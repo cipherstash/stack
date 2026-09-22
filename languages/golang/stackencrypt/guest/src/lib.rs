@@ -1,8 +1,9 @@
 // Security lints — the block `stack-encrypt` and `stack-auth` carry, minus
-// `deny(unsafe_code)`: the export surface (`abi`) and the two host imports
+// `deny(unsafe_code)`: the export surface (`abi`) and the token import
 // (`host`) are `extern "C"` over raw pointers by nature. Every `unsafe`
 // block is confined to those two wasm32-only modules and documented at the
-// site; `unsafe_op_in_unsafe_fn` keeps each one explicit.
+// site; `unsafe_op_in_unsafe_fn` keeps each one explicit. The allocator,
+// the buffer registry and the transport import are `stack-guest-abi`'s.
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(clippy::unwrap_used)]
 #![warn(clippy::expect_used)]
@@ -57,9 +58,11 @@
 //!   `StackCipher<K>` / `KeysetCipher<K>` / bytes. Compiles and unit-tests
 //!   on the native host target (`cargo test` here, no wasm toolchain
 //!   needed) against `stack_kms::FakeDataKeySource`.
-//! - [`abi`], [`host`], `buffers` (wasm32 only) — the export surface,
-//!   the two host imports, and the buffer registry. See [`abi`]'s module
-//!   docs for the full ABI contract.
+//! - [`abi`], [`host`] (wasm32 only) — this guest's export surface and its
+//!   token import. The conventions every guest shares — `se_alloc` /
+//!   `se_dealloc`, the buffer registry, the packed result encoding, the
+//!   status table, the `transport_send` import — are `stack_guest_abi`'s;
+//!   [`abi`]'s module docs give this guest's contract on top of them.
 //!
 //! On wasm32 `vitaminc-encrypt` uses its pure-Rust (RustCrypto `aes-gcm`)
 //! backend; the trade-offs are documented there. Values cross the boundary
@@ -83,10 +86,5 @@ pub mod status;
 // truncate a 64-bit pointer).
 #[cfg(target_arch = "wasm32")]
 pub mod abi;
-// Target-independent (plain `Vec`s and raw pointers, no linear-memory
-// reads), so it exists natively for its unit tests — the
-// empty-buffer accounting in particular is pinned there.
-#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-pub(crate) mod buffers;
 #[cfg(target_arch = "wasm32")]
 pub mod host;

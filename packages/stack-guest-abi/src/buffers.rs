@@ -1,7 +1,7 @@
 //! The guest-owned buffer registry behind `se_alloc` / `se_dealloc`,
 //! following the vitaminc guest's conventions (see `vcencrypt/guest/src/
-//! abi.rs`; sharing one implementation from a common vitaminc crate is a
-//! planned follow-up in that repository):
+//! abi.rs`). Shared by every guest under `bindings/go`, so the registry
+//! discipline is written once:
 //!
 //! - Every buffer the guest hands out — from [`alloc`] and from packed
 //!   results — is recorded here keyed by start address, holding the true
@@ -47,7 +47,7 @@ fn empty_ptr() -> *mut u8 {
 /// through `try_reserve_exact`, not the aborting global-allocator error
 /// path, so an oversized request is a recoverable host-side error instead
 /// of a trap that poisons the instance.
-pub(crate) fn alloc(len: usize) -> *mut u8 {
+pub fn alloc(len: usize) -> *mut u8 {
     let mut buf: Vec<u8> = Vec::new();
     if buf.try_reserve_exact(len).is_err() {
         return core::ptr::null_mut();
@@ -58,7 +58,7 @@ pub(crate) fn alloc(len: usize) -> *mut u8 {
 
 /// Register a buffer and leak it to a raw pointer for the host. The
 /// registry entry is what makes the matching [`dealloc`] / [`take`] sound.
-pub(crate) fn register(buf: Vec<u8>) -> *mut u8 {
+pub fn register(buf: Vec<u8>) -> *mut u8 {
     if buf.is_empty() {
         // See `EMPTY_BUFFERS`: empties share one pointer, so they are
         // counted, not keyed. Nothing leaks — an empty `Vec` owns no heap.
@@ -87,7 +87,7 @@ pub(crate) fn register(buf: Vec<u8>) -> *mut u8 {
 /// other pointer (or a stale one) a no-op rather than undefined behaviour,
 /// but a pointer that happens to alias a *different* live registered buffer
 /// of the same length would free that buffer.
-pub(crate) unsafe fn dealloc(ptr: *mut u8, len: usize) {
+pub unsafe fn dealloc(ptr: *mut u8, len: usize) {
     if let Some(mut buf) = unsafe { reclaim(ptr, len) } {
         buf.zeroize();
     }
@@ -101,23 +101,24 @@ pub(crate) unsafe fn dealloc(ptr: *mut u8, len: usize) {
 /// # Safety
 ///
 /// As for [`dealloc`].
-pub(crate) unsafe fn take(ptr: *mut u8, len: usize) -> Option<Vec<u8>> {
+pub unsafe fn take(ptr: *mut u8, len: usize) -> Option<Vec<u8>> {
     if ptr.is_null() && len == 0 {
         return Some(Vec::new());
     }
     unsafe { reclaim(ptr, len) }
 }
 
-/// Wipe and free every buffer the registry still holds — what `se_shutdown`
-/// does after dropping the cipher, so a host that tears the instance down
-/// without releasing an output first still leaves no plaintext behind.
+/// Wipe and free every buffer the registry still holds — what a guest's
+/// shutdown export does after dropping its state, so a host that tears the
+/// instance down without releasing an output first still leaves no
+/// plaintext behind.
 /// Empties carry no bytes; their count is simply reset.
 ///
 /// This path allocates nothing: the registry is moved out whole (an empty
 /// `HashMap` does not allocate) and walked in place, so a shutdown under
 /// linear-memory pressure cannot fail before the wipe on an allocation the
 /// wipe itself made.
-pub(crate) fn wipe_all() {
+pub fn wipe_all() {
     let live = BUFFERS.with(|b| core::mem::take(&mut *b.borrow_mut()));
     for (ptr, len) in live {
         // SAFETY: every entry was registered by `register`, which leaked a

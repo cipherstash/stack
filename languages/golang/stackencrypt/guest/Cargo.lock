@@ -2009,12 +2009,20 @@ dependencies = [
  "serde_json",
  "stack-auth",
  "stack-encrypt",
+ "stack-guest-abi",
  "stack-kms",
  "uuid",
  "vitaminc-aead-value",
  "vitaminc-protected",
  "zeroize",
  "zerokms-protocol",
+]
+
+[[package]]
+name = "stack-guest-abi"
+version = "0.0.0"
+dependencies = [
+ "zeroize",
 ]
 
 [[package]]

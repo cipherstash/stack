@@ -1,12 +1,9 @@
-//! The wasm export surface. Same conventions as the vitaminc guest
-//! (`vc_*`), under the `se_` prefix:
+//! This guest's wasm export surface: the cipher exports, over the
+//! conventions every guest shares (`stack_guest_abi::abi`: `se_alloc` /
+//! `se_dealloc`, the buffer registry, the packed `u64` result encoding, the
+//! hostile-input validation of every `(ptr, len)` pair). What is specific
+//! to this guest:
 //!
-//! - The host owns all buffer lifecycles. It writes inputs into guest
-//!   memory obtained from [`se_alloc`] and releases every buffer — its own
-//!   inputs and the guest's outputs — with [`se_dealloc`], which **zeroizes
-//!   before freeing**. The guest keeps a registry of every buffer it hands
-//!   out (`crate::buffers`), so `se_dealloc` never trusts the host's
-//!   length.
 //! - **Every export handed plaintext wipes that buffer in place before it
 //!   returns**, rather than leaving it for `se_dealloc`: [`se_cipher_init`]
 //!   (the config carries the client key), and [`se_encrypt`],
@@ -34,7 +31,7 @@
 //!   without it, key material would sit in freed host memory. After it, a
 //!   well-formed cipher operation is `STATUS_STATE`, as one before
 //!   [`se_cipher_init`] is, and so is a re-`se_cipher_init`. That is the
-//!   whole of the claim: [`se_alloc`] and [`se_dealloc`] return no status
+//!   whole of the claim: `se_alloc` and `se_dealloc` return no status
 //!   and go on working — the host still has buffers to free — a second
 //!   [`se_shutdown`] is a no-op, and a *malformed* call is
 //!   `STATUS_ENCODING` in any state, because validation runs first (see
@@ -43,26 +40,6 @@
 //!   the guest **only** through `se_alloc` (to place the transport response
 //!   / token); calling any other export from inside a host import is
 //!   undefined behaviour of the embedding, not of this module.
-//!
-//! # Result encoding
-//!
-//! Every fallible export returns a single `u64` split into a high and a low
-//! 32-bit field:
-//!
-//! - **success** — the high 32 bits are non-zero: an output pointer with
-//!   the low 32 bits its length.
-//! - **error** — the high 32 bits are zero and the low 32 bits are a
-//!   [`crate::status`] code. A valid pointer is never zero, so the two
-//!   spaces never collide.
-//!
-//! # Hostile-input posture
-//!
-//! As the vitaminc guest: every export validates its pointer/length pairs
-//! against linear memory before any unsafe construction (null with nonzero
-//! length rejected), invalid input yields `STATUS_ENCODING` rather than a
-//! trap, and the `catch_unwind` at each export is belt-and-braces for a
-//! hypothetical unwind build — wasm32-wasip1 aborts on panic. Statuses are
-//! the only detail leaked.
 //!
 //! The value exports ([`se_encrypt`] and friends) are the cipher-directed
 //! path and take the AAD as `KeysetCipher::encrypt` does: any bytes, none
@@ -91,12 +68,12 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use futures::executor::block_on;
 use stack_encrypt::{KeysetCipher, StackCipher};
+use stack_guest_abi::abi::{err_status, input, ok_buffer, take_plaintext, wipe_input};
+use stack_guest_abi::buffers;
 use stack_kms::{ClientOpts, StackKms};
 use vitaminc_aead_value::transport as codec;
 use vitaminc_aead_value::FfiValue;
-use zeroize::{Zeroize, Zeroizing};
 
-use crate::buffers;
 use crate::config::parse_config;
 use crate::host::{HostTokenStrategy, WasiHostConnection};
 use crate::ops;
@@ -118,111 +95,9 @@ thread_local! {
     static SHUT_DOWN: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Allocate `len` bytes of guest memory for the host to write into. Returns
-/// null if the allocation fails (recoverable host-side; never a trap).
-#[no_mangle]
-pub extern "C" fn se_alloc(len: u32) -> *mut u8 {
-    buffers::alloc(len as usize)
-}
-
-/// Zeroize and free a buffer previously handed out by [`se_alloc`] or
-/// packed into a result. See `crate::buffers::dealloc` for the registry
-/// discipline (unknown pointer: no-op; length mismatch: refused).
-///
-/// # Safety
-///
-/// `ptr` should be a pointer this module handed out; the registry makes
-/// anything else a no-op rather than undefined behaviour.
-#[no_mangle]
-pub unsafe extern "C" fn se_dealloc(ptr: *mut u8, len: u32) {
-    unsafe { buffers::dealloc(ptr, len as usize) }
-}
-
-/// Pack a buffer result: `ptr << 32 | len`. The buffer is registered so the
-/// host's eventual [`se_dealloc`] wipes and frees exactly what was
-/// allocated.
-fn ok_buffer(out: Vec<u8>) -> u64 {
-    let len = out.len() as u64;
-    let ptr = buffers::register(out) as usize as u64;
-    (ptr << 32) | len
-}
-
-/// Pack an error: the status in the low 32 bits, high bits zero.
-fn err_status(status: u32) -> u64 {
-    status as u64
-}
-
-/// Current linear-memory size in bytes. `u64` because a full 4 GiB memory
-/// (65536 pages) overflows a 32-bit `usize`.
-fn linear_memory_bytes() -> u64 {
-    core::arch::wasm32::memory_size::<0>() as u64 * 65536
-}
-
-/// Borrow a host-supplied `(ptr, len)` pair, validating before any slice
-/// exists: null-with-nonzero-length is rejected (treating it as empty would
-/// silently drop whatever bytes the host meant to pass), the length must be under
-/// `isize::MAX`, and the whole range must lie inside the current linear
-/// memory. A pair that fails validation yields `STATUS_ENCODING`; a pair
-/// that passes can still name the wrong bytes — the host owns its pointers
-/// — but can never fault or over-read past linear memory.
-fn input<'a>(ptr: *const u8, len: u32) -> Result<&'a [u8], u32> {
-    let len = len as usize;
-    if len == 0 {
-        return Ok(&[]);
-    }
-    if ptr.is_null() || len > isize::MAX as usize {
-        return Err(STATUS_ENCODING);
-    }
-    let end = (ptr as usize).checked_add(len).ok_or(STATUS_ENCODING)?;
-    if end as u64 > linear_memory_bytes() {
-        return Err(STATUS_ENCODING);
-    }
-    // SAFETY: non-null, in-bounds of linear memory, and under `isize::MAX`;
-    // wasm linear memory is fully initialized (fresh pages are zero), so
-    // reading the range as bytes is defined.
-    Ok(unsafe { std::slice::from_raw_parts(ptr, len) })
-}
-
-/// Zeroize a validated input range in place (without freeing it — the host
-/// still owns the buffer and will `se_dealloc` it after the call).
-///
-/// # Safety
-///
-/// The range must have passed [`input`] validation and carry no outstanding
-/// borrows.
-unsafe fn wipe_input(ptr: *mut u8, len: u32) {
-    if ptr.is_null() || len == 0 {
-        return;
-    }
-    unsafe { std::slice::from_raw_parts_mut(ptr, len as usize) }.zeroize();
-}
-
 /// Decode one codec-encoded input.
 fn decode(bytes: &[u8]) -> Result<FfiValue, u32> {
     codec::decode_value(&mut codec::Reader::new(bytes)).map_err(|_| STATUS_ENCODING)
-}
-
-/// Take a plaintext input out of the host's buffer and wipe the buffer.
-///
-/// The exports below hold their decoded value across a ZeroKMS round trip, so
-/// the borrow of the host buffer would otherwise outlive the call. Copying
-/// into a `Zeroizing` first lets the original be wiped immediately: the
-/// plaintext then exists for the duration of this call and no longer, instead
-/// of sitting in linear memory until the host gets round to `se_dealloc`.
-///
-/// Called before any other buffer is borrowed, deliberately. The wipe writes
-/// through `&mut`, so no other `&[u8]` into linear memory may be live — and a
-/// host that aliases its value range onto another argument therefore reads
-/// zeros there, which the option parser rejects as `STATUS_ENCODING`.
-///
-/// # Safety
-///
-/// `ptr`/`len` must name a host buffer the caller is done with; it is zeroed
-/// before this returns.
-unsafe fn take_plaintext(ptr: *mut u8, len: u32) -> Result<Zeroizing<Vec<u8>>, u32> {
-    let taken = Zeroizing::new(input(ptr, len)?.to_vec());
-    unsafe { wipe_input(ptr, len) };
-    Ok(taken)
 }
 
 /// Run `f` with the instance's cipher, or report `STATUS_STATE` when there
@@ -339,8 +214,8 @@ fn cipher_init(decoded: FfiValue) -> Result<Vec<u8>, u32> {
 /// Tear the instance down: drop the cipher — the client key and every
 /// loaded keyset's index key are wiped by `ZeroizeOnDrop` — and wipe every
 /// buffer the registry still holds, so nothing the host forgot to
-/// [`se_dealloc`] survives in freed memory. Idempotent — a second call is a
-/// no-op, and [`se_alloc`]/[`se_dealloc`] keep working so the host can
+/// `se_dealloc` survives in freed memory. Idempotent — a second call is a
+/// no-op, and `se_alloc`/`se_dealloc` keep working so the host can
 /// still free what it holds. Afterwards every well-formed cipher operation
 /// is `STATUS_STATE`, [`se_cipher_init`] included; a malformed one is
 /// `STATUS_ENCODING` first, as in any other state.
@@ -401,7 +276,7 @@ pub unsafe extern "C" fn se_keyset(sel_ptr: *const u8, sel_len: u32) -> u64 {
 /// # Safety
 ///
 /// Pointer/length pairs should name buffers the host wrote via
-/// [`se_alloc`]; each range is bounds-checked against linear memory (a bad
+/// `se_alloc`; each range is bounds-checked against linear memory (a bad
 /// pair returns `STATUS_ENCODING` instead of faulting).
 #[no_mangle]
 pub unsafe extern "C" fn se_encrypt(
@@ -438,7 +313,7 @@ pub unsafe extern "C" fn se_encrypt_element(
 /// tree; one batched key request per keyset the leaves were sealed under,
 /// dispatched as one `retrieve-data-key` call per 500 keyed leaves. The
 /// output buffer contains **plaintext** — the host must copy it out and
-/// immediately release it with [`se_dealloc`] (which wipes it).
+/// immediately release it with `se_dealloc` (which wipes it).
 ///
 /// `aad` must be the one the ciphertext was sealed under, empty included.
 /// `opts` constrains which keyset may be opened: `{"any"}` opens leaves from

@@ -6,25 +6,18 @@
 //! # Import contract (module `cipherstash_transport`)
 //!
 //! All pointers are offsets into guest linear memory; the host allocates
-//! guest buffers with `se_alloc` and the guest reclaims them through its
-//! registry (`crate::buffers`).
+//! guest buffers with `se_alloc` and the guest reclaims them through the
+//! shared registry (`stack_guest_abi::buffers`).
 //!
-//! - `transport_send(method, url, headers, body, resp_headers_out,
-//!   resp_body_out) -> status` — perform one HTTP request. Each of the four
-//!   inputs is a `(ptr, len)` pair borrowed for the duration of the call;
-//!   `headers` is the `name: value` line format of [`crate::headers`]. The
-//!   two outputs are `(ptr_out, len_out)` slot pairs the host fills with
-//!   `se_alloc`'d buffers (response headers, response body). The return
-//!   value is the HTTP status code, or negative for a transport-level
-//!   failure — then the body carries the host's error text and headers are
-//!   empty. This is #2099's ZeroKMS-shaped import generalised to a plain
-//!   HTTP request (method + URL + headers), so `stack-auth`'s refreshers
-//!   can reuse it later and a future `wasi:http` implementation can replace
-//!   it without changing the connection seam.
+//! - `transport_send(..)` — perform one HTTP request. The import and its
+//!   contract are `stack_guest_abi::transport`'s, shared with every guest;
+//!   this module only builds ZeroKMS requests over it.
 //! - `token_get(token_out) -> status` — hand over the current bearer token
 //!   (Phase-1 auth: minting and refresh stay on the host). `token_out` is a
-//!   `(ptr_out, len_out)` slot pair filled the same way; status `0` is
-//!   success, anything else a host-side failure.
+//!   `(ptr_out, len_out)` slot pair filled with an `se_alloc`'d buffer;
+//!   status `0` is success, anything else a host-side failure. This
+//!   guest's own: the credential guest supplies tokens rather than asking
+//!   for them.
 //!
 //! What crosses the boundary per ZeroKMS call is exactly what would cross
 //! TLS anyway: the URL, the bearer token, and the serialized protocol
@@ -36,50 +29,22 @@
 //! are reclaimed via the registry (which the ABI's `se_dealloc` also wipes).
 
 use std::convert::Infallible;
-use std::fmt;
 use std::sync::Mutex;
 
 use stack_auth::{AuthError, AuthStrategy, CustomError, SecretToken, ServiceToken};
+use stack_guest_abi::buffers;
+use stack_guest_abi::transport;
 use stack_kms::{BaseUrlUnresolved, ZeroKMSConnection, ZeroKMSConnectionInit, ZeroKmsEndpoint};
 use zeroize::Zeroizing;
 use zerokms_protocol::{ViturRequest, ViturRequestError};
 
-use crate::buffers;
 use crate::headers::{header_value, request_headers};
 use crate::response::map_response;
 
 #[link(wasm_import_module = "cipherstash_transport")]
 extern "C" {
-    fn transport_send(
-        method_ptr: *const u8,
-        method_len: u32,
-        url_ptr: *const u8,
-        url_len: u32,
-        headers_ptr: *const u8,
-        headers_len: u32,
-        body_ptr: *const u8,
-        body_len: u32,
-        resp_headers_ptr_out: *mut u32,
-        resp_headers_len_out: *mut u32,
-        resp_body_ptr_out: *mut u32,
-        resp_body_len_out: *mut u32,
-    ) -> i32;
-
     fn token_get(token_ptr_out: *mut u32, token_len_out: *mut u32) -> i32;
 }
-
-/// The host stored an out-slot pointer the guest's buffer registry does not
-/// know (or with a mismatched length) — a host-side bookkeeping bug.
-#[derive(Debug)]
-struct HostBufferError;
-
-impl fmt::Display for HostBufferError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "host returned an unregistered or mismatched buffer")
-    }
-}
-
-impl std::error::Error for HostBufferError {}
 
 /// A [`ZeroKMSConnection`] whose transport is the `transport_send` host
 /// import. The host call is synchronous from the guest's perspective, so
@@ -160,51 +125,14 @@ impl ZeroKMSConnection for WasiHostConnection {
         let auth = Zeroizing::new(format!("Bearer {access_token}"));
         let headers = Zeroizing::new(request_headers(auth.as_str()));
 
-        let method = b"POST";
-        let mut resp_headers_ptr: u32 = 0;
-        let mut resp_headers_len: u32 = 0;
-        let mut resp_body_ptr: u32 = 0;
-        let mut resp_body_len: u32 = 0;
+        // The shared import reclaims both response slots before judging
+        // either, and the body it hands back wipes on drop (it carries
+        // wrapped key material).
+        let response = transport::send(b"POST", url.as_str(), &headers, &body)
+            .map_err(|e| ViturRequestError::parse("Host response buffer failed validation", e))?;
 
-        // SAFETY: every input pair names a live guest allocation borrowed
-        // for the call; the out-slots are stack locals the host writes once.
-        let status = unsafe {
-            transport_send(
-                method.as_ptr(),
-                method.len() as u32,
-                url.as_str().as_ptr(),
-                url.as_str().len() as u32,
-                headers.as_ptr(),
-                headers.len() as u32,
-                body.as_ptr(),
-                body.len() as u32,
-                &mut resp_headers_ptr,
-                &mut resp_headers_len,
-                &mut resp_body_ptr,
-                &mut resp_body_len,
-            )
-        };
-
-        // Reclaim *both* slots before judging either. A `?` on the headers
-        // slot would otherwise strand the body buffer — a 2xx JSON body full
-        // of wrapped data keys — registered, unfreed and unwiped for the life
-        // of the instance.
-        //
-        // SAFETY: pointers come from the host's `se_alloc` calls; the
-        // registry validates them before any Vec is rebuilt.
-        let resp_headers =
-            unsafe { buffers::take(resp_headers_ptr as *mut u8, resp_headers_len as usize) };
-        // Response bodies carry wrapped key material — wipe on drop.
-        let resp_body = unsafe { buffers::take(resp_body_ptr as *mut u8, resp_body_len as usize) }
-            .map(Zeroizing::new);
-
-        let unregistered =
-            || ViturRequestError::parse("Host response buffer failed validation", HostBufferError);
-        let resp_headers = resp_headers.ok_or_else(unregistered)?;
-        let resp_body = resp_body.ok_or_else(unregistered)?;
-
-        let content_type = header_value(&resp_headers, "content-type");
-        map_response(status, content_type, &resp_body)
+        let content_type = header_value(&response.headers, "content-type");
+        map_response(response.status, content_type, &response.body)
     }
 }
 

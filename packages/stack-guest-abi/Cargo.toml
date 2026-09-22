@@ -1,0 +1,17 @@
+[package]
+name = "stack-guest-abi"
+description = "The WASI guest ABI the Go binding's guests share: allocator and buffer registry, status table, host transport import"
+version = "0.0.0"
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license-file = "LICENSE"
+# Internal plumbing for the guests under bindings/go, never a release of its
+# own; also keeps release-plz from picking it up.
+publish = false
+
+[dependencies]
+zeroize = { workspace = true }

@@ -1,93 +1,30 @@
-//! Status codes for the ABI's packed result encoding (see [`crate::abi`]),
-//! and the mapping from [`stack_encrypt::Error`] onto them.
+//! The mapping from [`stack_encrypt::Error`] (and the dynamic and KMS
+//! errors under it) onto the status table.
 //!
-//! Defined outside the wasm32-gated ABI module so native builds — the ops
-//! unit tests — can reference them too. The Go host mirrors these values;
-//! they are part of the guest/host contract and must not be renumbered.
+//! The numbers themselves are [`stack_guest_abi::status`]'s — one table for
+//! every guest, never renumbered, decoded once by the Go host — and are
+//! re-exported here so this crate's modules and tests name them as they
+//! always have. Defined outside the wasm32-gated ABI module so native builds
+//! — the ops unit tests — can reference them too.
 //!
-//! Codes 1–4 are byte-for-byte the vitaminc guest's codes (`vcencrypt`'s
-//! `status.rs`), so the two guests read identically from the host side;
-//! code 3 there is "unknown handle", and here — where there is no handle —
-//! it is the call-order violation that means the same thing to a host: no
-//! cipher for this call. Codes 5–10 map the ZeroKMS request outcomes
-//! ([`ViturRequestErrorKind`]-shaped) so a Go caller can distinguish a bad
-//! token from a tampered ciphertext without parsing strings. Code 11 is a
-//! term-derivation failure (a caller-input condition, e.g. match text that
-//! yields no tokens). Code 12 is a keyset-scoped open refusing a leaf whose
-//! keyset id is not the scope's — a host's own constraint, checked before
-//! the leaf is authenticated and so not a statement about tampering.
+//! What this guest decides is *which* number a given failure is. Codes 5–10
+//! map the ZeroKMS request outcomes ([`ViturRequestErrorKind`]-shaped) so a
+//! Go caller can distinguish a bad token from a tampered ciphertext without
+//! parsing strings; 11 is a term-derivation failure (a caller-input
+//! condition, e.g. match text that yields no tokens); 12 is a keyset-scoped
+//! open refusing a leaf whose keyset id is not the scope's — a host's own
+//! constraint, checked before the leaf is authenticated and so not a
+//! statement about tampering.
 
 use stack_auth::AuthError;
 use stack_kms::{GenerateKeyError, LoadKeysetError, RetrieveKeyError};
 use zerokms_protocol::ViturRequestErrorKind;
 
-/// AEAD open failure: a tampered ciphertext, a wrong element derivation, or
-/// a wrong AAD that reached the AEAD. Against ZeroKMS a wrong AAD does not
-/// get that far — every data key is bound to its context's descriptor, so
-/// the retrieve is refused first, as [`STATUS_KMS_FORBIDDEN`]. Only a key
-/// source that ignores descriptors (the native tests' fake) reports a wrong
-/// AAD here.
-pub const STATUS_AUTH: u32 = 1;
-/// Invalid input at the boundary: malformed transport bytes, a malformed
-/// cipher config, an empty encryption context, or a pointer/length pair that
-/// fails validation against linear memory.
-pub const STATUS_ENCODING: u32 = 2;
-/// The call is out of order: an operation before `se_cipher_init`, or
-/// after `se_shutdown`, or `se_cipher_init` twice. A host fixes its call
-/// sequence; nothing here is a guest bug. (The vitaminc guest's code 3 is
-/// "unknown handle", the same condition under a handle scheme.)
-pub const STATUS_STATE: u32 = 3;
-/// A caught panic, a response that did not match its
-/// requests, or any other unexpected internal failure.
-pub const STATUS_INTERNAL: u32 = 4;
-/// ZeroKMS (or the auth strategy) rejected the *credential*: an expired or
-/// rejected access token, or a credential exchange the server refused.
-///
-/// The one status a host should answer by refreshing the token and retrying.
-/// Deliberately narrow for that reason: a configuration fault that merely
-/// *arrives* through the auth strategy — a token with no ZeroKMS `services`
-/// claim, a host `token_get` that failed — is [`STATUS_KMS_TRANSPORT`], since
-/// no number of refreshes can fix it.
-pub const STATUS_KMS_UNAUTHORIZED: u32 = 5;
-/// ZeroKMS rejected the request as forbidden: the token is valid but lacks
-/// permission, the keyset is disabled, the organisation is over its usage
-/// allowance — or, on decrypt, the AAD/context is not the one the value
-/// was sealed under, so the data key cannot be re-derived. That last one is
-/// the production form of a wrong-context open; see [`STATUS_AUTH`].
-pub const STATUS_KMS_FORBIDDEN: u32 = 6;
-/// ZeroKMS could not find the resource: an unknown keyset (or client), or a
-/// data key that does not exist for the presented `iv`/`tag`.
-pub const STATUS_KMS_NOT_FOUND: u32 = 7;
-/// ZeroKMS reported a resource conflict.
-pub const STATUS_KMS_CONFLICT: u32 = 8;
-/// No ZeroKMS verdict was reached: the host's `transport_send` errored, the
-/// host's `token_get` errored, the endpoint is unknown or invalid (no
-/// `zerokms_url` in the config *and* no ZeroKMS entry in the token's
-/// `services` claim), or the request could not be prepared.
-///
-/// Not retryable by refreshing a token — these are configuration or host
-/// faults. See [`STATUS_KMS_UNAUTHORIZED`] for the one that is.
-pub const STATUS_KMS_TRANSPORT: u32 = 9;
-/// ZeroKMS failed in a way none of the codes above capture: a malformed
-/// response, invalid key material, or an unclassified server error.
-pub const STATUS_KMS_OTHER: u32 = 10;
-/// An index term failed to derive: e.g. match text that yields no tokens, or
-/// a value/scheme combination the term does not support.
-pub const STATUS_TERM: u32 = 11;
-/// An opening export was constrained to one keyset (`{"name"}`, `{"id"}` or
-/// `{"default"}` in its options) and the leaf named another. Refused before
-/// any key is retrieved. A host that means "whichever keyset" opens with
-/// `{"any"}`.
-///
-/// A constraint failure, and only that — never provenance. The comparison
-/// reads the keyset id *out of the leaf*, before anything is retrieved and
-/// so before anything is authenticated, which means a flipped byte in that
-/// field arrives here exactly as a genuinely misrouted row does. The id is
-/// bound into the leaf AAD, so the tampered leaf cannot go on to open —
-/// it fails as [`STATUS_AUTH`] — but that verdict is only reached on the
-/// path where the constraint let it through. Read this status as "not this
-/// keyset's row", never as "an untampered row".
-pub const STATUS_FOREIGN_KEYSET: u32 = 12;
+pub use stack_guest_abi::status::{
+    STATUS_AUTH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET, STATUS_INTERNAL, STATUS_KMS_CONFLICT,
+    STATUS_KMS_FORBIDDEN, STATUS_KMS_NOT_FOUND, STATUS_KMS_OTHER, STATUS_KMS_TRANSPORT,
+    STATUS_KMS_UNAUTHORIZED, STATUS_STATE, STATUS_TERM,
+};
 
 /// Map a sealing/opening error onto the ABI status word.
 ///
