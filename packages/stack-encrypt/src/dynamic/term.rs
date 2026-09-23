@@ -182,61 +182,118 @@ where
     D: IntoPrfContext<'c>,
 {
     match kind {
-        TermKind::Equality => {
-            let term = match scalar {
-                Scalar::I32(v) => cipher.equality_term(v, context).await,
-                Scalar::I64(v) => cipher.equality_term(v, context).await,
-                Scalar::U32(v) => cipher.equality_term(v, context).await,
-                Scalar::U64(v) => cipher.equality_term(v, context).await,
-                Scalar::Text(t) => cipher.equality_term(String::clone(&t), context).await,
-                Scalar::Bytes(b) => {
-                    cipher
-                        .equality_term(Protected::new(Vec::clone(&b)), context)
-                        .await
-                }
-                // No PRF encoding is defined for floats (equality on
-                // IEEE-754 values is a modelling error) or booleans.
-                Scalar::Bool(_) | Scalar::F32(_) | Scalar::F64(_) => {
-                    return Err(Error::Term { kind })
-                }
-            }?;
-            Ok(term.into_bytes().to_vec())
-        }
-        TermKind::Match => match scalar {
-            Scalar::Text(t) => Ok(cipher
-                .match_terms::<DefaultMatch>(&t, context)
+        TermKind::Equality => equality(cipher, scalar, context).await,
+        TermKind::Match => match_term(cipher, scalar, context).await,
+        TermKind::Ore => ore_of(cipher, scalar, context).await,
+        TermKind::Ope => ope_of(cipher, scalar, context).await,
+    }
+}
+
+/// [`TermKind::Equality`] per scalar: one PRF block over the value, for
+/// every integer width, text and bytes.
+async fn equality<'c, K, D>(
+    cipher: &KeysetCipher<'_, K>,
+    scalar: Scalar,
+    context: NonEmpty<D>,
+) -> Result<Vec<u8>, Error>
+where
+    K: DataKeySource + Sync,
+    D: IntoPrfContext<'c>,
+{
+    let term = match scalar {
+        Scalar::I32(v) => cipher.equality_term(v, context).await,
+        Scalar::I64(v) => cipher.equality_term(v, context).await,
+        Scalar::U32(v) => cipher.equality_term(v, context).await,
+        Scalar::U64(v) => cipher.equality_term(v, context).await,
+        Scalar::Text(t) => cipher.equality_term(String::clone(&t), context).await,
+        Scalar::Bytes(b) => {
+            cipher
+                .equality_term(Protected::new(Vec::clone(&b)), context)
                 .await
-                .map(|t| t.to_bytes())?),
-            _ => Err(Error::Term { kind }),
-        },
-        // The text and bytes arms hand the encryptor the `Zeroizing` operand
-        // itself, not a bare clone of its contents: the CLLW encryptors take
-        // their value by `'static` ownership (the visitor carries it), so a
-        // cloned-out `String`/`Vec<u8>` would be freed with the plaintext
-        // still in it — in a guest's linear memory, where the host can read
-        // it. Keeping the wrapper costs nothing and saves the copy as well.
-        TermKind::Ore => match scalar {
-            Scalar::Bool(v) => ore(cipher, v, context).await,
-            Scalar::I32(v) => ore(cipher, v, context).await,
-            Scalar::I64(v) => ore(cipher, v, context).await,
-            Scalar::U32(v) => ore(cipher, v, context).await,
-            Scalar::U64(v) => ore(cipher, v, context).await,
-            Scalar::F32(v) => ore(cipher, v, context).await,
-            Scalar::F64(v) => ore(cipher, v, context).await,
-            Scalar::Text(t) => ore(cipher, t, context).await,
-            Scalar::Bytes(b) => ore(cipher, b, context).await,
-        },
-        TermKind::Ope => match scalar {
-            Scalar::Bool(v) => ope(cipher, v, context).await,
-            Scalar::I32(v) => ope(cipher, v, context).await,
-            Scalar::I64(v) => ope(cipher, v, context).await,
-            Scalar::U32(v) => ope(cipher, v, context).await,
-            Scalar::U64(v) => ope(cipher, v, context).await,
-            Scalar::F32(v) => ope(cipher, v, context).await,
-            Scalar::F64(v) => ope(cipher, v, context).await,
-            Scalar::Text(t) => ope(cipher, t, context).await,
-            Scalar::Bytes(b) => ope(cipher, b, context).await,
-        },
+        }
+        // No PRF encoding is defined for floats (equality on IEEE-754
+        // values is a modelling error) or booleans.
+        Scalar::Bool(_) | Scalar::F32(_) | Scalar::F64(_) => {
+            return Err(Error::Term {
+                kind: TermKind::Equality,
+            })
+        }
+    }?;
+    Ok(term.into_bytes().to_vec())
+}
+
+/// [`TermKind::Match`] per scalar: text only.
+async fn match_term<'c, K, D>(
+    cipher: &KeysetCipher<'_, K>,
+    scalar: Scalar,
+    context: NonEmpty<D>,
+) -> Result<Vec<u8>, Error>
+where
+    K: DataKeySource + Sync,
+    D: IntoPrfContext<'c>,
+{
+    match scalar {
+        Scalar::Text(t) => Ok(cipher
+            .match_terms::<DefaultMatch>(&t, context)
+            .await
+            .map(|t| t.to_bytes())?),
+        _ => Err(Error::Term {
+            kind: TermKind::Match,
+        }),
+    }
+}
+
+/// [`TermKind::Ore`] per scalar: every scalar has an ORE encoding.
+///
+/// The text and bytes arms hand the encryptor the `Zeroizing` operand
+/// itself, not a bare clone of its contents: the CLLW encryptors take
+/// their value by `'static` ownership (the visitor carries it), so a
+/// cloned-out `String`/`Vec<u8>` would be freed with the plaintext
+/// still in it — in a guest's linear memory, where the host can read
+/// it. Keeping the wrapper costs nothing and saves the copy as well.
+async fn ore_of<'c, K, D>(
+    cipher: &KeysetCipher<'_, K>,
+    scalar: Scalar,
+    context: NonEmpty<D>,
+) -> Result<Vec<u8>, Error>
+where
+    K: DataKeySource + Sync,
+    D: IntoPrfContext<'c>,
+{
+    match scalar {
+        Scalar::Bool(v) => ore(cipher, v, context).await,
+        Scalar::I32(v) => ore(cipher, v, context).await,
+        Scalar::I64(v) => ore(cipher, v, context).await,
+        Scalar::U32(v) => ore(cipher, v, context).await,
+        Scalar::U64(v) => ore(cipher, v, context).await,
+        Scalar::F32(v) => ore(cipher, v, context).await,
+        Scalar::F64(v) => ore(cipher, v, context).await,
+        Scalar::Text(t) => ore(cipher, t, context).await,
+        Scalar::Bytes(b) => ore(cipher, b, context).await,
+    }
+}
+
+/// [`TermKind::Ope`] per scalar; see [`ore_of`] for why the text and bytes
+/// arms pass the wrapper.
+async fn ope_of<'c, K, D>(
+    cipher: &KeysetCipher<'_, K>,
+    scalar: Scalar,
+    context: NonEmpty<D>,
+) -> Result<Vec<u8>, Error>
+where
+    K: DataKeySource + Sync,
+    D: IntoPrfContext<'c>,
+{
+    match scalar {
+        Scalar::Bool(v) => ope(cipher, v, context).await,
+        Scalar::I32(v) => ope(cipher, v, context).await,
+        Scalar::I64(v) => ope(cipher, v, context).await,
+        Scalar::U32(v) => ope(cipher, v, context).await,
+        Scalar::U64(v) => ope(cipher, v, context).await,
+        Scalar::F32(v) => ope(cipher, v, context).await,
+        Scalar::F64(v) => ope(cipher, v, context).await,
+        Scalar::Text(t) => ope(cipher, t, context).await,
+        Scalar::Bytes(b) => ope(cipher, b, context).await,
     }
 }
 

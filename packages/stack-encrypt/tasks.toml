@@ -1,3 +1,24 @@
+["crap:stack-encrypt"]
+description = "Gate stack-encrypt on the CRAP (Change Risk Anti-Patterns) metric — fails when a complex, under-tested function exceeds the threshold"
+run = [
+  # Instrument and run the unit and integration tests, emitting LCOV coverage
+  # that `cargo crap` consumes. `--all-features` so the `dynamic` module (the
+  # FFI value model every binding funnels through) is scored, not skipped as
+  # uninstrumented. The trybuild UI suite is excluded: it compiles the derive's
+  # compile-fail cases in a scratch cargo project, which contributes nothing to
+  # this crate's coverage and only slows the instrumented run.
+  "mise x --env test -- cargo llvm-cov nextest -p stack-encrypt --all-features -E 'not binary(ui)' --lcov --output-path {{config_root}}/target/stack-encrypt-lcov.info",
+  # Score every production function. Excludes test code, the examples, and the
+  # detached fuzz crate (which lives under this package's directory and would
+  # otherwise be walked as production source). `--fail-above` exits non-zero
+  # when any function's CRAP score exceeds the threshold from the workspace-root
+  # .cargo-crap.toml (30), so this gates both local runs and CI.
+  # NOTE: this must stay the LAST command — the crap-stack-encrypt.yml CI
+  # workflow runs this task and relies on mise appending its trailing args
+  # (e.g. --format github) to this `cargo crap` invocation.
+  "cargo crap --path packages/stack-encrypt --lcov {{config_root}}/target/stack-encrypt-lcov.info --exclude 'examples/**' --exclude 'fuzz/**' --exclude '**/tests/**' --fail-above",
+]
+
 # Fuzz the frozen v1 leaf byte decoder (`SealedValue::from_bytes`, also
 # `TryFrom<&[u8]>`). This is what a stored ciphertext column comes back
 # through, so it is the crate's widest untrusted-input parser: it must never
