@@ -1,10 +1,61 @@
 //! In-memory [`ZeroKMSConnection`] used by unit tests to stub ZeroKMS
-//! responses without touching the network.
+//! responses without touching the network, plus the fixtures every unit
+//! test built on it needs (a client key, a client over the stub, and the
+//! key material ZeroKMS would return).
+//!
+//! Shared by `client.rs`'s own tests and by `provider.rs`, which drives the
+//! key-provider implementation over the same stub.
 
 use async_mutex::Mutex;
-use zerokms_protocol::{ViturRequest, ViturRequestError};
+use uuid::uuid;
+use zerokms_protocol::{GeneratedKey, ViturKeyMaterial, ViturRequest, ViturRequestError};
 
+use recipher::keyset::{EncryptionKeySet, ProxyKeySet};
+
+use crate::client::{Client, ClientOpts};
 use crate::connection::{ZeroKMSConnection, ZeroKMSConnectionInit};
+use crate::key::{ClientKey, V1KeySet};
+
+/// A fresh, random [`ClientKey`]. Data and index keys are derived from it,
+/// so a test that compares derived material must reuse one value (reach it
+/// through `StackKms::client_key`) rather than call this twice.
+pub(crate) fn random_client_key() -> ClientKey {
+    let domain_key = EncryptionKeySet::generate().unwrap();
+    let authority_key = EncryptionKeySet::generate().unwrap();
+    let keyset = ProxyKeySet::generate(&authority_key, &domain_key);
+
+    ClientKey {
+        key_id: uuid!("00000000-0000-0000-0000-000000000000"),
+        keyset: V1KeySet(keyset),
+    }
+}
+
+/// A low-level [`Client`] over a stub connection the callback configures.
+pub(crate) fn build_client(
+    callback: impl FnOnce(TestConnectionBuilder) -> TestConnectionBuilder,
+) -> Client<TestConnection> {
+    let builder = callback(TestConnectionBuilder::new());
+    let client_opts = ClientOpts::new(builder)
+        .with_max_keys_per_req(10)
+        .unwrap()
+        .with_max_concurrent_reqs(5)
+        .unwrap();
+    Client::init_opts(client_opts).expect("Failed to initialize test client")
+}
+
+/// 528 bytes is the size of the key material returned by ZeroKMS for the
+/// recipher proxy re-encryption scheme.
+pub(crate) fn key_material() -> ViturKeyMaterial {
+    ViturKeyMaterial::from(vec![7u8; 528])
+}
+
+pub(crate) fn generated_key(tag: Vec<u8>) -> GeneratedKey {
+    GeneratedKey {
+        key_material: key_material(),
+        tag,
+        decryption_policy: None,
+    }
+}
 
 type EffectHandlers = Vec<(String, Box<dyn FnOnce(&str) + Send>)>;
 type RequestHandlers = Vec<(String, Result<String, ViturRequestError>)>;
