@@ -63,3 +63,12 @@ run = "cargo doc -p stack-encrypt --no-deps --all-features"
 ["test:doc:stack-encrypt"]
 description = "Run documentation tests for stack-encrypt"
 run = "mise x --env test -- cargo test -p stack-encrypt --doc --all-features"
+
+# Mutation testing (cargo-mutants) over the whole crate: what the per-PR
+# `--in-diff` gate (.github/workflows/mutants.yml) does for changed lines only.
+# Reads .cargo/mutants.toml (all features, nextest, the slow-test filter,
+# timeouts). About 60 minutes with four jobs on a laptop. The
+# trybuild UI suite is filtered out of the per-mutant run by the shared config.
+["mutants:stack-encrypt"]
+description = "Full mutation-testing sweep of stack-encrypt (cargo-mutants; ~60 min)"
+run = "cargo mutants -p stack-encrypt --jobs 4"

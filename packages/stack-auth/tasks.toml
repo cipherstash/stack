@@ -61,3 +61,12 @@ run = "cargo +nightly fuzz run access_key_parse --sanitizer none --target $(rust
 description = "Fuzz stack-auth's JWT claims decode path (libFuzzer, nightly, 60s default)"
 dir = "{{config_root}}/packages/stack-auth"
 run = "cargo +nightly fuzz run jwt_decode --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+
+# Mutation testing (cargo-mutants) over the whole crate: what the per-PR
+# `--in-diff` gate (.github/workflows/mutants.yml) does for changed lines only.
+# Reads .cargo/mutants.toml (all features, nextest, the slow-test filter,
+# timeouts). About 15 minutes with four jobs on a laptop. The
+# stress tests are filtered out of the per-mutant run by the shared config.
+["mutants:stack-auth"]
+description = "Full mutation-testing sweep of stack-auth (cargo-mutants; ~15 min)"
+run = "cargo mutants -p stack-auth --jobs 4"
