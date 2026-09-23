@@ -162,6 +162,51 @@ mod tests {
         FfiValue::String(value.into())
     }
 
+    /// `borrowed` is a view, so it must be the same context for every
+    /// variant: one list holding each integer width, each byte-bearing
+    /// piece, and a nested list is its own borrowed view. A variant this
+    /// match forgot would fall to the cloning arm and still compare equal,
+    /// so the test also pins that no payload was copied where a borrow was
+    /// due — the text and bytes come back as `Cow::Borrowed`.
+    #[test]
+    fn a_borrowed_view_is_the_same_context_for_every_piece() {
+        let owned = ContextPiece::List(vec![
+            ContextPiece::Text(Cow::Owned("users/age".to_string())),
+            ContextPiece::Bytes(Cow::Owned(vec![1, 2, 3])),
+            ContextPiece::Encoded(Cow::Owned(vec![4, 5, 6])),
+            ContextPiece::U8(8),
+            ContextPiece::U16(16),
+            ContextPiece::U32(32),
+            ContextPiece::U64(64),
+            ContextPiece::U128(128),
+            ContextPiece::I8(-8),
+            ContextPiece::I16(-16),
+            ContextPiece::I32(-32),
+            ContextPiece::I64(-64),
+            ContextPiece::I128(-128),
+            ContextPiece::List(vec![ContextPiece::Text(Cow::Owned("t".to_string()))]),
+        ]);
+
+        let view = borrowed(&owned);
+        assert_eq!(view, owned, "the view is the same context");
+
+        let ContextPiece::List(parts) = &view else {
+            panic!("the view of a list is a list");
+        };
+        assert!(
+            matches!(&parts[0], ContextPiece::Text(Cow::Borrowed(_))),
+            "text is borrowed, not copied"
+        );
+        assert!(
+            matches!(&parts[1], ContextPiece::Bytes(Cow::Borrowed(_))),
+            "bytes are borrowed, not copied"
+        );
+        assert!(
+            matches!(&parts[2], ContextPiece::Encoded(Cow::Borrowed(_))),
+            "encoded bytes are borrowed, not copied"
+        );
+    }
+
     #[test]
     fn a_bare_string_is_the_flat_context() {
         let parsed = context(s("users/age")).expect("flat context");

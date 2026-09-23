@@ -21,6 +21,7 @@ on:
       - packages/cts-common/**
       - packages/stack-auth/**
       - packages/stack-kms/**
+      - packages/stack-encrypt/**
       # Root manifest/lockfile: a workspace-wide dependency change can break
       # this suite without touching any package source.
       - Cargo.toml
@@ -65,6 +66,9 @@ jobs:
           - { task: "fuzz:access-key", slug: access-key }
           - { task: "fuzz:jwt-decode", slug: jwt-decode }
           - { task: "fuzz:client-key", slug: client-key }
+          - { task: "fuzz:sealed-value", slug: sealed-value }
+          - { task: "fuzz:term-decode", slug: term-decode }
+          - { task: "fuzz:check-record", slug: check-record }
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-rust
@@ -90,6 +94,9 @@ jobs:
           - { task: "fuzz:access-key",   slug: access-key,   dir: packages/stack-auth, target: access_key_parse }
           - { task: "fuzz:jwt-decode",   slug: jwt-decode,   dir: packages/stack-auth, target: jwt_decode }
           - { task: "fuzz:client-key",   slug: client-key,   dir: packages/stack-kms,  target: client_key_encoded }
+          - { task: "fuzz:sealed-value", slug: sealed-value, dir: packages/stack-encrypt, target: sealed_value_decode }
+          - { task: "fuzz:term-decode",  slug: term-decode,  dir: packages/stack-encrypt, target: term_decode }
+          - { task: "fuzz:check-record", slug: check-record, dir: packages/stack-encrypt, target: check_record }
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-rust
