@@ -1,0 +1,21 @@
+# Fuzz the frozen v1 leaf byte decoder (`SealedValue::from_bytes`, also
+# `TryFrom<&[u8]>`). This is what a stored ciphertext column comes back
+# through, so it is the crate's widest untrusted-input parser: it must never
+# panic, and a leaf it accepts must re-encode to exactly the bytes it was
+# decoded from (the format is documented as lossless). Same flags and
+# rationale as `fuzz:access-key` in stack-auth: nightly, `--sanitizer none`
+# (pure safe Rust), and the native host triple. The fuzz crate lives in
+# `packages/stack-encrypt/fuzz/` (detached).
+["fuzz:sealed-value"]
+description = "Fuzz stack-encrypt's frozen leaf byte decoder, SealedValue::from_bytes (libFuzzer, nightly, 60s default)"
+dir = "{{config_root}}/packages/stack-encrypt"
+run = "cargo +nightly fuzz run sealed_value_decode --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+
+# Fuzz the SEM index-term byte decoders — every `from_bytes` / `TryFrom<&[u8]>`
+# a stored term comes back through (equality, match, ORE and OPE). One target
+# for all four: each is a length or range check over the same untrusted
+# slice, so a separate campaign per kind would only split the corpus.
+["fuzz:term-decode"]
+description = "Fuzz stack-encrypt's SEM index-term byte decoders (libFuzzer, nightly, 60s default)"
+dir = "{{config_root}}/packages/stack-encrypt"
+run = "cargo +nightly fuzz run term_decode --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"

@@ -12,8 +12,8 @@ skill is the reference, and this doc only covers what's repo-specific.
 
 ## What we fuzz and why
 
-We fuzz the parsers that turn **untrusted caller-supplied strings** into
-domain types. The invariant under test is always the same: parsing
+We fuzz the parsers that turn **untrusted caller-supplied input** — strings
+from a caller, or bytes read back from storage — into domain types. The invariant under test is always the same: parsing
 arbitrary input must **never panic** — malformed input must return an
 `Err`, not crash the process.
 
@@ -27,9 +27,11 @@ Current targets:
 | `fuzz:access-key`    | `stack-auth`  | `access_key_parse`    | `AccessKey` (`CSAK<key_id>.<key_secret>`)     |
 | `fuzz:jwt-decode`    | `stack-auth`  | `jwt_decode`          | JWT claims (`Token::fuzz_decode_claims`)      |
 | `fuzz:client-key`    | `stack-kms`   | `client_key_encoded`  | `ClientKey::from_encoded_v1` (hex or base64)  |
+| `fuzz:sealed-value`  | `stack-encrypt` | `sealed_value_decode` | `SealedValue::from_bytes` (frozen v1 leaf); accepted input must re-encode to itself |
+| `fuzz:term-decode`   | `stack-encrypt` | `term_decode`       | the SEM term decoders (`EqualityTerm`, `MatchTerm`, `OreTerm`, `OpeTerm` `from_bytes`) |
 
-Each target is a few lines — `libfuzzer-sys` hands a `&str` to the
-parser via the `arbitrary` crate:
+Each target is a few lines — `libfuzzer-sys` hands a `&str` (or `&[u8]`
+for the byte decoders) to the parser via the `arbitrary` crate:
 
 ```rust
 #![no_main]
@@ -64,6 +66,7 @@ packages/cts-common/fuzz/
   corpus/<target>/*          # committed seed inputs (valid examples)
 packages/stack-auth/fuzz/
 packages/stack-kms/fuzz/
+packages/stack-encrypt/fuzz/
   …
 ```
 
@@ -124,7 +127,8 @@ Two jobs with deliberately different roles:
   to stay small, and any crash reproducer is uploaded as an artifact.
 
 The `pull_request` trigger is path-filtered to `packages/cts-common/**`,
-`packages/stack-auth/**`, `packages/stack-kms/**`, and the workflow file,
+`packages/stack-auth/**`, `packages/stack-kms/**`, `packages/stack-encrypt/**`,
+and the workflow file,
 with `!**.md` / `!**.example` excludes last so docs-only changes are
 skipped.
 
