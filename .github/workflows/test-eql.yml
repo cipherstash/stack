@@ -329,7 +329,7 @@ jobs:
           cache: true
           working_directory: packages/eql
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: packages/eql
           shared-key: sqlx-tests
@@ -403,7 +403,7 @@ jobs:
           cache: true
           working_directory: packages/eql
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: packages/eql
           shared-key: sqlx-tests
@@ -454,7 +454,7 @@ jobs:
           cache: true
           working_directory: packages/eql
 
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: packages/eql
           shared-key: sqlx-tests
@@ -503,7 +503,7 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: packages/eql
           shared-key: sqlx-tests
@@ -530,7 +530,7 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: packages/eql
           shared-key: sqlx-tests
@@ -584,7 +584,7 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: packages/eql
           shared-key: sqlx-tests
@@ -614,7 +614,7 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: packages/eql
           shared-key: sqlx-tests
@@ -648,7 +648,7 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: packages/eql
           shared-key: sqlx-tests
@@ -702,7 +702,7 @@ jobs:
       # scripts/__tests__/eql-suite-ci.test.mjs, which finds the cargo by
       # closing over the mise task graph rather than grepping this file — the
       # string `cargo` appears nowhere in it.
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: packages/eql
           shared-key: sqlx-tests
@@ -746,7 +746,7 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: packages/eql
           shared-key: sqlx-tests
@@ -864,7 +864,7 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           workspaces: packages/eql
           shared-key: sqlx-tests
