@@ -40,3 +40,13 @@ run = "cargo +nightly fuzz run sealed_value_decode --sanitizer none --target $(r
 description = "Fuzz stack-encrypt's SEM index-term byte decoders (libFuzzer, nightly, 60s default)"
 dir = "{{config_root}}/packages/stack-encrypt"
 run = "cargo +nightly fuzz run term_decode --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+
+# Fuzz the stored-record preflight (`dynamic::record::check_record`) with
+# structure-aware inputs: an `Arbitrary`-derived mirror of a plan value and
+# a ciphertext tree, checked against a model of the documented record rules
+# — in particular that a passthrough under a field's `"c"` is refused, which
+# is what stops a rewritten stored tree being reported as a decrypt.
+["fuzz:check-record"]
+description = "Fuzz stack-encrypt's stored-record preflight against a model of its rules (structure-aware, libFuzzer, nightly, 60s default)"
+dir = "{{config_root}}/packages/stack-encrypt"
+run = "cargo +nightly fuzz run check_record --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"

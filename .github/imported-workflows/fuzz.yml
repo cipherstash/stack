@@ -68,6 +68,7 @@ jobs:
           - { task: "fuzz:client-key", slug: client-key }
           - { task: "fuzz:sealed-value", slug: sealed-value }
           - { task: "fuzz:term-decode", slug: term-decode }
+          - { task: "fuzz:check-record", slug: check-record }
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-rust
@@ -95,6 +96,7 @@ jobs:
           - { task: "fuzz:client-key",   slug: client-key,   dir: packages/stack-kms,  target: client_key_encoded }
           - { task: "fuzz:sealed-value", slug: sealed-value, dir: packages/stack-encrypt, target: sealed_value_decode }
           - { task: "fuzz:term-decode",  slug: term-decode,  dir: packages/stack-encrypt, target: term_decode }
+          - { task: "fuzz:check-record", slug: check-record, dir: packages/stack-encrypt, target: check_record }
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-rust
