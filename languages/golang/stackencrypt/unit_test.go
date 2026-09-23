@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
 	"io"
 	"net/http"
 	"os"
@@ -528,17 +529,19 @@ func TestLeafSetKeepsStackEncryptLeavesDistinct(t *testing.T) {
 	}
 }
 
+// This package's sentinels are the shared table's: a packed status decodes
+// to the error this package names for it.
 func TestStatusMappingIsTotal(t *testing.T) {
 	for status, want := range map[uint32]error{
 		1: ErrAuthentication, 2: ErrEncoding, 3: ErrState, 4: ErrInternal,
 		5: ErrUnauthorized, 6: ErrForbidden, 7: ErrNotFound, 8: ErrConflict,
 		9: ErrTransport, 10: ErrKMS, 11: ErrTerm, 12: ErrForeignKeyset,
 	} {
-		if got := statusError(status); !errors.Is(got, want) {
+		if _, _, got := guest.PackedResult(uint64(status)); !errors.Is(got, want) {
 			t.Errorf("status %d: %v", status, got)
 		}
 	}
-	if got := statusError(99); !errors.Is(got, ErrInternal) {
+	if _, _, got := guest.PackedResult(99); !errors.Is(got, ErrInternal) {
 		t.Errorf("unknown status: %v", got)
 	}
 }

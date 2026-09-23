@@ -3,8 +3,8 @@
 // profile.
 //
 //	stash auth login
-//	mise run wasm:guest:build          # the embedded guest must be current
-//	go run ./example
+//	mise run wasm:guest:build wasm:auth-guest:build   # both embedded guests
+//	go run ./stackencrypt/example                     # from bindings/go
 //
 // It walks the four things the binding does — seal a value, seal a record
 // with its index terms, probe those terms with a query, and open both again
@@ -38,15 +38,18 @@ func main() {
 }
 
 func run() error {
-	creds, err := loadCredentials()
+	ctx := context.Background()
+	creds, err := loadCredentials(ctx)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("workspace %s (%s)\n", creds.Workspace, creds.describe())
+	defer creds.Close()
+	fmt.Printf("workspace %s (%s)\n", creds.Workspace, creds.describe(ctx))
 
-	ctx := context.Background()
 	client, err := stackencrypt.NewClient(ctx, stackencrypt.Config{
-		ClientID:  creds.ClientID,
+		ClientID: creds.ClientID,
+		// Read from the profile as the opaque type, consumed and wiped by
+		// NewClient.
 		ClientKey: creds.ClientKey,
 		// Asked on every request, so the client follows the profile
 		// rather than pinning one token; see profile.go.

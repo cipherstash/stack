@@ -1,6 +1,6 @@
-//! An `AeadContext` carries only the AEAD encoding, so a record declaring it
-//! cannot hold a term: the term's declaration wants a `CallerContext`, and
-//! nothing converts an `AeadContext` into one.
+//! An `AeadContext` is the context of a ciphertext-only record: nothing
+//! converts it into the `CallerContext` a term's declaration wants, so a
+//! record declaring it cannot hold a term.
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::AeadContext;
 use stack_encrypt::{EncryptFrom, StackCipherText};

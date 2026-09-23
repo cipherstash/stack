@@ -1,4 +1,4 @@
-module github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt
+module github.com/cipherstash/cipherstash-suite/bindings/go
 
 go 1.25.0
 

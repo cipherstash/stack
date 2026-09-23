@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/sys"
@@ -97,7 +98,7 @@ func newStub(t *testing.T, status int, contentType, body string) *zerokmsStub {
 func testConfig(url string) Config {
 	return Config{
 		ClientID:   testClientID,
-		ClientKey:  testClientKey,
+		ClientKey:  NewClientKey([]byte(testClientKey)),
 		ZeroKMSURL: url,
 		Token:      StaticToken("stub-token"),
 	}
@@ -440,22 +441,31 @@ func (z *zeros) Read(p []byte) (int, error) {
 
 func TestConfigValidation(t *testing.T) {
 	ctx := context.Background()
+	wiped := NewClientKey([]byte(testClientKey))
+	wiped.Wipe()
 	for name, cfg := range map[string]Config{
-		"no token":     {ClientID: testClientID, ClientKey: testClientKey},
-		"no client id": {ClientKey: testClientKey, Token: StaticToken("t")},
+		"no token":     {ClientID: testClientID, ClientKey: NewClientKey([]byte(testClientKey))},
+		"no client id": {ClientKey: NewClientKey([]byte(testClientKey)), Token: StaticToken("t")},
 		"no key":       {ClientID: testClientID, Token: StaticToken("t")},
-		"negative cache": {ClientID: testClientID, ClientKey: testClientKey, Token: StaticToken("t"),
+		"empty key":    {ClientID: testClientID, ClientKey: NewClientKey(nil), Token: StaticToken("t")},
+		"wiped key":    {ClientID: testClientID, ClientKey: wiped, Token: StaticToken("t")},
+		"negative cache": {ClientID: testClientID, ClientKey: NewClientKey([]byte(testClientKey)), Token: StaticToken("t"),
 			KeysetCacheSize: -1},
 	} {
 		if _, err := NewClient(ctx, cfg); err == nil {
 			t.Errorf("%s: NewClient succeeded", name)
+		}
+		// A refused config consumes the key too: the caller is never handed
+		// live material back with the error.
+		if !cfg.ClientKey.IsZero() {
+			t.Errorf("%s: the key still holds material after NewClient refused the config", name)
 		}
 	}
 	// Malformed values the guest refuses: no request is made.
 	guestOrSkip(t)
 	for name, mutate := range map[string]func(*Config){
 		"client id not a uuid": func(c *Config) { c.ClientID = "acme" },
-		"key not hex":          func(c *Config) { c.ClientKey = "zz" },
+		"key not hex":          func(c *Config) { c.ClientKey = NewClientKey([]byte("zz")) },
 		"bad url":              func(c *Config) { c.ZeroKMSURL = "not a url" },
 	} {
 		stub := newStub(t, http.StatusOK, "application/json", "{}")
@@ -471,12 +481,57 @@ func TestConfigValidation(t *testing.T) {
 	}
 }
 
+// The client key is consumed by NewClient: whatever the outcome, the bytes
+// it was built from are zero once NewClient returns, the key reports
+// itself empty, and a Config never prints the material under any verb.
+//
+// The outcome exercised here is the guest's init failing (a refused
+// token); the refused-config outcomes are in TestConfigValidation, and
+// the successful one in the live test, which is the only place a client
+// can be built against a real load-keyset response. The wipe precedes the
+// init call, so the three paths share it.
+func TestClientKeyIsConsumedAndNeverPrinted(t *testing.T) {
+	material := []byte(testClientKey)
+	stub := newStub(t, http.StatusUnauthorized, "", "nope")
+	cfg := testConfig(stub.URL)
+	cfg.ClientKey = NewClientKey(material)
+	// %x and %d reach a struct's fields without asking a Stringer; the
+	// key's Formatter answers for them.
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d"} {
+		out := fmt.Sprintf(verb, cfg)
+		if strings.Contains(out, testClientKey[:16]) || strings.Contains(out, hex.EncodeToString(material[:8])) {
+			t.Errorf("Config under %s prints the key: %q", verb, out)
+		}
+	}
+	guestOrSkip(t)
+	if _, err := NewClient(context.Background(), cfg); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("NewClient: %v, want ErrUnauthorized", err)
+	}
+	if !cfg.ClientKey.IsZero() {
+		t.Error("the key still holds material after NewClient")
+	}
+	for i, b := range material {
+		if b != 0 {
+			t.Fatalf("byte %d of the key material was not wiped", i)
+		}
+	}
+	// A consumed key does not make a second client, and asks nothing of
+	// ZeroKMS trying.
+	before := len(stub.requests)
+	if _, err := NewClient(context.Background(), cfg); err == nil || errors.Is(err, ErrUnauthorized) {
+		t.Errorf("NewClient with a consumed key: %v, want a config error before any request", err)
+	}
+	if len(stub.requests) != before {
+		t.Errorf("a consumed key made %d request(s)", len(stub.requests)-before)
+	}
+}
+
 // rawInstance is a guest that was never initialised: every well-formed
 // operation is ErrState there, every malformed one ErrEncoding.
 func rawInstance(t *testing.T) *Client {
 	t.Helper()
 	ctx := context.Background()
-	inst, err := newInstance(ctx, guestOrSkip(t), &transport{rt: http.DefaultTransport, token: StaticToken("t")}, bestEffort)
+	inst, err := newInstance(ctx, guestOrSkip(t), &transport{rt: http.DefaultTransport, token: StaticToken("t")}, guest.BestEffort)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -652,36 +707,36 @@ func TestHostilePointerLengthPairsAreStatusesNotTraps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init with null pointer trapped: %v", err)
 	}
-	if _, cerr := packedResult(res[0]); !errors.Is(cerr, ErrEncoding) {
+	if _, _, cerr := guest.PackedResult(res[0]); !errors.Is(cerr, ErrEncoding) {
 		t.Fatalf("null pointer: %v, want ErrEncoding", cerr)
 	}
-	staged, err := inst.allocWrite(ctx, bytes.Repeat([]byte{0x2a}, 64))
+	staged, err := inst.exports.AllocWrite(ctx, inst.module, bytes.Repeat([]byte{0x2a}, 64))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer inst.free(ctx, staged)
+	defer inst.exports.Free(ctx, staged)
 	for _, hostile := range []uint64{0x7FFF_FFF0, 0xFFFF_FFFF} {
 		for name, fn := range map[string]func() ([]uint64, error){
-			"se_cipher_init": func() ([]uint64, error) { return inst.cipherInit.Call(ctx, uint64(staged.ptr), hostile) },
-			"se_keyset":      func() ([]uint64, error) { return inst.keyset.Call(ctx, uint64(staged.ptr), hostile) },
+			"se_cipher_init": func() ([]uint64, error) { return inst.cipherInit.Call(ctx, uint64(staged.Ptr), hostile) },
+			"se_keyset":      func() ([]uint64, error) { return inst.keyset.Call(ctx, uint64(staged.Ptr), hostile) },
 			"se_encrypt": func() ([]uint64, error) {
-				return inst.encrypt.Call(ctx, uint64(staged.ptr), hostile, 0, 0, uint64(staged.ptr), 4)
+				return inst.encrypt.Call(ctx, uint64(staged.Ptr), hostile, 0, 0, uint64(staged.Ptr), 4)
 			},
 		} {
 			res, err := fn()
 			if err != nil {
 				t.Fatalf("%s with len %#x trapped: %v", name, hostile, err)
 			}
-			if _, cerr := packedResult(res[0]); !errors.Is(cerr, ErrEncoding) {
+			if _, _, cerr := guest.PackedResult(res[0]); !errors.Is(cerr, ErrEncoding) {
 				t.Errorf("%s with len %#x: %v, want ErrEncoding", name, hostile, cerr)
 			}
 		}
 	}
 	// An unknown or mismatched free is a no-op, not a trap.
-	if _, err := inst.dealloc.Call(ctx, uint64(staged.ptr)+1, 1); err != nil {
+	if _, err := inst.exports.Dealloc.Call(ctx, uint64(staged.Ptr)+1, 1); err != nil {
 		t.Fatalf("dealloc of an unknown pointer trapped: %v", err)
 	}
-	if _, err := inst.dealloc.Call(ctx, uint64(staged.ptr), 1); err != nil {
+	if _, err := inst.exports.Dealloc.Call(ctx, uint64(staged.Ptr), 1); err != nil {
 		t.Fatalf("dealloc with a mismatched length trapped: %v", err)
 	}
 	// The instance still works.
@@ -707,7 +762,7 @@ func TestClientKeyDoesNotRemainInGuestMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr := &transport{rt: http.DefaultTransport, token: StaticToken("stub-token")}
-	inst, err := newInstance(ctx, guestOrSkip(t), tr, bestEffort)
+	inst, err := newInstance(ctx, guestOrSkip(t), tr, guest.BestEffort)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -742,7 +797,7 @@ func TestTransportSendCounterAndResponseHeaders(t *testing.T) {
 	stub := newStub(t, http.StatusUnauthorized, "text/plain", "nope")
 	tr := &transport{rt: http.DefaultTransport, token: StaticToken("stub-token")}
 	ctx := context.Background()
-	inst, err := newInstance(ctx, guestOrSkip(t), tr, bestEffort)
+	inst, err := newInstance(ctx, guestOrSkip(t), tr, guest.BestEffort)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -761,7 +816,7 @@ func ExampleNewClient() {
 	// a real round trip.
 	_, err := NewClient(context.Background(), Config{
 		ClientID:  "6a70bd18-99ac-4650-b104-37eec3a15b09",
-		ClientKey: "...",
+		ClientKey: NewClientKey([]byte("...")),
 		Token:     StaticToken("access token"),
 	})
 	fmt.Println(err != nil)

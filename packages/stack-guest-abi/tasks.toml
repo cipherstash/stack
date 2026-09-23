@@ -1,0 +1,30 @@
+# Miri over the guest ABI crate's native half. The buffer registry
+# (`buffers.rs`) is the one place under `bindings/go` where raw pointers are
+# handed out, kept, and turned back into owned `Vec`s, and its unit tests are
+# the only thing that exercises that round trip on a target Miri can
+# interpret — the `abi` and `transport` modules are wasm32-only and read the
+# wasm `memory_size` intrinsic, which Miri cannot execute; their hostile-input
+# behaviour is pinned from the Go side instead (`go:test`).
+#
+# Strict provenance: the registry may not rebuild a pointer from an integer,
+# because a pointer that was only ever an address has no allocation Miri can
+# check it against. Keying the map by the pointer itself keeps provenance
+# through the round trip, and this flag is what fails the build if that
+# discipline slips.
+["miri:stack-guest-abi"]
+description = "Run the stack-guest-abi unit tests under Miri (nightly) with strict provenance — checks the buffer registry's raw-pointer round trips for undefined behaviour"
+env = { MIRIFLAGS = "-Zmiri-strict-provenance" }
+run = "cargo +nightly miri test -p stack-guest-abi"
+
+# Rustdoc with warnings as errors: a broken intra-doc link or a rustdoc
+# warning fails the build. Doc *examples* are `test:doc:stack-guest-abi`. Both run
+# with all features so nothing feature-gated goes unchecked; the root `doc`
+# task fans out over every `doc:<crate>`.
+["doc:stack-guest-abi"]
+description = "Build docs for stack-guest-abi with all features (warnings are errors)"
+env = { RUSTDOCFLAGS = "-D warnings" }
+run = "cargo doc -p stack-guest-abi --no-deps --all-features"
+
+["test:doc:stack-guest-abi"]
+description = "Run documentation tests for stack-guest-abi"
+run = "mise x --env test -- cargo test -p stack-guest-abi --doc --all-features"

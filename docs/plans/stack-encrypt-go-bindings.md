@@ -423,12 +423,14 @@ for the proof; the Go side pools instances later.
 
 ### Phase 4 — the Go module
 
-**Status (2026-09-12): implemented in `bindings/go/stackencrypt`** (module
-path `github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt`,
+**Status (2026-09-12): implemented in `bindings/go/stackencrypt`** (package
+path `github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt`; since
+CIP-4115 the Go module is rooted at `bindings/go`, one module for every Go
+package, with `internal/guest` holding what the guest packages share,
 temporary until publishing). It imports `vcffi` + `vcvalue` from vitaminc
 (pseudo-versioned to a main commit; no fork), embeds the guest from
 `wasm/` (copied by `wasm:guest:build`, gitignored), and is gated by
-`go:stackencrypt:test` in `test-wasi.yml`. Where the shipped surface
+`go:test` in `test-wasi.yml`. Where the shipped surface
 differs from the sketch below, the shipped one follows CIP-4037: one
 instance per `Client` and no cipher handle, so `NewClient` takes the
 ZeroKMS credentials and initialises the cipher, `Client.Keyset(selector)`
@@ -520,8 +522,13 @@ probe, _ := cipher.Term(ctx, uint32(34), "users/age", stackencrypt.Equality)
 
 ## Credential guest — `stack-profile` and `stack-auth` for Go
 
-**Status:** decided 2026-09-20, not started. The decision and its rationale
-are [ADR-0005](../../packages/stack-encrypt/docs/adr/0005-a-separate-credential-guest-for-the-profile-and-auth.md);
+**Status:** decided 2026-09-20; the profile half shipped 2026-09-22
+(steps 1–4 below: CIP-4114, CIP-3997, CIP-4115 with CIP-4118, CIP-4053).
+`bindings/go/stackauth` is the package, `bindings/go/stackauth/guest` the
+module, `packages/stack-guest-abi` what both guests share. The transport
+seam (step 5, CIP-4116) shipped separately; the strategies (step 6,
+CIP-4054) are next. The decision and its rationale are
+[ADR-0005](../../packages/stack-encrypt/docs/adr/0005-a-separate-credential-guest-for-the-profile-and-auth.md);
 this section is the sequencing only.
 
 Go gets the profile and auth crates through a **second** WASI module, the

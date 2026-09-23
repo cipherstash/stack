@@ -56,7 +56,7 @@ use vitaminc_protected::Protected;
 use super::{borrowed, term, utf8, Error, Scalar, Scope, TermKind};
 use crate::target::Pending;
 use crate::{
-    AadPiece, BoxedPassthrough, CipherText, Encrypt, KeysetCipher, NonEmpty, StackCipherText,
+    BoxedPassthrough, CipherText, ContextPiece, Encrypt, KeysetCipher, NonEmpty, StackCipherText,
 };
 
 /// What a plan field asks for.
@@ -99,7 +99,7 @@ impl Output {
 #[derive(Clone, Debug)]
 pub struct FieldPlan {
     name: String,
-    context: NonEmpty<AadPiece<'static>>,
+    context: NonEmpty<ContextPiece<'static>>,
     outputs: Vec<Output>,
 }
 
@@ -118,7 +118,7 @@ impl FieldPlan {
     /// [`Error::Plan`] if `outputs` is empty or names an output twice.
     pub fn new(
         name: impl Into<String>,
-        context: NonEmpty<AadPiece<'static>>,
+        context: NonEmpty<ContextPiece<'static>>,
         outputs: Vec<Output>,
     ) -> Result<Self, Error> {
         if outputs.is_empty() {
@@ -142,7 +142,7 @@ impl FieldPlan {
     }
 
     /// The context this field binds under, on both halves.
-    pub fn context(&self) -> &NonEmpty<AadPiece<'static>> {
+    pub fn context(&self) -> &NonEmpty<ContextPiece<'static>> {
         &self.context
     }
 
@@ -158,7 +158,7 @@ impl FieldPlan {
 
     /// A borrowed view of the context, so one proof serves every output of
     /// every row without copying the payloads.
-    fn view(&self) -> Result<NonEmpty<AadPiece<'_>>, Error> {
+    fn view(&self) -> Result<NonEmpty<ContextPiece<'_>>, Error> {
         // The proof was made when the plan was built, so re-taking it over
         // the same tree cannot fail.
         NonEmpty::new(borrowed(self.context.get())).map_err(|_| Error::Internal)
@@ -271,7 +271,7 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
         let FfiValue::Object(spec) = spec else {
             return Err(Error::Plan);
         };
-        let mut context: Option<NonEmpty<AadPiece<'static>>> = None;
+        let mut context: Option<NonEmpty<ContextPiece<'static>>> = None;
         let mut outputs: Option<Vec<Output>> = None;
         for (key, value) in spec {
             match key.as_str() {

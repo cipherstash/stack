@@ -39,11 +39,11 @@
 //! The caller's AAD is refined per node with the same domain-separated
 //! derivations `Aes256Cipher` uses, so the container *shape* is authenticated:
 //!
-//! * sequence elements are sealed under [`Aad::for_sequence_element`];
-//! * map values under [`Aad::for_map_entry`] of their cleartext key (so
+//! * sequence elements are sealed under [`Context::for_sequence_element`];
+//! * map values under [`Context::for_map_entry`] of their cleartext key (so
 //!   swapping or renaming keys fails decryption);
-//! * authenticated-absent markers under [`Aad::for_none`], and empty
-//!   sequences/maps under [`Aad::for_empty_sequence`]/[`Aad::for_empty_map`] —
+//! * authenticated-absent markers under [`Context::for_none`], and empty
+//!   sequences/maps under [`Context::for_empty_sequence`]/[`Context::for_empty_map`] —
 //!   each sealing an *empty* plaintext, verified as empty on open.
 //!
 //! The decrypt side performs the same derivations inside [`StackDecipher`]'s
@@ -97,8 +97,8 @@ use stack_kms::{EnvKeyProvider, StackKms, StackKmsBuilder};
 use stack_kms::{FallbackKeyProvider, KeyProvider, KeyProviderError, ProfileStore};
 use uuid::Uuid;
 use vitaminc_aead::{
-    Aad, Cipher, CipherText, Decipher, DecipherVisitor, Decrypt, Encrypt, IntoAad, LocalCipherText,
-    MapAccess, MapCipher, SeqAccess, SeqCipher, Unspecified,
+    Cipher, CipherText, Context, Decipher, DecipherVisitor, Decrypt, Encrypt, IntoAad, IntoContext,
+    LocalCipherText, MapAccess, MapCipher, SeqAccess, SeqCipher, Unspecified,
 };
 use vitaminc_encrypt::{Aes256Cipher, AesCipherText, Key as AesKey};
 use vitaminc_protected::{Controlled, Protected};
@@ -686,11 +686,11 @@ impl<K: DataKeySource> KeysetCipher<'_, K> {
     pub async fn encrypt<'a, T, A>(&self, value: T, aad: A) -> Result<StackCipherText, Error>
     where
         T: Encrypt,
-        A: IntoAad<'a>,
+        A: IntoContext<'a>,
     {
-        let aad = aad.into_aad_piece();
-        let pending = value.encrypt_with_aad(self, aad.clone().into_aad())?;
-        pending.seal(self, aad).await
+        let context = aad.into_context();
+        let pending = value.encrypt_with_aad(self, context.clone().into_aad())?;
+        pending.seal(self, context).await
     }
 
     /// [`StackCipher::decrypt`], constrained to this keyset: a leaf sealed
@@ -699,7 +699,7 @@ impl<K: DataKeySource> KeysetCipher<'_, K> {
     pub async fn decrypt<'a, T, A>(&self, ciphertext: StackCipherText, aad: A) -> Result<T, Error>
     where
         T: Decrypt<'static> + 'static,
-        A: IntoAad<'a>,
+        A: IntoContext<'a>,
     {
         decrypt_through(self, ciphertext, aad).await
     }
@@ -722,7 +722,7 @@ impl<K: DataKeySource> KeysetCipher<'_, K> {
 async fn decipher_through<'s, 'a, K: DataKeySource + 's>(
     scope: impl crate::target::CipherScope<'s, K>,
     ciphertext: StackCipherText,
-    aad: impl IntoAad<'a>,
+    aad: impl IntoContext<'a>,
 ) -> Result<StackDecipher, Error> {
     crate::target::decipher_pending(scope, ciphertext, Descriptor::of(aad))
         .settle()
@@ -734,14 +734,14 @@ async fn decipher_through<'s, 'a, K: DataKeySource + 's>(
 async fn decrypt_through<'s, 'a, T, K: DataKeySource + 's>(
     scope: impl crate::target::CipherScope<'s, K>,
     ciphertext: StackCipherText,
-    aad: impl IntoAad<'a>,
+    aad: impl IntoContext<'a>,
 ) -> Result<T, Error>
 where
     T: Decrypt<'static> + 'static,
 {
-    let aad = aad.into_aad_piece();
-    let decipher = decipher_through(scope, ciphertext, aad.clone()).await?;
-    T::decrypt_with_aad(decipher, aad.into_aad()).map_err(Error::from)
+    let context = aad.into_context();
+    let decipher = decipher_through(scope, ciphertext, context.clone()).await?;
+    T::decrypt_with_aad(decipher, context.into_aad()).map_err(Error::from)
 }
 
 impl<K: DataKeySource> StackCipher<K> {
@@ -774,7 +774,7 @@ impl<K: DataKeySource> StackCipher<K> {
     pub async fn decrypt<'a, T, A>(&self, ciphertext: StackCipherText, aad: A) -> Result<T, Error>
     where
         T: Decrypt<'static> + 'static,
-        A: IntoAad<'a>,
+        A: IntoContext<'a>,
     {
         decrypt_through(self, ciphertext, aad).await
     }
@@ -827,7 +827,7 @@ impl<K: DataKeySource> StackCipher<K> {
 /// tag, each bound by the layer that owns its framing: the envelope version
 /// and the keyset id through this crate's leaf-AAD derivation,
 /// `PAE("stack-encrypt/leaf", version, keyset_id, derived_aad, tag)`, and
-/// the inner version through vitaminc's `Aad::for_leaf`, applied inside
+/// the inner version through vitaminc's `Context::for_leaf`, applied inside
 /// `Aes256Cipher` to the AAD this crate hands it. Relabel either version
 /// byte, or re-point the leaf at another keyset, in storage and the leaf
 /// fails authentication rather than parsing under the wrong rules. Parsing
@@ -1126,21 +1126,21 @@ pub enum PendingStackCipherText {
     /// A scalar awaiting a data key, with its bound (derived) AAD.
     Single {
         plaintext: Protected<Vec<u8>>,
-        aad: Aad<'static>,
+        aad: Context<'static>,
     },
     /// A pending sequence with at least one element.
     Sequence(Vec<PendingStackCipherText>),
     /// A pending empty-sequence marker; `aad` is already the
-    /// [`Aad::for_empty_sequence`] derivation.
-    EmptySequence { aad: Aad<'static> },
+    /// [`Context::for_empty_sequence`] derivation.
+    EmptySequence { aad: Context<'static> },
     /// A pending map with at least one entry.
     Map(Vec<(String, PendingStackCipherText)>),
-    /// A pending empty-map marker; `aad` is already the [`Aad::for_empty_map`]
+    /// A pending empty-map marker; `aad` is already the [`Context::for_empty_map`]
     /// derivation.
-    EmptyMap { aad: Aad<'static> },
+    EmptyMap { aad: Context<'static> },
     /// A pending authenticated-absent marker; `aad` is already the
-    /// [`Aad::for_none`] derivation.
-    None { aad: Aad<'static> },
+    /// [`Context::for_none`] derivation.
+    None { aad: Context<'static> },
     /// A passthrough value (needs no key).
     Passthrough(BoxedPassthrough),
 }
@@ -1180,7 +1180,7 @@ impl PendingStackCipherText {
     pub async fn seal<'a, K: DataKeySource>(
         self,
         cipher: &KeysetCipher<'_, K>,
-        aad: impl IntoAad<'a>,
+        aad: impl IntoContext<'a>,
     ) -> Result<StackCipherText, Error> {
         self.into_pending(cipher, aad).settle().await
     }
@@ -1205,13 +1205,13 @@ impl PendingStackCipherText {
     /// [`decrypt_into`](crate::target::DecryptInto) — a per-field record
     /// assembly in an FFI front-end, say — is bound by that layer's rule: it
     /// opens only under a [`NonEmpty`](crate::NonEmpty) context, so seal
-    /// under one here (a `NonEmpty<T>` is an [`IntoAad`] like any other, and
+    /// under one here (a `NonEmpty<T>` is an [`IntoContext`] like any other, and
     /// encodes exactly as `T` does) or the ciphertext can never be read that
     /// way.
     pub fn into_pending<'c, 'a, K>(
         self,
         cipher: &'a KeysetCipher<'_, K>,
-        aad: impl IntoAad<'c>,
+        aad: impl IntoContext<'c>,
     ) -> crate::target::Pending<'a, StackCipherText, K> {
         crate::target::seal_pending(cipher, self, Descriptor::of(aad))
     }
@@ -1226,7 +1226,7 @@ impl PendingStackCipherText {
         // Markers seal an *empty* plaintext so the AEAD tag still binds their
         // (already domain-separated) AAD, mirroring `Aes256Cipher`.
         fn seal_marker(
-            aad: Aad<'static>,
+            aad: Context<'static>,
             keyset_id: Uuid,
             keys: &mut impl Iterator<Item = DataKeyWithTag>,
         ) -> Result<SealedValue, Unspecified> {
@@ -1295,7 +1295,7 @@ fn leaf_cipher(key: &DataKey) -> Result<Aes256Cipher, Unspecified> {
 /// version and the keyset id under the tag is what makes those bytes in
 /// [`SealedValue::to_bytes`] more than parse hints: bytes relabelled with a
 /// different version fail verification instead of selecting different
-/// parsing and derivation rules — mirroring vitaminc's `Aad::for_leaf`,
+/// parsing and derivation rules — mirroring vitaminc's `Context::for_leaf`,
 /// which binds the *inner* [`LocalCipherText`] wire version the same way —
 /// and a leaf re-pointed at another keyset fails verification instead of
 /// asking that keyset for a key it never minted.
@@ -1311,9 +1311,9 @@ fn leaf_cipher(key: &DataKey) -> Result<Aes256Cipher, Unspecified> {
 /// dev-persisted data existed. A leaf sealed under an earlier form fails
 /// authentication in `open_leaf` with a plain AEAD error, indistinguishable
 /// from tampering; re-encrypt anything that matters.
-fn leaf_aad(aad: &Aad<'_>, keyset_id: Uuid, tag: &[u8]) -> Aad<'static> {
+fn leaf_aad(aad: &Context<'_>, keyset_id: Uuid, tag: &[u8]) -> Context<'static> {
     const LEAF_AAD_DOMAIN: &[u8] = b"stack-encrypt/leaf";
-    Aad::pae(&[
+    Context::pae(&[
         LEAF_AAD_DOMAIN,
         &[SealedValue::FORMAT_VERSION],
         keyset_id.as_bytes(),
@@ -1329,7 +1329,7 @@ fn leaf_aad(aad: &Aad<'_>, keyset_id: Uuid, tag: &[u8]) -> Aad<'static> {
 /// bound, so the leaf is cryptographically tied to its ZeroKMS data key.
 fn seal_leaf(
     plaintext: Protected<Vec<u8>>,
-    aad: &Aad<'_>,
+    aad: &Context<'_>,
     keyset_id: Uuid,
     key: DataKeyWithTag,
 ) -> Result<SealedValue, Unspecified> {
@@ -1353,7 +1353,7 @@ fn seal_leaf(
 }
 
 /// Open one keyed leaf under `aad`, returning the plaintext bytes.
-fn open_leaf(keyed: KeyedLeaf, aad: &Aad<'_>) -> Result<Protected<Vec<u8>>, Unspecified> {
+fn open_leaf(keyed: KeyedLeaf, aad: &Context<'_>) -> Result<Protected<Vec<u8>>, Unspecified> {
     /// Keeps the recovered bytes inside `Protected` across the visitor
     /// boundary (the blanket `Decrypt for Vec<u8>` would unwrap them).
     struct ProtectedBytes;
@@ -1374,7 +1374,7 @@ fn open_leaf(keyed: KeyedLeaf, aad: &Aad<'_>) -> Result<Protected<Vec<u8>>, Unsp
 /// Open one marker leaf (absent / empty-sequence / empty-map) and require the
 /// sealed plaintext to be empty. Without the emptiness check, a `Single` leaf
 /// could be re-tagged as a marker of the same AAD derivation.
-fn verify_empty_marker(keyed: KeyedLeaf, aad: &Aad<'_>) -> Result<(), Unspecified> {
+fn verify_empty_marker(keyed: KeyedLeaf, aad: &Context<'_>) -> Result<(), Unspecified> {
     let plaintext = open_leaf(keyed, aad)?;
     if plaintext.risky_ref().is_empty() {
         Ok(())
@@ -1469,10 +1469,10 @@ pub struct PendingSeqCipher<'c, 'k, K> {
     items: Vec<PendingStackCipherText>,
     /// The AAD fixed at [`Cipher::encrypt_seq`]; the empty marker is sealed
     /// against its `for_empty_sequence` derivation.
-    aad: Aad<'static>,
-    /// [`Aad::for_sequence_element`] of `aad`, derived once and applied to
+    aad: Context<'static>,
+    /// [`Context::for_sequence_element`] of `aad`, derived once and applied to
     /// every element.
-    element_aad: Aad<'static>,
+    element_aad: Context<'static>,
     /// Whether at least one element went through the authenticated
     /// [`encrypt_next`](SeqCipher::encrypt_next) path *and* produced a sealed
     /// node — see [`end`](SeqCipher::end).
@@ -1489,8 +1489,7 @@ impl<K> SeqCipher for PendingSeqCipher<'_, '_, K> {
         T: Encrypt,
     {
         // Borrow the stored derived AAD — no allocation per element.
-        let pending =
-            data.encrypt_with_aad(self.cipher, Aad::from_slice(self.element_aad.as_bytes()))?;
+        let pending = data.encrypt_with_aad(self.cipher, self.element_aad.clone())?;
         // A nested `Encrypt` impl may route through the passthrough channel;
         // only a genuinely pending-sealed node may satisfy `end`'s
         // all-passthrough rejection.
@@ -1521,7 +1520,7 @@ impl<K> SeqCipher for PendingSeqCipher<'_, '_, K> {
 }
 
 /// [`MapCipher`] driver: keys are stored in the clear; values become pending
-/// sub-trees sealed against [`Aad::for_map_entry`] of the map AAD and their
+/// sub-trees sealed against [`Context::for_map_entry`] of the map AAD and their
 /// key. Mirrors `AesMapCipher`'s key/value and duplicate-key contract checks.
 pub struct PendingMapCipher<'c, 'k, K> {
     cipher: &'c KeysetCipher<'k, K>,
@@ -1532,7 +1531,7 @@ pub struct PendingMapCipher<'c, 'k, K> {
     seen_keys: HashSet<String>,
     current_key: Option<Cow<'static, str>>,
     /// The AAD fixed at [`Cipher::encrypt_map`].
-    aad: Aad<'static>,
+    aad: Context<'static>,
     /// See [`PendingSeqCipher::encrypted`].
     encrypted: bool,
 }
@@ -1633,8 +1632,8 @@ impl<K> MapCipher for PendingMapCipher<'_, '_, K> {
 /// Structurally identical to `vitaminc_encrypt::AesDecipher` — the only
 /// difference is where each leaf's key comes from. The AAD is supplied per call
 /// by [`Decrypt::decrypt_with_aad`] and refined here exactly as the encrypt side
-/// refined it: sequence elements under [`Aad::for_sequence_element`], map
-/// values under [`Aad::for_map_entry`] of their key, markers under their
+/// refined it: sequence elements under [`Context::for_sequence_element`], map
+/// values under [`Context::for_map_entry`] of their key, markers under their
 /// respective derivations with an enforced-empty plaintext. Because the
 /// derivation lives in this drive (not in a pre-pass), `Decrypt` impls that
 /// transform the AAD themselves (e.g. `vitaminc_aead::Element`) work unchanged.
@@ -1834,10 +1833,10 @@ impl<'c> Decipher<'c> for StackDecipher {
 
 struct StackSeqAccess {
     items: std::vec::IntoIter<KeyedCipherText>,
-    /// [`Aad::for_sequence_element`] of the caller's AAD, derived once at
+    /// [`Context::for_sequence_element`] of the caller's AAD, derived once at
     /// construction and re-supplied per element by borrowing. Mirrors
     /// `PendingSeqCipher::element_aad` on the encrypt side.
-    element_aad: Aad<'static>,
+    element_aad: Context<'static>,
 }
 
 impl<'c> SeqAccess<'c> for StackSeqAccess {
@@ -1846,7 +1845,7 @@ impl<'c> SeqAccess<'c> for StackSeqAccess {
     fn next_element<T: Decrypt<'c> + 'c>(&mut self) -> Result<Option<T>, Self::Error> {
         match self.items.next() {
             Some(ct) => {
-                T::decrypt_with_aad(StackDecipher::over(ct), self.element_aad.as_bytes()).map(Some)
+                T::decrypt_with_aad(StackDecipher::over(ct), self.element_aad.clone()).map(Some)
             }
             None => Ok(None),
         }
@@ -1855,14 +1854,14 @@ impl<'c> SeqAccess<'c> for StackSeqAccess {
 
 struct StackMapAccess<'a> {
     entries: std::vec::IntoIter<(String, KeyedCipherText)>,
-    aad: Aad<'a>,
+    aad: Context<'a>,
     /// The entry handed out by `next_key` and not yet consumed by
     /// `next_value` / `next_passthrough`. Held as ciphertext rather than
     /// decrypted up front so the caller can choose the plaintext type after
     /// seeing the key — see [`MapAccess::next_key`] — alongside the entry
     /// AAD it was sealed under, derived once here so the key itself moves
     /// out to the caller.
-    pending: Option<(Aad<'static>, KeyedCipherText)>,
+    pending: Option<(Context<'static>, KeyedCipherText)>,
 }
 
 impl<'c, 'a> MapAccess<'c> for StackMapAccess<'a> {
@@ -1921,7 +1920,7 @@ mod tests {
                 .map(|(key, ct)| (key.to_string(), ct))
                 .collect::<Vec<_>>()
                 .into_iter(),
-            aad: Aad::from_slice(b"map"),
+            aad: Context::from_encoded(b"map"),
             pending: None,
         }
     }
@@ -1986,7 +1985,7 @@ mod tests {
     #[test]
     fn leaf_aad_bytes_are_pinned() {
         let keyset = Uuid::from_bytes(*b"keyset-fixture16");
-        let aad = leaf_aad(&Aad::from_slice(b"caller-aad"), keyset, b"key-tag");
+        let aad = leaf_aad(&Context::from_encoded(b"caller-aad"), keyset, b"key-tag");
         let hex: String = aad.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
         // PAE: LE64 count (5) ‖ per piece LE64 length ‖ piece, the pieces
         // being "stack-encrypt/leaf", [FORMAT_VERSION], the keyset id's 16

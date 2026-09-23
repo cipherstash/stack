@@ -1,6 +1,6 @@
 //go:build unix || windows
 
-package stackencrypt
+package guest
 
 import (
 	"fmt"
@@ -18,15 +18,18 @@ import (
 type mappedMemory struct {
 	mapping   []byte // the whole reservation
 	committed uint64 // bytes made accessible so far, from the front
-	policy    lockPolicy
+	policy    LockPolicy
 }
+
+// size implements sized, for the testing seam.
+func (m *mappedMemory) size() uint64 { return m.committed }
 
 // reserveMemory returns a mapped memory for the reservation, or a heap
 // memory when the reservation itself is impossible: max exceeds what this
 // process can address (a 32-bit host asked for wasm's 4 GiB default), or
 // the platform refused it. The error is the reason the memory is not, or
 // not fully, protected; nil when it is.
-func reserveMemory(capacity, max uint64, policy lockPolicy) (backend, error) {
+func reserveMemory(capacity, max uint64, policy LockPolicy) (backend, error) {
 	if max > math.MaxInt {
 		return newHeapMemory(capacity, max), fmt.Errorf("cannot reserve %s of address space on this host", byteCount(max))
 	}
@@ -53,7 +56,7 @@ func (m *mappedMemory) commit(size uint64) ([]byte, error) {
 			// operator sizing a limit needs the whole of what the guest
 			// holds with it.
 			err = fmt.Errorf("%w; the guest needs at least %s locked", err, byteCount(size))
-			if m.policy == strict && m.committed > 0 {
+			if m.policy == Strict && m.committed > 0 {
 				// Nothing was written to the range yet; giving it back
 				// leaves the guest exactly where it was.
 				decommitRange(fresh)

@@ -25,8 +25,9 @@ stack-auth = { workspace = true, optional = true }
 # `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`, re-exported from `target`.
 stack-encrypt-derive = { path = "../stack-encrypt-derive" }
 
-# The workspace vitaminc (0.3.0): the first release with `NonEmpty::with`,
-# `From<integer> for NonEmpty` (cipherstash/vitaminc#314) and `AadPiece`
+# The workspace vitaminc (0.5.0): one canonical context encoding shared by
+# the AEAD and PRF derivations (`IntoContext`, cipherstash/vitaminc#339),
+# `NonEmpty::with`, `From<integer> for NonEmpty` (#314) and the parts view
 # (#318), all of which this crate relies on. All five must share one
 # version or the aead crate is duplicated.
 vitaminc-aead = { workspace = true }

@@ -29,6 +29,11 @@ stack-auth = { path = "../../../../packages/stack-auth", default-features = fals
 # `dynamic`: the runtime value model this guest speaks — contexts, index
 # terms and record plans over `FfiValue`, shared with every other binding.
 stack-encrypt = { path = "../../../../packages/stack-encrypt", default-features = false, features = ["dynamic"] }
+# The guest ABI every guest under bindings/go shares: the allocator and
+# buffer registry (and with them the `se_alloc`/`se_dealloc` exports), the
+# packed-result helpers, the status table and the `transport_send` import.
+# This crate defines only the exports that are its own.
+stack-guest-abi = { path = "../../../../packages/stack-guest-abi" }
 stack-kms = { path = "../../../../packages/stack-kms", default-features = false }
 zerokms-protocol = { path = "../../../../packages/zerokms-protocol" }
 
@@ -37,8 +42,8 @@ zerokms-protocol = { path = "../../../../packages/zerokms-protocol" }
 # (see the comment in packages/stack-encrypt/Cargo.toml). A different
 # version here fails at the `FfiValue: Decrypt` bound, since the aead crate
 # would be duplicated.
-vitaminc-aead-value = "0.4.0"
-vitaminc-protected = "0.4.0"
+vitaminc-aead-value = "0.5.0"
+vitaminc-protected = "0.5.0"
 
 futures = { version = "0.3", default-features = false, features = ["executor"] }
 serde = "1"

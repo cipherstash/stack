@@ -1,6 +1,6 @@
 //go:build unix
 
-package stackencrypt
+package guest
 
 import (
 	"fmt"

@@ -306,7 +306,7 @@ async fn match_term_bytes_are_pinned() {
     let bytes = term.to_bytes();
     assert_eq!(
         hex(&bytes),
-        "2100220028002c002d0034003c003f005400620063006b0071007d007f0097009800a400a600a800a900d200d400fd00"
+        "040005000a000d000e001e002700350038003d0055005e005f0064006f007d007f009c00ad00bc00bd00ca00d000e000e500ef00"
     );
     assert_eq!(
         MatchTerm::<DefaultMatch>::from_bytes(&bytes).expect("decode match term"),
@@ -386,7 +386,7 @@ async fn ore_term_encoding_is_the_raw_cllw_bytes() {
     // differ (see the `sem` module docs).
     assert_eq!(
         hex(term.as_bytes()),
-        "d757854cffc68e9f3dfa9dba7ec400a30c80dd57122ebbc064eeff5a81069fc7"
+        "1ae5f8558dc2d7dddd6c5b714e9d285586a1b8390d9140421e78906cba1bd651"
     );
     assert_eq!(term.to_bytes(), term.as_bytes());
     assert_eq!(term.as_ref(), term.as_bytes());
@@ -412,7 +412,7 @@ async fn ope_term_encoding_is_the_raw_cllw_bytes() {
 
     assert_eq!(
         hex(term.as_bytes()),
-        "00470b57be663ba84635c72c1bdfa8ed263e7e57504002db51d3e695ba0b499833"
+        "00837615a1ea2fdcbebf7efe34cf4d2ee432c7eeff84fbd72e1bf05efa2338033c"
     );
     assert_eq!(
         OpeTerm::<u32>::from_bytes(term.as_bytes()).expect("decode ope term"),

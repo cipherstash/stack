@@ -1,12 +1,12 @@
 //go:build unix
 
-package stackencrypt
+package guesttest
 
 import "golang.org/x/sys/unix"
 
-// setMemlockLimit lowers RLIMIT_MEMLOCK to n bytes for this process. Only
+// SetMemlockLimit lowers RLIMIT_MEMLOCK to n bytes for this process. Only
 // a child test process calls it.
-func setMemlockLimit(n uint64) error {
+func SetMemlockLimit(n uint64) error {
 	var lim unix.Rlimit
 	setRlim(&lim.Cur, n)
 	setRlim(&lim.Max, n)

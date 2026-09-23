@@ -1,6 +1,6 @@
 //go:build unix && !linux
 
-package stackencrypt
+package guest
 
 // Without MAP_NORESERVE the reservation may be charged against a strict
 // overcommit setting on the BSDs; macOS has no such accounting.

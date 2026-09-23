@@ -2,7 +2,7 @@
 use super::{CipherScope, Pending, Request, Responses};
 use crate::cipher::{bind_keys, PendingStackCipherText, StackDecipher};
 use crate::{Descriptor, Error, KeysetCipher, StackCipher, StackCipherText};
-use vitaminc_aead::{CipherText, Decrypt, Encrypt, IntoAad};
+use vitaminc_aead::{CipherText, Decrypt, Encrypt, IntoAad, IntoContext};
 use vitaminc_protected::NonEmpty;
 
 /// Internal term operation. It is deliberately inaccessible to target authors.
@@ -16,12 +16,12 @@ pub(crate) trait Term<S, K, Ctx>: Sized {
         Self: 'a;
 }
 
-pub(crate) fn encrypt_native<'a, 'c, S: Encrypt + Clone, K, T: IntoAad<'c>>(
+pub(crate) fn encrypt_native<'a, 'c, S: Encrypt + Clone, K, T: IntoContext<'c>>(
     source: &S,
     cipher: &'a KeysetCipher<'_, K>,
     context: NonEmpty<T>,
 ) -> Pending<'a, StackCipherText, K> {
-    let context = context.into_aad_piece();
+    let context = context.into_context();
     let descriptor = Descriptor::from_piece(&context);
     if let Err(error) = descriptor.check() {
         return Pending::failed(cipher, error);
@@ -32,12 +32,12 @@ pub(crate) fn encrypt_native<'a, 'c, S: Encrypt + Clone, K, T: IntoAad<'c>>(
         Err(_) => Pending::ready(cipher, Err(Error::Aead)),
     }
 }
-pub(crate) fn open_native<'a, 'c, P: Decrypt<'static> + 'static, K, T: IntoAad<'c>>(
+pub(crate) fn open_native<'a, 'c, P: Decrypt<'static> + 'static, K, T: IntoContext<'c>>(
     tree: StackCipherText,
     cipher: &'a StackCipher<K>,
     context: NonEmpty<T>,
 ) -> Pending<'a, P, K> {
-    let context = context.into_aad_piece();
+    let context = context.into_context();
     let descriptor = Descriptor::from_piece(&context);
     // Fast path, as in `seal_pending`; `dispatch` is the gate.
     if let Err(e) = descriptor.check() {

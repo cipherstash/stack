@@ -1,0 +1,41 @@
+# Configuration for cargo-mutants — mutation testing for the stack crates.
+#
+# Mutation testing rewrites small pieces of logic (flip a `<` to `<=`, replace
+# a body with `Default::default()`, drop an `&&` arm) and reruns the tests: a
+# mutant that survives is a line the suite does not actually pin down. CRAP
+# (`crap:*`) says which complex code is uncovered; this says which covered
+# code is not asserted on — in a crypto crate, the comparisons, length checks
+# and context bindings a test can execute without ever checking.
+#
+# CI runs this `--in-diff` as a per-PR gate (.github/workflows/mutants.yml):
+# only the lines a PR changes are mutated, so the gate trips when a PR adds
+# logic its tests do not exercise. A full per-crate sweep is
+# `mise run mutants:<crate>` (stack-auth ~15 min, stack-encrypt ~60 min on a
+# laptop with four jobs); `mise run mutants` runs every crate that has one.
+# Both read the settings below, so they stay in sync.
+
+# Build and test with every feature on, so feature-gated code (stack-encrypt's
+# `dynamic` module, the `http` transports) is compiled and exercised. Without
+# this a mutant there would "survive" only because the feature was off.
+additional_cargo_args = ["--all-features"]
+
+# nextest, as everywhere else in the suite. The filterset drops two things
+# from the per-mutant test command that are slow and pin no mutant:
+# stack-encrypt's trybuild UI suite (`binary(ui)`: it compiles the derive's
+# compile-fail cases in a scratch project, ~60s, and exercises no mutable
+# line) and stack-auth's wall-clock stress tests (real servers, real sleeps,
+# flaky under a slowed build). A filter naming something a package does not
+# have matches nothing, so one filter serves every package.
+test_tool = "nextest"
+additional_cargo_test_args = ["-E", "not binary(ui) & not test(stress_tests)"]
+
+# Skip the derive crate: its logic runs inside `#[proc_macro_derive]` entry
+# points at compile time, not in the instrumented test binary, so every
+# mutant there survives spuriously. Its behaviour is pinned by stack-encrypt's
+# `tests/derive.rs` and the trybuild UI suite instead.
+exclude_globs = ["packages/stack-encrypt-derive/**"]
+
+# Headroom over the measured baseline before a slow-but-correct mutant is
+# misreported as a timeout.
+timeout_multiplier = 5.0
+minimum_test_timeout = 90

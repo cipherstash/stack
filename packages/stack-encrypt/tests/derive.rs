@@ -13,8 +13,8 @@ use common::{counting_cipher, stack_cipher};
 use stack_encrypt::sem::{EqualityTerm, MatchTerm, OreTerm};
 use stack_encrypt::target::{AeadContext, DecryptFrom, EncryptInto};
 use stack_encrypt::{
-    nonempty, Aad, DecryptField, DecryptInto, Decryptable, EncryptFrom, Error, IntoAad, MaybeEmpty,
-    NonEmpty, StackCipherText,
+    nonempty, ContextPiece, DecryptField, DecryptInto, Decryptable, EncryptFrom, Error,
+    IntoContext, MaybeEmpty, NonEmpty, StackCipherText,
 };
 
 // --- Records: every field from one plaintext, under one context -------------
@@ -379,8 +379,9 @@ async fn listed_plaintexts_each_get_their_own_impl() {
     assert_eq!((number, text.as_str()), (7, "seven"));
 }
 
-/// A context type with the AEAD encoding alone: enough to seal, not to
-/// derive a term. `WorkspaceId` in `cts-common` is the production shape.
+/// A plain `IntoContext` type, declared through `AeadContext`: enough to
+/// seal, not to derive a term. `WorkspaceId` in `cts-common` is the
+/// production shape.
 #[derive(Clone, Debug, PartialEq)]
 struct Tenant(String);
 impl MaybeEmpty for Tenant {
@@ -388,9 +389,9 @@ impl MaybeEmpty for Tenant {
         self.0.is_empty()
     }
 }
-impl<'a> IntoAad<'a> for Tenant {
-    fn into_aad(self) -> Aad<'a> {
-        self.0.into_aad()
+impl<'a> IntoContext<'a> for Tenant {
+    fn into_context(self) -> ContextPiece<'a> {
+        self.0.into_context()
     }
 }
 

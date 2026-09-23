@@ -1,4 +1,4 @@
-package stackencrypt
+package guest
 
 import (
 	"errors"
@@ -39,32 +39,35 @@ import (
 // many Linux hosts and the guest's memory is larger, so the lock is
 // commonly refused, with nothing else lost: the pages can be swapped, and
 // on a host with no swap not even that. The refusal is recorded and
-// reported through Client.MemoryLocked and Client.MemoryLockError so an
-// operator can see it and raise the limit; Config.RequireLockedMemory
-// turns it into a NewClient failure.
+// reported through LockError, which each public package surfaces on its
+// client (stackencrypt: Client.MemoryLocked and Client.MemoryLockError) so
+// an operator can see it and raise the limit; Strict turns it into a
+// constructor failure (stackencrypt: Config.RequireLockedMemory).
 
-// lockPolicy is what a refused lock means for an instance.
-type lockPolicy uint8
+// LockPolicy is what a refused lock means for an instance.
+type LockPolicy uint8
 
 const (
-	// bestEffort records a refused lock and carries on with unlocked
+	// BestEffort records a refused lock and carries on with unlocked
 	// memory.
-	bestEffort lockPolicy = iota
-	// strict refuses growth that cannot be locked. The first commit is the
+	BestEffort LockPolicy = iota
+	// Strict refuses growth that cannot be locked. The first commit is the
 	// exception: wazero cannot instantiate on a nil buffer, so it is
-	// granted with the refusal recorded, and newInstance turns that into
-	// the ErrMemoryLock the caller asked for.
-	strict
+	// granted with the refusal recorded, and the public package's
+	// constructor turns that into the ErrMemoryLock the caller asked for.
+	Strict
 )
 
-func policyFor(requireLockedMemory bool) lockPolicy {
+// PolicyFor is the policy a caller's "require locked memory" setting
+// means: Strict when set, BestEffort otherwise.
+func PolicyFor(requireLockedMemory bool) LockPolicy {
 	if requireLockedMemory {
-		return strict
+		return Strict
 	}
-	return bestEffort
+	return BestEffort
 }
 
-// backend is one platform's linear memory behind a memoryAllocator: a
+// backend is one platform's linear memory behind an Allocator: a
 // reservation committed from the front. It is used from the guest's
 // goroutine only; the allocator does the bookkeeping other goroutines
 // read.
@@ -73,19 +76,20 @@ type backend interface {
 	// will use, whose base never changes. A nil buffer means the growth
 	// failed. lockErr, when set, is a refused lock on the newly committed
 	// range: with a buffer, the range was kept unlocked (best effort);
-	// without one, the growth was refused because of it (strict).
+	// without one, the growth was refused because of it (Strict).
 	commit(size uint64) (buf []byte, lockErr error)
 	// free wipes the committed range and releases the reservation.
 	free()
 }
 
-// memoryAllocator is the experimental.MemoryAllocator handed to wazero for
+// Allocator is the experimental.MemoryAllocator handed to wazero for
 // one guest instance, and the experimental.LinearMemory it returns: wazero
 // calls Allocate once per memory, and the guest has exactly one. It
-// records what the Client reports about the memory, and holds the memory
-// mapped while a guest call is in flight (see enter, exit and Free).
-type memoryAllocator struct {
-	policy lockPolicy
+// records what the public package reports about the memory, and holds the
+// memory mapped while a guest call is in flight (see Enter, Exit and
+// Free).
+type Allocator struct {
+	policy LockPolicy
 
 	mu      sync.Mutex
 	backing backend
@@ -98,10 +102,10 @@ type memoryAllocator struct {
 	// a range that was kept — and never clears: a lock refused once is
 	// reported for the life of the instance.
 	lockErr error
-	// growth is the strict growths refused. It is not lockErr: a refused
+	// growth is the Strict growths refused. It is not lockErr: a refused
 	// growth gives its range back before the guest sees it, so every byte
 	// the guest holds is still locked and the instance still reports so.
-	growth growthRefusal
+	growth GrowthRefusal
 	// inFlight counts guest calls in progress (see enter and exit);
 	// pending records a Free that arrived while one was, to be honoured
 	// when the outermost call returns.
@@ -113,28 +117,31 @@ type memoryAllocator struct {
 	freed bool
 }
 
-// growthRefusal is the strict growths an allocator has refused: how many,
-// and the lock refusal behind the latest. Client.call compares the count
-// across a call to name the real cause when the guest reports only a
-// failed allocation.
-type growthRefusal struct {
-	refused uint64
-	reason  error
+// GrowthRefusal is the Strict growths an allocator has refused: how many,
+// and the lock refusal behind the latest. A caller compares the count
+// across a guest call to name the real cause when the guest reports only
+// a failed allocation.
+type GrowthRefusal struct {
+	Refused uint64
+	Reason  error
 }
 
-func newMemoryAllocator(policy lockPolicy) *memoryAllocator {
-	return &memoryAllocator{policy: policy}
+// NewAllocator is an allocator for one guest instance under policy. Hand
+// it to wazero as the instance's experimental.MemoryAllocator; it
+// allocates when the guest's memory is first instantiated.
+func NewAllocator(policy LockPolicy) *Allocator {
+	return &Allocator{policy: policy}
 }
 
 // Allocate implements experimental.MemoryAllocator.
-func (a *memoryAllocator) Allocate(capacity, max uint64) experimental.LinearMemory {
+func (a *Allocator) Allocate(capacity, max uint64) experimental.LinearMemory {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.backing != nil {
 		// The guest has one memory; a second would mean wazero's contract
 		// changed under us. Refusing here fails instantiation loudly
 		// rather than letting two memories share one report.
-		panic("stackencrypt: guest memory allocated twice")
+		panic("cipherstash: guest memory allocated twice")
 	}
 	backing, err := reserveMemory(capacity, max, a.policy)
 	a.backing = backing
@@ -144,15 +151,15 @@ func (a *memoryAllocator) Allocate(capacity, max uint64) experimental.LinearMemo
 }
 
 // Reallocate implements experimental.LinearMemory.
-func (a *memoryAllocator) Reallocate(size uint64) []byte {
+func (a *Allocator) Reallocate(size uint64) []byte {
 	buf, lockErr := a.backing.commit(size)
 	if lockErr != nil {
 		a.mu.Lock()
 		if buf == nil {
 			// Strict: the range was given back, so nothing unlocked was
 			// admitted and the lock report stands.
-			a.growth.refused++
-			a.growth.reason = lockErr
+			a.growth.Refused++
+			a.growth.Reason = lockErr
 		} else if a.lockErr == nil {
 			a.lockErr = lockErr
 		}
@@ -172,7 +179,7 @@ func (a *memoryAllocator) Reallocate(size uint64) []byte {
 // whose next store then faults in compiled code. So a Free that arrives
 // during a call is recorded and performed by the outermost exit, when no
 // guest code can be running. A Free with no call in flight is immediate.
-func (a *memoryAllocator) Free() {
+func (a *Allocator) Free() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.inFlight > 0 {
@@ -182,16 +189,16 @@ func (a *memoryAllocator) Free() {
 	a.freeLocked()
 }
 
-// enter marks a guest call in progress: the memory must stay mapped until
-// the matching exit, whatever wazero asks in between.
-func (a *memoryAllocator) enter() {
+// Enter marks a guest call in progress: the memory must stay mapped until
+// the matching Exit, whatever wazero asks in between.
+func (a *Allocator) Enter() {
 	a.mu.Lock()
 	a.inFlight++
 	a.mu.Unlock()
 }
 
-// exit ends a guest call and performs a Free that arrived during it.
-func (a *memoryAllocator) exit() {
+// Exit ends a guest call and performs a Free that arrived during it.
+func (a *Allocator) Exit() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.inFlight--
@@ -202,7 +209,7 @@ func (a *memoryAllocator) exit() {
 }
 
 // freeLocked wipes and releases the memory, once. Called with mu held.
-func (a *memoryAllocator) freeLocked() {
+func (a *Allocator) freeLocked() {
 	if a.freed {
 		return
 	}
@@ -210,16 +217,16 @@ func (a *memoryAllocator) freeLocked() {
 	a.backing.free()
 }
 
-// lockError is nil while every committed byte is locked (and, on Linux,
+// LockError is nil while every committed byte is locked (and, on Linux,
 // excluded from dumps); otherwise it names what was refused and why.
-func (a *memoryAllocator) lockError() error {
+func (a *Allocator) LockError() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.lockErr
 }
 
-// growthRefusal is the strict growths refused so far.
-func (a *memoryAllocator) growthRefusal() growthRefusal {
+// GrowthRefusal is the Strict growths refused so far.
+func (a *Allocator) GrowthRefusal() GrowthRefusal {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.growth
@@ -227,8 +234,8 @@ func (a *memoryAllocator) growthRefusal() growthRefusal {
 
 // String is the memory's state for a log line: "locked", or the refusal.
 // Nothing secret is printed.
-func (a *memoryAllocator) String() string {
-	if err := a.lockError(); err != nil {
+func (a *Allocator) String() string {
+	if err := a.LockError(); err != nil {
 		return fmt.Sprintf("unlocked: %v", err)
 	}
 	return "locked"
@@ -236,20 +243,24 @@ func (a *memoryAllocator) String() string {
 
 // LogValue is the same state for slog: a group with memory_locked and,
 // when false, memory_lock_error.
-func (a *memoryAllocator) LogValue() slog.Value {
-	if err := a.lockError(); err != nil {
+func (a *Allocator) LogValue() slog.Value {
+	if err := a.LockError(); err != nil {
 		return slog.GroupValue(slog.Bool("memory_locked", false), slog.String("memory_lock_error", err.Error()))
 	}
 	return slog.GroupValue(slog.Bool("memory_locked", true))
 }
 
-func (a *memoryAllocator) isFallback() bool {
+// IsFallback reports whether the guest runs on the heap fallback rather
+// than a reservation: nothing is locked, and growth may copy.
+func (a *Allocator) IsFallback() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.fallback
 }
 
-func (a *memoryAllocator) isFreed() bool {
+// IsFreed reports whether the memory has been wiped and released. Tests
+// read it to observe release paths a caller never sees.
+func (a *Allocator) IsFreed() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.freed
@@ -265,6 +276,9 @@ type heapMemory struct {
 	buf []byte
 	max uint64
 }
+
+// size implements sized, for the testing seam.
+func (m *heapMemory) size() uint64 { return uint64(len(m.buf)) }
 
 func newHeapMemory(capacity, max uint64) *heapMemory {
 	if capacity > max {
@@ -301,8 +315,8 @@ func (m *heapMemory) free() {
 // package has no lock implementation.
 var errNoLockSupport = errors.New("guest memory cannot be locked on this platform")
 
-// memoryLockError wraps a lock refusal as ErrMemoryLock.
-func memoryLockError(err error) error {
+// MemoryLockError wraps a lock refusal as ErrMemoryLock.
+func MemoryLockError(err error) error {
 	return fmt.Errorf("%w: %w", ErrMemoryLock, err)
 }
 

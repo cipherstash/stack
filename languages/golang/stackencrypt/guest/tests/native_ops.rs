@@ -288,8 +288,10 @@ fn guest_leaves_are_the_frozen_storage_encoding() {
     let leaf = SealedValue::from_bytes(&leaf_bytes).expect("frozen leaf encoding");
     // A guest leaf seals the *value model's* typed payload (`[tag] ++
     // payload`, the vitaminc sealed-leaf format), so the native open goes
-    // through `FfiValue`'s own `Decrypt` — not a bare `String`.
-    let value: FfiValue = block_on(cipher.decrypt(CipherText::Single(leaf), "ctx"))
+    // through `FfiValue`'s own `Decrypt` — not a bare `String`. The host's
+    // AAD is bytes, and a byte context is not a text context (vitaminc 0.5
+    // types its leaves), so the native side opens under the byte slice.
+    let value: FfiValue = block_on(cipher.decrypt(CipherText::Single(leaf), b"ctx".as_slice()))
         .expect("native decrypt of a guest leaf");
     assert_eq!(text(&value), "durable");
 }

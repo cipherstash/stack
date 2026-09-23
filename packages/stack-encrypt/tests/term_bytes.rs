@@ -9,6 +9,13 @@
 //!
 //! Keyed by `FakeDataKeySource`'s deterministic index key, so the expected
 //! bytes are stable without ZeroKMS.
+//!
+//! The pins moved once without the derivation moving: vitaminc 0.5 changed
+//! the canonical encoding of a context (typed leaves, one encoding for the
+//! AEAD and the PRF), so the bytes under every label changed while the
+//! labels and framing here did not. That was a prerelease wire break, taken
+//! deliberately (CIP-4036); the `/v1` suffixes stayed because nothing of
+//! this crate's own moved.
 
 use stack_encrypt::nonempty;
 use stack_encrypt::sem::DefaultMatch;
@@ -38,7 +45,7 @@ async fn equality_term_bytes_are_pinned() {
 
     assert_eq!(
         hex(term.as_bytes()),
-        "81b963584feb41e517069477bd7fb568615ce724cb146451df6b6b4c16e43de1"
+        "c101ef066547cb33003c352dcd02a42bfe4a24e2d0609caca0189d9f1af8262a"
     );
 }
 
@@ -56,8 +63,8 @@ async fn match_term_positions_are_pinned() {
     assert_eq!(
         term.positions(),
         [
-            33, 34, 40, 44, 45, 52, 60, 63, 84, 98, 99, 107, 113, 125, 127, 151, 152, 164, 166,
-            168, 169, 210, 212, 253
+            4, 5, 10, 13, 14, 30, 39, 53, 56, 61, 85, 94, 95, 100, 111, 125, 127, 156, 173, 188,
+            189, 202, 208, 224, 229, 239
         ]
     );
 }
@@ -75,7 +82,7 @@ async fn ore_term_bytes_are_pinned() {
 
     assert_eq!(
         hex(term.as_ref()),
-        "d757854cffc68e9f3dfa9dba7ec400a30c80dd57122ebbc064eeff5a81069fc7"
+        "1ae5f8558dc2d7dddd6c5b714e9d285586a1b8390d9140421e78906cba1bd651"
     );
 }
 
@@ -93,6 +100,6 @@ async fn ope_term_bytes_are_pinned() {
 
     assert_eq!(
         hex(term.as_ref()),
-        "00470b57be663ba84635c72c1bdfa8ed263e7e57504002db51d3e695ba0b499833"
+        "00837615a1ea2fdcbebf7efe34cf4d2ee432c7eeff84fbd72e1bf05efa2338033c"
     );
 }

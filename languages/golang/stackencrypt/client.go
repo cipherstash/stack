@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
@@ -19,11 +20,14 @@ type Config struct {
 	// ClientID is the ZeroKMS client id (a UUID string). Required.
 	ClientID string
 	// ClientKey is the v1 client key material: hex (the CS_CLIENT_KEY form,
-	// either case) or standard padded base64 (the secretkey.json form).
-	// Required. It enters guest memory once and is wiped from the config
-	// buffer before any request is made; the Go-side copy this package
-	// makes is wiped too. The caller's own string is the caller's.
-	ClientKey string
+	// either case) or standard padded base64 (the secretkey.json form),
+	// wrapped by [NewClientKey] or read from the developer profile by
+	// stackauth. Required. It is consumed: NewClient marshals it into the
+	// config buffer, wipes the key, and wipes the buffer once the guest has
+	// the key, so after NewClient returns — whatever the outcome, a config
+	// it refused included — the ClientKey is empty and the bytes it was
+	// built from are zero. A key is for one client.
+	ClientKey *ClientKey
 	// ZeroKMSURL pins the ZeroKMS endpoint. When empty the endpoint is
 	// resolved from the access token's services claim on first use.
 	ZeroKMSURL string
@@ -91,6 +95,10 @@ type Client struct {
 // the default keyset — one ZeroKMS round trip. The returned client is ready
 // to seal.
 func NewClient(ctx context.Context, cfg Config) (*Client, error) {
+	// The key is consumed whatever happens below: a config refused before
+	// the key is marshalled must not hand it back live. Nil-safe, and a
+	// no-op after the wipe on the accepted path.
+	defer cfg.ClientKey.Wipe()
 	if cfg.Token == nil {
 		return nil, errors.New("stackencrypt: Config.Token is required")
 	}
@@ -110,9 +118,14 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, err
 	}
 	defer wipe(encoded)
+	// The key is consumed: it is in the config buffer now, and the buffer
+	// is wiped once the guest has it. Wiping the key here rather than after
+	// the init call keeps the exposure to one copy from this point on,
+	// whatever the init's outcome.
+	cfg.ClientKey.Wipe()
 
 	t := &transport{rt: rt, token: cfg.Token}
-	inst, err := newInstance(ctx, wasm, t, policyFor(cfg.RequireLockedMemory))
+	inst, err := newInstance(ctx, wasm, t, guest.PolicyFor(cfg.RequireLockedMemory))
 	if err != nil {
 		return nil, err
 	}
@@ -149,14 +162,14 @@ func newClient(inst *instance, t *transport) *Client {
 // memory the kernel may swap out. Nothing else changes. A production
 // checklist should assert this, or set [Config.RequireLockedMemory] and
 // let NewClient refuse. [Client.MemoryLockError] says why.
-func (c *Client) MemoryLocked() bool { return c.inst.mem.lockError() == nil }
+func (c *Client) MemoryLocked() bool { return c.inst.mem.LockError() == nil }
 
 // MemoryLockError is why MemoryLocked is false: an error wrapping
 // ErrMemoryLock that names what was refused and the limit that refused it.
 // Nil while the memory is locked.
 func (c *Client) MemoryLockError() error {
-	if err := c.inst.mem.lockError(); err != nil {
-		return memoryLockError(err)
+	if err := c.inst.mem.LockError(); err != nil {
+		return guest.MemoryLockError(err)
 	}
 	return nil
 }
@@ -174,20 +187,30 @@ func (c *Client) String() string {
 func (c *Client) LogValue() slog.Value { return c.inst.mem.LogValue() }
 
 // encodeConfig renders the se_cipher_init object. The result holds the
-// client key; the caller wipes it.
+// client key; the caller wipes it, and the key it was read from.
 func encodeConfig(cfg Config) ([]byte, error) {
-	if cfg.ClientID == "" || cfg.ClientKey == "" {
+	if cfg.ClientID == "" || cfg.ClientKey.IsZero() {
 		return nil, errors.New("stackencrypt: Config.ClientID and Config.ClientKey are required")
 	}
+	// Every refusal comes before the key is copied, so a rejected config
+	// leaves nothing but the key itself, which the caller wipes.
+	if cfg.KeysetCacheSize < 0 {
+		return nil, errors.New("stackencrypt: Config.KeysetCacheSize must not be negative")
+	}
+	// The key crosses as text: the guest's config parser takes the hex or
+	// base64 form as the CS_CLIENT_KEY variable and secretkey.json hold it.
+	// The string is a copy the marshaller reads once — and copies once more
+	// into its own scratch before appending — and the encoded buffer that
+	// results is what the caller wipes. A string cannot be wiped, and
+	// neither can the marshaller's copy; both live until the collector takes
+	// them: the copies of the key this package cannot zero, accepted for the
+	// length of NewClient. A marshaller that took bytes would remove both.
 	fields := vcvalue.Object{
 		{Key: "client_id", Value: cfg.ClientID},
-		{Key: "client_key", Value: cfg.ClientKey},
+		{Key: "client_key", Value: string(guest.KeyBytes(cfg.ClientKey))},
 	}
 	if cfg.ZeroKMSURL != "" {
 		fields = append(fields, vcvalue.Field{Key: "zerokms_url", Value: cfg.ZeroKMSURL})
-	}
-	if cfg.KeysetCacheSize < 0 {
-		return nil, errors.New("stackencrypt: Config.KeysetCacheSize must not be negative")
 	}
 	if cfg.KeysetCacheSize > 0 {
 		fields = append(fields, vcvalue.Field{Key: "keyset_cache_size", Value: strconv.Itoa(cfg.KeysetCacheSize)})
@@ -304,7 +327,7 @@ func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([
 		c.closed = true
 		return nil, ErrState
 	}
-	growth := c.inst.mem.growthRefusal()
+	growth := c.inst.mem.GrowthRefusal()
 	out, err := f(c.inst)
 	switch {
 	case c.inst.module.IsClosed():
@@ -325,8 +348,8 @@ func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([
 	// of its own, aborts, and the trap closed the client above. Name the
 	// real cause either way. The refusal is this call's, not the client's:
 	// the range went back unused, so MemoryLocked still holds.
-	if g := c.inst.mem.growthRefusal(); err != nil && g.refused != growth.refused {
-		err = fmt.Errorf("%w (growth refused under RequireLockedMemory): %w", memoryLockError(g.reason), err)
+	if g := c.inst.mem.GrowthRefusal(); err != nil && g.Refused != growth.Refused {
+		err = fmt.Errorf("%w (growth refused under RequireLockedMemory): %w", guest.MemoryLockError(g.Reason), err)
 	}
 	if err != nil {
 		return nil, err

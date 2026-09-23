@@ -53,8 +53,8 @@ impl Request {
     /// at the extension point, and its AEAD context is the caller's to keep
     /// in agreement with this one.
     ///
-    /// A descriptor is rendered from the AEAD encoding alone, so the context
-    /// need only convert into an [`AeadContext`]: the `IntoAad`-only type a
+    /// A descriptor is rendered from the context's parts, so the context
+    /// need only convert into an [`AeadContext`]: any `IntoContext` type a
     /// [`StackCipherText`](crate::StackCipherText) seals under can request
     /// the key it seals with, and a [`CallerContext`](super::CallerContext)
     /// converts as it is.
@@ -205,7 +205,7 @@ mod tests {
     use stack_kms::{DataKeySource, FakeDataKeySource, GenerateKeyPayload, RetrieveKeyPayload};
 
     use super::*;
-    use crate::{Aad, IntoAad, MaybeEmpty, NonEmpty};
+    use crate::{ContextPiece, IntoContext, MaybeEmpty, NonEmpty};
 
     fn d() -> Descriptor {
         Descriptor::of("test/field")
@@ -285,7 +285,7 @@ mod tests {
         }
     }
 
-    /// AEAD only: no `IntoPrfContext`, so it can seal but not derive a term.
+    /// A plain `IntoContext` type, as an `AeadContext` target declares.
     #[derive(Clone)]
     struct Tenant(String);
     impl MaybeEmpty for Tenant {
@@ -293,16 +293,16 @@ mod tests {
             self.0.is_empty()
         }
     }
-    impl<'a> IntoAad<'a> for Tenant {
-        fn into_aad(self) -> Aad<'a> {
-            self.0.into_aad()
+    impl<'a> IntoContext<'a> for Tenant {
+        fn into_context(self) -> ContextPiece<'a> {
+            self.0.into_context()
         }
     }
 
-    /// A descriptor is rendered from the AEAD encoding alone, so the context
-    /// a `StackCipherText` seals under — one with `IntoAad` and nothing else
-    /// — can request the data key it seals with. Requiring a PRF-capable
-    /// context here would shut an `AeadContext`-only target out of the
+    /// A descriptor is rendered from the context's parts, so the context a
+    /// `StackCipherText` seals under — any `IntoContext` type, as an
+    /// `AeadContext` — can request the data key it seals with. Requiring a
+    /// `CallerContext` here would shut an `AeadContext` target out of the
     /// `Pending::request` extension point for no reason.
     #[test]
     fn an_aead_only_context_can_request_a_data_key() {

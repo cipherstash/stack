@@ -5,8 +5,10 @@
 // # Shape
 //
 // A [Client] is one wasm instance and one ZeroKMS client: [NewClient]
-// instantiates the embedded guest, hands it the client key once, and loads
-// the client's default keyset. Every keyset the client uses after that is
+// instantiates the embedded guest, hands it the client key once — the
+// [ClientKey] in its [Config] is consumed and wiped, whatever the outcome —
+// and loads the client's default keyset. Every keyset the client uses after
+// that is
 // selected per call through a [KeysetSelector] and loaded on first use by
 // the guest's own bounded cache; nothing the host could allocate, alias or
 // free crosses the boundary. [Client.Close] runs the guest's shutdown so the

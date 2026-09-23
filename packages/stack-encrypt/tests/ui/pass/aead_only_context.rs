@@ -1,14 +1,15 @@
-//! A context type that implements `IntoAad` alone is enough to seal a
+//! A context type that implements `IntoContext` is enough to seal a
 //! ciphertext, so it must be enough for a derived record made only of
 //! ciphertexts: `#[stash(context_type = AeadContext)]` declares that, and the
 //! record then accepts exactly what the canonical `StackCipherText` path
 //! accepts. `tests/ui/aead_context_with_term.rs` pins the record such a
 //! context cannot declare.
 use stack_encrypt::target::{AeadContext, DecryptFrom, EncryptInto};
-use stack_encrypt::{Aad, DecryptInto, EncryptFrom, IntoAad, KeysetCipher, MaybeEmpty, NonEmpty, StackCipherText};
+use stack_encrypt::{ContextPiece, DecryptInto, EncryptFrom, IntoContext, KeysetCipher, MaybeEmpty, NonEmpty, StackCipherText};
 use stack_kms::FakeDataKeySource;
 
-/// AEAD only: no `IntoPrfContext`, so it cannot derive a term.
+/// Declared through `AeadContext` below: it can seal, but the record
+/// derives no term under it.
 #[derive(Clone, Debug, PartialEq)]
 struct Tenant(String);
 impl MaybeEmpty for Tenant {
@@ -16,9 +17,9 @@ impl MaybeEmpty for Tenant {
         self.0.is_empty()
     }
 }
-impl<'a> IntoAad<'a> for Tenant {
-    fn into_aad(self) -> Aad<'a> {
-        self.0.into_aad()
+impl<'a> IntoContext<'a> for Tenant {
+    fn into_context(self) -> ContextPiece<'a> {
+        self.0.into_context()
     }
 }
 
