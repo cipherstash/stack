@@ -29,7 +29,14 @@ use std::collections::HashMap;
 use zeroize::Zeroize;
 
 thread_local! {
-    static BUFFERS: RefCell<HashMap<usize, usize>> = RefCell::new(HashMap::new());
+    /// Live sized buffers, keyed by the pointer itself (hashed and compared
+    /// by address) rather than by `ptr as usize`: the value handed back to
+    /// `Vec::from_raw_parts` must be the pointer that came out of
+    /// `Box::into_raw`, provenance intact. Rebuilding it from an integer is
+    /// an exposed-provenance round trip that strict-provenance Miri
+    /// (`miri:stack-guest-abi`) rejects, and it would hide a stale entry
+    /// behind a pointer Miri could no longer check.
+    static BUFFERS: RefCell<HashMap<*mut u8, usize>> = RefCell::new(HashMap::new());
     /// Live zero-length buffers, counted rather than keyed: every empty
     /// `Vec` leaks to the *same* dangling pointer (alignment, so `0x1`), and
     /// a pointer-keyed map entry would be overwritten by the second empty
@@ -76,7 +83,7 @@ pub fn register(buf: Vec<u8>) -> *mut u8 {
     let ptr = Box::into_raw(boxed) as *mut u8;
     // A fresh allocation can't already be registered; the returned previous
     // entry is the invariant, checked in debug builds.
-    let previous = BUFFERS.with(|b| b.borrow_mut().insert(ptr as usize, len));
+    let previous = BUFFERS.with(|b| b.borrow_mut().insert(ptr, len));
     debug_assert!(previous.is_none());
     ptr
 }
@@ -130,7 +137,7 @@ pub fn wipe_all() {
         // SAFETY: every entry was registered by `register`, which leaked a
         // boxed slice of exactly `len` bytes at `ptr`, and it was removed
         // above so nothing else can reclaim it.
-        let mut buf = unsafe { Vec::from_raw_parts(ptr as *mut u8, len, len) };
+        let mut buf = unsafe { Vec::from_raw_parts(ptr, len, len) };
         buf.zeroize();
     }
     EMPTY_BUFFERS.with(|c| c.set(0));
@@ -154,11 +161,15 @@ unsafe fn reclaim(ptr: *mut u8, len: usize) -> Option<Vec<u8>> {
             })
         });
     }
-    let real_len = BUFFERS.with(|b| b.borrow_mut().remove(&(ptr as usize)))?;
+    // The entry's own key is what the buffer is rebuilt from, not the host's
+    // copy of the address: the key is the pointer `register` leaked, so it is
+    // the one with provenance over the allocation. The host's `ptr` only
+    // selects the entry (pointers hash and compare by address).
+    let (ptr, real_len) = BUFFERS.with(|b| b.borrow_mut().remove_entry(&ptr))?;
     if real_len != len {
         // Put the entry back exactly as it was; it was just removed, so
         // nothing can be there to displace.
-        let previous = BUFFERS.with(|b| b.borrow_mut().insert(ptr as usize, real_len));
+        let previous = BUFFERS.with(|b| b.borrow_mut().insert(ptr, real_len));
         debug_assert!(previous.is_none());
         return None;
     }
