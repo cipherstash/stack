@@ -23,3 +23,10 @@ zeroize = { workspace = true }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 thiserror = { workspace = true }
 vitaminc-protected = { workspace = true }
+
+[dev-dependencies]
+# The registry's property test (`buffers::properties`): random interleavings
+# of alloc / register / take / dealloc / wipe_all against a model of what the
+# host holds, run natively and under Miri. `std` only: the `fork` and
+# `timeout` defaults spawn processes and threads Miri cannot interpret.
+proptest = { version = "1.7", default-features = false, features = ["std"] }
