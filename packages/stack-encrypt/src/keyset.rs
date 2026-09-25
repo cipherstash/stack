@@ -95,6 +95,16 @@ struct Alias {
     resolution: Resolution,
 }
 
+impl Alias {
+    /// Whether the binding is still trusted at `now`. Strictly within the
+    /// window: a zero window is never fresh, whatever the clock's
+    /// resolution — even read at the very instant it was bound, which is
+    /// what a coarse clock reports for a binding made moments ago.
+    fn is_fresh_at(&self, now: Instant, ttl: Duration) -> bool {
+        now.saturating_duration_since(self.resolved_at) < ttl
+    }
+}
+
 /// A lookup's place in the order of lookups that went to ZeroKMS. The
 /// caller carries it from [`get`](KeysetCache::get) to
 /// [`insert`](KeysetCache::insert), where an answer is applied only if it is
@@ -103,6 +113,16 @@ struct Alias {
 /// land in any order, and a later question has the later answer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct Resolution(u64);
+
+impl Resolution {
+    /// Whether this lookup came after `other`: the one comparison every
+    /// ordering rule in [`KeysetCache`] is written in. Strict — each lookup
+    /// takes its own ticket, so two answers never share one, and "later"
+    /// never includes the answer itself.
+    fn is_later_than(self, other: Resolution) -> bool {
+        self > other
+    }
+}
 
 /// What a lookup found.
 pub(crate) enum Lookup {
@@ -270,9 +290,7 @@ impl KeysetCache {
         let (id, fresh) = match by {
             IdentifiedBy::Uuid(id) => (*id, true),
             IdentifiedBy::Name(name) => match self.by_name.get::<str>(name) {
-                // Strictly within the window: a zero window is never fresh,
-                // whatever the clock's resolution.
-                Some(alias) => (alias.id, alias.resolved_at.elapsed() < self.name_ttl),
+                Some(alias) => (alias.id, alias.is_fresh_at(Instant::now(), self.name_ttl)),
                 None => return Lookup::Miss(self.resolution()),
             },
         };
@@ -334,11 +352,11 @@ impl KeysetCache {
             .name
             .as_deref()
             .and_then(|name| self.by_name.get(name))
-            .filter(|alias| alias.resolution > resolution)
+            .filter(|alias| alias.resolution.is_later_than(resolution))
             .and_then(|alias| self.entry(alias.id))
             .map(|entry| Arc::clone(&entry.state));
         if let Some(entry) = self.entry(state.id) {
-            if entry.resolution > resolution {
+            if entry.resolution.is_later_than(resolution) {
                 return later.unwrap_or_else(|| Arc::clone(&entry.state));
             }
         }
@@ -395,11 +413,11 @@ impl KeysetCache {
     ///
     /// [`watermark`]: Self::watermark
     fn bind(&mut self, name: &str, id: Uuid, resolution: Resolution) -> bool {
-        if resolution < self.watermark {
+        if self.watermark.is_later_than(resolution) {
             return false;
         }
         if let Some(alias) = self.by_name.get(name) {
-            if alias.resolution > resolution {
+            if alias.resolution.is_later_than(resolution) {
                 return false;
             }
             if alias.id != id {
@@ -447,7 +465,7 @@ impl KeysetCache {
         let Some(alias) = self.by_name.get(name) else {
             return;
         };
-        if alias.resolution > resolution {
+        if alias.resolution.is_later_than(resolution) {
             return;
         }
         let id = alias.id;
@@ -690,21 +708,119 @@ mod tests {
         );
     }
 
+    /// The documented bound on how long a rename can go unnoticed.
+    #[test]
+    fn a_name_binding_is_trusted_for_five_minutes_by_default() {
+        assert_eq!(DEFAULT_NAME_TTL, Duration::from_secs(300));
+    }
+
+    /// Every ordering rule in the cache is written in `is_later_than`, so
+    /// its strictness is pinned here once: a lookup is not later than
+    /// itself, nor than one after it.
+    #[test]
+    fn later_is_strictly_later() {
+        assert!(Resolution(2).is_later_than(Resolution(1)));
+        assert!(!Resolution(1).is_later_than(Resolution(1)));
+        assert!(!Resolution(1).is_later_than(Resolution(2)));
+    }
+
+    /// A binding is fresh strictly inside its window. The zero-window case
+    /// is read at the very instant of binding — what a coarse clock (a
+    /// millisecond `performance.now()`, say) reports for a binding made
+    /// moments ago — and is still stale.
+    #[test]
+    fn a_binding_is_fresh_strictly_within_its_window() {
+        let bound = Instant::now();
+        let alias = Alias {
+            id: Uuid::from_u128(1),
+            resolved_at: bound,
+            resolution: Resolution(1),
+        };
+        let ttl = Duration::from_secs(60);
+
+        assert!(alias.is_fresh_at(bound, ttl));
+        assert!(alias.is_fresh_at(bound + ttl - Duration::from_nanos(1), ttl));
+        assert!(
+            !alias.is_fresh_at(bound + ttl, ttl),
+            "the window's end is outside it"
+        );
+        assert!(
+            !alias.is_fresh_at(bound, Duration::ZERO),
+            "a zero window is never fresh"
+        );
+    }
+
+    /// No two uses are ever tied for least recently used — a load is newer
+    /// than every use before it, and so is a hit — so eviction takes the
+    /// same keyset in every cache, whatever order its hasher's seed happens
+    /// to iterate the entries in.
+    #[test]
+    fn eviction_follows_use_order_not_hash_order() {
+        for _ in 0..64 {
+            let (mut loads, mut hits) = (cache(2), cache(2));
+
+            loads.load(state(1, None));
+            loads.load(state(2, None));
+            loads.load(state(3, None));
+            assert!(
+                matches!(loads.get(&id(1)), Lookup::Miss(_)),
+                "the first loaded is the least recently used"
+            );
+            assert!(matches!(loads.get(&id(2)), Lookup::Hit(_)));
+
+            hits.load(state(1, None));
+            hits.load(state(2, None));
+            assert!(matches!(hits.get(&id(1)), Lookup::Hit(_)));
+            hits.load(state(3, None));
+            assert!(
+                matches!(hits.get(&id(2)), Lookup::Miss(_)),
+                "a hit makes 1 newer than the 2 loaded after it"
+            );
+            assert!(matches!(hits.get(&id(1)), Lookup::Hit(_)));
+        }
+    }
+
+    /// A name that moved to another keyset is no longer the old keyset's to
+    /// give up: renaming the old keyset afterwards must not unbind the name
+    /// from the keyset that now answers to it.
+    #[test]
+    fn renaming_the_keyset_a_name_left_does_not_take_the_name() {
+        let mut cache = cache(4);
+        cache.load(state(1, Some("acme")));
+        cache.load(state(2, Some("acme")));
+        cache.load(state(1, Some("legacy")));
+
+        assert_eq!(
+            hit(cache.get(&name("acme"))),
+            Some(Uuid::from_u128(2)),
+            "the name stays with the keyset it moved to"
+        );
+        assert_eq!(
+            hit(cache.get(&name("legacy"))),
+            Some(Uuid::from_u128(1)),
+            "and the old keyset answers to its new name"
+        );
+        assert_eq!(cache.names(), 2);
+    }
+
+    /// The default here is keyset 7, not the nil id the other tests' caches
+    /// default to: a cache that mistook the nil id for its default would
+    /// pass every test whose default *is* nil.
     #[test]
     fn the_default_is_found_by_id_and_its_builder_name_but_never_stored() {
         let mut cache = KeysetCache::new(
             NonZeroUsize::new(1).unwrap(),
             Duration::MAX,
-            state(0, Some("primary")),
+            state(7, Some("primary")),
         );
         assert_eq!(
-            hit(cache.get(&id(0))),
-            Some(Uuid::from_u128(0)),
+            hit(cache.get(&id(7))),
+            Some(Uuid::from_u128(7)),
             "the default is found by its id"
         );
         assert_eq!(
             hit(cache.get(&name("primary"))),
-            Some(Uuid::from_u128(0)),
+            Some(Uuid::from_u128(7)),
             "and by the name the builder gave it"
         );
 
@@ -713,19 +829,19 @@ mod tests {
         cache.load(state(2, None));
         assert_eq!(cache.len(), 1, "the bounded part holds its one slot");
         assert_eq!(
-            hit(cache.get(&id(0))),
-            Some(Uuid::from_u128(0)),
+            hit(cache.get(&id(7))),
+            Some(Uuid::from_u128(7)),
             "the default survives an eviction that filled the bound"
         );
         assert_eq!(
             hit(cache.get(&name("primary"))),
-            Some(Uuid::from_u128(0)),
+            Some(Uuid::from_u128(7)),
             "and so does its name binding"
         );
 
         // Re-resolving the default by name refreshes its binding, and does
         // not put a second copy of it in the bounded part.
-        cache.load(state(0, Some("primary")));
+        cache.load(state(7, Some("primary")));
         assert_eq!(
             cache.len(),
             1,
@@ -733,10 +849,10 @@ mod tests {
         );
 
         // The default renamed: its old name no longer selects it.
-        cache.load(state(0, Some("main")));
+        cache.load(state(7, Some("main")));
         assert_eq!(
             hit(cache.get(&name("main"))),
-            Some(Uuid::from_u128(0)),
+            Some(Uuid::from_u128(7)),
             "the default's new name selects it"
         );
         assert!(

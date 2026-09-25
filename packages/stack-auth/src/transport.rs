@@ -555,6 +555,19 @@ mod tests {
         stub.seen.lock().unwrap().remove(0)
     }
 
+    /// The crate itself reads a response through `text()`/`json()`; the
+    /// public accessors are what a host transport's own tests (and the FFI
+    /// bindings) read, so they must hand back exactly what was built.
+    #[test]
+    fn a_response_reads_back_what_it_was_built_with() {
+        let headers = vec![("content-type".to_string(), "application/json".to_string())];
+        let response = HttpResponse::new(201, headers.clone(), b"{\"ok\":true}".to_vec());
+
+        assert_eq!(response.status(), 201);
+        assert_eq!(response.headers(), headers.as_slice());
+        assert_eq!(response.body(), b"{\"ok\":true}");
+    }
+
     #[test]
     fn debug_output_names_headers_and_never_prints_a_secret() {
         let request = HttpRequest::new(

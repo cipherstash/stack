@@ -618,6 +618,39 @@ mod tests {
         ));
     }
 
+    /// The guard's contract, directly: armed, its drop clears the in-progress
+    /// flag (the cancellation path); defused, its drop leaves the flag to
+    /// the normal path that already owns it. A defused guard that still
+    /// fired would clear the flag out from under a refresh another caller
+    /// started after this one installed its token.
+    #[test]
+    fn a_defused_cancel_guard_leaves_the_flag_alone() {
+        let in_progress = AtomicBool::new(true);
+        let notify = Notify::new();
+
+        let mut guard = CancelGuard {
+            in_progress: &in_progress,
+            notify: &notify,
+            defused: false,
+        };
+        guard.defuse();
+        drop(guard);
+        assert!(
+            in_progress.load(Ordering::Acquire),
+            "a defused guard must not touch the flag"
+        );
+
+        drop(CancelGuard {
+            in_progress: &in_progress,
+            notify: &notify,
+            defused: false,
+        });
+        assert!(
+            !in_progress.load(Ordering::Acquire),
+            "an armed guard clears the flag on drop"
+        );
+    }
+
     fn make_token(access: &str, expires_in: u64, refresh: bool) -> Token {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)

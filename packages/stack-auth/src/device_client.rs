@@ -237,9 +237,19 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let store = ProfileStore::new(dir.path());
 
+        // ZeroKMS sees which client build provisioned the device: the mock
+        // only answers a request that names this crate, version and platform.
+        let user_agent = format!(
+            "stack-auth/{} ({} {})",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+        );
         let mut mocks = MockSet::new();
         mocks.mock(|when, then| {
-            when.post().path("/create-client");
+            when.post()
+                .path("/create-client")
+                .header("user-agent", user_agent);
             then.json(client_response_json());
         });
         let server = start_server(mocks).await;

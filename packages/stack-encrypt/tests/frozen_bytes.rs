@@ -124,6 +124,43 @@ fn sealed_value_rejects_truncation() {
 }
 
 #[test]
+fn sealed_value_decodes_the_shortest_leaf_the_layout_allows() {
+    // An empty tag and an empty ciphertext leave exactly the fixed-width
+    // fields: version ‖ keyset_id ‖ iv ‖ tag_len. That is a whole leaf —
+    // structurally, whatever the AEAD makes of it — and one byte less is
+    // truncated. With a non-empty tag the tag check would reject a short
+    // buffer anyway, so only this shape pins the fixed-width check itself.
+    let leaf = SealedValue::from_parts(Uuid::nil(), [7; 16], Vec::new(), Vec::new())
+        .expect("an empty tag fits");
+    let bytes = leaf.to_bytes();
+    assert_eq!(bytes.len(), 1 + 16 + 16 + 2);
+
+    let decoded = SealedValue::from_bytes(&bytes).expect("the fixed fields alone are a leaf");
+    assert_eq!(decoded.keyset_id(), Uuid::nil());
+    assert_eq!(decoded.iv(), &[7; 16]);
+    assert!(decoded.tag().is_empty());
+    assert!(decoded.ciphertext().is_empty());
+
+    assert!(matches!(
+        SealedValue::from_bytes(&bytes[..bytes.len() - 1]),
+        Err(LeafBytesError::Truncated)
+    ));
+}
+
+#[test]
+fn sealed_value_accepts_the_longest_tag_the_length_field_frames() {
+    // `u16::MAX` bytes is the last tag the length field can state, so it is
+    // a valid leaf — and it must survive the byte format intact.
+    let tag = vec![0x5A; usize::from(u16::MAX)];
+    let leaf = SealedValue::from_parts(Uuid::nil(), [0; 16], tag.clone(), vec![0xDE, 0xAD])
+        .expect("a u16::MAX-byte tag fits the length field");
+
+    let decoded = SealedValue::from_bytes(&leaf.to_bytes()).expect("decode leaf");
+    assert_eq!(decoded.tag(), tag.as_slice());
+    assert_eq!(decoded.ciphertext(), [0xDE, 0xAD].as_slice());
+}
+
+#[test]
 fn sealed_value_rejects_oversized_tag_on_construction() {
     // `to_bytes` is infallible because the tag can never outgrow the `u16`
     // length field: the only constructor that could admit one rejects it.
@@ -278,6 +315,9 @@ async fn equality_term_encoding_is_the_raw_prf_bytes() {
         EqualityTerm::try_from(term.to_bytes().as_slice()).expect("TryFrom decode"),
         term
     );
+    // And the owned conversion out is the same encoding.
+    let bytes = term.to_bytes();
+    assert_eq!(Vec::<u8>::from(term), bytes);
 }
 
 #[test]
@@ -317,6 +357,14 @@ async fn match_term_bytes_are_pinned() {
         MatchTerm::<DefaultMatch>::try_from(bytes.as_slice()).expect("TryFrom decode"),
         term
     );
+}
+
+/// `Debug` shows the positions — the stored, queried form — and nothing
+/// else.
+#[test]
+fn match_term_debug_is_its_positions() {
+    let term = MatchTerm::<DefaultMatch>::from_positions(vec![17, 3]).expect("in range");
+    assert_eq!(format!("{term:?}"), "MatchTerm { positions: [3, 17] }");
 }
 
 #[test]

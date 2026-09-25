@@ -312,6 +312,11 @@ mod tests {
 
         assert_eq!(result.access_token().as_str(), "new-access");
         assert_eq!(result.refresh_token().unwrap().as_str(), "new-refresh");
+        // The `/oauth/token` response carries neither; the refresher stamps
+        // them, and a token without its region cannot derive its workspace
+        // CRN on the next load.
+        assert_eq!(result.region(), Some("ap-southeast-2.aws"));
+        assert_eq!(result.client_id(), Some("cli"));
 
         // Persistence must have happened inside refresh() while the lock
         // was held — so disk now reflects the rotated state.
@@ -322,6 +327,55 @@ mod tests {
             .unwrap();
         assert_eq!(on_disk.access_token().as_str(), "new-access");
         assert_eq!(on_disk.refresh_token().unwrap().as_str(), "new-refresh");
+        assert_eq!(on_disk.region(), Some("ap-southeast-2.aws"));
+        assert_eq!(on_disk.client_id(), Some("cli"));
+    }
+
+    /// The refresh response does not echo the device instance (CIP-2793), so
+    /// a device-bound refresher re-attaches it: the next refresh has to
+    /// present the same instance, and it reads it from this token.
+    #[tokio::test]
+    async fn refresh_carries_the_device_instance_through() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/token");
+            then.json(serde_json::json!({
+                "access_token": "new-access",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "refresh_token": "new-refresh"
+            }));
+        });
+        let server = start_server(mocks).await;
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = ProfileStore::new(dir.path());
+        store.init_workspace(WORKSPACE_ID).unwrap();
+        let ws_store = store.current_workspace_store().unwrap();
+        ws_store
+            .save_profile(&token_on_disk("old-access", "matching-refresh"))
+            .unwrap();
+        let refresher = DeviceSessionRefresher::new(
+            Some(ws_store),
+            server.url(""),
+            "cli",
+            "ap-southeast-2.aws",
+            Some("device-7".to_string()),
+            default_transport(),
+        );
+
+        let result = refresher
+            .refresh(&SecretToken::new("matching-refresh"))
+            .await
+            .unwrap();
+        assert_eq!(result.device_instance_id(), Some("device-7"));
+
+        let on_disk: Token = ProfileStore::new(dir.path())
+            .workspace_store(WORKSPACE_ID)
+            .unwrap()
+            .load_profile()
+            .unwrap();
+        assert_eq!(on_disk.device_instance_id(), Some("device-7"));
     }
 
     /// Concurrent in-process calls to `refresh` must not produce a stale

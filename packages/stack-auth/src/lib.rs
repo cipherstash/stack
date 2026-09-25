@@ -671,4 +671,27 @@ mod tests {
             );
         }
     }
+
+    /// `CS_CTS_HOST` overrides CTS discovery only when it holds something:
+    /// set-but-empty reads as unset (a shell that exports the variable blank
+    /// must not become a URL parse error), and a value that is there is
+    /// parsed, not ignored.
+    #[test]
+    fn cts_base_url_from_env_treats_empty_as_unset() {
+        let read =
+            |value: Option<&str>| temp_env::with_var("CS_CTS_HOST", value, cts_base_url_from_env);
+
+        assert!(matches!(read(None), Ok(None)), "unset → no override");
+        assert!(matches!(read(Some("")), Ok(None)), "empty → no override");
+        assert_eq!(
+            read(Some("https://cts.example.com/"))
+                .expect("a valid URL parses")
+                .map(String::from),
+            Some("https://cts.example.com/".to_string()),
+        );
+        assert!(
+            matches!(read(Some("not a url")), Err(AuthError::InvalidUrl(_))),
+            "a malformed override is an error, not ignored",
+        );
+    }
 }

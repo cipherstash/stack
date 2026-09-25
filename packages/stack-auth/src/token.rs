@@ -428,6 +428,21 @@ mod tests {
         );
     }
 
+    /// The public, wall-clock predicates are what a caller holding a `Token`
+    /// actually consults, so each is pinned on both sides of its edge — an
+    /// hour either way of now, far outside the 90s leeway and any clock skew
+    /// within one test.
+    #[test]
+    fn wall_clock_predicates_refuse_an_expired_token() {
+        let expired = token_expiring_at(now_unix_secs() - 3600);
+        assert!(expired.is_expired(), "an hour past expiry → expired");
+        assert!(!expired.is_usable(), "an hour past expiry → not usable");
+
+        let fresh = make_token(3600, false);
+        assert!(!fresh.is_expired(), "an hour before expiry → not expired");
+        assert!(fresh.is_usable(), "an hour before expiry → usable");
+    }
+
     #[test]
     fn is_expired_at_saturates_near_u64_max() {
         // `is_expired_at` computes `now + EXPIRY_LEEWAY_SECS`; a plain add would
@@ -766,6 +781,20 @@ mod tests {
         let token = jwt_token(serde_json::json!({"sub": "user-123"}));
         let err = token.issuer().unwrap_err();
         assert!(matches!(err, AuthError::InvalidToken(_)));
+    }
+
+    /// The fuzz shim is the claim decoder, not a stub: the harness only
+    /// checks it never panics, so this pins that it still reports the
+    /// decoder's verdict both ways.
+    #[cfg(feature = "fuzz")]
+    #[test]
+    fn fuzz_decode_claims_reports_the_decoders_verdict() {
+        let valid = jwt_token(valid_claims_json());
+        assert!(Token::fuzz_decode_claims(valid.access_token().as_str()).is_ok());
+        assert!(matches!(
+            Token::fuzz_decode_claims("not.a.jwt"),
+            Err(AuthError::InvalidToken(_))
+        ));
     }
 
     #[test]

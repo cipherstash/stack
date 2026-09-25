@@ -1400,6 +1400,80 @@ mod tests {
         assert_eq!(rebuilt.to_string(), original.to_string());
     }
 
+    /// Same contract as `retryability_is_pinned_for_every_error_code`, for
+    /// the "refresh the credential and retry" axis the FFI front-ends key
+    /// off: a credential verdict must say so, and an account, authorisation
+    /// or transport failure must not send the caller round a refresh loop
+    /// that cannot fix it.
+    #[test]
+    fn credential_rejection_is_pinned_for_every_error_code() {
+        const CREDENTIAL_REJECTION: &[&str] = &[
+            codes::NOT_AUTHENTICATED,
+            codes::EXPIRED_TOKEN,
+            codes::INVALID_GRANT,
+            codes::INVALID_CLIENT,
+            codes::INVALID_ACCESS_KEY,
+            codes::ALREADY_CONSUMED,
+        ];
+
+        let payload = serde_json::Map::new();
+        let mut checked = (0, 0);
+        for code in AuthError::ERROR_CODES {
+            let err = AuthError::from_error_code(code, "message", &payload);
+            if err.error_code() != *code {
+                continue;
+            }
+            let expected = CREDENTIAL_REJECTION.contains(code);
+            assert_eq!(
+                err.is_credential_rejection(),
+                expected,
+                "{code} is on the wrong side of the credential-rejection boundary",
+            );
+            if expected {
+                checked.0 += 1;
+            } else {
+                checked.1 += 1;
+            }
+        }
+        assert!(
+            checked.0 > 0 && checked.1 > 0,
+            "both sides of the boundary must be exercised: {checked:?}",
+        );
+
+        // `INVALID_ACCESS_KEY` does not round-trip through `from_error_code`,
+        // so build it the way a malformed key does.
+        let malformed_key =
+            AuthError::from("".parse::<crate::access_key::AccessKey>().unwrap_err());
+        assert_eq!(malformed_key.error_code(), codes::INVALID_ACCESS_KEY);
+        assert!(malformed_key.is_credential_rejection());
+    }
+
+    /// The account-refusal codes carry CTS's wording across the boundary,
+    /// but a blank one falls back to the default rather than rendering an
+    /// empty `Display`; a real message is kept exactly as given.
+    #[test]
+    fn from_error_code_falls_back_on_a_blank_account_refusal_message() {
+        let payload = serde_json::Map::new();
+        for (code, default) in [
+            (
+                codes::USAGE_LIMIT_EXCEEDED,
+                UsageLimitExceeded::DEFAULT_MESSAGE,
+            ),
+            (
+                codes::ORG_NOT_PROVISIONED,
+                OrgNotProvisioned::DEFAULT_MESSAGE,
+            ),
+        ] {
+            for blank in ["", "  \t"] {
+                let err = AuthError::from_error_code(code, blank, &payload);
+                assert_eq!(err.error_code(), code);
+                assert_eq!(err.to_string(), default, "{code} with {blank:?}");
+            }
+            let err = AuthError::from_error_code(code, " as sent ", &payload);
+            assert_eq!(err.to_string(), " as sent ", "{code} keeps its message");
+        }
+    }
+
     #[test]
     fn serialize_emits_type_message_help_and_payload() {
         let expected: cts_common::WorkspaceId = "ZVATKW3VHMFG27DY".parse().unwrap();

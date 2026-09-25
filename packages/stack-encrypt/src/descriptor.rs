@@ -311,6 +311,16 @@ mod tests {
         assert_eq!(Descriptor::of(()).as_str(), "");
         assert_eq!(Descriptor::of("").as_str(), "");
         assert_eq!(Descriptor::of(b"".as_slice()).as_str(), "");
+        assert!(Descriptor::of(()).is_empty());
+        assert!(!Descriptor::of("users/email").is_empty());
+    }
+
+    /// Every view of a descriptor is the one rendering ZeroKMS is sent.
+    #[test]
+    fn display_and_as_ref_are_the_rendering() {
+        let descriptor = Descriptor::of(nonempty!("users/email"));
+        assert_eq!(descriptor.to_string(), "users/email");
+        assert_eq!(AsRef::<str>::as_ref(&descriptor), "users/email");
     }
 
     #[test]
