@@ -19,14 +19,16 @@ use protocol::{
 mod tests;
 
 // Keep the browser boundary visible to callers of `open_in_browser`.
-#[cfg(not(test))]
 fn launch_browser(uri: &str) -> std::io::Result<()> {
-    open::that(uri)
-}
+    #[cfg(test)]
+    {
+        tests::browser::launch(uri)
+    }
 
-#[cfg(test)]
-fn launch_browser(uri: &str) -> std::io::Result<()> {
-    tests::browser::launch(uri)
+    #[cfg(not(test))]
+    {
+        open::that(uri)
+    }
 }
 
 /// The device-code flow is interactive and native-only, so it always runs
