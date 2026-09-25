@@ -18,6 +18,10 @@ use protocol::{
 #[cfg(test)]
 mod tests;
 
+// Keep the public success/failure path under test without opening a browser.
+#[cfg(test)]
+use tests::browser as open;
+
 /// The device-code flow is interactive and native-only, so it always runs
 /// over the bundled transport.
 fn bundled_transport() -> SharedTransport {

@@ -36,40 +36,43 @@ additional_cargo_test_args = ["-E", "not binary(ui) & not test(stress_tests)"]
 exclude_globs = ["packages/stack-encrypt-derive/**"]
 
 # Mutants no test binary can kill, by name. Every other survivor is a test to
-# write, not a line to add here (CIP-4143 cleared the first full sweeps that
-# way). Two kinds qualify:
+# write, not a line to add here. Two kinds qualify:
 #
 # - Unreachable: code compiled out of the native `--all-features` test build
-#   (wasm32-only impls, the no-`http` fallback, the non-test reqwest client),
-#   or whose only effect is outside the process (launching a browser). A
-#   mutant there builds and "survives" because nothing it touches is run.
+#   (wasm32-only impls, the no-`http` fallback, the non-test reqwest client).
+#   A mutant there builds and "survives" because nothing it touches is run.
 # - Equivalent: the replacement is the value the code already returns
 #   (`Some(())` for a `()` credential, `Map::new()` for `Default::default()`,
 #   a builder's `new()` for its `Default`), so no test can tell them apart.
 #
 # The regexes match the name `--list` prints, `path:line:col: replace …`.
 # Anchor on the replacement text, so an entry cannot swallow a reachable
-# sibling with the same function name. The two wasm32 `TokenStoreFn` entries
-# have to anchor on the line as well — their names are otherwise identical to
-# the native impl's, which is caught — so if those lines move, a full sweep
-# reports them again and the line numbers here need moving with them.
+# sibling with the same function name. The wasm32 `TokenStoreFn`,
+# `AutoStrategy::detect_inner` and `Pending::into_future` entries also anchor
+# on the line because their names are identical to the native impl's.
+# If those lines move, a full sweep reports them again and the line numbers
+# here need moving with them.
 exclude_re = [
   # stack-auth — unreachable under the native test build.
   'stack-auth/src/transport\.rs:\d+:\d+: replace <impl std::fmt::Display for NoTransport>::fmt ',
   'stack-auth/src/transport\.rs:\d+:\d+: replace <impl DynTransport for T>::send_dyn -> std::pin::Pin<Box<dyn Future<Output = Result<HttpResponse, RequestError>>\+\x27a>> ',
+  # Production http_client variants are cfg-disabled here; the test variant
+  # builds an unconfigured Client, equivalent to Client::default().
   'stack-auth/src/transport\.rs:\d+:\d+: replace http_client -> reqwest::Client with Default::default\(\)$',
-  'stack-auth/src/auto_strategy\.rs:\d+:\d+: replace AutoStrategy::detect_inner -> Result<Self, AuthError> with Ok\(Default::default\(\)\)$',
+  'stack-auth/src/auto_strategy\.rs:150:9: replace AutoStrategy::detect_inner -> Result<Self, AuthError> with Ok\(Default::default\(\)\)$',
   'stack-auth/src/token_store\.rs:(258|266):9: replace <impl TokenStore for TokenStoreFn<L, S>>::(load|save)',
-  'stack-auth/src/device_code/mod\.rs:\d+:\d+: replace PendingDeviceCode::open_in_browser -> bool ',
   # stack-auth — equivalent.
   'stack-auth/src/(access_key|oidc)_refresher\.rs:\d+:\d+: replace <impl Refresher for \w+(<P>)?>::try_credential -> Option<Self::Credential> with Some\(Default::default\(\)\)$',
   'stack-auth/src/error\.rs:\d+:\d+: replace AuthErrorKind::payload -> serde_json::Map<String, serde_json::Value> with Default::default\(\)$',
   # stack-encrypt — unreachable under the native test build (the wasm32
   # variant; the native one returns a `FallbackKeyProvider`).
   'stack-encrypt/src/cipher\.rs:\d+:\d+: replace client_key_provider -> EnvKeyProvider with Default::default\(\)$',
+  'stack-encrypt/src/target/pending\.rs:443:9: replace <impl IntoFuture for Pending<.*>>::into_future -> Self::IntoFuture with Default::default\(\)$',
   # stack-encrypt — equivalent.
   'stack-encrypt/src/cipher\.rs:\d+:\d+: replace StackCipher<FromEnv>::builder -> StackCipherBuilder with Default::default\(\)$',
   'stack-encrypt/src/sem/mod\.rs:\d+:\d+: replace <impl MatchConfig for DefaultMatch>::options -> MatchOptions with Default::default\(\)$',
+  # Both unit-context conversions explicitly return Self::default().
+  'stack-encrypt/src/target/context\.rs:\d+:\d+: replace <impl From<\(\)> for (DeclaredContext|ExpectedContext<T>)>::from -> Self with Default::default\(\)$',
 ]
 
 # Headroom over the measured baseline before a slow-but-correct mutant is

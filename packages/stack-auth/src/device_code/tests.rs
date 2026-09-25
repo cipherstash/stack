@@ -138,6 +138,51 @@ async fn begin_pending(server: &MockServer, dir: &TempDir) -> PendingDeviceCode 
     strategy_for(server, dir).begin().await.unwrap()
 }
 
+/// Stand in for the OS launcher only; `open_in_browser` itself is unchanged
+/// between test and production builds. Thread-local expectations keep tests
+/// independent even when run concurrently in one test binary.
+pub(super) mod browser {
+    use std::cell::RefCell;
+
+    thread_local! {
+        pub(super) static EXPECTED: RefCell<Option<(String, bool)>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) fn that(uri: &str) -> std::io::Result<()> {
+        let (expected, succeeds) = EXPECTED
+            .with_borrow_mut(Option::take)
+            .expect("unexpected browser launch");
+        assert_eq!(uri, expected, "open the complete verification URI");
+        if succeeds {
+            Ok(())
+        } else {
+            Err(std::io::Error::other("browser launcher failed"))
+        }
+    }
+}
+
+#[tokio::test]
+async fn opening_the_browser_reports_the_launchers_result() {
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    mock_code_endpoint(&mut mocks);
+    let server = start_server(mocks).await;
+    let pending = begin_pending(&server, &dir).await;
+
+    for succeeds in [true, false] {
+        browser::EXPECTED.with_borrow_mut(|expected| {
+            *expected = Some((
+                "http://example.com/activate?user_code=ABCD-EFGH".to_string(),
+                succeeds,
+            ));
+        });
+        assert_eq!(pending.open_in_browser(), succeeds);
+        browser::EXPECTED.with_borrow(|expected| {
+            assert!(expected.is_none(), "the launcher must actually be called");
+        });
+    }
+}
+
 #[tokio::test(start_paused = true)]
 async fn test_poll_for_token_success() {
     let dir = TempDir::new().unwrap();

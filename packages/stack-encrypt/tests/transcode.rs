@@ -349,17 +349,23 @@ impl Visitor for TreeVisitor {
         Ok(Stored::Value(leaf))
     }
     fn sequence<R: SequenceReader>(self, mut reader: R) -> Result<Stored, Error> {
-        let mut output = Vec::with_capacity(reader.remaining());
+        let length = reader.remaining();
+        let mut output = Vec::with_capacity(length);
         while let Some(child) = reader.next() {
             output.push(child.read(TreeVisitor)?);
+            assert_eq!(reader.remaining(), length - output.len());
         }
+        assert_eq!(output.len(), length);
         Ok(Stored::List(output))
     }
     fn map<R: MapReader>(self, mut reader: R) -> Result<Stored, Error> {
-        let mut output = Vec::with_capacity(reader.remaining());
+        let length = reader.remaining();
+        let mut output = Vec::with_capacity(length);
         while let Some((key, child)) = reader.next() {
             output.push((key, child.read(TreeVisitor)?));
+            assert_eq!(reader.remaining(), length - output.len());
         }
+        assert_eq!(output.len(), length);
         Ok(Stored::Object(output))
     }
     fn absent(self, marker: SealedValue) -> Result<Stored, Error> {
