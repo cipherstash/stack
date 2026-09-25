@@ -1328,7 +1328,11 @@ mod tests {
             .scoped_to(a.keyset_id())
             .await
             .expect("re-scoping to its own keyset changes nothing");
-        assert_eq!(tags.len(), 1);
+        assert_eq!(
+            tags.len(),
+            1,
+            "rescoping to the same keyset should produce one tag"
+        );
         assert_eq!(
             cipher.kms().generate_keysets(),
             vec![Some(a.keyset_id())],
@@ -1352,7 +1356,11 @@ mod tests {
                 if left == a.keyset_id() && right == b.keyset_id()),
             "{result:?}"
         );
-        assert_eq!(cipher.kms().generate_calls(), 0);
+        assert_eq!(
+            cipher.kms().generate_calls(),
+            0,
+            "a mismatched merge should not mint a key"
+        );
     }
 
     /// A generate built through the client scope fails where it is built,

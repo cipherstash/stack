@@ -18,9 +18,16 @@ use protocol::{
 #[cfg(test)]
 mod tests;
 
-// Keep the public success/failure path under test without opening a browser.
+// Keep the browser boundary visible to callers of `open_in_browser`.
+#[cfg(not(test))]
+fn launch_browser(uri: &str) -> std::io::Result<()> {
+    open::that(uri)
+}
+
 #[cfg(test)]
-use tests::browser as open;
+fn launch_browser(uri: &str) -> std::io::Result<()> {
+    tests::browser::launch(uri)
+}
 
 /// The device-code flow is interactive and native-only, so it always runs
 /// over the bundled transport.
@@ -289,7 +296,7 @@ impl PendingDeviceCode {
     ///
     /// Returns `true` if the browser was opened successfully.
     pub fn open_in_browser(&self) -> bool {
-        open::that(&self.verification_uri_complete).is_ok()
+        launch_browser(&self.verification_uri_complete).is_ok()
     }
 
     /// Poll the auth server until the user authorizes (or the code expires).

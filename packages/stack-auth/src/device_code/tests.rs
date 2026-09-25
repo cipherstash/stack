@@ -148,7 +148,7 @@ pub(super) mod browser {
         pub(super) static EXPECTED: RefCell<Option<(String, bool)>> = const { RefCell::new(None) };
     }
 
-    pub(crate) fn that(uri: &str) -> std::io::Result<()> {
+    pub(in crate::device_code) fn launch(uri: &str) -> std::io::Result<()> {
         let (expected, succeeds) = EXPECTED
             .with_borrow_mut(Option::take)
             .expect("unexpected browser launch");
@@ -176,7 +176,11 @@ async fn opening_the_browser_reports_the_launchers_result() {
                 succeeds,
             ));
         });
-        assert_eq!(pending.open_in_browser(), succeeds);
+        assert_eq!(
+            pending.open_in_browser(),
+            succeeds,
+            "browser launch result should match launcher success={succeeds}"
+        );
         browser::EXPECTED.with_borrow(|expected| {
             assert!(expected.is_none(), "the launcher must actually be called");
         });

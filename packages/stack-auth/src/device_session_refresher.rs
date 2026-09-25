@@ -310,13 +310,29 @@ mod tests {
         let credential = SecretToken::new("matching-refresh");
         let result = refresher.refresh(&credential).await.unwrap();
 
-        assert_eq!(result.access_token().as_str(), "new-access");
-        assert_eq!(result.refresh_token().unwrap().as_str(), "new-refresh");
+        assert_eq!(
+            result.access_token().as_str(),
+            "new-access",
+            "refresh should return the new access token"
+        );
+        assert_eq!(
+            result.refresh_token().unwrap().as_str(),
+            "new-refresh",
+            "refresh should return the rotated refresh token"
+        );
         // The `/oauth/token` response carries neither; the refresher stamps
         // them, and a token without its region cannot derive its workspace
         // CRN on the next load.
-        assert_eq!(result.region(), Some("ap-southeast-2.aws"));
-        assert_eq!(result.client_id(), Some("cli"));
+        assert_eq!(
+            result.region(),
+            Some("ap-southeast-2.aws"),
+            "refresh should preserve the region"
+        );
+        assert_eq!(
+            result.client_id(),
+            Some("cli"),
+            "refresh should preserve the client id"
+        );
 
         // Persistence must have happened inside refresh() while the lock
         // was held — so disk now reflects the rotated state.
@@ -325,10 +341,26 @@ mod tests {
             .unwrap()
             .load_profile()
             .unwrap();
-        assert_eq!(on_disk.access_token().as_str(), "new-access");
-        assert_eq!(on_disk.refresh_token().unwrap().as_str(), "new-refresh");
-        assert_eq!(on_disk.region(), Some("ap-southeast-2.aws"));
-        assert_eq!(on_disk.client_id(), Some("cli"));
+        assert_eq!(
+            on_disk.access_token().as_str(),
+            "new-access",
+            "the rotated access token should be persisted"
+        );
+        assert_eq!(
+            on_disk.refresh_token().unwrap().as_str(),
+            "new-refresh",
+            "the rotated refresh token should be persisted"
+        );
+        assert_eq!(
+            on_disk.region(),
+            Some("ap-southeast-2.aws"),
+            "the region should be persisted"
+        );
+        assert_eq!(
+            on_disk.client_id(),
+            Some("cli"),
+            "the client id should be persisted"
+        );
     }
 
     /// The refresh response does not echo the device instance (CIP-2793), so
@@ -368,7 +400,11 @@ mod tests {
             .refresh(&SecretToken::new("matching-refresh"))
             .await
             .unwrap();
-        assert_eq!(result.device_instance_id(), Some("device-7"));
+        assert_eq!(
+            result.device_instance_id(),
+            Some("device-7"),
+            "refresh should preserve the device instance"
+        );
 
         let on_disk: Token = ProfileStore::new(dir.path())
             .workspace_store(WORKSPACE_ID)

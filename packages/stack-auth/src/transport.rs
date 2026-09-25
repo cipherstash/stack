@@ -563,9 +563,17 @@ mod tests {
         let headers = vec![("content-type".to_string(), "application/json".to_string())];
         let response = HttpResponse::new(201, headers.clone(), b"{\"ok\":true}".to_vec());
 
-        assert_eq!(response.status(), 201);
-        assert_eq!(response.headers(), headers.as_slice());
-        assert_eq!(response.body(), b"{\"ok\":true}");
+        assert_eq!(response.status(), 201, "response should retain its status");
+        assert_eq!(
+            response.headers(),
+            headers.as_slice(),
+            "response should retain its headers"
+        );
+        assert_eq!(
+            response.body(),
+            b"{\"ok\":true}",
+            "response should retain its body"
+        );
     }
 
     #[test]

@@ -711,7 +711,11 @@ mod tests {
     /// The documented bound on how long a rename can go unnoticed.
     #[test]
     fn a_name_binding_is_trusted_for_five_minutes_by_default() {
-        assert_eq!(DEFAULT_NAME_TTL, Duration::from_secs(300));
+        assert_eq!(
+            DEFAULT_NAME_TTL,
+            Duration::from_secs(300),
+            "name bindings should be trusted for five minutes by default"
+        );
     }
 
     /// Every ordering rule in the cache is written in `is_later_than`, so
@@ -719,9 +723,18 @@ mod tests {
     /// itself, nor than one after it.
     #[test]
     fn later_is_strictly_later() {
-        assert!(Resolution(2).is_later_than(Resolution(1)));
-        assert!(!Resolution(1).is_later_than(Resolution(1)));
-        assert!(!Resolution(1).is_later_than(Resolution(2)));
+        assert!(
+            Resolution(2).is_later_than(Resolution(1)),
+            "a later resolution should compare later"
+        );
+        assert!(
+            !Resolution(1).is_later_than(Resolution(1)),
+            "a resolution should not be later than itself"
+        );
+        assert!(
+            !Resolution(1).is_later_than(Resolution(2)),
+            "an earlier resolution should not compare later"
+        );
     }
 
     /// A binding is fresh strictly inside its window. The zero-window case
@@ -738,8 +751,14 @@ mod tests {
         };
         let ttl = Duration::from_secs(60);
 
-        assert!(alias.is_fresh_at(bound, ttl));
-        assert!(alias.is_fresh_at(bound + ttl - Duration::from_nanos(1), ttl));
+        assert!(
+            alias.is_fresh_at(bound, ttl),
+            "a binding should be fresh at its start"
+        );
+        assert!(
+            alias.is_fresh_at(bound + ttl - Duration::from_nanos(1), ttl),
+            "a binding should be fresh just before expiry"
+        );
         assert!(
             !alias.is_fresh_at(bound + ttl, ttl),
             "the window's end is outside it"
@@ -766,17 +785,26 @@ mod tests {
                 matches!(loads.get(&id(1)), Lookup::Miss(_)),
                 "the first loaded is the least recently used"
             );
-            assert!(matches!(loads.get(&id(2)), Lookup::Hit(_)));
+            assert!(
+                matches!(loads.get(&id(2)), Lookup::Hit(_)),
+                "the second loaded keyset should remain cached"
+            );
 
             hits.load(state(1, None));
             hits.load(state(2, None));
-            assert!(matches!(hits.get(&id(1)), Lookup::Hit(_)));
+            assert!(
+                matches!(hits.get(&id(1)), Lookup::Hit(_)),
+                "the first keyset should be cached before its hit"
+            );
             hits.load(state(3, None));
             assert!(
                 matches!(hits.get(&id(2)), Lookup::Miss(_)),
                 "a hit makes 1 newer than the 2 loaded after it"
             );
-            assert!(matches!(hits.get(&id(1)), Lookup::Hit(_)));
+            assert!(
+                matches!(hits.get(&id(1)), Lookup::Hit(_)),
+                "the recently used keyset should survive eviction"
+            );
         }
     }
 
@@ -800,7 +828,11 @@ mod tests {
             Some(Uuid::from_u128(1)),
             "and the old keyset answers to its new name"
         );
-        assert_eq!(cache.names(), 2);
+        assert_eq!(
+            cache.names(),
+            2,
+            "both names should remain bound after the rename"
+        );
     }
 
     /// The default here is keyset 7, not the nil id the other tests' caches

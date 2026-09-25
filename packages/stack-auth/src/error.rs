@@ -1417,7 +1417,8 @@ mod tests {
         ];
 
         let payload = serde_json::Map::new();
-        let mut checked = (0, 0);
+        let mut rejected_credentials = 0;
+        let mut other_errors = 0;
         for code in AuthError::ERROR_CODES {
             let err = AuthError::from_error_code(code, "message", &payload);
             if err.error_code() != *code {
@@ -1430,22 +1431,29 @@ mod tests {
                 "{code} is on the wrong side of the credential-rejection boundary",
             );
             if expected {
-                checked.0 += 1;
+                rejected_credentials += 1;
             } else {
-                checked.1 += 1;
+                other_errors += 1;
             }
         }
         assert!(
-            checked.0 > 0 && checked.1 > 0,
-            "both sides of the boundary must be exercised: {checked:?}",
+            rejected_credentials > 0 && other_errors > 0,
+            "both sides of the boundary must be exercised: {rejected_credentials} credential rejections, {other_errors} other errors",
         );
 
         // `INVALID_ACCESS_KEY` does not round-trip through `from_error_code`,
         // so build it the way a malformed key does.
         let malformed_key =
             AuthError::from("".parse::<crate::access_key::AccessKey>().unwrap_err());
-        assert_eq!(malformed_key.error_code(), codes::INVALID_ACCESS_KEY);
-        assert!(malformed_key.is_credential_rejection());
+        assert_eq!(
+            malformed_key.error_code(),
+            codes::INVALID_ACCESS_KEY,
+            "malformed access key should retain its error code"
+        );
+        assert!(
+            malformed_key.is_credential_rejection(),
+            "malformed access key should be a credential rejection: {malformed_key:?}"
+        );
     }
 
     /// The account-refusal codes carry CTS's wording across the boundary,
@@ -1466,7 +1474,7 @@ mod tests {
         ] {
             for blank in ["", "  \t"] {
                 let err = AuthError::from_error_code(code, blank, &payload);
-                assert_eq!(err.error_code(), code);
+                assert_eq!(err.error_code(), code, "blank message should retain {code}");
                 assert_eq!(err.to_string(), default, "{code} with {blank:?}");
             }
             let err = AuthError::from_error_code(code, " as sent ", &payload);

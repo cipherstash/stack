@@ -219,11 +219,28 @@ async fn empty_marker_does_not_decode_under_wrong_aad() {
 
 /// A hand-written record carrying one field in the clear, through the
 /// type-erased `passthrough_entry_boxed` a cipher-generic `Encrypt` has to
-/// use — optionally giving that field twice.
+/// use.
 struct Row {
     id: u32,
     email: String,
     repeat_id: bool,
+}
+
+impl Row {
+    fn once() -> Self {
+        Self {
+            id: 7,
+            email: "a@x".to_string(),
+            repeat_id: false,
+        }
+    }
+
+    fn with_duplicate_id() -> Self {
+        Self {
+            repeat_id: true,
+            ..Self::once()
+        }
+    }
 }
 
 impl Encrypt for Row {
@@ -249,13 +266,7 @@ impl Encrypt for Row {
 async fn a_passthrough_map_entry_is_stored_in_the_clear_once() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
-    let row = |repeat_id| Row {
-        id: 7,
-        email: "a@x".to_string(),
-        repeat_id,
-    };
-
-    let ct = keyset.encrypt(row(false), ()).await.expect("encrypt");
+    let ct = keyset.encrypt(Row::once(), ()).await.expect("encrypt");
     let CipherText::Map(entries) = ct else {
         panic!("a record encrypts as a map: {ct:?}");
     };
@@ -269,7 +280,7 @@ async fn a_passthrough_map_entry_is_stored_in_the_clear_once() {
         "{entries:?}"
     );
 
-    let result = keyset.encrypt(row(true), ()).await;
+    let result = keyset.encrypt(Row::with_duplicate_id(), ()).await;
     assert!(result.is_err(), "a passthrough key given twice is refused");
 }
 
