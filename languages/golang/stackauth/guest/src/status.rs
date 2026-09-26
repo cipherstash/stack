@@ -1,4 +1,4 @@
-//! The mapping from [`stack_profile::ProfileError`] onto the status table.
+//! Map profile and auth errors onto the shared guest status table.
 //!
 //! The numbers are [`stack_guest_abi::status`]'s — one table for every
 //! guest, decoded once by the Go host — re-exported here so this crate's
@@ -7,6 +7,7 @@
 //! `stack-profile` conditions a Go caller can act on each have one, and
 //! the two it cannot act on are internal.
 
+use stack_auth::AuthError;
 use stack_profile::ProfileError;
 
 pub use stack_guest_abi::status::{
@@ -15,6 +16,23 @@ pub use stack_guest_abi::status::{
     STATUS_PROFILE_NOT_FOUND, STATUS_PROFILE_NO_CURRENT_WORKSPACE,
     STATUS_PROFILE_WORKSPACE_NOT_FOUND, STATUS_STATE,
 };
+
+/// Preserve the auth decisions callers can act on without exposing token
+/// bytes or parsing a server message across the ABI.
+pub fn status_for_auth(error: &AuthError) -> u32 {
+    use stack_guest_abi::status::*;
+    match error.error_code() {
+        "INVALID_GRANT" => STATUS_AUTH_INVALID_GRANT,
+        "INVALID_CLIENT" => STATUS_AUTH_INVALID_CLIENT,
+        "USAGE_LIMIT_EXCEEDED" => STATUS_AUTH_USAGE_LIMIT,
+        "NOT_AUTHENTICATED" | "EXPIRED_TOKEN" => STATUS_AUTH_NOT_AUTHENTICATED,
+        "REQUEST_ERROR" | "SERVER_ERROR" => STATUS_AUTH_TRANSPORT,
+        "INVALID_URL" | "INVALID_REGION" | "INVALID_CRN" | "WORKSPACE_MISMATCH"
+        | "INVALID_WORKSPACE_ID" | "MISSING_WORKSPACE_CRN" | "INVALID_ACCESS_KEY"
+        | "INVALID_TOKEN" => STATUS_AUTH_CONFIG,
+        _ => STATUS_AUTH_OTHER,
+    }
+}
 
 /// A profile error as a status code.
 ///

@@ -28,6 +28,7 @@ serde_json = { workspace = true }
 # `.form()` does (it uses this crate), so the bundled transport and a host's
 # own transport send byte-identical requests.
 serde_urlencoded = "0.7"
+stack-profile = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
@@ -52,7 +53,6 @@ zeroize = { workspace = true }
 # every target — `base64` above is shared. Wasm consumers use
 # `DeviceSessionStrategy::with_token` (in-memory) or `AccessKeyStrategy`.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-stack-profile = { workspace = true }
 open = "5.3.2"
 jsonwebtoken = { workspace = true }
 tokio = { workspace = true }

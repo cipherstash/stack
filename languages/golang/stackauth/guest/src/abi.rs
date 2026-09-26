@@ -29,7 +29,7 @@ use stack_guest_abi::abi::{err_status, input, ok_buffer};
 use stack_guest_abi::buffers;
 use stack_guest_abi::status::STATUS_INTERNAL;
 
-use crate::ops;
+use crate::{auth, ops};
 
 /// Where the host mounts the profile root. The Go side mounts exactly one
 /// directory here and constructs every store directory under it; nothing
@@ -183,10 +183,37 @@ pub unsafe extern "C" fn sa_device_identity(dir_ptr: *const u8, dir_len: u32) ->
     export1(dir_ptr, dir_len, ops::device_identity)
 }
 
+/// Construct an auth strategy from a tagged JSON config. Returns its handle.
+/// The access key, when present, stays in the guest and is dropped on free.
+/// # Safety
+/// The input pair is validated against guest linear memory.
+#[no_mangle]
+pub unsafe extern "C" fn sa_auth_new(ptr: *const u8, len: u32) -> u64 {
+    export1(ptr, len, auth::create)
+}
+
+/// Get a service token from a strategy. For a device session the Go host
+/// must hold the workspace's auth.json lock for the whole call.
+/// # Safety
+/// The input pair is validated against guest linear memory.
+#[no_mangle]
+pub unsafe extern "C" fn sa_auth_token(ptr: *const u8, len: u32) -> u64 {
+    export1(ptr, len, auth::token)
+}
+
+/// Drop one strategy and its cached credential.
+/// # Safety
+/// The input pair is validated against guest linear memory.
+#[no_mangle]
+pub unsafe extern "C" fn sa_auth_free(ptr: *const u8, len: u32) -> u64 {
+    export1(ptr, len, auth::free)
+}
+
 /// Tear the instance down: wipe every buffer the registry still holds.
 /// This guest keeps no other state. Idempotent; `se_alloc` and
 /// `se_dealloc` keep working so the host can still free what it holds.
 #[no_mangle]
 pub extern "C" fn sa_shutdown() {
+    let _ = catch_unwind(AssertUnwindSafe(auth::clear));
     let _ = catch_unwind(AssertUnwindSafe(buffers::wipe_all));
 }

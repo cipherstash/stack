@@ -99,10 +99,20 @@ pub const STATUS_PROFILE_INVALID_WORKSPACE_ID: u32 = 18;
 /// in to it on this machine.
 pub const STATUS_PROFILE_WORKSPACE_NOT_FOUND: u32 = 19;
 
+// Auth strategy verdicts from the credential guest. Keep the three
+// actionable exchange refusals separate from network/configuration errors.
+pub const STATUS_AUTH_INVALID_GRANT: u32 = 20;
+pub const STATUS_AUTH_INVALID_CLIENT: u32 = 21;
+pub const STATUS_AUTH_USAGE_LIMIT: u32 = 22;
+pub const STATUS_AUTH_NOT_AUTHENTICATED: u32 = 23;
+pub const STATUS_AUTH_TRANSPORT: u32 = 24;
+pub const STATUS_AUTH_CONFIG: u32 = 25;
+pub const STATUS_AUTH_OTHER: u32 = 26;
+
 /// The last code in the table. A guest appending a code of its own starts
 /// at `LAST_STATUS + 1` and moves this constant with it, so two guests can
 /// never claim one number.
-pub const LAST_STATUS: u32 = STATUS_PROFILE_WORKSPACE_NOT_FOUND;
+pub const LAST_STATUS: u32 = STATUS_AUTH_OTHER;
 
 #[cfg(test)]
 mod tests {
@@ -132,6 +142,13 @@ mod tests {
             STATUS_PROFILE_NO_CURRENT_WORKSPACE,
             STATUS_PROFILE_INVALID_WORKSPACE_ID,
             STATUS_PROFILE_WORKSPACE_NOT_FOUND,
+            STATUS_AUTH_INVALID_GRANT,
+            STATUS_AUTH_INVALID_CLIENT,
+            STATUS_AUTH_USAGE_LIMIT,
+            STATUS_AUTH_NOT_AUTHENTICATED,
+            STATUS_AUTH_TRANSPORT,
+            STATUS_AUTH_CONFIG,
+            STATUS_AUTH_OTHER,
         ];
         for (i, code) in codes.iter().enumerate() {
             assert_eq!(*code, i as u32 + 1, "code {i} is out of sequence");

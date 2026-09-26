@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -23,6 +24,13 @@ type Option func(*options)
 type options struct {
 	guest         []byte
 	requireLocked bool
+	transport     http.RoundTripper
+}
+
+// WithRoundTripper sends the guest's authentication requests through rt.
+// The default is http.DefaultTransport.
+func WithRoundTripper(rt http.RoundTripper) Option {
+	return func(o *options) { o.transport = rt }
 }
 
 // WithGuest overrides the embedded wasm module.
@@ -104,7 +112,7 @@ func Open(ctx context.Context, dir string, opts ...Option) (*ProfileStore, error
 			return nil, err
 		}
 	}
-	inst, err := newInstance(ctx, wasm, dir, guest.PolicyFor(o.requireLocked))
+	inst, err := newInstance(ctx, wasm, dir, guest.PolicyFor(o.requireLocked), o.transport)
 	if err != nil {
 		return nil, err
 	}
@@ -175,6 +183,17 @@ type export func(*instance) api.Function
 // call runs one export under the profile's lock, closing the profile if
 // the guest trapped or an interrupted call took the module down.
 func (s *ProfileStore) call(ctx context.Context, fn export, args ...string) ([]byte, error) {
+	staged := make([]guest.Arg, 0, len(args)+1)
+	staged = append(staged, guest.BufArg([]byte(s.dir)))
+	for _, arg := range args {
+		staged = append(staged, guest.BufArg([]byte(arg)))
+	}
+	return s.callArgs(ctx, fn, staged...)
+}
+
+// callArgs is the shared checked call path for profile exports and auth
+// exports. The latter pass secret-bearing byte buffers and wipe host copies.
+func (s *ProfileStore) callArgs(ctx context.Context, fn export, args ...guest.Arg) ([]byte, error) {
 	r := s.root
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -183,7 +202,7 @@ func (s *ProfileStore) call(ctx context.Context, fn export, args ...string) ([]b
 		return nil, ErrState
 	}
 	growth := r.inst.mem.GrowthRefusal()
-	out, err := r.inst.call(ctx, fn(r.inst), append([]string{s.dir}, args...)...)
+	out, err := guest.Call(ctx, r.inst.mem, r.inst.module, r.inst.exports, fn(r.inst), args...)
 	switch {
 	case r.inst.module.IsClosed():
 		r.closed = true
@@ -282,9 +301,9 @@ func (s *ProfileStore) CurrentWorkspaceStore(ctx context.Context) (*ProfileStore
 
 // LockPath is the host path of the lock file the Rust crate takes for
 // filename in this store: a sibling `.<filename>.lock`. Nothing is created
-// or locked. It is for the host to hold the crate's lock — around a
-// refresh, once this package refreshes — since the guest cannot; this
-// package never composes a profile path itself.
+// or locked. DeviceSession holds this lock across the guest's refresh call;
+// the guest cannot lock under WASI. This package never composes a profile
+// path itself.
 func (s *ProfileStore) LockPath(ctx context.Context, filename string) (string, error) {
 	// The guest validates the filename as the crate does, against the
 	// guest's separator, which is `/`. The host's is checked here: on

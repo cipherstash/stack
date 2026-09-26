@@ -178,8 +178,7 @@ pub fn secret_key(dir: &[u8]) -> Result<Vec<u8>, u32> {
 /// (strings), `expires_at` (seconds since the epoch, `u64`), and `region`,
 /// `client_id` and `device_instance_id` (each a string or null). The
 /// refresh token is not in it, on purpose: the host presents the access
-/// token and refuses it at expiry; refreshing is this guest's, once the
-/// auth half lands.
+/// token and refuses it at expiry; the auth strategy exports handle refresh.
 pub fn token(dir: &[u8]) -> Result<Vec<u8>, u32> {
     let token: Token = store(dir)?
         .load(AUTH_FILENAME)

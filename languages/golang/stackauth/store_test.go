@@ -68,10 +68,8 @@ func write(t *testing.T, path, content string) {
 	}
 }
 
-// The guest may reach the filesystem — that is what it is for — and
-// nothing else: no sockets, no transport import (the auth half adds one),
-// and only the exports this package resolves.
-func TestImportSurfaceIsWASIWithoutSockets(t *testing.T) {
+// The guest may reach the profile mount and the two named auth host imports.
+func TestImportSurfaceIsWASIAndAuthTransport(t *testing.T) {
 	ctx := context.Background()
 	r := wazero.NewRuntime(ctx)
 	defer r.Close(ctx)
@@ -81,10 +79,23 @@ func TestImportSurfaceIsWASIWithoutSockets(t *testing.T) {
 	}
 	defer compiled.Close(ctx)
 	sawPathOpen := false
+	sawTransport := false
+	sawOIDC := false
 	for _, imp := range compiled.ImportedFunctions() {
 		module, name, _ := imp.Import()
+		if module == "cipherstash_transport" {
+			switch name {
+			case "transport_send":
+				sawTransport = true
+			case "oidc_token_get":
+				sawOIDC = true
+			default:
+				t.Errorf("unexpected auth host import %s", name)
+			}
+			continue
+		}
 		if module != "wasi_snapshot_preview1" {
-			t.Errorf("guest imports %s::%s, outside WASI", module, name)
+			t.Errorf("guest imports %s::%s, outside the allowed surface", module, name)
 			continue
 		}
 		if strings.HasPrefix(name, "sock_") {
@@ -97,7 +108,10 @@ func TestImportSurfaceIsWASIWithoutSockets(t *testing.T) {
 	if !sawPathOpen {
 		t.Error("guest does not import path_open; it cannot be reading a profile")
 	}
-	for _, name := range []string{"se_alloc", "se_dealloc", "sa_shutdown", "sa_current_workspace", "sa_set_current_workspace", "sa_clear_current_workspace", "sa_list_workspaces", "sa_workspace_dir", "sa_lock_path", "sa_secret_key", "sa_token", "sa_device_identity"} {
+	if !sawTransport || !sawOIDC {
+		t.Errorf("missing auth imports: transport=%t oidc=%t", sawTransport, sawOIDC)
+	}
+	for _, name := range []string{"se_alloc", "se_dealloc", "sa_shutdown", "sa_current_workspace", "sa_set_current_workspace", "sa_clear_current_workspace", "sa_list_workspaces", "sa_workspace_dir", "sa_lock_path", "sa_secret_key", "sa_token", "sa_device_identity", "sa_auth_new", "sa_auth_token", "sa_auth_free"} {
 		if _, ok := compiled.ExportedFunctions()[name]; !ok {
 			t.Errorf("guest does not export %s", name)
 		}

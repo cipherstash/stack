@@ -146,13 +146,10 @@ jobs:
           mise run go:test
 
   # The same Go binding on macOS and Windows, against the guest Linux built.
-  # Today that is the crypto binding, which had never run on either. The
-  # reason to have the platforms in place now is what comes next: the
-  # credential guest (ADR-0005, CIP-4054) puts the cross-process refresh
-  # lock on the Go side with a Unix and a Windows implementation, and a Go
-  # developer sharing a profile with the CLI is the scenario the lock exists
-  # for, so those tests need somewhere to run before they are written. They
-  # gate the way wasi-check does: a red run on the PR, not branch protection.
+  # The credential guest's Go-side refresh lock has Unix and Windows
+  # implementations. The shared go-binding-test.sh prints the device refresh
+  # tests explicitly on each platform, alongside the rest of the Go suite.
+  # They gate the way wasi-check does: a red run on the PR, not branch protection.
   # main's ruleset requires no status check today, and this workflow is path
   # filtered, so a required check here would never run on a PR outside the
   # filter and block it forever. If either job is ever made required, pair it

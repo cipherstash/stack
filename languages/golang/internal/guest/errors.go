@@ -64,7 +64,14 @@ var (
 	ErrInvalidWorkspaceID = errors.New("cipherstash: invalid workspace id")
 	// ErrWorkspaceNotFound is a workspace with no local profile data: nothing
 	// has logged in to it on this machine.
-	ErrWorkspaceNotFound = errors.New("cipherstash: workspace has no local profile; log in to it first")
+	ErrWorkspaceNotFound    = errors.New("cipherstash: workspace has no local profile; log in to it first")
+	ErrAuthInvalidGrant     = errors.New("cipherstash: auth server rejected the refresh grant")
+	ErrAuthInvalidClient    = errors.New("cipherstash: auth server rejected the client")
+	ErrAuthUsageLimit       = errors.New("cipherstash: account usage limit exceeded")
+	ErrAuthNotAuthenticated = errors.New("cipherstash: no usable authentication credential")
+	ErrAuthTransport        = errors.New("cipherstash: auth transport failed")
+	ErrAuthConfig           = errors.New("cipherstash: invalid auth configuration or token")
+	ErrAuthOther            = errors.New("cipherstash: authentication failed")
 	// ErrMemoryLock is guest memory that could not be locked in RAM (or,
 	// on Linux, excluded from core dumps). A constructor returns it when
 	// asked for locked memory and refused, and so does any later call under

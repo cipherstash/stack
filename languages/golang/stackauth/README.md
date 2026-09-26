@@ -7,9 +7,9 @@ the Go SDK: it hands a [`stackencrypt`](../stackencrypt) client its client
 key and its bearer token without either package re-deriving the profile's
 layout, and without either importing the other.
 
-This is the **profile half** of [ADR-0005]. Refreshing a token from Go, and
-the access-key and OIDC strategies, are the auth half (CIP-4054); until it
-lands, an expired stored token means `stash auth login`.
+The guest also runs the `stack-auth` strategies: access key, device session,
+OIDC federation, and automatic selection. Go supplies HTTP and holds the
+cross-process refresh lock for device sessions.
 
 [wazero]: https://wazero.io
 [ADR-0005]: ../../../packages/stack-encrypt/docs/adr/0005-a-separate-credential-guest-for-the-profile-and-auth.md
@@ -42,7 +42,7 @@ func run(ctx context.Context) error {
     client, err := stackencrypt.NewClient(ctx, stackencrypt.Config{
         ClientID:  clientID,
         ClientKey: clientKey,               // consumed and wiped by NewClient
-        Token:     workspace.TokenSource(), // re-reads auth.json per request
+        Token:     workspace.TokenSource(), // reads auth.json; no refresh
     })
     if err != nil {
         return err
@@ -57,6 +57,25 @@ func run(ctx context.Context) error {
 key goes straight from the profile into the config. The token source
 refuses a token at its real expiry with `stackauth.ErrTokenExpired`.
 
+For a refreshing device session, replace `workspace.TokenSource()` with a
+strategy and close it after the client:
+
+```go
+source, err := workspace.DeviceSession(ctx)
+if err != nil { return err }
+defer source.Close()
+// stackencrypt.Config{Token: source, ...}
+```
+
+`profile.AccessKey(ctx, crn, key)`, `profile.OIDC(ctx, crn, provider)`, and
+`profile.Auto(ctx)` also return strategies that satisfy
+`stackencrypt.TokenSource`. `Auto` checks `CS_CLIENT_ACCESS_KEY` and
+`CS_WORKSPACE_CRN` first, then the current workspace's stored device session.
+The OIDC provider is a one-method `Token(context.Context) (string, error)`
+interface. Use `stackauth.OAuth2TokenSource(source)` to adapt a
+`golang.org/x/oauth2.TokenSource`. `WithAuthBaseURL(url)` overrides service
+discovery for local tests or a custom CTS host.
+
 ## What the guest is given
 
 Exactly one directory, mounted read-write at a fixed guest path, and no
@@ -66,8 +85,9 @@ workspace id, and the mount itself is confined — a symlink inside the
 profile that leads outside it is refused, for reads and for the one write,
 rather than followed with the process's permissions as a plain directory
 mount would. Files it creates are mode 0600. It takes no file lock (WASI
-preview 1 has none); the cross-process refresh lock the CLI holds is Go's
-to take, on the path `ProfileStore.LockPath` names, once refreshing lands.
+preview 1 has none); Go holds the same lock as the CLI across the device
+session call, on the path `ProfileStore.LockPath` names. The guest re-reads
+auth.json after acquisition and saves refreshed tokens before release.
 
 The crypto guest behind `stackencrypt` is not widened by this package
 existing: it still has no filesystem and no environment.

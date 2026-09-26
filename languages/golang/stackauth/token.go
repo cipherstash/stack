@@ -11,8 +11,7 @@ import (
 
 // Token is the stored access token, as auth.json holds it and
 // [ProfileStore.Token] reads it through the Rust crate's own type. The
-// refresh token is not in it: refreshing is the auth half of this package,
-// and it runs inside the guest.
+// refresh token is not in it: the guest handles refresh through a Strategy.
 type Token struct {
 	// AccessToken is the bearer credential.
 	AccessToken string
@@ -76,8 +75,7 @@ func (s *ProfileStore) Token(ctx context.Context) (Token, error) {
 // Every call re-reads the file, so a login or refresh by the CLI in
 // another terminal is picked up without a restart, and a token at or past
 // its real expiry is refused with [ErrTokenExpired] rather than presented.
-// Refreshing is not here yet; until it is, the answer to ErrTokenExpired
-// is `stash auth login`.
+// This read-only source does not refresh; use DeviceSession for that.
 type TokenSource struct {
 	store *ProfileStore
 	// now is the clock, for tests; nil is time.Now.

@@ -37,7 +37,14 @@ var (
 	// ErrState is a call on a store that has been closed.
 	ErrState = guest.ErrState
 	// ErrInternal is a guest panic or any other unexpected guest failure.
-	ErrInternal = guest.ErrInternal
+	ErrInternal         = guest.ErrInternal
+	ErrInvalidGrant     = guest.ErrAuthInvalidGrant
+	ErrInvalidClient    = guest.ErrAuthInvalidClient
+	ErrUsageLimit       = guest.ErrAuthUsageLimit
+	ErrNotAuthenticated = guest.ErrAuthNotAuthenticated
+	ErrAuthTransport    = guest.ErrAuthTransport
+	ErrAuthConfig       = guest.ErrAuthConfig
+	ErrAuthOther        = guest.ErrAuthOther
 	// ErrMemoryLock is guest memory that could not be locked in RAM (or, on
 	// Linux, excluded from core dumps). Open returns it under
 	// [RequireLockedMemory]; otherwise [ProfileStore.MemoryLockError]
@@ -45,8 +52,8 @@ var (
 	ErrMemoryLock = guest.ErrMemoryLock
 
 	// ErrTokenExpired is a stored token past its expiry: the profile has one,
-	// but it is no use, and only `stash auth login` (or, once the auth half
-	// of this package lands, a refresh) can replace it.
+	// but it is no use. A DeviceSession strategy can refresh it when the
+	// profile has a valid refresh token.
 	ErrTokenExpired = errors.New("stackauth: the stored token has expired; run `stash auth login`")
 	// ErrNoProfile is a profile directory that does not exist: nothing has
 	// logged in on this machine, or CS_CONFIG_PATH names the wrong place.

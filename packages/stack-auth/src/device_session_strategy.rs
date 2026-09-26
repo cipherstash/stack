@@ -1,7 +1,6 @@
 use cts_common::{Crn, CtsServiceDiscovery, Region, ServiceDiscovery};
 use tracing::warn;
 
-#[cfg(not(target_arch = "wasm32"))]
 use stack_profile::ProfileStore;
 
 use crate::auto_refresh::AutoRefresh;
@@ -68,10 +67,22 @@ impl DeviceSessionStrategy {
     /// The token must have `region` and `client_id` set (as saved by
     /// `DeviceCodeStrategy` (native, with the `http` feature) or a prior
     /// `DeviceSessionStrategy`). The store is used for persisting refreshed tokens.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn with_profile(store: ProfileStore) -> DeviceSessionStrategyBuilder {
         DeviceSessionStrategyBuilder {
             source: OAuthTokenSource::Store(store),
+            base_url_override: None,
+            transport: None,
+        }
+    }
+
+    /// Build from a workspace-scoped profile store. WASI hosts use this
+    /// after taking the sibling auth.json lock; the store is read when
+    /// `build` runs, so a sibling process's completed rotation is observed.
+    /// On wasm32 the host must hold that lock through `get_token`, including
+    /// the save, because WASI preview 1 has no file locking.
+    pub fn with_workspace_store(store: ProfileStore) -> DeviceSessionStrategyBuilder {
+        DeviceSessionStrategyBuilder {
+            source: OAuthTokenSource::WorkspaceStore(store),
             base_url_override: None,
             transport: None,
         }
@@ -98,8 +109,8 @@ enum OAuthTokenSource {
         token: Token,
     },
     /// A token loaded from a persistent store.
-    #[cfg(not(target_arch = "wasm32"))]
     Store(ProfileStore),
+    WorkspaceStore(ProfileStore),
 }
 
 /// Builder for [`DeviceSessionStrategy`].
@@ -165,9 +176,12 @@ impl DeviceSessionStrategyBuilder {
                 client_id,
                 token,
             } => Self::build_from_token(region, client_id, token, base_url_override, transport),
-            #[cfg(not(target_arch = "wasm32"))]
             OAuthTokenSource::Store(store) => {
-                Self::build_from_store(store, base_url_override, transport)
+                let ws_store = store.current_workspace_store()?;
+                Self::build_from_workspace_store(ws_store, base_url_override, transport)
+            }
+            OAuthTokenSource::WorkspaceStore(store) => {
+                Self::build_from_workspace_store(store, base_url_override, transport)
             }
         }
     }
@@ -216,13 +230,11 @@ impl DeviceSessionStrategyBuilder {
     }
 
     /// Build from a token persisted in a [`ProfileStore`].
-    #[cfg(not(target_arch = "wasm32"))]
-    fn build_from_store(
-        store: ProfileStore,
+    fn build_from_workspace_store(
+        ws_store: ProfileStore,
         base_url_override: Option<url::Url>,
         transport: SharedTransport,
     ) -> Result<DeviceSessionStrategy, AuthError> {
-        let ws_store = store.current_workspace_store()?;
         let token: Token = ws_store.load_profile()?;
 
         let region_str = token

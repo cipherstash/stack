@@ -928,6 +928,16 @@ impl From<stack_profile::ProfileError> for AuthError {
     }
 }
 
+// A WASI credential guest reads its profile through stack-profile too. Its
+// host holds the refresh lock; profile failures are reported by the guest's
+// dedicated status codes when it loads the store, before strategy creation.
+#[cfg(target_arch = "wasm32")]
+impl From<stack_profile::ProfileError> for AuthError {
+    fn from(e: stack_profile::ProfileError) -> Self {
+        Self::Custom(CustomError(e.to_string()))
+    }
+}
+
 #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 impl From<crate::DeviceClientError> for AuthError {
     fn from(e: crate::DeviceClientError) -> Self {

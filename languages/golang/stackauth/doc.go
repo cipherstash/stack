@@ -9,8 +9,9 @@
 // A [ProfileStore] is one guest instance over one mounted directory. [Resolve]
 // finds the profile directory the way the Rust crate does (CS_CONFIG_PATH,
 // then ~/.cipherstash); [Open] takes one. The guest is given that directory
-// and nothing else: no environment, no other path, no network, and no way
-// out through a symlink inside it, which the mount refuses to follow.
+// and nothing else: no environment, no other path, and no way out through a
+// symlink inside it, which the mount refuses to follow. Authentication HTTP
+// requests go through the Go host's transport import.
 // Everything
 // the napi binding of stack-profile exposes is a method here, named as in
 // Rust: the current workspace ([ProfileStore.CurrentWorkspace],
@@ -28,8 +29,11 @@
 // stored token: it re-reads auth.json on every call, so a login or refresh
 // by the CLI in another terminal is picked up without a restart, and it
 // refuses a token at its real expiry with an error naming `stash auth
-// login`. Refreshing a token from Go is the auth half of this package,
-// not yet here; the 90-second refresh-ahead margin belongs to it.
+// login`. For authentication and refresh, use [ProfileStore.AccessKey],
+// [ProfileStore.OIDC], [ProfileStore.DeviceSession], or [ProfileStore.Auto].
+// Each returns a [Strategy] that implements stackencrypt.TokenSource.
+// [OAuth2TokenSource] adapts an existing golang.org/x/oauth2.TokenSource
+// into the OIDC provider interface.
 //
 // # Why a second guest
 //
@@ -43,10 +47,11 @@
 //
 // # What the guest cannot do
 //
-// WASI preview 1 has no file locking, so the guest takes none: the
-// cross-process refresh lock the Rust CLI holds is Go's to take, on the
-// path [ProfileStore.LockPath] names, around the refresh call once it
-// exists. Creating a device identity is native-only in the crate and
+// WASI preview 1 has no file locking, so the guest takes none. Go holds the
+// same cross-process lock as the Rust CLI, on the path [ProfileStore.LockPath]
+// names, across each device-session call. The guest re-reads auth.json after
+// the lock and saves a rotated token before Go releases it. Creating a device
+// identity is native-only in the crate and
 // CLI territory; this package only reads one. Files the guest creates are
 // mode 0600, which is wazero's create mode rather than the crate's own
 // (skipped on wasm32), so a test pins it.

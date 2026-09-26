@@ -1,0 +1,41 @@
+//go:build !windows
+
+package stackauth
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"time"
+
+	"golang.org/x/sys/unix"
+)
+
+// The lock file and flock match stack-profile's native FileLockGuard.
+func withRefreshLock(ctx context.Context, path string, run func() error) error {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("stackauth: open refresh lock: %w", err)
+	}
+	defer f.Close()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		err = unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, unix.EWOULDBLOCK) && !errors.Is(err, unix.EAGAIN) {
+			return fmt.Errorf("stackauth: acquire refresh lock: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	defer unix.Flock(int(f.Fd()), unix.LOCK_UN)
+	return run()
+}

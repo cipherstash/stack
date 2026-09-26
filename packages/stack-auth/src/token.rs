@@ -5,7 +5,6 @@ use url::Url;
 use crate::transport::{self, SharedTransport};
 use crate::{AuthError, SecretToken};
 
-#[cfg(not(target_arch = "wasm32"))]
 impl stack_profile::ProfileData for Token {
     const FILENAME: &'static str = "auth.json";
     const MODE: Option<u32> = Some(0o600);

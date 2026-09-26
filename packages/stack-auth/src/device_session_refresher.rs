@@ -1,7 +1,8 @@
 use url::Url;
 
+use stack_profile::ProfileStore;
 #[cfg(not(target_arch = "wasm32"))]
-use stack_profile::{FileLockGuard, ProfileData, ProfileStore};
+use stack_profile::{FileLockGuard, ProfileData};
 
 use crate::refresher::Refresher;
 use crate::transport::SharedTransport;
@@ -9,11 +10,10 @@ use crate::{AuthError, SecretToken, Token};
 
 /// Implements [`Refresher`] using OAuth refresh tokens.
 ///
-/// Optionally owns a [`ProfileStore`] for persisting refreshed tokens to disk
-/// (native targets only). When the store is `None` — or always on wasm32 —
-/// tokens are cached in memory only.
+/// Optionally owns a [`ProfileStore`] for persisting refreshed tokens to disk.
+/// When the store is `None`, tokens are cached in memory only. On wasm32 the
+/// embedding host must hold the refresh lock across the whole refresh call.
 pub(crate) struct DeviceSessionRefresher {
-    #[cfg(not(target_arch = "wasm32"))]
     store: Option<ProfileStore>,
     base_url: Url,
     client_id: String,
@@ -23,7 +23,6 @@ pub(crate) struct DeviceSessionRefresher {
 }
 
 impl DeviceSessionRefresher {
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn new(
         store: Option<ProfileStore>,
         base_url: Url,
@@ -34,24 +33,6 @@ impl DeviceSessionRefresher {
     ) -> Self {
         Self {
             store,
-            base_url,
-            client_id: client_id.into(),
-            region: region.into(),
-            device_instance_id,
-            transport,
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) fn new(
-        _store: Option<()>,
-        base_url: Url,
-        client_id: impl Into<String>,
-        region: impl Into<String>,
-        device_instance_id: Option<String>,
-        transport: SharedTransport,
-    ) -> Self {
-        Self {
             base_url,
             client_id: client_id.into(),
             region: region.into(),
@@ -100,7 +81,6 @@ impl Refresher for DeviceSessionRefresher {
         // token that another process just rotated to. Burn our (now-stale)
         // credential against Clerk and we'd get "already used"; return the
         // disk copy directly instead.
-        #[cfg(not(target_arch = "wasm32"))]
         if let Some(disk_token) = self.load_freshly_refreshed_token(credential) {
             tracing::debug!(
                 "refresh skipped: another process rotated the token while we waited on the lock"
@@ -125,19 +105,18 @@ impl Refresher for DeviceSessionRefresher {
         // Persist while holding the lock — any sibling process waiting on
         // the lock will read the rotated token on their next attempt and
         // skip burning their stale credential.
-        #[cfg(not(target_arch = "wasm32"))]
-        self.persist_refreshed(&token);
+        self.persist_refreshed(&token)?;
 
         Ok(token)
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl DeviceSessionRefresher {
     /// Acquire the cross-process refresh lock on `auth.json`, off the async
     /// runtime thread so we don't block other tasks. Returns `None` when no
     /// `ProfileStore` is configured (in-memory refreshers can't race against
     /// other processes since there's no shared state).
+    #[cfg(not(target_arch = "wasm32"))]
     async fn acquire_refresh_lock(&self) -> Result<Option<FileLockGuard>, AuthError> {
         let Some(store) = self.store.clone() else {
             return Ok(None);
@@ -175,20 +154,18 @@ impl DeviceSessionRefresher {
     }
 
     /// Persist the freshly refreshed token to disk while the lock is held.
-    /// A failure here is logged loudly because it's the precondition for
-    /// Clerk's refresh-token-rotation replay detection to fire on a later
-    /// process: we keep using the rotated token from memory while disk
-    /// still holds the previous (now-revoked) one.
-    fn persist_refreshed(&self, token: &Token) {
-        let Some(store) = &self.store else { return };
-        match store.save_profile(token) {
-            Ok(()) => tracing::debug!("refreshed token saved to disk"),
-            Err(err) => tracing::error!(
-                %err,
-                "failed to persist refreshed token to disk — a subsequent process \
-                 will replay the prior refresh token and Clerk will revoke the chain"
-            ),
-        }
+    /// A failure here must reach the caller: returning a token while disk
+    /// still holds its consumed refresh token would hide a broken rotation.
+    fn persist_refreshed(&self, token: &Token) -> Result<(), AuthError> {
+        let Some(store) = &self.store else {
+            return Ok(());
+        };
+        store.save_profile(token).map_err(|err| {
+            tracing::error!(%err, "failed to persist refreshed token to disk");
+            AuthError::from(err)
+        })?;
+        tracing::debug!("refreshed token saved to disk");
+        Ok(())
     }
 }
 

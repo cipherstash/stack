@@ -35,6 +35,10 @@ if [ -n "$out" ]; then
 fi
 
 go vet ./...
+# Keep the refresh-lock results explicit in CI logs on Linux, macOS, and
+# Windows. These tests exercise the platform lock implementation with two
+# independent guest instances sharing one auth.json.
+CGO_ENABLED=0 go test -v ./stackauth -run '^TestDeviceRefresh'
 CGO_ENABLED=0 go test ./...
 
 # The transport codec's u32-bound guards are load-bearing where int is 32
