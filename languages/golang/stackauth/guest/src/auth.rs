@@ -131,8 +131,8 @@ pub fn token(handle: &[u8]) -> Result<Vec<u8>, u32> {
                 base_url,
             } => {
                 let store = ProfileStore::new(workspace_dir);
-                let mut builder = DeviceSessionStrategy::with_workspace_store(store)
-                    .transport(WasiAuthTransport);
+                let mut builder =
+                    DeviceSessionStrategy::with_workspace_store(store).transport(WasiAuthTransport);
                 if let Some(url) = base_url {
                     builder = builder.base_url(url.clone());
                 }

@@ -921,20 +921,18 @@ impl From<access_key::InvalidAccessKey> for AuthError {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl From<stack_profile::ProfileError> for AuthError {
     fn from(e: stack_profile::ProfileError) -> Self {
-        Self::Store(StoreError(e))
-    }
-}
-
-// A WASI credential guest reads its profile through stack-profile too. Its
-// host holds the refresh lock; profile failures are reported by the guest's
-// dedicated status codes when it loads the store, before strategy creation.
-#[cfg(target_arch = "wasm32")]
-impl From<stack_profile::ProfileError> for AuthError {
-    fn from(e: stack_profile::ProfileError) -> Self {
-        Self::Custom(CustomError(e.to_string()))
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Self::Store(StoreError(e))
+        }
+        // On wasm32 the auth guest still loads and saves profiles, but the
+        // native Store variant is not part of that target's public enum.
+        #[cfg(target_arch = "wasm32")]
+        {
+            Self::Custom(CustomError(e.to_string()))
+        }
     }
 }
 
@@ -1388,6 +1386,16 @@ mod classify_issuance_failure_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn profile_error_retains_store_type() {
+        let err = AuthError::from(stack_profile::ProfileError::NotFound {
+            path: "auth.json".into(),
+        });
+        assert!(matches!(&err, AuthError::Store(StoreError(_))));
+        assert_eq!(err.error_code(), codes::STORE_ERROR);
+    }
 
     /// The typed variant must survive the FFI round-trip; degrading to `CUSTOM`
     /// would put clients back to string-matching the message.

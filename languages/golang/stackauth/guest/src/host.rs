@@ -81,7 +81,9 @@ impl OidcProvider for HostOidcProvider {
         let token = std::str::from_utf8(&bytes)
             .map_err(|_| AuthError::Request(request_error("OIDC token is not UTF-8")))?;
         if token.is_empty() || token.chars().any(char::is_control) {
-            return Err(AuthError::Request(request_error("OIDC token is empty or contains controls")));
+            return Err(AuthError::Request(request_error(
+                "OIDC token is empty or contains controls",
+            )));
         }
         Ok(SecretToken::new(token))
     }

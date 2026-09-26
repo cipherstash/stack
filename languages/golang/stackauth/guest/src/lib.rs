@@ -97,9 +97,9 @@ pub mod ops;
 pub mod status;
 
 #[cfg(target_arch = "wasm32")]
-pub mod host;
-#[cfg(target_arch = "wasm32")]
 pub mod auth;
+#[cfg(target_arch = "wasm32")]
+pub mod host;
 
 // The ABI's packed u64 results embed 32-bit pointers and its bounds checks
 // read the wasm linear-memory size, so this module only exists on wasm32.
