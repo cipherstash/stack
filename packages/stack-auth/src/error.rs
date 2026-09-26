@@ -67,7 +67,6 @@ pub(crate) mod codes {
     pub(crate) const ALREADY_CONSUMED: &str = "ALREADY_CONSUMED";
     pub(crate) const INTERNAL_ERROR: &str = "INTERNAL_ERROR";
     pub(crate) const CUSTOM: &str = "CUSTOM";
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) const STORE_ERROR: &str = "STORE_ERROR";
 }
 
@@ -376,11 +375,9 @@ impl AuthErrorKind for CustomError {
 }
 
 /// A token store operation failed.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Token store error: {0}")]
 pub struct StoreError(pub stack_profile::ProfileError);
-#[cfg(not(target_arch = "wasm32"))]
 impl AuthErrorKind for StoreError {
     fn error_code(&self) -> &'static str {
         codes::STORE_ERROR
@@ -455,7 +452,6 @@ pub enum AuthError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Custom(#[from] CustomError),
-    #[cfg(not(target_arch = "wasm32"))]
     #[error(transparent)]
     #[diagnostic(transparent)]
     Store(#[from] StoreError),
@@ -496,7 +492,6 @@ impl AuthError {
             | AuthError::Server(_)
             | AuthError::Internal(_)
             | AuthError::Custom(_) => false,
-            #[cfg(not(target_arch = "wasm32"))]
             AuthError::Store(_) => false,
         }
     }
@@ -529,8 +524,6 @@ impl AuthError {
         codes::ALREADY_CONSUMED,
         codes::INTERNAL_ERROR,
         codes::CUSTOM,
-        // `Store` (and its code) only exists off-wasm — see the enum above.
-        #[cfg(not(target_arch = "wasm32"))]
         codes::STORE_ERROR,
     ];
 
@@ -557,7 +550,6 @@ impl AuthError {
             Self::AlreadyConsumed(e) => e,
             Self::Internal(e) => e,
             Self::Custom(e) => e,
-            #[cfg(not(target_arch = "wasm32"))]
             Self::Store(e) => e,
         }
     }
@@ -593,7 +585,6 @@ impl AuthError {
             // whose cause we cannot classify.
             Self::Custom(_) => true,
             // Local persistence (cookie, KV, keychain) can fail transiently.
-            #[cfg(not(target_arch = "wasm32"))]
             Self::Store(_) => true,
 
             // Settled answers. Retrying re-asks a question already answered.
@@ -653,7 +644,6 @@ impl AuthError {
             | Self::AlreadyConsumed(_)
             | Self::Internal(_)
             | Self::Custom(_) => false,
-            #[cfg(not(target_arch = "wasm32"))]
             Self::Store(_) => false,
         }
     }
@@ -923,16 +913,7 @@ impl From<access_key::InvalidAccessKey> for AuthError {
 
 impl From<stack_profile::ProfileError> for AuthError {
     fn from(e: stack_profile::ProfileError) -> Self {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            Self::Store(StoreError(e))
-        }
-        // On wasm32 the auth guest still loads and saves profiles, but the
-        // native Store variant is not part of that target's public enum.
-        #[cfg(target_arch = "wasm32")]
-        {
-            Self::Custom(CustomError(e.to_string()))
-        }
+        Self::Store(StoreError(e))
     }
 }
 
@@ -1388,7 +1369,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(not(target_arch = "wasm32"))]
     fn profile_error_retains_store_type() {
         let err = AuthError::from(stack_profile::ProfileError::NotFound {
             path: "auth.json".into(),

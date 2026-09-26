@@ -76,6 +76,9 @@ impl Refresher for DeviceSessionRefresher {
         // its own refresh.
         #[cfg(not(target_arch = "wasm32"))]
         let _lock = self.acquire_refresh_lock().await?;
+        // On wasm32 this is the host's responsibility: the Go credential
+        // binding holds the sibling auth.json lock across its refresh export.
+        // WASI preview 1 has no file-lock operation for this arm to call.
 
         // After acquiring the lock, the disk may already hold a fresher
         // token that another process just rotated to. Burn our (now-stale)

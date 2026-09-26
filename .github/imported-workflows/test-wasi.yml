@@ -139,6 +139,8 @@ jobs:
           # best effort, so its test skips where RLIMIT_MEMLOCK refuses it —
           # a developer laptop's default. CI raises the limit and sets this
           # so the skip is an error here and the lock is really exercised.
+          # Device refresh locking is separate: its Go tests cannot skip and
+          # must pass on Linux, macOS and Windows.
           STACKENCRYPT_TESTS_REQUIRE_LOCK: "1"
         run: |
           ulimit -l "$(ulimit -H -l)"
@@ -149,6 +151,9 @@ jobs:
   # The credential guest's Go-side refresh lock has Unix and Windows
   # implementations. The shared go-binding-test.sh prints the device refresh
   # tests explicitly on each platform, alongside the rest of the Go suite.
+  # The device refresh lock must succeed on macOS and Windows too; the tests
+  # have no best-effort skip. STACKENCRYPT_TESTS_REQUIRE_LOCK stays Linux-only
+  # because it governs guest memory locking, not the refresh file lock.
   # They gate the way wasi-check does: a red run on the PR, not branch protection.
   # main's ruleset requires no status check today, and this workflow is path
   # filtered, so a required check here would never run on a PR outside the

@@ -86,7 +86,8 @@ profile that leads outside it is refused, for reads and for the one write,
 rather than followed with the process's permissions as a plain directory
 mount would. Files it creates are mode 0600. It takes no file lock (WASI
 preview 1 has none); Go holds the same lock as the CLI across the device
-session call, on the path `ProfileStore.LockPath` names. The guest re-reads
+session refresh call, on the path `ProfileStore.LockPath` names. A fresh
+token is read without the lock; on refresh the guest re-reads
 auth.json after acquisition and saves refreshed tokens before release.
 
 The crypto guest behind `stackencrypt` is not widened by this package

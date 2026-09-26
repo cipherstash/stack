@@ -236,6 +236,7 @@ func TestStatusDecodesToTheSharedSentinels(t *testing.T) {
 		guest.StatusAuthTransport:             guest.ErrAuthTransport,
 		guest.StatusAuthConfig:                guest.ErrAuthConfig,
 		guest.StatusAuthOther:                 guest.ErrAuthOther,
+		guest.StatusAuthRefreshRequired:       guest.ErrAuthRefreshRequired,
 	}
 	for code, sentinel := range want {
 		if got := guest.StatusError(code); got != sentinel {

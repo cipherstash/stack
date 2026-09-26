@@ -55,10 +55,8 @@ struct SecretKeyFile {
 /// to it by the Go tests that write the file where `stash auth login` does.
 const SECRET_KEY_FILENAME: &str = "secretkey.json";
 
-/// The filename `stack-auth`'s `Token` declares. Its `ProfileData` impl is
-/// native-only (the crate's `stack-profile` dependency is, for the sake of
-/// its browser build), so the name is spelled here and pinned to the
-/// crate's by a native test.
+/// The filename `stack-auth`'s `Token` declares. Kept here for the profile
+/// read export, with a native test checking the crate's own name.
 const AUTH_FILENAME: &str = "auth.json";
 
 /// The store at `dir`. The directory is the caller's to name; an empty or
@@ -202,6 +200,13 @@ pub fn token(dir: &[u8]) -> Result<Vec<u8>, u32> {
     ]))
 }
 
+/// Whether auth.json exists, without parsing it. AutoStrategy makes this
+/// selection before building a device strategy, so malformed JSON must still
+/// select the device path and then report its profile error.
+pub fn has_token(dir: &[u8]) -> Result<Vec<u8>, u32> {
+    Ok(vec![u8::from(store(dir)?.exists_profile::<Token>())])
+}
+
 /// `device.json` in this store, read-only, as a codec object
 /// `{device_instance_id, device_name}`. Creating one is the CLI's.
 pub fn device_identity(dir: &[u8]) -> Result<Vec<u8>, u32> {
@@ -255,6 +260,16 @@ mod tests {
             panic!("not bytes");
         };
         b.risky_ref().to_vec()
+    }
+
+    #[test]
+    fn has_token_selects_existing_profile_without_parsing_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(AUTH_FILENAME);
+        let store_dir = dir.path().to_str().unwrap().as_bytes();
+        assert_eq!(has_token(store_dir).unwrap(), vec![0]);
+        std::fs::write(path, "{").unwrap();
+        assert_eq!(has_token(store_dir).unwrap(), vec![1]);
     }
 
     /// The names this guest spells are the crates' own.

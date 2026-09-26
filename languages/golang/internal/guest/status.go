@@ -34,6 +34,7 @@ const (
 	StatusAuthTransport             = 24
 	StatusAuthConfig                = 25
 	StatusAuthOther                 = 26
+	StatusAuthRefreshRequired       = 27
 )
 
 // StatusError is the sentinel a guest status decodes to. A status this host
@@ -93,6 +94,8 @@ func StatusError(status uint32) error {
 		return ErrAuthConfig
 	case StatusAuthOther:
 		return ErrAuthOther
+	case StatusAuthRefreshRequired:
+		return ErrAuthRefreshRequired
 	default:
 		return fmt.Errorf("%w (unrecognized guest status %d)", ErrInternal, status)
 	}

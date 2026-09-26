@@ -71,8 +71,8 @@ type instance struct {
 	shutdown                                                     api.Function
 	currentWorkspace, setCurrentWorkspace, clearCurrentWorkspace api.Function
 	listWorkspaces, workspaceDir, lockPath                       api.Function
-	secretKey, token, deviceIdentity                             api.Function
-	authNew, authToken, authFree                                 api.Function
+	secretKey, token, hasToken, deviceIdentity                   api.Function
+	authNew, authValidateCRN, authToken, authRefresh, authFree   api.Function
 }
 
 // guestModuleConfig is the module configuration every guest instance runs
@@ -152,9 +152,12 @@ func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.
 		"sa_lock_path":               &inst.lockPath,
 		"sa_secret_key":              &inst.secretKey,
 		"sa_token":                   &inst.token,
+		"sa_has_token":               &inst.hasToken,
 		"sa_device_identity":         &inst.deviceIdentity,
 		"sa_auth_new":                &inst.authNew,
+		"sa_auth_validate_crn":       &inst.authValidateCRN,
 		"sa_auth_token":              &inst.authToken,
+		"sa_auth_refresh":            &inst.authRefresh,
 		"sa_auth_free":               &inst.authFree,
 	}
 	for name, slot := range exports {
@@ -182,14 +185,4 @@ func (inst *instance) release() error {
 		err = cerr
 	}
 	return err
-}
-
-// call drives one export with string arguments, through the shared
-// plumbing: staged, called, copied out, wiped.
-func (inst *instance) call(ctx context.Context, fn api.Function, args ...string) ([]byte, error) {
-	staged := make([]guest.Arg, len(args))
-	for i, a := range args {
-		staged[i] = guest.BufArg([]byte(a))
-	}
-	return guest.Call(ctx, inst.mem, inst.module, inst.exports, fn, staged...)
 }

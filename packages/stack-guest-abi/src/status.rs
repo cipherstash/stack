@@ -108,11 +108,15 @@ pub const STATUS_AUTH_NOT_AUTHENTICATED: u32 = 23;
 pub const STATUS_AUTH_TRANSPORT: u32 = 24;
 pub const STATUS_AUTH_CONFIG: u32 = 25;
 pub const STATUS_AUTH_OTHER: u32 = 26;
+/// The device-session token is inside its refresh window. The Go host must
+/// acquire the profile lock before calling the credential guest's refresh
+/// export; this is a control-flow signal, not a caller-facing auth failure.
+pub const STATUS_AUTH_REFRESH_REQUIRED: u32 = 27;
 
 /// The last code in the table. A guest appending a code of its own starts
 /// at `LAST_STATUS + 1` and moves this constant with it, so two guests can
 /// never claim one number.
-pub const LAST_STATUS: u32 = STATUS_AUTH_OTHER;
+pub const LAST_STATUS: u32 = STATUS_AUTH_REFRESH_REQUIRED;
 
 #[cfg(test)]
 mod tests {
@@ -149,6 +153,7 @@ mod tests {
             STATUS_AUTH_TRANSPORT,
             STATUS_AUTH_CONFIG,
             STATUS_AUTH_OTHER,
+            STATUS_AUTH_REFRESH_REQUIRED,
         ];
         for (i, code) in codes.iter().enumerate() {
             assert_eq!(*code, i as u32 + 1, "code {i} is out of sequence");

@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -43,8 +45,8 @@ func TestAccessKeyStrategyCachesAndPreservesRequest(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Error(err)
 		}
-		if body["accessKey"] != "CSAKtestKeyId.testKeySecret" {
-			t.Errorf("body: %#v", body)
+		if want := (map[string]any{"accessKey": "CSAKtestKeyId.testKeySecret"}); !reflect.DeepEqual(body, want) {
+			t.Errorf("request body = %#v, want %#v", body, want)
 		}
 		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, jwt, time.Now().Add(time.Hour).Unix())
 	}))
@@ -79,8 +81,8 @@ func TestOIDCStrategyCallsProviderOnlyOnExchange(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Error(err)
 		}
-		if body["oidcToken"] != "idp-token" || body["workspaceId"] != "ZVATKW3VHMFG27DY" {
-			t.Errorf("body: %#v", body)
+		if want := (map[string]any{"oidcToken": "idp-token", "workspaceId": "ZVATKW3VHMFG27DY"}); !reflect.DeepEqual(body, want) {
+			t.Errorf("request body = %#v, want %#v", body, want)
 		}
 		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, testJWT(t, "https://cts.example"), time.Now().Add(time.Hour).Unix())
 	}))
@@ -108,41 +110,30 @@ func TestOIDCStrategyCallsProviderOnlyOnExchange(t *testing.T) {
 	}
 }
 
-func TestAuthErrorTaxonomy(t *testing.T) {
+func TestUsageLimitIsPreservedAcrossGuest(t *testing.T) {
 	guestOrSkip(t)
-	for _, tc := range []struct {
-		name   string
-		status int
-		body   string
-		want   error
-	}{
-		{"usage limit", 402, `{"cs_code":"USAGE_LIMIT_EXCEEDED"}`, ErrUsageLimit},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(tc.status)
-				fmt.Fprint(w, tc.body)
-			}))
-			defer server.Close()
-			profile, err := Open(context.Background(), t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer profile.Close()
-			strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithAuthBaseURL(server.URL))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer strategy.Close()
-			_, err = strategy.Token(context.Background())
-			if !errors.Is(err, tc.want) {
-				t.Fatalf("Token error = %v, want %v", err, tc.want)
-			}
-		})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusPaymentRequired)
+		fmt.Fprint(w, `{"cs_code":"USAGE_LIMIT_EXCEEDED"}`)
+	}))
+	defer server.Close()
+	profile, err := Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profile.Close()
+	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithAuthBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strategy.Close()
+	_, err = strategy.Token(context.Background())
+	if !errors.Is(err, ErrUsageLimit) {
+		t.Fatalf("Token error = %v, want %v", err, ErrUsageLimit)
 	}
 }
 
-func TestDeviceRefreshInvalidClient(t *testing.T) {
+func TestDeviceRefreshReportsInvalidClient(t *testing.T) {
 	guestOrSkip(t)
 	dir, _ := expiredDeviceProfile(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -172,7 +163,7 @@ func TestDeviceRefreshInvalidClient(t *testing.T) {
 
 // Match stack-auth's AutoStrategy order: an access key wins over a stored
 // device session; with no key, the current workspace's auth.json is used.
-func TestAutoStrategyDetectionOrder(t *testing.T) {
+func TestAutoPrefersAccessKeyThenDeviceSession(t *testing.T) {
 	guestOrSkip(t)
 	dir, _ := expiredDeviceProfile(t)
 	var accessCalls, refreshCalls atomic.Int32
@@ -214,7 +205,9 @@ func TestAutoStrategyDetectionOrder(t *testing.T) {
 	if accessCalls.Load() != 1 || refreshCalls.Load() != 0 {
 		t.Fatalf("access key should win: access=%d refresh=%d", accessCalls.Load(), refreshCalls.Load())
 	}
-	t.Setenv("CS_CLIENT_ACCESS_KEY", "")
+	if err := os.Unsetenv("CS_CLIENT_ACCESS_KEY"); err != nil {
+		t.Fatal(err)
+	}
 	strategy, err = profile.Auto(context.Background(), WithAuthBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
@@ -247,6 +240,119 @@ func expiredDeviceProfile(t *testing.T) (string, string) {
 	return dir, workspaceDir
 }
 
+func TestDeviceSessionFreshTokenDoesNotTakeRefreshLock(t *testing.T) {
+	guestOrSkip(t)
+	dir, workspaceDir := expiredDeviceProfile(t)
+	write(t, filepath.Join(workspaceDir, "auth.json"), fmt.Sprintf(`{"access_token":"fresh","refresh_token":"refresh-1","token_type":"Bearer","expires_at":%d,"region":"ap-southeast-2.aws","client_id":"client-1"}`, time.Now().Add(time.Hour).Unix()))
+	profile, err := Open(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profile.Close()
+	workspace, err := profile.WorkspaceStore(context.Background(), wsA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	strategy, err := workspace.DeviceSession(context.Background(), WithAuthBaseURL("https://cts.example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strategy.Close()
+	path, err := workspace.LockPath(context.Background(), "auth.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = withRefreshLock(context.Background(), path, func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		token, err := strategy.Token(ctx)
+		if err != nil || token != "fresh" {
+			return fmt.Errorf("fresh token while lock is held = %q, %v", token, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeviceSessionMissingAndInvalidProfilesKeepTheirErrors(t *testing.T) {
+	guestOrSkip(t)
+	for _, tc := range []struct {
+		name string
+		body string
+		want error
+	}{
+		{"missing", "", ErrNotFound},
+		{"invalid JSON", "{", ErrInvalid},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			workspaceDir := filepath.Join(dir, "workspaces", wsA)
+			if err := os.MkdirAll(workspaceDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if tc.body != "" {
+				write(t, filepath.Join(workspaceDir, "auth.json"), tc.body)
+			}
+			profile, err := Open(context.Background(), dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer profile.Close()
+			workspace, err := profile.WorkspaceStore(context.Background(), wsA)
+			if err != nil {
+				t.Fatal(err)
+			}
+			strategy, err := workspace.DeviceSession(context.Background(), WithAuthBaseURL("https://cts.example.com"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer strategy.Close()
+			if _, err := strategy.Token(context.Background()); !errors.Is(err, tc.want) {
+				t.Fatalf("Token error = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAutoUsesEnvironmentPresenceAndProfileExistence(t *testing.T) {
+	guestOrSkip(t)
+	dir, workspaceDir := expiredDeviceProfile(t)
+	profile, err := Open(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profile.Close()
+	if err := profile.SetCurrentWorkspace(context.Background(), wsA); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CS_WORKSPACE_CRN", testCRN)
+	t.Setenv("CS_CLIENT_ACCESS_KEY", "")
+	if _, err := profile.Auto(context.Background()); !errors.Is(err, ErrAuthConfig) {
+		t.Fatalf("set but empty access key: error = %v, want %v", err, ErrAuthConfig)
+	}
+	if err := os.Unsetenv("CS_CLIENT_ACCESS_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CS_WORKSPACE_CRN", "invalid")
+	if _, err := profile.Auto(context.Background()); !errors.Is(err, ErrAuthConfig) {
+		t.Fatalf("invalid CRN without key: error = %v, want %v", err, ErrAuthConfig)
+	}
+	if err := os.Unsetenv("CS_WORKSPACE_CRN"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(workspaceDir, "auth.json"), "{")
+	strategy, err := profile.Auto(context.Background())
+	if err != nil {
+		t.Fatalf("existing but invalid profile must select device strategy: %v", err)
+	}
+	defer strategy.Close()
+	if _, err := strategy.Token(context.Background()); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("invalid profile: error = %v, want %v", err, ErrInvalid)
+	}
+}
+
 func TestDeviceRefreshLockPreventsReplay(t *testing.T) {
 	guestOrSkip(t)
 	dir, _ := expiredDeviceProfile(t)
@@ -259,8 +365,9 @@ func TestDeviceRefreshLockPreventsReplay(t *testing.T) {
 		if err := r.ParseForm(); err != nil {
 			t.Error(err)
 		}
-		if r.Form.Get("grant_type") != "refresh_token" || r.Form.Get("refresh_token") != "refresh-1" || r.Form.Get("client_id") != "client-1" {
-			t.Errorf("form: %v", r.Form)
+		want := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {"refresh-1"}, "client_id": {"client-1"}}
+		if !reflect.DeepEqual(r.PostForm, want) {
+			t.Errorf("request body = %v, want %v", r.PostForm, want)
 		}
 		time.Sleep(50 * time.Millisecond)
 		fmt.Fprint(w, `{"access_token":"fresh","token_type":"Bearer","expires_in":3600,"refresh_token":"refresh-2"}`)
@@ -319,7 +426,7 @@ func TestDeviceRefreshLockPreventsReplay(t *testing.T) {
 	}
 }
 
-func TestDeviceRefreshInvalidGrant(t *testing.T) {
+func TestDeviceRefreshReportsInvalidGrant(t *testing.T) {
 	guestOrSkip(t)
 	dir, _ := expiredDeviceProfile(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

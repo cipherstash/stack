@@ -179,7 +179,10 @@ inside the guest: access key, device
 session, OIDC federation with a Go callback for the identity-provider token,
 and auto. `AutoStrategy`'s detection order runs in Go against the environment
 Go already owns, pinned against the Rust order by a test; the guest stays
-environment-free and exposes typed constructors.
+environment-free. The Go package exposes typed constructors; one tagged
+config crosses the guest ABI and Rust validates its variant before creating
+the corresponding strategy. This keeps the public API typed without adding
+separate pointer and length signatures for each strategy export.
 
 The token exchanges are tested against an in-process `httptest` server,
 since HTTP goes through the Go host: exact request bodies, the error

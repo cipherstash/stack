@@ -72,9 +72,10 @@
 //! WASI preview 1 has no file locking, so this module takes none. The Go
 //! side takes the same lock the Rust CLI takes, on the path
 //! [`ProfileStore::lock_path`](stack_profile::ProfileStore::lock_path)
-//! names (exported here), around the entire device-session token call.
-//! The strategy reads auth.json only after that lock is held and saves a
-//! rotated token before the call returns. Go never composes a profile path.
+//! names (exported here), around the entire device-session refresh export.
+//! A fresh token is read without that lock. The refresh export re-reads
+//! auth.json after acquisition and saves a rotated token before returning.
+//! Go never composes a profile path.
 //!
 //! # Not faked
 //!

@@ -100,9 +100,9 @@ func (s *ProfileStore) OIDC(ctx context.Context, crn string, provider OIDCProvid
 	return strategy, nil
 }
 
-// DeviceSession uses this workspace store's auth.json. Its Token call takes
-// the same cross-process lock as the Rust CLI, then the guest re-reads the
-// token, exchanges only if necessary, and saves before the lock is released.
+// DeviceSession uses this workspace store's auth.json. Fresh tokens are read
+// without a lock. A refresh takes the same cross-process lock as the Rust
+// CLI, then the guest re-reads and saves before the lock is released.
 func (s *ProfileStore) DeviceSession(ctx context.Context, opts ...StrategyOption) (*Strategy, error) {
 	if s.dir == guestRoot {
 		return nil, ErrAuthConfig
@@ -118,9 +118,15 @@ func (s *ProfileStore) DeviceSession(ctx context.Context, opts ...StrategyOption
 // Auto follows stack-auth's detection order against the Go host's
 // environment: access key first, then the current workspace's device token.
 func (s *ProfileStore) Auto(ctx context.Context, opts ...StrategyOption) (*Strategy, error) {
-	if key := os.Getenv("CS_CLIENT_ACCESS_KEY"); key != "" {
-		crn := os.Getenv("CS_WORKSPACE_CRN")
-		if crn == "" {
+	crn, crnSet := os.LookupEnv("CS_WORKSPACE_CRN")
+	if crnSet {
+		_, err := s.callArgs(ctx, func(i *instance) api.Function { return i.authValidateCRN }, guest.BufArg([]byte(crn)))
+		if err != nil {
+			return nil, err
+		}
+	}
+	if key, keySet := os.LookupEnv("CS_CLIENT_ACCESS_KEY"); keySet {
+		if !crnSet {
 			return nil, ErrAuthConfig
 		}
 		return s.AccessKey(ctx, crn, key, opts...)
@@ -132,41 +138,53 @@ func (s *ProfileStore) Auto(ctx context.Context, opts ...StrategyOption) (*Strat
 		}
 		return nil, err
 	}
-	if _, err := workspace.Token(ctx); err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return nil, ErrNotAuthenticated
-		}
+	hasToken, err := workspace.hasToken(ctx)
+	if err != nil {
 		return nil, err
+	}
+	if !hasToken {
+		return nil, ErrNotAuthenticated
 	}
 	return workspace.DeviceSession(ctx, opts...)
 }
 
-// Token gets the current CTS bearer credential. For a device session the
-// host holds the refresh lock over the entire guest call.
+func (s *ProfileStore) hasToken(ctx context.Context) (bool, error) {
+	out, err := s.call(ctx, func(i *instance) api.Function { return i.hasToken })
+	if err != nil {
+		return false, err
+	}
+	if len(out) != 1 || out[0] > 1 {
+		return false, fmt.Errorf("%w: invalid has-token response", ErrInternal)
+	}
+	return out[0] == 1, nil
+}
+
+// Token gets the current CTS bearer credential. Device sessions read a fresh
+// token without a file lock; only a refresh call takes the cross-process lock.
 func (s *Strategy) Token(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return "", ErrState
 	}
-	call := func() (string, error) {
-		out, err := s.store.callArgs(ctx, func(i *instance) api.Function { return i.authToken }, guest.BufArg([]byte(s.handle)))
+	call := func(export func(*instance) api.Function) (string, error) {
+		out, err := s.store.callArgs(ctx, export, guest.BufArg([]byte(s.handle)))
 		if err != nil {
 			return "", err
 		}
 		return string(out), nil
 	}
-	if !s.device {
-		return call()
+	token, err := call(func(i *instance) api.Function { return i.authToken })
+	if !s.device || !errors.Is(err, guest.ErrAuthRefreshRequired) {
+		return token, err
 	}
 	path, err := s.store.LockPath(ctx, "auth.json")
 	if err != nil {
 		return "", err
 	}
-	var token string
 	err = withRefreshLock(ctx, path, func() error {
 		var err error
-		token, err = call()
+		token, err = call(func(i *instance) api.Function { return i.authRefresh })
 		return err
 	})
 	return token, err

@@ -111,7 +111,7 @@ func TestImportSurfaceIsWASIAndAuthTransport(t *testing.T) {
 	if !sawTransport || !sawOIDC {
 		t.Errorf("missing auth imports: transport=%t oidc=%t", sawTransport, sawOIDC)
 	}
-	for _, name := range []string{"se_alloc", "se_dealloc", "sa_shutdown", "sa_current_workspace", "sa_set_current_workspace", "sa_clear_current_workspace", "sa_list_workspaces", "sa_workspace_dir", "sa_lock_path", "sa_secret_key", "sa_token", "sa_device_identity", "sa_auth_new", "sa_auth_token", "sa_auth_free"} {
+	for _, name := range []string{"se_alloc", "se_dealloc", "sa_shutdown", "sa_current_workspace", "sa_set_current_workspace", "sa_clear_current_workspace", "sa_list_workspaces", "sa_workspace_dir", "sa_lock_path", "sa_secret_key", "sa_token", "sa_has_token", "sa_device_identity", "sa_auth_new", "sa_auth_validate_crn", "sa_auth_token", "sa_auth_refresh", "sa_auth_free"} {
 		if _, ok := compiled.ExportedFunctions()[name]; !ok {
 			t.Errorf("guest does not export %s", name)
 		}

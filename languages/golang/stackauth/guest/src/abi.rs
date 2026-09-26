@@ -172,6 +172,14 @@ pub unsafe extern "C" fn sa_token(dir_ptr: *const u8, dir_len: u32) -> u64 {
     export1(dir_ptr, dir_len, ops::token)
 }
 
+/// Whether this workspace has auth.json, without parsing its content.
+/// # Safety
+/// As for [`sa_current_workspace`].
+#[no_mangle]
+pub unsafe extern "C" fn sa_has_token(dir_ptr: *const u8, dir_len: u32) -> u64 {
+    export1(dir_ptr, dir_len, ops::has_token)
+}
+
 /// `device.json` in the store at `dir`, read-only. See
 /// [`ops::device_identity`].
 ///
@@ -192,13 +200,31 @@ pub unsafe extern "C" fn sa_auth_new(ptr: *const u8, len: u32) -> u64 {
     export1(ptr, len, auth::create)
 }
 
-/// Get a service token from a strategy. For a device session the Go host
-/// must hold the workspace's auth.json lock for the whole call.
+/// Validate a workspace CRN using the same Rust parser as AutoStrategy.
+/// # Safety
+/// The input pair is validated against guest linear memory.
+#[no_mangle]
+pub unsafe extern "C" fn sa_auth_validate_crn(ptr: *const u8, len: u32) -> u64 {
+    export1(ptr, len, auth::validate_crn)
+}
+
+/// Get a service token from a strategy. A device session returns
+/// `STATUS_AUTH_REFRESH_REQUIRED` when it enters the refresh window;
+/// this export never refreshes a device session or needs its file lock.
 /// # Safety
 /// The input pair is validated against guest linear memory.
 #[no_mangle]
 pub unsafe extern "C" fn sa_auth_token(ptr: *const u8, len: u32) -> u64 {
     export1(ptr, len, auth::token)
+}
+
+/// Refresh a device session. The Go host must hold the workspace's
+/// auth.json lock across this whole call, including the disk re-read and save.
+/// # Safety
+/// The input pair is validated against guest linear memory.
+#[no_mangle]
+pub unsafe extern "C" fn sa_auth_refresh(ptr: *const u8, len: u32) -> u64 {
+    export1(ptr, len, auth::refresh)
 }
 
 /// Drop one strategy and its cached credential.

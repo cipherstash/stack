@@ -11,9 +11,9 @@ use stack_auth::AuthError;
 use stack_profile::ProfileError;
 
 pub use stack_guest_abi::status::{
-    STATUS_ENCODING, STATUS_INTERNAL, STATUS_PROFILE_INVALID_FILENAME,
-    STATUS_PROFILE_INVALID_WORKSPACE_ID, STATUS_PROFILE_IO, STATUS_PROFILE_JSON,
-    STATUS_PROFILE_NOT_FOUND, STATUS_PROFILE_NO_CURRENT_WORKSPACE,
+    STATUS_AUTH_REFRESH_REQUIRED, STATUS_ENCODING, STATUS_INTERNAL,
+    STATUS_PROFILE_INVALID_FILENAME, STATUS_PROFILE_INVALID_WORKSPACE_ID, STATUS_PROFILE_IO,
+    STATUS_PROFILE_JSON, STATUS_PROFILE_NOT_FOUND, STATUS_PROFILE_NO_CURRENT_WORKSPACE,
     STATUS_PROFILE_WORKSPACE_NOT_FOUND, STATUS_STATE,
 };
 
@@ -21,6 +21,9 @@ pub use stack_guest_abi::status::{
 /// bytes or parsing a server message across the ABI.
 pub fn status_for_auth(error: &AuthError) -> u32 {
     use stack_guest_abi::status::*;
+    if let AuthError::Store(store_error) = error {
+        return status_for_profile(&store_error.0);
+    }
     match error.error_code() {
         "INVALID_GRANT" => STATUS_AUTH_INVALID_GRANT,
         "INVALID_CLIENT" => STATUS_AUTH_INVALID_CLIENT,
@@ -107,5 +110,15 @@ mod tests {
                 assert!(seen.insert(expected), "code {expected} is shared");
             }
         }
+    }
+
+    #[test]
+    fn auth_store_errors_keep_their_profile_status() {
+        let missing = AuthError::from(ProfileError::NotFound {
+            path: "auth.json".into(),
+        });
+        assert_eq!(status_for_auth(&missing), STATUS_PROFILE_NOT_FOUND);
+        let io = AuthError::from(ProfileError::Io(std::io::Error::other("disk full")));
+        assert_eq!(status_for_auth(&io), STATUS_PROFILE_IO);
     }
 }

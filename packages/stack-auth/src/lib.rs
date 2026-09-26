@@ -76,7 +76,6 @@ mod oidc_federation_strategy;
 mod oidc_refresher;
 mod refresher;
 
-#[cfg(not(target_arch = "wasm32"))]
 pub use error::StoreError;
 pub use error::{
     AccessDenied, AlreadyConsumed, AuthError, AuthErrorKind, CustomError, InternalError,
