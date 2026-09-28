@@ -127,7 +127,7 @@ jobs:
           Add-MpPreference -ExclusionPath "${{ github.workspace }}\${{ env.WORKING_DIR }}\target"
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.90.0
+        uses: dtolnay/rust-toolchain@1.94.1
         with:
           targets: ${{ matrix.target }}
 
@@ -173,7 +173,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.90.0
+        uses: dtolnay/rust-toolchain@1.94.1
         with:
           targets: wasm32-unknown-unknown
 
