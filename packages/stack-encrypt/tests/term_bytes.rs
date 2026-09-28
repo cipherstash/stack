@@ -133,6 +133,7 @@ async fn match_term_positions_are_pinned_for_a_wide_filter() {
             2287, 2398, 2404, 2829, 5150, 5181, 5293, 9255, 11964, 14175, 16080, 24350, 25354,
             28362, 31748, 33647, 35845, 39141, 39480, 41998, 42621, 45365, 50303, 60896, 64668,
             64957, 65365
-        ]
+        ],
+        "positions for a 65536-bit filter are frozen: both bytes of each slice are in play"
     );
 }

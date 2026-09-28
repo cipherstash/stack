@@ -133,18 +133,36 @@ fn sealed_value_decodes_the_shortest_leaf_the_layout_allows() {
     let leaf = SealedValue::from_parts(Uuid::nil(), [7; 16], Vec::new(), Vec::new())
         .expect("an empty tag fits");
     let bytes = leaf.to_bytes();
-    assert_eq!(bytes.len(), 1 + 16 + 16 + 2);
+    assert_eq!(
+        bytes.len(),
+        1 + 16 + 16 + 2,
+        "an empty tag and ciphertext should leave only the fixed-width fields"
+    );
 
     let decoded = SealedValue::from_bytes(&bytes).expect("the fixed fields alone are a leaf");
-    assert_eq!(decoded.keyset_id(), Uuid::nil());
-    assert_eq!(decoded.iv(), &[7; 16]);
-    assert!(decoded.tag().is_empty());
-    assert!(decoded.ciphertext().is_empty());
+    assert_eq!(
+        decoded.keyset_id(),
+        Uuid::nil(),
+        "the keyset id should survive the round trip"
+    );
+    assert_eq!(
+        decoded.iv(),
+        &[7; 16],
+        "the iv should survive the round trip"
+    );
+    assert!(decoded.tag().is_empty(), "the tag should decode as empty");
+    assert!(
+        decoded.ciphertext().is_empty(),
+        "the ciphertext should decode as empty"
+    );
 
-    assert!(matches!(
-        SealedValue::from_bytes(&bytes[..bytes.len() - 1]),
-        Err(LeafBytesError::Truncated)
-    ));
+    assert!(
+        matches!(
+            SealedValue::from_bytes(&bytes[..bytes.len() - 1]),
+            Err(LeafBytesError::Truncated)
+        ),
+        "one byte short of the fixed-width fields should be truncated"
+    );
 }
 
 #[test]
@@ -156,8 +174,16 @@ fn sealed_value_accepts_the_longest_tag_the_length_field_frames() {
         .expect("a u16::MAX-byte tag fits the length field");
 
     let decoded = SealedValue::from_bytes(&leaf.to_bytes()).expect("decode leaf");
-    assert_eq!(decoded.tag(), tag.as_slice());
-    assert_eq!(decoded.ciphertext(), [0xDE, 0xAD].as_slice());
+    assert_eq!(
+        decoded.tag(),
+        tag.as_slice(),
+        "a u16::MAX-byte tag should survive the round trip intact"
+    );
+    assert_eq!(
+        decoded.ciphertext(),
+        [0xDE, 0xAD].as_slice(),
+        "the ciphertext after the longest tag should still be framed correctly"
+    );
 }
 
 #[test]
@@ -317,7 +343,11 @@ async fn equality_term_encoding_is_the_raw_prf_bytes() {
     );
     // And the owned conversion out is the same encoding.
     let bytes = term.to_bytes();
-    assert_eq!(Vec::<u8>::from(term), bytes);
+    assert_eq!(
+        Vec::<u8>::from(term),
+        bytes,
+        "the owned conversion should produce the same encoding as to_bytes"
+    );
 }
 
 #[test]
@@ -364,7 +394,11 @@ async fn match_term_bytes_are_pinned() {
 #[test]
 fn match_term_debug_is_its_positions() {
     let term = MatchTerm::<DefaultMatch>::from_positions(vec![17, 3]).expect("in range");
-    assert_eq!(format!("{term:?}"), "MatchTerm { positions: [3, 17] }");
+    assert_eq!(
+        format!("{term:?}"),
+        "MatchTerm { positions: [3, 17] }",
+        "Debug should show only the sorted positions"
+    );
 }
 
 #[test]

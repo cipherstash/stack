@@ -790,7 +790,11 @@ mod tests {
             let opening: Decryption<Option<String>, FakeDataKeySource> = sealed
                 .decryption_field(context())
                 .expect("an optional ciphertext is a recoverable field even when absent");
-            assert_eq!(opening.open_in(&keyset).await.unwrap(), expected);
+            assert_eq!(
+                opening.open_in(&keyset).await.unwrap(),
+                expected,
+                "opening should recover the value that was sealed, or its absence"
+            );
         }
     }
 
@@ -806,14 +810,23 @@ mod tests {
     #[test]
     fn operation_debug_describes_the_operation_without_its_captured_value() {
         let encryption: Encryption<'_, (), _, (), ()> = Encryption::ready(Ok("secret metadata"));
-        assert_eq!(format!("{encryption:?}"), "Encryption { .. }");
+        assert_eq!(
+            format!("{encryption:?}"),
+            "Encryption { .. }",
+            "a ready encryption should not print its captured value"
+        );
 
         let decryption = Decryption::<_, ()>::ready("secret plaintext");
-        assert_eq!(format!("{decryption:?}"), "Decryption { .. }");
+        assert_eq!(
+            format!("{decryption:?}"),
+            "Decryption { .. }",
+            "a ready decryption should not print its plaintext"
+        );
         let failure = Decryption::<(), ()>::failed(Error::NotOpened);
         assert_eq!(
             format!("{failure:?}"),
-            "Decryption { failed: NotOpened, .. }"
+            "Decryption { failed: NotOpened, .. }",
+            "a failed decryption should name its error and nothing else"
         );
     }
 }

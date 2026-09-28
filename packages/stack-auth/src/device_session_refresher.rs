@@ -411,7 +411,11 @@ mod tests {
             .unwrap()
             .load_profile()
             .unwrap();
-        assert_eq!(on_disk.device_instance_id(), Some("device-7"));
+        assert_eq!(
+            on_disk.device_instance_id(),
+            Some("device-7"),
+            "the rotated token on disk should keep the device instance"
+        );
     }
 
     /// Concurrent in-process calls to `refresh` must not produce a stale

@@ -2008,14 +2008,20 @@ mod tests {
     fn decrypt_passthrough_opens_only_a_passthrough() {
         let passthrough = || StackDecipher::over(CipherText::Passthrough(Box::new(7u32)));
 
-        assert_eq!(passthrough().decrypt_passthrough_as::<u32>(), Ok(7));
+        assert_eq!(
+            passthrough().decrypt_passthrough_as::<u32>(),
+            Ok(7),
+            "a passthrough payload of the requested type should be handed back"
+        );
         assert_eq!(
             passthrough().decrypt_passthrough_as::<String>(),
-            Err(Unspecified)
+            Err(Unspecified),
+            "a payload of another type should fail the downcast"
         );
         assert_eq!(
             StackDecipher::over(CipherText::Sequence(vec![])).decrypt_passthrough_as::<u32>(),
-            Err(Unspecified)
+            Err(Unspecified),
+            "a sealed shape should be refused rather than surfaced unopened"
         );
     }
 
