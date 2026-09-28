@@ -44,7 +44,9 @@
 // to produce, and one call seals every row of a slice from batched key
 // requests. The same plan is a value ([Plan]): [PlanFromTags] is what the
 // tags parse to, [NewPlan] builds one for a struct that cannot carry tags
-// (generated code), and [WithPlan] runs a record call under it. Key
+// (generated code), and [WithPlan] runs a record call under it. The plan
+// subpackage derives one from a field's schema facts through a policy
+// written in Go. Key
 // requests are batched 500 keys at a time, in both directions: one request
 // for any ordinary value or batch, one more per 500 sealed leaves beyond
 // that. Terms ([EqualityTerm], [MatchTerm], [OreTerm], [OpeTerm]) are

@@ -215,6 +215,56 @@ instance is released, and takes no context because it does no I/O. A
 cleanup, which covers the forgot-to-close case in a running process and
 nothing at exit.
 
+## Plans from a policy
+
+A record plan says which fields to encrypt, under which context, with which
+index terms. `stash` tags or `NewPlan` spell it out by hand. The `plan`
+subpackage derives it from what the schema already says about each field
+(its facts, such as Fideslang `data_categories`), through a policy written
+in Go:
+
+```go
+import "github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt/plan"
+
+type Individual struct {
+    ID         int64
+    Email      string `facts:"fides.data_categories=user.contact.email"`
+    MedicareNo string `facts:"fides.data_categories=user.government_id"`
+}
+
+var category = plan.Key("fides.data_categories")
+
+var Base = plan.FirstOf(
+    plan.When(category.Under("user.government_id"), plan.Encrypt(plan.EQL(stackencrypt.Equality))),
+    plan.When(category.Under("user.contact.email"), plan.Encrypt(plan.EQL(stackencrypt.Equality, stackencrypt.Match))),
+    plan.When(category.Under("user"), plan.Encrypt(plan.EQL())),
+)
+
+var Individuals = plan.ForMessage(&Individual{}, plan.Table("individuals"),
+    plan.FirstOf(
+        plan.When(plan.Field("MedicareNo"), plan.Encrypt(plan.EQL(stackencrypt.Equality)),
+            plan.Column("medicare_number")),
+    ).OrElse(Base),
+)
+
+// At startup: panics if a classified field is decided by no rule.
+var individuals = plan.MustPlanFor(plan.StructTags, Individuals)
+
+records, err := cipher.EncryptRecords(ctx, rows, stackencrypt.WithPlan(individuals))
+```
+
+A policy fails closed: a field with facts that no rule decides is an error
+when the plan is built, naming the field and its facts. There is no default;
+write a catch-all, `Plaintext()` included, in the policy. Fields with no
+facts are left out and stored as they are.
+
+An EQL target's context is its column identity, `"<table>/<column>"`. The
+table is required per message, never derived from its name, and the column
+is the field name unless a rule pins it with `plan.Column`, which keeps the
+context fixed across renames. `plan.Custom` targets supply their own
+context. The plan a policy builds is a `Plan` like any other: the guest
+receives the same bytes as for the equivalent hand-built plan.
+
 ## Errors
 
 Errors are sentinel values, matched with `errors.Is`. The wasm guest
