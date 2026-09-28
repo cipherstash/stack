@@ -2,6 +2,7 @@ package stackencrypt
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"reflect"
@@ -25,14 +26,31 @@ func liveClient(t *testing.T) *Client {
 	}
 	material := []byte(clientKey)
 	key := NewClientKey(material)
-	c, err := NewClient(t.Context(), Config{
-		Credentials: NewCredentials(clientID, key, StaticToken(token)),
-		ZeroKMSURL:  url,
+	// The credentials a successful NewClient resolved are released by the
+	// client's Close, once: the wiring only a real load-keyset response can
+	// reach.
+	var released int
+	creds := credentialsFunc(func(ctx context.Context, opts ResolveOptions) (*ResolvedCredentials, error) {
+		r, err := NewCredentials(clientID, key, StaticToken(token)).Resolve(ctx, opts)
+		if err == nil {
+			r.Close = func() error { released++; return nil }
+		}
+		return r, err
 	})
+	c, err := NewClient(t.Context(), Config{Credentials: creds, ZeroKMSURL: url})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	t.Cleanup(func() { _ = c.Close() })
+	t.Cleanup(func() {
+		_ = c.Close()
+		_ = c.Close()
+		if released != 1 {
+			t.Errorf("Close released the credentials %d times, want once", released)
+		}
+	})
+	if released != 0 {
+		t.Fatalf("a successful NewClient released the credentials %d times, want 0", released)
+	}
 	// The successful outcome of the consumption contract, which only a
 	// real load-keyset response can reach: the key is empty and the bytes
 	// it was built from are zero once the client exists.

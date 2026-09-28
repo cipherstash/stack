@@ -194,6 +194,11 @@ func TestAutoCredentialsFromTheProfile(t *testing.T) {
 	if got := token(t, resolved); got != "profile-token" {
 		t.Errorf("Token = %q, want the stored device session's", got)
 	}
+	// The credential guest's lock state travels with the credentials, so
+	// the client can report it; what it is depends on the host.
+	if err := resolved.MemoryLockError; err != nil && !errors.Is(err, ErrMemoryLock) {
+		t.Errorf("MemoryLockError = %v, want nil or ErrMemoryLock", err)
+	}
 }
 
 func TestAutoCredentialsFromTheEnvironmentWithNoProfile(t *testing.T) {
@@ -334,6 +339,44 @@ func TestAutoCredentialsMissing(t *testing.T) {
 	}
 }
 
+// A profile that exists but cannot be opened is not "not logged in": the
+// error says why the profile could not be consulted — here, a
+// CS_CONFIG_PATH that names a file — wherever the profile would have
+// supplied the missing half.
+func TestAutoCredentialsNamesWhyTheProfileCouldNotBeOpened(t *testing.T) {
+	authGuestOrSkip(t)
+	file := filepath.Join(t.TempDir(), "profile")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("the token", func(t *testing.T) {
+		cleanEnv(t, file)
+		_, err := resolve(t)
+		for _, want := range []error{ErrNoCredentials, stackauth.ErrNoProfile} {
+			if !errors.Is(err, want) {
+				t.Errorf("error %v, want %v", err, want)
+			}
+		}
+		if err == nil || !strings.Contains(err.Error(), "is not a directory") || !strings.Contains(err.Error(), file) {
+			t.Errorf("error %q does not say why %s could not be opened", err, file)
+		}
+	})
+	t.Run("the client key", func(t *testing.T) {
+		cleanEnv(t, file)
+		t.Setenv(envAccessKey, testAccessKey)
+		t.Setenv(envWorkspaceCRN, testCRN)
+		_, err := resolve(t)
+		for _, want := range []error{ErrNoCredentials, stackauth.ErrNoProfile} {
+			if !errors.Is(err, want) {
+				t.Errorf("error %v, want %v", err, want)
+			}
+		}
+		if err == nil || !strings.Contains(err.Error(), "is not a directory") || !strings.Contains(err.Error(), envClientKey) {
+			t.Errorf("error %q does not name %s and say why the profile could not be opened", err, envClientKey)
+		}
+	})
+}
+
 // A set but empty variable is refused rather than skipped, as stack-kms's
 // EnvKeyProvider refuses it; and no error from resolution carries the
 // material of a key the environment or the profile held.
@@ -383,6 +426,121 @@ func TestNewClientWithAutoCredentials(t *testing.T) {
 	// A failed NewClient released the credentials it resolved.
 	if _, err := released.Token.Token(context.Background()); !errors.Is(err, stackauth.ErrState) {
 		t.Fatalf("the token source after a failed NewClient: %v, want ErrState", err)
+	}
+}
+
+// A failed NewClient releases the credentials once, through the client it
+// made and closed — the same wiring a successful client's Close runs — and
+// not again on its way out.
+func TestNewClientReleasesTheCredentialsOnceWhenInitFails(t *testing.T) {
+	guestOrSkip(t)
+	stub := newStub(t, http.StatusUnauthorized, "", "nope")
+	var released int
+	creds := credentialsFunc(func(ctx context.Context, opts ResolveOptions) (*ResolvedCredentials, error) {
+		r, err := testCredentials(StaticToken("t")).Resolve(ctx, opts)
+		if err == nil {
+			r.Close = func() error { released++; return nil }
+		}
+		return r, err
+	})
+	_, err := NewClient(context.Background(), Config{Credentials: creds, ZeroKMSURL: stub.URL})
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("NewClient: %v, want ErrUnauthorized from the stub", err)
+	}
+	if released != 1 {
+		t.Fatalf("a failed NewClient released the credentials %d times, want once", released)
+	}
+}
+
+// A Resolve that fails while handing back what it built is consumed as a
+// successful one is: the key is wiped and Close runs, once.
+func TestNewClientConsumesCredentialsAFailedResolveHandsBack(t *testing.T) {
+	key := NewClientKey([]byte(testClientKey))
+	var released int
+	resolveErr := errors.New("the token strategy failed")
+	creds := credentialsFunc(func(context.Context, ResolveOptions) (*ResolvedCredentials, error) {
+		return &ResolvedCredentials{
+			ClientID:  testClientID,
+			ClientKey: key,
+			Close:     func() error { released++; return nil },
+		}, resolveErr
+	})
+	_, err := NewClient(context.Background(), Config{Credentials: creds})
+	if !errors.Is(err, resolveErr) {
+		t.Fatalf("NewClient: %v, want the Resolve error", err)
+	}
+	if !key.IsZero() {
+		t.Error("the key a failed Resolve handed back still holds material")
+	}
+	if released != 1 {
+		t.Errorf("the failed Resolve's Close ran %d times, want once", released)
+	}
+}
+
+// The host-side checks of the config run before the credentials are asked:
+// a refused endpoint or cache size costs no resolution — under
+// AutoCredentials, no credential guest — and an explicit key is consumed
+// all the same.
+func TestNewClientRefusesTheConfigBeforeResolvingCredentials(t *testing.T) {
+	for name, cfg := range map[string]func(*testing.T) Config{
+		"an unusable CS_ZEROKMS_HOST": func(t *testing.T) Config {
+			t.Setenv("CS_ZEROKMS_HOST", "localhost:3002")
+			return Config{}
+		},
+		"a negative cache size": func(*testing.T) Config { return Config{KeysetCacheSize: -1} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			cleanEnv(t, t.TempDir())
+			cfg := cfg(t)
+			resolved := false
+			cfg.Credentials = credentialsFunc(func(ctx context.Context, opts ResolveOptions) (*ResolvedCredentials, error) {
+				resolved = true
+				return testCredentials(StaticToken("t")).Resolve(ctx, opts)
+			})
+			if _, err := NewClient(context.Background(), cfg); err == nil {
+				t.Fatal("NewClient accepted the config")
+			}
+			if resolved {
+				t.Error("the credentials were resolved for a config refused host-side")
+			}
+			key := NewClientKey([]byte(testClientKey))
+			cfg.Credentials = NewCredentials(testClientID, key, StaticToken("t"))
+			if _, err := NewClient(context.Background(), cfg); err == nil {
+				t.Fatal("NewClient accepted the config")
+			}
+			if !key.IsZero() {
+				t.Error("an explicit key was handed back live with the refused config")
+			}
+		})
+	}
+}
+
+// The client's memory report covers the credentials' memory too: a lock the
+// credential guest could not get is a lock the client did not get, wherever
+// the client is asked, printed or logged.
+func TestClientReportsTheCredentialsMemoryLock(t *testing.T) {
+	wasm := guestOrSkip(t)
+	inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: StaticToken("t")}, guest.BestEffort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newClient(inst, nil)
+	t.Cleanup(func() { _ = c.Close() })
+	if err := c.MemoryLockError(); err != nil {
+		t.Skipf("this guest's own memory is unlocked here (%v); the fold cannot be told apart", err)
+	}
+	c.credentialsLockErr = guest.MemoryLockError(errors.New("RLIMIT_MEMLOCK refused the credential guest"))
+	if c.MemoryLocked() {
+		t.Fatal("MemoryLocked with the credentials' memory unlocked")
+	}
+	if err := c.MemoryLockError(); !errors.Is(err, ErrMemoryLock) || !strings.Contains(err.Error(), "credential guest") {
+		t.Fatalf("MemoryLockError = %v, want ErrMemoryLock naming the credential guest", err)
+	}
+	if s := fmt.Sprint(c); !strings.Contains(s, "unlocked") || !strings.Contains(s, "credential guest") {
+		t.Fatalf("Client prints as %q: no credentials' memory state", s)
+	}
+	if v := c.LogValue().String(); !strings.Contains(v, "memory_locked=false") || !strings.Contains(v, "credential guest") {
+		t.Fatalf("Client logs as %q: no credentials' memory state", v)
 	}
 }
 

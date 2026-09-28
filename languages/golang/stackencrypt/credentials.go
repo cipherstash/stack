@@ -23,7 +23,10 @@ import (
 // [ResolvedCredentials] for what an implementation owes the client.
 type Credentials interface {
 	// Resolve produces the credentials for one client. NewClient calls it
-	// once, and consumes the key it returns.
+	// once, and consumes the key it returns. A result returned alongside
+	// an error is consumed too: its key is wiped and its Close is called,
+	// so an implementation may hand back what it built before it failed
+	// rather than release it itself.
 	Resolve(ctx context.Context, opts ResolveOptions) (*ResolvedCredentials, error)
 }
 
@@ -55,6 +58,15 @@ type ResolvedCredentials struct {
 	// The client calls it from Client.Close, or from NewClient when the
 	// client is not made. A Token that outlives it must not be asked again.
 	Close func() error
+	// MemoryLockError, when not nil, is why memory the credentials hold key
+	// material in is not locked in RAM: for AutoCredentials, the credential
+	// guest's, which the client key passed through and the token strategy
+	// lives in, as stackauth's ProfileStore.MemoryLockError reports it.
+	// The client folds it into Client.MemoryLocked and
+	// Client.MemoryLockError, so a checklist asserting the lock sees every
+	// guest the key was in, not only the crypto guest. Nil when the memory
+	// is locked, or when the credentials hold nothing.
+	MemoryLockError error
 }
 
 // ErrNoCredentials is [AutoCredentials] finding no token source or no
@@ -115,10 +127,13 @@ var envZeroKMSHost = []string{"CS_ZEROKMS_HOST", "CS_VITUR_HOST"}
 //     workspace's secretkey.json. Only one of the two set is the same as
 //     neither. Set but empty is an error, not a fall-through.
 //
-// The profile is CS_CONFIG_PATH, else ~/.cipherstash; a directory that does
-// not exist is not an error — an environment-only deployment has none — it
-// just leaves the environment as the only source. Nothing found in either
-// place is [ErrNoCredentials].
+// The profile is CS_CONFIG_PATH, else ~/.cipherstash; a profile that cannot
+// be opened is not an error — an environment-only deployment has none — it
+// just leaves the environment as the only source, as the Rust client does.
+// Nothing found in either place is [ErrNoCredentials], and when the profile
+// would have been consulted, that error says why it could not be: a
+// directory that does not exist, one that cannot be read, a path that is
+// not a directory.
 //
 // The profile and the token strategies run in stackauth's credential guest,
 // not in the crypto guest, which still sees no environment and no
@@ -137,10 +152,14 @@ func (autoCredentials) Resolve(ctx context.Context, opts ResolveOptions) (resolv
 		authOpts = append(authOpts, stackauth.RequireLockedMemory())
 	}
 	profile, err := stackauth.Resolve(ctx, authOpts...)
-	hasProfile := err == nil
+	// noProfile is why there is no profile to consult, when there is none:
+	// kept for the errors that would have consulted it, so a profile that
+	// exists but cannot be opened is not reported as "not logged in".
+	var noProfile error
 	if errors.Is(err, stackauth.ErrNoProfile) {
-		// No profile directory: the strategies that need none still run,
-		// in a guest with nothing mounted.
+		// The strategies that need no profile still run, in a guest with
+		// nothing mounted; every profile read on it is ErrNoProfile.
+		noProfile = err
 		profile, err = stackauth.OpenWithoutProfile(ctx, authOpts...)
 	}
 	if err != nil {
@@ -157,9 +176,14 @@ func (autoCredentials) Resolve(ctx context.Context, opts ResolveOptions) (resolv
 	strategy, err := profile.Auto(ctx)
 	switch {
 	case errors.Is(err, stackauth.ErrNotAuthenticated):
+		if noProfile != nil {
+			err = fmt.Errorf("%w: %w", err, noProfile)
+		}
 		return nil, fmt.Errorf("%w: no token: set %s and %s, or run `stash auth login`: %w",
 			ErrNoCredentials, envAccessKey, envWorkspaceCRN, err)
-	case errors.Is(err, stackauth.ErrAuthConfig):
+	case errors.Is(err, stackauth.ErrAuthConfig) && accessKeyConfigured():
+		// The status covers every configuration fault the guest reports;
+		// name the variables only when they are what was configured.
 		return nil, fmt.Errorf("stackencrypt: credentials: check %s and %s: %w", envAccessKey, envWorkspaceCRN, err)
 	case err != nil:
 		return nil, fmt.Errorf("stackencrypt: credentials: %w", err)
@@ -175,7 +199,7 @@ func (autoCredentials) Resolve(ctx context.Context, opts ResolveOptions) (resolv
 		return nil, err
 	}
 	if key == nil {
-		if clientID, key, err = clientKeyFromProfile(ctx, profile, hasProfile); err != nil {
+		if clientID, key, err = clientKeyFromProfile(ctx, profile, noProfile); err != nil {
 			return nil, err
 		}
 	}
@@ -189,7 +213,16 @@ func (autoCredentials) Resolve(ctx context.Context, opts ResolveOptions) (resolv
 			// cleanly.
 			return errors.Join(strategy.Close(), profile.Close())
 		},
+		MemoryLockError: profile.MemoryLockError(),
 	}, nil
+}
+
+// accessKeyConfigured reports whether either variable of the access-key
+// strategy is set: what its configuration errors are then about.
+func accessKeyConfigured() bool {
+	_, keySet := os.LookupEnv(envAccessKey)
+	_, crnSet := os.LookupEnv(envWorkspaceCRN)
+	return keySet || crnSet
 }
 
 // clientKeyFromEnv is stack-kms's EnvKeyProvider: both variables set is the
@@ -217,16 +250,19 @@ func clientKeyFromEnv() (string, *ClientKey, error) {
 // clientKeyFromProfile is the current workspace's secretkey.json. The
 // "nothing there" answers — no profile, no current workspace, no file — are
 // ErrNoCredentials; a file that is there but unreadable keeps its own error.
-func clientKeyFromProfile(ctx context.Context, profile *stackauth.ProfileStore, hasProfile bool) (string, *ClientKey, error) {
+// noProfile, when not nil, is why the profile could not be opened; the
+// store's own answer to a read is then a bare ErrNoProfile, and the reason
+// is the useful one.
+func clientKeyFromProfile(ctx context.Context, profile *stackauth.ProfileStore, noProfile error) (string, *ClientKey, error) {
 	notConfigured := func(err error) error {
 		return fmt.Errorf("%w: no client key: set %s and %s, or run `stash auth login`: %w",
 			ErrNoCredentials, envClientID, envClientKey, err)
 	}
-	if !hasProfile {
-		return "", nil, notConfigured(stackauth.ErrNoProfile)
-	}
 	workspace, err := profile.CurrentWorkspaceStore(ctx)
-	if errors.Is(err, stackauth.ErrNoCurrentWorkspace) {
+	if errors.Is(err, stackauth.ErrNoProfile) && noProfile != nil {
+		err = noProfile
+	}
+	if errors.Is(err, stackauth.ErrNoProfile) || errors.Is(err, stackauth.ErrNoCurrentWorkspace) {
 		return "", nil, notConfigured(err)
 	}
 	if err != nil {

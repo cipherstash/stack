@@ -230,6 +230,10 @@ func (t *transport) tokenGet(ctx context.Context, m api.Module, tokenPtrOut, tok
 	tok := []byte(token)
 	defer wipe(tok)
 	if !place(ctx, m, tokenPtrOut, tokenLenOut, tok) {
+		// The source did its part; the guest could not take the token (no
+		// allocator, a refused allocation, an out-of-range slot). Say so,
+		// or the failure reads as the source's.
+		t.tokenErr = errors.New("stackencrypt: the token could not be handed to the guest")
 		return hostFailed
 	}
 	return 0

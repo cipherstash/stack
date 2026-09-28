@@ -95,10 +95,6 @@ func Resolve(ctx context.Context, opts ...Option) (*ProfileStore, error) {
 // mounted as the one directory the guest can see. Nothing is read until a
 // method asks; nothing is written unless a method writes.
 func Open(ctx context.Context, dir string, opts ...Option) (*ProfileStore, error) {
-	var o options
-	for _, opt := range opts {
-		opt(&o)
-	}
 	info, err := os.Stat(dir)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", ErrNoProfile, dir, err)
@@ -106,21 +102,7 @@ func Open(ctx context.Context, dir string, opts ...Option) (*ProfileStore, error
 	if !info.IsDir() {
 		return nil, fmt.Errorf("%w: %s is not a directory", ErrNoProfile, dir)
 	}
-	wasm := o.guest
-	if wasm == nil {
-		if wasm, err = embeddedGuest(); err != nil {
-			return nil, err
-		}
-	}
-	inst, err := newInstance(ctx, wasm, dir, guest.PolicyFor(o.requireLocked), o.transport)
-	if err != nil {
-		return nil, err
-	}
-	r := &root{inst: inst, hostDir: dir}
-	// The cleanup takes the instance, not the root: a cleanup whose
-	// argument reaches its object keeps that object alive forever.
-	r.cleanup = runtime.AddCleanup(r, func(inst *instance) { _ = inst.release() }, inst)
-	return &ProfileStore{root: r, dir: guestRoot}, nil
+	return open(ctx, dir, opts)
 }
 
 // OpenWithoutProfile instantiates the guest with no directory mounted: no
@@ -131,6 +113,13 @@ func Open(ctx context.Context, dir string, opts ...Option) (*ProfileStore, error
 // is the environment's access key or ErrNotAuthenticated, as stack-auth's
 // AutoStrategy is with no profile store.
 func OpenWithoutProfile(ctx context.Context, opts ...Option) (*ProfileStore, error) {
+	return open(ctx, "", opts)
+}
+
+// open instantiates the guest over hostDir — mounted as the one directory
+// the guest can see, or, when empty, nothing — and arms its cleanup. Open
+// and OpenWithoutProfile differ only in what they hand it.
+func open(ctx context.Context, hostDir string, opts []Option) (*ProfileStore, error) {
 	var o options
 	for _, opt := range opts {
 		opt(&o)
@@ -142,11 +131,13 @@ func OpenWithoutProfile(ctx context.Context, opts ...Option) (*ProfileStore, err
 			return nil, err
 		}
 	}
-	inst, err := newInstance(ctx, wasm, "", guest.PolicyFor(o.requireLocked), o.transport)
+	inst, err := newInstance(ctx, wasm, hostDir, guest.PolicyFor(o.requireLocked), o.transport)
 	if err != nil {
 		return nil, err
 	}
-	r := &root{inst: inst}
+	r := &root{inst: inst, hostDir: hostDir}
+	// The cleanup takes the instance, not the root: a cleanup whose
+	// argument reaches its object keeps that object alive forever.
 	r.cleanup = runtime.AddCleanup(r, func(inst *instance) { _ = inst.release() }, inst)
 	return &ProfileStore{root: r, dir: guestRoot}, nil
 }

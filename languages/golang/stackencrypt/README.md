@@ -57,9 +57,11 @@ keyset, and `ctx` bounds that request. It has nothing to do with an
 The zero `Config` finds its credentials the way the Rust client does, with
 `AutoCredentials`: the environment first, then the developer profile that
 `stash auth login` writes. On a developer machine, logging in is enough.
-In CI or a deployment, four variables are:
+In CI or a deployment, the environment supplies them. The first two rows
+are what a deployment with no profile needs; the rest override what would
+otherwise be resolved:
 
-| Variable | |
+| Variable | Role |
 |---|---|
 | `CS_CLIENT_ACCESS_KEY`, `CS_WORKSPACE_CRN` | An access key, exchanged for a token. Without it, the current workspace's stored session is used, and refreshed as it expires. |
 | `CS_CLIENT_ID`, `CS_CLIENT_KEY` | The client key, used when both are set. Without them, the current workspace's `secretkey.json` is used. |
@@ -68,7 +70,16 @@ In CI or a deployment, four variables are:
 | `CS_CONFIG_PATH` | The profile directory, instead of `~/.cipherstash`. |
 
 A variable that is set but empty or unusable is an error, not a reason to
-look elsewhere. Nothing found is `ErrNoCredentials`, naming what to set.
+look elsewhere. Nothing found is `ErrNoCredentials`, naming what to set;
+when the profile would have been consulted, it also says why the profile
+could not be opened, so an unreadable or mistyped `CS_CONFIG_PATH` is not
+reported as "not logged in".
+
+The endpoint variables are read whatever the credentials, `NewCredentials`
+included, as the Rust client reads them. A service that left `ZeroKMSURL`
+empty and relied on the token's services claim now follows
+`CS_ZEROKMS_HOST` or `CS_VITUR_HOST` if either is set in its environment,
+so a value exported there for another tool is worth checking on upgrade.
 
 Resolution happens host-side, in Go. The profile and the token strategies
 run in `stackauth`'s credential guest; the crypto guest that holds the

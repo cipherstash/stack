@@ -57,7 +57,9 @@
 // The guest imports exactly two host functions: an HTTP send, served by any
 // [net/http.RoundTripper], and a bearer-token fetch, served by a
 // [TokenSource]. What crosses per ZeroKMS call is what would cross TLS
-// anyway; derived key material never leaves the guest.
+// anyway; derived key material never leaves the guest. Under
+// [AutoCredentials] the same RoundTripper also carries the authentication
+// requests to CTS, so one scoped to the ZeroKMS host alone is not enough.
 //
 // # Credentials
 //
