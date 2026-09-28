@@ -511,6 +511,44 @@ mod tests {
             );
         }
 
+        /// The other side of the length check. A key id of exactly the IV
+        /// length splits into an IV and an *empty* tag, which is a shape the
+        /// split accepts — so the guard has to be `<`, not `<=`. Without
+        /// this, tightening it by one byte would reject a key id the format
+        /// permits and no test would notice.
+        #[tokio::test]
+        async fn a_key_id_that_is_exactly_the_iv_splits_with_an_empty_tag() {
+            let captured = Captured::<RetrieveKeyRequest<'static>>::new();
+            let keyset = build_keyset(|builder| {
+                builder
+                    .add_effect::<RetrieveKeyRequest, _>(captured.recorder())
+                    .add_success_response::<RetrieveKeyRequest>(RetrieveKeyResponse {
+                        keys: vec![RetrievedKey {
+                            key_material: key_material(),
+                        }],
+                    })
+            })
+            .await;
+
+            let keys = keyset
+                .retrieve_keys(&[(KeyId::new(vec![7u8; IV_LEN]), Binding::from("users/email"))])
+                .await
+                .expect("a key id of exactly the IV length is splittable");
+            assert_eq!(keys.len(), 1);
+
+            let request = captured.take();
+            assert_eq!(request.keys.len(), 1);
+            assert_eq!(
+                request.keys[0].iv.as_ref(),
+                &[7u8; IV_LEN],
+                "the whole key id is the IV"
+            );
+            assert!(
+                request.keys[0].tag.is_empty(),
+                "and the tag is what is left, which is nothing"
+            );
+        }
+
         #[tokio::test]
         async fn a_short_key_id_fails_before_any_request() {
             // No `retrieve-data-key` handler is stubbed, so reaching the
