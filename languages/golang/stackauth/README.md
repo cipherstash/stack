@@ -16,6 +16,12 @@ cross-process refresh lock for device sessions.
 
 ## Use
 
+Most applications never call this package directly: a `stackencrypt`
+client built with the zero `Config` resolves its credentials with
+`stackencrypt.AutoCredentials`, which reads the environment first and then
+the profile, through this package. Use it directly to take the profile
+apart yourself:
+
 ```go
 import (
     "context"
@@ -39,10 +45,14 @@ func run(ctx context.Context) error {
     if err != nil {
         return err
     }
+    source, err := workspace.DeviceSession(ctx) // refreshes under the CLI's lock
+    if err != nil {
+        return err
+    }
+    defer source.Close()
     client, err := stackencrypt.NewClient(ctx, stackencrypt.Config{
-        ClientID:  clientID,
-        ClientKey: clientKey,               // consumed and wiped by NewClient
-        Token:     workspace.TokenSource(), // reads auth.json; no refresh
+        // The key is consumed and wiped by NewClient.
+        Credentials: stackencrypt.NewCredentials(clientID, clientKey, source),
     })
     if err != nil {
         return err
@@ -54,18 +64,15 @@ func run(ctx context.Context) error {
 ```
 
 `stackauth.ClientKey` and `stackencrypt.ClientKey` are one type, so the
-key goes straight from the profile into the config. The token source
-refuses a token at its real expiry with `stackauth.ErrTokenExpired`.
+key goes straight from the profile into the credentials. For a token that
+is read and never refreshed, `workspace.TokenSource()` re-reads auth.json
+on every call and refuses a token at its real expiry with
+`stackauth.ErrTokenExpired`.
 
-For a refreshing device session, replace `workspace.TokenSource()` with a
-strategy and close it after the client:
-
-```go
-source, err := workspace.DeviceSession(ctx)
-if err != nil { return err }
-defer source.Close()
-// stackencrypt.Config{Token: source, ...}
-```
+With no profile directory at all (CI, a container, a server authenticating
+by federation), `stackauth.OpenWithoutProfile(ctx)` runs the guest with
+nothing mounted: the access-key and OIDC strategies work, and every profile
+read is `ErrNoProfile`.
 
 `profile.AccessKey(ctx, crn, key)`, `profile.OIDC(ctx, crn, provider)`, and
 `profile.Auto(ctx)` also return strategies that satisfy

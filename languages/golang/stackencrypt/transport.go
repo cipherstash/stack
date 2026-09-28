@@ -21,9 +21,9 @@ const transportModule = "cipherstash_transport"
 
 // TokenSource supplies the bearer token the guest presents to ZeroKMS. It
 // is asked on every request, so a source that rotates tokens needs no
-// re-initialisation of the client. Minting and refresh stay host-side; a
-// future token strategy running inside the guest is an additive change to
-// [Config], not to this interface.
+// re-initialisation of the client. Minting and refresh stay host-side, out
+// of the crypto guest: [AutoCredentials] runs them in stackauth's credential
+// guest, and hands the client a TokenSource over the strategy it chose.
 type TokenSource interface {
 	Token(ctx context.Context) (string, error)
 }
@@ -49,6 +49,12 @@ type transport struct {
 	// sends counts transport_send excursions, so tests can pin the batching
 	// contract (one ZeroKMS call per operation) instead of trusting it.
 	sends atomic.Int64
+	// tokenErr is why the token source last failed during the call in
+	// flight: the guest sees only that token_get failed, so Client.call
+	// attaches the cause — ErrNoCredentials, a refused refresh — to the
+	// error it returns. Only touched under the client's lock, which every
+	// guest call holds.
+	tokenErr error
 }
 
 // transportFailed is the return value of transport_send when the request
@@ -211,7 +217,12 @@ func (b *requestBody) Close() error {
 // tokenGet is token_get: hand the guest the current bearer token.
 func (t *transport) tokenGet(ctx context.Context, m api.Module, tokenPtrOut, tokenLenOut uint32) int32 {
 	token, err := t.token.Token(ctx)
-	if err != nil || token == "" {
+	if err != nil {
+		t.tokenErr = err
+		return hostFailed
+	}
+	if token == "" {
+		t.tokenErr = errors.New("stackencrypt: the token source returned an empty token")
 		return hostFailed
 	}
 	// The credential's transport copy is wiped once it is in guest memory;

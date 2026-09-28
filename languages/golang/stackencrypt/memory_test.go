@@ -86,9 +86,7 @@ func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
 	}
 	limited := !probe.IsFallback()
 	cfg := Config{
-		ClientID:            "6a70bd18-99ac-4650-b104-37eec3a15b09",
-		ClientKey:           NewClientKey([]byte("00")),
-		Token:               StaticToken("t"),
+		Credentials:         NewCredentials("6a70bd18-99ac-4650-b104-37eec3a15b09", NewClientKey([]byte("00")), StaticToken("t")),
 		Guest:               wasiProbe,
 		RequireLockedMemory: true,
 	}
@@ -102,7 +100,7 @@ func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
 	// Best effort under the same refusal: the client exists, says so, and
 	// shows it wherever it is printed or logged.
 	if wasm, gerr := embeddedGuest(); gerr == nil {
-		inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: cfg.Token}, guest.BestEffort)
+		inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: StaticToken("t")}, guest.BestEffort)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -193,7 +191,7 @@ func TestRequireLockedMemoryFailsTheCallThatCannotGrow(t *testing.T) {
 func TestRequireLockedMemoryClosesTheClientOnARefusedInternalGrowth(t *testing.T) {
 	ctx := context.Background()
 	c := strictClient(t)
-	cfg := Config{ClientID: strings.Repeat("a", 2<<20), ClientKey: NewClientKey([]byte("00")), Token: StaticToken("t")}
+	cfg := initConfig{clientID: strings.Repeat("a", 2<<20), clientKey: NewClientKey([]byte("00"))}
 	encoded, err := encodeConfig(cfg)
 	if err != nil {
 		t.Fatal(err)

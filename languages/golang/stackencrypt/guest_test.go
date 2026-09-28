@@ -96,12 +96,19 @@ func newStub(t *testing.T, status int, contentType, body string) *zerokmsStub {
 }
 
 func testConfig(url string) Config {
-	return Config{
-		ClientID:   testClientID,
-		ClientKey:  NewClientKey([]byte(testClientKey)),
-		ZeroKMSURL: url,
-		Token:      StaticToken("stub-token"),
-	}
+	return Config{Credentials: testCredentials(StaticToken("stub-token")), ZeroKMSURL: url}
+}
+
+// testCredentials is the test client id and a fresh copy of the test key,
+// with token as the token source.
+func testCredentials(token TokenSource) Credentials {
+	return NewCredentials(testClientID, NewClientKey([]byte(testClientKey)), token)
+}
+
+// testInit is testConfig as se_cipher_init takes it, for tests that drive
+// an instance by hand.
+func testInit(url string) initConfig {
+	return initConfig{clientID: testClientID, clientKey: NewClientKey([]byte(testClientKey)), zerokmsURL: url}
 }
 
 func TestImportSurfaceIsWASIPlusTransport(t *testing.T) {
@@ -204,10 +211,16 @@ func TestTransportOutcomesMapToErrors(t *testing.T) {
 	t.Run("no token", func(t *testing.T) {
 		stub := newStub(t, http.StatusOK, "application/json", "{}")
 		cfg := testConfig(stub.URL)
-		cfg.Token = TokenFunc(func(context.Context) (string, error) { return "", errors.New("vault down") })
+		vaultDown := errors.New("vault down")
+		cfg.Credentials = testCredentials(TokenFunc(func(context.Context) (string, error) { return "", vaultDown }))
 		_, err := NewClient(context.Background(), cfg)
 		if err == nil {
 			t.Fatal("NewClient succeeded with no token")
+		}
+		// The guest reports only that token_get failed; the client attaches
+		// what the token source said.
+		if !errors.Is(err, vaultDown) {
+			t.Fatalf("NewClient: %v, want the token source's error", err)
 		}
 		if len(stub.requests) != 0 {
 			t.Fatalf("a request was made without a token: %+v", stub.requests)
@@ -443,30 +456,39 @@ func TestConfigValidation(t *testing.T) {
 	ctx := context.Background()
 	wiped := NewClientKey([]byte(testClientKey))
 	wiped.Wipe()
-	for name, cfg := range map[string]Config{
-		"no token":     {ClientID: testClientID, ClientKey: NewClientKey([]byte(testClientKey))},
-		"no client id": {ClientKey: NewClientKey([]byte(testClientKey)), Token: StaticToken("t")},
-		"no key":       {ClientID: testClientID, Token: StaticToken("t")},
-		"empty key":    {ClientID: testClientID, ClientKey: NewClientKey(nil), Token: StaticToken("t")},
-		"wiped key":    {ClientID: testClientID, ClientKey: wiped, Token: StaticToken("t")},
-		"negative cache": {ClientID: testClientID, ClientKey: NewClientKey([]byte(testClientKey)), Token: StaticToken("t"),
-			KeysetCacheSize: -1},
+	for name, tc := range map[string]struct {
+		id    string
+		key   *ClientKey
+		token TokenSource
+		cache int
+	}{
+		"no token":       {id: testClientID, key: NewClientKey([]byte(testClientKey))},
+		"no client id":   {key: NewClientKey([]byte(testClientKey)), token: StaticToken("t")},
+		"no key":         {id: testClientID, token: StaticToken("t")},
+		"empty key":      {id: testClientID, key: NewClientKey(nil), token: StaticToken("t")},
+		"wiped key":      {id: testClientID, key: wiped, token: StaticToken("t")},
+		"negative cache": {id: testClientID, key: NewClientKey([]byte(testClientKey)), token: StaticToken("t"), cache: -1},
 	} {
+		cfg := Config{Credentials: NewCredentials(tc.id, tc.key, tc.token), KeysetCacheSize: tc.cache}
 		if _, err := NewClient(ctx, cfg); err == nil {
 			t.Errorf("%s: NewClient succeeded", name)
 		}
 		// A refused config consumes the key too: the caller is never handed
 		// live material back with the error.
-		if !cfg.ClientKey.IsZero() {
+		if !tc.key.IsZero() {
 			t.Errorf("%s: the key still holds material after NewClient refused the config", name)
 		}
 	}
 	// Malformed values the guest refuses: no request is made.
 	guestOrSkip(t)
 	for name, mutate := range map[string]func(*Config){
-		"client id not a uuid": func(c *Config) { c.ClientID = "acme" },
-		"key not hex":          func(c *Config) { c.ClientKey = NewClientKey([]byte("zz")) },
-		"bad url":              func(c *Config) { c.ZeroKMSURL = "not a url" },
+		"client id not a uuid": func(c *Config) {
+			c.Credentials = NewCredentials("acme", NewClientKey([]byte(testClientKey)), StaticToken("t"))
+		},
+		"key not hex": func(c *Config) {
+			c.Credentials = NewCredentials(testClientID, NewClientKey([]byte("zz")), StaticToken("t"))
+		},
+		"bad url": func(c *Config) { c.ZeroKMSURL = "not a url" },
 	} {
 		stub := newStub(t, http.StatusOK, "application/json", "{}")
 		cfg := testConfig(stub.URL)
@@ -494,20 +516,27 @@ func TestClientKeyIsConsumedAndNeverPrinted(t *testing.T) {
 	material := []byte(testClientKey)
 	stub := newStub(t, http.StatusUnauthorized, "", "nope")
 	cfg := testConfig(stub.URL)
-	cfg.ClientKey = NewClientKey(material)
+	key := NewClientKey(material)
+	cfg.Credentials = NewCredentials(testClientID, key, StaticToken("stub-token"))
+	resolved, err := cfg.Credentials.Resolve(context.Background(), ResolveOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	// %x and %d reach a struct's fields without asking a Stringer; the
 	// key's Formatter answers for them.
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d"} {
-		out := fmt.Sprintf(verb, cfg)
-		if strings.Contains(out, testClientKey[:16]) || strings.Contains(out, hex.EncodeToString(material[:8])) {
-			t.Errorf("Config under %s prints the key: %q", verb, out)
+		for what, v := range map[string]any{"Config": cfg, "Credentials": cfg.Credentials, "ResolvedCredentials": *resolved} {
+			out := fmt.Sprintf(verb, v)
+			if strings.Contains(out, testClientKey[:16]) || strings.Contains(out, hex.EncodeToString(material[:8])) {
+				t.Errorf("%s under %s prints the key: %q", what, verb, out)
+			}
 		}
 	}
 	guestOrSkip(t)
 	if _, err := NewClient(context.Background(), cfg); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("NewClient: %v, want ErrUnauthorized", err)
 	}
-	if !cfg.ClientKey.IsZero() {
+	if !key.IsZero() {
 		t.Error("the key still holds material after NewClient")
 	}
 	for i, b := range material {
@@ -757,7 +786,7 @@ func TestClientKeyDoesNotRemainInGuestMemory(t *testing.T) {
 	// Keep the instance to scan it: build the client by hand so a failed
 	// init does not tear it down first.
 	ctx := context.Background()
-	encoded, err := encodeConfig(testConfig(stub.URL))
+	encoded, err := encodeConfig(testInit(stub.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -802,7 +831,7 @@ func TestTransportSendCounterAndResponseHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer inst.release()
-	encoded, _ := encodeConfig(testConfig(stub.URL))
+	encoded, _ := encodeConfig(testInit(stub.URL))
 	if _, err := inst.call(ctx, inst.cipherInit, buf(encoded)); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("init: %v", err)
 	}
@@ -815,9 +844,11 @@ func ExampleNewClient() {
 	// A client needs ZeroKMS credentials; see live_test.go for the shape of
 	// a real round trip.
 	_, err := NewClient(context.Background(), Config{
-		ClientID:  "6a70bd18-99ac-4650-b104-37eec3a15b09",
-		ClientKey: NewClientKey([]byte("...")),
-		Token:     StaticToken("access token"),
+		Credentials: NewCredentials(
+			"6a70bd18-99ac-4650-b104-37eec3a15b09",
+			NewClientKey([]byte("...")),
+			StaticToken("access token"),
+		),
 	})
 	fmt.Println(err != nil)
 	// Output: true

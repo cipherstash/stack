@@ -28,19 +28,14 @@ safe for concurrent use.
 ```go
 import (
     "context"
-    "os"
 
     "github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt"
 )
 
 func run(ctx context.Context) error {
-    client, err := stackencrypt.NewClient(ctx, stackencrypt.Config{
-        ClientID:  os.Getenv("CS_CLIENT_ID"),
-        ClientKey: stackencrypt.NewClientKey([]byte(os.Getenv("CS_CLIENT_KEY"))),
-        Token:     stackencrypt.StaticToken(os.Getenv("CS_CLIENT_ACCESS_KEY")),
-    })
+    client, err := stackencrypt.NewClient(ctx, stackencrypt.Config{})
     if err != nil {
-        return err
+        return err // stackencrypt.ErrNoCredentials: nothing configured
     }
     defer client.Close()
 
@@ -57,18 +52,50 @@ keyset, and `ctx` bounds that request. It has nothing to do with an
 `stackencrypt.Context`. Every method that can reach ZeroKMS takes a
 `context.Context` first, for the same reason.
 
-`Token` supplies the bearer token for every request. `StaticToken` is the
-simplest source; a `TokenFunc` can fetch or refresh one.
+### Credentials
+
+The zero `Config` finds its credentials the way the Rust client does, with
+`AutoCredentials`: the environment first, then the developer profile that
+`stash auth login` writes. On a developer machine, logging in is enough.
+In CI or a deployment, four variables are:
+
+| Variable | |
+|---|---|
+| `CS_CLIENT_ACCESS_KEY`, `CS_WORKSPACE_CRN` | An access key, exchanged for a token. Without it, the current workspace's stored session is used, and refreshed as it expires. |
+| `CS_CLIENT_ID`, `CS_CLIENT_KEY` | The client key, used when both are set. Without them, the current workspace's `secretkey.json` is used. |
+| `CS_ZEROKMS_HOST` (or `CS_VITUR_HOST`) | Pins the ZeroKMS endpoint. Otherwise it comes from the token. Read whatever the credentials. |
+| `CS_CTS_HOST` | Overrides the authentication endpoint. |
+| `CS_CONFIG_PATH` | The profile directory, instead of `~/.cipherstash`. |
+
+A variable that is set but empty or unusable is an error, not a reason to
+look elsewhere. Nothing found is `ErrNoCredentials`, naming what to set.
+
+Resolution happens host-side, in Go. The profile and the token strategies
+run in `stackauth`'s credential guest; the crypto guest that holds the
+keys is still given no environment and no filesystem. The credential guest
+lives as long as the client, and `Close` releases it.
+
+To supply the credentials yourself, pass `NewCredentials`:
+
+```go
+client, err := stackencrypt.NewClient(ctx, stackencrypt.Config{
+    Credentials: stackencrypt.NewCredentials(clientID, clientKey, tokenSource),
+})
+```
+
+`tokenSource` is asked for the bearer token on every request. `StaticToken`
+is the simplest source; a `TokenFunc` can fetch or refresh one, and every
+`stackauth` strategy is one. `Credentials` is an interface, so another
+source of credentials can implement it.
 
 `ClientKey` is an opaque type, not a string: it prints a redaction under
-every verb, so a logged `Config` never shows the key. `NewClientKey` takes
+every verb, so logged credentials never show the key. `NewClientKey` takes
 ownership of the slice it is given, and `NewClient` consumes the key —
 whatever the outcome, even a config it refuses, the key is empty afterwards
 and that slice is zero. A key is for one client; build another for another
-client. What the SDK cannot reach is what the key was built *from*: the
-`os.Getenv` string above is Go's, immutable, and lives until collected.
-Read the key from the developer profile through `stackauth` where you can,
-and where an environment variable is the source, treat the process
+client. What the SDK cannot reach is what the key was built *from*: a
+string read from the environment is Go's, immutable, and lives until
+collected. Where an environment variable is the source, treat the process
 environment as holding the key for the life of the process.
 
 ### Key material in memory
@@ -128,11 +155,12 @@ small and reveals nothing about plaintext or key material.
 | `ErrForeignKeyset` | A keyset-bound `Cipher` was given another keyset's ciphertext. Open it through the `Client`. |
 | `ErrEncoding` | Malformed input: a value, ciphertext, plan, context or config refused before any cryptography. |
 | `ErrTerm` | A term could not be derived, for example match text that yields no tokens. |
-| `ErrTransport` | ZeroKMS could not be reached. |
+| `ErrTransport` | ZeroKMS could not be reached, or the token source failed. A token source's own error is wrapped in it, so `errors.Is` finds that too (a refused refresh is `stackauth.ErrInvalidGrant`). |
 | `ErrKMS` | Any other ZeroKMS failure. |
 | `ErrConflict` | ZeroKMS reported a resource conflict. |
 | `ErrState` | The client has been closed: by `Close`, by a call its context interrupted, or by a guest trap. |
 | `ErrMemoryLock` | The instance's memory could not be locked in RAM. Returned by `NewClient` under `RequireLockedMemory`, and by a call whose growth could not be locked; otherwise reported by `MemoryLockError`. |
+| `ErrNoCredentials` | `NewClient` found no token source or no client key, in the environment or the profile. The message names what to set. |
 | `ErrInternal` | An unexpected failure inside the guest. |
 
 ## How it works under the hood

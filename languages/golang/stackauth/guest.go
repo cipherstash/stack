@@ -84,24 +84,32 @@ type instance struct {
 // should be predictable across instances. The clocks are the system's for
 // the same reason they are in stackencrypt: a deterministic default is the
 // wrong default for anything that reads time. Each is pinned by a test.
+//
+// A nil mount is a guest with no directory at all ([OpenWithoutProfile]):
+// no filesystem is configured, so there is nothing to mount or confine.
 func guestModuleConfig(mount *confinedFS) wazero.ModuleConfig {
-	fsConfig := wazero.NewFSConfig().(sysfs.FSConfig).WithSysFSMount(mount, guestRoot)
-	return wazero.NewModuleConfig().
+	config := wazero.NewModuleConfig().
 		WithName("stack_auth_guest").
-		WithFSConfig(fsConfig).
 		WithRandSource(rand.Reader).
 		WithSysNanotime().
 		WithSysWalltime()
+	if mount == nil {
+		return config
+	}
+	return config.WithFSConfig(wazero.NewFSConfig().(sysfs.FSConfig).WithSysFSMount(mount, guestRoot))
 }
 
 // newInstance instantiates wasm with hostDir mounted at guestRoot and its
-// linear memory from the guest packages' allocator. Under the strict
-// policy, memory that cannot be locked fails instantiation with
-// ErrMemoryLock.
+// linear memory from the guest packages' allocator. An empty hostDir mounts
+// nothing. Under the strict policy, memory that cannot be locked fails
+// instantiation with ErrMemoryLock.
 func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.LockPolicy, rt http.RoundTripper) (*instance, error) {
-	mount, err := newConfinedFS(hostDir)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", ErrNoProfile, hostDir, err)
+	var mount *confinedFS
+	if hostDir != "" {
+		var err error
+		if mount, err = newConfinedFS(hostDir); err != nil {
+			return nil, fmt.Errorf("%w: %s: %w", ErrNoProfile, hostDir, err)
+		}
 	}
 	config := wazero.NewRuntimeConfig().
 		WithCompilationCache(compilationCache()).
@@ -109,7 +117,9 @@ func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.
 	runtime := wazero.NewRuntimeWithConfig(ctx, config)
 	fail := func(err error) (*instance, error) {
 		_ = runtime.Close(ctx)
-		_ = mount.Close()
+		if mount != nil {
+			_ = mount.Close()
+		}
 		return nil, err
 	}
 	if _, err := wasi_snapshot_preview1.Instantiate(ctx, runtime); err != nil {
@@ -181,6 +191,9 @@ func (inst *instance) release() error {
 		inst.mem.Exit()
 	}
 	err := inst.runtime.Close(ctx)
+	if inst.mount == nil {
+		return err
+	}
 	if cerr := inst.mount.Close(); err == nil {
 		err = cerr
 	}

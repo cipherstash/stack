@@ -575,3 +575,48 @@ func TestAuthTransportErrorWithoutAResponseNamesNoStatus(t *testing.T) {
 		t.Fatalf("Token error = %v, want a bare ErrAuthTransport", err)
 	}
 }
+
+// A store with no profile mounted still runs the strategies that need none:
+// the environment's access key through Auto, as stack-auth's AutoStrategy
+// does with no profile store. Profile reads are ErrNoProfile, and Auto with
+// no access key is ErrNotAuthenticated rather than a profile error.
+func TestOpenWithoutProfileRunsAccessKeyAndRefusesProfileReads(t *testing.T) {
+	guestOrSkip(t)
+	var jwt string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, jwt, time.Now().Add(time.Hour).Unix())
+	}))
+	defer server.Close()
+	jwt = testJWT(t, server.URL)
+	ctx := context.Background()
+	store, err := OpenWithoutProfile(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if store.Dir() != "" {
+		t.Errorf("Dir = %q, want empty", store.Dir())
+	}
+	if _, err := store.CurrentWorkspace(ctx); !errors.Is(err, ErrNoProfile) {
+		t.Errorf("CurrentWorkspace: %v, want ErrNoProfile", err)
+	}
+	if _, _, err := store.SecretKey(ctx); !errors.Is(err, ErrNoProfile) {
+		t.Errorf("SecretKey: %v, want ErrNoProfile", err)
+	}
+	t.Setenv("CS_CLIENT_ACCESS_KEY", "CSAKtestKeyId.testKeySecret")
+	t.Setenv("CS_WORKSPACE_CRN", testCRN)
+	strategy, err := store.Auto(ctx, WithAuthBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strategy.Close()
+	if token, err := strategy.Token(ctx); err != nil || token != jwt {
+		t.Fatalf("Token = %q, %v", token, err)
+	}
+	if err := os.Unsetenv("CS_CLIENT_ACCESS_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Auto(ctx); !errors.Is(err, ErrNotAuthenticated) {
+		t.Fatalf("Auto with no key and no profile: %v, want ErrNotAuthenticated", err)
+	}
+}

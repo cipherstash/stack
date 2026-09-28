@@ -8,7 +8,8 @@
 //
 // A [ProfileStore] is one guest instance over one mounted directory. [Resolve]
 // finds the profile directory the way the Rust crate does (CS_CONFIG_PATH,
-// then ~/.cipherstash); [Open] takes one. The guest is given that directory
+// then ~/.cipherstash); [Open] takes one; [OpenWithoutProfile] mounts
+// nothing, for the access-key and OIDC strategies where there is no profile. The guest is given that directory
 // and nothing else: no environment, no other path, and no way out through a
 // symlink inside it, which the mount refuses to follow. Authentication HTTP
 // requests go through the Go host's transport import.
@@ -20,7 +21,7 @@
 // one workspace ([ProfileStore.WorkspaceStore],
 // [ProfileStore.CurrentWorkspaceStore]), and the typed reads of the files a
 // workspace holds: [ProfileStore.SecretKey] hands out the ZeroKMS client key
-// as the opaque [ClientKey] that stackencrypt's Config takes,
+// as the opaque [ClientKey] that stackencrypt.NewCredentials takes,
 // [ProfileStore.Token] the stored access token, [ProfileStore.DeviceIdentity]
 // the identity the CLI created. [ProfileStore.Close] releases the guest;
 // stores scoped from it are closed with it.

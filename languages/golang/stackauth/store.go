@@ -84,7 +84,7 @@ func Resolve(ctx context.Context, opts ...Option) (*ProfileStore, error) {
 	if strings.TrimSpace(dir) == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return nil, fmt.Errorf("stackauth: no home directory and CS_CONFIG_PATH is unset: %w", err)
+			return nil, fmt.Errorf("%w: no home directory and CS_CONFIG_PATH is unset: %w", ErrNoProfile, err)
 		}
 		dir = filepath.Join(home, ".cipherstash")
 	}
@@ -123,12 +123,44 @@ func Open(ctx context.Context, dir string, opts ...Option) (*ProfileStore, error
 	return &ProfileStore{root: r, dir: guestRoot}, nil
 }
 
+// OpenWithoutProfile instantiates the guest with no directory mounted: no
+// filesystem at all. It is for the strategies that need no profile —
+// [ProfileStore.AccessKey] and [ProfileStore.OIDC] — where there is none to
+// open: CI, a container, a server authenticating by federation. Every
+// profile read on it fails with ErrNoProfile, and [ProfileStore.Auto] on it
+// is the environment's access key or ErrNotAuthenticated, as stack-auth's
+// AutoStrategy is with no profile store.
+func OpenWithoutProfile(ctx context.Context, opts ...Option) (*ProfileStore, error) {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
+	wasm := o.guest
+	if wasm == nil {
+		var err error
+		if wasm, err = embeddedGuest(); err != nil {
+			return nil, err
+		}
+	}
+	inst, err := newInstance(ctx, wasm, "", guest.PolicyFor(o.requireLocked), o.transport)
+	if err != nil {
+		return nil, err
+	}
+	r := &root{inst: inst}
+	r.cleanup = runtime.AddCleanup(r, func(inst *instance) { _ = inst.release() }, inst)
+	return &ProfileStore{root: r, dir: guestRoot}, nil
+}
+
 // Dir is the store's directory on the host: the profile root, or the
-// workspace directory under it.
+// workspace directory under it. Empty for a store from
+// [OpenWithoutProfile].
 func (s *ProfileStore) Dir() string { return s.hostPath(s.dir) }
 
 // hostPath maps a guest path under the mount to the host path it names.
 func (s *ProfileStore) hostPath(guestPath string) string {
+	if s.root.hostDir == "" {
+		return ""
+	}
 	rel := strings.TrimPrefix(guestPath, guestRoot)
 	parts := strings.Split(strings.TrimPrefix(rel, "/"), "/")
 	return filepath.Join(append([]string{s.root.hostDir}, parts...)...)
@@ -183,6 +215,11 @@ type export func(*instance) api.Function
 // call runs one export under the profile's lock, closing the profile if
 // the guest trapped or an interrupted call took the module down.
 func (s *ProfileStore) call(ctx context.Context, fn export, args ...string) ([]byte, error) {
+	// Every profile export works on the mount; without one the guest would
+	// report an I/O error that says less than this does.
+	if s.root.hostDir == "" {
+		return nil, ErrNoProfile
+	}
 	staged := make([]guest.Arg, 0, len(args)+1)
 	staged = append(staged, guest.BufArg([]byte(s.dir)))
 	for _, arg := range args {
@@ -327,7 +364,7 @@ func (s *ProfileStore) LockPath(ctx context.Context, filename string) (string, e
 
 // SecretKey reads secretkey.json in this store (a workspace store; the
 // root holds none): the ZeroKMS client id and the client key, the latter as
-// the opaque [ClientKey] a stackencrypt.Config takes. The transport copy
+// the opaque [ClientKey] stackencrypt.NewCredentials takes. The transport copy
 // of the key is wiped once it is in the ClientKey; the key is then the
 // caller's to consume.
 func (s *ProfileStore) SecretKey(ctx context.Context) (clientID string, key *ClientKey, err error) {

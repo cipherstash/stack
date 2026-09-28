@@ -71,7 +71,7 @@ func (s *ProfileStore) Token(ctx context.Context) (Token, error) {
 }
 
 // TokenSource is a bearer-token source over the token stored in a
-// workspace's auth.json, in the shape stackencrypt's Config.Token takes.
+// workspace's auth.json, in the shape stackencrypt's TokenSource takes.
 // Every call re-reads the file, so a login or refresh by the CLI in
 // another terminal is picked up without a restart, and a token at or past
 // its real expiry is refused with [ErrTokenExpired] rather than presented.

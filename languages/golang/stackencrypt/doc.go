@@ -5,9 +5,10 @@
 // # Shape
 //
 // A [Client] is one wasm instance and one ZeroKMS client: [NewClient]
-// instantiates the embedded guest, hands it the client key once — the
-// [ClientKey] in its [Config] is consumed and wiped, whatever the outcome —
-// and loads the client's default keyset. Every keyset the client uses after
+// resolves the client's [Credentials], instantiates the embedded guest,
+// hands it the client key once — the [ClientKey] the credentials resolved
+// to is consumed and wiped, whatever the outcome — and loads the client's
+// default keyset. Every keyset the client uses after
 // that is
 // selected per call through a [KeysetSelector] and loaded on first use by
 // the guest's own bounded cache; nothing the host could allocate, alias or
@@ -57,6 +58,21 @@
 // [net/http.RoundTripper], and a bearer-token fetch, served by a
 // [TokenSource]. What crosses per ZeroKMS call is what would cross TLS
 // anyway; derived key material never leaves the guest.
+//
+// # Credentials
+//
+// A [Credentials] supplies the client id, the client key and the token
+// source, and NewClient resolves it host-side: the crypto guest is never
+// given the environment or a filesystem to find them in. The default,
+// [AutoCredentials], mirrors the Rust client — the environment first
+// (CS_CLIENT_ACCESS_KEY with CS_WORKSPACE_CRN for the token, CS_CLIENT_ID
+// with CS_CLIENT_KEY for the key), then the developer profile, which it
+// reads through stackauth's credential guest, where the token strategies
+// also run. CS_ZEROKMS_HOST (or CS_VITUR_HOST) pins the endpoint whatever
+// the credentials. [NewCredentials] takes the three values explicitly.
+// Credentials that cannot be resolved fail NewClient with
+// [ErrNoCredentials]; credentials that resolve but do not work fail it too,
+// at the one ZeroKMS round trip it makes.
 //
 // # Host runtime
 //

@@ -26,7 +26,8 @@ func liveClient(t *testing.T) *Client {
 	material := []byte(clientKey)
 	key := NewClientKey(material)
 	c, err := NewClient(t.Context(), Config{
-		ClientID: clientID, ClientKey: key, ZeroKMSURL: url, Token: StaticToken(token),
+		Credentials: NewCredentials(clientID, key, StaticToken(token)),
+		ZeroKMSURL:  url,
 	})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)

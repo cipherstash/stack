@@ -1,6 +1,6 @@
 // Command example exercises the stack-encrypt Go binding against real
 // ZeroKMS, using the credentials `stash auth login` leaves in the developer
-// profile.
+// profile (or the CS_* environment variables, which win).
 //
 //	stash auth login
 //	mise run wasm:guest:build wasm:auth-guest:build   # both embedded guests
@@ -39,31 +39,23 @@ func main() {
 
 func run() error {
 	ctx := context.Background()
-	creds, err := loadCredentials(ctx)
-	if err != nil {
-		return err
-	}
-	defer creds.Close()
-	fmt.Printf("workspace %s (%s)\n", creds.Workspace, creds.describe(ctx))
-
-	client, err := stackencrypt.NewClient(ctx, stackencrypt.Config{
-		ClientID: creds.ClientID,
-		// Read from the profile as the opaque type, consumed and wiped by
-		// NewClient.
-		ClientKey: creds.ClientKey,
-		// Asked on every request, so the client follows the profile
-		// rather than pinning one token; see profile.go.
-		Token: creds.token(),
-		// ZeroKMSURL is left empty: the endpoint is resolved from the
-		// token's services claim on first use.
-	})
+	// The zero Config: credentials from AutoCredentials, which is the
+	// environment first (CS_CLIENT_ACCESS_KEY + CS_WORKSPACE_CRN, CS_CLIENT_ID
+	// + CS_CLIENT_KEY), then the developer profile `stash auth login` writes,
+	// read through stackauth's credential guest. The token is a refreshing
+	// device session there, asked on every request, so a long run outlives
+	// one token. ZeroKMSURL is left empty: CS_ZEROKMS_HOST if set, else the
+	// token's services claim.
+	client, err := stackencrypt.NewClient(ctx, stackencrypt.Config{})
 	if err != nil {
 		return fmt.Errorf("connecting to ZeroKMS: %w", err)
 	}
 	// Close runs the guest's own wipe of the client key and every loaded
-	// index key. The memory's protection does not wait on it (see the
-	// package docs); this is ordinary resource hygiene.
+	// index key, and releases the credential guest. The memory's protection
+	// does not wait on it (see the package docs); this is ordinary resource
+	// hygiene.
 	defer client.Close()
+	fmt.Printf("connected (%v)\n", client)
 
 	cipher := client.DefaultKeyset()
 	keysetID, err := cipher.KeysetID(ctx)
