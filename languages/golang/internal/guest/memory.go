@@ -42,7 +42,7 @@ import (
 // reported through LockError, which each public package surfaces on its
 // client (stackencrypt: Client.MemoryLocked and Client.MemoryLockError) so
 // an operator can see it and raise the limit; Strict turns it into a
-// constructor failure (stackencrypt: Config.RequireLockedMemory).
+// constructor failure (stackencrypt: WithRequireLockedMemory).
 
 // LockPolicy is what a refused lock means for an instance.
 type LockPolicy uint8

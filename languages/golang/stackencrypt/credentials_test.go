@@ -408,7 +408,7 @@ func TestNewClientWithAutoCredentials(t *testing.T) {
 	authGuestOrSkip(t)
 	cleanEnv(t, newProfile(t, loggedIn("profile-token")))
 	stub := newStub(t, http.StatusUnauthorized, "", "nope")
-	// The endpoint from the environment, since the Config names none.
+	// The endpoint from the environment, since no option names one.
 	t.Setenv("CS_ZEROKMS_HOST", stub.URL)
 	var released *ResolvedCredentials
 	creds := credentialsFunc(func(ctx context.Context, opts ResolveOptions) (*ResolvedCredentials, error) {
@@ -416,7 +416,7 @@ func TestNewClientWithAutoCredentials(t *testing.T) {
 		released = r
 		return r, err
 	})
-	_, err := NewClient(context.Background(), Config{Credentials: creds})
+	_, err := NewClient(context.Background(), WithCredentials(creds))
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("NewClient: %v, want ErrUnauthorized from the stub", err)
 	}
@@ -446,7 +446,7 @@ func TestNewClientReleasesTheCredentialsOnceWhenInitFails(t *testing.T) {
 		}
 		return r, err
 	})
-	_, err := NewClient(context.Background(), Config{Credentials: creds, ZeroKMSURL: stub.URL})
+	_, err := NewClient(context.Background(), WithCredentials(creds), WithZeroKMSURL(stub.URL))
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("NewClient: %v, want ErrUnauthorized from the stub", err)
 	}
@@ -468,7 +468,7 @@ func TestNewClientConsumesCredentialsAFailedResolveHandsBack(t *testing.T) {
 			Close:     func() error { released++; return nil },
 		}, resolveErr
 	})
-	_, err := NewClient(context.Background(), Config{Credentials: creds})
+	_, err := NewClient(context.Background(), WithCredentials(creds))
 	if !errors.Is(err, resolveErr) {
 		t.Fatalf("NewClient: %v, want the Resolve error", err)
 	}
@@ -485,30 +485,32 @@ func TestNewClientConsumesCredentialsAFailedResolveHandsBack(t *testing.T) {
 // AutoCredentials, no credential guest — and an explicit key is consumed
 // all the same.
 func TestNewClientRefusesTheConfigBeforeResolvingCredentials(t *testing.T) {
-	for name, cfg := range map[string]func(*testing.T) Config{
-		"an unusable CS_ZEROKMS_HOST": func(t *testing.T) Config {
+	for name, options := range map[string]func(*testing.T) []ClientOption{
+		"an unusable CS_ZEROKMS_HOST": func(t *testing.T) []ClientOption {
 			t.Setenv("CS_ZEROKMS_HOST", "localhost:3002")
-			return Config{}
+			return nil
 		},
-		"a negative cache size": func(*testing.T) Config { return Config{KeysetCacheSize: -1} },
+		"a negative cache size": func(*testing.T) []ClientOption {
+			return []ClientOption{WithKeysetCacheSize(-1)}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cleanEnv(t, t.TempDir())
-			cfg := cfg(t)
+			opts := options(t)
 			resolved := false
-			cfg.Credentials = credentialsFunc(func(ctx context.Context, opts ResolveOptions) (*ResolvedCredentials, error) {
+			spy := credentialsFunc(func(ctx context.Context, opts ResolveOptions) (*ResolvedCredentials, error) {
 				resolved = true
 				return testCredentials(StaticToken("t")).Resolve(ctx, opts)
 			})
-			if _, err := NewClient(context.Background(), cfg); err == nil {
+			if _, err := NewClient(context.Background(), append([]ClientOption{WithCredentials(spy)}, opts...)...); err == nil {
 				t.Fatal("NewClient accepted the config")
 			}
 			if resolved {
 				t.Error("the credentials were resolved for a config refused host-side")
 			}
 			key := NewClientKey([]byte(testClientKey))
-			cfg.Credentials = NewCredentials(testClientID, key, StaticToken("t"))
-			if _, err := NewClient(context.Background(), cfg); err == nil {
+			explicit := NewCredentials(testClientID, key, StaticToken("t"))
+			if _, err := NewClient(context.Background(), append([]ClientOption{WithCredentials(explicit)}, opts...)...); err == nil {
 				t.Fatal("NewClient accepted the config")
 			}
 			if !key.IsZero() {
@@ -526,10 +528,10 @@ func TestNewCredentialsRefusedConfigThenRetryIsConsumed(t *testing.T) {
 	guestOrSkip(t)
 	stub := newStub(t, http.StatusUnauthorized, "", "nope")
 	creds := testCredentials(StaticToken("t"))
-	if _, err := NewClient(context.Background(), Config{Credentials: creds, ZeroKMSURL: stub.URL, KeysetCacheSize: -1}); err == nil {
+	if _, err := NewClient(context.Background(), WithCredentials(creds), WithZeroKMSURL(stub.URL), WithKeysetCacheSize(-1)); err == nil {
 		t.Fatal("NewClient accepted a negative cache size")
 	}
-	_, err := NewClient(context.Background(), Config{Credentials: creds, ZeroKMSURL: stub.URL})
+	_, err := NewClient(context.Background(), WithCredentials(creds), WithZeroKMSURL(stub.URL))
 	if !errors.Is(err, ErrCredentialsConsumed) {
 		t.Fatalf("retry with a corrected config: %v, want ErrCredentialsConsumed", err)
 	}
@@ -585,11 +587,11 @@ func TestNewCredentialsRefusesASecondClient(t *testing.T) {
 	guestOrSkip(t)
 	stub := newStub(t, http.StatusUnauthorized, "", "nope")
 	creds := testCredentials(StaticToken("t"))
-	cfg := Config{Credentials: creds, ZeroKMSURL: stub.URL}
-	if _, err := NewClient(context.Background(), cfg); !errors.Is(err, ErrUnauthorized) {
+	cfg := []ClientOption{WithCredentials(creds), WithZeroKMSURL(stub.URL)}
+	if _, err := NewClient(context.Background(), cfg...); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("first NewClient: %v, want ErrUnauthorized from the stub", err)
 	}
-	_, err := NewClient(context.Background(), cfg)
+	_, err := NewClient(context.Background(), cfg...)
 	if !errors.Is(err, ErrCredentialsConsumed) {
 		t.Fatalf("second NewClient: %v, want ErrCredentialsConsumed", err)
 	}
@@ -601,12 +603,12 @@ func TestNewCredentialsRefusesASecondClient(t *testing.T) {
 	}
 }
 
-// A nil Credentials is AutoCredentials: with nothing configured, the error
-// is the resolution's, before any guest or request.
+// NewClient with no options is AutoCredentials: with nothing configured,
+// the error is the resolution's, before any guest or request.
 func TestNewClientDefaultsToAutoCredentials(t *testing.T) {
 	authGuestOrSkip(t)
 	cleanEnv(t, filepath.Join(t.TempDir(), "absent"))
-	if _, err := NewClient(context.Background(), Config{}); !errors.Is(err, ErrNoCredentials) {
+	if _, err := NewClient(context.Background()); !errors.Is(err, ErrNoCredentials) {
 		t.Fatalf("NewClient with no credentials anywhere: %v, want ErrNoCredentials", err)
 	}
 }

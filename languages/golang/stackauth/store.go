@@ -42,7 +42,7 @@ func WithGuest(wasm []byte) Option {
 // memory cannot be locked in RAM or, on Linux, excluded from core dumps,
 // instead of continuing with memory that may be swapped or dumped and
 // reporting so through [ProfileStore.MemoryLocked]. It holds for the life
-// of the store, as stackencrypt's Config.RequireLockedMemory does for a
+// of the store, as stackencrypt's WithRequireLockedMemory does for a
 // client.
 func RequireLockedMemory() Option {
 	return func(o *options) { o.requireLocked = true }

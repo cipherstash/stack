@@ -20,7 +20,8 @@ import (
 //
 // [AutoCredentials] is the default: the environment, then the developer
 // profile, in the Rust client's order. [NewCredentials] takes the three
-// values explicitly. Any other type can implement it; see
+// values explicitly; [OIDCFederation] mints the token from an identity
+// provider's. Any other type can implement it; see
 // [ResolvedCredentials] for what an implementation owes the client.
 type Credentials interface {
 	// Resolve produces the credentials for one client. NewClient calls it
@@ -164,7 +165,71 @@ type autoCredentials struct{}
 // String names the credentials' kind; nothing is resolved to print it.
 func (autoCredentials) String() string { return "stackencrypt.AutoCredentials" }
 
-func (autoCredentials) Resolve(ctx context.Context, opts ResolveOptions) (resolved *ResolvedCredentials, err error) {
+func (autoCredentials) Resolve(ctx context.Context, opts ResolveOptions) (*ResolvedCredentials, error) {
+	return resolveWithStrategy(ctx, opts, func(ctx context.Context, profile *stackauth.ProfileStore, noProfile error) (*stackauth.Strategy, error) {
+		strategy, err := profile.Auto(ctx)
+		switch {
+		case errors.Is(err, stackauth.ErrNotAuthenticated):
+			if noProfile != nil {
+				err = fmt.Errorf("%w: %w", err, noProfile)
+			}
+			return nil, fmt.Errorf("%w: no token: set %s and %s, or run `stash auth login`: %w",
+				ErrNoCredentials, envAccessKey, envWorkspaceCRN, err)
+		case errors.Is(err, stackauth.ErrAuthConfig) && accessKeyConfigured():
+			// The status covers every configuration fault the guest reports;
+			// name the variables only when they are what was configured.
+			return nil, fmt.Errorf("stackencrypt: credentials: check %s and %s: %w", envAccessKey, envWorkspaceCRN, err)
+		case err != nil:
+			return nil, fmt.Errorf("stackencrypt: credentials: %w", err)
+		}
+		return strategy, nil
+	})
+}
+
+// OIDCFederation is [Credentials] whose token is minted by federation: CTS
+// exchanges a token from the application's own identity provider (Clerk,
+// Auth0, Okta, a cloud workload identity) for a CipherStash one in the
+// workspace crn names. provider is asked for a fresh IdP token only when a
+// CipherStash token has to be minted; stackauth.OAuth2TokenSource adapts a
+// golang.org/x/oauth2 source. The client key is resolved as
+// [AutoCredentials] resolves it: CS_CLIENT_ID and CS_CLIENT_KEY, else the
+// developer profile. CS_CTS_HOST overrides the authentication endpoint.
+func OIDCFederation(crn string, provider stackauth.OIDCProvider) Credentials {
+	return oidcCredentials{crn: crn, provider: provider}
+}
+
+type oidcCredentials struct {
+	crn      string
+	provider stackauth.OIDCProvider
+}
+
+// String names the credentials' kind and workspace; the provider is not
+// asked for anything to print it.
+func (c oidcCredentials) String() string {
+	return fmt.Sprintf("stackencrypt.OIDCFederation{crn: %s}", c.crn)
+}
+
+func (c oidcCredentials) Resolve(ctx context.Context, opts ResolveOptions) (*ResolvedCredentials, error) {
+	return resolveWithStrategy(ctx, opts, func(ctx context.Context, profile *stackauth.ProfileStore, _ error) (*stackauth.Strategy, error) {
+		strategy, err := profile.OIDC(ctx, c.crn, c.provider)
+		if err != nil {
+			return nil, fmt.Errorf("stackencrypt: credentials: OIDC federation: %w", err)
+		}
+		return strategy, nil
+	})
+}
+
+// resolveWithStrategy opens the credential guest — over the profile when
+// there is one, with nothing mounted when there is not — asks strategy for
+// the token source (passing why there is no profile, when there is none),
+// then resolves the client key from the environment or
+// the profile. On success the guest and the strategy are the resolved
+// credentials' to close; on failure they are closed here.
+func resolveWithStrategy(
+	ctx context.Context,
+	opts ResolveOptions,
+	strategy func(ctx context.Context, profile *stackauth.ProfileStore, noProfile error) (*stackauth.Strategy, error),
+) (_ *ResolvedCredentials, err error) {
 	authOpts := []stackauth.Option{stackauth.WithRoundTripper(opts.Transport)}
 	if opts.RequireLockedMemory {
 		authOpts = append(authOpts, stackauth.RequireLockedMemory())
@@ -191,24 +256,13 @@ func (autoCredentials) Resolve(ctx context.Context, opts ResolveOptions) (resolv
 
 	// The token first, as Rust detects its strategy before it asks the key
 	// provider: with neither configured, the error names the token.
-	strategy, err := profile.Auto(ctx)
-	switch {
-	case errors.Is(err, stackauth.ErrNotAuthenticated):
-		if noProfile != nil {
-			err = fmt.Errorf("%w: %w", err, noProfile)
-		}
-		return nil, fmt.Errorf("%w: no token: set %s and %s, or run `stash auth login`: %w",
-			ErrNoCredentials, envAccessKey, envWorkspaceCRN, err)
-	case errors.Is(err, stackauth.ErrAuthConfig) && accessKeyConfigured():
-		// The status covers every configuration fault the guest reports;
-		// name the variables only when they are what was configured.
-		return nil, fmt.Errorf("stackencrypt: credentials: check %s and %s: %w", envAccessKey, envWorkspaceCRN, err)
-	case err != nil:
-		return nil, fmt.Errorf("stackencrypt: credentials: %w", err)
+	token, err := strategy(ctx, profile, noProfile)
+	if err != nil {
+		return nil, err
 	}
 	defer func() {
 		if err != nil {
-			_ = strategy.Close()
+			_ = token.Close()
 		}
 	}()
 
@@ -224,12 +278,12 @@ func (autoCredentials) Resolve(ctx context.Context, opts ResolveOptions) (resolv
 	return &ResolvedCredentials{
 		ClientID:  clientID,
 		ClientKey: key,
-		Token:     strategy,
+		Token:     token,
 		Close: func() error {
 			// The strategy lives in the profile's guest, which closing the
 			// profile would free anyway; closing it first unregisters it
 			// cleanly.
-			return errors.Join(strategy.Close(), profile.Close())
+			return errors.Join(token.Close(), profile.Close())
 		},
 		MemoryLockError: profile.MemoryLockError,
 	}, nil

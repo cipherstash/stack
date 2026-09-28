@@ -95,8 +95,10 @@ func newStub(t *testing.T, status int, contentType, body string) *zerokmsStub {
 	return s
 }
 
-func testConfig(url string) Config {
-	return Config{Credentials: testCredentials(StaticToken("stub-token")), ZeroKMSURL: url}
+// testConfig is the options for a client of the test credentials against
+// url. A test appends to it; a later option wins.
+func testConfig(url string) []ClientOption {
+	return []ClientOption{WithCredentials(testCredentials(StaticToken("stub-token"))), WithZeroKMSURL(url)}
 }
 
 // testCredentials is the test client id and a fresh copy of the test key,
@@ -151,7 +153,7 @@ func TestImportSurfaceIsWASIPlusTransport(t *testing.T) {
 func TestNewClientIssuesTheLoadKeysetRequest(t *testing.T) {
 	guestOrSkip(t)
 	stub := newStub(t, http.StatusUnauthorized, "", "nope")
-	_, err := NewClient(context.Background(), testConfig(stub.URL))
+	_, err := NewClient(context.Background(), testConfig(stub.URL)...)
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("NewClient: %v, want ErrUnauthorized", err)
 	}
@@ -193,7 +195,7 @@ func TestTransportOutcomesMapToErrors(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			stub := newStub(t, tc.status, tc.contentType, tc.body)
-			_, err := NewClient(context.Background(), testConfig(stub.URL))
+			_, err := NewClient(context.Background(), testConfig(stub.URL)...)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("NewClient: %v, want %v", err, tc.want)
 			}
@@ -203,7 +205,7 @@ func TestTransportOutcomesMapToErrors(t *testing.T) {
 		stub := newStub(t, http.StatusOK, "application/json", "{}")
 		url := stub.URL
 		stub.Close()
-		_, err := NewClient(context.Background(), testConfig(url))
+		_, err := NewClient(context.Background(), testConfig(url)...)
 		if !errors.Is(err, ErrTransport) {
 			t.Fatalf("NewClient: %v, want ErrTransport", err)
 		}
@@ -212,8 +214,8 @@ func TestTransportOutcomesMapToErrors(t *testing.T) {
 		stub := newStub(t, http.StatusOK, "application/json", "{}")
 		cfg := testConfig(stub.URL)
 		vaultDown := errors.New("vault down")
-		cfg.Credentials = testCredentials(TokenFunc(func(context.Context) (string, error) { return "", vaultDown }))
-		_, err := NewClient(context.Background(), cfg)
+		cfg = append(cfg, WithCredentials(testCredentials(TokenFunc(func(context.Context) (string, error) { return "", vaultDown }))))
+		_, err := NewClient(context.Background(), cfg...)
 		if err == nil {
 			t.Fatal("NewClient succeeded with no token")
 		}
@@ -231,10 +233,10 @@ func TestTransportOutcomesMapToErrors(t *testing.T) {
 func TestRoundTripperFailureIsTransport(t *testing.T) {
 	guestOrSkip(t)
 	cfg := testConfig("http://zerokms.invalid")
-	cfg.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+	cfg = append(cfg, WithTransport(roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return nil, errors.New("no route")
-	})
-	_, err := NewClient(context.Background(), cfg)
+	})))
+	_, err := NewClient(context.Background(), cfg...)
 	if !errors.Is(err, ErrTransport) {
 		t.Fatalf("NewClient: %v, want ErrTransport", err)
 	}
@@ -250,13 +252,13 @@ func TestInterruptedCallClosesTheClient(t *testing.T) {
 	t.Run("deadline during a request", func(t *testing.T) {
 		guestOrSkip(t)
 		cfg := testConfig("http://zerokms.invalid")
-		cfg.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		cfg = append(cfg, WithTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			<-r.Context().Done()
 			return nil, r.Context().Err()
-		})
+		})))
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
-		_, err := NewClient(ctx, cfg)
+		_, err := NewClient(ctx, cfg...)
 		if !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("NewClient: %v, want the deadline", err)
 		}
@@ -311,8 +313,8 @@ func TestOversizedResponseIsTransport(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := testConfig("http://zerokms.invalid")
-			cfg.Transport = rt
-			_, err := NewClient(context.Background(), cfg)
+			cfg = append(cfg, WithTransport(rt))
+			_, err := NewClient(context.Background(), cfg...)
 			if !errors.Is(err, ErrTransport) {
 				t.Fatalf("NewClient: %v, want ErrTransport", err)
 			}
@@ -364,7 +366,7 @@ func TestEmptyContextIsRefusedAtTheRoot(t *testing.T) {
 func TestInterruptedResponseBodyIsTransport(t *testing.T) {
 	guestOrSkip(t)
 	cfg := testConfig("http://zerokms.invalid")
-	cfg.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+	cfg = append(cfg, WithTransport(roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode:    http.StatusOK,
 			Header:        http.Header{"Content-Type": {"application/json"}},
@@ -374,8 +376,8 @@ func TestInterruptedResponseBodyIsTransport(t *testing.T) {
 				&failingReader{err: io.ErrUnexpectedEOF},
 			)),
 		}, nil
-	})
-	if _, err := NewClient(context.Background(), cfg); !errors.Is(err, ErrTransport) {
+	})))
+	if _, err := NewClient(context.Background(), cfg...); !errors.Is(err, ErrTransport) {
 		t.Fatalf("NewClient: %v, want ErrTransport", err)
 	}
 }
@@ -396,7 +398,7 @@ func TestRequestBodyOutlivesTheRoundTrip(t *testing.T) {
 	}
 	done := make(chan drained, 1)
 	cfg := testConfig("http://zerokms.invalid")
-	cfg.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	cfg = append(cfg, WithTransport(roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		go func() {
 			<-returned
 			b, err := io.ReadAll(r.Body)
@@ -404,8 +406,8 @@ func TestRequestBodyOutlivesTheRoundTrip(t *testing.T) {
 			done <- drained{req: r, body: b, err: err}
 		}()
 		return nil, errors.New("connection reset")
-	})
-	_, err := NewClient(context.Background(), cfg)
+	})))
+	_, err := NewClient(context.Background(), cfg...)
 	if !errors.Is(err, ErrTransport) {
 		t.Fatalf("NewClient: %v, want ErrTransport", err)
 	}
@@ -469,8 +471,8 @@ func TestConfigValidation(t *testing.T) {
 		"wiped key":      {id: testClientID, key: wiped, token: StaticToken("t")},
 		"negative cache": {id: testClientID, key: NewClientKey([]byte(testClientKey)), token: StaticToken("t"), cache: -1},
 	} {
-		cfg := Config{Credentials: NewCredentials(tc.id, tc.key, tc.token), KeysetCacheSize: tc.cache}
-		if _, err := NewClient(ctx, cfg); err == nil {
+		cfg := []ClientOption{WithCredentials(NewCredentials(tc.id, tc.key, tc.token)), WithKeysetCacheSize(tc.cache)}
+		if _, err := NewClient(ctx, cfg...); err == nil {
 			t.Errorf("%s: NewClient succeeded", name)
 		}
 		// A refused config consumes the key too: the caller is never handed
@@ -481,19 +483,13 @@ func TestConfigValidation(t *testing.T) {
 	}
 	// Malformed values the guest refuses: no request is made.
 	guestOrSkip(t)
-	for name, mutate := range map[string]func(*Config){
-		"client id not a uuid": func(c *Config) {
-			c.Credentials = NewCredentials("acme", NewClientKey([]byte(testClientKey)), StaticToken("t"))
-		},
-		"key not hex": func(c *Config) {
-			c.Credentials = NewCredentials(testClientID, NewClientKey([]byte("zz")), StaticToken("t"))
-		},
-		"bad url": func(c *Config) { c.ZeroKMSURL = "not a url" },
+	for name, option := range map[string]ClientOption{
+		"client id not a uuid": WithCredentials(NewCredentials("acme", NewClientKey([]byte(testClientKey)), StaticToken("t"))),
+		"key not hex":          WithCredentials(NewCredentials(testClientID, NewClientKey([]byte("zz")), StaticToken("t"))),
+		"bad url":              WithZeroKMSURL("not a url"),
 	} {
 		stub := newStub(t, http.StatusOK, "application/json", "{}")
-		cfg := testConfig(stub.URL)
-		mutate(&cfg)
-		_, err := NewClient(ctx, cfg)
+		_, err := NewClient(ctx, append(testConfig(stub.URL), option)...)
 		if !errors.Is(err, ErrEncoding) {
 			t.Errorf("%s: %v, want ErrEncoding", name, err)
 		}
@@ -505,7 +501,8 @@ func TestConfigValidation(t *testing.T) {
 
 // The client key is consumed by NewClient: whatever the outcome, the bytes
 // it was built from are zero once NewClient returns, the key reports
-// itself empty, and a Config never prints the material under any verb.
+// itself empty, and the credentials never print the material under any
+// verb.
 //
 // The outcome exercised here is the guest's init failing (a refused
 // token); the refused-config outcomes are in TestConfigValidation, and
@@ -515,9 +512,9 @@ func TestConfigValidation(t *testing.T) {
 func TestClientKeyIsConsumedAndNeverPrinted(t *testing.T) {
 	material := []byte(testClientKey)
 	stub := newStub(t, http.StatusUnauthorized, "", "nope")
-	cfg := testConfig(stub.URL)
 	key := NewClientKey(material)
-	cfg.Credentials = NewCredentials(testClientID, key, StaticToken("stub-token"))
+	creds := NewCredentials(testClientID, key, StaticToken("stub-token"))
+	cfg := append(testConfig(stub.URL), WithCredentials(creds))
 	// Resolving consumes the credentials, so the printed resolution is a
 	// separate set's, over another copy of the key.
 	resolved, err := NewCredentials(testClientID, NewClientKey([]byte(testClientKey)), StaticToken("stub-token")).Resolve(context.Background(), ResolveOptions{})
@@ -528,7 +525,7 @@ func TestClientKeyIsConsumedAndNeverPrinted(t *testing.T) {
 	// %x and %d reach a struct's fields without asking a Stringer; the
 	// key's Formatter answers for them.
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d"} {
-		for what, v := range map[string]any{"Config": cfg, "Credentials": cfg.Credentials, "ResolvedCredentials": *resolved} {
+		for what, v := range map[string]any{"Credentials": creds, "ResolvedCredentials": *resolved} {
 			out := fmt.Sprintf(verb, v)
 			if strings.Contains(out, testClientKey[:16]) || strings.Contains(out, hex.EncodeToString(material[:8])) {
 				t.Errorf("%s under %s prints the key: %q", what, verb, out)
@@ -536,7 +533,7 @@ func TestClientKeyIsConsumedAndNeverPrinted(t *testing.T) {
 		}
 	}
 	guestOrSkip(t)
-	if _, err := NewClient(context.Background(), cfg); !errors.Is(err, ErrUnauthorized) {
+	if _, err := NewClient(context.Background(), cfg...); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("NewClient: %v, want ErrUnauthorized", err)
 	}
 	if !key.IsZero() {
@@ -550,7 +547,7 @@ func TestClientKeyIsConsumedAndNeverPrinted(t *testing.T) {
 	// A consumed key does not make a second client, says so, and asks
 	// nothing of ZeroKMS trying.
 	before := len(stub.requests)
-	if _, err := NewClient(context.Background(), cfg); !errors.Is(err, ErrCredentialsConsumed) {
+	if _, err := NewClient(context.Background(), cfg...); !errors.Is(err, ErrCredentialsConsumed) {
 		t.Errorf("NewClient with a consumed key: %v, want ErrCredentialsConsumed before any request", err)
 	}
 	if len(stub.requests) != before {
@@ -846,13 +843,11 @@ func TestTransportSendCounterAndResponseHeaders(t *testing.T) {
 func ExampleNewClient() {
 	// A client needs ZeroKMS credentials; see live_test.go for the shape of
 	// a real round trip.
-	_, err := NewClient(context.Background(), Config{
-		Credentials: NewCredentials(
-			"6a70bd18-99ac-4650-b104-37eec3a15b09",
-			NewClientKey([]byte("...")),
-			StaticToken("access token"),
-		),
-	})
+	_, err := NewClient(context.Background(), WithCredentials(NewCredentials(
+		"6a70bd18-99ac-4650-b104-37eec3a15b09",
+		NewClientKey([]byte("...")),
+		StaticToken("access token"),
+	)))
 	fmt.Println(err != nil)
 	// Output: true
 }

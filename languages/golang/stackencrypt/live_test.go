@@ -37,7 +37,7 @@ func liveClient(t *testing.T) *Client {
 		}
 		return r, err
 	})
-	c, err := NewClient(t.Context(), Config{Credentials: creds, ZeroKMSURL: url})
+	c, err := NewClient(t.Context(), WithCredentials(creds), WithZeroKMSURL(url))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}

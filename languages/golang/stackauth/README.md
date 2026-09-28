@@ -17,7 +17,7 @@ cross-process refresh lock for device sessions.
 ## Use
 
 Most applications never call this package directly: a `stackencrypt`
-client built with the zero `Config` resolves its credentials with
+client built with `NewClient(ctx)` and no options resolves its credentials with
 `stackencrypt.AutoCredentials`, which reads the environment first and then
 the profile, through this package. Use it directly to take the profile
 apart yourself:
@@ -50,10 +50,10 @@ func run(ctx context.Context) error {
         return err
     }
     defer source.Close()
-    client, err := stackencrypt.NewClient(ctx, stackencrypt.Config{
+    client, err := stackencrypt.NewClient(ctx,
         // The key is consumed and wiped by NewClient.
-        Credentials: stackencrypt.NewCredentials(clientID, clientKey, source),
-    })
+        stackencrypt.WithCredentials(stackencrypt.NewCredentials(clientID, clientKey, source)),
+    )
     if err != nil {
         return err
     }

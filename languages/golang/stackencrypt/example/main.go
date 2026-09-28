@@ -39,14 +39,14 @@ func main() {
 
 func run() error {
 	ctx := context.Background()
-	// The zero Config: credentials from AutoCredentials, which is the
+	// No options: credentials from AutoCredentials, which is the
 	// environment first (CS_CLIENT_ACCESS_KEY + CS_WORKSPACE_CRN, CS_CLIENT_ID
 	// + CS_CLIENT_KEY), then the developer profile `stash auth login` writes,
 	// read through stackauth's credential guest. The token is a refreshing
 	// device session there, asked on every request, so a long run outlives
-	// one token. ZeroKMSURL is left empty: CS_ZEROKMS_HOST if set, else the
-	// token's services claim.
-	client, err := stackencrypt.NewClient(ctx, stackencrypt.Config{})
+	// one token. No WithZeroKMSURL: CS_ZEROKMS_HOST if set, else the token's
+	// services claim.
+	client, err := stackencrypt.NewClient(ctx)
 	if err != nil {
 		return fmt.Errorf("connecting to ZeroKMS: %w", err)
 	}

@@ -37,8 +37,8 @@ side will not notice a stale one, so rebuild after any change under either
 
 ## Credentials
 
-The example passes the zero `Config`, so `NewClient` resolves its
-credentials with `stackencrypt.AutoCredentials`, the library path any
+The example calls `NewClient(ctx)` with no options, so it resolves its
+credentials with `stackencrypt.AutoCredentials`, which is what any
 application gets by default. It looks in the environment first and then in
 the developer profile, in the order the Rust client uses:
 

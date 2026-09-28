@@ -33,7 +33,7 @@ import (
 )
 
 func run(ctx context.Context) error {
-    client, err := stackencrypt.NewClient(ctx, stackencrypt.Config{})
+    client, err := stackencrypt.NewClient(ctx)
     if err != nil {
         return err // stackencrypt.ErrNoCredentials: nothing configured
     }
@@ -52,11 +52,34 @@ keyset, and `ctx` bounds that request. It has nothing to do with an
 `stackencrypt.Context`. Every method that can reach ZeroKMS takes a
 `context.Context` first, for the same reason.
 
+Everything else is a functional option, and each has a default:
+
+```go
+client, err := stackencrypt.NewClient(ctx,
+    stackencrypt.WithCredentials(stackencrypt.OIDCFederation(crn, provider)),
+    stackencrypt.WithZeroKMSURL("https://zerokms.example"),
+    stackencrypt.WithTransport(rt),
+    stackencrypt.WithKeysetCacheSize(4096),
+    stackencrypt.WithRequireLockedMemory(),
+)
+```
+
+| Option | Default |
+|---|---|
+| `WithCredentials(c)` | `AutoCredentials()`: see below. |
+| `WithZeroKMSURL(url)` | `CS_ZEROKMS_HOST` if set, otherwise the endpoint in the token. |
+| `WithTransport(rt)` | `http.DefaultTransport`. Used for ZeroKMS, and for token requests when the credentials make them. |
+| `WithKeysetCacheSize(n)` | 1024 keysets beyond the default one. |
+| `WithRequireLockedMemory()` | Off: memory that cannot be locked is reported, not refused. See below. |
+| `WithGuest(wasm)` | The embedded guest module. |
+
+If an option is given twice, the later one wins.
+
 ### Credentials
 
-The zero `Config` finds its credentials the way the Rust client does, with
-`AutoCredentials`: the environment first, then the developer profile that
-`stash auth login` writes. On a developer machine, logging in is enough.
+With no `WithCredentials`, `NewClient` finds its credentials the way the
+Rust client does, with `AutoCredentials`: the environment first, then the
+developer profile that `stash auth login` writes. On a developer machine, logging in is enough.
 In CI or a deployment, the environment supplies them. The first two rows
 are what a deployment with no profile needs; the rest override what would
 otherwise be resolved:
@@ -76,10 +99,10 @@ could not be opened, so an unreadable or mistyped `CS_CONFIG_PATH` is not
 reported as "not logged in".
 
 The endpoint variables are read whatever the credentials, `NewCredentials`
-included, as the Rust client reads them. A service that left `ZeroKMSURL`
-empty and relied on the token's services claim now follows
+included, as the Rust client reads them. A service that passes no
+`WithZeroKMSURL` and relies on the token's services claim now follows
 `CS_ZEROKMS_HOST` or `CS_VITUR_HOST` if either is set in its environment,
-so a value exported there for another tool is worth checking on upgrade.
+so a value exported there for another tool is worth checking.
 
 Resolution happens host-side, in Go. The profile and the token strategies
 run in `stackauth`'s credential guest; the crypto guest that holds the
@@ -89,20 +112,29 @@ lives as long as the client, and `Close` releases it.
 To supply the credentials yourself, pass `NewCredentials`:
 
 ```go
-client, err := stackencrypt.NewClient(ctx, stackencrypt.Config{
-    Credentials: stackencrypt.NewCredentials(clientID, clientKey, tokenSource),
-})
+client, err := stackencrypt.NewClient(ctx,
+    stackencrypt.WithCredentials(stackencrypt.NewCredentials(clientID, clientKey, tokenSource)),
+)
 ```
 
 `tokenSource` is asked for the bearer token on every request. `StaticToken`
 is the simplest source; a `TokenFunc` can fetch or refresh one, and every
-`stackauth` strategy is one. `Credentials` is an interface, so another
-source of credentials can implement it.
+`stackauth` strategy is one.
+
+To authenticate through your own identity provider, pass `OIDCFederation`
+with the workspace CRN and a provider of the IdP's tokens. CTS exchanges
+the IdP token for a CipherStash one, and the provider is asked again only
+when that token needs replacing. `stackauth.OAuth2TokenSource` adapts a
+`golang.org/x/oauth2` source. The client key is found as `AutoCredentials`
+finds it.
+
+`Credentials` is an interface, so another source of credentials can
+implement it.
 
 `ClientKey` is an opaque type, not a string: it prints a redaction under
 every verb, so logged credentials never show the key. `NewClientKey` takes
 ownership of the slice it is given, and `NewClient` consumes the key —
-whatever the outcome, even a config it refuses, the key is empty afterwards
+whatever the outcome, even options it refuses, the key is empty afterwards
 and that slice is zero. A key is for one client; build another for another
 client. What the SDK cannot reach is what the key was built *from*: a
 string read from the environment is Go's, immutable, and lives until
@@ -133,15 +165,15 @@ lost, and nothing on a host without swap. `client.MemoryLocked()` reports
 the outcome and `client.MemoryLockError()` names the limit to raise
 (`ulimit -l`, a systemd `LimitMEMLOCK=`, a pod `securityContext`) and the
 size the instance holds. For a deployment that would rather not start than
-run unlocked, set `RequireLockedMemory` and `NewClient` fails with
+run unlocked, pass `WithRequireLockedMemory()` and `NewClient` fails with
 `ErrMemoryLock`. That policy holds for the life of the client: memory the
 instance later grows into must lock too, or the call that needed it fails
 with `ErrMemoryLock`, so grant a limit with room to grow. A `Client` prints
 its memory state with `%v` and logs it as a `slog` group, so a startup log
 shows it.
 
-Production checklist: assert `MemoryLocked()` at startup, or set
-`RequireLockedMemory`. Handling `SIGTERM` for a graceful shutdown is
+Production checklist: assert `MemoryLocked()` at startup, or pass
+`WithRequireLockedMemory()`. Handling `SIGTERM` for a graceful shutdown is
 ordinary Go practice and worth doing for your own reasons; the SDK does not
 depend on it and installs no signal handler of its own.
 
@@ -170,7 +202,7 @@ small and reveals nothing about plaintext or key material.
 | `ErrKMS` | Any other ZeroKMS failure. |
 | `ErrConflict` | ZeroKMS reported a resource conflict. |
 | `ErrState` | The client has been closed: by `Close`, by a call its context interrupted, or by a guest trap. |
-| `ErrMemoryLock` | The instance's memory could not be locked in RAM. Returned by `NewClient` under `RequireLockedMemory`, and by a call whose growth could not be locked; otherwise reported by `MemoryLockError`. |
+| `ErrMemoryLock` | The instance's memory could not be locked in RAM. Returned by `NewClient` under `WithRequireLockedMemory()`, and by a call whose growth could not be locked; otherwise reported by `MemoryLockError`. |
 | `ErrNoCredentials` | `NewClient` found no token source or no client key, in the environment or the profile. The message names what to set. |
 | `ErrCredentialsConsumed` | `NewCredentials` given to a second `NewClient`: the first consumed its key. Build new credentials, with a new key, for another client. |
 | `ErrInternal` | An unexpected failure inside the guest. |

@@ -8,13 +8,15 @@
 // resolves the client's [Credentials], instantiates the embedded guest,
 // hands it the client key once — the [ClientKey] the credentials resolved
 // to is consumed and wiped, whatever the outcome — and loads the client's
-// default keyset. Every keyset the client uses after that is selected per
-// call through a [KeysetSelector] and loaded on first use by the guest's
-// own bounded cache; nothing the host could allocate, alias or free crosses
-// the boundary. [Client.Close] runs the guest's shutdown so the client key
-// and every loaded index key are wiped before the instance is freed —
-// closing a wasm instance runs no Rust destructors on its own. Close is
-// hygiene, not the security story: see Memory below.
+// default keyset. It takes functional options ([ClientOption]), every one
+// with a default, so NewClient(ctx) alone is a working client. Every keyset
+// the client uses after that is selected per call through a
+// [KeysetSelector] and loaded on first use by the guest's own bounded
+// cache; nothing the host could allocate, alias or free crosses the
+// boundary. [Client.Close] runs the guest's shutdown so the client key and
+// every loaded index key are wiped before the instance is freed — closing a
+// wasm instance runs no Rust destructors on its own. Close is hygiene, not
+// the security story: see Memory below.
 //
 // A [Cipher] is the client bound to one keyset ([Client.Keyset] and
 // [Client.DefaultKeyset], the Rust crate's StackCipher::keyset and
@@ -70,7 +72,9 @@
 // with CS_CLIENT_KEY for the key), then the developer profile, which it
 // reads through stackauth's credential guest, where the token strategies
 // also run. CS_ZEROKMS_HOST (or CS_VITUR_HOST) pins the endpoint whatever
-// the credentials. [NewCredentials] takes the three values explicitly.
+// the credentials. [NewCredentials] takes the three values explicitly, and
+// [OIDCFederation] mints the token from an identity provider's. Pass one
+// with [WithCredentials].
 // Credentials that cannot be resolved fail NewClient with
 // [ErrNoCredentials]; credentials that resolve but do not work fail it too,
 // at the one ZeroKMS round trip it makes.
@@ -111,7 +115,7 @@
 // that is lost, and nothing on a host without swap. [Client.MemoryLocked]
 // reports the outcome and [Client.MemoryLockError] the reason, naming the
 // limit to raise (ulimit -l, a systemd LimitMEMLOCK=, a pod's
-// securityContext). [Config.RequireLockedMemory] turns a refusal into a
+// securityContext). [WithRequireLockedMemory] turns a refusal into a
 // [NewClient] failure with [ErrMemoryLock], for deployments that would
 // rather not start than run unlocked; it also refuses any later growth of
 // the guest's memory that cannot be locked, so the limit granted must

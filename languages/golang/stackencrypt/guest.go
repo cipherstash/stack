@@ -26,7 +26,7 @@ var guestFS embed.FS
 const guestPath = "wasm/stack_encrypt_guest.wasm"
 
 // ErrGuestNotBuilt is returned by NewClient when no guest module is
-// embedded and none was supplied in Config.Guest.
+// embedded and none was supplied with WithGuest.
 var ErrGuestNotBuilt = errors.New("stackencrypt: guest module not built — run `mise run wasm:guest:build`")
 
 func embeddedGuest() ([]byte, error) {

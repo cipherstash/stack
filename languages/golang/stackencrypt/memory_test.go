@@ -85,12 +85,11 @@ func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
 		return
 	}
 	limited := !probe.IsFallback()
-	cfg := Config{
-		Credentials:         NewCredentials("6a70bd18-99ac-4650-b104-37eec3a15b09", NewClientKey([]byte("00")), StaticToken("t")),
-		Guest:               wasiProbe,
-		RequireLockedMemory: true,
-	}
-	_, err := NewClient(context.Background(), cfg)
+	_, err := NewClient(context.Background(),
+		WithCredentials(NewCredentials("6a70bd18-99ac-4650-b104-37eec3a15b09", NewClientKey([]byte("00")), StaticToken("t"))),
+		WithGuest(wasiProbe),
+		WithRequireLockedMemory(),
+	)
 	if !errors.Is(err, ErrMemoryLock) {
 		t.Fatalf("strict NewClient under a refused lock: %v, want ErrMemoryLock", err)
 	}
