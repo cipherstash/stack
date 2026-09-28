@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"unicode"
 )
 
 // Fact is what the SDK knows about one field of a message: where it is,
@@ -16,9 +17,9 @@ import (
 type Fact struct {
 	// Message is the message's (or struct's) full name, for errors.
 	Message string
-	// Field is the field's schema name: the proto field name, or the Go
-	// field name for a struct. It is the column a field encrypts into
-	// unless a rule pins another ([Column]).
+	// Field is the field's schema name: the proto field name, or, for a
+	// struct, the Go field name in snake_case. It is the column a field
+	// encrypts into unless a rule pins another ([Column]).
 	Field string
 	// GoField is the Go struct field the plan binds to. Field when empty.
 	GoField string
@@ -53,6 +54,20 @@ func (f Fact) Values(key string) []string {
 	return out
 }
 
+// hasValue reports whether any value under key satisfies pred, without
+// collecting the values: the matchers run once per rule per field.
+func (f Fact) hasValue(key string, pred func(string) bool) bool {
+	for _, a := range f.Annotations {
+		if a.Key != key {
+			continue
+		}
+		if slices.ContainsFunc(a.Values, pred) {
+			return true
+		}
+	}
+	return false
+}
+
 // goField is the Go struct field the fact binds to.
 func (f Fact) goField() string {
 	if f.GoField != "" {
@@ -61,7 +76,8 @@ func (f Fact) goField() string {
 	return f.Field
 }
 
-// String names the field and its annotations, the way errors name them.
+// String names the field — and the Go field it binds to, when that is
+// spelled differently — and its annotations, the way errors name them.
 func (f Fact) String() string {
 	var b strings.Builder
 	if f.Message != "" {
@@ -69,6 +85,11 @@ func (f Fact) String() string {
 		b.WriteByte('.')
 	}
 	b.WriteString(f.Field)
+	if f.GoField != "" && f.GoField != f.Field {
+		b.WriteString(" (")
+		b.WriteString(f.GoField)
+		b.WriteByte(')')
+	}
 	if len(f.Annotations) > 0 {
 		b.WriteString(" [")
 		for i, a := range f.Annotations {
@@ -105,10 +126,16 @@ func (f SourceFunc) Facts(msg any) ([]Fact, error) { return f(msg) }
 //	    MedicareNo string `facts:"fides.data_categories=user.government_id,user.financial"`
 //	}
 //
-// The tag is `key=value[,value...]`, repeated with `;` for more keys. Field
-// and GoField are the Go field name, Number is 0 and Kind is the field's
-// reflect.Kind (through one pointer). Unexported and embedded fields are
-// skipped: a plan binds exported, direct fields only.
+// The tag is `key=value[,value...]`, repeated with `;` for more keys.
+// GoField is the Go field name and Field is its snake_case ("MedicareNo"
+// is "medicare_no", "ID" is "id", "HTTPPort" is "http_port"): the name a
+// proto field or a database column would have, so the column identity a
+// field binds by default is the one the Rust derive and the schema spell.
+// Number is 0 and Kind is the field's reflect.Kind (through one pointer).
+//
+// Unexported and embedded fields are not facts: a plan binds exported,
+// direct fields only. A `facts` tag on one — or on any field of an
+// embedded struct — is an error, not a field quietly left in plaintext.
 var StructTags Source = SourceFunc(structFacts)
 
 func structFacts(msg any) ([]Fact, error) {
@@ -123,6 +150,9 @@ func structFacts(msg any) ([]Fact, error) {
 	for i := 0; i < t.NumField(); i++ {
 		sf := t.Field(i)
 		if !sf.IsExported() || sf.Anonymous {
+			if err := refuseUnbindableTag(sf); err != nil {
+				return nil, fmt.Errorf("plan: %s.%s: %w", t, sf.Name, err)
+			}
 			continue
 		}
 		kind := sf.Type
@@ -135,13 +165,78 @@ func structFacts(msg any) ([]Fact, error) {
 		}
 		facts = append(facts, Fact{
 			Message:     t.String(),
-			Field:       sf.Name,
+			Field:       snakeCase(sf.Name),
 			GoField:     sf.Name,
 			Kind:        kind.Kind().String(),
 			Annotations: annotations,
 		})
 	}
 	return facts, nil
+}
+
+// refuseUnbindableTag is the error for a `facts` tag on a field a plan
+// cannot bind: an unexported or embedded field, or any field of an
+// embedded struct, however deep. The tag says the field is classified;
+// dropping it would store the field in plaintext with no rule ever asked.
+func refuseUnbindableTag(sf reflect.StructField) error {
+	if sf.Tag.Get("facts") != "" {
+		if sf.Anonymous {
+			return errors.New("a facts tag on an embedded field, which a plan cannot bind")
+		}
+		return errors.New("a facts tag on an unexported field, which a plan cannot bind")
+	}
+	if !sf.Anonymous {
+		return nil
+	}
+	if tagged := firstFactsTag(sf.Type); tagged != "" {
+		return fmt.Errorf("embedded %s has a facts tag on %s, which a plan cannot bind; make it a direct field", sf.Type, tagged)
+	}
+	return nil
+}
+
+// firstFactsTag names the first field of t (a struct, through one
+// pointer), or of a struct embedded in it, that carries a facts tag; ""
+// when none does.
+func firstFactsTag(t reflect.Type) string {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return ""
+	}
+	for i := 0; i < t.NumField(); i++ {
+		sf := t.Field(i)
+		if sf.Tag.Get("facts") != "" {
+			return sf.Name
+		}
+		if sf.Anonymous {
+			if name := firstFactsTag(sf.Type); name != "" {
+				return sf.Name + "." + name
+			}
+		}
+	}
+	return ""
+}
+
+// snakeCase is a Go field name as a schema would spell it: a lower-case
+// word per hump, joined by underscores, with an initialism kept as one
+// word ("HTTPPort" is "http_port", "ID" is "id"). Digits stay with the
+// word before them ("Line2" is "line2").
+func snakeCase(name string) string {
+	runes := []rune(name)
+	var b strings.Builder
+	b.Grow(len(name) + 4)
+	for i, r := range runes {
+		if i > 0 && unicode.IsUpper(r) {
+			prev := runes[i-1]
+			nextLower := i+1 < len(runes) && unicode.IsLower(runes[i+1])
+			if unicode.IsLower(prev) || unicode.IsDigit(prev) || (unicode.IsUpper(prev) && nextLower) {
+				b.WriteByte('_')
+			}
+		}
+		b.WriteRune(unicode.ToLower(r))
+	}
+	return b.String()
 }
 
 func parseFactsTag(tag string) ([]Annotation, error) {

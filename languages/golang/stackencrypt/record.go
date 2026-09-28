@@ -297,6 +297,21 @@ type fieldPlan struct {
 	outputs []string
 }
 
+// Validate checks that the plan binds to t: every planned field is an
+// exported, direct field of the struct type. The record calls make the
+// same check on every call and fail with the same error; this is for a
+// caller that builds a plan at startup for a type it knows, so a field the
+// type does not have is reported then rather than at the first write. The
+// zero Plan is the type's own tags, and PlanFromTags validates those.
+func (p Plan) Validate(t reflect.Type) error {
+	if p.d == nil {
+		_, err := PlanFromTags(t)
+		return err
+	}
+	_, err := p.bind(t)
+	return err
+}
+
 // bind resolves the plan's fields against a struct type. Not cached: a
 // name lookup per field is far below the cost of the call it precedes, and
 // a cache keyed by plan would grow with every plan a caller ever built.

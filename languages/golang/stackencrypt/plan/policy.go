@@ -176,8 +176,13 @@ type RuleOption func(*Decision)
 // the column's identity, which may differ from the field's name after a
 // field rename, and from the column's current name after a database
 // rename: stored payloads keep the identity they were written under. Only
-// meaningful with [Encrypt]; building a plan refuses it elsewhere.
+// meaningful with [Encrypt]; building a plan refuses it elsewhere. An
+// empty name is a programming error and panics: a pin that is not there
+// would silently bind the field's own name instead.
 func Column(name string) RuleOption {
+	if name == "" {
+		panic("plan.Column: empty column name")
+	}
 	return func(d *Decision) { d.column = name }
 }
 
@@ -210,15 +215,19 @@ func Kind(kind string) Matcher {
 	return func(f Fact) bool { return f.Kind == kind }
 }
 
-// Any matches when at least one of ms does.
+// Any matches when at least one of ms does. A nil matcher is a
+// programming error and panics here, as it does in [When].
 func Any(ms ...Matcher) Matcher {
+	ms = matchers("plan.Any", ms)
 	return func(f Fact) bool {
 		return slices.ContainsFunc(ms, func(m Matcher) bool { return m(f) })
 	}
 }
 
-// All matches when every one of ms does.
+// All matches when every one of ms does. A nil matcher is a programming
+// error and panics here, as it does in [When].
 func All(ms ...Matcher) Matcher {
+	ms = matchers("plan.All", ms)
 	return func(f Fact) bool {
 		for _, m := range ms {
 			if !m(f) {
@@ -229,9 +238,25 @@ func All(ms ...Matcher) Matcher {
 	}
 }
 
-// Not matches when m does not.
+// Not matches when m does not. A nil matcher is a programming error and
+// panics here, as it does in [When].
 func Not(m Matcher) Matcher {
+	if m == nil {
+		panic("plan.Not: nil matcher")
+	}
 	return func(f Fact) bool { return !m(f) }
+}
+
+// matchers is a combinator's own copy of its matchers, none of them nil:
+// a later write to the caller's slice must not change the matcher, and a
+// nil found now names the combinator instead of crashing a build.
+func matchers(combinator string, ms []Matcher) []Matcher {
+	for i, m := range ms {
+		if m == nil {
+			panic(fmt.Sprintf("%s: nil matcher at index %d", combinator, i))
+		}
+	}
+	return slices.Clone(ms)
 }
 
 // Key is an annotation key, the handle rules match annotations through. A
@@ -243,21 +268,28 @@ type Key string
 
 // Present matches fields with any value under the key.
 func (k Key) Present() Matcher {
-	return func(f Fact) bool { return len(f.Values(string(k))) > 0 }
+	return func(f Fact) bool { return f.hasValue(string(k), func(string) bool { return true }) }
 }
 
 // Is matches fields with value among their values under the key.
 func (k Key) Is(value string) Matcher {
-	return func(f Fact) bool { return slices.Contains(f.Values(string(k)), value) }
+	return func(f Fact) bool { return f.hasValue(string(k), func(v string) bool { return v == value }) }
 }
 
 // Under matches fields with a value under the key at or below prefix in a
 // dot-separated taxonomy (Fideslang's): "user.contact" matches
-// "user.contact" and "user.contact.email", not "user.contactless".
+// "user.contact" and "user.contact.email", not "user.contactless". The
+// prefix is one or more non-empty dot-separated segments; anything else
+// ("", "user.", ".user", "a..b") could match nothing while reading as a
+// catch-all, so it is a programming error and panics.
 func (k Key) Under(prefix string) Matcher {
+	if prefix == "" || slices.Contains(strings.Split(prefix, "."), "") {
+		panic(fmt.Sprintf("plan.Key(%q).Under(%q): a prefix is one or more non-empty dot-separated segments", string(k), prefix))
+	}
+	below := prefix + "."
 	return func(f Fact) bool {
-		return slices.ContainsFunc(f.Values(string(k)), func(v string) bool {
-			return v == prefix || strings.HasPrefix(v, prefix+".")
+		return f.hasValue(string(k), func(v string) bool {
+			return v == prefix || strings.HasPrefix(v, below)
 		})
 	}
 }

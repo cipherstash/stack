@@ -3,6 +3,7 @@ package plan
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt"
@@ -19,6 +20,11 @@ var (
 	// a pinned column on a field that is not encrypted, an empty context or
 	// column identity.
 	ErrInvalid = errors.New("invalid decision")
+	// ErrNothingEncrypted is a message the policy encrypts no field of:
+	// every classified field decided Plaintext, or none classified. Such a
+	// message has no plan to build, and its records are stored without
+	// one — a [stackencrypt.Plan] always seals at least one field.
+	ErrNothingEncrypted = errors.New("the policy encrypts no field of the message")
 )
 
 // Table names the table a message's records are stored in: the first half
@@ -43,7 +49,7 @@ type Message struct {
 //
 //	var Individuals = plan.ForMessage(&Individual{}, plan.Table("individuals"),
 //	    plan.FirstOf(
-//	        plan.When(plan.Field("MedicareNo"), plan.Encrypt(plan.EQL(stackencrypt.Equality)),
+//	        plan.When(plan.Field("medicare_no"), plan.Encrypt(plan.EQL(stackencrypt.Equality)),
 //	            plan.Column("medicare_number")),
 //	    ).OrElse(Base),
 //	)
@@ -90,6 +96,9 @@ func (m Message) Build(facts []Fact) (stackencrypt.Plan, error) {
 	if len(errs) > 0 {
 		return stackencrypt.Plan{}, errors.Join(errs...)
 	}
+	if len(fields) == 0 {
+		return stackencrypt.Plan{}, fmt.Errorf("plan: %s: %w; a message with nothing to encrypt needs no plan", messageName(m, facts), ErrNothingEncrypted)
+	}
 	p, err := stackencrypt.NewPlan(fields...)
 	if err != nil {
 		return stackencrypt.Plan{}, fmt.Errorf("plan: %s: %w", messageName(m, facts), err)
@@ -125,8 +134,14 @@ func (m Message) field(f Fact) (stackencrypt.FieldPlan, bool, error) {
 	if d.column != "" {
 		column = d.column
 	}
-	if column == "" || strings.Contains(column, "/") {
-		return stackencrypt.FieldPlan{}, false, fmt.Errorf("%w: column %q must be non-empty and contain no '/'", ErrInvalid, column)
+	if column == "" {
+		return stackencrypt.FieldPlan{}, false, fmt.Errorf("%w: the field has no name to store it under", ErrInvalid)
+	}
+	// A '/' in the column would make an identity-shaped context ambiguous
+	// ("a/b" under "t" reads as "a" under "t/b" would). A Custom target's
+	// context is its own, and its column is only the record key.
+	if _, custom := d.target.(customTarget); !custom && strings.Contains(column, "/") {
+		return stackencrypt.FieldPlan{}, false, fmt.Errorf("%w: column %q contains '/', which would make its identity ambiguous", ErrInvalid, column)
 	}
 	context := d.target.Context(Identifier{Table: string(m.table), Column: column})
 	if context == "" {
@@ -147,8 +162,12 @@ func messageName(m Message, facts []Fact) string {
 	return fmt.Sprintf("%T", m.msg)
 }
 
-// PlanFor reads m's facts from src and builds its plan; see
-// [Message.Build].
+// PlanFor reads m's facts from src, builds its plan (see [Message.Build])
+// and, when m's message is a struct or a pointer to one, checks the plan
+// binds to it: every planned field is an exported, direct field of the
+// type. A fact whose GoField the type does not have — a typo in a source,
+// a generated field renamed — is then an error here, not at the first
+// record call.
 func PlanFor(src Source, m Message) (stackencrypt.Plan, error) {
 	if src == nil {
 		return stackencrypt.Plan{}, errors.New("plan: PlanFor needs a Source")
@@ -157,12 +176,34 @@ func PlanFor(src Source, m Message) (stackencrypt.Plan, error) {
 	if err != nil {
 		return stackencrypt.Plan{}, err
 	}
-	return m.Build(facts)
+	p, err := m.Build(facts)
+	if err != nil {
+		return stackencrypt.Plan{}, err
+	}
+	if t := structType(m.msg); t != nil {
+		if err := p.Validate(t); err != nil {
+			return stackencrypt.Plan{}, fmt.Errorf("plan: %s: %w", messageName(m, facts), err)
+		}
+	}
+	return p, nil
+}
+
+// structType is msg's struct type, through one pointer, or nil when msg is
+// not a struct: nothing to bind a plan to.
+func structType(msg any) reflect.Type {
+	t := reflect.TypeOf(msg)
+	if t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t == nil || t.Kind() != reflect.Struct {
+		return nil
+	}
+	return t
 }
 
 // MustPlanFor is [PlanFor] for startup: it panics when the policy does not
-// decide every classified field, so a policy gap stops the process before
-// it writes anything.
+// decide every classified field, or the plan does not bind to the message,
+// so a policy gap stops the process before it writes anything.
 func MustPlanFor(src Source, m Message) stackencrypt.Plan {
 	p, err := PlanFor(src, m)
 	if err != nil {

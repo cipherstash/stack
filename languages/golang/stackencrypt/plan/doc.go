@@ -19,7 +19,7 @@
 //
 //	var Individuals = plan.ForMessage(&Individual{}, plan.Table("individuals"),
 //	    plan.FirstOf(
-//	        plan.When(plan.Field("MedicareNo"), plan.Encrypt(plan.EQL(stackencrypt.Equality)),
+//	        plan.When(plan.Field("medicare_no"), plan.Encrypt(plan.EQL(stackencrypt.Equality)),
 //	            plan.Column("medicare_number")),
 //	    ).OrElse(Base),
 //	)
@@ -30,10 +30,12 @@
 // # Facts
 //
 // A [Source] makes the facts for a message. [StructTags] reads a Go
-// struct's `facts` tags; a protobuf source reads descriptors and their
-// custom options the same way, and needs nothing from this package beyond
-// [Fact], [Source] and [Key]. [Message.Build] takes facts directly, so a
-// generator or a test can build a plan without a source at all.
+// struct's `facts` tags, naming each field as a schema would (the Go name
+// in snake_case); a protobuf source reads descriptors and their custom
+// options the same way, and needs nothing from this package beyond [Fact],
+// [Source] and [Key]. [Message.Build] takes facts directly, so a generator
+// or a test can build a plan without a source at all; [PlanFor] also checks
+// the plan binds to the message's Go type.
 //
 // # Contexts
 //
@@ -52,7 +54,9 @@
 // is built ([ErrUnmatched]), naming the field and its annotations; there is
 // no built-in default, so a catch-all, Plaintext included, is written in the
 // policy. A field with no annotations that no rule names is not the
-// policy's concern: it is left out of the plan and stored as it is. Build
-// plans at startup with [MustPlanFor], so a gap stops the process before it
+// policy's concern: it is left out of the plan and stored as it is. A
+// message the policy encrypts nothing of has no plan to build
+// ([ErrNothingEncrypted]): its records are stored without one. Build plans
+// at startup with [MustPlanFor], so a gap stops the process before it
 // writes anything.
 package plan

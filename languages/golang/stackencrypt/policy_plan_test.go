@@ -29,13 +29,15 @@ func TestPolicyPlanIsTheHandBuiltPlan(t *testing.T) {
 		plan.When(category.Present(), plan.Plaintext()),
 	)
 	individuals := plan.ForMessage(&individual{}, "individuals", plan.FirstOf(
-		plan.When(plan.Field("MedicareNo"), plan.Encrypt(plan.EQL(se.Equality, se.Ore)), plan.Column("medicare_number")),
+		plan.When(plan.Field("medicare_no"), plan.Encrypt(plan.EQL(se.Equality, se.Ore)), plan.Column("medicare_number")),
 	).OrElse(base))
 
 	fromPolicy := plan.MustPlanFor(plan.StructTags, individuals)
+	// The schema spelling of each column, as a Rust derive or a database
+	// would have it.
 	byHand, err := se.NewPlan(
-		se.FieldPlan{Field: "Email", Context: "individuals/Email", Terms: []se.TermKind{se.Equality, se.Match}},
-		se.FieldPlan{Field: "Name", Context: "individuals/Name"},
+		se.FieldPlan{Field: "Email", Name: "email", Context: "individuals/email", Terms: []se.TermKind{se.Equality, se.Match}},
+		se.FieldPlan{Field: "Name", Name: "name", Context: "individuals/name"},
 		se.FieldPlan{Field: "MedicareNo", Name: "medicare_number", Context: "individuals/medicare_number", Terms: []se.TermKind{se.Equality, se.Ore}},
 	)
 	if err != nil {

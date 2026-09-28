@@ -242,12 +242,13 @@ var Base = plan.FirstOf(
 
 var Individuals = plan.ForMessage(&Individual{}, plan.Table("individuals"),
     plan.FirstOf(
-        plan.When(plan.Field("MedicareNo"), plan.Encrypt(plan.EQL(stackencrypt.Equality)),
+        plan.When(plan.Field("medicare_no"), plan.Encrypt(plan.EQL(stackencrypt.Equality)),
             plan.Column("medicare_number")),
     ).OrElse(Base),
 )
 
-// At startup: panics if a classified field is decided by no rule.
+// At startup: panics if a classified field is decided by no rule, or the
+// plan names a field the struct does not have.
 var individuals = plan.MustPlanFor(plan.StructTags, Individuals)
 
 records, err := cipher.EncryptRecords(ctx, rows, stackencrypt.WithPlan(individuals))
@@ -256,14 +257,21 @@ records, err := cipher.EncryptRecords(ctx, rows, stackencrypt.WithPlan(individua
 A policy fails closed: a field with facts that no rule decides is an error
 when the plan is built, naming the field and its facts. There is no default;
 write a catch-all, `Plaintext()` included, in the policy. Fields with no
-facts are left out and stored as they are.
+facts are left out and stored as they are. A `facts` tag on a field a plan
+cannot bind (unexported, or inside an embedded struct) is an error too,
+not a field quietly left in plaintext. A message the policy encrypts
+nothing of has no plan: `PlanFor` reports `ErrNothingEncrypted`, and its
+records are stored without one.
 
 An EQL target's context is its column identity, `"<table>/<column>"`. The
 table is required per message, never derived from its name, and the column
-is the field name unless a rule pins it with `plan.Column`, which keeps the
-context fixed across renames. `plan.Custom` targets supply their own
-context. The plan a policy builds is a `Plan` like any other: the guest
-receives the same bytes as for the equivalent hand-built plan.
+is the field's schema name — for a Go struct, the field name in snake_case
+(`MedicareNo` is `medicare_no`), the spelling the Rust derive and the
+database column share — unless a rule pins it with `plan.Column`, which
+keeps the context fixed across renames. `plan.Field` matches on that same
+schema name. `plan.Custom` targets supply their own context. The plan a
+policy builds is a `Plan` like any other: the guest receives the same bytes
+as for the equivalent hand-built plan.
 
 ## Errors
 
