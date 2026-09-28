@@ -172,6 +172,7 @@ func (s *Strategy) Token(ctx context.Context) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		defer guest.Wipe(out)
 		return string(out), nil
 	}
 	token, err := call(func(i *instance) api.Function { return i.authToken })
