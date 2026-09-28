@@ -332,6 +332,19 @@ func TestAutoUsesEnvironmentPresenceAndProfileExistence(t *testing.T) {
 	if _, err := profile.Auto(context.Background()); !errors.Is(err, ErrAuthConfig) {
 		t.Fatalf("set but empty access key: error = %v, want %v", err, ErrAuthConfig)
 	}
+	// A key that does not parse is a configuration error like the empty one,
+	// the class Rust's AutoStrategy reports, not a malformed-input error.
+	t.Setenv("CS_CLIENT_ACCESS_KEY", "not-a-key")
+	if _, err := profile.Auto(context.Background()); !errors.Is(err, ErrAuthConfig) {
+		t.Fatalf("malformed access key: error = %v, want %v", err, ErrAuthConfig)
+	}
+	if _, err := profile.AccessKey(context.Background(), "invalid", "CSAKtestKeyId.testKeySecret"); !errors.Is(err, ErrAuthConfig) {
+		t.Fatalf("malformed CRN for access key: error = %v, want %v", err, ErrAuthConfig)
+	}
+	provider := OIDCProviderFunc(func(context.Context) (string, error) { return "", nil })
+	if _, err := profile.OIDC(context.Background(), "invalid", provider); !errors.Is(err, ErrAuthConfig) {
+		t.Fatalf("malformed CRN for OIDC: error = %v, want %v", err, ErrAuthConfig)
+	}
 	if err := os.Unsetenv("CS_CLIENT_ACCESS_KEY"); err != nil {
 		t.Fatal(err)
 	}

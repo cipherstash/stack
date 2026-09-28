@@ -17,8 +17,8 @@ use zeroize::Zeroizing;
 
 use crate::host::{HostOidcProvider, WasiAuthTransport};
 use crate::status::{
-    status_for_auth, status_for_profile, STATUS_AUTH_REFRESH_REQUIRED, STATUS_ENCODING,
-    STATUS_STATE,
+    status_for_auth, status_for_profile, STATUS_AUTH_CONFIG, STATUS_AUTH_REFRESH_REQUIRED,
+    STATUS_ENCODING, STATUS_STATE,
 };
 
 #[derive(Deserialize)]
@@ -65,11 +65,14 @@ fn parse_base_url(value: Option<String>) -> Result<Option<url::Url>, u32> {
 
 pub fn validate_crn(bytes: &[u8]) -> Result<Vec<u8>, u32> {
     let text = std::str::from_utf8(bytes).map_err(|_| STATUS_ENCODING)?;
-    let _: Crn = text
-        .parse()
-        .map_err(|_| stack_guest_abi::status::STATUS_AUTH_CONFIG)?;
+    let _: Crn = text.parse().map_err(|_| STATUS_AUTH_CONFIG)?;
     Ok(Vec::new())
 }
+
+// A CRN or access key that does not parse is a configuration error, the
+// class Rust's `AutoStrategy` reports (`INVALID_CRN`, `INVALID_ACCESS_KEY`)
+// and the one `validate_crn` already uses. `STATUS_ENCODING` is kept for the
+// JSON envelope itself.
 
 pub fn create(config: &[u8]) -> Result<Vec<u8>, u32> {
     let config: Config = serde_json::from_slice(config).map_err(|_| STATUS_ENCODING)?;
@@ -80,8 +83,8 @@ pub fn create(config: &[u8]) -> Result<Vec<u8>, u32> {
             base_url,
         } => {
             let access_key = Zeroizing::new(access_key);
-            let crn: Crn = crn.parse().map_err(|_| STATUS_ENCODING)?;
-            let key: AccessKey = access_key.parse().map_err(|_| STATUS_ENCODING)?;
+            let crn: Crn = crn.parse().map_err(|_| STATUS_AUTH_CONFIG)?;
+            let key: AccessKey = access_key.parse().map_err(|_| STATUS_AUTH_CONFIG)?;
             let mut builder = AccessKeyStrategy::builder(crn, key).transport(WasiAuthTransport);
             if let Some(url) = parse_base_url(base_url)? {
                 builder = builder.base_url(url);
@@ -93,7 +96,7 @@ pub fn create(config: &[u8]) -> Result<Vec<u8>, u32> {
             provider,
             base_url,
         } => {
-            let crn: Crn = crn.parse().map_err(|_| STATUS_ENCODING)?;
+            let crn: Crn = crn.parse().map_err(|_| STATUS_AUTH_CONFIG)?;
             let mut builder = OidcFederationStrategy::builder(crn, HostOidcProvider(provider))
                 .transport(WasiAuthTransport);
             if let Some(url) = parse_base_url(base_url)? {

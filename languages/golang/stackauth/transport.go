@@ -17,6 +17,13 @@ import (
 
 // OIDCProvider supplies the current identity-provider JWT. The Rust
 // federation strategy asks only when its cached CTS token needs renewal.
+//
+// Token runs inside the guest call that needs it, while the ProfileStore
+// that owns the strategy is locked. It must not call back into that
+// ProfileStore or any strategy of it (reading a stored token, building
+// another strategy): the call would wait on the same lock and deadlock
+// rather than fail. OAuth2TokenSource does not touch the store, so it is
+// safe to use from here.
 type OIDCProvider interface {
 	Token(context.Context) (string, error)
 }
