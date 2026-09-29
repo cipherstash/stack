@@ -6,13 +6,14 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
 	"io"
 	"net/http"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
 
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"

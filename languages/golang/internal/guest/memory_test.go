@@ -229,6 +229,14 @@ func TestStatusDecodesToTheSharedSentinels(t *testing.T) {
 		guest.StatusProfileNoCurrentWorkspace: guest.ErrNoCurrentWorkspace,
 		guest.StatusProfileInvalidWorkspaceID: guest.ErrInvalidWorkspaceID,
 		guest.StatusProfileWorkspaceNotFound:  guest.ErrWorkspaceNotFound,
+		guest.StatusAuthInvalidGrant:          guest.ErrAuthInvalidGrant,
+		guest.StatusAuthInvalidClient:         guest.ErrAuthInvalidClient,
+		guest.StatusAuthUsageLimit:            guest.ErrAuthUsageLimit,
+		guest.StatusAuthNotAuthenticated:      guest.ErrAuthNotAuthenticated,
+		guest.StatusAuthTransport:             guest.ErrAuthTransport,
+		guest.StatusAuthConfig:                guest.ErrAuthConfig,
+		guest.StatusAuthOther:                 guest.ErrAuthOther,
+		guest.StatusAuthRefreshRequired:       guest.ErrAuthRefreshRequired,
 	}
 	for code, sentinel := range want {
 		if got := guest.StatusError(code); got != sentinel {

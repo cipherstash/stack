@@ -1976,6 +1976,55 @@ mod tests {
         assert_eq!(map.next_key(), Ok(None));
     }
 
+    /// A cipher's `Debug` — and a keyset handle's — names the keyset and the
+    /// source's type and stops there: the cache behind a cipher holds every
+    /// loaded keyset's index key, a handle carries its keyset's, and the
+    /// backend holds the credentials.
+    #[tokio::test]
+    async fn debug_shows_the_keyset_and_the_source_type_only() {
+        let cipher = StackCipher::builder()
+            .kms(stack_kms::FakeDataKeySource::new())
+            .init()
+            .await
+            .unwrap();
+        let keyset = cipher.default_keyset();
+        let keyset_id = keyset.keyset_id().to_string();
+
+        for (debug, type_name) in [
+            (format!("{cipher:?}"), "StackCipher {"),
+            (format!("{keyset:?}"), "KeysetCipher {"),
+        ] {
+            assert!(debug.starts_with(type_name), "{debug}");
+            assert!(debug.contains(&keyset_id), "{debug}");
+            assert!(debug.contains("FakeDataKeySource"), "{debug}");
+            assert!(debug.ends_with(", .. }"), "non-exhaustive: {debug}");
+        }
+    }
+
+    /// `decrypt_passthrough` hands back the payload of a passthrough node and
+    /// nothing else: any sealed shape is refused rather than surfaced
+    /// unopened, and a payload of another type is refused by the downcast.
+    #[test]
+    fn decrypt_passthrough_opens_only_a_passthrough() {
+        let passthrough = || StackDecipher::over(CipherText::Passthrough(Box::new(7u32)));
+
+        assert_eq!(
+            passthrough().decrypt_passthrough_as::<u32>(),
+            Ok(7),
+            "a passthrough payload of the requested type should be handed back"
+        );
+        assert_eq!(
+            passthrough().decrypt_passthrough_as::<String>(),
+            Err(Unspecified),
+            "a payload of another type should fail the downcast"
+        );
+        assert_eq!(
+            StackDecipher::over(CipherText::Sequence(vec![])).decrypt_passthrough_as::<u32>(),
+            Err(Unspecified),
+            "a sealed shape should be refused rather than surfaced unopened"
+        );
+    }
+
     /// Byte-level pin for the [`leaf_aad`] derivation. This is part of the
     /// frozen leaf format: a change to the domain label, the version byte,
     /// the keyset id's place, the piece order, or the PAE framing makes

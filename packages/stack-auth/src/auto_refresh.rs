@@ -128,6 +128,17 @@ impl StickyDenial {
     }
 }
 
+/// Whether a failed [`Refresher::refresh`] spent its credential.
+///
+/// A store error means the upstream exchange succeeded and only persisting
+/// the result failed (see [`Refresher::refresh`]). The credential has been
+/// used, so restoring it would replay it on the next call; for a rotating
+/// refresh token that replay trips the issuer's reuse detection and revokes
+/// the whole chain.
+fn credential_consumed(err: &crate::AuthError) -> bool {
+    matches!(err, crate::AuthError::Store(_))
+}
+
 /// Ensures [`AutoRefresh::refresh_in_progress`] is cleared and waiters are
 /// notified if the refresh future is cancelled (dropped) before completing.
 ///
@@ -509,15 +520,21 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
             defused: false,
         };
 
-        match self.refresher.refresh(&credential).await {
+        let result = match self.refresher.refresh(&credential).await {
             Ok(new_token) => {
                 self.save_refreshed_token(&new_token).await;
                 let mut state = self.state.lock().await;
                 let _ = self.install_refreshed_token(&mut state, new_token);
                 guard.defuse();
+                Ok(current_service_token)
             }
             Err(err) => {
-                tracing::warn!(%err, "token refresh failed (token still usable)");
+                let consumed = credential_consumed(&err);
+                if consumed {
+                    tracing::error!(%err, "refreshed token could not be persisted");
+                } else {
+                    tracing::warn!(%err, "token refresh failed (token still usable)");
+                }
                 // Defer `defuse()` until after the lock acquire so the
                 // CancelGuard's Drop still fires if cancellation lands on
                 // `state.lock().await`. Without this the in-progress flag
@@ -525,22 +542,32 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
                 // subsequent caller exactly like the Ok-path bug fixed
                 // earlier in this file.
                 let mut state = self.state.lock().await;
-                if let Some(token) = state.token.as_mut() {
-                    self.refresher.restore(token, credential);
+                if !consumed {
+                    if let Some(token) = state.token.as_mut() {
+                        self.refresher.restore(token, credential);
+                    }
                 }
                 self.refresh_in_progress.store(false, Ordering::Release);
-                // The cached token is still usable, so this call still
-                // succeeds — but record the refusal so the next call doesn't
-                // re-issue the same request (if it's account-level), and so a
-                // caller parked in `wait_for_in_flight_refresh` sees the same
-                // answer this refresh actually got (regardless of its class).
+                // Record the refusal so the next call doesn't re-issue the
+                // same request (if it's account-level), and so a caller parked
+                // in `wait_for_in_flight_refresh` sees the same answer this
+                // refresh actually got (regardless of its class).
                 state.record_refusal(&err, self.clock.now_unix_secs());
                 guard.defuse();
+                // An ordinary failure leaves the cached token usable, so this
+                // call still succeeds. A consumed credential does not: the
+                // rotation happened upstream but was lost, and succeeding
+                // would hide that until the cached token expires.
+                if consumed {
+                    Err(AutoRefreshError::Auth(err))
+                } else {
+                    Ok(current_service_token)
+                }
             }
-        }
+        };
 
         self.refresh_notify.notify_waiters();
-        Ok(current_service_token)
+        result
     }
 
     /// Token is fully expired — refresh while holding the lock so concurrent
@@ -572,8 +599,10 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
             Err(err) => {
                 guard.defuse();
                 tracing::warn!(%err, "token refresh failed");
-                if let Some(token) = state.token.as_mut() {
-                    self.refresher.restore(token, credential);
+                if !credential_consumed(&err) {
+                    if let Some(token) = state.token.as_mut() {
+                        self.refresher.restore(token, credential);
+                    }
                 }
                 self.refresh_in_progress.store(false, Ordering::Release);
                 state.record_refusal(&err, self.clock.now_unix_secs());
@@ -616,6 +645,39 @@ mod tests {
             ))),
             AuthError::AccessDenied(_)
         ));
+    }
+
+    /// The guard's contract, directly: armed, its drop clears the in-progress
+    /// flag (the cancellation path); defused, its drop leaves the flag to
+    /// the normal path that already owns it. A defused guard that still
+    /// fired would clear the flag out from under a refresh another caller
+    /// started after this one installed its token.
+    #[test]
+    fn a_defused_cancel_guard_leaves_the_flag_alone() {
+        let in_progress = AtomicBool::new(true);
+        let notify = Notify::new();
+
+        let mut guard = CancelGuard {
+            in_progress: &in_progress,
+            notify: &notify,
+            defused: false,
+        };
+        guard.defuse();
+        drop(guard);
+        assert!(
+            in_progress.load(Ordering::Acquire),
+            "a defused guard must not touch the flag"
+        );
+
+        drop(CancelGuard {
+            in_progress: &in_progress,
+            notify: &notify,
+            defused: false,
+        });
+        assert!(
+            !in_progress.load(Ordering::Acquire),
+            "an armed guard clears the flag on drop"
+        );
     }
 
     fn make_token(access: &str, expires_in: u64, refresh: bool) -> Token {
@@ -1182,6 +1244,80 @@ mod tests {
                     "cache should hold the refreshed token after retry"
                 );
             }
+        }
+    }
+
+    /// Makes every later `auth.json` write fail: the atomic save renames a
+    /// temp file over the target, which cannot replace a non-empty directory.
+    fn break_token_persistence(dir: &tempfile::TempDir) {
+        use stack_profile::ProfileData;
+        let path = ProfileStore::new(dir.path())
+            .workspace_store("ZVATKW3VHMFG27DY")
+            .unwrap()
+            .dir()
+            .join(Token::FILENAME);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("occupied"), b"").unwrap();
+    }
+
+    fn refreshing_server() -> MockSet {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/token");
+            then.json(refresh_response_json("refreshed-token"));
+        });
+        mocks
+    }
+
+    /// The upstream exchange succeeds, so the refresh token it sent is spent.
+    /// Restoring it would replay it on the next call and revoke the chain.
+    mod given_a_refreshed_token_cannot_be_saved {
+        use super::*;
+        use crate::AuthError;
+
+        #[tokio::test]
+        async fn an_expiring_token_fails_the_call_and_drops_the_spent_refresh_token() {
+            let server = start_server(refreshing_server()).await;
+            let dir = tempfile::tempdir().unwrap();
+            // Inside the refresh leeway but still usable: the non-blocking path.
+            let strategy =
+                auto_refresh_with_token(&dir, &server, make_token("still-usable", 30, true));
+            break_token_persistence(&dir);
+
+            let result = strategy.get_token().await;
+            assert!(
+                matches!(result, Err(AutoRefreshError::Auth(AuthError::Store(_)))),
+                "a lost rotation must fail the call, got: {result:?}"
+            );
+
+            let state = strategy.state.lock().await;
+            assert!(
+                state.token.as_ref().unwrap().refresh_token().is_none(),
+                "the spent refresh token must not be restored for replay"
+            );
+        }
+
+        #[tokio::test]
+        async fn an_expired_token_fails_the_call_and_drops_the_spent_refresh_token() {
+            let server = start_server(refreshing_server()).await;
+            let dir = tempfile::tempdir().unwrap();
+            let mut token = make_token("expired", 0, true);
+            token.expires_at -= 10;
+            let strategy = auto_refresh_with_token(&dir, &server, token);
+            break_token_persistence(&dir);
+
+            let result = strategy.get_token().await;
+            assert!(
+                matches!(result, Err(AutoRefreshError::Auth(AuthError::Store(_)))),
+                "a lost rotation must fail the call, got: {result:?}"
+            );
+
+            let state = strategy.state.lock().await;
+            assert!(
+                state.token.as_ref().unwrap().refresh_token().is_none(),
+                "the spent refresh token must not be restored for replay"
+            );
         }
     }
 

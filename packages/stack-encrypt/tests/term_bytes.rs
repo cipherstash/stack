@@ -18,7 +18,7 @@
 //! this crate's own moved.
 
 use stack_encrypt::nonempty;
-use stack_encrypt::sem::DefaultMatch;
+use stack_encrypt::sem::{DefaultMatch, MatchConfig, MatchOptions};
 use stack_encrypt::StackCipher;
 use stack_kms::FakeDataKeySource;
 
@@ -101,5 +101,39 @@ async fn ope_term_bytes_are_pinned() {
     assert_eq!(
         hex(term.as_ref()),
         "00837615a1ea2fdcbebf7efe34cf4d2ee432c7eeff84fbd72e1bf05efa2338033c"
+    );
+}
+
+/// A filter wider than 256 bits: the default's mask keeps only the low byte
+/// of each 2-byte slice, so the pin above cannot see which byte fills the
+/// high half. Here every position uses both.
+struct WideMatch;
+
+impl MatchConfig for WideMatch {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            m: 65536,
+            ..Default::default()
+        }
+    }
+}
+
+#[tokio::test]
+async fn match_term_positions_are_pinned_for_a_wide_filter() {
+    let cipher = cipher().await;
+    let term = cipher
+        .default_keyset()
+        .match_terms::<WideMatch>("alice smith", nonempty!("users/name"))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        term.positions(),
+        [
+            2287, 2398, 2404, 2829, 5150, 5181, 5293, 9255, 11964, 14175, 16080, 24350, 25354,
+            28362, 31748, 33647, 35845, 39141, 39480, 41998, 42621, 45365, 50303, 60896, 64668,
+            64957, 65365
+        ],
+        "positions for a 65536-bit filter are frozen: both bytes of each slice are in play"
     );
 }

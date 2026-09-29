@@ -19,10 +19,10 @@ func reserveRange(max int) ([]byte, error) {
 	}
 	// The reservation is not Go memory; going through unsafe.Add keeps
 	// the conversion within what vet's unsafeptr check accepts.
-	return unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(nil), base)), max), nil
+	return unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(nil), base)), max), nil //nolint:gosec // audited: wraps the VirtualAlloc reservation
 }
 
-func address(b []byte) uintptr { return uintptr(unsafe.Pointer(unsafe.SliceData(b))) }
+func address(b []byte) uintptr { return uintptr(unsafe.Pointer(unsafe.SliceData(b))) } //nolint:gosec // audited: address for VirtualAlloc/VirtualLock
 
 func commitRange(b []byte) error {
 	_, err := windows.VirtualAlloc(address(b), uintptr(len(b)), windows.MEM_COMMIT, windows.PAGE_READWRITE)

@@ -56,24 +56,26 @@
 //!
 //! # What crosses the boundary
 //!
-//! Inputs are UTF-8 strings: the store directory (a guest path under the
-//! mount), a workspace id, a filename. Outputs are either a UTF-8 string
+//! Profile inputs are UTF-8 strings: the store directory (a guest path under
+//! the mount), a workspace id, a filename. Outputs are either a UTF-8 string
 //! (an id, a path) or a value in vitaminc's FFI codec
 //! (`vitaminc_aead_value::transport`): a list of ids, or the fields of
 //! `secretkey.json`, `auth.json` or `device.json` as an object. The client
 //! key in `secretkey.json` crosses as the text the file holds; the Go side
 //! wraps it in its opaque `ClientKey` and wipes its transport copy. A
-//! refresh token never crosses: the profile half of this guest hands out
-//! the access token and its expiry, and refreshing is the auth half's
-//! (CIP-4054), which runs inside this module.
+//! refresh token never crosses: the auth strategy retains it inside this
+//! module, while the Go host supplies HTTP through a single transport
+//! import. The host can provide an access key or an OIDC provider callback.
 //!
 //! # Locking
 //!
 //! WASI preview 1 has no file locking, so this module takes none. The Go
 //! side takes the same lock the Rust CLI takes, on the path
 //! [`ProfileStore::lock_path`](stack_profile::ProfileStore::lock_path)
-//! names (exported here), around the refresh export once it exists — and
-//! never composes a profile path itself.
+//! names (exported here), around the entire device-session refresh export.
+//! A fresh token is read without that lock. The refresh export re-reads
+//! auth.json after acquisition and saves a rotated token before returning.
+//! Go never composes a profile path.
 //!
 //! # Not faked
 //!
@@ -85,14 +87,21 @@
 //!
 //! Split into:
 //!
-//! - [`ops`], [`status`] — everything that is pure logic over a
+//! - [`ops`], [`status`], [`headers`] — everything that is pure logic over a
 //!   `ProfileStore` and bytes. Compiles and unit-tests on the native host
 //!   target (`cargo test` here) against a temporary directory.
+//! - [`auth`], [`host`] (wasm32 only) — stack-auth strategies and host HTTP.
 //! - [`abi`] (wasm32 only) — the export surface, over the conventions
 //!   every guest shares (`stack_guest_abi`).
 
+pub mod headers;
 pub mod ops;
 pub mod status;
+
+#[cfg(target_arch = "wasm32")]
+pub mod auth;
+#[cfg(target_arch = "wasm32")]
+pub mod host;
 
 // The ABI's packed u64 results embed 32-bit pointers and its bounds checks
 // read the wasm linear-memory size, so this module only exists on wasm32.

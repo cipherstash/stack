@@ -308,9 +308,37 @@ mod tests {
     #[test]
     fn the_empty_context_renders_empty() {
         // `()` and `""` encode to the same (empty) bytes: one descriptor.
-        assert_eq!(Descriptor::of(()).as_str(), "");
-        assert_eq!(Descriptor::of("").as_str(), "");
-        assert_eq!(Descriptor::of(b"".as_slice()).as_str(), "");
+        assert_eq!(
+            Descriptor::of(()).as_str(),
+            "",
+            "unit context should render empty"
+        );
+        assert_eq!(
+            Descriptor::of("").as_str(),
+            "",
+            "empty text should render empty"
+        );
+        assert_eq!(
+            Descriptor::of(b"".as_slice()).as_str(),
+            "",
+            "empty bytes should render empty"
+        );
+        assert!(
+            Descriptor::of(()).is_empty(),
+            "unit context should be empty"
+        );
+        assert!(
+            !Descriptor::of("users/email").is_empty(),
+            "textual context should not be empty"
+        );
+    }
+
+    /// Every view of a descriptor is the one rendering ZeroKMS is sent.
+    #[test]
+    fn display_and_as_ref_are_the_rendering() {
+        let descriptor = Descriptor::of(nonempty!("users/email"));
+        assert_eq!(descriptor.to_string(), "users/email");
+        assert_eq!(AsRef::<str>::as_ref(&descriptor), "users/email");
     }
 
     #[test]

@@ -138,6 +138,55 @@ async fn begin_pending(server: &MockServer, dir: &TempDir) -> PendingDeviceCode 
     strategy_for(server, dir).begin().await.unwrap()
 }
 
+/// Stand in for the OS launcher only; `open_in_browser` itself is unchanged
+/// between test and production builds. Thread-local expectations keep tests
+/// independent even when run concurrently in one test binary.
+pub(super) mod browser {
+    use std::cell::RefCell;
+
+    thread_local! {
+        pub(super) static EXPECTED: RefCell<Option<(String, bool)>> = const { RefCell::new(None) };
+    }
+
+    pub(in crate::device_code) fn launch(uri: &str) -> std::io::Result<()> {
+        let (expected, succeeds) = EXPECTED
+            .with_borrow_mut(Option::take)
+            .expect("unexpected browser launch");
+        assert_eq!(uri, expected, "open the complete verification URI");
+        if succeeds {
+            Ok(())
+        } else {
+            Err(std::io::Error::other("browser launcher failed"))
+        }
+    }
+}
+
+#[tokio::test]
+async fn opening_the_browser_reports_the_launchers_result() {
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    mock_code_endpoint(&mut mocks);
+    let server = start_server(mocks).await;
+    let pending = begin_pending(&server, &dir).await;
+
+    for succeeds in [true, false] {
+        browser::EXPECTED.with_borrow_mut(|expected| {
+            *expected = Some((
+                "http://example.com/activate?user_code=ABCD-EFGH".to_string(),
+                succeeds,
+            ));
+        });
+        assert_eq!(
+            pending.open_in_browser(),
+            succeeds,
+            "browser launch result should match launcher success={succeeds}"
+        );
+        browser::EXPECTED.with_borrow(|expected| {
+            assert!(expected.is_none(), "the launcher must actually be called");
+        });
+    }
+}
+
 #[tokio::test(start_paused = true)]
 async fn test_poll_for_token_success() {
     let dir = TempDir::new().unwrap();
@@ -171,6 +220,43 @@ async fn test_poll_for_token_success() {
         "ZVATKW3VHMFG27DY",
         "current workspace should be set after poll_for_token"
     );
+}
+
+/// The device-code start and the token poll both go to CTS, whose edge
+/// refuses a request without a `user-agent` it accepts: each names the crate.
+/// The mocks answer only a request that carries it.
+#[tokio::test(start_paused = true)]
+async fn device_code_requests_identify_the_crate() {
+    let user_agent = format!(
+        "stack-auth/{} ({} {})",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    );
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    let code_agent = user_agent.clone();
+    mocks.mock(move |when, then| {
+        when.post()
+            .path("/oauth/device/code")
+            .header("user-agent", code_agent);
+        then.json(device_code_json());
+    });
+    mocks.mock(move |when, then| {
+        when.post()
+            .path("/oauth/device/token")
+            .header("user-agent", user_agent);
+        then.json(token_json());
+    });
+    let server = start_server(mocks).await;
+
+    let token = begin_pending(&server, &dir)
+        .await
+        .poll_for_token()
+        .await
+        .unwrap();
+
+    assert_eq!(token.token_type(), "Bearer");
 }
 
 #[tokio::test(start_paused = true)]

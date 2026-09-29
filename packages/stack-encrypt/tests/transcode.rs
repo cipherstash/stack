@@ -390,6 +390,77 @@ impl Stored {
         }
     }
 }
+
+#[test]
+fn native_readers_report_the_number_of_remaining_entries() {
+    struct LengthVisitor;
+
+    impl Visitor for LengthVisitor {
+        type Value = usize;
+
+        fn sequence<R: SequenceReader>(self, mut reader: R) -> Result<usize, Error> {
+            let length = reader.remaining();
+            assert_eq!(
+                length, 3,
+                "sequence should initially report all three entries"
+            );
+            for consumed in 1..=length {
+                assert!(
+                    reader.next().is_some(),
+                    "sequence entry {consumed} should exist"
+                );
+                assert_eq!(
+                    reader.remaining(),
+                    length - consumed,
+                    "sequence should report its remaining length after entry {consumed}"
+                );
+            }
+            assert!(
+                reader.next().is_none(),
+                "sequence should end after three entries"
+            );
+            Ok(length)
+        }
+
+        fn map<R: MapReader>(self, mut reader: R) -> Result<usize, Error> {
+            let length = reader.remaining();
+            assert_eq!(length, 3, "map should initially report all three entries");
+            for consumed in 1..=length {
+                assert!(reader.next().is_some(), "map entry {consumed} should exist");
+                assert_eq!(
+                    reader.remaining(),
+                    length - consumed,
+                    "map should report its remaining length after entry {consumed}"
+                );
+            }
+            assert!(
+                reader.next().is_none(),
+                "map should end after three entries"
+            );
+            Ok(length)
+        }
+    }
+
+    let value = || CipherText::Passthrough(Box::new(7_u32) as stack_encrypt::BoxedPassthrough);
+    let sequence: StackCipherText = CipherText::Sequence(vec![value(), value(), value()]);
+    assert_eq!(
+        sequence.read(LengthVisitor).unwrap(),
+        3,
+        "sequence should yield three entries"
+    );
+
+    let map: StackCipherText = CipherText::Map(vec![
+        ("first".into(), value()),
+        ("second".into(), value()),
+        ("third".into(), value()),
+    ]);
+    assert_eq!(
+        map.read(LengthVisitor).unwrap(),
+        3,
+        "map should yield three entries"
+    );
+}
+
 #[tokio::test]
 async fn native_readers_preserve_map_keys_and_authenticated_markers() {
     use std::collections::HashMap;

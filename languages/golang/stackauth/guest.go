@@ -6,6 +6,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 
 	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
@@ -64,12 +65,14 @@ type instance struct {
 	mem     *guest.Allocator
 	exports guest.Exports
 	// mount is the one directory the guest sees, confined to itself.
-	mount *confinedFS
+	mount     *confinedFS
+	transport *authTransport
 
 	shutdown                                                     api.Function
 	currentWorkspace, setCurrentWorkspace, clearCurrentWorkspace api.Function
 	listWorkspaces, workspaceDir, lockPath                       api.Function
-	secretKey, token, deviceIdentity                             api.Function
+	secretKey, token, hasToken, deviceIdentity                   api.Function
+	authNew, authValidateCRN, authToken, authRefresh, authFree   api.Function
 }
 
 // guestModuleConfig is the module configuration every guest instance runs
@@ -81,24 +84,32 @@ type instance struct {
 // should be predictable across instances. The clocks are the system's for
 // the same reason they are in stackencrypt: a deterministic default is the
 // wrong default for anything that reads time. Each is pinned by a test.
+//
+// A nil mount is a guest with no directory at all ([OpenWithoutProfile]):
+// no filesystem is configured, so there is nothing to mount or confine.
 func guestModuleConfig(mount *confinedFS) wazero.ModuleConfig {
-	fsConfig := wazero.NewFSConfig().(sysfs.FSConfig).WithSysFSMount(mount, guestRoot)
-	return wazero.NewModuleConfig().
+	config := wazero.NewModuleConfig().
 		WithName("stack_auth_guest").
-		WithFSConfig(fsConfig).
 		WithRandSource(rand.Reader).
 		WithSysNanotime().
 		WithSysWalltime()
+	if mount == nil {
+		return config
+	}
+	return config.WithFSConfig(wazero.NewFSConfig().(sysfs.FSConfig).WithSysFSMount(mount, guestRoot))
 }
 
 // newInstance instantiates wasm with hostDir mounted at guestRoot and its
-// linear memory from the guest packages' allocator. Under the strict
-// policy, memory that cannot be locked fails instantiation with
-// ErrMemoryLock.
-func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.LockPolicy) (*instance, error) {
-	mount, err := newConfinedFS(hostDir)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", ErrNoProfile, hostDir, err)
+// linear memory from the guest packages' allocator. An empty hostDir mounts
+// nothing. Under the strict policy, memory that cannot be locked fails
+// instantiation with ErrMemoryLock.
+func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.LockPolicy, rt http.RoundTripper) (*instance, error) {
+	var mount *confinedFS
+	if hostDir != "" {
+		var err error
+		if mount, err = newConfinedFS(hostDir); err != nil {
+			return nil, fmt.Errorf("%w: %s: %w", ErrNoProfile, hostDir, err)
+		}
 	}
 	config := wazero.NewRuntimeConfig().
 		WithCompilationCache(compilationCache()).
@@ -106,11 +117,17 @@ func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.
 	runtime := wazero.NewRuntimeWithConfig(ctx, config)
 	fail := func(err error) (*instance, error) {
 		_ = runtime.Close(ctx)
-		_ = mount.Close()
+		if mount != nil {
+			_ = mount.Close()
+		}
 		return nil, err
 	}
 	if _, err := wasi_snapshot_preview1.Instantiate(ctx, runtime); err != nil {
 		return fail(fmt.Errorf("stackauth: instantiating WASI: %w", err))
+	}
+	transport := newAuthTransport(rt)
+	if err := transport.instantiate(ctx, runtime); err != nil {
+		return fail(fmt.Errorf("stackauth: instantiating host transport: %w", err))
 	}
 	mem := guest.NewAllocator(policy)
 	// The guest is a reactor (cdylib): no _start. wazero runs _initialize
@@ -132,7 +149,7 @@ func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.
 			return fail(guest.MemoryLockError(lerr))
 		}
 	}
-	inst := &instance{runtime: runtime, module: module, mem: mem, mount: mount}
+	inst := &instance{runtime: runtime, module: module, mem: mem, mount: mount, transport: transport}
 	exports := map[string]*api.Function{
 		"se_alloc":                   &inst.exports.Alloc,
 		"se_dealloc":                 &inst.exports.Dealloc,
@@ -145,7 +162,13 @@ func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.
 		"sa_lock_path":               &inst.lockPath,
 		"sa_secret_key":              &inst.secretKey,
 		"sa_token":                   &inst.token,
+		"sa_has_token":               &inst.hasToken,
 		"sa_device_identity":         &inst.deviceIdentity,
+		"sa_auth_new":                &inst.authNew,
+		"sa_auth_validate_crn":       &inst.authValidateCRN,
+		"sa_auth_token":              &inst.authToken,
+		"sa_auth_refresh":            &inst.authRefresh,
+		"sa_auth_free":               &inst.authFree,
 	}
 	for name, slot := range exports {
 		if *slot = module.ExportedFunction(name); *slot == nil {
@@ -168,18 +191,11 @@ func (inst *instance) release() error {
 		inst.mem.Exit()
 	}
 	err := inst.runtime.Close(ctx)
+	if inst.mount == nil {
+		return err
+	}
 	if cerr := inst.mount.Close(); err == nil {
 		err = cerr
 	}
 	return err
-}
-
-// call drives one export with string arguments, through the shared
-// plumbing: staged, called, copied out, wiped.
-func (inst *instance) call(ctx context.Context, fn api.Function, args ...string) ([]byte, error) {
-	staged := make([]guest.Arg, len(args))
-	for i, a := range args {
-		staged[i] = guest.BufArg([]byte(a))
-	}
-	return guest.Call(ctx, inst.mem, inst.module, inst.exports, fn, staged...)
 }

@@ -33,6 +33,11 @@ pub(crate) trait Refresher: Send + Sync {
     fn restore(&self, token: &mut Token, credential: Self::Credential);
 
     /// Perform the HTTP refresh or authentication call.
+    ///
+    /// Return [`AuthError::Store`] only when the exchange succeeded but its
+    /// result could not be persisted. `AutoRefresh` treats that credential as
+    /// spent: it is not restored, and the call fails even if the cached token
+    /// is still usable.
     fn refresh(
         &self,
         credential: &Self::Credential,
@@ -63,6 +68,11 @@ pub(crate) trait Refresher {
     fn restore(&self, token: &mut Token, credential: Self::Credential);
 
     /// Perform the HTTP refresh or authentication call.
+    ///
+    /// Return [`AuthError::Store`] only when the exchange succeeded but its
+    /// result could not be persisted. `AutoRefresh` treats that credential as
+    /// spent: it is not restored, and the call fails even if the cached token
+    /// is still usable.
     ///
     /// The returned future is not `Send` — reqwest's wasm32 fetch backend
     /// holds JS handles via `Rc<RefCell<...>>` and edge runtimes are

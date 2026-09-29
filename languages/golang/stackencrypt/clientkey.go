@@ -8,8 +8,9 @@ import "github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
 //
 // It is the one type both guest packages share: stackauth reads one out of
 // the developer profile, and this package consumes it. The alias is what
-// makes a key read there the type taken here without either package
-// importing the other.
+// makes a key read there the type taken here without stackauth importing
+// this package, so a binary that only wants the profile does not carry the
+// crypto guest.
 type ClientKey = guest.ClientKey
 
 // NewClientKey wraps key material — the CS_CLIENT_KEY hex form, or the

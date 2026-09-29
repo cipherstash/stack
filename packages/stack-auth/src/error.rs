@@ -67,7 +67,6 @@ pub(crate) mod codes {
     pub(crate) const ALREADY_CONSUMED: &str = "ALREADY_CONSUMED";
     pub(crate) const INTERNAL_ERROR: &str = "INTERNAL_ERROR";
     pub(crate) const CUSTOM: &str = "CUSTOM";
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) const STORE_ERROR: &str = "STORE_ERROR";
 }
 
@@ -376,11 +375,9 @@ impl AuthErrorKind for CustomError {
 }
 
 /// A token store operation failed.
-#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Token store error: {0}")]
 pub struct StoreError(pub stack_profile::ProfileError);
-#[cfg(not(target_arch = "wasm32"))]
 impl AuthErrorKind for StoreError {
     fn error_code(&self) -> &'static str {
         codes::STORE_ERROR
@@ -455,7 +452,6 @@ pub enum AuthError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Custom(#[from] CustomError),
-    #[cfg(not(target_arch = "wasm32"))]
     #[error(transparent)]
     #[diagnostic(transparent)]
     Store(#[from] StoreError),
@@ -496,7 +492,6 @@ impl AuthError {
             | AuthError::Server(_)
             | AuthError::Internal(_)
             | AuthError::Custom(_) => false,
-            #[cfg(not(target_arch = "wasm32"))]
             AuthError::Store(_) => false,
         }
     }
@@ -529,8 +524,6 @@ impl AuthError {
         codes::ALREADY_CONSUMED,
         codes::INTERNAL_ERROR,
         codes::CUSTOM,
-        // `Store` (and its code) only exists off-wasm — see the enum above.
-        #[cfg(not(target_arch = "wasm32"))]
         codes::STORE_ERROR,
     ];
 
@@ -557,7 +550,6 @@ impl AuthError {
             Self::AlreadyConsumed(e) => e,
             Self::Internal(e) => e,
             Self::Custom(e) => e,
-            #[cfg(not(target_arch = "wasm32"))]
             Self::Store(e) => e,
         }
     }
@@ -593,7 +585,6 @@ impl AuthError {
             // whose cause we cannot classify.
             Self::Custom(_) => true,
             // Local persistence (cookie, KV, keychain) can fail transiently.
-            #[cfg(not(target_arch = "wasm32"))]
             Self::Store(_) => true,
 
             // Settled answers. Retrying re-asks a question already answered.
@@ -653,7 +644,6 @@ impl AuthError {
             | Self::AlreadyConsumed(_)
             | Self::Internal(_)
             | Self::Custom(_) => false,
-            #[cfg(not(target_arch = "wasm32"))]
             Self::Store(_) => false,
         }
     }
@@ -921,7 +911,6 @@ impl From<access_key::InvalidAccessKey> for AuthError {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl From<stack_profile::ProfileError> for AuthError {
     fn from(e: stack_profile::ProfileError) -> Self {
         Self::Store(StoreError(e))
@@ -1379,6 +1368,15 @@ mod classify_issuance_failure_tests {
 mod tests {
     use super::*;
 
+    #[test]
+    fn profile_error_retains_store_type() {
+        let err = AuthError::from(stack_profile::ProfileError::NotFound {
+            path: "auth.json".into(),
+        });
+        assert!(matches!(&err, AuthError::Store(StoreError(_))));
+        assert_eq!(err.error_code(), codes::STORE_ERROR);
+    }
+
     /// The typed variant must survive the FFI round-trip; degrading to `CUSTOM`
     /// would put clients back to string-matching the message.
     #[test]
@@ -1398,6 +1396,88 @@ mod tests {
         );
         assert_eq!(rebuilt.error_code(), codes::USAGE_LIMIT_EXCEEDED);
         assert_eq!(rebuilt.to_string(), original.to_string());
+    }
+
+    /// Same contract as `retryability_is_pinned_for_every_error_code`, for
+    /// the "refresh the credential and retry" axis the FFI front-ends key
+    /// off: a credential verdict must say so, and an account, authorisation
+    /// or transport failure must not send the caller round a refresh loop
+    /// that cannot fix it.
+    #[test]
+    fn credential_rejection_is_pinned_for_every_error_code() {
+        const CREDENTIAL_REJECTION: &[&str] = &[
+            codes::NOT_AUTHENTICATED,
+            codes::EXPIRED_TOKEN,
+            codes::INVALID_GRANT,
+            codes::INVALID_CLIENT,
+            codes::INVALID_ACCESS_KEY,
+            codes::ALREADY_CONSUMED,
+        ];
+
+        let payload = serde_json::Map::new();
+        let mut rejected_credentials = 0;
+        let mut other_errors = 0;
+        for code in AuthError::ERROR_CODES {
+            let err = AuthError::from_error_code(code, "message", &payload);
+            if err.error_code() != *code {
+                continue;
+            }
+            let expected = CREDENTIAL_REJECTION.contains(code);
+            assert_eq!(
+                err.is_credential_rejection(),
+                expected,
+                "{code} is on the wrong side of the credential-rejection boundary",
+            );
+            if expected {
+                rejected_credentials += 1;
+            } else {
+                other_errors += 1;
+            }
+        }
+        assert!(
+            rejected_credentials > 0 && other_errors > 0,
+            "both sides of the boundary must be exercised: {rejected_credentials} credential rejections, {other_errors} other errors",
+        );
+
+        // `INVALID_ACCESS_KEY` does not round-trip through `from_error_code`,
+        // so build it the way a malformed key does.
+        let malformed_key =
+            AuthError::from("".parse::<crate::access_key::AccessKey>().unwrap_err());
+        assert_eq!(
+            malformed_key.error_code(),
+            codes::INVALID_ACCESS_KEY,
+            "malformed access key should retain its error code"
+        );
+        assert!(
+            malformed_key.is_credential_rejection(),
+            "malformed access key should be a credential rejection: {malformed_key:?}"
+        );
+    }
+
+    /// The account-refusal codes carry CTS's wording across the boundary,
+    /// but a blank one falls back to the default rather than rendering an
+    /// empty `Display`; a real message is kept exactly as given.
+    #[test]
+    fn from_error_code_falls_back_on_a_blank_account_refusal_message() {
+        let payload = serde_json::Map::new();
+        for (code, default) in [
+            (
+                codes::USAGE_LIMIT_EXCEEDED,
+                UsageLimitExceeded::DEFAULT_MESSAGE,
+            ),
+            (
+                codes::ORG_NOT_PROVISIONED,
+                OrgNotProvisioned::DEFAULT_MESSAGE,
+            ),
+        ] {
+            for blank in ["", "  \t"] {
+                let err = AuthError::from_error_code(code, blank, &payload);
+                assert_eq!(err.error_code(), code, "blank message should retain {code}");
+                assert_eq!(err.to_string(), default, "{code} with {blank:?}");
+            }
+            let err = AuthError::from_error_code(code, " as sent ", &payload);
+            assert_eq!(err.to_string(), " as sent ", "{code} keeps its message");
+        }
     }
 
     #[test]

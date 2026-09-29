@@ -23,7 +23,7 @@
 
 use std::fmt;
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use url::Url;
 use zeroize::Zeroizing;
@@ -312,6 +312,31 @@ impl std::error::Error for NoTransport {}
 // The two request shapes the crate makes.
 // ---------------------------------------------------------------------------
 
+/// The `user-agent` every request this crate builds carries:
+/// `stack-auth/<version> (<os> <arch>)`.
+///
+/// Not cosmetic. The edge in front of production CTS answers a request whose
+/// `user-agent` is a runtime's generic default (Go's `Go-http-client/1.1`)
+/// with a bare nginx 403 that never reaches CTS. Natively, reqwest sends no
+/// `user-agent` of its own, which that edge happens to let through; a host
+/// transport whose HTTP client fills one in when the request has none (the
+/// Go binding's) was refused on every exchange. So the crate names itself
+/// on every request rather than leaving the header to whatever client
+/// carries it. A host transport may replace the value with one naming
+/// itself (the Go guest sends `stack-auth/<version> (Go)`), but it is never
+/// absent.
+pub(crate) fn user_agent() -> &'static str {
+    static USER_AGENT: OnceLock<String> = OnceLock::new();
+    USER_AGENT.get_or_init(|| {
+        format!(
+            "stack-auth/{} ({} {})",
+            crate::VERSION,
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+        )
+    })
+}
+
 /// `POST` a JSON body.
 pub(crate) async fn post_json<B: serde::Serialize>(
     transport: &SharedTransport,
@@ -343,7 +368,8 @@ pub(crate) async fn post_form<B: serde::Serialize>(
     .await
 }
 
-/// `POST` `body` as `content_type`, with `extra` headers first. A failure
+/// `POST` `body` as `content_type`, with `extra` headers first and then
+/// `content-type` and [`user_agent`]. A failure
 /// here is the transport's (or the encoder's); the caller lifts it into
 /// its own error type, which for a strategy is `AuthError::Request`.
 pub(crate) async fn post(
@@ -354,6 +380,7 @@ pub(crate) async fn post(
     body: Zeroizing<Vec<u8>>,
 ) -> Result<HttpResponse, RequestError> {
     extra.push(("content-type".to_string(), content_type.to_string()));
+    extra.push(("user-agent".to_string(), user_agent().to_string()));
     let request = HttpRequest {
         method: "POST",
         url,
@@ -555,6 +582,27 @@ mod tests {
         stub.seen.lock().unwrap().remove(0)
     }
 
+    /// The crate itself reads a response through `text()`/`json()`; the
+    /// public accessors are what a host transport's own tests (and the FFI
+    /// bindings) read, so they must hand back exactly what was built.
+    #[test]
+    fn a_response_reads_back_what_it_was_built_with() {
+        let headers = vec![("content-type".to_string(), "application/json".to_string())];
+        let response = HttpResponse::new(201, headers.clone(), b"{\"ok\":true}".to_vec());
+
+        assert_eq!(response.status(), 201, "response should retain its status");
+        assert_eq!(
+            response.headers(),
+            headers.as_slice(),
+            "response should retain its headers"
+        );
+        assert_eq!(
+            response.body(),
+            b"{\"ok\":true}",
+            "response should retain its body"
+        );
+    }
+
     #[test]
     fn debug_output_names_headers_and_never_prints_a_secret() {
         let request = HttpRequest::new(
@@ -611,6 +659,77 @@ mod tests {
         );
     }
 
+    /// The `user-agent` the crate's requests must carry, spelled out rather
+    /// than read back from [`user_agent`], so a change to it is a test
+    /// change.
+    fn expected_user_agent() -> String {
+        format!(
+            "stack-auth/{} ({} {})",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+        )
+    }
+
+    /// The `user-agent` values in `headers`: there must be exactly one.
+    fn user_agents(headers: &[(String, String)]) -> Vec<&str> {
+        headers
+            .iter()
+            .filter(|(name, _)| name == "user-agent")
+            .map(|(_, value)| value.as_str())
+            .collect()
+    }
+
+    /// The edge in front of production CTS refuses a request whose
+    /// `user-agent` is a runtime's generic default with a bare 403, and a
+    /// host transport's HTTP client fills one in when the request carries
+    /// none. Both request shapes the crate makes name the crate themselves.
+    #[tokio::test]
+    async fn every_request_identifies_itself() {
+        let stub = Arc::new(Stub::replying(200, "{}"));
+        let transport: SharedTransport = stub.clone();
+
+        post_json(&transport, base_url(), &serde_json::json!({"a": 1}))
+            .await
+            .unwrap();
+        post_form(&transport, base_url(), &[("a", "1")])
+            .await
+            .unwrap();
+        post(
+            &transport,
+            base_url(),
+            "application/json",
+            vec![("authorization".into(), "Bearer tok".into())],
+            Zeroizing::new(Vec::new()),
+        )
+        .await
+        .unwrap();
+
+        let expected = expected_user_agent();
+        for (shape, content_type) in [
+            ("post_json", "application/json"),
+            ("post_form", "application/x-www-form-urlencoded"),
+            ("post with extra headers", "application/json"),
+        ] {
+            let (_, _, headers, _) = seen(&stub);
+            assert_eq!(
+                user_agents(&headers),
+                vec![expected.as_str()],
+                "{shape}: exactly one user-agent, naming the crate, version and platform"
+            );
+            assert!(
+                headers.contains(&("content-type".to_string(), content_type.to_string())),
+                "{shape}: the content type travels with the user-agent: {headers:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_user_agent_names_the_crate_version_and_platform() {
+        assert_eq!(user_agent(), expected_user_agent());
+        assert_eq!(crate::VERSION, env!("CARGO_PKG_VERSION"));
+    }
+
     #[tokio::test]
     async fn refresh_posts_a_form_and_reads_the_token() {
         let stub = Arc::new(Stub::replying(
@@ -638,6 +757,11 @@ mod tests {
             "content-type".to_string(),
             "application/x-www-form-urlencoded".to_string()
         )));
+        assert_eq!(
+            user_agents(&headers),
+            vec![expected_user_agent().as_str()],
+            "the device-session refresh identifies the crate"
+        );
         assert_eq!(
             body, b"grant_type=refresh_token&client_id=cli&refresh_token=rt",
             "an absent device id is omitted, not sent empty"
@@ -696,8 +820,34 @@ mod tests {
         assert_eq!(url, "https://cts.example.com/api/authorise");
         assert!(headers.contains(&("content-type".to_string(), "application/json".to_string())));
         assert_eq!(
+            user_agents(&headers),
+            vec![expected_user_agent().as_str()],
+            "the access-key exchange identifies the crate"
+        );
+        assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
             serde_json::json!({"accessKey": "CSAKid.secret", "audience": "aud"})
+        );
+    }
+
+    #[tokio::test]
+    async fn oidc_federation_posts_json_and_identifies_the_crate() {
+        let stub = Arc::new(Stub::replying(
+            200,
+            r#"{"accessToken":"svc","expiry":4102444800}"#,
+        ));
+        let provider = OidcProviderFn::new(|| async { Ok(SecretToken::new("h.p.s")) });
+        let refresher = OidcRefresher::new(provider, workspace_id(), base_url(), stub.clone());
+
+        let _ = refresher.refresh(&()).await;
+
+        let (method, url, headers, _) = seen(&stub);
+        assert_eq!(method, "POST");
+        assert_eq!(url, "https://cts.example.com/api/authorise");
+        assert_eq!(
+            user_agents(&headers),
+            vec![expected_user_agent().as_str()],
+            "the OIDC federation exchange identifies the crate"
         );
     }
 

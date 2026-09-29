@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -23,6 +24,13 @@ type Option func(*options)
 type options struct {
 	guest         []byte
 	requireLocked bool
+	transport     http.RoundTripper
+}
+
+// WithRoundTripper sends the guest's authentication requests through rt.
+// The default is http.DefaultTransport.
+func WithRoundTripper(rt http.RoundTripper) Option {
+	return func(o *options) { o.transport = rt }
 }
 
 // WithGuest overrides the embedded wasm module.
@@ -34,7 +42,7 @@ func WithGuest(wasm []byte) Option {
 // memory cannot be locked in RAM or, on Linux, excluded from core dumps,
 // instead of continuing with memory that may be swapped or dumped and
 // reporting so through [ProfileStore.MemoryLocked]. It holds for the life
-// of the store, as stackencrypt's Config.RequireLockedMemory does for a
+// of the store, as stackencrypt's WithRequireLockedMemory does for a
 // client.
 func RequireLockedMemory() Option {
 	return func(o *options) { o.requireLocked = true }
@@ -76,7 +84,7 @@ func Resolve(ctx context.Context, opts ...Option) (*ProfileStore, error) {
 	if strings.TrimSpace(dir) == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return nil, fmt.Errorf("stackauth: no home directory and CS_CONFIG_PATH is unset: %w", err)
+			return nil, fmt.Errorf("%w: no home directory and CS_CONFIG_PATH is unset: %w", ErrNoProfile, err)
 		}
 		dir = filepath.Join(home, ".cipherstash")
 	}
@@ -87,28 +95,47 @@ func Resolve(ctx context.Context, opts ...Option) (*ProfileStore, error) {
 // mounted as the one directory the guest can see. Nothing is read until a
 // method asks; nothing is written unless a method writes.
 func Open(ctx context.Context, dir string, opts ...Option) (*ProfileStore, error) {
-	var o options
-	for _, opt := range opts {
-		opt(&o)
-	}
-	info, err := os.Stat(dir)
+	info, err := os.Stat(dir) //nolint:gosec // the caller chooses the profile directory
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", ErrNoProfile, dir, err)
 	}
 	if !info.IsDir() {
 		return nil, fmt.Errorf("%w: %s is not a directory", ErrNoProfile, dir)
 	}
+	return open(ctx, dir, opts)
+}
+
+// OpenWithoutProfile instantiates the guest with no directory mounted: no
+// filesystem at all. It is for the strategies that need no profile —
+// [ProfileStore.AccessKey] and [ProfileStore.OIDC] — where there is none to
+// open: CI, a container, a server authenticating by federation. Every
+// profile read on it fails with ErrNoProfile, and [ProfileStore.Auto] on it
+// is the environment's access key or ErrNotAuthenticated, as stack-auth's
+// AutoStrategy is with no profile store.
+func OpenWithoutProfile(ctx context.Context, opts ...Option) (*ProfileStore, error) {
+	return open(ctx, "", opts)
+}
+
+// open instantiates the guest over hostDir — mounted as the one directory
+// the guest can see, or, when empty, nothing — and arms its cleanup. Open
+// and OpenWithoutProfile differ only in what they hand it.
+func open(ctx context.Context, hostDir string, opts []Option) (*ProfileStore, error) {
+	var o options
+	for _, opt := range opts {
+		opt(&o)
+	}
 	wasm := o.guest
 	if wasm == nil {
+		var err error
 		if wasm, err = embeddedGuest(); err != nil {
 			return nil, err
 		}
 	}
-	inst, err := newInstance(ctx, wasm, dir, guest.PolicyFor(o.requireLocked))
+	inst, err := newInstance(ctx, wasm, hostDir, guest.PolicyFor(o.requireLocked), o.transport)
 	if err != nil {
 		return nil, err
 	}
-	r := &root{inst: inst, hostDir: dir}
+	r := &root{inst: inst, hostDir: hostDir}
 	// The cleanup takes the instance, not the root: a cleanup whose
 	// argument reaches its object keeps that object alive forever.
 	r.cleanup = runtime.AddCleanup(r, func(inst *instance) { _ = inst.release() }, inst)
@@ -116,11 +143,15 @@ func Open(ctx context.Context, dir string, opts ...Option) (*ProfileStore, error
 }
 
 // Dir is the store's directory on the host: the profile root, or the
-// workspace directory under it.
+// workspace directory under it. Empty for a store from
+// [OpenWithoutProfile].
 func (s *ProfileStore) Dir() string { return s.hostPath(s.dir) }
 
 // hostPath maps a guest path under the mount to the host path it names.
 func (s *ProfileStore) hostPath(guestPath string) string {
+	if s.root.hostDir == "" {
+		return ""
+	}
 	rel := strings.TrimPrefix(guestPath, guestRoot)
 	parts := strings.Split(strings.TrimPrefix(rel, "/"), "/")
 	return filepath.Join(append([]string{s.root.hostDir}, parts...)...)
@@ -175,6 +206,22 @@ type export func(*instance) api.Function
 // call runs one export under the profile's lock, closing the profile if
 // the guest trapped or an interrupted call took the module down.
 func (s *ProfileStore) call(ctx context.Context, fn export, args ...string) ([]byte, error) {
+	// Every profile export works on the mount; without one the guest would
+	// report an I/O error that says less than this does.
+	if s.root.hostDir == "" {
+		return nil, ErrNoProfile
+	}
+	staged := make([]guest.Arg, 0, len(args)+1)
+	staged = append(staged, guest.BufArg([]byte(s.dir)))
+	for _, arg := range args {
+		staged = append(staged, guest.BufArg([]byte(arg)))
+	}
+	return s.callArgs(ctx, fn, staged...)
+}
+
+// callArgs is the shared checked call path for profile exports and auth
+// exports. The latter pass secret-bearing byte buffers and wipe host copies.
+func (s *ProfileStore) callArgs(ctx context.Context, fn export, args ...guest.Arg) ([]byte, error) {
 	r := s.root
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -183,7 +230,7 @@ func (s *ProfileStore) call(ctx context.Context, fn export, args ...string) ([]b
 		return nil, ErrState
 	}
 	growth := r.inst.mem.GrowthRefusal()
-	out, err := r.inst.call(ctx, fn(r.inst), append([]string{s.dir}, args...)...)
+	out, err := guest.Call(ctx, r.inst.mem, r.inst.module, r.inst.exports, fn(r.inst), args...)
 	switch {
 	case r.inst.module.IsClosed():
 		r.closed = true
@@ -282,9 +329,9 @@ func (s *ProfileStore) CurrentWorkspaceStore(ctx context.Context) (*ProfileStore
 
 // LockPath is the host path of the lock file the Rust crate takes for
 // filename in this store: a sibling `.<filename>.lock`. Nothing is created
-// or locked. It is for the host to hold the crate's lock — around a
-// refresh, once this package refreshes — since the guest cannot; this
-// package never composes a profile path itself.
+// or locked. DeviceSession holds this lock across the guest's refresh call;
+// the guest cannot lock under WASI. This package never composes a profile
+// path itself.
 func (s *ProfileStore) LockPath(ctx context.Context, filename string) (string, error) {
 	// The guest validates the filename as the crate does, against the
 	// guest's separator, which is `/`. The host's is checked here: on
@@ -308,7 +355,7 @@ func (s *ProfileStore) LockPath(ctx context.Context, filename string) (string, e
 
 // SecretKey reads secretkey.json in this store (a workspace store; the
 // root holds none): the ZeroKMS client id and the client key, the latter as
-// the opaque [ClientKey] a stackencrypt.Config takes. The transport copy
+// the opaque [ClientKey] stackencrypt.NewCredentials takes. The transport copy
 // of the key is wiped once it is in the ClientKey; the key is then the
 // caller's to consume.
 func (s *ProfileStore) SecretKey(ctx context.Context) (clientID string, key *ClientKey, err error) {

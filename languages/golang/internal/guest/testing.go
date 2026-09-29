@@ -15,11 +15,18 @@ type Refusing struct {
 	reason  error
 	refuse  bool
 	refused int
+	// keep commits a refused growth all the same, unlocked, as BestEffort
+	// does: the reason becomes the allocator's lock error.
+	keep bool
 }
 
 func (b *Refusing) commit(size uint64) ([]byte, error) {
 	if b.refuse && size > b.past {
 		b.refused++
+		if b.keep {
+			buf, _ := b.backend.commit(size)
+			return buf, b.reason
+		}
 		return nil, b.reason
 	}
 	return b.backend.commit(size)
@@ -46,6 +53,16 @@ func RefuseGrowth(alloc *Allocator, reason error) *Refusing {
 	defer alloc.mu.Unlock()
 	refusing := &Refusing{backend: alloc.backing, past: alloc.backing.(sized).size(), reason: reason, refuse: true}
 	alloc.backing = refusing
+	return refusing
+}
+
+// UnlockGrowth is RefuseGrowth as a BestEffort allocator meets a refused
+// lock: the growth goes through, and its range is reported unlocked with
+// reason, from then on, as LockError. It forces the report a lock limit
+// would give, on any host.
+func UnlockGrowth(alloc *Allocator, reason error) *Refusing {
+	refusing := RefuseGrowth(alloc, reason)
+	refusing.keep = true
 	return refusing
 }
 

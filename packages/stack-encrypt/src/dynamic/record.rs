@@ -1125,6 +1125,23 @@ mod tests {
         CipherText::Passthrough(Box::new(value) as BoxedPassthrough)
     }
 
+    /// `Settled` is exact both ways: a slot with no value and a value with
+    /// no slot are both the merge miscounting, reported as `Internal`.
+    #[test]
+    fn settled_values_must_match_their_slots_exactly() {
+        let mut settled = Settled::of(vec![1]);
+        assert!(matches!(settled.next(), Ok(1)));
+        assert!(
+            matches!(settled.next(), Err(Error::Internal)),
+            "a slot with no value"
+        );
+        assert!(Settled::of(Vec::<u8>::new()).finish().is_ok());
+        assert!(
+            matches!(Settled::of(vec![1]).finish(), Err(Error::Internal)),
+            "a value with no slot"
+        );
+    }
+
     /// A table row: what is refused, the value that must be refused, and
     /// the error it must be refused with. `Error` is not `PartialEq`, so the
     /// expectation is a predicate.
@@ -1667,6 +1684,36 @@ mod tests {
                 35,
                 "the age round-trips through its keyset"
             );
+        }
+
+        /// A sealed field can hold a whole object. The walk refuses a key
+        /// given *twice*; an object whose keys are all distinct is
+        /// well-formed on both sides of the round trip.
+        #[tokio::test]
+        async fn a_nested_object_with_distinct_keys_round_trips() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = the_plan();
+            let source = || {
+                let mut entries = object(row(34));
+                entries[1].1 = obj(vec![("home", s("a@x")), ("work", s("b@x"))]);
+                FfiValue::Object(entries)
+            };
+
+            check_source(source(), &plan).expect("check_source accepts it");
+            let sealed = encrypt(&keyset, source(), &plan).await.expect("encrypt");
+            check_record(sealed, &plan).expect("check_record accepts it");
+
+            let sealed = encrypt(&keyset, source(), &plan).await.expect("encrypt");
+            let fields = object(
+                decrypt(Scope::Client(&cipher), sealed, &plan)
+                    .await
+                    .expect("decrypt"),
+            );
+            let email = object(fields.into_iter().nth(1).expect("the email field").1);
+            assert_eq!(keys(&email), ["home", "work"]);
+            assert_eq!(text_of(&email[0].1), "a@x");
+            assert_eq!(text_of(&email[1].1), "b@x");
         }
     }
 

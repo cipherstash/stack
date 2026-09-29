@@ -5,16 +5,18 @@
 // # Shape
 //
 // A [Client] is one wasm instance and one ZeroKMS client: [NewClient]
-// instantiates the embedded guest, hands it the client key once — the
-// [ClientKey] in its [Config] is consumed and wiped, whatever the outcome —
-// and loads the client's default keyset. Every keyset the client uses after
-// that is
-// selected per call through a [KeysetSelector] and loaded on first use by
-// the guest's own bounded cache; nothing the host could allocate, alias or
-// free crosses the boundary. [Client.Close] runs the guest's shutdown so the
-// client key and every loaded index key are wiped before the instance is
-// freed — closing a wasm instance runs no Rust destructors on its own.
-// Close is hygiene, not the security story: see Memory below.
+// resolves the client's [Credentials], instantiates the embedded guest,
+// hands it the client key once — the [ClientKey] the credentials resolved
+// to is consumed and wiped, whatever the outcome — and loads the client's
+// default keyset. It takes functional options ([ClientOption]), every one
+// with a default, so NewClient(ctx) alone is a working client. Every keyset
+// the client uses after that is selected per call through a
+// [KeysetSelector] and loaded on first use by the guest's own bounded
+// cache; nothing the host could allocate, alias or free crosses the
+// boundary. [Client.Close] runs the guest's shutdown so the client key and
+// every loaded index key are wiped before the instance is freed — closing a
+// wasm instance runs no Rust destructors on its own. Close is hygiene, not
+// the security story: see Memory below.
 //
 // A [Cipher] is the client bound to one keyset ([Client.Keyset] and
 // [Client.DefaultKeyset], the Rust crate's StackCipher::keyset and
@@ -54,9 +56,34 @@
 // # Transport and auth
 //
 // The guest imports exactly two host functions: an HTTP send, served by any
-// [net/http.RoundTripper], and a bearer-token fetch, served by a
-// [TokenSource]. What crosses per ZeroKMS call is what would cross TLS
-// anyway; derived key material never leaves the guest.
+// [net/http.RoundTripper], and a bearer-token fetch, served by the
+// credentials' stackauth strategy. What crosses per ZeroKMS call is what would cross TLS
+// anyway; derived key material never leaves the guest. Under
+// [AutoCredentials] and [OIDCFederation] the same RoundTripper also carries
+// the authentication requests to CTS, so one scoped to the ZeroKMS host
+// alone is not enough. Under [NewCredentials] those requests go through the
+// store the caller opened the strategy from.
+//
+// # Credentials
+//
+// A [Credentials] supplies the client id, the client key and the stackauth
+// strategy the token comes from, and NewClient resolves it host-side: the crypto guest is never
+// given the environment or a filesystem to find them in. The default,
+// [AutoCredentials], mirrors the Rust client — the environment first
+// (CS_CLIENT_ACCESS_KEY with CS_WORKSPACE_CRN for the token, CS_CLIENT_ID
+// with CS_CLIENT_KEY for the key), then the developer profile, which it
+// reads through stackauth's credential guest, where the token strategies
+// also run. CS_ZEROKMS_HOST (or CS_VITUR_HOST) pins the endpoint whatever
+// the credentials. [NewCredentials] takes a client id, a client key and a
+// strategy explicitly, and [OIDCFederation] mints the token from an
+// identity provider's. Pass one with [WithCredentials]. Those three are
+// the only kinds of Credentials, and none takes a raw token: a token is
+// always a stackauth strategy's, since a raw one cannot be refreshed when
+// it expires and would bypass the cross-process lock a device-session
+// refresh holds with the CLI.
+// Credentials that cannot be resolved fail NewClient with
+// [ErrNoCredentials]; credentials that resolve but do not work fail it too,
+// at the one ZeroKMS round trip it makes.
 //
 // # Host runtime
 //
@@ -94,15 +121,19 @@
 // that is lost, and nothing on a host without swap. [Client.MemoryLocked]
 // reports the outcome and [Client.MemoryLockError] the reason, naming the
 // limit to raise (ulimit -l, a systemd LimitMEMLOCK=, a pod's
-// securityContext). [Config.RequireLockedMemory] turns a refusal into a
+// securityContext). [WithRequireLockedMemory] turns a refusal into a
 // [NewClient] failure with [ErrMemoryLock], for deployments that would
 // rather not start than run unlocked; it also refuses any later growth of
 // the guest's memory that cannot be locked, so the limit granted must
 // leave the guest room to grow: a refused growth fails the call with
 // [ErrMemoryLock], and closes the client when the growth was the guest's
-// own allocation rather than a host-staged buffer. A Client prints its
-// memory state ([Client.String]) and logs it ([Client.LogValue]). An
-// embedder running
+// own allocation rather than a host-staged buffer. The report and the
+// policy cover the credential guest as well; with [NewCredentials] that is
+// the caller's stackauth store, which NewClient refuses under the policy
+// when it is unlocked, and which should be opened with
+// stackauth.RequireLockedMemory to stay locked (see
+// [WithRequireLockedMemory]). A Client prints its memory state
+// ([Client.String]) and logs it ([Client.LogValue]). An embedder running
 // the guest under its own wazero configuration gets none of this unless
 // it supplies an allocator of its own.
 //

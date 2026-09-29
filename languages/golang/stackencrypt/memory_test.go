@@ -4,15 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/tetratelabs/wazero/api"
 	"net/http"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/tetratelabs/wazero/api"
+
 	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
 	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guesttest"
+	"github.com/cipherstash/cipherstash-suite/bindings/go/stackauth"
 )
 
 // The allocator on its own is tested in internal/guest. These are the
@@ -85,14 +87,11 @@ func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
 		return
 	}
 	limited := !probe.IsFallback()
-	cfg := Config{
-		ClientID:            "6a70bd18-99ac-4650-b104-37eec3a15b09",
-		ClientKey:           NewClientKey([]byte("00")),
-		Token:               StaticToken("t"),
-		Guest:               wasiProbe,
-		RequireLockedMemory: true,
-	}
-	_, err := NewClient(context.Background(), cfg)
+	_, err := NewClient(context.Background(),
+		WithCredentials(newTestCredentials("6a70bd18-99ac-4650-b104-37eec3a15b09", NewClientKey([]byte("00")), staticToken("t"))),
+		WithGuest(wasiProbe),
+		WithRequireLockedMemory(),
+	)
 	if !errors.Is(err, ErrMemoryLock) {
 		t.Fatalf("strict NewClient under a refused lock: %v, want ErrMemoryLock", err)
 	}
@@ -102,7 +101,7 @@ func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
 	// Best effort under the same refusal: the client exists, says so, and
 	// shows it wherever it is printed or logged.
 	if wasm, gerr := embeddedGuest(); gerr == nil {
-		inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: cfg.Token}, guest.BestEffort)
+		inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: staticToken("t")}, guest.BestEffort)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -124,6 +123,55 @@ func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
 	fmt.Println("case ok")
 }
 
+// WithRequireLockedMemory covers a store the caller opened best effort
+// behind NewCredentials: with RLIMIT_MEMLOCK at zero the store opens
+// unlocked, and NewClient refuses the credentials with ErrMemoryLock, before
+// the crypto guest is instantiated.
+func TestRequireLockedMemoryRefusesACallerStoreUnlocked(t *testing.T) {
+	if !guesttest.InChild(t) {
+		return
+	}
+	if err := guesttest.SetMemlockLimit(0); err != nil {
+		t.Fatalf("lowering RLIMIT_MEMLOCK: %v", err)
+	}
+	ctx := context.Background()
+	store, err := stackauth.OpenWithoutProfile(ctx)
+	if errors.Is(err, stackauth.ErrGuestNotBuilt) {
+		fmt.Println("case skipped:", err)
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if store.MemoryLocked() {
+		fmt.Println("case skipped: mlock succeeds under RLIMIT_MEMLOCK=0")
+		return
+	}
+	strategy, err := store.AccessKey(ctx, "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY", "CSAKtestKeyId.testKeySecret", stackauth.WithAuthBaseURL("https://cts.invalid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strategy.Close()
+	if err := strategy.MemoryLockError(); !errors.Is(err, ErrMemoryLock) {
+		t.Fatalf("Strategy.MemoryLockError = %v, want the store's ErrMemoryLock", err)
+	}
+	key := NewClientKey([]byte("00"))
+	_, err = NewClient(ctx,
+		WithCredentials(NewCredentials("6a70bd18-99ac-4650-b104-37eec3a15b09", key, strategy)),
+		WithGuest(wasiProbe),
+		withZeroKMSURL("https://zerokms.invalid"),
+		WithRequireLockedMemory(),
+	)
+	if !errors.Is(err, ErrMemoryLock) || !strings.Contains(err.Error(), "credentials' memory") {
+		t.Fatalf("strict NewClient over an unlocked caller store: %v, want ErrMemoryLock naming the credentials", err)
+	}
+	if !key.IsZero() {
+		t.Fatal("the key still holds material after the credentials were refused")
+	}
+	fmt.Println("case ok")
+}
+
 // strictClient is a Client over the real guest under the strict policy,
 // or a skip where this host refuses the lock.
 func strictClient(t *testing.T) *Client {
@@ -131,7 +179,7 @@ func strictClient(t *testing.T) *Client {
 	if !guesttest.HostReserves(t) {
 		t.Skip("heap fallback in use on this host: a strict client cannot exist")
 	}
-	inst, err := newInstance(context.Background(), guestOrSkip(t), &transport{rt: http.DefaultTransport, token: StaticToken("t")}, guest.Strict)
+	inst, err := newInstance(context.Background(), guestOrSkip(t), &transport{rt: http.DefaultTransport, token: staticToken("t")}, guest.Strict)
 	if errors.Is(err, ErrMemoryLock) {
 		guesttest.SkipUnlessLockRequired(t, "the lock was refused", err)
 	}
@@ -193,7 +241,7 @@ func TestRequireLockedMemoryFailsTheCallThatCannotGrow(t *testing.T) {
 func TestRequireLockedMemoryClosesTheClientOnARefusedInternalGrowth(t *testing.T) {
 	ctx := context.Background()
 	c := strictClient(t)
-	cfg := Config{ClientID: strings.Repeat("a", 2<<20), ClientKey: NewClientKey([]byte("00")), Token: StaticToken("t")}
+	cfg := initConfig{clientID: strings.Repeat("a", 2<<20), clientKey: NewClientKey([]byte("00"))}
 	encoded, err := encodeConfig(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -237,7 +285,7 @@ func TestRequireLockedMemoryClosesTheClientOnARefusedInternalGrowth(t *testing.T
 // exit.
 func TestUnreachableClientIsReleased(t *testing.T) {
 	wasm := guestOrSkip(t)
-	inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: StaticToken("t")}, guest.BestEffort)
+	inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: staticToken("t")}, guest.BestEffort)
 	if err != nil {
 		t.Fatal(err)
 	}

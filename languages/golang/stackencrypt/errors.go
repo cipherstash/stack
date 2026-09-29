@@ -51,7 +51,7 @@ var (
 	ErrForeignKeyset = guest.ErrForeignKeyset
 	// ErrMemoryLock is guest memory that could not be locked in RAM (or,
 	// on Linux, excluded from core dumps). NewClient returns it when
-	// Config.RequireLockedMemory is set, and so does any later call under
+	// WithRequireLockedMemory is given, and so does any later call under
 	// that setting whose growth of the guest's memory could not be locked;
 	// otherwise Client.MemoryLockError reports it and the client works on
 	// with unlocked memory. The wrapped error names the limit that refused

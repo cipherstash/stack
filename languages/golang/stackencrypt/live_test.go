@@ -2,36 +2,99 @@ package stackencrypt
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/cipherstash/cipherstash-suite/bindings/go/stackauth"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
-// Round trips through real ZeroKMS key material. Run by the phase 5
-// harness (`mise run test:integration:wasi-go`), which boots zerokms-server
-// and exports the four variables below; skipped otherwise.
+// Round trips through real ZeroKMS key material. No CI harness runs these
+// yet: one that boots zerokms-server and exports the variables below is
+// tracked in CIP-4024. Until then they run locally when the variables are
+// set (from a gitignored mise.local.toml, say), and each test is skipped
+// unless its own are:
+//
+//   - STACK_ENCRYPT_TEST_CLIENT_ID, STACK_ENCRYPT_TEST_CLIENT_KEY: the
+//     seeded client (every live test);
+//   - STACK_ENCRYPT_TEST_CLIENT_ACCESS_KEY, STACK_ENCRYPT_TEST_WORKSPACE_CRN:
+//     an access key and its workspace, exchanged for a token (every live
+//     test) — by a stackauth access-key strategy given to NewCredentials
+//     (liveClient), and by AutoCredentials from the environment
+//     (TestLiveAutoCredentialsFromTheEnvironment). There is no raw-token
+//     variable: the client takes tokens only from stackauth strategies;
+//   - STACK_ENCRYPT_TEST_ZEROKMS_URL (optional): the ZeroKMS endpoint, else
+//     the token's services claim;
+//   - STACK_ENCRYPT_TEST_CTS_HOST (optional): the authentication endpoint
+//     the access key is exchanged at, else discovery from the workspace CRN;
+//   - STACK_ENCRYPT_TEST_OTHER_KEYSET (optional): a second keyset's name.
 
 func liveClient(t *testing.T) *Client {
 	t.Helper()
-	guestOrSkip(t)
 	clientID, clientKey := os.Getenv("STACK_ENCRYPT_TEST_CLIENT_ID"), os.Getenv("STACK_ENCRYPT_TEST_CLIENT_KEY")
-	token, url := os.Getenv("STACK_ENCRYPT_TEST_ACCESS_TOKEN"), os.Getenv("STACK_ENCRYPT_TEST_ZEROKMS_URL")
-	if clientID == "" || clientKey == "" || token == "" {
-		t.Skip("STACK_ENCRYPT_TEST_{CLIENT_ID,CLIENT_KEY,ACCESS_TOKEN} not set")
+	accessKey, crn := os.Getenv("STACK_ENCRYPT_TEST_CLIENT_ACCESS_KEY"), os.Getenv("STACK_ENCRYPT_TEST_WORKSPACE_CRN")
+	url := os.Getenv("STACK_ENCRYPT_TEST_ZEROKMS_URL")
+	if clientID == "" || clientKey == "" || accessKey == "" || crn == "" {
+		t.Skip("STACK_ENCRYPT_TEST_{CLIENT_ID,CLIENT_KEY,CLIENT_ACCESS_KEY,WORKSPACE_CRN} not set")
 	}
+	guestOrSkip(t)
+	authGuestOrSkip(t)
+	// The explicit path: the caller opens the store and the strategy, and
+	// closes them after the client (cleanups run last-registered first).
+	store, err := stackauth.OpenWithoutProfile(t.Context())
+	if err != nil {
+		t.Fatalf("stackauth.OpenWithoutProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	var strategyOpts []stackauth.StrategyOption
+	if cts := os.Getenv("STACK_ENCRYPT_TEST_CTS_HOST"); cts != "" {
+		strategyOpts = append(strategyOpts, stackauth.WithAuthBaseURL(cts))
+	}
+	strategy, err := store.AccessKey(t.Context(), crn, accessKey, strategyOpts...)
+	if err != nil {
+		t.Fatalf("stackauth access-key strategy: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := strategy.Close(); err != nil {
+			t.Errorf("strategy.Close: %v", err)
+		}
+	})
 	material := []byte(clientKey)
 	key := NewClientKey(material)
-	c, err := NewClient(t.Context(), Config{
-		ClientID: clientID, ClientKey: key, ZeroKMSURL: url, Token: StaticToken(token),
+	// The credentials a successful NewClient resolved are released by the
+	// client's Close, once: the wiring only a real load-keyset response can
+	// reach. NewCredentials itself holds nothing to release — the strategy
+	// is the caller's — so the spy adds a Close to count.
+	var released int
+	creds := credentialsFunc(func(ctx context.Context, opts resolveOptions) (*resolvedCredentials, error) {
+		r, err := NewCredentials(clientID, key, strategy).resolve(ctx, opts)
+		if err == nil {
+			r.Close = func() error { released++; return nil }
+		}
+		return r, err
 	})
+	c, err := NewClient(t.Context(), WithCredentials(creds), withZeroKMSURL(url))
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	t.Cleanup(func() { _ = c.Close() })
+	t.Cleanup(func() {
+		_ = c.Close()
+		_ = c.Close()
+		if released != 1 {
+			t.Errorf("Close released the credentials %d times, want once", released)
+		}
+		// The client never closes the caller's strategy.
+		if _, err := strategy.Token(context.Background()); err != nil {
+			t.Errorf("the strategy after Client.Close: %v, want still usable", err)
+		}
+	})
+	if released != 0 {
+		t.Fatalf("a successful NewClient released the credentials %d times, want 0", released)
+	}
 	// The successful outcome of the consumption contract, which only a
 	// real load-keyset response can reach: the key is empty and the bytes
 	// it was built from are zero once the client exists.
@@ -254,5 +317,69 @@ func TestPlaintextDoesNotRemainInGuestMemoryAfterEncrypt(t *testing.T) {
 	}
 	if n := bytes.Count(view, []byte(plaintext)); n != 0 {
 		t.Fatalf("plaintext found %d times in guest memory after Encrypt returned", n)
+	}
+}
+
+// The zero-configuration path end to end: NewClient with no options, its
+// credentials from AutoCredentials, the token from a real access-key
+// exchange — the CI shape of a deployment, with the variables the Rust
+// client reads and no developer profile.
+func TestLiveAutoCredentialsFromTheEnvironment(t *testing.T) {
+	clientID, clientKey := os.Getenv("STACK_ENCRYPT_TEST_CLIENT_ID"), os.Getenv("STACK_ENCRYPT_TEST_CLIENT_KEY")
+	accessKey, crn := os.Getenv("STACK_ENCRYPT_TEST_CLIENT_ACCESS_KEY"), os.Getenv("STACK_ENCRYPT_TEST_WORKSPACE_CRN")
+	if clientID == "" || clientKey == "" || accessKey == "" || crn == "" {
+		t.Skip("STACK_ENCRYPT_TEST_{CLIENT_ID,CLIENT_KEY,CLIENT_ACCESS_KEY,WORKSPACE_CRN} not set")
+	}
+	guestOrSkip(t)
+	authGuestOrSkip(t)
+	// An empty profile directory, so only the environment can answer, and
+	// none of the developer's own CS_* variables.
+	cleanEnv(t, t.TempDir())
+	if cts := os.Getenv("STACK_ENCRYPT_TEST_CTS_HOST"); cts != "" {
+		t.Setenv("CS_CTS_HOST", cts)
+	} else if err := os.Unsetenv("CS_CTS_HOST"); err != nil { // cleanEnv's placeholder
+		t.Fatal(err)
+	}
+	if url := os.Getenv("STACK_ENCRYPT_TEST_ZEROKMS_URL"); url != "" {
+		t.Setenv("CS_ZEROKMS_HOST", url)
+	}
+	t.Setenv(envAccessKey, accessKey)
+	t.Setenv(envWorkspaceCRN, crn)
+	t.Setenv(envClientID, clientID)
+	t.Setenv(envClientKey, clientKey)
+
+	ctx := t.Context()
+	c, err := NewClient(ctx)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer func() {
+		if err := c.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
+	// Whether memory locks depends on the host; that it is reported, and
+	// consistently, does not.
+	if err := c.MemoryLockError(); err != nil && !errors.Is(err, ErrMemoryLock) {
+		t.Errorf("MemoryLockError = %v, want nil or ErrMemoryLock", err)
+	}
+	if c.MemoryLocked() != (c.MemoryLockError() == nil) {
+		t.Error("MemoryLocked disagrees with MemoryLockError")
+	}
+
+	aad := []byte("users/v1")
+	ct, err := c.DefaultKeyset().Encrypt(ctx, "alice", aad)
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	if _, ok := ct.(Sealed); !ok {
+		t.Fatalf("sealed as %T", ct)
+	}
+	pt, err := c.Decrypt(ctx, ct, aad)
+	if err != nil {
+		t.Fatalf("Decrypt: %v", err)
+	}
+	if pt != "alice" {
+		t.Fatalf("Decrypt = %#v, want %q", pt, "alice")
 	}
 }

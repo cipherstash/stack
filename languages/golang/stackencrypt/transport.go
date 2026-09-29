@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -19,36 +20,33 @@ import (
 // functions are the whole host surface the guest can reach.
 const transportModule = "cipherstash_transport"
 
-// TokenSource supplies the bearer token the guest presents to ZeroKMS. It
+// tokenSource supplies the bearer token the guest presents to ZeroKMS. It
 // is asked on every request, so a source that rotates tokens needs no
-// re-initialisation of the client. Minting and refresh stay host-side; a
-// future token strategy running inside the guest is an additive change to
-// [Config], not to this interface.
-type TokenSource interface {
+// re-initialisation of the client. Outside this package's tests it is
+// always a *stackauth.Strategy: minting and refresh stay host-side, out of
+// the crypto guest, in stackauth's credential guest. The interface is
+// unexported so that no caller can hand the client a raw token, which could
+// not be refreshed and would bypass the strategies' refresh lock.
+type tokenSource interface {
 	Token(ctx context.Context) (string, error)
 }
 
-// TokenFunc adapts a function to a [TokenSource].
-type TokenFunc func(ctx context.Context) (string, error)
-
-// Token implements TokenSource.
-func (f TokenFunc) Token(ctx context.Context) (string, error) { return f(ctx) }
-
-// StaticToken is a [TokenSource] that always returns the same token.
-func StaticToken(token string) TokenSource {
-	return TokenFunc(func(context.Context) (string, error) { return token, nil })
-}
-
 // transport implements the guest's two host imports over a RoundTripper
-// and a TokenSource. One per Client; it is bound to the module at
+// and a tokenSource. One per Client; it is bound to the module at
 // instantiation and reaches the guest's allocator through the module the
 // call arrives on.
 type transport struct {
 	rt    http.RoundTripper
-	token TokenSource
+	token tokenSource
 	// sends counts transport_send excursions, so tests can pin the batching
 	// contract (one ZeroKMS call per operation) instead of trusting it.
 	sends atomic.Int64
+	// tokenErr is why the token source last failed during the call in
+	// flight: the guest sees only that token_get failed, so Client.call
+	// attaches the cause — ErrNoCredentials, a refused refresh — to the
+	// error it returns. Only touched under the client's lock, which every
+	// guest call holds.
+	tokenErr error
 }
 
 // transportFailed is the return value of transport_send when the request
@@ -121,7 +119,7 @@ func (t *transport) perform(ctx context.Context, mem api.Memory,
 	reqBody := newRequestBody(body)
 	req, err := http.NewRequestWithContext(ctx, string(method), string(url), reqBody)
 	if err != nil {
-		reqBody.Close()
+		_ = reqBody.Close()
 		return transportFailed, nil, []byte(err.Error())
 	}
 	// NewRequest only infers a length from the readers it knows; without
@@ -133,6 +131,10 @@ func (t *transport) perform(ctx context.Context, mem api.Memory,
 		return transportFailed, nil, []byte(err.Error())
 	}
 	defer resp.Body.Close()
+	// A caller's RoundTripper can return any int; the guest gets an i32.
+	if resp.StatusCode < 100 || resp.StatusCode > 999 {
+		return transportFailed, nil, fmt.Appendf(nil, "invalid HTTP status %d", resp.StatusCode)
+	}
 	if resp.ContentLength > maxResponseBytes {
 		return transportFailed, nil, fmt.Appendf(nil, "response of %d bytes exceeds the %d-byte limit", resp.ContentLength, maxResponseBytes)
 	}
@@ -150,7 +152,7 @@ func (t *transport) perform(ctx context.Context, mem api.Memory,
 		wipe(respBody)
 		return transportFailed, nil, fmt.Appendf(nil, "response exceeds the %d-byte limit", maxResponseBytes)
 	}
-	return int32(resp.StatusCode), encodeHeaders(resp.Header), respBody
+	return int32(resp.StatusCode), encodeHeaders(resp.Header), respBody //nolint:gosec // range-checked above
 }
 
 // requestBody is the io.ReadCloser a guest request goes out as. It owns
@@ -211,14 +213,23 @@ func (b *requestBody) Close() error {
 // tokenGet is token_get: hand the guest the current bearer token.
 func (t *transport) tokenGet(ctx context.Context, m api.Module, tokenPtrOut, tokenLenOut uint32) int32 {
 	token, err := t.token.Token(ctx)
-	if err != nil || token == "" {
+	if err != nil {
+		t.tokenErr = err
+		return hostFailed
+	}
+	if token == "" {
+		t.tokenErr = errors.New("stackencrypt: the token source returned an empty token")
 		return hostFailed
 	}
 	// The credential's transport copy is wiped once it is in guest memory;
-	// the TokenSource's own string is the source's.
+	// the source's own string is the source's.
 	tok := []byte(token)
 	defer wipe(tok)
 	if !place(ctx, m, tokenPtrOut, tokenLenOut, tok) {
+		// The source did its part; the guest could not take the token (no
+		// allocator, a refused allocation, an out-of-range slot). Say so,
+		// or the failure reads as the source's.
+		t.tokenErr = errors.New("stackencrypt: the token could not be handed to the guest")
 		return hostFailed
 	}
 	return 0
@@ -233,11 +244,14 @@ func place(ctx context.Context, m api.Module, ptrOut, lenOut uint32, data []byte
 	if alloc == nil {
 		return false
 	}
+	if uint64(len(data)) > math.MaxUint32 {
+		return false
+	}
 	res, err := alloc.Call(ctx, uint64(len(data)))
 	if err != nil {
 		return false
 	}
-	ptr := uint32(res[0])
+	ptr := api.DecodeU32(res[0])
 	if ptr == 0 {
 		return false
 	}
@@ -245,7 +259,7 @@ func place(ctx context.Context, m api.Module, ptrOut, lenOut uint32, data []byte
 	if len(data) > 0 && !mem.Write(ptr, data) {
 		return false
 	}
-	return mem.WriteUint32Le(ptrOut, ptr) && mem.WriteUint32Le(lenOut, uint32(len(data)))
+	return mem.WriteUint32Le(ptrOut, ptr) && mem.WriteUint32Le(lenOut, uint32(len(data))) //nolint:gosec // bounded above
 }
 
 // parseHeaders decodes the guest's `name: value` line format. Malformed

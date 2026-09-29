@@ -6,8 +6,12 @@
 
 use std::collections::HashMap;
 
-use stack_encrypt::{CipherText, ContextTag, Element, SealedValue, StackCipher};
+use stack_encrypt::{
+    BoxedPassthrough, Cipher, CipherText, ContextTag, Element, Encrypt, IntoAad, SealedValue,
+    StackCipher,
+};
 use stack_kms::FakeDataKeySource;
+use vitaminc_aead::{MapCipher, Passthrough};
 use vitaminc_protected::{Controlled, Protected};
 
 async fn cipher() -> StackCipher<FakeDataKeySource> {
@@ -211,6 +215,103 @@ async fn empty_marker_does_not_decode_under_wrong_aad() {
         .expect("encrypt");
     let result: Result<Vec<String>, _> = cipher.decrypt(ct, ()).await;
     assert!(result.is_err(), "empty marker must authenticate its AAD");
+}
+
+/// A hand-written record carrying one field in the clear, through the
+/// type-erased `passthrough_entry_boxed` a cipher-generic `Encrypt` has to
+/// use.
+struct Row {
+    id: u32,
+    email: String,
+    repeat_id: bool,
+}
+
+impl Row {
+    fn once() -> Self {
+        Self {
+            id: 7,
+            email: "a@x".to_string(),
+            repeat_id: false,
+        }
+    }
+
+    fn with_duplicate_id() -> Self {
+        Self {
+            repeat_id: true,
+            ..Self::once()
+        }
+    }
+}
+
+impl Encrypt for Row {
+    fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
+    where
+        C: Cipher,
+        A: IntoAad<'a>,
+    {
+        let mut map = cipher
+            .encrypt_map(aad)
+            .passthrough_entry_boxed("id", Box::new(self.id))?;
+        if self.repeat_id {
+            map = map.passthrough_entry_boxed("id", Box::new(self.id))?;
+        }
+        map.encrypt_entry("email", self.email)?.end()
+    }
+}
+
+/// A passthrough entry lands in the map as given, beside the sealed ones;
+/// a key given twice is refused like any repeated map key, since a map the
+/// cipher would refuse to open must never be produced.
+#[tokio::test]
+async fn a_passthrough_map_entry_is_stored_in_the_clear_once() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let ct = keyset.encrypt(Row::once(), ()).await.expect("encrypt");
+    let CipherText::Map(entries) = ct else {
+        panic!("a record encrypts as a map: {ct:?}");
+    };
+    let entry = |name: &str| entries.iter().find(|(key, _)| key == name).map(|(_, v)| v);
+    assert!(
+        matches!(entry("id"), Some(CipherText::Passthrough(v)) if v.downcast_ref::<u32>() == Some(&7)),
+        "{entries:?}"
+    );
+    assert!(
+        matches!(entry("email"), Some(CipherText::Single(_))),
+        "{entries:?}"
+    );
+
+    let result = keyset.encrypt(Row::with_duplicate_id(), ()).await;
+    assert!(result.is_err(), "a passthrough key given twice is refused");
+}
+
+/// A container is authenticated by the sealed nodes inside it, so one with
+/// none — no entries at all, or only passthroughs, which carry no tag —
+/// would verify under *any* AAD. The encrypt side never produces one
+/// (emptiness is the authenticated `Empty*` marker); the decrypt side must
+/// refuse to open one, even for a type that reads passthroughs back.
+#[tokio::test]
+async fn a_container_with_nothing_sealed_in_it_does_not_open() {
+    let cipher = cipher().await;
+    let aad = b"users".as_slice();
+    let clear = |value: u32| CipherText::Passthrough(Box::new(value) as BoxedPassthrough);
+
+    let result: Result<Vec<String>, _> = cipher.decrypt(CipherText::Sequence(vec![]), aad).await;
+    assert!(result.is_err(), "an entry-less sequence proves nothing");
+    let result: Result<HashMap<String, String>, _> =
+        cipher.decrypt(CipherText::Map(vec![]), aad).await;
+    assert!(result.is_err(), "an entry-less map proves nothing");
+
+    let result: Result<Vec<Passthrough<u32>>, _> = cipher
+        .decrypt(CipherText::Sequence(vec![clear(1), clear(2)]), aad)
+        .await;
+    assert!(
+        result.is_err(),
+        "an all-passthrough sequence proves nothing"
+    );
+    let result: Result<HashMap<String, Passthrough<u32>>, _> = cipher
+        .decrypt(CipherText::Map(vec![("id".to_string(), clear(1))]), aad)
+        .await;
+    assert!(result.is_err(), "an all-passthrough map proves nothing");
 }
 
 #[tokio::test]

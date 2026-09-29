@@ -4,7 +4,7 @@
 use std::cmp::Ordering;
 
 use stack_encrypt::nonempty;
-use stack_encrypt::sem::{DefaultMatch, MatchConfig, MatchOptions, Tokenizer};
+use stack_encrypt::sem::{DefaultMatch, MatchConfig, MatchOptions, MatchTerm, Tokenizer};
 use stack_encrypt::{Error, StackCipher};
 use stack_kms::{FakeDataKeySource, IdentifiedBy};
 use uuid::Uuid;
@@ -143,6 +143,56 @@ async fn match_query_terms_are_contained_in_stored_terms() {
     assert!(
         stored.contains(&query),
         "a substring's tokens must be contained in the stored term"
+    );
+}
+
+/// Containment is a superset test, not an overlap test, and an empty probe
+/// matches nothing — pinned on positions directly, so the verdict does not
+/// hang on which bits a PRF happened to set.
+#[test]
+fn match_containment_needs_every_query_position() {
+    let term = |positions: &[u16]| {
+        MatchTerm::<DefaultMatch>::from_positions(positions.to_vec())
+            .expect("positions inside the default filter")
+    };
+    let stored = term(&[3, 17, 200]);
+
+    assert!(stored.contains(&term(&[3, 200])), "a subset is contained");
+    assert!(
+        stored.contains(&term(&[3, 17, 200])),
+        "the set itself is contained"
+    );
+    assert!(
+        !stored.contains(&term(&[3, 18])),
+        "one missing position is enough to miss"
+    );
+    assert!(
+        !stored.contains(&term(&[])),
+        "an empty probe must not match every row"
+    );
+    assert!(
+        !term(&[]).contains(&term(&[])),
+        "not even against an empty term"
+    );
+}
+
+#[tokio::test]
+async fn match_query_terms_for_other_text_are_not_contained() {
+    let cipher = generator().await;
+    let gen = cipher.default_keyset();
+
+    let stored = gen
+        .match_terms::<DefaultMatch>("alice wonderland", nonempty!("users/bio"))
+        .await
+        .unwrap();
+    let query = gen
+        .match_terms::<DefaultMatch>("zebra", nonempty!("users/bio"))
+        .await
+        .unwrap();
+
+    assert!(
+        !stored.contains(&query),
+        "text sharing no token with the stored value must not match"
     );
 }
 

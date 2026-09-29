@@ -1126,3 +1126,33 @@ impl<K> KeysetCipher<'_, K> {
         Pending::ready(self, term.map_err(Error::from))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use vitaminc_prf::PrfKeyInit;
+    use vitaminc_protected::Protected;
+
+    use super::*;
+
+    /// The Bloom fold reads a token *stream*: handed a map-shaped PRF input
+    /// it refuses, rather than folding the entries' blocks as if they were
+    /// tokens.
+    #[test]
+    fn the_bloom_fold_refuses_a_map_shaped_input() {
+        let prf = HmacSha256Prf::new(Protected::new([7; 32]));
+        let input = BTreeMap::from([("a".to_string(), "alice".to_string())]);
+
+        let result = input
+            .prf_visit_with_context(&prf, (), BloomVisitor { k: 3, mask: 255 })
+            .into_result();
+        assert!(
+            matches!(
+                result,
+                Err(PrfError::Visitor(PrfVisitorError::UnexpectedShape))
+            ),
+            "{result:?}"
+        );
+    }
+}

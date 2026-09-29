@@ -765,3 +765,68 @@ impl<T: Decryptable> Decryptable for Vec<T> {
 impl<T: Decryptable> Decryptable for Option<T> {
     const DECRYPTABLE: bool = T::DECRYPTABLE;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{nonempty, sem::EqualityTerm};
+    use stack_kms::FakeDataKeySource;
+
+    #[tokio::test]
+    async fn an_optional_ciphertext_field_recovers_present_and_absent_values() {
+        let cipher = StackCipher::builder()
+            .kms(FakeDataKeySource::new())
+            .init()
+            .await
+            .unwrap();
+        let keyset = cipher.default_keyset();
+        let context = || AeadContext::from(nonempty!("users/nickname"));
+
+        for expected in [Some("secret nickname".to_string()), None] {
+            let sealed: Option<StackCipherText> = match &expected {
+                Some(value) => Some(keyset.encrypt_as(value, context()).await.unwrap()),
+                None => None,
+            };
+            let opening: Decryption<Option<String>, FakeDataKeySource> = sealed
+                .decryption_field(context())
+                .expect("an optional ciphertext is a recoverable field even when absent");
+            assert_eq!(
+                opening.open_in(&keyset).await.unwrap(),
+                expected,
+                "opening should recover the value that was sealed, or its absence"
+            );
+        }
+    }
+
+    #[test]
+    fn an_optional_term_is_never_a_recoverable_field() {
+        for term in [Some(EqualityTerm::from_bytes([7; 32])), None] {
+            let opening: Option<Decryption<Option<String>, FakeDataKeySource>> =
+                term.decryption_field(CallerContext::from(nonempty!("users/nickname")));
+            assert!(opening.is_none(), "a term cannot recover plaintext");
+        }
+    }
+
+    #[test]
+    fn operation_debug_describes_the_operation_without_its_captured_value() {
+        let encryption: Encryption<'_, (), _, (), ()> = Encryption::ready(Ok("secret metadata"));
+        assert_eq!(
+            format!("{encryption:?}"),
+            "Encryption { .. }",
+            "a ready encryption should not print its captured value"
+        );
+
+        let decryption = Decryption::<_, ()>::ready("secret plaintext");
+        assert_eq!(
+            format!("{decryption:?}"),
+            "Decryption { .. }",
+            "a ready decryption should not print its plaintext"
+        );
+        let failure = Decryption::<(), ()>::failed(Error::NotOpened);
+        assert_eq!(
+            format!("{failure:?}"),
+            "Decryption { failed: NotOpened, .. }",
+            "a failed decryption should name its error and nothing else"
+        );
+    }
+}

@@ -37,31 +37,36 @@ side will not notice a stale one, so rebuild after any change under either
 
 ## Credentials
 
-`profile.go` reads the developer profile through
-[`stackauth`](../../stackauth): `Resolve` finds the directory the Rust crate
-would, `CurrentWorkspaceStore` scopes to the workspace `stash auth login`
-selected, `SecretKey` hands out the client key as the opaque `ClientKey`
-a `Config` takes, and `TokenSource` is the token source the client
-authenticates with. Nothing in the example spells the profile's layout;
-the `stack-profile` crate does, inside the credential guest, so the example
-cannot drift from it.
+The example calls `NewClient(ctx)` with no options, so it resolves its
+credentials with `stackencrypt.AutoCredentials`, which is what any
+application gets by default. It looks in the environment first and then in
+the developer profile, in the order the Rust client uses:
 
-Two details in there that are easy to get wrong:
+- **The token.** If `CS_CLIENT_ACCESS_KEY` is set (with `CS_WORKSPACE_CRN`),
+  the access key is exchanged for a token. Otherwise the current workspace's
+  stored device session is used. Both run in `stackauth`'s credential guest.
+- **The client key.** `CS_CLIENT_ID` and `CS_CLIENT_KEY` if both are set,
+  otherwise the current workspace's `secretkey.json`.
+- **The endpoint.** `CS_ZEROKMS_HOST` if set, otherwise the token's
+  `services` claim.
 
-- **The token is not static.** `TokenSource.Token` is called on *every*
-  request, precisely so a token can change under a long-lived client. A
-  profile token lasts 45 minutes, so pinning one with `StaticToken` gives you
-  a program that works and then stops. `stackauth`'s source re-reads
-  `auth.json` each time instead, picking up whatever else refreshes it, and
-  refuses a token at its real expiry with `stackauth.ErrTokenExpired`.
-- **It never refreshes, yet.** Refreshing is the auth half of `stackauth`
-  (see ADR-0005): the IdP rotates refresh tokens and detects replay, so two
-  processes sharing `~/.cipherstash` that both exchange the same one get the
-  entire chain revoked. Rust handles this with a cross-process lock and a
-  re-read after acquiring it, and Go will take the same lock on the path
-  `ProfileStore.LockPath` names. Until then an expired token means
-  `stash auth login`.
+`CS_CONFIG_PATH` overrides the profile directory, and `CS_CTS_HOST`
+overrides the authentication endpoint.
 
-`CS_CLIENT_ID` / `CS_CLIENT_KEY` override the profile's client key.
-`CS_CONFIG_PATH` overrides the profile directory. The token always comes from
-the profile.
+Nothing in the example spells out the profile's layout. The `stack-profile`
+crate reads it inside the credential guest, so the example cannot drift
+from it. The crypto guest still sees no environment and no filesystem:
+credentials are resolved host-side.
+
+The device session is **asked on every request and refreshes itself**. A
+profile token lasts 45 minutes, so a pinned token would give you a program
+that works for a while and then stops; that is why the client takes tokens
+only from `stackauth` strategies and has no way to pass a raw one. The refresh takes the
+same cross-process lock as the `stash` CLI. The IdP rotates refresh tokens
+and detects replay, so two processes sharing `~/.cipherstash` that both
+exchanged the same refresh token would get the whole chain revoked; the lock
+prevents that.
+
+To supply the credentials yourself instead, from a secrets manager and with
+no `CS_*` variables or profile, see [`explicit/`](explicit/), which uses
+`stackencrypt.NewCredentials`.

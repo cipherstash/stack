@@ -65,6 +65,23 @@ var (
 	// ErrWorkspaceNotFound is a workspace with no local profile data: nothing
 	// has logged in to it on this machine.
 	ErrWorkspaceNotFound = errors.New("cipherstash: workspace has no local profile; log in to it first")
+	// ErrAuthInvalidGrant is an OAuth refresh grant the auth server rejected.
+	ErrAuthInvalidGrant = errors.New("cipherstash: auth server rejected the refresh grant")
+	// ErrAuthInvalidClient is a client credential the auth server rejected.
+	ErrAuthInvalidClient = errors.New("cipherstash: auth server rejected the client")
+	// ErrAuthUsageLimit is an account blocked by its usage allowance.
+	ErrAuthUsageLimit = errors.New("cipherstash: account usage limit exceeded")
+	// ErrAuthNotAuthenticated means no usable auth credential is available.
+	ErrAuthNotAuthenticated = errors.New("cipherstash: no usable authentication credential")
+	// ErrAuthTransport is a failed auth HTTP exchange or response read.
+	ErrAuthTransport = errors.New("cipherstash: auth transport failed")
+	// ErrAuthConfig is invalid auth configuration or token data.
+	ErrAuthConfig = errors.New("cipherstash: invalid auth configuration or token")
+	// ErrAuthOther is an auth failure outside the actionable categories above.
+	ErrAuthOther = errors.New("cipherstash: authentication failed")
+	// ErrAuthRefreshRequired tells the Go credential host to take the
+	// cross-process lock and call the device-session refresh export.
+	ErrAuthRefreshRequired = errors.New("cipherstash: device session needs refresh")
 	// ErrMemoryLock is guest memory that could not be locked in RAM (or,
 	// on Linux, excluded from core dumps). A constructor returns it when
 	// asked for locked memory and refused, and so does any later call under

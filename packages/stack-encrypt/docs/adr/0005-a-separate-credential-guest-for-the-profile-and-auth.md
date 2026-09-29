@@ -179,7 +179,10 @@ inside the guest: access key, device
 session, OIDC federation with a Go callback for the identity-provider token,
 and auto. `AutoStrategy`'s detection order runs in Go against the environment
 Go already owns, pinned against the Rust order by a test; the guest stays
-environment-free and exposes typed constructors.
+environment-free. The Go package exposes typed constructors; one tagged
+config crosses the guest ABI and Rust validates its variant before creating
+the corresponding strategy. This keeps the public API typed without adding
+separate pointer and length signatures for each strategy export.
 
 The token exchanges are tested against an in-process `httptest` server,
 since HTTP goes through the Go host: exact request bodies, the error
@@ -229,3 +232,19 @@ What it does **not** fix: the client key still passes through Go host memory
 between the two guests, since two wasm instances cannot share memory. It is
 wiped there, not absent. And a token is a Go string on the host side, which
 cannot be wiped; that is accepted for a credential that lives for hours.
+
+## Amendment (2026-09-27, CIP-4052): stackencrypt imports stackauth
+
+Decision 4 said neither public package imports the other. Credential
+resolution changes one direction of that. `stackencrypt.AutoCredentials`,
+the default credentials for `NewClient`, reads the profile and runs the
+token strategies through `stackauth`, so `stackencrypt` imports it. The
+alternative was to leave the composition to every application, which is
+the gap CIP-4052 exists to close.
+
+The reason decision 4 gave still holds: `stackauth` does not import
+`stackencrypt`, so a binary that only wants the profile does not carry the
+crypto guest. A binary that encrypts now carries both guests. Neither
+sandbox changes. The crypto guest still has no environment and no
+filesystem, and the credential guest still has one mount. With no profile
+directory, `stackauth.OpenWithoutProfile` gives it none.

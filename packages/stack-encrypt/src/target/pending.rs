@@ -1304,6 +1304,86 @@ mod tests {
         );
     }
 
+    /// Scoping a pending that already has a scope checks the two agree: the
+    /// same keyset again is a no-op, another one is the mismatch `zip`
+    /// reports — never a silent re-scope that mints under the second.
+    #[tokio::test]
+    async fn rescoping_to_another_keyset_is_a_mismatch() {
+        let cipher = cipher().await;
+        let a = cipher.keyset(Uuid::from_u128(1)).await.unwrap();
+
+        let result = generating(&a, 1).scoped_to(Uuid::from_u128(2)).await;
+        assert!(
+            matches!(result, Err(Error::KeysetMismatch { left, right })
+                if left == Uuid::from_u128(1) && right == Uuid::from_u128(2)),
+            "{result:?}"
+        );
+        assert_eq!(
+            cipher.kms().generate_calls(),
+            0,
+            "a mismatched scope mints nothing"
+        );
+
+        let tags = generating(&a, 1)
+            .scoped_to(a.keyset_id())
+            .await
+            .expect("re-scoping to its own keyset changes nothing");
+        assert_eq!(
+            tags.len(),
+            1,
+            "rescoping to the same keyset should produce one tag"
+        );
+        assert_eq!(
+            cipher.kms().generate_keysets(),
+            vec![Some(a.keyset_id())],
+            "minted under the one keyset it was scoped to"
+        );
+    }
+
+    /// The scope a pending is given is the scope it keeps: merged afterwards
+    /// with another tenant's pending, it is a mismatch, not an unscoped
+    /// value the other side's keyset absorbs.
+    #[tokio::test]
+    async fn a_scoped_pending_keeps_its_scope_through_a_merge() {
+        let cipher = cipher().await;
+        let a = cipher.keyset(Uuid::from_u128(1)).await.unwrap();
+        let b = cipher.keyset(Uuid::from_u128(2)).await.unwrap();
+
+        let scoped = Pending::ready(&cipher, Ok(())).scoped_to(a.keyset_id());
+        let result = scoped.zip(generating(&b, 1)).await;
+        assert!(
+            matches!(result, Err(Error::KeysetMismatch { left, right })
+                if left == a.keyset_id() && right == b.keyset_id()),
+            "{result:?}"
+        );
+        assert_eq!(
+            cipher.kms().generate_calls(),
+            0,
+            "a mismatched merge should not mint a key"
+        );
+    }
+
+    /// A generate built through the client scope fails where it is built,
+    /// so merging it into a tenant's batch afterwards cannot launder it into
+    /// a key minted under that tenant's keyset.
+    #[tokio::test]
+    async fn an_unscoped_generate_is_not_adopted_by_a_scoped_merge() {
+        let cipher = cipher().await;
+        let tenant = cipher.keyset(Uuid::from_u128(9)).await.unwrap();
+        let unscoped: Pending<'_, Vec<u8>, _> =
+            Pending::request(&cipher, vec![Request::generate_under(d())], |responses| {
+                responses.next_generated_key().map(|key| key.tag)
+            });
+
+        let result = unscoped.zip(generating(&tenant, 1)).await;
+        assert!(matches!(result, Err(Error::NoKeyset)), "{result:?}");
+        assert_eq!(
+            cipher.kms().generate_calls(),
+            0,
+            "the tenant's keyset mints nothing for it"
+        );
+    }
+
     /// An unscoped pending merged with a scoped one takes the scope: a
     /// ready value beside a tenant's data keys is still that tenant's batch.
     #[tokio::test]

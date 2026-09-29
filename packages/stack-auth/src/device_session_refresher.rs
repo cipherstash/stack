@@ -1,7 +1,8 @@
 use url::Url;
 
+use stack_profile::ProfileStore;
 #[cfg(not(target_arch = "wasm32"))]
-use stack_profile::{FileLockGuard, ProfileData, ProfileStore};
+use stack_profile::{FileLockGuard, ProfileData};
 
 use crate::refresher::Refresher;
 use crate::transport::SharedTransport;
@@ -9,11 +10,10 @@ use crate::{AuthError, SecretToken, Token};
 
 /// Implements [`Refresher`] using OAuth refresh tokens.
 ///
-/// Optionally owns a [`ProfileStore`] for persisting refreshed tokens to disk
-/// (native targets only). When the store is `None` — or always on wasm32 —
-/// tokens are cached in memory only.
+/// Optionally owns a [`ProfileStore`] for persisting refreshed tokens to disk.
+/// When the store is `None`, tokens are cached in memory only. On wasm32 the
+/// embedding host must hold the refresh lock across the whole refresh call.
 pub(crate) struct DeviceSessionRefresher {
-    #[cfg(not(target_arch = "wasm32"))]
     store: Option<ProfileStore>,
     base_url: Url,
     client_id: String,
@@ -23,7 +23,6 @@ pub(crate) struct DeviceSessionRefresher {
 }
 
 impl DeviceSessionRefresher {
-    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn new(
         store: Option<ProfileStore>,
         base_url: Url,
@@ -34,24 +33,6 @@ impl DeviceSessionRefresher {
     ) -> Self {
         Self {
             store,
-            base_url,
-            client_id: client_id.into(),
-            region: region.into(),
-            device_instance_id,
-            transport,
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub(crate) fn new(
-        _store: Option<()>,
-        base_url: Url,
-        client_id: impl Into<String>,
-        region: impl Into<String>,
-        device_instance_id: Option<String>,
-        transport: SharedTransport,
-    ) -> Self {
-        Self {
             base_url,
             client_id: client_id.into(),
             region: region.into(),
@@ -95,12 +76,14 @@ impl Refresher for DeviceSessionRefresher {
         // its own refresh.
         #[cfg(not(target_arch = "wasm32"))]
         let _lock = self.acquire_refresh_lock().await?;
+        // On wasm32 this is the host's responsibility: the Go credential
+        // binding holds the sibling auth.json lock across its refresh export.
+        // WASI preview 1 has no file-lock operation for this arm to call.
 
         // After acquiring the lock, the disk may already hold a fresher
         // token that another process just rotated to. Burn our (now-stale)
         // credential against Clerk and we'd get "already used"; return the
         // disk copy directly instead.
-        #[cfg(not(target_arch = "wasm32"))]
         if let Some(disk_token) = self.load_freshly_refreshed_token(credential) {
             tracing::debug!(
                 "refresh skipped: another process rotated the token while we waited on the lock"
@@ -125,19 +108,18 @@ impl Refresher for DeviceSessionRefresher {
         // Persist while holding the lock — any sibling process waiting on
         // the lock will read the rotated token on their next attempt and
         // skip burning their stale credential.
-        #[cfg(not(target_arch = "wasm32"))]
-        self.persist_refreshed(&token);
+        self.persist_refreshed(&token)?;
 
         Ok(token)
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl DeviceSessionRefresher {
     /// Acquire the cross-process refresh lock on `auth.json`, off the async
     /// runtime thread so we don't block other tasks. Returns `None` when no
     /// `ProfileStore` is configured (in-memory refreshers can't race against
     /// other processes since there's no shared state).
+    #[cfg(not(target_arch = "wasm32"))]
     async fn acquire_refresh_lock(&self) -> Result<Option<FileLockGuard>, AuthError> {
         let Some(store) = self.store.clone() else {
             return Ok(None);
@@ -175,20 +157,18 @@ impl DeviceSessionRefresher {
     }
 
     /// Persist the freshly refreshed token to disk while the lock is held.
-    /// A failure here is logged loudly because it's the precondition for
-    /// Clerk's refresh-token-rotation replay detection to fire on a later
-    /// process: we keep using the rotated token from memory while disk
-    /// still holds the previous (now-revoked) one.
-    fn persist_refreshed(&self, token: &Token) {
-        let Some(store) = &self.store else { return };
-        match store.save_profile(token) {
-            Ok(()) => tracing::debug!("refreshed token saved to disk"),
-            Err(err) => tracing::error!(
-                %err,
-                "failed to persist refreshed token to disk — a subsequent process \
-                 will replay the prior refresh token and Clerk will revoke the chain"
-            ),
-        }
+    /// A failure here must reach the caller: returning a token while disk
+    /// still holds its consumed refresh token would hide a broken rotation.
+    fn persist_refreshed(&self, token: &Token) -> Result<(), AuthError> {
+        let Some(store) = &self.store else {
+            return Ok(());
+        };
+        store.save_profile(token).map_err(|err| {
+            tracing::error!(%err, "failed to persist refreshed token to disk");
+            AuthError::from(err)
+        })?;
+        tracing::debug!("refreshed token saved to disk");
+        Ok(())
     }
 }
 
@@ -310,8 +290,29 @@ mod tests {
         let credential = SecretToken::new("matching-refresh");
         let result = refresher.refresh(&credential).await.unwrap();
 
-        assert_eq!(result.access_token().as_str(), "new-access");
-        assert_eq!(result.refresh_token().unwrap().as_str(), "new-refresh");
+        assert_eq!(
+            result.access_token().as_str(),
+            "new-access",
+            "refresh should return the new access token"
+        );
+        assert_eq!(
+            result.refresh_token().unwrap().as_str(),
+            "new-refresh",
+            "refresh should return the rotated refresh token"
+        );
+        // The `/oauth/token` response carries neither; the refresher stamps
+        // them, and a token without its region cannot derive its workspace
+        // CRN on the next load.
+        assert_eq!(
+            result.region(),
+            Some("ap-southeast-2.aws"),
+            "refresh should preserve the region"
+        );
+        assert_eq!(
+            result.client_id(),
+            Some("cli"),
+            "refresh should preserve the client id"
+        );
 
         // Persistence must have happened inside refresh() while the lock
         // was held — so disk now reflects the rotated state.
@@ -320,8 +321,81 @@ mod tests {
             .unwrap()
             .load_profile()
             .unwrap();
-        assert_eq!(on_disk.access_token().as_str(), "new-access");
-        assert_eq!(on_disk.refresh_token().unwrap().as_str(), "new-refresh");
+        assert_eq!(
+            on_disk.access_token().as_str(),
+            "new-access",
+            "the rotated access token should be persisted"
+        );
+        assert_eq!(
+            on_disk.refresh_token().unwrap().as_str(),
+            "new-refresh",
+            "the rotated refresh token should be persisted"
+        );
+        assert_eq!(
+            on_disk.region(),
+            Some("ap-southeast-2.aws"),
+            "the region should be persisted"
+        );
+        assert_eq!(
+            on_disk.client_id(),
+            Some("cli"),
+            "the client id should be persisted"
+        );
+    }
+
+    /// The refresh response does not echo the device instance (CIP-2793), so
+    /// a device-bound refresher re-attaches it: the next refresh has to
+    /// present the same instance, and it reads it from this token.
+    #[tokio::test]
+    async fn refresh_carries_the_device_instance_through() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/oauth/token");
+            then.json(serde_json::json!({
+                "access_token": "new-access",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "refresh_token": "new-refresh"
+            }));
+        });
+        let server = start_server(mocks).await;
+        let dir = tempfile::tempdir().unwrap();
+
+        let store = ProfileStore::new(dir.path());
+        store.init_workspace(WORKSPACE_ID).unwrap();
+        let ws_store = store.current_workspace_store().unwrap();
+        ws_store
+            .save_profile(&token_on_disk("old-access", "matching-refresh"))
+            .unwrap();
+        let refresher = DeviceSessionRefresher::new(
+            Some(ws_store),
+            server.url(""),
+            "cli",
+            "ap-southeast-2.aws",
+            Some("device-7".to_string()),
+            default_transport(),
+        );
+
+        let result = refresher
+            .refresh(&SecretToken::new("matching-refresh"))
+            .await
+            .unwrap();
+        assert_eq!(
+            result.device_instance_id(),
+            Some("device-7"),
+            "refresh should preserve the device instance"
+        );
+
+        let on_disk: Token = ProfileStore::new(dir.path())
+            .workspace_store(WORKSPACE_ID)
+            .unwrap()
+            .load_profile()
+            .unwrap();
+        assert_eq!(
+            on_disk.device_instance_id(),
+            Some("device-7"),
+            "the rotated token on disk should keep the device instance"
+        );
     }
 
     /// Concurrent in-process calls to `refresh` must not produce a stale

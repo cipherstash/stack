@@ -38,16 +38,26 @@ var (
 	ErrState = guest.ErrState
 	// ErrInternal is a guest panic or any other unexpected guest failure.
 	ErrInternal = guest.ErrInternal
+	// ErrInvalidGrant is an OAuth refresh grant the auth server rejected.
+	ErrInvalidGrant = guest.ErrAuthInvalidGrant
+	// ErrInvalidClient is a client credential the auth server rejected.
+	ErrInvalidClient = guest.ErrAuthInvalidClient
+	// ErrUsageLimit is an account blocked by its usage allowance.
+	ErrUsageLimit = guest.ErrAuthUsageLimit
+	// ErrNotAuthenticated means no usable auth credential is available.
+	ErrNotAuthenticated = guest.ErrAuthNotAuthenticated
+	// ErrAuthTransport is a failed auth HTTP exchange or response read.
+	ErrAuthTransport = guest.ErrAuthTransport
+	// ErrAuthConfig is invalid auth configuration or token data.
+	ErrAuthConfig = guest.ErrAuthConfig
+	// ErrAuthOther is an auth failure outside the actionable categories above.
+	ErrAuthOther = guest.ErrAuthOther
 	// ErrMemoryLock is guest memory that could not be locked in RAM (or, on
 	// Linux, excluded from core dumps). Open returns it under
 	// [RequireLockedMemory]; otherwise [ProfileStore.MemoryLockError]
 	// reports it and the store works on with unlocked memory.
 	ErrMemoryLock = guest.ErrMemoryLock
 
-	// ErrTokenExpired is a stored token past its expiry: the profile has one,
-	// but it is no use, and only `stash auth login` (or, once the auth half
-	// of this package lands, a refresh) can replace it.
-	ErrTokenExpired = errors.New("stackauth: the stored token has expired; run `stash auth login`")
 	// ErrNoProfile is a profile directory that does not exist: nothing has
 	// logged in on this machine, or CS_CONFIG_PATH names the wrong place.
 	ErrNoProfile = errors.New("stackauth: no profile directory; run `stash auth login`")

@@ -27,6 +27,14 @@ const (
 	StatusProfileNoCurrentWorkspace = 17
 	StatusProfileInvalidWorkspaceID = 18
 	StatusProfileWorkspaceNotFound  = 19
+	StatusAuthInvalidGrant          = 20
+	StatusAuthInvalidClient         = 21
+	StatusAuthUsageLimit            = 22
+	StatusAuthNotAuthenticated      = 23
+	StatusAuthTransport             = 24
+	StatusAuthConfig                = 25
+	StatusAuthOther                 = 26
+	StatusAuthRefreshRequired       = 27
 )
 
 // StatusError is the sentinel a guest status decodes to. A status this host
@@ -72,6 +80,22 @@ func StatusError(status uint32) error {
 		return ErrInvalidWorkspaceID
 	case StatusProfileWorkspaceNotFound:
 		return ErrWorkspaceNotFound
+	case StatusAuthInvalidGrant:
+		return ErrAuthInvalidGrant
+	case StatusAuthInvalidClient:
+		return ErrAuthInvalidClient
+	case StatusAuthUsageLimit:
+		return ErrAuthUsageLimit
+	case StatusAuthNotAuthenticated:
+		return ErrAuthNotAuthenticated
+	case StatusAuthTransport:
+		return ErrAuthTransport
+	case StatusAuthConfig:
+		return ErrAuthConfig
+	case StatusAuthOther:
+		return ErrAuthOther
+	case StatusAuthRefreshRequired:
+		return ErrAuthRefreshRequired
 	default:
 		return fmt.Errorf("%w (unrecognized guest status %d)", ErrInternal, status)
 	}
@@ -84,5 +108,5 @@ func PackedResult(packed uint64) (ptr, length uint32, err error) {
 	if packed>>32 == 0 {
 		return 0, 0, StatusError(uint32(packed))
 	}
-	return uint32(packed >> 32), uint32(packed), nil
+	return uint32(packed >> 32), uint32(packed), nil //nolint:gosec // splits the packed u64 into its two u32 halves
 }

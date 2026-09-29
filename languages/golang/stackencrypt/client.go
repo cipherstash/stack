@@ -15,49 +15,6 @@ import (
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
-// Config configures a [Client].
-type Config struct {
-	// ClientID is the ZeroKMS client id (a UUID string). Required.
-	ClientID string
-	// ClientKey is the v1 client key material: hex (the CS_CLIENT_KEY form,
-	// either case) or standard padded base64 (the secretkey.json form),
-	// wrapped by [NewClientKey] or read from the developer profile by
-	// stackauth. Required. It is consumed: NewClient marshals it into the
-	// config buffer, wipes the key, and wipes the buffer once the guest has
-	// the key, so after NewClient returns — whatever the outcome, a config
-	// it refused included — the ClientKey is empty and the bytes it was
-	// built from are zero. A key is for one client.
-	ClientKey *ClientKey
-	// ZeroKMSURL pins the ZeroKMS endpoint. When empty the endpoint is
-	// resolved from the access token's services claim on first use.
-	ZeroKMSURL string
-	// KeysetCacheSize is how many keysets beyond the default the guest keeps
-	// loaded; zero means the crate default (1024).
-	KeysetCacheSize int
-	// Transport performs the HTTP requests to ZeroKMS. Nil means
-	// http.DefaultTransport.
-	Transport http.RoundTripper
-	// Token supplies the bearer token for every request. Required.
-	Token TokenSource
-	// Guest overrides the embedded wasm module. Nil means the embedded one.
-	Guest []byte
-	// RequireLockedMemory makes NewClient fail with ErrMemoryLock when the
-	// guest's memory cannot be locked in RAM or, on Linux, excluded from
-	// core dumps, instead of continuing with memory that may be swapped or
-	// dumped and reporting so through Client.MemoryLocked. It holds for
-	// the life of the client: a later growth of the guest's memory that
-	// cannot be locked is refused too, and what the guest already holds
-	// stays locked. When the growth was for a buffer the host is staging,
-	// the call fails with ErrMemoryLock and the client goes on. When it
-	// was for the guest's own allocation, the guest cannot report it: it
-	// aborts, and the client is closed with its keys wiped, the call still
-	// failing with ErrMemoryLock. Set it where swap is a real exposure and
-	// the deployment grants a lock limit with room for the guest to grow
-	// (RLIMIT_MEMLOCK on Linux; the error names the size held so far); see
-	// [Client.MemoryLocked].
-	RequireLockedMemory bool
-}
-
 // Client is one wasm instance holding one ZeroKMS client: its key, its
 // default keyset, and the keysets it has loaded since. It is safe for
 // concurrent use; calls are serialised internally, because a wasm instance
@@ -85,35 +42,117 @@ type Client struct {
 	closed   bool
 	released bool
 	def      KeysetID
+	// releaseCredentials is the resolved credentials' Close, run once by
+	// Close. Nil when they hold nothing open.
+	releaseCredentials func() error
+	// credentialsLockErr is the resolved credentials' MemoryLockError: the
+	// memory the key passed through before it reached this guest, asked
+	// live and folded into MemoryLocked so the report covers every guest
+	// that held it, as it is now. Nil when the credentials report nothing.
+	credentialsLockErr func() error
 	// cleanup releases the instance if the Client becomes unreachable
 	// without Close: the forgot-to-close case in a running process. It
 	// does nothing at process exit, and is not meant to.
 	cleanup runtime.Cleanup
 }
 
-// NewClient instantiates the guest, loads the client key into it, and loads
-// the default keyset — one ZeroKMS round trip. The returned client is ready
-// to seal.
-func NewClient(ctx context.Context, cfg Config) (*Client, error) {
-	// The key is consumed whatever happens below: a config refused before
-	// the key is marshalled must not hand it back live. Nil-safe, and a
-	// no-op after the wipe on the accepted path.
-	defer cfg.ClientKey.Wipe()
-	if cfg.Token == nil {
-		return nil, errors.New("stackencrypt: Config.Token is required")
+// NewClient resolves the credentials, instantiates the guest, loads the
+// client key into it, and loads the default keyset — one ZeroKMS round trip,
+// which is where credentials that resolve but do not work fail: a token that
+// cannot be minted or is refused fails here, not at first use. The returned
+// client is ready to seal.
+//
+// With no options it is a working client: the credentials are
+// [AutoCredentials], and every other setting has a default. Each
+// [ClientOption] changes one.
+func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error) {
+	var cfg clientOptions
+	for _, opt := range opts {
+		opt(&cfg)
 	}
-	wasm := cfg.Guest
-	if wasm == nil {
-		var err error
-		if wasm, err = embeddedGuest(); err != nil {
-			return nil, err
-		}
-	}
-	rt := cfg.Transport
+	rt := cfg.transport
 	if rt == nil {
 		rt = http.DefaultTransport
 	}
-	encoded, err := encodeConfig(cfg)
+	creds := cfg.credentials
+	if creds == nil {
+		creds = AutoCredentials()
+	}
+	// Credentials a later WithCredentials replaced are never resolved, but
+	// an explicit key in them is still the client's to consume — unless the
+	// replacement is the same credentials passed again, whose key is the
+	// one this client resolves.
+	for _, c := range cfg.superseded {
+		if !sameExplicit(c, creds) {
+			consumeUnresolved(c)
+		}
+	}
+	// The host-side checks come first: they resolve nothing, and under
+	// AutoCredentials resolving means instantiating the credential guest
+	// and reading the profile, which a config refused here should not pay
+	// for. A refused config still consumes an explicit key, as
+	// WithCredentials promises; any other Credentials has not been asked
+	// yet, so holds nothing of this client's.
+	zerokmsURL, err := zerokmsEndpoint(cfg.zerokmsURL)
+	if err == nil && cfg.keysetCacheSize < 0 {
+		err = fmt.Errorf("%w: WithKeysetCacheSize must not be negative", ErrEncoding)
+	}
+	if explicit, ok := creds.(*explicitCredentials); ok && err == nil && explicit.token == nil {
+		// Knowable from the credentials as they were built: the one place
+		// a missing token source is decided.
+		err = fmt.Errorf("%w: NewCredentials needs a stackauth strategy for the token", ErrEncoding)
+	}
+	wasm := cfg.guest
+	if err == nil && wasm == nil {
+		wasm, err = embeddedGuest()
+	}
+	if err != nil {
+		consumeUnresolved(creds)
+		return nil, err
+	}
+	resolved, err := creds.resolve(ctx, resolveOptions{Transport: rt, RequireLockedMemory: cfg.requireLockedMemory})
+	if err != nil {
+		// A resolve that fails may still hand back what it built. The key
+		// is consumed and what Close holds is released, as on every other
+		// path: nothing of the client's outlives a failed NewClient.
+		if resolved != nil {
+			resolved.ClientKey.Wipe()
+			if resolved.Close != nil {
+				_ = resolved.Close()
+			}
+		}
+		return nil, err
+	}
+	if resolved == nil {
+		return nil, fmt.Errorf("%w: the credentials resolved to nothing", ErrEncoding)
+	}
+	// Nil-safe, and a no-op after the wipe on the accepted path.
+	defer resolved.ClientKey.Wipe()
+	// The credentials are the client's to release once it exists — its
+	// Close does, on the paths below as at the end of its life — and until
+	// then NewClient's.
+	owned := false
+	defer func() {
+		if err != nil && !owned && resolved.Close != nil {
+			_ = resolved.Close()
+		}
+	}()
+	if cfg.requireLockedMemory && resolved.MemoryLockError != nil {
+		// The credentials' own guest held the key, and holds the token
+		// strategy: under the strict policy its memory must be locked too.
+		// AutoCredentials and OIDCFederation open it strict and cannot get
+		// here unlocked; NewCredentials' store is the caller's, opened
+		// however the caller chose.
+		if lockErr := resolved.MemoryLockError(); lockErr != nil {
+			return nil, fmt.Errorf("stackencrypt: the credentials' memory: %w", lockErr)
+		}
+	}
+	encoded, err := encodeConfig(initConfig{
+		clientID:        resolved.ClientID,
+		clientKey:       resolved.ClientKey,
+		zerokmsURL:      zerokmsURL,
+		keysetCacheSize: cfg.keysetCacheSize,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -122,14 +161,20 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 	// is wiped once the guest has it. Wiping the key here rather than after
 	// the init call keeps the exposure to one copy from this point on,
 	// whatever the init's outcome.
-	cfg.ClientKey.Wipe()
+	resolved.ClientKey.Wipe()
 
-	t := &transport{rt: rt, token: cfg.Token}
-	inst, err := newInstance(ctx, wasm, t, guest.PolicyFor(cfg.RequireLockedMemory))
+	t := &transport{rt: rt, token: resolved.Token}
+	inst, err := newInstance(ctx, wasm, t, guest.PolicyFor(cfg.requireLockedMemory))
 	if err != nil {
 		return nil, err
 	}
 	c := newClient(inst, t)
+	// From here the credentials are the client's: every exit below goes
+	// through its Close, which releases them once, and so does the
+	// client's own Close later.
+	c.releaseCredentials = resolved.Close
+	c.credentialsLockErr = resolved.MemoryLockError
+	owned = true
 	out, err := c.call(ctx, func(inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.cipherInit, buf(encoded))
 	})
@@ -145,6 +190,29 @@ func NewClient(ctx context.Context, cfg Config) (*Client, error) {
 	return c, nil
 }
 
+// consumeUnresolved is what NewClient owes a Credentials it refuses a
+// config without asking: explicit credentials hold their key from
+// construction, so it is wiped rather than handed back live, and they are
+// marked consumed, so a retry with a corrected config is refused with
+// ErrCredentialsConsumed rather than told the wiped values are missing.
+// Any other implementation has not been asked, and holds nothing of this
+// client's.
+// sameExplicit reports whether a and b are the same NewCredentials value.
+// It compares the concrete pointers: comparing the interfaces would panic
+// on an implementation that is not comparable, such as a func type.
+func sameExplicit(a, b Credentials) bool {
+	x, ok := a.(*explicitCredentials)
+	y, isExplicit := b.(*explicitCredentials)
+	return ok && isExplicit && x == y
+}
+
+func consumeUnresolved(creds Credentials) {
+	if explicit, ok := creds.(*explicitCredentials); ok {
+		explicit.consumed.Store(true)
+		explicit.key.Wipe()
+	}
+}
+
 // newClient wraps an instance and arms its cleanup. The cleanup takes the
 // instance, not the client: a cleanup whose argument reaches its object
 // keeps that object alive forever.
@@ -154,24 +222,41 @@ func newClient(inst *instance, t *transport) *Client {
 	return c
 }
 
-// MemoryLocked reports whether the guest's memory — where the client key
-// and every loaded index key live — is locked in RAM and, on Linux,
-// excluded from core dumps. False means the lock was refused (on Linux,
-// most often RLIMIT_MEMLOCK, which defaults to 64 KiB on many hosts) or is
-// not available on this platform, and the client is working on with
-// memory the kernel may swap out. Nothing else changes. A production
-// checklist should assert this, or set [Config.RequireLockedMemory] and
-// let NewClient refuse. [Client.MemoryLockError] says why.
-func (c *Client) MemoryLocked() bool { return c.inst.mem.LockError() == nil }
+// MemoryLocked reports whether the memory the client's key material lives
+// in — this guest's, where the client key and every loaded index key are,
+// and whatever the credentials held it in on the way (stackauth's
+// credential guest, for [AutoCredentials]) — is locked in RAM and, on
+// Linux, excluded from core dumps. False means a lock was refused (on
+// Linux, most often RLIMIT_MEMLOCK, which defaults to 64 KiB on many
+// hosts) or is not available on this platform, and the client is working
+// on with memory the kernel may swap out. Nothing else changes. A
+// production checklist should assert this, or set
+// [WithRequireLockedMemory] and let NewClient refuse.
+// [Client.MemoryLockError] says why.
+func (c *Client) MemoryLocked() bool { return c.MemoryLockError() == nil }
 
 // MemoryLockError is why MemoryLocked is false: an error wrapping
-// ErrMemoryLock that names what was refused and the limit that refused it.
-// Nil while the memory is locked.
+// ErrMemoryLock that names what was refused and the limit that refused it,
+// for this guest, the credentials' memory, or both. Nil while every one is
+// locked.
 func (c *Client) MemoryLockError() error {
-	if err := c.inst.mem.LockError(); err != nil {
-		return guest.MemoryLockError(err)
+	var err error
+	if lerr := c.inst.mem.LockError(); lerr != nil {
+		err = guest.MemoryLockError(lerr)
 	}
-	return nil
+	if c.credentialsLockErr != nil {
+		err = errors.Join(err, c.credentialsLockErr())
+	}
+	return err
+}
+
+// memoryState is the memory's state for a log line: "locked", or the
+// refusal. Nothing secret is printed.
+func (c *Client) memoryState() string {
+	if err := c.MemoryLockError(); err != nil {
+		return fmt.Sprintf("unlocked: %v", err)
+	}
+	return "locked"
 }
 
 // String implements fmt.Stringer so that a Client printed with %v or %s
@@ -179,23 +264,32 @@ func (c *Client) MemoryLockError() error {
 // printed. The state is what an operator reading a startup log needs to
 // see, and [Client.LogValue] gives it structured form.
 func (c *Client) String() string {
-	return fmt.Sprintf("stackencrypt.Client{memory: %s}", c.inst.mem)
+	return fmt.Sprintf("stackencrypt.Client{memory: %s}", c.memoryState())
 }
 
 // LogValue implements slog.LogValuer: a group with memory_locked and, when
 // false, memory_lock_error.
-func (c *Client) LogValue() slog.Value { return c.inst.mem.LogValue() }
+func (c *Client) LogValue() slog.Value {
+	if err := c.MemoryLockError(); err != nil {
+		return slog.GroupValue(slog.Bool("memory_locked", false), slog.String("memory_lock_error", err.Error()))
+	}
+	return slog.GroupValue(slog.Bool("memory_locked", true))
+}
+
+// initConfig is what se_cipher_init takes: the resolved credentials' id
+// and key, and the settings that reach the guest.
+type initConfig struct {
+	clientID        string
+	clientKey       *ClientKey
+	zerokmsURL      string
+	keysetCacheSize int
+}
 
 // encodeConfig renders the se_cipher_init object. The result holds the
 // client key; the caller wipes it, and the key it was read from.
-func encodeConfig(cfg Config) ([]byte, error) {
-	if cfg.ClientID == "" || cfg.ClientKey.IsZero() {
-		return nil, errors.New("stackencrypt: Config.ClientID and Config.ClientKey are required")
-	}
-	// Every refusal comes before the key is copied, so a rejected config
-	// leaves nothing but the key itself, which the caller wipes.
-	if cfg.KeysetCacheSize < 0 {
-		return nil, errors.New("stackencrypt: Config.KeysetCacheSize must not be negative")
+func encodeConfig(cfg initConfig) ([]byte, error) {
+	if cfg.clientID == "" || cfg.clientKey.IsZero() {
+		return nil, errors.New("stackencrypt: the credentials' client id and client key are required")
 	}
 	// The key crosses as text: the guest's config parser takes the hex or
 	// base64 form as the CS_CLIENT_KEY variable and secretkey.json hold it.
@@ -206,14 +300,14 @@ func encodeConfig(cfg Config) ([]byte, error) {
 	// them: the copies of the key this package cannot zero, accepted for the
 	// length of NewClient. A marshaller that took bytes would remove both.
 	fields := vcvalue.Object{
-		{Key: "client_id", Value: cfg.ClientID},
-		{Key: "client_key", Value: string(guest.KeyBytes(cfg.ClientKey))},
+		{Key: "client_id", Value: cfg.clientID},
+		{Key: "client_key", Value: string(guest.KeyBytes(cfg.clientKey))},
 	}
-	if cfg.ZeroKMSURL != "" {
-		fields = append(fields, vcvalue.Field{Key: "zerokms_url", Value: cfg.ZeroKMSURL})
+	if cfg.zerokmsURL != "" {
+		fields = append(fields, vcvalue.Field{Key: "zerokms_url", Value: cfg.zerokmsURL})
 	}
-	if cfg.KeysetCacheSize > 0 {
-		fields = append(fields, vcvalue.Field{Key: "keyset_cache_size", Value: strconv.Itoa(cfg.KeysetCacheSize)})
+	if cfg.keysetCacheSize > 0 {
+		fields = append(fields, vcvalue.Field{Key: "keyset_cache_size", Value: strconv.Itoa(cfg.keysetCacheSize)})
 	}
 	return vcffi.Marshal(fields)
 }
@@ -237,7 +331,11 @@ func (c *Client) Close() error {
 	c.released = true
 	c.closed = true
 	c.cleanup.Stop()
-	return c.inst.release()
+	err := c.inst.release()
+	if c.releaseCredentials != nil {
+		err = errors.Join(err, c.releaseCredentials())
+	}
+	return err
 }
 
 // Keyset binds the client to one keyset, by name or by id: Rust's
@@ -328,6 +426,9 @@ func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([
 		return nil, ErrState
 	}
 	growth := c.inst.mem.GrowthRefusal()
+	if c.transport != nil {
+		c.transport.tokenErr = nil
+	}
 	out, err := f(c.inst)
 	switch {
 	case c.inst.module.IsClosed():
@@ -350,6 +451,11 @@ func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([
 	// the range went back unused, so MemoryLocked still holds.
 	if g := c.inst.mem.GrowthRefusal(); err != nil && g.Refused != growth.Refused {
 		err = fmt.Errorf("%w (growth refused under RequireLockedMemory): %w", guest.MemoryLockError(g.Reason), err)
+	}
+	// The guest reports a failed token_get as a transport failure and no
+	// more; the token source said why.
+	if err != nil && c.transport != nil && c.transport.tokenErr != nil {
+		err = fmt.Errorf("%w (token source: %w)", err, c.transport.tokenErr)
 	}
 	if err != nil {
 		return nil, err
