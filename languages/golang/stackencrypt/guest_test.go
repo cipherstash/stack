@@ -518,10 +518,13 @@ func TestClientKeyIsConsumedAndNeverPrinted(t *testing.T) {
 	cfg := testConfig(stub.URL)
 	key := NewClientKey(material)
 	cfg.Credentials = NewCredentials(testClientID, key, StaticToken("stub-token"))
-	resolved, err := cfg.Credentials.Resolve(context.Background(), ResolveOptions{})
+	// Resolving consumes the credentials, so the printed resolution is a
+	// separate set's, over another copy of the key.
+	resolved, err := NewCredentials(testClientID, NewClientKey([]byte(testClientKey)), StaticToken("stub-token")).Resolve(context.Background(), ResolveOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer resolved.ClientKey.Wipe()
 	// %x and %d reach a struct's fields without asking a Stringer; the
 	// key's Formatter answers for them.
 	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%d"} {
@@ -544,11 +547,11 @@ func TestClientKeyIsConsumedAndNeverPrinted(t *testing.T) {
 			t.Fatalf("byte %d of the key material was not wiped", i)
 		}
 	}
-	// A consumed key does not make a second client, and asks nothing of
-	// ZeroKMS trying.
+	// A consumed key does not make a second client, says so, and asks
+	// nothing of ZeroKMS trying.
 	before := len(stub.requests)
-	if _, err := NewClient(context.Background(), cfg); err == nil || errors.Is(err, ErrUnauthorized) {
-		t.Errorf("NewClient with a consumed key: %v, want a config error before any request", err)
+	if _, err := NewClient(context.Background(), cfg); !errors.Is(err, ErrCredentialsConsumed) {
+		t.Errorf("NewClient with a consumed key: %v, want ErrCredentialsConsumed before any request", err)
 	}
 	if len(stub.requests) != before {
 		t.Errorf("a consumed key made %d request(s)", len(stub.requests)-before)

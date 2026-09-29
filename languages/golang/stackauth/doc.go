@@ -6,16 +6,16 @@
 //
 // # Shape
 //
-// A [ProfileStore] is one guest instance over one mounted directory. [Resolve]
-// finds the profile directory the way the Rust crate does (CS_CONFIG_PATH,
-// then ~/.cipherstash); [Open] takes one; [OpenWithoutProfile] mounts
-// nothing, for the access-key and OIDC strategies where there is no profile. The guest is given that directory
+// A [ProfileStore] is one guest instance over one mounted directory.
+// [Resolve] finds the profile directory the way the Rust crate does
+// (CS_CONFIG_PATH, then ~/.cipherstash); [Open] takes one;
+// [OpenWithoutProfile] mounts nothing, for the access-key and OIDC
+// strategies where there is no profile. The guest is given that directory
 // and nothing else: no environment, no other path, and no way out through a
 // symlink inside it, which the mount refuses to follow. Authentication HTTP
-// requests go through the Go host's transport import.
-// Everything
-// the napi binding of stack-profile exposes is a method here, named as in
-// Rust: the current workspace ([ProfileStore.CurrentWorkspace],
+// requests go through the Go host's transport import. Everything the napi
+// binding of stack-profile exposes is a method here, named as in Rust: the
+// current workspace ([ProfileStore.CurrentWorkspace],
 // [ProfileStore.SetCurrentWorkspace], [ProfileStore.ClearCurrentWorkspace]),
 // the workspaces on disk ([ProfileStore.ListWorkspaces]), a store scoped to
 // one workspace ([ProfileStore.WorkspaceStore],

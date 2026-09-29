@@ -172,6 +172,7 @@ small and reveals nothing about plaintext or key material.
 | `ErrState` | The client has been closed: by `Close`, by a call its context interrupted, or by a guest trap. |
 | `ErrMemoryLock` | The instance's memory could not be locked in RAM. Returned by `NewClient` under `RequireLockedMemory`, and by a call whose growth could not be locked; otherwise reported by `MemoryLockError`. |
 | `ErrNoCredentials` | `NewClient` found no token source or no client key, in the environment or the profile. The message names what to set. |
+| `ErrCredentialsConsumed` | `NewCredentials` given to a second `NewClient`: the first consumed its key. Build new credentials, with a new key, for another client. |
 | `ErrInternal` | An unexpected failure inside the guest. |
 
 ## How it works under the hood

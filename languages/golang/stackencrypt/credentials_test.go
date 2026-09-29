@@ -196,8 +196,11 @@ func TestAutoCredentialsFromTheProfile(t *testing.T) {
 	}
 	// The credential guest's lock state travels with the credentials, so
 	// the client can report it; what it is depends on the host.
-	if err := resolved.MemoryLockError; err != nil && !errors.Is(err, ErrMemoryLock) {
-		t.Errorf("MemoryLockError = %v, want nil or ErrMemoryLock", err)
+	if resolved.MemoryLockError == nil {
+		t.Fatal("MemoryLockError is not set: the credential guest's lock state is not reported")
+	}
+	if err := resolved.MemoryLockError(); err != nil && !errors.Is(err, ErrMemoryLock) {
+		t.Errorf("MemoryLockError() = %v, want nil or ErrMemoryLock", err)
 	}
 }
 
@@ -529,7 +532,15 @@ func TestClientReportsTheCredentialsMemoryLock(t *testing.T) {
 	if err := c.MemoryLockError(); err != nil {
 		t.Skipf("this guest's own memory is unlocked here (%v); the fold cannot be told apart", err)
 	}
-	c.credentialsLockErr = guest.MemoryLockError(errors.New("RLIMIT_MEMLOCK refused the credential guest"))
+	// The credentials' state is asked each time: what was locked at
+	// NewClient can become unlocked on a later growth, and the client's
+	// report follows it.
+	var lockErr error
+	c.credentialsLockErr = func() error { return lockErr }
+	if !c.MemoryLocked() {
+		t.Fatalf("MemoryLocked false while the credentials report locked: %v", c.MemoryLockError())
+	}
+	lockErr = guest.MemoryLockError(errors.New("RLIMIT_MEMLOCK refused the credential guest"))
 	if c.MemoryLocked() {
 		t.Fatal("MemoryLocked with the credentials' memory unlocked")
 	}
@@ -541,6 +552,29 @@ func TestClientReportsTheCredentialsMemoryLock(t *testing.T) {
 	}
 	if v := c.LogValue().String(); !strings.Contains(v, "memory_locked=false") || !strings.Contains(v, "credential guest") {
 		t.Fatalf("Client logs as %q: no credentials' memory state", v)
+	}
+}
+
+// A second NewClient given the same NewCredentials is refused for the
+// reason that holds — the key was consumed by the first — not for values
+// the caller did supply.
+func TestNewCredentialsRefusesASecondClient(t *testing.T) {
+	guestOrSkip(t)
+	stub := newStub(t, http.StatusUnauthorized, "", "nope")
+	creds := testCredentials(StaticToken("t"))
+	cfg := Config{Credentials: creds, ZeroKMSURL: stub.URL}
+	if _, err := NewClient(context.Background(), cfg); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("first NewClient: %v, want ErrUnauthorized from the stub", err)
+	}
+	_, err := NewClient(context.Background(), cfg)
+	if !errors.Is(err, ErrCredentialsConsumed) {
+		t.Fatalf("second NewClient: %v, want ErrCredentialsConsumed", err)
+	}
+	if strings.Contains(err.Error(), "required") {
+		t.Errorf("the error blames missing values: %q", err)
+	}
+	if len(stub.requests) != 1 {
+		t.Errorf("the second NewClient made a request: %d in all", len(stub.requests))
 	}
 }
 

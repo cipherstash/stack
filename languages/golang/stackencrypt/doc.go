@@ -8,14 +8,13 @@
 // resolves the client's [Credentials], instantiates the embedded guest,
 // hands it the client key once — the [ClientKey] the credentials resolved
 // to is consumed and wiped, whatever the outcome — and loads the client's
-// default keyset. Every keyset the client uses after
-// that is
-// selected per call through a [KeysetSelector] and loaded on first use by
-// the guest's own bounded cache; nothing the host could allocate, alias or
-// free crosses the boundary. [Client.Close] runs the guest's shutdown so the
-// client key and every loaded index key are wiped before the instance is
-// freed — closing a wasm instance runs no Rust destructors on its own.
-// Close is hygiene, not the security story: see Memory below.
+// default keyset. Every keyset the client uses after that is selected per
+// call through a [KeysetSelector] and loaded on first use by the guest's
+// own bounded cache; nothing the host could allocate, alias or free crosses
+// the boundary. [Client.Close] runs the guest's shutdown so the client key
+// and every loaded index key are wiped before the instance is freed —
+// closing a wasm instance runs no Rust destructors on its own. Close is
+// hygiene, not the security story: see Memory below.
 //
 // A [Cipher] is the client bound to one keyset ([Client.Keyset] and
 // [Client.DefaultKeyset], the Rust crate's StackCipher::keyset and

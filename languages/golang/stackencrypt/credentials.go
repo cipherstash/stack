@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sync/atomic"
 
 	"github.com/cipherstash/cipherstash-suite/bindings/go/stackauth"
 )
@@ -58,15 +59,18 @@ type ResolvedCredentials struct {
 	// The client calls it from Client.Close, or from NewClient when the
 	// client is not made. A Token that outlives it must not be asked again.
 	Close func() error
-	// MemoryLockError, when not nil, is why memory the credentials hold key
-	// material in is not locked in RAM: for AutoCredentials, the credential
-	// guest's, which the client key passed through and the token strategy
-	// lives in, as stackauth's ProfileStore.MemoryLockError reports it.
-	// The client folds it into Client.MemoryLocked and
-	// Client.MemoryLockError, so a checklist asserting the lock sees every
-	// guest the key was in, not only the crypto guest. Nil when the memory
-	// is locked, or when the credentials hold nothing.
-	MemoryLockError error
+	// MemoryLockError, when not nil, reports why memory the credentials
+	// hold key material in is not locked in RAM: for AutoCredentials, the
+	// credential guest's, which the client key passed through and the
+	// token strategy lives in, as stackauth's ProfileStore.MemoryLockError
+	// reports it. It is asked each time, not once: under best-effort
+	// locking a guest's memory can become unlocked later, when a growth
+	// for a token exchange or a refresh cannot be locked. The client folds
+	// its answer into Client.MemoryLocked and Client.MemoryLockError, so a
+	// checklist asserting the lock sees every guest the key was in, not
+	// only the crypto guest. Nil, or returning nil, when the memory is
+	// locked or the credentials hold nothing.
+	MemoryLockError func() error
 }
 
 // ErrNoCredentials is [AutoCredentials] finding no token source or no
@@ -77,18 +81,31 @@ var ErrNoCredentials = errors.New("stackencrypt: no credentials")
 // NewCredentials is [Credentials] from explicit values: a client id, a
 // client key (from [NewClientKey], or stackauth's typed read), and a token
 // source. The key is consumed by the first NewClient given these
-// credentials; a second is refused, as a key is for one client.
+// credentials; a second is refused with [ErrCredentialsConsumed], as a key
+// is for one client.
 func NewCredentials(clientID string, key *ClientKey, token TokenSource) Credentials {
 	return &explicitCredentials{clientID: clientID, key: key, token: token}
 }
+
+// ErrCredentialsConsumed is [NewCredentials] resolved a second time: the
+// first NewClient consumed its key, so there is nothing left to give.
+// Build new credentials, with a new key, for another client.
+var ErrCredentialsConsumed = errors.New("stackencrypt: the credentials' client key was already consumed by another client")
 
 type explicitCredentials struct {
 	clientID string
 	key      *ClientKey
 	token    TokenSource
+	// consumed is set by the first Resolve: what it handed out is the
+	// caller's to wipe, and a second caller must not be told its values
+	// were missing when they were spent.
+	consumed atomic.Bool
 }
 
 func (c *explicitCredentials) Resolve(context.Context, ResolveOptions) (*ResolvedCredentials, error) {
+	if !c.consumed.CompareAndSwap(false, true) {
+		return nil, ErrCredentialsConsumed
+	}
 	return &ResolvedCredentials{ClientID: c.clientID, ClientKey: c.key, Token: c.token}, nil
 }
 
@@ -213,7 +230,7 @@ func (autoCredentials) Resolve(ctx context.Context, opts ResolveOptions) (resolv
 			// cleanly.
 			return errors.Join(strategy.Close(), profile.Close())
 		},
-		MemoryLockError: profile.MemoryLockError(),
+		MemoryLockError: profile.MemoryLockError,
 	}, nil
 }
 

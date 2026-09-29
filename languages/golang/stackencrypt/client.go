@@ -93,9 +93,10 @@ type Client struct {
 	// Close. Nil when they hold nothing open.
 	releaseCredentials func() error
 	// credentialsLockErr is the resolved credentials' MemoryLockError: the
-	// memory the key passed through before it reached this guest, folded
-	// into MemoryLocked so the report covers every guest that held it.
-	credentialsLockErr error
+	// memory the key passed through before it reached this guest, asked
+	// live and folded into MemoryLocked so the report covers every guest
+	// that held it, as it is now. Nil when the credentials report nothing.
+	credentialsLockErr func() error
 	// cleanup releases the instance if the Client becomes unreachable
 	// without Close: the forgot-to-close case in a running process. It
 	// does nothing at process exit, and is not meant to.
@@ -248,7 +249,10 @@ func (c *Client) MemoryLockError() error {
 	if lerr := c.inst.mem.LockError(); lerr != nil {
 		err = guest.MemoryLockError(lerr)
 	}
-	return errors.Join(err, c.credentialsLockErr)
+	if c.credentialsLockErr != nil {
+		err = errors.Join(err, c.credentialsLockErr())
+	}
+	return err
 }
 
 // memoryState is the memory's state for a log line: "locked", or the
