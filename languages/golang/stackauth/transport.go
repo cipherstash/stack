@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -179,14 +180,17 @@ func placeAuth(ctx context.Context, m api.Module, ptrOut, lenOut uint32, data []
 	if alloc == nil {
 		return false
 	}
+	if uint64(len(data)) > math.MaxUint32 {
+		return false
+	}
 	res, err := alloc.Call(ctx, uint64(len(data)))
 	if err != nil || len(res) == 0 || res[0] == 0 {
 		return false
 	}
-	ptr := uint32(res[0])
+	ptr := api.DecodeU32(res[0])
 	mem := m.Memory()
 	return (len(data) == 0 || mem.Write(ptr, data)) &&
-		mem.WriteUint32Le(ptrOut, ptr) && mem.WriteUint32Le(lenOut, uint32(len(data)))
+		mem.WriteUint32Le(ptrOut, ptr) && mem.WriteUint32Le(lenOut, uint32(len(data))) //nolint:gosec // bounded above
 }
 
 func parseAuthHeaders(buf []byte) http.Header {

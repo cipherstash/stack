@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/tetratelabs/wazero/api"
 )
@@ -47,11 +48,16 @@ type Exports struct {
 
 // AllocWrite stages data into a fresh guest buffer.
 func (e Exports) AllocWrite(ctx context.Context, m api.Module, data []byte) (Buf, error) {
+	// se_alloc takes an i32: a longer length would reach the guest
+	// truncated to its low 32 bits.
+	if uint64(len(data)) > math.MaxUint32 {
+		return Buf{}, errors.New("cipherstash: buffer exceeds the guest's 4 GiB address space")
+	}
 	res, err := e.Alloc.Call(ctx, uint64(len(data)))
 	if err != nil {
 		return Buf{}, fmt.Errorf("%w: guest alloc: %w", ErrTrap, err)
 	}
-	b := Buf{Ptr: uint32(res[0]), Len: uint32(len(data))}
+	b := Buf{Ptr: api.DecodeU32(res[0]), Len: uint32(len(data))} //nolint:gosec // bounded above
 	if b.Ptr == 0 {
 		return Buf{}, errors.New("cipherstash: guest allocation failed")
 	}

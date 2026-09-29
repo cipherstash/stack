@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -239,11 +240,14 @@ func place(ctx context.Context, m api.Module, ptrOut, lenOut uint32, data []byte
 	if alloc == nil {
 		return false
 	}
+	if uint64(len(data)) > math.MaxUint32 {
+		return false
+	}
 	res, err := alloc.Call(ctx, uint64(len(data)))
 	if err != nil {
 		return false
 	}
-	ptr := uint32(res[0])
+	ptr := api.DecodeU32(res[0])
 	if ptr == 0 {
 		return false
 	}
@@ -251,7 +255,7 @@ func place(ctx context.Context, m api.Module, ptrOut, lenOut uint32, data []byte
 	if len(data) > 0 && !mem.Write(ptr, data) {
 		return false
 	}
-	return mem.WriteUint32Le(ptrOut, ptr) && mem.WriteUint32Le(lenOut, uint32(len(data)))
+	return mem.WriteUint32Le(ptrOut, ptr) && mem.WriteUint32Le(lenOut, uint32(len(data))) //nolint:gosec // bounded above
 }
 
 // parseHeaders decodes the guest's `name: value` line format. Malformed
