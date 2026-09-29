@@ -108,5 +108,5 @@ func PackedResult(packed uint64) (ptr, length uint32, err error) {
 	if packed>>32 == 0 {
 		return 0, 0, StatusError(uint32(packed))
 	}
-	return uint32(packed >> 32), uint32(packed), nil
+	return uint32(packed >> 32), uint32(packed), nil //nolint:gosec // splits the packed u64 into its two u32 halves
 }
