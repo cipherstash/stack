@@ -286,6 +286,13 @@ func resolveWithStrategy(
 		noProfile = err
 		profile, err = stackauth.OpenWithoutProfile(ctx, authOpts...)
 	}
+	if errors.Is(err, ErrMemoryLock) {
+		// Under RequireLockedMemory the guest is refused before anything is
+		// resolved — on a host that cannot lock or reserve its memory at all
+		// (a 32-bit address space, a zero RLIMIT_MEMLOCK). Name which guest,
+		// as the client's own report does.
+		return nil, fmt.Errorf("stackencrypt: credentials: the credential guest: %w", err)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("stackencrypt: credentials: %w", err)
 	}

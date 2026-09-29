@@ -808,6 +808,14 @@ func TestRequireLockedMemoryRefusesUnlockedCredentials(t *testing.T) {
 			if len(stub.requests) != 0 {
 				t.Errorf("a request was made for refused credentials: %+v", stub.requests)
 			}
+			if *resolved == nil {
+				// A host that cannot lock the credential guest at all (a
+				// 32-bit address space cannot reserve it) refuses it while
+				// resolving, before any key or token exists: the refusal
+				// above is that one, and there is nothing to have released.
+				t.Logf("the host refused the credential guest itself: %v", err)
+				return
+			}
 			if !(*resolved).ClientKey.IsZero() {
 				t.Error("the key still holds material after the credentials were refused")
 			}
