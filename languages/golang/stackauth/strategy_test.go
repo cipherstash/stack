@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -576,6 +578,46 @@ func TestAuthTransportErrorWithoutAResponseNamesNoStatus(t *testing.T) {
 	_, err = strategy.Token(context.Background())
 	if !errors.Is(err, ErrAuthTransport) || strings.Contains(err.Error(), "HTTP") {
 		t.Fatalf("Token error = %v, want a bare ErrAuthTransport", err)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// A status that would wrap in the guest's i32 — here to 200 — is refused
+// as a transport failure, so a failed exchange cannot pass as a success.
+func TestOutOfRangeAuthStatusIsTransport(t *testing.T) {
+	guestOrSkip(t)
+	cases := map[string]int{"negative": -200, "two digits": 99, "four digits": 1000}
+	if strconv.IntSize == 64 {
+		wraps := int64(1<<32 + 200)
+		cases["wraps to 200"] = int(wraps)
+	}
+	for name, status := range cases {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			rt := roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: status,
+					Header:     http.Header{"Content-Type": {"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"accessToken":"x","expiry":0}`)),
+				}, nil
+			})
+			profile, err := Open(ctx, t.TempDir(), WithRoundTripper(rt))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer profile.Close()
+			strategy, err := profile.AccessKey(ctx, testCRN, "CSAKtestKeyId.testKeySecret", WithAuthBaseURL("https://cts.invalid"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer strategy.Close()
+			if _, err := strategy.Token(ctx); !errors.Is(err, ErrAuthTransport) {
+				t.Fatalf("Token: %v, want ErrAuthTransport", err)
+			}
+		})
 	}
 }
 

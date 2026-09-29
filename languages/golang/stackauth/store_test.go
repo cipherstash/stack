@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -306,6 +307,22 @@ func TestTypedReadsReturnTheFilesFields(t *testing.T) {
 	write(t, filepath.Join(dir, "workspaces", wsB, "auth.json"), "{not json")
 	if _, err := other.Token(ctx); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("Token from a malformed file: %v, want ErrInvalid", err)
+	}
+}
+
+// expires_at is a u64 in the crate's file; one past int64 would wrap to a
+// time in the past, so it is refused rather than read as expired.
+func TestTokenExpiresAtOutOfRangeIsInternal(t *testing.T) {
+	ctx := context.Background()
+	dir, s := profile(t)
+	write(t, filepath.Join(dir, "workspaces", wsA, "auth.json"),
+		fmt.Sprintf(`{"access_token":"tok","refresh_token":"refresh","token_type":"Bearer","expires_at":%d}`, uint64(math.MaxInt64)+1))
+	ws, err := s.WorkspaceStore(ctx, wsA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.Token(ctx); !errors.Is(err, ErrInternal) {
+		t.Fatalf("Token: %v, want ErrInternal", err)
 	}
 }
 
