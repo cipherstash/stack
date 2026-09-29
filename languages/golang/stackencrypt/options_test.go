@@ -23,9 +23,9 @@ func TestClientOptionsSetTheirField(t *testing.T) {
 	wasm := []byte("\x00asm")
 	var got clientOptions
 	for _, opt := range []ClientOption{
-		WithZeroKMSURL("https://first.example"),
+		withZeroKMSURL("https://first.example"),
 		WithCredentials(creds),
-		WithZeroKMSURL("https://second.example"),
+		withZeroKMSURL("https://second.example"),
 		WithKeysetCacheSize(4096),
 		WithTransport(rt),
 		WithGuest(wasm),
@@ -36,24 +36,6 @@ func TestClientOptionsSetTheirField(t *testing.T) {
 	if got.credentials != creds || got.zerokmsURL != "https://second.example" || got.keysetCacheSize != 4096 ||
 		got.transport == nil || string(got.guest) != string(wasm) || !got.requireLockedMemory {
 		t.Fatalf("options = %+v", got)
-	}
-}
-
-// The endpoint a later WithZeroKMSURL names is the one NewClient uses.
-func TestLaterZeroKMSURLWins(t *testing.T) {
-	guestOrSkip(t)
-	first := newStub(t, http.StatusUnauthorized, "", "first")
-	second := newStub(t, http.StatusUnauthorized, "", "second")
-	_, err := NewClient(context.Background(),
-		WithCredentials(testCredentials(staticToken("stub-token"))),
-		WithZeroKMSURL(first.URL),
-		WithZeroKMSURL(second.URL),
-	)
-	if !errors.Is(err, ErrUnauthorized) {
-		t.Fatalf("NewClient: %v", err)
-	}
-	if len(first.requests) != 0 || len(second.requests) != 1 {
-		t.Fatalf("requests: first %d, second %d; want only the second", len(first.requests), len(second.requests))
 	}
 }
 
@@ -76,12 +58,12 @@ func TestLaterCredentialsConsumeTheOnesTheyReplace(t *testing.T) {
 			_, _ = NewClient(context.Background(),
 				WithCredentials(replaced),
 				WithCredentials(later(t)),
-				WithZeroKMSURL(stub.URL),
+				withZeroKMSURL(stub.URL),
 			)
 			if !key.IsZero() {
 				t.Error("the replaced credentials' key still holds material")
 			}
-			if _, err := NewClient(context.Background(), WithCredentials(replaced), WithZeroKMSURL(stub.URL)); !errors.Is(err, ErrCredentialsConsumed) {
+			if _, err := NewClient(context.Background(), WithCredentials(replaced), withZeroKMSURL(stub.URL)); !errors.Is(err, ErrCredentialsConsumed) {
 				t.Errorf("reusing the replaced credentials: %v, want ErrCredentialsConsumed", err)
 			}
 		})
@@ -96,7 +78,7 @@ func TestLaterKeysetCacheSizeWins(t *testing.T) {
 	stub := newStub(t, http.StatusUnauthorized, "", "nope")
 	_, err := NewClient(context.Background(),
 		WithCredentials(testCredentials(staticToken("stub-token"))),
-		WithZeroKMSURL(stub.URL),
+		withZeroKMSURL(stub.URL),
 		WithKeysetCacheSize(-1),
 		WithKeysetCacheSize(0),
 	)
@@ -151,7 +133,7 @@ func TestOIDCFederationThroughTheClientTransport(t *testing.T) {
 	rt := &countingTransport{}
 	_, err := NewClient(context.Background(),
 		WithCredentials(OIDCFederation(testCRN, provider)),
-		WithZeroKMSURL(stub.URL),
+		withZeroKMSURL(stub.URL),
 		WithTransport(rt),
 	)
 	if !errors.Is(err, ErrUnauthorized) {

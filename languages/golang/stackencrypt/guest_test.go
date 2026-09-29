@@ -99,7 +99,7 @@ func newStub(t *testing.T, status int, contentType, body string) *zerokmsStub {
 // testConfig is the options for a client of the test credentials against
 // url. A test appends to it; a later option wins.
 func testConfig(url string) []ClientOption {
-	return []ClientOption{WithCredentials(testCredentials(staticToken("stub-token"))), WithZeroKMSURL(url)}
+	return []ClientOption{WithCredentials(testCredentials(staticToken("stub-token"))), withZeroKMSURL(url)}
 }
 
 // testCredentials is the test client id and a fresh copy of the test key,
@@ -487,7 +487,7 @@ func TestConfigValidation(t *testing.T) {
 	for name, option := range map[string]ClientOption{
 		"client id not a uuid": WithCredentials(newTestCredentials("acme", NewClientKey([]byte(testClientKey)), staticToken("t"))),
 		"key not hex":          WithCredentials(newTestCredentials(testClientID, NewClientKey([]byte("zz")), staticToken("t"))),
-		"bad url":              WithZeroKMSURL("not a url"),
+		"bad url":              withZeroKMSURL("not a url"),
 	} {
 		stub := newStub(t, http.StatusOK, "application/json", "{}")
 		_, err := NewClient(ctx, append(testConfig(stub.URL), option)...)

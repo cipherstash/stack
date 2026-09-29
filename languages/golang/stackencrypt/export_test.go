@@ -23,3 +23,10 @@ func staticToken(token string) tokenSource {
 func newTestCredentials(clientID string, key *ClientKey, token tokenSource) Credentials {
 	return &explicitCredentials{clientID: clientID, key: key, token: token}
 }
+
+// withZeroKMSURL points the client at a ZeroKMS stub. There is no public
+// option for it: applications take the endpoint from the token, or from
+// CS_ZEROKMS_HOST.
+func withZeroKMSURL(url string) ClientOption {
+	return func(o *clientOptions) { o.zerokmsURL = url }
+}

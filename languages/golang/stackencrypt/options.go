@@ -13,7 +13,10 @@ type clientOptions struct {
 	// superseded is every earlier WithCredentials a later one replaced.
 	// NewClient consumes them too: a key handed to WithCredentials is
 	// wiped whichever option wins.
-	superseded          []Credentials
+	superseded []Credentials
+	// zerokmsURL is set only by the tests' withZeroKMSURL, to reach a
+	// stub. Applications get the endpoint from the token's services claim,
+	// or CS_ZEROKMS_HOST, as the Rust client does.
 	zerokmsURL          string
 	keysetCacheSize     int
 	transport           http.RoundTripper
@@ -39,15 +42,6 @@ func WithCredentials(c Credentials) ClientOption {
 		}
 		o.credentials = c
 	}
-}
-
-// WithZeroKMSURL pins the ZeroKMS endpoint. Without it, CS_ZEROKMS_HOST (or
-// the legacy CS_VITUR_HOST) pins it if set — a set value that is not an
-// http(s) URL is an error — and otherwise the endpoint is resolved from the
-// access token's services claim on first use. The variables are read
-// whatever the credentials, as stack-kms reads them.
-func WithZeroKMSURL(url string) ClientOption {
-	return func(o *clientOptions) { o.zerokmsURL = url }
 }
 
 // WithKeysetCacheSize sets how many keysets beyond the default the guest

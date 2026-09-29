@@ -159,7 +159,7 @@ func TestRequireLockedMemoryRefusesACallerStoreUnlocked(t *testing.T) {
 	_, err = NewClient(ctx,
 		WithCredentials(NewCredentials("6a70bd18-99ac-4650-b104-37eec3a15b09", key, strategy)),
 		WithGuest(wasiProbe),
-		WithZeroKMSURL("https://zerokms.invalid"),
+		withZeroKMSURL("https://zerokms.invalid"),
 		WithRequireLockedMemory(),
 	)
 	if !errors.Is(err, ErrMemoryLock) || !strings.Contains(err.Error(), "credentials' memory") {

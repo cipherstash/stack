@@ -44,7 +44,7 @@ func run() error {
 	// + CS_CLIENT_KEY), then the developer profile `stash auth login` writes,
 	// read through stackauth's credential guest. The token is a refreshing
 	// device session there, asked on every request, so a long run outlives
-	// one token. No WithZeroKMSURL: CS_ZEROKMS_HOST if set, else the token's
+	// one token. The ZeroKMS endpoint: CS_ZEROKMS_HOST if set, else the token's
 	// services claim.
 	client, err := stackencrypt.NewClient(ctx)
 	if err != nil {

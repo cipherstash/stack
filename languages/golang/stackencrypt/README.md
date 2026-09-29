@@ -66,7 +66,6 @@ client, err := stackencrypt.NewClient(ctx,
 | Option | Default |
 |---|---|
 | `WithCredentials(c)` | `AutoCredentials()`: see below. |
-| `WithZeroKMSURL(url)` | `CS_ZEROKMS_HOST` if set, otherwise the endpoint in the token. |
 | `WithTransport(rt)` | `http.DefaultTransport`. Used for ZeroKMS, and for token requests when the credentials make them. |
 | `WithKeysetCacheSize(n)` | 1024 keysets beyond the default one. |
 | `WithRequireLockedMemory()` | Off: memory that cannot be locked is reported, not refused. See below. |
@@ -97,11 +96,11 @@ when the profile would have been consulted, it also says why the profile
 could not be opened, so an unreadable or mistyped `CS_CONFIG_PATH` is not
 reported as "not logged in".
 
-The endpoint variables are read whatever the credentials, `NewCredentials`
-included, as the Rust client reads them. A service that passes no
-`WithZeroKMSURL` and relies on the token's services claim now follows
-`CS_ZEROKMS_HOST` or `CS_VITUR_HOST` if either is set in its environment,
-so a value exported there for another tool is worth checking.
+The ZeroKMS endpoint comes from the token's services claim; there is no
+option to pin it. `CS_ZEROKMS_HOST` (or the legacy `CS_VITUR_HOST`)
+overrides it whatever the credentials, `NewCredentials` included, as the
+Rust client reads them, so a value exported there for another tool is
+worth checking.
 
 Resolution happens host-side, in Go. The profile and the token strategies
 run in `stackauth`'s credential guest; the crypto guest that holds the

@@ -446,7 +446,7 @@ func TestNewClientReleasesTheCredentialsOnceWhenInitFails(t *testing.T) {
 		}
 		return r, err
 	})
-	_, err := NewClient(context.Background(), WithCredentials(creds), WithZeroKMSURL(stub.URL))
+	_, err := NewClient(context.Background(), WithCredentials(creds), withZeroKMSURL(stub.URL))
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("NewClient: %v, want ErrUnauthorized from the stub", err)
 	}
@@ -530,10 +530,10 @@ func TestNewCredentialsRefusedConfigThenRetryIsConsumed(t *testing.T) {
 	guestOrSkip(t)
 	stub := newStub(t, http.StatusUnauthorized, "", "nope")
 	creds := testCredentials(staticToken("t"))
-	if _, err := NewClient(context.Background(), WithCredentials(creds), WithZeroKMSURL(stub.URL), WithKeysetCacheSize(-1)); err == nil {
+	if _, err := NewClient(context.Background(), WithCredentials(creds), withZeroKMSURL(stub.URL), WithKeysetCacheSize(-1)); err == nil {
 		t.Fatal("NewClient accepted a negative cache size")
 	}
-	_, err := NewClient(context.Background(), WithCredentials(creds), WithZeroKMSURL(stub.URL))
+	_, err := NewClient(context.Background(), WithCredentials(creds), withZeroKMSURL(stub.URL))
 	if !errors.Is(err, ErrCredentialsConsumed) {
 		t.Fatalf("retry with a corrected config: %v, want ErrCredentialsConsumed", err)
 	}
@@ -589,7 +589,7 @@ func TestNewCredentialsRefusesASecondClient(t *testing.T) {
 	guestOrSkip(t)
 	stub := newStub(t, http.StatusUnauthorized, "", "nope")
 	creds := testCredentials(staticToken("t"))
-	cfg := []ClientOption{WithCredentials(creds), WithZeroKMSURL(stub.URL)}
+	cfg := []ClientOption{WithCredentials(creds), withZeroKMSURL(stub.URL)}
 	if _, err := NewClient(context.Background(), cfg...); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("first NewClient: %v, want ErrUnauthorized from the stub", err)
 	}
@@ -801,7 +801,7 @@ func TestRequireLockedMemoryRefusesUnlockedCredentials(t *testing.T) {
 			}
 			creds, resolved := forcedCreds(t)
 			// No crypto guest is needed: the refusal precedes it.
-			_, err := NewClient(context.Background(), WithCredentials(creds), WithZeroKMSURL(stub.URL), WithGuest(wasiProbe), WithRequireLockedMemory())
+			_, err := NewClient(context.Background(), WithCredentials(creds), withZeroKMSURL(stub.URL), WithGuest(wasiProbe), WithRequireLockedMemory())
 			if !errors.Is(err, ErrMemoryLock) || !strings.Contains(err.Error(), "credential guest") {
 				t.Fatalf("NewClient under WithRequireLockedMemory: %v, want ErrMemoryLock naming the credential guest", err)
 			}
@@ -827,7 +827,7 @@ func TestRequireLockedMemoryRefusesUnlockedCredentials(t *testing.T) {
 
 			guestOrSkip(t)
 			creds, _ = forcedCreds(t)
-			if _, err := NewClient(context.Background(), WithCredentials(creds), WithZeroKMSURL(stub.URL)); !errors.Is(err, ErrUnauthorized) {
+			if _, err := NewClient(context.Background(), WithCredentials(creds), withZeroKMSURL(stub.URL)); !errors.Is(err, ErrUnauthorized) {
 				t.Fatalf("NewClient under best effort: %v, want ErrUnauthorized from the stub, the report not refused", err)
 			}
 		})
@@ -863,7 +863,7 @@ func TestNewCredentialsLeavesTheStrategyToTheCaller(t *testing.T) {
 
 	zerokms := newStub(t, http.StatusOK, "application/json", "{}")
 	creds = NewCredentials(testClientID, NewClientKey([]byte(testClientKey)), strategy)
-	if _, err := NewClient(ctx, WithCredentials(creds), WithZeroKMSURL(zerokms.URL)); err == nil {
+	if _, err := NewClient(ctx, WithCredentials(creds), withZeroKMSURL(zerokms.URL)); err == nil {
 		t.Fatal("NewClient succeeded with a token CTS refused")
 	}
 	// Still open: asked again, it goes back to CTS rather than failing
