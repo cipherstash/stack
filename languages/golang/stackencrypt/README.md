@@ -228,9 +228,21 @@ import "github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt/plan"
 
 type Individual struct {
     ID         int64
-    Email      string `facts:"fides.data_categories=user.contact.email"`
-    MedicareNo string `facts:"fides.data_categories=user.government_id"`
+    Email      string
+    MedicareNo string
 }
+
+// Facts come from a Source, such as the protobuf one planned in CIP-4088.
+// Any function returning facts is one.
+var source = plan.SourceFunc(func(msg any) ([]plan.Fact, error) {
+    return []plan.Fact{
+        {Field: "id", GoField: "ID"},
+        {Field: "email", GoField: "Email", Annotations: []plan.Annotation{
+            {Key: "fides.data_categories", Values: []string{"user.contact.email"}}}},
+        {Field: "medicare_no", GoField: "MedicareNo", Annotations: []plan.Annotation{
+            {Key: "fides.data_categories", Values: []string{"user.government_id"}}}},
+    }, nil
+})
 
 var category = plan.Key("fides.data_categories")
 
@@ -249,7 +261,7 @@ var Individuals = plan.ForMessage(&Individual{}, plan.Table("individuals"),
 
 // At startup: panics if a classified field is decided by no rule, or the
 // plan names a field the struct does not have.
-var individuals = plan.MustPlanFor(plan.StructTags, Individuals)
+var individuals = plan.MustPlanFor(source, Individuals)
 
 records, err := cipher.EncryptRecords(ctx, rows, stackencrypt.WithPlan(individuals))
 ```
@@ -257,19 +269,16 @@ records, err := cipher.EncryptRecords(ctx, rows, stackencrypt.WithPlan(individua
 A policy fails closed: a field with facts that no rule decides is an error
 when the plan is built, naming the field and its facts. There is no default;
 write a catch-all, `Plaintext()` included, in the policy. Fields with no
-facts are left out and stored as they are. A `facts` tag on a field a plan
-cannot bind (unexported, or inside an embedded struct) is an error too,
-not a field quietly left in plaintext. A message the policy encrypts
+facts are left out and stored as they are. A message the policy encrypts
 nothing of has no plan: `PlanFor` reports `ErrNothingEncrypted`, and its
 records are stored without one.
 
 An EQL target's context is its column identity, `"<table>/<column>"`. The
 table is required per message, never derived from its name. A field is
-stored in the column named by its schema name — for a Go struct, the field
-name in snake_case (`MedicareNo` is `medicare_no`), the spelling the Rust
-derive and the database column share — unless a rule names another with
-`plan.Column`, and that column is also its identity unless the rule pins
-one with `plan.Identity`. `plan.Field` matches on that same schema name.
+stored in the column named by its schema name (its `Fact.Field`, such as
+`medicare_no`: the spelling the Rust derive and the database column share)
+unless a rule names another with `plan.Column`, and that column is also its
+identity unless the rule pins one with `plan.Identity`. `plan.Field` matches on that same schema name.
 
 The identity is bound into every stored ciphertext, its data key and its
 index terms, so once data is written it must never change. A field never

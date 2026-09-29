@@ -44,9 +44,8 @@ type Message struct {
 }
 
 // ForMessage scopes policy to msg, stored in table. msg is what the
-// [Source] reads facts from: a struct value or pointer for [StructTags], a
-// proto.Message for a protobuf source. Refine a shared base per message
-// with OrElse:
+// [Source] reads facts from, such as a proto.Message for a protobuf
+// source. Refine a shared base per message with OrElse:
 //
 //	var Individuals = plan.ForMessage(&Individual{}, plan.Table("individuals"),
 //	    plan.FirstOf(

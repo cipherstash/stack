@@ -24,18 +24,29 @@
 //	    ).OrElse(Base),
 //	)
 //
-//	var individuals = plan.MustPlanFor(plan.StructTags, Individuals)
+//	var individuals = plan.MustPlanFor(source, Individuals)
 //	// cipher.EncryptRecords(ctx, rows, stackencrypt.WithPlan(individuals))
 //
 // # Facts
 //
-// A [Source] makes the facts for a message. [StructTags] reads a Go
-// struct's `facts` tags, naming each field as a schema would (the Go name
-// in snake_case); a protobuf source reads descriptors and their custom
-// options the same way, and needs nothing from this package beyond [Fact],
-// [Source] and [Key]. [Message.Build] takes facts directly, so a generator
-// or a test can build a plan without a source at all; [PlanFor] also checks
-// the plan binds to the message's Go type.
+// A [Source] makes the facts for a message. A protobuf source (planned in
+// CIP-4088) reads descriptors and their custom options, and needs nothing
+// from this package beyond [Fact], [Source] and [Key]. Any function
+// returning facts is one:
+//
+//	var source = plan.SourceFunc(func(msg any) ([]plan.Fact, error) {
+//	    return []plan.Fact{
+//	        {Field: "id", GoField: "ID"},
+//	        {Field: "email", GoField: "Email", Annotations: []plan.Annotation{
+//	            {Key: "fides.data_categories", Values: []string{"user.contact.email"}}}},
+//	        {Field: "medicare_no", GoField: "MedicareNo", Annotations: []plan.Annotation{
+//	            {Key: "fides.data_categories", Values: []string{"user.government_id"}}}},
+//	    }, nil
+//	})
+//
+// [Message.Build] takes facts directly, so a generator or a test can build
+// a plan without a source at all; [PlanFor] also checks the plan binds to
+// the message's Go type.
 //
 // # Contexts
 //

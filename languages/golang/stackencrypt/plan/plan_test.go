@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/factstest"
 	se "github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt"
 	"github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt/plan"
 )
@@ -35,7 +36,7 @@ var individuals = plan.ForMessage(&individual{}, plan.Table("individuals"),
 )
 
 func TestPolicyBuildsThePlan(t *testing.T) {
-	p, err := plan.PlanFor(plan.StructTags, individuals)
+	p, err := plan.PlanFor(factstest.StructTags, individuals)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +66,7 @@ func TestUnmatchedFactFailsTheBuild(t *testing.T) {
 		plan.When(category.Under("user.contact"), plan.Encrypt(plan.EQL(se.Equality))),
 	)
 	m := plan.ForMessage(patient{}, "patients", narrow)
-	_, err := plan.PlanFor(plan.StructTags, m)
+	_, err := plan.PlanFor(factstest.StructTags, m)
 	if !errors.Is(err, plan.ErrUnmatched) {
 		t.Fatalf("err = %v, want ErrUnmatched", err)
 	}
@@ -86,14 +87,14 @@ func TestUnmatchedFactFailsTheBuild(t *testing.T) {
 				t.Error("MustPlanFor did not panic on an unmatched fact")
 			}
 		}()
-		plan.MustPlanFor(plan.StructTags, m)
+		plan.MustPlanFor(factstest.StructTags, m)
 	}()
 
 	// A catch-all written in the policy closes the gap; Plaintext counts.
 	closed := plan.ForMessage(patient{}, "patients", narrow.OrElse(
 		plan.When(category.Present(), plan.Plaintext()),
 	))
-	p := plan.MustPlanFor(plan.StructTags, closed)
+	p := plan.MustPlanFor(factstest.StructTags, closed)
 	if got := p.Fields(); len(got) != 1 || got[0].Field != "Email" {
 		t.Fatalf("fields = %+v, want Email only", got)
 	}
@@ -107,7 +108,7 @@ func TestNothingEncryptedIsItsOwnError(t *testing.T) {
 		Kind string `facts:"fides.data_categories=system.operations"`
 	}
 	m := plan.ForMessage(audit{}, "audits", plan.When(category.Under("system"), plan.Plaintext()))
-	_, err := plan.PlanFor(plan.StructTags, m)
+	_, err := plan.PlanFor(factstest.StructTags, m)
 	if !errors.Is(err, plan.ErrNothingEncrypted) {
 		t.Fatalf("err = %v, want ErrNothingEncrypted", err)
 	}
@@ -438,89 +439,19 @@ func TestDecisionsSpellThemselves(t *testing.T) {
 	}
 }
 
-func TestStructTagsSource(t *testing.T) {
-	type embedded struct{ Inner string }
-	type row struct {
-		embedded
-		ID     *int64
-		Email  string `facts:"a=x,y;b=z"`
-		hidden string //nolint:unused // proves untagged unexported fields are skipped
-	}
-	facts, err := plan.StructTags.Facts(&row{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []plan.Fact{
-		{Message: "plan_test.row", Field: "id", GoField: "ID", Kind: "int64"},
-		{Message: "plan_test.row", Field: "email", GoField: "Email", Kind: "string", Annotations: []plan.Annotation{
-			{Key: "a", Values: []string{"x", "y"}}, {Key: "b", Values: []string{"z"}},
-		}},
-	}
-	if !reflect.DeepEqual(facts, want) {
-		t.Fatalf("facts =\n%+v\nwant\n%+v", facts, want)
-	}
-	if got := facts[1].String(); got != "plan_test.row.email (Email) [a=x,y; b=z]" {
+func TestFactAndSource(t *testing.T) {
+	f := plan.Fact{Message: "row", Field: "email", GoField: "Email", Annotations: []plan.Annotation{
+		{Key: "a", Values: []string{"x", "y"}}, {Key: "b", Values: []string{"z"}}, {Key: "a", Values: []string{"w"}},
+	}}
+	if got := f.String(); got != "row.email (Email) [a=x,y; b=z; a=w]" {
 		t.Errorf("String = %s", got)
 	}
-	type taggedInner struct {
-		Secret string `facts:"a=x"`
+	if got := f.Values("a"); !reflect.DeepEqual(got, []string{"x", "y", "w"}) {
+		t.Errorf("Values = %v", got)
 	}
-	type deeper struct{ taggedInner }
-	for name, bad := range map[string]struct {
-		msg any
-		say string
-	}{
-		"not a struct": {42, "reads structs"},
-		"nil":          {nil, "reads structs"},
-		"no value": {struct {
-			A string `facts:"a="`
-		}{}, "key=value"},
-		"no key": {struct {
-			A string `facts:"=x"`
-		}{}, "key=value"},
-		"empty value": {struct {
-			A string `facts:"a=x,"`
-		}{}, "empty value"},
-		"key twice": {struct {
-			A string `facts:"a=x;a=y"`
-		}{}, "given twice"},
-		// A tag the plan cannot bind is refused, never quietly plaintext.
-		"tagged unexported field": {struct {
-			medicareNo string `facts:"a=x"` //nolint:unused // the tag is the point
-		}{}, "unexported field"},
-		"tagged embedded field": {struct {
-			embedded `facts:"a=x"`
-		}{}, "embedded field"},
-		"tag inside an embedded struct": {struct{ taggedInner }{}, "Secret"},
-		"tag two embeddings deep":       {struct{ deeper }{}, "taggedInner.Secret"},
-	} {
-		_, err := plan.StructTags.Facts(bad.msg)
-		if err == nil {
-			t.Errorf("%s: facts read", name)
-		} else if !strings.Contains(err.Error(), bad.say) {
-			t.Errorf("%s: err = %q, want it to say %q", name, err, bad.say)
-		}
-	}
-	// The schema spelling of a Go field name.
-	type spelled struct {
-		ID         int64
-		Email      string
-		HTTPPort   int
-		MedicareNo string
-		Line2      string
-		UserID     string
-		OAuth2Key  string
-	}
-	got, err := plan.StructTags.Facts(spelled{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	names := make([]string, len(got))
-	for i, f := range got {
-		names[i] = f.Field
-	}
-	if want := []string{"id", "email", "http_port", "medicare_no", "line2", "user_id", "o_auth2_key"}; !reflect.DeepEqual(names, want) {
-		t.Errorf("schema names = %v, want %v", names, want)
+	src := plan.SourceFunc(func(any) ([]plan.Fact, error) { return []plan.Fact{f}, nil })
+	if got, err := src.Facts(nil); err != nil || len(got) != 1 {
+		t.Errorf("SourceFunc.Facts = %v, %v", got, err)
 	}
 	if _, err := plan.PlanFor(nil, individuals); err == nil {
 		t.Error("PlanFor without a source")

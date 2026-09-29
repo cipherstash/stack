@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/factstest"
 	se "github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt"
 	"github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt/plan"
 )
@@ -49,7 +50,7 @@ func TestPolicyPlanIsTheHandBuiltPlan(t *testing.T) {
 		individuals := plan.ForMessage(&individual{}, "individuals", plan.FirstOf(
 			plan.When(plan.Field("medicare_no"), plan.Encrypt(plan.EQL(se.Equality, se.Ore)), tc.pins...),
 		).OrElse(base))
-		fromPolicy := plan.MustPlanFor(plan.StructTags, individuals)
+		fromPolicy := plan.MustPlanFor(factstest.StructTags, individuals)
 		byHand, err := se.NewPlan(email, name, tc.medicare)
 		if err != nil {
 			t.Fatal(err)
