@@ -151,8 +151,9 @@ func TestUnclassifiedFieldsAreLeftOutUnlessNamed(t *testing.T) {
 	}
 }
 
-// A context is fixed at first write. Pinning the column keeps it through a
-// field rename (proto or Go) and is the identity a database rename keeps.
+// A context is fixed at first write. Pinning the column keeps it, and the
+// record key, through a field rename (proto or Go): on a column never
+// renamed in the database, Column sets the identity too.
 func TestColumnPinSurvivesRenames(t *testing.T) {
 	gov := []plan.Annotation{{Key: "fides.data_categories", Values: []string{"user.government_id"}}}
 	before := []plan.Fact{{Message: "acme.v1.Individual", Field: "medicare_number", GoField: "MedicareNumber", Annotations: gov}}
@@ -185,6 +186,37 @@ func TestColumnPinSurvivesRenames(t *testing.T) {
 	}
 	if got := unpinned.Fields()[0].Context; got != "individuals/medicare_no" {
 		t.Fatalf("unpinned context = %q", got)
+	}
+}
+
+// A database rename moves the record key, never the identity: new writes go
+// to the new column, under the context existing rows were written with.
+func TestIdentityKeepsTheContextThroughAColumnRename(t *testing.T) {
+	gov := []plan.Annotation{{Key: "fides.data_categories", Values: []string{"user.government_id"}}}
+	facts := []plan.Fact{{Message: "acme.v1.Individual", Field: "medicare_no", GoField: "MedicareNo", Annotations: gov}}
+	eq := plan.Encrypt(plan.EQL(se.Equality))
+	for name, tc := range map[string]struct {
+		opts         []plan.RuleOption
+		key, context string
+	}{
+		// Neither: both are the field's schema name.
+		"defaults": {nil, "medicare_no", "individuals/medicare_no"},
+		// Column alone, on a field never renamed in the database: both.
+		"column": {[]plan.RuleOption{plan.Column("medicare_number")}, "medicare_number", "individuals/medicare_number"},
+		// ALTER TABLE individuals RENAME COLUMN medicare_number TO medicare_num.
+		"renamed column": {[]plan.RuleOption{plan.Column("medicare_num"), plan.Identity("medicare_number")}, "medicare_num", "individuals/medicare_number"},
+		// The column renamed to the field's own name.
+		"identity alone": {[]plan.RuleOption{plan.Identity("medicare_number")}, "medicare_no", "individuals/medicare_number"},
+	} {
+		p, err := plan.ForMessage(nil, "individuals", plan.When(plan.Field("medicare_no"), eq, tc.opts...)).Build(facts)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		want := []se.FieldPlan{{Field: "MedicareNo", Name: tc.key, Context: tc.context, Terms: []se.TermKind{se.Equality}}}
+		if got := p.Fields(); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: fields = %+v, want %+v", name, got, want)
+		}
 	}
 }
 
@@ -240,6 +272,10 @@ func TestBuildRefusesMalformedDecisions(t *testing.T) {
 		"fail":               {"t", plan.When(plan.Field("a"), plan.Fail("biometrics are never stored")), plan.ErrRefused, ""},
 		"nil target":         {"t", plan.When(plan.Field("a"), plan.Encrypt(nil)), plan.ErrInvalid, "no target"},
 		"column on plain":    {"t", plan.When(plan.Field("a"), plan.Plaintext(), plan.Column("c")), plan.ErrInvalid, "Plaintext"},
+		"identity on plain":  {"t", plan.When(plan.Field("a"), plan.Plaintext(), plan.Identity("c")), plan.ErrInvalid, "Plaintext"},
+		"identity on custom": {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.Custom("ctx")), plan.Identity("c")), plan.ErrInvalid, "context is fixed"},
+		"slash in identity":  {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL()), plan.Column("c"), plan.Identity("x/y")), plan.ErrInvalid, "contains '/'"},
+		"slash, renamed":     {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL()), plan.Column("x/y"), plan.Identity("c")), plan.ErrInvalid, "contains '/'"},
 		"zero decision":      {"t", plan.When(plan.Field("a"), plan.Decision{}), plan.ErrInvalid, "zero Decision"},
 		"empty context":      {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.Custom(""))), plan.ErrInvalid, "empty context"},
 		"nil policy":         {"t", nil, plan.ErrUnmatched, ""},
@@ -273,6 +309,18 @@ func TestBuildRefusesMalformedDecisions(t *testing.T) {
 	two := []plan.Fact{{Field: "a", Annotations: classified}, {Field: "b", Annotations: classified}}
 	if _, err := plan.ForMessage(nil, "t", plan.When(plan.Any(plan.Field("a"), plan.Field("b")), plan.Encrypt(plan.EQL()), plan.Column("c"))).Build(two); err == nil {
 		t.Error("two fields pinned to one column built")
+	}
+	// Two columns with one identity would bind each other's ciphertexts.
+	_, err = plan.ForMessage(nil, "t", plan.FirstOf(
+		plan.When(plan.Field("a"), plan.Encrypt(plan.EQL())),
+		plan.When(plan.Field("b"), plan.Encrypt(plan.EQL()), plan.Identity("a")),
+	)).Build(two)
+	if !errors.Is(err, plan.ErrInvalid) || !strings.Contains(err.Error(), `identity "a" is already field a's`) {
+		t.Errorf("two fields sharing an identity: err = %v", err)
+	}
+	// Custom targets may share a context: it is the policy's to choose.
+	if _, err := plan.ForMessage(nil, "t", plan.When(plan.Any(plan.Field("a"), plan.Field("b")), plan.Encrypt(plan.Custom("ctx")))).Build(two); err != nil {
+		t.Errorf("two custom fields sharing a context: %v", err)
 	}
 }
 
@@ -347,25 +395,32 @@ func TestCombinatorsRefuseNilAndCopyTheirMatchers(t *testing.T) {
 	}
 }
 
-func TestColumnRefusesAnEmptyName(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Error("Column(\"\") did not panic")
-		}
-	}()
-	plan.Column("")
+func TestPinsRefuseAnEmptyName(t *testing.T) {
+	for name, pin := range map[string]func(string) plan.RuleOption{"Column": plan.Column, "Identity": plan.Identity} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%s(\"\") did not panic", name)
+				}
+			}()
+			pin("")
+		}()
+	}
 }
 
 func TestDecisionsSpellThemselves(t *testing.T) {
-	d, ok := plan.When(plan.Field("a"), plan.Encrypt(plan.EQL(se.Equality, se.Match)), plan.Column("c")).Decide(plan.Fact{Field: "a"})
+	d, ok := plan.When(plan.Field("a"), plan.Encrypt(plan.EQL(se.Equality, se.Match)), plan.Column("c"), plan.Identity("old_c")).Decide(plan.Fact{Field: "a"})
 	if !ok {
 		t.Fatal("no match")
 	}
-	if got, want := d.String(), `Encrypt(EQL(eq, match)) Column("c")`; got != want {
+	if got, want := d.String(), `Encrypt(EQL(eq, match)) Column("c") Identity("old_c")`; got != want {
 		t.Errorf("String = %s, want %s", got, want)
 	}
-	if target, ok := d.Target(); !ok || target == nil || d.Column() != "c" {
-		t.Errorf("accessors: %v %v %q", target, ok, d.Column())
+	if target, ok := d.Target(); !ok || target == nil || d.Column() != "c" || d.Identity() != "old_c" {
+		t.Errorf("accessors: %v %v %q %q", target, ok, d.Column(), d.Identity())
+	}
+	if d := plan.Encrypt(plan.EQL()); d.Column() != "" || d.Identity() != "" {
+		t.Errorf("unpinned accessors: %q %q", d.Column(), d.Identity())
 	}
 	for d, want := range map[string]string{
 		plan.Plaintext().String():                         "Plaintext()",

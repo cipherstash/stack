@@ -43,10 +43,18 @@
 // PRF context, fixed when data is first written. For an [EQL] target the
 // context is the column identity, "<table>/<column>" ([Identifier]): the
 // table is the message's [Table], which is required and never derived from
-// the message's name, and the column is the field's schema name unless the
-// rule pins another with [Column] — the column's identity, which survives
-// renames of the field and of the database column. A [Custom] target
-// supplies its context itself.
+// the message's name, and the column is the column the field is first
+// stored in. A rule sets that column with [Column] (the field's schema name
+// by default), which for an EQL target sets the identity too. Once data is
+// written the identity must never change, so after a database rename
+// (ALTER TABLE ... RENAME COLUMN) the rule stores into the new column and
+// pins the old identity with [Identity]:
+//
+//	plan.When(plan.Field("medicare_no"), plan.Encrypt(plan.EQL(stackencrypt.Equality)),
+//	    plan.Column("medicare_num"), plan.Identity("medicare_number"))
+//
+// A [Custom] target supplies its context itself; [Column] names only its
+// record key, and [Identity] is refused.
 //
 // # Failing closed
 //

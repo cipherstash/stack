@@ -264,12 +264,26 @@ nothing of has no plan: `PlanFor` reports `ErrNothingEncrypted`, and its
 records are stored without one.
 
 An EQL target's context is its column identity, `"<table>/<column>"`. The
-table is required per message, never derived from its name, and the column
-is the field's schema name — for a Go struct, the field name in snake_case
-(`MedicareNo` is `medicare_no`), the spelling the Rust derive and the
-database column share — unless a rule pins it with `plan.Column`, which
-keeps the context fixed across renames. `plan.Field` matches on that same
-schema name. `plan.Custom` targets supply their own context. The plan a
+table is required per message, never derived from its name. A field is
+stored in the column named by its schema name — for a Go struct, the field
+name in snake_case (`MedicareNo` is `medicare_no`), the spelling the Rust
+derive and the database column share — unless a rule names another with
+`plan.Column`, and that column is also its identity unless the rule pins
+one with `plan.Identity`. `plan.Field` matches on that same schema name.
+
+The identity is bound into every stored ciphertext, its data key and its
+index terms, so once data is written it must never change. A field never
+renamed in the database needs no `Identity`. After
+`ALTER TABLE individuals RENAME COLUMN medicare_number TO medicare_num`,
+new writes go to the new column under the old identity:
+
+```go
+plan.When(plan.Field("medicare_no"), plan.Encrypt(plan.EQL(stackencrypt.Equality)),
+    plan.Column("medicare_num"), plan.Identity("medicare_number"))
+```
+
+`plan.Custom` targets supply their own context: `plan.Column` names only
+their record key, and `plan.Identity` is refused. The plan a
 policy builds is a `Plan` like any other: the guest receives the same bytes
 as for the equivalent hand-built plan.
 

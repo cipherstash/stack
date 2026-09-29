@@ -17,8 +17,9 @@ var (
 	// ErrRefused is a field the policy decided to [Fail].
 	ErrRefused = errors.New("the policy refuses the field")
 	// ErrInvalid is a decision that cannot become a plan field: no target,
-	// a pinned column on a field that is not encrypted, an empty context or
-	// column identity.
+	// a pinned column or identity on a field that is not encrypted, an
+	// identity on a Custom target, an empty context, a '/' in a column
+	// identity, or two EQL fields sharing one identity.
 	ErrInvalid = errors.New("invalid decision")
 	// ErrNothingEncrypted is a message the policy encrypts no field of:
 	// every classified field decided Plaintext, or none classified. Such a
@@ -83,8 +84,19 @@ func (m Message) Build(facts []Fact) (stackencrypt.Plan, error) {
 	}
 	var fields []stackencrypt.FieldPlan
 	var errs []error
+	// An EQL identity is one column's context: two fields sharing one would
+	// bind each other's ciphertexts and terms. NewPlan refuses a shared
+	// record key, but with Identity the identity can be shared without one.
+	identities := map[string]Fact{}
 	for _, f := range facts {
-		fp, planned, err := m.field(f)
+		fp, id, planned, err := m.field(f)
+		if err == nil && id != "" {
+			if prev, dup := identities[id]; dup {
+				err = fmt.Errorf("%w: identity %q is already field %s's", ErrInvalid, id, prev.Field)
+			} else {
+				identities[id] = f
+			}
+		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("plan: %s: %w", f, err))
 			continue
@@ -106,53 +118,77 @@ func (m Message) Build(facts []Fact) (stackencrypt.Plan, error) {
 	return p, nil
 }
 
-// field decides one field: its plan field, and whether it is planned.
-func (m Message) field(f Fact) (stackencrypt.FieldPlan, bool, error) {
+// field decides one field: its plan field, its EQL identity ("" for a
+// Custom target), and whether it is planned.
+func (m Message) field(f Fact) (stackencrypt.FieldPlan, string, bool, error) {
+	none := func(err error) (stackencrypt.FieldPlan, string, bool, error) {
+		return stackencrypt.FieldPlan{}, "", false, err
+	}
 	d, ok := m.policy.Decide(f)
 	if !ok {
 		if len(f.Annotations) == 0 {
-			return stackencrypt.FieldPlan{}, false, nil
+			return none(nil)
 		}
-		return stackencrypt.FieldPlan{}, false, ErrUnmatched
+		return none(ErrUnmatched)
 	}
 	switch d.verdict {
 	case encrypt:
 	case plaintext:
 		if d.column != "" {
-			return stackencrypt.FieldPlan{}, false, fmt.Errorf("%w: Column(%q) pinned on a Plaintext field", ErrInvalid, d.column)
+			return none(fmt.Errorf("%w: Column(%q) pinned on a Plaintext field", ErrInvalid, d.column))
 		}
-		return stackencrypt.FieldPlan{}, false, nil
+		if d.identity != "" {
+			return none(fmt.Errorf("%w: Identity(%q) pinned on a Plaintext field", ErrInvalid, d.identity))
+		}
+		return none(nil)
 	case fail:
-		return stackencrypt.FieldPlan{}, false, fmt.Errorf("%w: %s", ErrRefused, d.reason)
+		return none(fmt.Errorf("%w: %s", ErrRefused, d.reason))
 	default:
-		return stackencrypt.FieldPlan{}, false, fmt.Errorf("%w: the zero Decision", ErrInvalid)
+		return none(fmt.Errorf("%w: the zero Decision", ErrInvalid))
 	}
 	if d.target == nil {
-		return stackencrypt.FieldPlan{}, false, fmt.Errorf("%w: Encrypt with no target", ErrInvalid)
+		return none(fmt.Errorf("%w: Encrypt with no target", ErrInvalid))
 	}
 	column := f.Field
 	if d.column != "" {
 		column = d.column
 	}
 	if column == "" {
-		return stackencrypt.FieldPlan{}, false, fmt.Errorf("%w: the field has no name to store it under", ErrInvalid)
+		return none(fmt.Errorf("%w: the field has no name to store it under", ErrInvalid))
 	}
-	// A '/' in the column would make an identity-shaped context ambiguous
-	// ("a/b" under "t" reads as "a" under "t/b" would). A Custom target's
-	// context is its own, and its column is only the record key.
-	if _, custom := d.target.(customTarget); !custom && strings.Contains(column, "/") {
-		return stackencrypt.FieldPlan{}, false, fmt.Errorf("%w: column %q contains '/', which would make its identity ambiguous", ErrInvalid, column)
+	_, custom := d.target.(customTarget)
+	identity := column
+	if custom {
+		// A Custom target's context is its own: there is no identity to
+		// pin, and a pin would read as if it took effect.
+		if d.identity != "" {
+			return none(fmt.Errorf("%w: Identity(%q) on %v, whose context is fixed", ErrInvalid, d.identity, d.target))
+		}
+		identity = ""
+	} else if d.identity != "" {
+		identity = d.identity
 	}
-	context := d.target.Context(Identifier{Table: string(m.table), Column: column})
+	// A '/' in an EQL column would make an identity-shaped context
+	// ambiguous ("a/b" under "t" reads as "a" under "t/b" would), and the
+	// column is the identity until the day it is renamed. A Custom
+	// target's column is only the record key.
+	if !custom {
+		for _, name := range []string{column, identity} {
+			if strings.Contains(name, "/") {
+				return none(fmt.Errorf("%w: column %q contains '/', which would make its identity ambiguous", ErrInvalid, name))
+			}
+		}
+	}
+	context := d.target.Context(Identifier{Table: string(m.table), Column: identity})
 	if context == "" {
-		return stackencrypt.FieldPlan{}, false, fmt.Errorf("%w: target %v gives an empty context", ErrInvalid, d.target)
+		return none(fmt.Errorf("%w: target %v gives an empty context", ErrInvalid, d.target))
 	}
 	return stackencrypt.FieldPlan{
 		Field:   f.goField(),
 		Name:    column,
 		Context: context,
 		Terms:   d.target.Terms(),
-	}, true, nil
+	}, identity, true, nil
 }
 
 func messageName(m Message, facts []Fact) string {

@@ -9,10 +9,12 @@ import (
 )
 
 // Identifier is a field's column identity: the table its message is
-// stored in and the column it encrypts into. For an EQL target it is the
-// field's encryption context, so it is fixed at first write and must never
-// change — which is why the table is given, never derived from a message
-// name, and why a rule can pin the column ([Column]) across renames.
+// stored in and the column its data was first written to. For an EQL
+// target it is the field's encryption context, so it is fixed at first
+// write and must never change — which is why the table is given, never
+// derived from a message name, and why a rule can pin the column half
+// ([Identity]) apart from the column the value is stored in ([Column])
+// once the database column is renamed.
 type Identifier struct {
 	Table  string
 	Column string
@@ -94,10 +96,11 @@ const (
 // target, leave it plaintext, or refuse it. Build one with [Encrypt],
 // [Plaintext] or [Fail].
 type Decision struct {
-	verdict verdict
-	target  Target
-	reason  string
-	column  string
+	verdict  verdict
+	target   Target
+	reason   string
+	column   string
+	identity string
 }
 
 // Encrypt decides that the field is encrypted into target.
@@ -114,8 +117,13 @@ func Fail(reason string) Decision { return Decision{verdict: fail, reason: reaso
 // Target returns the decision's target, and whether it encrypts at all.
 func (d Decision) Target() (Target, bool) { return d.target, d.verdict == encrypt }
 
-// Column returns the column the decision pins, or "" for the field's own.
+// Column returns the column the decision stores the field in, or "" for
+// the field's own name.
 func (d Decision) Column() string { return d.column }
+
+// Identity returns the column half of the identity the decision pins, or
+// "" for the effective column's (see [Identity]).
+func (d Decision) Identity() string { return d.identity }
 
 // String spells the decision for tests and errors.
 func (d Decision) String() string {
@@ -132,6 +140,9 @@ func (d Decision) String() string {
 	}
 	if d.column != "" {
 		s += fmt.Sprintf(" Column(%q)", d.column)
+	}
+	if d.identity != "" {
+		s += fmt.Sprintf(" Identity(%q)", d.identity)
 	}
 	return s
 }
@@ -171,19 +182,44 @@ func FirstOf(policies ...Policy) Policy {
 // RuleOption adjusts the decision a [When] rule makes.
 type RuleOption func(*Decision)
 
-// Column pins the column an encrypted field is stored under: its record
-// name and, for an EQL target, the column half of its context. The pin is
-// the column's identity, which may differ from the field's name after a
-// field rename, and from the column's current name after a database
-// rename: stored payloads keep the identity they were written under. Only
-// meaningful with [Encrypt]; building a plan refuses it elsewhere. An
-// empty name is a programming error and panics: a pin that is not there
-// would silently bind the field's own name instead.
+// Column names the column an encrypted field is stored in: its record
+// key ([stackencrypt.FieldPlan.Name]). It defaults to the field's schema
+// name, so a rule needs it only when the two differ — after the field is
+// renamed in the schema, say. For an EQL target, the column also sets the
+// field's identity unless [Identity] pins another: on a field never
+// renamed in the database, Column alone is enough. Only meaningful with
+// [Encrypt]; building a plan refuses it elsewhere. An empty name is a
+// programming error and panics: a pin that is not there would silently
+// store the field under its own name instead.
 func Column(name string) RuleOption {
 	if name == "" {
 		panic("plan.Column: empty column name")
 	}
 	return func(d *Decision) { d.column = name }
+}
+
+// Identity pins the column half of an EQL field's identity
+// ([Identifier]), and so its context "<table>/<column>": the AAD bound to
+// every stored ciphertext, its ZeroKMS data-key binding and its terms' PRF
+// context. It defaults to the effective [Column], so a field whose
+// database column has never been renamed needs no Identity.
+//
+// Once data is written, a field's identity must never change: rows
+// written under the old one would no longer decrypt, and their terms would
+// no longer match queries. A database rename (ALTER TABLE ... RENAME
+// COLUMN) is therefore spelled as the new column and the old identity:
+//
+//	plan.When(plan.Field("medicare_no"), plan.Encrypt(plan.EQL(stackencrypt.Equality)),
+//	    plan.Column("medicare_no"), plan.Identity("medicare_number"))
+//
+// Only meaningful with an EQL [Encrypt]: a [Custom] target's context is
+// its own, and building a plan refuses Identity there and on [Plaintext].
+// An empty name is a programming error and panics, as for [Column].
+func Identity(name string) RuleOption {
+	if name == "" {
+		panic("plan.Identity: empty column name")
+	}
+	return func(d *Decision) { d.identity = name }
 }
 
 // When decides d for the fields m matches, and matches nothing else.
