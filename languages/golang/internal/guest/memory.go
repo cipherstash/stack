@@ -1,7 +1,6 @@
 package guest
 
 import (
-	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -310,10 +309,6 @@ func (m *heapMemory) free() {
 	clear(m.buf[:cap(m.buf)])
 	m.buf = nil
 }
-
-// errNoLockSupport is the heap fallback's reason on platforms where this
-// package has no lock implementation.
-var errNoLockSupport = errors.New("guest memory cannot be locked on this platform")
 
 // MemoryLockError wraps a lock refusal as ErrMemoryLock.
 func MemoryLockError(err error) error {

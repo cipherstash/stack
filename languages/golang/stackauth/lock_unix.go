@@ -36,6 +36,6 @@ func withRefreshLock(ctx context.Context, path string, run func() error) error {
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
-	defer unix.Flock(int(f.Fd()), unix.LOCK_UN)
+	defer func() { _ = unix.Flock(int(f.Fd()), unix.LOCK_UN) }()
 	return run()
 }

@@ -158,7 +158,7 @@ func TestOIDCFederationResolvesTheKeyLikeAuto(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resolved.Close()
+	defer func() { _ = resolved.Close() }()
 	if resolved.ClientID != profileClientID || guest.KeyBytes(resolved.ClientKey) == nil {
 		t.Errorf("ClientID = %q, want the profile's", resolved.ClientID)
 	}
@@ -190,7 +190,7 @@ func TestOIDCFederationTakesStrategyOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resolved.Close()
+	defer func() { _ = resolved.Close() }()
 	resolved.ClientKey.Wipe()
 	if got := token(t, resolved); got != auth.jwt {
 		t.Fatalf("token = %q, want the pinned CTS's", got)

@@ -1,0 +1,20 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  exclusions:
+    presets:
+      # Unchecked Close, Flush, fmt.Fprint* and friends.
+      - std-error-handling
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
