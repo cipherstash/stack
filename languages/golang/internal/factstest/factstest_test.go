@@ -13,11 +13,11 @@ import (
 // not follow forever.
 type (
 	list struct {
-		*list
+		*list //nolint:unused // the recursion is the point
 		Value string
 	}
 	node struct {
-		*node
+		*node         //nolint:unused // the recursion is the point
 		Secret string `facts:"a=x"`
 	}
 )
