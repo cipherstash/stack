@@ -2,11 +2,21 @@ error[E0277]: the trait bound `AnyKeyset<'a, K>: target::pending::sealed::Sealed
   --> tests/ui/foreign_cipher_scope.rs:11:36
    |
 11 | impl<'a, K> CipherScope<'a, K> for AnyKeyset<'a, K> {
-   |                                    ^^^^^^^^^^^^^^^^ the trait `target::pending::sealed::Sealed` is not implemented for `AnyKeyset<'a, K>`
+   |                                    ^^^^^^^^^^^^^^^^ unsatisfied trait bound
    |
-   = help: the following other types implement trait `target::pending::sealed::Sealed`:
-             &KeysetCipher<'_, K>
-             &StackCipher<K>
+help: the trait `target::pending::sealed::Sealed` is not implemented for `AnyKeyset<'a, K>`
+  --> tests/ui/foreign_cipher_scope.rs:9:1
+   |
+ 9 | struct AnyKeyset<'a, K>(&'a StackCipher<K>, Uuid);
+   | ^^^^^^^^^^^^^^^^^^^^^^^
+   = note: `AnyKeyset<'a, K>` implements similarly named trait `unicode_width::private::Sealed`, but not `target::pending::sealed::Sealed`
+help: the following other types implement trait `target::pending::sealed::Sealed`
+  --> src/target/pending.rs
+   |
+   |     impl<K> Sealed for &crate::StackCipher<K> {}
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&StackCipher<K>`
+   |     impl<K> Sealed for &crate::KeysetCipher<'_, K> {}
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&KeysetCipher<'_, K>`
 note: required by a bound in `CipherScope`
   --> src/target/pending.rs
    |
