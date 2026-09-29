@@ -119,7 +119,7 @@ func (t *transport) perform(ctx context.Context, mem api.Memory,
 	reqBody := newRequestBody(body)
 	req, err := http.NewRequestWithContext(ctx, string(method), string(url), reqBody)
 	if err != nil {
-		reqBody.Close()
+		_ = reqBody.Close()
 		return transportFailed, nil, []byte(err.Error())
 	}
 	// NewRequest only infers a length from the readers it knows; without
