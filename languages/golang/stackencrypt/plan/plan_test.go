@@ -374,14 +374,19 @@ func TestCombinatorsRefuseNilAndCopyTheirMatchers(t *testing.T) {
 		"Any": func() { plan.Any(plan.Field("a"), unset) },
 		"All": func() { plan.All(unset) },
 		"Not": func() { plan.Not(unset) },
+		// With no matchers, All would match every field and Any none: a
+		// rule built from an empty slice would silently decide everything
+		// or nothing.
+		"Any()": func() { plan.Any() },
+		"All()": func() { plan.All([]plan.Matcher{}...) },
 	} {
 		func() {
 			defer func() {
 				r := recover()
 				if r == nil {
-					t.Errorf("%s(nil) did not panic", name)
-				} else if !strings.Contains(fmt.Sprint(r), "plan."+name) {
-					t.Errorf("%s(nil) panicked with %v, which does not name it", name, r)
+					t.Errorf("%s did not panic", name)
+				} else if !strings.Contains(fmt.Sprint(r), "plan."+strings.TrimSuffix(name, "()")) {
+					t.Errorf("%s panicked with %v, which does not name it", name, r)
 				}
 			}()
 			build()

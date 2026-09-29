@@ -75,8 +75,9 @@ func TestStructTags(t *testing.T) {
 		"tagged embedded field": {struct {
 			embedded `facts:"a=x"`
 		}{}, "embedded field"},
-		"tag inside an embedded struct": {struct{ taggedInner }{}, "Secret"},
-		"tag two embeddings deep":       {struct{ deeper }{}, "taggedInner.Secret"},
+		"tag inside an embedded struct":  {struct{ taggedInner }{}, "Secret"},
+		"tag two embeddings deep":        {struct{ deeper }{}, "taggedInner.Secret"},
+		"tag inside an embedded pointer": {struct{ *taggedInner }{}, "Secret"},
 	} {
 		_, err := factstest.StructTags.Facts(bad.msg)
 		if err == nil {

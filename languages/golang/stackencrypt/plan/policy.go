@@ -251,8 +251,8 @@ func Kind(kind string) Matcher {
 	return func(f Fact) bool { return f.Kind == kind }
 }
 
-// Any matches when at least one of ms does. A nil matcher is a
-// programming error and panics here, as it does in [When].
+// Any matches when at least one of ms does. A nil matcher, or none at
+// all, is a programming error and panics here, as it does in [When].
 func Any(ms ...Matcher) Matcher {
 	ms = matchers("plan.Any", ms)
 	return func(f Fact) bool {
@@ -260,8 +260,11 @@ func Any(ms ...Matcher) Matcher {
 	}
 }
 
-// All matches when every one of ms does. A nil matcher is a programming
-// error and panics here, as it does in [When].
+// All matches when every one of ms does. A nil matcher, or none at all,
+// is a programming error and panics here, as it does in [When]: with no
+// matchers All would match every field, so a rule built from a slice that
+// came back empty would decide every field below it. A policy that needs
+// a catch-all writes a final rule whose matcher says so.
 func All(ms ...Matcher) Matcher {
 	ms = matchers("plan.All", ms)
 	return func(f Fact) bool {
@@ -287,6 +290,9 @@ func Not(m Matcher) Matcher {
 // a later write to the caller's slice must not change the matcher, and a
 // nil found now names the combinator instead of crashing a build.
 func matchers(combinator string, ms []Matcher) []Matcher {
+	if len(ms) == 0 {
+		panic(combinator + ": no matchers; All() would match every field and Any() none")
+	}
 	for i, m := range ms {
 		if m == nil {
 			panic(fmt.Sprintf("%s: nil matcher at index %d", combinator, i))
