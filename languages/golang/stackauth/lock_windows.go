@@ -15,7 +15,7 @@ import (
 // Lock the same first 2^64-1 bytes stack-profile's Windows FileLockGuard
 // locks. OVERLAPPED offset zero makes the range identical.
 func withRefreshLock(ctx context.Context, path string, run func() error) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // path is inside the caller's profile directory
 	if err != nil {
 		return fmt.Errorf("stackauth: open refresh lock: %w", err)
 	}

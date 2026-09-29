@@ -95,7 +95,7 @@ func Resolve(ctx context.Context, opts ...Option) (*ProfileStore, error) {
 // mounted as the one directory the guest can see. Nothing is read until a
 // method asks; nothing is written unless a method writes.
 func Open(ctx context.Context, dir string, opts ...Option) (*ProfileStore, error) {
-	info, err := os.Stat(dir)
+	info, err := os.Stat(dir) //nolint:gosec // the caller chooses the profile directory
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s: %w", ErrNoProfile, dir, err)
 	}

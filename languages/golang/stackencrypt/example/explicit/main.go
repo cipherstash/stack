@@ -70,7 +70,7 @@ type secrets interface {
 type fileSecrets struct{ dir string }
 
 func (s fileSecrets) Get(_ context.Context, name string) ([]byte, error) {
-	b, err := os.ReadFile(filepath.Join(s.dir, name))
+	b, err := os.ReadFile(filepath.Join(s.dir, name)) //nolint:gosec // example reads the operator's mounted secrets
 	if err != nil {
 		return nil, fmt.Errorf("reading secret %q: %w", name, err)
 	}
