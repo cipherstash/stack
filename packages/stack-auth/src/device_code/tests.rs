@@ -222,6 +222,43 @@ async fn test_poll_for_token_success() {
     );
 }
 
+/// The device-code start and the token poll both go to CTS, whose edge
+/// refuses a request without a `user-agent` it accepts: each names the crate.
+/// The mocks answer only a request that carries it.
+#[tokio::test(start_paused = true)]
+async fn device_code_requests_identify_the_crate() {
+    let user_agent = format!(
+        "stack-auth/{} ({} {})",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+    );
+    let dir = TempDir::new().unwrap();
+    let mut mocks = MockSet::new();
+    let code_agent = user_agent.clone();
+    mocks.mock(move |when, then| {
+        when.post()
+            .path("/oauth/device/code")
+            .header("user-agent", code_agent);
+        then.json(device_code_json());
+    });
+    mocks.mock(move |when, then| {
+        when.post()
+            .path("/oauth/device/token")
+            .header("user-agent", user_agent);
+        then.json(token_json());
+    });
+    let server = start_server(mocks).await;
+
+    let token = begin_pending(&server, &dir)
+        .await
+        .poll_for_token()
+        .await
+        .unwrap();
+
+    assert_eq!(token.token_type(), "Bearer");
+}
+
 #[tokio::test(start_paused = true)]
 async fn test_poll_for_token_access_denied() {
     let dir = TempDir::new().unwrap();

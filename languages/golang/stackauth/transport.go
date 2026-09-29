@@ -35,6 +35,31 @@ func (f OIDCProviderFunc) Token(ctx context.Context) (string, error) { return f(
 
 const maxAuthResponseBytes = 16 << 20
 
+// authHTTPStatus records the status of the last HTTP response the transport
+// received during one guest call. Only a status code crosses the guest ABI,
+// so without it a refused exchange (the edge in front of CTS answering 403)
+// reaches the caller as a bare ErrAuthTransport. It lives on the call's
+// context, which wazero hands to the host import, so concurrent calls on
+// different profiles never see each other's status.
+type authHTTPStatus struct{ code int }
+
+type authHTTPStatusKey struct{}
+
+func withAuthHTTPStatus(ctx context.Context) (context.Context, *authHTTPStatus) {
+	status := &authHTTPStatus{}
+	return context.WithValue(ctx, authHTTPStatusKey{}, status), status
+}
+
+// wrap names the HTTP status of a refused exchange on an ErrAuthTransport
+// ("cipherstash: auth transport failed: HTTP 403"). The body is never
+// included: it may be an HTML error page, or echo a credential.
+func (s *authHTTPStatus) wrap(err error) error {
+	if err == nil || !errors.Is(err, ErrAuthTransport) || s.code == 0 || (s.code >= 200 && s.code < 300) {
+		return err
+	}
+	return fmt.Errorf("%w: HTTP %d", err, s.code)
+}
+
 type authTransport struct {
 	rt           http.RoundTripper
 	mu           sync.Mutex
@@ -102,6 +127,9 @@ func (t *authTransport) send(ctx context.Context, m api.Module,
 		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, []byte(err.Error()))
 	}
 	defer resp.Body.Close()
+	if status, ok := ctx.Value(authHTTPStatusKey{}).(*authHTTPStatus); ok {
+		status.code = resp.StatusCode
+	}
 	if resp.ContentLength > maxAuthResponseBytes {
 		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, []byte("auth response exceeds limit"))
 	}

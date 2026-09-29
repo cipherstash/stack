@@ -87,13 +87,14 @@
 //!
 //! Split into:
 //!
-//! - [`ops`], [`status`] — everything that is pure logic over a
+//! - [`ops`], [`status`], [`headers`] — everything that is pure logic over a
 //!   `ProfileStore` and bytes. Compiles and unit-tests on the native host
 //!   target (`cargo test` here) against a temporary directory.
 //! - [`auth`], [`host`] (wasm32 only) — stack-auth strategies and host HTTP.
 //! - [`abi`] (wasm32 only) — the export surface, over the conventions
 //!   every guest shares (`stack_guest_abi`).
 
+pub mod headers;
 pub mod ops;
 pub mod status;
 

@@ -167,6 +167,14 @@ func (s *Strategy) Token(ctx context.Context) (string, error) {
 	if s.closed {
 		return "", ErrState
 	}
+	ctx, status := withAuthHTTPStatus(ctx)
+	token, err := s.token(ctx)
+	return token, status.wrap(err)
+}
+
+// token is Token under the strategy's lock: a read, then a locked refresh
+// for a device session that needs one.
+func (s *Strategy) token(ctx context.Context) (string, error) {
 	call := func(export func(*instance) api.Function) (string, error) {
 		out, err := s.store.callArgs(ctx, export, guest.BufArg([]byte(s.handle)))
 		if err != nil {

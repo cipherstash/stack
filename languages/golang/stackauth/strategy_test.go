@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -83,6 +84,9 @@ func TestOIDCStrategyCallsProviderOnlyOnExchange(t *testing.T) {
 		}
 		if want := (map[string]any{"oidcToken": "idp-token", "workspaceId": "ZVATKW3VHMFG27DY"}); !reflect.DeepEqual(body, want) {
 			t.Errorf("request body = %#v, want %#v", body, want)
+		}
+		if ua := r.Header.Get("User-Agent"); !isStackAuthGoAgent(ua) {
+			t.Errorf("OIDC federation User-Agent = %q, want stack-auth/<version> (Go)", ua)
 		}
 		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, testJWT(t, "https://cts.example"), time.Now().Add(time.Hour).Unix())
 	}))
@@ -375,6 +379,9 @@ func TestDeviceRefreshLockPreventsReplay(t *testing.T) {
 		if r.URL.Path != "/oauth/token" {
 			t.Errorf("path: %s", r.URL.Path)
 		}
+		if ua := r.Header.Get("User-Agent"); !isStackAuthGoAgent(ua) {
+			t.Errorf("device-session refresh User-Agent = %q, want stack-auth/<version> (Go)", ua)
+		}
 		if err := r.ParseForm(); err != nil {
 			t.Error(err)
 		}
@@ -464,5 +471,107 @@ func TestDeviceRefreshReportsInvalidGrant(t *testing.T) {
 	_, err = strategy.Token(context.Background())
 	if !errors.Is(err, ErrInvalidGrant) {
 		t.Fatalf("Token error = %v, want ErrInvalidGrant", err)
+	}
+}
+
+// The edge in front of production CTS answers a request whose User-Agent is
+// Go's default (Go-http-client/1.1) with a bare nginx 403 before CTS sees
+// it, and Go's HTTP client fills that default in when a request carries
+// none. The access-key exchange must name stack-auth and the Go host.
+func TestAuthRequestsIdentifyTheLibraryNotGo(t *testing.T) {
+	guestOrSkip(t)
+	var agent atomic.Value
+	var jwt string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		agent.Store(r.Header.Get("User-Agent"))
+		if ua := r.Header.Get("User-Agent"); ua == "" || strings.HasPrefix(ua, "Go-http-client/") {
+			// What the production edge does, so the failure is the real one.
+			http.Error(w, "<html><center><h1>403 Forbidden</h1></center></html>", http.StatusForbidden)
+			return
+		}
+		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, jwt, time.Now().Add(time.Hour).Unix())
+	}))
+	defer server.Close()
+	jwt = testJWT(t, server.URL)
+	profile, err := Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profile.Close()
+	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithAuthBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strategy.Close()
+	got, err := strategy.Token(context.Background())
+	ua, _ := agent.Load().(string)
+	if err != nil || got != jwt {
+		t.Fatalf("Token = %q, %v (User-Agent %q)", got, err, ua)
+	}
+	if !isStackAuthGoAgent(ua) {
+		t.Fatalf("User-Agent = %q, want stack-auth/<version> (Go)", ua)
+	}
+}
+
+// isStackAuthGoAgent reports whether ua is the credential guest's own,
+// stack-auth/<version> (Go), and not Go's default Go-http-client/1.1.
+func isStackAuthGoAgent(ua string) bool {
+	version, ok := strings.CutPrefix(ua, "stack-auth/")
+	if !ok {
+		return false
+	}
+	version, ok = strings.CutSuffix(version, " (Go)")
+	return ok && version != "" && !strings.ContainsAny(version, " ()")
+}
+
+// Only a status code crosses the guest ABI, so a refused exchange must still
+// say which HTTP status refused it, and never carry the response body.
+func TestAuthTransportErrorNamesTheHTTPStatusNotTheBody(t *testing.T) {
+	guestOrSkip(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, "<html><h1>403 Forbidden</h1>nginx CSAKtestKeyId.testKeySecret</html>")
+	}))
+	defer server.Close()
+	profile, err := Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profile.Close()
+	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithAuthBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strategy.Close()
+	_, err = strategy.Token(context.Background())
+	if !errors.Is(err, ErrAuthTransport) {
+		t.Fatalf("Token error = %v, want ErrAuthTransport", err)
+	}
+	if want := "cipherstash: auth transport failed: HTTP 403"; err.Error() != want {
+		t.Fatalf("Token error = %q, want %q", err, want)
+	}
+}
+
+// A transport failure with no HTTP response at all stays the bare sentinel:
+// there is no status to name.
+func TestAuthTransportErrorWithoutAResponseNamesNoStatus(t *testing.T) {
+	guestOrSkip(t)
+	server := httptest.NewServer(http.NotFoundHandler())
+	addr := server.URL
+	server.Close()
+	profile, err := Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profile.Close()
+	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithAuthBaseURL(addr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strategy.Close()
+	_, err = strategy.Token(context.Background())
+	if !errors.Is(err, ErrAuthTransport) || strings.Contains(err.Error(), "HTTP") {
+		t.Fatalf("Token error = %v, want a bare ErrAuthTransport", err)
 	}
 }

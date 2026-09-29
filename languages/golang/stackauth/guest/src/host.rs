@@ -7,8 +7,10 @@ use std::io;
 use stack_auth::{
     AuthError, HttpRequest, HttpResponse, HttpTransport, OidcProvider, RequestError, SecretToken,
 };
-use stack_guest_abi::{buffers, headers, transport};
+use stack_guest_abi::{buffers, transport};
 use zeroize::Zeroizing;
+
+use crate::headers::request_headers;
 
 #[link(wasm_import_module = "cipherstash_transport")]
 extern "C" {
@@ -23,12 +25,9 @@ pub struct WasiAuthTransport;
 
 impl HttpTransport for WasiAuthTransport {
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, RequestError> {
-        let pairs: Vec<(&str, &str)> = request
-            .headers()
-            .iter()
-            .map(|(name, value)| (name.as_str(), value.as_str()))
-            .collect();
-        let wire_headers = Zeroizing::new(headers::encode_headers(&pairs));
+        // stack-auth's headers, naming this host in the `user-agent`: the
+        // edge in front of CTS refuses Go's default one (see `headers`).
+        let wire_headers = Zeroizing::new(request_headers(request.headers()));
         let response = transport::send(
             request.method(),
             request.url().as_str(),

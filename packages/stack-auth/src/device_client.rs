@@ -13,15 +13,6 @@ use crate::error::RequestError;
 use crate::transport::{self, ReqwestTransport};
 use crate::{ensure_trailing_slash, ServiceToken, Token};
 
-fn user_agent() -> String {
-    format!(
-        "stack-auth/{} ({} {})",
-        env!("CARGO_PKG_VERSION"),
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-    )
-}
-
 // ---------------------------------------------------------------------------
 // Secret key file (output)
 // ---------------------------------------------------------------------------
@@ -111,13 +102,12 @@ pub async fn bind_client_device(store: &ProfileStore) -> Result<(), DeviceClient
         &transport::share(ReqwestTransport::default()),
         url,
         "application/json",
-        vec![
-            ("user-agent".to_string(), user_agent()),
-            (
-                "authorization".to_string(),
-                format!("Bearer {}", service_token.as_str()),
-            ),
-        ],
+        // The shared transport adds `content-type` and the crate's
+        // `user-agent`: ZeroKMS sees which client build provisioned the device.
+        vec![(
+            "authorization".to_string(),
+            format!("Bearer {}", service_token.as_str()),
+        )],
         body,
     )
     .await?;

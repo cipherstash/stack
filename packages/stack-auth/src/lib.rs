@@ -115,6 +115,13 @@ pub use token_store::{InMemoryTokenStore, NoStore, TokenStore, TokenStoreFn};
 pub use transport::ReqwestTransport;
 pub use transport::{HttpRequest, HttpResponse, HttpTransport};
 
+/// This crate's version: the product token in the `user-agent` every
+/// request it builds carries (`stack-auth/<version> (<os> <arch>)`). A host
+/// transport that replaces that value with one naming itself (the Go
+/// binding's guest sends `stack-auth/<version> (Go)`) reads the version
+/// here, so the product token means the same thing from every host.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Deprecated alias for [`DeviceSessionStrategy`].
 ///
 /// Renamed to make the *renewal* (existing CTS session) vs *federation*
