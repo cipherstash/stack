@@ -128,6 +128,10 @@ func (t *authTransport) send(ctx context.Context, m api.Module,
 		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, []byte(err.Error()))
 	}
 	defer resp.Body.Close()
+	// A caller's RoundTripper can return any int; the guest gets an i32.
+	if resp.StatusCode < 100 || resp.StatusCode > 999 {
+		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, fmt.Appendf(nil, "invalid HTTP status %d", resp.StatusCode))
+	}
 	if status, ok := ctx.Value(authHTTPStatusKey{}).(*authHTTPStatus); ok {
 		status.code = resp.StatusCode
 	}
@@ -143,7 +147,7 @@ func (t *authTransport) send(ctx context.Context, m api.Module,
 	if len(responseBody) > maxAuthResponseBytes {
 		return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, -1, nil, []byte("auth response exceeds limit"))
 	}
-	return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, int32(resp.StatusCode), encodeAuthHeaders(resp.Header), responseBody)
+	return t.placeResponse(ctx, m, respHeadersPtrOut, respHeadersLenOut, respBodyPtrOut, respBodyLenOut, int32(resp.StatusCode), encodeAuthHeaders(resp.Header), responseBody) //nolint:gosec // range-checked above
 }
 
 func (t *authTransport) placeResponse(ctx context.Context, m api.Module,

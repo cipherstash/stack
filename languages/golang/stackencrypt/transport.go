@@ -131,6 +131,10 @@ func (t *transport) perform(ctx context.Context, mem api.Memory,
 		return transportFailed, nil, []byte(err.Error())
 	}
 	defer resp.Body.Close()
+	// A caller's RoundTripper can return any int; the guest gets an i32.
+	if resp.StatusCode < 100 || resp.StatusCode > 999 {
+		return transportFailed, nil, fmt.Appendf(nil, "invalid HTTP status %d", resp.StatusCode)
+	}
 	if resp.ContentLength > maxResponseBytes {
 		return transportFailed, nil, fmt.Appendf(nil, "response of %d bytes exceeds the %d-byte limit", resp.ContentLength, maxResponseBytes)
 	}
@@ -148,7 +152,7 @@ func (t *transport) perform(ctx context.Context, mem api.Memory,
 		wipe(respBody)
 		return transportFailed, nil, fmt.Appendf(nil, "response exceeds the %d-byte limit", maxResponseBytes)
 	}
-	return int32(resp.StatusCode), encodeHeaders(resp.Header), respBody
+	return int32(resp.StatusCode), encodeHeaders(resp.Header), respBody //nolint:gosec // range-checked above
 }
 
 // requestBody is the io.ReadCloser a guest request goes out as. It owns

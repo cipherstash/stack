@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -315,6 +316,33 @@ func TestOversizedResponseIsTransport(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg := testConfig("http://zerokms.invalid")
 			cfg = append(cfg, WithTransport(rt))
+			_, err := NewClient(context.Background(), cfg...)
+			if !errors.Is(err, ErrTransport) {
+				t.Fatalf("NewClient: %v, want ErrTransport", err)
+			}
+		})
+	}
+}
+
+// A status that would wrap in the guest's i32 — here to 200 — is refused
+// as a transport failure.
+func TestOutOfRangeStatusIsTransport(t *testing.T) {
+	guestOrSkip(t)
+	cases := map[string]int{"negative": -200, "two digits": 99}
+	if strconv.IntSize == 64 {
+		wraps := int64(1<<32 + 200)
+		cases["wraps to 200"] = int(wraps)
+	}
+	for name, status := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := testConfig("http://zerokms.invalid")
+			cfg = append(cfg, WithTransport(roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: status,
+					Header:     http.Header{"Content-Type": {"application/json"}},
+					Body:       io.NopCloser(strings.NewReader("{}")),
+				}, nil
+			})))
 			_, err := NewClient(context.Background(), cfg...)
 			if !errors.Is(err, ErrTransport) {
 				t.Fatalf("NewClient: %v, want ErrTransport", err)
