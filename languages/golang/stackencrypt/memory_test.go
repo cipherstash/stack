@@ -4,12 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/tetratelabs/wazero/api"
 	"net/http"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/tetratelabs/wazero/api"
 
 	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
 	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guesttest"

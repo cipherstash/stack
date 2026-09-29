@@ -39,6 +39,6 @@ func withRefreshLock(ctx context.Context, path string, run func() error) error {
 		case <-time.After(20 * time.Millisecond):
 		}
 	}
-	defer windows.UnlockFileEx(h, 0, 0xffffffff, 0xffffffff, &overlap)
+	defer func() { _ = windows.UnlockFileEx(h, 0, 0xffffffff, 0xffffffff, &overlap) }()
 	return run()
 }

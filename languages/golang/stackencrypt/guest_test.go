@@ -796,7 +796,7 @@ func TestClientKeyDoesNotRemainInGuestMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer inst.release()
+	defer func() { _ = inst.release() }()
 	_, err = inst.call(ctx, inst.cipherInit, buf(encoded))
 	if !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("init: %v", err)
@@ -831,7 +831,7 @@ func TestTransportSendCounterAndResponseHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer inst.release()
+	defer func() { _ = inst.release() }()
 	encoded, _ := encodeConfig(testInit(stub.URL))
 	if _, err := inst.call(ctx, inst.cipherInit, buf(encoded)); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("init: %v", err)

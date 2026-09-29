@@ -147,6 +147,25 @@ jobs:
           echo "RLIMIT_MEMLOCK: $(ulimit -l) KiB"
           mise run go:test
 
+  # Linux only: macOS and Windows would report the same findings. Files
+  # behind a windows or darwin build tag are not seen here; lint them
+  # locally with GOOS set. Needs no guests: the packages embed a directory
+  # and compile without them.
+  go-lint:
+    name: Go lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: jdx/mise-action@v4
+        with:
+          install_args: go golangci-lint
+          cache: true
+
+      - name: golangci-lint
+        run: mise run go:lint
+
   # The same Go binding on macOS and Windows, against the guest Linux built.
   # The credential guest's Go-side refresh lock has Unix and Windows
   # implementations. The shared go-binding-test.sh prints the device refresh
