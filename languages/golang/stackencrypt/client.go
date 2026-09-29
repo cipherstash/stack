@@ -74,6 +74,11 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	if rt == nil {
 		rt = http.DefaultTransport
 	}
+	// Credentials a later WithCredentials replaced are never resolved, but
+	// an explicit key in them is still the client's to consume.
+	for _, c := range cfg.superseded {
+		consumeUnresolved(c)
+	}
 	creds := cfg.credentials
 	if creds == nil {
 		creds = AutoCredentials()

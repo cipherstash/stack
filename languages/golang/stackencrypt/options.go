@@ -9,7 +9,11 @@ type ClientOption func(*clientOptions)
 
 // clientOptions is what the options set. Every zero value is the default.
 type clientOptions struct {
-	credentials         Credentials
+	credentials Credentials
+	// superseded is every earlier WithCredentials a later one replaced.
+	// NewClient consumes them too: a key handed to WithCredentials is
+	// wiped whichever option wins.
+	superseded          []Credentials
 	zerokmsURL          string
 	keysetCacheSize     int
 	transport           http.RoundTripper
@@ -26,9 +30,15 @@ type clientOptions struct {
 // wipes the key, and wipes the buffer once the guest has the key, so after
 // NewClient returns — whatever the outcome, a configuration it refused
 // included — the key is empty and the bytes it was built from are zero. A
-// key is for one client.
+// key is for one client. That holds for credentials a later WithCredentials
+// replaces as well: they are consumed, not left holding a live key.
 func WithCredentials(c Credentials) ClientOption {
-	return func(o *clientOptions) { o.credentials = c }
+	return func(o *clientOptions) {
+		if o.credentials != nil {
+			o.superseded = append(o.superseded, o.credentials)
+		}
+		o.credentials = c
+	}
 }
 
 // WithZeroKMSURL pins the ZeroKMS endpoint. Without it, CS_ZEROKMS_HOST (or

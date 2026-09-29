@@ -57,7 +57,6 @@ Everything else is a functional option, and each has a default:
 ```go
 client, err := stackencrypt.NewClient(ctx,
     stackencrypt.WithCredentials(stackencrypt.OIDCFederation(crn, provider)),
-    stackencrypt.WithZeroKMSURL("https://zerokms.example"),
     stackencrypt.WithTransport(rt),
     stackencrypt.WithKeysetCacheSize(4096),
     stackencrypt.WithRequireLockedMemory(),

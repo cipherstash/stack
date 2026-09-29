@@ -32,9 +32,8 @@ cd bindings/go && go run ./stackencrypt/example/explicit -secrets-dir ... -clien
 ```
 
 Optional flags: `-cts-host` pins the authentication endpoint (default: from
-the workspace CRN), `-zerokms-url` pins ZeroKMS (default: from the token),
-and `-require-locked-memory` refuses to run on memory that cannot be locked
-in RAM.
+the workspace CRN), and `-require-locked-memory` refuses to run on memory
+that cannot be locked in RAM. The ZeroKMS endpoint comes from the token.
 
 ## What it shows
 

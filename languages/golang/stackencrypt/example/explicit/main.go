@@ -38,7 +38,6 @@ type config struct {
 	clientID            string
 	workspaceCRN        string
 	ctsHost             string
-	zerokmsURL          string
 	requireLockedMemory bool
 }
 
@@ -48,7 +47,6 @@ func main() {
 	flag.StringVar(&cfg.clientID, "client-id", "", "the ZeroKMS client id (not a secret)")
 	flag.StringVar(&cfg.workspaceCRN, "workspace-crn", "", "the workspace the access key belongs to")
 	flag.StringVar(&cfg.ctsHost, "cts-host", "", "pin the authentication endpoint (default: from the workspace CRN)")
-	flag.StringVar(&cfg.zerokmsURL, "zerokms-url", "", "pin the ZeroKMS endpoint (default: from the token)")
 	flag.BoolVar(&cfg.requireLockedMemory, "require-locked-memory", false, "refuse to run on memory that cannot be locked in RAM")
 	flag.Parse()
 	if cfg.clientID == "" || cfg.workspaceCRN == "" {
@@ -124,9 +122,6 @@ func run(ctx context.Context, cfg config, secrets secrets) error {
 	creds := stackencrypt.NewCredentials(cfg.clientID, stackencrypt.NewClientKey(keyMaterial), strategy)
 
 	opts := []stackencrypt.ClientOption{stackencrypt.WithCredentials(creds)}
-	if cfg.zerokmsURL != "" {
-		opts = append(opts, stackencrypt.WithZeroKMSURL(cfg.zerokmsURL))
-	}
 	if cfg.requireLockedMemory {
 		opts = append(opts, stackencrypt.WithRequireLockedMemory())
 	}

@@ -57,6 +57,37 @@ func TestLaterZeroKMSURLWins(t *testing.T) {
 	}
 }
 
+// A WithCredentials a later one replaces is never resolved, but its key is
+// still consumed: wiped, and its credentials refused if reused. That holds
+// whether the replacement is other credentials or nil, the default.
+func TestLaterCredentialsConsumeTheOnesTheyReplace(t *testing.T) {
+	guestOrSkip(t)
+	for name, later := range map[string]func(*testing.T) Credentials{
+		"other credentials": func(*testing.T) Credentials { return testCredentials(staticToken("stub-token")) },
+		"nil": func(t *testing.T) Credentials {
+			cleanEnv(t, filepath.Join(t.TempDir(), "absent"))
+			return nil
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := newStub(t, http.StatusUnauthorized, "", "nope")
+			key := NewClientKey([]byte(testClientKey))
+			replaced := newTestCredentials(testClientID, key, staticToken("stub-token"))
+			_, _ = NewClient(context.Background(),
+				WithCredentials(replaced),
+				WithCredentials(later(t)),
+				WithZeroKMSURL(stub.URL),
+			)
+			if !key.IsZero() {
+				t.Error("the replaced credentials' key still holds material")
+			}
+			if _, err := NewClient(context.Background(), WithCredentials(replaced), WithZeroKMSURL(stub.URL)); !errors.Is(err, ErrCredentialsConsumed) {
+				t.Errorf("reusing the replaced credentials: %v, want ErrCredentialsConsumed", err)
+			}
+		})
+	}
+}
+
 // A later WithKeysetCacheSize replaces an earlier one before anything is
 // checked: a negative size overridden by zero, the default, is accepted,
 // and the client goes on to ZeroKMS.
