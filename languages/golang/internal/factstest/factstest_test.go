@@ -9,6 +9,19 @@ import (
 	"github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt/plan"
 )
 
+// Recursive embeddings, legal in Go, which a scan of embedded structs must
+// not follow forever.
+type (
+	list struct {
+		*list
+		Value string
+	}
+	node struct {
+		*node
+		Secret string `facts:"a=x"`
+	}
+)
+
 func TestStructTags(t *testing.T) {
 	type embedded struct{ Inner string }
 	type row struct {
@@ -71,6 +84,14 @@ func TestStructTags(t *testing.T) {
 		} else if !strings.Contains(err.Error(), bad.say) {
 			t.Errorf("%s: err = %q, want it to say %q", name, err, bad.say)
 		}
+	}
+	// A recursive embedding terminates, and is not a fact: the embedded
+	// copy's fields are the struct's own, tagged or not.
+	if facts, err := factstest.StructTags.Facts(list{}); err != nil || len(facts) != 1 || facts[0].GoField != "Value" {
+		t.Errorf("recursive embedding: facts %+v, %v; want Value alone", facts, err)
+	}
+	if facts, err := factstest.StructTags.Facts(node{}); err != nil || len(facts) != 1 || facts[0].GoField != "Secret" || len(facts[0].Annotations) != 1 {
+		t.Errorf("recursive embedding beside a tag: facts %+v, %v; want Secret alone, classified", facts, err)
 	}
 	// The schema spelling of a Go field name.
 	type spelled struct {

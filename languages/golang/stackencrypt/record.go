@@ -308,6 +308,9 @@ func (p Plan) Validate(t reflect.Type) error {
 		_, err := PlanFromTags(t)
 		return err
 	}
+	if t == nil {
+		return errors.New("stackencrypt: records must be structs, not a nil type")
+	}
 	_, err := p.bind(t)
 	return err
 }

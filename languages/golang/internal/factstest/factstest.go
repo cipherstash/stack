@@ -49,7 +49,7 @@ func structFacts(msg any) ([]plan.Fact, error) {
 	for i := 0; i < t.NumField(); i++ {
 		sf := t.Field(i)
 		if !sf.IsExported() || sf.Anonymous {
-			if err := refuseUnbindableTag(sf); err != nil {
+			if err := refuseUnbindableTag(t, sf); err != nil {
 				return nil, fmt.Errorf("factstest: %s.%s: %w", t, sf.Name, err)
 			}
 			continue
@@ -73,11 +73,13 @@ func structFacts(msg any) ([]plan.Fact, error) {
 	return facts, nil
 }
 
-// refuseUnbindableTag is the error for a `facts` tag on a field a plan
-// cannot bind: an unexported or embedded field, or any field of an
-// embedded struct, however deep. The tag says the field is classified;
-// dropping it would store the field in plaintext with no rule ever asked.
-func refuseUnbindableTag(sf reflect.StructField) error {
+// refuseUnbindableTag is the error for a `facts` tag on a field sf of
+// outer that a plan cannot bind: an unexported or embedded field, or any
+// field of an embedded struct, however deep. The tag says the field is
+// classified; dropping it would store the field in plaintext with no rule
+// ever asked. A struct that embeds itself (`type Node struct { *Node; ...
+// }`) is not searched again: its fields are outer's own, already read.
+func refuseUnbindableTag(outer reflect.Type, sf reflect.StructField) error {
 	if sf.Tag.Get("facts") != "" {
 		if sf.Anonymous {
 			return errors.New("a facts tag on an embedded field, which a plan cannot bind")
@@ -87,7 +89,7 @@ func refuseUnbindableTag(sf reflect.StructField) error {
 	if !sf.Anonymous {
 		return nil
 	}
-	if tagged := firstFactsTag(sf.Type); tagged != "" {
+	if tagged := firstFactsTag(sf.Type, []reflect.Type{outer}); tagged != "" {
 		return fmt.Errorf("embedded %s has a facts tag on %s, which a plan cannot bind; make it a direct field", sf.Type, tagged)
 	}
 	return nil
@@ -95,21 +97,24 @@ func refuseUnbindableTag(sf reflect.StructField) error {
 
 // firstFactsTag names the first field of t (a struct, through one
 // pointer), or of a struct embedded in it, that carries a facts tag; ""
-// when none does.
-func firstFactsTag(t reflect.Type) string {
+// when none does. seen is the structs already on the path down: an
+// embedding can be recursive (`type Node struct { *Node; ... }`), and a
+// struct already being searched has nothing new to find.
+func firstFactsTag(t reflect.Type, seen []reflect.Type) string {
 	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
-	if t.Kind() != reflect.Struct {
+	if t.Kind() != reflect.Struct || slices.Contains(seen, t) {
 		return ""
 	}
+	seen = append(seen, t)
 	for i := 0; i < t.NumField(); i++ {
 		sf := t.Field(i)
 		if sf.Tag.Get("facts") != "" {
 			return sf.Name
 		}
 		if sf.Anonymous {
-			if name := firstFactsTag(sf.Type); name != "" {
+			if name := firstFactsTag(sf.Type, seen); name != "" {
 				return sf.Name + "." + name
 			}
 		}

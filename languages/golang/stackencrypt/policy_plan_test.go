@@ -3,12 +3,27 @@ package stackencrypt_test
 import (
 	"bytes"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/factstest"
 	se "github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt"
 	"github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt/plan"
 )
+
+// Validate refuses a nil type as PlanFromTags does, for the zero plan
+// and a built one alike, rather than dereferencing it.
+func TestValidateRefusesANilType(t *testing.T) {
+	built, err := se.NewPlan(se.FieldPlan{Field: "A", Context: "t/a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, p := range map[string]se.Plan{"zero": {}, "built": built} {
+		if err := p.Validate(nil); err == nil || !strings.Contains(err.Error(), "nil type") {
+			t.Errorf("%s plan: Validate(nil) = %v, want an error naming the nil type", name, err)
+		}
+	}
+}
 
 // A plan a policy builds is a Plan like any other: the guest receives
 // byte-identical input to the equivalent plan built by hand. This test is
