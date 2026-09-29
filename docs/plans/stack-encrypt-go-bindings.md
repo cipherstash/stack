@@ -487,11 +487,13 @@ probe, _ := cipher.Term(ctx, uint32(34), "users/age", stackencrypt.Equality)
   `zerokms-server` against the mock auth server, mints a token, seeds a
   client + keyset, then `CGO_ENABLED=0 go test ./...` in
   `bindings/go/stackencrypt`. It exports `STACK_ENCRYPT_TEST_CLIENT_ID`,
-  `STACK_ENCRYPT_TEST_CLIENT_KEY`, `STACK_ENCRYPT_TEST_ACCESS_TOKEN` and
-  optionally `STACK_ENCRYPT_TEST_ZEROKMS_URL`; for the `AutoCredentials`
-  path (an access-key exchange, no options to `NewClient`) also
-  `STACK_ENCRYPT_TEST_ACCESS_KEY`, `STACK_ENCRYPT_TEST_WORKSPACE_CRN` and
-  optionally `STACK_ENCRYPT_TEST_CTS_HOST`. `live_test.go` documents each.
+  `STACK_ENCRYPT_TEST_CLIENT_KEY`, `STACK_ENCRYPT_TEST_CLIENT_ACCESS_KEY`
+  and `STACK_ENCRYPT_TEST_WORKSPACE_CRN`, and optionally
+  `STACK_ENCRYPT_TEST_CTS_HOST` and `STACK_ENCRYPT_TEST_ZEROKMS_URL`. The
+  same four required variables drive both paths: `NewCredentials` with a
+  `stackauth` access-key strategy, and `AutoCredentials` (no options to
+  `NewClient`). There is no raw-token variable, since the client takes
+  tokens only from `stackauth` strategies. `live_test.go` documents each.
 - Go tests: import-surface gate (exactly WASI + `cipherstash_transport`),
   stub-transport tests for the bridge, live encrypt/decrypt, live
   `EncryptRecords` asserting **one** `transport_send` for N rows

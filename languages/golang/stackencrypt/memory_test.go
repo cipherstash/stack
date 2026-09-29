@@ -86,7 +86,7 @@ func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
 	}
 	limited := !probe.IsFallback()
 	_, err := NewClient(context.Background(),
-		WithCredentials(NewCredentials("6a70bd18-99ac-4650-b104-37eec3a15b09", NewClientKey([]byte("00")), StaticToken("t"))),
+		WithCredentials(newTestCredentials("6a70bd18-99ac-4650-b104-37eec3a15b09", NewClientKey([]byte("00")), staticToken("t"))),
 		WithGuest(wasiProbe),
 		WithRequireLockedMemory(),
 	)
@@ -99,7 +99,7 @@ func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
 	// Best effort under the same refusal: the client exists, says so, and
 	// shows it wherever it is printed or logged.
 	if wasm, gerr := embeddedGuest(); gerr == nil {
-		inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: StaticToken("t")}, guest.BestEffort)
+		inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: staticToken("t")}, guest.BestEffort)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -128,7 +128,7 @@ func strictClient(t *testing.T) *Client {
 	if !guesttest.HostReserves(t) {
 		t.Skip("heap fallback in use on this host: a strict client cannot exist")
 	}
-	inst, err := newInstance(context.Background(), guestOrSkip(t), &transport{rt: http.DefaultTransport, token: StaticToken("t")}, guest.Strict)
+	inst, err := newInstance(context.Background(), guestOrSkip(t), &transport{rt: http.DefaultTransport, token: staticToken("t")}, guest.Strict)
 	if errors.Is(err, ErrMemoryLock) {
 		guesttest.SkipUnlessLockRequired(t, "the lock was refused", err)
 	}
@@ -234,7 +234,7 @@ func TestRequireLockedMemoryClosesTheClientOnARefusedInternalGrowth(t *testing.T
 // exit.
 func TestUnreachableClientIsReleased(t *testing.T) {
 	wasm := guestOrSkip(t)
-	inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: StaticToken("t")}, guest.BestEffort)
+	inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: staticToken("t")}, guest.BestEffort)
 	if err != nil {
 		t.Fatal(err)
 	}

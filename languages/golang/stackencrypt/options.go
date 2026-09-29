@@ -17,10 +17,10 @@ type clientOptions struct {
 	requireLockedMemory bool
 }
 
-// WithCredentials supplies the client id, the client key and the token
-// source. The default, and what nil means, is [AutoCredentials]: the
-// environment, then the developer profile. [NewCredentials] takes the three
-// explicitly, and [OIDCFederation] mints tokens from an identity provider's.
+// WithCredentials supplies the client id, the client key and the stackauth
+// strategy the token comes from. The default, and what nil means, is
+// [AutoCredentials]: the environment, then the developer profile.
+// [NewCredentials] takes the three explicitly, and [OIDCFederation] mints tokens from an identity provider's.
 //
 // The client key is consumed: NewClient marshals it into the config buffer,
 // wipes the key, and wipes the buffer once the guest has the key, so after
@@ -51,7 +51,7 @@ func WithKeysetCacheSize(n int) ClientOption {
 // stackauth's credential guest makes to CTS: an access-key exchange, a
 // device-session refresh, a federation exchange. A RoundTripper scoped to
 // the ZeroKMS host alone (a pinned client certificate, an egress allowlist)
-// refuses those; the failure then surfaces as the token source's. Nil means
+// refuses those; the failure then surfaces as the token strategy's. Nil means
 // http.DefaultTransport, the default.
 func WithTransport(rt http.RoundTripper) ClientOption {
 	return func(o *clientOptions) { o.transport = rt }

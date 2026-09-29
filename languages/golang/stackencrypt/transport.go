@@ -19,33 +19,24 @@ import (
 // functions are the whole host surface the guest can reach.
 const transportModule = "cipherstash_transport"
 
-// TokenSource supplies the bearer token the guest presents to ZeroKMS. It
+// tokenSource supplies the bearer token the guest presents to ZeroKMS. It
 // is asked on every request, so a source that rotates tokens needs no
-// re-initialisation of the client. Minting and refresh stay host-side, out
-// of the crypto guest: [AutoCredentials] runs them in stackauth's credential
-// guest, and hands the client a TokenSource over the strategy it chose.
-type TokenSource interface {
+// re-initialisation of the client. Outside this package's tests it is
+// always a *stackauth.Strategy: minting and refresh stay host-side, out of
+// the crypto guest, in stackauth's credential guest. The interface is
+// unexported so that no caller can hand the client a raw token, which could
+// not be refreshed and would bypass the strategies' refresh lock.
+type tokenSource interface {
 	Token(ctx context.Context) (string, error)
 }
 
-// TokenFunc adapts a function to a [TokenSource].
-type TokenFunc func(ctx context.Context) (string, error)
-
-// Token implements TokenSource.
-func (f TokenFunc) Token(ctx context.Context) (string, error) { return f(ctx) }
-
-// StaticToken is a [TokenSource] that always returns the same token.
-func StaticToken(token string) TokenSource {
-	return TokenFunc(func(context.Context) (string, error) { return token, nil })
-}
-
 // transport implements the guest's two host imports over a RoundTripper
-// and a TokenSource. One per Client; it is bound to the module at
+// and a tokenSource. One per Client; it is bound to the module at
 // instantiation and reaches the guest's allocator through the module the
 // call arrives on.
 type transport struct {
 	rt    http.RoundTripper
-	token TokenSource
+	token tokenSource
 	// sends counts transport_send excursions, so tests can pin the batching
 	// contract (one ZeroKMS call per operation) instead of trusting it.
 	sends atomic.Int64
@@ -226,7 +217,7 @@ func (t *transport) tokenGet(ctx context.Context, m api.Module, tokenPtrOut, tok
 		return hostFailed
 	}
 	// The credential's transport copy is wiped once it is in guest memory;
-	// the TokenSource's own string is the source's.
+	// the source's own string is the source's.
 	tok := []byte(token)
 	defer wipe(tok)
 	if !place(ctx, m, tokenPtrOut, tokenLenOut, tok) {

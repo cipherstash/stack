@@ -96,9 +96,9 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 		consumeUnresolved(creds)
 		return nil, err
 	}
-	resolved, err := creds.Resolve(ctx, ResolveOptions{Transport: rt, RequireLockedMemory: cfg.requireLockedMemory})
+	resolved, err := creds.resolve(ctx, resolveOptions{Transport: rt, RequireLockedMemory: cfg.requireLockedMemory})
 	if err != nil {
-		// A Resolve that fails may still hand back what it built. The key
+		// A resolve that fails may still hand back what it built. The key
 		// is consumed and what Close holds is released, as on every other
 		// path: nothing of the client's outlives a failed NewClient.
 		if resolved != nil {
@@ -110,7 +110,7 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 		return nil, err
 	}
 	if resolved == nil {
-		return nil, errors.New("stackencrypt: Credentials.Resolve returned no credentials")
+		return nil, errors.New("stackencrypt: the credentials resolved to nothing")
 	}
 	// Nil-safe, and a no-op after the wipe on the accepted path.
 	defer resolved.ClientKey.Wipe()

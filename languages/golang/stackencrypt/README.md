@@ -109,17 +109,38 @@ run in `stackauth`'s credential guest; the crypto guest that holds the
 keys is still given no environment and no filesystem. The credential guest
 lives as long as the client, and `Close` releases it.
 
-To supply the credentials yourself, pass `NewCredentials`:
+To supply the credentials yourself, pass `NewCredentials` with a client
+id, a client key and a `stackauth` strategy for the token:
 
 ```go
+store, err := stackauth.OpenWithoutProfile(ctx) // or stackauth.Resolve(ctx) for the profile
+if err != nil {
+    return err
+}
+defer store.Close()
+strategy, err := store.AccessKey(ctx, crn, accessKey) // or DeviceSession, OIDC, Auto
+if err != nil {
+    return err
+}
+defer strategy.Close()
 client, err := stackencrypt.NewClient(ctx,
-    stackencrypt.WithCredentials(stackencrypt.NewCredentials(clientID, clientKey, tokenSource)),
+    stackencrypt.WithCredentials(stackencrypt.NewCredentials(clientID, clientKey, strategy)),
 )
+if err != nil {
+    return err
+}
+defer client.Close()
 ```
 
-`tokenSource` is asked for the bearer token on every request. `StaticToken`
-is the simplest source; a `TokenFunc` can fetch or refresh one, and every
-`stackauth` strategy is one.
+The strategy is asked for the bearer token on every request, and mints or
+refreshes it as it needs to. The store and the strategy stay yours: the
+client never closes them, so keep them open until `client.Close` has
+returned, as the deferred calls above do. A nil strategy is refused.
+
+Tokens come only from `stackauth` strategies; there is no way to hand the
+client a raw bearer token. A raw token cannot be refreshed when it expires,
+and a source outside the strategies would bypass the cross-process lock a
+device-session refresh holds with the `stash` CLI.
 
 To authenticate through your own identity provider, pass `OIDCFederation`
 with the workspace CRN and a provider of the IdP's tokens. CTS exchanges
@@ -128,8 +149,8 @@ when that token needs replacing. `stackauth.OAuth2TokenSource` adapts a
 `golang.org/x/oauth2` source. The client key is found as `AutoCredentials`
 finds it.
 
-`Credentials` is an interface, so another source of credentials can
-implement it.
+`AutoCredentials`, `NewCredentials` and `OIDCFederation` are the only kinds
+of `Credentials`: the interface is sealed.
 
 `ClientKey` is an opaque type, not a string: it prints a redaction under
 every verb, so logged credentials never show the key. `NewClientKey` takes
@@ -198,12 +219,12 @@ small and reveals nothing about plaintext or key material.
 | `ErrForeignKeyset` | A keyset-bound `Cipher` was given another keyset's ciphertext. Open it through the `Client`. |
 | `ErrEncoding` | Malformed input: a value, ciphertext, plan, context or config refused before any cryptography. |
 | `ErrTerm` | A term could not be derived, for example match text that yields no tokens. |
-| `ErrTransport` | ZeroKMS could not be reached, or the token source failed. A token source's own error is wrapped in it, so `errors.Is` finds that too (a refused refresh is `stackauth.ErrInvalidGrant`). |
+| `ErrTransport` | ZeroKMS could not be reached, or the token strategy failed. The strategy's own error is wrapped in it, so `errors.Is` finds that too (a refused refresh is `stackauth.ErrInvalidGrant`). |
 | `ErrKMS` | Any other ZeroKMS failure. |
 | `ErrConflict` | ZeroKMS reported a resource conflict. |
 | `ErrState` | The client has been closed: by `Close`, by a call its context interrupted, or by a guest trap. |
 | `ErrMemoryLock` | The instance's memory could not be locked in RAM. Returned by `NewClient` under `WithRequireLockedMemory()`, and by a call whose growth could not be locked; otherwise reported by `MemoryLockError`. |
-| `ErrNoCredentials` | `NewClient` found no token source or no client key, in the environment or the profile. The message names what to set. |
+| `ErrNoCredentials` | `NewClient` found no token strategy or no client key, in the environment or the profile. The message names what to set. |
 | `ErrCredentialsConsumed` | `NewCredentials` given to a second `NewClient`: the first consumed its key. Build new credentials, with a new key, for another client. |
 | `ErrInternal` | An unexpected failure inside the guest. |
 
@@ -221,8 +242,8 @@ small and reveals nothing about plaintext or key material.
   own shutdown as well, so every key is wiped in place before the instance
   is released.
 - **Two host imports.** The guest imports exactly one HTTP send, served by
-  your `http.RoundTripper`, and one bearer-token fetch, served by your
-  `TokenSource`. What crosses the boundary per ZeroKMS call is what would
+  your `http.RoundTripper`, and one bearer-token fetch, served by the
+  credentials' `stackauth` strategy. What crosses the boundary per ZeroKMS call is what would
   cross TLS anyway. The guest sees no environment and no filesystem.
 - **Real randomness.** The guest draws IVs and nonces from the process
   CSPRNG. wazero's default random source is deterministic, so the package

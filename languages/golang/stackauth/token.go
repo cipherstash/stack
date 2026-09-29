@@ -2,7 +2,6 @@ package stackauth
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
@@ -68,36 +67,4 @@ func (s *ProfileStore) Token(ctx context.Context) (Token, error) {
 		return Token{}, err
 	}
 	return t, nil
-}
-
-// TokenSource is a bearer-token source over the token stored in a
-// workspace's auth.json, in the shape stackencrypt's TokenSource takes.
-// Every call re-reads the file, so a login or refresh by the CLI in
-// another terminal is picked up without a restart, and a token at or past
-// its real expiry is refused with [ErrTokenExpired] rather than presented.
-// This read-only source does not refresh; use DeviceSession for that.
-type TokenSource struct {
-	store *ProfileStore
-	// now is the clock, for tests; nil is time.Now.
-	now func() time.Time
-}
-
-// TokenSource is a [TokenSource] over this store's auth.json.
-func (s *ProfileStore) TokenSource() *TokenSource { return &TokenSource{store: s} }
-
-// Token implements stackencrypt's TokenSource: the stored access token,
-// re-read now, or ErrTokenExpired.
-func (ts *TokenSource) Token(ctx context.Context) (string, error) {
-	t, err := ts.store.Token(ctx)
-	if err != nil {
-		return "", err
-	}
-	now := time.Now
-	if ts.now != nil {
-		now = ts.now
-	}
-	if !t.Usable(now()) {
-		return "", fmt.Errorf("%w (expired at %s)", ErrTokenExpired, t.ExpiresAt.UTC().Format(time.RFC3339))
-	}
-	return t.AccessToken, nil
 }

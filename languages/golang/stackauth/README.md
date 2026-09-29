@@ -64,10 +64,16 @@ func run(ctx context.Context) error {
 ```
 
 `stackauth.ClientKey` and `stackencrypt.ClientKey` are one type, so the
-key goes straight from the profile into the credentials. For a token that
-is read and never refreshed, `workspace.TokenSource()` re-reads auth.json
-on every call and refuses a token at its real expiry with
-`stackauth.ErrTokenExpired`.
+key goes straight from the profile into the credentials. The profile and
+the strategy are the caller's: the client asks the strategy for a token on
+every request but never closes it, so both stay open until the client is
+closed (the deferred calls above run in that order).
+
+A stackencrypt client takes its token only from a strategy, never a raw
+string: a raw token cannot be refreshed when it expires, and would bypass
+the cross-process lock a device-session refresh holds with the `stash` CLI
+(the IdP revokes a whole refresh-token chain when one is used twice).
+`workspace.Token(ctx)` still reads the stored token, for inspection.
 
 With no profile directory at all (CI, a container, a server authenticating
 by federation), `stackauth.OpenWithoutProfile(ctx)` runs the guest with
@@ -75,8 +81,8 @@ nothing mounted: the access-key and OIDC strategies work, and every profile
 read is `ErrNoProfile`.
 
 `profile.AccessKey(ctx, crn, key)`, `profile.OIDC(ctx, crn, provider)`, and
-`profile.Auto(ctx)` also return strategies that satisfy
-`stackencrypt.TokenSource`. `Auto` checks `CS_CLIENT_ACCESS_KEY` and
+`profile.Auto(ctx)` also return strategies that `stackencrypt.NewCredentials`
+takes. `Auto` checks `CS_CLIENT_ACCESS_KEY` and
 `CS_WORKSPACE_CRN` first, then the current workspace's stored device session.
 The OIDC provider is a one-method `Token(context.Context) (string, error)`
 interface. Use `stackauth.OAuth2TokenSource(source)` to adapt a

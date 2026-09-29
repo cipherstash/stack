@@ -59,8 +59,9 @@ from it. The crypto guest still sees no environment and no filesystem:
 credentials are resolved host-side.
 
 The device session is **asked on every request and refreshes itself**. A
-profile token lasts 45 minutes, so pinning one with `StaticToken` would give
-you a program that works for a while and then stops. The refresh takes the
+profile token lasts 45 minutes, so a pinned token would give you a program
+that works for a while and then stops; that is why the client takes tokens
+only from `stackauth` strategies and has no way to pass a raw one. The refresh takes the
 same cross-process lock as the `stash` CLI. The IdP rotates refresh tokens
 and detects replay, so two processes sharing `~/.cipherstash` that both
 exchanged the same refresh token would get the whole chain revoked; the lock

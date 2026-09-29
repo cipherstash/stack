@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
+	"github.com/cipherstash/cipherstash-suite/bindings/go/stackauth"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/sys"
@@ -98,13 +99,13 @@ func newStub(t *testing.T, status int, contentType, body string) *zerokmsStub {
 // testConfig is the options for a client of the test credentials against
 // url. A test appends to it; a later option wins.
 func testConfig(url string) []ClientOption {
-	return []ClientOption{WithCredentials(testCredentials(StaticToken("stub-token"))), WithZeroKMSURL(url)}
+	return []ClientOption{WithCredentials(testCredentials(staticToken("stub-token"))), WithZeroKMSURL(url)}
 }
 
 // testCredentials is the test client id and a fresh copy of the test key,
 // with token as the token source.
-func testCredentials(token TokenSource) Credentials {
-	return NewCredentials(testClientID, NewClientKey([]byte(testClientKey)), token)
+func testCredentials(token tokenSource) Credentials {
+	return newTestCredentials(testClientID, NewClientKey([]byte(testClientKey)), token)
 }
 
 // testInit is testConfig as se_cipher_init takes it, for tests that drive
@@ -214,7 +215,7 @@ func TestTransportOutcomesMapToErrors(t *testing.T) {
 		stub := newStub(t, http.StatusOK, "application/json", "{}")
 		cfg := testConfig(stub.URL)
 		vaultDown := errors.New("vault down")
-		cfg = append(cfg, WithCredentials(testCredentials(TokenFunc(func(context.Context) (string, error) { return "", vaultDown }))))
+		cfg = append(cfg, WithCredentials(testCredentials(tokenFunc(func(context.Context) (string, error) { return "", vaultDown }))))
 		_, err := NewClient(context.Background(), cfg...)
 		if err == nil {
 			t.Fatal("NewClient succeeded with no token")
@@ -461,17 +462,17 @@ func TestConfigValidation(t *testing.T) {
 	for name, tc := range map[string]struct {
 		id    string
 		key   *ClientKey
-		token TokenSource
+		token tokenSource
 		cache int
 	}{
 		"no token":       {id: testClientID, key: NewClientKey([]byte(testClientKey))},
-		"no client id":   {key: NewClientKey([]byte(testClientKey)), token: StaticToken("t")},
-		"no key":         {id: testClientID, token: StaticToken("t")},
-		"empty key":      {id: testClientID, key: NewClientKey(nil), token: StaticToken("t")},
-		"wiped key":      {id: testClientID, key: wiped, token: StaticToken("t")},
-		"negative cache": {id: testClientID, key: NewClientKey([]byte(testClientKey)), token: StaticToken("t"), cache: -1},
+		"no client id":   {key: NewClientKey([]byte(testClientKey)), token: staticToken("t")},
+		"no key":         {id: testClientID, token: staticToken("t")},
+		"empty key":      {id: testClientID, key: NewClientKey(nil), token: staticToken("t")},
+		"wiped key":      {id: testClientID, key: wiped, token: staticToken("t")},
+		"negative cache": {id: testClientID, key: NewClientKey([]byte(testClientKey)), token: staticToken("t"), cache: -1},
 	} {
-		cfg := []ClientOption{WithCredentials(NewCredentials(tc.id, tc.key, tc.token)), WithKeysetCacheSize(tc.cache)}
+		cfg := []ClientOption{WithCredentials(newTestCredentials(tc.id, tc.key, tc.token)), WithKeysetCacheSize(tc.cache)}
 		if _, err := NewClient(ctx, cfg...); err == nil {
 			t.Errorf("%s: NewClient succeeded", name)
 		}
@@ -484,8 +485,8 @@ func TestConfigValidation(t *testing.T) {
 	// Malformed values the guest refuses: no request is made.
 	guestOrSkip(t)
 	for name, option := range map[string]ClientOption{
-		"client id not a uuid": WithCredentials(NewCredentials("acme", NewClientKey([]byte(testClientKey)), StaticToken("t"))),
-		"key not hex":          WithCredentials(NewCredentials(testClientID, NewClientKey([]byte("zz")), StaticToken("t"))),
+		"client id not a uuid": WithCredentials(newTestCredentials("acme", NewClientKey([]byte(testClientKey)), staticToken("t"))),
+		"key not hex":          WithCredentials(newTestCredentials(testClientID, NewClientKey([]byte("zz")), staticToken("t"))),
 		"bad url":              WithZeroKMSURL("not a url"),
 	} {
 		stub := newStub(t, http.StatusOK, "application/json", "{}")
@@ -513,11 +514,11 @@ func TestClientKeyIsConsumedAndNeverPrinted(t *testing.T) {
 	material := []byte(testClientKey)
 	stub := newStub(t, http.StatusUnauthorized, "", "nope")
 	key := NewClientKey(material)
-	creds := NewCredentials(testClientID, key, StaticToken("stub-token"))
+	creds := newTestCredentials(testClientID, key, staticToken("stub-token"))
 	cfg := append(testConfig(stub.URL), WithCredentials(creds))
 	// Resolving consumes the credentials, so the printed resolution is a
 	// separate set's, over another copy of the key.
-	resolved, err := NewCredentials(testClientID, NewClientKey([]byte(testClientKey)), StaticToken("stub-token")).Resolve(context.Background(), ResolveOptions{})
+	resolved, err := newTestCredentials(testClientID, NewClientKey([]byte(testClientKey)), staticToken("stub-token")).resolve(context.Background(), resolveOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -560,7 +561,7 @@ func TestClientKeyIsConsumedAndNeverPrinted(t *testing.T) {
 func rawInstance(t *testing.T) *Client {
 	t.Helper()
 	ctx := context.Background()
-	inst, err := newInstance(ctx, guestOrSkip(t), &transport{rt: http.DefaultTransport, token: StaticToken("t")}, guest.BestEffort)
+	inst, err := newInstance(ctx, guestOrSkip(t), &transport{rt: http.DefaultTransport, token: staticToken("t")}, guest.BestEffort)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -790,7 +791,7 @@ func TestClientKeyDoesNotRemainInGuestMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr := &transport{rt: http.DefaultTransport, token: StaticToken("stub-token")}
+	tr := &transport{rt: http.DefaultTransport, token: staticToken("stub-token")}
 	inst, err := newInstance(ctx, guestOrSkip(t), tr, guest.BestEffort)
 	if err != nil {
 		t.Fatal(err)
@@ -824,7 +825,7 @@ func TestClientKeyDoesNotRemainInGuestMemory(t *testing.T) {
 func TestTransportSendCounterAndResponseHeaders(t *testing.T) {
 	guestOrSkip(t)
 	stub := newStub(t, http.StatusUnauthorized, "text/plain", "nope")
-	tr := &transport{rt: http.DefaultTransport, token: StaticToken("stub-token")}
+	tr := &transport{rt: http.DefaultTransport, token: staticToken("stub-token")}
 	ctx := context.Background()
 	inst, err := newInstance(ctx, guestOrSkip(t), tr, guest.BestEffort)
 	if err != nil {
@@ -841,13 +842,32 @@ func TestTransportSendCounterAndResponseHeaders(t *testing.T) {
 }
 
 func ExampleNewClient() {
-	// A client needs ZeroKMS credentials; see live_test.go for the shape of
-	// a real round trip.
-	_, err := NewClient(context.Background(), WithCredentials(NewCredentials(
-		"6a70bd18-99ac-4650-b104-37eec3a15b09",
-		NewClientKey([]byte("...")),
-		StaticToken("access token"),
-	)))
+	// With no options, NewClient uses AutoCredentials. To supply the
+	// credentials yourself, the token comes from a stackauth strategy —
+	// here an access key; live_test.go has a real round trip. The caller
+	// opened the store and the strategy, and closes them after the client.
+	ctx := context.Background()
+	err := func() error {
+		store, err := stackauth.OpenWithoutProfile(ctx)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		strategy, err := store.AccessKey(ctx, "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY", "CSAK...")
+		if err != nil {
+			return err
+		}
+		defer strategy.Close()
+		client, err := NewClient(ctx, WithCredentials(NewCredentials(
+			"6a70bd18-99ac-4650-b104-37eec3a15b09",
+			NewClientKey([]byte("...")), // not a real key: NewClient refuses it
+			strategy,
+		)))
+		if err != nil {
+			return err
+		}
+		return client.Close()
+	}()
 	fmt.Println(err != nil)
 	// Output: true
 }

@@ -160,16 +160,16 @@ func newAuthServer(t *testing.T) *authServer {
 
 // resolve runs AutoCredentials and releases what it holds at the end of
 // the test.
-func resolve(t *testing.T) (*ResolvedCredentials, error) {
+func resolve(t *testing.T) (*resolvedCredentials, error) {
 	t.Helper()
-	resolved, err := AutoCredentials().Resolve(context.Background(), ResolveOptions{Transport: http.DefaultTransport})
+	resolved, err := AutoCredentials().resolve(context.Background(), resolveOptions{Transport: http.DefaultTransport})
 	if err == nil {
 		t.Cleanup(func() { _ = resolved.Close() })
 	}
 	return resolved, err
 }
 
-func token(t *testing.T, resolved *ResolvedCredentials) string {
+func token(t *testing.T, resolved *resolvedCredentials) string {
 	t.Helper()
 	tok, err := resolved.Token.Token(context.Background())
 	if err != nil {
@@ -410,9 +410,9 @@ func TestNewClientWithAutoCredentials(t *testing.T) {
 	stub := newStub(t, http.StatusUnauthorized, "", "nope")
 	// The endpoint from the environment, since no option names one.
 	t.Setenv("CS_ZEROKMS_HOST", stub.URL)
-	var released *ResolvedCredentials
-	creds := credentialsFunc(func(ctx context.Context, opts ResolveOptions) (*ResolvedCredentials, error) {
-		r, err := AutoCredentials().Resolve(ctx, opts)
+	var released *resolvedCredentials
+	creds := credentialsFunc(func(ctx context.Context, opts resolveOptions) (*resolvedCredentials, error) {
+		r, err := AutoCredentials().resolve(ctx, opts)
 		released = r
 		return r, err
 	})
@@ -439,8 +439,8 @@ func TestNewClientReleasesTheCredentialsOnceWhenInitFails(t *testing.T) {
 	guestOrSkip(t)
 	stub := newStub(t, http.StatusUnauthorized, "", "nope")
 	var released int
-	creds := credentialsFunc(func(ctx context.Context, opts ResolveOptions) (*ResolvedCredentials, error) {
-		r, err := testCredentials(StaticToken("t")).Resolve(ctx, opts)
+	creds := credentialsFunc(func(ctx context.Context, opts resolveOptions) (*resolvedCredentials, error) {
+		r, err := testCredentials(staticToken("t")).resolve(ctx, opts)
 		if err == nil {
 			r.Close = func() error { released++; return nil }
 		}
@@ -461,8 +461,8 @@ func TestNewClientConsumesCredentialsAFailedResolveHandsBack(t *testing.T) {
 	key := NewClientKey([]byte(testClientKey))
 	var released int
 	resolveErr := errors.New("the token strategy failed")
-	creds := credentialsFunc(func(context.Context, ResolveOptions) (*ResolvedCredentials, error) {
-		return &ResolvedCredentials{
+	creds := credentialsFunc(func(context.Context, resolveOptions) (*resolvedCredentials, error) {
+		return &resolvedCredentials{
 			ClientID:  testClientID,
 			ClientKey: key,
 			Close:     func() error { released++; return nil },
@@ -498,9 +498,9 @@ func TestNewClientRefusesTheConfigBeforeResolvingCredentials(t *testing.T) {
 			cleanEnv(t, t.TempDir())
 			opts := options(t)
 			resolved := false
-			spy := credentialsFunc(func(ctx context.Context, opts ResolveOptions) (*ResolvedCredentials, error) {
+			spy := credentialsFunc(func(ctx context.Context, opts resolveOptions) (*resolvedCredentials, error) {
 				resolved = true
-				return testCredentials(StaticToken("t")).Resolve(ctx, opts)
+				return testCredentials(staticToken("t")).resolve(ctx, opts)
 			})
 			if _, err := NewClient(context.Background(), append([]ClientOption{WithCredentials(spy)}, opts...)...); err == nil {
 				t.Fatal("NewClient accepted the config")
@@ -509,7 +509,7 @@ func TestNewClientRefusesTheConfigBeforeResolvingCredentials(t *testing.T) {
 				t.Error("the credentials were resolved for a config refused host-side")
 			}
 			key := NewClientKey([]byte(testClientKey))
-			explicit := NewCredentials(testClientID, key, StaticToken("t"))
+			explicit := newTestCredentials(testClientID, key, staticToken("t"))
 			if _, err := NewClient(context.Background(), append([]ClientOption{WithCredentials(explicit)}, opts...)...); err == nil {
 				t.Fatal("NewClient accepted the config")
 			}
@@ -527,7 +527,7 @@ func TestNewClientRefusesTheConfigBeforeResolvingCredentials(t *testing.T) {
 func TestNewCredentialsRefusedConfigThenRetryIsConsumed(t *testing.T) {
 	guestOrSkip(t)
 	stub := newStub(t, http.StatusUnauthorized, "", "nope")
-	creds := testCredentials(StaticToken("t"))
+	creds := testCredentials(staticToken("t"))
 	if _, err := NewClient(context.Background(), WithCredentials(creds), WithZeroKMSURL(stub.URL), WithKeysetCacheSize(-1)); err == nil {
 		t.Fatal("NewClient accepted a negative cache size")
 	}
@@ -548,7 +548,7 @@ func TestNewCredentialsRefusedConfigThenRetryIsConsumed(t *testing.T) {
 // the client is asked, printed or logged.
 func TestClientReportsTheCredentialsMemoryLock(t *testing.T) {
 	wasm := guestOrSkip(t)
-	inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: StaticToken("t")}, guest.BestEffort)
+	inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: staticToken("t")}, guest.BestEffort)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -586,7 +586,7 @@ func TestClientReportsTheCredentialsMemoryLock(t *testing.T) {
 func TestNewCredentialsRefusesASecondClient(t *testing.T) {
 	guestOrSkip(t)
 	stub := newStub(t, http.StatusUnauthorized, "", "nope")
-	creds := testCredentials(StaticToken("t"))
+	creds := testCredentials(staticToken("t"))
 	cfg := []ClientOption{WithCredentials(creds), WithZeroKMSURL(stub.URL)}
 	if _, err := NewClient(context.Background(), cfg...); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("first NewClient: %v, want ErrUnauthorized from the stub", err)
@@ -664,7 +664,7 @@ func TestZeroKMSEndpointOrder(t *testing.T) {
 func TestAutoCredentialsCloseReleasesTheGuest(t *testing.T) {
 	authGuestOrSkip(t)
 	cleanEnv(t, newProfile(t, loggedIn("profile-token")))
-	resolved, err := AutoCredentials().Resolve(context.Background(), ResolveOptions{Transport: http.DefaultTransport})
+	resolved, err := AutoCredentials().resolve(context.Background(), resolveOptions{Transport: http.DefaultTransport})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -677,7 +677,7 @@ func TestAutoCredentialsCloseReleasesTheGuest(t *testing.T) {
 }
 
 func TestCredentialsPrintNoKey(t *testing.T) {
-	for _, c := range []Credentials{AutoCredentials(), NewCredentials(testClientID, NewClientKey([]byte(testClientKey)), StaticToken("t"))} {
+	for _, c := range []Credentials{AutoCredentials(), newTestCredentials(testClientID, NewClientKey([]byte(testClientKey)), staticToken("t"))} {
 		for _, verb := range []string{"%v", "%+v", "%s"} {
 			if out := fmt.Sprintf(verb, c); strings.Contains(out, testClientKey[:16]) || !strings.HasPrefix(out, "stackencrypt.") {
 				t.Errorf("%s: %q", verb, out)
@@ -686,10 +686,66 @@ func TestCredentialsPrintNoKey(t *testing.T) {
 	}
 }
 
-type credentialsFunc func(context.Context, ResolveOptions) (*ResolvedCredentials, error)
+type credentialsFunc func(context.Context, resolveOptions) (*resolvedCredentials, error)
 
-func (f credentialsFunc) Resolve(ctx context.Context, opts ResolveOptions) (*ResolvedCredentials, error) {
+func (f credentialsFunc) resolve(ctx context.Context, opts resolveOptions) (*resolvedCredentials, error) {
 	return f(ctx, opts)
 }
 
 func ptr(s string) *string { return &s }
+
+// NewCredentials takes its token only from a stackauth strategy: a nil one
+// is refused, and the key is consumed all the same.
+func TestNewCredentialsRefusesANilStrategy(t *testing.T) {
+	key := NewClientKey([]byte(testClientKey))
+	_, err := NewClient(context.Background(), WithCredentials(NewCredentials(testClientID, key, nil)))
+	if !errors.Is(err, ErrEncoding) || !strings.Contains(err.Error(), "strategy") {
+		t.Fatalf("NewClient: %v, want ErrEncoding naming the strategy", err)
+	}
+	if !key.IsZero() {
+		t.Error("the key still holds material after NewClient refused a nil strategy")
+	}
+}
+
+// The strategy given to NewCredentials is the caller's: the credentials
+// hold nothing to close, and a client — here one whose init failed — leaves
+// the strategy open.
+func TestNewCredentialsLeavesTheStrategyToTheCaller(t *testing.T) {
+	guestOrSkip(t)
+	authGuestOrSkip(t)
+	ctx := context.Background()
+	store, err := stackauth.OpenWithoutProfile(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	cts := newStub(t, http.StatusUnauthorized, "", "nope")
+	strategy, err := store.AccessKey(ctx, testCRN, "CSAKtest.key", stackauth.WithAuthBaseURL(cts.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := NewCredentials(testClientID, NewClientKey([]byte(testClientKey)), strategy)
+	resolved, err := creds.resolve(ctx, resolveOptions{Transport: http.DefaultTransport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Token != tokenSource(strategy) || resolved.Close != nil {
+		t.Fatalf("resolved = %+v, want the strategy as the token source and no Close", resolved)
+	}
+	resolved.ClientKey.Wipe()
+
+	zerokms := newStub(t, http.StatusOK, "application/json", "{}")
+	creds = NewCredentials(testClientID, NewClientKey([]byte(testClientKey)), strategy)
+	if _, err := NewClient(ctx, WithCredentials(creds), WithZeroKMSURL(zerokms.URL)); err == nil {
+		t.Fatal("NewClient succeeded with a token CTS refused")
+	}
+	// Still open: asked again, it goes back to CTS rather than failing
+	// with ErrState.
+	before := len(cts.requests)
+	if _, err := strategy.Token(ctx); errors.Is(err, stackauth.ErrState) {
+		t.Fatalf("the strategy after a failed NewClient: %v, want it still open", err)
+	}
+	if len(cts.requests) == before {
+		t.Error("the strategy made no request after NewClient: it was closed")
+	}
+}

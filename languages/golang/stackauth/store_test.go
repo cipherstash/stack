@@ -309,47 +309,6 @@ func TestTypedReadsReturnTheFilesFields(t *testing.T) {
 	}
 }
 
-// The token source re-reads the file on every call, so a login in another
-// terminal is picked up, and refuses the token at its real expiry.
-func TestTokenSourceRereadsAndRefusesAtExpiry(t *testing.T) {
-	ctx := context.Background()
-	dir, s := profile(t)
-	ws, err := s.WorkspaceStore(ctx, wsA)
-	if err != nil {
-		t.Fatal(err)
-	}
-	src := ws.TokenSource()
-	first, err := src.Token(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	later := time.Now().Add(2 * time.Hour).Unix()
-	write(t, filepath.Join(dir, "workspaces", wsA, "auth.json"), authJSON(later))
-	second, err := src.Token(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second == first || second != fmt.Sprintf("tok-%d", later) {
-		t.Fatalf("the rewritten token was not picked up: %q then %q", first, second)
-	}
-	// At the expiry timestamp itself the token is refused: the crate's
-	// is_usable is strictly before it. No refresh-ahead margin here.
-	src.now = func() time.Time { return time.Unix(later, 0) }
-	if _, err := src.Token(ctx); !errors.Is(err, ErrTokenExpired) || !strings.Contains(err.Error(), "stash auth login") {
-		t.Fatalf("token at its expiry: %v, want ErrTokenExpired naming stash auth login", err)
-	}
-	src.now = func() time.Time { return time.Unix(later-1, 0) }
-	if _, err := src.Token(ctx); err != nil {
-		t.Fatalf("token one second before expiry: %v", err)
-	}
-	// An expired file on disk is refused too, whatever the clock.
-	write(t, filepath.Join(dir, "workspaces", wsA, "auth.json"), authJSON(time.Now().Add(-time.Minute).Unix()))
-	src.now = nil
-	if _, err := src.Token(ctx); !errors.Is(err, ErrTokenExpired) {
-		t.Fatalf("an expired stored token: %v, want ErrTokenExpired", err)
-	}
-}
-
 // The lock file is the crate's sibling `.<filename>.lock`, named by the
 // guest and mapped back to the host, never composed here; a filename that
 // is a path is refused before any path is built.

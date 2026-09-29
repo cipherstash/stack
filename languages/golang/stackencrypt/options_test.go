@@ -44,7 +44,7 @@ func TestLaterZeroKMSURLWins(t *testing.T) {
 	first := newStub(t, http.StatusUnauthorized, "", "first")
 	second := newStub(t, http.StatusUnauthorized, "", "second")
 	_, err := NewClient(context.Background(),
-		WithCredentials(testCredentials(StaticToken("stub-token"))),
+		WithCredentials(testCredentials(staticToken("stub-token"))),
 		WithZeroKMSURL(first.URL),
 		WithZeroKMSURL(second.URL),
 	)
@@ -59,7 +59,7 @@ func TestLaterZeroKMSURLWins(t *testing.T) {
 func TestNegativeKeysetCacheSizeIsRefused(t *testing.T) {
 	key := NewClientKey([]byte(testClientKey))
 	_, err := NewClient(context.Background(),
-		WithCredentials(NewCredentials(testClientID, key, StaticToken("t"))),
+		WithCredentials(newTestCredentials(testClientID, key, staticToken("t"))),
 		WithKeysetCacheSize(-1),
 	)
 	if err == nil {
@@ -134,7 +134,7 @@ func TestOIDCFederationResolvesTheKeyLikeAuto(t *testing.T) {
 	authGuestOrSkip(t)
 	cleanEnv(t, newProfile(t, loggedIn("profile-token")))
 	provider := stackauth.OIDCProviderFunc(func(context.Context) (string, error) { return "idp-token", nil })
-	resolved, err := OIDCFederation(testCRN, provider).Resolve(context.Background(), ResolveOptions{Transport: http.DefaultTransport})
+	resolved, err := OIDCFederation(testCRN, provider).resolve(context.Background(), resolveOptions{Transport: http.DefaultTransport})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestOIDCFederationResolvesTheKeyLikeAuto(t *testing.T) {
 	}
 	// No CRN is a configuration error from the strategy, before any
 	// provider or key is asked.
-	if _, err := OIDCFederation("", provider).Resolve(context.Background(), ResolveOptions{Transport: http.DefaultTransport}); !errors.Is(err, stackauth.ErrAuthConfig) {
+	if _, err := OIDCFederation("", provider).resolve(context.Background(), resolveOptions{Transport: http.DefaultTransport}); !errors.Is(err, stackauth.ErrAuthConfig) {
 		t.Fatalf("OIDCFederation with no CRN: %v, want ErrAuthConfig", err)
 	}
 }

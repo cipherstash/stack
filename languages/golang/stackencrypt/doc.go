@@ -56,25 +56,29 @@
 // # Transport and auth
 //
 // The guest imports exactly two host functions: an HTTP send, served by any
-// [net/http.RoundTripper], and a bearer-token fetch, served by a
-// [TokenSource]. What crosses per ZeroKMS call is what would cross TLS
+// [net/http.RoundTripper], and a bearer-token fetch, served by the
+// credentials' stackauth strategy. What crosses per ZeroKMS call is what would cross TLS
 // anyway; derived key material never leaves the guest. Under
 // [AutoCredentials] the same RoundTripper also carries the authentication
 // requests to CTS, so one scoped to the ZeroKMS host alone is not enough.
 //
 // # Credentials
 //
-// A [Credentials] supplies the client id, the client key and the token
-// source, and NewClient resolves it host-side: the crypto guest is never
+// A [Credentials] supplies the client id, the client key and the stackauth
+// strategy the token comes from, and NewClient resolves it host-side: the crypto guest is never
 // given the environment or a filesystem to find them in. The default,
 // [AutoCredentials], mirrors the Rust client — the environment first
 // (CS_CLIENT_ACCESS_KEY with CS_WORKSPACE_CRN for the token, CS_CLIENT_ID
 // with CS_CLIENT_KEY for the key), then the developer profile, which it
 // reads through stackauth's credential guest, where the token strategies
 // also run. CS_ZEROKMS_HOST (or CS_VITUR_HOST) pins the endpoint whatever
-// the credentials. [NewCredentials] takes the three values explicitly, and
-// [OIDCFederation] mints the token from an identity provider's. Pass one
-// with [WithCredentials].
+// the credentials. [NewCredentials] takes a client id, a client key and a
+// strategy explicitly, and [OIDCFederation] mints the token from an
+// identity provider's. Pass one with [WithCredentials]. Those three are
+// the only kinds of Credentials, and none takes a raw token: a token is
+// always a stackauth strategy's, since a raw one cannot be refreshed when
+// it expires and would bypass the cross-process lock a device-session
+// refresh holds with the CLI.
 // Credentials that cannot be resolved fail NewClient with
 // [ErrNoCredentials]; credentials that resolve but do not work fail it too,
 // at the one ZeroKMS round trip it makes.

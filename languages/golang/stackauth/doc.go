@@ -26,13 +26,16 @@
 // the identity the CLI created. [ProfileStore.Close] releases the guest;
 // stores scoped from it are closed with it.
 //
-// [ProfileStore.TokenSource] is a token source for stackencrypt over the
-// stored token: it re-reads auth.json on every call, so a login or refresh
-// by the CLI in another terminal is picked up without a restart, and it
-// refuses a token at its real expiry with an error naming `stash auth
-// login`. For authentication and refresh, use [ProfileStore.AccessKey],
+// For authentication and refresh, use [ProfileStore.AccessKey],
 // [ProfileStore.OIDC], [ProfileStore.DeviceSession], or [ProfileStore.Auto].
-// Each returns a [Strategy] that implements stackencrypt.TokenSource.
+// Each returns a [Strategy], which is what stackencrypt.NewCredentials takes
+// for the bearer token: the only way a token reaches a stackencrypt client.
+// A raw token — [ProfileStore.Token]'s included — cannot be refreshed when
+// it expires, and would bypass the cross-process lock a device-session
+// refresh holds with the CLI, so stackencrypt does not accept one. A
+// strategy lives in its store's guest, and closing the store closes it. A
+// stackencrypt client given one never closes the strategy or the store:
+// both are the caller's, and stay open until the client is closed.
 // [OAuth2TokenSource] adapts an existing golang.org/x/oauth2.TokenSource
 // into the OIDC provider interface.
 //

@@ -58,10 +58,6 @@ var (
 	// reports it and the store works on with unlocked memory.
 	ErrMemoryLock = guest.ErrMemoryLock
 
-	// ErrTokenExpired is a stored token past its expiry: the profile has one,
-	// but it is no use. A DeviceSession strategy can refresh it when the
-	// profile has a valid refresh token.
-	ErrTokenExpired = errors.New("stackauth: the stored token has expired; run `stash auth login`")
 	// ErrNoProfile is a profile directory that does not exist: nothing has
 	// logged in on this machine, or CS_CONFIG_PATH names the wrong place.
 	ErrNoProfile = errors.New("stackauth: no profile directory; run `stash auth login`")

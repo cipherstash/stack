@@ -13,29 +13,33 @@ import (
 )
 
 // Credentials is where a [Client]'s ZeroKMS credentials come from: the
-// client id, the client key, and the source of the bearer token. NewClient
-// resolves them once, host-side — the crypto guest is never given the
-// environment or a filesystem to look them up itself — and hands the key to
-// the guest.
+// client id, the client key, and the stackauth strategy that supplies the
+// bearer token. NewClient resolves them once, host-side — the crypto guest
+// is never given the environment or a filesystem to look them up itself —
+// and hands the key to the guest.
 //
 // [AutoCredentials] is the default: the environment, then the developer
-// profile, in the Rust client's order. [NewCredentials] takes the three
-// values explicitly; [OIDCFederation] mints the token from an identity
-// provider's. Any other type can implement it; see
-// [ResolvedCredentials] for what an implementation owes the client.
+// profile, in the Rust client's order. [NewCredentials] takes a client id,
+// a client key and a strategy explicitly; [OIDCFederation] mints the token
+// from an identity provider's. Those three are the only implementations:
+// the interface is sealed, so a bearer token always comes from a stackauth
+// strategy. A raw token cannot be refreshed when it expires, and a source
+// outside the strategies would bypass the cross-process refresh lock the
+// device session shares with the CLI (a refresh token used twice gets the
+// whole chain revoked).
 type Credentials interface {
-	// Resolve produces the credentials for one client. NewClient calls it
+	// resolve produces the credentials for one client. NewClient calls it
 	// once, and consumes the key it returns. A result returned alongside
 	// an error is consumed too: its key is wiped and its Close is called,
 	// so an implementation may hand back what it built before it failed
 	// rather than release it itself.
-	Resolve(ctx context.Context, opts ResolveOptions) (*ResolvedCredentials, error)
+	resolve(ctx context.Context, opts resolveOptions) (*resolvedCredentials, error)
 }
 
-// ResolveOptions is what NewClient tells a [Credentials] about the client
+// resolveOptions is what NewClient tells a [Credentials] about the client
 // it is resolving for, so a source that makes requests or holds key
 // material of its own can do so under the client's settings.
-type ResolveOptions struct {
+type resolveOptions struct {
 	// Transport is the client's RoundTripper (never nil). AutoCredentials
 	// sends its authentication requests through it too.
 	Transport http.RoundTripper
@@ -45,16 +49,17 @@ type ResolveOptions struct {
 	RequireLockedMemory bool
 }
 
-// ResolvedCredentials is one client's credentials, as a [Credentials]
+// resolvedCredentials is one client's credentials, as a [Credentials]
 // resolved them.
-type ResolvedCredentials struct {
+type resolvedCredentials struct {
 	// ClientID is the ZeroKMS client id (a UUID string).
 	ClientID string
 	// ClientKey is the client key. NewClient consumes it whatever the
 	// outcome, as [NewClientKey] describes.
 	ClientKey *ClientKey
-	// Token supplies the bearer token for every request.
-	Token TokenSource
+	// Token supplies the bearer token for every request: a stackauth
+	// strategy, outside the package's own tests.
+	Token tokenSource
 	// Close, when not nil, releases what the credentials hold open — the
 	// profile's guest and a refreshing token strategy, for AutoCredentials.
 	// The client calls it from Client.Close, or from NewClient when the
@@ -74,18 +79,33 @@ type ResolvedCredentials struct {
 	MemoryLockError func() error
 }
 
-// ErrNoCredentials is [AutoCredentials] finding no token source or no
+// ErrNoCredentials is [AutoCredentials] finding no token strategy or no
 // client key in either place it looks. The wrapped error says which, and
 // what to set.
 var ErrNoCredentials = errors.New("stackencrypt: no credentials")
 
 // NewCredentials is [Credentials] from explicit values: a client id, a
-// client key (from [NewClientKey], or stackauth's typed read), and a token
-// source. The key is consumed by the first NewClient given these
-// credentials; a second is refused with [ErrCredentialsConsumed], as a key
-// is for one client.
-func NewCredentials(clientID string, key *ClientKey, token TokenSource) Credentials {
-	return &explicitCredentials{clientID: clientID, key: key, token: token}
+// client key (from [NewClientKey], or stackauth's typed read), and the
+// stackauth strategy that supplies the bearer token (ProfileStore's
+// AccessKey, DeviceSession, OIDC or Auto). The key is consumed by the first
+// NewClient given these credentials; a second is refused with
+// [ErrCredentialsConsumed], as a key is for one client. A nil strategy is
+// refused by NewClient.
+//
+// The caller opened the strategy's ProfileStore and the strategy, and keeps
+// them: the client asks the strategy for a token on every ZeroKMS request
+// but never closes it or the store. Both must stay open until Client.Close
+// has returned, and are the caller's to close after it — the strategy, then
+// the store (closing the store closes its strategies too). A token asked of
+// a closed strategy is an error from the operation that needed it.
+func NewCredentials(clientID string, key *ClientKey, strategy *stackauth.Strategy) Credentials {
+	c := &explicitCredentials{clientID: clientID, key: key}
+	// A nil *Strategy stored in the interface would be a non-nil source
+	// that fails on first use; left unset, resolve refuses it up front.
+	if strategy != nil {
+		c.token = strategy
+	}
+	return c
 }
 
 // ErrCredentialsConsumed is [NewCredentials] given to a second NewClient:
@@ -94,21 +114,30 @@ func NewCredentials(clientID string, key *ClientKey, token TokenSource) Credenti
 // new key, for another client.
 var ErrCredentialsConsumed = errors.New("stackencrypt: the credentials' client key was already consumed by an earlier NewClient")
 
+// explicitCredentials is NewCredentials. token is the strategy; only this
+// package's tests put anything else in it.
 type explicitCredentials struct {
 	clientID string
 	key      *ClientKey
-	token    TokenSource
-	// consumed is set by the first Resolve: what it handed out is the
+	token    tokenSource
+	// consumed is set by the first resolve: what it handed out is the
 	// caller's to wipe, and a second caller must not be told its values
 	// were missing when they were spent.
 	consumed atomic.Bool
 }
 
-func (c *explicitCredentials) Resolve(context.Context, ResolveOptions) (*ResolvedCredentials, error) {
+func (c *explicitCredentials) resolve(context.Context, resolveOptions) (*resolvedCredentials, error) {
 	if !c.consumed.CompareAndSwap(false, true) {
 		return nil, ErrCredentialsConsumed
 	}
-	return &ResolvedCredentials{ClientID: c.clientID, ClientKey: c.key, Token: c.token}, nil
+	resolved := &resolvedCredentials{ClientID: c.clientID, ClientKey: c.key, Token: c.token}
+	if c.token == nil {
+		// Returned with the key, so NewClient consumes it as it does on
+		// every other refusal.
+		return resolved, fmt.Errorf("%w: NewCredentials needs a stackauth strategy for the token", ErrEncoding)
+	}
+	// No Close: the strategy and its store are the caller's.
+	return resolved, nil
 }
 
 // String names the credentials' kind and client id; the key prints a
@@ -165,7 +194,7 @@ type autoCredentials struct{}
 // String names the credentials' kind; nothing is resolved to print it.
 func (autoCredentials) String() string { return "stackencrypt.AutoCredentials" }
 
-func (autoCredentials) Resolve(ctx context.Context, opts ResolveOptions) (*ResolvedCredentials, error) {
+func (autoCredentials) resolve(ctx context.Context, opts resolveOptions) (*resolvedCredentials, error) {
 	return resolveWithStrategy(ctx, opts, func(ctx context.Context, profile *stackauth.ProfileStore, noProfile error) (*stackauth.Strategy, error) {
 		strategy, err := profile.Auto(ctx)
 		switch {
@@ -209,7 +238,7 @@ func (c oidcCredentials) String() string {
 	return fmt.Sprintf("stackencrypt.OIDCFederation{crn: %s}", c.crn)
 }
 
-func (c oidcCredentials) Resolve(ctx context.Context, opts ResolveOptions) (*ResolvedCredentials, error) {
+func (c oidcCredentials) resolve(ctx context.Context, opts resolveOptions) (*resolvedCredentials, error) {
 	return resolveWithStrategy(ctx, opts, func(ctx context.Context, profile *stackauth.ProfileStore, _ error) (*stackauth.Strategy, error) {
 		strategy, err := profile.OIDC(ctx, c.crn, c.provider)
 		if err != nil {
@@ -227,9 +256,9 @@ func (c oidcCredentials) Resolve(ctx context.Context, opts ResolveOptions) (*Res
 // credentials' to close; on failure they are closed here.
 func resolveWithStrategy(
 	ctx context.Context,
-	opts ResolveOptions,
+	opts resolveOptions,
 	strategy func(ctx context.Context, profile *stackauth.ProfileStore, noProfile error) (*stackauth.Strategy, error),
-) (_ *ResolvedCredentials, err error) {
+) (_ *resolvedCredentials, err error) {
 	authOpts := []stackauth.Option{stackauth.WithRoundTripper(opts.Transport)}
 	if opts.RequireLockedMemory {
 		authOpts = append(authOpts, stackauth.RequireLockedMemory())
@@ -275,7 +304,7 @@ func resolveWithStrategy(
 			return nil, err
 		}
 	}
-	return &ResolvedCredentials{
+	return &resolvedCredentials{
 		ClientID:  clientID,
 		ClientKey: key,
 		Token:     token,
