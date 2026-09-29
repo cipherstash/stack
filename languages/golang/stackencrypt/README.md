@@ -215,6 +215,87 @@ instance is released, and takes no context because it does no I/O. A
 cleanup, which covers the forgot-to-close case in a running process and
 nothing at exit.
 
+## Plans from a policy
+
+A record plan says which fields to encrypt, under which context, with which
+index terms. `stash` tags or `NewPlan` spell it out by hand. The `plan`
+subpackage derives it from what the schema already says about each field
+(its facts, such as Fideslang `data_categories`), through a policy written
+in Go:
+
+```go
+import "github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt/plan"
+
+type Individual struct {
+    ID         int64
+    Email      string
+    MedicareNo string
+}
+
+// Facts come from a Source, such as the protobuf one planned in CIP-4088.
+// Any function returning facts is one.
+var source = plan.SourceFunc(func(msg any) ([]plan.Fact, error) {
+    return []plan.Fact{
+        {Field: "id", GoField: "ID"},
+        {Field: "email", GoField: "Email", Annotations: []plan.Annotation{
+            {Key: "fides.data_categories", Values: []string{"user.contact.email"}}}},
+        {Field: "medicare_no", GoField: "MedicareNo", Annotations: []plan.Annotation{
+            {Key: "fides.data_categories", Values: []string{"user.government_id"}}}},
+    }, nil
+})
+
+var category = plan.Key("fides.data_categories")
+
+var Base = plan.FirstOf(
+    plan.When(category.Under("user.government_id"), plan.Encrypt(plan.EQL(stackencrypt.Equality))),
+    plan.When(category.Under("user.contact.email"), plan.Encrypt(plan.EQL(stackencrypt.Equality, stackencrypt.Match))),
+    plan.When(category.Under("user"), plan.Encrypt(plan.EQL())),
+)
+
+var Individuals = plan.ForMessage(&Individual{}, plan.Table("individuals"),
+    plan.FirstOf(
+        plan.When(plan.Field("medicare_no"), plan.Encrypt(plan.EQL(stackencrypt.Equality)),
+            plan.Column("medicare_number")),
+    ).OrElse(Base),
+)
+
+// At startup: panics if a classified field is decided by no rule, or the
+// plan names a field the struct does not have.
+var individuals = plan.MustPlanFor(source, Individuals)
+
+records, err := cipher.EncryptRecords(ctx, rows, stackencrypt.WithPlan(individuals))
+```
+
+A policy fails closed: a field with facts that no rule decides is an error
+when the plan is built, naming the field and its facts. There is no default;
+write a catch-all, `Plaintext()` included, in the policy. Fields with no
+facts are left out and stored as they are. A message the policy encrypts
+nothing of has no plan: `PlanFor` reports `ErrNothingEncrypted`, and its
+records are stored without one.
+
+An EQL target's context is its column identity, `"<table>/<column>"`. The
+table is required per message, never derived from its name. A field is
+stored in the column named by its schema name (its `Fact.Field`, such as
+`medicare_no`: the spelling the Rust derive and the database column share)
+unless a rule names another with `plan.Column`, and that column is also its
+identity unless the rule pins one with `plan.Identity`. `plan.Field` matches on that same schema name.
+
+The identity is bound into every stored ciphertext, its data key and its
+index terms, so once data is written it must never change. A field never
+renamed in the database needs no `Identity`. After
+`ALTER TABLE individuals RENAME COLUMN medicare_number TO medicare_num`,
+new writes go to the new column under the old identity:
+
+```go
+plan.When(plan.Field("medicare_no"), plan.Encrypt(plan.EQL(stackencrypt.Equality)),
+    plan.Column("medicare_num"), plan.Identity("medicare_number"))
+```
+
+`plan.Custom` targets supply their own context: `plan.Column` names only
+their record key, and `plan.Identity` is refused. The plan a
+policy builds is a `Plan` like any other: the guest receives the same bytes
+as for the equivalent hand-built plan.
+
 ## Errors
 
 Errors are sentinel values, matched with `errors.Is`. The wasm guest

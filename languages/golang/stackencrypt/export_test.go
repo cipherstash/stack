@@ -1,6 +1,11 @@
 package stackencrypt
 
-import "context"
+import (
+	"context"
+	"reflect"
+
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
+)
 
 // The test-only ways to give a client a token. The public API takes tokens
 // only from stackauth strategies; the tests that talk to httptest stubs
@@ -29,4 +34,20 @@ func newTestCredentials(clientID string, key *ClientKey, token tokenSource) Cred
 // CS_ZEROKMS_HOST.
 func withZeroKMSURL(url string) ClientOption {
 	return func(o *clientOptions) { o.zerokmsURL = url }
+}
+
+// GuestPlanInput is the encoded plan object a record call over t sends the
+// guest under p, each context extended by ext: what the external tests
+// compare byte for byte. Test-only; not part of the package's API.
+func GuestPlanInput(p Plan, t reflect.Type, ext ...any) ([]byte, error) {
+	o := applyOptions([]RecordOption{WithPlan(p), ExtendContext(ext...)})
+	bound, err := planFor(t, o)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := planValue(bound, o)
+	if err != nil {
+		return nil, err
+	}
+	return vcffi.Marshal(obj)
 }
