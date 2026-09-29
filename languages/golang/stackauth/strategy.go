@@ -202,6 +202,15 @@ func (s *Strategy) token(ctx context.Context) (string, error) {
 	return token, err
 }
 
+// MemoryLockError is why the memory the strategy lives in is not locked in
+// RAM: its ProfileStore's guest, where its token, its access key or refresh
+// token, and any client key read through the same store are held. It is
+// [ProfileStore.MemoryLockError] of that store, asked now rather than when
+// the strategy was made: under best-effort locking the guest can commit
+// unlocked memory later, on a growth for a token exchange or a refresh.
+// Nil while the memory is locked. It can be asked after Close.
+func (s *Strategy) MemoryLockError() error { return s.store.MemoryLockError() }
+
 // Close drops the strategy's cached token and unregisters its provider.
 func (s *Strategy) Close() error {
 	s.mu.Lock()

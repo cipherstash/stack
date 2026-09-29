@@ -17,6 +17,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
+	"github.com/tetratelabs/wazero/api"
 )
 
 const testCRN = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"
@@ -618,5 +621,39 @@ func TestOpenWithoutProfileRunsAccessKeyAndRefusesProfileReads(t *testing.T) {
 	}
 	if _, err := store.Auto(ctx); !errors.Is(err, ErrNotAuthenticated) {
 		t.Fatalf("Auto with no key and no profile: %v, want ErrNotAuthenticated", err)
+	}
+}
+
+// A strategy reports its store's memory lock, asked live: a store opened
+// best effort whose guest later grows into memory it cannot lock is
+// reported unlocked by its strategies from then on.
+func TestStrategyReportsItsStoresMemoryLockLive(t *testing.T) {
+	ctx := context.Background()
+	_, s := profile(t)
+	strategy, err := s.AccessKey(ctx, testCRN, "CSAKtestKeyId.testKeySecret", WithAuthBaseURL("https://cts.invalid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strategy.Close()
+	if fmt.Sprint(strategy.MemoryLockError()) != fmt.Sprint(s.MemoryLockError()) {
+		t.Fatalf("Strategy.MemoryLockError = %v, want the store's %v", strategy.MemoryLockError(), s.MemoryLockError())
+	}
+	if s.MemoryLockError() != nil {
+		t.Skipf("the store is unlocked already here (%v); a later refusal cannot be told apart", s.MemoryLockError())
+	}
+	unlocked := guest.UnlockGrowth(s.root.inst.mem, errors.New("refused for the test"))
+	// Staging a 2 MiB argument into guest memory needs a growth.
+	if _, err := s.call(ctx, func(i *instance) api.Function { return i.setCurrentWorkspace }, strings.Repeat("A", 2<<20)); errors.Is(err, ErrMemoryLock) {
+		t.Fatalf("a best-effort growth was refused: %v", err)
+	}
+	if unlocked.Refused() == 0 {
+		t.Fatal("the guest did not grow; the test proves nothing")
+	}
+	if err := strategy.MemoryLockError(); !errors.Is(err, ErrMemoryLock) || !strings.Contains(err.Error(), unlocked.Reason().Error()) {
+		t.Fatalf("Strategy.MemoryLockError after an unlocked growth = %v, want ErrMemoryLock naming it", err)
+	}
+	_ = strategy.Close()
+	if err := strategy.MemoryLockError(); !errors.Is(err, ErrMemoryLock) {
+		t.Fatalf("Strategy.MemoryLockError after Close = %v, want the store's report still", err)
 	}
 }

@@ -78,15 +78,20 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	if creds == nil {
 		creds = AutoCredentials()
 	}
-	// The host-side checks come first: they read nothing from the
-	// credentials, and under AutoCredentials resolving means instantiating
-	// the credential guest and reading the profile, which a config refused
-	// here should not pay for. A refused config still consumes an explicit
-	// key, as WithCredentials promises; any other Credentials has not
-	// been asked yet, so holds nothing of this client's.
+	// The host-side checks come first: they resolve nothing, and under
+	// AutoCredentials resolving means instantiating the credential guest
+	// and reading the profile, which a config refused here should not pay
+	// for. A refused config still consumes an explicit key, as
+	// WithCredentials promises; any other Credentials has not been asked
+	// yet, so holds nothing of this client's.
 	zerokmsURL, err := zerokmsEndpoint(cfg.zerokmsURL)
 	if err == nil && cfg.keysetCacheSize < 0 {
 		err = errors.New("stackencrypt: WithKeysetCacheSize must not be negative")
+	}
+	if explicit, ok := creds.(*explicitCredentials); ok && err == nil && explicit.token == nil {
+		// Knowable from the credentials as they were built: the one place
+		// a missing token source is decided.
+		err = fmt.Errorf("%w: NewCredentials needs a stackauth strategy for the token", ErrEncoding)
 	}
 	wasm := cfg.guest
 	if err == nil && wasm == nil {
@@ -123,8 +128,15 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 			_ = resolved.Close()
 		}
 	}()
-	if resolved.Token == nil {
-		return nil, errors.New("stackencrypt: the credentials have no token source")
+	if cfg.requireLockedMemory && resolved.MemoryLockError != nil {
+		// The credentials' own guest held the key, and holds the token
+		// strategy: under the strict policy its memory must be locked too.
+		// AutoCredentials and OIDCFederation open it strict and cannot get
+		// here unlocked; NewCredentials' store is the caller's, opened
+		// however the caller chose.
+		if lockErr := resolved.MemoryLockError(); lockErr != nil {
+			return nil, fmt.Errorf("stackencrypt: the credentials' memory: %w", lockErr)
+		}
 	}
 	encoded, err := encodeConfig(initConfig{
 		clientID:        resolved.ClientID,

@@ -13,10 +13,11 @@ import (
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
-// Round trips through real ZeroKMS key material. Run by the phase 5
-// harness (`mise run test:integration:wasi-go`), which boots zerokms-server
-// and exports the variables below; each test is skipped unless its own are
-// set:
+// Round trips through real ZeroKMS key material. No CI harness runs these
+// yet: one that boots zerokms-server and exports the variables below is
+// tracked in CIP-4024. Until then they run locally when the variables are
+// set (from a gitignored mise.local.toml, say), and each test is skipped
+// unless its own are:
 //
 //   - STACK_ENCRYPT_TEST_CLIENT_ID, STACK_ENCRYPT_TEST_CLIENT_KEY: the
 //     seeded client (every live test);

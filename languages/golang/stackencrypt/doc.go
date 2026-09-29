@@ -125,9 +125,13 @@
 // the guest's memory that cannot be locked, so the limit granted must
 // leave the guest room to grow: a refused growth fails the call with
 // [ErrMemoryLock], and closes the client when the growth was the guest's
-// own allocation rather than a host-staged buffer. A Client prints its
-// memory state ([Client.String]) and logs it ([Client.LogValue]). An
-// embedder running
+// own allocation rather than a host-staged buffer. The report and the
+// policy cover the credential guest as well; with [NewCredentials] that is
+// the caller's stackauth store, which NewClient refuses under the policy
+// when it is unlocked, and which should be opened with
+// stackauth.RequireLockedMemory to stay locked (see
+// [WithRequireLockedMemory]). A Client prints its memory state
+// ([Client.String]) and logs it ([Client.LogValue]). An embedder running
 // the guest under its own wazero configuration gets none of this unless
 // it supplies an allocator of its own.
 //

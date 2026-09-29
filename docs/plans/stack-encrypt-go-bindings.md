@@ -438,24 +438,29 @@ is the keyset-bound view (the Rust `StackCipher::keyset`, returning its
 `KeysetCipher`) and `Client.DefaultKeyset()` its `default_keyset`, `Client.Decrypt*`
 opens any keyset, and `Term` takes a `Context` and returns an error.
 
-Original sketch: `bindings/go/stackencrypt` (module path TBD — see
-decisions). Imports `vcvalue` for the model. Surface mirrors `vcencrypt` so
-the two feel like one SDK:
+`bindings/go/stackencrypt` imports `vcvalue` for the model, and its surface
+mirrors `vcencrypt` so the two feel like one SDK. As shipped, with explicit
+credentials (`NewClient(ctx)` alone resolves them as the Rust client does,
+from the environment and then the developer profile):
 
 ```go
-client, _ := stackencrypt.NewClient(ctx, stackencrypt.Config{
-    Transport: http.DefaultClient,          // or any RoundTripper
-    Token:     stackencrypt.StaticToken(tok), // phase-1 auth
-})
-cipher, _ := client.NewCipher(ctx, stackencrypt.CipherConfig{
-    ClientID: id, ClientKey: key, Keyset: "users",
-})
+store, _ := stackauth.OpenWithoutProfile(ctx) // or stackauth.Resolve(ctx) for the profile
+defer store.Close()                            // after the client and the strategy
+strategy, _ := store.AccessKey(ctx, crn, accessKey) // or DeviceSession, OIDC, Auto
+defer strategy.Close()                              // after the client
 
-ct, _  := cipher.Encrypt(ctx, user, aad)          // map[string]any of stackencrypt.Sealed / vcvalue.Plain
-pt, _  := cipher.Decrypt(ctx, ct, aad)
+client, _ := stackencrypt.NewClient(ctx,
+    stackencrypt.WithCredentials(stackencrypt.NewCredentials(id, stackencrypt.NewClientKey(key), strategy)),
+    stackencrypt.WithTransport(rt), // optional: any RoundTripper
+)
+defer client.Close()
+cipher := client.Keyset(stackencrypt.KeysetName("users")) // or client.DefaultKeyset()
 
-rows, _ := cipher.EncryptRecords(ctx, users, aad)  // one ZeroKMS call for the slice
-probe, _ := cipher.Term(ctx, uint32(34), "users/age", stackencrypt.Equality)
+ct, _ := cipher.Encrypt(ctx, user, aad)   // map[string]any of stackencrypt.Sealed / vcvalue.Plain
+pt, _ := client.Decrypt(ctx, ct, aad)     // any keyset
+
+rows, _ := cipher.EncryptRecords(ctx, users) // one ZeroKMS call for the slice
+probe, _ := cipher.Term(ctx, uint32(34), stackencrypt.MustContext("users/age"), stackencrypt.Equality)
 ```
 
 - `stackencrypt.Sealed` — the Phase 2 leaf; `driver.Valuer` + `sql.Scanner`
@@ -483,17 +488,21 @@ probe, _ := cipher.Term(ctx, uint32(34), "users/age", stackencrypt.Equality)
 
 ### Phase 5 — validation and CI
 
-- `mise run test:integration:wasi-go` (renamed #2099 harness): boots
-  `zerokms-server` against the mock auth server, mints a token, seeds a
-  client + keyset, then `CGO_ENABLED=0 go test ./...` in
-  `bindings/go/stackencrypt`. It exports `STACK_ENCRYPT_TEST_CLIENT_ID`,
-  `STACK_ENCRYPT_TEST_CLIENT_KEY`, `STACK_ENCRYPT_TEST_CLIENT_ACCESS_KEY`
-  and `STACK_ENCRYPT_TEST_WORKSPACE_CRN`, and optionally
+- A CI harness for the live tests, tracked in CIP-4024 and not yet built
+  (the intended name is `mise run test:integration:wasi-go`, the renamed
+  #2099 harness). It is to boot `zerokms-server` against the mock auth
+  server, seed a client + keyset and an access key, then run
+  `CGO_ENABLED=0 go test ./...` in `bindings/go/stackencrypt` with
+  `STACK_ENCRYPT_TEST_CLIENT_ID`, `STACK_ENCRYPT_TEST_CLIENT_KEY`,
+  `STACK_ENCRYPT_TEST_CLIENT_ACCESS_KEY` and
+  `STACK_ENCRYPT_TEST_WORKSPACE_CRN` exported, and optionally
   `STACK_ENCRYPT_TEST_CTS_HOST` and `STACK_ENCRYPT_TEST_ZEROKMS_URL`. The
   same four required variables drive both paths: `NewCredentials` with a
   `stackauth` access-key strategy, and `AutoCredentials` (no options to
   `NewClient`). There is no raw-token variable, since the client takes
   tokens only from `stackauth` strategies. `live_test.go` documents each.
+  Until the harness exists, the live tests are skipped unless those
+  variables are set, and run locally when they are.
 - Go tests: import-surface gate (exactly WASI + `cipherstash_transport`),
   stub-transport tests for the bridge, live encrypt/decrypt, live
   `EncryptRecords` asserting **one** `transport_send` for N rows

@@ -147,7 +147,10 @@ with the workspace CRN and a provider of the IdP's tokens. CTS exchanges
 the IdP token for a CipherStash one, and the provider is asked again only
 when that token needs replacing. `stackauth.OAuth2TokenSource` adapts a
 `golang.org/x/oauth2` source. The client key is found as `AutoCredentials`
-finds it.
+finds it. `stackauth` strategy options follow the provider:
+`OIDCFederation(crn, provider, stackauth.WithAuthBaseURL(cts))` pins the CTS
+endpoint for these credentials, where `CS_CTS_HOST` would pin it for the
+whole process.
 
 `AutoCredentials`, `NewCredentials` and `OIDCFederation` are the only kinds
 of `Credentials`: the interface is sealed.
@@ -193,8 +196,18 @@ with `ErrMemoryLock`, so grant a limit with room to grow. A `Client` prints
 its memory state with `%v` and logs it as a `slog` group, so a startup log
 shows it.
 
+The report and the policy cover the credential guest too, which holds the
+token strategy and which the client key may have passed through.
+`AutoCredentials` and `OIDCFederation` open it under the client's policy.
+With `NewCredentials` it is the `stackauth` store you opened: under
+`WithRequireLockedMemory()`, `NewClient` fails with `ErrMemoryLock` if that
+store's memory is unlocked, but the store's own policy decides its later
+growth. Open it with `stackauth.RequireLockedMemory()` as well to keep it
+locked for the life of the client.
+
 Production checklist: assert `MemoryLocked()` at startup, or pass
-`WithRequireLockedMemory()`. Handling `SIGTERM` for a graceful shutdown is
+`WithRequireLockedMemory()`, and with `NewCredentials` open the store with
+`stackauth.RequireLockedMemory()`. Handling `SIGTERM` for a graceful shutdown is
 ordinary Go practice and worth doing for your own reasons; the SDK does not
 depend on it and installs no signal handler of its own.
 

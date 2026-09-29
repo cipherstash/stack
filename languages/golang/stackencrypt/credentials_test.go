@@ -458,6 +458,8 @@ func TestNewClientReleasesTheCredentialsOnceWhenInitFails(t *testing.T) {
 // A Resolve that fails while handing back what it built is consumed as a
 // successful one is: the key is wiped and Close runs, once.
 func TestNewClientConsumesCredentialsAFailedResolveHandsBack(t *testing.T) {
+	// The resolve runs after the guest is read.
+	guestOrSkip(t)
 	key := NewClientKey([]byte(testClientKey))
 	var released int
 	resolveErr := errors.New("the token strategy failed")
@@ -604,8 +606,11 @@ func TestNewCredentialsRefusesASecondClient(t *testing.T) {
 }
 
 // NewClient with no options is AutoCredentials: with nothing configured,
-// the error is the resolution's, before any guest or request.
+// the error is the resolution's, before the crypto guest is instantiated
+// or a request made.
 func TestNewClientDefaultsToAutoCredentials(t *testing.T) {
+	// The resolve runs after the guest is read.
+	guestOrSkip(t)
 	authGuestOrSkip(t)
 	cleanEnv(t, filepath.Join(t.TempDir(), "absent"))
 	if _, err := NewClient(context.Background()); !errors.Is(err, ErrNoCredentials) {
@@ -695,15 +700,129 @@ func (f credentialsFunc) resolve(ctx context.Context, opts resolveOptions) (*res
 func ptr(s string) *string { return &s }
 
 // NewCredentials takes its token only from a stackauth strategy: a nil one
-// is refused, and the key is consumed all the same.
+// is refused host-side, before any guest is read, and the key is consumed
+// all the same — the credentials are spent, as on any refused config.
 func TestNewCredentialsRefusesANilStrategy(t *testing.T) {
 	key := NewClientKey([]byte(testClientKey))
-	_, err := NewClient(context.Background(), WithCredentials(NewCredentials(testClientID, key, nil)))
+	creds := NewCredentials(testClientID, key, nil)
+	_, err := NewClient(context.Background(), WithCredentials(creds))
 	if !errors.Is(err, ErrEncoding) || !strings.Contains(err.Error(), "strategy") {
 		t.Fatalf("NewClient: %v, want ErrEncoding naming the strategy", err)
 	}
 	if !key.IsZero() {
 		t.Error("the key still holds material after NewClient refused a nil strategy")
+	}
+	if !creds.(*explicitCredentials).consumed.Load() {
+		t.Error("the credentials were not marked consumed")
+	}
+}
+
+// NewCredentials reports the memory lock of the store the caller opened its
+// strategy from, as AutoCredentials reports its profile's: the store's own
+// answer, asked live.
+func TestNewCredentialsReportsTheStrategysMemoryLock(t *testing.T) {
+	authGuestOrSkip(t)
+	ctx := context.Background()
+	// Best effort, stackauth's default: the store opens whatever the lock.
+	store, err := stackauth.OpenWithoutProfile(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	strategy, err := store.AccessKey(ctx, testCRN, testAccessKey, stackauth.WithAuthBaseURL("https://cts.example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strategy.Close()
+	resolved, err := NewCredentials(testClientID, NewClientKey([]byte(testClientKey)), strategy).resolve(ctx, resolveOptions{Transport: http.DefaultTransport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved.ClientKey.Wipe()
+	if resolved.MemoryLockError == nil {
+		t.Fatal("MemoryLockError is not set: the strategy's store's lock state is not reported")
+	}
+	if got, want := resolved.MemoryLockError(), store.MemoryLockError(); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("MemoryLockError() = %v, want the store's %v", got, want)
+	}
+}
+
+// WithRequireLockedMemory covers the credential guest whatever the
+// credentials: memory the credentials report unlocked is refused with
+// ErrMemoryLock before the crypto guest is instantiated or a request made,
+// the key is consumed and what the credentials hold is released. Under
+// best effort the same report lets the client be made. The refusal is
+// forced through the credentials' report, over a store opened best effort:
+// the real refusal, under RLIMIT_MEMLOCK, is in
+// TestRequireLockedMemoryRefusesACallerStoreUnlocked.
+func TestRequireLockedMemoryRefusesUnlockedCredentials(t *testing.T) {
+	authGuestOrSkip(t)
+	forced := guest.MemoryLockError(errors.New("RLIMIT_MEMLOCK refused the credential guest"))
+	for name, base := range map[string]func(t *testing.T) Credentials{
+		"NewCredentials": func(t *testing.T) Credentials {
+			cleanEnv(t, t.TempDir())
+			auth := newAuthServer(t)
+			ctx := context.Background()
+			// Best effort, stackauth's default.
+			store, err := stackauth.OpenWithoutProfile(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			strategy, err := store.AccessKey(ctx, testCRN, testAccessKey, stackauth.WithAuthBaseURL(auth.URL))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = strategy.Close() })
+			return NewCredentials(testClientID, NewClientKey([]byte(testClientKey)), strategy)
+		},
+		"AutoCredentials": func(t *testing.T) Credentials {
+			cleanEnv(t, newProfile(t, loggedIn("profile-token")))
+			return AutoCredentials()
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stub := newStub(t, http.StatusUnauthorized, "", "nope")
+			forcedCreds := func(t *testing.T) (Credentials, **resolvedCredentials) {
+				creds := base(t)
+				var got *resolvedCredentials
+				return credentialsFunc(func(ctx context.Context, opts resolveOptions) (*resolvedCredentials, error) {
+					r, err := creds.resolve(ctx, opts)
+					if err != nil {
+						return r, err
+					}
+					if r.MemoryLockError == nil {
+						t.Error("the credentials report no memory lock state")
+					}
+					r.MemoryLockError = func() error { return forced }
+					got = r
+					return r, nil
+				}), &got
+			}
+			creds, resolved := forcedCreds(t)
+			// No crypto guest is needed: the refusal precedes it.
+			_, err := NewClient(context.Background(), WithCredentials(creds), WithZeroKMSURL(stub.URL), WithGuest(wasiProbe), WithRequireLockedMemory())
+			if !errors.Is(err, ErrMemoryLock) || !strings.Contains(err.Error(), "credential guest") {
+				t.Fatalf("NewClient under WithRequireLockedMemory: %v, want ErrMemoryLock naming the credential guest", err)
+			}
+			if len(stub.requests) != 0 {
+				t.Errorf("a request was made for refused credentials: %+v", stub.requests)
+			}
+			if !(*resolved).ClientKey.IsZero() {
+				t.Error("the key still holds material after the credentials were refused")
+			}
+			if (*resolved).Close != nil {
+				if _, err := (*resolved).Token.Token(context.Background()); !errors.Is(err, stackauth.ErrState) {
+					t.Errorf("the token source after the refusal: %v, want it released (ErrState)", err)
+				}
+			}
+
+			guestOrSkip(t)
+			creds, _ = forcedCreds(t)
+			if _, err := NewClient(context.Background(), WithCredentials(creds), WithZeroKMSURL(stub.URL)); !errors.Is(err, ErrUnauthorized) {
+				t.Fatalf("NewClient under best effort: %v, want ErrUnauthorized from the stub, the report not refused", err)
+			}
+		})
 	}
 }
 

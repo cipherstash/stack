@@ -13,6 +13,7 @@ import (
 
 	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
 	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guesttest"
+	"github.com/cipherstash/cipherstash-suite/bindings/go/stackauth"
 )
 
 // The allocator on its own is tested in internal/guest. These are the
@@ -117,6 +118,55 @@ func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
 		if v := c.LogValue().String(); !strings.Contains(v, "memory_locked=false") {
 			t.Fatalf("Client logs as %q: no memory state", v)
 		}
+	}
+	fmt.Println("case ok")
+}
+
+// WithRequireLockedMemory covers a store the caller opened best effort
+// behind NewCredentials: with RLIMIT_MEMLOCK at zero the store opens
+// unlocked, and NewClient refuses the credentials with ErrMemoryLock, before
+// the crypto guest is instantiated.
+func TestRequireLockedMemoryRefusesACallerStoreUnlocked(t *testing.T) {
+	if !guesttest.InChild(t) {
+		return
+	}
+	if err := guesttest.SetMemlockLimit(0); err != nil {
+		t.Fatalf("lowering RLIMIT_MEMLOCK: %v", err)
+	}
+	ctx := context.Background()
+	store, err := stackauth.OpenWithoutProfile(ctx)
+	if errors.Is(err, stackauth.ErrGuestNotBuilt) {
+		fmt.Println("case skipped:", err)
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if store.MemoryLocked() {
+		fmt.Println("case skipped: mlock succeeds under RLIMIT_MEMLOCK=0")
+		return
+	}
+	strategy, err := store.AccessKey(ctx, "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY", "CSAKtestKeyId.testKeySecret", stackauth.WithAuthBaseURL("https://cts.invalid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strategy.Close()
+	if err := strategy.MemoryLockError(); !errors.Is(err, ErrMemoryLock) {
+		t.Fatalf("Strategy.MemoryLockError = %v, want the store's ErrMemoryLock", err)
+	}
+	key := NewClientKey([]byte("00"))
+	_, err = NewClient(ctx,
+		WithCredentials(NewCredentials("6a70bd18-99ac-4650-b104-37eec3a15b09", key, strategy)),
+		WithGuest(wasiProbe),
+		WithZeroKMSURL("https://zerokms.invalid"),
+		WithRequireLockedMemory(),
+	)
+	if !errors.Is(err, ErrMemoryLock) || !strings.Contains(err.Error(), "credentials' memory") {
+		t.Fatalf("strict NewClient over an unlocked caller store: %v, want ErrMemoryLock naming the credentials", err)
+	}
+	if !key.IsZero() {
+		t.Fatal("the key still holds material after the credentials were refused")
 	}
 	fmt.Println("case ok")
 }

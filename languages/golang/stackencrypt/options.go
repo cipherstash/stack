@@ -75,8 +75,17 @@ func WithGuest(wasm []byte) ClientOption {
 // closed with its keys wiped, the call still failing with ErrMemoryLock.
 // Set it where swap is a real exposure and the deployment grants a lock
 // limit with room for the guest to grow (RLIMIT_MEMLOCK on Linux; the error
-// names the size held so far); see [Client.MemoryLocked]. [AutoCredentials]
-// and [OIDCFederation] apply it to the credential guest too.
+// names the size held so far); see [Client.MemoryLocked].
+//
+// It covers the credential guest too, where the token strategy lives and
+// the client key may have passed through. [AutoCredentials] and
+// [OIDCFederation] open that guest under the same policy, so it is refused
+// at NewClient and on every later growth alike. [NewCredentials]' guest is
+// the stackauth store the caller opened: NewClient fails with
+// ErrMemoryLock if that store's memory is unlocked when it is asked, but
+// only the store's own policy governs its later growth, so open it with
+// stackauth.RequireLockedMemory to hold it locked for the life of the
+// client. Client.MemoryLocked reports the store's state live either way.
 func WithRequireLockedMemory() ClientOption {
 	return func(o *clientOptions) { o.requireLockedMemory = true }
 }

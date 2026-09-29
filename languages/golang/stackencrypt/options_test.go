@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"sync"
@@ -56,17 +57,23 @@ func TestLaterZeroKMSURLWins(t *testing.T) {
 	}
 }
 
-func TestNegativeKeysetCacheSizeIsRefused(t *testing.T) {
-	key := NewClientKey([]byte(testClientKey))
+// A later WithKeysetCacheSize replaces an earlier one before anything is
+// checked: a negative size overridden by zero, the default, is accepted,
+// and the client goes on to ZeroKMS.
+func TestLaterKeysetCacheSizeWins(t *testing.T) {
+	guestOrSkip(t)
+	stub := newStub(t, http.StatusUnauthorized, "", "nope")
 	_, err := NewClient(context.Background(),
-		WithCredentials(newTestCredentials(testClientID, key, staticToken("t"))),
+		WithCredentials(testCredentials(staticToken("stub-token"))),
+		WithZeroKMSURL(stub.URL),
 		WithKeysetCacheSize(-1),
+		WithKeysetCacheSize(0),
 	)
-	if err == nil {
-		t.Fatal("NewClient accepted a negative keyset cache size")
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("NewClient: %v, want ErrUnauthorized from the stub", err)
 	}
-	if !key.IsZero() {
-		t.Error("the key still holds material after NewClient refused the options")
+	if len(stub.requests) != 1 {
+		t.Fatalf("requests: %d, want one: the overridden size was refused", len(stub.requests))
 	}
 }
 
@@ -146,5 +153,36 @@ func TestOIDCFederationResolvesTheKeyLikeAuto(t *testing.T) {
 	// provider or key is asked.
 	if _, err := OIDCFederation("", provider).resolve(context.Background(), resolveOptions{Transport: http.DefaultTransport}); !errors.Is(err, stackauth.ErrAuthConfig) {
 		t.Fatalf("OIDCFederation with no CRN: %v, want ErrAuthConfig", err)
+	}
+}
+
+// OIDCFederation's strategy options reach the strategy: WithAuthBaseURL
+// pins CTS for these credentials, over CS_CTS_HOST, which here names a
+// decoy that fails the test if it is asked.
+func TestOIDCFederationTakesStrategyOptions(t *testing.T) {
+	authGuestOrSkip(t)
+	cleanEnv(t, filepath.Join(t.TempDir(), "absent"))
+	auth := newAuthServer(t)
+	decoy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("CS_CTS_HOST was asked (%s) though WithAuthBaseURL pinned CTS", r.URL.Path)
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(decoy.Close)
+	t.Setenv("CS_CTS_HOST", decoy.URL)
+	t.Setenv(envClientID, testClientID)
+	t.Setenv(envClientKey, testClientKey)
+	provider := stackauth.OIDCProviderFunc(func(context.Context) (string, error) { return "idp-token", nil })
+	creds := OIDCFederation(testCRN, provider, stackauth.WithAuthBaseURL(auth.URL))
+	resolved, err := creds.resolve(context.Background(), resolveOptions{Transport: http.DefaultTransport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resolved.Close()
+	resolved.ClientKey.Wipe()
+	if got := token(t, resolved); got != auth.jwt {
+		t.Fatalf("token = %q, want the pinned CTS's", got)
+	}
+	if auth.calls.Load() != 1 {
+		t.Fatalf("exchanges at the pinned CTS: %d, want one", auth.calls.Load())
 	}
 }

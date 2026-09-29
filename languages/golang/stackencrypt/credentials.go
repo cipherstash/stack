@@ -66,16 +66,19 @@ type resolvedCredentials struct {
 	// client is not made. A Token that outlives it must not be asked again.
 	Close func() error
 	// MemoryLockError, when not nil, reports why memory the credentials
-	// hold key material in is not locked in RAM: for AutoCredentials, the
-	// credential guest's, which the client key passed through and the
-	// token strategy lives in, as stackauth's ProfileStore.MemoryLockError
-	// reports it. It is asked each time, not once: under best-effort
-	// locking a guest's memory can become unlocked later, when a growth
-	// for a token exchange or a refresh cannot be locked. The client folds
-	// its answer into Client.MemoryLocked and Client.MemoryLockError, so a
-	// checklist asserting the lock sees every guest the key was in, not
-	// only the crypto guest. Nil, or returning nil, when the memory is
-	// locked or the credentials hold nothing.
+	// hold key material in is not locked in RAM: the credential guest's,
+	// which the token strategy lives in and (for AutoCredentials and
+	// OIDCFederation) the client key passed through. AutoCredentials and
+	// OIDCFederation hand over their profile's ProfileStore.MemoryLockError;
+	// NewCredentials, the caller's strategy's Strategy.MemoryLockError,
+	// which is its store's. It is asked each time, not once: under
+	// best-effort locking a guest's memory can become unlocked later, when
+	// a growth for a token exchange or a refresh cannot be locked. NewClient
+	// refuses the credentials with it under WithRequireLockedMemory, and the
+	// client folds its answer into Client.MemoryLocked and
+	// Client.MemoryLockError, so a checklist asserting the lock sees every
+	// guest the key was in, not only the crypto guest. Nil, or returning
+	// nil, when the memory is locked or the credentials hold nothing.
 	MemoryLockError func() error
 }
 
@@ -101,7 +104,7 @@ var ErrNoCredentials = errors.New("stackencrypt: no credentials")
 func NewCredentials(clientID string, key *ClientKey, strategy *stackauth.Strategy) Credentials {
 	c := &explicitCredentials{clientID: clientID, key: key}
 	// A nil *Strategy stored in the interface would be a non-nil source
-	// that fails on first use; left unset, resolve refuses it up front.
+	// that fails on first use; left unset, NewClient refuses it up front.
 	if strategy != nil {
 		c.token = strategy
 	}
@@ -130,11 +133,14 @@ func (c *explicitCredentials) resolve(context.Context, resolveOptions) (*resolve
 	if !c.consumed.CompareAndSwap(false, true) {
 		return nil, ErrCredentialsConsumed
 	}
+	// A nil token never gets here: NewClient refuses it host-side, before
+	// the guest is read.
 	resolved := &resolvedCredentials{ClientID: c.clientID, ClientKey: c.key, Token: c.token}
-	if c.token == nil {
-		// Returned with the key, so NewClient consumes it as it does on
-		// every other refusal.
-		return resolved, fmt.Errorf("%w: NewCredentials needs a stackauth strategy for the token", ErrEncoding)
+	if strategy, ok := c.token.(*stackauth.Strategy); ok {
+		// The strategy's store is the guest the token lives in and, when
+		// the key was read through it, the key passed through: reported
+		// live, as AutoCredentials reports its profile's.
+		resolved.MemoryLockError = strategy.MemoryLockError
 	}
 	// No Close: the strategy and its store are the caller's.
 	return resolved, nil
@@ -222,14 +228,20 @@ func (autoCredentials) resolve(ctx context.Context, opts resolveOptions) (*resol
 // CipherStash token has to be minted; stackauth.OAuth2TokenSource adapts a
 // golang.org/x/oauth2 source. The client key is resolved as
 // [AutoCredentials] resolves it: CS_CLIENT_ID and CS_CLIENT_KEY, else the
-// developer profile. CS_CTS_HOST overrides the authentication endpoint.
-func OIDCFederation(crn string, provider stackauth.OIDCProvider) Credentials {
-	return oidcCredentials{crn: crn, provider: provider}
+// developer profile.
+//
+// opts configure the federation strategy as they would
+// stackauth.ProfileStore.OIDC: stackauth.WithAuthBaseURL pins the CTS
+// endpoint for these credentials alone. Without it, CS_CTS_HOST overrides
+// the endpoint, else it is discovered.
+func OIDCFederation(crn string, provider stackauth.OIDCProvider, opts ...stackauth.StrategyOption) Credentials {
+	return oidcCredentials{crn: crn, provider: provider, opts: opts}
 }
 
 type oidcCredentials struct {
 	crn      string
 	provider stackauth.OIDCProvider
+	opts     []stackauth.StrategyOption
 }
 
 // String names the credentials' kind and workspace; the provider is not
@@ -240,7 +252,7 @@ func (c oidcCredentials) String() string {
 
 func (c oidcCredentials) resolve(ctx context.Context, opts resolveOptions) (*resolvedCredentials, error) {
 	return resolveWithStrategy(ctx, opts, func(ctx context.Context, profile *stackauth.ProfileStore, _ error) (*stackauth.Strategy, error) {
-		strategy, err := profile.OIDC(ctx, c.crn, c.provider)
+		strategy, err := profile.OIDC(ctx, c.crn, c.provider, c.opts...)
 		if err != nil {
 			return nil, fmt.Errorf("stackencrypt: credentials: OIDC federation: %w", err)
 		}
