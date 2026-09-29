@@ -66,3 +66,7 @@ same cross-process lock as the `stash` CLI. The IdP rotates refresh tokens
 and detects replay, so two processes sharing `~/.cipherstash` that both
 exchanged the same refresh token would get the whole chain revoked; the lock
 prevents that.
+
+To supply the credentials yourself instead, from a secrets manager and with
+no `CS_*` variables or profile, see [`explicit/`](explicit/), which uses
+`stackencrypt.NewCredentials`.
