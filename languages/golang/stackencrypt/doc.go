@@ -59,8 +59,10 @@
 // [net/http.RoundTripper], and a bearer-token fetch, served by the
 // credentials' stackauth strategy. What crosses per ZeroKMS call is what would cross TLS
 // anyway; derived key material never leaves the guest. Under
-// [AutoCredentials] the same RoundTripper also carries the authentication
-// requests to CTS, so one scoped to the ZeroKMS host alone is not enough.
+// [AutoCredentials] and [OIDCFederation] the same RoundTripper also carries
+// the authentication requests to CTS, so one scoped to the ZeroKMS host
+// alone is not enough. Under [NewCredentials] those requests go through the
+// store the caller opened the strategy from.
 //
 // # Credentials
 //

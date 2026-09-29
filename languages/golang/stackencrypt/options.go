@@ -55,8 +55,10 @@ func WithKeysetCacheSize(n int) ClientOption {
 // stackauth's credential guest makes to CTS: an access-key exchange, a
 // device-session refresh, a federation exchange. A RoundTripper scoped to
 // the ZeroKMS host alone (a pinned client certificate, an egress allowlist)
-// refuses those; the failure then surfaces as the token strategy's. Nil means
-// http.DefaultTransport, the default.
+// refuses those; the failure then surfaces as the token strategy's. Under
+// [NewCredentials] the token exchange runs in the store the caller opened,
+// not through this RoundTripper: pass stackauth.WithRoundTripper to that
+// store instead. Nil means http.DefaultTransport, the default.
 func WithTransport(rt http.RoundTripper) ClientOption {
 	return func(o *clientOptions) { o.transport = rt }
 }

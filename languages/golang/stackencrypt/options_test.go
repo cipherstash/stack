@@ -70,6 +70,37 @@ func TestLaterCredentialsConsumeTheOnesTheyReplace(t *testing.T) {
 	}
 }
 
+// The same credentials passed to WithCredentials twice are the ones that
+// win, not ones replaced: their key is resolved, not consumed, and the
+// client reaches ZeroKMS.
+func TestTheSameCredentialsPassedTwiceAreNotConsumed(t *testing.T) {
+	guestOrSkip(t)
+	stub := newStub(t, http.StatusUnauthorized, "", "nope")
+	creds := testCredentials(staticToken("stub-token"))
+	_, err := NewClient(context.Background(),
+		WithCredentials(creds),
+		WithCredentials(creds),
+		withZeroKMSURL(stub.URL),
+	)
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("NewClient: %v, want ErrUnauthorized from the stub", err)
+	}
+	if len(stub.requests) != 1 {
+		t.Fatalf("requests: %d, want one", len(stub.requests))
+	}
+}
+
+// Every Credentials constructor returns a comparable value: comparing two
+// does not panic, whichever constructor made them.
+func TestCredentialsAreComparable(t *testing.T) {
+	a := OIDCFederation("crn:a", nil)
+	b := OIDCFederation("crn:b", nil, stackauth.WithAuthBaseURL("https://cts.example.com"))
+	if a == b || AutoCredentials() != AutoCredentials() {
+		t.Fatal("unexpected comparison result")
+	}
+	_ = map[Credentials]bool{a: true, b: true, AutoCredentials(): true, testCredentials(staticToken("t")): true}
+}
+
 // A later WithKeysetCacheSize replaces an earlier one before anything is
 // checked: a negative size overridden by zero, the default, is accepted,
 // and the client goes on to ZeroKMS.

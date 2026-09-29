@@ -235,7 +235,7 @@ func (autoCredentials) resolve(ctx context.Context, opts resolveOptions) (*resol
 // endpoint for these credentials alone. Without it, CS_CTS_HOST overrides
 // the endpoint, else it is discovered.
 func OIDCFederation(crn string, provider stackauth.OIDCProvider, opts ...stackauth.StrategyOption) Credentials {
-	return oidcCredentials{crn: crn, provider: provider, opts: opts}
+	return &oidcCredentials{crn: crn, provider: provider, opts: opts}
 }
 
 type oidcCredentials struct {

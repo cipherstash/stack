@@ -74,14 +74,18 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	if rt == nil {
 		rt = http.DefaultTransport
 	}
-	// Credentials a later WithCredentials replaced are never resolved, but
-	// an explicit key in them is still the client's to consume.
-	for _, c := range cfg.superseded {
-		consumeUnresolved(c)
-	}
 	creds := cfg.credentials
 	if creds == nil {
 		creds = AutoCredentials()
+	}
+	// Credentials a later WithCredentials replaced are never resolved, but
+	// an explicit key in them is still the client's to consume — unless the
+	// replacement is the same credentials passed again, whose key is the
+	// one this client resolves.
+	for _, c := range cfg.superseded {
+		if !sameExplicit(c, creds) {
+			consumeUnresolved(c)
+		}
 	}
 	// The host-side checks come first: they resolve nothing, and under
 	// AutoCredentials resolving means instantiating the credential guest
@@ -91,7 +95,7 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	// yet, so holds nothing of this client's.
 	zerokmsURL, err := zerokmsEndpoint(cfg.zerokmsURL)
 	if err == nil && cfg.keysetCacheSize < 0 {
-		err = errors.New("stackencrypt: WithKeysetCacheSize must not be negative")
+		err = fmt.Errorf("%w: WithKeysetCacheSize must not be negative", ErrEncoding)
 	}
 	if explicit, ok := creds.(*explicitCredentials); ok && err == nil && explicit.token == nil {
 		// Knowable from the credentials as they were built: the one place
@@ -120,7 +124,7 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 		return nil, err
 	}
 	if resolved == nil {
-		return nil, errors.New("stackencrypt: the credentials resolved to nothing")
+		return nil, fmt.Errorf("%w: the credentials resolved to nothing", ErrEncoding)
 	}
 	// Nil-safe, and a no-op after the wipe on the accepted path.
 	defer resolved.ClientKey.Wipe()
@@ -193,6 +197,15 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 // ErrCredentialsConsumed rather than told the wiped values are missing.
 // Any other implementation has not been asked, and holds nothing of this
 // client's.
+// sameExplicit reports whether a and b are the same NewCredentials value.
+// It compares the concrete pointers: comparing the interfaces would panic
+// on an implementation that is not comparable, such as a func type.
+func sameExplicit(a, b Credentials) bool {
+	x, ok := a.(*explicitCredentials)
+	y, isExplicit := b.(*explicitCredentials)
+	return ok && isExplicit && x == y
+}
+
 func consumeUnresolved(creds Credentials) {
 	if explicit, ok := creds.(*explicitCredentials); ok {
 		explicit.consumed.Store(true)

@@ -504,8 +504,8 @@ func TestNewClientRefusesTheConfigBeforeResolvingCredentials(t *testing.T) {
 				resolved = true
 				return testCredentials(staticToken("t")).resolve(ctx, opts)
 			})
-			if _, err := NewClient(context.Background(), append([]ClientOption{WithCredentials(spy)}, opts...)...); err == nil {
-				t.Fatal("NewClient accepted the config")
+			if _, err := NewClient(context.Background(), append([]ClientOption{WithCredentials(spy)}, opts...)...); !errors.Is(err, ErrEncoding) {
+				t.Fatalf("NewClient: %v, want ErrEncoding", err)
 			}
 			if resolved {
 				t.Error("the credentials were resolved for a config refused host-side")
@@ -831,6 +831,33 @@ func TestRequireLockedMemoryRefusesUnlockedCredentials(t *testing.T) {
 				t.Fatalf("NewClient under best effort: %v, want ErrUnauthorized from the stub, the report not refused", err)
 			}
 		})
+	}
+}
+
+// WithRequireLockedMemory lets credentials through whose memory report is
+// nil: the report is asked, and NewClient goes on past it. The outcome
+// after that depends on whether this host can lock the crypto guest, so it
+// is judged by the credentials' refusal being absent, not by success.
+func TestRequireLockedMemoryAcceptsLockedCredentials(t *testing.T) {
+	stub := newStub(t, http.StatusUnauthorized, "", "nope")
+	var asked atomic.Int32
+	creds := credentialsFunc(func(ctx context.Context, opts resolveOptions) (*resolvedCredentials, error) {
+		r, err := testCredentials(staticToken("stub-token")).resolve(ctx, opts)
+		if err != nil {
+			return r, err
+		}
+		r.MemoryLockError = func() error {
+			asked.Add(1)
+			return nil
+		}
+		return r, nil
+	})
+	_, err := NewClient(context.Background(), WithCredentials(creds), withZeroKMSURL(stub.URL), WithGuest(wasiProbe), WithRequireLockedMemory())
+	if asked.Load() == 0 {
+		t.Fatal("the credentials' memory report was not asked")
+	}
+	if err != nil && strings.Contains(err.Error(), "the credentials' memory") {
+		t.Fatalf("NewClient refused credentials reporting locked memory: %v", err)
 	}
 }
 
