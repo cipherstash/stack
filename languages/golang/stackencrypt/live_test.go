@@ -14,7 +14,20 @@ import (
 
 // Round trips through real ZeroKMS key material. Run by the phase 5
 // harness (`mise run test:integration:wasi-go`), which boots zerokms-server
-// and exports the four variables below; skipped otherwise.
+// and exports the variables below; each test is skipped unless its own are
+// set:
+//
+//   - STACK_ENCRYPT_TEST_CLIENT_ID, STACK_ENCRYPT_TEST_CLIENT_KEY: the
+//     seeded client (every live test);
+//   - STACK_ENCRYPT_TEST_ACCESS_TOKEN: an already-minted token (liveClient);
+//   - STACK_ENCRYPT_TEST_ACCESS_KEY, STACK_ENCRYPT_TEST_WORKSPACE_CRN: an
+//     access key and its workspace, exchanged for a token by
+//     AutoCredentials (TestLiveAutoCredentialsFromTheEnvironment);
+//   - STACK_ENCRYPT_TEST_ZEROKMS_URL (optional): the ZeroKMS endpoint, else
+//     the token's services claim;
+//   - STACK_ENCRYPT_TEST_CTS_HOST (optional): the authentication endpoint
+//     the access key is exchanged at, else discovery from the workspace CRN;
+//   - STACK_ENCRYPT_TEST_OTHER_KEYSET (optional): a second keyset's name.
 
 func liveClient(t *testing.T) *Client {
 	t.Helper()
@@ -273,5 +286,69 @@ func TestPlaintextDoesNotRemainInGuestMemoryAfterEncrypt(t *testing.T) {
 	}
 	if n := bytes.Count(view, []byte(plaintext)); n != 0 {
 		t.Fatalf("plaintext found %d times in guest memory after Encrypt returned", n)
+	}
+}
+
+// The zero-configuration path end to end: NewClient with no options, its
+// credentials from AutoCredentials, the token from a real access-key
+// exchange — the CI shape of a deployment, with the variables the Rust
+// client reads and no developer profile.
+func TestLiveAutoCredentialsFromTheEnvironment(t *testing.T) {
+	clientID, clientKey := os.Getenv("STACK_ENCRYPT_TEST_CLIENT_ID"), os.Getenv("STACK_ENCRYPT_TEST_CLIENT_KEY")
+	accessKey, crn := os.Getenv("STACK_ENCRYPT_TEST_ACCESS_KEY"), os.Getenv("STACK_ENCRYPT_TEST_WORKSPACE_CRN")
+	if clientID == "" || clientKey == "" || accessKey == "" || crn == "" {
+		t.Skip("STACK_ENCRYPT_TEST_{CLIENT_ID,CLIENT_KEY,ACCESS_KEY,WORKSPACE_CRN} not set")
+	}
+	guestOrSkip(t)
+	authGuestOrSkip(t)
+	// An empty profile directory, so only the environment can answer, and
+	// none of the developer's own CS_* variables.
+	cleanEnv(t, t.TempDir())
+	if cts := os.Getenv("STACK_ENCRYPT_TEST_CTS_HOST"); cts != "" {
+		t.Setenv("CS_CTS_HOST", cts)
+	} else if err := os.Unsetenv("CS_CTS_HOST"); err != nil { // cleanEnv's placeholder
+		t.Fatal(err)
+	}
+	if url := os.Getenv("STACK_ENCRYPT_TEST_ZEROKMS_URL"); url != "" {
+		t.Setenv("CS_ZEROKMS_HOST", url)
+	}
+	t.Setenv(envAccessKey, accessKey)
+	t.Setenv(envWorkspaceCRN, crn)
+	t.Setenv(envClientID, clientID)
+	t.Setenv(envClientKey, clientKey)
+
+	ctx := t.Context()
+	c, err := NewClient(ctx)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	defer func() {
+		if err := c.Close(); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	}()
+	// Whether memory locks depends on the host; that it is reported, and
+	// consistently, does not.
+	if err := c.MemoryLockError(); err != nil && !errors.Is(err, ErrMemoryLock) {
+		t.Errorf("MemoryLockError = %v, want nil or ErrMemoryLock", err)
+	}
+	if c.MemoryLocked() != (c.MemoryLockError() == nil) {
+		t.Error("MemoryLocked disagrees with MemoryLockError")
+	}
+
+	aad := []byte("users/v1")
+	ct, err := c.DefaultKeyset().Encrypt(ctx, "alice", aad)
+	if err != nil {
+		t.Fatalf("Encrypt: %v", err)
+	}
+	if _, ok := ct.(Sealed); !ok {
+		t.Fatalf("sealed as %T", ct)
+	}
+	pt, err := c.Decrypt(ctx, ct, aad)
+	if err != nil {
+		t.Fatalf("Decrypt: %v", err)
+	}
+	if pt != "alice" {
+		t.Fatalf("Decrypt = %#v, want %q", pt, "alice")
 	}
 }
