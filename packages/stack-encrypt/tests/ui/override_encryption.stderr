@@ -15,4 +15,4 @@ error[E0046]: not all trait items implemented, missing: `encryption`
 3 | impl EncryptFrom<u32> for Target {
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ missing `encryption` in implementation
   |
-  = help: implement the missing item: `fn encryption<K>() -> Encryption<'s, u32, Self, K, <Self as EncryptFrom<u32>>::Context> { todo!() }`
+  = help: implement the missing item: `fn encryption<'s, K>() -> Encryption<'s, u32, Self, K, <Self as EncryptFrom<u32>>::Context> { todo!() }`

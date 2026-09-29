@@ -2,19 +2,24 @@ error[E0277]: the trait bound `SerdeOnly: Encrypt` is not satisfied
  --> tests/ui/plaintext_needs_encrypt.rs:9:33
   |
 9 |     let _=keyset.encrypt_as::<_,Target>(&SerdeOnly {value:"x".into()},nonempty!("column").into());
-  |                  ----------     ^^^^^^ the trait `Encrypt` is not implemented for `SerdeOnly`
+  |                  ----------     ^^^^^^ unsatisfied trait bound
   |                  |
   |                  required by a bound introduced by this call
   |
+help: the trait `Encrypt` is not implemented for `SerdeOnly`
+ --> tests/ui/plaintext_needs_encrypt.rs:4:1
+  |
+4 | struct SerdeOnly { value: String }
+  | ^^^^^^^^^^^^^^^^
   = help: the following other types implement trait `Encrypt`:
             &str
             ContextTag<Tag, T>
-            Element<T>
             FfiValue
             HashMap<K, T>
             Vec<T>
             Vec<u8>
             [u8; N]
+            stack_encrypt::Element<T>
           and $N others
   = note: required for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` to implement `EncryptFrom<SerdeOnly>`
   = note: 1 redundant requirement hidden
