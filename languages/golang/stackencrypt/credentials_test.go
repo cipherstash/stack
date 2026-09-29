@@ -518,6 +518,29 @@ func TestNewClientRefusesTheConfigBeforeResolvingCredentials(t *testing.T) {
 	}
 }
 
+// A config refused before the credentials are asked still consumes explicit
+// credentials: the retry with the config corrected is refused because the
+// key was spent, not told the key it was given is missing, and sends no
+// request.
+func TestNewCredentialsRefusedConfigThenRetryIsConsumed(t *testing.T) {
+	guestOrSkip(t)
+	stub := newStub(t, http.StatusUnauthorized, "", "nope")
+	creds := testCredentials(StaticToken("t"))
+	if _, err := NewClient(context.Background(), Config{Credentials: creds, ZeroKMSURL: stub.URL, KeysetCacheSize: -1}); err == nil {
+		t.Fatal("NewClient accepted a negative cache size")
+	}
+	_, err := NewClient(context.Background(), Config{Credentials: creds, ZeroKMSURL: stub.URL})
+	if !errors.Is(err, ErrCredentialsConsumed) {
+		t.Fatalf("retry with a corrected config: %v, want ErrCredentialsConsumed", err)
+	}
+	if strings.Contains(err.Error(), "required") {
+		t.Errorf("the error blames missing values: %q", err)
+	}
+	if len(stub.requests) != 0 {
+		t.Errorf("the refused config and its retry made %d requests, want none", len(stub.requests))
+	}
+}
+
 // The client's memory report covers the credentials' memory too: a lock the
 // credential guest could not get is a lock the client did not get, wherever
 // the client is asked, printed or logged.

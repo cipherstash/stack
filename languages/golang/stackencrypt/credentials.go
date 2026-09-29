@@ -87,10 +87,11 @@ func NewCredentials(clientID string, key *ClientKey, token TokenSource) Credenti
 	return &explicitCredentials{clientID: clientID, key: key, token: token}
 }
 
-// ErrCredentialsConsumed is [NewCredentials] resolved a second time: the
-// first NewClient consumed its key, so there is nothing left to give.
-// Build new credentials, with a new key, for another client.
-var ErrCredentialsConsumed = errors.New("stackencrypt: the credentials' client key was already consumed by another client")
+// ErrCredentialsConsumed is [NewCredentials] given to a second NewClient:
+// the first consumed its key — whether it made a client or refused its
+// config — so there is nothing left to give. Build new credentials, with a
+// new key, for another client.
+var ErrCredentialsConsumed = errors.New("stackencrypt: the credentials' client key was already consumed by an earlier NewClient")
 
 type explicitCredentials struct {
 	clientID string

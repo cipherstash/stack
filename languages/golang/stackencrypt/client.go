@@ -210,10 +210,14 @@ func NewClient(ctx context.Context, cfg Config) (_ *Client, err error) {
 
 // consumeUnresolved is what NewClient owes a Credentials it refuses a
 // config without asking: explicit credentials hold their key from
-// construction, so it is wiped rather than handed back live. Any other
-// implementation has not been asked, and holds nothing of this client's.
+// construction, so it is wiped rather than handed back live, and they are
+// marked consumed, so a retry with a corrected config is refused with
+// ErrCredentialsConsumed rather than told the wiped values are missing.
+// Any other implementation has not been asked, and holds nothing of this
+// client's.
 func consumeUnresolved(creds Credentials) {
 	if explicit, ok := creds.(*explicitCredentials); ok {
+		explicit.consumed.Store(true)
 		explicit.key.Wipe()
 	}
 }
