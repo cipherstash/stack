@@ -1,0 +1,68 @@
+# stack-encrypt WASI guest: `StackCipher` over host-provided HTTP under
+# WASI/wazero, embedded by the Go module one directory up (Phase 3/4 of
+# docs/plans/stack-encrypt-go-bindings.md).
+#
+# Deliberately a standalone workspace (same pattern as the fuzz crates and
+# vitaminc's guest): this crate targets wasm32-wasip1 and is consumed as a
+# .wasm artifact, so its wasm-only profile and target must not leak into
+# workspace builds.
+#
+# Build: mise run wasm:guest:build   (or: cargo build --target wasm32-wasip1 --release)
+[package]
+name = "stack-encrypt-guest"
+description = "WASI guest module exposing stack-encrypt to non-Rust hosts (Go/wazero)"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+# cdylib: the .wasm guest module. rlib: lets the ops/config/status modules
+# unit-test natively (`cargo test` here, no wasm toolchain needed).
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The stack crates with default features off: no reqwest, no native TLS —
+# HTTP comes from the host (see `wasm:wasi-check` in the suite root).
+stack-auth = { path = "../../../../packages/stack-auth", default-features = false }
+# `dynamic`: the runtime value model this guest speaks — contexts, index
+# terms and record plans over `FfiValue`, shared with every other binding.
+stack-encrypt = { path = "../../../../packages/stack-encrypt", default-features = false, features = ["dynamic"] }
+# The guest ABI every guest under bindings/go shares: the allocator and
+# buffer registry (and with them the `se_alloc`/`se_dealloc` exports), the
+# packed-result helpers, the status table and the `transport_send` import.
+# This crate defines only the exports that are its own.
+stack-guest-abi = { path = "../../../../packages/stack-guest-abi" }
+stack-kms = { path = "../../../../packages/stack-kms", default-features = false }
+zerokms-protocol = { path = "../../../../packages/zerokms-protocol" }
+
+# The FFI codec + `FfiValue` tree, shared with vitaminc's own guest — one
+# codec, not a fork. Same vitaminc version stack-encrypt builds against
+# (see the comment in packages/stack-encrypt/Cargo.toml). A different
+# version here fails at the `FfiValue: Decrypt` bound, since the aead crate
+# would be duplicated.
+vitaminc-aead-value = "0.5.0"
+vitaminc-protected = "0.5.0"
+
+futures = { version = "0.3", default-features = false, features = ["executor"] }
+serde = "1"
+serde_json = "1"
+uuid = "1"
+zeroize = "1"
+
+[dev-dependencies]
+stack-kms = { path = "../../../../packages/stack-kms", default-features = false, features = ["test-support"] }
+# For minting a valid client-key fixture in the config tests.
+recipher = { path = "../../../../packages/recipher" }
+# Re-encoding that fixture into the other forms the config table promises
+# (upper-case hex, base64) so the lenient decode is actually exercised.
+base16ct = { version = "0.2.0", features = ["alloc"] }
+base64ct = { version = "1.7", features = ["alloc"] }
+
+[profile.release]
+# Smaller .wasm; the guest is IO-bound on the FFI copy and the ZeroKMS round
+# trip, not on codegen.
+opt-level = "s"
+lto = true
+strip = true

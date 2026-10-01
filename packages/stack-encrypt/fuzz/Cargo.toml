@@ -1,0 +1,55 @@
+# Fuzz crate for stack-encrypt's frozen byte decoders.
+#
+# This is a DETACHED crate: the `[workspace]` table at the bottom makes it its
+# own workspace root so the libfuzzer-sys dependency and the nightly-only build
+# never touch the main monorepo workspace. It is not a member of the root
+# workspace (see the root Cargo.toml `members` list). Run via the `fuzz:*`
+# mise tasks, which invoke `cargo +nightly fuzz run`.
+[package]
+name = "stack-encrypt-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+# Structure-aware inputs for `check_record`: the mirror types derive
+# `Arbitrary`, so the fuzzer mutates trees and plans, not bytes.
+arbitrary = { version = "1", features = ["derive"] }
+# The fixed leaf the record harness fills its sealed nodes with.
+uuid = "1.8"
+
+[dependencies.stack-encrypt]
+path = ".."
+# The decoders are structural and need no ZeroKMS client: with `http` off,
+# reqwest and its TLS stack stay out of the fuzz build.
+default-features = false
+# `dynamic`: the record plan and preflight the `check_record` target drives.
+features = ["dynamic"]
+
+[[bin]]
+name = "sealed_value_decode"
+path = "fuzz_targets/sealed_value_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "term_decode"
+path = "fuzz_targets/term_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "check_record"
+path = "fuzz_targets/check_record.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+resolver = "2"

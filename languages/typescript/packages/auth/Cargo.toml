@@ -1,0 +1,34 @@
+[package]
+name = "stack-auth-node"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+stack-auth = { workspace = true, features = ["http"] }
+stack-profile = { workspace = true }
+cts-common = { workspace = true }
+vitaminc-protected = { workspace = true }
+napi = { version = "2", features = ["async", "tokio_rt"] }
+napi-derive = "2"
+serde_json = "1"
+zeroize = { workspace = true }
+
+[dev-dependencies]
+# `stack-auth/test-utils` gives the Rust #[cfg(test)] unit tests the no-timeout
+# `http_client`; the mock server itself is now a JS helper (see
+# __tests__/helpers/), so the napi crate no longer ships a `test-utils` feature
+# or the heavy mocktail/jsonwebtoken/reqwest deps in its published artifact.
+stack-auth = { workspace = true, features = ["http", "test-utils"] }
+jsonwebtoken = { workspace = true }
+mocktail = "0.3.0"
+serde_json = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+url = "2"
+
+[build-dependencies]
+napi-build = "2"

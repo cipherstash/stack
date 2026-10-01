@@ -1,0 +1,417 @@
+use cts_common::{Crn, CtsServiceDiscovery, ServiceDiscovery, WorkspaceId};
+
+use crate::access_key::AccessKey;
+use crate::access_key_refresher::AccessKeyRefresher;
+use crate::auto_refresh::AutoRefresh;
+use crate::token_store::{NoStore, TokenStore};
+use crate::transport::{self, SharedTransport};
+use crate::HttpTransport;
+use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, ServiceToken};
+
+/// An [`AuthStrategy`] that uses a static access key to authenticate against
+/// a specific workspace.
+///
+/// The strategy is bound to a workspace CRN at construction. The region is
+/// derived from the CRN — there is no separate `region` argument — so a
+/// caller can't accidentally point the strategy at one region while the
+/// CRN says another.
+///
+/// The first call to [`get_token`](AuthStrategy::get_token) authenticates
+/// with the server. Subsequent calls return the cached token until it
+/// expires, at which point re-authentication happens automatically. Every
+/// returned token is checked against the CRN; post-auth verification can
+/// fail in two ways:
+///
+/// - [`AuthError::WorkspaceMismatch`] — the JWT decoded cleanly but its
+///   `workspace` claim doesn't match the CRN's workspace ID.
+/// - [`AuthError::InvalidToken`] — the JWT is malformed or missing the
+///   `workspace` claim entirely, so verification can't run.
+///
+/// Either outcome is preferred over silently letting the caller operate on
+/// a different workspace than they specified.
+///
+/// When constructed via [`AccessKeyStrategyBuilder::with_token_store`], the
+/// strategy also persists tokens through an external [`TokenStore`] so that
+/// short-lived strategy instances (e.g. one per Edge Function request) can
+/// share a cache and avoid re-authenticating every cold start.
+///
+/// # Example
+///
+/// ```no_run
+/// use stack_auth::{AccessKey, AccessKeyStrategy};
+/// use cts_common::Crn;
+///
+/// let crn: Crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse().unwrap();
+/// let key: AccessKey = "CSAKmyKeyId.myKeySecret".parse().unwrap();
+/// let strategy = AccessKeyStrategy::new(crn, key).unwrap();
+/// ```
+pub struct AccessKeyStrategy<S = NoStore> {
+    inner: AutoRefresh<AccessKeyRefresher, S>,
+    expected_workspace: WorkspaceId,
+}
+
+impl AccessKeyStrategy {
+    /// Create a new `AccessKeyStrategy` for the given workspace CRN and
+    /// access key. The auth endpoint is resolved automatically via service
+    /// discovery using the region encoded in the CRN.
+    ///
+    /// The `CS_CTS_HOST` environment variable, if set and non-empty,
+    /// overrides service discovery — useful for pointing the strategy at
+    /// a staging CTS or a local mock without changing the CRN.
+    ///
+    /// A CRN with a `service_name` component (e.g.
+    /// `crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY:zerokms`) is accepted; the
+    /// `service_name` is ignored. Only the region and workspace ID are
+    /// load-bearing for this strategy.
+    pub fn new(workspace_crn: Crn, access_key: AccessKey) -> Result<Self, AuthError> {
+        Self::builder(workspace_crn, access_key).build()
+    }
+
+    /// Return a builder for configuring an `AccessKeyStrategy` before construction.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use stack_auth::{AccessKey, AccessKeyStrategy};
+    /// use cts_common::Crn;
+    ///
+    /// let crn: Crn = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY".parse().unwrap();
+    /// let key: AccessKey = "CSAKmyKeyId.myKeySecret".parse().unwrap();
+    /// let strategy = AccessKeyStrategy::builder(crn, key)
+    ///     .audience("my-audience")
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn builder(workspace_crn: Crn, access_key: AccessKey) -> AccessKeyStrategyBuilder {
+        AccessKeyStrategyBuilder {
+            workspace_crn,
+            access_key: access_key.into_secret_token(),
+            audience: None,
+            base_url_override: None,
+            token_store: NoStore,
+            transport: None,
+        }
+    }
+}
+
+impl<S: TokenStore> AuthStrategy for &AccessKeyStrategy<S> {
+    async fn get_token(self) -> Result<ServiceToken, AuthError> {
+        self.inner
+            .get_token()
+            .await?
+            .verify_workspace(self.expected_workspace)
+    }
+}
+
+/// Builder for [`AccessKeyStrategy`].
+///
+/// Created via [`AccessKeyStrategy::builder`].
+pub struct AccessKeyStrategyBuilder<S = NoStore> {
+    workspace_crn: Crn,
+    access_key: SecretToken,
+    audience: Option<String>,
+    base_url_override: Option<url::Url>,
+    token_store: S,
+    transport: Option<SharedTransport>,
+}
+
+impl<S> AccessKeyStrategyBuilder<S> {
+    /// Send this strategy's requests through `transport` instead of the
+    /// bundled `reqwest` client.
+    ///
+    /// Without the `http` feature there is no bundled client, so this is
+    /// required; with it, this is how a host with its own HTTP stack (or a
+    /// test with a stub) takes over the wire without changing anything else
+    /// about the strategy.
+    pub fn transport(mut self, transport: impl HttpTransport) -> Self {
+        self.transport = Some(transport::share(transport));
+        self
+    }
+
+    /// [`transport`](Self::transport), for a caller that may or may not
+    /// have one — the auto strategy hands its own through.
+    pub(crate) fn maybe_transport(mut self, transport: Option<SharedTransport>) -> Self {
+        self.transport = transport;
+        self
+    }
+    /// Set the audience for token requests.
+    pub fn audience(mut self, audience: impl Into<String>) -> Self {
+        self.audience = Some(audience.into());
+        self
+    }
+
+    /// Override the CTS base URL resolved for this strategy.
+    ///
+    /// Takes precedence over both the `CS_CTS_HOST` environment variable and
+    /// region-derived service discovery. Use it to point a single strategy
+    /// instance at a specific CTS host — e.g. a self-hosted CTS, or a local
+    /// mock auth server in development — without relying on the process-wide
+    /// `CS_CTS_HOST`, which would redirect every other CTS client sharing the
+    /// process.
+    pub fn base_url(mut self, url: url::Url) -> Self {
+        self.base_url_override = Some(url);
+        self
+    }
+
+    /// Wire an external [`TokenStore`] into the strategy.
+    ///
+    /// On every call to [`get_token`](AuthStrategy::get_token), if no token is
+    /// cached in memory, the store is consulted before falling back to
+    /// re-authenticating with the access key. After every successful refresh
+    /// or initial auth, the new token is written back to the store. Use this
+    /// from short-lived strategy instances (Edge Functions, Workers, proxy
+    /// worker pools) to share a service-token cache across processes.
+    ///
+    /// Returns a new builder with the store type erased into the chain — see
+    /// [`InMemoryTokenStore`](crate::InMemoryTokenStore) and
+    /// [`TokenStoreFn`](crate::TokenStoreFn) for ready-made
+    /// implementations.
+    pub fn with_token_store<T: TokenStore>(self, store: T) -> AccessKeyStrategyBuilder<T> {
+        AccessKeyStrategyBuilder {
+            workspace_crn: self.workspace_crn,
+            access_key: self.access_key,
+            audience: self.audience,
+            base_url_override: self.base_url_override,
+            token_store: store,
+            transport: self.transport,
+        }
+    }
+}
+
+impl<S: TokenStore> AccessKeyStrategyBuilder<S> {
+    /// Build the [`AccessKeyStrategy`].
+    ///
+    /// Resolves the base URL in priority order: an explicit [`base_url`]
+    /// override, then the `CS_CTS_HOST` environment variable, then service
+    /// discovery using the CRN's region.
+    ///
+    /// [`base_url`]: Self::base_url
+    pub fn build(self) -> Result<AccessKeyStrategy<S>, AuthError> {
+        let expected_workspace = self.workspace_crn.workspace_id;
+        let region = self.workspace_crn.region;
+        let base_url = match self.base_url_override {
+            Some(url) => url,
+            None => {
+                crate::cts_base_url_from_env()?.unwrap_or(CtsServiceDiscovery::endpoint(region)?)
+            }
+        };
+        let refresher = AccessKeyRefresher::new(
+            self.access_key,
+            ensure_trailing_slash(base_url),
+            self.audience,
+            transport::resolve(self.transport)?,
+        );
+        Ok(AccessKeyStrategy {
+            inner: AutoRefresh::with_store(refresher, self.token_store),
+            expected_workspace,
+        })
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "http")]
+mod workspace_verification_tests {
+    use super::*;
+    use crate::test_support::{crn_with_workspace, jwt_with_workspace};
+    use mocktail::prelude::*;
+    use std::time::UNIX_EPOCH;
+
+    async fn start_mock_server_returning_jwt(workspace: &str) -> MockServer {
+        let mut mocks = MockSet::new();
+        let jwt = jwt_with_workspace(workspace);
+        mocks.mock(move |when, then| {
+            when.post().path("/api/authorise");
+            then.json(serde_json::json!({
+                "accessToken": jwt,
+                "expiry": 3600,
+            }));
+        });
+        let server = MockServer::new_http("access-key-strategy-workspace-test").with_mocks(mocks);
+        #[allow(clippy::expect_used)]
+        server.start().await.expect("mock server start");
+        server
+    }
+
+    fn test_access_key() -> AccessKey {
+        "CSAKtestKeyId.testKeySecret"
+            .parse()
+            .expect("test access key parses")
+    }
+
+    /// Happy path — JWT workspace matches the CRN: `get_token()` returns
+    /// the token cleanly.
+    #[tokio::test]
+    async fn returns_token_when_workspace_matches() {
+        const WS: &str = "ZVATKW3VHMFG27DY";
+        let server = start_mock_server_returning_jwt(WS).await;
+        let crn = crn_with_workspace(WS);
+
+        let strategy = AccessKeyStrategy::builder(crn, test_access_key())
+            .base_url(server.url(""))
+            .build()
+            .expect("builder");
+
+        let token = (&strategy).get_token().await.expect("get_token");
+        assert_eq!(
+            token.workspace_id().expect("workspace_id").as_str(),
+            WS,
+            "happy-path token should carry the expected workspace",
+        );
+    }
+
+    /// Mismatch — JWT workspace differs from the CRN's: `get_token()`
+    /// returns `AuthError::WorkspaceMismatch` rather than the token.
+    #[tokio::test]
+    async fn errors_when_token_workspace_differs_from_crn() {
+        const TOKEN_WS: &str = "AAAAAAAAAAAAAAAA";
+        const CRN_WS: &str = "ZVATKW3VHMFG27DY";
+        let server = start_mock_server_returning_jwt(TOKEN_WS).await;
+        let crn = crn_with_workspace(CRN_WS);
+
+        let strategy = AccessKeyStrategy::builder(crn, test_access_key())
+            .base_url(server.url(""))
+            .build()
+            .expect("builder");
+
+        let err = (&strategy)
+            .get_token()
+            .await
+            .expect_err("expected mismatch");
+        match err {
+            AuthError::WorkspaceMismatch(crate::error::WorkspaceMismatch {
+                expected_workspace,
+                token_workspace,
+            }) => {
+                assert_eq!(expected_workspace.as_str(), CRN_WS);
+                assert_eq!(token_workspace.as_str(), TOKEN_WS);
+            }
+            other => panic!("expected WorkspaceMismatch, got {other:?}"),
+        }
+        assert_eq!(
+            AuthError::WorkspaceMismatch(crate::error::WorkspaceMismatch {
+                expected_workspace: CRN_WS.parse().unwrap(),
+                token_workspace: TOKEN_WS.parse().unwrap(),
+            })
+            .error_code(),
+            "WORKSPACE_MISMATCH",
+        );
+    }
+
+    /// A CRN carrying a `service_name` component is accepted; the
+    /// `service_name` is ignored. The strategy uses only the region (for
+    /// service discovery) and the workspace ID (for token verification).
+    /// Pinned as a test rather than left to implementation drift so that a
+    /// future contributor doesn't tighten the constructor into rejecting
+    /// these CRNs without realising the docstring already promises
+    /// acceptance.
+    #[tokio::test]
+    async fn accepts_crn_with_service_name() {
+        const WS: &str = "ZVATKW3VHMFG27DY";
+        let server = start_mock_server_returning_jwt(WS).await;
+        let crn: Crn = format!("crn:ap-southeast-2.aws:{WS}:zerokms")
+            .parse()
+            .expect("CRN with service_name parses");
+
+        let strategy = AccessKeyStrategy::builder(crn, test_access_key())
+            .base_url(server.url(""))
+            .build()
+            .expect("CRN with service_name should construct a strategy");
+
+        let token = (&strategy).get_token().await.expect("get_token");
+        assert_eq!(
+            token.workspace_id().expect("workspace_id").as_str(),
+            WS,
+            "service_name is ignored — verification still uses the workspace ID",
+        );
+    }
+
+    /// A pre-populated [`TokenStore`] returning a token for a *different*
+    /// workspace must still be rejected by the strategy's wrapper. This
+    /// is the cross-feature interaction the CRN parity work is designed
+    /// to protect — a shared cookie / KV cache between strategies bound
+    /// to different workspaces must never let a load from the store
+    /// bypass workspace verification.
+    ///
+    /// Drives the assertion without any HTTP traffic: a 500-returning
+    /// mock fails the test loudly if the strategy ever reaches the
+    /// authorise endpoint instead of trusting the store.
+    #[tokio::test]
+    async fn rejects_stored_token_for_different_workspace() {
+        const TOKEN_WS: &str = "AAAAAAAAAAAAAAAA";
+        const CRN_WS: &str = "ZVATKW3VHMFG27DY";
+
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post().path("/api/authorise");
+            then.internal_server_error()
+                .json(serde_json::json!({"error": "store must satisfy the request"}));
+        });
+        let server =
+            MockServer::new_http("access-key-strategy-store-mismatch-test").with_mocks(mocks);
+        #[allow(clippy::expect_used)]
+        server.start().await.expect("mock server start");
+
+        let now = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_secs();
+        let stored = crate::Token {
+            access_token: crate::SecretToken::new(jwt_with_workspace(TOKEN_WS)),
+            token_type: "Bearer".to_string(),
+            expires_at: now + 3600,
+            refresh_token: None,
+            region: None,
+            client_id: None,
+            device_instance_id: None,
+        };
+        let store = std::sync::Arc::new(crate::InMemoryTokenStore::new());
+        store.save(&stored).await;
+
+        let strategy = AccessKeyStrategy::builder(crn_with_workspace(CRN_WS), test_access_key())
+            .base_url(server.url(""))
+            .with_token_store(std::sync::Arc::clone(&store))
+            .build()
+            .expect("builder");
+
+        let err = (&strategy)
+            .get_token()
+            .await
+            .expect_err("expected mismatch from stored token");
+        assert!(
+            matches!(err, AuthError::WorkspaceMismatch { .. }),
+            "expected WorkspaceMismatch, got {err:?}",
+        );
+    }
+
+    /// Regression guard — the workspace check runs on *every* `get_token()`
+    /// call, not only on the call that triggers initial authentication.
+    /// A future optimisation that cached the "verified" result, or that
+    /// stashed the token into a field bypassing the wrapper, would let a
+    /// mismatched token slide through on the second call. Verified by
+    /// calling `get_token()` twice against the same mock and asserting
+    /// both fail with `WorkspaceMismatch`.
+    #[tokio::test]
+    async fn errors_on_each_subsequent_get_token_call() {
+        const TOKEN_WS: &str = "AAAAAAAAAAAAAAAA";
+        const CRN_WS: &str = "ZVATKW3VHMFG27DY";
+        let server = start_mock_server_returning_jwt(TOKEN_WS).await;
+        let crn = crn_with_workspace(CRN_WS);
+
+        let strategy = AccessKeyStrategy::builder(crn, test_access_key())
+            .base_url(server.url(""))
+            .build()
+            .expect("builder");
+
+        for call in 1..=2 {
+            let result = (&strategy).get_token().await;
+            let err = match result {
+                Ok(_) => panic!("call {call}: expected Err, got Ok"),
+                Err(e) => e,
+            };
+            assert!(
+                matches!(err, AuthError::WorkspaceMismatch { .. }),
+                "call {call}: expected WorkspaceMismatch, got {err:?}",
+            );
+        }
+    }
+}

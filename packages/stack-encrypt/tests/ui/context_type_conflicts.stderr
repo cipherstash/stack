@@ -1,0 +1,29 @@
+error: `context_type` names what the caller passes to a record whose fields take the caller's context; a `struct` derive's fields carry their own, so the record takes `DeclaredContext` and a caller's context extends them
+ --> tests/ui/context_type_conflicts.rs:7:58
+  |
+7 | #[stash(struct = User, context = "users", context_type = stack_encrypt::target::AeadContext)]
+  |                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: `struct` given here
+ --> tests/ui/context_type_conflicts.rs:7:18
+  |
+7 | #[stash(struct = User, context = "users", context_type = stack_encrypt::target::AeadContext)]
+  |                  ^^^^
+
+error: `context_field` supplies the complete context, so the record's `Context` is `NonEmpty<T>` of that field's type; `context_type` does not apply
+  --> tests/ui/context_type_conflicts.rs:13:44
+   |
+13 | #[stash(plaintext = String, context_type = stack_encrypt::target::AeadContext)]
+   |                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: `context_type` names what the caller passes to a record whose fields take the caller's context; every field here carries a `context = ".."` of its own, so the record takes `DeclaredContext` and a caller's context extends them
+  --> tests/ui/context_type_conflicts.rs:21:44
+   |
+21 | #[stash(plaintext = String, context_type = stack_encrypt::target::AeadContext)]
+   |                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: `context_type` is given twice; a record has one associated context
+  --> tests/ui/context_type_conflicts.rs:28:60
+   |
+28 | #[stash(context_type = stack_encrypt::target::AeadContext, context_type = stack_encrypt::target::AeadContext)]
+   |                                                            ^^^^^^^^^^^^

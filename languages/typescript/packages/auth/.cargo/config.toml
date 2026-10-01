@@ -1,0 +1,11 @@
+# macOS dyld's chained-fixups format does not run the module-registration
+# constructors that the `ctor` crate emits for each `#[napi]` item, so a
+# napi addon built on macOS silently exports only a subset of its classes
+# and functions (`require()` returns a near-empty object). Linking with
+# `-no_fixup_chains` restores the classic bind-on-load behaviour so every
+# `#[napi]` registration runs.
+#
+# Scoped to the `stack-auth-node` crate (this is the only napi addon in the
+# repo). No-op on Linux — CI builds there and is unaffected.
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-Wl,-no_fixup_chains"]

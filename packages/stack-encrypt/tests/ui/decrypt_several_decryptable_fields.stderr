@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: `Rec` has several decryptable fields: mark the one decryption opens `#[stash(decrypt)]`
+ --> tests/ui/decrypt_several_decryptable_fields.rs:3:10
+  |
+3 | #[derive(DecryptInto)]
+  |          ^^^^^^^^^^^ evaluation of `_` failed here

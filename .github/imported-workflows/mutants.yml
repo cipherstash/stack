@@ -1,0 +1,207 @@
+name: "Mutants"
+
+# Gates PRs on mutation testing of the lines they change in the stack crates.
+# cargo-mutants rewrites small pieces of logic (flip `<` to `<=`, replace a
+# body with `Default::default()`, …) and reruns the tests; a mutant that
+# survives is a line the suite does not actually pin down. In a crypto crate —
+# comparisons, length checks, scope and passthrough refusals — that is exactly
+# the logic we want a test to catch before it ships. Same shape as vitaminc's
+# gate.
+#
+# Scoped with `--in-diff` to the PR's own changes, so the gate trips only when
+# a PR adds (or moves) logic its tests don't exercise. A full sweep is far too
+# slow for a per-PR gate (stack-encrypt: 736 mutants, ~60 min); run it locally
+# with `mise run mutants:<crate>`. Config (features, test filter, excludes,
+# timeouts) lives in .cargo/mutants.toml so the gate and the local tasks stay
+# in sync.
+#
+# Scoped to the opted-in crates with `-p`: the baseline runs the unmutated
+# tests of the packages named, and the rest of the workspace needs databases
+# and mock servers this job does not start. A diff touching only other crates
+# yields no mutants and passes.
+#
+# To soften back to report-only, drop the "Enforce — fail on surviving
+# mutants" step; the sticky comment keeps working either way.
+on:
+  # No branch filter: a stacked PR (a feature branch as base) must run this
+  # gate too. With `branches: [main]` here, retargeting a PR onto its parent
+  # branch would silently switch the gate off.
+  pull_request:
+    paths:
+      - packages/stack-auth/**
+      - packages/stack-encrypt/**
+      - Cargo.toml
+      - Cargo.lock
+      - .cargo/mutants.toml
+      - .github/workflows/mutants.yml
+      # Ordering matters, this needs to stay at the end if we want to include the above, but exclude all .md files.
+      - "!**.md"
+      - "!**.example"
+
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+# Needed to post/update the report comment on the PR.
+permissions:
+  contents: read
+  pull-requests: write
+
+# Cancel an in-flight run when the PR is pushed again — only the latest matters.
+concurrency:
+  group: mutants-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: full
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+
+jobs:
+  mutants:
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    name: "🧬 Mutants gate"
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history so we can diff the PR against its base branch for
+          # `--in-diff`.
+          fetch-depth: 0
+      # Installs cargo-mutants and cargo-nextest via mise (`[tools]`).
+      - uses: ./.github/actions/setup-rust
+
+      - name: Fix permissions on target directory
+        run: |
+          mkdir -p ./target
+          sudo chown -R "$(id -u):$(id -g)" ./target
+
+      - name: Compute PR diff
+        # cargo-mutants `--in-diff` mutates only lines added/changed by the PR.
+        # Diff the checked-out tree against the base branch tip; fetch it
+        # first since the PR checkout doesn't include it. PR-only: a manual
+        # `workflow_dispatch` has no `github.base_ref` to diff against, so it
+        # sweeps the opted-in crates instead (see the run step below).
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          git diff "origin/${{ github.base_ref }}" > pr.diff
+          echo "Changed lines under mutation:"
+          cat pr.diff
+
+      - name: Run cargo-mutants
+        id: mutants
+        # Don't fail the job here: the gate step below is authoritative, and
+        # the sticky comment must be posted first. On a PR, scope to the diff;
+        # on a manual dispatch there is no diff, so sweep the opted-in crates
+        # (slow, but that's the point of asking for it).
+        continue-on-error: true
+        run: |
+          set +e
+          crates=(-p stack-auth -p stack-encrypt)
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            cargo mutants --no-shuffle -vV "${crates[@]}" --in-diff pr.diff
+          else
+            cargo mutants --no-shuffle -vV "${crates[@]}"
+          fi
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Build mutants report
+        # Compose a sticky-comment body from the cargo-mutants output dir.
+        # Always runs so the comment reflects the run even when the gate below
+        # will fail.
+        if: always()
+        run: |
+          out=mutants.out
+          count() { if [ -f "$out/$1" ]; then grep -c . "$out/$1" || true; else echo 0; fi; }
+          caught=$(count caught.txt)
+          missed=$(count missed.txt)
+          unviable=$(count unviable.txt)
+          timeout=$(count timeout.txt)
+          {
+            echo '<!-- cargo-mutants-report -->'
+            echo '## 🧬 Mutation testing (cargo-mutants, `--in-diff`, stack-auth + stack-encrypt)'
+            echo
+            if [ ! -d "$out" ]; then
+              # No output dir: either the run found nothing to mutate (exit 0)
+              # or it died before producing results (e.g. the baseline tests
+              # failed). Distinguish them so a failed run doesn't masquerade
+              # as a clean one.
+              if [ "${{ steps.mutants.outputs.exit_code }}" = "0" ]; then
+                echo "No mutants were generated for the changed lines."
+              else
+                echo "⚠️ cargo-mutants did not complete (exit ${{ steps.mutants.outputs.exit_code }}) before producing results — check the workflow run logs. The gate below will fail."
+              fi
+              exit 0
+            fi
+            echo "| caught | missed | unviable | timeout |"
+            echo "| -----: | -----: | -------: | ------: |"
+            echo "| $caught | $missed | $unviable | $timeout |"
+            echo
+            if [ "$missed" -gt 0 ] || [ "$timeout" -gt 0 ]; then
+              echo "### Surviving mutants — add a test that fails on each before merging"
+              echo '```'
+              [ -s "$out/missed.txt" ] && cat "$out/missed.txt"
+              [ -s "$out/timeout.txt" ] && { echo '# timed out (treated as surviving):'; cat "$out/timeout.txt"; }
+              echo '```'
+            elif [ "${{ steps.mutants.outputs.exit_code }}" = "0" ]; then
+              echo "✅ Every mutant in the changed lines was caught by a test."
+            else
+              echo "⚠️ cargo-mutants exited ${{ steps.mutants.outputs.exit_code }} with no surviving mutants recorded — the run may not have completed cleanly. Check the workflow run logs."
+            fi
+          } > mutants-comment.md
+          cat mutants-comment.md
+
+      - name: Post mutants report as a sticky PR comment
+        # Posted before the gate so the comment always shows what tripped it.
+        # Best-effort: a comment hiccup must not turn the gate red or stop the
+        # authoritative enforce step from running.
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('mutants-comment.md', 'utf8');
+            const marker = '<!-- cargo-mutants-report -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner, repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Enforce — fail on surviving mutants
+        # The gate. A surviving ("missed") or timed-out mutant in the changed
+        # lines means a test does not pin that logic down; block the merge.
+        run: |
+          out=mutants.out
+          if [ -s "$out/missed.txt" ] || [ -s "$out/timeout.txt" ]; then
+            echo "::error::Surviving mutants in the PR diff — add tests that catch them (see the PR comment)."
+            [ -s "$out/missed.txt" ] && cat "$out/missed.txt"
+            [ -s "$out/timeout.txt" ] && cat "$out/timeout.txt"
+            exit 1
+          fi
+          # Only three exits mean the sweep actually completed: 0 (all
+          # mutants caught), 2 (missed mutants) and 3 (timeouts) — and 2/3
+          # are already enforced via missed.txt/timeout.txt above. Everything
+          # else means it did not complete: 4 (the unmutated baseline failed
+          # to build or test), 70 (internal tool error), an OOM kill, … . The
+          # presence of outcomes.json cannot stand in for this check — it is
+          # written incrementally after the baseline, so a mid-run death
+          # leaves it on disk with most mutants untested.
+          case "${{ steps.mutants.outputs.exit_code }}" in
+            0|2|3) ;;
+            *)
+              echo "::error::cargo-mutants did not complete (exit ${{ steps.mutants.outputs.exit_code }}) — check the run logs."
+              exit 1
+              ;;
+          esac
+          echo "No surviving mutants in the PR diff."

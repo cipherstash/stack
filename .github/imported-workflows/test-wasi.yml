@@ -1,0 +1,241 @@
+name: "WASI check (Go/wazero target)"
+on:
+  push:
+    branches:
+      - main
+    paths:
+      # The gate must be fail-closed over its build inputs, not just the five
+      # checked crates: their dependency closure includes other local
+      # packages/ crates (e.g. zerokms-protocol -> cipherstash-config), and
+      # root Cargo.toml (workspace deps/features) or .cargo/ config can
+      # change what compiles for the target without touching Cargo.lock.
+      # Trigger on all of packages/ rather than enumerating the closure,
+      # which would silently drift.
+      - packages/**
+      # The guest is a detached workspace and the Go module (bindings/go:
+      # stackencrypt and the internal packages) a separate module, so nothing
+      # else in CI compiles, tests or links them — this job is their only gate.
+      - bindings/go/**
+      - scripts/check-wasm-imports.py
+      - scripts/go-binding-test.sh
+      - Cargo.toml
+      - Cargo.lock
+      - .cargo/**
+      - mise.toml
+      - .github/workflows/test-wasi.yml
+      # Ordering matters, this needs to stay at the end if we want to include the above, but exclude all .md files.
+      - "!**.md"
+      - "!**.example"
+
+  pull_request:
+    paths:
+      - packages/**
+      # The guest is a detached workspace and the Go module (bindings/go:
+      # stackencrypt and the internal packages) a separate module, so nothing
+      # else in CI compiles, tests or links them — this job is their only gate.
+      - bindings/go/**
+      - scripts/check-wasm-imports.py
+      - scripts/go-binding-test.sh
+      - Cargo.toml
+      - Cargo.lock
+      - .cargo/**
+      - mise.toml
+      - .github/workflows/test-wasi.yml
+      # Ordering matters, this needs to stay at the end if we want to include the above, but exclude all .md files.
+      - "!**.md"
+      - "!**.example"
+
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: full
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+
+jobs:
+  wasi-check:
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-rust
+
+      - name: Fix permissions on target directory
+        run: |
+          mkdir -p ./target
+          sudo chown -R "$(id -u):$(id -g)" ./target
+
+      # The HTTP-free core compiles for wasm32-wasip1 with no JS-host backend
+      # and no native HTTP/TLS stack in its dependency tree — the invariant
+      # the Go/wazero binding of stack-encrypt is built on. See
+      # docs/plans/stack-encrypt-go-bindings.md and wasm-analysis.md Layer 6.
+      - name: WASI core check
+        run: mise run wasm:wasi-check
+
+      # The same no-http shape, exercised on the host: unit tests, doctests,
+      # and rustdoc (-D warnings) must hold with default features off — the
+      # compile gate above cannot see doc examples or intra-doc links.
+      - name: No-http tests and docs
+        run: mise run wasm:no-http-test
+
+      # The stack-encrypt WASI guest (bindings/go/stackencrypt/guest) is a
+      # detached workspace: `test:unit` and the workspace-wide lints never
+      # see it, so without these two steps its tests could fail and its
+      # wasm-only modules stop compiling with every check still green.
+      - name: Guest lint and tests
+        run: mise run wasm:guest:test
+
+      # Builds the release module and asserts its host-import surface is
+      # exactly WASI (minus ambient filesystem/sockets) plus the two
+      # `cipherstash_transport` functions — the property the Go embedder's
+      # sandboxing rests on, checkable only on the linked artifact.
+      - name: Guest release build and import-surface gate
+        run: mise run wasm:guest:build
+
+      # The credential guest (ADR-0005): the same lint and native tests,
+      # then the release build and its own import gate — filesystem
+      # allowed, sockets denied, no transport import until the auth half.
+      - name: Credential guest lint and tests
+        run: mise run wasm:auth-guest:test
+
+      - name: Credential guest release build and import-surface gate
+        run: mise run wasm:auth-guest:build
+
+      # The module checked above is what every platform tests. Its checksum
+      # travels with it so the other jobs can prove they got the same bytes,
+      # not a stale or rebuilt guest.
+      - name: Record the guests' checksums
+        run: |
+          for guest in stackencrypt/wasm/stack_encrypt_guest.wasm stackauth/wasm/stack_auth_guest.wasm; do
+            (cd bindings/go && openssl dgst -sha256 "$guest" | awk '{print $NF}' > "$guest.sha256" && echo "$guest sha256 $(cat "$guest.sha256")")
+          done
+
+      - name: Hand the guests to the other platforms
+        uses: actions/upload-artifact@v7
+        with:
+          name: wasm-guests
+          path: |
+            bindings/go/stackencrypt/wasm/stack_encrypt_guest.wasm
+            bindings/go/stackencrypt/wasm/stack_encrypt_guest.wasm.sha256
+            bindings/go/stackauth/wasm/stack_auth_guest.wasm
+            bindings/go/stackauth/wasm/stack_auth_guest.wasm.sha256
+          if-no-files-found: error
+          retention-days: 1
+
+      # The Go module (bindings/go; stackencrypt and stackauth embed the
+      # guests built above): format, vet and hermetic tests (import surface, transport
+      # bridge against an httptest ZeroKMS, guest-parser acceptance of every
+      # encoding the package builds, hostile ABI inputs, key residency), on
+      # amd64 and 386. Live round trips through ZeroKMS are the phase 5
+      # harness's.
+      - name: Go binding
+        env:
+          # The guest's memory lock (bindings/go/stackencrypt/memory.go) is
+          # best effort, so its test skips where RLIMIT_MEMLOCK refuses it —
+          # a developer laptop's default. CI raises the limit and sets this
+          # so the skip is an error here and the lock is really exercised.
+          # Device refresh locking is separate: its Go tests cannot skip and
+          # must pass on Linux, macOS and Windows.
+          STACKENCRYPT_TESTS_REQUIRE_LOCK: "1"
+        run: |
+          ulimit -l "$(ulimit -H -l)"
+          echo "RLIMIT_MEMLOCK: $(ulimit -l) KiB"
+          mise run go:test
+
+  # Linux only: macOS and Windows would report the same findings. Files
+  # behind a windows or darwin build tag are not seen here; lint them
+  # locally with GOOS set. Needs no guests: the packages embed a directory
+  # and compile without them.
+  go-lint:
+    name: Go lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: jdx/mise-action@v4
+        with:
+          install_args: go golangci-lint
+          cache: true
+
+      - name: golangci-lint
+        run: mise run go:lint
+
+  # The same Go binding on macOS and Windows, against the guest Linux built.
+  # The credential guest's Go-side refresh lock has Unix and Windows
+  # implementations. The shared go-binding-test.sh prints the device refresh
+  # tests explicitly on each platform, alongside the rest of the Go suite.
+  # The device refresh lock must succeed on macOS and Windows too; the tests
+  # have no best-effort skip. STACKENCRYPT_TESTS_REQUIRE_LOCK stays Linux-only
+  # because it governs guest memory locking, not the refresh file lock.
+  # They gate the way wasi-check does: a red run on the PR, not branch protection.
+  # main's ruleset requires no status check today, and this workflow is path
+  # filtered, so a required check here would never run on a PR outside the
+  # filter and block it forever. If either job is ever made required, pair it
+  # with a same-named job in a workflow triggered on the complementary paths
+  # that always succeeds, as GitHub documents. Nothing Rust runs here — Go
+  # plus the artifact is the whole toolchain, which is what keeps them quick.
+  go-binding-cross:
+    name: Go binding (${{ matrix.os }})
+    needs: wasi-check
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # Git for Windows defaults to CRLF on checkout, and gofmt would then
+      # report every file. Set this before checkout, where it takes effect.
+      - name: Keep LF line endings
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v6
+
+      # One source of truth for the Go version: the mise pin the Linux job
+      # runs under. The sed matches one shape of that line; if the pin is
+      # ever written another way, fail here by name rather than hand
+      # setup-go an empty version.
+      - name: Go version from mise.toml
+        id: go
+        run: |
+          version=$(sed -n 's/^go = "\(.*\)"/\1/p' mise.toml)
+          if [ -z "$version" ]; then
+            echo 'no `go = "..."` line in mise.toml; the Go version pin has changed shape' >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.go.outputs.version }}
+          cache-dependency-path: bindings/go/go.sum
+
+      # The artifact keeps the paths it was uploaded with, relative to their
+      # common root (bindings/go), so both guests land where the packages
+      # embed them.
+      - uses: actions/download-artifact@v8
+        with:
+          name: wasm-guests
+          path: bindings/go
+
+      - name: The guests are the ones Linux built and checked
+        run: |
+          cd bindings/go
+          for guest in stackencrypt/wasm/stack_encrypt_guest.wasm stackauth/wasm/stack_auth_guest.wasm; do
+            want=$(cat "$guest.sha256")
+            got=$(openssl dgst -sha256 "$guest" | awk '{print $NF}')
+            if [ "$want" != "$got" ]; then
+              echo "$guest checksum mismatch: artifact says $want, file is $got" >&2
+              exit 1
+            fi
+            echo "$guest sha256 $got"
+          done
+
+      - name: Go binding
+        run: scripts/go-binding-test.sh bindings/go

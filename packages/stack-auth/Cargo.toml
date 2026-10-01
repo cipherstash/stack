@@ -1,0 +1,99 @@
+[package]
+name = "stack-auth"
+description = "Authentication library for CipherStash services"
+version = "0.42.3"
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license-file = "LICENSE"
+
+# `aquamarine` is only used by a `#[doc]` macro in a doctest. `cargo-udeps`
+# cannot see into rustdoc, so it reports `aquamarine` as unused. Ignore it.
+[package.metadata.cargo-udeps.ignore]
+normal = ["aquamarine"]
+
+[dependencies]
+aquamarine = "0.6"
+base64 = { workspace = true }
+cts-common = { workspace = true }
+miette = { workspace = true }
+reqwest = { workspace = true, optional = true }
+# `Bytes::from_owner` lends reqwest a buffer this crate still owns, so the
+# request body is wiped when reqwest is done rather than copied.
+bytes = { version = "1.9", optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Form bodies for the OAuth token endpoints, encoded exactly as reqwest's
+# `.form()` does (it uses this crate), so the bundled transport and a host's
+# own transport send byte-identical requests.
+serde_urlencoded = "0.7"
+stack-profile = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+vitaminc = { workspace = true, features = ["protected"] }
+vitaminc-protected = { workspace = true }
+web-time = { workspace = true }
+zerokms-protocol = { workspace = true }
+zeroize = { workspace = true }
+
+# `stack-profile` is shared above: the WASI credential guest reads and saves
+# device-session tokens through it, while the native CLI holds its own lock.
+# Native-only:
+# - `open` launches a browser for device-code auth
+# - `jsonwebtoken` pulls `ring`, which doesn't compile on wasm32; it is now used
+#   only by native tests (to mint fixture JWTs). Claim decoding itself no longer
+#   uses it — see `decode_jwt_payload`.
+# - `tokio` with `full` features pulls `mio` (network IO), which doesn't
+#   compile on wasm32. Workspace dep is `features = ["full"]` so we can't
+#   subtract — split target-conditionally instead.
+#
+# JWT claim decoding uses a manual base64+JSON path (`decode_jwt_payload`) on
+# every target — `base64` above is shared. Wasm consumers can also use
+# `DeviceSessionStrategy::with_workspace_store` when their host holds the lock.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+open = "5.3.2"
+jsonwebtoken = { workspace = true }
+tokio = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1.47.1", default-features = false, features = ["sync"] }
+
+[features]
+default = ["http"]
+# The bundled HTTP transport: `ReqwestTransport`, which every strategy
+# builder uses unless given another `HttpTransport`. Off, reqwest and its
+# native TLS stack are not in the dependency graph at all — the shape a host
+# with its own transport (the WASI/wazero guest) builds against — and the
+# strategies (access-key, device-session, OIDC-federation, auto) still exist
+# but must be handed a transport. Device binding and the device-code flow are
+# native-only and keep the bundled transport, so they need this feature.
+# `StaticTokenStrategy` is a test double behind `test-utils`, not part of
+# the production surface.
+http = ["dep:reqwest", "dep:bytes"]
+test-utils = []
+# Exposes fuzz-only entry points (e.g. `fuzz_decode_claims`) for the cargo-fuzz
+# harnesses in `fuzz/`. A Cargo feature (not `#[cfg(fuzzing)]`) so it is a known
+# cfg and never trips the `unexpected_cfgs` lint under `-D warnings`.
+fuzz = []
+
+[[example]]
+name = "auto_strategy"
+required-features = ["http"]
+
+[[example]]
+name = "device_code"
+required-features = ["http", "test-utils"]
+
+[dev-dependencies]
+axum = "0.8"
+cts-common = { workspace = true }
+mocktail = "0.3.0"
+# Version matches the existing use in `vitur-server-core`.
+proptest = "1.7.0"
+temp-env = { workspace = true }
+tempfile = "3.21.0"
+tokio = { workspace = true, features = ["test-util"] }
+tracing-subscriber = { workspace = true }
