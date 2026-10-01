@@ -554,18 +554,30 @@ monorepo, which is where the silent failures are.
   has been repointed, is likewise configuration — check the registry, do not
   read it here. This bullet used to narrate that state and was wrong twice.
 
-  **The map has been empty since EQL's Phase-5 cutover, and empty is a
-  legitimate state.** A package absorbed before its publisher moves goes back
-  in, with its artefact in `FROZEN_ARTEFACT_DIGESTS`, and both entries are
-  deleted in the PR that repoints its publisher — not afterwards.
+  **EQL left the map in its Phase-5 cutover, and an empty map is a legitimate
+  state.** A package absorbed before its publisher moves goes in, with its
+  artefact in `FROZEN_ARTEFACT_DIGESTS`, and both entries are deleted in the
+  PR that repoints its publisher — not afterwards.
   `scripts/__tests__/frozen-publisher-docs.test.mjs` holds this file, the EQL
   plan and `SECURITY.md`'s "Note on publishing" to the map — the last being
   the one file that tells a reporter which pipeline built the artefact they
   are reporting on. `release-gate.test.mjs` asserts the map carries neither
   EQL nor any FFI name: the seven protect-ffi packages were left in it after
   their own cutover, which armed the gate against the first release that
-  cutover had just enabled. With nothing frozen, the tests drive the mechanism
-  with EQL's old entry as an injected fixture.
+  cutover had just enabled. The tests drive the `field` mechanism with EQL's
+  old entry as an injected fixture.
+
+  **Delete the `@cipherstash/auth*` entries in the arming PR of the stack-*
+  crates import.** The wrapper and its six platform packages, imported from
+  cipherstash-suite, are frozen the same way until npm trusted publishing is
+  repointed here. The wrapper has no release manifest, so its check-3 entry is
+  a `files` list: the gate hashes each of the 15 tracked files it publishes,
+  in the tree and in the tarball, and names the one that differs. That is why
+  `biome.json` excludes those files: a reformat is a skew, and the gate
+  refuses it. The platform packages publish only a binary built in CI, so their entries
+  declare `noTreeBytes` and check 3 skips them; checks 1 and 2 still apply.
+  `scripts/lint-no-auth-changeset.mjs` refuses a changeset naming any of the
+  seven, and goes in the same PR.
 
   **Check 3 is the one worth understanding before you touch a frozen package.**
   For a package this repo publishes, in-tree bytes differing from npm is an

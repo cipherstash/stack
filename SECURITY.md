@@ -26,12 +26,16 @@ This repository also carries the source of the **`eql-bindings`** Rust crate
 lockstep with `@cipherstash/eql`. It is in scope for security reports on the
 same terms as the npm packages above.
 
-> **Note on publishing.** Every package in the table above, including all seven
-> `@cipherstash/protect-ffi*` packages and `@cipherstash/eql`, is published from
-> this repository by `.github/workflows/release.yml`; the `eql-bindings` crate
-> is published from here by `.github/workflows/release-plz.yml`. EQL moved here
-> at the Phase 5 cutover in `docs/plans/2026-08-13-eql-monorepo-absorption.md`.
-> Releases made before it, `@cipherstash/eql@3.0.5` and earlier, were built by
+> **Note on publishing.** `@cipherstash/auth` and its six platform packages,
+> and the `stack-auth` and `stack-profile` crates, are developed here but are
+> *published* from `cipherstash/cipherstash-suite` until the arming PR of the
+> stack-* crates import repoints them. Every other package in the table above,
+> including all seven `@cipherstash/protect-ffi*` packages and
+> `@cipherstash/eql`, is published from this repository by
+> `.github/workflows/release.yml`; the `eql-bindings` crate is published from
+> here by `.github/workflows/release-plz.yml`. EQL moved here at the Phase 5
+> cutover in `docs/plans/2026-08-13-eql-monorepo-absorption.md`. Releases made
+> before it, `@cipherstash/eql@3.0.5` and earlier, were built by
 > `cipherstash/encrypt-query-language`. **Source, issues, and security reports
 > for all of them belong here regardless** — that part does not depend on which
 > pipeline built the artefact.

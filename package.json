@@ -29,6 +29,7 @@
     "clean": "rimraf --glob **/.next **/.turbo **/dist **/node_modules",
     "code:fix": "biome check --write",
     "code:check": "biome check",
+    "lint:auth-changeset": "node scripts/lint-no-auth-changeset.mjs",
     "lint:eql-pins": "node scripts/lint-no-eql-registry-pins.mjs",
     "lint:package-paths": "node scripts/lint-no-dead-package-paths.mjs",
     "lint:runners": "node scripts/lint-no-hardcoded-runners.mjs",
