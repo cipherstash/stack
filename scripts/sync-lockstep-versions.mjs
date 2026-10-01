@@ -76,7 +76,7 @@ const SKIP_DIRS = new Set([
  *
  * DISCOVERED, not listed. The crate is consumed across cargo workspace
  * boundaries — `languages/typescript/packages/protect-ffi/crates/protect-ffi/Cargo.toml` reaches it
- * by `path = "../../../eql/crates/eql-bindings"` — and a hardcoded list is
+ * by `path = "../../../../../../packages/eql/crates/eql-bindings"` — and a hardcoded list is
  * exactly what was missing before: `packages/eql`'s own lock is refreshed as a
  * side effect of the SQL build below, `languages/typescript/packages/protect-ffi`'s was refreshed by
  * nothing, and no one noticed because no command in this repo passes

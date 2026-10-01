@@ -24,7 +24,7 @@ import { describe, expect, it } from 'vitest'
 // package. `import.meta` is unavailable: tsconfig emits CommonJS and tsc
 // rejects it (TS1470). Same reasoning as lintWiring.test.ts.
 const packageRoot = process.cwd()
-const workflowDir = join(packageRoot, '../../.github/workflows')
+const workflowDir = join(packageRoot, '../../../../.github/workflows')
 
 /**
  * `//` line comments removed, so `JSON.parse` accepts `turbo.json`.
@@ -184,7 +184,7 @@ describe('integration-tests suite runs in CI', () => {
         (
           JSON.parse(
             stripJsonComments(
-              readFileSync(join(packageRoot, '../../turbo.json'), 'utf8'),
+              readFileSync(join(packageRoot, '../../../../turbo.json'), 'utf8'),
             ),
           ) as { tasks?: Record<string, unknown> }
         ).tasks ?? {},

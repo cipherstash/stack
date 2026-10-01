@@ -1,5 +1,5 @@
 import { configDefaults, defineConfig } from 'vitest/config'
-import { sharedAlias, stackSourceAlias } from '../../vitest.shared'
+import { sharedAlias, stackSourceAlias } from '../../../../vitest.shared'
 import { WASM_CORE_SUITE } from './vitest.wasm-core.config'
 
 export default defineConfig({

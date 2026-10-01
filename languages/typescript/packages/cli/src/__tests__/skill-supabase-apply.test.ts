@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const CLI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
-const REPO_ROOT = resolve(CLI_ROOT, '../..')
+const REPO_ROOT = resolve(CLI_ROOT, '../../../..')
 const SKILLS_ROOT = resolve(REPO_ROOT, 'skills')
 
 /**

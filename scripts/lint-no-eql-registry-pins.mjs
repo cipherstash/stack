@@ -783,7 +783,7 @@ export function report(result) {
       'registry pin lets the installed SQL and the emitting Rust drift apart\n' +
       'silently — it compiles, it passes CI, and it fails in a database.\n\n' +
       'Resolve it in-tree instead:\n\n' +
-      `    ${CARGO_DEPENDENCY} = { path = "../../../eql/crates/eql-bindings" }\n` +
+      `    ${CARGO_DEPENDENCY} = { path = "../../../../../../packages/eql/crates/eql-bindings" }\n` +
       `    "${NPM_DEPENDENCY}": "workspace:*"\n\n` +
       '`workspace:*` and not `workspace:^`: both resolve in-tree and both\n' +
       'satisfy this linter, but pnpm packs them differently into a published\n' +

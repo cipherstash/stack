@@ -60,7 +60,7 @@ const withoutComments = (yaml: string) => yaml.replace(/^[ \t]*#.*$/gm, '')
 // package — that was true of the deposited upstream copy this used to read,
 // which made the CI assertion below vacuous from the day of the absorption.
 const testWorkflow = withoutComments(
-  read('../../.github/workflows/tests-rust.yml'),
+  read('../../../../.github/workflows/tests-rust.yml'),
 )
 // Every root workflow an exempted script may hang off, discovered by reading
 // the DIRECTORY rather than by listing filenames. Same rule as above: root
@@ -72,7 +72,7 @@ const testWorkflow = withoutComments(
 // this reads as "the script runs nowhere", and the tempting repair is to widen
 // the list until it includes the dead package-local path. A directory cannot
 // drift out of date with itself.
-const ROOT_WORKFLOW_DIR = '../../.github/workflows'
+const ROOT_WORKFLOW_DIR = '../../../../.github/workflows'
 const rootWorkflowNames = readdirSync(
   join(packageRoot, ROOT_WORKFLOW_DIR),
 ).filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))

@@ -20,7 +20,7 @@ describe('package README', () => {
       'utf8',
     )
     const rootReadme = readFileSync(
-      fileURLToPath(new URL('../../../README.md', import.meta.url)),
+      fileURLToPath(new URL('../../../../../README.md', import.meta.url)),
       'utf8',
     )
     expect(

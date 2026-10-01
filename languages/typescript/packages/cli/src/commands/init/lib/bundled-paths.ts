@@ -27,9 +27,10 @@ export function findBundledDir(name: string): string | undefined {
     join(here, '..', '..', name),
     join(here, '..', '..', '..', name),
     join(here, '..', '..', '..', '..', name),
-    // Dev fallback: running from `languages/typescript/packages/cli/src/commands/init/lib/`,
-    // the monorepo `<name>/` is six levels up.
-    join(here, '..', '..', '..', '..', '..', '..', name),
+    // Dev fallback: running from
+    // `languages/typescript/packages/cli/src/commands/init/lib/`, the
+    // monorepo `<name>/` is eight levels up.
+    join(here, '..', '..', '..', '..', '..', '..', '..', '..', name),
   ]
   for (const candidate of candidates) {
     if (existsSync(candidate)) {

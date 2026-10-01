@@ -89,7 +89,7 @@ on:
       - 'languages/typescript/packages/protect-ffi/scripts/inline-wasm.mjs'
       # Out of that package, and compiled into the same two artifacts: the
       # cdylib crate carries
-      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so the
       # EQL wire types are linked into `index.node` and into
       # `protect_ffi_inline.js`. Both cache keys in
       # `.github/actions/build-ffi-binding` hash them, so an edit here misses
@@ -174,7 +174,7 @@ on:
       - 'languages/typescript/packages/protect-ffi/scripts/inline-wasm.mjs'
       # Out of that package, and compiled into the same two artifacts: the
       # cdylib crate carries
-      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so the
       # EQL wire types are linked into `index.node` and into
       # `protect_ffi_inline.js`. Both cache keys in
       # `.github/actions/build-ffi-binding` hash them, so an edit here misses

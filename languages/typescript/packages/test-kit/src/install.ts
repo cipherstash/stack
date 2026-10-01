@@ -7,7 +7,10 @@ import { promisify } from 'node:util'
 const execFileAsync = promisify(execFile)
 
 /** `languages/typescript/packages/test-kit/src` → repo root. */
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
+const REPO_ROOT = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '../../../../..',
+)
 const STASH_BIN = resolve(
   REPO_ROOT,
   'languages/typescript/packages/cli/dist/bin/stash.js',

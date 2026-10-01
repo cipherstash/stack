@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 import { defineConfig } from 'vitest/config'
-import { sharedAlias, stackSourceAlias } from '../../../vitest.shared'
+import { sharedAlias, stackSourceAlias } from '../../../../../vitest.shared'
 import {
   integrationHarness,
   integrationTestDefaults,

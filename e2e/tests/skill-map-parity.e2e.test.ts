@@ -20,10 +20,10 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { SKILL_MAP as CLI_SKILL_MAP } from '../../packages/cli/src/commands/init/lib/install-skills.js'
-import type { Integration as CliIntegration } from '../../packages/cli/src/commands/init/types.js'
-import { SKILL_MAP as WIZARD_SKILL_MAP } from '../../packages/wizard/src/lib/install-skills.js'
-import type { Integration as WizardIntegration } from '../../packages/wizard/src/lib/types.js'
+import { SKILL_MAP as CLI_SKILL_MAP } from '../../languages/typescript/packages/cli/src/commands/init/lib/install-skills.js'
+import type { Integration as CliIntegration } from '../../languages/typescript/packages/cli/src/commands/init/types.js'
+import { SKILL_MAP as WIZARD_SKILL_MAP } from '../../languages/typescript/packages/wizard/src/lib/install-skills.js'
+import type { Integration as WizardIntegration } from '../../languages/typescript/packages/wizard/src/lib/types.js'
 
 // Exhaustive over the wizard union: a new wizard integration added without a
 // CLI counterpart fails to compile here, rather than shipping a divergent set.

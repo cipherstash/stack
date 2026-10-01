@@ -32,7 +32,7 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  *    emits. Reported in review on #863; this file was written for it.
  *  - `packages/eql/crates/**` and `packages/eql/Cargo.toml` are in BOTH keys —
  *    `crates/protect-ffi/Cargo.toml` carries
- *    `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so that
+ *    `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so that
  *    tree compiles into `index.node` — and five path-filtered workflows that
  *    build or compile the binding did not list them. Four of them run the
  *    action NATIVELY (`wasm:` left at its default), so the first version of

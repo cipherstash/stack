@@ -56,7 +56,7 @@ runs:
         # the build step below and the job proceeds on a stale index.node.
         #
         # The last two are NOT in this package. `crates/protect-ffi/Cargo.toml`
-        # carries `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`
+        # carries `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`
         # — an in-tree path dependency that compiles into `index.node` and into
         # the wasm build below. A path dep has no registry checksum, so a
         # source-only edit there moves NOTHING this key would otherwise hash:

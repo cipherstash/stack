@@ -16,7 +16,7 @@ It runs in two layers:
 
 - Local Postgres + EQL via the repo-root `local/docker-compose.yml`:
   ```bash
-  cd ../../local && docker compose up -d
+  cd ../../../../local && docker compose up -d
   ```
 - A CipherStash profile signed in (`stash login`). Auth is read from the
   CipherStash profile; no environment variables required.

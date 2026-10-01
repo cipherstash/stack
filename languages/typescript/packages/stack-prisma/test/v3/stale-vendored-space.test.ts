@@ -598,9 +598,12 @@ describe('fresh database: both install paths must converge on eql-3.0.5', () => 
     // driving `db init` in a repo upgraded from 1.0.0 hits this refusal with no
     // route out of it. Nothing type-checks either file; this assertion is the
     // only thing holding the pair to the planner's real message.
-    // `test/v3` -> `test` -> `languages/typescript/packages/stack-prisma` -> `packages` -> root.
+    // `test/v3` -> `test` -> `stack-prisma` -> `packages` -> `typescript`
+    // -> `languages` -> root.
     const repoRoot = join(
       dirname(fileURLToPath(import.meta.url)),
+      '..',
+      '..',
       '..',
       '..',
       '..',
@@ -718,9 +721,12 @@ describe('no seed phase run: the 3.0.5 upgrade is silently invisible', () => {
  * reaches the repo root to hold shipped docs to a fact.
  */
 describe('shipped skills: claims verified false, which must not come back', () => {
-  // `test/v3` -> `test` -> `languages/typescript/packages/stack-prisma` -> `packages` -> root.
+  // `test/v3` -> `test` -> `stack-prisma` -> `packages` -> `typescript`
+  // -> `languages` -> root.
   const repoRoot = join(
     dirname(fileURLToPath(import.meta.url)),
+    '..',
+    '..',
     '..',
     '..',
     '..',

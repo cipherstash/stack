@@ -1,12 +1,12 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import stackVitestConfig from '../../packages/stack/vitest.config.ts'
+import stackVitestConfig from '../../languages/typescript/packages/stack/vitest.config.ts'
 import wasmCoreVitestConfig, {
   WASM_CORE_SUITE,
-} from '../../packages/stack/vitest.wasm-core.config.ts'
-import supabaseVitestConfig from '../../packages/stack-supabase/vitest.config.ts'
-import { requireIntegrationEnv } from '../../packages/test-kit/src/env.ts'
+} from '../../languages/typescript/packages/stack/vitest.wasm-core.config.ts'
+import supabaseVitestConfig from '../../languages/typescript/packages/stack-supabase/vitest.config.ts'
+import { requireIntegrationEnv } from '../../languages/typescript/packages/test-kit/src/env.ts'
 import { readJsonc } from './lib/read-jsonc.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
