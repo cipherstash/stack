@@ -212,6 +212,74 @@ updates:
         update-types:
           - version-update:semver-major
 
+  # ── Cargo (the root workspace — the stack-* crates) ─────────────
+  # The root workspace (the six stack-* crates and the three node binding
+  # crates) and the five detached workspaces beside it: the three cargo-fuzz
+  # crates and the two Go WASI guests. Each has its own Cargo.lock, and each
+  # is its own workspace root, so each is listed.
+  - package-ecosystem: cargo
+    directories:
+      - /
+      - /packages/stack-auth/fuzz
+      - /packages/stack-kms/fuzz
+      - /packages/stack-encrypt/fuzz
+      - /languages/golang/stackencrypt/guest
+      - /languages/golang/stackauth/guest
+    # Monthly, matching the other two cargo entries.
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - supply-chain
+    commit-message:
+      prefix: "chore"
+      include: scope
+    groups:
+      cargo-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Released from cipherstash-suite and pinned with exact `=` requirements
+      # in the root Cargo.toml and the guests: stack-auth's API carries their
+      # types, so they move in lockstep with the suite, by hand.
+      - dependency-name: "cts-common"
+      - dependency-name: "zerokms-protocol"
+      - dependency-name: "recipher"
+      - dependency-name: "cllw-ore"
+      # vitaminc is pinned at 0.5.0 across the crates and the guests; the
+      # guests' `FfiValue: Decrypt` bound fails if two versions resolve.
+      - dependency-name: "vitaminc*"
+      # Major bumps are reviewed and applied manually, not by Dependabot.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  # ── Go (languages/golang) ──────────────────────────────────────
+  - package-ecosystem: gomod
+    directory: /languages/golang
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - supply-chain
+    commit-message:
+      prefix: "chore"
+      include: scope
+    ignore:
+      # Major bumps are reviewed and applied manually, not by Dependabot.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
   # ── GitHub Actions ─────────────────────────────────────────────
   - package-ecosystem: github-actions
     directory: /

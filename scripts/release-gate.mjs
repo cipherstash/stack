@@ -35,6 +35,7 @@
  * pointing at a version nobody can install.
  */
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   appendFileSync,
   globSync,
@@ -146,6 +147,25 @@ export const FROZEN_PUBLISHERS = new Map([
       '3.0.5 names that repository and `release.yml` here carries no NPM_TOKEN. Repointing ' +
       'is Phase 5 of docs/plans/2026-08-13-eql-monorepo-absorption.md.',
   ],
+  // The @cipherstash/auth wrapper and its six platform packages, imported
+  // from cipherstash-suite with the stack-* crates. They keep publishing from
+  // there until the arming PR of that import repoints npm trusted publishing
+  // at this repository and deletes all seven entries here, in both maps.
+  ...[
+    '@cipherstash/auth',
+    '@cipherstash/auth-darwin-arm64',
+    '@cipherstash/auth-darwin-x64',
+    '@cipherstash/auth-linux-arm64-gnu',
+    '@cipherstash/auth-linux-x64-gnu',
+    '@cipherstash/auth-linux-x64-musl',
+    '@cipherstash/auth-win32-x64-msvc',
+  ].map((name) => [
+    name,
+    'Still published from cipherstash/cipherstash-suite — npm trusted publishing ' +
+      'for the seven @cipherstash/auth packages names that repository, and ' +
+      '`release.yml` here has no job that builds the native binaries. Repointing ' +
+      'is the arming PR (PR E) of the stack-* crates import.',
+  ]),
 ])
 
 /**
@@ -179,6 +199,22 @@ export const FROZEN_PUBLISHERS = new Map([
  * that by equality, so a frozen publisher added without an artefact fails
  * rather than silently getting no bytes check. Both entries are DELETED
  * together by the cutover that repoints the publisher.
+ *
+ * ## Three shapes of entry
+ *
+ *   * `field` — a digest read out of a release manifest on each side, as for
+ *     `@cipherstash/eql` above.
+ *   * `files` — for a package with no such manifest. The gate hashes each
+ *     listed file with sha256, in the tree and in the published tarball, and
+ *     a mismatch names the file. `@cipherstash/auth` is this shape: the list
+ *     is every tracked file the wrapper publishes except `package.json`, which
+ *     publishing rewrites. `wasm/` is a build output and is not listed. The
+ *     list cannot see the Rust source, because the compiled binary is not in
+ *     the tree — the freeze covers the JavaScript and type surface only.
+ *   * `noTreeBytes` — a package whose tarball holds nothing the tree has, only
+ *     a binary built in CI. CHECK C skips it, and the string says why. The
+ *     entry still exists so the key-equality test holds, and CHECK A still
+ *     blocks a version npm does not carry.
  */
 export const FROZEN_ARTEFACT_DIGESTS = new Map([
   [
@@ -194,6 +230,46 @@ export const FROZEN_ARTEFACT_DIGESTS = new Map([
       field: 'installSqlSha256',
     },
   ],
+  [
+    '@cipherstash/auth',
+    {
+      label: 'wrapper sources and type declarations',
+      files: [
+        'index.js',
+        'stack-auth-node.js',
+        'wasm-inline.mjs',
+        'cookies.mjs',
+        'base64url.mjs',
+        'next.mjs',
+        'index.d.ts',
+        'native.d.ts',
+        'wasm-types.d.ts',
+        'wasm-inline.d.ts',
+        'cookies.d.ts',
+        'base64url.d.ts',
+        'next.d.ts',
+        'README.md',
+        'LICENSE',
+      ].map((file) => ({
+        inTree: `languages/typescript/packages/auth/${file}`,
+        published: `package/${file}`,
+      })),
+    },
+  ],
+  ...[
+    '@cipherstash/auth-darwin-arm64',
+    '@cipherstash/auth-darwin-x64',
+    '@cipherstash/auth-linux-arm64-gnu',
+    '@cipherstash/auth-linux-x64-gnu',
+    '@cipherstash/auth-linux-x64-musl',
+    '@cipherstash/auth-win32-x64-msvc',
+  ].map((name) => [
+    name,
+    {
+      label: 'platform binary',
+      noTreeBytes: 'the published tarball holds only a binary built in CI',
+    },
+  ]),
 ])
 
 /**
@@ -491,6 +567,21 @@ export function frozenBytesSkew({
       )
     }
 
+    // Nothing in the tree to compare. An empty reason is a declaration that
+    // has lost its justification, so it throws like a missing artefact.
+    if ('noTreeBytes' in artefact) {
+      if (
+        typeof artefact.noTreeBytes !== 'string' ||
+        artefact.noTreeBytes.trim() === ''
+      ) {
+        throw new Error(
+          `${name} declares \`noTreeBytes\` with no reason. Say why the tarball ` +
+            'holds nothing the tree has, or declare a `field` or `files` artefact.',
+        )
+      }
+      continue
+    }
+
     const published = publishedDigest(name, version, artefact)
     if (published === null || published === undefined) continue
 
@@ -501,12 +592,38 @@ export function frozenBytesSkew({
         package: name,
         version,
         label: artefact.label,
-        local,
-        published,
+        ...differingLines(local, published),
       })
     }
   }
   return blockers
+}
+
+/**
+ * For a `files` artefact, only the files that differ.
+ *
+ * Its digest is one `<published path> <sha256>` line per file, so the lines
+ * that differ are the files that differ, and the report names them rather
+ * than printing fifteen hashes. A `field` digest is a single line, and passes
+ * through unchanged.
+ */
+function differingLines(local, published) {
+  const left = String(local).split('\n')
+  const right = String(published).split('\n')
+  if (left.length === 1 && right.length === 1) return { local, published }
+  const only = (lines, other) =>
+    lines.filter((line) => !other.includes(line)).join('\n              ')
+  return { local: only(left, right), published: only(right, left) }
+}
+
+/** One `<published path> <sha256>` line per listed file. */
+function fileDigests(files, read) {
+  return files
+    .map(({ published }) => {
+      const hash = createHash('sha256').update(read(published)).digest('hex')
+      return `${published} ${hash}`
+    })
+    .join('\n')
 }
 
 /**
@@ -648,8 +765,31 @@ function digestField(manifest, artefact, source) {
   return value
 }
 
-/** The digest an artefact's IN-TREE release manifest claims for itself. */
+/**
+ * The digest an artefact's IN-TREE release manifest claims for itself — or,
+ * for a `files` artefact, the sha256 of each listed file on disk.
+ *
+ * A listed file that is missing THROWS, naming it: a stale list must not pass
+ * quietly, for the same reason a missing field throws.
+ */
 export function inTreeArtefactDigest(_name, artefact) {
+  if (artefact.files) {
+    const byPublished = new Map(
+      artefact.files.map((file) => [file.published, file.inTree]),
+    )
+    return fileDigests(artefact.files, (published) => {
+      const inTree = byPublished.get(published)
+      try {
+        return readFileSync(join(REPO_ROOT, inTree))
+      } catch (err) {
+        throw new Error(
+          `${inTree} is listed in FROZEN_ARTEFACT_DIGESTS but cannot be read ` +
+            `(${err.code ?? err.message}). Fix the list rather than leaving the ` +
+            'check disarmed.',
+        )
+      }
+    })
+  }
   const path = join(REPO_ROOT, artefact.inTree)
   return digestField(
     JSON.parse(readFileSync(path, 'utf8')),
@@ -715,12 +855,15 @@ export function publishedArtefactDigest(name, version, artefact) {
       )
     }
 
+    // One member for a `field` artefact, every listed file for a `files` one.
+    // A member missing from the tarball fails the extraction, which names it.
+    const members = artefact.files
+      ? artefact.files.map((file) => file.published)
+      : [artefact.published]
     try {
-      execFileSync(
-        'tar',
-        ['-xzf', join(dir, packed), '-C', dir, artefact.published],
-        { stdio: ['ignore', 'pipe', 'pipe'] },
-      )
+      execFileSync('tar', ['-xzf', join(dir, packed), '-C', dir, ...members], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
     } catch (err) {
       // Already fail-closed — this call sits outside the E404 catch above — but
       // the message was `Command failed: tar -xzf …` with tar's own stderr
@@ -728,12 +871,17 @@ export function publishedArtefactDigest(name, version, artefact) {
       // the one worth naming: the published layout moved.
       const text = `${err.stdout ?? ''}${err.stderr ?? ''}`
       throw new Error(
-        `${spec}: could not extract \`${artefact.published}\` from the published tarball. ` +
+        `${spec}: could not extract \`${members.join('`, `')}\` from the published tarball. ` +
           'The package layout has changed — update the `published` path in ' +
           `FROZEN_ARTEFACT_DIGESTS.\n${text.trim() || err.message}`,
       )
     }
 
+    if (artefact.files) {
+      return fileDigests(artefact.files, (published) =>
+        readFileSync(join(dir, published)),
+      )
+    }
     return digestField(
       JSON.parse(readFileSync(join(dir, artefact.published), 'utf8')),
       artefact,
@@ -826,9 +974,10 @@ export function reportBlockers(blockers) {
       "     repository's to do.\n"
     : target
       ? '  1. Publish the frozen package. For @cipherstash/eql that is the Phase 5\n' +
-        '     cutover in docs/plans/2026-08-13-eql-monorepo-absorption.md: repoint\n' +
-        '     npm trusted publishing to cipherstash/stack and release the version\n' +
-        `     above — ${target}.\n` +
+        '     cutover in docs/plans/2026-08-13-eql-monorepo-absorption.md; for the\n' +
+        '     @cipherstash/auth packages it is the arming PR of the stack-* crates\n' +
+        '     import. Either way: repoint npm trusted publishing to cipherstash/stack\n' +
+        `     and release the version above — ${target}.\n` +
         '     Every finding then clears on its own, with no further change here.\n'
       : '  1. Publish the frozen package. Nothing above is frozen, so this way out\n' +
         '     is not available: the findings are manifests to fix, not a release to\n' +

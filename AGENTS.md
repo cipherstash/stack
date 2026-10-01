@@ -562,6 +562,18 @@ monorepo, which is where the silent failures are.
   their own cutover, which armed the gate against the first release that
   cutover had just enabled.
 
+  **Delete the `@cipherstash/auth*` entries in the arming PR of the stack-*
+  crates import.** The wrapper and its six platform packages, imported from
+  cipherstash-suite, are frozen the same way until npm trusted publishing is
+  repointed here. The wrapper has no release manifest, so its check-3 entry is
+  a `files` list: the gate hashes each of the 15 tracked files it publishes,
+  in the tree and in the tarball, and names the one that differs. That is why
+  `biome.json` excludes those files: a reformat is a skew, and the gate
+  refuses it. The platform packages publish only a binary built in CI, so their entries
+  declare `noTreeBytes` and check 3 skips them; checks 1 and 2 still apply.
+  `scripts/lint-no-auth-changeset.mjs` refuses a changeset naming any of the
+  seven, and goes in the same PR.
+
   **Check 3 is the one worth understanding before you touch `packages/eql`.**
   For a package this repo publishes, in-tree bytes differing from npm is an
   unreleased change — every pull request. For a frozen one it is a

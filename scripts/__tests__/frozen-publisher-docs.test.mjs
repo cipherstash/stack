@@ -47,10 +47,19 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  */
 
 const EQL = '@cipherstash/eql'
+const AUTH = '@cipherstash/auth'
 
-/** Where the freeze is explained, and the instruction each file carries. */
+/**
+ * Where each freeze is explained, and the instruction each file carries.
+ *
+ * `pkg` is the map key the instruction is about. The @cipherstash/auth freeze
+ * (the wrapper and its six platform packages, keyed here by the wrapper) is
+ * deleted by the arming PR of the stack-* crates import, and its prose goes
+ * with it.
+ */
 const DOCS = [
   {
+    pkg: EQL,
     file: 'AGENTS.md',
     // Both spellings resolve to "the `@cipherstash/eql` entry", which is the
     // thing Phase 5 deletes — matching that keeps the guard anchored to the
@@ -58,10 +67,12 @@ const DOCS = [
     instruction: /`@cipherstash\/eql` entry/,
   },
   {
+    pkg: EQL,
     file: 'docs/plans/2026-08-13-eql-monorepo-absorption.md',
     instruction: /`@cipherstash\/eql` entry/,
   },
   {
+    pkg: EQL,
     file: 'SECURITY.md',
     // Not a regex, and deliberately: this is `foreignPublishClaims` run over
     // the file, so the SAME extractor that forbids a wrong name below is what
@@ -69,6 +80,16 @@ const DOCS = [
     // would otherwise silently turn the prohibition into a no-op while this
     // assertion went on passing against a pattern nothing else uses.
     instruction: (body) => foreignPublishClaims(body).includes(EQL),
+  },
+  {
+    pkg: AUTH,
+    file: 'AGENTS.md',
+    instruction: /`@cipherstash\/auth\*?` entries/,
+  },
+  {
+    pkg: AUTH,
+    file: 'SECURITY.md',
+    instruction: (body) => foreignPublishClaims(body).includes(AUTH),
   },
 ]
 
@@ -187,20 +208,22 @@ describe('frozen-publisher docs track the map', () => {
   })
 
   it.each(DOCS)(
-    '$file documents the eql freeze iff the map carries it',
-    ({ file, instruction }) => {
+    '$file documents the $pkg freeze iff the map carries it',
+    ({ pkg, file, instruction }) => {
       expect(
         satisfies(instruction, read(file)),
-        FROZEN_PUBLISHERS.has(EQL)
-          ? `${file} no longer tells an agent about the ${EQL} freeze, but ` +
+        FROZEN_PUBLISHERS.has(pkg)
+          ? `${file} no longer tells an agent about the ${pkg} freeze, but ` +
               'FROZEN_PUBLISHERS still carries it.'
-          : `${EQL} has left FROZEN_PUBLISHERS (Phase-5 cutover), so ${file} ` +
+          : `${pkg} has left FROZEN_PUBLISHERS (its publishing cutover), so ${file} ` +
               'must stop instructing agents about the freeze.',
-      ).toBe(FROZEN_PUBLISHERS.has(EQL))
+      ).toBe(FROZEN_PUBLISHERS.has(pkg))
     },
   )
 
-  it.each(DOCS)('$file freezes only what the map freezes', ({ file }) => {
+  const FILES = [...new Set(DOCS.map(({ file }) => file))]
+
+  it.each(FILES)('%s freezes only what the map freezes', (file) => {
     const claimed = [...new Set(foreignPublishClaims(read(file)))]
     expect(
       claimed.filter((name) => !FROZEN_PUBLISHERS.has(name)),
@@ -212,7 +235,7 @@ describe('frozen-publisher docs track the map', () => {
     ).toEqual([])
   })
 
-  it.each(DOCS)('$file asserts no live gate verdict', ({ file }) => {
+  it.each(FILES)('%s asserts no live gate verdict', (file) => {
     const body = read(file)
     expect(
       LIVE_VERDICT_CLAIMS.filter((claim) => claim.test(body)).map(String),

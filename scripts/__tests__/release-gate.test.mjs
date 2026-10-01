@@ -38,6 +38,7 @@ import { readWorkflow } from './lib/workflows.mjs'
 
 const FFI = '@cipherstash/protect-ffi'
 const PLATFORM = '@cipherstash/protect-ffi-darwin-arm64'
+const AUTH = '@cipherstash/auth'
 
 describe('unpublished', () => {
   it('reports a package whose committed version is not on the registry', () => {
@@ -763,6 +764,19 @@ describe('the gate exits non-zero when a blocker is found', () => {
         "    process.stderr.write('npm error code ETARGET\\n'); process.exit(1)\n" +
         '  }\n' +
         "  const dest = process.argv[process.argv.indexOf('--pack-destination') + 1]\n" +
+        // A `files` artefact (@cipherstash/auth): the tarball carries the
+        // tree's own bytes for every listed file, so CHECK C compares them for
+        // real and passes.
+        '  const files = JSON.parse(process.env.FAKE_NPM_FILES)[name]\n' +
+        '  if (files) {\n' +
+        '    for (const [published, source] of Object.entries(files)) {\n' +
+        "      const target = path.join(dest, 'stage', published)\n" +
+        '      fs.mkdirSync(path.dirname(target), { recursive: true })\n' +
+        '      fs.copyFileSync(source, target)\n' +
+        '    }\n' +
+        "    require('node:child_process').execFileSync('tar', ['-czf', path.join(dest, 'f.tgz'), '-C', path.join(dest, 'stage'), 'package'])\n" +
+        "    process.stdout.write('f.tgz\\n'); process.exit(0)\n" +
+        '  }\n' +
         "  const stage = path.join(dest, 'stage', 'package', 'dist', 'sql')\n" +
         '  fs.mkdirSync(stage, { recursive: true })\n' +
         "  fs.writeFileSync(path.join(stage, 'release-manifest.json'), JSON.stringify({\n" +
@@ -785,6 +799,21 @@ describe('the gate exits non-zero when a blocker is found', () => {
     return { dir, versions, packDigest }
   }
 
+  /** For each `files` artefact, the tree file behind each tarball member. */
+  const FILES_ARTEFACTS = Object.fromEntries(
+    [...FROZEN_ARTEFACT_DIGESTS]
+      .filter(([, artefact]) => artefact.files)
+      .map(([name, artefact]) => [
+        name,
+        Object.fromEntries(
+          artefact.files.map((file) => [
+            file.published,
+            join(REPO_ROOT, file.inTree),
+          ]),
+        ),
+      ]),
+  )
+
   /** Every workspace package published at exactly its committed version. */
   const allPublished = Object.fromEntries(
     manifests.map(({ name, version }) => [name, [version]]),
@@ -800,6 +829,7 @@ describe('the gate exits non-zero when a blocker is found', () => {
         PATH: `${dir}:${process.env.PATH}`,
         FAKE_NPM_VERSIONS: versions,
         FAKE_NPM_PACK_DIGEST: packDigest,
+        FAKE_NPM_FILES: JSON.stringify(FILES_ARTEFACTS),
         // The real one would be written for the whole vitest run.
         GITHUB_OUTPUT: join(dir, 'github-output.txt'),
       },
@@ -867,6 +897,15 @@ describe('the gate exits non-zero when a blocker is found', () => {
     expect(result.status).toBe(1)
     expect(result.stderr).not.toMatch(/npm pack .* failed:\s*$/m)
     expect(result.stderr).toContain('Phase 5')
+  })
+
+  it('blocks a stray @cipherstash/auth bump while the auth packages are frozen', () => {
+    // The auth freeze, end to end: npm carries the committed 0.44.0 and not
+    // the bump, so CHECK A names the bumped version and the release stops.
+    const result = runGate({ ...allPublished, [AUTH]: ['0.43.0'] })
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain(`${AUTH}@0.44.0 is not on npm`)
+    expect(result.stderr).toContain('cipherstash/cipherstash-suite')
   })
 })
 
@@ -1259,5 +1298,171 @@ describe('reportBlockers, for a bytes skew', () => {
     expect(text).toContain('accde0030')
     expect(text).toContain('install SQL')
     expect(text).not.toMatch(/Publish the frozen package\./)
+  })
+})
+
+/**
+ * The `files` artefact shape, which `@cipherstash/auth` needs because it has no
+ * release manifest to read a digest from. The gate hashes each listed file on
+ * both sides; EQL's `field` entry keeps working unchanged (every EQL test
+ * above).
+ */
+describe('a `files` artefact', () => {
+  const AUTH_DIR = 'languages/typescript/packages/auth'
+  const artefact = FROZEN_ARTEFACT_DIGESTS.get(AUTH)
+
+  it('hashes every listed file in the tree, one line per file', () => {
+    const lines = inTreeArtefactDigest(AUTH, artefact).split('\n')
+    expect(lines).toHaveLength(artefact.files.length)
+    for (const line of lines)
+      expect(line).toMatch(/^package\/\S+ [0-9a-f]{64}$/)
+  })
+
+  it('lists every tracked file the wrapper publishes, except package.json', () => {
+    // A file the wrapper publishes and the list leaves out is a file whose
+    // bytes nobody compares. `files` in package.json is what npm packs, and
+    // `wasm/` is a build output with nothing tracked behind it.
+    const manifest = JSON.parse(
+      readFileSync(join(REPO_ROOT, AUTH_DIR, 'package.json'), 'utf8'),
+    )
+    const published = manifest.files.filter((entry) => !entry.endsWith('/'))
+    expect(artefact.files.map((file) => file.inTree).sort()).toEqual(
+      published.map((file) => `${AUTH_DIR}/${file}`).sort(),
+    )
+    expect(manifest.files.filter((entry) => entry.endsWith('/'))).toEqual([
+      'wasm/',
+    ])
+  })
+
+  it('throws, naming the file, when a listed file is missing from the tree', () => {
+    expect(() =>
+      inTreeArtefactDigest(AUTH, {
+        files: [
+          { inTree: `${AUTH_DIR}/no-such-file.js`, published: 'package/x.js' },
+        ],
+      }),
+    ).toThrow(/no-such-file\.js/)
+  })
+
+  it('names only the file that differs', () => {
+    const [blocker] = frozenBytesSkew({
+      manifests: [{ name: AUTH, version: '0.44.0', private: false }],
+      frozen: new Map([[AUTH, 'frozen']]),
+      artefacts: new Map([[AUTH, artefact]]),
+      inTreeDigest: () => 'package/a.js 1111\npackage/b.js 2222',
+      publishedDigest: () => 'package/a.js 1111\npackage/b.js 3333',
+    })
+    expect(blocker.kind).toBe('frozen-bytes-skew')
+    expect(blocker.local).toBe('package/b.js 2222')
+    expect(blocker.published).toBe('package/b.js 3333')
+  })
+
+  it('reads the same bytes out of a tarball as from the tree', () => {
+    // Driven through the real `npm pack` + `tar` path with a shimmed `npm`
+    // that packs the tree's own files, so the two digests must agree.
+    const dir = mkdtempSync(join(tmpdir(), 'release-gate-files-'))
+    const shim = join(dir, 'npm')
+    const members = Object.fromEntries(
+      artefact.files.map((file) => [
+        file.published,
+        join(REPO_ROOT, file.inTree),
+      ]),
+    )
+    writeFileSync(
+      shim,
+      '#!/usr/bin/env node\n' +
+        "const fs = require('node:fs'), path = require('node:path')\n" +
+        "const dest = process.argv[process.argv.indexOf('--pack-destination') + 1]\n" +
+        `const members = ${JSON.stringify(members)}\n` +
+        'const drop = process.env.DROP_MEMBER\n' +
+        'for (const [published, source] of Object.entries(members)) {\n' +
+        '  if (published === drop) continue\n' +
+        "  const target = path.join(dest, 'stage', published)\n" +
+        '  fs.mkdirSync(path.dirname(target), { recursive: true })\n' +
+        '  fs.copyFileSync(source, target)\n' +
+        '}\n' +
+        "require('node:child_process').execFileSync('tar', ['-czf', path.join(dest, 'f.tgz'), '-C', path.join(dest, 'stage'), 'package'])\n" +
+        "process.stdout.write('f.tgz\\n')\n",
+    )
+    chmodSync(shim, 0o755)
+    const path = process.env.PATH
+    process.env.PATH = `${dir}:${path}`
+    try {
+      expect(publishedArtefactDigest(AUTH, '0.44.0', artefact)).toBe(
+        inTreeArtefactDigest(AUTH, artefact),
+      )
+      // A listed file missing from the tarball throws rather than passing.
+      process.env.DROP_MEMBER = 'package/next.mjs'
+      expect(() => publishedArtefactDigest(AUTH, '0.44.0', artefact)).toThrow(
+        /package\/next\.mjs/,
+      )
+    } finally {
+      process.env.PATH = path
+      delete process.env.DROP_MEMBER
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+/**
+ * The `noTreeBytes` shape: the six @cipherstash/auth platform packages publish
+ * only a binary built in CI, so CHECK C has nothing to compare and skips them.
+ * They are frozen all the same, so CHECK A blocks a stray version.
+ */
+describe('a `noTreeBytes` artefact', () => {
+  const platforms = workspaceManifests()
+    .map((manifest) => manifest.name)
+    .filter((name) => name.startsWith(`${AUTH}-`))
+
+  it('covers every @cipherstash/auth platform package in the workspace', () => {
+    expect(platforms).toHaveLength(6)
+    for (const name of platforms) {
+      expect(FROZEN_PUBLISHERS.has(name), name).toBe(true)
+      expect(FROZEN_ARTEFACT_DIGESTS.get(name).noTreeBytes, name).toMatch(/\S/)
+    }
+  })
+
+  it('is skipped by CHECK C without asking the registry', () => {
+    const name = platforms[0]
+    expect(
+      frozenBytesSkew({
+        manifests: [{ name, version: '0.44.0', private: false }],
+        frozen: new Map([[name, 'frozen']]),
+        artefacts: new Map([[name, FROZEN_ARTEFACT_DIGESTS.get(name)]]),
+        inTreeDigest: () => {
+          throw new Error('must not read the tree')
+        },
+        publishedDigest: () => {
+          throw new Error('must not download')
+        },
+      }),
+    ).toEqual([])
+  })
+
+  it('throws when the reason is empty', () => {
+    const name = platforms[0]
+    expect(() =>
+      frozenBytesSkew({
+        manifests: [{ name, version: '0.44.0', private: false }],
+        frozen: new Map([[name, 'frozen']]),
+        artefacts: new Map([
+          [name, { label: 'platform binary', noTreeBytes: '' }],
+        ]),
+        inTreeDigest: () => 'x',
+        publishedDigest: () => 'x',
+      }),
+    ).toThrow(/noTreeBytes/)
+  })
+
+  it('still blocks a platform version npm does not carry (CHECK A)', () => {
+    const name = platforms[0]
+    expect(
+      publishBlockers({
+        manifests: [{ name, version: '0.44.1', private: false }],
+        lookup: () => ['0.44.0'],
+      }).map(
+        (blocker) => `${blocker.kind} ${blocker.package}@${blocker.version}`,
+      ),
+    ).toEqual([`frozen-publisher ${name}@0.44.1`])
   })
 })

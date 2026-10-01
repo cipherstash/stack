@@ -29,9 +29,13 @@ same terms as the npm packages above.
 > **Note on publishing.** `@cipherstash/eql` and the `eql-bindings` crate are
 > developed here but are *published* from `cipherstash/encrypt-query-language`
 > until the Phase 5 cutover in
-> `docs/plans/2026-08-13-eql-monorepo-absorption.md` completes. Everything else
-> in the table above, including all seven `@cipherstash/protect-ffi*` packages,
-> is published from this repository by `.github/workflows/release.yml`.
+> `docs/plans/2026-08-13-eql-monorepo-absorption.md` completes. `@cipherstash/auth`
+> and its six platform packages, and the `stack-auth` and
+> `stack-profile` crates, are developed here but are *published* from
+> `cipherstash/cipherstash-suite` until the arming PR of the stack-* crates
+> import repoints them. Everything else in the table above, including all seven
+> `@cipherstash/protect-ffi*` packages, is published from this repository by
+> `.github/workflows/release.yml`.
 > **Source, issues, and security reports for all of them belong here
 > regardless** — that part does not depend on which pipeline built the
 > artefact.
