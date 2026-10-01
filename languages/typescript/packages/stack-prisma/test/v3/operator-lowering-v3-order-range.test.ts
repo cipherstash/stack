@@ -3,7 +3,7 @@
  * `Lt` / `Lte` / `Between` / `NotBetween`) plus the free-standing
  * ordering helpers (`eqlAsc` / `eqlDesc`).
  *
- * Canonical dialect (mirrors `packages/stack-drizzle/src/v3/sql-dialect.ts`):
+ * Canonical dialect (mirrors `languages/typescript/packages/stack-drizzle/src/v3/sql-dialect.ts`):
  *
  *     eql_v3.gt(<col>, $n::eql_v3.query_<domain>)
  *     (eql_v3.gte(...) AND eql_v3.lte(...))          -- between, self-parenthesised

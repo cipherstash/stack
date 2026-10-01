@@ -35,7 +35,7 @@ export type V3ColumnLike = {
  *   on ANY subpath, including `@cipherstash/stack/eql/v3`.
  * - **ESM does code-split**, so `dist/adapter-kit.js` and `dist/eql/v3/index.js`
  *   share one chunk — but `dist/wasm-inline.js` is a separate esbuild run
- *   (`packages/stack/tsup.config.ts`) and carries its own copy, so an ESM
+ *   (`languages/typescript/packages/stack/tsup.config.ts`) and carries its own copy, so an ESM
  *   consumer authoring from `@cipherstash/stack/wasm-inline` hit it too.
  *
  * Whenever the adapter and the schema resolved different copies, `instanceof`
@@ -45,17 +45,17 @@ export type V3ColumnLike = {
  * `buildColumnKeyMap()` and the encrypt config, not this map).
  *
  * The same hazard has a type-level half, fixed separately in
- * `packages/stack/tsup.config.ts` and gated by
- * `packages/stack/dist-types/wasm-inline-type-identity.ts`.
+ * `languages/typescript/packages/stack/tsup.config.ts` and gated by
+ * `languages/typescript/packages/stack/dist-types/wasm-inline-type-identity.ts`.
  *
- * Mirrors `hasBuildColumnKeyMap` (`packages/stack/src/types.ts:276-283`), the
+ * Mirrors `hasBuildColumnKeyMap` (`languages/typescript/packages/stack/src/types.ts:276-283`), the
  * repo's canonical answer to the same problem, used identically at
  * `wasm-inline.ts:1361` — including its spelling: `'k' in obj && typeof (obj as
  * { k?: unknown }).k === 'function'`, one narrowed probe per member, rather
  * than one blanket `as Record<string, unknown>` over the whole object.
  *
  * Four probes, not two: a v2 column builder has `build()` and `getName()`
- * (`EncryptedColumn`, `packages/stack/src/schema/index.ts:442,449`) but neither
+ * (`EncryptedColumn`, `languages/typescript/packages/stack/src/schema/index.ts:442,449`) but neither
  * `getEqlType()` nor `getQueryCapabilities()` (`eql/v3/columns.ts:445,450`).
  *
  * Exported for `__tests__/column-map-predicate.test.ts` only — `column-map.ts`
@@ -147,7 +147,7 @@ export class ColumnMap {
   ) {
     // FAIL CLOSED at the table level, for the same reason the column loop does
     // below. `buildColumnKeyMap()` is the canonical v2/v3 discriminator
-    // (`packages/stack/src/types.ts:276`), and it is also the very first thing
+    // (`languages/typescript/packages/stack/src/types.ts:276`), and it is also the very first thing
     // this constructor calls — so a v2 table died on the next line with
     // `table.buildColumnKeyMap is not a function`, naming an internal method
     // instead of the version mismatch. The column-level probe cannot cover

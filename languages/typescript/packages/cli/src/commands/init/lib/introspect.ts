@@ -51,7 +51,7 @@ export function pgTypeToDataType(udtName: string): DataType {
  * so keying on the v2 name alone, as this did, reported every column on the
  * default path as plaintext. That is the dangerous direction to be wrong in:
  * an encrypted column shown as plaintext invites the caller to encrypt it a
- * second time. `packages/wizard` already carries this predicate; the two
+ * second time. `languages/typescript/packages/wizard` already carries this predicate; the two
  * should agree.
  *
  * Deliberately not `classifyEqlDomain` from `@cipherstash/migrate`, despite

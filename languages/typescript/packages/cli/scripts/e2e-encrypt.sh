@@ -5,7 +5,7 @@
 # `stash_e2e_test`. Requires CipherStash credentials in the environment
 # for the actual encryption step (CS_CLIENT_ACCESS_KEY etc).
 #
-# Usage: bash packages/cli/scripts/e2e-encrypt.sh
+# Usage: bash languages/typescript/packages/cli/scripts/e2e-encrypt.sh
 
 set -euo pipefail
 

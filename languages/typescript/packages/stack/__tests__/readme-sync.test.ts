@@ -1,7 +1,7 @@
 /**
  * Guards the npm README against drifting from the root README.
  *
- * `packages/stack/README.md` is a synced copy of the repo root `README.md` —
+ * `languages/typescript/packages/stack/README.md` is a synced copy of the repo root `README.md` —
  * the root file is the single source of truth, and the `prebuild` script
  * copies it into the package before every build (npm cannot publish a
  * symlink, so a real file must ship in the tarball). If someone edits the
@@ -25,7 +25,7 @@ describe('package README', () => {
     )
     expect(
       pkgReadme,
-      'packages/stack/README.md has drifted from the root README — run `pnpm --filter @cipherstash/stack build` and commit the synced copy',
+      'languages/typescript/packages/stack/README.md has drifted from the root README — run `pnpm --filter @cipherstash/stack build` and commit the synced copy',
     ).toBe(rootReadme)
   })
 })

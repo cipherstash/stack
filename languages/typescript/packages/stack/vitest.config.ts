@@ -9,7 +9,7 @@ export default defineConfig({
     // and the `/wasm-inline` stubs (`src/wasm-inline.ts` imports subpaths Vitest
     // can't resolve; unit tests that only touch pure helpers load the stub, tests
     // needing real WASM mock the specifiers explicitly). Both point at fixed
-    // locations under packages/stack, so they live in vitest.shared.
+    // locations under languages/typescript/packages/stack, so they live in vitest.shared.
     alias: { ...sharedAlias, ...stackSourceAlias },
   },
   test: {

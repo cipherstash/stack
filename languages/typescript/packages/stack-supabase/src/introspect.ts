@@ -95,7 +95,7 @@ export function groupIntrospectionRows(
   }))
 }
 
-// DELIBERATE FORK of packages/cli/src/commands/init/lib/introspect.ts — keep the
+// DELIBERATE FORK of languages/typescript/packages/cli/src/commands/init/lib/introspect.ts — keep the
 // two in sync. `stack` cannot depend on `cli`, and the projections differ: the
 // CLI detects v2 composites via `udt_name = 'eql_v2_encrypted'`; this reads v3
 // domains via `domain_name`. `udt_name` is `jsonb` for a v3 domain column, so it

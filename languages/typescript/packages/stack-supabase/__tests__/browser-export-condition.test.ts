@@ -1,7 +1,7 @@
 /**
  * `@cipherstash/stack-supabase` declares no `browser` export condition (#804).
  *
- * The sibling of `packages/stack/__tests__/browser-export-condition.test.ts`,
+ * The sibling of `languages/typescript/packages/stack/__tests__/browser-export-condition.test.ts`,
  * and it exists because this package has a `wasm-inline` entry of its own.
  * `./wasm-inline` binds the WASM engine from `@cipherstash/stack/wasm-inline`,
  * and that engine's core requires `clientKey` — a workspace secret — on every

@@ -7,7 +7,7 @@
  *
  * Scope: only strings the E2E suite asserts on. Inline strings that no test
  * depends on stay inline — premature extraction is worse than copy-paste
- * here. See `packages/cli/AGENTS.md` for guidance on what to add.
+ * here. See `languages/typescript/packages/cli/AGENTS.md` for guidance on what to add.
  */
 export const messages = {
   cli: {

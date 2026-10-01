@@ -1,7 +1,7 @@
 /**
  * Cipherstash v3 query-operations registry — the EQL v3 twin of the v2
  * `../execution/operators.ts`, lowering to the canonical v3 dialect
- * (`packages/stack-drizzle/src/v3/{operators,sql-dialect}.ts` is the
+ * (`languages/typescript/packages/stack-drizzle/src/v3/{operators,sql-dialect}.ts` is the
  * byte-for-byte reference):
  *
  *     eql_v3.eq(<col>, $n::eql_v3.query_<domain>)      -- equality (eqlEq)

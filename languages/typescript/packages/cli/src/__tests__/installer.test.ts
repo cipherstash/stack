@@ -819,7 +819,7 @@ describe('Supabase grants split', () => {
       '@/installer/grants.ts'
     )
     // The exact string the CLI shipped before the immediate/owner-scoped
-    // split. `packages/stack-supabase/integration/grants.integration.test.ts`
+    // split. `languages/typescript/packages/stack-supabase/integration/grants.integration.test.ts`
     // live-proves this block, so it must not drift.
     expect(
       SUPABASE_PERMISSIONS_SQL_V3,

@@ -42,7 +42,7 @@
       // `@/`). `tsc` does not read Vitest's `resolve.alias`, so without these
       // the catalog's builders lose their precise return types and the
       // `.test-d.ts` matrix collapses to `never`. Mirrors `vitest.shared.ts`
-      // and `packages/test-kit/tsconfig.json`; keep the three in step.
+      // and `languages/typescript/packages/test-kit/tsconfig.json`; keep the three in step.
       "@cipherstash/test-kit": ["../test-kit/src/index.ts"],
       "@cipherstash/test-kit/suite": ["../test-kit/src/run-family-suite.ts"],
       "@cipherstash/test-kit/integration-clerk": [

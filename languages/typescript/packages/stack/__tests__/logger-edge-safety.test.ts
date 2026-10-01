@@ -1,9 +1,9 @@
 /**
  * `@cipherstash/stack/adapter-kit` re-exports this package's `logger`
  * (`src/adapter-kit.ts`), and three first-party adapters value-import
- * adapter-kit: `packages/stack-supabase/src/column-map.ts:1`,
- * `packages/stack-drizzle/src/column.ts:1`,
- * `packages/stack-prisma/src/exports/column-types.ts:19`. A realm with no
+ * adapter-kit: `languages/typescript/packages/stack-supabase/src/column-map.ts:1`,
+ * `languages/typescript/packages/stack-drizzle/src/column.ts:1`,
+ * `languages/typescript/packages/stack-prisma/src/exports/column-types.ts:19`. A realm with no
  * `process` binding turns an unguarded module-scope `process.env` read in the
  * logger into a `ReferenceError` at import time on exactly the runtimes those
  * builds exist to serve.
@@ -13,7 +13,7 @@
  *
  * It reads `dist/`, so it SKIPS when the package has not been built — run
  * `pnpm --filter @cipherstash/stack build` first for it to mean anything.
- * `packages/stack/turbo.json` wires `test` to `build`, and the root `build` task
+ * `languages/typescript/packages/stack/turbo.json` wires `test` to `build`, and the root `build` task
  * declares `outputs: ["dist/**"]` so a cache hit restores the artefact rather
  * than replaying logs over a missing one — without that, this gate reported
  * `1 skipped` while the suite stayed green. A bare `pnpm --filter … test` on an

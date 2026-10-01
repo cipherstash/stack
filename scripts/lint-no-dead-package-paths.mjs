@@ -24,7 +24,7 @@ const TARGETS = process.argv.slice(2).length
       '.github',
       'skills',
       'e2e/README.md',
-      'packages/cli/AGENTS.md',
+      'languages/typescript/packages/cli/AGENTS.md',
       // The linters themselves carry package paths — an allowlist entry for a
       // deleted package sat here unnoticed because `scripts/` was not scanned.
       // `__tests__` is excluded below: its fixtures MUST name dead packages.
@@ -46,12 +46,12 @@ const SKIP_FILES = new Set(['CHANGELOG.md'])
 const TEXT_EXT = /\.(md|ya?ml|json|mjs|ts|txt)$/
 
 // `packages/<name>` where `<name>` is a real directory name. The character
-// class excludes `*`, so workspace globs (`packages/*`, `./packages/*`) are
+// class excludes `*`, so workspace globs (`languages/typescript/packages/*`, `./languages/typescript/packages/*`) are
 // left alone, and it is greedy so a longer directory name is never excused by
 // a live package whose name is a prefix of it.
 //
 // The name must END on an alphanumeric. Without that anchor a sentence-final
-// `packages/stack.` — or a hyphen at a line wrap, or a trailing underscore —
+// `languages/typescript/packages/stack.` — or a hyphen at a line wrap, or a trailing underscore —
 // captured the punctuation too and reported a LIVE package as dead, failing
 // the build with a message naming a directory that plainly exists. Uppercase
 // is admitted so a capitalised directory name is checked rather than silently
@@ -69,8 +69,8 @@ const PACKAGE_REF = /packages\/([a-zA-Z0-9](?:[a-zA-Z0-9._-]*[a-zA-Z0-9])?)/g
 // by this very stack are sitting on `main` right now as exactly such shells
 // (#772 review, finding 15).
 //
-// Note this deliberately does NOT require a `package.json`: `packages/utils` has
-// none (it is two loose files consumed by relative path from `packages/nextjs`)
+// Note this deliberately does NOT require a `package.json`: `languages/typescript/packages/utils` has
+// none (it is two loose files consumed by relative path from `languages/typescript/packages/nextjs`)
 // yet is tracked, live, and referenced from AGENTS.md.
 //
 // Shelling out to git is a dependency this linter has to own: git missing, or a

@@ -77,7 +77,7 @@ describe('generateClientFromSchemas', () => {
 // above only exercise 3 of 13 domains, so every domain is proven to emit
 // verbatim through both generators. `V3Domain` and `DataType` are finite closed
 // unions, so enumeration is complete — a fast-check property would sample the
-// same finite set and add nothing (and `packages/cli` has no fast-check dep).
+// same finite set and add nothing (and `languages/typescript/packages/cli` has no fast-check dep).
 const ALL_DOMAINS: import('../types.js').V3Domain[] = [
   'Text',
   'TextEq',

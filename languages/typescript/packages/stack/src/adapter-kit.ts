@@ -36,7 +36,7 @@ export type { AuditConfig } from './encryption/operations/base-operation.js'
 // check silently fails for any consumer who resolved a different copy. That is
 // how encrypted filter operands once reached PostgREST in plaintext. Probe
 // structurally instead, as `isV3ColumnLike`
-// (`packages/stack-supabase/src/column-map.ts`) and `hasBuildColumnKeyMap`
+// (`languages/typescript/packages/stack-supabase/src/column-map.ts`) and `hasBuildColumnKeyMap`
 // (`src/types.ts`) do.
 export {
   type AnyEncryptedV3Column,

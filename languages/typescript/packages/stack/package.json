@@ -16,7 +16,7 @@
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/cipherstash/stack.git",
-		"directory": "packages/stack"
+		"directory": "languages/typescript/packages/stack"
 	},
 	"license": "MIT",
 	"author": "CipherStash <humans@cipherstash.com>",

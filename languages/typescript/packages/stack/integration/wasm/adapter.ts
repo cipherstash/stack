@@ -12,7 +12,7 @@
  * term → query-domain cast → indexed operator → correct row set.
  *
  * The SQL shapes deliberately mirror the Drizzle v3 dialect
- * (`packages/stack-drizzle/src/v3/sql-dialect.ts`): `eq`/`neq`, comparison
+ * (`languages/typescript/packages/stack-drizzle/src/v3/sql-dialect.ts`): `eq`/`neq`, comparison
  * fns, parenthesised `gte AND lte` ranges, `contains` for bloom matching, and
  * `ord_term` ordering. `in`/`notIn` decompose to OR-of-eq / AND-of-neq over
  * one `encryptQueryBulk` batch — exercising the bulk path on every family.

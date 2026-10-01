@@ -65,7 +65,7 @@ const testWorkflow = withoutComments(
 // Every root workflow an exempted script may hang off, discovered by reading
 // the DIRECTORY rather than by listing filenames. Same rule as above: root
 // only — a script "run by CI" according to a file under
-// packages/protect-ffi/.github/ is a script nothing runs.
+// languages/typescript/packages/protect-ffi/.github/ is a script nothing runs.
 //
 // The scan is the point. A hardcoded list has to be maintained in step with a
 // set of files nothing forces it to track: move a job to a new workflow and
@@ -196,7 +196,7 @@ function reachableFromAnyEntryPoint(): Set<string> {
  * list is a way to launder an orphan into an intention: `test:typecheck:wasm`
  * sat here from the absorption onward reading "run by the wasm job", and the
  * only jobs that ran it were the upstream copies under
- * packages/protect-ffi/.github/ — which GitHub, reading workflows from the
+ * languages/typescript/packages/protect-ffi/.github/ — which GitHub, reading workflows from the
  * repository root alone, never executed.
  */
 const ENTRY_POINT_EXEMPT: Record<string, string> = {
@@ -258,7 +258,7 @@ fs.appendFileSync(${JSON.stringify(marker)}, process.pid + '\\n')
 const load = Module._load
 Module._load = function (request, parent, isMain) {
   if (BINDING.test(request)) {
-    // Shaped like the real thing: \`code\` is what packages/cli keys on.
+    // Shaped like the real thing: \`code\` is what languages/typescript/packages/cli keys on.
     const error = new Error("Cannot find module '" + request + "'")
     error.code = 'MODULE_NOT_FOUND'
     throw error
@@ -364,7 +364,7 @@ describe('lint and format wiring', () => {
   })
 
   it('keeps no .github directory inside this package', () => {
-    // `packages/protect-ffi/.github/` is gone: the release pipeline ported the
+    // `languages/typescript/packages/protect-ffi/.github/` is gone: the release pipeline ported the
     // last of what it held (`build.yml`'s per-platform CARGO_BUILD_TARGET
     // matrix, and `actions/setup`'s `neon list-platforms` step) into
     // `.github/workflows/_build-ffi-artifacts.yml`.
@@ -396,7 +396,7 @@ describe('lint and format wiring', () => {
 
   it('keeps cargo off the default test path', () => {
     // The load-bearing half of the split. Root `pnpm test` runs
-    // `turbo test --filter './packages/*'`, which reaches this package's
+    // `turbo test --filter './languages/typescript/packages/*'`, which reaches this package's
     // `test` — so anything cargo on that path is cargo on every PR, in a repo
     // where one package out of eighteen is Rust.
     //
@@ -424,7 +424,7 @@ describe('lint and format wiring', () => {
       // test then requires what cargo produces: `src/nativeLoading.test.ts`
       // asserted `assertNativeBindingAvailable()` does not throw, which needs
       // an `index.node` that only `build:native` writes. Root `pnpm test`
-      // reaches this package through `turbo test --filter './packages/*'`, so
+      // reaches this package through `turbo test --filter './languages/typescript/packages/*'`, so
       // that made a Rust build a prerequisite of the whole repo's default test
       // — the exact thing the entry-point split exists to prevent, arriving
       // through the tests instead of through the scripts.
@@ -491,7 +491,7 @@ describe('lint and format wiring', () => {
 
       expect(
         child.status,
-        `The default test suite does not survive a checkout with no cargo build.\n\`packages/protect-ffi\`'s \`test\` is what root \`pnpm test\` runs through turbo, and it must pass with no \`index.node\` anywhere — the six \`platforms/*\` packages are empty until someone compiles one, and \`build\` is \`tsc\`, not cargo.\nGate the assertion on the artifact being present (see \`builtArtifacts\` in nativeLoading.test.ts) and give the artifact-free case its own contract, rather than making a Rust toolchain a prerequisite of the repo's default test.\nThe nested run said:\n${output}`,
+        `The default test suite does not survive a checkout with no cargo build.\n\`languages/typescript/packages/protect-ffi\`'s \`test\` is what root \`pnpm test\` runs through turbo, and it must pass with no \`index.node\` anywhere — the six \`platforms/*\` packages are empty until someone compiles one, and \`build\` is \`tsc\`, not cargo.\nGate the assertion on the artifact being present (see \`builtArtifacts\` in nativeLoading.test.ts) and give the artifact-free case its own contract, rather than making a Rust toolchain a prerequisite of the repo's default test.\nThe nested run said:\n${output}`,
       ).toBe(0)
 
       // Non-vacuity, in two parts. A child that ran nothing exits 0 on some
@@ -552,7 +552,7 @@ describe('lint and format wiring', () => {
     //
     // Scoped to `test:cargo`, the Rust CHECK entry point, and deliberately not
     // to the build scripts. `cargo-build` is also `debug`, and `build:native`
-    // is a documented local command (README.md, packages/cli/AGENTS.md) — a
+    // is a documented local command (README.md, languages/typescript/packages/cli/AGENTS.md) — a
     // contributor who has just edited `Cargo.toml` regenerates the lock on
     // their next build, legitimately, and `--locked` would turn that into a
     // failure at the end of a compile. The check runs on the same commit and

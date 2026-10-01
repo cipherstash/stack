@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest'
 // `ERR_REQUIRE_ESM: Must use import to load ES Module: .../uuid/dist-node/index.js`.
 // This file proves the published CJS bundles (a) don't contain an
 // unresolved `require("uuid")` and (b) can be loaded from a real Node CJS
-// process. See packages/stack/tsup.config.ts (noExternal: ['uuid']).
+// process. See languages/typescript/packages/stack/tsup.config.ts (noExternal: ['uuid']).
 
 const packageRoot = path.resolve(__dirname, '..')
 const distDir = path.join(packageRoot, 'dist')
@@ -124,7 +124,7 @@ describe('CJS consumers can require the built bundles', () => {
       for (const dep of ESM_ONLY_DEPENDENCIES) {
         expect(
           externalized.has(dep),
-          `${entry} externalizes "${dep}" via require(), which is ESM-only and will crash CJS consumers with ERR_REQUIRE_ESM. Add it to noExternal in packages/stack/tsup.config.ts.`,
+          `${entry} externalizes "${dep}" via require(), which is ESM-only and will crash CJS consumers with ERR_REQUIRE_ESM. Add it to noExternal in languages/typescript/packages/stack/tsup.config.ts.`,
         ).toBe(false)
       }
     },

@@ -10,7 +10,7 @@
  *      at all. A PARTIAL `CS_*` environment counts as neither: it would
  *      fail deep inside the client with "[encryption]: Not
  *      authenticated", which names nothing — mirroring the rejection
- *      rationale in `packages/test-kit/src/env.ts`.
+ *      rationale in `languages/typescript/packages/test-kit/src/env.ts`.
  *   2. **A Postgres to talk to** — `DATABASE_URL`. Locally:
  *
  *        docker compose -f local/docker-compose.postgres.yml up -d --wait
@@ -18,7 +18,7 @@
  *
  * When either is missing the suites SKIP (describe.skip) so the default
  * `pnpm test` run stays green on machines without secrets — the posture
- * the plan chose for this package (unlike `packages/stack/integration`,
+ * the plan chose for this package (unlike `languages/typescript/packages/stack/integration`,
  * whose suites run under a separate config and throw instead).
  */
 

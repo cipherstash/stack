@@ -54,7 +54,7 @@ describe('lint-no-dead-package-paths', () => {
   })
 
   // #772 review, finding 15. The name capture had no right anchor, so a
-  // sentence-final `packages/stack.` swallowed the period and the linter
+  // sentence-final `languages/typescript/packages/stack.` swallowed the period and the linter
   // reported a LIVE package as dead — failing the build with a message naming a
   // directory that plainly exists. Never fired in 400 commits only because the
   // repo's backtick convention happened to dodge it.
@@ -226,16 +226,16 @@ describe('lint-no-dead-package-paths', () => {
   })
 
   it('matches the longest package name, not a shorter prefix', () => {
-    // `packages/stack-drizzle` must not be read as `packages/stack` + suffix,
+    // `languages/typescript/packages/stack-drizzle` must not be read as `languages/typescript/packages/stack` + suffix,
     // and a dead `packages/stack-forge` must not be excused by live
-    // `packages/stack`.
+    // `languages/typescript/packages/stack`.
     const r = run(fx('prefix.md'))
     expect(r.exitCode).toBe(1)
     expect(r.output).toMatch(/packages\/stack-forge/)
     expect(r.output).not.toMatch(/packages\/stack-drizzle/)
   })
 
-  it('ignores `packages/*` globs and `./packages/*` filters', () => {
+  it('ignores `languages/typescript/packages/*` globs and `./languages/typescript/packages/*` filters', () => {
     expect(run(fx('globs.md')).exitCode).toBe(0)
   })
 

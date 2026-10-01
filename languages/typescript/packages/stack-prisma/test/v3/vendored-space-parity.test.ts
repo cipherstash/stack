@@ -1,6 +1,6 @@
 /**
  * Drift guard: the example app's vendored cipherstash contract space
- * (`examples/prisma/migrations/cipherstash/`) must be byte-identical to
+ * (`languages/typescript/examples/prisma/migrations/cipherstash/`) must be byte-identical to
  * the artefacts this package ships.
  *
  * The CLI's seed phase copies the descriptor's migration packages into a
@@ -18,7 +18,7 @@
  * files. If this test fails after intentionally changing the package's
  * migrations, regenerate the example's copy:
  *
- *   cd examples/prisma && rm -rf migrations/cipherstash \
+ *   cd languages/typescript/examples/prisma && rm -rf migrations/cipherstash \
  *     && pnpm exec prisma-next migration plan --name sync   # then delete
  *                                                          # the planned
  *                                                          # app-space dir

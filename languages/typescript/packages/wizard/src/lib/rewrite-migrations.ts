@@ -47,7 +47,7 @@ const DOMAIN_RE = new RegExp(ENCRYPTED_DOMAIN, 'i')
  * Ordered longest-first so the alternation cannot match a prefix of a longer
  * form and leave a trailing fragment behind.
  *
- * NOTE: this file is the sibling of `packages/cli/src/commands/db/rewrite-migrations.ts`,
+ * NOTE: this file is the sibling of `languages/typescript/packages/cli/src/commands/db/rewrite-migrations.ts`,
  * which cli's `stash eql migration --drizzle` uses. Both are tightly coupled to
  * drizzle-kit's output format — if drizzle-kit changes, both need updating
  * together. Keep them in sync.
@@ -1222,7 +1222,7 @@ export async function rewriteEncryptedAlterColumns(
 }
 
 // #region wizard-only — deliberately has no counterpart in
-// packages/cli/src/commands/db/rewrite-migrations.ts. Everything OUTSIDE this
+// languages/typescript/packages/cli/src/commands/db/rewrite-migrations.ts. Everything OUTSIDE this
 // region is mirrored there byte-for-byte and is checked by
 // scripts/__tests__/rewriter-copies-in-sync.test.mjs. Only the wizard sweeps
 // several candidate directories; both CLI call sites pass one explicit --out.
@@ -1375,7 +1375,7 @@ function renderSafeAlter(
     // the TABLE's schema (from a pgSchema() table) and says nothing about where
     // the domain lives. If EQL ever supports installing into a non-`public`
     // schema, this needs the install schema threaded in, here and in the
-    // sibling `packages/cli/src/commands/db/rewrite-migrations.ts`.
+    // sibling `languages/typescript/packages/cli/src/commands/db/rewrite-migrations.ts`.
     `ALTER TABLE ${qualifiedTable} ADD COLUMN "${encrypted}" "public"."${domain}";`,
   ].join('\n')
 }

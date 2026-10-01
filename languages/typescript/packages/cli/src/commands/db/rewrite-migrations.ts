@@ -1248,7 +1248,7 @@ function renderSafeAlter(
     // the TABLE's schema (from a pgSchema() table) and says nothing about where
     // the domain lives. If EQL ever supports installing into a non-`public`
     // schema, this needs the install schema threaded in, here and in the
-    // sibling `packages/wizard/src/lib/rewrite-migrations.ts`.
+    // sibling `languages/typescript/packages/wizard/src/lib/rewrite-migrations.ts`.
     `ALTER TABLE ${qualifiedTable} ADD COLUMN "${encrypted}" "public"."${domain}";`,
   ].join('\n')
 }

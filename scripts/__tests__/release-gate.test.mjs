@@ -116,12 +116,12 @@ describe('workspacePackagePatterns', () => {
     expect(workspacePackagePatterns(SOURCE)).toEqual(yaml.load(SOURCE).packages)
   })
 
-  it('keeps the nested platform packages, which `packages/*` does not cover', () => {
+  it('keeps the nested platform packages, which `languages/typescript/packages/*` does not cover', () => {
     // The six platform packages sit a level deeper than the glob above them.
     // Losing this entry is the concrete shape of a narrowed gate: six
     // unpublished packages reported as nothing to publish.
     expect(workspacePackagePatterns(SOURCE)).toContain(
-      'packages/protect-ffi/platforms/*',
+      'languages/typescript/packages/protect-ffi/platforms/*',
     )
   })
 
@@ -207,8 +207,8 @@ describe('classify', () => {
  *
  * That is not hypothetical here. `@cipherstash/eql` is published from
  * `cipherstash/encrypt-query-language`, so a version bumped in this workspace
- * cannot be published from this repository — while `packages/cli` and
- * `packages/stack-prisma` carry `"@cipherstash/eql": "workspace:*"` in their
+ * cannot be published from this repository — while `languages/typescript/packages/cli` and
+ * `languages/typescript/packages/stack-prisma` carry `"@cipherstash/eql": "workspace:*"` in their
  * RUNTIME dependencies, which pnpm rewrites to that exact version at pack time.
  * The hand-applied 3.0.5 bump put both of them a release ahead of the registry:
  * a range no published version satisfied, in a tarball that publishes fine.
@@ -469,8 +469,8 @@ describe('publishBlockers', () => {
   it('ignores devDependencies', () => {
     // A published tarball keeps its devDependencies in the manifest, but no
     // consumer installs them, so an unsatisfiable one breaks nothing. This is
-    // why `packages/stack`'s `@cipherstash/eql: workspace:^` is not a finding
-    // while `packages/cli`'s identical line is.
+    // why `languages/typescript/packages/stack`'s `@cipherstash/eql: workspace:^` is not a finding
+    // while `languages/typescript/packages/cli`'s identical line is.
     expect(
       publishBlockers({
         manifests: [
@@ -491,7 +491,7 @@ describe('publishBlockers', () => {
   })
 
   it('does not check a private package’s own dependencies', () => {
-    // `examples/*`, `e2e` and `packages/bench` are never packed, so their
+    // `languages/typescript/examples/*`, `e2e` and `languages/typescript/packages/bench` are never packed, so their
     // `workspace:*` lines reach no consumer.
     expect(
       publishBlockers({
@@ -661,9 +661,9 @@ describe('the gate over this repo’s real manifests', () => {
   })
 
   it('names every published package that would ship the unsatisfiable range', () => {
-    // THE REGRESSION. `packages/cli` (`stash`) and `packages/stack-prisma` both
+    // THE REGRESSION. `languages/typescript/packages/cli` (`stash`) and `languages/typescript/packages/stack-prisma` both
     // carry `"@cipherstash/eql": "workspace:*"` under `dependencies`, so both
-    // pack the exact `3.0.5`. `packages/stack` carries the same line under
+    // pack the exact `3.0.5`. `languages/typescript/packages/stack` carries the same line under
     // `devDependencies` and must NOT appear.
     expect(
       blockers

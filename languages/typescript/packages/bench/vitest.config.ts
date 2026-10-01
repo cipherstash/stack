@@ -9,7 +9,7 @@ export default defineConfig({
     globalSetup: ['./src/harness/global-setup.ts'],
     // `@cipherstash/test-kit` is consumed as unbuilt TypeScript source, so it
     // must not be externalized — same reason the integration suites carry this
-    // (`packages/test-kit/src/integration/config.ts`).
+    // (`languages/typescript/packages/test-kit/src/integration/config.ts`).
     server: { deps: { inline: [/packages\/test-kit/] } },
     testTimeout: 300_000,
     hookTimeout: 300_000,

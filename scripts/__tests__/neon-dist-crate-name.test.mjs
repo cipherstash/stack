@@ -48,7 +48,10 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 /** The crate whose cdylib becomes `index.node`. */
 function crateName() {
   const toml = readFileSync(
-    join(REPO_ROOT, 'packages/protect-ffi/crates/protect-ffi/Cargo.toml'),
+    join(
+      REPO_ROOT,
+      'languages/typescript/packages/protect-ffi/crates/protect-ffi/Cargo.toml',
+    ),
     'utf8',
   )
   const match = toml.match(/^\s*name\s*=\s*"([^"]+)"/m)

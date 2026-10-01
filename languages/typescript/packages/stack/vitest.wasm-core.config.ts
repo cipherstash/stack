@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitest/config'
 
 /**
- * The one suite in `packages/stack` that loads the REAL protect-ffi WASM core
+ * The one suite in `languages/typescript/packages/stack` that loads the REAL protect-ffi WASM core
  * outside the integration harness. It is in neither of the package's other two
  * configs — excluded from `vitest.config.ts` (see WHERE IT RUNS below) and not
  * joined to `integration/vitest.config.ts` — which is what this third one is
@@ -16,14 +16,14 @@ import { defineConfig } from 'vitest/config'
  * assertion lands before the first network call. That is what puts it in an
  * awkward middle. It cannot stay with the unit suites, and joining the
  * integration suites would give it dependencies it does not have:
- * `packages/test-kit/src/integration/global-setup.ts` requires credentials AND
+ * `languages/typescript/packages/test-kit/src/integration/global-setup.ts` requires credentials AND
  * a database unconditionally (it throws rather than skips, then runs a real
  * `stash eql install`), and `integration-drizzle.yml`, the workflow that runs
  * them, is path-filtered, fork-skipped and matrixed over two databases. A
  * contract about the core would then go unchecked on any diff those paths do
  * not select.
  *
- * So: a SEPARATE config from `packages/stack/vitest.config.ts`, for the same
+ * So: a SEPARATE config from `languages/typescript/packages/stack/vitest.config.ts`, for the same
  * reason `integration/vitest.config.ts` is one — the default suite has to run
  * with nothing but a checkout and `pnpm install`, and this file needs a build
  * that neither of those produces.

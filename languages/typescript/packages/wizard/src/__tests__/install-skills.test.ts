@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Hermetic: mock the filesystem and prompts so the tests drive the failure
 // paths directly. The real-FS behaviour is covered by the `stash` CLI's copy
-// of this logic (packages/cli install-skills.test.ts); this file pins the
+// of this logic (languages/typescript/packages/cli install-skills.test.ts); this file pins the
 // wizard copy's never-throw contract, which previously had no coverage —
 // exactly how the original unguarded mkdirSync shipped twice (see
 // cipherstash/stack#736).

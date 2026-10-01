@@ -118,7 +118,7 @@ function schemaAuthoringGuidance(integration: Integration): string {
  * or Prisma project sends the agent after a package that is not installed.
  *
  * A `switch` with a neutral `default`, not an if-chain ending in the Drizzle
- * string: `packages/cli` is built by tsup, which transpiles without
+ * string: `languages/typescript/packages/cli` is built by tsup, which transpiles without
  * type-checking, and the package has no `typecheck` script — so nothing would
  * catch a fifth `Integration` variant silently inheriting Drizzle's answer.
  * `skillsFor()` in `install-skills.ts` degrades the same way, for the same

@@ -12,12 +12,12 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * ## The property
  *
  * `encryptedSupabase` built from declared `schemas` refuses `select('*')` and
- * bare `select()` — `expandStarOrThrow()`, `packages/stack-supabase/src/
+ * bare `select()` — `expandStarOrThrow()`, `languages/typescript/packages/stack-supabase/src/
  * query-builder.ts:159-166`. It reads like a safety net: name your columns or
  * get nothing. It is not one. A query awaited with **no `.select()` call at
  * all** takes the other branch — `query-builder.ts:703-725` sends a raw `*` —
  * and `decryptResults` returns it untouched on its `!hasSelect` passthrough
- * (`packages/stack-supabase/src/query-results.ts:127-130`). Every column comes
+ * (`languages/typescript/packages/stack-supabase/src/query-results.ts:127-130`). Every column comes
  * back undecrypted, declared or not. That is long-standing behaviour the
  * source deliberately leaves alone; only the docs were wrong about it.
  *
@@ -31,10 +31,10 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * - Nothing type-checks a SKILL.md or a README, and these are shipped text.
  *   `skills/` rides inside the `stash` npm tarball and `stash init` copies it
  *   into the customer's repository, where their coding agent reads it as
- *   instruction. `packages/stack-supabase/README.md` renders on the npm
+ *   instruction. `languages/typescript/packages/stack-supabase/README.md` renders on the npm
  *   package page.
  * - The runtime tests pin the two behaviours separately and correctly
- *   (`packages/stack-supabase/__tests__/supabase-declared-mode.test.ts`), but a
+ *   (`languages/typescript/packages/stack-supabase/__tests__/supabase-declared-mode.test.ts`), but a
  *   passing test says nothing about what a document claims.
  * - The specific failure was a CORRECTION THAT LANDED IN ONE OF TWO COPIES.
  *   `578783ad` fixed the claim in `skills/stash-supabase/SKILL.md` and left the
@@ -68,7 +68,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * - The second false claim fixed alongside this one, that an ambient
  *   `DATABASE_URL` is ignored "with a warning" on the edge entry. Both the
  *   ambient read and the warning are gated on `introspector`
- *   (`packages/stack-supabase/src/create.ts:304,330`), which is `null` on the
+ *   (`languages/typescript/packages/stack-supabase/src/create.ts:304,330`), which is `null` on the
  *   `wasm-inline` build. It is left unguarded deliberately: "a warning is
  *   logged" has no stable phrasing to key on, and the correction ("gated on the
  *   introspector") is a word that appears freely in any section discussing
@@ -213,7 +213,9 @@ describe("the select('*') refusal is documented as not a read backstop", () => {
     expect(files.length).toBeGreaterThan(5)
     expect(files).toContain('skills/stash-supabase/SKILL.md')
     expect(files).toContain('skills/stash-managed-platforms/SKILL.md')
-    expect(files).toContain('packages/stack-supabase/README.md')
+    expect(files).toContain(
+      'languages/typescript/packages/stack-supabase/README.md',
+    )
   })
 
   /**

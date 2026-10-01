@@ -11,15 +11,15 @@ on:
     branches:
       - 'main'
     paths:
-      - 'packages/bench/**'
-      - 'packages/stack/src/eql/v3/**'
+      - 'languages/typescript/packages/bench/**'
+      - 'languages/typescript/packages/stack/src/eql/v3/**'
       # The bench drives the typed v3 CLIENT, which lives in `encryption/`, not
       # `eql/v3/` (that is the authoring DSL). Without this the job stayed green
       # by never running for the changes most likely to break it.
-      - 'packages/stack/src/encryption/**'
-      - 'packages/stack-drizzle/**'
-      - 'packages/test-kit/**'
-      - 'packages/cli/src/installer/**'
+      - 'languages/typescript/packages/stack/src/encryption/**'
+      - 'languages/typescript/packages/stack-drizzle/**'
+      - 'languages/typescript/packages/test-kit/**'
+      - 'languages/typescript/packages/cli/src/installer/**'
       - 'local/**'
       - '.github/workflows/tests-bench.yml'
       - '.github/actions/integration-setup/**'
@@ -28,15 +28,15 @@ on:
       - "**"
     # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
     paths:
-      - 'packages/bench/**'
-      - 'packages/stack/src/eql/v3/**'
+      - 'languages/typescript/packages/bench/**'
+      - 'languages/typescript/packages/stack/src/eql/v3/**'
       # The bench drives the typed v3 CLIENT, which lives in `encryption/`, not
       # `eql/v3/` (that is the authoring DSL). Without this the job stayed green
       # by never running for the changes most likely to break it.
-      - 'packages/stack/src/encryption/**'
-      - 'packages/stack-drizzle/**'
-      - 'packages/test-kit/**'
-      - 'packages/cli/src/installer/**'
+      - 'languages/typescript/packages/stack/src/encryption/**'
+      - 'languages/typescript/packages/stack-drizzle/**'
+      - 'languages/typescript/packages/test-kit/**'
+      - 'languages/typescript/packages/cli/src/installer/**'
       - 'local/**'
       - '.github/workflows/tests-bench.yml'
       - '.github/actions/integration-setup/**'
@@ -77,7 +77,7 @@ jobs:
       # credentials, and `tsc --noEmit` passes on a hand-written row type that
       # agrees with itself (#772 review, finding 12).
       - name: Run bench unit checks (no database, no credentials)
-        working-directory: packages/bench
+        working-directory: languages/typescript/packages/bench
         run: pnpm test:unit
 
       # Service-scoped `postgres`: local/docker-compose.yml also defines a
@@ -98,5 +98,5 @@ jobs:
       # option-terminator and ignore the filter, running all 3 test files
       # — including ones that need CipherStash credentials.
       - name: Run bench smoke tests
-        working-directory: packages/bench
+        working-directory: languages/typescript/packages/bench
         run: pnpm test:local db-only

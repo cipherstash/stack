@@ -383,7 +383,7 @@ disclosure, see [SECURITY.md][security-policy]. [MIT licensed][license].
 [benches]: https://github.com/cipherstash/benches
 [eql]: https://github.com/cipherstash/encrypt-query-language
 [discord]: https://discord.gg/5qwXUFb6PB
-[examples]: https://github.com/cipherstash/stack/tree/main/examples
+[examples]: https://github.com/cipherstash/stack/tree/main/languages/typescript/examples
 [contribute]: https://github.com/cipherstash/stack/blob/main/CONTRIBUTING.md
 [security-policy]: https://github.com/cipherstash/stack/blob/main/SECURITY.md
 [license]: https://github.com/cipherstash/stack/blob/main/LICENSE.md

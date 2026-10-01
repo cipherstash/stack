@@ -20,7 +20,7 @@ import { render } from '../helpers/pty.js'
 // Absent by patching the resolver in the spawned CLI, not by moving files: the
 // suite must not mutate the checkout it runs in, and this works whether or not
 // the developer has run `build:native`. Same technique as
-// `packages/protect-ffi/src/lintWiring.test.ts`, which re-runs its own suite
+// `languages/typescript/packages/protect-ffi/src/lintWiring.test.ts`, which re-runs its own suite
 // this way.
 
 interface Target {

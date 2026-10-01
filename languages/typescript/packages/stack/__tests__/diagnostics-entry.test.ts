@@ -98,7 +98,7 @@ function specifiersOf(bundlePath: string): string[] {
  * files keeps the checkout untouched and works whether or not the developer
  * has run `build:native`.
  *
- * Adapted from `packages/protect-ffi/src/lintWiring.test.ts`, which runs its
+ * Adapted from `languages/typescript/packages/protect-ffi/src/lintWiring.test.ts`, which runs its
  * own suite under the same hook. `fs` is patched too: a loader that stats the
  * artifact before requiring it would otherwise see a file that `require` then
  * refuses to load.
@@ -321,7 +321,7 @@ describe('@cipherstash/stack/diagnostics', () => {
       // execFileSync above.
       expect(output).toMatch(/^imported /)
       // Unwrapped: same `code` and the platform package by name, which is what
-      // `packages/cli/src/native.ts` classifies on.
+      // `languages/typescript/packages/cli/src/native.ts` classifies on.
       expect(output).toContain('MODULE_NOT_FOUND')
       expect(output).toMatch(
         /Cannot find module '@cipherstash\/protect-ffi-(darwin|linux|win32)-/,

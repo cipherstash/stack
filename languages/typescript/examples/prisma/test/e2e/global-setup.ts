@@ -23,7 +23,7 @@
  *      between full-run iterations of the suite.
  *
  * No teardown — the container lifecycle is owned by the developer
- * (`docker compose down` from `examples/prisma`
+ * (`docker compose down` from `languages/typescript/examples/prisma`
  * tears it down explicitly).
  */
 
@@ -110,7 +110,7 @@ export default async function setup(): Promise<() => Promise<void>> {
         pgIsReady,
         'Bring it up with:\n' +
           '  docker compose -f test/e2e/docker-compose.yml up -d\n' +
-          '(from `examples/prisma`).',
+          '(from `languages/typescript/examples/prisma`).',
       ),
     )
   }

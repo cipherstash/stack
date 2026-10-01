@@ -15,7 +15,7 @@ per-column search-mode flags.
 ## Source layout
 
 ```text
-packages/stack-prisma/
+languages/typescript/packages/stack-prisma/
 ├── src/
 │   ├── contract.prisma                  PSL contract source (models NO storage — v3
 │   │                                     declares none; the bundle creates the domains)

@@ -23,7 +23,7 @@ import { describe, expect, it } from 'vitest'
 // see it — they mock the `/wasm-inline` subpath and run under Node, where the
 // native root resolves fine — so the assertion has to be on the built artifact.
 //
-// Mirrors `packages/stack-prisma/test/bundling-isolation.test.ts`.
+// Mirrors `languages/typescript/packages/stack-prisma/test/bundling-isolation.test.ts`.
 
 const packageRoot = path.resolve(fileURLToPath(import.meta.url), '../..')
 const distDir = path.join(packageRoot, 'dist')

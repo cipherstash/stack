@@ -117,7 +117,7 @@ const SENSITIVE_FILE_PATTERNS = [
   // `.env`, `.env.local`, `.env.production`, … but not the committed templates
   // `.env.example` / `.env.sample` / `.env.template`. Those carry placeholder
   // key names rather than values, and the agent doctrine
-  // (`packages/cli/src/commands/init/doctrine/AGENTS-doctrine.md`, invariant 3)
+  // (`languages/typescript/packages/cli/src/commands/init/doctrine/AGENTS-doctrine.md`, invariant 3)
   // instructs the agent to create and edit them — a blanket `.env.` rule made
   // that impossible, since this guard also covers Edit and Write.
   //

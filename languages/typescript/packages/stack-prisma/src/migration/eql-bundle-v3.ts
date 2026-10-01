@@ -98,7 +98,7 @@ export function assertInstallSqlDigest(sql: string): string {
  * Turns a missing/broken package into an actionable error instead of a raw
  * `readFileSync` failure. The CLI does the same check on its own install
  * path — see `assertBundledEqlSqlDigest` in
- * `packages/cli/src/installer/bundle-digest.ts`. (This comment named a
+ * `languages/typescript/packages/cli/src/installer/bundle-digest.ts`. (This comment named a
  * `readV3InstallSql` that never existed, back when the CLI verified nothing.)
  */
 export function readVerifiedInstallSql(): string {

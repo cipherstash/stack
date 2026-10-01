@@ -346,7 +346,7 @@ describe('drizzle migrate prompt after a staged rewrite', () => {
   // to sit after a `continue`, so the wizard surfaced neither: the user was told
   // a directory failed without being told which of its files had changed or
   // what it had flagged. The CLI twin has always reported the partial set
-  // (`packages/cli/src/commands/eql/migration.ts`). #837.
+  // (`languages/typescript/packages/cli/src/commands/eql/migration.ts`). #837.
   //
   // Mocked, unlike the tests above: the throw has to land *inside* the rewrite
   // loop to leave a partial set behind, which needs a mid-loop `writeFile`

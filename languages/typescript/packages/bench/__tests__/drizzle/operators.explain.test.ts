@@ -122,7 +122,7 @@ async function tryExplainWhere(name: string, where: SQL): Promise<void> {
 // even with the hmac index available the planner correctly chooses a seq
 // scan because it would re-touch nearly every row. We record their plans for
 // the investigation log but don't assert — the SQL shape is what matters,
-// and that's covered by the unit tests under packages/stack.
+// and that's covered by the unit tests under languages/typescript/packages/stack.
 describe('#421: equality and array operators', () => {
   it('eq engages the hmac functional index', async () => {
     const plan = await explainWhere(

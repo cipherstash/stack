@@ -184,7 +184,7 @@ describe('rewriteEncryptedAlterColumns', () => {
   })
 
   // Every concrete `eql_v3_*` domain shipped by `@cipherstash/stack/eql/v3`
-  // (see `packages/stack/src/eql/v3/columns.ts`). Eight scalar bases carry the
+  // (see `languages/typescript/packages/stack/src/eql/v3/columns.ts`). Eight scalar bases carry the
   // four storage/eq/ord flavours; text adds `_match`/`_search`; boolean and json
   // stand alone.
   const V3_SCALAR_BASES = [

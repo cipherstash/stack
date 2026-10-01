@@ -13,7 +13,7 @@
  *   the build's tests instead of silently installing unpinned and being
  *   exempt from the skew warning.
  *
- * Values are manifest paths relative to `packages/cli/`.
+ * Values are manifest paths relative to `languages/typescript/packages/cli/`.
  */
 export const RELEASE_TRAIN_MANIFESTS = {
   stash: './package.json',

@@ -7,8 +7,8 @@ const REPO_ROOT = resolve(import.meta.dirname, '..')
 // Files that legitimately contain a `npx` literal — keep this list
 // short and explicit so additions require deliberate review.
 const ALLOWLISTED_PATHS = new Set([
-  'packages/wizard/src/lib/detect.ts', // npm row of the PM table
-  'packages/cli/src/commands/init/utils.ts', // runnerCommand `case 'npm'`
+  'languages/typescript/packages/wizard/src/lib/detect.ts', // npm row of the PM table
+  'languages/typescript/packages/cli/src/commands/init/utils.ts', // runnerCommand `case 'npm'`
   'scripts/lint-no-hardcoded-runners.mjs', // this script's own docs
 ])
 
@@ -186,8 +186,8 @@ if (offenders.length > 0) {
   for (const o of offenders) console.error(`  ${o}`)
   console.error(
     '\nUse the detected package manager instead. See ' +
-      'packages/cli/src/commands/init/utils.ts (runnerCommand) and ' +
-      'packages/wizard/src/lib/detect.ts (detectPackageManager).',
+      'languages/typescript/packages/cli/src/commands/init/utils.ts (runnerCommand) and ' +
+      'languages/typescript/packages/wizard/src/lib/detect.ts (detectPackageManager).',
   )
   process.exit(1)
 }

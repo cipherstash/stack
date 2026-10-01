@@ -592,7 +592,7 @@ describe('database rules', () => {
 
   /**
    * `@cipherstash/migrate` accepts `schema.table` (`splitTableName` in
-   * `packages/migrate/src/version.ts`), so the spelling reaches validate — but
+   * `languages/typescript/packages/migrate/src/version.ts`), so the spelling reaches validate — but
    * the literal `'app.users'` is compared whole against a bare
    * `information_schema.columns.table_name`, matches nothing, and was reported
    * as a missing table. Saying nothing could be checked is honest; saying the

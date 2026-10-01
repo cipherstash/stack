@@ -18,7 +18,7 @@ import { readWorkflow, WORKFLOW_DIR, workflowFiles } from './lib/workflows.mjs'
  * parity gates and the doc/known-failure checks executed nowhere, and a suite
  * that never starts reads exactly like a suite that passes.
  *
- * `packages/protect-ffi/src/integrationSuiteCi.test.ts` is the same file for
+ * `languages/typescript/packages/protect-ffi/src/integrationSuiteCi.test.ts` is the same file for
  * the same failure one absorption earlier, and its comment predicted this one:
  * "the next subtree import brings its own `.github/`, and it will arrive
  * looking exactly as authoritative as this one did."
@@ -27,7 +27,7 @@ import { readWorkflow, WORKFLOW_DIR, workflowFiles } from './lib/workflows.mjs'
  * sound. That a root workflow invokes the suite is loud when wrong — nothing
  * runs, no status appears. That its RELEVANCE FILTER still selects EQL's files
  * after the tree moved a level down is not: an unprefixed `src/**` matches
- * `packages/stack/src/**` and misses `packages/eql/src/**` entirely, so the
+ * `languages/typescript/packages/stack/src/**` and misses `packages/eql/src/**` entirely, so the
  * heavy jobs would skip on exactly the changes they exist to check, report
  * `skipped`, and let `ci-required` go green having compiled nothing.
  */
@@ -255,7 +255,7 @@ describe('the relevance filter still selects the imported tree', () => {
 
     expect(
       offenders,
-      `These \`paths:\` entries in ${EQL_WORKFLOW} are not under \`${EQL_PREFIX}\`, are not the workflow itself, and are not a composite action it \`uses:\`. dorny/paths-filter matches repo-root-relative paths, so after the subtree import an unprefixed glob matches the WRONG tree — \`src/**\` selects \`packages/stack/src/**\` and never \`packages/eql/src/**\`. The heavy jobs then skip on real EQL changes, report \`skipped\`, and \`ci-required\` treats skipped as pass.\n${offenders.map((p) => `  ${p}`).join('\n')}`,
+      `These \`paths:\` entries in ${EQL_WORKFLOW} are not under \`${EQL_PREFIX}\`, are not the workflow itself, and are not a composite action it \`uses:\`. dorny/paths-filter matches repo-root-relative paths, so after the subtree import an unprefixed glob matches the WRONG tree — \`src/**\` selects \`languages/typescript/packages/stack/src/**\` and never \`packages/eql/src/**\`. The heavy jobs then skip on real EQL changes, report \`skipped\`, and \`ci-required\` treats skipped as pass.\n${offenders.map((p) => `  ${p}`).join('\n')}`,
     ).toEqual([])
   })
 })
@@ -394,7 +394,7 @@ describe('the shared Rust cache is pointed and saved correctly', () => {
 // ---------------------------------------------------------------------------
 
 /**
- * The other half of the split this repo insists on for `packages/protect-ffi`.
+ * The other half of the split this repo insists on for `languages/typescript/packages/protect-ffi`.
  *
  * There, `lintWiring.test.ts` holds two properties from the manifest side: no
  * cargo on the default `test` path, and every cargo check reachable from

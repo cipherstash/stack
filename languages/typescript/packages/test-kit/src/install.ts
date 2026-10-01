@@ -6,9 +6,12 @@ import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 
-/** `packages/test-kit/src` → repo root. */
+/** `languages/typescript/packages/test-kit/src` → repo root. */
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
-const STASH_BIN = resolve(REPO_ROOT, 'packages/cli/dist/bin/stash.js')
+const STASH_BIN = resolve(
+  REPO_ROOT,
+  'languages/typescript/packages/cli/dist/bin/stash.js',
+)
 
 export type DbVariant = 'postgres' | 'supabase'
 

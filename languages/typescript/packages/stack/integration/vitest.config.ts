@@ -10,7 +10,7 @@ import {
 /**
  * Integration suites: real ZeroKMS, real Postgres, real PostgREST.
  *
- * Deliberately a SEPARATE config from `packages/stack/vitest.config.ts`, which
+ * Deliberately a SEPARATE config from `languages/typescript/packages/stack/vitest.config.ts`, which
  * excludes `integration/**`. `pnpm test` must stay runnable with no credentials
  * and no database; these run only under `test:integration:*`, from their own CI
  * jobs. That separation is what lets the integration suites throw on missing

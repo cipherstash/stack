@@ -117,12 +117,12 @@ jobs:
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
-      # `pnpm run test` below runs the `packages/stack` suites, and only 8 of
+      # `pnpm run test` below runs the `languages/typescript/packages/stack` suites, and only 8 of
       # those 120 files mock `@cipherstash/protect-ffi` — the rest load
       # `index.node`, which nothing else in this job produces.
       #
       # NOT for protect-ffi's own suite, though vendoring it did add
-      # `@cipherstash/protect-ffi#test` to `turbo test --filter './packages/*'`.
+      # `@cipherstash/protect-ffi#test` to `turbo test --filter './languages/typescript/packages/*'`.
       # That suite must pass with no binding at all (its `build` is `tsc` and
       # its `test` is deliberately cargo-free), and `src/lintWiring.test.ts`
       # re-runs it here with the artifact hidden to keep that true — this job
@@ -176,7 +176,7 @@ jobs:
       - name: Typecheck (prisma-next — enforces v3 operator-capability gating)
         run: pnpm exec turbo run typecheck --filter @cipherstash/stack-prisma
 
-      # `packages/bench` is a live importer of `@cipherstash/stack` and
+      # `languages/typescript/packages/bench` is a live importer of `@cipherstash/stack` and
       # `@cipherstash/stack-drizzle`, but it has no `test` script (its suites
       # need a database), so `pnpm run test` never reaches it and an adapter
       # rename could break it unnoticed. Its `build` is `tsc --noEmit`, and
@@ -192,12 +192,12 @@ jobs:
       - name: Typecheck (wizard)
         run: pnpm exec turbo run typecheck --filter @cipherstash/wizard
 
-      # `examples/*` are standalone apps outside the `./packages/*` filter that
-      # root `build`/`test` use, so nothing in CI compiled them. `examples/basic`
+      # `languages/typescript/examples/*` are standalone apps outside the `./languages/typescript/packages/*` filter that
+      # root `build`/`test` use, so nothing in CI compiled them. `languages/typescript/examples/basic`
       # had been broken since the v2 removal deleted `encryptedType` and the v2
       # `encryptedSupabase` — on a fully green board. Gate it through turbo so
       # `^build` builds stack/stack-drizzle/stash first.
-      - name: Typecheck (examples/basic — guards the v3 stack/stack-drizzle importers)
+      - name: Typecheck (languages/typescript/examples/basic — guards the v3 stack/stack-drizzle importers)
         run: pnpm exec turbo run typecheck --filter @cipherstash/basic-example
 
       # The rest of the surfaces that were compiling nowhere. Each of these has
@@ -220,7 +220,7 @@ jobs:
       - name: Typecheck (nextjs)
         run: pnpm exec turbo run typecheck --filter @cipherstash/nextjs
 
-      - name: Typecheck (examples/prisma — guards the prisma-next importers)
+      - name: Typecheck (languages/typescript/examples/prisma — guards the prisma-next importers)
         run: pnpm exec turbo run typecheck --filter @cipherstash/prisma-example
 
       - name: Typecheck (e2e)
@@ -300,8 +300,8 @@ jobs:
       # siblings that depend on it. A merge can therefore ARM a release that
       # cannot succeed, and this repository has done it. `@cipherstash/eql` is
       # published from cipherstash/encrypt-query-language, so a version bumped
-      # in this workspace cannot be published from here — while `packages/cli`
-      # and `packages/stack-prisma` carry it in RUNTIME dependencies, so pnpm
+      # in this workspace cannot be published from here — while `languages/typescript/packages/cli`
+      # and `languages/typescript/packages/stack-prisma` carry it in RUNTIME dependencies, so pnpm
       # packs whatever version this tree holds into both tarballs. Bump it past
       # what the registry carries and both ship a range no published version
       # satisfies, in tarballs that publish fine. That is what the hand-applied
@@ -324,26 +324,26 @@ jobs:
       - name: Test — lint script self-tests
         run: pnpm run test:scripts
 
-      - name: Create .env file in ./packages/stack/
+      - name: Create .env file in ./languages/typescript/packages/stack/
         run: |
-          touch ./packages/stack/.env
-          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/stack/.env
-          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/stack/.env
-          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/stack/.env
-          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/stack/.env
-          echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/stack/.env
+          touch ./languages/typescript/packages/stack/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./languages/typescript/packages/stack/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./languages/typescript/packages/stack/.env
+          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./languages/typescript/packages/stack/.env
+          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./languages/typescript/packages/stack/.env
+          echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./languages/typescript/packages/stack/.env
 
       # Run TurboRepo tests
       #
       # STASH_TEST_DATABASE_URL points the CLI's live-Postgres suites
-      # (`packages/cli/src/**/__tests__/**.live.test.ts`) at this job's
+      # (`languages/typescript/packages/cli/src/**/__tests__/**.live.test.ts`) at this job's
       # service container — without it they self-skip, and the only guard on
       # the `stash eql verify` parser↔catalog spelling seam
       # (`installer/__tests__/verify.live.test.ts`) would run in no CI
       # workflow at all: a routine `@cipherstash/eql` bump could then make
       # every `stash eql install` fail with phantom damage, on green CI.
       # Most suites need Postgres only. The encrypted-index upgrade suite also
-      # loads this job's CipherStash credentials from packages/stack/.env and
+      # loads this job's CipherStash credentials from languages/typescript/packages/stack/.env and
       # uses the binding built above to create genuine ciphertext. The verify
       # suite installs EQL v3 into its own schemas, which coexists
       # with the image's pre-installed EQL v2 that the stack tests use.
@@ -432,7 +432,7 @@ jobs:
 
       # Run the standalone `e2e/` workspace via turbo so the `^build`
       # dep on the `test:e2e` task builds cli + wizard first. CLI's own
-      # E2E (`packages/cli/tests/e2e/**`) is covered by the `run-tests`
+      # E2E (`languages/typescript/packages/cli/tests/e2e/**`) is covered by the `run-tests`
       # job above; we filter to the new workspace here to avoid duplication.
       - name: Run E2E tests
         run: pnpm exec turbo run test:e2e --filter @cipherstash/e2e
@@ -528,7 +528,7 @@ jobs:
       # src/lintWiring.test.ts asserts this step exists, because between the
       # absorption and this line the check ran nowhere at all: the jobs its
       # exemption named were the upstream copies under
-      # packages/protect-ffi/.github/, which GitHub never executes.
+      # languages/typescript/packages/protect-ffi/.github/, which GitHub never executes.
       - name: Typecheck the generated WASM declarations
         run: pnpm --filter @cipherstash/protect-ffi run test:typecheck:wasm
 
@@ -541,13 +541,13 @@ jobs:
       #
       # Not the only suite that loads the real core, and this is not the only
       # job that builds it for one — `integration-drizzle.yml` runs
-      # `packages/stack`'s `integration/wasm/**` the same way. It is here
+      # `languages/typescript/packages/stack`'s `integration/wasm/**` the same way. It is here
       # because it needs NOTHING else: no credentials, no database. Those
       # suites' `globalSetup` requires both unconditionally and throws rather
       # than skipping, and that job is path-filtered and fork-skipped besides,
       # so hosting a core contract there would leave it unchecked on every diff
       # those paths do not select. See
-      # `packages/stack/vitest.wasm-core.config.ts` for the long form.
+      # `languages/typescript/packages/stack/vitest.wasm-core.config.ts` for the long form.
       #
       # Before `Build stack` deliberately — it reads protect-ffi's output
       # directly and none of stack's, so a core that changed its credential
@@ -636,7 +636,7 @@ jobs:
           client-key: ${{ secrets.CS_CLIENT_KEY }}
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
-      # The `packages/stack` suites below are the live ones — 120 files, of
+      # The `languages/typescript/packages/stack` suites below are the live ones — 120 files, of
       # which only 8 mock `@cipherstash/protect-ffi` — so they load
       # `index.node`, and the `Build packages` step below does not produce it
       # (protect-ffi's `build` is `tsc`, deliberately cargo-free). No
@@ -648,22 +648,22 @@ jobs:
       - name: Build the protect-ffi binding
         uses: ./.github/actions/build-ffi-binding
 
-      - name: Create .env file in ./packages/stack/
+      - name: Create .env file in ./languages/typescript/packages/stack/
         run: |
-          touch ./packages/stack/.env
-          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./packages/stack/.env
-          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./packages/stack/.env
-          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./packages/stack/.env
-          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./packages/stack/.env
-          echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./packages/stack/.env
+          touch ./languages/typescript/packages/stack/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./languages/typescript/packages/stack/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./languages/typescript/packages/stack/.env
+          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./languages/typescript/packages/stack/.env
+          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./languages/typescript/packages/stack/.env
+          echo "DATABASE_URL=postgres://cipherstash:password@localhost:5432/cipherstash" >> ./languages/typescript/packages/stack/.env
 
       # Build with Node (turbo/tsup need Node), then run tests with Bun
       - name: Build packages
-        run: pnpm turbo build --filter './packages/*'
+        run: pnpm turbo build --filter './languages/typescript/packages/*'
 
       - name: Run tests with Bun
         run: |
-          for dir in packages/stack; do
+          for dir in languages/typescript/packages/stack; do
             if [ -f "$dir/vitest.config.ts" ] || [ -f "$dir/package.json" ]; then
               echo "--- Testing $dir ---"
               (cd "$dir" && bunx --bun vitest run) || true

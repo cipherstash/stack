@@ -10,7 +10,7 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  * entry covers, is live coverage that silently does not run: edit only that
  * directory and the job the code depends on never starts.
  *
- * `packages/stack/src/dynamodb/**` was exactly that (#815 review). The only
+ * `languages/typescript/packages/stack/src/dynamodb/**` was exactly that (#815 review). The only
  * live EQL v2 read coverage in the repo lives in
  * `integration/shared/v2-decrypt-compat.integration.test.ts`, which exercises
  * the DynamoDB legacy read path — and `grep -rn dynamodb .github/` returned
@@ -36,8 +36,8 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  * did cover are covered there.
  */
 
-const STACK_SRC = 'packages/stack/src'
-const STACK_MANIFEST = 'packages/stack/package.json'
+const STACK_SRC = 'languages/typescript/packages/stack/src'
+const STACK_MANIFEST = 'languages/typescript/packages/stack/package.json'
 const CATALOG_MANIFEST = 'pnpm-workspace.yaml'
 
 /** Both trigger events, in the order GitHub evaluates them. */
@@ -45,7 +45,7 @@ const TRIGGER_EVENTS = ['push', 'pull_request']
 
 /**
  * The integration workflows, discovered rather than listed: any workflow whose
- * `CS_IT_SUITE` globs select suites out of `packages/stack/` is in scope. A
+ * `CS_IT_SUITE` globs select suites out of `languages/typescript/packages/stack/` is in scope. A
  * fourth integration job added later is therefore held to the same bar without
  * anyone remembering to add it here.
  */
@@ -82,7 +82,7 @@ function suiteGlobs(wf) {
   return globs
 }
 
-/** Test files under `packages/stack/` matching a `CS_IT_SUITE` glob. */
+/** Test files under `languages/typescript/packages/stack/` matching a `CS_IT_SUITE` glob. */
 function suiteFiles(globs) {
   const files = []
   const walk = (dir) => {
@@ -97,7 +97,7 @@ function suiteFiles(globs) {
     // Walk the literal prefix; the glob tail only ever narrows to
     // `*.integration.test.ts`, which the walk already filters on.
     const prefix = glob.split('/').slice(0, 2).join('/')
-    walk(join(REPO_ROOT, 'packages/stack', prefix))
+    walk(join(REPO_ROOT, 'languages/typescript/packages/stack', prefix))
   }
   return [...new Set(files)]
 }
@@ -124,7 +124,7 @@ function importedSourcePaths(file) {
   return targets
 }
 
-/** `packages/stack`'s dependency declarations, specifier -> version range. */
+/** `languages/typescript/packages/stack`'s dependency declarations, specifier -> version range. */
 function stackDependencies() {
   const manifest = JSON.parse(
     readFileSync(join(REPO_ROOT, STACK_MANIFEST), 'utf8'),
@@ -149,7 +149,7 @@ function stackDependencies() {
  * directly — so a protect-ffi bump is precisely the change most able to break
  * them, and precisely the change that touches no source directory at all.
  *
- * Specifiers with no entry in `packages/stack/package.json` (e.g.
+ * Specifiers with no entry in `languages/typescript/packages/stack/package.json` (e.g.
  * `@cipherstash/test-kit`, resolved through tsconfig `paths` to a workspace
  * package) are skipped: `importedSourcePaths`' sibling globs already cover them.
  */
@@ -231,7 +231,7 @@ describe('integration workflow paths filters', () => {
       // Mutation-tested: rewriting the suites' `from '@/…'` to the public
       // `@cipherstash/stack/…` entry — an ordinary "test the built package,
       // not internals" refactor — empties this set, and the check then passed
-      // with `packages/stack/src/dynamodb/**` deleted from the filter, which
+      // with `languages/typescript/packages/stack/src/dynamodb/**` deleted from the filter, which
       // is verbatim the #815 gap described at the top of this file. The
       // sibling manifest check above already asserts its own premise; this one
       // has to as well.

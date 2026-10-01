@@ -7,7 +7,7 @@
  * realm (which would hand the module the host's `process` and prove nothing).
  * Bare specifiers are rejected. The graphs this is pointed at have none today
  * only because everything they reach is bundled (`noExternal` in
- * `packages/stack/tsup.config.ts`) — a property of the build config, not of
+ * `languages/typescript/packages/stack/tsup.config.ts`) — a property of the build config, not of
  * module resolution. So a new one is a SIGNAL, not automatically a defect: if
  * it is a legitimate external the target runtime resolves, allow it here.
  *

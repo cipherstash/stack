@@ -13,7 +13,7 @@
     // builds this package, the gate reports 4 skipped, and a regression that
     // put `@cipherstash/stack` back into the edge graph would ship green.
     //
-    // Same fix, same reason, as `packages/stack/turbo.json` — added there in
+    // Same fix, same reason, as `languages/typescript/packages/stack/turbo.json` — added there in
     // #799 for the adapter-kit process-free realm gate (#708 review, James).
     "test": {
       "dependsOn": ["^build", "build"]
