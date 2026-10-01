@@ -71,7 +71,7 @@ If these variables are missing, tests that require live encryption will fail or 
 
 ## Repository Layout
 
-Every npm package except EQL lives under `languages/typescript/`: packages in `languages/typescript/packages/`, example apps in `languages/typescript/examples/`. The root `packages/` holds EQL's subtree (and, later, Rust crates). The JavaScript root stays at the repository root: `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `turbo.json`, `.changeset/`, `biome.json`, `tsconfig.json` and `vitest.shared.ts`.
+Every npm package except EQL lives under `languages/typescript/`: packages in `languages/typescript/packages/`, example apps in `languages/typescript/examples/`. The root `packages/` holds Rust crates only: the stack-* crates and EQL's subtree. The Go module is `languages/golang/`. The repository root is the root of the Cargo workspace and of mise (`Cargo.toml`, `Cargo.lock`, `mise.toml`), and the JavaScript root stays there too: `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `turbo.json`, `.changeset/`, `biome.json`, `tsconfig.json` and `vitest.shared.ts`.
 
 - `languages/typescript/packages/stack`: Main package (`@cipherstash/stack`) containing the encryption client and all integrations
   - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/identity`, `@cipherstash/stack/schema`, `@cipherstash/stack/eql/v3`, `@cipherstash/stack/v3`, `@cipherstash/stack/types`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/encryption`, `@cipherstash/stack/errors`, `@cipherstash/stack/adapter-kit`, `@cipherstash/stack/wasm-inline`, `@cipherstash/stack/diagnostics` (the Drizzle and Supabase integrations moved to their own packages — see below)
@@ -90,6 +90,9 @@ Every npm package except EQL lives under `languages/typescript/`: packages in `l
   EQL issues in this repository, never in the historical
   `cipherstash/encrypt-query-language` repository. Old upstream issue and PR
   links are provenance only.
+- `packages/stack-auth`, `packages/stack-profile`, `packages/stack-kms`, `packages/stack-encrypt`, `packages/stack-encrypt-derive`, `packages/stack-guest-abi`: The Rust crates imported from `cipherstash/cipherstash-suite` with their history — `stack-auth` and `stack-profile` (published to crates.io), and `stack-kms`, `stack-encrypt`, `stack-encrypt-derive` and `stack-guest-abi` (`publish = false`). They are the members of the **root Cargo workspace**, with the three node binding crates below. See "Working on the Rust crates".
+- `languages/typescript/packages/auth`, `languages/typescript/packages/profile`, `languages/typescript/packages/stack-auth-wasm`: The node bindings of those crates. `@cipherstash/auth` (napi-rs v2) and its six `platforms/*` packages are published to npm, **frozen here** until publishing moves from the suite (see `FROZEN_PUBLISHERS` below). `@cipherstash/profile` and its platforms are private and never published; `@cipherstash/stack-auth-wasm` is private and builds the wasm that `@cipherstash/auth` ships. Their `build` and `test` scripts never invoke cargo; `build:native`, `build:debug` and `test:cargo` do.
+- `languages/golang`: The Go module (`stackencrypt`, `stackauth`, `internal`), a wazero host with no cgo. Its two WASI guests (`*/guest`) are detached Cargo workspaces built by `mise run wasm:guest:build` and `mise run wasm:auth-guest:build`; the `.wasm` files they embed are gitignored. There is no Go release process yet.
 - `e2e/*`: Cross-package end-to-end tests (package managers, supply chain, Prisma example README)
 - `languages/typescript/examples/*`: Working apps (basic, prisma, supabase-worker)
 - `docs/plans/*`: Internal design plans. User-facing documentation lives at https://cipherstash.com/docs (not in this repo).
@@ -97,8 +100,8 @@ Every npm package except EQL lives under `languages/typescript/`: packages in `l
 
 ## Working on protect-ffi
 
-`languages/typescript/packages/protect-ffi` carries one of this repo's two Cargo workspaces (the
-other is `packages/eql/crates`), and its scripts are split so a Rust toolchain
+`languages/typescript/packages/protect-ffi` carries one of this repo's three Cargo workspaces (the
+others are the root workspace, for the stack-* crates, and `packages/eql`), and its scripts are split so a Rust toolchain
 stays optional for everyone else.
 
 - **The default `test` and `build` never invoke cargo.** Root `pnpm test` runs
@@ -615,6 +618,84 @@ monorepo, which is where the silent failures are.
 - **Changesets for `@cipherstash/eql` go in the repo-root `.changeset/`.** The
   subtree's own `.changeset/` was deleted with the import; there is no second
   one to put them in by mistake.
+
+## Working on the Rust crates
+
+The stack-* crates came from `cipherstash/cipherstash-suite`, which still owns
+`cipherstash-client`, `cts-common`, `zerokms-protocol`, `recipher` and
+`cllw-ore`. Here those come from crates.io, pinned exactly in the root
+`Cargo.toml`.
+
+- **Three Cargo workspaces, not one.** The root workspace (the six stack-*
+  crates and the three node binding crates), protect-ffi's and EQL's. The root
+  `Cargo.toml` excludes the other two, and they pin their own vitaminc. The
+  three fuzz crates and the two Go guests are detached workspaces too, each
+  with its own `Cargo.lock`.
+- **The toolchain is pinned in the root `mise.toml`:** Rust 1.94.1 (the
+  `stack-encrypt` `tests/ui` trybuild snapshots record its diagnostics), the
+  cargo tools, and Go 1.26. EQL's `mise.toml` overrides the Rust pin in its
+  folder. protect-ffi's does not pin Rust, so the root pin applies there.
+- **Run the tests with nextest, under the test env:** `mise x --env test --
+  cargo nextest run --workspace --all-features`. Doc examples are `mise run
+  test:doc`; rustdoc with warnings as errors is `mise run doc`.
+- **The node bindings keep cargo off `pnpm test`.** Their `test` runs vitest
+  and Biome against a binding already built with `pnpm --filter
+  @cipherstash/auth run build:debug`; `test:cargo` runs the crate's tests.
+
+### Fuzzing
+
+Untrusted-input parsers are fuzzed with cargo-fuzz / libFuzzer. The fuzz
+crates live in `packages/*/fuzz/` (detached workspaces) and run via `fuzz:*`
+mise tasks (nightly toolchain), e.g.:
+
+```bash
+mise run fuzz:access-key                      # 60s default
+mise run fuzz:access-key -- -max_total_time=300
+mise run fuzz:access-key -- -runs=0           # replay seed corpus only (CI regression)
+```
+
+CI is split into a blocking per-PR regression replay and a nightly,
+non-blocking bug-finding campaign; the workflow arrives with the CI port.
+Full walkthrough — layout, adding a target, the CI split — in
+[`docs/fuzzing.md`](docs/fuzzing.md). For cargo-fuzz mechanics (sanitizers,
+corpus, crash triage) use the Trail of Bits `cargo-fuzz` skill rather than a
+repo-local one.
+
+### Miri
+
+The guest ABI crate (`packages/stack-guest-abi`) is the one place under
+`languages/golang` that hands raw pointers to the Go host and rebuilds owned
+buffers from them. Its unit tests run under Miri with strict provenance:
+
+```bash
+mise run miri:stack-guest-abi           # nightly + the miri component
+```
+
+Only the native half (the buffer registry, headers, status table) is
+interpretable; the wasm32-only `abi` and `transport` modules read the wasm
+`memory_size` intrinsic, so their hostile-input behaviour is pinned from the
+Go side (`mise run go:test`).
+
+### Mutation testing
+
+The stack crates that opt in (stack-auth, stack-encrypt) are mutation-tested
+with cargo-mutants; config in `.cargo/mutants.toml`. Once the CI port lands,
+CI gates every PR touching them with `--in-diff`: only the lines the PR changes are mutated, and
+a surviving mutant fails the job. A full sweep is slow and is run locally:
+
+```bash
+mise run mutants:stack-auth         # ~15 min
+mise run mutants:stack-encrypt      # ~60 min
+mise run mutants                    # every crate with a mutants:<crate> task
+```
+
+A non-equivalent surviving mutant means the test suite does not distinguish
+the changed behavior; the fix is a test that fails under that mutation, not
+an exclusion. Exclude only what the configured test build cannot reach
+(proc-macro entry points, wasm32-only modules), or a demonstrably equivalent
+replacement such as `Some(Default::default())` for `Some(())`. Document the
+reason and match the specific replacement so a reachable, behavior-changing
+mutation in the same function stays covered.
 
 ## Agent Skills — these ship to customers
 

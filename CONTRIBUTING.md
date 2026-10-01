@@ -180,6 +180,18 @@ The `stash` / `@cipherstash/stack` / `@cipherstash/stack-drizzle` /
 packages are a `fixed` group in [`.changeset/config.json`](./.changeset/config.json):
 they always version together, so a bump to any one of them bumps all six.
 
+`@cipherstash/auth` and its six `@cipherstash/auth-*` platform packages are
+developed here but still published from `cipherstash/cipherstash-suite`. Until
+publishing moves here, do not add a changeset for them: `pnpm run
+lint:auth-changeset` fails on one, and `release:gate` blocks any version npm
+does not have. Once publishing moves, the seven release together as their own
+`fixed` group.
+
+Two Rust crates, `stack-auth` and `stack-profile`, are released to crates.io,
+in one version group of their own, by release-plz from the root Cargo
+workspace — not by Changesets. Until that pipeline is armed they, too, keep
+releasing from the suite.
+
 ## Pre-release process
 
 The 1.0 line published its `1.0.0-rc.*` series through
