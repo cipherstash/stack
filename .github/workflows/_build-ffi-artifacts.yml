@@ -138,7 +138,7 @@ jobs:
           CARGO_BUILD_TARGET: ${{ matrix.cfg.target }}
         run: rustup target add "$CARGO_BUILD_TARGET"
 
-      - uses: pnpm/action-setup@v6.0.10
+      - uses: pnpm/action-setup@v6.1.0
         with:
           run_install: false
           cache: false
@@ -335,7 +335,7 @@ jobs:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      - uses: pnpm/action-setup@v6.0.10
+      - uses: pnpm/action-setup@v6.1.0
         with:
           run_install: false
           cache: false
