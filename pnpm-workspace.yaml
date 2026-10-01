@@ -156,7 +156,9 @@ overrides:
   # shape as the js-yaml 4.x entry above. Reached through ajv.
   # #198 CVE-2026-75899, CVE-2026-75931, CVE-2026-75975, CVE-2026-76172 — raised
   # to 3.1.6.
-  'fast-uri@<3.1.6': '3.1.6'
+  # #215 CVE-2026-84394 (GHSA-58mr-gqgx-xq4g) — raised to 3.1.7 (published
+  # 2026-09-02).
+  'fast-uri@<3.1.7': '3.1.7'
   # GHSA-f88m-g3jw-g9cj — sharp's vendored libvips carries multiple High
   # libvips CVEs (CVE-2026-33327, CVE-2026-33328, CVE-2026-35590,
   # CVE-2026-35591), fixed >=0.35.0. Pulled in as an optional dependency of
