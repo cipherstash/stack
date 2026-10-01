@@ -37,7 +37,7 @@
       "dependsOn": ["^build"],
       "outputs": ["lib/**"]
     },
-    // These two builds `cpSync('../../skills', 'dist/skills')` — they consume a
+    // These two builds `cpSync('../../../../skills', 'dist/skills')` — they consume a
     // directory OUTSIDE their own package, which `$TURBO_DEFAULT$` does not
     // cover. Without naming it here a skills-only edit does not invalidate the
     // build, and since `build` now declares `outputs: ["dist/**"]`, the cache

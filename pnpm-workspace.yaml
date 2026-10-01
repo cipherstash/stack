@@ -1,21 +1,24 @@
 packages:
+  # Every npm package except EQL lives under languages/typescript/. The root
+  # packages/ holds EQL's subtree, and later the Rust crates.
   - languages/typescript/packages/*
   # The six per-platform binary packages for @cipherstash/protect-ffi. The
-  # `languages/typescript/packages/*` glob above already covers the wrapper itself; these are nested
-  # a level deeper and need their own entry.
+  # glob above already covers the wrapper itself; these are nested a level
+  # deeper and need their own entry.
   - languages/typescript/packages/protect-ffi/platforms/*
   # @cipherstash/eql, from the encrypt-query-language subtree. The subtree is
   # imported at a VERBATIM prefix so its repo-root-relative paths keep resolving
   # (mise tasks, Doxyfile, sync-generated.mjs), which puts the npm package two
-  # levels down. `languages/typescript/packages/*` matches the subtree ROOT, which carries no
-  # package.json by design — the private @cipherstash/eql-workspace manifest was
-  # deleted so this glob contributes exactly one member.
+  # levels down. The subtree ROOT carries no package.json by design — the
+  # private @cipherstash/eql-workspace manifest was deleted so the subtree
+  # contributes exactly one member, through this glob.
   - packages/eql/packages/*
   # The protect-ffi live integration suite. Nested a level deeper than
-  # `languages/typescript/packages/*` reaches, like the two entries above, and named literally
-  # rather than globbed because `languages/typescript/packages/protect-ffi/*` would also select
-  # `crates/`, `docs/`, `lib/`, `scripts/` and `src/` — directories with no
-  # package.json, which pnpm rejects rather than skips.
+  # `languages/typescript/packages/*` reaches, like the platform entry above,
+  # and named literally rather than globbed because
+  # `languages/typescript/packages/protect-ffi/*` would also select `crates/`,
+  # `docs/`, `lib/`, `scripts/` and `src/` — directories with no package.json,
+  # which pnpm rejects rather than skips.
   #
   # It kept its own `package-lock.json` and installed with `npm ci` until
   # CIP-3744. That was the last registry pin of `@cipherstash/eql` in the tree:
