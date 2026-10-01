@@ -160,9 +160,12 @@ Both bind to a *workflow filename* at the registry, so renaming either file
 silently invalidates its publisher configuration.
 
 `scripts/__tests__/workflow-publish-permissions.test.mjs` classifies every job
-that may mint an OIDC token: publishers and named non-publishing exchanges are
-separate equalities, with a reviewed allowlist for jobs that may write to the
-repository. The distinction matters because OIDC is a transport, not itself a
+that may mint an OIDC token. Publishers and named non-publishing exchanges are
+kept in separate lists, but the jobs holding `id-token: write` are asserted
+against their union in a single equality; the separate lists feed separate
+predicates (only publishers' workflows have their sibling jobs held read-only).
+The jobs that may write to the repository are a reviewed allowlist that includes
+every OIDC holder. The distinction matters because OIDC is a transport, not itself a
 publishing capability: `claude-review.yml` exchanges its token with Anthropic,
 while the registry-bound release workflows exchange theirs with npm or
 crates.io. Every grant remains per job, never at workflow level, and any new

@@ -128,20 +128,40 @@ describe('Claude pull-request review', () => {
     expect(guard.run).toContain('exit 1')
   })
 
-  it('keeps reviews bounded, read-only, quiet, and sticky', () => {
+  it('keeps reviews bounded, read-only, and quiet', () => {
+    // `track_progress: true` would select tag mode, which grants git commit
+    // and push and auto-accepts file edits.
     expect(claude.with).toMatchObject({
-      use_sticky_comment: true,
       track_progress: false,
       include_fix_links: false,
       classify_inline_comments: false,
       show_full_output: false,
     })
+    // Agent mode creates no comment of its own, so this input would be inert.
+    expect(claude.with).not.toHaveProperty('use_sticky_comment')
     expect(claude.with.claude_args.trim().split('\n')).toEqual([
       '--model sonnet',
-      '--max-turns 10',
-      '--allowedTools "mcp__github_inline_comment__create_inline_comment"',
-      '--disallowedTools "Bash,Edit,Write,NotebookEdit,Task,WebFetch,WebSearch"',
+      '--max-turns 25',
+      '--allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*)"',
+      '--disallowedTools "Edit,Write,NotebookEdit,Task,WebFetch,WebSearch"',
     ])
+  })
+
+  it('gives the review a way to read the diff and publish its summary', () => {
+    // Agent mode injects no PR context and the checkout has no history, so
+    // without `gh pr diff` the review cannot see what changed; without
+    // `gh pr comment` its summary is discarded and the job still succeeds.
+    const prompt = claude.with.prompt.replace(/\s+/g, ' ')
+    const pr = gha('github.event.pull_request.number')
+    expect(prompt).toContain(`gh pr diff ${pr}`)
+    expect(prompt).toContain(`gh pr view ${pr}`)
+    expect(prompt).toContain(
+      `gh pr comment ${pr} --edit-last --create-if-none --body-file -`,
+    )
+    // A blanket `Bash` disallow overrides the scoped `Bash(gh pr …)` allows.
+    expect(claude.with.claude_args).not.toMatch(
+      /disallowedTools "[^"]*\bBash\b/,
+    )
   })
 
   it('defines the actionable-finding and clean-review contracts', () => {
@@ -159,7 +179,7 @@ describe('Claude pull-request review', () => {
     )
     expect(prompt).toContain('Never describe the pull request as approved')
     for (const prohibited of [
-      'execute commands',
+      'Run no commands other than',
       'modify code',
       'create commits',
       'push branches',
