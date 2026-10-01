@@ -21,9 +21,6 @@ Current targets:
 
 | mise task            | crate         | target binary         | parses                                        |
 |----------------------|---------------|-----------------------|-----------------------------------------------|
-| `fuzz:crn`           | `cts-common`  | `crn_parse`           | `Crn` (e.g. `crn:ca-central-1.aws:ZVAT…`)     |
-| `fuzz:workspace-id`  | `cts-common`  | `workspace_id_parse`  | `WorkspaceId`                                 |
-| `fuzz:region`        | `cts-common`  | `region_parse`        | `Region`                                      |
 | `fuzz:access-key`    | `stack-auth`  | `access_key_parse`    | `AccessKey` (`CSAK<key_id>.<key_secret>`)     |
 | `fuzz:jwt-decode`    | `stack-auth`  | `jwt_decode`          | JWT claims (`Token::fuzz_decode_claims`)      |
 | `fuzz:client-key`    | `stack-kms`   | `client_key_encoded`  | `ClientKey::from_encoded_v1` (hex or base64)  |
@@ -39,7 +36,7 @@ for the byte decoders) to the parser via the `arbitrary` crate:
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|s: &str| {
-    let _ = s.parse::<cts_common::Crn>();
+    let _ = s.parse::<stack_auth::AccessKey>();
 });
 ```
 
@@ -61,11 +58,11 @@ main monorepo workspace, and it is **not** a member of the root
 `Cargo.toml`:
 
 ```
-packages/cts-common/fuzz/
+packages/stack-auth/fuzz/
   Cargo.toml                 # detached workspace, cargo-fuzz = true
+  Cargo.lock                 # tracked, so `--locked` and Dependabot see it
   fuzz_targets/*.rs          # one file per target binary
   corpus/<target>/*          # committed seed inputs (valid examples)
-packages/stack-auth/fuzz/
 packages/stack-kms/fuzz/
 packages/stack-encrypt/fuzz/
   …
@@ -84,21 +81,21 @@ nightly once with `rustup toolchain install nightly`.
 Run a target via its `mise` task (60s by default):
 
 ```bash
-mise run fuzz:crn
+mise run fuzz:access-key
 ```
 
 Override the duration by appending another libFuzzer flag — the last
 value of a repeated flag wins:
 
 ```bash
-mise run fuzz:crn -- -max_total_time=300
+mise run fuzz:access-key -- -max_total_time=300
 ```
 
 Replay only the committed seed corpus without fuzzing (what CI's
 regression job does):
 
 ```bash
-mise run fuzz:crn -- -runs=0
+mise run fuzz:access-key -- -runs=0
 ```
 
 The tasks pin `--sanitizer none` (these parsers are pure safe Rust, so
@@ -110,9 +107,9 @@ fails to find `std`).
 A crash drops a reproducer into `fuzz/artifacts/<target>/`; re-run that
 single input with `cargo +nightly fuzz run <target> <path-to-reproducer>`.
 
-## CI ([`.github/workflows/fuzz.yml`](../.github/workflows/fuzz.yml))
+## CI (`.github/workflows/fuzz.yml`)
 
-Two jobs with deliberately different roles:
+The workflow arrives with the CI port of the stack-* crates. Two jobs with deliberately different roles:
 
 - **fuzz-regression** (`pull_request`, **blocking**): builds every
   harness — which catches harness/API drift, e.g. a changed `FromStr`
@@ -127,9 +124,8 @@ Two jobs with deliberately different roles:
   `restore-keys`) so coverage compounds, minimized with `cargo fuzz cmin`
   to stay small, and any crash reproducer is uploaded as an artifact.
 
-The `pull_request` trigger is path-filtered to `packages/cts-common/**`,
-`packages/stack-auth/**`, `packages/stack-kms/**`, `packages/stack-encrypt/**`,
-and the workflow file,
+The `pull_request` trigger is path-filtered to `packages/stack-auth/**`,
+`packages/stack-kms/**`, `packages/stack-encrypt/**`, and the workflow file,
 with `!**.md` / `!**.example` excludes last so docs-only changes are
 skipped.
 

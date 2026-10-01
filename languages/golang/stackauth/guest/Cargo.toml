@@ -27,7 +27,7 @@ crate-type = ["cdylib", "rlib"]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 futures = "0.3"
-cts-common = { path = "../../../../packages/cts-common", default-features = false }
+cts-common = { version = "=0.43.0", default-features = false }
 url = "2"
 # Strategies and `Token`, the typed shape of `auth.json`, with default
 # features off: no reqwest, no native TLS.

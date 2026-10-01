@@ -35,7 +35,7 @@ stack-encrypt = { path = "../../../../packages/stack-encrypt", default-features 
 # This crate defines only the exports that are its own.
 stack-guest-abi = { path = "../../../../packages/stack-guest-abi" }
 stack-kms = { path = "../../../../packages/stack-kms", default-features = false }
-zerokms-protocol = { path = "../../../../packages/zerokms-protocol" }
+zerokms-protocol = "=0.12.31"
 
 # The FFI codec + `FfiValue` tree, shared with vitaminc's own guest — one
 # codec, not a fork. Same vitaminc version stack-encrypt builds against
@@ -54,7 +54,7 @@ zeroize = "1"
 [dev-dependencies]
 stack-kms = { path = "../../../../packages/stack-kms", default-features = false, features = ["test-support"] }
 # For minting a valid client-key fixture in the config tests.
-recipher = { path = "../../../../packages/recipher" }
+recipher = "=0.3.1"
 # Re-encoding that fixture into the other forms the config table promises
 # (upper-case hex, base64) so the lenient decode is actually exercised.
 base16ct = { version = "0.2.0", features = ["alloc"] }

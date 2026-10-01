@@ -2,7 +2,7 @@
 
 > **Status:** RFC. Cross-repo design — implementation lives in [`cipherstash/protectjs-ffi`](https://github.com/cipherstash/protectjs-ffi).
 >
-> **Prep landed in this repo:** [`stack_auth::AuthStrategyFn`](packages/stack-auth/src/auth_strategy_fn.rs) — the helper protect-ffi will reach for. Sits on the acquisition layer ([`stack_auth::auth`](packages/stack-auth/src/lib.rs)); its sibling [`stack_auth::TokenStoreFn`](packages/stack-auth/src/token_store.rs) on the persistence layer is what `JsTokenStore` already uses for cookie-backed caching.
+> **Prep landed in this repo:** [`stack_auth::AuthStrategyFn`](../packages/stack-auth/src/auth_strategy_fn.rs) — the helper protect-ffi will reach for. Sits on the acquisition layer ([`stack_auth::auth`](../packages/stack-auth/src/lib.rs)); its sibling [`stack_auth::TokenStoreFn`](../packages/stack-auth/src/token_store.rs) on the persistence layer is what `JsTokenStore` already uses for cookie-backed caching.
 
 ## Why
 
@@ -179,11 +179,11 @@ If the JS `getToken` throws or rejects, the adapter surfaces an `AuthError`. Rec
 
 This is bridge scaffolding. Once `stack-encrypt` lands with its own napi/wasm bindings that accept a `stack_auth::AuthStrategy` natively (no JS-callback round-trip per ZeroKMS request), `protect-ffi`'s `JsAuthStrategy` adapter can be retired and consumers migrate to `@cipherstash/protect` (or whatever the published package becomes).
 
-[`AuthStrategyFn`](packages/stack-auth/src/auth_strategy_fn.rs) itself stays useful past that retirement — any foreign Rust consumer that wants to bring a non-`stack-auth`-native strategy to `cipherstash-client` (third-party integrations, test fixtures, future sidecars) uses the same pattern.
+[`AuthStrategyFn`](../packages/stack-auth/src/auth_strategy_fn.rs) itself stays useful past that retirement — any foreign Rust consumer that wants to bring a non-`stack-auth`-native strategy to `cipherstash-client` (third-party integrations, test fixtures, future sidecars) uses the same pattern.
 
 ## Why no changes to cipherstash-suite production code
 
-`cipherstash_client::ZeroKMSBuilder::new<C>` already accepts any `C` where `for<'a> &'a C: stack_auth::AuthStrategy` (see [`packages/cipherstash-client/src/zerokms/builder.rs:108-118`](packages/cipherstash-client/src/zerokms/builder.rs)). `JsAuthStrategy` satisfies that bound by virtue of `impl AuthStrategy for &JsAuthStrategy`. No generic refactor, no `dyn AuthStrategy`, no trait additions.
+`cipherstash_client::ZeroKMSBuilder::new<C>` already accepts any `C` where `for<'a> &'a C: stack_auth::AuthStrategy` (see `src/zerokms/builder.rs:108-118` in the `cipherstash-client` crate, in cipherstash-suite). `JsAuthStrategy` satisfies that bound by virtue of `impl AuthStrategy for &JsAuthStrategy`. No generic refactor, no `dyn AuthStrategy`, no trait additions.
 
 The only thing this repo ships in support of this RFC is:
 
