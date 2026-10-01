@@ -5,10 +5,10 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { createBaseProvider } from '../../packages/cli/src/commands/init/providers/base.js'
-import { createDrizzleProvider } from '../../packages/cli/src/commands/init/providers/drizzle.js'
-import { createSupabaseProvider } from '../../packages/cli/src/commands/init/providers/supabase.js'
-import type { PackageManager } from '../../packages/cli/src/commands/init/utils.js'
+import { createBaseProvider } from '../../languages/typescript/packages/cli/src/commands/init/providers/base.js'
+import { createDrizzleProvider } from '../../languages/typescript/packages/cli/src/commands/init/providers/drizzle.js'
+import { createSupabaseProvider } from '../../languages/typescript/packages/cli/src/commands/init/providers/supabase.js'
+import type { PackageManager } from '../../languages/typescript/packages/cli/src/commands/init/utils.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(__dirname, '../..')

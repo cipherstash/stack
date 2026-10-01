@@ -9,12 +9,12 @@
     "test": "deno test --no-check --allow-env --allow-net --allow-read --allow-sys --no-prompt"
   },
   "imports": {
-    "@cipherstash/stack/wasm-inline": "../../packages/stack/dist/wasm-inline.js",
-    "@cipherstash/stack-supabase/wasm-inline": "../../packages/stack-supabase/dist/wasm-inline.js",
-    "@cipherstash/stack/adapter-kit": "../../packages/stack/dist/adapter-kit.js",
-    "@cipherstash/stack/eql/v3": "../../packages/stack/dist/eql/v3/index.js",
-    "@cipherstash/stack/errors": "../../packages/stack/dist/errors/index.js",
-    "@cipherstash/protect-ffi/wasm-inline": "../../packages/stack/node_modules/@cipherstash/protect-ffi/dist/wasm/protect_ffi_inline.js",
-    "@cipherstash/auth/wasm-inline": "../../packages/stack/node_modules/@cipherstash/auth/wasm-inline.mjs"
+    "@cipherstash/stack/wasm-inline": "../../languages/typescript/packages/stack/dist/wasm-inline.js",
+    "@cipherstash/stack-supabase/wasm-inline": "../../languages/typescript/packages/stack-supabase/dist/wasm-inline.js",
+    "@cipherstash/stack/adapter-kit": "../../languages/typescript/packages/stack/dist/adapter-kit.js",
+    "@cipherstash/stack/eql/v3": "../../languages/typescript/packages/stack/dist/eql/v3/index.js",
+    "@cipherstash/stack/errors": "../../languages/typescript/packages/stack/dist/errors/index.js",
+    "@cipherstash/protect-ffi/wasm-inline": "../../languages/typescript/packages/stack/node_modules/@cipherstash/protect-ffi/dist/wasm/protect_ffi_inline.js",
+    "@cipherstash/auth/wasm-inline": "../../languages/typescript/packages/stack/node_modules/@cipherstash/auth/wasm-inline.mjs"
   }
 }

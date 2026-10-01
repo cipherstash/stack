@@ -33,7 +33,7 @@ on:
       - 'languages/typescript/packages/protect-ffi/mise.toml'
       # Out of that package, and a compile input all the same: the cdylib
       # crate carries
-      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so the
       # EQL wire types are linked into the `index.node` this job encrypts
       # through. The native cache key in `.github/actions/build-ffi-binding`
       # hashes both, so an edit here misses that cache and the binding gets
@@ -66,7 +66,7 @@ on:
       - 'languages/typescript/packages/protect-ffi/mise.toml'
       # Out of that package, and a compile input all the same: the cdylib
       # crate carries
-      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so the
       # EQL wire types are linked into the `index.node` this job encrypts
       # through. The native cache key in `.github/actions/build-ffi-binding`
       # hashes both, so an edit here misses that cache and the binding gets

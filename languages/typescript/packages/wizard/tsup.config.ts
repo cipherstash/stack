@@ -21,8 +21,8 @@ var require = __createRequire(import.meta.url);`,
     // the agent can install them into the user's `.claude/skills` directory
     // (CIP-2992). The cli used to ship these too — they belong with the
     // wizard now.
-    if (existsSync('../../skills')) {
-      cpSync('../../skills', 'dist/skills', { recursive: true })
+    if (existsSync('../../../../skills')) {
+      cpSync('../../../../skills', 'dist/skills', { recursive: true })
     }
   },
 })

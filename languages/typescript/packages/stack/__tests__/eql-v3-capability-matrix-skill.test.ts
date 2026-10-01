@@ -28,7 +28,7 @@ import { types } from '@/eql/v3'
 
 const SKILL = resolve(
   dirname(fileURLToPath(import.meta.url)),
-  '../../../skills/stash-encryption/SKILL.md',
+  '../../../../../skills/stash-encryption/SKILL.md',
 )
 
 /** Only the matrix, so an example elsewhere in the file cannot satisfy a row. */

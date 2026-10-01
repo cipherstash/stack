@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import cliVitestConfig from '../../packages/cli/vitest.config.ts'
+import cliVitestConfig from '../../languages/typescript/packages/cli/vitest.config.ts'
 
 /**
  * `languages/typescript/packages/cli/vitest.config.ts` carries its own alias map, outside the one

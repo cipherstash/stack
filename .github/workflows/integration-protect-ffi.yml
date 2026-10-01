@@ -78,7 +78,7 @@ on:
       - 'languages/typescript/packages/protect-ffi/package.json'
       - 'languages/typescript/packages/protect-ffi/mise.toml'
       # Out of this package, and a real compile input: the cdylib crate carries
-      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so the
       # EQL wire types are linked into `index.node` AND into the wasm32 build
       # this suite's `wasm-round-trip` test loads. Both cache keys in
       # `.github/actions/build-ffi-binding` hash these, so an edit misses the
@@ -108,7 +108,7 @@ on:
       - 'languages/typescript/packages/protect-ffi/package.json'
       - 'languages/typescript/packages/protect-ffi/mise.toml'
       # Out of this package, and a real compile input: the cdylib crate carries
-      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so the
       # EQL wire types are linked into `index.node` AND into the wasm32 build
       # this suite's `wasm-round-trip` test loads. Both cache keys in
       # `.github/actions/build-ffi-binding` hash these, so an edit misses the

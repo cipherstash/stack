@@ -9,7 +9,7 @@ import {
 } from '../release-train.js'
 
 const CLI_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
-const REPO_ROOT = resolve(CLI_ROOT, '../..')
+const REPO_ROOT = resolve(CLI_ROOT, '../../../..')
 const SKILLS_ROOT = resolve(REPO_ROOT, 'skills')
 
 /** The stable version a workspace manifest belongs to: `1.0.0-rc.4` → `1.0.0`. */

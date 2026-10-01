@@ -363,7 +363,7 @@ describe('build-ffi-binding — the WASM key covers the build it skips', () => {
  * Both of those reason about files inside `languages/typescript/packages/protect-ffi`. Cargo does
  * not. `crates/protect-ffi/Cargo.toml` carries
  *
- *     eql-bindings = { path = "../../../eql/crates/eql-bindings" }
+ *     eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }
  *
  * — an in-tree path dependency in a DIFFERENT package, and a genuine compile
  * input to both `index.node` and the wasm32 build. A path dep carries no

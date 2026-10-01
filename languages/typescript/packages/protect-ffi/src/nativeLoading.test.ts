@@ -248,7 +248,10 @@ describe('assertNativeBindingAvailable', () => {
     // that mentions proving the binding loads is not a step that proves it.
     // Comments inside `runs:` go for the same reason.
     const action = readFileSync(
-      join(packageRoot, '../../.github/actions/build-ffi-binding/action.yml'),
+      join(
+        packageRoot,
+        '../../../../.github/actions/build-ffi-binding/action.yml',
+      ),
       'utf8',
     )
     const runsAt = action.search(/^runs:/m)
