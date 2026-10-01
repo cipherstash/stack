@@ -63,6 +63,10 @@ version = "0.4.2"
     ).toThrow(/did not find a version line/)
   })
 
+  test('returns the manifest unchanged when the version already matches', () => {
+    expect(bumpCargoPackageVersion(CARGO, '0.4.2')).toBe(CARGO)
+  })
+
   test('round-trips the real crate manifest shape', () => {
     const real = `[package]
 name = "eql-bindings"
