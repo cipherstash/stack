@@ -1,0 +1,4 @@
+# Workflows set NEXTEST_PROFILE=ci.
+[profile.ci]
+# Do not cancel the test run on the first failure.
+fail-fast = false

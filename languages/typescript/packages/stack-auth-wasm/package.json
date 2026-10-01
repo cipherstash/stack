@@ -5,10 +5,10 @@
   "license": "SEE LICENSE IN LICENSE",
   "private": true,
   "scripts": {
-    "build": "npm run build:bundler && npm run build:deno",
+    "build:wasm": "pnpm run build:bundler && pnpm run build:deno",
     "build:bundler": "wasm-pack build --target bundler --out-dir pkg-bundler",
     "build:deno": "wasm-pack build --target deno --out-dir pkg-deno",
-    "test": "wasm-pack test --node"
+    "test:cargo": "wasm-pack test --node"
   },
   "files": [
     "pkg-bundler/",

@@ -1,6 +1,6 @@
 {
   "name": "@cipherstash/auth-linux-x64-musl",
-  "version": "0.36.0",
+  "version": "0.44.0",
   "os": [
     "linux"
   ],

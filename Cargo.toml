@@ -1,0 +1,126 @@
+[workspace]
+resolver = "2"
+
+# The stack-* crates imported from cipherstash-suite, and the three node
+# bindings that wrap them. The root is one of three Cargo workspaces in this
+# repository: EQL and protect-ffi keep their own, and pin their own vitaminc
+# (see `exclude`).
+members = [
+  "packages/stack-auth",
+  "packages/stack-profile",
+  "packages/stack-kms",
+  "packages/stack-encrypt",
+  "packages/stack-encrypt-derive",
+  "packages/stack-guest-abi",
+  "languages/typescript/packages/auth",
+  "languages/typescript/packages/profile",
+  "languages/typescript/packages/stack-auth-wasm",
+]
+
+# Each of these is its own workspace, with its own Cargo.lock.
+exclude = [
+  "packages/eql",
+  "languages/typescript/packages/protect-ffi",
+  # cargo-fuzz crates: nightly-only, run through the `fuzz:*` mise tasks.
+  "packages/stack-auth/fuzz",
+  "packages/stack-kms/fuzz",
+  "packages/stack-encrypt/fuzz",
+  # WASI guests for the Go module, built through `wasm:guest:build` and
+  # `wasm:auth-guest:build`.
+  "languages/golang/stackencrypt/guest",
+  "languages/golang/stackauth/guest",
+]
+
+[workspace.package]
+# Used by the node binding crates, which take `version.workspace`. The
+# published crates (stack-auth, stack-profile) carry their own version.
+version = "0.35.0"
+edition = "2021"
+authors = [
+  "Dan Draper <dan@cipherstash.com>",
+  "Drew Thomas <drew@cipherstash.com>",
+  "Fiona McCawley <fiona@cipherstash.com>",
+  "James Sadler <james@cipherstash.com>",
+  "Kate Andrews <kate@cipherstash.com>",
+  "Lindsay Holmwood <lindsay@cipherstash.com>",
+  "Paul Hawkins <paul@cipherstash.com>",
+  "Robin Howard <robin@cipherstash.com>",
+  "Toby Hede <toby@cipherstash.com>",
+  "Yuji Yokoo <yuji@cipherstash.com>",
+]
+repository = "https://github.com/cipherstash/stack"
+homepage = "https://cipherstash.com"
+keywords = ["cryptography", "security", "databases", "encryption", "sql"]
+categories = ["cryptography", "database"]
+
+# Note that profiles provided in any non-root packages are ignored
+[profile.release]
+strip = true # same as "symbols"
+lto = true   # same as "fat"
+
+[profile.dev]
+incremental = true
+
+[workspace.dependencies]
+# The two published crates of this workspace. Members take them with
+# `workspace = true`.
+# `default-features = false`: a member can add features to a workspace dep
+# but cannot subtract them, and `stack-kms` / `stack-encrypt` need stack-auth
+# without `http`. Consumers that want the default transport re-enable it with
+# `features = ["http"]`.
+stack-auth = { path = "./packages/stack-auth", version = "0.42.3", default-features = false }
+stack-profile = { path = "./packages/stack-profile", version = "0.42.3" }
+
+# Suite crates, from crates.io. Pinned exactly: they release from
+# cipherstash-suite, and stack-auth's API carries their types.
+cts-common = { version = "=0.43.0", default-features = false }
+zerokms-protocol = "=0.12.31"
+recipher = "=0.3.1"
+cllw-ore = { version = "=0.5.0", default-features = false }
+
+# External dependencies, with the suite's feature lists.
+base64 = "0.22.0"
+blake3 = { version = "1.5.4", features = ["zeroize"] }
+jsonwebtoken = { version = "10.3.0", default-features = false, features = ["aws_lc_rs", "use_pem"] }
+lazy_static = "1.4.0"
+# Base miette (the `Diagnostic` derive). The `fancy` renderer is heavy and
+# only needed by binaries; enable it per crate.
+miette = { version = "7.5.0" }
+reqwest = { version = "0.13", default-features = false, features = [
+  "brotli",
+  "gzip",
+  "json",
+  "rustls",
+  "hickory-dns",
+  "stream",
+  "form",
+  "query",
+] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0.132" }
+thiserror = "1.0.56"
+tokio = { version = "1.47.1", features = ["full"] }
+tracing = { version = "0.1", features = ["log"] }
+tracing-subscriber = { version = "0.3", features = [
+  "ansi",
+  "json",
+  "env-filter",
+  "std",
+] }
+url = { version = "2.5.4", features = ["serde"] }
+uuid = { version = "1.8", features = ["v4", "v5", "serde"] }
+# Drop-in `std::time::{Instant, SystemTime}` replacement — polyfills via JS
+# time APIs on wasm32 (stdlib's wasm time module is a panicking stub).
+web-time = "1.1"
+zeroize = { version = "1.8.1", features = ["derive"] }
+# This is needed because lock_api 0.4.6 was breaking things and the branch forces the use of 0.4.12
+temp-env = { git = "https://github.com/cipherstash/temp-env", branch = "main" }
+vitaminc = { version = "0.5.0", features = ["random", "protected", "encrypt"] }
+vitaminc-aead = "0.5.0"
+# The dynamic value model (`FfiValue`) and its FFI transport codec, shared by
+# every language binding. Optional in stack-encrypt (the `dynamic` feature).
+vitaminc-aead-value = "0.5.0"
+vitaminc-encrypt = "0.5.0"
+vitaminc-hmac = "0.5.0"
+vitaminc-prf = "0.5.0"
+vitaminc-protected = "0.5.0"
