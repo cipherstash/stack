@@ -852,7 +852,15 @@ export function reportBlockers(blockers) {
   )
 }
 
-function main() {
+/**
+ * The maps are parameters so the process tests can drive the blocking path
+ * while the real maps are empty. Deliberately not reachable from the command
+ * line: no flag or environment variable changes what a real run freezes.
+ */
+export function main({
+  frozen = FROZEN_PUBLISHERS,
+  artefacts = FROZEN_ARTEFACT_DIGESTS,
+} = {}) {
   const manifests = workspaceManifests()
   // One cache across both questions: `unpublished` and `publishBlockers` ask
   // the registry about overlapping sets, and `npm view` is a network round trip
@@ -892,9 +900,11 @@ function main() {
   // that downloads anything, and there is no point paying for a tarball on a
   // run that is already refusing for a reason a tarball cannot change.
   const blockers = [
-    ...publishBlockers({ manifests, lookup }),
+    ...publishBlockers({ manifests, lookup, frozen }),
     ...frozenBytesSkew({
       manifests,
+      frozen,
+      artefacts,
       inTreeDigest: inTreeArtefactDigest,
       publishedDigest: publishedArtefactDigest,
     }),
@@ -905,7 +915,6 @@ function main() {
   }
 }
 
-// Importable without running: the unit tests exercise the two pure functions
-// above, and neither the workspace scan nor the registry lookups may fire on
-// import.
+// Importable without running: the unit tests exercise the functions above,
+// and neither the workspace scan nor the registry lookups may fire on import.
 if (process.argv[1] === fileURLToPath(import.meta.url)) main()
