@@ -57,7 +57,15 @@ const TEXT_EXT = /\.(md|ya?ml|json|mjs|ts|txt)$/
 // is admitted so a capitalised directory name is checked rather than silently
 // skipped; no package uses one today, which is exactly why nothing noticed
 // (#772 review, finding 15).
-const PACKAGE_REF = /packages\/([a-zA-Z0-9](?:[a-zA-Z0-9._-]*[a-zA-Z0-9])?)/g
+//
+// Packages live under two roots: `packages/` (EQL's subtree, and later the
+// Rust crates) and `languages/typescript/packages/` (every other npm package). The
+// optional prefix is part of the match, so a reference is checked against the
+// root it names: a leftover root-level path to a package that moved under
+// `languages/typescript/` is reported dead, not excused by its new home.
+const PACKAGE_ROOTS = ['packages', 'languages/typescript/packages']
+const PACKAGE_REF =
+  /(?:languages\/typescript\/)?packages\/([a-zA-Z0-9](?:[a-zA-Z0-9._-]*[a-zA-Z0-9])?)/g
 
 // Live packages come from git, not from what is on disk.
 //
@@ -99,7 +107,7 @@ function gitPackagePaths(...args) {
 
 const livePackages = new Set(
   [
-    ...gitPackagePaths('ls-files', '-z', 'packages'),
+    ...gitPackagePaths('ls-files', '-z', ...PACKAGE_ROOTS),
     // Untracked but not ignored. A package scaffolded a minute ago is live
     // even though nothing about it is staged yet, and reporting it as "does
     // not exist" is the sentence-final false alarm all over again, pointed the
@@ -111,18 +119,22 @@ const livePackages = new Set(
       '--others',
       '--exclude-standard',
       '-z',
-      'packages',
+      ...PACKAGE_ROOTS,
     ),
   ]
-    .map((file) => file.split('/')[1])
+    .map((file) => {
+      const root = PACKAGE_ROOTS.findLast((r) => file.startsWith(`${r}/`))
+      const name = file.slice(root.length + 1).split('/')[0]
+      return name && `${root}/${name}`
+    })
     .filter(Boolean),
 )
 
 if (livePackages.size === 0) {
   console.error(
-    'git reported no packages at all under `packages/`. Refusing to run —\n' +
-      'every reference would be flagged. Check that `packages/` is present and\n' +
-      'not wholly ignored.',
+    'git reported no packages at all under `packages/` or\n' +
+      '`languages/typescript/packages/`. Refusing to run — every reference\n' +
+      'would be flagged. Check that both are present and not wholly ignored.',
   )
   process.exit(2)
 }
@@ -181,10 +193,8 @@ for (const target of TARGETS) {
     lines.forEach((line, idx) => {
       PACKAGE_REF.lastIndex = 0
       for (const m of line.matchAll(PACKAGE_REF)) {
-        if (livePackages.has(m[1])) continue
-        offenders.push(
-          `${shown}:${idx + 1}: \`packages/${m[1]}\` does not exist`,
-        )
+        if (livePackages.has(m[0])) continue
+        offenders.push(`${shown}:${idx + 1}: \`${m[0]}\` does not exist`)
       }
     })
   }

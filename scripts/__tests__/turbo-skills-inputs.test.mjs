@@ -1,7 +1,7 @@
 /**
  * A build that copies `skills/` must declare `skills/` as an input.
  *
- * `languages/typescript/packages/cli` and `languages/typescript/packages/wizard` both `cpSync('../../skills',
+ * `languages/typescript/packages/cli` and `languages/typescript/packages/wizard` both `cpSync('../../../../skills',
  * 'dist/skills')` — they consume a directory outside their own package, which
  * turbo's `$TURBO_DEFAULT$` does not cover. On its own that only meant a stale
  * cache entry stayed valid; once `build` declared `outputs: ["dist/**"]`, a
@@ -25,7 +25,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
 
 /** Packages whose tsup config copies the repo-root `skills/` into `dist/`. */
 function packagesCopyingSkills() {
-  const pkgsDir = join(REPO_ROOT, 'packages')
+  const pkgsDir = join(REPO_ROOT, 'languages/typescript/packages')
   const found = []
   for (const entry of readdirSync(pkgsDir, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue
@@ -33,7 +33,7 @@ function packagesCopyingSkills() {
     const pkgJson = join(pkgsDir, entry.name, 'package.json')
     if (!existsSync(tsup) || !existsSync(pkgJson)) continue
     if (
-      !/cpSync\(\s*['"]\.\.\/\.\.\/skills['"]/.test(readFileSync(tsup, 'utf8'))
+      !/cpSync\(\s*['"](?:\.\.\/){4}skills['"]/.test(readFileSync(tsup, 'utf8'))
     )
       continue
     found.push(JSON.parse(readFileSync(pkgJson, 'utf8')).name)

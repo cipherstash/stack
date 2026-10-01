@@ -307,7 +307,7 @@ describe('the `browser` export-condition guard runs everywhere (#804)', () => {
       expect(
         existsSync(join(REPO_ROOT, pkg, relative)),
         `${pkg}/${relative} is missing.\n` +
-          `That file is the only thing stopping a \`browser\` export condition being added to quiet a bundler, which would ship a workspace secret to the browser. If it moved, move this expectation with it — and keep it somewhere \`pnpm --filter ${pkg.replace('packages/', '@cipherstash/')} test\` collects.`,
+          `That file is the only thing stopping a \`browser\` export condition being added to quiet a bundler, which would ship a workspace secret to the browser. If it moved, move this expectation with it — and keep it somewhere \`pnpm --filter ${pkg.replace(/^.*packages\//, '@cipherstash/')} test\` collects.`,
       ).toBe(true)
 
       expect(

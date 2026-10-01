@@ -1,3 +1,3 @@
-- `packages/stack-drizzle` exists.
+- `languages/typescript/packages/stack-drizzle` exists.
 - `packages/stack-forge` does not.
-- `packages/stack` exists.
+- `languages/typescript/packages/stack` exists.
