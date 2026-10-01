@@ -1,8 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { execFileSync } from "child_process";
-import { mkdtempSync, writeFileSync, copyFileSync } from "fs";
-import { join } from "path";
-import { tmpdir } from "os";
+import { execFileSync } from 'child_process'
+import { copyFileSync, mkdtempSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { describe, expect, it } from 'vitest'
 
 // The public type surface is split across two files: `index.d.ts` is
 // hand-written and re-exports the NAPI-RS–generated `native.d.ts`, adding the
@@ -20,10 +20,10 @@ import { tmpdir } from "os";
 // name, through the `package.json` `exports` map. It asserts behaviour (does a
 // consumer compile?) rather than grepping the declaration file for strings.
 
-const packageDir = join(__dirname, "..");
+const packageDir = join(__dirname, '..')
 // Run the locally-installed tsc as a script under the current node, so this is
 // cross-platform (no shell, no `.bin` shim) and pinned to the devDependency.
-const tscBin = require.resolve("typescript/bin/tsc");
+const tscBin = require.resolve('typescript/bin/tsc')
 
 // A consumer that imports — and *uses*, so nothing is elided — the public
 // Result surface: the success types (`TokenResult`), the `AuthFailure`
@@ -71,124 +71,124 @@ async function run() {
 
 void run;
 void _alias;
-`;
+`
 
 // Node16 resolution makes tsc honour the package's `exports` map (the "node"
 // condition resolves to `index.d.ts`), so this verifies the real entrypoint a
 // consumer hits — not just a relative path into the file.
 const baseCompilerOptions = {
-  target: "ES2020",
-  module: "Node16",
-  moduleResolution: "Node16",
+  target: 'ES2020',
+  module: 'Node16',
+  moduleResolution: 'Node16',
   strict: true,
   esModuleInterop: true,
   skipLibCheck: true,
   noEmit: true,
-  baseUrl: ".",
-};
+  baseUrl: '.',
+}
 
 // Type-check CONSUMER against whatever `@cipherstash/auth` resolves to at
 // `pkgDir`. Returns whether tsc accepted it and its combined output.
 function typecheckConsumerAgainst(pkgDir: string): {
-  ok: boolean;
-  output: string;
+  ok: boolean
+  output: string
 } {
-  const dir = mkdtempSync(join(tmpdir(), "cs-auth-tscheck-"));
-  writeFileSync(join(dir, "consumer.ts"), CONSUMER);
+  const dir = mkdtempSync(join(tmpdir(), 'cs-auth-tscheck-'))
+  writeFileSync(join(dir, 'consumer.ts'), CONSUMER)
   writeFileSync(
-    join(dir, "tsconfig.json"),
+    join(dir, 'tsconfig.json'),
     JSON.stringify({
       compilerOptions: {
         ...baseCompilerOptions,
-        paths: { "@cipherstash/auth": [pkgDir] },
+        paths: { '@cipherstash/auth': [pkgDir] },
       },
-      files: ["consumer.ts"],
+      files: ['consumer.ts'],
     }),
-  );
+  )
 
   try {
     const output = execFileSync(
       process.execPath,
-      [tscBin, "-p", join(dir, "tsconfig.json")],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-    );
-    return { ok: true, output };
+      [tscBin, '-p', join(dir, 'tsconfig.json')],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    )
+    return { ok: true, output }
   } catch (err) {
-    const e = err as { stdout?: Buffer | string; stderr?: Buffer | string };
-    return { ok: false, output: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+    const e = err as { stdout?: Buffer | string; stderr?: Buffer | string }
+    return { ok: false, output: `${e.stdout ?? ''}${e.stderr ?? ''}` }
   }
 }
 
-describe("consumer typecheck (index.d.ts -> native.d.ts split)", () => {
-  it("a consumer importing from @cipherstash/auth type-checks", () => {
-    const { ok, output } = typecheckConsumerAgainst(packageDir);
-    expect(ok, `tsc reported type errors:\n${output}`).toBe(true);
-  });
+describe('consumer typecheck (index.d.ts -> native.d.ts split)', () => {
+  it('a consumer importing from @cipherstash/auth type-checks', () => {
+    const { ok, output } = typecheckConsumerAgainst(packageDir)
+    expect(ok, `tsc reported type errors:\n${output}`).toBe(true)
+  })
 
-  it("rejects a consumer when the split is broken (guard has teeth)", () => {
+  it('rejects a consumer when the split is broken (guard has teeth)', () => {
     // Mirror the real package so module resolution is identical (same
     // package.json/`exports`), but replace index.d.ts with a stub that drops
     // the `export * from "./native"` re-export and the hand-written
     // declarations. The consumer must now fail to compile — proving this
     // harness actually goes red when the split breaks, rather than only
     // passing when everything is intact.
-    const brokenPkg = mkdtempSync(join(tmpdir(), "cs-auth-broken-"));
+    const brokenPkg = mkdtempSync(join(tmpdir(), 'cs-auth-broken-'))
     copyFileSync(
-      join(packageDir, "package.json"),
-      join(brokenPkg, "package.json"),
-    );
-    writeFileSync(join(brokenPkg, "index.d.ts"), "export {};\n");
+      join(packageDir, 'package.json'),
+      join(brokenPkg, 'package.json'),
+    )
+    writeFileSync(join(brokenPkg, 'index.d.ts'), 'export {};\n')
 
-    const { ok } = typecheckConsumerAgainst(brokenPkg);
-    expect(ok, "tsc should reject a consumer when the split is broken").toBe(
+    const { ok } = typecheckConsumerAgainst(brokenPkg)
+    expect(ok, 'tsc should reject a consumer when the split is broken').toBe(
       false,
-    );
-  });
-});
+    )
+  })
+})
 
-describe("runtime re-export contract (index.js)", () => {
-  it("OAuthStrategy is the same runtime value as DeviceSessionStrategy", () => {
+describe('runtime re-export contract (index.js)', () => {
+  it('OAuthStrategy is the same runtime value as DeviceSessionStrategy', () => {
     // The typecheck above (noEmit) only proves the *type* alias resolves. The
     // runtime alias `module.exports.OAuthStrategy = native.DeviceSessionStrategy`
     // in index.js is exercised by nothing else, so load the real entrypoint and
     // assert it: drop that line and `import { OAuthStrategy }` silently becomes
     // `undefined` for consumers.
-    const mod = require("../index.js") as typeof import("../index");
-    expect(mod.OAuthStrategy).toBeDefined();
-    expect(mod.OAuthStrategy).toBe(mod.DeviceSessionStrategy);
-  });
-});
+    const mod = require('../index.js') as typeof import('../index')
+    expect(mod.OAuthStrategy).toBeDefined()
+    expect(mod.OAuthStrategy).toBe(mod.DeviceSessionStrategy)
+  })
+})
 
-describe("publish contract (npm pack)", () => {
-  it("packs the declarations required by index.d.ts", () => {
+describe('publish contract (npm pack)', () => {
+  it('packs the declarations required by index.d.ts', () => {
     // index.d.ts does `export * from "./native"`, so native.d.ts MUST ship in
     // the tarball or every published consumer's import dangles on a missing
     // file. The typecheck resolves against the source tree, not the packed
     // output, so this is the only guard on the `files` allowlist.
-    const out = execFileSync("npm", ["pack", "--json", "--dry-run"], {
+    const out = execFileSync('npm', ['pack', '--json', '--dry-run'], {
       cwd: packageDir,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
     const packed = (
       JSON.parse(out) as Array<{ files: Array<{ path: string }> }>
-    )[0].files.map((f) => f.path);
+    )[0].files.map((f) => f.path)
     expect(packed).toEqual(
-      expect.arrayContaining(["index.d.ts", "native.d.ts"]),
-    );
-  });
+      expect.arrayContaining(['index.d.ts', 'native.d.ts']),
+    )
+  })
 
-  it("bundles the LICENSE (README links to it; repo URL is private)", () => {
+  it('bundles the LICENSE (README links to it; repo URL is private)', () => {
     // The README's license link points at the private repo, unreachable from
     // npmjs.org — so a copy must ride in the tarball. Guard the `files` entry.
-    const out = execFileSync("npm", ["pack", "--json", "--dry-run"], {
+    const out = execFileSync('npm', ['pack', '--json', '--dry-run'], {
       cwd: packageDir,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    });
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
     const packed = (
       JSON.parse(out) as Array<{ files: Array<{ path: string }> }>
-    )[0].files.map((f) => f.path);
-    expect(packed).toContain("LICENSE");
-  });
-});
+    )[0].files.map((f) => f.path)
+    expect(packed).toContain('LICENSE')
+  })
+})

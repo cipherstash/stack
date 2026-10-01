@@ -4,13 +4,13 @@
 // payload segment and deserialises it — so a JWT only needs three segments and a
 // well-formed payload, hence zero crypto deps.
 
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
-export const WORKSPACE_ID = "ZVATKW3VHMFG27DY";
+export const WORKSPACE_ID = 'ZVATKW3VHMFG27DY'
 
 function base64url(value: unknown): string {
-  return Buffer.from(JSON.stringify(value)).toString("base64url");
+  return Buffer.from(JSON.stringify(value)).toString('base64url')
 }
 
 /**
@@ -20,20 +20,20 @@ function base64url(value: unknown): string {
  * signature segments just have to be present for the three-segment check.
  */
 export function mintJwt(claims: Record<string, unknown> = {}): string {
-  const now = Math.floor(Date.now() / 1000);
-  const header = base64url({ alg: "HS256", typ: "JWT" });
+  const now = Math.floor(Date.now() / 1000)
+  const header = base64url({ alg: 'HS256', typ: 'JWT' })
   const payload = base64url({
-    iss: "https://cts.example.com/",
-    sub: "CS|test-user",
-    aud: "test-audience",
+    iss: 'https://cts.example.com/',
+    sub: 'CS|test-user',
+    aud: 'test-audience',
     iat: now,
     exp: now + 3600,
     workspace: WORKSPACE_ID,
-    org_id: "org_test_default",
-    scope: "",
+    org_id: 'org_test_default',
+    scope: '',
     ...claims,
-  });
-  return `${header}.${payload}.sig`;
+  })
+  return `${header}.${payload}.sig`
 }
 
 /**
@@ -51,20 +51,20 @@ export function saveTestToken(
   profileDir: string,
   zerokmsBaseUrl: string,
 ): void {
-  const now = Math.floor(Date.now() / 1000);
+  const now = Math.floor(Date.now() / 1000)
   const jwt = mintJwt({
-    aud: "legacy-aud-value",
+    aud: 'legacy-aud-value',
     services: { zerokms: zerokmsBaseUrl },
-  });
+  })
   const tokenJson = {
     access_token: jwt,
-    token_type: "Bearer",
+    token_type: 'Bearer',
     expires_at: now + 3600,
-  };
-  const wsDir = join(profileDir, "workspaces", WORKSPACE_ID);
-  mkdirSync(wsDir, { recursive: true });
-  writeFileSync(join(profileDir, "current_workspace"), WORKSPACE_ID);
-  writeFileSync(join(wsDir, "auth.json"), JSON.stringify(tokenJson), {
+  }
+  const wsDir = join(profileDir, 'workspaces', WORKSPACE_ID)
+  mkdirSync(wsDir, { recursive: true })
+  writeFileSync(join(profileDir, 'current_workspace'), WORKSPACE_ID)
+  writeFileSync(join(wsDir, 'auth.json'), JSON.stringify(tokenJson), {
     mode: 0o600,
-  });
+  })
 }
