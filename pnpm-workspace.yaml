@@ -6,6 +6,12 @@ packages:
   # glob above already covers the wrapper itself; these are nested a level
   # deeper and need their own entry.
   - languages/typescript/packages/protect-ffi/platforms/*
+  # The node bindings imported from cipherstash-suite. `auth`, `profile` and
+  # `stack-auth-wasm` sit one level down and are already selected by the first
+  # glob; the per-platform packages of `@cipherstash/auth` and
+  # `@cipherstash/profile` are a level deeper, like protect-ffi's.
+  - languages/typescript/packages/auth/platforms/*
+  - languages/typescript/packages/profile/platforms/*
   # @cipherstash/eql, from the encrypt-query-language subtree. The subtree is
   # imported at a VERBATIM prefix so its repo-root-relative paths keep resolving
   # (mise tasks, Doxyfile, sync-generated.mjs), which puts the npm package two

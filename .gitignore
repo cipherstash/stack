@@ -91,3 +91,22 @@ sql/cipherstash-*.sql
 .cipherstash/
 
 notes/
+
+# Rust crates imported from cipherstash-suite (packages/stack-*).
+# cargo-fuzz: crash artifacts, coverage data, and the corpus that grows during
+# a campaign. Ignore the generated corpus entries but keep the hand-written seed
+# corpora (committed as `valid-*`) tracked. The fuzz crates' Cargo.lock files
+# are tracked here, unlike in the suite, so `--locked` and Dependabot see them.
+packages/*/fuzz/artifacts/
+packages/*/fuzz/coverage/
+packages/*/fuzz/corpus/*/*
+!packages/*/fuzz/corpus/*/valid-*
+# cargo-mutants output (`mise run mutants:<crate>` writes it to the cwd).
+mutants.out/
+
+# The Go module's embedded WASI guests: build outputs of `mise run
+# wasm:guest:build` and `mise run wasm:auth-guest:build`.
+languages/golang/stackencrypt/wasm/*.wasm
+languages/golang/stackauth/wasm/*.wasm
+languages/golang/stackencrypt/wasm/*.sha256
+languages/golang/stackauth/wasm/*.sha256

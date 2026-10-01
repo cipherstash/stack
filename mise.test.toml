@@ -1,0 +1,19 @@
+# The `test` environment, for `mise x --env test -- …` in the root and
+# stack-* tasks (test:doc, crap:*). Carried from cipherstash-suite, keeping
+# only what the stack crates read; the suite's CTS, ZeroKMS and database
+# settings serve services this repository does not run.
+[tools]
+"cargo:cargo-nextest" = "latest"
+
+[env]
+# Annoyingly if you pass --env test to mise it doesn't set this automatically
+MISE_ENV = "test"
+
+# Local service hosts, as in the suite. The stack-auth tests set their own
+# values with temp-env where they depend on one.
+CS_CTS_HOST = "http://localhost:3001"
+CS_IDP_HOST = "http://localhost:3030"
+CS_IDP_CLIENT_ID = "admin_test_client_id"
+CS_VITUR_HOST = "http://localhost:3002"
+CS_TEST_ZEROKMS_HOST = "http://localhost:3002"
+CS_REGION = "ap-southeast-2.aws"

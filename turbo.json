@@ -56,6 +56,15 @@
       "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/skills/**", ".env*"],
       "env": ["STASH_POSTHOG_KEY"]
     },
+    // The @cipherstash/auth napi binding. Its `build:native` is
+    // `napi build --release`, which needs Rust, so it is not the package's
+    // `build`: the root `build` and `test` never invoke cargo (the same split
+    // protect-ffi uses). `test` runs vitest and Biome against a binding built
+    // beforehand; `test:cargo` runs the crate's own tests. `wasm/**` is the
+    // output of `build:wasm`, cached with the native build it ships beside.
+    "@cipherstash/auth#build:native": {
+      "outputs": ["*.node", "native.d.ts", "wasm/**"]
+    },
     // Typechecks `languages/typescript/packages/stack/dist-types` against the BUILT declarations, so
     // it must run after `build` — unlike `test:types`, which reads source.
     "test:types:dist": {

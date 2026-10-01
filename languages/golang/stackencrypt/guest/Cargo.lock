@@ -327,6 +327,8 @@ dependencies = [
 [[package]]
 name = "cipherstash-config"
 version = "0.42.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8d098935e395d7346d0cdc8cdf3ed9674ab03fa8b415e828d02e65c81836a73c"
 dependencies = [
  "bitflags",
  "serde",
@@ -336,7 +338,9 @@ dependencies = [
 
 [[package]]
 name = "cllw-ore"
-version = "0.4.3"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "476f300d37a5029d3d9dd57145d4db50a23f40ae9b4d1374c44543978b906191"
 dependencies = [
  "blake3",
  "hex",
@@ -459,7 +463,9 @@ dependencies = [
 
 [[package]]
 name = "cts-common"
-version = "0.42.3"
+version = "0.43.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b9cb0f5ffa463e8facbe6ad78cfe925d132a051c6b1c9a5da2f3961296b7e632"
 dependencies = [
  "arrayvec",
  "base32",
@@ -1632,7 +1638,9 @@ dependencies = [
 
 [[package]]
 name = "recipher"
-version = "0.3.0"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e14e156e2d485b51cc67c19241e7d81ad524bda9fd4f77791b698ab10c8e26e9"
 dependencies = [
  "aes",
  "cmac",
@@ -2944,7 +2952,9 @@ dependencies = [
 
 [[package]]
 name = "zerokms-protocol"
-version = "0.12.30"
+version = "0.12.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c28e88315a5109d0a1e7ee4b7b4b8776a0bff5f5b139ae83960a3debe84e92e"
 dependencies = [
  "base64",
  "cipherstash-config",

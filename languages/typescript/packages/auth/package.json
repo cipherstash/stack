@@ -66,20 +66,19 @@
     "wasm/"
   ],
   "scripts": {
-    "build": "napi build --release --dts native.d.ts",
+    "build:native": "napi build --release --dts native.d.ts",
     "build:debug": "napi build --dts native.d.ts",
-    "build:wasm": "cd ../wasm && wasm-pack build --target bundler --out-dir ../node/wasm && rm -f ../node/wasm/README.md ../node/wasm/LICENSE ../node/wasm/.gitignore && echo '{\"type\":\"module\"}' > ../node/wasm/package.json && node ../node/scripts/inline-wasm.mjs",
-    "test": "npm run build:debug && vitest run",
-    "format": "npx --yes @biomejs/biome@2.3.4 format --write .",
-    "format:check": "npx --yes @biomejs/biome@2.3.4 ci ."
+    "build:wasm": "cd ../stack-auth-wasm && wasm-pack build --target bundler --out-dir ../auth/wasm && rm -f ../auth/wasm/README.md ../auth/wasm/LICENSE ../auth/wasm/.gitignore && echo '{\"type\":\"module\"}' > ../auth/wasm/package.json && node ../auth/scripts/inline-wasm.mjs",
+    "test": "vitest run && biome check .",
+    "test:cargo": "cargo test --locked"
   },
   "peerDependencies": {
-    "@cipherstash/auth-darwin-x64": "0.40.0",
-    "@cipherstash/auth-darwin-arm64": "0.40.0",
-    "@cipherstash/auth-linux-x64-gnu": "0.40.0",
-    "@cipherstash/auth-linux-arm64-gnu": "0.40.0",
-    "@cipherstash/auth-linux-x64-musl": "0.40.0",
-    "@cipherstash/auth-win32-x64-msvc": "0.40.0"
+    "@cipherstash/auth-darwin-x64": "workspace:*",
+    "@cipherstash/auth-darwin-arm64": "workspace:*",
+    "@cipherstash/auth-linux-x64-gnu": "workspace:*",
+    "@cipherstash/auth-linux-arm64-gnu": "workspace:*",
+    "@cipherstash/auth-linux-x64-musl": "workspace:*",
+    "@cipherstash/auth-win32-x64-msvc": "workspace:*"
   },
   "peerDependenciesMeta": {
     "@cipherstash/auth-darwin-x64": {

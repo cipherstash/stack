@@ -1,11 +1,10 @@
 ["test:integration:stack-profile"]
 description = "Run stack-profile Node.js integration tests"
-dir = "{{config_root}}/packages/stack-profile/node"
+dir = "{{config_root}}/languages/typescript/packages/profile"
 run = [
-  "npm install",
   "cargo build -p stack-profile-node",
-  "cp ../../../target/debug/libstack_profile_node.dylib stack-profile-node.node 2>/dev/null || cp ../../../target/debug/libstack_profile_node.so stack-profile-node.node",
-  "npx vitest run",
+  "cp ../../../../target/debug/libstack_profile_node.dylib stack-profile-node.node 2>/dev/null || cp ../../../../target/debug/libstack_profile_node.so stack-profile-node.node",
+  "pnpm exec vitest run",
 ]
 
 # Rustdoc with warnings as errors: a broken intra-doc link or a rustdoc
