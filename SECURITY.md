@@ -112,7 +112,7 @@ The following are **in scope**:
 
 The following are **out of scope**:
 
-- Example applications in the `examples` dir (though we are still grateful for any relevant disclosures there)
+- Example applications in the `languages/typescript/examples` dir (though we are still grateful for any relevant disclosures there)
 - Social engineering, physical attacks, or denial-of-service
 - Attacks requiring privileged access to developer machines or CI/CD infrastructure
 

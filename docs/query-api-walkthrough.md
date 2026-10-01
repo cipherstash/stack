@@ -74,4 +74,4 @@ flowchart LR
 - **`cipherstashclient`** = the CipherStash Client **Rust SDK**, compiled via Neon into the platform `.node` binary inside `@cipherstash/protect-ffi`. It performs the actual crypto and talks to ZeroKMS.
 - **Result shape:** `EncryptedQueryResult` (`types.ts:175`); shaped by `formatEncryptedResult(..., returnType)` (`eql` vs raw).
 - **Version:** `languages/typescript/packages/stack/package.json` pins `@cipherstash/protect-ffi@0.30.0` (`stack-drizzle` and `stack-supabase` pin the same version — they must move in lockstep).
-- **Paths:** rows 1–3 and the notes above are relative to `languages/typescript/packages/stack/src/`; row 1a is rooted at `packages/`; rows 4–5 are inside the installed `@cipherstash/protect-ffi`. Line numbers drift — search the symbol, don't trust the offset.
+- **Paths:** rows 1–3 and the notes above are relative to `languages/typescript/packages/stack/src/`; row 1a is rooted at `languages/typescript/packages/`; rows 4–5 are inside the installed `@cipherstash/protect-ffi`. Line numbers drift — search the symbol, don't trust the offset.
