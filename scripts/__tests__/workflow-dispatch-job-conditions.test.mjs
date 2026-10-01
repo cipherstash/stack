@@ -59,6 +59,8 @@ const EXPECTED_DISPATCHABLE = [
   // it is the ONLY way to run it, and it exists to be pointed at a Version
   // Packages branch before the irreversible publish.
   '.github/workflows/ffi-preflight.yml',
+  // The same dry run for the @cipherstash/auth line.
+  '.github/workflows/auth-preflight.yml',
   '.github/workflows/integration-protect-ffi.yml',
   // Path-filtered to the release machinery, so dispatch is how it gets run
   // against a branch that changed something the filter does not name.
@@ -412,8 +414,9 @@ const PERMISSIVE_NEEDS = {
   classify: { outputs: { mode: 'production', version: '3.0.6' } },
   'eql-armed': { outputs: { armed: 'true' } },
   'crates-armed': { outputs: { armed: 'true' } },
-  gate: { result: 'success', outputs: { ffi: 'true' } },
+  gate: { result: 'success', outputs: { ffi: 'true', auth: 'true' } },
   'publish-ffi': { result: 'success' },
+  'publish-auth': { result: 'success' },
   release: {
     result: 'success',
     outputs: {

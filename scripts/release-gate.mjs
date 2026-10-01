@@ -176,9 +176,10 @@ export const FROZEN_PUBLISHERS = new Map([
   ].map((name) => [
     name,
     'Still published from cipherstash/cipherstash-suite — npm trusted publishing ' +
-      'for the seven @cipherstash/auth packages names that repository, and ' +
-      '`release.yml` here has no job that builds the native binaries. Repointing ' +
-      'is the arming PR (PR E) of the stack-* crates import.',
+      'for the seven @cipherstash/auth packages names that repository, not this ' +
+      'one. `release.yml` here builds and publishes them (`publish-auth`), but only ' +
+      'once these entries are gone. Repointing is the arming PR (PR E) of the ' +
+      'stack-* crates import.',
   ]),
 ])
 

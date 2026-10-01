@@ -44,6 +44,8 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 const PUBLISH_OIDC_JOBS = [
   // Uploads the seven prebuilt FFI tarballs. Publishes, so it needs OIDC.
   '.github/workflows/release.yml / publish-ffi',
+  // The same for the seven prebuilt @cipherstash/auth tarballs.
+  '.github/workflows/release.yml / publish-auth',
   // `changeset publish` for the JS packages, plus the Version Packages PR.
   '.github/workflows/release.yml / release',
   // The EQL prerelease path publishes @cipherstash/eql directly rather than

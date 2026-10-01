@@ -67,9 +67,9 @@ for (const { file, packages } of offenders) {
 console.error(
   '\nThese seven packages live in this repo but are still PUBLISHED from\n' +
     'cipherstash/cipherstash-suite — npm trusted publishing has not been\n' +
-    'repointed yet, and this repository has no job that builds their native\n' +
-    'binaries. Releasing a bumped version from here is blocked by\n' +
-    '`release:gate`, and that block stops every other release with it.\n\n' +
+    'repointed yet, so `release.yml` here cannot publish them. Releasing a\n' +
+    'bumped version from here is blocked by `release:gate`, and that block\n' +
+    'stops every other release with it.\n\n' +
     'Remove the changeset. Merges that touch the auth packages are paused\n' +
     'until the arming PR (PR E of the stack-* crates import), which repoints\n' +
     'trusted publishing, deletes this script and writes the changesets. If a\n' +

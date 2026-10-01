@@ -17,6 +17,11 @@ const TARGETS = process.argv.slice(2).length
       // calls it too — cannot become a way to build these artifacts under
       // different rules.
       '.github/workflows/_build-ffi-artifacts.yml',
+      // The @cipherstash/auth line, for the same reasons: the reusable build
+      // publishes through release.yml's publish-auth, and its dry-run caller
+      // must not build the same tarballs under other rules.
+      '.github/workflows/_build-auth-artifacts.yml',
+      '.github/workflows/auth-preflight.yml',
       // The EQL release line. The two reusables are reached from release.yml
       // anyway and named for the same reason `_build-ffi-artifacts.yml` is: a
       // second caller must not become a way to build them under other rules.

@@ -16,10 +16,15 @@ name: Release JS
 # See https://docs.npmjs.com/trusted-publishers#supported-cicd-providers
 # Enforced by scripts/__tests__/workflow-publish-permissions.test.mjs.
 #
-# THREE RELEASE LINES, ONE FILE: the JS packages (changesets), the seven FFI
-# tarballs, and the EQL line ported here from packages/eql/.github/. They share
-# a file because npm trusted publishing binds to a repository AND a workflow
-# filename, so every npm publish in this repository has to happen here.
+# FOUR RELEASE LINES, ONE FILE: the JS packages (changesets), the seven FFI
+# tarballs, the seven @cipherstash/auth tarballs, and the EQL line ported here
+# from packages/eql/.github/. They share a file because npm trusted publishing
+# binds to a repository AND a workflow filename, so every npm publish in this
+# repository has to happen here.
+#
+# The auth jobs are INERT while the seven auth packages are in
+# FROZEN_PUBLISHERS: the gate reports `auth=true` only for an unpublished auth
+# version, and for a frozen package that is a blocker, so `gate` fails first.
 #
 # `workflow_dispatch` came with the EQL port (its prerelease path is dispatched
 # against a release branch). A dispatch reaches every job in the file, so
@@ -165,12 +170,14 @@ jobs:
     name: What needs publishing?
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # `ffi` only. The gate also computes `js`, and it is in the job log, but no
-    # job can be keyed on it: `release` below has to run on every push to main
-    # to open and update the Version Packages PR, published or not. Declaring
-    # it as an output read nothing and implied a gate that does not exist.
+    # `ffi` and `auth` only. The gate also computes `js`, and it is in the job
+    # log, but no job can be keyed on it: `release` below has to run on every
+    # push to main to open and update the Version Packages PR, published or
+    # not. Declaring it as an output read nothing and implied a gate that does
+    # not exist.
     outputs:
       ffi: ${{ steps.gate.outputs.ffi }}
+      auth: ${{ steps.gate.outputs.auth }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -340,19 +347,127 @@ jobs:
           # complete case a no-op.
           gh release upload "$rel" ffi-dist/*.tgz --repo "$REPO" --clobber
 
+  auth-artifacts:
+    name: Build auth artifacts
+    needs: [classify, gate]
+    if: needs.classify.outputs.mode == 'production' && needs.gate.outputs.auth == 'true'
+    uses: ./.github/workflows/_build-auth-artifacts.yml
+    with:
+      ref: ${{ github.sha }}
+
+  # The publish-ffi pattern, for the seven @cipherstash/auth tarballs. BEFORE
+  # `changeset publish` for the same reason: changesets would pack the platform
+  # workspaces, which hold no .node binary. Once these are on npm, changesets
+  # skips all seven as already published.
+  publish-auth:
+    name: Publish auth packages
+    needs: [classify, gate, auth-artifacts]
+    if: needs.classify.outputs.mode == 'production' && needs.gate.outputs.auth == 'true'
+    # GitHub-hosted: npm rejects provenance from a self-hosted runner (E422).
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # the seven git tags and the GitHub release
+      id-token: write # npm OIDC trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: auth-tarballs
+          path: auth-dist
+
+      # No `registry-url:`: it writes an `_authToken` line that shadows OIDC.
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@^11.5.1
+
+      # PLATFORM PACKAGES FIRST, WRAPPER LAST, so no install ever resolves a
+      # wrapper whose platform peers are missing. Idempotent per tarball.
+      - name: Publish the tarballs
+        id: publish
+        run: |
+          set -euo pipefail
+          meta () { tar xzOf "$1" package/package.json | node -p \
+            "JSON.parse(require('node:fs').readFileSync(0,'utf8')).$2"; }
+
+          shopt -s nullglob
+          wrapper=""
+          platforms=()
+          for tgz in auth-dist/*.tgz ; do
+            if [ "$(meta "$tgz" name)" = "@cipherstash/auth" ]; then
+              wrapper="$tgz"
+            else
+              platforms+=("$tgz")
+            fi
+          done
+          test -n "$wrapper" || { echo "::error::no wrapper tarball"; exit 1; }
+          test "${#platforms[@]}" -eq 6 || {
+            echo "::error::expected 6 platform tarballs, got ${#platforms[@]}"; exit 1; }
+
+          published=()
+          for tgz in "${platforms[@]}" "$wrapper" ; do
+            name=$(meta "$tgz" name)
+            version=$(meta "$tgz" version)
+            if npm view "${name}@${version}" version >/dev/null 2>&1; then
+              echo "${name}@${version} already published — skipping"
+            else
+              # "./" is load-bearing; see publish-ffi.
+              npm publish --access public --provenance "./$tgz"
+            fi
+            published+=("${name}@${version}")
+          done
+          printf '%s\n' "${published[@]}" > published.txt
+          echo "version=$(meta "$wrapper" version)" >> "$GITHUB_OUTPUT"
+
+      # Changesets tags only what it published itself, so without this an auth
+      # release has no git tag and no GitHub release. The same idempotent tag
+      # check as publish-ffi.
+      - name: Tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ steps.publish.outputs.version }}
+        run: |
+          set -euo pipefail
+          while read -r tag ; do
+            at=$(gh api "repos/${REPO}/git/matching-refs/tags/${tag}" \
+              --jq ".[] | select(.ref == \"refs/tags/${tag}\") | .object.sha" 2>/dev/null || true)
+            if [ -n "$at" ]; then
+              test "$at" = "$GITHUB_SHA" || {
+                echo "::error::tag ${tag} points at ${at}, not ${GITHUB_SHA}"; exit 1; }
+              echo "tag ${tag} already at this commit — skipping"
+            else
+              gh api -X POST "repos/${REPO}/git/refs" \
+                -f ref="refs/tags/${tag}" -f sha="$GITHUB_SHA" >/dev/null
+              echo "created ${tag}"
+            fi
+          done < published.txt
+
+          rel="@cipherstash/auth@${VERSION}"
+          if ! gh release view "$rel" --repo "$REPO" >/dev/null 2>&1; then
+            gh release create "$rel" --repo "$REPO" --verify-tag \
+              --title "auth v${VERSION}" \
+              --notes "@cipherstash/auth native bindings ${VERSION}. Published: $(tr '\n' ' ' < published.txt)"
+          fi
+          gh release upload "$rel" auth-dist/*.tgz --repo "$REPO" --clobber
+
   release:
     name: Release
-    needs: [classify, gate, publish-ffi]
-    # `always()` because `publish-ffi` is SKIPPED for an ordinary JS release,
-    # and a skipped dependency would otherwise skip this job too.
+    needs: [classify, gate, publish-ffi, publish-auth]
+    # `always()` because `publish-ffi` and `publish-auth` are SKIPPED for an
+    # ordinary JS release, and a skipped dependency would otherwise skip this
+    # job too.
     #
     # The condition has to tell "skipped because FFI was unnecessary" apart from
     # "skipped because its prerequisite failed". If `ffi-artifacts` fails,
     # `publish-ffi` is SKIPPED rather than failed — so the obvious
     # `result != 'failure'` check passes, and `changeset publish` goes on to
     # pack and publish the platform workspaces without their binaries. Keyed on
-    # the gate's own output instead: if FFI was in scope, its publish must have
-    # SUCCEEDED.
+    # the gate's own outputs instead: if FFI or auth was in scope, its publish
+    # must have SUCCEEDED.
     if: >-
       always() &&
       needs.classify.outputs.mode == 'production' &&
@@ -360,6 +475,10 @@ jobs:
       (
         needs.gate.outputs.ffi != 'true' ||
         needs.publish-ffi.result == 'success'
+      ) &&
+      (
+        needs.gate.outputs.auth != 'true' ||
+        needs.publish-auth.result == 'success'
       )
     # GitHub-hosted (not Blacksmith): npm provenance attestations, which are
     # generated automatically by OIDC trusted publishing, are only accepted

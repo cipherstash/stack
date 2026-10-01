@@ -1,6 +1,11 @@
 {
   "name": "@cipherstash/auth-win32-x64-msvc",
   "version": "0.44.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cipherstash/stack.git",
+    "directory": "languages/typescript/packages/auth/platforms/win32-x64-msvc"
+  },
   "os": [
     "win32"
   ],

@@ -61,6 +61,26 @@ describe('lint-release.yml lints exactly what it triggers on', () => {
     }
   })
 
+  it('lints every reusable workflow release.yml calls, and their other callers', () => {
+    // The two lists agreeing says nothing about whether a NEW release workflow
+    // made it into either. Derived instead: whatever release.yml builds with is
+    // release machinery, and so is any other workflow that calls the same
+    // builder (a preflight), because it runs the same build by another route.
+    const localUses = (relPath) =>
+      Object.values(readWorkflow(relPath)?.jobs ?? {})
+        .map((job) => job?.uses)
+        .filter((uses) => typeof uses === 'string' && uses.startsWith('./'))
+        .map((uses) => uses.slice(2))
+    const builders = new Set(localUses(`${WORKFLOW_DIR}/release.yml`))
+    const callers = workflowFiles().filter((relPath) =>
+      localUses(relPath).some((uses) => builders.has(uses)),
+    )
+    expect(builders.size).toBeGreaterThan(0)
+    expect(
+      [...builders, ...callers].filter((relPath) => !linted.includes(relPath)),
+    ).toEqual([])
+  })
+
   it('lints itself', () => {
     // The gate has to be inside its own scope: a shell or syntax error
     // introduced HERE is otherwise checked by nothing.

@@ -184,8 +184,8 @@ they always version together, so a bump to any one of them bumps all six.
 developed here but still published from `cipherstash/cipherstash-suite`. Until
 publishing moves here, do not add a changeset for them: `pnpm run
 lint:auth-changeset` fails on one, and `release:gate` blocks any version npm
-does not have. Once publishing moves, the seven release together as their own
-`fixed` group.
+does not have. They are already their own `fixed` group in
+`.changeset/config.json`, so once publishing moves the seven release together.
 
 Two Rust crates, `stack-auth` and `stack-profile`, are released to crates.io,
 in one version group of their own, by release-plz from the root Cargo

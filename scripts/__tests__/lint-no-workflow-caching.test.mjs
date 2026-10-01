@@ -17,6 +17,8 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
 const TARGET_WORKFLOWS = [
   '.github/workflows/release.yml',
   '.github/workflows/_build-ffi-artifacts.yml',
+  '.github/workflows/_build-auth-artifacts.yml',
+  '.github/workflows/auth-preflight.yml',
   // The EQL release line. `scripts/__tests__/eql-suite-ci.test.mjs` reads the
   // script's real list too, and uses it to exempt these workflows from the
   // rust-cache requirement — the two rules point opposite ways for a job that

@@ -783,6 +783,23 @@ describe('the gate actually blocks the publish', () => {
         '`always()` a failed gate would otherwise still reach `changeset publish`.',
     ).toMatch(/needs\.gate\.result\s*==\s*'success'/)
   })
+
+  it('builds and publishes auth only on the gate, and holds the release for it', () => {
+    // The `publish-ffi` shape: a skipped `publish-auth` whose build failed must
+    // not read as "auth was not in scope", or `changeset publish` packs the
+    // auth platform workspaces with no binary.
+    expect(workflow.jobs.gate.outputs.auth).toBeDefined()
+    for (const name of ['auth-artifacts', 'publish-auth']) {
+      expect(String(workflow.jobs[name].if)).toContain(
+        "needs.gate.outputs.auth == 'true'",
+      )
+    }
+    const release = workflow.jobs.release
+    expect(release.needs).toContain('publish-auth')
+    expect(String(release.if).replace(/\s+/g, ' ')).toContain(
+      "needs.gate.outputs.auth != 'true' || needs.publish-auth.result == 'success'",
+    )
+  })
 })
 
 /**

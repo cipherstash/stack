@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 import { FROZEN_PUBLISHERS, workspaceManifests } from '../release-gate.mjs'
+import { REPO_ROOT } from './lib/repo-root.mjs'
 
 const SCRIPT = resolve(
   fileURLToPath(import.meta.url),
@@ -120,9 +121,10 @@ describe('lint-no-auth-changeset', () => {
   })
 
   it('guards exactly the frozen auth packages, which are the auth workspace packages', () => {
-    // Three lists name the same seven packages until PR E: this guard, the
-    // release gate's freeze, and the workspace. Drift between any two lets a
-    // platform package through while the others still treat it as frozen.
+    // Four lists name the same seven packages until PR E: this guard, the
+    // release gate's freeze, the workspace, and the changesets `fixed` group.
+    // Drift between any two lets a platform package through while the others
+    // still treat it as frozen, or version it apart from the wrapper.
     const guarded = [
       ...readFileSync(SCRIPT, 'utf8').matchAll(
         /'(@cipherstash\/auth(?:-[a-z0-9-]+)?)'/g,
@@ -138,5 +140,11 @@ describe('lint-no-auth-changeset', () => {
     expect([...new Set(guarded)].sort()).toHaveLength(7)
     expect([...new Set(guarded)].sort()).toEqual([...frozen].sort())
     expect([...new Set(guarded)].sort()).toEqual([...workspace].sort())
+
+    const { fixed } = JSON.parse(
+      readFileSync(join(REPO_ROOT, '.changeset/config.json'), 'utf8'),
+    )
+    const group = fixed.find((names) => names.includes('@cipherstash/auth'))
+    expect([...(group ?? [])].sort()).toEqual([...new Set(guarded)].sort())
   })
 })
