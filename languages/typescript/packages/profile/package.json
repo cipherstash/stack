@@ -1,6 +1,7 @@
 {
   "name": "@cipherstash/profile",
   "version": "0.35.0",
+  "private": true,
   "main": "index.js",
   "types": "index.d.ts",
   "napi": {

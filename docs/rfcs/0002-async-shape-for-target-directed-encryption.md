@@ -443,7 +443,7 @@ outputs — is a future `Prf` trait extension, and should be designed with the
 | -- | -- |
 | `src/target/{mod,pending,request}.rs` | `EncryptTarget` + GAT; `Pending` (with the wasm32 `Send` cfg-split carried over from `PendingEncrypt`); drop `PendingEncrypt` alias, `EncryptFrom::Error`, `TargetError`. Split in review so `Pending` and `Request`/`Responses` carry their own unit tests |
 | `src/sem/mod.rs` | four visitors in, four `derive_*` out; validation moves ahead of the request; ORE/OPE encrypt inside the visitor (`Send + 'static` sources) |
-| `packages/cllw-ore` | `CllwOreEncrypt`/`CllwOpeEncrypt` for `String` and `Vec<u8>`, delegating to the borrowed impls |
+| `cllw-ore` (in cipherstash-suite) | `CllwOreEncrypt`/`CllwOpeEncrypt` for `String` and `Vec<u8>`, delegating to the borrowed impls |
 | `src/cipher.rs` | `StackCipher: EncryptTarget`; `dispatch`; `Error::Term`/`Error::Other`/`Error::ResponseShape` |
 | `examples/`, `tests/` | column encrypted as a `Vec`, not a loop; `try_join!` gone; tokio dev-dep drops out of the record shape |
 
@@ -631,8 +631,8 @@ attribute name lined up with neither derive. Flipping the decrypt trait (item
 Three homes, by durability:
 
 - **Trait invariants** (§5, and "the visitor shapes, the backend only
-  produces blocks") → rustdoc on `Prf::Ok<T>` in `vitaminc/packages/prf/src/traits.rs`,
-  and on `Cipher::Ok` in `vitaminc/packages/aead/src/cipher.rs`. A backend
+  produces blocks") → rustdoc on `Prf::Ok<T>` in `src/traits.rs` of vitaminc's `prf` crate,
+  and on `Cipher::Ok` in `src/cipher.rs` of its `aead` crate. A backend
   author reads the trait, not this repo's RFC directory. These are the two
   places where getting it wrong is invisible until it is expensive.
 - **The reasoning** (§2–§4) → this RFC. It explains why the obvious
