@@ -71,6 +71,8 @@ If these variables are missing, tests that require live encryption will fail or 
 
 ## Repository Layout
 
+Every npm package except EQL lives under `languages/typescript/`: packages in `languages/typescript/packages/`, example apps in `languages/typescript/examples/`. The root `packages/` holds EQL's subtree (and, later, Rust crates). The JavaScript root stays at the repository root: `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `turbo.json`, `.changeset/`, `biome.json`, `tsconfig.json` and `vitest.shared.ts`.
+
 - `languages/typescript/packages/stack`: Main package (`@cipherstash/stack`) containing the encryption client and all integrations
   - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/identity`, `@cipherstash/stack/schema`, `@cipherstash/stack/eql/v3`, `@cipherstash/stack/v3`, `@cipherstash/stack/types`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/encryption`, `@cipherstash/stack/errors`, `@cipherstash/stack/adapter-kit`, `@cipherstash/stack/wasm-inline`, `@cipherstash/stack/diagnostics` (the Drizzle and Supabase integrations moved to their own packages — see below)
 - `languages/typescript/packages/cli`: The `stash` CLI — auth, init, encryption schema, and database setup (`stash eql install`). Has its own `AGENTS.md`.
@@ -100,7 +102,8 @@ other is `packages/eql/crates`), and its scripts are split so a Rust toolchain
 stays optional for everyone else.
 
 - **The default `test` and `build` never invoke cargo.** Root `pnpm test` runs
-  `turbo test --filter './languages/typescript/packages/**'`, which reaches this package — so a cargo
+  `turbo test --filter './languages/typescript/packages/**' --filter
+  './packages/**'`, which reaches this package — so a cargo
   process on that path is a Rust toolchain on every contributor's machine.
   `test` is the JS chain; `build` is `tsc`.
 - **CI does build the binding, in the jobs that need it.** That is the limit of
@@ -228,7 +231,8 @@ EQL versions installed** in the database.
   EMITS it — and it would have disagreed in a database, not in CI.
 
   The cost of membership: root `pnpm test` is `turbo test --filter
-  './languages/typescript/packages/**'`, which now reaches this package. It is kept out by **naming no
+  './languages/typescript/packages/**' --filter './packages/**'`, which now
+  reaches this package. It is kept out by **naming no
   live script after a turbo task** — the suite's runners are `vitest:live` and
   `vitest:live:coverage`, which `turbo.json` knows nothing about. `test` is the
   obvious trap and `test:integration` is the less obvious one (a real turbo task,
@@ -299,14 +303,17 @@ monorepo, which is where the silent failures are.
 - **The package is at `packages/eql/packages/eql`, two levels down.** The
   subtree root has no `package.json` by design, so a tool that globs one level
   under `packages/` selects the root — a directory with no manifest and no
-  scripts — and not the package. That is why root `pnpm test` is
-  `turbo test --filter './languages/typescript/packages/**'` and not `'./languages/typescript/packages/*'`: under the
-  one-level filter the task graph contained `@cipherstash/eql#build` (pulled in
-  transitively by its consumers) and **no `#test` at all**, so its Vitest suite
-  ran nowhere while CI stayed green. `build` can stay one-level because
-  consumers pull it through `^build`. Anything else that walks `languages/typescript/packages/*` needs
-  the same treatment — `scripts/lint-typecheck-scope.mjs` already carries the
-  two nested roots explicitly.
+  scripts — and not the package. It is also outside `languages/typescript/`,
+  where every other npm package lives. That is why root `pnpm test` is
+  `turbo test --filter './languages/typescript/packages/**' --filter
+  './packages/**'`: under a one-level `./packages/*` filter the task graph
+  contained `@cipherstash/eql#build` (pulled in transitively by its consumers)
+  and **no `#test` at all**, so its Vitest suite ran nowhere while CI stayed
+  green, and a filter naming only `languages/typescript/` drops it the same
+  way. `build` can stay one-level because consumers pull it through `^build`.
+  Anything else that walks the package roots needs the same treatment —
+  `scripts/lint-typecheck-scope.mjs` already carries the nested roots
+  explicitly.
 - **Anything invoking a mise task must run with `working_directory:
   packages/eql`.** `packages/eql/mise.toml` is ~900 lines and its
   `[task_config].includes` pulls in `tasks/`, `tasks/postgres.toml` and

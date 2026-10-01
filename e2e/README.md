@@ -1,6 +1,6 @@
 # `@cipherstash/e2e`
 
-End-to-end tests that exercise built CipherStash binaries and cross-package behaviour. Lives outside `packages/` because these tests are not tied to a single package — they verify how the published artefacts behave when a user actually runs them.
+End-to-end tests that exercise built CipherStash binaries and cross-package behaviour. Lives outside `languages/typescript/packages/` because these tests are not tied to a single package — they verify how the published artefacts behave when a user actually runs them.
 
 ## Running
 

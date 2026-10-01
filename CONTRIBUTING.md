@@ -31,9 +31,9 @@ See [AGENTS.md](./AGENTS.md) for a detailed layout, key APIs, environment variab
 
 **@cipherstash/stack** is the main package published to npm. It contains the encryption client and all integrations (Drizzle, Supabase, DynamoDB, secrets, identity). This is likely where you'll spend most of your time.
 
-### `examples/` Directory
+### `languages/typescript/examples/` Directory
 
-The `examples/` directory contains applications demonstrating how to use `@cipherstash/stack`. They reference the local workspace packages, so you can verify your changes in a real application scenario.
+The `languages/typescript/examples/` directory contains applications demonstrating how to use `@cipherstash/stack`. They reference the local workspace packages, so you can verify your changes in a real application scenario.
 
 ## Setup Instructions
 
@@ -72,7 +72,7 @@ Start the dev script, which watches for changes to the packages and is picked up
 pnpm run dev
 ```
 
-Then navigate to one of the examples in `examples/` and follow its README.
+Then navigate to one of the examples in `languages/typescript/examples/` and follow its README.
 
 ## Making Changes
 
