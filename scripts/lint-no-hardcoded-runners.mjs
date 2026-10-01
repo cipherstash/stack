@@ -12,10 +12,12 @@ const ALLOWLISTED_PATHS = new Set([
   'scripts/lint-no-hardcoded-runners.mjs', // this script's own docs
 ])
 
-// Default scan root; override with argv[2] for tests.
+// Default scan roots; override with argv[2] for tests. Every npm package but
+// EQL lives under `languages/typescript/packages`; EQL's subtree stays under
+// `packages`.
 const TARGETS = process.argv.slice(2).length
   ? process.argv.slice(2)
-  : ['packages']
+  : ['languages/typescript/packages', 'packages']
 
 // Catches:
 //   - `'npx'` / `"npx"` / `` `npx `` — bare-quoted, e.g. `?? 'npx'` or `runner = 'npx'`

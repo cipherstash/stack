@@ -56,8 +56,8 @@ describe('removed stack-drizzle surface is absent from shipped files', () => {
     expect(files.length).toBeGreaterThan(5)
     expect(files).toContain('skills/stash-drizzle/SKILL.md')
     expect(files).toContain('languages/typescript/packages/stack/README.md')
-    // The two roots nested deeper than `languages/typescript/packages/*`. Pinned by name because
-    // they are what the hardcoded `:(glob)languages/typescript/packages/*/README.md` silently
+    // The two roots nested deeper than one level. Pinned by name because
+    // they are what the hardcoded `:(glob)packages/*/README.md` silently
     // missed: `:(glob)` does not cross `/`, so it selected the EQL subtree
     // ROOT's README — which ships in no tarball — instead of the package's.
     expect(files).toContain('packages/eql/packages/eql/README.md')
