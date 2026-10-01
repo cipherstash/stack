@@ -42,13 +42,16 @@ export function bumpCargoPackageVersion(cargo, version) {
   if (!packageSection) {
     throw new Error('no [package] section found in Cargo.toml')
   }
-  const updated = packageSection[0].replace(
-    /^version = "[^"]*"$/m,
-    `version = "${version}"`,
-  )
-  if (updated === packageSection[0]) {
+  const versionLine = /^version = "[^"]*"$/m
+  if (!versionLine.test(packageSection[0])) {
     throw new Error('did not find a version line in the [package] section')
   }
+  // Already at the target is not an error: every release that leaves EQL's
+  // version alone reaches this with the version unchanged.
+  const updated = packageSection[0].replace(
+    versionLine,
+    `version = "${version}"`,
+  )
   return cargo.replace(packageSection[0], updated)
 }
 
