@@ -14,11 +14,13 @@ This is a [Turborepo](https://turbo.build/) monorepo managed with [pnpm](https:/
 
 ```text
 .
-├── packages/
-│   ├── stack/            <-- Main package (@cipherstash/stack)
-│   ├── cli/              <-- The `stash` CLI
-│   └── ...               <-- stack-drizzle, stack-supabase, stack-prisma, nextjs, migrate, wizard, ...
-├── examples/             <-- Runnable example apps
+├── languages/typescript/
+│   ├── packages/
+│   │   ├── stack/        <-- Main package (@cipherstash/stack)
+│   │   ├── cli/          <-- The `stash` CLI
+│   │   └── ...           <-- stack-drizzle, stack-supabase, stack-prisma, nextjs, migrate, wizard, ...
+│   └── examples/         <-- Runnable example apps
+├── packages/eql/         <-- EQL (@cipherstash/eql and its Rust crates)
 ├── e2e/                  <-- Cross-package end-to-end tests
 ├── skills/               <-- Agent skills
 ├── .changeset/

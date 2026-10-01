@@ -20,7 +20,7 @@ decisions are actually resolved.
 /
 ├── CONTEXT-MAP.md
 ├── docs/adr/                       system-wide decisions
-└── packages/
+└── languages/typescript/packages/
     ├── stack/
     │   ├── CONTEXT.md
     │   └── docs/adr/               stack-specific decisions
