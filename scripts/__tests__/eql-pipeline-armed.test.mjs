@@ -83,10 +83,15 @@ describe('the switch answers from FROZEN_PUBLISHERS', () => {
     expect(frozenReason(new Map())).toBeNull()
   })
 
-  it('matches the live map, whichever state that is in', () => {
-    // Not "is currently false" — pinning the verdict would make the cutover
-    // fail here for no reason.
+  it('matches the live map', () => {
     expect(eqlPipelineArmed()).toBe(!FROZEN_PUBLISHERS.has(EQL_PACKAGE))
+  })
+
+  it('is armed, because the Phase-5 cutover moved EQL publishing here', () => {
+    // Pinned once the cutover landed: re-freezing EQL stops the SQL release,
+    // docs, crate and image jobs, so it must be a deliberate edit here.
+    expect(eqlPipelineArmed()).toBe(true)
+    expect(frozenReason()).toBeNull()
   })
 })
 

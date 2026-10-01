@@ -26,15 +26,15 @@ This repository also carries the source of the **`eql-bindings`** Rust crate
 lockstep with `@cipherstash/eql`. It is in scope for security reports on the
 same terms as the npm packages above.
 
-> **Note on publishing.** `@cipherstash/eql` and the `eql-bindings` crate are
-> developed here but are *published* from `cipherstash/encrypt-query-language`
-> until the Phase 5 cutover in
-> `docs/plans/2026-08-13-eql-monorepo-absorption.md` completes. Everything else
-> in the table above, including all seven `@cipherstash/protect-ffi*` packages,
-> is published from this repository by `.github/workflows/release.yml`.
-> **Source, issues, and security reports for all of them belong here
-> regardless** — that part does not depend on which pipeline built the
-> artefact.
+> **Note on publishing.** Every package in the table above, including all seven
+> `@cipherstash/protect-ffi*` packages and `@cipherstash/eql`, is published from
+> this repository by `.github/workflows/release.yml`; the `eql-bindings` crate
+> is published from here by `.github/workflows/release-plz.yml`. EQL moved here
+> at the Phase 5 cutover in `docs/plans/2026-08-13-eql-monorepo-absorption.md`.
+> Releases made before it, `@cipherstash/eql@3.0.5` and earlier, were built by
+> `cipherstash/encrypt-query-language`. **Source, issues, and security reports
+> for all of them belong here regardless** — that part does not depend on which
+> pipeline built the artefact.
 >
 > **Do not trust this note for which repository published a given release.**
 > Registry configuration changes without touching this file, and this note has
@@ -52,8 +52,8 @@ same terms as the npm packages above.
 >
 > `scripts/__tests__/frozen-publisher-docs.test.mjs` now holds this paragraph to
 > `FROZEN_PUBLISHERS` in `scripts/release-gate.mjs`. It fails if the note names
-> a package the map does not freeze, and fails again on the Phase-5 cutover that
-> empties the map — so the next half of this note to go stale does so loudly.
+> a package the map does not freeze, or stops naming `@cipherstash/eql` while
+> the map freezes it — so the next sentence here to go stale does so loudly.
 
 **Security fixes are released for the latest release line of each package.** Security reports are welcome for any version, but fixes land in the latest release — if you are running an older major version, plan to upgrade to receive them.
 
