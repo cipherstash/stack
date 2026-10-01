@@ -6,12 +6,18 @@ operations.
 ## Repository ownership
 
 All work present in this monorepo is tracked in `cipherstash/stack`, including
-the absorbed EQL source under `packages/eql` and protect-ffi under
-`languages/typescript/packages/protect-ffi`. Their former upstream repositories are historical
-sources, not active issue trackers. Never create, move, or update an issue in
-`cipherstash/encrypt-query-language` or `cipherstash/protectjs-ffi` for work in
-this tree. Create it in `cipherstash/stack` and link historical upstream issues
-only as provenance.
+the absorbed EQL source under `packages/eql`, protect-ffi under
+`languages/typescript/packages/protect-ffi`, and the stack-* crates, node bindings and Go
+module imported from `cipherstash/cipherstash-suite` (the stack-* crates under `packages/`,
+`languages/typescript/packages/auth`, `languages/typescript/packages/profile`,
+`languages/typescript/packages/stack-auth-wasm` and `languages/golang`). The
+former upstream repositories of EQL and protect-ffi are historical sources, not
+active issue trackers. `cipherstash/cipherstash-suite` is still active for the
+crates that stayed there, but not for anything in this tree. Never create,
+move, or update an issue in `cipherstash/encrypt-query-language`,
+`cipherstash/protectjs-ffi` or `cipherstash/cipherstash-suite` for work in this
+tree. Create it in `cipherstash/stack` and link historical upstream issues only
+as provenance.
 
 ## Conventions
 

@@ -13,3 +13,12 @@
 /pnpm-lock.yaml                         @cipherstash/developers
 /.npmrc                                 @cipherstash/developers
 /skills/stash-supply-chain-security/    @cipherstash/developers
+
+# The stack-* crates, their node bindings and the Go module, imported from
+# cipherstash-suite. stack-auth, stack-profile and @cipherstash/auth publish to
+# crates.io and npm.
+/packages/stack-*/                      @cipherstash/developers
+/languages/golang/                      @cipherstash/developers
+/languages/typescript/packages/auth/    @cipherstash/developers
+/languages/typescript/packages/profile/ @cipherstash/developers
+/languages/typescript/packages/stack-auth-wasm/ @cipherstash/developers
