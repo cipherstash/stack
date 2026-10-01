@@ -33,9 +33,9 @@ describe.skipIf(!existsSync(WASM_SHIM))('wasm-inline Result wrapper', () => {
     expect(r.failure?.help).toMatch(/crn:<region>:<workspace-id>/)
     // ...and be mirrored onto the live Error, matching the napi seam, so loggers
     // that only see `failure.error` still get the hint.
-    expect((r.failure?.error as Error & { help?: string }).help).toBe(
-      r.failure?.help,
-    )
+    expect(
+      (r.failure?.error as (Error & { help?: string }) | undefined)?.help,
+    ).toBe(r.failure?.help)
   })
 
   it("strips the envelope's message field instead of spreading it", async () => {

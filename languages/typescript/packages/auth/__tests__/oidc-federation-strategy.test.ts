@@ -250,9 +250,9 @@ describe('OidcFederationStrategy (TypeScript / vitest)', () => {
     expect(cr.failure?.help).toMatch(/crn:<region>:<workspace-id>/)
     // The same help is mirrored onto the live Error for loggers that only
     // see the error object.
-    expect((cr.failure?.error as Error & { help?: string }).help).toBe(
-      cr.failure?.help,
-    )
+    expect(
+      (cr.failure?.error as (Error & { help?: string }) | undefined)?.help,
+    ).toBe(cr.failure?.help)
   })
 
   it('rejects a CRN whose workspace segment is malformed with .type', () => {
