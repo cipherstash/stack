@@ -1,6 +1,13 @@
 import type { JsPlaintext } from '@cipherstash/protect-ffi'
 import { describe, expectTypeOf, it } from 'vitest'
-import type { EncryptionClient } from '@/encryption'
+import type {
+  BatchEncryptQueryOperation,
+  BulkEncryptModelsOperation,
+  EncryptionClient,
+  EncryptModelOperation,
+  EncryptOperation,
+  EncryptQueryOperation,
+} from '@/encryption'
 // Everything comes from the single `@cipherstash/stack/v3` surface (re-exported
 // from src/encryption/v3.ts), exercising the re-export at the same time.
 import {
@@ -360,5 +367,90 @@ describe('typed v3 client — an optional lock context still type-checks', () =>
       users,
       maybe,
     )
+  })
+})
+
+/**
+ * What each method RETURNS, on the interface. The cases above pin what the
+ * methods accept, the `V3EncryptedModel` / `V3DecryptedModel` mappings, and the
+ * single-model decrypt `data`; these add the operation types and the bulk and
+ * positional-lock-context `data`.
+ *
+ * Like everything in this file they run against `declare const client`, so
+ * they check `EncryptionClient<S>`'s declared signatures — NOT
+ * `createEncryptionClient`'s construction. That the factory's object literal
+ * satisfies the interface is checked by `tsc` on `src` (it is annotated
+ * `EncryptionClient<S>`); that its runtime output matches the declared types is
+ * checked by `typed-client-v3.test.ts`.
+ */
+describe('typed v3 client — each method resolves to its precise operation', () => {
+  /** The `data` of an awaited operation's success arm. */
+  type SuccessData<Op> = Extract<Awaited<Op>, { data: unknown }>['data']
+
+  it('encrypt returns an EncryptOperation', () => {
+    expectTypeOf(
+      client.encrypt('a@b.com', { table: users, column: users.email }),
+    ).toEqualTypeOf<EncryptOperation>()
+  })
+
+  it('encryptQuery returns the scalar operation for (value, opts) and the batch one for terms', () => {
+    expectTypeOf(
+      client.encryptQuery('a@b.com', { table: users, column: users.email }),
+    ).toEqualTypeOf<EncryptQueryOperation>()
+    expectTypeOf(
+      client.encryptQuery([
+        { value: 'a@b.com', table: users, column: users.email },
+      ]),
+    ).toEqualTypeOf<BatchEncryptQueryOperation>()
+  })
+
+  it('encryptModel / bulkEncryptModels return operations over the precise encrypted model', () => {
+    type Row = { id: string; email: string }
+    expectTypeOf(
+      client.encryptModel({ id: 'u1', email: 'a@b.com' }, users),
+    ).toEqualTypeOf<
+      EncryptModelOperation<V3EncryptedModel<typeof users, Row>>
+    >()
+
+    const bulk = client.bulkEncryptModels(
+      [{ id: 'u1', email: 'a@b.com' }],
+      users,
+    )
+    expectTypeOf(bulk).toEqualTypeOf<
+      BulkEncryptModelsOperation<V3EncryptedModel<typeof users, Row>>
+    >()
+    expectTypeOf<SuccessData<typeof bulk>>().toEqualTypeOf<
+      Array<{ id: string; email: Encrypted }>
+    >()
+  })
+
+  it('a positional lock context keeps the precise decrypted model', () => {
+    type EncRow = { id: string; email: Encrypted; createdAt: Encrypted }
+    const bound = client.decryptModel({} as EncRow, users, lockContext)
+    expectTypeOf<SuccessData<typeof bound>>().toEqualTypeOf<{
+      id: string
+      email: string
+      createdAt: Date
+    }>()
+  })
+
+  it('bulkDecryptModels resolves to an array of the table plaintext model, or Decrypted<T>[] without a table', () => {
+    type EncRow = { id: string; email: Encrypted; createdAt: Encrypted }
+    const rows = [] as EncRow[]
+
+    expectTypeOf<
+      SuccessData<
+        ReturnType<typeof client.bulkDecryptModels<typeof users, EncRow>>
+      >
+    >().toEqualTypeOf<Array<{ id: string; email: string; createdAt: Date }>>()
+    const bound = client.bulkDecryptModels(rows, users, lockContext)
+    expectTypeOf<SuccessData<typeof bound>>().toEqualTypeOf<
+      Array<{ id: string; email: string; createdAt: Date }>
+    >()
+    expectTypeOf<
+      SuccessData<
+        ReturnType<typeof client.bulkDecryptModels<EncRow>>
+      >[number]['createdAt']
+    >().toEqualTypeOf<string>()
   })
 })

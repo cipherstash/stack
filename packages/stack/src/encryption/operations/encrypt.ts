@@ -1,13 +1,11 @@
 import { type Result, withResult } from '@byteslice/result'
-import {
-  encrypt as ffiEncrypt,
-  type JsPlaintext,
-} from '@cipherstash/protect-ffi'
+import { encrypt as ffiEncrypt } from '@cipherstash/protect-ffi'
 import {
   failureDiagnostics,
   failureMessage,
 } from '@/encryption/helpers/auth-failure'
 import { getErrorCode } from '@/encryption/helpers/error-code'
+import { toJsPlaintext } from '@/encryption/helpers/js-plaintext'
 import { assertValidNumericValue } from '@/encryption/helpers/validation'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import { type LockContextInput, resolveLockContext } from '@/identity'
@@ -17,7 +15,7 @@ import type {
   Client,
   Encrypted,
   EncryptOptions,
-  Plaintext,
+  PlaintextInput,
 } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import { noClientError } from '../index'
@@ -25,17 +23,18 @@ import { EncryptionOperation } from './base-operation'
 
 export class EncryptOperation extends EncryptionOperation<Encrypted> {
   private client: Client
-  // Internally widened to allow null so the runtime guard below can
-  // short-circuit. The public `Encryption.encrypt()` signature still
-  // rejects null at the type layer; this is defense in depth for callers
-  // that reach this class through casts or dynamic field walking.
-  private plaintext: Plaintext | null
+  // Widened to allow null so the runtime guard below can short-circuit.
+  // `PlaintextInput` also admits the v3 `types.Json` document (see its
+  // definition). The public `encrypt()` signature rejects null for every
+  // scalar column; a `types.Json` column's document type does admit `null`,
+  // and it short-circuits here like any other null.
+  private plaintext: PlaintextInput | null
   private column: BuildableColumn
   private table: BuildableTable
 
   constructor(
     client: Client,
-    plaintext: Plaintext | null,
+    plaintext: PlaintextInput | null,
     opts: EncryptOptions,
   ) {
     super()
@@ -67,9 +66,10 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
         }
 
         if (this.plaintext === null) {
-          // Defense in depth: the public `Encryption.encrypt()` signature
-          // rejects null, but null can still arrive here via casts or
-          // dynamic field walking. Return null directly so the result
+          // The public `encrypt()` signature rejects null for scalar columns,
+          // but null can still arrive here via casts, dynamic field walking,
+          // or a `types.Json` column (whose document type admits `null`).
+          // Return null directly so the result
           // matches DB NULL semantics rather than encrypting JSON null
           // into a SteVec. The cast acknowledges the type-narrow
           // contract at the public boundary.
@@ -81,10 +81,7 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
         const { metadata } = this.getAuditData()
 
         return await ffiEncrypt(this.client, {
-          // `Plaintext` widens the FFI `JsPlaintext` with `Date` (serialized via
-          // `toJSON` at the boundary); cast until the upstream `JsPlaintext` input
-          // union is corrected to include it.
-          plaintext: this.plaintext as JsPlaintext,
+          plaintext: toJsPlaintext(this.plaintext),
           column: this.column.getName(),
           table: this.table.tableName,
           unverifiedContext: metadata,
@@ -105,7 +102,7 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
 
   public getOperation(): {
     client: Client
-    plaintext: Plaintext | null
+    plaintext: PlaintextInput | null
     column: BuildableColumn
     table: BuildableTable
   } {
@@ -159,7 +156,7 @@ export class EncryptOperationWithLockContext extends EncryptionOperation<Encrypt
         const lockContext = resolveLockContext(this.lockContext)
 
         return await ffiEncrypt(client, {
-          plaintext: plaintext as JsPlaintext,
+          plaintext: toJsPlaintext(plaintext),
           column: column.getName(),
           table: table.tableName,
           lockContext,

@@ -13,12 +13,15 @@ import { reconstructDatePaths } from '@/eql/v3/date-reconstruction'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import type { LockContextInput } from '@/identity'
 import type {
+  BuildableTable,
   BulkDecryptPayload,
-  BulkEncryptPayload,
+  BulkEncryptPayloadInput,
   Decrypted,
   Encrypted,
   EncryptedReturnType,
   EncryptOptions,
+  EncryptQueryArgs,
+  PlaintextInput,
 } from '@/types'
 // Every binding from `./index` is imported TYPE-ONLY — `Encryption` included,
 // since it is referenced only from the TSDoc {@link}s below (same trick as the
@@ -47,8 +50,17 @@ import {
 
 /**
  * The structural VIEW of the native client that the wrapper below consumes —
- * only the members it forwards to, with operands erased to `never` so a client
- * built for any schema tuple satisfies it.
+ * only the members it forwards to, typed with what the native client accepts
+ * and returns.
+ *
+ * Members are function-typed PROPERTIES, not method shorthand. TypeScript
+ * checks method parameters bivariantly, so with method syntax a native method
+ * accepting LESS than the view declares would still satisfy it. Property
+ * syntax gets the strict (contravariant) check, so `Encryption()` passing the
+ * native client to {@link createEncryptionClient} only compiles if each native
+ * member accepts at least the parameter types declared here. Whether a
+ * wrapper's argument fits those parameters is checked separately, at each
+ * forwarding call below.
  *
  * Deliberately not the concrete class: that class (`NativeEncryptionClient` in
  * `./index`) is not exported, and naming it here would make the two modules
@@ -57,26 +69,31 @@ import {
  * the implementation class.
  */
 type UnderlyingNativeClient = {
-  encrypt(plaintext: never, opts: never): EncryptOperation
-  encryptQuery(
-    plaintextOrTerms: never,
-    opts?: never,
-  ): EncryptQueryOperation | BatchEncryptQueryOperation
-  encryptModel(input: never, table: never): unknown
-  bulkEncryptModels(input: never, table: never): unknown
-  decrypt(encrypted: Encrypted): DecryptOperation
-  decryptModel(
+  encrypt: (plaintext: PlaintextInput, opts: EncryptOptions) => EncryptOperation
+  encryptQuery: (
+    ...args: EncryptQueryArgs
+  ) => EncryptQueryOperation | BatchEncryptQueryOperation
+  encryptModel: (
     input: Record<string, unknown>,
-  ): DecryptModelOperation<Record<string, unknown>>
-  bulkDecryptModels(
+    table: BuildableTable,
+  ) => EncryptModelOperation<Record<string, unknown>>
+  bulkEncryptModels: (
     input: Array<Record<string, unknown>>,
-  ): BulkDecryptModelsOperation<Record<string, unknown>>
-  bulkEncrypt(
-    plaintexts: BulkEncryptPayload,
+    table: BuildableTable,
+  ) => BulkEncryptModelsOperation<Record<string, unknown>>
+  decrypt: (encrypted: Encrypted) => DecryptOperation
+  decryptModel: (
+    input: Record<string, unknown>,
+  ) => DecryptModelOperation<Record<string, unknown>>
+  bulkDecryptModels: (
+    input: Array<Record<string, unknown>>,
+  ) => BulkDecryptModelsOperation<Record<string, unknown>>
+  bulkEncrypt: (
+    plaintexts: BulkEncryptPayloadInput,
     opts: EncryptOptions,
-  ): BulkEncryptOperation
-  bulkDecrypt(payloads: BulkDecryptPayload): BulkDecryptOperation
-  getEncryptConfig(): import('@/schema').EncryptConfig | undefined
+  ) => BulkEncryptOperation
+  bulkDecrypt: (payloads: BulkDecryptPayload) => BulkDecryptOperation
+  getEncryptConfig: () => import('@/schema').EncryptConfig | undefined
 }
 
 type QueryTermForTable<Table extends AnyV3Table> =
@@ -465,14 +482,16 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
   const passthroughRow = (row: Record<string, unknown>) => row
   const passthroughRows = (rows: Array<Record<string, unknown>>) => rows
 
-  // Overloaded so the implementation is checked against BOTH forms directly —
-  // no whole-value cast. The two public signatures mirror the interface member;
-  // the hidden implementation signature is broad and forwards to the underlying
-  // native client (which routes to the batch operation when no `opts` are
-  // supplied).
-  // Only the forwarded args are `as never`, exactly as the sibling wrappers
-  // below: one forwarding body cannot re-derive the public client's per-column
-  // signatures.
+  // Overloaded so the object literal can present BOTH public forms with no
+  // whole-value cast. The two public signatures mirror the interface member;
+  // the hidden implementation signature takes the native argument list
+  // (`EncryptQueryArgs`) and forwards it untouched with `...args` to the
+  // underlying native client, which routes to the batch operation when no
+  // `opts` are supplied. Nothing is asserted.
+  // TypeScript relates each overload to the implementation only loosely (type
+  // parameters erased, parameters compared in either direction), so the
+  // precise per-column types the overloads declare are not verified against
+  // this body — they are the interface's contract, enforced at call sites.
   function encryptQuery<
     Table extends S[number],
     Col extends QueryableColumnsOf<Table>,
@@ -490,15 +509,25 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
     terms: readonly QueryTermForSchemas<S>[],
   ): BatchEncryptQueryOperation
   function encryptQuery(
-    plaintextOrTerms: unknown,
-    opts?: unknown,
+    ...args: EncryptQueryArgs
   ): EncryptQueryOperation | BatchEncryptQueryOperation {
-    return client.encryptQuery(plaintextOrTerms as never, opts as never)
+    return client.encryptQuery(...args)
   }
 
   // Overloaded declarations for the same reason as `encryptQuery` above: the
   // table-ful and table-less forms have different return types, and a single
   // arrow in the object literal cannot present both.
+  // The implementation's return type is the shape the body really builds — a
+  // mapped operation over `Record<string, unknown>` rows — typed as the
+  // lock-bound interface because every overload's return is assignable to it
+  // (the unbound form only ADDS `.withLockContext()`, which the mapped
+  // operation always carries). That replaces `<never>` plus a cast, but it
+  // does NOT make the overloads type-checked: TypeScript accepts an overload
+  // whose return is related to the implementation's in EITHER direction, so
+  // the per-table `V3DecryptedModel` each overload promises is checked by no
+  // type — exactly as before. It is held by the reconstruction below and by
+  // the runtime tests in `typed-client-v3.test.ts`; no type can follow a
+  // runtime `cast_as` lookup.
   function decryptModel<
     Table extends S[number],
     T extends Record<string, unknown>,
@@ -521,7 +550,7 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
     input: Record<string, unknown>,
     table?: AnyV3Table,
     lockContext?: LockContextInput,
-  ): AuditableDecryptModelOperation<never> {
+  ): LockBoundDecryptModelOperation<Record<string, unknown>> {
     // `table` is absent on the table-less one-arg call (see `passthroughRow`).
     // Given a table: reconstruct dates from its cast_as, or — if it was never
     // registered — leave `map` undefined so the mapped op resolves to
@@ -531,11 +560,7 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
       : passthroughRow
     const op = client.decryptModel(input)
     const base = lockContext ? op.withLockContext(lockContext) : op
-    return new MappedDecryptOperation(
-      base,
-      reconstruct,
-      unknownTableFailure,
-    ) as never
+    return new MappedDecryptOperation(base, reconstruct, unknownTableFailure)
   }
 
   function bulkDecryptModels<
@@ -560,7 +585,7 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
     input: Array<Record<string, unknown>>,
     table?: AnyV3Table,
     lockContext?: LockContextInput,
-  ): AuditableDecryptModelOperation<never> {
+  ): LockBoundDecryptModelOperation<Array<Record<string, unknown>>> {
     const op = client.bulkDecryptModels(input)
     const base = lockContext ? op.withLockContext(lockContext) : op
     // No table → pass rows through (no date reconstruction). Registered table →
@@ -577,26 +602,42 @@ export function createEncryptionClient<const S extends readonly AnyV3Table[]>(
       const reconstruct = reconstructors.get(table.tableName)
       mapRows = reconstruct ? (rows) => rows.map(reconstruct) : undefined
     }
-    return new MappedDecryptOperation(
-      base,
-      mapRows,
-      unknownTableFailure,
-    ) as never
+    return new MappedDecryptOperation(base, mapRows, unknownTableFailure)
   }
 
   const typed: EncryptionClient<S> = {
-    encrypt: (plaintext, opts) =>
-      client.encrypt(plaintext as never, opts as never),
+    encrypt: (plaintext, opts) => client.encrypt(plaintext, opts),
     encryptQuery,
-    encryptModel: (input, table) =>
-      client.encryptModel(input as never, table as never) as never,
-    bulkEncryptModels: (input, table) =>
-      client.bulkEncryptModels(input as never, table as never) as never,
+    // The only two type assertions in this factory, both specific (neither
+    // erases the type). The native model operations are typed
+    // `Record<string, unknown>` because the encrypted model is produced at
+    // runtime by walking the table's columns; `V3EncryptedModel<Table, T>` is a
+    // statement about what that walk yields for this table and input, which no
+    // type can derive from the walk itself. `EncryptModelOperation<T>` takes
+    // `T` on trust either way (its `execute()` asserts the walked result to
+    // `T`), so this is where the precise shape is named — visibly, once per
+    // method.
+    encryptModel: <Table extends S[number], T extends Record<string, unknown>>(
+      input: V3ModelInput<Table, T>,
+      table: Table,
+    ) =>
+      client.encryptModel(input, table) as EncryptModelOperation<
+        V3EncryptedModel<Table, T>
+      >,
+    bulkEncryptModels: <
+      Table extends S[number],
+      T extends Record<string, unknown>,
+    >(
+      input: Array<V3ModelInput<Table, T>>,
+      table: Table,
+    ) =>
+      client.bulkEncryptModels(input, table) as BulkEncryptModelsOperation<
+        V3EncryptedModel<Table, T>
+      >,
     decrypt: (encrypted) => client.decrypt(encrypted),
     decryptModel,
     bulkDecryptModels,
-    bulkEncrypt: (plaintexts, opts) =>
-      client.bulkEncrypt(plaintexts as BulkEncryptPayload, opts),
+    bulkEncrypt: (plaintexts, opts) => client.bulkEncrypt(plaintexts, opts),
     bulkDecrypt: (payloads) => client.bulkDecrypt(payloads),
     getEncryptConfig: () => client.getEncryptConfig(),
     // The same tuple, by reference — not a copy. `S` is a `const` type
