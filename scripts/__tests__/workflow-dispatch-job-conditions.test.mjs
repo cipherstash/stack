@@ -411,6 +411,7 @@ const PERMISSIVE_NEEDS = {
   // be indistinguishable from "skips on a dispatch".
   classify: { outputs: { mode: 'production', version: '3.0.6' } },
   'eql-armed': { outputs: { armed: 'true' } },
+  'crates-armed': { outputs: { armed: 'true' } },
   gate: { result: 'success', outputs: { ffi: 'true' } },
   'publish-ffi': { result: 'success' },
   release: {

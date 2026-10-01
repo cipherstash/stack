@@ -1,0 +1,59 @@
+# release-plz configuration for the ROOT Cargo workspace: the stack-* crates.
+#
+# `.github/workflows/release-plz.yml`'s `release-crates` job passes
+# `manifest_path: Cargo.toml` and `config: release-plz.toml`. The EQL workspace
+# has its own file at packages/eql/release-plz.toml.
+#
+# Two crates publish from here, `stack-auth` and `stack-profile`, in one
+# version group of their own. In cipherstash-suite they shared a group with
+# `cipherstash-client`, which stays there. Every other workspace member is
+# `publish = false` in its Cargo.toml and is also listed below with
+# `release = false`, so `release-plz update` does not bump its version or
+# write its changelog either.
+#
+# Tags are release-plz's default, `stack-auth-v<semver>` and
+# `stack-profile-v<semver>`. No workflow triggers on either.
+
+[workspace]
+changelog_config = "cliff.toml"
+git_tag_enable = true
+git_release_enable = true
+publish = true
+# Matches cipherstash-suite and packages/eql/release-plz.toml.
+semver_check = false
+
+[[package]]
+name = "stack-auth"
+version_group = "stack-auth"
+
+[[package]]
+name = "stack-profile"
+version_group = "stack-auth"
+
+[[package]]
+name = "stack-kms"
+release = false
+
+[[package]]
+name = "stack-encrypt"
+release = false
+
+[[package]]
+name = "stack-encrypt-derive"
+release = false
+
+[[package]]
+name = "stack-guest-abi"
+release = false
+
+[[package]]
+name = "stack-auth-node"
+release = false
+
+[[package]]
+name = "stack-profile-node"
+release = false
+
+[[package]]
+name = "stack-auth-wasm"
+release = false
