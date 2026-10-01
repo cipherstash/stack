@@ -25,8 +25,8 @@
     "stack-profile-node.js"
   ],
   "scripts": {
-    "build:native": "napi build --release",
-    "build:debug": "napi build",
+    "build:native": "napi build --release --dts native.d.ts",
+    "build:debug": "napi build --dts native.d.ts",
     "test": "vitest run && biome check .",
     "test:cargo": "cargo test --locked"
   },
