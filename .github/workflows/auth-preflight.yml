@@ -92,7 +92,10 @@ jobs:
                   echo "::error::linux-x64-musl links glibc — it is the gnu binary"
                   exit 1
                 fi
-                echo "linux-x64-musl: no glibc NEEDED entry" ;;
+                grep -q 'NEEDED.*libc\.musl-' <<< "$dynamic" || {
+                  echo "::error::linux-x64-musl has no musl libc NEEDED entry — it is linked statically"
+                  exit 1; }
+                echo "linux-x64-musl: links musl, not glibc" ;;
             esac
             checked=$((checked + 1))
           done
@@ -130,3 +133,28 @@ jobs:
           console.log('smoke OK')
           EOF
           node smoke.mjs
+
+      # The host step above installs only linux-x64-gnu, the runner's own
+      # platform. The musl binary loads only where musl is the C library, so it
+      # is installed and loaded inside Alpine, from the image the build uses.
+      - name: Smoke-test the musl artifact inside Alpine
+        env:
+          ALPINE_NODE_IMAGE: node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
+        run: |
+          set -euo pipefail
+          wrapper=$(basename "$(ls "$GITHUB_WORKSPACE"/auth-dist/cipherstash-auth-[0-9]*.tgz)")
+          musl=$(basename "$(ls "$GITHUB_WORKSPACE"/auth-dist/cipherstash-auth-linux-x64-musl-*.tgz)")
+          docker run --rm -v "$GITHUB_WORKSPACE/auth-dist:/dist:ro" \
+            -e WRAPPER="$wrapper" -e MUSL="$musl" \
+            "$ALPINE_NODE_IMAGE" sh -euc '
+              mkdir -p /tmp/smoke && cd /tmp/smoke
+              echo "{\"name\":\"smoke\",\"version\":\"1.0.0\",\"private\":true}" > package.json
+              npm install --no-audit --no-fund "/dist/$WRAPPER" "/dist/$MUSL"
+              node -e "
+                const auth = require(\"@cipherstash/auth\")
+                for (const name of [\"AccessKeyStrategy\", \"AutoStrategy\", \"OidcFederationStrategy\"]) {
+                  if (typeof auth[name] !== \"function\") throw new Error(\"no \" + name)
+                }
+                console.log(\"musl smoke OK\")
+              "
+            '
