@@ -1,0 +1,28 @@
+# Written by plantest.Golden: what the policy stores each field it decides as.
+# Regenerate it with go test -update; do not edit it by hand.
+# A column's context is bound into every ciphertext and query term written under it, so once a row is written it must never change.
+
+table individuals
+
+column email
+  context individuals/email
+  terms eq match
+  fact fides.data_categories user.contact.email
+
+column medicare_num
+  context individuals/medicare_number
+  terms eq
+  fact fides.data_categories user.government_id
+
+column name
+  context individuals/name
+  terms ore
+  fact fides.data_categories user.name
+
+column notes
+  context individuals-notes/v1
+  terms none
+  fact fides.data_categories user.content
+
+plaintext country
+  fact fides.data_categories system.operations
