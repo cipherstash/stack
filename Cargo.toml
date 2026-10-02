@@ -71,10 +71,14 @@ incremental = true
 stack-auth = { path = "./packages/stack-auth", version = "0.42.3", default-features = false }
 stack-profile = { path = "./packages/stack-profile", version = "0.42.3" }
 
-# Suite crates, from crates.io. Pinned exactly: they release from
-# cipherstash-suite, and stack-auth's API carries their types.
-cts-common = { version = "=0.43.0", default-features = false }
-zerokms-protocol = "=0.12.31"
+# Suite crates, from crates.io; Cargo.lock holds the exact versions.
+# cts-common and zerokms-protocol take caret requirements because the
+# published stack-auth inherits them: an exact pin would stop the suite
+# unifying stack-auth with a later compatible cts-common, and a second copy
+# breaks the shared Crn, Region and WorkspaceId types. recipher and cllw-ore
+# feed only unpublished crates, so they stay exact.
+cts-common = { version = "0.43.0", default-features = false }
+zerokms-protocol = "0.12.31"
 recipher = "=0.3.1"
 cllw-ore = { version = "=0.5.0", default-features = false }
 
