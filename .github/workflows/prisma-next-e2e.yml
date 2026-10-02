@@ -25,6 +25,7 @@ on:
       # what makes that a gate rather than a report — a PR touching any of these
       # runs the suite before the change lands, not after.
       - '.github/actions/build-ffi-binding/**'
+      - '.github/actions/build-auth-binding/**'
       - 'languages/typescript/packages/protect-ffi/crates/**'
       - 'languages/typescript/packages/protect-ffi/src/**'
       - 'languages/typescript/packages/protect-ffi/Cargo.toml'
@@ -58,6 +59,7 @@ on:
       # scripts/__tests__/workflow-paths-filter-parity.test.mjs compares the
       # two copies.)
       - '.github/actions/build-ffi-binding/**'
+      - '.github/actions/build-auth-binding/**'
       - 'languages/typescript/packages/protect-ffi/crates/**'
       - 'languages/typescript/packages/protect-ffi/src/**'
       - 'languages/typescript/packages/protect-ffi/Cargo.toml'
@@ -146,6 +148,9 @@ jobs:
       # workflow, but the job's `if` skips it for want of CS_* credentials.
       - name: Build the protect-ffi binding
         uses: ./.github/actions/build-ffi-binding
+
+      - name: Build the @cipherstash/auth binding
+        uses: ./.github/actions/build-auth-binding
 
       # Write the CS_* credentials and the harness DATABASE_URL into the
       # example app's .env so the runtime + the `prisma-next migration

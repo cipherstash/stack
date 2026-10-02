@@ -23,6 +23,7 @@ on:
       - 'local/**'
       - '.github/workflows/tests-bench.yml'
       - '.github/actions/integration-setup/**'
+      - '.github/actions/build-auth-binding/**'
   pull_request:
     branches:
       - "**"
@@ -40,6 +41,7 @@ on:
       - 'local/**'
       - '.github/workflows/tests-bench.yml'
       - '.github/actions/integration-setup/**'
+      - '.github/actions/build-auth-binding/**'
 
 jobs:
   tests-bench:
@@ -58,6 +60,12 @@ jobs:
           # This job's existing Node; the composite defaults to 24 for the
           # integration suites.
           node-version: 22
+
+      # The bench unit checks import @cipherstash/stack, and the `stash eql
+      # install` in the bench `globalSetup` runs the CLI; both load
+      # @cipherstash/auth's napi module.
+      - name: Build the @cipherstash/auth binding
+        uses: ./.github/actions/build-auth-binding
 
       # `@cipherstash/stack` ships dist/-based `exports`; bench imports
       # from `@cipherstash/stack` and `@cipherstash/stack-drizzle` (the Drizzle

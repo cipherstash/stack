@@ -38,25 +38,6 @@ packages:
 
 catalogs:
   repo:
-    # @cipherstash/auth ships per-platform native bindings as optional
-    # peerDependencies. pnpm does not auto-install platform-matched
-    # optional peer deps, so the consuming packages (stack, cli, wizard)
-    # declare them as `optionalDependencies` via `catalog:repo`.
-    #
-    # LOCKSTEP IS LOAD-BEARING, not tidiness: auth pins its bindings as
-    # EXACT-version optional peer deps, so a skewed set makes npm nest
-    # per-consumer binding copies that the hoisted auth package cannot
-    # resolve — every project-local install of the CLI/SDK then dies with
-    # "Failed to load native binding" (the 1.0.0-rc.2 B1 bug). Enforced by
-    # e2e/tests/supply-chain.e2e.test.ts; Dependabot ignores all seven
-    # names — bump them together, manually.
-    '@cipherstash/auth': 0.44.0
-    '@cipherstash/auth-darwin-arm64': 0.44.0
-    '@cipherstash/auth-darwin-x64': 0.44.0
-    '@cipherstash/auth-linux-arm64-gnu': 0.44.0
-    '@cipherstash/auth-linux-x64-gnu': 0.44.0
-    '@cipherstash/auth-linux-x64-musl': 0.44.0
-    '@cipherstash/auth-win32-x64-msvc': 0.44.0
     '@types/node': 22.20.1
     tsup: 8.5.1
     tsx: 4.23.12
@@ -64,9 +45,8 @@ catalogs:
     vitest: 4.1.11
     # Must track `vitest` exactly: the coverage provider is versioned in
     # lockstep with the runner, and vitest refuses to start against a mismatched
-    # one ("Vitest failed to load @vitest/coverage-v8"). Catalogued for the same
-    # reason the auth bindings are, and enforced the same way — by a test rather
-    # than by this comment: see `e2e/tests/supply-chain.e2e.test.ts`. Dependabot
+    # one ("Vitest failed to load @vitest/coverage-v8"). Enforced by a test
+    # rather than by this comment: see `e2e/tests/supply-chain.e2e.test.ts`. Dependabot
     # groups both under `dev-dependencies` and will otherwise move one alone.
     '@vitest/coverage-v8': 4.1.11
   security:
@@ -191,9 +171,9 @@ blockExoticSubdeps: true
 #                                 retired @prisma-next/* scope is kept for
 #                                 historical installs while anything still pins
 #                                 0.16)
-#   - @cipherstash/auth*         CipherStash-published auth strategies (NAPI +
-#                                 WASM-inline variant); also tracked in lockstep
-#                                 with protect-ffi for the WASM path.
+#
+# @cipherstash/auth* was listed here until the stack-* crates import made the
+# seven packages workspace packages, for the same reason as the EQL entry below.
 #
 # @cipherstash/eql was listed here until the encrypt-query-language subtree
 # landed. It is now a workspace package, so no pnpm install ever resolves it
@@ -206,5 +186,3 @@ minimumReleaseAgeExclude:
   - '@prisma-next/*'
   - '@prisma/orm-*'
   - 'prisma-next'
-  - '@cipherstash/auth'
-  - '@cipherstash/auth-*'

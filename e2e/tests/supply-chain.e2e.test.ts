@@ -96,44 +96,47 @@ describe('supply chain — pnpm configuration', () => {
     }
   })
 
-  it('@cipherstash/auth and its six platform bindings are catalog-pinned in lockstep', () => {
+  it('@cipherstash/auth and its six platform bindings resolve from the workspace in lockstep', () => {
     // Not tidiness — a load-bearing invariant. @cipherstash/auth pins its
     // bindings as EXACT-version optional peerDependencies, while stash /
     // stack / wizard declare the bindings in their own optionalDependencies
-    // (pnpm doesn't auto-install optional peer deps). If the seven catalog
-    // entries skew, npm nests per-consumer binding copies that the hoisted
-    // auth package cannot resolve, and every project-local install of the
-    // CLI/SDK dies at startup with "Failed to load native binding". That is
-    // exactly what happened in 1.0.0-rc.2: Dependabot bumped the six
-    // bindings to 0.42.0 while the ignored @cipherstash/auth stayed 0.41.0.
-    // Dependabot now ignores all seven names; this test catches every other
-    // way the set can drift.
+    // (pnpm doesn't auto-install optional peer deps). If the seven skew, npm
+    // nests per-consumer binding copies that the hoisted auth package cannot
+    // resolve, and every project-local install of the CLI/SDK dies at startup
+    // with "Failed to load native binding" — 1.0.0-rc.2, when they were
+    // registry pins. As workspace packages in one changesets `fixed` group
+    // (auth-build-artifacts.test.mjs), `workspace:*` packs each range as the
+    // same exact version, and a catalog entry would be a pin that can drift.
+    const isAuth = (name: string) =>
+      name === '@cipherstash/auth' || name.startsWith('@cipherstash/auth-')
     const ws = readYaml('pnpm-workspace.yaml') as {
       catalogs?: Record<string, Record<string, string>>
     }
-    const repo = ws.catalogs?.repo ?? {}
-    const authEntries = Object.entries(repo).filter(
-      ([name]) =>
-        name === '@cipherstash/auth' || name.startsWith('@cipherstash/auth-'),
-    )
-    // The wrapper + the six platform bindings. A count change means a
-    // binding was added/removed upstream — update the consumers' package
-    // JSONs and this expectation together.
-    expect(authEntries.length).toBe(7)
-    const versions = new Set(authEntries.map(([, v]) => v))
+    expect(Object.keys(ws.catalogs?.repo ?? {}).filter(isAuth)).toEqual([])
+
+    const specifiers = globSync('languages/typescript/**/package.json', {
+      cwd: REPO_ROOT,
+      exclude: (path) => path.includes('node_modules'),
+    }).flatMap((file) => {
+      const manifest = readJson(file) as Record<string, unknown>
+      return [
+        'dependencies',
+        'devDependencies',
+        'optionalDependencies',
+      ].flatMap((table) =>
+        Object.entries((manifest[table] ?? {}) as Record<string, string>)
+          .filter(([name]) => isAuth(name))
+          .map(([name, range]) => `${file} ${name}@${range}`),
+      )
+    })
+    // stack, stash and wizard declare all seven; the protect-ffi suite one.
+    expect(specifiers.length).toBeGreaterThanOrEqual(22)
     expect(
-      versions.size,
-      `@cipherstash/auth* catalog entries have skewed versions: ${authEntries
-        .map(([n, v]) => `${n}@${v}`)
-        .join(', ')}`,
-    ).toBe(1)
+      specifiers.filter((entry) => !entry.endsWith('@workspace:*')),
+    ).toEqual([])
   })
 
   it('vitest and @vitest/coverage-v8 are catalog-pinned in lockstep', () => {
-    // The same shape as the auth set above, one dependency along, and it needs
-    // its own assertion because that one filters on the `@cipherstash/auth`
-    // prefix and cannot see this pair.
-    //
     // `@vitest/coverage-v8` is versioned against the runner, not
     // independently: vitest refuses to start against a mismatched provider
     // ("Vitest failed to load @vitest/coverage-v8"). Both are in the

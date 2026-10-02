@@ -136,15 +136,20 @@ jobs:
       - name: Build the protect-ffi binding
         uses: ./.github/actions/build-ffi-binding
 
-      # `pnpm run test` below also runs the @cipherstash/auth and
-      # @cipherstash/profile vitest suites, which load the napi module. Their
-      # `test` scripts do not build it, so cargo stays off the default `test`
-      # path; this step builds it, as the protect-ffi step above does for
-      # `index.node`. Each `build:debug` writes its typings to the committed
-      # `native.d.ts`, so the build leaves the tree clean; tests-crates.yml
-      # holds it to that, and runs the same suites against the pinned Rust.
-      - name: Build the auth and profile node bindings
-        run: pnpm --filter @cipherstash/auth --filter @cipherstash/profile run build:debug
+      # The SDK, stash and wizard suites below load @cipherstash/auth's napi
+      # module, and so does its own vitest suite.
+      - name: Build the @cipherstash/auth binding
+        uses: ./.github/actions/build-auth-binding
+
+      # `pnpm run test` below also runs the @cipherstash/profile vitest suite,
+      # which loads the napi module. Its `test` script does not build it, so
+      # cargo stays off the default `test` path; this step builds it, as the
+      # step above does for @cipherstash/auth. `build:debug` writes its typings
+      # to the committed `native.d.ts`, so the build leaves the tree clean;
+      # tests-crates.yml holds it to that, and runs the same suites against the
+      # pinned Rust.
+      - name: Build the profile node binding
+        run: pnpm --filter @cipherstash/profile run build:debug
 
       - name: Type tests (stack)
         run: pnpm exec turbo run test:types --filter @cipherstash/stack
@@ -440,6 +445,9 @@ jobs:
       - name: Build the protect-ffi binding
         uses: ./.github/actions/build-ffi-binding
 
+      - name: Build the @cipherstash/auth binding
+        uses: ./.github/actions/build-auth-binding
+
       # Run the standalone `e2e/` workspace via turbo so the `^build`
       # dep on the `test:e2e` task builds cli + wizard first. CLI's own
       # E2E (`languages/typescript/packages/cli/tests/e2e/**`) is covered by the `run-tests`
@@ -526,6 +534,13 @@ jobs:
       # the .js and .wasm come from wasm-pack and nothing else in CI runs it.
       - name: Build the protect-ffi binding
         uses: ./.github/actions/build-ffi-binding
+        with:
+          wasm: 'true'
+
+      # stack's wasm-inline entry imports @cipherstash/auth/wasm-inline, which
+      # loads auth's own wasm/.
+      - name: Build the @cipherstash/auth binding
+        uses: ./.github/actions/build-auth-binding
         with:
           wasm: 'true'
 
@@ -657,6 +672,9 @@ jobs:
       # this is a restore rather than a compile.
       - name: Build the protect-ffi binding
         uses: ./.github/actions/build-ffi-binding
+
+      - name: Build the @cipherstash/auth binding
+        uses: ./.github/actions/build-auth-binding
 
       - name: Create .env file in ./languages/typescript/packages/stack/
         run: |

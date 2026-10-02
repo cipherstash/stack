@@ -43,17 +43,6 @@ updates:
         patterns:
           - "@types/*"
     ignore:
-      # Catalog-managed; bump manually via pnpm-workspace.yaml + changeset.
-      - dependency-name: "@cipherstash/auth"
-      # The platform bindings MUST move in lockstep with @cipherstash/auth:
-      # auth pins them as exact-version optional peer deps, so a skewed set
-      # makes npm nest per-consumer binding copies the hoisted auth package
-      # cannot resolve, and every project-local install of the CLI/SDK dies
-      # with "Failed to load native binding". Dependabot once bumped these
-      # six to 0.42.0 while the ignored auth stayed 0.41.0 (the rc.2 B1
-      # bug). Bump all seven catalog entries together, manually. Lockstep is
-      # enforced by e2e/tests/supply-chain.e2e.test.ts.
-      - dependency-name: "@cipherstash/auth-*"
       # 0.x bumps ship breaking type changes (e.g. 0.2 → 0.3 tightened the
       # FailureOption constraint). Review and apply manually.
       - dependency-name: "@byteslice/result"
@@ -126,13 +115,12 @@ updates:
           - patch
     ignore:
       # The CipherStash crates are pinned with EXACT `=` requirements in
-      # crates/protect-ffi/Cargo.toml and are the same release train as the
-      # @cipherstash/auth catalog entries above — cipherstash-client,
-      # cts-common, stack-auth and stack-profile all sit at =0.42.0, matching
-      # the catalog's 0.42.0. Dependabot bumping a subset is the Rust version
-      # of the rc.2 B1 bug recorded above: it would rewrite one `=` pin and
-      # leave the rest, and the crates do not tolerate skew. Bump them
-      # together, manually, in step with the npm catalog.
+      # crates/protect-ffi/Cargo.toml and are one release train —
+      # cipherstash-client, cts-common, stack-auth and stack-profile all sit at
+      # the same `=` version. Dependabot bumping a subset would rewrite one `=`
+      # pin and leave the rest, and the crates do not tolerate skew (a skewed
+      # @cipherstash/auth platform set was the npm form of this, the rc.2 B1
+      # bug). Bump them together, manually.
       #
       # Caveat worth knowing: `ignore` suppresses Dependabot SECURITY PRs too,
       # not just version updates. osv-scanner is the compensating control —
