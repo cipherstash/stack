@@ -133,6 +133,12 @@ const EXPECTED_ASYMMETRIES = new Map([
     'pull_request is the only trigger; a post-merge copy would report a release-blocking finding too late to act on',
   ],
   [
+    '.github/workflows/require-auth-npm-changeset.yml',
+    // Its list is held to the job's own `git diff` pathspec by
+    // check-auth-npm-changeset.test.mjs, which is the second copy here.
+    'pull_request is the only trigger; the check diffs a pull request against its base, which a push does not have',
+  ],
+  [
     '.github/workflows/test-eql.yml',
     // `pull_request` is deliberately UNFILTERED and `push: branches: [main]`
     // carries the list, which is the same shape as tests-rust.yml with the two
