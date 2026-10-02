@@ -11,7 +11,7 @@
 ["fuzz:client-key"]
 description = "Fuzz stack-kms's client-key material decoder (libFuzzer, nightly, 60s default)"
 dir = "{{config_root}}/packages/stack-kms"
-run = "cargo +nightly fuzz run client_key_encoded --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+run = "mise x --env test -- cargo +nightly fuzz run client_key_encoded --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
 
 # Rustdoc with warnings as errors: a broken intra-doc link or a rustdoc
 # warning fails the build. Doc *examples* are `test:doc:stack-kms`. Both run

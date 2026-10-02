@@ -37,7 +37,7 @@ run = [
   # NOTE: this must stay the LAST command — the crap-stack-auth.yml CI workflow runs
   # this task and relies on mise appending its trailing args (e.g. --format github)
   # to this `cargo crap` invocation.
-  "cargo crap --path packages/stack-auth --lcov {{config_root}}/target/stack-auth-lcov.info --exclude 'node/**' --exclude 'wasm/**' --exclude 'examples/**' --exclude '**/tests.rs' --exclude '**/tests/**' --fail-above",
+  "mise x --env test -- cargo crap --path packages/stack-auth --lcov {{config_root}}/target/stack-auth-lcov.info --exclude 'node/**' --exclude 'wasm/**' --exclude 'examples/**' --exclude '**/tests.rs' --exclude '**/tests/**' --fail-above",
 ]
 
 # Fuzz stack-auth's public AccessKey string parser (libFuzzer via cargo-fuzz).
@@ -51,7 +51,7 @@ run = [
 ["fuzz:access-key"]
 description = "Fuzz stack-auth's AccessKey string parser (libFuzzer, nightly, 60s default)"
 dir = "{{config_root}}/packages/stack-auth"
-run = "cargo +nightly fuzz run access_key_parse --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+run = "mise x --env test -- cargo +nightly fuzz run access_key_parse --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
 
 # Fuzz the JWT claims decode path (Token::fuzz_decode_claims, behind the `fuzz`
 # feature). On native this is the jsonwebtoken-based decode with signature
@@ -59,7 +59,7 @@ run = "cargo +nightly fuzz run access_key_parse --sanitizer none --target $(rust
 ["fuzz:jwt-decode"]
 description = "Fuzz stack-auth's JWT claims decode path (libFuzzer, nightly, 60s default)"
 dir = "{{config_root}}/packages/stack-auth"
-run = "cargo +nightly fuzz run jwt_decode --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+run = "mise x --env test -- cargo +nightly fuzz run jwt_decode --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
 
 # Mutation testing (cargo-mutants) over the whole crate: what the per-PR
 # `--in-diff` gate (.github/workflows/mutants.yml) does for changed lines only.
@@ -68,4 +68,4 @@ run = "cargo +nightly fuzz run jwt_decode --sanitizer none --target $(rustc -vV 
 # stress tests are filtered out of the per-mutant run by the shared config.
 ["mutants:stack-auth"]
 description = "Full mutation-testing sweep of stack-auth (cargo-mutants; ~15 min)"
-run = "cargo mutants -p stack-auth --jobs 4"
+run = "mise x --env test -- cargo mutants -p stack-auth --jobs 4"

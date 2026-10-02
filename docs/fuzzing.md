@@ -75,7 +75,8 @@ the scheduled campaign grows the corpus from there.
 ## Running locally
 
 cargo-fuzz needs the **nightly** toolchain and the `cargo-fuzz` binary;
-`mise` provides the latter (`cargo:cargo-fuzz` in `mise.toml`). Install
+`mise` provides the latter (`cargo:cargo-fuzz` in `mise.test.toml`,
+which the `fuzz:*` tasks load with `mise x --env test`). Install
 nightly once with `rustup toolchain install nightly`.
 
 Run a target via its `mise` task (60s by default):

@@ -16,7 +16,7 @@ run = [
   # NOTE: this must stay the LAST command — the crap-stack-encrypt.yml CI
   # workflow runs this task and relies on mise appending its trailing args
   # (e.g. --format github) to this `cargo crap` invocation.
-  "cargo crap --path packages/stack-encrypt --lcov {{config_root}}/target/stack-encrypt-lcov.info --exclude 'examples/**' --exclude 'fuzz/**' --exclude '**/tests/**' --fail-above",
+  "mise x --env test -- cargo crap --path packages/stack-encrypt --lcov {{config_root}}/target/stack-encrypt-lcov.info --exclude 'examples/**' --exclude 'fuzz/**' --exclude '**/tests/**' --fail-above",
 ]
 
 # Fuzz the frozen v1 leaf byte decoder (`SealedValue::from_bytes`, also
@@ -30,7 +30,7 @@ run = [
 ["fuzz:sealed-value"]
 description = "Fuzz stack-encrypt's frozen leaf byte decoder, SealedValue::from_bytes (libFuzzer, nightly, 60s default)"
 dir = "{{config_root}}/packages/stack-encrypt"
-run = "cargo +nightly fuzz run sealed_value_decode --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+run = "mise x --env test -- cargo +nightly fuzz run sealed_value_decode --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
 
 # Fuzz the SEM index-term byte decoders — every `from_bytes` / `TryFrom<&[u8]>`
 # a stored term comes back through (equality, match, ORE and OPE). One target
@@ -39,7 +39,7 @@ run = "cargo +nightly fuzz run sealed_value_decode --sanitizer none --target $(r
 ["fuzz:term-decode"]
 description = "Fuzz stack-encrypt's SEM index-term byte decoders (libFuzzer, nightly, 60s default)"
 dir = "{{config_root}}/packages/stack-encrypt"
-run = "cargo +nightly fuzz run term_decode --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+run = "mise x --env test -- cargo +nightly fuzz run term_decode --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
 
 # Fuzz the stored-record preflight (`dynamic::record::check_record`) with
 # structure-aware inputs: an `Arbitrary`-derived mirror of a plan value and
@@ -49,7 +49,7 @@ run = "cargo +nightly fuzz run term_decode --sanitizer none --target $(rustc -vV
 ["fuzz:check-record"]
 description = "Fuzz stack-encrypt's stored-record preflight against a model of its rules (structure-aware, libFuzzer, nightly, 60s default)"
 dir = "{{config_root}}/packages/stack-encrypt"
-run = "cargo +nightly fuzz run check_record --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+run = "mise x --env test -- cargo +nightly fuzz run check_record --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
 
 # Rustdoc with warnings as errors: a broken intra-doc link or a rustdoc
 # warning fails the build. Doc *examples* are `test:doc:stack-encrypt`. Both run
@@ -71,4 +71,4 @@ run = "mise x --env test -- cargo test -p stack-encrypt --doc --all-features"
 # trybuild UI suite is filtered out of the per-mutant run by the shared config.
 ["mutants:stack-encrypt"]
 description = "Full mutation-testing sweep of stack-encrypt (cargo-mutants; ~60 min)"
-run = "cargo mutants -p stack-encrypt --jobs 4"
+run = "mise x --env test -- cargo mutants -p stack-encrypt --jobs 4"
