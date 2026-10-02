@@ -22,8 +22,12 @@ concurrency:
 
 jobs:
   review:
+    # Disabled until the review is advisory: a turn limit, a cancelled run or
+    # an API error marked pull requests with a failed check. Set the
+    # repository variable CLAUDE_REVIEW_ENABLED to 'true' to re-enable.
     if: >-
-      (github.event_name != 'pull_request'
+      vars.CLAUDE_REVIEW_ENABLED == 'true'
+      && (github.event_name != 'pull_request'
       || github.event.pull_request.head.repo.full_name == github.repository)
       && github.event.pull_request.draft != true
       && github.event.pull_request.user.type != 'Bot'
