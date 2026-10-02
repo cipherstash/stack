@@ -19,6 +19,7 @@ const PERMITTED_TOOLS = new Set([...BASE_TOOLS, 'Skill', 'Task'])
 // Exactly the `allowed-tools` frontmatter of
 // plugins/code-review/commands/code-review.md at the pinned
 // anthropics/claude-code commit. Re-read that file when bumping the pin.
+// The lens gets all of it except `gh pr comment`.
 const CODE_REVIEW_PLUGIN_TOOLS = [
   'Bash(gh issue view:*)',
   'Bash(gh search:*)',
@@ -132,10 +133,11 @@ describe('Claude pull-request review', () => {
     }
   })
 
-  it('reviews under the base branch copy of every file CLAUDE.md imports', () => {
-    // The action restores CLAUDE.md from the base branch but not its @imports,
-    // so an imported file would otherwise come from the pull request under
-    // review. Derived from CLAUDE.md so a new import cannot go unrestored.
+  it('reviews under the base branch copy of every agent instruction file', () => {
+    // The action restores the root CLAUDE.md from the base branch but not its
+    // @imports or nested CLAUDE.md files, so those would otherwise come from
+    // the pull request under review. Derived from CLAUDE.md so a new import
+    // cannot go unrestored.
     const imports = readFileSync('CLAUDE.md', 'utf8')
       .split('\n')
       .filter((line) => /^@\S+$/.test(line.trim()))
@@ -149,10 +151,23 @@ describe('Claude pull-request review', () => {
       path: '.review-base',
       'sparse-checkout-cone-mode': false,
     })
-    expect(baseCheckout.with['sparse-checkout'].trim().split('\n')).toEqual(
-      imports,
+    const patterns = baseCheckout.with['sparse-checkout'].trim().split('\n')
+    expect(patterns).toEqual(
+      expect.arrayContaining(['CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md']),
     )
-    expect(restore.env.RESTORE_PATHS.split(/\s+/)).toEqual(imports)
+    // A non-cone pattern without a slash matches that name at any depth.
+    for (const path of imports) {
+      const name = path.split('/').pop()
+      expect(patterns.includes(path) || patterns.includes(name)).toBe(true)
+    }
+    // Every name restored at any depth is first removed at every depth, so a
+    // copy the base branch lacks does not survive.
+    for (const name of patterns.filter((pattern) => !pattern.includes('/'))) {
+      expect(restore.run).toContain(`-name ${name}`)
+    }
+    expect(restore.run).toContain('xargs -0 rm -f')
+    expect(restore.run).toContain('cp ".review-base/$path" "$path"')
+    expect(restore.run).toContain('realpath -m')
     expect(restore.run).toContain('rm -rf .review-base')
 
     expect(steps.indexOf(baseCheckout)).toBeLessThan(steps.indexOf(restore))
@@ -267,8 +282,11 @@ describe('Claude review lenses', () => {
 
   it('grants the plugin lens exactly the tools its pinned command declares', () => {
     const plugin = lenses.find((lens) => lens.source === 'plugin')
+    const expected = CODE_REVIEW_PLUGIN_TOOLS.filter(
+      (tool) => tool !== 'Bash(gh pr comment:*)',
+    )
     expect(tools(plugin.allowed_tools).sort()).toEqual(
-      [...CODE_REVIEW_PLUGIN_TOOLS, 'Task'].sort(),
+      [...expected, 'Task'].sort(),
     )
   })
 
@@ -294,6 +312,8 @@ describe('Claude review lenses', () => {
       for (const tool of ALWAYS_DISALLOWED) {
         expect(allowed).not.toContain(tool)
       }
+      // The publish step posts summaries; Claude writes no general comment.
+      expect(allowed).not.toContain('Bash(gh pr comment:*)')
       // A blanket `Bash` disallow overrides the scoped `Bash(gh …)` allows.
       expect(disallowed).not.toContain('Bash')
       expect(allowed).not.toContain('Bash')
@@ -354,9 +374,12 @@ describe('Claude review output contract', () => {
     )
     expect(schema).toMatchObject({
       type: 'object',
-      properties: { summary: { type: 'string' } },
-      required: ['summary'],
+      properties: {
+        reviewed: { type: 'boolean' },
+        summary: { type: 'string' },
+      },
     })
+    expect(schema.required.sort()).toEqual(['reviewed', 'summary'])
   })
 
   it('chooses the plugin command or the skill prompt by lens source', () => {
@@ -396,6 +419,9 @@ describe('Claude review output contract', () => {
     })
     expect(guard().run).toContain('[ "$REVIEW_CONCLUSION" != "success" ]')
     expect(guard().run).toContain('.summary')
+    // A lens that stopped early (the code-review plugin does, once Claude has
+    // commented) returns a summary but did not review.
+    expect(guard().run).toContain("jq -r '.reviewed'")
     expect(guard().run).toContain('exit 1')
   })
 

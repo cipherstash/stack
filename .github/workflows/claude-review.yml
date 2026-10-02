@@ -69,15 +69,17 @@ jobs:
             timeout_minutes: 20
             allowed_tools: Skill,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*)
             disallowed_tools: Edit,Write,NotebookEdit,Task,WebFetch,WebSearch,Read(./.git/**)
-          # The tools are exactly the plugin command's `allowed-tools`
-          # frontmatter at the pinned commit, plus Task for its subagents.
+          # The tools are the plugin command's `allowed-tools` frontmatter at
+          # the pinned commit, plus Task for its subagents, minus
+          # `gh pr comment`: the publish step posts the summary, and with it
+          # the command would post a second, unmarked one.
           - name: code-review
             source: plugin
             command: /code-review
             subagents: true
             max_turns: 60
             timeout_minutes: 35
-            allowed_tools: Task,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*)
+            allowed_tools: Task,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*)
             disallowed_tools: Edit,Write,NotebookEdit,WebFetch,WebSearch,Read(./.git/**)
     env:
       REVIEW_PROMPT: |
@@ -111,8 +113,9 @@ jobs:
         mcp__github_inline_comment__create_inline_comment with confirmed: true,
         and begin the comment body with [${{ matrix.lens.name }}].
 
-        Finish by returning a concise Markdown summary of your findings as the
-        structured output's `summary` field; a later step publishes it. If
+        Finish by returning structured output: `reviewed` true once you have
+        examined the change, and a concise Markdown summary of your findings
+        as `summary`; a later step publishes it. If
         there are no qualifying findings, the summary is exactly:
         Reviewed commit ${{ github.event.pull_request.head.sha }}; no actionable issues found.
         Never describe the pull request as approved or imply that human review
@@ -146,9 +149,11 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # The action restores CLAUDE.md and .claude/ from the base branch but not
-      # the files CLAUDE.md imports, so AGENTS.md would come from the pull
-      # request and let it rewrite the reviewer's instructions.
+      # The action restores the root CLAUDE.md and .claude/ from the base
+      # branch, but not the files CLAUDE.md imports, nor nested CLAUDE.md files
+      # (Claude Code loads one when it reads files beside it, and the
+      # code-review plugin audits against them). Without these two steps the
+      # pull request could rewrite the reviewer's instructions.
       - name: Checkout base-branch agent instructions
         uses: actions/checkout@v6
         with:
@@ -156,23 +161,39 @@ jobs:
           path: .review-base
           fetch-depth: 1
           persist-credentials: false
+          # Non-cone patterns: a name without a slash matches at any depth.
           sparse-checkout: |
+            CLAUDE.md
+            CLAUDE.local.md
             AGENTS.md
           sparse-checkout-cone-mode: false
 
       - name: Restore base-branch agent instructions
         shell: bash
-        env:
-          RESTORE_PATHS: AGENTS.md
         run: |
-          for path in $RESTORE_PATHS; do
-            # Remove first so a symlink planted by the pull request is replaced,
-            # not written through.
-            rm -f "$path"
-            if [ -f ".review-base/$path" ]; then
+          # Remove the pull request's copies first, including ones the base
+          # does not have, so a planted symlink is replaced, not written
+          # through.
+          find . \( -path ./.git -o -path ./.review-base \) -prune -o \
+            \( -type f -o -type l \) \
+            \( -name CLAUDE.md -o -name CLAUDE.local.md -o -name AGENTS.md \) \
+            -print0 | xargs -0 rm -f
+          root=$(realpath .)
+          (cd .review-base && find . -path ./.git -prune -o -type f -print0) |
+            while IFS= read -r -d '' path; do
+              dir=$(dirname "$path")
+              # A directory the pull request replaced with a symlink could
+              # point outside the checkout.
+              case "$(realpath -m "$dir")" in
+                "$root" | "$root"/*) ;;
+                *)
+                  echo "::warning::Not restoring ${path}: its directory resolves outside the checkout"
+                  continue
+                  ;;
+              esac
+              mkdir -p "$dir"
               cp ".review-base/$path" "$path"
-            fi
-          done
+            done
           rm -rf .review-base
 
       # Plugins are installed from local checkouts because the action accepts
@@ -255,7 +276,7 @@ jobs:
             --max-turns ${{ matrix.lens.max_turns }}
             --allowedTools "${{ matrix.lens.allowed_tools }}"
             --disallowedTools "${{ matrix.lens.disallowed_tools }}"
-            --json-schema '{"type":"object","properties":{"summary":{"type":"string","minLength":1}},"required":["summary"],"additionalProperties":false}'
+            --json-schema '{"type":"object","properties":{"reviewed":{"type":"boolean","description":"true only if the change was examined; false if the review stopped early, for example at an eligibility check"},"summary":{"type":"string","minLength":1}},"required":["reviewed","summary"],"additionalProperties":false}'
 
       - name: Require completed Claude review
         if: always()
@@ -264,6 +285,7 @@ jobs:
           REVIEW_CONCLUSION: ${{ steps.claude-review.outputs.conclusion }}
           STRUCTURED_OUTPUT: ${{ steps.claude-review.outputs.structured_output }}
           WORKFLOW_MISMATCH: ${{ steps.claude-review.outputs.skipped_due_to_workflow_validation_mismatch }}
+          LENS: ${{ matrix.lens.name }}
         run: |
           if [ "$WORKFLOW_MISMATCH" = "true" ]; then
             # Only reachable on the GitHub App token path; with `github_token`
@@ -278,6 +300,13 @@ jobs:
           summary=$(jq -r '.summary // empty' <<<"${STRUCTURED_OUTPUT:-null}" 2>/dev/null || true)
           if [ -z "${summary//[[:space:]]/}" ]; then
             echo "::error::Claude review completed without a summary."
+            exit 1
+          fi
+          # The code-review plugin stops early when Claude has already
+          # commented on the pull request. Failing here also keeps the
+          # previous summary, since the publish step does not run.
+          if [ "$(jq -r '.reviewed' <<<"$STRUCTURED_OUTPUT")" != "true" ]; then
+            echo "::error::The ${LENS} lens stopped before reviewing the change: ${summary}"
             exit 1
           fi
 

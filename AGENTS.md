@@ -671,13 +671,17 @@ before changing the workflow, and know these facts about
 - **Tag mode (`track_progress: true`) is not the fix.** It brings a progress
   comment, and also `git commit`, a push wrapper and auto-accepted edits. Keep
   it off. `use_sticky_comment` is inert in agent mode; do not add it.
-- **The action restores `.claude/`, `CLAUDE.md` and a few other config files
-  from the base branch — not the files `CLAUDE.md` imports.** Lens skills,
-  settings and hooks therefore always come from `main`. `AGENTS.md` does not,
-  so two workflow steps copy every `@import` of `CLAUDE.md` from the base
-  commit before Claude starts; the test derives that list from `CLAUDE.md`, so
-  a new import cannot slip through. Do not pass `--setting-sources`: it stops
-  the restored instructions and the skills loading at all.
+- **The action restores `.claude/`, the root `CLAUDE.md` and a few other
+  config files from the base branch — not the files `CLAUDE.md` imports, and
+  not nested `CLAUDE.md` files.** Lens skills, settings and hooks therefore
+  always come from `main`. The rest does not, so two workflow steps take every
+  `CLAUDE.md`, `CLAUDE.local.md` and `AGENTS.md` at any depth from the base
+  commit, deleting copies the base lacks, before Claude starts. Nested
+  `CLAUDE.md` matters because Claude Code loads one when it reads files beside
+  it and the `code-review` plugin audits against them. The test checks every
+  `@import` of `CLAUDE.md` is covered, so a new import cannot slip through. Do
+  not pass `--setting-sources`: it stops the restored instructions and the
+  skills loading at all.
 - **The workflow file itself runs from the pull request.** The action's
   "workflow must match the default branch" skip only applies when it trades
   OIDC for the Claude GitHub App token; this workflow passes `github_token`
@@ -693,15 +697,16 @@ before changing the workflow, and know these facts about
   `NotebookEdit`, `WebFetch`, `WebSearch` and `Read(./.git/**)` (the action
   writes its token into the remote URL). Allowed: the inline-comment tool,
   `Bash(gh pr diff:*)`, `Bash(gh pr view:*)`, and `Skill`. `Task` only where a
-  lens declares `subagents: true`. **Never disallow a blanket `Bash`** — it
+  lens declares `subagents: true`. No lens gets `gh pr comment`. **Never disallow a blanket `Bash`** — it
   overrides the scoped `Bash(gh …)` allows and the lens goes blind.
 - **The summary is published by a shell step, not by Claude.** Claude returns
-  `{"summary": string}` through `--json-schema`; the "Publish lens summary"
+  `{"reviewed": boolean, "summary": string}` through `--json-schema`; the "Publish lens summary"
   step finds its comment by author (`github-actions[bot]`) and a
   `<!-- claude-review:<lens> -->` marker at the very start of the body, and
   sends the body as a JSON document. "Require completed Claude review" runs
-  `always()` and fails the check unless the action concluded `success` and
-  returned a non-empty summary — a green lens means a review happened.
+  `always()` and fails the check unless the action concluded `success`,
+  returned a non-empty summary and reported `reviewed: true` — a green lens
+  means a review happened. A failed lens leaves its previous summary in place.
 - **Plugins install only from a `.git` URL (unpinnable) or a local path.**
   So `cipherstash/skills` (the `company-skills` plugin) and
   `anthropics/claude-code` (the `code-review` plugin) are checked out at full
@@ -709,10 +714,13 @@ before changing the workflow, and know these facts about
   does not track these refs; bump them by hand. When bumping
   `anthropics/claude-code`, re-read
   `plugins/code-review/commands/code-review.md`: the `code-review` lens's
-  `allowed_tools` must equal its `allowed-tools` frontmatter plus `Task`, and
-  the test pins that list. Do not copy the command into this repository — its
-  licence is "All rights reserved". It stops early when Claude has already
-  commented on the pull request, so it may review only the first push.
+  `allowed_tools` must equal its `allowed-tools` frontmatter plus `Task`,
+  minus `gh pr comment` (with it the command posts a second, unmarked
+  summary), and the test pins that list. Do not copy the command into this
+  repository — its licence is "All rights reserved". It stops early when
+  Claude has already commented on the pull request, so after the first push
+  the `code-review` check is expected to go red with "stopped before reviewing
+  the change". Whether to accept that is the open question in #997.
 
 **Adding a lens:** add `.claude/skills/review-<lens>/SKILL.md` and one matrix
 entry with `source: repository` and `skill: review-<lens>`. The test fails if

@@ -10,8 +10,9 @@ is split into parallel lenses. What each lens looks for lives in a skill —
 `company-skills` plugin from a pinned `cipherstash/skills` commit for
 organisation lenses, and a pinned `anthropics/claude-code` commit for the
 `code-review` plugin — never in workflow YAML. Skills are read from the base
-branch: the action restores `.claude/` and `CLAUDE.md`, and the workflow
-restores every file `CLAUDE.md` imports, so a pull request cannot rewrite the
+branch: the action restores `.claude/` and the root `CLAUDE.md`, and the
+workflow restores every `CLAUDE.md`, `CLAUDE.local.md` and `AGENTS.md` at any
+depth (removing ones the base lacks), so a pull request cannot rewrite the
 instructions its own review follows. Plugins are installed from local
 checkouts at full commit SHAs because the action cannot pin a marketplace URL.
 
@@ -37,4 +38,7 @@ and push rights, was rejected for the same reason.
   request here that bumps a pinned SHA.
 - Summaries are found by author and a leading per-lens marker, so lenses
   cannot overwrite each other's comment.
-- A lens that skips, crashes, or returns no summary fails its check.
+- A lens that skips, crashes, stops early, or returns no summary fails its
+  check. The `code-review` plugin stops early once Claude has commented on a
+  pull request, so its check is red after the first push until that is
+  revisited.
