@@ -1,0 +1,5 @@
+error: `nested` opts a field out of the context a `struct` derive infers, so it applies only with `struct = ..`; a `plaintext` record's field with no `context` is already handed the caller's
+  --> tests/ui/nested_outside_struct.rs:11:8
+   |
+11 |     c: StackCipherText,
+   |        ^^^^^^^^^^^^^^^

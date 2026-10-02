@@ -1,0 +1,58 @@
+name: "Miri (guest ABI)"
+
+# Runs the stack-guest-abi unit tests under Miri with strict provenance (the
+# `miri:stack-guest-abi` mise task). The crate is the shared ABI of the WASI
+# guests under bindings/go: its buffer registry hands raw pointers to the Go
+# host and rebuilds owned buffers from them, and Miri is the only check that
+# sees a use-after-free, a double-free, or a pointer rebuilt without
+# provenance on that path. Blocking on PRs that touch the crate: Miri is
+# deterministic, so a red run is a real defect or a harness that stopped
+# compiling, never flake.
+on:
+  pull_request:
+    paths:
+      - packages/stack-guest-abi/**
+      # Root manifest/lockfile: a workspace-wide dependency change can break
+      # the build under Miri without touching the crate.
+      - Cargo.toml
+      - Cargo.lock
+      - mise.toml
+      - .github/workflows/miri.yml
+      # Ordering matters, this needs to stay at the end if we want to include the above, but exclude all .md files.
+      - "!**.md"
+      - "!**.example"
+
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+env:
+  RUST_BACKTRACE: full
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+
+jobs:
+  miri-stack-guest-abi:
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-rust
+
+      - name: Install nightly toolchain with Miri
+        run: |
+          rustup toolchain install nightly --profile minimal --component miri
+          cargo +nightly miri setup
+
+      - name: Fix permissions on target directory
+        run: |
+          mkdir -p ./target
+          sudo chown -R "$(id -u):$(id -g)" ./target
+
+      - name: Miri
+        run: mise run miri:stack-guest-abi

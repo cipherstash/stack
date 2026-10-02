@@ -1,0 +1,22 @@
+["test:integration:stack-profile"]
+description = "Run stack-profile Node.js integration tests"
+dir = "{{config_root}}/packages/stack-profile/node"
+run = [
+  "npm install",
+  "cargo build -p stack-profile-node",
+  "cp ../../../target/debug/libstack_profile_node.dylib stack-profile-node.node 2>/dev/null || cp ../../../target/debug/libstack_profile_node.so stack-profile-node.node",
+  "npx vitest run",
+]
+
+# Rustdoc with warnings as errors: a broken intra-doc link or a rustdoc
+# warning fails the build. Doc *examples* are `test:doc:stack-profile`. Both run
+# with all features so nothing feature-gated goes unchecked; the root `doc`
+# task fans out over every `doc:<crate>`.
+["doc:stack-profile"]
+description = "Build docs for stack-profile with all features (warnings are errors)"
+env = { RUSTDOCFLAGS = "-D warnings" }
+run = "cargo doc -p stack-profile --no-deps --all-features"
+
+["test:doc:stack-profile"]
+description = "Run documentation tests for stack-profile"
+run = "mise x --env test -- cargo test -p stack-profile --doc --all-features"

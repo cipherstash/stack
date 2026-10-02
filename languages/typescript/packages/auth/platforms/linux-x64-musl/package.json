@@ -1,0 +1,17 @@
+{
+  "name": "@cipherstash/auth-linux-x64-musl",
+  "version": "0.36.0",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "stack-auth-node.linux-x64-musl.node",
+  "files": [
+    "stack-auth-node.linux-x64-musl.node"
+  ],
+  "libc": [
+    "musl"
+  ]
+}

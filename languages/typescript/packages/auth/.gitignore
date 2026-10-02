@@ -1,0 +1,11 @@
+target/
+node_modules/
+*.node
+npm/*/*.node
+
+# wasm/ is the output of `wasm-pack build` invoked by `npm run build:wasm`.
+# Build artifacts are populated by CI before publish (or locally by the dev).
+wasm/
+
+# Local `npm pack` tarballs used for offline testing.
+cipherstash-auth-*.tgz

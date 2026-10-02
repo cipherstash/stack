@@ -1,0 +1,17 @@
+{
+  "name": "@cipherstash/auth-linux-x64-gnu",
+  "version": "0.36.0",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "stack-auth-node.linux-x64-gnu.node",
+  "files": [
+    "stack-auth-node.linux-x64-gnu.node"
+  ],
+  "libc": [
+    "glibc"
+  ]
+}

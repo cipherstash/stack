@@ -1,0 +1,86 @@
+# Release versioning for the @cipherstash npm products (CIP-3278).
+#
+# Owns the *versioning* half of npm releases: on push to main, the changesets
+# action opens/updates a "Version Packages" PR that applies accumulated
+# .changeset/*.md entries to package.json + CHANGELOG.md for the @cipherstash
+# npm products. It deliberately does NOT publish here — the @cipherstash/auth
+# and @cipherstash/profile packages need a matrix napi/wasm build.
+#
+# Publishing is automated but lives in the per-product matrix workflows: merging
+# the Version Packages PR bumps each product's node/package.json on main, which
+# triggers publish-auth-npm.yml / publish-profile-npm.yml (path-filtered on that
+# file, with an npm-version guard so only a genuine bump publishes). That merge
+# is the human gate.
+#
+# This is the seam with release-plz: release-plz owns Cargo.* + crates.io;
+# this owns package.json + npm. They never touch the same files.
+name: "Release (npm — changesets)"
+
+on:
+  push:
+    branches:
+      - main
+
+# Only one Version Packages PR in flight at a time.
+concurrency:
+  group: release-npm
+  cancel-in-progress: false
+
+permissions:
+  contents: write # create the Version Packages branch/commit
+  pull-requests: write # open/update the Version Packages PR
+
+jobs:
+  version:
+    name: Open/update Version Packages PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      # Installs only the root manifest's devDependency (@changesets/cli).
+      # `--ignore-scripts` and no workspace build keep this off the napi
+      # toolchain entirely — versioning only reads/writes package.json + md.
+      #
+      # TEMPORARY: `npm install`, not `npm ci`. `@cipherstash/profile` (the
+      # `packages/stack-profile/node` workspace) declares its per-platform
+      # native bindings (`@cipherstash/profile-*`) as optionalDependencies, and
+      # those aren't published to npm yet. `npm ci` validates the whole lockfile
+      # against every workspace manifest (even with `--no-workspaces`) and hard-
+      # fails with "Missing: @cipherstash/profile-<platform> from lock file",
+      # because an unpublished optional dep can't be recorded in the lock file.
+      # `npm install` skips unresolvable optional deps with a warning instead.
+      # Revert to `npm ci` once the `@cipherstash/profile-*` bindings are
+      # published (tracked with the profile publishing work).
+      - name: Install changesets
+        run: npm install --no-workspaces --ignore-scripts --no-audit --no-fund
+
+      - name: Create Version Packages PR
+        uses: changesets/action@v1.8.0
+        with:
+          # `version-packages` (root package.json) runs `changeset version` to
+          # regenerate package.json + CHANGELOG from .changeset/*.md, then
+          # `npm install --package-lock-only` so the root lockfile's recorded
+          # member versions re-sync in the same commit (otherwise they drift).
+          # Run via `npm run` — not `npx` — so the local `.bin/changeset`
+          # resolves and `&&` executes in a shell.
+          # No `publish:` on purpose — publishing is the matrix workflows' job
+          # (see header comment).
+          version: npm run version-packages
+          # Create the Version Packages commit through the GitHub API instead of
+          # a local `git commit`. API-created commits are signed by GitHub, so
+          # they satisfy the "Commits must have verified signatures" branch
+          # protection on `main` (a local commit from the action is unsigned and
+          # blocks the merge). This is how release-plz's release commits pass,
+          # and matches cipherstash/stack's release.yml.
+          commitMode: github-api
+          title: "Release: version @cipherstash npm packages"
+          commit: "chore(release): version @cipherstash npm packages"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
