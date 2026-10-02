@@ -95,7 +95,9 @@ check() {
   # cargo tree can die on EPIPE, and pipefail would adopt that status —
   # silently masking a MATCH once the tree outgrows the pipe buffer.
   local tree
-  tree=$(cargo tree --target wasm32-wasip1 -e normal -p "$crate" "$@")
+  # --color never: CI sets CARGO_TERM_COLOR=always, and the colour codes
+  # around the tree prefix stop the grep below from ever matching.
+  tree=$(cargo tree --color never --target wasm32-wasip1 -e normal -p "$crate" "$@")
   if grep -Eq '^[^a-z]*(wasm-bindgen|web-sys|js-sys) ' <<<"$tree"; then
     echo "error: $crate pulls a JS-host backend (wasm-bindgen/web-sys/js-sys) on WASI — not wazero-loadable" >&2
     exit 1
