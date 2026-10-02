@@ -166,10 +166,20 @@ function elf({ needed }) {
 const dir = mkdtempSync(join(tmpdir(), 'check-c-library-'))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
+// Enough NEEDED entries that readelf is still writing after the C library's
+// line. A `grep -q` reading readelf through a pipe exits at that line, readelf
+// takes SIGPIPE, and under pipefail the match reads as a miss.
+const FILLER = Array.from(
+  { length: 3000 },
+  (_, i) => `libfiller-${String(i).padStart(4, '0')}.so`,
+)
+
 /** The libraries a Rust cdylib names on each C library, as readelf lists them. */
 const FIXTURES = {
   gnu: ['libgcc_s.so.1', 'libm.so.6', 'libc.so.6', 'ld-linux-x86-64.so.2'],
   musl: ['libgcc_s.so.1', 'libc.musl-x86_64.so.1'],
+  'gnu-long': ['libc.so.6', ...FILLER],
+  'musl-long': ['libc.musl-x86_64.so.1', ...FILLER],
   // A binary with a dynamic section that names no C library: a C library
   // linked in statically, with only libgcc left dynamic.
   'no-libc': ['libgcc_s.so.1'],
@@ -213,16 +223,16 @@ describe.skipIf(!hasReadelf && !process.env.CI)('check-c-library.sh', () => {
   })
 
   const ACCEPTS = {
-    'linux-x64-gnu': 'gnu',
-    'linux-arm64-gnu': 'gnu',
-    'linux-x64-musl': 'musl',
+    'linux-x64-gnu': ['gnu', 'gnu-long'],
+    'linux-arm64-gnu': ['gnu', 'gnu-long'],
+    'linux-x64-musl': ['musl', 'musl-long'],
   }
 
   const cases = Object.entries(ACCEPTS).flatMap(([platform, accepted]) =>
     Object.keys(FIXTURES).map((binary) => ({
       platform,
       binary,
-      ok: binary === accepted,
+      ok: accepted.includes(binary),
     })),
   )
 
