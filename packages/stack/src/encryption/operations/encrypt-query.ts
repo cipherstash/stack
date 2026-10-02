@@ -1,21 +1,19 @@
 import { type Result, withResult } from '@byteslice/result'
-import {
-  encryptQuery as ffiEncryptQuery,
-  type JsPlaintext,
-} from '@cipherstash/protect-ffi'
+import { encryptQuery as ffiEncryptQuery } from '@cipherstash/protect-ffi'
 import { formatEncryptedResult } from '@/encryption/helpers'
 import {
   failureDiagnostics,
   failureMessage,
 } from '@/encryption/helpers/auth-failure'
 import { getErrorCode } from '@/encryption/helpers/error-code'
+import { toJsPlaintext } from '@/encryption/helpers/js-plaintext'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import { type LockContextInput, resolveLockContext } from '@/identity'
 import type {
   Client,
   EncryptedQueryResult,
   EncryptQueryOptions,
-  Plaintext,
+  PlaintextInput,
 } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import { resolveIndexType } from '../helpers/infer-index-type'
@@ -30,7 +28,7 @@ import { EncryptionOperation } from './base-operation'
 export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryResult> {
   constructor(
     private client: Client,
-    private plaintext: Plaintext | null | undefined,
+    private plaintext: PlaintextInput | null | undefined,
     private opts: EncryptQueryOptions,
   ) {
     super()
@@ -65,7 +63,7 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
       return { data: null }
     }
 
-    const plaintext: Plaintext = this.plaintext
+    const plaintext: NonNullable<PlaintextInput> = this.plaintext
 
     const validationError = validateNumericValue(plaintext)
     if (validationError?.failure) {
@@ -94,10 +92,7 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
         assertMatchNeedleQueryable(plaintext, indexType, this.opts.column)
 
         const encrypted = await ffiEncryptQuery(this.client, {
-          // `Plaintext` widens the FFI `JsPlaintext` with `Date` (serialized via
-          // `toJSON` at the boundary); cast until the upstream input union is
-          // corrected to include it.
-          plaintext: plaintext as JsPlaintext,
+          plaintext: toJsPlaintext(plaintext),
           column: this.opts.column.getName(),
           table: this.opts.table.tableName,
           indexType,
@@ -128,7 +123,7 @@ export class EncryptQueryOperation extends EncryptionOperation<EncryptedQueryRes
 export class EncryptQueryOperationWithLockContext extends EncryptionOperation<EncryptedQueryResult> {
   constructor(
     private client: Client,
-    private plaintext: Plaintext | null | undefined,
+    private plaintext: PlaintextInput | null | undefined,
     private opts: EncryptQueryOptions,
     private lockContext: LockContextInput,
     auditMetadata?: Record<string, unknown>,
@@ -154,7 +149,7 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
       return { data: null }
     }
 
-    const plaintext: Plaintext = this.plaintext
+    const plaintext: NonNullable<PlaintextInput> = this.plaintext
 
     const validationError = validateNumericValue(plaintext)
     if (validationError?.failure) {
@@ -185,10 +180,7 @@ export class EncryptQueryOperationWithLockContext extends EncryptionOperation<En
         assertMatchNeedleQueryable(plaintext, indexType, this.opts.column)
 
         const encrypted = await ffiEncryptQuery(this.client, {
-          // `Plaintext` widens the FFI `JsPlaintext` with `Date` (serialized via
-          // `toJSON` at the boundary); cast until the upstream input union is
-          // corrected to include it.
-          plaintext: plaintext as JsPlaintext,
+          plaintext: toJsPlaintext(plaintext),
           column: this.opts.column.getName(),
           table: this.opts.table.tableName,
           indexType,
