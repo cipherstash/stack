@@ -51,7 +51,8 @@ describe('_build-auth-artifacts.yml', () => {
 
   it('builds each binding without writing over the committed loader', () => {
     const build = runs(binaries).filter((run) => /\bnapi build\b/.test(run))
-    expect(build).toHaveLength(1)
+    // One host build, and one inside Alpine for the musl leg.
+    expect(build).toHaveLength(2)
     for (const flag of [
       '--platform',
       '--release',
@@ -60,7 +61,7 @@ describe('_build-auth-artifacts.yml', () => {
       '--dts native.d.ts',
       '--js false',
     ]) {
-      expect(build[0]).toContain(flag)
+      for (const run of build) expect(run).toContain(flag)
     }
   })
 
@@ -71,6 +72,45 @@ describe('_build-auth-artifacts.yml', () => {
       new RegExp(`git diff --exit-code\\b.*${AUTH_DIR}`).test(run),
     )
     expect(check).toBeGreaterThan(build)
+  })
+
+  it('builds the musl binding inside Alpine, from an image pinned by digest', () => {
+    // Built on the Ubuntu runner, the musl binary linked glibc and failed to
+    // load on musl. Alpine is a musl system, so its compiler links musl.
+    const steps = binaries?.steps ?? []
+    const musl = steps.filter((step) =>
+      String(step?.if ?? '').includes("== 'linux-x64-musl'"),
+    )
+    const run = musl.map((step) => String(step?.run ?? '')).join('\n')
+    const env = Object.assign({}, ...musl.map((step) => step?.env ?? {}))
+    expect(env.ALPINE_NODE_IMAGE).toMatch(/-alpine@sha256:[0-9a-f]{64}$/)
+    expect(run).toContain('docker run')
+    expect(run).toContain('RUSTFLAGS="-C target-feature=-crt-static"')
+    // The host build and the host dependency install skip the musl leg.
+    for (const name of ['Build the native binding', 'Install dependencies']) {
+      const step = steps.find((s) => s?.name === name)
+      expect(String(step?.if ?? '')).toContain("!= 'linux-x64-musl'")
+    }
+  })
+
+  it('checks the C library of every Linux binary before it is packed', () => {
+    // Without this, only a hand-run auth-preflight sees a glibc-linked musl
+    // binary, and a release would publish it.
+    const steps = binaries?.steps ?? []
+    const check = steps.findIndex((step) =>
+      String(step?.run ?? '').includes('readelf -d'),
+    )
+    const pack = steps.findIndex((step) =>
+      /\bnpm pack\b/.test(String(step?.run ?? '')),
+    )
+    expect(check).toBeGreaterThan(-1)
+    expect(check).toBeLessThan(pack)
+    const run = String(steps[check].run)
+    expect(String(steps[check].if)).toContain("runner.os == 'Linux'")
+    expect(run).toMatch(
+      /linux-x64-gnu\|linux-arm64-gnu\)[\s\S]*libc\\\.so\\\.6/,
+    )
+    expect(run).toContain('linux-x64-musl links glibc')
   })
 
   it('packs the wrapper with pnpm, which rewrites its workspace peers', () => {
