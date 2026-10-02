@@ -3,8 +3,8 @@ name: FFI release pre-flight
 # `changeset publish` has no --dry-run, so this IS the dry run: build the real
 # artifacts, check every binary is the architecture and libc its package name
 # claims, then install the host-matching pair into a scratch project and use
-# them. Point it at the Version Packages PR branch so the tarballs tested carry
-# the exact versions that will publish.
+# them, and the musl pair inside Alpine. Point it at the Version Packages PR
+# branch so the tarballs tested carry the exact versions that will publish.
 #
 # It never publishes, and cannot — both authentication paths are absent, which
 # takes more than the one line it looks like. No `id-token` permission closes
@@ -150,3 +150,26 @@ jobs:
           EOF
           node smoke.mjs
 
+      # The host steps above install only linux-x64-gnu, the runner's own
+      # platform. The musl binary loads only where musl is the C library, so it
+      # is installed and loaded inside Alpine, from the image the build uses.
+      - name: Smoke-test the musl artifact inside Alpine
+        env:
+          ALPINE_NODE_IMAGE: node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
+        run: |
+          set -euo pipefail
+          wrapper=$(basename "$(ls "$GITHUB_WORKSPACE"/ffi-dist/cipherstash-protect-ffi-[0-9]*.tgz)")
+          musl=$(basename "$(ls "$GITHUB_WORKSPACE"/ffi-dist/cipherstash-protect-ffi-linux-x64-musl-*.tgz)")
+          docker run --rm -v "$GITHUB_WORKSPACE/ffi-dist:/dist:ro" \
+            -e WRAPPER="$wrapper" -e MUSL="$musl" \
+            "$ALPINE_NODE_IMAGE" sh -euc '
+              mkdir -p /tmp/smoke && cd /tmp/smoke
+              echo "{\"name\":\"smoke\",\"version\":\"1.0.0\",\"private\":true}" > package.json
+              npm install --no-audit --no-fund "/dist/$WRAPPER" "/dist/$MUSL"
+              node -e "
+                const ffi = require(\"@cipherstash/protect-ffi\")
+                ffi.assertNativeBindingAvailable()
+                if (typeof ffi.isEncrypted !== \"function\") throw new Error(\"no isEncrypted\")
+                console.log(\"musl smoke OK\")
+              "
+            '
