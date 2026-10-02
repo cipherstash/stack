@@ -624,8 +624,11 @@ monorepo, which is where the silent failures are.
 
 The stack-* crates came from `cipherstash/cipherstash-suite`, which still owns
 `cipherstash-client`, `cts-common`, `zerokms-protocol`, `recipher` and
-`cllw-ore`. Here those come from crates.io, pinned exactly in the root
-`Cargo.toml`.
+`cllw-ore`. Here those come from crates.io, and `Cargo.lock` holds their
+exact versions. In the root `Cargo.toml`, `recipher` and `cllw-ore` are
+pinned with `=`. `cts-common` and `zerokms-protocol` take caret
+requirements, because the published `stack-auth` inherits them, and an
+exact pin would stop the suite sharing one `cts-common` with it.
 
 - **Three Cargo workspaces, not one.** The root workspace (the six stack-*
   crates and the three node binding crates), protect-ffi's and EQL's. The root
