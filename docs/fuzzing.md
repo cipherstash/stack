@@ -110,7 +110,7 @@ single input with `cargo +nightly fuzz run <target> <path-to-reproducer>`.
 
 ## CI (`.github/workflows/fuzz.yml`)
 
-The workflow arrives with the CI port of the stack-* crates. Two jobs with deliberately different roles:
+Two jobs with deliberately different roles:
 
 - **fuzz-regression** (`pull_request`, **blocking**): builds every
   harness — which catches harness/API drift, e.g. a changed `FromStr`
@@ -126,8 +126,8 @@ The workflow arrives with the CI port of the stack-* crates. Two jobs with delib
   to stay small, and any crash reproducer is uploaded as an artifact.
 
 The `pull_request` trigger is path-filtered to `packages/stack-auth/**`,
-`packages/stack-kms/**`, `packages/stack-encrypt/**`, and the workflow file,
-with `!**.md` / `!**.example` excludes last so docs-only changes are
+`packages/stack-kms/**`, `packages/stack-encrypt/**`, the root `Cargo.toml`,
+`Cargo.lock` and `mise.toml`, and the workflow file, with `!**.md` / `!**.example` excludes last so docs-only changes are
 skipped.
 
 ## Adding a new target

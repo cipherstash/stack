@@ -3,7 +3,7 @@
 #
 # One definition of "the Go binding passes", run on three platforms: the mise
 # task `go:test` (Linux CI, and locally) and the macOS/Windows
-# jobs in .github/workflows/test-wasi.yml both call this, so they cannot
+# jobs in .github/workflows/tests-golang.yml both call this, so they cannot
 # drift apart. The guest module itself is built once, on Linux, and handed to
 # the other platforms as an artifact — the wasm is platform-independent and
 # the Rust build is the slow part.

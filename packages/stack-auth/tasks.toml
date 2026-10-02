@@ -34,7 +34,7 @@ run = [
   # binding crates so the report reflects the core library. `--fail-above` exits
   # non-zero when any function's CRAP score exceeds the threshold from the
   # workspace-root .cargo-crap.toml (30), so this gates both local runs and CI.
-  # NOTE: this must stay the LAST command — the crap-stack-auth.yml CI workflow runs
+  # NOTE: this must stay the LAST command — the crap-crates.yml CI workflow runs
   # this task and relies on mise appending its trailing args (e.g. --format github)
   # to this `cargo crap` invocation.
   "mise x --env test -- cargo crap --path packages/stack-auth --lcov {{config_root}}/target/stack-auth-lcov.info --exclude 'node/**' --exclude 'wasm/**' --exclude 'examples/**' --exclude '**/tests.rs' --exclude '**/tests/**' --fail-above",

@@ -192,6 +192,7 @@ const EXPECTED_CREDENTIALED_JOBS = [
   '.github/workflows/tests.yml / run-tests',
   '.github/workflows/tests.yml / run-tests-bun',
   '.github/workflows/tests.yml / wasm-e2e-tests',
+  '.github/workflows/tests-golang.yml / live',
 ]
 
 /**
@@ -227,6 +228,10 @@ const BINDING_EXEMPT_JOBS = new Map([
   [
     '.github/workflows/test-eql.yml / e2e',
     'Rust: the proptest-e2e oracle encrypts through cipherstash-client, and never loads index.node or dist/wasm.',
+  ],
+  [
+    '.github/workflows/tests-golang.yml / live',
+    'Go and Rust: the Go live tests encrypt through the stack-encrypt WASI guest, and the stack-encrypt examples link the crate directly. Neither loads index.node or dist/wasm.',
   ],
 ])
 
