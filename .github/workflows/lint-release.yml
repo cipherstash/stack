@@ -19,8 +19,8 @@ name: Lint release tooling
 on:
   pull_request:
     # Exactly what the job reads: the workflows actionlint is pointed at, the
-    # config it resolves the Blacksmith label from, and the two shell scripts
-    # the last two steps run. The filter also named scripts/release-gate.mjs,
+    # config it resolves the Blacksmith label from, and the shell scripts the
+    # later steps check and run. The filter also named scripts/release-gate.mjs,
     # scripts/ffi-release-matrix.mjs, scripts/lint-no-workflow-caching.mjs and
     # package.json — none of which this job looks at, since it deliberately does
     # not run `test:scripts` (see the job comment). Editing one booted a runner
@@ -43,6 +43,7 @@ on:
       - .github/workflows/lint-release.yml
       - .github/actionlint.yaml
       - packages/eql/tasks/release/*.sh
+      - scripts/check-c-library.sh
   workflow_dispatch: {}
 
 permissions:
@@ -113,3 +114,9 @@ jobs:
 
       - name: prepare-bindings-assets validation unit test
         run: bash packages/eql/tasks/release/prepare-bindings-assets.test.sh
+
+      # Every release build runs it on each Linux binary before packing, so a
+      # shell mistake in it fails a release mid-build. Its tests run in
+      # `test:scripts`.
+      - name: shellcheck (C library check)
+        run: shellcheck scripts/check-c-library.sh

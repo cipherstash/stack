@@ -30,6 +30,8 @@ const workflow = readWorkflow(WORKFLOW)
 const binaries = workflow?.jobs?.binaries
 const wrapper = workflow?.jobs?.wrapper
 const runs = (job) => (job?.steps ?? []).map((step) => String(step?.run ?? ''))
+/** A GitHub Actions expression, as the parsed workflow holds it. */
+const gha = (expression) => `\${{ ${expression} }}`
 
 const PLATFORMS = readdirSync(join(AUTH, 'platforms'), { withFileTypes: true })
   .filter((entry) => entry.isDirectory())
@@ -112,44 +114,47 @@ describe('_build-auth-artifacts.yml', () => {
 
   it('checks the C library of every Linux binary before it is packed', () => {
     // Without this, only a hand-run auth-preflight sees a glibc-linked musl
-    // binary, and a release would publish it.
+    // binary, and a release would publish it. The rules themselves, and that
+    // every Linux platform package has one, are check-c-library.test.mjs's.
     const steps = binaries?.steps ?? []
     const check = steps.findIndex((step) =>
-      String(step?.run ?? '').includes('readelf -d'),
+      String(step?.run ?? '').includes('scripts/check-c-library.sh'),
+    )
+    const place = steps.findIndex(
+      (step) => step?.name === 'Place the binding in its platform package',
     )
     const pack = steps.findIndex((step) =>
       /\bnpm pack\b/.test(String(step?.run ?? '')),
     )
-    expect(check).toBeGreaterThan(-1)
+    expect(place).toBeGreaterThan(-1)
+    expect(check).toBeGreaterThan(place)
     expect(check).toBeLessThan(pack)
-    const run = String(steps[check].run)
     expect(String(steps[check].if)).toContain("runner.os == 'Linux'")
-    expect(run).toMatch(
-      /linux-x64-gnu\|linux-arm64-gnu\)[\s\S]*libc\\\.so\\\.6/,
+    // The binary that is packed, under the leg's own platform name.
+    expect(steps[check].env?.PLATFORM).toBe(gha('matrix.platform'))
+    expect(String(steps[check].run)).toMatch(
+      /check-c-library\.sh "\$PLATFORM" "languages\/typescript\/packages\/auth\/platforms\/\$\{PLATFORM\}\/stack-auth-node\.\$\{PLATFORM\}\.node"/,
     )
-    expect(run).toContain('linux-x64-musl links glibc')
-    // A static binary has no libc entry, so musl must be named, not only
-    // glibc refused.
-    expect(run).toMatch(/linux-x64-musl\)[\s\S]*libc\\\.musl-/)
-    // Every rejection fails the job, so the binary is never packed.
-    const errors = run.match(/::error::/g) ?? []
-    expect(errors.length).toBeGreaterThan(0)
-    expect((run.match(/exit 1/g) ?? []).length).toBe(errors.length)
-    // Every Linux platform in the matrix has a rule.
-    const linux = (binaries?.strategy?.matrix?.include ?? [])
-      .filter((leg) => String(leg.os).startsWith('ubuntu'))
-      .map((leg) => leg.platform)
-    expect(linux.length).toBeGreaterThan(0)
-    for (const platform of linux) {
-      expect(run).toMatch(new RegExp(`(^|[|\\s])${platform}[|)]`, 'm'))
-    }
   })
 
-  it('auth-preflight requires musl, and loads the musl artifact inside Alpine', () => {
+  it('auth-preflight checks the C library, and loads the musl artifact inside Alpine', () => {
     const preflight = readWorkflow('.github/workflows/auth-preflight.yml')
     const steps = preflight?.jobs?.smoke?.steps ?? []
     const verify = steps.map((step) => String(step?.run ?? '')).join('\n')
-    expect(verify).toMatch(/linux-x64-musl\)[\s\S]*libc\\\.musl-/)
+    expect(verify).toMatch(
+      /if \[\[ "\$platform" == linux-\* \]\]; then\s+"\$GITHUB_WORKSPACE\/scripts\/check-c-library\.sh" "\$platform" "\$binary"/,
+    )
+    // The script comes from the commit that was built, and the checkout comes
+    // first, because a checkout empties the directory it checks out into.
+    const checkout = steps.findIndex((step) =>
+      String(step?.uses ?? '').startsWith('actions/checkout@'),
+    )
+    const download = steps.findIndex((step) =>
+      String(step?.uses ?? '').startsWith('actions/download-artifact@'),
+    )
+    expect(checkout).toBeGreaterThan(-1)
+    expect(checkout).toBeLessThan(download)
+    expect(steps[checkout].with?.ref).toBe(gha('inputs.ref'))
     // The host smoke test installs only the runner's own platform, so without
     // this step no job loads the musl binary.
     const alpine = steps.find((step) =>
