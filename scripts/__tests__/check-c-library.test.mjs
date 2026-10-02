@@ -297,6 +297,7 @@ describe.skipIf(!hasReadelf && !process.env.CI)('check-c-library.sh', () => {
 describe('the workflows that check a Linux binary', () => {
   const CALLERS = [
     '.github/workflows/_build-auth-artifacts.yml',
+    '.github/workflows/_build-ffi-artifacts.yml',
     '.github/workflows/auth-preflight.yml',
     '.github/workflows/ffi-preflight.yml',
   ]

@@ -269,6 +269,16 @@ jobs:
             -o "platforms/${PLATFORM}/index.node" < "${BUILD_LOG}"
           test -s "platforms/${PLATFORM}/index.node"
 
+      # Every build checks which C library its binary links, so a release
+      # cannot publish a musl binary that links glibc even if nobody ran
+      # ffi-preflight first. The rules are in scripts/check-c-library.sh, which
+      # every workflow that checks a Linux binary runs.
+      - name: Check which C library the binary links
+        if: ${{ runner.os == 'Linux' }}
+        env:
+          PLATFORM: ${{ matrix.cfg.platform }}
+        run: scripts/check-c-library.sh "$PLATFORM" "languages/typescript/packages/protect-ffi/platforms/${PLATFORM}/index.node"
+
       # `pnpm pack` writes into the packed package's own directory by default,
       # and `--pack-destination` resolves relative to `--dir` rather than to the
       # CWD (verified). Packing to the default location and moving the result
