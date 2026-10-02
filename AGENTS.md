@@ -656,6 +656,93 @@ Three rules to remember when editing CI or pnpm config:
 2. **Adding to `pnpm.onlyBuiltDependencies` is an audit decision** — vet the package and explain the addition in the PR.
 3. **Don't commit auth tokens in `.npmrc`.** Tokens belong in user-level `~/.npmrc` or environment variables.
 
+## Claude PR review
+
+`.github/workflows/claude-review.yml` runs an advisory Claude review on every
+non-draft, non-bot pull request from a branch in this repository. It never
+approves, blocks, or merges. It is one job, `review`, with a matrix of
+**lenses** — `correctness`, `security`, `repo-rules`, `code-review` — each its
+own check, its own inline comments (prefixed `[<lens>]`) and one summary
+comment it updates on every push. `scripts/__tests__/claude-review-workflow.test.mjs`
+holds the shape; the decisions behind it are in
+`docs/adr/0002-claude-review-lenses-are-base-branch-skills.md`. Read both
+before changing the workflow, and know these facts about
+`anthropics/claude-code-action`, none of which the YAML shows:
+
+- **A prompt on a `pull_request` event selects agent mode.** Agent mode
+  injects no pull-request context and creates no comment. The lens reads the
+  diff itself with scoped `gh pr diff` / `gh pr view` (the checkout is one
+  commit deep) and returns its summary as structured output.
+- **Tag mode (`track_progress: true`) is not the fix.** It brings a progress
+  comment, and also `git commit`, a push wrapper and auto-accepted edits. Keep
+  it off. `use_sticky_comment` is inert in agent mode; do not add it.
+- **The action restores `.claude/`, the root `CLAUDE.md` and a few other
+  config files from the base branch — not the files `CLAUDE.md` imports, and
+  not nested `CLAUDE.md` files.** Lens skills, settings and hooks therefore
+  always come from `main`. The rest does not, so two workflow steps take every
+  `CLAUDE.md`, `CLAUDE.local.md` and `AGENTS.md` at any depth from the base
+  commit, deleting copies the base lacks, before Claude starts. Nested
+  `CLAUDE.md` matters because Claude Code loads one when it reads files beside
+  it and the `code-review` plugin audits against them. The test checks every
+  `@import` of `CLAUDE.md` is covered, so a new import cannot slip through. Do
+  not pass `--setting-sources`: it stops the restored instructions and the
+  skills loading at all.
+- **The workflow file itself runs from the pull request.** The action's
+  "workflow must match the default branch" skip only applies when it trades
+  OIDC for the Claude GitHub App token; this workflow passes `github_token`
+  (the App token has write access `permissions:` cannot narrow), so no skip
+  happens. A pull request that edits the workflow is reviewed by its own
+  edited copy — but still under `main`'s skills, so a lens added in the same
+  pull request has no skill to load there. **A workflow or lens change is not
+  proven by its own pull request's checks.** After merging, open a small test
+  pull request with a planted bug and a planted rule violation and confirm
+  every lens runs, finds its plant, and updates (not duplicates) its summary
+  on a second push.
+- **Claude is read-only.** Every lens disallows `Edit`, `Write`,
+  `NotebookEdit`, `WebFetch`, `WebSearch` and `Read(./.git/**)` (the action
+  writes its token into the remote URL). Allowed: the inline-comment tool,
+  `Bash(gh pr diff:*)`, `Bash(gh pr view:*)`, and `Skill`. `Task` only where a
+  lens declares `subagents: true`. Every lens explicitly disallows
+  `Bash(gh pr comment:*)`: a plugin command's `allowed-tools` frontmatter
+  grants its tools on its own, so leaving one off the allow-list does not
+  block it. **Never disallow a blanket `Bash`** — it
+  overrides the scoped `Bash(gh …)` allows and the lens goes blind.
+- **The summary is published by a shell step, not by Claude.** Claude returns
+  `{"reviewed": boolean, "summary": string}` through `--json-schema`; the "Publish lens summary"
+  step finds its comment by author (`github-actions[bot]`) and a
+  `<!-- claude-review:<lens> -->` marker at the very start of the body, and
+  sends the body as a JSON document. "Require completed Claude review" runs
+  `always()` and fails the check unless the action concluded `success`,
+  returned a non-empty summary and reported `reviewed: true` — a green lens
+  means a review happened. A failed lens leaves its previous summary in place.
+- **Plugins install only from a `.git` URL (unpinnable) or a local path.**
+  So `cipherstash/skills` (the `company-skills` plugin) and
+  `anthropics/claude-code` (the `code-review` plugin) are checked out at full
+  commit SHAs under `.review-plugins/` and installed from there. Dependabot
+  does not track these refs; bump them by hand. When bumping
+  `anthropics/claude-code`, re-read
+  `plugins/code-review/commands/code-review.md`: the `code-review` lens's
+  `allowed_tools` must equal its `allowed-tools` frontmatter plus `Task`,
+  minus `gh pr comment` (with it the command posts a second, unmarked
+  summary), and the test pins that list. Do not copy the command into this
+  repository — its licence is "All rights reserved". Its eligibility check
+  stops it when Claude has already commented on the pull request. Whether it
+  counts the lens summaries (posted by `github-actions[bot]`) is untested; if
+  it does, the `code-review` check goes red after the first push with
+  "stopped before reviewing the change". That, and whether to accept it, is
+  the open question in #997.
+
+**Adding a lens:** add `.claude/skills/review-<lens>/SKILL.md` and one matrix
+entry with `source: repository` and `skill: review-<lens>`. The test fails if
+either exists without the other. A lens that applies to every CipherStash
+repository belongs in `cipherstash/skills` instead: add it there, bump the
+pinned SHA here, and use `source: organisation` with
+`skill: company-skills:review-<lens>`. `review-correctness` and
+`review-security` are written to move there; they live here only until that
+repository carries them. Developers can install the same plugin locally with
+`/plugin marketplace add cipherstash/skills` and
+`/plugin install company-skills@company`.
+
 ## Key Concepts and APIs
 
 - **Initialization**: `Encryption({ schemas })` is the single client factory. It requires at least one concrete EQL v3 `encryptedTable` and returns `EncryptionClient<S>`, whose model and query types are derived from that schema tuple. The `EncryptionV3`, `typedClient`, `EncryptionClientFor`, and nominal-client surfaces have been removed.
