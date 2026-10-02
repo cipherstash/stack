@@ -147,6 +147,10 @@ jobs:
               pnpm install --frozen-lockfile --ignore-scripts --filter "@cipherstash/auth..."
               cd languages/typescript/packages/auth
               pnpm exec napi build --platform --release --target "$TARGET" --strip --dts native.d.ts --js false
+              # Load it here, on musl: readelf only infers that it will load,
+              # and this also catches a missing runtime library or an
+              # unresolved symbol, in every build, release builds included.
+              node -e "require(process.argv[1])" "$PWD/stack-auth-node.linux-x64-musl.node"
             '
 
       # The build must leave the tracked tree alone: `native.d.ts` is

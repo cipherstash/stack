@@ -91,6 +91,10 @@ describe('_build-auth-artifacts.yml', () => {
     expect(run).toMatch(/docker run[\s\S]*"\$ALPINE_NODE_IMAGE"/)
     expect(run).not.toMatch(/\bnode:\d+-alpine(?!@)/)
     expect(run).toContain('RUSTFLAGS="-C target-feature=-crt-static"')
+    // The container loads the binary it built, on musl.
+    expect(run).toMatch(
+      /napi build[\s\S]*node -e "require\(process\.argv\[1\]\)" "\$PWD\/stack-auth-node\.linux-x64-musl\.node"/,
+    )
     // The container hands its files back even when the build fails.
     expect(run).toMatch(/^\s*trap "chown -R .*\/build" EXIT$/m)
     // The host steps that only the host build uses skip the musl leg.
