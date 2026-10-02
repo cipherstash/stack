@@ -188,16 +188,20 @@ const PERMISSIVE_NEEDS = {
   gate: { result: 'success', outputs: { ffi: 'true', auth: 'true' } },
   'publish-ffi': { result: 'success' },
   'publish-auth': { result: 'success' },
-  release: {
+  release: { result: 'success', outputs: { published_packages: '' } },
+  'eql-assets': {
     result: 'success',
     outputs: {
-      eql_published: 'true',
-      eql_version: '3.0.6',
+      needed: 'true',
+      version: '3.0.6',
       // A final: `eql-image` runs only for one. The prerelease half of the
       // file is in DISPATCH_SKIPPED_JOBS instead.
-      eql_prerelease: 'false',
+      prerelease: 'false',
+      ref: 'cb58a7b993646173578e2bb3c35d8e22ed1a7944',
     },
   },
+  'eql-sql': { result: 'success' },
+  'eql-docs': { result: 'success' },
   // release-postgres-eql-image.yml's `promote-latest` reads this from its own
   // `build-sql` job, which copies the dispatch input through.
   'build-sql': { outputs: { update_floating_tags: 'true' } },
