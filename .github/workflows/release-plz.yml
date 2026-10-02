@@ -177,11 +177,11 @@ jobs:
   # Its own job, not a step in `release`: a step there would inherit the EQL
   # gate, and the two lines arm at different times.
   #
-  # INERT until the arming PR of the stack-* crates import (PR E). No crate is
-  # in FROZEN_PUBLISHERS (an npm map), so the switch keys on the
-  # `@cipherstash/auth` entry, which PR E deletes when it repoints crates.io and
-  # npm trusted publishing together. crates.io also needs a Trusted Publishing
-  # entry for both crates naming cipherstash/stack + release-plz.yml.
+  # ARMED by the arming PR of the stack-* crates import. No crate is in
+  # FROZEN_PUBLISHERS (an npm map), so the switch keys on the
+  # `@cipherstash/auth` entry, which that PR deleted when crates.io and npm
+  # trusted publishing moved here together. crates.io needs a Trusted
+  # Publishing entry for both crates naming cipherstash/stack + release-plz.yml.
   #
   # Publish-only: nothing here opens a release PR, so a version bump of the two
   # crates is a hand-made pull request. `release-plz update` cannot version

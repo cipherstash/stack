@@ -53,10 +53,11 @@ const AUTH = '@cipherstash/auth'
  * Where each freeze is explained, and the instruction each file carries.
  *
  * `pkg` is the map key the instruction is about. The @cipherstash/auth freeze
- * (the wrapper and its six platform packages, keyed here by the wrapper) is
- * deleted by the arming PR of the stack-* crates import, and its prose goes
- * with it. `historical` is the wording each instruction was written for,
- * which keeps an assertion of absence able to fail once a freeze is deleted.
+ * (the wrapper and its six platform packages, keyed here by the wrapper) was
+ * deleted by the arming PR of the stack-* crates import. Its rows stay, so
+ * neither document can describe it again; `historical` is the wording each
+ * instruction was written for, which keeps an assertion of absence able to
+ * fail.
  */
 const DOCS = [
   {

@@ -295,13 +295,6 @@ jobs:
       - name: Lint — no references to deleted package directories
         run: pnpm run lint:package-paths
 
-      # TEMPORARY — delete with the script in the arming PR (PR E) of the
-      # stack-* crates import. The seven @cipherstash/auth packages live here
-      # but still publish from cipherstash/cipherstash-suite, so a changeset
-      # naming one would bump a frozen package and block every release.
-      - name: Lint — no @cipherstash/auth changeset before the publishing cutover
-        run: pnpm run lint:auth-changeset
-
       # `eql-bindings` emits EQL payloads; `@cipherstash/eql` carries the SQL
       # that stores them. Both live here now and release at one lockstep
       # version. A registry pin on either lets them drift apart — it compiles,

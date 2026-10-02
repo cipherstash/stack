@@ -144,11 +144,11 @@ const INSTALLED_TABLES = new Set([
  *
  * Each entry is DELETED by the cutover that repoints its publisher.
  * `@cipherstash/eql`'s Phase-5 release cutover repointed npm and crates.io
- * trusted publishing at this repository and deleted its entry here. The
- * `@cipherstash/auth` packages below are in the same position until the
- * arming PR of the stack-* crates import. An empty map is a legitimate state,
- * not a retired mechanism — the next package that lives here before its
- * publisher moves goes in, with its artefact below.
+ * trusted publishing at this repository and deleted its entry here, and the
+ * arming PR of the stack-* crates import did the same for the seven
+ * `@cipherstash/auth` packages, which is why the map is empty. Empty is a
+ * legitimate state, not a retired mechanism — the next package that lives
+ * here before its publisher moves goes back in, with its artefact below.
  *
  * DELETE IT IN THAT PR, not afterwards. An entry left behind does not fail on
  * the day it goes wrong, it fails on the next release: while the package sits
@@ -160,28 +160,7 @@ const INSTALLED_TABLES = new Set([
  * `release-gate.test.mjs` now asserts their absence, so the map has a test for
  * what is NOT in it as well as what is.
  */
-export const FROZEN_PUBLISHERS = new Map([
-  // The @cipherstash/auth wrapper and its six platform packages, imported
-  // from cipherstash-suite with the stack-* crates. They keep publishing from
-  // there until the arming PR of that import repoints npm trusted publishing
-  // at this repository and deletes all seven entries here, in both maps.
-  ...[
-    '@cipherstash/auth',
-    '@cipherstash/auth-darwin-arm64',
-    '@cipherstash/auth-darwin-x64',
-    '@cipherstash/auth-linux-arm64-gnu',
-    '@cipherstash/auth-linux-x64-gnu',
-    '@cipherstash/auth-linux-x64-musl',
-    '@cipherstash/auth-win32-x64-msvc',
-  ].map((name) => [
-    name,
-    'Still published from cipherstash/cipherstash-suite — npm trusted publishing ' +
-      'for the seven @cipherstash/auth packages names that repository, not this ' +
-      'one. `release.yml` here builds and publishes them (`publish-auth`), but only ' +
-      'once these entries are gone. Repointing is the arming PR (PR E) of the ' +
-      'stack-* crates import.',
-  ]),
-])
+export const FROZEN_PUBLISHERS = new Map([])
 
 /**
  * For each frozen package, the artefact whose bytes must equal the published
@@ -224,58 +203,20 @@ export const FROZEN_PUBLISHERS = new Map([
  *     `release-gate.test.mjs`).
  *   * `files` — for a package with no such manifest. The gate hashes each
  *     listed file with sha256, in the tree and in the published tarball, and
- *     a mismatch names the file. `@cipherstash/auth` is this shape: the list
- *     is every tracked file the wrapper publishes except `package.json`, which
- *     publishing rewrites. `wasm/` is a build output and is not listed. The
- *     list cannot see the Rust source, because the compiled binary is not in
- *     the tree — the freeze covers the JavaScript and type surface only.
+ *     a mismatch names the file. `@cipherstash/auth` was frozen in this shape
+ *     from the stack-* crates import until its arming PR: the list was every
+ *     tracked file the wrapper publishes except `package.json`, which
+ *     publishing rewrites. Such a list cannot see a compiled binary's source.
  *   * `noTreeBytes` — a package whose tarball holds nothing the tree has, only
  *     a binary built in CI. CHECK C skips it, and the string says why. The
  *     entry still exists so the key-equality test holds, and CHECK A still
- *     blocks a version npm does not carry.
+ *     blocks a version npm does not carry. The six `@cipherstash/auth-*`
+ *     platform packages were frozen in this shape.
+ *
+ * No entry uses any of the three shapes today. They stay, with their tests,
+ * for the next package that lives here before its publisher moves.
  */
-export const FROZEN_ARTEFACT_DIGESTS = new Map([
-  [
-    '@cipherstash/auth',
-    {
-      label: 'wrapper sources and type declarations',
-      files: [
-        'index.js',
-        'stack-auth-node.js',
-        'wasm-inline.mjs',
-        'cookies.mjs',
-        'base64url.mjs',
-        'next.mjs',
-        'index.d.ts',
-        'native.d.ts',
-        'wasm-types.d.ts',
-        'wasm-inline.d.ts',
-        'cookies.d.ts',
-        'base64url.d.ts',
-        'next.d.ts',
-        'README.md',
-        'LICENSE',
-      ].map((file) => ({
-        inTree: `languages/typescript/packages/auth/${file}`,
-        published: `package/${file}`,
-      })),
-    },
-  ],
-  ...[
-    '@cipherstash/auth-darwin-arm64',
-    '@cipherstash/auth-darwin-x64',
-    '@cipherstash/auth-linux-arm64-gnu',
-    '@cipherstash/auth-linux-x64-gnu',
-    '@cipherstash/auth-linux-x64-musl',
-    '@cipherstash/auth-win32-x64-msvc',
-  ].map((name) => [
-    name,
-    {
-      label: 'platform binary',
-      noTreeBytes: 'the published tarball holds only a binary built in CI',
-    },
-  ]),
-])
+export const FROZEN_ARTEFACT_DIGESTS = new Map([])
 
 /**
  * The range pnpm writes into the packed `package.json` for a `workspace:`
@@ -979,10 +920,9 @@ export function reportBlockers(blockers) {
       "     repository's to do.\n"
     : target
       ? '  1. Publish the frozen package. For @cipherstash/eql that is the Phase 5\n' +
-        '     cutover in docs/plans/2026-08-13-eql-monorepo-absorption.md; for the\n' +
-        '     @cipherstash/auth packages it is the arming PR of the stack-* crates\n' +
-        '     import. Either way: repoint npm trusted publishing to cipherstash/stack\n' +
-        `     and release the version above — ${target}.\n` +
+        '     cutover in docs/plans/2026-08-13-eql-monorepo-absorption.md: repoint\n' +
+        '     npm trusted publishing to cipherstash/stack and release the version\n' +
+        `     above — ${target}.\n` +
         '     Every finding then clears on its own, with no further change here.\n'
       : '  1. Publish the frozen package. Nothing above is frozen, so this way out\n' +
         '     is not available: the findings are manifests to fix, not a release to\n' +

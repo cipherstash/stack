@@ -182,8 +182,15 @@ describe('the stack-* crates line', () => {
     )
   })
 
-  it('matches the live map, whichever state that is in', () => {
+  it('matches the live map', () => {
     expect(pipelineArmed('crates')).toBe(!FROZEN_PUBLISHERS.has(CRATES_PACKAGE))
+  })
+
+  it('is armed, because the arming PR moved auth and crates publishing here', () => {
+    // Re-freezing @cipherstash/auth also stops the stack-auth and
+    // stack-profile crates.io line, so it has to be a deliberate edit here.
+    expect(pipelineArmed('crates')).toBe(true)
+    expect(lineFrozenReason('crates')).toBeNull()
   })
 
   it('refuses a line it does not know', () => {

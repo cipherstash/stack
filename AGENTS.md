@@ -91,7 +91,7 @@ Every npm package except EQL lives under `languages/typescript/`: packages in `l
   `cipherstash/encrypt-query-language` repository. Old upstream issue and PR
   links are provenance only.
 - `packages/stack-auth`, `packages/stack-profile`, `packages/stack-kms`, `packages/stack-encrypt`, `packages/stack-encrypt-derive`, `packages/stack-guest-abi`: The Rust crates imported from `cipherstash/cipherstash-suite` with their history — `stack-auth` and `stack-profile` (published to crates.io), and `stack-kms`, `stack-encrypt`, `stack-encrypt-derive` and `stack-guest-abi` (`publish = false`). They are the members of the **root Cargo workspace**, with the three node binding crates below. See "Working on the Rust crates".
-- `languages/typescript/packages/auth`, `languages/typescript/packages/profile`, `languages/typescript/packages/stack-auth-wasm`: The node bindings of those crates. `@cipherstash/auth` (napi-rs v2) and its six `platforms/*` packages are published to npm, **frozen here** until publishing moves from the suite (see `FROZEN_PUBLISHERS` below). `@cipherstash/profile` and its platforms are private and never published; `@cipherstash/stack-auth-wasm` is private and builds the wasm that `@cipherstash/auth` ships. Their `build` and `test` scripts never invoke cargo; `build:native`, `build:debug` and `test:cargo` do.
+- `languages/typescript/packages/auth`, `languages/typescript/packages/profile`, `languages/typescript/packages/stack-auth-wasm`: The node bindings of those crates. `@cipherstash/auth` (napi-rs v2) and its six `platforms/*` packages are published to npm from this repository by `release.yml` (`auth-artifacts`, `publish-auth`). `@cipherstash/profile` and its platforms are private and never published; `@cipherstash/stack-auth-wasm` is private and builds the wasm that `@cipherstash/auth` ships. Their `build` and `test` scripts never invoke cargo; `build:native`, `build:debug` and `test:cargo` do.
 - `languages/golang`: The Go module (`stackencrypt`, `stackauth`, `internal`), a wazero host with no cgo. Its two WASI guests (`*/guest`) are detached Cargo workspaces built by `mise run wasm:guest:build` and `mise run wasm:auth-guest:build`; the `.wasm` files they embed are gitignored. There is no Go release process yet.
 - `e2e/*`: Cross-package end-to-end tests (package managers, supply chain, Prisma example README)
 - `languages/typescript/examples/*`: Working apps (basic, prisma, supabase-worker)
@@ -557,34 +557,31 @@ monorepo, which is where the silent failures are.
   has been repointed, is likewise configuration — check the registry, do not
   read it here. This bullet used to narrate that state and was wrong twice.
 
-  **EQL left the map in its Phase-5 cutover, and an empty map is a legitimate
-  state.** A package absorbed before its publisher moves goes in, with its
-  artefact in `FROZEN_ARTEFACT_DIGESTS`, and both entries are deleted in the
-  PR that repoints its publisher — not afterwards.
+  **The map is empty, and empty is a legitimate state.** EQL left it in its
+  Phase-5 cutover, and the `@cipherstash/auth` packages in the arming PR of
+  the stack-* crates import. A package absorbed before its publisher moves
+  goes back in, with its artefact in `FROZEN_ARTEFACT_DIGESTS`, and both
+  entries are deleted in the PR that repoints its publisher — not afterwards.
   `scripts/__tests__/frozen-publisher-docs.test.mjs` holds this file, the EQL
   plan and `SECURITY.md`'s "Note on publishing" to the map — the last being
   the one file that tells a reporter which pipeline built the artefact they
-  are reporting on. `release-gate.test.mjs` asserts the map carries neither
-  EQL nor any FFI name: the seven protect-ffi packages were left in it after
+  are reporting on. `release-gate.test.mjs` asserts the map carries no EQL,
+  auth or FFI name: the seven protect-ffi packages were left in it after
   their own cutover, which armed the gate against the first release that
-  cutover had just enabled. The tests drive the `field` mechanism with EQL's
-  old entry as an injected fixture.
+  cutover had just enabled. With nothing frozen, the tests drive the mechanism
+  with EQL's old entry as an injected fixture.
 
-  **Delete the `@cipherstash/auth*` entries in the arming PR of the stack-*
-  crates import.** The wrapper and its six platform packages, imported from
-  cipherstash-suite, are frozen the same way until npm trusted publishing is
-  repointed here. The wrapper has no release manifest, so its check-3 entry is
-  a `files` list: the gate hashes each of the 15 tracked files it publishes,
-  in the tree and in the tarball, and names the one that differs. That is why
-  `biome.json` excludes those files: a reformat is a skew, and the gate
-  refuses it. The platform packages publish only a binary built in CI, so their entries
-  declare `noTreeBytes` and check 3 skips them; checks 1 and 2 still apply.
-  `scripts/lint-no-auth-changeset.mjs` refuses a changeset naming any of the
-  seven, and goes in the same PR. Deleting the entries also arms two
-  pipelines: `release.yml`'s `auth-artifacts` and `publish-auth`, which run
-  once the gate reports `auth=true`, and `release-plz.yml`'s `release-crates`
-  for `stack-auth` and `stack-profile`, whose switch is
-  `node scripts/eql-pipeline-armed.mjs crates`.
+  The seven `@cipherstash/auth*` packages were frozen the same way from the
+  stack-* crates import until its arming PR, which moved npm trusted
+  publishing here and deleted them from both maps. That also armed
+  `release.yml`'s `auth-artifacts` and `publish-auth`, which run when the gate
+  reports `auth=true`, and `release-plz.yml`'s `release-crates` for
+  `stack-auth` and `stack-profile`, whose switch is
+  `node scripts/eql-pipeline-armed.mjs crates`. Re-freezing `@cipherstash/auth`
+  stops both lines. The gate's `files` and `noTreeBytes` entry shapes date from
+  that freeze and have no entry today. `biome.json` still excludes the 15
+  tracked files the wrapper publishes, so a reformat does not ride along with
+  an auth release.
 
   **Check 3 is the one worth understanding before you touch a frozen package.**
   For a package this repo publishes, in-tree bytes differing from npm is an
