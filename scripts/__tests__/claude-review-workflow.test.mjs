@@ -189,10 +189,13 @@ describe('Claude pull-request review', () => {
     })
     // Agent mode creates no comment of its own, so this input would be inert.
     expect(claude.with).not.toHaveProperty('use_sticky_comment')
+    // The `gh pr` allows are pinned to this pull request, so a prompt
+    // injection cannot read or comment on another one.
+    const pr = gha('github.event.pull_request.number')
     expect(claude.with.claude_args.trim().split('\n')).toEqual([
       '--model sonnet',
       '--max-turns 25',
-      '--allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*)"',
+      `--allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff ${pr}:*),Bash(gh pr view ${pr}:*),Bash(gh pr comment ${pr}:*)"`,
       '--disallowedTools "Edit,Write,NotebookEdit,Task,WebFetch,WebSearch,Read(./.git/**)"',
     ])
   })
