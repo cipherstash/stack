@@ -124,6 +124,21 @@ Before adding a new direct dep, ask:
 
 Do **not** commit any `.env` file to the repo.
 
+Treat OIDC as a transport, not as a synonym for publishing. A non-publishing
+workload-identity exchange still needs job-level `id-token: write`, but it must
+be classified separately from registry publishers in
+`scripts/__tests__/workflow-publish-permissions.test.mjs`, with the audience and
+reason recorded there. Keep its static credential inputs absent and grant only
+the repository permissions the job actually needs.
+
+A job's `permissions:` block limits only that job's `GITHUB_TOKEN`. Some actions
+use the OIDC token to obtain a different GitHub token instead —
+`anthropics/claude-code-action`, given no `github_token` input, exchanges it for
+a Claude GitHub App installation token with write access to contents, pull
+requests and issues. Check which token an action actually uses, and pass
+`github_token: ${{ secrets.GITHUB_TOKEN }}` where the action accepts one, so the
+grants you reviewed are the grants that apply.
+
 ## Publishing — OIDC trusted publishing + provenance (practices #11, #12)
 
 `.github/workflows/release.yml` publishes to npm with **no `NPM_TOKEN`**. It

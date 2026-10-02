@@ -159,14 +159,23 @@ over the same token exchange, and likewise carries no `CARGO_REGISTRY_TOKEN`.
 Both bind to a *workflow filename* at the registry, so renaming either file
 silently invalidates its publisher configuration.
 
-`scripts/__tests__/workflow-publish-permissions.test.mjs` holds the shape those
-two files must keep, as two separate equalities: who may publish (`id-token:
-write`, granted per job and never at workflow level, where it would be inherited
-by every job in a file the registry already trusts), and who may write to the
-repository at all. They are separate because a publishing workflow also contains
-jobs that create a release or dispatch another workflow — holding one does not
-confer the other. Both are equalities, so either addition has to be argued for
-in the same diff.
+`scripts/__tests__/workflow-publish-permissions.test.mjs` classifies every job
+that may mint an OIDC token. Publishers and named non-publishing exchanges are
+kept in separate lists, but the jobs holding `id-token: write` are asserted
+against their union in a single equality; the separate lists feed separate
+predicates (only publishers' workflows have their sibling jobs held read-only).
+The jobs that may write to the repository are a reviewed allowlist that includes
+every OIDC holder. The distinction matters because OIDC is a transport, not itself a
+publishing capability: `claude-review.yml` exchanges its token with Anthropic
+for an inference-only API credential, while the registry-bound release
+workflows exchange theirs with npm or crates.io. `claude-review.yml` passes the
+job's own `GITHUB_TOKEN` to the action as `github_token`. Without that input
+the action makes a second exchange, for a Claude GitHub App installation token
+with write access to contents, pull requests and issues, which the job's
+`permissions:` block does not limit. With it, the job's `contents: read` and
+`pull-requests: write` are what a review can do on GitHub. Every grant remains
+per job, never at workflow level, and any new holder or writer must be
+justified in the same diff.
 
 [GitHub Actions cache poisoning is a known attack][1] against credential-bearing
 workflows. The mechanism is:
