@@ -9,7 +9,9 @@
 # `cipherstash-client`, which stays there. Every other workspace member is
 # `publish = false` in its Cargo.toml and is also listed below with
 # `release = false`, so `release-plz update` does not bump its version or
-# write its changelog either.
+# write its changelog either. Each also repeats `publish = false`: the
+# workspace `publish = true` applies to every package that does not override
+# it, and release-plz refuses to run when that contradicts the Cargo.toml.
 #
 # Tags are release-plz's default, `stack-auth-v<semver>` and
 # `stack-profile-v<semver>`. No workflow triggers on either.
@@ -33,27 +35,34 @@ version_group = "stack-auth"
 [[package]]
 name = "stack-kms"
 release = false
+publish = false
 
 [[package]]
 name = "stack-encrypt"
 release = false
+publish = false
 
 [[package]]
 name = "stack-encrypt-derive"
 release = false
+publish = false
 
 [[package]]
 name = "stack-guest-abi"
 release = false
+publish = false
 
 [[package]]
 name = "stack-auth-node"
 release = false
+publish = false
 
 [[package]]
 name = "stack-profile-node"
 release = false
+publish = false
 
 [[package]]
 name = "stack-auth-wasm"
 release = false
+publish = false
