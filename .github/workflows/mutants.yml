@@ -30,6 +30,7 @@ on:
       - Cargo.toml
       - Cargo.lock
       - mise.toml
+      - mise.test.toml
       - .cargo/mutants.toml
       - .github/workflows/mutants.yml
       # Keep these excludes last so docs-only changes are skipped.
@@ -50,6 +51,12 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # The cargo tools are pinned in mise.test.toml, which mise loads only in
+  # the test environment. This job calls cargo-mutants (which runs nextest)
+  # directly, never through `mise run` or `mise x`, which would install the
+  # rest of the toolset. So mise-action installs only rust, nextest and
+  # cargo-mutants.
+  MISE_ENV: test
   RUST_BACKTRACE: full
   CARGO_TERM_COLOR: always
   CARGO_NET_GIT_FETCH_WITH_CLI: true

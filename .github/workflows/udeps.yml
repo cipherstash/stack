@@ -22,6 +22,7 @@ on:
       - languages/typescript/packages/stack-auth-wasm/**
       - Cargo.toml
       - Cargo.lock
+      - mise.test.toml
       - .github/workflows/udeps.yml
       # Keep these excludes last so docs-only changes are skipped.
       - "!**.md"
@@ -40,6 +41,7 @@ on:
       - languages/typescript/packages/stack-auth-wasm/**
       - Cargo.toml
       - Cargo.lock
+      - mise.test.toml
       - .github/workflows/udeps.yml
       - "!**.md"
       - "!**.example"
@@ -53,6 +55,11 @@ permissions:
   contents: read
 
 env:
+  # The cargo tools are pinned in mise.test.toml, which mise loads only in
+  # the test environment. This job calls cargo-udeps directly, never through
+  # `mise run` or `mise x`, which would install the rest of the toolset. So
+  # mise-action installs only rust and cargo-udeps.
+  MISE_ENV: test
   RUST_BACKTRACE: full
   CARGO_TERM_COLOR: always
   CARGO_NET_GIT_FETCH_WITH_CLI: true

@@ -37,6 +37,7 @@ on:
       - Cargo.lock
       - .cargo/**
       - mise.toml
+      - mise.test.toml
       - .github/actions/require-cs-secrets/**
       - .github/workflows/tests-golang.yml
       # Keep these excludes last so docs-only changes are skipped.
@@ -58,6 +59,7 @@ on:
       - Cargo.lock
       - .cargo/**
       - mise.toml
+      - mise.test.toml
       - .github/actions/require-cs-secrets/**
       - .github/workflows/tests-golang.yml
       - "!**.md"
@@ -86,6 +88,12 @@ jobs:
     name: WASI check, guests and Go (Linux)
     runs-on: blacksmith-16vcpu-ubuntu-2204
     timeout-minutes: 60
+    env:
+      # wasm:guest:test and wasm:auth-guest:test run nextest, which is pinned
+      # in mise.test.toml. In the test environment mise-action installs (and
+      # caches) the whole test toolset, which `mise run` would otherwise
+      # install uncached.
+      MISE_ENV: test
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -96,7 +104,6 @@ jobs:
           version: 2026.4.0
           install: true
           working_directory: .
-          install_args: rust cargo:cargo-nextest go
           cache: true
 
       # The root workspace and both guest workspaces, each with its own
