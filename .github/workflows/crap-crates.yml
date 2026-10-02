@@ -1,0 +1,96 @@
+name: CRAP gate (crates)
+
+# Gates pull requests that touch stack-auth or stack-encrypt on the CRAP
+# (Change Risk Anti-Patterns) metric: cyclomatic complexity weighted by test
+# coverage, so it surfaces complex, under-tested functions. Ported from
+# cipherstash-suite's `crap-stack-auth.yml` and `crap-stack-encrypt.yml`, as
+# one job per crate in one file.
+#
+# Blocking: each `crap:<crate>` mise task runs `cargo crap --fail-above`, so the
+# job fails when any function scores above the threshold in .cargo-crap.toml
+# (30). mise appends the trailing args after `--` to the task's LAST command,
+# which is `cargo crap`; `--format github` turns each offending function into
+# an inline `::warning` annotation before the job fails.
+#
+# Pull requests only, so `push` has no filter to mirror; recorded in
+# scripts/__tests__/workflow-paths-filter-parity.test.mjs.
+
+on:
+  pull_request:
+    paths:
+      - packages/stack-auth/**
+      - packages/stack-encrypt/**
+      - packages/stack-encrypt-derive/**
+      - Cargo.toml
+      - Cargo.lock
+      - mise.toml
+      - .cargo-crap.toml
+      - .github/workflows/crap-crates.yml
+      # Keep these excludes last so docs-only changes are skipped.
+      - "!**.md"
+      - "!**.example"
+  workflow_dispatch: {}
+
+# Read-only: failures surface as job status and inline annotations.
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: full
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  NEXTEST_PROFILE: ci
+
+jobs:
+  crap-stack-auth:
+    name: CRAP (stack-auth)
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      # rust carries llvm-tools-preview, which cargo-llvm-cov needs.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          install_args: rust cargo:cargo-nextest cargo:cargo-llvm-cov cargo:cargo-crap
+          cache: true
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Run the CRAP gate
+        run: mise run crap:stack-auth -- --format github
+
+  crap-stack-encrypt:
+    name: CRAP (stack-encrypt)
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          install_args: rust cargo:cargo-nextest cargo:cargo-llvm-cov cargo:cargo-crap
+          cache: true
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Run the CRAP gate
+        run: mise run crap:stack-encrypt -- --format github

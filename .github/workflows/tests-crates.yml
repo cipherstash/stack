@@ -1,0 +1,205 @@
+name: Tests (crates)
+
+# The stack-* crates and their three node bindings, ported from
+# cipherstash-suite's `test-unit.yml` (the stack crates' share of it),
+# `test-stack-auth.yml` and `test-stack-profile.yml` when the set was imported
+# to the repository root.
+#
+# This is the only workflow that runs the stack-encrypt `tests/ui` trybuild
+# binary: `crap-crates.yml` and `mutants.yml` both filter out `binary(ui)`.
+# `scripts/__tests__/crates-ci.test.mjs` pins that, and that every mise task in
+# the five crate `tasks.toml` files is reached from a root workflow.
+#
+# The filter keeps Markdown in: `stack-auth`'s crate docs are its README
+# (`#![doc = include_str!("../README.md")]`), so a README edit changes the
+# doctests. The suite's `!**.md` exclude would have skipped that change.
+
+on:
+  pull_request:
+    paths:
+      - packages/stack-auth/**
+      - packages/stack-profile/**
+      - packages/stack-kms/**
+      - packages/stack-encrypt/**
+      - packages/stack-encrypt-derive/**
+      - packages/stack-guest-abi/**
+      - languages/typescript/packages/auth/**
+      - languages/typescript/packages/profile/**
+      - languages/typescript/packages/stack-auth-wasm/**
+      # Root manifest, lockfile, toolchain pin and cargo config: each can
+      # change what compiles without touching a crate. The toolchain pin in
+      # particular changes the trybuild UI snapshots.
+      - Cargo.toml
+      - Cargo.lock
+      - mise.toml
+      - mise.test.toml
+      - .cargo/config.toml
+      - .config/nextest.toml
+      - pnpm-lock.yaml
+      - .github/workflows/tests-crates.yml
+  push:
+    branches: [main]
+    paths:
+      - packages/stack-auth/**
+      - packages/stack-profile/**
+      - packages/stack-kms/**
+      - packages/stack-encrypt/**
+      - packages/stack-encrypt-derive/**
+      - packages/stack-guest-abi/**
+      - languages/typescript/packages/auth/**
+      - languages/typescript/packages/profile/**
+      - languages/typescript/packages/stack-auth-wasm/**
+      - Cargo.toml
+      - Cargo.lock
+      - mise.toml
+      - mise.test.toml
+      - .cargo/config.toml
+      - .config/nextest.toml
+      - pnpm-lock.yaml
+      - .github/workflows/tests-crates.yml
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: full
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  NEXTEST_PROFILE: ci
+
+jobs:
+  rust:
+    name: fmt, clippy, nextest, doctests, rustdoc
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 60
+    env:
+      # Job-level, not workflow-level: RUSTFLAGS replaces the
+      # `[target.wasm32-unknown-unknown]` rustflags in .cargo/config.toml,
+      # which the stack-auth-wasm build in `node-bindings` needs.
+      RUSTFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      # At the repository root: the root mise.toml pins rust 1.94.1, which the
+      # trybuild snapshots record. Only the tools this job runs are installed;
+      # the cargo: tools build from source.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          install_args: rust cargo:cargo-nextest
+          cache: true
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: rustfmt
+        run: cargo fmt --all --check
+
+      - name: clippy
+        run: cargo clippy --locked --no-deps --workspace --all-targets --all-features -- -D warnings
+
+      # Every test binary in the workspace, the trybuild `ui` binary included.
+      - name: nextest
+        run: mise x --env test -- cargo nextest run --locked --workspace --all-features
+
+      - name: doctests
+        run: mise run test:doc
+
+      # Rustdoc with warnings as errors, one `doc:<crate>` task per crate.
+      # `test:doc` runs the examples; only this sees a broken intra-doc link.
+      - name: rustdoc
+        run: mise run doc
+
+      # The stack-encrypt examples need live credentials, so they are built
+      # here and run in tests-golang.yml `live`.
+      - name: Build the stack-encrypt examples
+        run: cargo build --locked -p stack-encrypt --examples
+
+  node-bindings:
+    name: node bindings, napi typings, stack-auth-wasm
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          install_args: rust aqua:wasm-bindgen/wasm-pack
+          cache: true
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - uses: pnpm/action-setup@v6.1.0
+        with:
+          run_install: false
+
+      - uses: actions/setup-node@v6.5.0
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      # node-pty falls back to `node-gyp rebuild` on Linux during any
+      # workspace install. See scripts/__tests__/workflow-node-gyp.test.mjs.
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Each builds the binding's cdylib, copies it next to the package, and
+      # runs the package's vitest suite against it.
+      - name: stack-auth node binding
+        run: mise run test:integration:stack-auth
+
+      - name: stack-profile node binding
+        run: mise run test:integration:stack-profile
+
+      # Each binding's `build:debug` is `napi build --dts native.d.ts`: napi
+      # writes its generated typings to `native.d.ts`, which is committed, and
+      # never to `index.d.ts`, which is hand-written. Nothing else regenerates
+      # `native.d.ts`, so a `#[napi]` signature change that is not rebuilt and
+      # committed would leave typings that disagree with the `.node` ABI. The
+      # build must leave the tracked tree as it found it: `git status` also
+      # catches an untracked file the build drops into the package.
+      - name: Guard committed napi typings against drift
+        run: |
+          pnpm --filter @cipherstash/auth run build:debug
+          pnpm --filter @cipherstash/profile run build:debug
+          dirty=$(git status --porcelain -- languages/typescript/packages/auth languages/typescript/packages/profile)
+          if [ -n "$dirty" ]; then
+            echo "$dirty"
+            git diff -- languages/typescript/packages/auth languages/typescript/packages/profile
+            echo "::error::napi build changed the auth or profile binding — run 'pnpm --filter @cipherstash/auth --filter @cipherstash/profile run build:debug' and commit native.d.ts. index.d.ts is hand-written and napi must not write it."
+            exit 1
+          fi
+
+      # `test:integration:stack-auth` builds only the napi module, so the
+      # wasm-inline Result tests self-skip there. Build the inline shim and
+      # run them here. wasm-pack comes from the root mise.toml.
+      - name: Build the wasm shim and run the wasm-inline Result tests
+        run: |
+          mise x -- pnpm --filter @cipherstash/auth run build:wasm
+          pnpm --filter @cipherstash/auth exec vitest run __tests__/wasm-inline-result.test.ts
+
+      - name: cargo check stack-auth-wasm (wasm32-unknown-unknown)
+        run: cargo check --locked --target wasm32-unknown-unknown -p stack-auth-wasm
+
+      - name: wasm-pack test stack-auth-wasm
+        run: mise x -- wasm-pack test --node languages/typescript/packages/stack-auth-wasm

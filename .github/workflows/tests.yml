@@ -141,7 +141,8 @@ jobs:
       # `test` scripts do not build it, so cargo stays off the default `test`
       # path; this step builds it, as the protect-ffi step above does for
       # `index.node`. Each `build:debug` writes its typings to the committed
-      # `native.d.ts`, so the build leaves the tree clean.
+      # `native.d.ts`, so the build leaves the tree clean; tests-crates.yml
+      # holds it to that, and runs the same suites against the pinned Rust.
       - name: Build the auth and profile node bindings
         run: pnpm --filter @cipherstash/auth --filter @cipherstash/profile run build:debug
 

@@ -13,7 +13,7 @@ run = [
   # otherwise be walked as production source). `--fail-above` exits non-zero
   # when any function's CRAP score exceeds the threshold from the workspace-root
   # .cargo-crap.toml (30), so this gates both local runs and CI.
-  # NOTE: this must stay the LAST command — the crap-stack-encrypt.yml CI
+  # NOTE: this must stay the LAST command — the crap-crates.yml CI
   # workflow runs this task and relies on mise appending its trailing args
   # (e.g. --format github) to this `cargo crap` invocation.
   "mise x --env test -- cargo crap --path packages/stack-encrypt --lcov {{config_root}}/target/stack-encrypt-lcov.info --exclude 'examples/**' --exclude 'fuzz/**' --exclude '**/tests/**' --fail-above",

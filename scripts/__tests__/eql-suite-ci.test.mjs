@@ -290,15 +290,31 @@ const SHARED_KEY = 'sqlx-tests'
  */
 const SHARED_KEY_SAVER = { relPath: EQL_WORKFLOW, jobName: 'build-archive' }
 
+/**
+ * Whether a job works in the EQL tree: it runs mise from `packages/eql`, which
+ * every EQL job must (see test-eql.yml's header). The stack-* crate jobs run
+ * mise at the repository root and cache the ROOT workspace, so the checks
+ * below are about EQL's jobs only.
+ */
+const isEqlJob = (job) =>
+  (Array.isArray(job?.steps) ? job.steps : []).some(
+    (step) =>
+      (step?.uses ?? '').startsWith('jdx/mise-action@') &&
+      step?.with?.working_directory === CARGO_WORKSPACE,
+  )
+
 /** Every `Swatinem/rust-cache` step GitHub can actually execute. */
 const RUST_CACHE_STEPS = workflowFiles().flatMap((relPath) => {
   const wf = readWorkflow(relPath)
   return Object.entries(wf?.jobs ?? {}).flatMap(([jobName, job]) =>
     (Array.isArray(job?.steps) ? job.steps : [])
       .filter((step) => (step?.uses ?? '').startsWith('Swatinem/rust-cache@'))
-      .map((step) => ({ relPath, jobName, step })),
+      .map((step) => ({ relPath, jobName, step, eql: isEqlJob(job) })),
   )
 })
+
+/** The rust-cache steps in EQL's jobs. */
+const EQL_RUST_CACHE_STEPS = RUST_CACHE_STEPS.filter(({ eql }) => eql)
 
 const stepLabel = ({ relPath, jobName }, detail) =>
   `${relPath} (${jobName}): ${detail}`
@@ -326,7 +342,7 @@ describe('the shared Rust cache is pointed and saved correctly', () => {
     ).toEqual([])
   })
 
-  it('points every rust-cache step at the nested Cargo workspace', () => {
+  it("points every EQL job's rust-cache step at the nested Cargo workspace", () => {
     // Silent when wrong, which is why it is asserted rather than left to
     // review. `workspaces:` names a workspace ROOT: rust-cache hashes the
     // `Cargo.lock` it finds there and caches the `target/` it writes there.
@@ -335,7 +351,12 @@ describe('the shared Rust cache is pointed and saved correctly', () => {
     // `packages/eql/target` — so a step naming it hashes no lockfile and
     // archives an empty directory, while reporting success. Same for the
     // monorepo root, where there is no Cargo.lock for this workspace at all.
-    const wrong = RUST_CACHE_STEPS.filter(
+    //
+    // EQL's jobs only: a job running mise at the repository root builds the
+    // root workspace, and rust-cache's default (`. -> target`) is right there.
+    // Held non-empty, so a change to `isEqlJob` cannot empty the check.
+    expect(EQL_RUST_CACHE_STEPS.length).toBeGreaterThan(0)
+    const wrong = EQL_RUST_CACHE_STEPS.filter(
       ({ step }) => step?.with?.workspaces !== CARGO_WORKSPACE,
     ).map((entry) =>
       stepLabel(entry, `workspaces: ${entry.step?.with?.workspaces}`),
