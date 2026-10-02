@@ -79,6 +79,7 @@ jobs:
       # `macos-latest` is arm64, so without it `darwin-x64` ships an arm64
       # binary.
       - name: Add the Rust target
+        if: ${{ matrix.platform != 'linux-x64-musl' }}
         env:
           TARGET: ${{ matrix.target }}
         run: mise x -- rustup target add "$TARGET"
@@ -94,6 +95,7 @@ jobs:
           package-manager-cache: false
 
       - name: Install node-gyp
+        if: ${{ matrix.platform != 'linux-x64-musl' }}
         run: npm install -g node-gyp
 
       - name: Install dependencies
@@ -136,6 +138,7 @@ jobs:
             -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
             -e RUSTFLAGS="-C target-feature=-crt-static" \
             "$ALPINE_NODE_IMAGE" sh -euc '
+              trap "chown -R \"\$HOST_UID:\$HOST_GID\" /build" EXIT
               apk add --no-cache build-base cmake perl linux-headers git curl rustup
               rustup-init -y --profile minimal --default-toolchain "$RUST_VERSION" --target "$TARGET"
               . "$HOME/.cargo/env"
@@ -144,7 +147,6 @@ jobs:
               pnpm install --frozen-lockfile --ignore-scripts --filter "@cipherstash/auth..."
               cd languages/typescript/packages/auth
               pnpm exec napi build --platform --release --target "$TARGET" --strip --dts native.d.ts --js false
-              chown -R "$HOST_UID:$HOST_GID" /build
             '
 
       # The build must leave the tracked tree alone: `native.d.ts` is
@@ -182,7 +184,12 @@ jobs:
               if grep -q 'NEEDED.*libc\.so\.6' <<< "$dynamic" ; then
                 echo "::error::linux-x64-musl links glibc — it is the gnu binary"
                 exit 1
-              fi ;;
+              fi
+              # A static binary has no libc entry at all, and Node.js cannot
+              # load it as a native module, so musl must be named.
+              grep -q 'NEEDED.*libc\.musl-' <<< "$dynamic" || {
+                echo "::error::linux-x64-musl has no musl libc NEEDED entry — it is linked statically"
+                exit 1; } ;;
             *)
               echo "::error::no C library rule for $PLATFORM"; exit 1 ;;
           esac
