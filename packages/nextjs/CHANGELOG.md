@@ -1,6 +1,6 @@
 # @cipherstash/nextjs
 
-## 4.2.0
+## 4.4.0
 
 ### Minor Changes
 
