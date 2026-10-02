@@ -24,6 +24,7 @@ on:
       - Cargo.toml
       - Cargo.lock
       - mise.toml
+      - mise.test.toml
       - .cargo-crap.toml
       - .github/workflows/crap-crates.yml
       # Keep these excludes last so docs-only changes are skipped.
@@ -44,6 +45,12 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # The cargo tools are pinned in mise.test.toml, which mise loads only in
+  # the test environment. With no install_args, mise-action installs (and
+  # caches) the whole test toolset once: `mise run` and `mise x` install any
+  # tool of the toolset that is missing, uncached, so narrowing the install
+  # would only move the rest out of the cache.
+  MISE_ENV: test
   RUST_BACKTRACE: full
   CARGO_TERM_COLOR: always
   CARGO_NET_GIT_FETCH_WITH_CLI: true
@@ -65,7 +72,6 @@ jobs:
           version: 2026.4.0
           install: true
           working_directory: .
-          install_args: rust cargo:cargo-nextest cargo:cargo-llvm-cov cargo:cargo-crap
           cache: true
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -87,7 +93,6 @@ jobs:
           version: 2026.4.0
           install: true
           working_directory: .
-          install_args: rust cargo:cargo-nextest cargo:cargo-llvm-cov cargo:cargo-crap
           cache: true
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2

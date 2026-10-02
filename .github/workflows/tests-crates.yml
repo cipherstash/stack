@@ -86,20 +86,24 @@ jobs:
       # `[target.wasm32-unknown-unknown]` rustflags in .cargo/config.toml,
       # which the stack-auth-wasm build in `node-bindings` needs.
       RUSTFLAGS: "-D warnings"
+      # nextest is pinned in mise.test.toml, which mise loads only in the
+      # test environment. See the mise-action step.
+      MISE_ENV: test
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
 
       # At the repository root: the root mise.toml pins rust 1.94.1, which the
-      # trybuild snapshots record. Only the tools this job runs are installed;
-      # the cargo: tools build from source.
+      # trybuild snapshots record. No install_args: `mise x` and `mise run`
+      # install any tool of the toolset that is missing, uncached, so this
+      # installs (and caches) the whole test toolset once. The cargo: tools
+      # build from source.
       - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
         with:
           version: 2026.4.0
           install: true
           working_directory: .
-          install_args: rust cargo:cargo-nextest
           cache: true
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
