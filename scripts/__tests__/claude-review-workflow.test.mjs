@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { readWorkflow } from './lib/workflows.mjs'
 
@@ -91,10 +92,45 @@ describe('Claude pull-request review', () => {
   })
 
   it('does not leave a checkout credential behind', () => {
-    const checkout = review.steps.find((step) =>
+    const checkouts = review.steps.filter((step) =>
       String(step.uses ?? '').startsWith('actions/checkout@'),
     )
-    expect(checkout.with['persist-credentials']).toBe(false)
+    expect(checkouts.length).toBeGreaterThan(0)
+    for (const checkout of checkouts) {
+      expect(checkout.with['persist-credentials']).toBe(false)
+    }
+  })
+
+  it('reviews under the base branch copy of every file CLAUDE.md imports', () => {
+    // The action restores CLAUDE.md from the base branch but not its @imports,
+    // so an imported file would otherwise come from the pull request under
+    // review. Derived from CLAUDE.md so a new import cannot go unrestored.
+    const imports = readFileSync('CLAUDE.md', 'utf8')
+      .split('\n')
+      .filter((line) => /^@\S+$/.test(line.trim()))
+      .map((line) => line.trim().slice(1))
+    expect(imports).toContain('AGENTS.md')
+
+    const baseCheckout = review.steps.find(
+      (step) => step.name === 'Checkout base-branch agent instructions',
+    )
+    const restore = review.steps.find(
+      (step) => step.name === 'Restore base-branch agent instructions',
+    )
+    expect(baseCheckout.with).toMatchObject({
+      ref: gha('github.event.pull_request.base.sha'),
+      path: '.review-base',
+      'sparse-checkout-cone-mode': false,
+    })
+    expect(baseCheckout.with['sparse-checkout'].trim().split('\n')).toEqual(
+      imports,
+    )
+    expect(restore.env.RESTORE_PATHS.split(/\s+/)).toEqual(imports)
+    expect(restore.run).toContain('rm -rf .review-base')
+
+    const steps = review.steps
+    expect(steps.indexOf(baseCheckout)).toBeLessThan(steps.indexOf(restore))
+    expect(steps.indexOf(restore)).toBeLessThan(steps.indexOf(claude))
   })
 
   it('pins the reviewed Claude action release and authenticates only with OIDC', () => {

@@ -62,6 +62,35 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      # The action restores CLAUDE.md and .claude/ from the base branch but not
+      # the files CLAUDE.md imports, so AGENTS.md would come from the pull
+      # request and let it rewrite the reviewer's instructions.
+      - name: Checkout base-branch agent instructions
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .review-base
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: |
+            AGENTS.md
+          sparse-checkout-cone-mode: false
+
+      - name: Restore base-branch agent instructions
+        shell: bash
+        env:
+          RESTORE_PATHS: AGENTS.md
+        run: |
+          for path in $RESTORE_PATHS; do
+            # Remove first so a symlink planted by the pull request is replaced,
+            # not written through.
+            rm -f "$path"
+            if [ -f ".review-base/$path" ]; then
+              cp ".review-base/$path" "$path"
+            fi
+          done
+          rm -rf .review-base
+
       - name: Review pull request
         id: claude-review
         uses: anthropics/claude-code-action@bf38e86e58df9ebf3420326d019f955bb3be64dd # v1.0.225
