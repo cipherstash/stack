@@ -157,19 +157,6 @@ jobs:
         # `Read(./.git/**)` keeps Claude out of .git/config, where the action
         # writes the token into the remote URL.
 
-      # TEMPORARY DIAGNOSTIC: print only the result message, not the transcript.
-      - name: Print Claude result message
-        if: always()
-        shell: bash
-        env:
-          EXECUTION_FILE: ${{ steps.claude-review.outputs.execution_file }}
-        run: |
-          if [ -f "$EXECUTION_FILE" ]; then
-            jq -r '.[] | select(.type == "result") | {subtype, is_error, result, errors} | tostring' "$EXECUTION_FILE"
-          else
-            echo "No execution file at '${EXECUTION_FILE}'"
-          fi
-
       - name: Require completed Claude review
         if: always()
         shell: bash
