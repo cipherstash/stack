@@ -3,7 +3,8 @@
   "version": "0.33.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/cipherstash/stack.git"
+    "url": "git+https://github.com/cipherstash/stack.git",
+    "directory": "languages/typescript/packages/protect-ffi"
   },
   "bugs": {
     "url": "https://github.com/cipherstash/stack/issues"
