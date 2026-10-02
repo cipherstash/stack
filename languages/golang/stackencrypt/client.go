@@ -398,13 +398,13 @@ func (c *Client) DecryptElement(ctx context.Context, ct any, aad []byte) (any, e
 
 // DecryptRecords opens records produced by Cipher.EncryptRecords under any
 // keyset of this client, into a slice; see Cipher.DecryptRecords.
-func (c *Client) DecryptRecords(ctx context.Context, records []EncryptedRecord, out any, opts ...RecordOption) error {
+func (c *Client) DecryptRecords(ctx context.Context, records []EncryptedRecord, out any, opts ...Option) error {
 	return c.decryptRecords(ctx, anyKeyset{}, records, out, opts)
 }
 
 // DecryptRecord opens one record under any keyset of this client; see
 // Cipher.DecryptRecord.
-func (c *Client) DecryptRecord(ctx context.Context, record EncryptedRecord, out any, opts ...RecordOption) error {
+func (c *Client) DecryptRecord(ctx context.Context, record EncryptedRecord, out any, opts ...Option) error {
 	return c.decryptRecord(ctx, anyKeyset{}, record, out, opts)
 }
 

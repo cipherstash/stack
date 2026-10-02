@@ -677,7 +677,11 @@ func TestGuestAcceptsEveryEncodingThisPackageBuilds(t *testing.T) {
 			_, err := byID.Term(ctx, 1.5, c, Ore)
 			return err
 		},
-		"Term ope bytes":       func() error { _, err := def.Term(ctx, []byte{1}, MustContext("k"), Ope); return err },
+		"Term ope bytes": func() error { _, err := def.Term(ctx, []byte{1}, MustContext("k"), Ope); return err },
+		"Term ext option": func() error {
+			_, err := byID.Term(ctx, 1.5, MustContext("users/age"), Ore, ExtendContext(uint64(7), "eu"))
+			return err
+		},
 		"EncryptRecords":       func() error { _, err := def.EncryptRecords(ctx, rows); return err },
 		"EncryptRecords ext":   func() error { _, err := named.EncryptRecords(ctx, &rows, ExtendContext(uint64(7), "eu")); return err },
 		"EncryptRecord":        func() error { _, err := byID.EncryptRecord(ctx, rows[0]); return err },

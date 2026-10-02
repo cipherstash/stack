@@ -258,11 +258,11 @@ func TestExplicitPlanIsTheTagPlan(t *testing.T) {
 	if a, b := encode(explicit), encode(tagged); !bytes.Equal(a, b) {
 		t.Fatalf("guest input differs:\n%x\n%x", a, b)
 	}
-	viaOption, err := planFor(typ, applyOptions([]RecordOption{WithPlan(explicit)}))
+	viaOption, err := planFor(typ, applyOptions([]Option{WithPlan(explicit)}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	viaTags, err := planFor(typ, applyOptions([]RecordOption{WithPlan(Plan{})}))
+	viaTags, err := planFor(typ, applyOptions([]Option{WithPlan(Plan{})}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,6 +273,59 @@ func TestExplicitPlanIsTheTagPlan(t *testing.T) {
 	explicit.Fields()[0].Context = "changed"
 	if explicit.Fields()[0].Context != "users/age" {
 		t.Fatal("Fields exposed the plan's own slice")
+	}
+}
+
+// A probe's context under ExtendContext is, byte for byte, the context the
+// record plan sends for a field with the same own context under the same
+// extension — the one place the probe and the stored term could silently
+// disagree. And it differs from the unextended context and from another
+// extension's, which is what makes the match tenant-specific.
+func TestTermExtensionMatchesRecordFieldContext(t *testing.T) {
+	type row struct {
+		Email string `stash:"context=users/email,index=eq"`
+	}
+	ext := []any{uint64(7), "eu"}
+	o := applyOptions([]Option{ExtendContext(ext...)})
+	bound, err := planFor(reflect.TypeOf(row{}), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj, err := planValue(bound, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, ok := obj[0].Value.(vcvalue.Object)
+	if !ok || spec[0].Key != "context" {
+		t.Fatalf("plan field encodes as %+v", obj[0].Value)
+	}
+	fieldContext := spec[0].Value
+
+	var to termOptions
+	ExtendContext(ext...).applyTerm(&to)
+	probe, err := extend(MustContext("users/email"), to.extension)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(probe.value(), fieldContext) {
+		t.Fatalf("probe context %#v, record field context %#v", probe.value(), fieldContext)
+	}
+	if reflect.DeepEqual(MustContext("users/email").value(), fieldContext) {
+		t.Fatal("the unextended probe context equals the extended field's")
+	}
+	other, err := extend(MustContext("users/email"), []any{uint64(8), "eu"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reflect.DeepEqual(other.value(), fieldContext) {
+		t.Fatal("another tenant's probe context equals the field's")
+	}
+	// The same option value, held once and passed to both calls, is how
+	// the two sides are kept in step; it applies identically through
+	// either interface.
+	var opt Option = ExtendContext(ext...)
+	if _, ok := opt.(TermOption); !ok {
+		t.Fatal("ExtendContext is not a TermOption through its Option interface")
 	}
 }
 
@@ -293,7 +346,7 @@ func TestPlanBindsByFieldName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bound, err := planFor(typ, applyOptions([]RecordOption{WithPlan(ok)}))
+	bound, err := planFor(typ, applyOptions([]Option{WithPlan(ok)}))
 	if err != nil {
 		t.Fatal(err)
 	}

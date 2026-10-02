@@ -79,22 +79,86 @@ type EncryptedField struct {
 // EncryptedRecord is one record's planned fields, by wire name.
 type EncryptedRecord map[string]EncryptedField
 
-// RecordOption adjusts how a record call binds its fields.
-type RecordOption func(*recordOptions)
+// Option adjusts one record call: [Cipher.EncryptRecords],
+// [Cipher.EncryptRecord], [Cipher.DecryptRecords], [Cipher.DecryptRecord]
+// and the Client forms of the last two. An option is a value built by one
+// of the functions below, and a call applies the options it is given in
+// order.
+//
+// A [TermOption] is an Option the probe call, [Cipher.Term], accepts as
+// well: what a record and the probe that matches it must agree on. An
+// option that means something only on a record call, such as [WithPlan],
+// is not one, so handing it to Term does not compile.
+type Option interface {
+	applyRecord(*recordOptions)
+}
+
+// TermOption is an [Option] that [Cipher.Term] also accepts. Every
+// TermOption is an Option, so one value serves the encrypt, decrypt and
+// probe calls alike, and the three cannot drift apart:
+//
+//	tenant := stackencrypt.ExtendContext(uint64(tenantID))
+//	rows, err := cipher.EncryptRecords(ctx, users, tenant)
+//	probe, err := cipher.Term(ctx, "bob@example.com", email, stackencrypt.Equality, tenant)
+//	err = cipher.DecryptRecords(ctx, rows, &back, tenant)
+type TermOption interface {
+	Option
+	applyTerm(*termOptions)
+}
 
 type recordOptions struct {
 	extension []any
 	plan      Plan
 }
 
+type termOptions struct {
+	extension []any
+}
+
+// contextExtension is what [ExtendContext] returns.
+type contextExtension struct{ parts []any }
+
+func (e contextExtension) applyRecord(o *recordOptions) {
+	o.extension = append(o.extension, e.parts...)
+}
+
+func (e contextExtension) applyTerm(o *termOptions) {
+	o.extension = append(o.extension, e.parts...)
+}
+
 // ExtendContext extends every field's context by parts, in order, the way
 // the Rust derive extends a field's context by the caller's
 // (encrypt_into_with_context): a field tagged context=users/age with
-// ExtendContext(uint64(7)) binds ["users/age", 7]. The same extension must
-// be given to decrypt the records.
-func ExtendContext(parts ...any) RecordOption {
-	return func(o *recordOptions) { o.extension = append(o.extension, parts...) }
+// ExtendContext(uint64(7)) binds ["users/age", 7]. On [Cipher.Term] it
+// extends the probe's context the same way, so a probe built under the
+// extension a record was written under compares against that record's
+// terms, and under any other extension, or none, against nothing.
+//
+// The same extension must be given to decrypt the records. A part's type
+// is part of the context (an int crosses as int64, so uint64(7) and 7 are
+// different contexts), which is why an extension is best held in one value
+// and passed to every call rather than spelled afresh at each.
+func ExtendContext(parts ...any) TermOption {
+	return contextExtension{parts: slices.Clone(parts)}
 }
+
+// extend is c extended by every part of ext, in order: the one definition
+// of how an extension applies, shared by the record plan and the probe so
+// the two cannot disagree.
+func extend(c Context, ext []any) (Context, error) {
+	for _, part := range ext {
+		var err error
+		if c, err = c.With(part); err != nil {
+			return Context{}, err
+		}
+	}
+	return c, nil
+}
+
+// planOption is what [WithPlan] returns.
+type planOption struct{ plan Plan }
+
+func (p planOption) applyRecord(o *recordOptions) { o.plan = p.plan }
 
 // WithPlan encrypts or decrypts records under an explicit plan instead of
 // the struct's `stash` tags.
@@ -107,8 +171,8 @@ func ExtendContext(parts ...any) RecordOption {
 // generated struct may be decrypted into a domain struct under a plan
 // with the same Names and Contexts. Terms are one-way outputs, derived on
 // encryption and never sent to decrypt, so they need not match either.
-func WithPlan(p Plan) RecordOption {
-	return func(o *recordOptions) { o.plan = p }
+func WithPlan(p Plan) Option {
+	return planOption{plan: p}
 }
 
 // FieldPlan is one planned field of a record.
@@ -355,10 +419,8 @@ func planValue(plan []fieldPlan, opts recordOptions) (vcvalue.Object, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, part := range opts.extension {
-			if ctx, err = ctx.With(part); err != nil {
-				return nil, err
-			}
+		if ctx, err = extend(ctx, opts.extension); err != nil {
+			return nil, err
 		}
 		outputs := make([]any, len(f.outputs))
 		for i, o := range f.outputs {
@@ -372,10 +434,10 @@ func planValue(plan []fieldPlan, opts recordOptions) (vcvalue.Object, error) {
 	return out, nil
 }
 
-func applyOptions(opts []RecordOption) recordOptions {
+func applyOptions(opts []Option) recordOptions {
 	var o recordOptions
 	for _, opt := range opts {
-		opt(&o)
+		opt.applyRecord(&o)
 	}
 	return o
 }
@@ -385,7 +447,7 @@ func applyOptions(opts []RecordOption) recordOptions {
 // fields from batched ZeroKMS key requests (one per 500 sealed fields),
 // terms derived under this keyset's index key. One EncryptedRecord per
 // row, in order.
-func (cph *Cipher) EncryptRecords(ctx context.Context, rows any, opts ...RecordOption) ([]EncryptedRecord, error) {
+func (cph *Cipher) EncryptRecords(ctx context.Context, rows any, opts ...Option) ([]EncryptedRecord, error) {
 	v := reflect.Indirect(reflect.ValueOf(rows))
 	if !v.IsValid() || v.Kind() != reflect.Slice {
 		return nil, fmt.Errorf("stackencrypt: EncryptRecords takes a slice of structs, not %T", rows)
@@ -418,7 +480,7 @@ func (cph *Cipher) EncryptRecords(ctx context.Context, rows any, opts ...RecordO
 
 // EncryptRecord seals one struct (or a pointer to one) per its `stash`
 // tags, or per [WithPlan]; see EncryptRecords.
-func (cph *Cipher) EncryptRecord(ctx context.Context, row any, opts ...RecordOption) (EncryptedRecord, error) {
+func (cph *Cipher) EncryptRecord(ctx context.Context, row any, opts ...Option) (EncryptedRecord, error) {
 	v := reflect.Indirect(reflect.ValueOf(row))
 	if !v.IsValid() {
 		return nil, fmt.Errorf("stackencrypt: EncryptRecord takes a struct, not %T", row)
@@ -531,18 +593,18 @@ func termBytes(node any) ([]byte, error) {
 // left as they are: when the slice already holds one row per record, each
 // row keeps its other fields; otherwise it is replaced by a fresh slice.
 // Nothing is written unless every record decodes.
-func (cph *Cipher) DecryptRecords(ctx context.Context, records []EncryptedRecord, out any, opts ...RecordOption) error {
+func (cph *Cipher) DecryptRecords(ctx context.Context, records []EncryptedRecord, out any, opts ...Option) error {
 	return cph.client.decryptRecords(ctx, cph.keyset, records, out, opts)
 }
 
 // DecryptRecord opens one record into out, a pointer to a struct; see
 // DecryptRecords. Fields the plan does not name keep their values, and
 // nothing is written unless every planned field decodes.
-func (cph *Cipher) DecryptRecord(ctx context.Context, record EncryptedRecord, out any, opts ...RecordOption) error {
+func (cph *Cipher) DecryptRecord(ctx context.Context, record EncryptedRecord, out any, opts ...Option) error {
 	return cph.client.decryptRecord(ctx, cph.keyset, record, out, opts)
 }
 
-func (c *Client) decryptRecords(ctx context.Context, sel KeysetSelector, records []EncryptedRecord, out any, opts []RecordOption) error {
+func (c *Client) decryptRecords(ctx context.Context, sel KeysetSelector, records []EncryptedRecord, out any, opts []Option) error {
 	ptr := reflect.ValueOf(out)
 	if ptr.Kind() != reflect.Pointer || ptr.IsNil() || ptr.Elem().Kind() != reflect.Slice {
 		return fmt.Errorf("stackencrypt: DecryptRecords writes into a pointer to a slice of structs, not %T", out)
@@ -600,7 +662,7 @@ func commitRecord(target reflect.Value, item any, plan []fieldPlan) error {
 	return nil
 }
 
-func (c *Client) decryptRecord(ctx context.Context, sel KeysetSelector, record EncryptedRecord, out any, opts []RecordOption) error {
+func (c *Client) decryptRecord(ctx context.Context, sel KeysetSelector, record EncryptedRecord, out any, opts []Option) error {
 	ptr := reflect.ValueOf(out)
 	if ptr.Kind() != reflect.Pointer || ptr.IsNil() || ptr.Elem().Kind() != reflect.Struct {
 		return fmt.Errorf("stackencrypt: DecryptRecord writes into a pointer to a struct, not %T", out)

@@ -86,12 +86,26 @@ func (cph *Cipher) DecryptElement(ctx context.Context, ct any, aad []byte) (any,
 // encoding); a string for Match; any scalar for Ore and Ope. The result is
 // one of EqualityTerm, MatchTerm, OreTerm or OpeTerm.
 //
+// opts are the [TermOption]s a probe shares with the record calls.
+// [ExtendContext] extends context exactly as it extends each field's own
+// context in a record call, so a probe for a field written under an
+// extension is the field's context plus the same option value the rows
+// were written with, never a context spelled by hand.
+//
 // Term takes a context and returns an error because it may be a ZeroKMS
 // round trip: term derivation is asynchronous in the Rust crate, and a
 // ZeroKMS backend that derives terms server-side settles the same way.
-func (cph *Cipher) Term(ctx context.Context, value any, context Context, kind TermKind) (any, error) {
+func (cph *Cipher) Term(ctx context.Context, value any, context Context, kind TermKind, opts ...TermOption) (any, error) {
 	if context.node == nil {
 		return nil, fmt.Errorf("stackencrypt: term context is empty")
+	}
+	var o termOptions
+	for _, opt := range opts {
+		opt.applyTerm(&o)
+	}
+	context, err := extend(context, o.extension)
+	if err != nil {
+		return nil, err
 	}
 	encodedValue, err := vcffi.Marshal(value)
 	if err != nil {
@@ -105,12 +119,12 @@ func (cph *Cipher) Term(ctx context.Context, value any, context Context, kind Te
 		return nil, err
 	}
 	defer wipe(encodedContext)
-	opts, err := vcffi.Marshal(options(cph.keyset))
+	encodedOpts, err := vcffi.Marshal(options(cph.keyset))
 	if err != nil {
 		return nil, err
 	}
 	out, err := cph.client.call(ctx, func(inst *instance) ([]byte, error) {
-		return inst.call(ctx, inst.term, buf(encodedValue), buf(encodedContext), scalar(uint64(kind)), buf(opts))
+		return inst.call(ctx, inst.term, buf(encodedValue), buf(encodedContext), scalar(uint64(kind)), buf(encodedOpts))
 	})
 	if err != nil {
 		return nil, err
