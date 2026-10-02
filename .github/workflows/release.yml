@@ -220,6 +220,10 @@ jobs:
     permissions:
       contents: write # the seven git tags and the GitHub release
       id-token: write # npm OIDC trusted publishing
+    # `release` waits for npm to serve every one of these before it runs
+    # `changeset publish`. Empty when this job is skipped.
+    outputs:
+      published: ${{ steps.publish.outputs.published }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -289,7 +293,10 @@ jobs:
             published+=("${name}@${version}")
           done
           printf '%s\n' "${published[@]}" > published.txt
-          echo "version=$(meta "$wrapper" version)" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$(meta "$wrapper" version)"
+            echo "published=${published[*]}"
+          } >> "$GITHUB_OUTPUT"
 
       # Changesets tags only what IT published — `tagPublish` receives
       # `publishedPackages.filter(p => p.result === "published")` — and it skips
@@ -369,6 +376,9 @@ jobs:
     permissions:
       contents: write # the seven git tags and the GitHub release
       id-token: write # npm OIDC trusted publishing
+    # Waited for by `release`, as publish-ffi's is.
+    outputs:
+      published: ${{ steps.publish.outputs.published }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -420,7 +430,10 @@ jobs:
             published+=("${name}@${version}")
           done
           printf '%s\n' "${published[@]}" > published.txt
-          echo "version=$(meta "$wrapper" version)" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$(meta "$wrapper" version)"
+            echo "published=${published[*]}"
+          } >> "$GITHUB_OUTPUT"
 
       # Changesets tags only what it published itself, so without this an auth
       # release has no git tag and no GitHub release. The same idempotent tag
@@ -590,6 +603,19 @@ jobs:
           working_directory: packages/eql
           add_shims_to_path: false
           env: false
+
+      # BEFORE `changeset publish`. npm accepts a publish minutes before its
+      # package document lists the version, and `changeset publish` publishes
+      # every version that document does not list — the native packages again,
+      # from the workspace, with `restricted` access, which npm refuses with
+      # E402. That failed this job for protect-ffi 0.33.0 and for
+      # @cipherstash/auth 0.44.1. See scripts/wait-for-npm-versions.mjs.
+      - name: Wait for npm to list the native packages
+        timeout-minutes: 20
+        env:
+          FFI_PUBLISHED: ${{ needs.publish-ffi.outputs.published }}
+          AUTH_PUBLISHED: ${{ needs.publish-auth.outputs.published }}
+        run: node scripts/wait-for-npm-versions.mjs
 
       - name: Publish to npm
         id: changesets

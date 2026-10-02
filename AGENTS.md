@@ -207,6 +207,13 @@ stays optional for everyone else.
   bumps nothing is a no-op for all seven. `ffi-preflight.yml` is the dry run
   (`changeset publish` has no `--dry-run`); dispatch it against the Version
   Packages branch before merging a release that moves an FFI version.
+  **The `release` job waits for npm to list all seven** (and the seven
+  `@cipherstash/auth` packages `publish-auth` publishes the same way) before
+  `changeset publish`, through `scripts/wait-for-npm-versions.mjs`. npm lists
+  a publish minutes after accepting it, and `changeset publish` publishes any
+  version npm does not list yet a second time — with `restricted` access, so
+  npm refuses it with E402 and the job fails. That happened to protect-ffi
+  0.33.0 and @cipherstash/auth 0.44.1 before the wait existed.
 - **Trusted publishing binds to (repository, workflow filename).** Keep
   `release.yml` as the single npm entry point; a rename silently invalidates all
   seven publisher configurations. Each one must also list `npm publish` under
