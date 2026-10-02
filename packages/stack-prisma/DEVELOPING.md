@@ -365,6 +365,27 @@ artefacts (`src/contract.{json,d.ts}`) are re-emitted via
 `pnpm exec prisma-next contract emit`; `refs/head.json` is hand-pinned to
 the head migration's `to` hash and its invariants.
 
+**An EQL bump's migration lands BEFORE the bump.** The Version Packages PR
+moves `@cipherstash/eql`, and its CI runs the lockstep test, so the migration
+baking the new release has to be on `main` first. But the emit script bakes
+whatever `@cipherstash/eql` is installed, which on `main` is still the old
+release. So: check out the release's EQL files from the Version Packages branch
+(`packages/eql/packages/eql/{sql,src/generated,package.json}` and the
+`eql-bindings` copies), rebuild `@cipherstash/eql` (this package reads its
+`dist/`), emit ONLY the new upgrade directory and the baseline, then
+`git checkout` the EQL files back and rebuild again. Never loop over every
+directory: each `migration.ts` calls `readVerifiedInstallSql()`, so
+re-emitting a historical edge silently bakes the new release into it. `tsx`
+is not a dependency of this package; any workspace copy works (e.g.
+`../cli/node_modules/.bin/tsx`). Copy the new and re-emitted `migration.json` /
+`ops.json` pairs into `examples/prisma/migrations/cipherstash/` and add the new
+invariant to its single-line `refs/head.json`
+(`test/v3/vendored-space-parity.test.ts` enforces both). Between the two merges the live byte-identity check in
+`test/live/migration-apply-live-pg.test.ts` fails by construction (the
+baseline bakes the new release, the installed package is the old one), and
+the `eqlVersion` marker in `test/v3/migration-v3.test.ts` has to accept both
+releases; narrow it once the bump merges.
+
 ## Other design choices worth knowing
 
 ### Handle storage — `#` field with redacting overrides

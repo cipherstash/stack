@@ -29,14 +29,15 @@ Declare encrypted columns directly in `schema.prisma`, and the framework's migra
 npm install @cipherstash/stack @cipherstash/stack-prisma
 ```
 
-### Upgrading from 1.0.0
+### Upgrading from 1.0.0 or 1.1.x
 
-1.0.0 shipped the EQL v3 baseline migration at **eql-3.0.4**. Later versions bake
-**eql-3.0.5** into the same baseline directory
+1.0.0, 1.1.0 and 1.1.1 shipped the EQL v3 baseline migration at **eql-3.0.4**.
+Later versions bake **eql-3.0.6** into the same baseline directory
 (`20260601T0100_install_eql_v3_bundle`), so its bytes — and its `migrationHash` —
 changed. Migration packages are content-addressed and copied into your repo, and
 the CLI's seed phase never rewrites a directory that already exists, so a
-`migrations/cipherstash/` generated against 1.0.0 keeps the old baseline forever.
+`migrations/cipherstash/` generated against 1.0.0 or 1.1.x keeps the old baseline
+forever.
 
 **After upgrading, delete the vendored directory and regenerate it:**
 
@@ -46,21 +47,22 @@ npx prisma-next migration plan
 ```
 
 Your database is untouched by this: markers are keyed by invariant, so
-already-applied invariants are not re-run and the only new work is the 3.0.5
-upgrade edge.
+already-applied invariants are not re-run and the only new work is the 3.0.5 and
+3.0.6 upgrade edges. Both run, in that order, so the EQL bundle is re-installed
+twice; the database ends on eql-3.0.6.
 
 Skipping this is not always fatal, which is why it is easy to miss:
 
 | You run | With a stale `migrations/cipherstash/` |
 | --- | --- |
 | `prisma-next migration plan` | Succeeds. The stale baseline is kept silently — there is no hash mismatch, because it is intact, just old. |
-| `prisma-next migrate` (existing database) | Correct: applies the 3.0.5 upgrade edge only. |
-| `prisma-next migrate` (fresh database) | Correct end state, but installs eql-3.0.4 and then immediately re-installs eql-3.0.5 over it. |
-| `prisma-next db init` (fresh database) | **Fails**: `Operation cipherstash.upgrade-eql-v3-bundle-3.0.5 has class "data" which is not allowed by policy.` `db init` is additive-only, and the stale baseline does not carry the 3.0.5 invariant, so the planner has to reach for the data-classed upgrade edge. The message does not say so — the remedy is the `rm -rf` above. |
+| `prisma-next migrate` (existing database) | Correct: applies the 3.0.5 and 3.0.6 upgrade edges only. |
+| `prisma-next migrate` (fresh database) | Correct end state, but installs eql-3.0.4 and then immediately re-installs eql-3.0.5 and eql-3.0.6 over it. |
+| `prisma-next db init` (fresh database) | **Fails**: `Operation cipherstash.upgrade-eql-v3-bundle-3.0.5 has class "data" which is not allowed by policy.` `db init` is additive-only, and the stale baseline does not carry the 3.0.5 or 3.0.6 invariants, so the planner has to reach for the data-classed upgrade edges. The message does not say so — the remedy is the `rm -rf` above. |
 
 Note that only `prisma-next migration plan` copies new migration packages into
 your repo. If you upgrade the package and run `prisma-next migrate` or
-`db init` **without** planning first, the 3.0.5 upgrade is not on disk yet and is
+`db init` **without** planning first, the new upgrade edges are not on disk yet and are
 silently skipped — your database stays on the older bundle. Always run
 `migration plan` after upgrading.
 

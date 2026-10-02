@@ -5,8 +5,9 @@
     "cipherstash:install-eql-v3-bundle-v1",
     "cipherstash:upgrade-eql-v3-bundle-3.0.2-v1",
     "cipherstash:upgrade-eql-v3-bundle-3.0.4-v1",
-    "cipherstash:upgrade-eql-v3-bundle-3.0.5-v1"
+    "cipherstash:upgrade-eql-v3-bundle-3.0.5-v1",
+    "cipherstash:upgrade-eql-v3-bundle-3.0.6-v1"
   ],
   "createdAt": "2026-07-14T20:10:24.325Z",
-  "migrationHash": "bad30c9b3d2ad383d853cda0209eb14a031f2d107ba9cbdfb26b95d58e9aff37"
+  "migrationHash": "2fdc7cafd2c6011b5129267cd77e640077fdc6401cba5a987c3f0bb412dad05c"
 }

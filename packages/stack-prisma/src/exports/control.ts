@@ -57,12 +57,19 @@ import v3Upgrade305Metadata from '../../migrations/20260814T0000_upgrade_eql_v3_
 import v3Upgrade305Ops from '../../migrations/20260814T0000_upgrade_eql_v3_3_0_5/ops.json' with {
   type: 'json',
 }
+import v3Upgrade306Metadata from '../../migrations/20261002T0000_upgrade_eql_v3_3_0_6/migration.json' with {
+  type: 'json',
+}
+import v3Upgrade306Ops from '../../migrations/20261002T0000_upgrade_eql_v3_3_0_6/ops.json' with {
+  type: 'json',
+}
 import headRef from '../../migrations/refs/head.json' with { type: 'json' }
 import contractJson from '../contract.json' with { type: 'json' }
 import {
   CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
+  CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
 } from '../extension-metadata/constants-v3'
 import { cipherstashPackMeta } from '../extension-metadata/descriptor-meta'
@@ -110,11 +117,17 @@ const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
       ops: v3Upgrade304Ops,
     },
     // 3.0.5 upgrade edge — same shape, for databases installed at any
-    // earlier bundle. This is the release the baseline currently bakes.
+    // earlier bundle.
     {
       dirName: CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
       metadata: v3Upgrade305Metadata,
       ops: v3Upgrade305Ops,
+    },
+    // The release the baseline currently bakes.
+    {
+      dirName: CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
+      metadata: v3Upgrade306Metadata,
+      ops: v3Upgrade306Ops,
     },
   ],
   headRef,

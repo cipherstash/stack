@@ -50,7 +50,7 @@ Any RLS policy, view, or constraint that calls an `eql_v3` function is dropped
 by the same CASCADE and needs recreating too. **The rename itself needs no
 action — the alias makes it non-breaking.**
 
-Two artefacts carry the new bundle:
+Two artefacts carry the new invariant:
 
 - A new upgrade edge, `20260814T0000_upgrade_eql_v3_3_0_5`, carrying the
   invariant `cipherstash:upgrade-eql-v3-bundle-3.0.5-v1`. Databases already
@@ -60,27 +60,31 @@ Two artefacts carry the new bundle:
   phase that copies a new migration package into your repo runs only from
   `migration plan`, so without it the 3.0.5 directory never reaches disk and
   `migrate` is a silent no-op that leaves the database on the older bundle.
-- The baseline install migration `20260601T0100_install_eql_v3_bundle`, whose
-  baked bundle moves to 3.0.5 and which gains a fourth no-SQL carrier op for
-  the new invariant. Fresh databases therefore land on 3.0.5 from the single
-  all-additive genesis edge, keeping `db init` (additive-only policy) working.
+- The baseline install migration `20260601T0100_install_eql_v3_bundle`, which
+  gains a no-SQL carrier op for the new invariant. The baseline itself bakes
+  eql-3.0.6, not 3.0.5: it was re-emitted again for 3.0.6 before any release
+  carried the 3.0.5 bytes (see the 3.0.6 entry). Fresh databases land on 3.0.6
+  from the single all-additive genesis edge, keeping `db init` (additive-only
+  policy) working.
 
 **Action required.** The baseline's bytes — and so its `migrationHash` — have
-changed. If your project already has a `migrations/cipherstash/` directory
-generated against `@cipherstash/stack-prisma@1.0.0` or `@1.1.0`, delete that
-directory and re-run `prisma-next migration plan` (or `migrate`); the 1.1.0
-Prisma Next 0.17 upgrade re-anchored the same artefacts, so a space vendored
-against either release is stale here. The seed phase regenerates
+changed. This is one change, shared with the 3.0.6 entry: npm never shipped
+the 3.0.5 baseline on its own. If your project already has a
+`migrations/cipherstash/` directory generated against
+`@cipherstash/stack-prisma@1.0.0`, `@1.1.0` or `@1.1.1`, delete that directory
+and re-run `prisma-next migration plan` (or `migrate`); the 1.1.0 Prisma Next
+0.17 upgrade re-anchored the same artefacts, so a space vendored against any
+of them is stale here. The seed phase regenerates
 it byte-identical to the shipped artefacts. Your database keeps its markers, so
-already-applied invariants are not re-run — the only new work is the 3.0.5
-upgrade edge.
+already-applied invariants are not re-run — the only new work is the 3.0.5 and
+3.0.6 upgrade edges.
 
 If you skip the delete, nothing warns you: a vendored baseline is stale but
 internally intact, so it passes every integrity check. On an existing database
 the upgrade still applies correctly; on a **fresh** one, `db init` refuses with
 `Operation cipherstash.upgrade-eql-v3-bundle-3.0.5 has class "data" which is
 not allowed by policy.` — an error that names neither the directory nor the
-remedy. See "Upgrading from 1.0.0" in the package README.
+remedy. See "Upgrading from 1.0.0 or 1.1.x" in the package README.
 
 **Why the baseline was re-emitted rather than left frozen.** These artefacts are
 content-addressed and normally append-only: an EQL bump ships as a new upgrade
@@ -93,4 +97,6 @@ collect every head-ref invariant from the genesis edge it walks. The
 append-only alternative would duplicate the full ~2.6 MB bundle into a new
 genesis edge on every EQL release, permanently; re-emitting was taken instead
 while 1.0.0 was two weeks old with negligible adoption, and is a decision to be
-re-argued on adoption numbers rather than repeated by default.
+re-argued on adoption numbers rather than repeated by default. This re-emit
+never reached npm: 1.1.0 and 1.1.1 shipped the eql-3.0.4 baseline, and the
+3.0.6 re-emit replaced these bytes before a release carried them.

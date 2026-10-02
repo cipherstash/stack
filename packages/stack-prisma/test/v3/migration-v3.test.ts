@@ -1,7 +1,7 @@
 /**
  * v3 baseline migration assertions — the on-disk emitted artefacts for
- * `20260601T0100_install_eql_v3_bundle` and the 3.0.2 / 3.0.4 / 3.0.5
- * upgrade edges.
+ * `20260601T0100_install_eql_v3_bundle` and the 3.0.2 / 3.0.4 / 3.0.5 /
+ * 3.0.6 upgrade edges.
  *
  * The install SQL IS baked into `ops.json`: each migration's self-emit
  * script embeds `readVerifiedInstallSql()` — the installed
@@ -57,12 +57,19 @@ import v3Upgrade305Metadata from '../../migrations/20260814T0000_upgrade_eql_v3_
 import v3Upgrade305Ops from '../../migrations/20260814T0000_upgrade_eql_v3_3_0_5/ops.json' with {
   type: 'json',
 }
+import v3Upgrade306Metadata from '../../migrations/20261002T0000_upgrade_eql_v3_3_0_6/migration.json' with {
+  type: 'json',
+}
+import v3Upgrade306Ops from '../../migrations/20261002T0000_upgrade_eql_v3_3_0_6/ops.json' with {
+  type: 'json',
+}
 import headRef from '../../migrations/refs/head.json' with { type: 'json' }
 import cipherstashDescriptor from '../../src/exports/control'
 import {
   CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
+  CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
   CIPHERSTASH_V3_INVARIANTS,
 } from '../../src/extension-metadata/constants-v3'
@@ -112,8 +119,8 @@ function descriptorMigration(dirName: string) {
 // (`createdAt → to → migrationHash`, see `findPath` /
 // `findPathWithInvariants`), so moving it can change which path a database
 // walks when more than one is available. The baseline has been re-emitted
-// twice with new bytes and kept its original `createdAt` both times, which is
-// correct and deliberate: re-emitting the same logical migration must not
+// with new bytes several times and kept its original `createdAt` every time,
+// which is correct and deliberate: re-emitting the same logical migration must not
 // shift its position in the graph. A review has already asked for it to be
 // moved forward to "match the new bytes" — that is the change this pin exists
 // to make someone argue for rather than make by accident.
@@ -122,23 +129,36 @@ const PUBLISHED_MIGRATIONS = [
     dirName: CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
     metadata: v3Metadata,
     ops: v3Ops,
-    // Re-pinned TWICE, both times deliberately (see the migration file's
+    // Re-pinned deliberately at each re-emit (see the migration file's
     // header for the full record):
     //   1. the pre-GA re-emit on the 1.0 release branch, which reclassified
     //      the install op `data` → `additive`, added the upgrade
     //      invariant-carrier ops (so fresh-database `db init` passes its
     //      additive-only policy), and baked eql-3.0.4;
-    //   2. this one, for eql-3.0.5 — a GA-published artefact rewritten
-    //      while adoption was still negligible, in preference to a second
-    //      `from: null` genesis edge duplicating the bundle SQL forever.
+    //   2. eql-3.0.5 (`bad30c9b…`, baking `accde003…`) — never published:
+    //      1.1.0 and 1.1.1 ship `1030654387…`, the eql-3.0.4 bundle;
+    //   3. this one, for eql-3.0.6 — so the one change npm consumers see is
+    //      `1030654387…` → this hash, in 1.2.0. Taken in preference to a
+    //      second `from: null` genesis edge duplicating the bundle SQL
+    //      forever, while adoption is still small.
     // The baseline is the ONE migration whose baked digest tracks the
     // pinned release rather than a historical one, which is why the
     // lockstep test below has something to match.
     createdAt: '2026-07-14T20:10:24.325Z',
     migrationHash:
-      'bad30c9b3d2ad383d853cda0209eb14a031f2d107ba9cbdfb26b95d58e9aff37',
+      '2fdc7cafd2c6011b5129267cd77e640077fdc6401cba5a987c3f0bb412dad05c',
     installSqlSha256:
-      'accde0030b8f356af616175640635f67661d51aa900624b7fb0fb059e8115048',
+      '9b6dab789248f911707f7c1c468c5d455987b47aac4a30fc421bc813073fffb1',
+  },
+  {
+    dirName: CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
+    metadata: v3Upgrade306Metadata,
+    ops: v3Upgrade306Ops,
+    createdAt: '2026-10-02T04:18:42.588Z',
+    migrationHash:
+      'b16c9fc5fbe87f2ec03bcae3fc3d619cb4aac0c5781da7ba2105d3e11a6e0a3a',
+    installSqlSha256:
+      '9b6dab789248f911707f7c1c468c5d455987b47aac4a30fc421bc813073fffb1',
   },
   {
     dirName: CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
@@ -180,13 +200,13 @@ const MIGRATIONS_DIR = join(
 )
 
 describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
-  it('installs under the v3 invariants with four additive rawSql ops', () => {
-    // Four ops, all `additive`, so fresh-database `db init` (additive-only
+  it('installs under the v3 invariants with five additive rawSql ops', () => {
+    // Five ops, all `additive`, so fresh-database `db init` (additive-only
     // policy) can walk this genesis edge: the bundle install itself, plus one
-    // no-SQL carrier op per upgrade invariant (3.0.2, 3.0.4 and 3.0.5). The
-    // baked bundle IS the pinned release, so a fresh install lands at 3.0.5 —
-    // which satisfies all three invariants, and the shortest-path planner
-    // never needs the data-classed upgrade self-edges.
+    // no-SQL carrier op per upgrade invariant (3.0.2, 3.0.4, 3.0.5 and
+    // 3.0.6). The baked bundle IS the pinned release, so a fresh install
+    // lands at 3.0.6 — which satisfies all four invariants, and the
+    // shortest-path planner never needs the data-classed upgrade self-edges.
     // `additive` is safe on this edge because the checker's
     // no-op self-edge rule only fires when from === to, and this edge runs
     // from: null → the empty-storage hash — see the rationale comment in
@@ -197,10 +217,9 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     // because no self-edge can be additive (the integrity checker rejects a
     // self-edge with no data-class op). A new EQL invariant therefore
     // cannot be added to the head ref without a carrier op landing here.
-    expect(v3Ops).toHaveLength(4)
-    const [installOp, carrier302, carrier304, carrier305] = v3Ops as Array<
-      Record<string, unknown>
-    >
+    expect(v3Ops).toHaveLength(5)
+    const [installOp, carrier302, carrier304, carrier305, carrier306] =
+      v3Ops as Array<Record<string, unknown>>
     expect(installOp!.id).toBe('cipherstash.install-eql-v3-bundle')
     expect(installOp!.invariantId).toBe(CIPHERSTASH_V3_INVARIANTS.installBundle)
     expect(installOp!.invariantId).toBe('cipherstash:install-eql-v3-bundle-v1')
@@ -220,11 +239,17 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
       CIPHERSTASH_V3_INVARIANTS.upgradeBundle305,
     )
     expect(carrier305!.operationClass).toBe('additive')
+    expect(carrier306?.id).toBe('cipherstash.install-provides-eql-v3-3-0-6')
+    expect(carrier306?.invariantId).toBe(
+      CIPHERSTASH_V3_INVARIANTS.upgradeBundle306,
+    )
+    expect(carrier306?.operationClass).toBe('additive')
     // The carriers ship no SQL — the preceding install op's bundle is
     // already the pinned release, which satisfies every upgrade invariant.
     expect(carrier302!.execute).toEqual([])
     expect(carrier304!.execute).toEqual([])
     expect(carrier305!.execute).toEqual([])
+    expect(carrier306?.execute).toEqual([])
   })
 
   it('every published migration is frozen — artefact identity and baked-SQL provenance are pinned', () => {
@@ -251,8 +276,8 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
       // reads as "a path-selection key moved" rather than as one more digest
       // to re-pin. `createdAt` is the primary tie-break in the migrator's
       // neighbour ordering (`createdAt → to → migrationHash`), NOT a record of
-      // when these bytes were written — the baseline has been re-emitted twice
-      // and correctly kept its original value both times. See the note on
+      // when these bytes were written — the baseline has been re-emitted
+      // several times and correctly kept its original value every time. See the note on
       // PUBLISHED_MIGRATIONS for why moving it is a decision to argue, not a
       // tidy-up to wave through.
       expect(
@@ -290,11 +315,19 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     // @cipherstash/eql resolves in-tree (`workspace:*` → packages/eql), and
     // @cipherstash/stack encodes the v3 domain types against the same
     // release. The `*` is load-bearing in the PACKED tarball, not here: pnpm
-    // rewrites it to the exact version, so a consumer installs 3.0.5 and not
-    // any later 3.0.x published from cipherstash/encrypt-query-language while
+    // rewrites it to the exact version, so a consumer installs that release
+    // and not a later 3.0.x published from cipherstash/encrypt-query-language while
     // these baked migrations stay frozen. Bump this marker together with the
     // dependency and the new migration.
-    expect(releaseManifest.eqlVersion).toBe('3.0.5')
+    //
+    // TWO values, for one release cycle only. The 3.0.6 migrations land on
+    // main AHEAD of the Version Packages PR that bumps @cipherstash/eql
+    // 3.0.5 → 3.0.6, because that PR's own CI runs this suite and needs a
+    // migration baking 3.0.6 to already exist. Between the two merges the
+    // installed release is 3.0.5 (baked by the 3.0.5 edge); after it, 3.0.6
+    // (baked by the baseline and the 3.0.6 edge). Narrow this to '3.0.6'
+    // once the bump has merged.
+    expect(['3.0.5', '3.0.6']).toContain(releaseManifest.eqlVersion)
   })
 
   it('the descriptor wires the committed artefacts verbatim — one identity everywhere', () => {
@@ -368,6 +401,7 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
         CIPHERSTASH_V3_INVARIANTS.upgradeBundle302,
         CIPHERSTASH_V3_INVARIANTS.upgradeBundle304,
         CIPHERSTASH_V3_INVARIANTS.upgradeBundle305,
+        CIPHERSTASH_V3_INVARIANTS.upgradeBundle306,
       ].sort(),
     )
   })
@@ -449,7 +483,7 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     const op = (v3Upgrade305Ops as Array<Record<string, unknown>>)[0]!
     // Self-edge (from === to), so the integrity checker requires a
     // data-class op; only `migrate` (all classes allowed) walks it — fresh
-    // databases get 3.0.5 from the all-additive install edge instead.
+    // databases get the pinned release from the all-additive install edge.
     expect(op.operationClass).toBe('data')
 
     const runtimeUpgrade = descriptorMigration(
@@ -497,6 +531,69 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
     ).toHaveLength(2)
   })
 
+  it('adds a distinct 3.0.6 upgrade edge for databases on an older bundle', () => {
+    expect(CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME).toBe(
+      '20261002T0000_upgrade_eql_v3_3_0_6',
+    )
+    expect(CIPHERSTASH_V3_INVARIANTS.upgradeBundle306).toBe(
+      'cipherstash:upgrade-eql-v3-bundle-3.0.6-v1',
+    )
+    expect(v3Upgrade306Metadata.from).toBe(v3Metadata.to)
+    expect(v3Upgrade306Metadata.to).toBe(v3Metadata.to)
+    expect(v3Upgrade306Metadata.providedInvariants).toEqual([
+      CIPHERSTASH_V3_INVARIANTS.upgradeBundle306,
+    ])
+    expect(v3Upgrade306Ops).toHaveLength(1)
+    const [op] = v3Upgrade306Ops as Array<Record<string, unknown>>
+    expect(op?.id).toBe('cipherstash.upgrade-eql-v3-bundle-3.0.6')
+    expect(op?.invariantId).toBe(CIPHERSTASH_V3_INVARIANTS.upgradeBundle306)
+    // Self-edge (from === to), so the integrity checker requires a
+    // data-class op; only `migrate` (all classes allowed) walks it — fresh
+    // databases get 3.0.6 from the all-additive install edge instead.
+    expect(op?.operationClass).toBe('data')
+
+    const runtimeUpgrade = descriptorMigration(
+      CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
+    )
+    expect(runtimeUpgrade.metadata).toEqual(v3Upgrade306Metadata)
+    expect(runtimeUpgrade.ops).toEqual(v3Upgrade306Ops)
+  })
+
+  it('the 3.0.6 upgrade edge and the genesis edge both bake eql-3.0.6', () => {
+    // 3.0.6 changes nothing but the version stamp: `eql_v3.version()` and
+    // the schema comment. So the stamp IS the behavioural content, and it is
+    // what each edge's postcheck reads back — assert it in the baked bytes of
+    // both edges that install this release, and that no 3.0.5 stamp is left
+    // behind.
+    for (const [name, ops] of [
+      [CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME, v3Upgrade306Ops],
+      [CIPHERSTASH_V3_BASELINE_MIGRATION_NAME, v3Ops],
+    ] as const) {
+      const sql = firstExecuteSql(ops)
+      expect(sql, `${name} version()`).toContain("SELECT '3.0.6';")
+      expect(sql, `${name} schema comment`).toContain(
+        "COMMENT ON SCHEMA eql_v3 IS '3.0.6';",
+      )
+      expect(sql, `${name} stale stamp`).not.toContain("SELECT '3.0.5';")
+    }
+
+    // Every version postcheck on both edges reads back 3.0.6 — an edge that
+    // baked 3.0.6 but checked for 3.0.5 would fail on every apply.
+    const versionChecks = [
+      ...(v3Ops as unknown[]),
+      ...(v3Upgrade306Ops as unknown[]),
+    ]
+      .flatMap(
+        (op) => (op as { postcheck: ReadonlyArray<{ sql: string }> }).postcheck,
+      )
+      .map((check) => check.sql)
+      .filter((sql) => sql.includes('eql_v3.version()'))
+    expect(versionChecks.length).toBeGreaterThan(0)
+    for (const sql of versionChecks) {
+      expect(sql).toBe("SELECT eql_v3.version() = '3.0.6'")
+    }
+  })
+
   it('pins the head ref at the unchanged hash with all invariants', () => {
     expect(headRef.hash).toBe(v3Metadata.to)
     expect(headRef.invariants).toEqual([
@@ -504,6 +601,7 @@ describe('v3 baseline migration (20260601T0100_install_eql_v3_bundle)', () => {
       CIPHERSTASH_V3_INVARIANTS.upgradeBundle302,
       CIPHERSTASH_V3_INVARIANTS.upgradeBundle304,
       CIPHERSTASH_V3_INVARIANTS.upgradeBundle305,
+      CIPHERSTASH_V3_INVARIANTS.upgradeBundle306,
     ])
   })
 })

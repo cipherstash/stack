@@ -9,13 +9,22 @@
  * op carries the `cipherstash:install-eql-v3-bundle-v1` invariant, the op's own
  * postchecks hold against the live database, and no v2-style
  * `add_search_config` was executed (v3 needs no per-column search configuration).
+ *
+ * It then applies the shipped edges' OWN baked SQL, independent of the
+ * installed `@cipherstash/eql`: the genesis edge alone on an empty schema
+ * (the `db init` path), and a 1.1.x database (eql-3.0.4) walking the 3.0.5
+ * and 3.0.6 upgrade edges (the `migrate` path).
  */
 
 import 'dotenv/config'
+import type { MigrationPlanOperation } from '@prisma/orm-framework/components/control'
 import type postgres from 'postgres'
 import { afterAll, beforeAll, expect, it } from 'vitest'
 import cipherstashDescriptor from '../../src/exports/control'
 import {
+  CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME,
+  CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
+  CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
   CIPHERSTASH_V3_INVARIANTS,
 } from '../../src/extension-metadata/constants-v3'
@@ -29,18 +38,83 @@ import { describeLivePg } from './helpers/live-gate'
 
 const INSTALL_OP_ID = 'cipherstash.install-eql-v3-bundle'
 
-interface MigrationOp {
-  readonly id: string
-  readonly invariantId: string
-  readonly operationClass: string
-  readonly execute: ReadonlyArray<{
-    readonly description: string
-    readonly sql: string
-  }>
-  readonly postcheck: ReadonlyArray<{
-    readonly description: string
-    readonly sql: string
-  }>
+type Step = { readonly description: string; readonly sql: string }
+
+/**
+ * The SQL target's op shape: `@prisma/orm-target-postgres` adds the
+ * `execute` / `postcheck` step lists to the framework's base op.
+ */
+interface MigrationOp extends MigrationPlanOperation {
+  readonly execute: readonly Step[]
+  readonly postcheck: readonly Step[]
+}
+
+function descriptorOps(dirName: string): readonly MigrationOp[] {
+  const migration = cipherstashDescriptor.contractSpace?.migrations.find(
+    (m) => m.dirName === dirName,
+  )
+  if (!migration) throw new Error(`descriptor is missing migration ${dirName}`)
+  return migration.ops as readonly MigrationOp[]
+}
+
+async function stepHolds(
+  sql: postgres.Sql | postgres.TransactionSql,
+  step: Step,
+): Promise<boolean> {
+  const rows = (await sql.unsafe(step.sql)) as unknown as Array<
+    Record<string, unknown>
+  >
+  return Object.values(rows[0] ?? {})[0] === true
+}
+
+/** The runner's skip rule: an op whose postchecks all hold is not executed. */
+async function postchecksAllHold(
+  sql: postgres.TransactionSql,
+  op: MigrationOp,
+): Promise<boolean> {
+  if (op.postcheck.length === 0) return false
+  for (const check of op.postcheck) {
+    if (!(await stepHolds(sql, check))) return false
+  }
+  return true
+}
+
+async function expectPostchecksHold(
+  sql: postgres.Sql | postgres.TransactionSql,
+  ops: readonly MigrationOp[],
+): Promise<void> {
+  for (const op of ops) {
+    for (const check of op.postcheck) {
+      expect(
+        await stepHolds(sql, check),
+        `${op.id}: ${check.description}`,
+      ).toBe(true)
+    }
+  }
+}
+
+/**
+ * The runner's execute → postcheck order, per op. Unlike the runner it
+ * never skips a pre-satisfied op; callers that rely on an op really
+ * running assert `postchecksAllHold` is false first.
+ */
+async function applyEdge(
+  tx: postgres.TransactionSql,
+  dirName: string,
+): Promise<void> {
+  for (const op of descriptorOps(dirName)) {
+    for (const step of op.execute) await tx.unsafe(step.sql)
+    await expectPostchecksHold(tx, [op])
+  }
+}
+
+async function eqlVersion(
+  sql: postgres.Sql | postgres.TransactionSql,
+): Promise<string | undefined> {
+  const [row] = await sql<{ version: string }[]>`
+    SELECT eql_v3.version() AS version
+  `
+  return row?.version
 }
 
 /**
@@ -52,17 +126,11 @@ interface MigrationOp {
  * because this suite only runs against a live database.)
  */
 function readRuntimeDescriptorOp(): MigrationOp {
-  const migration = cipherstashDescriptor.contractSpace?.migrations.find(
-    ({ dirName }) => dirName === CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
-  )
-  const op = migration?.ops.find(({ id }) => id === INSTALL_OP_ID) as
-    | MigrationOp
-    | undefined
+  const ops = descriptorOps(CIPHERSTASH_V3_BASELINE_MIGRATION_NAME)
+  const op = ops.find(({ id }) => id === INSTALL_OP_ID)
   if (!op) {
     throw new Error(
-      `expected an op with id "${INSTALL_OP_ID}" in the v3 baseline migration, got [${(
-        migration?.ops ?? []
-      )
+      `expected an op with id "${INSTALL_OP_ID}" in the v3 baseline migration, got [${ops
         .map(({ id }) => id)
         .join(', ')}]`,
     )
@@ -97,7 +165,9 @@ describeLivePg('v3 baseline migration bundle against live Postgres', () => {
     expect(op.operationClass).toBe('additive')
     expect(op.execute).toHaveLength(1)
     // Byte identity: what installEqlV3IfNeeded just applied IS the migration
-    // bundle the control descriptor gives to `prisma-next migrate`.
+    // bundle the control descriptor gives to `prisma-next migrate`. Red by
+    // construction while an EQL bump's migration is on main ahead of the
+    // Version Packages PR that moves @cipherstash/eql (DEVELOPING.md).
     expect(op.execute[0]?.sql).toBe(readInstallSql())
   })
 
@@ -138,6 +208,50 @@ describeLivePg('v3 baseline migration bundle against live Postgres', () => {
       expect(value, check.description).toBe(true)
     }
   }, 60_000)
+
+  // Postchecks compare against literals interpolated at emit time, so one
+  // that never matches what its own edge installs fails every customer
+  // apply while every offline test stays green.
+
+  it('db init: the genesis edge alone, on an empty eql_v3, satisfies every one of its postchecks', async () => {
+    await uninstallEqlV3(sql)
+    await sql.begin((tx) =>
+      applyEdge(tx, CIPHERSTASH_V3_BASELINE_MIGRATION_NAME),
+    )
+  }, 240_000)
+
+  it('migrate: a 1.1.x database (eql-3.0.4) walks the 3.0.5 then 3.0.6 edges, installing the bundle twice', async () => {
+    // 1.1.x baselines baked the same eql-3.0.4 bytes as the 3.0.4 edge
+    // (both pin `63104a81…`). The path is pinned offline in
+    // stale-vendored-space.test.ts; this runs its SQL.
+    await uninstallEqlV3(sql)
+    await sql.begin((tx) =>
+      applyEdge(tx, CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME),
+    )
+    expect(await eqlVersion(sql)).toBe('3.0.4')
+
+    // One transaction, as the runner applies a whole plan.
+    await sql.begin(async (tx) => {
+      for (const dirName of [
+        CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
+        CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
+      ]) {
+        for (const op of descriptorOps(dirName)) {
+          expect(
+            await postchecksAllHold(tx, op),
+            `${op.id} would be skipped as pre-satisfied`,
+          ).toBe(false)
+        }
+        await applyEdge(tx, dirName)
+      }
+    })
+
+    expect(await eqlVersion(sql)).toBe('3.0.6')
+    await expectPostchecksHold(
+      sql,
+      descriptorOps(CIPHERSTASH_V3_BASELINE_MIGRATION_NAME),
+    )
+  }, 480_000)
 
   it('executes no v2-style search configuration (no add_search_config)', () => {
     const bundle = readInstallSql()
