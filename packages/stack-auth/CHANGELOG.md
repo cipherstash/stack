@@ -1,4 +1,58 @@
 
+## [0.43.0] - 2026-10-02
+
+
+### ⚠ Breaking changes
+
+- `RequestError`'s tuple payload is now `Box<dyn std::error::Error + Send + Sync + 'static>` instead of `reqwest::Error`. Construct it with `RequestError::from(reqwest_error)` (or box the error yourself) instead of `RequestError(reqwest_error)`, and recover the concrete error with `.0.downcast_ref::<reqwest::Error>()` instead of using `.0` as a `reqwest::Error` directly. `source()` is unchanged; the `Display` message is now "Request to the auth server failed" (it was "HTTP request failed").
+- `DeviceClientError::Request` now carries a `RequestError` rather than a `reqwest::Error`; a match on that variant's payload changes type.
+- `From<reqwest::Error> for AuthError` is removed. Every reqwest failure enters the crate through `ReqwestTransport` as a `RequestError`; a caller that lifted a `reqwest::Error` into `AuthError` directly should wrap it in `RequestError` (`AuthError::Request(RequestError(Box::new(e)))`) or, better, send through the transport.
+- Depends on `cts-common` 0.43 (vitaminc 0.5) and `zerokms-protocol` 0.12.31, from crates.io. `Crn` (re-exported here), `Region`, `WorkspaceId` and the `cts-common` errors in this crate's API are `cts-common` 0.43 types, so a caller that passes them in needs `cts-common` 0.43 too.
+
+### CI
+
+- mutation-testing gate for stack-auth and stack-encrypt (cargo-mutants --in-diff)
+
+### Documentation
+
+- correct stale StaticTokenStrategy comments in Cargo manifests
+
+### Features
+
+- build stack-auth, stack-kms and stack-encrypt for WASI without reqwest
+- classify credential rejections where the variants live
+- a workspace CRN is reachable without reaching for cts-common
+- an HTTP transport trait mirroring the guest's host import, reqwest behind `http`
+- add Go credential strategies
+
+### Fixes
+
+- address review findings on the http feature split
+- address Copilot review on error Display strings
+- test modules keep a literal `cfg(test)` so the CRAP gate skips them; add the npm changeset
+- the wire types print nothing secret, wipe their headers, and lend reqwest the body
+- satisfy credential guest CI
+- lock only device refresh
+- never replay a spent refresh token after a failed save
+- identify every auth request with a user-agent
+
+### Miscellaneous
+
+- per-crate rustdoc gates for the stack crates, fanned out by `doc`
+- move to cipherstash/stack with its history: the first release from that repository's `release-plz.yml`, in a version group with stack-profile alone
+
+### Refactoring
+
+- replace crate-wide no-http allow(dead_code) with item-level http gates
+
+### Testing
+
+- pin mutation regression behavior
+- cover remaining mutation paths
+- address PR review findings
+- keep browser launcher mutable
+- address review notes on assertion messages
+
 ## [0.42.3] - 2026-08-26
 
 

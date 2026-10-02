@@ -1937,7 +1937,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stack-auth"
-version = "0.42.3"
+version = "0.43.0"
 dependencies = [
  "aquamarine",
  "base64",
@@ -1999,7 +1999,7 @@ dependencies = [
 
 [[package]]
 name = "stack-profile"
-version = "0.42.3"
+version = "0.43.0"
 dependencies = [
  "dirs",
  "gethostname",

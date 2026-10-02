@@ -37,6 +37,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [0.43.0] - 2026-10-02
+
+
+### Features
+
+- the crate builds for wasm32-wasip1, and names the lock file's path
+
+### Miscellaneous
+
+- per-crate rustdoc gates for the stack crates, fanned out by `doc`
+- move to cipherstash/stack with its history: the first release from that repository's `release-plz.yml`, in a version group with stack-auth alone. No change to the API; the version follows stack-auth's breaking release
+
 ## [0.42.3] - 2026-08-26
 
 

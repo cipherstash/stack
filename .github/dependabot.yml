@@ -233,9 +233,10 @@ updates:
           - minor
           - patch
     ignore:
-      # Released from cipherstash-suite and pinned with exact `=` requirements
-      # in the root Cargo.toml and the guests: stack-auth's API carries their
-      # types, so they move in lockstep with the suite, by hand.
+      # Released from cipherstash-suite: stack-auth's API carries their types,
+      # so they move in lockstep with the suite, by hand. The guests pin them
+      # with `=`; the root Cargo.toml pins recipher and cllw-ore with `=`, and
+      # gives cts-common and zerokms-protocol caret requirements.
       - dependency-name: "cts-common"
       - dependency-name: "zerokms-protocol"
       - dependency-name: "recipher"
