@@ -1,6 +1,6 @@
 {
   "name": "@cipherstash/ffi-integration-tests",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Live integration coverage for @cipherstash/protect-ffi — real ZeroKMS, real Postgres, EQL v2 and v3",
   "license": "MIT",
