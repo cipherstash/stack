@@ -1,6 +1,7 @@
 package stackencrypt
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -137,9 +138,18 @@ func (e contextExtension) applyTerm(o *termOptions) {
 // The same extension must be given to decrypt the records. A part's type
 // is part of the context (an int crosses as int64, so uint64(7) and 7 are
 // different contexts), which is why an extension is best held in one value
-// and passed to every call rather than spelled afresh at each.
+// and passed to every call rather than spelled afresh at each. The option
+// owns its parts: a byte-slice part is copied, so a caller's buffer reused
+// after the call does not change what the option extends by.
 func ExtendContext(parts ...any) TermOption {
-	return contextExtension{parts: slices.Clone(parts)}
+	owned := make([]any, len(parts))
+	for i, part := range parts {
+		if b, ok := part.([]byte); ok {
+			part = bytes.Clone(b)
+		}
+		owned[i] = part
+	}
+	return contextExtension{parts: owned}
 }
 
 // extend is c extended by every part of ext, in order: the one definition

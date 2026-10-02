@@ -329,6 +329,34 @@ func TestTermExtensionMatchesRecordFieldContext(t *testing.T) {
 	}
 }
 
+// An option owns its parts. A byte-slice part is copied when the option
+// is built, so a caller's buffer reused between the write and the probe
+// does not move the context the saved option extends by, on either side.
+func TestExtendContextOwnsItsByteParts(t *testing.T) {
+	region := []byte("eu")
+	opt := ExtendContext(uint64(7), region)
+	first := applyOptions([]Option{opt})
+	var firstProbe termOptions
+	opt.applyTerm(&firstProbe)
+
+	copy(region, "us")
+
+	second := applyOptions([]Option{opt})
+	var secondProbe termOptions
+	opt.applyTerm(&secondProbe)
+	for name, ext := range map[string][]any{
+		"record, before": first.extension, "record, after": second.extension,
+		"probe, before": firstProbe.extension, "probe, after": secondProbe.extension,
+	} {
+		if got := string(ext[1].([]byte)); got != "eu" {
+			t.Errorf("%s: byte part is %q after the caller's buffer changed, want \"eu\"", name, got)
+		}
+	}
+	if !reflect.DeepEqual(first.extension, second.extension) || !reflect.DeepEqual(firstProbe.extension, secondProbe.extension) {
+		t.Error("the same option applied twice gave different extensions")
+	}
+}
+
 // A plan can name only exported, direct fields of the struct it binds to,
 // and only fields that exist; an untagged struct binds fine under it.
 func TestPlanBindsByFieldName(t *testing.T) {
