@@ -43,6 +43,14 @@ describe('Claude pull-request review', () => {
     expect(condition).toContain("github.event.pull_request.user.type != 'Bot'")
   })
 
+  it('runs only when CLAUDE_REVIEW_ENABLED is switched on', () => {
+    // Off unless the repository variable is exactly 'true', so the review can
+    // be disabled or re-enabled without a pull request.
+    expect(String(review.if).replace(/\s+/g, ' ')).toMatch(
+      /^vars\.CLAUDE_REVIEW_ENABLED == 'true' && /,
+    )
+  })
+
   it('uses a GitHub-hosted runner and cancels superseded reviews', () => {
     expect(review['runs-on']).toBe('ubuntu-latest')
     expect(workflow.concurrency).toEqual({

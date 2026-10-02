@@ -429,6 +429,14 @@ const PERMISSIVE_NEEDS = {
 }
 
 /**
+ * Repository variables a condition reads, set to the value that lets the run
+ * PROCEED, for the same reason as `PERMISSIVE_NEEDS`. `claude-review.yml` is
+ * switched on by `CLAUDE_REVIEW_ENABLED`; left unset it would read as skipped
+ * on every event, and the fork guard would be credited with the skip.
+ */
+const PERMISSIVE_VARS = { CLAUDE_REVIEW_ENABLED: 'true' }
+
+/**
  * `github.event` carries the webhook payload of the triggering event, so on a
  * manual dispatch there is no `pull_request` key to reach through — that
  * absence is the whole bug.
@@ -440,6 +448,7 @@ const PERMISSIVE_NEEDS = {
 const CONTEXTS = {
   push: {
     needs: PERMISSIVE_NEEDS,
+    vars: PERMISSIVE_VARS,
     github: {
       event_name: 'push',
       repository: REPOSITORY,
@@ -449,6 +458,7 @@ const CONTEXTS = {
   },
   merge_group: {
     needs: PERMISSIVE_NEEDS,
+    vars: PERMISSIVE_VARS,
     github: {
       event_name: 'merge_group',
       repository: REPOSITORY,
@@ -458,6 +468,7 @@ const CONTEXTS = {
   },
   workflow_dispatch: {
     needs: PERMISSIVE_NEEDS,
+    vars: PERMISSIVE_VARS,
     github: {
       event_name: 'workflow_dispatch',
       repository: REPOSITORY,
@@ -467,6 +478,7 @@ const CONTEXTS = {
   },
   same_repo_pull_request: {
     needs: PERMISSIVE_NEEDS,
+    vars: PERMISSIVE_VARS,
     github: {
       event_name: 'pull_request',
       repository: REPOSITORY,
@@ -478,6 +490,7 @@ const CONTEXTS = {
   },
   fork_pull_request: {
     needs: PERMISSIVE_NEEDS,
+    vars: PERMISSIVE_VARS,
     github: {
       event_name: 'pull_request',
       repository: REPOSITORY,
