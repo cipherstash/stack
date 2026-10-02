@@ -1,6 +1,6 @@
 {
   "name": "@cipherstash/auth-darwin-arm64",
-  "version": "0.44.0",
+  "version": "0.44.1",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/cipherstash/stack.git",

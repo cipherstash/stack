@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.44.1
+
+### Patch Changes
+
+- e766c9a: Internal addition to the underlying Rust crate: `AuthError` gains an
+  `is_credential_rejection()` classifier used by FFI front-ends to decide
+  whether refreshing the credential and retrying is sensible. No API or
+  behaviour change for `@cipherstash/auth` consumers.
+- e766c9a: Device-session refresh now reports failed profile saves so callers do not silently reuse a consumed refresh token.
+- e766c9a: Internal restructuring of the underlying Rust crate: HTTP transport (reqwest
+  and the bundled access-key, device-session, OIDC-federation and auto
+  strategies) now sits behind an `http` cargo feature, on by default and always
+  enabled in the npm builds — no API change for `@cipherstash/auth` consumers.
+  The only observable difference is the wording of transport-failure error
+  messages, which now read "Request to the auth server failed: …" instead of
+  "HTTP request failed: …".
+- e766c9a: Internal restructuring of the underlying Rust crate: every strategy now sends
+  its requests through an `HttpTransport` trait, with the bundled reqwest client
+  as the default implementation, so the same strategies can run over a host's own
+  HTTP client (the Go binding's WASI guest). The npm builds always use the bundled
+  client — no API or behaviour change for `@cipherstash/auth` consumers.
+- ed14d04: The `linux-x64-musl` binary now links musl. In 0.44.0 it linked glibc, so
+  `@cipherstash/auth` did not load on musl systems such as Alpine Linux.
+- e766c9a: Internal test-only change to the underlying Rust crate: adds regression coverage for token expiry, credential rejection, device metadata, and browser-launch results. No API or behaviour change for `@cipherstash/auth` consumers; this entry exists because CI requires a changeset for changes under the crate.
+- e766c9a: Internal addition to the underlying Rust crate: `stack_auth` now re-exports
+  `Crn` (the workspace CRN every strategy is bound to) so a caller that builds
+  a strategy by hand needs nothing else from `cts-common`. No API or behaviour
+  change for `@cipherstash/auth` consumers.
+- 32f6750: The native binding is now built from the `stack-auth` 0.43.0 crate, so its
+  requests identify themselves as `stack-auth/0.43.0` in the user agent. No API
+  or behaviour change for `@cipherstash/auth` consumers.
+  - @cipherstash/auth-darwin-x64@0.44.1
+  - @cipherstash/auth-darwin-arm64@0.44.1
+  - @cipherstash/auth-win32-x64-msvc@0.44.1
+  - @cipherstash/auth-linux-x64-gnu@0.44.1
+  - @cipherstash/auth-linux-arm64-gnu@0.44.1
+  - @cipherstash/auth-linux-x64-musl@0.44.1
+
 ## 0.44.0
 
 ### Minor Changes
@@ -109,7 +147,7 @@
     getJwt,
     loadToken,
     saveToken,
-    "http://localhost:4000" // baseUrl — federate against a mock / self-hosted CTS
+    "http://localhost:4000", // baseUrl — federate against a mock / self-hosted CTS
   );
   ```
 
@@ -132,7 +170,7 @@
   ```ts
   const strategy = OidcFederationStrategy.create(
     "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY",
-    getJwt // () => Promise<string> — your current third-party OIDC JWT
+    getJwt, // () => Promise<string> — your current third-party OIDC JWT
   );
   const { token } = await strategy.getToken();
   ```
@@ -149,7 +187,7 @@
     workspaceCrn,
     getJwt,
     loadToken,
-    saveToken
+    saveToken,
   );
   ```
 
@@ -164,13 +202,13 @@
   // Before (0.38.x)
   const strategy = AccessKeyStrategy.create(
     "ap-southeast-2.aws",
-    "CSAKid.secret"
+    "CSAKid.secret",
   );
 
   // After (0.39.0)
   const strategy = AccessKeyStrategy.create(
     "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY",
-    "CSAKid.secret"
+    "CSAKid.secret",
   );
   ```
 
@@ -227,7 +265,7 @@ malformed CRN argument is rejected with the existing `INVALID_CRN` code.
   ```ts
   const strategy = AccessKeyStrategy.create(
     "ap-southeast-2.aws",
-    "CSAKid.secret"
+    "CSAKid.secret",
   );
   const { token } = await strategy.getToken();
   ```
