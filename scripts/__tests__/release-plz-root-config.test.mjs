@@ -15,6 +15,13 @@ import { readWorkflow } from './lib/workflows.mjs'
  * `release = false`. A member added to the workspace without a line here would
  * be versioned on the next release-plz run.
  *
+ * Each of those members also carries `publish = false`. The workspace table
+ * sets `publish = true`, and release-plz applies it to every package that
+ * does not set its own. `release-plz release` then exits before publishing
+ * anything: "Package `stack-kms` has `publish = false` or `publish = []` in
+ * the Cargo.toml, but it has `publish = true` in the release-plz
+ * configuration."
+ *
  * `cargo-publish-opt-out.test.mjs` pins which members may publish; this pins
  * that the release-plz configuration agrees with it.
  */
@@ -46,6 +53,7 @@ function configuredPackages(source) {
     packages.set(name, {
       versionGroup: /^version_group\s*=\s*"([^"]+)"/m.exec(body)?.[1] ?? null,
       release: !/^release\s*=\s*false$/m.test(body),
+      publish: !/^publish\s*=\s*false$/m.test(body),
     })
   }
   return packages
@@ -88,6 +96,17 @@ describe('root release-plz.toml', () => {
     )
     expect([...groups]).toHaveLength(1)
     expect([...groups][0]).toBeTruthy()
+  })
+
+  it('opts every unpublished member out of publishing here too', () => {
+    const unpublished = members.filter((member) => !member.publish)
+    expect(unpublished.length).toBeGreaterThan(0)
+    for (const { name } of unpublished) {
+      expect(packages.get(name)?.publish, name).toBe(false)
+    }
+    for (const name of PUBLISHED) {
+      expect(packages.get(name)?.publish, name).toBe(true)
+    }
   })
 
   it('points the changelog at a file that exists', () => {
