@@ -126,8 +126,12 @@ const INSTALLED_TABLES = new Set([
  * whether it is still true, in the shape of `EXEMPT_DECLARATIONS` in
  * `scripts/lint-no-eql-registry-pins.mjs`.
  *
- * Each entry is DELETED by the cutover that repoints its publisher — for
- * `@cipherstash/eql` that is the Phase-5 release cutover.
+ * Each entry is DELETED by the cutover that repoints its publisher.
+ * `@cipherstash/eql` was the last one: its Phase-5 release cutover repointed
+ * npm and crates.io trusted publishing at this repository and deleted its
+ * entry here, which is why the map is empty. Empty is a legitimate state, not a
+ * retired mechanism — the next package that lives here before its publisher
+ * moves goes back in, with its artefact below.
  *
  * DELETE IT IN THAT PR, not afterwards. An entry left behind does not fail on
  * the day it goes wrong, it fails on the next release: while the package sits
@@ -139,14 +143,7 @@ const INSTALLED_TABLES = new Set([
  * `release-gate.test.mjs` now asserts their absence, so the map has a test for
  * what is NOT in it as well as what is.
  */
-export const FROZEN_PUBLISHERS = new Map([
-  [
-    '@cipherstash/eql',
-    'Still published from cipherstash/encrypt-query-language — the npm provenance on ' +
-      '3.0.5 names that repository and `release.yml` here carries no NPM_TOKEN. Repointing ' +
-      'is Phase 5 of docs/plans/2026-08-13-eql-monorepo-absorption.md.',
-  ],
-])
+export const FROZEN_PUBLISHERS = new Map([])
 
 /**
  * For each frozen package, the artefact whose bytes must equal the published
@@ -161,13 +158,15 @@ export const FROZEN_PUBLISHERS = new Map([
  * the digest manifest is regenerated with the artefact and goes on agreeing
  * with it. Only the registry disagrees.
  *
- * `@cipherstash/eql` is the case that proves it. The subtree sat at `3.0.5`
- * with an install bundle hashing `7ad9c9f8…` while npm's `3.0.5` was
- * `accde0030…` — upstream had restored the deprecated `ste_vec_contains`
- * aliases in the actual release. `packages/cli`'s installer reads that SQL
- * verbatim (`readInstallSql`, no digest check), so `stash eql install` would
- * have put functions into a customer database that the version it reports does
- * not define. It was caught by a human reading the diff.
+ * `@cipherstash/eql`, while it was frozen, was the case that proved it. The
+ * subtree sat at `3.0.5` with an install bundle hashing `7ad9c9f8…` while npm's
+ * `3.0.5` was `accde0030…` — upstream had restored the deprecated
+ * `ste_vec_contains` aliases in the actual release. `packages/cli`'s installer
+ * reads that SQL verbatim (`readInstallSql`, no digest check), so
+ * `stash eql install` would have put functions into a customer database that
+ * the version it reports does not define. It was caught by a human reading the
+ * diff. `release-gate.test.mjs` keeps that entry as a fixture, so the check is
+ * still driven over the real tree while the map is empty.
  *
  * The digest is read from each side's release manifest rather than hashed
  * here: the manifest is the artefact's own statement about itself, so a
@@ -180,21 +179,7 @@ export const FROZEN_PUBLISHERS = new Map([
  * rather than silently getting no bytes check. Both entries are DELETED
  * together by the cutover that repoints the publisher.
  */
-export const FROZEN_ARTEFACT_DIGESTS = new Map([
-  [
-    '@cipherstash/eql',
-    {
-      label: 'install SQL (sql/release-manifest.json :: installSqlSha256)',
-      // Repo-relative. The subtree root carries no package.json, so the npm
-      // package is two levels down — see AGENTS.md, "Working on EQL".
-      inTree: 'packages/eql/packages/eql/sql/release-manifest.json',
-      // Inside the tarball, under its `package/` prefix. `sql/` is a build
-      // output there, published as `dist/sql/`.
-      published: 'package/dist/sql/release-manifest.json',
-      field: 'installSqlSha256',
-    },
-  ],
-])
+export const FROZEN_ARTEFACT_DIGESTS = new Map([])
 
 /**
  * The range pnpm writes into the packed `package.json` for a `workspace:`
@@ -683,12 +668,12 @@ export function inTreeArtefactDigest(_name, artefact) {
  *
  * `ETARGET` AS WELL AS `E404`. npm answers a missing PACKAGE with `E404` and a
  * missing VERSION of an existing package with `ETARGET` — and the second is the
- * case this function documents: `@cipherstash/eql@<next>` on every release
- * before upstream publishes it. Classifying on `E404` alone turned that into an
- * uncaught throw with an empty reason, raised while building the blocker array,
- * so `reportBlockers` never ran and the actionable `frozen-publisher` message
- * was never printed. Both codes are registry ANSWERS, not transport failures;
- * anything else still throws.
+ * case this function documents: `@cipherstash/eql@<next>` was exactly that on
+ * every release while upstream still published it. Classifying on `E404`
+ * alone turned that into an uncaught throw with an empty reason, raised while
+ * building the blocker array, so `reportBlockers` never ran and the actionable
+ * `frozen-publisher` message was never printed. Both codes are registry
+ * ANSWERS, not transport failures; anything else still throws.
  */
 export function publishedArtefactDigest(name, version, artefact) {
   const spec = `${name}@${version}`
@@ -852,7 +837,15 @@ export function reportBlockers(blockers) {
   )
 }
 
-function main() {
+/**
+ * The maps are parameters so the process tests can drive the blocking path
+ * while the real maps are empty. Deliberately not reachable from the command
+ * line: no flag or environment variable changes what a real run freezes.
+ */
+export function main({
+  frozen = FROZEN_PUBLISHERS,
+  artefacts = FROZEN_ARTEFACT_DIGESTS,
+} = {}) {
   const manifests = workspaceManifests()
   // One cache across both questions: `unpublished` and `publishBlockers` ask
   // the registry about overlapping sets, and `npm view` is a network round trip
@@ -892,9 +885,11 @@ function main() {
   // that downloads anything, and there is no point paying for a tarball on a
   // run that is already refusing for a reason a tarball cannot change.
   const blockers = [
-    ...publishBlockers({ manifests, lookup }),
+    ...publishBlockers({ manifests, lookup, frozen }),
     ...frozenBytesSkew({
       manifests,
+      frozen,
+      artefacts,
       inTreeDigest: inTreeArtefactDigest,
       publishedDigest: publishedArtefactDigest,
     }),
@@ -905,7 +900,6 @@ function main() {
   }
 }
 
-// Importable without running: the unit tests exercise the two pure functions
-// above, and neither the workspace scan nor the registry lookups may fire on
-// import.
+// Importable without running: the unit tests exercise the functions above,
+// and neither the workspace scan nor the registry lookups may fire on import.
 if (process.argv[1] === fileURLToPath(import.meta.url)) main()

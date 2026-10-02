@@ -336,8 +336,8 @@ monorepo, which is where the silent failures are.
   and the job running it stopped counting as a Rust job for the cache check —
   while a mise task invoked from a composite action read as run by nobody,
   whose natural repair is an exemption claiming CI does not run it.
-- **The EQL release pipeline is built and INERT, and the switch that arms it is
-  derived rather than flipped.** Five artefacts ship at one version — the npm
+- **The EQL release pipeline is built and ARMED, and the switch that armed it
+  is derived rather than flipped.** Five artefacts ship at one version — the npm
   package, the `eql-bindings` crate, the SQL bundle, the docs bundle and the
   `postgres-eql` image — and the workflows that produce them all live at the
   repo root now:
@@ -354,12 +354,13 @@ monorepo, which is where the silent failures are.
   **Inertness is a derived switch, not a flag somebody flips.** The one piece
   of state is `FROZEN_PUBLISHERS` in `scripts/release-gate.mjs` — the existing
   map recording "this package lives here but is published elsewhere" — and
-  every job that publishes an EQL artefact is gated on its answer. **Deleting
-  the `@cipherstash/eql` entry at the Phase-5 cutover is what arms the
-  pipeline**, and there is no second thing to remember, because the cutover has
-  to delete it anyway: the release gate blocks every release until it does. A
-  separate flag would have failed silently in the worst direction — an npm
-  package published with no SQL release, no docs and no crate.
+  every job that publishes an EQL artefact is gated on its answer. **The
+  Phase-5 cutover armed the pipeline by deleting EQL from that map**, with no
+  second thing to remember, because the cutover had to delete it anyway: the
+  release gate blocks every release of a frozen package. A separate flag would
+  have failed silently in the worst direction — an npm package published with
+  no SQL release, no docs and no crate. `eql-pipeline-armed.test.mjs` now pins
+  the armed state, so re-freezing EQL is a deliberate edit, not a side effect.
 
   **Two readers, one map, and they are not the same code path.** Say which you
   mean:
@@ -372,11 +373,11 @@ monorepo, which is where the silent failures are.
   - The **production npm publish does not.** `release.yml`'s `release` job runs
     `changeset publish` gated only on `needs.gate.result == 'success'`, and
     `.changeset/config.json` has `"ignore": []`, so `@cipherstash/eql` is
-    publishable like any other workspace member. What holds it is
-    `release-gate.mjs` exiting non-zero for a frozen publisher, which fails the
-    `gate` job and skips `release` entirely.
+    publishable like any other workspace member. What held it while it was
+    frozen was `release-gate.mjs` exiting non-zero for a frozen publisher,
+    which fails the `gate` job and skips `release` entirely.
 
-  Both keyed on the same entry, so one deletion still arms all five. But
+  Both keyed on the same map, so the one deletion armed all five. But
   nothing asserts the two agree: relax the gate and the npm half opens while
   `eql-armed` still reports `false` and the other four jobs skip correctly —
   which is exactly the outcome the derived switch exists to prevent. This
@@ -444,8 +445,8 @@ monorepo, which is where the silent failures are.
   (`eqlLockstepSkew`) because the release hook needs the same answer, and a
   PR-time guard that could disagree with the release-time decision is two
   guards. **It is deliberately not keyed to `FROZEN_PUBLISHERS`.** The gate's
-  `FROZEN_ARTEFACT_DIGESTS` check compares the tree against *npm* and is
-  deleted at the Phase-5 cutover; this compares the tree against *itself*,
+  `FROZEN_ARTEFACT_DIGESTS` check compares the tree against *npm* and lost
+  its EQL entry at the Phase-5 cutover; this compares the tree against *itself*,
   which is a property of a lockstep release rather than of who publishes it, so
   it survives.
 - **The version hook no longer rewrites the SQL assets on a release that does
@@ -524,8 +525,8 @@ monorepo, which is where the silent failures are.
   `CS_WORKSPACE_CRN` re-pins both. `tests/sqlx/src/selectors.rs` holds five more
   workspace-keyed constants with no consumers and no guard — delete or guard
   them before using any of them.
-- **`FROZEN_PUBLISHERS` is what stops this repo publishing EQL, and it is a
-  mechanism, not a status.** `scripts/release-gate.mjs` carries a map of every
+- **`FROZEN_PUBLISHERS` is what stops this repo publishing a package whose
+  publisher lives elsewhere, and it is a mechanism, not a status.** `scripts/release-gate.mjs` carries a map of every
   package that lives here but is published from another repository. For each,
   the gate **exits non-zero** — failing the `gate` job, which skips `release`
   entirely — on any of three conditions:
@@ -546,16 +547,20 @@ monorepo, which is where the silent failures are.
   has been repointed, is likewise configuration — check the registry, do not
   read it here. This bullet used to narrate that state and was wrong twice.
 
-  **Delete the `@cipherstash/eql` entry in the Phase-5 cutover.**
-  `scripts/__tests__/frozen-publisher-docs.test.mjs` fails until this paragraph
-  goes with it, and `SECURITY.md`'s "Note on publishing" is the third document
-  it holds — the one file that tells a reporter which pipeline built the
-  artefact they are reporting on. `release-gate.test.mjs` also asserts the map
-  carries no FFI name: the seven protect-ffi packages were left in it after
+  **The map has been empty since EQL's Phase-5 cutover, and empty is a
+  legitimate state.** A package absorbed before its publisher moves goes back
+  in, with its artefact in `FROZEN_ARTEFACT_DIGESTS`, and both entries are
+  deleted in the PR that repoints its publisher — not afterwards.
+  `scripts/__tests__/frozen-publisher-docs.test.mjs` holds this file, the EQL
+  plan and `SECURITY.md`'s "Note on publishing" to the map — the last being
+  the one file that tells a reporter which pipeline built the artefact they
+  are reporting on. `release-gate.test.mjs` asserts the map carries neither
+  EQL nor any FFI name: the seven protect-ffi packages were left in it after
   their own cutover, which armed the gate against the first release that
-  cutover had just enabled.
+  cutover had just enabled. With nothing frozen, the tests drive the mechanism
+  with EQL's old entry as an injected fixture.
 
-  **Check 3 is the one worth understanding before you touch `packages/eql`.**
+  **Check 3 is the one worth understanding before you touch a frozen package.**
   For a package this repo publishes, in-tree bytes differing from npm is an
   unreleased change — every pull request. For a frozen one it is a
   contradiction: the version cannot be released from here, so the tree is not

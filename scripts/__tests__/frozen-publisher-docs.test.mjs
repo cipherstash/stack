@@ -22,11 +22,11 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * sentence — the docs should state the CONDITION under which it fires and point
  * at `node scripts/release-gate.mjs` for the answer.
  *
- * The second half is the deletion that is already scheduled. Phase 5 removes
- * the `@cipherstash/eql` entry from the map, and on that day both documents
- * become wrong in the other direction — still instructing agents about a freeze
- * that no longer exists. Keyed on the map rather than on a date, so the cutover
- * PR cannot land the code change without the prose.
+ * The second half is the deletion. Phase 5 removed the `@cipherstash/eql`
+ * entry from the map, which made every document wrong in the other direction —
+ * still instructing agents about a freeze that no longer existed. Keyed on the
+ * map rather than on a date, so the cutover PR could not land the code change
+ * without the prose, and so a package frozen later is held to the same rule.
  *
  * THE THIRD DRIFT, and the reason `SECURITY.md` is now in the list. Its "Note
  * on publishing" named the seven `@cipherstash/protect-ffi*` packages as still
@@ -56,10 +56,14 @@ const DOCS = [
     // thing Phase 5 deletes — matching that keeps the guard anchored to the
     // instruction rather than to a paragraph that may be rewritten.
     instruction: /`@cipherstash\/eql` entry/,
+    historical: 'Delete the `@cipherstash/eql` entry in the Phase-5 cutover.',
   },
   {
     file: 'docs/plans/2026-08-13-eql-monorepo-absorption.md',
     instruction: /`@cipherstash\/eql` entry/,
+    historical:
+      'Phase-5 action: delete the `@cipherstash/eql` entry from ' +
+      '`FROZEN_PUBLISHERS`, nothing more.',
   },
   {
     file: 'SECURITY.md',
@@ -69,6 +73,10 @@ const DOCS = [
     // would otherwise silently turn the prohibition into a no-op while this
     // assertion went on passing against a pattern nothing else uses.
     instruction: (body) => foreignPublishClaims(body).includes(EQL),
+    historical:
+      '> `@cipherstash/eql` and the `eql-bindings` crate are\n' +
+      '> developed here but are *published* from `cipherstash/encrypt-query-language`\n' +
+      '> until the Phase 5 cutover in\n',
   },
 ]
 
@@ -179,12 +187,15 @@ const satisfies = (instruction, body) =>
   typeof instruction === 'function' ? instruction(body) : instruction.test(body)
 
 describe('frozen-publisher docs track the map', () => {
-  it('still has a frozen entry to document', () => {
-    // The map going empty is the Phase-5 end state and a legitimate one — but
-    // it must arrive with the doc edits below, not ahead of them. An empty map
-    // here means every `iff` assertion is vacuous, so say so out loud.
-    expect(FROZEN_PUBLISHERS.size).toBeGreaterThan(0)
-  })
+  it.each(DOCS)(
+    '$file instruction still recognises the freeze wording it was written for',
+    ({ instruction, historical }) => {
+      // With EQL out of the map, the `iff` below asserts ABSENCE, which an
+      // instruction that matches nothing passes vacuously. The pre-cutover
+      // wording is the fixture that keeps it able to fail.
+      expect(satisfies(instruction, flatten(historical))).toBe(true)
+    },
+  )
 
   it.each(DOCS)(
     '$file documents the eql freeze iff the map carries it',

@@ -1,9 +1,9 @@
 /**
  * May this repository publish the EQL release line?
  *
- * The pipeline was built here while `@cipherstash/eql` is still published from
- * `cipherstash/encrypt-query-language`, so it must reach no registry until the
- * Phase-5 cutover. That is a state, and it needs a switch.
+ * The pipeline was built here while `@cipherstash/eql` was still published from
+ * `cipherstash/encrypt-query-language`, so it had to reach no registry until
+ * the Phase-5 cutover. That is a state, and it needs a switch.
  *
  * The switch is DERIVED, not flipped. `FROZEN_PUBLISHERS` in
  * `scripts/release-gate.mjs` is the single record of "this package lives here

@@ -8,6 +8,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import {
@@ -225,6 +226,25 @@ describe('classify', () => {
  */
 
 const EQL = '@cipherstash/eql'
+
+/**
+ * EQL's pre-cutover freeze, injected as a fixture. The real maps are empty, but
+ * the real tree is still the best place to drive the mechanism: `stash` and
+ * `@cipherstash/stack-prisma` pin `@cipherstash/eql` at `workspace:*`, and the
+ * install-SQL release manifest is a real committed file.
+ */
+const FROZEN_EQL = new Map([[EQL, 'publisher not repointed yet']])
+const EQL_ARTEFACTS = new Map([
+  [
+    EQL,
+    {
+      label: 'install SQL (sql/release-manifest.json :: installSqlSha256)',
+      inTree: 'packages/eql/packages/eql/sql/release-manifest.json',
+      published: 'package/dist/sql/release-manifest.json',
+      field: 'installSqlSha256',
+    },
+  ],
+])
 
 describe('packedRange', () => {
   it('resolves the three bare protocol forms the way pnpm does', () => {
@@ -553,9 +573,9 @@ describe('publishBlockers', () => {
  * published from `cipherstash/protectjs-ffi`, and left behind by the cutover
  * that repointed npm trusted publishing at this repository.
  *
- * So the map gets a test that names what is NOT in it. `FROZEN_PUBLISHERS.size
- * > 0` (asserted in `frozen-publisher-docs.test.mjs`) catches the map emptying
- * early; this catches it emptying late.
+ * So the map gets a test that names what is NOT in it. `@cipherstash/eql` is
+ * held to the same rule since its Phase-5 cutover, when npm and crates.io
+ * trusted publishing moved here.
  */
 describe('FROZEN_PUBLISHERS', () => {
   it('does not freeze the protect-ffi packages, whose publisher has moved here', () => {
@@ -567,11 +587,21 @@ describe('FROZEN_PUBLISHERS', () => {
     ).toEqual([])
   })
 
-  it('does not block the first FFI release published from this repository', () => {
+  it('does not freeze @cipherstash/eql, whose publisher has moved here', () => {
+    expect(
+      FROZEN_PUBLISHERS.has(EQL),
+      'npm trusted publishing for @cipherstash/eql is bound to this repository ' +
+        'and `release.yml`. A frozen entry here blocks the first EQL release ' +
+        'made from it, and disarms `eql-pipeline-armed.mjs`.',
+    ).toBe(false)
+    expect(FROZEN_ARTEFACT_DIGESTS.has(EQL)).toBe(false)
+  })
+
+  it('does not block the first FFI or EQL release published from this repository', () => {
     // Driven through the REAL map, not a fixture: the defect is in the map's
     // contents, so a fixture would prove the mechanism and miss it entirely.
-    // Every FFI version on the registry was published from the old repository,
-    // so the first bump made here is by definition absent from npm — which is
+    // Every version on the registry was published from the old repository, so
+    // the first bump made here is by definition absent from npm — which is
     // what a release IS, and must not be read as a blocker.
     const blockers = publishBlockers({
       manifests: [
@@ -586,7 +616,7 @@ describe('FROZEN_PUBLISHERS', () => {
       ],
       lookup: (name) => (name === EQL ? ['3.0.5'] : ['0.31.0']),
     })
-    expect(blockers.map((blocker) => blocker.package)).toEqual([EQL])
+    expect(blockers).toEqual([])
   })
 })
 
@@ -639,54 +669,61 @@ describe('reportBlockers', () => {
 describe('the gate over this repo’s real manifests', () => {
   // A SYNTHETIC REGISTRY over the REAL tree: every workspace package is
   // published at exactly the version the tree carries, EXCEPT `@cipherstash/eql`
-  // — held one release behind, the state npm was in while the hand-applied
-  // 3.0.5 bump sat unpublished. So the only thing this can report is the
-  // consequence of that bump, and it reports it from the manifests themselves
-  // rather than from a fixture that could drift away from them. Synthetic on
-  // purpose: these assertions must not move when the registry does.
+  // — held behind it, the state npm is in whenever an EQL bump sits
+  // unpublished. Synthetic on purpose: these assertions must not move when the
+  // registry does.
   const manifests = workspaceManifests()
+  const EQL_VERSION = manifests.find((m) => m.name === EQL).version
   const lookup = (name) => {
     if (name === EQL) return ['3.0.3', '3.0.4']
     const found = manifests.find((m) => m.name === name)
     return found ? [found.version] : null
   }
-  const blockers = publishBlockers({ manifests, lookup })
 
-  it('names the frozen package that cannot publish', () => {
-    expect(
-      blockers
-        .filter((b) => b.kind === 'frozen-publisher')
-        .map((b) => `${b.package}@${b.version}`),
-    ).toEqual([`${EQL}@3.0.5`])
+  it('reports nothing for an unpublished EQL version: it is a release now, not a blocker', () => {
+    expect(publishBlockers({ manifests, lookup })).toEqual([])
   })
 
-  it('names every published package that would ship the unsatisfiable range', () => {
-    // THE REGRESSION. `packages/cli` (`stash`) and `packages/stack-prisma` both
-    // carry `"@cipherstash/eql": "workspace:*"` under `dependencies`, so both
-    // pack the exact `3.0.5`. `packages/stack` carries the same line under
-    // `devDependencies` and must NOT appear.
-    expect(
-      blockers
-        .filter((b) => b.kind === 'frozen-dependency')
-        .map((b) => `${b.package} -> ${b.dependency}@${b.range}`)
-        .sort(),
-    ).toEqual([
-      `@cipherstash/stack-prisma -> ${EQL}@3.0.5`,
-      `stash -> ${EQL}@3.0.5`,
-    ])
-  })
+  describe('with EQL frozen by fixture', () => {
+    const blockers = publishBlockers({ manifests, lookup, frozen: FROZEN_EQL })
 
-  it('reports nothing once the frozen package is on npm at its committed version', () => {
-    // The exit condition, stated as a test: complete the Phase-5 repoint and
-    // publish 3.0.5, and this gate goes quiet on its own. Nothing else has to
-    // change — which is what makes the freeze a fact about the registry rather
-    // than a policy encoded here.
-    expect(
-      publishBlockers({
-        manifests,
-        lookup: (name) => (name === EQL ? ['3.0.4', '3.0.5'] : lookup(name)),
-      }),
-    ).toEqual([])
+    it('names the frozen package that cannot publish', () => {
+      expect(
+        blockers
+          .filter((b) => b.kind === 'frozen-publisher')
+          .map((b) => `${b.package}@${b.version}`),
+      ).toEqual([`${EQL}@${EQL_VERSION}`])
+    })
+
+    it('names every published package that would ship the unsatisfiable range', () => {
+      // THE REGRESSION. `packages/cli` (`stash`) and `packages/stack-prisma`
+      // both carry `"@cipherstash/eql": "workspace:*"` under `dependencies`, so
+      // both pack the exact version. `packages/stack` carries the same line
+      // under `devDependencies` and must NOT appear.
+      expect(
+        blockers
+          .filter((b) => b.kind === 'frozen-dependency')
+          .map((b) => `${b.package} -> ${b.dependency}@${b.range}`)
+          .sort(),
+      ).toEqual([
+        `@cipherstash/stack-prisma -> ${EQL}@${EQL_VERSION}`,
+        `stash -> ${EQL}@${EQL_VERSION}`,
+      ])
+    })
+
+    it('reports nothing once the frozen package is on npm at its committed version', () => {
+      // The exit condition: publish the committed version and the gate goes
+      // quiet on its own, which is what makes the freeze a fact about the
+      // registry rather than a policy encoded here.
+      expect(
+        publishBlockers({
+          manifests,
+          lookup: (name) =>
+            name === EQL ? ['3.0.4', EQL_VERSION] : lookup(name),
+          frozen: FROZEN_EQL,
+        }),
+      ).toEqual([])
+    })
   })
 })
 
@@ -721,8 +758,12 @@ describe('the gate actually blocks the publish', () => {
  *
  * `npm` is shimmed on PATH rather than the module being imported, because
  * `npmVersions` shells out to it. That also keeps this offline and
- * deterministic: the real registry would make the assertion below depend on
- * whether Phase 5 has happened yet.
+ * deterministic.
+ *
+ * WITH THE REAL MAPS EMPTY, the blocking path needs a frozen package, so most
+ * of these run `main()` with the EQL fixture injected through its parameters —
+ * a separate process importing the module, never a flag the real script reads.
+ * One runs the script itself, to hold the real maps to "EQL is not frozen".
  *
  * THE SHIM ANSWERS `pack` AS WELL AS `view`, and that is not tidying. It used
  * to answer `view` only, so `publishedArtefactDigest`'s `npm pack` got a
@@ -734,11 +775,10 @@ describe('the gate actually blocks the publish', () => {
 describe('the gate exits non-zero when a blocker is found', () => {
   const manifests = workspaceManifests()
 
+  const EQL_VERSION = manifests.find((m) => m.name === EQL).version
+
   /** The digest the tree currently claims for the frozen package's install SQL. */
-  const IN_TREE_DIGEST = inTreeArtefactDigest(
-    EQL,
-    FROZEN_ARTEFACT_DIGESTS.get(EQL),
-  )
+  const IN_TREE_DIGEST = inTreeArtefactDigest(EQL, EQL_ARTEFACTS.get(EQL))
 
   /**
    * A PATH entry whose `npm view <name> versions --json` answers from `map`,
@@ -790,9 +830,19 @@ describe('the gate exits non-zero when a blocker is found', () => {
     manifests.map(({ name, version }) => [name, [version]]),
   )
 
-  const runGate = (map, packDigest = IN_TREE_DIGEST) => {
+  /** `main()` in its own process, with the EQL fixture as the frozen maps. */
+  const FIXTURE_MAIN = [
+    '--input-type=module',
+    '-e',
+    `import { main } from ${JSON.stringify(pathToFileURL(join(REPO_ROOT, 'scripts/release-gate.mjs')).href)}\n` +
+      `main({ frozen: new Map(${JSON.stringify([...FROZEN_EQL])}), ` +
+      `artefacts: new Map(${JSON.stringify([...EQL_ARTEFACTS])}) })\n`,
+  ]
+  const REAL_SCRIPT = ['scripts/release-gate.mjs']
+
+  const runGate = (map, packDigest = IN_TREE_DIGEST, args = FIXTURE_MAIN) => {
     const { dir, versions } = fakeRegistry(map, packDigest)
-    const result = spawnSync(process.execPath, ['scripts/release-gate.mjs'], {
+    const result = spawnSync(process.execPath, args, {
       cwd: REPO_ROOT,
       encoding: 'utf8',
       env: {
@@ -809,13 +859,13 @@ describe('the gate exits non-zero when a blocker is found', () => {
   }
 
   it('fails the job, and says how to clear it', () => {
-    // THE REAL TREE against a registry held one release behind it:
-    // @cipherstash/eql pinned to 3.0.4, everything else at its committed
-    // version. Exit 1 is what skips the `release` job.
+    // THE REAL TREE, EQL frozen by fixture, against a registry held behind
+    // it: @cipherstash/eql at 3.0.4, everything else at its committed version.
+    // Exit 1 is what skips the `release` job.
     const result = runGate({ ...allPublished, [EQL]: ['3.0.3', '3.0.4'] })
     expect(result.status).toBe(1)
     expect(result.stderr).toContain('cannot be installed')
-    expect(result.stderr).toContain(`${EQL}@3.0.5`)
+    expect(result.stderr).toContain(`${EQL}@${EQL_VERSION}`)
     // The message has to name the way out, or a blocked release is a puzzle.
     expect(result.stderr).toContain('Phase 5')
   })
@@ -830,26 +880,27 @@ describe('the gate exits non-zero when a blocker is found', () => {
 
   it('exits 0 once the frozen package is published', () => {
     // The other half of the mutation check: this must not be a gate that always
-    // fails. Publish 3.0.5 and the same tree passes untouched — and now the
+    // fails. Publish the committed version and the same tree passes untouched — and now the
     // tarball this run downloads carries the tree's own digest, so CHECK C is
     // genuinely compared rather than skipped for want of a tarball.
-    const result = runGate({ ...allPublished, [EQL]: ['3.0.4', '3.0.5'] })
+    const result = runGate({ ...allPublished, [EQL]: ['3.0.4', EQL_VERSION] })
     expect(result.stderr).toBe('')
     expect(result.status).toBe(0)
   })
 
   it('blocks the release when npm’s bytes are not the tree’s bytes', () => {
-    // CHECK C, end to end, through `main()`. The registry carries 3.0.5 — so
-    // `publishBlockers` finds nothing — and the tarball for it hashes something
-    // else, which is exactly the #885 defect: `packages/eql` at 3.0.5 with an
-    // install bundle npm's 3.0.5 does not contain. `stash eql install` reads
+    // CHECK C, end to end, through `main()`. The registry carries the
+    // committed version — so `publishBlockers` finds nothing — and the tarball
+    // for it hashes something else, which is exactly the #885 defect:
+    // `packages/eql` at 3.0.5 with an install bundle npm's 3.0.5 did not
+    // contain. `stash eql install` reads
     // that SQL verbatim, with no digest check of its own.
     const result = runGate(
-      { ...allPublished, [EQL]: ['3.0.4', '3.0.5'] },
+      { ...allPublished, [EQL]: ['3.0.4', EQL_VERSION] },
       '7ad9c9f8beefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef',
     )
     expect(result.status).toBe(1)
-    expect(result.stderr).toContain('is NOT the 3.0.5 that is on npm')
+    expect(result.stderr).toContain(`is NOT the ${EQL_VERSION} that is on npm`)
     expect(result.stderr).toContain(IN_TREE_DIGEST)
     expect(result.stderr).toContain('7ad9c9f8beef')
     // Publishing cannot clear this one, and saying so is the whole point of
@@ -867,6 +918,20 @@ describe('the gate exits non-zero when a blocker is found', () => {
     expect(result.status).toBe(1)
     expect(result.stderr).not.toMatch(/npm pack .* failed:\s*$/m)
     expect(result.stderr).toContain('Phase 5')
+  })
+
+  it('passes the real tree with EQL unpublished, because EQL is no longer frozen', () => {
+    // The real script and the real maps. An unpublished EQL version is what
+    // an EQL release looks like at gate time; read as a blocker, it would stop
+    // every release this repository makes of it.
+    const result = runGate(
+      { ...allPublished, [EQL]: ['3.0.3', '3.0.4'] },
+      IN_TREE_DIGEST,
+      REAL_SCRIPT,
+    )
+    expect(result.stderr).toBe('')
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain(`unpublished: ${EQL}`)
   })
 })
 
@@ -1203,15 +1268,18 @@ module.exports = () => {
 })
 
 describe('inTreeArtefactDigest, over the real committed manifest', () => {
-  it('reads the digest the tree claims for the frozen package', () => {
-    // Driven through the REAL map and the REAL file: this is the side of the
-    // comparison that lives in this repository, so a path that stops resolving
-    // is a check that stops checking.
-    const artefact = FROZEN_ARTEFACT_DIGESTS.get('@cipherstash/eql')
-    expect(artefact).toBeDefined()
-    expect(inTreeArtefactDigest('@cipherstash/eql', artefact)).toMatch(
+  it('reads the digest the tree claims, from the REAL file', () => {
+    // The declaration is the EQL fixture; the file is real, so the fixture's
+    // path stopping resolving fails here rather than in the process tests.
+    expect(inTreeArtefactDigest(EQL, EQL_ARTEFACTS.get(EQL))).toMatch(
       /^[0-9a-f]{64}$/,
     )
+  })
+
+  it('resolves every artefact the real map declares', () => {
+    for (const [name, artefact] of FROZEN_ARTEFACT_DIGESTS) {
+      expect(inTreeArtefactDigest(name, artefact)).toMatch(/^[0-9a-f]{64}$/)
+    }
   })
 
   it('throws when the declared field is not in the manifest', () => {
