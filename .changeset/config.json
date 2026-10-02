@@ -19,6 +19,15 @@
       "@cipherstash/protect-ffi-linux-x64-gnu",
       "@cipherstash/protect-ffi-linux-arm64-gnu",
       "@cipherstash/protect-ffi-linux-x64-musl"
+    ],
+    [
+      "@cipherstash/auth",
+      "@cipherstash/auth-darwin-x64",
+      "@cipherstash/auth-darwin-arm64",
+      "@cipherstash/auth-win32-x64-msvc",
+      "@cipherstash/auth-linux-x64-gnu",
+      "@cipherstash/auth-linux-arm64-gnu",
+      "@cipherstash/auth-linux-x64-musl"
     ]
   ],
   "linked": [],

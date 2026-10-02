@@ -24,10 +24,12 @@ on:
       - main
     paths:
       - '.github/workflows/release.yml'
-      # The reusable workflow release.yml calls: everything it builds is packed
-      # and published, and it is on the lint's target list for that reason, so
-      # an edit to it has to run this gate too.
+      # The reusable workflows release.yml calls for the two native-binary
+      # lines: everything they build is packed and published, and they are on
+      # the lint's target list for that reason, so an edit to either has to run
+      # this gate too.
       - '.github/workflows/_build-ffi-artifacts.yml'
+      - '.github/workflows/_build-auth-artifacts.yml'
       - '.github/workflows/tests-supply-chain.yml'
       - 'scripts/lint-no-workflow-caching.mjs'
       - 'scripts/__tests__/lint-no-workflow-caching.test.mjs'
@@ -37,10 +39,12 @@ on:
       - '**'
     paths:
       - '.github/workflows/release.yml'
-      # The reusable workflow release.yml calls: everything it builds is packed
-      # and published, and it is on the lint's target list for that reason, so
-      # an edit to it has to run this gate too.
+      # The reusable workflows release.yml calls for the two native-binary
+      # lines: everything they build is packed and published, and they are on
+      # the lint's target list for that reason, so an edit to either has to run
+      # this gate too.
       - '.github/workflows/_build-ffi-artifacts.yml'
+      - '.github/workflows/_build-auth-artifacts.yml'
       - '.github/workflows/tests-supply-chain.yml'
       - 'scripts/lint-no-workflow-caching.mjs'
       - 'scripts/__tests__/lint-no-workflow-caching.test.mjs'

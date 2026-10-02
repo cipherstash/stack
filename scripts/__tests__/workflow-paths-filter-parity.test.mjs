@@ -108,7 +108,9 @@ const EXPECTED_ASYMMETRIES = new Map([
     // `changeset version` runs scripts/sync-lockstep-versions.mjs, which
     // rewrites packages/eql/crates/eql-bindings/Cargo.toml and the SQL assets
     // beside it, so every version-moving commit touches `packages/eql/**`.
-    // The list itself is kept honest by eql-workflow-filters.test.mjs.
+    // The list itself is kept honest by eql-workflow-filters.test.mjs. The
+    // stack-* crates line holds the same way: a bump of either crate edits its
+    // own `packages/stack-*/Cargo.toml`, which the filter names.
     'push is the only trigger; a pull_request copy would make a crates.io publisher reachable from a fork',
   ],
   [

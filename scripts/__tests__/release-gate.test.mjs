@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -39,6 +40,7 @@ import { readWorkflow } from './lib/workflows.mjs'
 
 const FFI = '@cipherstash/protect-ffi'
 const PLATFORM = '@cipherstash/protect-ffi-darwin-arm64'
+const AUTH_PLATFORM = '@cipherstash/auth-linux-x64-musl'
 const AUTH = '@cipherstash/auth'
 
 describe('unpublished', () => {
@@ -167,18 +169,23 @@ describe('workspacePackagePatterns', () => {
 
 describe('classify', () => {
   it('flags ffi when the wrapper is unpublished', () => {
-    expect(classify([FFI])).toEqual({ ffi: true, js: false })
+    expect(classify([FFI])).toEqual({ ffi: true, auth: false, js: false })
   })
 
   it('flags ffi when only a platform package is unpublished', () => {
     // The fixed group moves all seven together, but a partially-failed publish
     // can leave one behind — that still needs the matrix.
-    expect(classify([PLATFORM])).toEqual({ ffi: true, js: false })
+    expect(classify([PLATFORM])).toEqual({
+      ffi: true,
+      auth: false,
+      js: false,
+    })
   })
 
   it('flags js for an ordinary Stack release', () => {
     expect(classify(['@cipherstash/stack', 'stash'])).toEqual({
       ffi: false,
+      auth: false,
       js: true,
     })
   })
@@ -186,13 +193,44 @@ describe('classify', () => {
   it('flags both when a release spans them', () => {
     expect(classify([FFI, '@cipherstash/stack'])).toEqual({
       ffi: true,
+      auth: false,
       js: true,
     })
   })
 
   it('flags neither when nothing is unpublished', () => {
     // The common case: any push to main that is not a merged Version PR.
-    expect(classify([])).toEqual({ ffi: false, js: false })
+    expect(classify([])).toEqual({ ffi: false, auth: false, js: false })
+  })
+
+  it('flags auth, and not js, when the auth wrapper is unpublished', () => {
+    // The defect the branch exists for: read as `js`, the auth platform
+    // packages would be packed from the workspace with no binary in them.
+    expect(classify([AUTH])).toEqual({ ffi: false, auth: true, js: false })
+  })
+
+  it('flags auth when only an auth platform package is unpublished', () => {
+    expect(classify([AUTH_PLATFORM])).toEqual({
+      ffi: false,
+      auth: true,
+      js: false,
+    })
+  })
+
+  it('does not read the private stack-auth-wasm package as auth', () => {
+    expect(classify(['@cipherstash/stack-auth-wasm'])).toEqual({
+      ffi: false,
+      auth: false,
+      js: true,
+    })
+  })
+
+  it('flags all three when a release spans every line', () => {
+    expect(classify([FFI, AUTH, '@cipherstash/stack'])).toEqual({
+      ffi: true,
+      auth: true,
+      js: true,
+    })
   })
 })
 
@@ -745,6 +783,23 @@ describe('the gate actually blocks the publish', () => {
         '`always()` a failed gate would otherwise still reach `changeset publish`.',
     ).toMatch(/needs\.gate\.result\s*==\s*'success'/)
   })
+
+  it('builds and publishes auth only on the gate, and holds the release for it', () => {
+    // The `publish-ffi` shape: a skipped `publish-auth` whose build failed must
+    // not read as "auth was not in scope", or `changeset publish` packs the
+    // auth platform workspaces with no binary.
+    expect(workflow.jobs.gate.outputs.auth).toBeDefined()
+    for (const name of ['auth-artifacts', 'publish-auth']) {
+      expect(String(workflow.jobs[name].if)).toContain(
+        "needs.gate.outputs.auth == 'true'",
+      )
+    }
+    const release = workflow.jobs.release
+    expect(release.needs).toContain('publish-auth')
+    expect(String(release.if).replace(/\s+/g, ' ')).toContain(
+      "needs.gate.outputs.auth != 'true' || needs.publish-auth.result == 'success'",
+    )
+  })
 })
 
 /**
@@ -886,9 +941,24 @@ describe('the gate exits non-zero when a blocker is found', () => {
         GITHUB_OUTPUT: join(dir, 'github-output.txt'),
       },
     })
+    const outputFile = join(dir, 'github-output.txt')
+    result.githubOutput = existsSync(outputFile)
+      ? readFileSync(outputFile, 'utf8')
+      : ''
     rmSync(dir, { recursive: true, force: true })
     return result
   }
+
+  it('writes all three publisher flags to the job outputs', () => {
+    // `release.yml` keys `auth-artifacts`, `publish-auth` and the `release`
+    // job's wait on `gate.outputs.auth`. A flag the gate never writes reads as
+    // '' in the workflow, which is "auth not in scope": the auth jobs skip and
+    // `changeset publish` packs the auth platform workspaces with no binary.
+    const result = runGate(allPublished)
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain('ffi=false auth=false js=false')
+    expect(result.githubOutput).toBe('ffi=false\nauth=false\njs=false\n')
+  })
 
   it('fails the job, and says how to clear it', () => {
     // THE REAL TREE, EQL frozen by fixture, against a registry held behind

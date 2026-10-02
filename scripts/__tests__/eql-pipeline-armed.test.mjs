@@ -7,6 +7,9 @@ import {
   EQL_PACKAGE,
   eqlPipelineArmed,
   frozenReason,
+  LINES,
+  lineFrozenReason,
+  pipelineArmed,
 } from '../eql-pipeline-armed.mjs'
 import { FROZEN_PUBLISHERS } from '../release-gate.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
@@ -58,8 +61,8 @@ function jobConditions(relPath) {
   ])
 }
 
-function run(env = {}) {
-  return execFileSync('node', [SCRIPT], {
+function run(env = {}, args = []) {
+  return execFileSync('node', [SCRIPT, ...args], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
     env: { ...process.env, ...env },
@@ -150,5 +153,70 @@ describe('every EQL publish job reads it', () => {
       gated.sort(),
       "The set of jobs gated on the EQL arming switch has changed. A job that LOST its guard will publish on the day the FROZEN_PUBLISHERS entry is deleted, whether or not anyone meant it to — and until then it is indistinguishable from a job that still has one. Spell the guard exactly `needs.eql-armed.outputs.armed == 'true'`.",
     ).toEqual(GATED_JOBS)
+  })
+})
+
+/**
+ * The stack-* crates line in `release-plz.yml`. It keys on the
+ * `@cipherstash/auth` entry, because no crate is in the npm map and the arming
+ * PR of the stack-* crates import repoints both registries together.
+ */
+const CRATES_PACKAGE = '@cipherstash/auth'
+const CRATES_WORKFLOW = '.github/workflows/release-plz.yml'
+const CRATES_GATED_JOBS = [`${CRATES_WORKFLOW} / release-crates`]
+
+describe('the stack-* crates line', () => {
+  it('keys on the @cipherstash/auth entry', () => {
+    expect(LINES.get('crates')?.pkg).toBe(CRATES_PACKAGE)
+  })
+
+  it('is inert while @cipherstash/auth is frozen, and armed once it is not', () => {
+    expect(pipelineArmed('crates', new Map([[CRATES_PACKAGE, 'x']]))).toBe(
+      false,
+    )
+    expect(pipelineArmed('crates', new Map())).toBe(true)
+    // The lines are independent: the EQL entry does not hold the crates back.
+    expect(pipelineArmed('crates', new Map([[EQL_PACKAGE, 'x']]))).toBe(true)
+    expect(lineFrozenReason('crates', new Map([[CRATES_PACKAGE, 'why']]))).toBe(
+      'why',
+    )
+  })
+
+  it('matches the live map, whichever state that is in', () => {
+    expect(pipelineArmed('crates')).toBe(!FROZEN_PUBLISHERS.has(CRATES_PACKAGE))
+  })
+
+  it('refuses a line it does not know', () => {
+    expect(() => pipelineArmed('bogus')).toThrow(/unknown release line/)
+  })
+
+  it('writes `armed=` for the named line', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'crates-armed-'))
+    const outputFile = join(dir, 'output')
+    try {
+      execFileSync('sh', ['-c', `: > "${outputFile}"`])
+      const stdout = run({ GITHUB_OUTPUT: outputFile }, ['crates'])
+      expect(stdout).toContain(CRATES_PACKAGE)
+      expect(readFileSync(outputFile, 'utf8')).toBe(
+        `armed=${pipelineArmed('crates')}\n`,
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('is computed by release-plz.yml and gates exactly the crates publish job', () => {
+    const job = readWorkflow(CRATES_WORKFLOW)?.jobs?.['crates-armed']
+    const runsIt = (job?.steps ?? []).some((step) =>
+      String(step?.run ?? '').includes('scripts/eql-pipeline-armed.mjs crates'),
+    )
+    expect(runsIt && Boolean(job?.outputs?.armed)).toBe(true)
+
+    const gated = jobConditions(CRATES_WORKFLOW)
+      .filter(([, condition]) =>
+        condition.includes("needs.crates-armed.outputs.armed == 'true'"),
+      )
+      .map(([id]) => id)
+    expect(gated).toEqual(CRATES_GATED_JOBS)
   })
 })

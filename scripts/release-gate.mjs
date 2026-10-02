@@ -57,6 +57,18 @@ const REPO_ROOT = resolve(import.meta.dirname, '..')
 export const FFI_PREFIX = '@cipherstash/protect-ffi'
 
 /**
+ * The second native-binary line: the `@cipherstash/auth` napi wrapper and its
+ * six `@cipherstash/auth-*` platform packages, imported from cipherstash-suite
+ * with the stack-* crates. Same reasoning as `FFI_PREFIX`: without its own
+ * branch an unpublished auth version reads as `js`, and `changeset publish`
+ * then packs the platform workspaces, which have no `.node` binary in them.
+ *
+ * A prefix, not a name: no other workspace package starts with it —
+ * `@cipherstash/stack-auth-wasm` does not.
+ */
+export const AUTH_PREFIX = '@cipherstash/auth'
+
+/**
  * Names whose committed version is absent from the registry.
  *
  * `lookup(name)` returns the published versions, or `null` when the package
@@ -77,9 +89,12 @@ export function unpublished(manifests, lookup) {
 
 /** Which publisher branches the unpublished set requires. */
 export function classify(names) {
+  const native = (name) =>
+    name.startsWith(FFI_PREFIX) || name.startsWith(AUTH_PREFIX)
   return {
     ffi: names.some((name) => name.startsWith(FFI_PREFIX)),
-    js: names.some((name) => !name.startsWith(FFI_PREFIX)),
+    auth: names.some((name) => name.startsWith(AUTH_PREFIX)),
+    js: names.some((name) => !native(name)),
   }
 }
 
@@ -161,9 +176,10 @@ export const FROZEN_PUBLISHERS = new Map([
   ].map((name) => [
     name,
     'Still published from cipherstash/cipherstash-suite — npm trusted publishing ' +
-      'for the seven @cipherstash/auth packages names that repository, and ' +
-      '`release.yml` here has no job that builds the native binaries. Repointing ' +
-      'is the arming PR (PR E) of the stack-* crates import.',
+      'for the seven @cipherstash/auth packages names that repository, not this ' +
+      'one. `release.yml` here builds and publishes them (`publish-auth`), but only ' +
+      'once these entries are gone. Repointing is the arming PR (PR E) of the ' +
+      'stack-* crates import.',
   ]),
 ])
 
@@ -1011,20 +1027,23 @@ export function main({
   }
 
   const missing = unpublished(manifests, lookup)
-  const { ffi, js } = classify(missing)
+  const { ffi, auth, js } = classify(missing)
 
   console.log(
     missing.length
       ? `unpublished: ${missing.join(', ')}`
       : 'nothing to publish — every committed version is on the registry',
   )
-  console.log(`ffi=${ffi} js=${js}`)
+  console.log(`ffi=${ffi} auth=${auth} js=${js}`)
 
-  // `ffi` and `js` only: the unpublished list was written here too and no job
+  // The three flags only: the unpublished list was written here too and no job
   // ever declared it as an output, so it was reachable by nothing. The
   // `console.log` above is where that list is actually read, in the job log.
   if (process.env.GITHUB_OUTPUT) {
-    appendFileSync(process.env.GITHUB_OUTPUT, `ffi=${ffi}\njs=${js}\n`)
+    appendFileSync(
+      process.env.GITHUB_OUTPUT,
+      `ffi=${ffi}\nauth=${auth}\njs=${js}\n`,
+    )
   }
 
   // AFTER the outputs are written, and before anything acts on them. The

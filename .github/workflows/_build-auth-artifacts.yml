@@ -1,0 +1,289 @@
+name: Build auth artifacts
+
+# Reusable. Builds the six `@cipherstash/auth` napi binaries and the wasm
+# output, packs all seven npm tarballs, and uploads them as `auth-tarballs`.
+#
+# IT DOES NOT PUBLISH, for the reason `_build-ffi-artifacts.yml` gives: npm
+# validates a trusted publish against the entry-point workflow's filename, so
+# the publish stays in `release.yml`. Two callers: `release.yml`
+# (`auth-artifacts`, after the gate says an auth version is unpublished) and
+# `auth-preflight.yml` (the manual dry run).
+#
+# NO CACHING ANYWHERE IN HERE: the output is published with provenance, so
+# this file is on `scripts/lint-no-workflow-caching.mjs`'s target list. That
+# is also why no job restores `Swatinem/rust-cache`.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to build from
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  binaries:
+    name: ${{ matrix.platform }}
+    strategy:
+      # One platform failing must not cancel the other five.
+      fail-fast: false
+      matrix:
+        include:
+          - platform: darwin-x64
+            target: x86_64-apple-darwin
+            os: macos-latest
+          - platform: darwin-arm64
+            target: aarch64-apple-darwin
+            os: macos-latest
+          - platform: linux-x64-gnu
+            target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          # A native arm64 runner rather than a cross-compile. The suite's
+          # `blacksmith-8vcpu-ubuntu-2404-arm` label is not in
+          # .github/actionlint.yaml; GitHub's own arm64 image is.
+          - platform: linux-arm64-gnu
+            target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+          - platform: linux-x64-musl
+            target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+          - platform: win32-x64-msvc
+            target: x86_64-pc-windows-msvc
+            os: windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Install musl tools (linux-x64-musl)
+        if: ${{ matrix.platform == 'linux-x64-musl' }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      # Rust 1.94.1 from the root mise.toml, the toolchain the crate is tested
+      # with. `cache: false` is required here, not a default.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          install_args: rust
+          cache: false
+
+      # An explicit target is what keeps both Darwin legs apart:
+      # `macos-latest` is arm64, so without it `darwin-x64` ships an arm64
+      # binary.
+      - name: Add the Rust target
+        env:
+          TARGET: ${{ matrix.target }}
+        run: mise x -- rustup target add "$TARGET"
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+          cache: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `--js false` is load-bearing. With `--platform`, napi v2 also writes its
+      # own `index.js` loader over the committed one, which is a published,
+      # frozen file (release-gate.mjs FROZEN_ARTEFACT_DIGESTS).
+      - name: Build the native binding
+        working-directory: languages/typescript/packages/auth
+        env:
+          TARGET: ${{ matrix.target }}
+        run: mise x -- pnpm exec napi build --platform --release --target "$TARGET" --strip --dts native.d.ts --js false
+
+      # The build must leave the tracked tree alone: `native.d.ts` is
+      # regenerated and has to equal the committed copy, and nothing else may
+      # change.
+      - name: Verify the build changed no tracked file
+        run: git diff --exit-code -- languages/typescript/packages/auth
+
+      - name: Place the binding in its platform package
+        working-directory: languages/typescript/packages/auth
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          mv "stack-auth-node.${PLATFORM}.node" "platforms/${PLATFORM}/"
+          test -s "platforms/${PLATFORM}/stack-auth-node.${PLATFORM}.node"
+
+      # `npm pack`, not `pnpm pack`: a platform package has no `workspace:`
+      # dependency to rewrite. The wrapper does, and is packed with pnpm below.
+      - name: Pack the platform package
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          mkdir -p auth-dist
+          (cd "languages/typescript/packages/auth/platforms/${PLATFORM}" && npm pack)
+          mv "languages/typescript/packages/auth/platforms/${PLATFORM}"/*.tgz auth-dist/
+          ls auth-dist
+
+      - name: Verify the tarball is the platform package, with its binary
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tarballs=(auth-dist/*.tgz)
+          test "${#tarballs[@]}" -eq 1 || {
+            echo "::error::expected one tarball, found ${#tarballs[@]}"; exit 1; }
+          tgz="${tarballs[0]}"
+          name=$(tar xzOf "$tgz" package/package.json | node -p \
+            'JSON.parse(require("node:fs").readFileSync(0,"utf8")).name')
+          test "$name" = "@cipherstash/auth-${PLATFORM}" || {
+            echo "::error::packed $name, expected the ${PLATFORM} platform package"
+            exit 1; }
+          # Into a variable, not `tar | grep -q`: SIGPIPE under pipefail. See
+          # _build-ffi-artifacts.yml.
+          listing=$(tar tzf "$tgz")
+          grep -qx "package/stack-auth-node.${PLATFORM}.node" <<< "$listing" || {
+            echo "::error::$tgz has no stack-auth-node.${PLATFORM}.node"; exit 1; }
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: auth-platform-${{ matrix.platform }}
+          path: auth-dist/*.tgz
+          if-no-files-found: error
+
+  wrapper:
+    name: wasm + wrapper tarball
+    # Collects the six platform artifacts, so a caller downloads
+    # `auth-tarballs` and has all seven.
+    needs: [binaries]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      # Rust with the wasm32-unknown-unknown target from the root mise.toml,
+      # and wasm-pack, which `build:wasm` shells out to and the root mise.toml
+      # does not pin.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          install_args: rust aqua:wasm-bindgen/wasm-pack@0.13.1
+          cache: false
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+          cache: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install node-gyp
+        run: npm install -g node-gyp
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # `wasm/` is in the wrapper's `files` and is not tracked.
+      - name: Build wasm
+        working-directory: languages/typescript/packages/auth
+        run: mise x aqua:wasm-bindgen/wasm-pack@0.13.1 -- pnpm run build:wasm
+
+      # `pnpm pack`, not `npm pack`: the six platform peers are `workspace:*`,
+      # which only pnpm rewrites to the exact version. An npm-packed wrapper
+      # would publish `workspace:*` ranges that no registry can resolve.
+      - name: Pack the wrapper
+        run: |
+          set -euo pipefail
+          mkdir -p auth-dist
+          pnpm --dir languages/typescript/packages/auth pack
+          mv languages/typescript/packages/auth/cipherstash-auth-[0-9]*.tgz auth-dist/
+
+      - name: Verify the wrapper tarball
+        run: |
+          set -euo pipefail
+          tgz=$(ls auth-dist/cipherstash-auth-[0-9]*.tgz)
+          tar tzf "$tgz" > listing.txt
+          # Every path the packed manifest's `exports` resolve to, plus every
+          # plain `files` entry. `wasm/` is a folder entry, covered by the
+          # wasm export paths.
+          tar xzOf "$tgz" package/package.json | node -e '
+            const j = JSON.parse(require("node:fs").readFileSync(0, "utf8"))
+            const paths = new Set()
+            const walk = (node) => {
+              if (typeof node === "string") { if (node.startsWith("./")) paths.add("package/" + node.slice(2)) }
+              else if (node && typeof node === "object") { for (const v of Object.values(node)) walk(v) }
+            }
+            walk(j.exports)
+            for (const f of j.files ?? []) { if (!f.endsWith("/")) paths.add("package/" + f) }
+            paths.add("package/wasm/stack_auth_wasm_bg.wasm")
+            console.log([...paths].sort().join("\n"))
+          ' > required.txt
+          cat required.txt
+          while read -r required ; do
+            grep -qx "$required" listing.txt || {
+              echo "::error::$required missing from $tgz"; exit 1; }
+          done < required.txt
+          # The six platform peers must be concrete versions equal to the
+          # wrapper's own.
+          tar xzOf "$tgz" package/package.json | node -e '
+            const j = JSON.parse(require("node:fs").readFileSync(0, "utf8"))
+            const peers = Object.entries(j.peerDependencies ?? {}).filter(([n]) => n.startsWith("@cipherstash/auth-"))
+            if (peers.length !== 6) { console.error("expected 6 platform peers, found " + peers.length); process.exit(1) }
+            for (const [n, v] of peers) {
+              if (v !== j.version) { console.error(n + " is " + v + ", expected " + j.version); process.exit(1) }
+            }
+            console.log("platform peers OK")
+          '
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: auth-platform-*
+          path: auth-dist
+          merge-multiple: true
+
+      - name: Verify all seven tarballs are present and distinct
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tarballs=(auth-dist/*.tgz)
+          count=${#tarballs[@]}
+          test "$count" -eq 7 || {
+            echo "::error::expected 7 tarballs, found $count"; ls auth-dist; exit 1; }
+          names=$(for t in "${tarballs[@]}" ; do
+            tar xzOf "$t" package/package.json | node -p \
+              'JSON.parse(require("node:fs").readFileSync(0,"utf8")).name'
+          done | sort -u | wc -l)
+          test "$names" -eq 7 || {
+            echo "::error::expected 7 distinct package names, found $names"; exit 1; }
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: auth-tarballs
+          path: auth-dist/*.tgz
+          if-no-files-found: error

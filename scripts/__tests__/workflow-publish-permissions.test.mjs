@@ -44,6 +44,8 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 const PUBLISH_OIDC_JOBS = [
   // Uploads the seven prebuilt FFI tarballs. Publishes, so it needs OIDC.
   '.github/workflows/release.yml / publish-ffi',
+  // The same for the seven prebuilt @cipherstash/auth tarballs.
+  '.github/workflows/release.yml / publish-auth',
   // `changeset publish` for the JS packages, plus the Version Packages PR.
   '.github/workflows/release.yml / release',
   // The EQL prerelease path publishes @cipherstash/eql directly rather than
@@ -54,6 +56,9 @@ const PUBLISH_OIDC_JOBS = [
   // could not stay a two-line one: the workflow filename is bound at crates.io
   // rather than npm, but the scope is the same scope.
   '.github/workflows/release-plz.yml / release',
+  // release-plz publishes stack-auth and stack-profile from the root Cargo
+  // workspace: the same crates.io token exchange, a second release line.
+  '.github/workflows/release-plz.yml / release-crates',
 ]
 
 /**

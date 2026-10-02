@@ -34,6 +34,8 @@ on:
       - .github/workflows/release.yml
       - .github/workflows/_build-ffi-artifacts.yml
       - .github/workflows/ffi-preflight.yml
+      - .github/workflows/_build-auth-artifacts.yml
+      - .github/workflows/auth-preflight.yml
       - .github/workflows/_build-eql-sql.yml
       - .github/workflows/_build-eql-docs.yml
       - .github/workflows/release-plz.yml
@@ -91,6 +93,8 @@ jobs:
             .github/workflows/release.yml \
             .github/workflows/_build-ffi-artifacts.yml \
             .github/workflows/ffi-preflight.yml \
+            .github/workflows/_build-auth-artifacts.yml \
+            .github/workflows/auth-preflight.yml \
             .github/workflows/_build-eql-sql.yml \
             .github/workflows/_build-eql-docs.yml \
             .github/workflows/release-plz.yml \

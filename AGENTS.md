@@ -580,7 +580,11 @@ monorepo, which is where the silent failures are.
   refuses it. The platform packages publish only a binary built in CI, so their entries
   declare `noTreeBytes` and check 3 skips them; checks 1 and 2 still apply.
   `scripts/lint-no-auth-changeset.mjs` refuses a changeset naming any of the
-  seven, and goes in the same PR.
+  seven, and goes in the same PR. Deleting the entries also arms two
+  pipelines: `release.yml`'s `auth-artifacts` and `publish-auth`, which run
+  once the gate reports `auth=true`, and `release-plz.yml`'s `release-crates`
+  for `stack-auth` and `stack-profile`, whose switch is
+  `node scripts/eql-pipeline-armed.mjs crates`.
 
   **Check 3 is the one worth understanding before you touch a frozen package.**
   For a package this repo publishes, in-tree bytes differing from npm is an
