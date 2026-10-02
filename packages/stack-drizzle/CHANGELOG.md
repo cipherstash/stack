@@ -1,5 +1,14 @@
 # @cipherstash/stack-drizzle
 
+## 1.2.0
+
+### Patch Changes
+
+- Updated dependencies [b04ea2f]
+- Updated dependencies [518abfd]
+- Updated dependencies [c1bf387]
+  - @cipherstash/stack@1.2.0
+
 ## 1.1.1
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @cipherstash/eql
 
+## 3.0.6
+
+### Patch Changes
+
+- e52d331: Point `repository`, `repository.directory`, and `bugs.url` at `cipherstash/stack` instead of the archived `cipherstash/encrypt-query-language`. Purely metadata — no behaviour change — but required before npm's trusted publishing (already repointed at `cipherstash/stack`) can accept a release: npm rejects a publish whose manifest `repository.url` doesn't match the publishing repository.
+
 ## 3.0.5
 
 ### Patch Changes
@@ -20,7 +26,7 @@
   pressure. See [U-001](../../docs/upgrading/v3.0.5.md#u-001-the-containment-implementation-is-renamed).
 
   **The thing in this release that does have consequences is not the rename.**
-  The installer opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, so *every* EQL
+  The installer opens with `DROP SCHEMA IF EXISTS eql_v3 CASCADE`, so _every_ EQL
   install drops grants, functional indexes and dependent views — true of every
   release, not just this one, and now the only item here with operational weight.
   See [U-002](../../docs/upgrading/v3.0.5.md#u-002-grants-and-dependent-objects-do-not-survive-an-install).
@@ -49,6 +55,7 @@
   re-synced to that release so the bundle here is byte-identical to the published
   one — `installSqlSha256: accde0030…`. The generated entry below is upstream's
   own changeset for the same release.
+
 - 4c2bb92: **`eql_v3.ste_vec_contains` is renamed to `eql_v3.jsonb_document_contains`.** This
   consolidates the last `ste_vec_*`-named public object into the `jsonb_*` family,
   matching the earlier renames of the SteVec entry/query surface (`jsonb_entry`,
