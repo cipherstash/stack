@@ -54,25 +54,28 @@ jobs:
             max_turns: 25
             timeout_minutes: 20
             allowed_tools: Skill,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*)
-            disallowed_tools: Edit,Write,NotebookEdit,Task,WebFetch,WebSearch,Read(./.git/**)
+            disallowed_tools: Edit,Write,NotebookEdit,Task,WebFetch,WebSearch,Read(./.git/**),Bash(gh pr comment:*)
           - name: security
             source: repository
             skill: review-security
             max_turns: 25
             timeout_minutes: 20
             allowed_tools: Skill,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*)
-            disallowed_tools: Edit,Write,NotebookEdit,Task,WebFetch,WebSearch,Read(./.git/**)
+            disallowed_tools: Edit,Write,NotebookEdit,Task,WebFetch,WebSearch,Read(./.git/**),Bash(gh pr comment:*)
           - name: repo-rules
             source: repository
             skill: review-repo-rules
             max_turns: 25
             timeout_minutes: 20
             allowed_tools: Skill,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*)
-            disallowed_tools: Edit,Write,NotebookEdit,Task,WebFetch,WebSearch,Read(./.git/**)
+            disallowed_tools: Edit,Write,NotebookEdit,Task,WebFetch,WebSearch,Read(./.git/**),Bash(gh pr comment:*)
           # The tools are the plugin command's `allowed-tools` frontmatter at
           # the pinned commit, plus Task for its subagents, minus
           # `gh pr comment`: the publish step posts the summary, and with it
-          # the command would post a second, unmarked one.
+          # the command would post a second, unmarked one. Leaving it off the
+          # allow-list is not enough, because a command's frontmatter grants
+          # its own tools; the explicit deny in disallowed_tools is what
+          # blocks it.
           - name: code-review
             source: plugin
             command: /code-review
@@ -80,7 +83,7 @@ jobs:
             max_turns: 60
             timeout_minutes: 35
             allowed_tools: Task,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*)
-            disallowed_tools: Edit,Write,NotebookEdit,WebFetch,WebSearch,Read(./.git/**)
+            disallowed_tools: Edit,Write,NotebookEdit,WebFetch,WebSearch,Read(./.git/**),Bash(gh pr comment:*)
     env:
       REVIEW_PROMPT: |
         REPOSITORY: ${{ github.repository }}
@@ -302,9 +305,10 @@ jobs:
             echo "::error::Claude review completed without a summary."
             exit 1
           fi
-          # The code-review plugin stops early when Claude has already
-          # commented on the pull request. Failing here also keeps the
-          # previous summary, since the publish step does not run.
+          # The code-review plugin's eligibility check stops it when Claude has
+          # already commented on the pull request, which may include the
+          # lens summaries. Failing here also keeps the previous summary,
+          # since the publish step does not run.
           if [ "$(jq -r '.reviewed' <<<"$STRUCTURED_OUTPUT")" != "true" ]; then
             echo "::error::The ${LENS} lens stopped before reviewing the change: ${summary}"
             exit 1

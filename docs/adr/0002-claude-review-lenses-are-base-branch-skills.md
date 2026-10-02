@@ -40,5 +40,5 @@ and push rights, was rejected for the same reason.
   cannot overwrite each other's comment.
 - A lens that skips, crashes, stops early, or returns no summary fails its
   check. The `code-review` plugin stops early once Claude has commented on a
-  pull request, so its check is red after the first push until that is
-  revisited.
+  pull request; if it counts the lens summaries as such, its check is red
+  after the first push until that is revisited.

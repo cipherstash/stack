@@ -38,6 +38,9 @@ const ALWAYS_DISALLOWED = [
   'WebSearch',
   // The action writes its token into the checkout's remote URL.
   'Read(./.git/**)',
+  // The publish step posts summaries. A plugin command's frontmatter grants
+  // its own tools, so leaving this off an allow-list does not block it.
+  'Bash(gh pr comment:*)',
 ]
 
 const workflow = readWorkflow(WORKFLOW)

@@ -697,7 +697,10 @@ before changing the workflow, and know these facts about
   `NotebookEdit`, `WebFetch`, `WebSearch` and `Read(./.git/**)` (the action
   writes its token into the remote URL). Allowed: the inline-comment tool,
   `Bash(gh pr diff:*)`, `Bash(gh pr view:*)`, and `Skill`. `Task` only where a
-  lens declares `subagents: true`. No lens gets `gh pr comment`. **Never disallow a blanket `Bash`** — it
+  lens declares `subagents: true`. Every lens explicitly disallows
+  `Bash(gh pr comment:*)`: a plugin command's `allowed-tools` frontmatter
+  grants its tools on its own, so leaving one off the allow-list does not
+  block it. **Never disallow a blanket `Bash`** — it
   overrides the scoped `Bash(gh …)` allows and the lens goes blind.
 - **The summary is published by a shell step, not by Claude.** Claude returns
   `{"reviewed": boolean, "summary": string}` through `--json-schema`; the "Publish lens summary"
@@ -717,10 +720,12 @@ before changing the workflow, and know these facts about
   `allowed_tools` must equal its `allowed-tools` frontmatter plus `Task`,
   minus `gh pr comment` (with it the command posts a second, unmarked
   summary), and the test pins that list. Do not copy the command into this
-  repository — its licence is "All rights reserved". It stops early when
-  Claude has already commented on the pull request, so after the first push
-  the `code-review` check is expected to go red with "stopped before reviewing
-  the change". Whether to accept that is the open question in #997.
+  repository — its licence is "All rights reserved". Its eligibility check
+  stops it when Claude has already commented on the pull request. Whether it
+  counts the lens summaries (posted by `github-actions[bot]`) is untested; if
+  it does, the `code-review` check goes red after the first push with
+  "stopped before reviewing the change". That, and whether to accept it, is
+  the open question in #997.
 
 **Adding a lens:** add `.claude/skills/review-<lens>/SKILL.md` and one matrix
 entry with `source: repository` and `skill: review-<lens>`. The test fails if
