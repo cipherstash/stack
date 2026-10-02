@@ -166,10 +166,16 @@ against their union in a single equality; the separate lists feed separate
 predicates (only publishers' workflows have their sibling jobs held read-only).
 The jobs that may write to the repository are a reviewed allowlist that includes
 every OIDC holder. The distinction matters because OIDC is a transport, not itself a
-publishing capability: `claude-review.yml` exchanges its token with Anthropic,
-while the registry-bound release workflows exchange theirs with npm or
-crates.io. Every grant remains per job, never at workflow level, and any new
-holder or writer must be justified in the same diff.
+publishing capability: `claude-review.yml` exchanges its token with Anthropic
+for an inference-only API credential, while the registry-bound release
+workflows exchange theirs with npm or crates.io. `claude-review.yml` passes the
+job's own `GITHUB_TOKEN` to the action as `github_token`. Without that input
+the action makes a second exchange, for a Claude GitHub App installation token
+with write access to contents, pull requests and issues, which the job's
+`permissions:` block does not limit. With it, the job's `contents: read` and
+`pull-requests: write` are what a review can do on GitHub. Every grant remains
+per job, never at workflow level, and any new holder or writer must be
+justified in the same diff.
 
 [GitHub Actions cache poisoning is a known attack][1] against credential-bearing
 workflows. The mechanism is:

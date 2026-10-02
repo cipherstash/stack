@@ -95,6 +95,13 @@ jobs:
         id: claude-review
         uses: anthropics/claude-code-action@bf38e86e58df9ebf3420326d019f955bb3be64dd # v1.0.225
         with:
+          # Without this the action trades the job's OIDC token for a Claude
+          # GitHub App installation token with write access to contents, pull
+          # requests and issues, which this job's `permissions:` cannot narrow.
+          # The job token is limited to the grants above. The action puts
+          # whichever token it uses in GH_TOKEN and in the checkout's git
+          # remote URL, so it is the token a misled review could leak.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
           anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
           anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
@@ -146,7 +153,9 @@ jobs:
             --model sonnet
             --max-turns 25
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*)"
-            --disallowedTools "Edit,Write,NotebookEdit,Task,WebFetch,WebSearch"
+            --disallowedTools "Edit,Write,NotebookEdit,Task,WebFetch,WebSearch,Read(./.git/**)"
+        # `Read(./.git/**)` keeps Claude out of .git/config, where the action
+        # writes the token into the remote URL.
 
       - name: Require completed Claude review
         if: always()
@@ -155,9 +164,10 @@ jobs:
           REVIEW_CONCLUSION: ${{ steps.claude-review.outputs.conclusion }}
         run: |
           if [ "$REVIEW_CONCLUSION" != "success" ]; then
-            # The action leaves `conclusion` unset when it skips because this
-            # workflow file differs from the default branch's copy, which is
-            # every pull request that edits it.
-            echo "::error::Claude review did not complete; action conclusion was '${REVIEW_CONCLUSION:-unset}'. An unset conclusion usually means this workflow file differs from the default branch, so the action skipped."
+            # The action leaves `conclusion` unset when it exits before Claude
+            # runs. On the GitHub App token path that includes skipping a
+            # workflow that differs from the default branch's copy; with
+            # `github_token` set, that check is not made.
+            echo "::error::Claude review did not complete; action conclusion was '${REVIEW_CONCLUSION:-unset}'. An unset conclusion means the action exited before Claude ran; see the 'Review pull request' step log."
             exit 1
           fi

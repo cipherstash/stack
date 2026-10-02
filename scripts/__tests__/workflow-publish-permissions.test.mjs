@@ -67,7 +67,10 @@ const PUBLISH_OIDC_JOBS = [
 const NON_PUBLISH_OIDC_JOBS = [
   // Exchanges GitHub identity for a short-lived, inference-only Anthropic
   // credential. It cannot publish a package; pull-requests: write is solely for
-  // the advisory review comments.
+  // the advisory review comments. That holds only while the job passes
+  // `github_token`: without it the action makes a second OIDC exchange, for a
+  // Claude GitHub App token with write access to contents, pull requests and
+  // issues (asserted in claude-review-workflow.test.mjs).
   '.github/workflows/claude-review.yml / review',
 ]
 

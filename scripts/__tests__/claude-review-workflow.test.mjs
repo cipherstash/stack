@@ -146,7 +146,21 @@ describe('Claude pull-request review', () => {
     expect(claude.with).not.toHaveProperty('claude_code_oauth_token')
   })
 
-  it('fails closed when the vendor action skips workflow validation', () => {
+  it('gives Claude the job token, not the Claude GitHub App token', () => {
+    // Without `github_token` the action exchanges OIDC for a Claude App
+    // installation token with write access to contents, pull requests and
+    // issues; the job's `permissions:` block does not limit that token.
+    expect(claude.with.github_token).toBe(gha('secrets.GITHUB_TOKEN'))
+  })
+
+  it('keeps Claude out of the git config holding that token', () => {
+    // The action writes its token into the checkout's remote URL.
+    expect(claude.with.claude_args).toMatch(
+      /--disallowedTools "[^"]*Read\(\.\/\.git\/\*\*\)/,
+    )
+  })
+
+  it('fails closed when the vendor action exits before Claude runs', () => {
     const guard = review.steps.find(
       (step) => step.name === 'Require completed Claude review',
     )
@@ -179,7 +193,7 @@ describe('Claude pull-request review', () => {
       '--model sonnet',
       '--max-turns 25',
       '--allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr comment:*)"',
-      '--disallowedTools "Edit,Write,NotebookEdit,Task,WebFetch,WebSearch"',
+      '--disallowedTools "Edit,Write,NotebookEdit,Task,WebFetch,WebSearch,Read(./.git/**)"',
     ])
   })
 
