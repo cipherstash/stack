@@ -68,8 +68,8 @@ incremental = true
 # but cannot subtract them, and `stack-kms` / `stack-encrypt` need stack-auth
 # without `http`. Consumers that want the default transport re-enable it with
 # `features = ["http"]`.
-stack-auth = { path = "./packages/stack-auth", version = "0.42.3", default-features = false }
-stack-profile = { path = "./packages/stack-profile", version = "0.42.3" }
+stack-auth = { path = "./packages/stack-auth", version = "0.43.0", default-features = false }
+stack-profile = { path = "./packages/stack-profile", version = "0.43.0" }
 
 # Suite crates, from crates.io; Cargo.lock holds the exact versions.
 # cts-common and zerokms-protocol take caret requirements because the
