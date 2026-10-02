@@ -128,6 +128,32 @@ func TestSelectorsSpellEveryVariant(t *testing.T) {
 	}
 }
 
+// A Context owns its parts, as an option does: NewContext and With copy a
+// byte-slice part in, so a caller's buffer reused once the context is
+// built does not change it.
+func TestContextOwnsItsByteParts(t *testing.T) {
+	root, ext := []byte("users/email"), []byte("eu")
+	c, err := NewContext(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err = c.With(ext); err != nil {
+		t.Fatal(err)
+	}
+	copy(root, "users/phone")
+	copy(ext, "us")
+	parts, ok := c.value().([]any)
+	if !ok || len(parts) != 2 {
+		t.Fatalf("context value is %#v, want a two-part list", c.value())
+	}
+	if got := string(parts[0].([]byte)); got != "users/email" {
+		t.Errorf("root part is %q after the caller's buffer changed, want \"users/email\"", got)
+	}
+	if got := string(parts[1].([]byte)); got != "eu" {
+		t.Errorf("extension part is %q after the caller's buffer changed, want \"eu\"", got)
+	}
+}
+
 func TestContextNestsToTheLeft(t *testing.T) {
 	c := MustContext("users/age")
 	if got := c.value(); got != "users/age" {

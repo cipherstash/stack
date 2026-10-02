@@ -1,7 +1,6 @@
 package stackencrypt
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -158,10 +157,7 @@ func (e contextExtension) applyTerm(o *termOptions) { e.appendTo(&o.extension) }
 func ExtendContext(parts ...any) Option {
 	owned := make([]any, len(parts))
 	for i, part := range parts {
-		if b, ok := part.([]byte); ok {
-			part = bytes.Clone(b)
-		}
-		owned[i] = part
+		owned[i] = ownPart(part)
 	}
 	return contextExtension{parts: owned}
 }
