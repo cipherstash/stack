@@ -106,6 +106,14 @@ jobs:
           working_directory: .
           cache: true
 
+      # mise caches its rust install as a symlink into ~/.rustup, which the
+      # cache does not hold. On a runner image that already carries a 1.94.1
+      # toolchain, a cache hit makes mise skip the components mise.toml
+      # declares, and the lint steps below fail. A no-op when they are there.
+      # Held by scripts/__tests__/crates-ci.test.mjs.
+      - name: Add rustfmt and clippy to the pinned toolchain
+        run: rustup component add rustfmt clippy
+
       # The root workspace and both guest workspaces, each with its own
       # target/.
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2

@@ -648,6 +648,118 @@ describe('the root workspace is tested with nextest, not cargo test', () => {
   })
 })
 
+describe('a job that restores the mise cache adds the lint components first', () => {
+  // mise installs the root's rust as a symlink into ~/.rustup, and
+  // mise-action caches ~/.local/share/mise but not ~/.rustup. On a runner
+  // image that already carries a 1.94.1 toolchain, a cache hit leaves the
+  // symlink resolving, so mise reports rust as installed and never adds the
+  // components mise.toml declares: `cargo fmt` and `cargo clippy` then fail
+  // with "not installed for the toolchain". The first run on a cache key
+  // misses and passes, so only the next one shows it. test-eql.yml and
+  // bench-eql.yml add the components the same way before `mise run`.
+  const COMPONENT_OF = { fmt: 'rustfmt', clippy: 'clippy' }
+  const LINT = /\bcargo\s+(fmt|clippy)\b/g
+
+  const isMiseAction = (step) =>
+    String(step?.uses ?? '').startsWith('jdx/mise-action@')
+  const restoresRootCache = (step) =>
+    isMiseAction(step) &&
+    step?.with?.cache !== false &&
+    String(step?.with?.working_directory ?? '.') === '.'
+
+  /** The lint commands a task runs, following the tasks it calls. */
+  const taskLints = (name, seen = new Set()) => {
+    if (seen.has(name) || !TASKS.has(name)) return new Set()
+    seen.add(name)
+    const task = TASKS.get(name)
+    return new Set([
+      ...[...stripCommentLines(task.body).matchAll(LINT)].map((m) => m[1]),
+      ...[...task.calls].flatMap((other) => [...taskLints(other, seen)]),
+    ])
+  }
+
+  /** The components a step needs: its own lint commands and its tasks'. */
+  const stepNeeds = (step, job) => {
+    const bodies = expandMatrix(String(step?.run ?? ''), job).map(
+      stripCommentLines,
+    )
+    const commands = new Set(
+      bodies.flatMap((body) => [
+        ...[...body.matchAll(LINT)].map((m) => m[1]),
+        ...[...TASKS.keys()]
+          .filter((name) => invokes(body, name))
+          .flatMap((name) => [...taskLints(name)]),
+      ]),
+    )
+    return [...commands].map((command) => COMPONENT_OF[command])
+  }
+
+  const adds = (step) => {
+    const run = String(step?.run ?? '')
+    if (!/\brustup\s+component\s+add\b/.test(run)) return []
+    return Object.values(COMPONENT_OF).filter((component) =>
+      new RegExp(`\\b${component}\\b`).test(run),
+    )
+  }
+
+  /** Each job whose root mise-action can restore a cache. */
+  const JOBS = ROOT_WORKFLOWS.flatMap(({ relPath, wf }) =>
+    Object.entries(wf?.jobs ?? {}).flatMap(([jobName, job]) => {
+      const steps = jobSteps(job)
+      const mise = steps.findIndex(restoresRootCache)
+      if (mise === -1) return []
+      return [{ relPath, jobName, job, steps, mise }]
+    }),
+  )
+
+  it('finds the jobs that lint the crates and the guests', () => {
+    const linting = JOBS.filter(({ job, steps }) =>
+      steps.some((step) => stepNeeds(step, job).length > 0),
+    ).map(({ relPath, jobName }) => `${relPath} / ${jobName}`)
+    expect(linting).toEqual(
+      expect.arrayContaining([
+        '.github/workflows/tests-crates.yml / rust',
+        '.github/workflows/tests-golang.yml / wasi-check',
+      ]),
+    )
+  })
+
+  it('adds every component a lint step needs before that step', () => {
+    const missing = JOBS.flatMap(({ relPath, jobName, job, steps, mise }) =>
+      steps.flatMap((step, index) => {
+        const added = new Set(
+          steps.slice(mise + 1, index).flatMap((earlier) => adds(earlier)),
+        )
+        return stepNeeds(step, job)
+          .filter((component) => !added.has(component))
+          .map(
+            (component) =>
+              `${relPath} / ${jobName} / ${step?.name ?? index}: ${component}`,
+          )
+      }),
+    )
+    expect(
+      missing,
+      'Add `rustup component add <components>` after the mise-action step and before these steps. A cache hit can leave the pinned toolchain without them.',
+    ).toEqual([])
+  })
+
+  it('reads a lint command through the tasks a step runs', () => {
+    expect(stepNeeds({ run: 'cargo fmt --all --check' }, {})).toEqual([
+      'rustfmt',
+    ])
+    expect(stepNeeds({ run: 'mise run wasm:guest:test' }, {}).sort()).toEqual([
+      'clippy',
+      'rustfmt',
+    ])
+    expect(stepNeeds({ run: '# cargo clippy' }, {})).toEqual([])
+    expect(adds({ run: 'rustup component add rustfmt clippy' })).toEqual([
+      'rustfmt',
+      'clippy',
+    ])
+  })
+})
+
 describe('@cipherstash/profile stays private while it is unpublished', () => {
   // Without the flag the release gate classifies it as `js`, and changesets
   // would publish 0.35.0 with no binaries. Its six platform packages are the
