@@ -4,8 +4,10 @@ import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 
 /**
- * Every crate in BOTH nested Cargo workspaces must opt out of crates.io unless
- * it is deliberately allowlisted below.
+ * Every crate in every Cargo workspace must opt out of crates.io unless it is
+ * deliberately allowlisted below: the root workspace (the stack-* crates),
+ * EQL, protect-ffi, and the single-package workspaces the root excludes (the
+ * three cargo-fuzz crates and the two Go WASI guests).
  *
  * A crate with no `publish` key is publishable BY DEFAULT, and release-plz
  * publishes every workspace member that has not opted out. The convention is
@@ -50,6 +52,24 @@ const WORKSPACES = [
     publishable: new Set(),
     expects: 'crates/protect-ffi',
   },
+  {
+    // The root workspace. The stack-* crates' release-plz step publishes
+    // exactly these two (the stack-kms, stack-encrypt, stack-encrypt-derive
+    // and stack-guest-abi names are unclaimed on crates.io, and publishing
+    // them is a separate decision).
+    root: '.',
+    publishable: new Set(['packages/stack-auth', 'packages/stack-profile']),
+    expects: 'packages/stack-auth',
+  },
+  // Single-package workspaces: `[workspace]` with no members, so the package
+  // at the root is the one member.
+  ...[
+    'packages/stack-auth/fuzz',
+    'packages/stack-kms/fuzz',
+    'packages/stack-encrypt/fuzz',
+    'languages/golang/stackencrypt/guest',
+    'languages/golang/stackauth/guest',
+  ].map((root) => ({ root, publishable: new Set(), expects: '.' })),
 ]
 
 /**
@@ -64,8 +84,11 @@ const WORKSPACES = [
  */
 function workspaceMembers(WORKSPACE) {
   const manifest = readFileSync(join(WORKSPACE, 'Cargo.toml'), 'utf8')
-  const block = /^members\s*=\s*\[([^\]]*)\]/m.exec(manifest)?.[1] ?? ''
-  return [...block.matchAll(/"([^"]+)"/g)]
+  const block = /^members\s*=\s*\[([^\]]*)\]/m.exec(manifest)?.[1]
+  // A `[workspace]` with no `members` whose manifest is also a `[package]`:
+  // cargo's single-package workspace, whose one member is the root itself.
+  if (block === undefined && /^\[package\]$/m.test(manifest)) return ['.']
+  return [...(block ?? '').matchAll(/"([^"]+)"/g)]
     .flatMap(([, pattern]) =>
       pattern.endsWith('/*')
         ? readdirSync(join(WORKSPACE, pattern.slice(0, -2)), {

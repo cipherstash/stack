@@ -136,6 +136,15 @@ jobs:
       - name: Build the protect-ffi binding
         uses: ./.github/actions/build-ffi-binding
 
+      # `pnpm run test` below also runs the @cipherstash/auth and
+      # @cipherstash/profile vitest suites, which load the napi module. Their
+      # `test` scripts do not build it, so cargo stays off the default `test`
+      # path; this step builds it, as the protect-ffi step above does for
+      # `index.node`. Each `build:debug` writes its typings to the committed
+      # `native.d.ts`, so the build leaves the tree clean.
+      - name: Build the auth and profile node bindings
+        run: pnpm --filter @cipherstash/auth --filter @cipherstash/profile run build:debug
+
       - name: Type tests (stack)
         run: pnpm exec turbo run test:types --filter @cipherstash/stack
 
@@ -284,6 +293,13 @@ jobs:
       # dangling in docs and CI config. Nothing else catches it (#760 review).
       - name: Lint — no references to deleted package directories
         run: pnpm run lint:package-paths
+
+      # TEMPORARY — delete with the script in the arming PR (PR E) of the
+      # stack-* crates import. The seven @cipherstash/auth packages live here
+      # but still publish from cipherstash/cipherstash-suite, so a changeset
+      # naming one would bump a frozen package and block every release.
+      - name: Lint — no @cipherstash/auth changeset before the publishing cutover
+        run: pnpm run lint:auth-changeset
 
       # `eql-bindings` emits EQL payloads; `@cipherstash/eql` carries the SQL
       # that stores them. Both live here now and release at one lockstep

@@ -1,0 +1,16 @@
+[package]
+name = "stack-profile-node"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+stack-profile = { workspace = true }
+napi = "2"
+napi-derive = "2"
+
+[build-dependencies]
+napi-build = "2"

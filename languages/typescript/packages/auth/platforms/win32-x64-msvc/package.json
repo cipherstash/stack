@@ -1,0 +1,14 @@
+{
+  "name": "@cipherstash/auth-win32-x64-msvc",
+  "version": "0.44.0",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "stack-auth-node.win32-x64-msvc.node",
+  "files": [
+    "stack-auth-node.win32-x64-msvc.node"
+  ]
+}

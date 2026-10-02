@@ -1,0 +1,111 @@
+{
+  "name": "@cipherstash/auth",
+  "version": "0.44.0",
+  "license": "SEE LICENSE IN LICENSE",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "browser": false,
+  "exports": {
+    ".": {
+      "node": {
+        "types": "./index.d.ts",
+        "default": "./index.js"
+      },
+      "default": {
+        "types": "./wasm-types.d.ts",
+        "default": "./wasm/stack_auth_wasm.js"
+      }
+    },
+    "./wasm": {
+      "types": "./wasm-types.d.ts",
+      "default": "./wasm/stack_auth_wasm.js"
+    },
+    "./wasm-inline": {
+      "types": "./wasm-inline.d.ts",
+      "default": "./wasm-inline.mjs"
+    },
+    "./cookies": {
+      "types": "./cookies.d.ts",
+      "default": "./cookies.mjs"
+    },
+    "./next": {
+      "types": "./next.d.ts",
+      "default": "./next.mjs"
+    }
+  },
+  "napi": {
+    "name": "stack-auth-node",
+    "triples": {
+      "defaults": false,
+      "additional": [
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+        "x86_64-pc-windows-msvc"
+      ]
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "native.d.ts",
+    "README.md",
+    "LICENSE",
+    "stack-auth-node.js",
+    "wasm-types.d.ts",
+    "wasm-inline.mjs",
+    "wasm-inline.d.ts",
+    "cookies.mjs",
+    "cookies.d.ts",
+    "base64url.mjs",
+    "base64url.d.ts",
+    "next.mjs",
+    "next.d.ts",
+    "wasm/"
+  ],
+  "scripts": {
+    "build:native": "napi build --release --dts native.d.ts",
+    "build:debug": "napi build --dts native.d.ts",
+    "build:wasm": "cd ../stack-auth-wasm && wasm-pack build --target bundler --out-dir ../auth/wasm && rm -f ../auth/wasm/README.md ../auth/wasm/LICENSE ../auth/wasm/.gitignore && echo '{\"type\":\"module\"}' > ../auth/wasm/package.json && node ../auth/scripts/inline-wasm.mjs",
+    "test": "vitest run && biome check .",
+    "test:cargo": "cargo test --locked"
+  },
+  "peerDependencies": {
+    "@cipherstash/auth-darwin-x64": "workspace:*",
+    "@cipherstash/auth-darwin-arm64": "workspace:*",
+    "@cipherstash/auth-linux-x64-gnu": "workspace:*",
+    "@cipherstash/auth-linux-arm64-gnu": "workspace:*",
+    "@cipherstash/auth-linux-x64-musl": "workspace:*",
+    "@cipherstash/auth-win32-x64-msvc": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@cipherstash/auth-darwin-x64": {
+      "optional": true
+    },
+    "@cipherstash/auth-darwin-arm64": {
+      "optional": true
+    },
+    "@cipherstash/auth-linux-x64-gnu": {
+      "optional": true
+    },
+    "@cipherstash/auth-linux-arm64-gnu": {
+      "optional": true
+    },
+    "@cipherstash/auth-linux-x64-musl": {
+      "optional": true
+    },
+    "@cipherstash/auth-win32-x64-msvc": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@byteslice/result": "^0.3.0"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2",
+    "typescript": "^5",
+    "vitest": "^3"
+  }
+}

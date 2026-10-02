@@ -1,0 +1,294 @@
+# The repository root is the root of the Rust and Go toolchains: the Cargo
+# workspace in Cargo.toml (the stack-* crates and the three node bindings) and
+# the Go module in languages/golang.
+#
+# EQL (packages/eql) and protect-ffi (languages/typescript/packages/protect-ffi)
+# keep their own mise.toml. A tool they pin there overrides the pin here, in
+# their folder only.
+
+[task_config]
+includes = [
+  "packages/stack-auth/tasks.toml",
+  "packages/stack-kms/tasks.toml",
+  "packages/stack-profile/tasks.toml",
+  "packages/stack-encrypt/tasks.toml",
+  "packages/stack-guest-abi/tasks.toml",
+]
+
+[tools]
+# 1.94.1, not latest: the stack-encrypt `tests/ui` trybuild snapshots record
+# this compiler's diagnostics. `llvm-tools-preview` is required by
+# cargo-llvm-cov to produce coverage data.
+rust = { version = "1.94.1", components = "rustc,cargo,rustfmt,rust-std,clippy,rust-docs,llvm-tools-preview", targets = "wasm32-unknown-unknown,wasm32-wasip1" }
+# No `cargo:` tools here. mise merges config down the tree, so every tool in
+# this file is also installed for packages/eql and protect-ffi, whose CI runs
+# `mise install` and `mise run` in their own folders. mise compiles a `cargo:`
+# tool with the runner's default rustc rather than the pinned one, so one
+# `latest` that outgrows that compiler breaks jobs that never use the tool.
+# The cargo tools (nextest, llvm-cov, crap, mutants, fuzz, udeps) live in
+# mise.test.toml, pinned, and load only with `--env test` / MISE_ENV=test.
+# The Go module (languages/golang) — the wazero host of the WASI guests.
+# CGO_ENABLED=0 throughout; see `go:test`.
+go = "1.26"
+golangci-lint = "2.14.0"
+# wasm-pack for the auth binding's `build:wasm`, which builds
+# languages/typescript/packages/stack-auth-wasm into the auth package's wasm/.
+# Same pin and backend id as protect-ffi's mise.toml (`wasm-pack` is not a
+# short name in mise's registry).
+"aqua:wasm-bindgen/wasm-pack" = "0.13.1"
+
+[tasks."test:doc"]
+description = "Run documentation tests"
+run = "mise x --env test -- cargo test --doc --all-features --workspace"
+
+# Rustdoc with warnings as errors, one crate at a time. `test:doc` runs the
+# doc *examples*; it cannot see a broken intra-doc link or a rustdoc warning,
+# which only a `cargo doc` build surfaces. Each crate defines its own
+# `doc:<crate>` in its tasks.toml so a change to one crate is checked with
+# `mise run doc:<crate>` alone; this task is the one entry point CI runs, and
+# it only fans out over those. A crate that adds a `doc:` task joins it.
+[tasks.doc]
+description = "Build docs for every crate that defines a doc:<crate> task (warnings are errors)"
+depends = ["doc:*"]
+
+# Mutation testing, the same shape as `doc`: each crate that opts in defines
+# `mutants:<crate>` in its tasks.toml (a full sweep of that crate, reading
+# .cargo/mutants.toml), and this fans out over them. Slow — see the per-crate
+# tasks for timings.
+[tasks.mutants]
+description = "Full mutation-testing sweep of every crate that defines a mutants:<crate> task (slow)"
+depends = ["mutants:*"]
+
+# WASI gate for the Go/wazero target (docs/plans/stack-encrypt-go-bindings.md,
+# docs/wasm-analysis.md Layer 6). Each listed crate must compile for
+# `wasm32-wasip1` AND keep two dependency families out of its graph:
+#
+# - JS-host backends (`wasm-bindgen`/`web-sys`/`js-sys`): imports of JS host
+#   functions that a non-JS runtime like wazero cannot satisfy — the module
+#   type-checks but fails to instantiate.
+# - The native HTTP/TLS stack (`reqwest`/`hyper`/`aws-lc-sys`): on wasip1
+#   reqwest 0.13.4+ selects a native backend that needs tokio-full and a C
+#   TLS provider, neither of which builds for WASI. HTTP is provided by the
+#   host (see the plan), so it must be out of the WASI build by construction.
+#
+# The suite's version of this task also checked the suite crates the stack
+# crates depend on (zerokms-protocol, cipherstash-core, recipher, cts-common,
+# cllw-ore). Here they come from crates.io and are checked through the stack
+# crates' graphs.
+[tasks."wasm:wasi-check"]
+description = "Check the stack crates compile for wasm32-wasip1 with no JS-host or native-HTTP deps (Go/wazero target)"
+# bash, not the default sh: the script uses `set -o pipefail` (Ubuntu's sh is
+# dash, which rejects it — macOS sh is bash-in-sh-mode, so it passes locally).
+shell = "bash -c"
+run = """
+set -euo pipefail
+# The WASI std target is in the mise `[tools]` rust targets; add it here as
+# well so the task is self-contained (idempotent, no-op if present).
+rustup target add wasm32-wasip1
+check() {
+  local crate="$1"; shift
+  echo "==> $crate (wasm32-wasip1)"
+  cargo check --target wasm32-wasip1 -p "$crate" "$@"
+  # -e normal: the gate's property is about what links into the module, and
+  # dev-deps never do — a wasm-bindgen-test dev-dep must not fail this.
+  # Capture the tree before grepping: `... | grep -q` exits on first match,
+  # cargo tree can die on EPIPE, and pipefail would adopt that status —
+  # silently masking a MATCH once the tree outgrows the pipe buffer.
+  local tree
+  # --color never: CI sets CARGO_TERM_COLOR=always, and the colour codes
+  # around the tree prefix stop the grep below from ever matching.
+  tree=$(cargo tree --color never --target wasm32-wasip1 -e normal -p "$crate" "$@")
+  if grep -Eq '^[^a-z]*(wasm-bindgen|web-sys|js-sys) ' <<<"$tree"; then
+    echo "error: $crate pulls a JS-host backend (wasm-bindgen/web-sys/js-sys) on WASI — not wazero-loadable" >&2
+    exit 1
+  fi
+  if grep -Eq '^[^a-z]*(reqwest|hyper|aws-lc-sys) ' <<<"$tree"; then
+    echo "error: $crate pulls the native HTTP/TLS stack (reqwest/hyper/aws-lc-sys) on WASI — HTTP must come from the host" >&2
+    exit 1
+  fi
+}
+# The stack crates: their default `http` feature is the reqwest transport,
+# which a host with its own transport (the wazero guest) builds without.
+check stack-auth --no-default-features
+check stack-kms --no-default-features
+check stack-encrypt --no-default-features
+# The Go binding's credential guest (ADR-0005) compiles stack-profile for
+# WASI: the hostname and the process id are native-only there.
+check stack-profile
+# The ABI every guest under languages/golang shares (allocator, registry,
+# status table, transport import); its export and import modules exist only
+# here.
+check stack-guest-abi
+echo "all WASI crates compile with no JS-host or native-HTTP deps"
+"""
+
+# Companion to wasm:wasi-check, on the host target: the stack crates'
+# no-default-features shape must also pass its unit tests, doctests, and
+# rustdoc — `cargo check` alone misses doc examples and intra-doc links that
+# reference http-only items.
+[tasks."wasm:no-http-test"]
+description = "Test and doc-build (warnings are errors) the stack crates with default features off — the shape the WASI guest builds against"
+shell = "bash -c"
+run = """
+set -euo pipefail
+# One crate per invocation: naming several -p at once lets dev-dep feature
+# unification turn `http` back on, silently testing the wrong shape. The
+# same applies within a crate: every stack-* path dev-dependency must set
+# `default-features = false` or its defaults re-enter this graph.
+for crate in stack-auth stack-kms stack-encrypt; do
+  echo "==> $crate (tests + doctests, --no-default-features)"
+  cargo test -p "$crate" --no-default-features
+  echo "==> $crate (rustdoc, --no-default-features)"
+  RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p "$crate" --no-default-features
+done
+"""
+
+# The stack-encrypt WASI guest (languages/golang/stackencrypt/guest) is a
+# detached workspace — like the fuzz crates — so the workspace-wide tasks
+# never touch it; these two are its build and test entry points.
+[tasks."wasm:guest:build"]
+description = "Build the stack-encrypt WASI guest module (wasm32-wasip1, release) and assert its host-import surface"
+shell = "bash -c"
+run = """
+set -euo pipefail
+rustup target add wasm32-wasip1
+root=$(pwd)
+cd languages/golang/stackencrypt/guest
+cargo build --target wasm32-wasip1 --release
+module=target/wasm32-wasip1/release/stack_encrypt_guest.wasm
+echo "guest module: languages/golang/stackencrypt/guest/$module"
+# The security contract is about the *linked* module, which a successful
+# build says nothing about: the guest may reach the outside world only
+# through the two host functions the Go embedder provides. Fail-closed —
+# any other import, or a missing one, fails here rather than widening the
+# surface silently. WASI is allowed as a module but denied the
+# capability-granting half of its namespace (ambient filesystem and
+# sockets), which is the part that would matter if a dependency grew one.
+# random_get is required, not merely allowed: the cipher's IVs and nonces
+# come from it, and the Go embedder wires it to crypto/rand (wazero's
+# default is a fixed seed). If getrandom ever moves to another backend the
+# host side must be revisited, so make that a build failure here.
+python3 "$root/scripts/check-wasm-imports.py" "$module" \\
+  --allow-module wasi_snapshot_preview1 \\
+  --deny-prefix wasi_snapshot_preview1:path_ \\
+  --deny-prefix wasi_snapshot_preview1:sock_ \\
+  --deny-prefix wasi_snapshot_preview1:fd_prestat \\
+  --require wasi_snapshot_preview1:random_get \\
+  --require cipherstash_transport:transport_send \\
+  --require cipherstash_transport:token_get
+# The Go module embeds the checked artefact (languages/golang/stackencrypt/wasm,
+# gitignored): copying it here is what makes `go test` in the binding run
+# against the guest just built rather than a stale one.
+cp "$module" ../wasm/stack_encrypt_guest.wasm
+echo "embedded into languages/golang/stackencrypt/wasm/stack_encrypt_guest.wasm"
+"""
+
+[tasks."wasm:guest:test"]
+description = "Lint and natively test the stack-encrypt WASI guest (ops/config/status modules run on the host target)"
+shell = "bash -c"
+run = """
+set -euo pipefail
+rustup target add wasm32-wasip1
+# The shared guest ABI crate first: a workspace member, so the root lint
+# covers its native half, but its export surface (`se_alloc`/`se_dealloc`,
+# the packed results) and the transport import compile only for wasm32, and
+# a path dependency is not linted from the guest's own workspace below.
+cargo clippy -p stack-guest-abi --all-targets --target wasm32-wasip1 -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p stack-guest-abi --target wasm32-wasip1
+cd languages/golang/stackencrypt/guest
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+# The wasm32-only modules (abi, host) only compile for the target; lint
+# them there so a broken export surface can't hide behind native-only CI.
+cargo clippy --target wasm32-wasip1 -- -D warnings
+# Intra-doc links, on the target the crate is written for (the wasm32-only
+# modules are part of the crate docs). rustdoc only warns on a broken link
+# and exits 0, so without -D warnings a stale link ships silently.
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --target wasm32-wasip1
+# nextest, as everywhere else; this crate is a detached workspace, so it
+# runs from here rather than a root `-p`. nextest is in mise.test.toml.
+mise x --env test -- cargo nextest run
+"""
+
+[tasks."wasm:auth-guest:build"]
+description = "Build the credential WASI guest module (stack-profile for Go; wasm32-wasip1, release) and assert its host-import surface"
+shell = "bash -c"
+run = """
+set -euo pipefail
+rustup target add wasm32-wasip1
+root=$(pwd)
+cd languages/golang/stackauth/guest
+cargo build --target wasm32-wasip1 --release
+module=target/wasm32-wasip1/release/stack_auth_guest.wasm
+echo "guest module: languages/golang/stackauth/guest/$module"
+# The credential guest's contract is the mirror image of the crypto
+# guest's: it may reach the filesystem — that is what it is for, and the
+# host grants it exactly one directory — and the auth host transport.
+# Sockets are denied by name; token exchanges use only the two named host
+# imports. random_get is required: the Rust runtime draws through
+# it (its hash maps are seeded from it), and the Go side wires it to
+# crypto/rand rather than wazero's fixed-seed default.
+python3 "$root/scripts/check-wasm-imports.py" "$module" \\
+  --allow-module wasi_snapshot_preview1 \\
+  --deny-prefix wasi_snapshot_preview1:sock_ \\
+  --require wasi_snapshot_preview1:random_get \\
+  --require wasi_snapshot_preview1:path_open \\
+  --require cipherstash_transport:transport_send \\
+  --require cipherstash_transport:oidc_token_get
+cp "$module" ../wasm/stack_auth_guest.wasm
+echo "embedded into languages/golang/stackauth/wasm/stack_auth_guest.wasm"
+"""
+
+[tasks."wasm:auth-guest:test"]
+description = "Lint and natively test the credential WASI guest (ops/status modules run on the host target)"
+shell = "bash -c"
+run = """
+set -euo pipefail
+rustup target add wasm32-wasip1
+cd languages/golang/stackauth/guest
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo clippy --target wasm32-wasip1 -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --target wasm32-wasip1
+mise x --env test -- cargo nextest run
+"""
+
+[tasks."go:test"]
+# The old name, from when the module held one package.
+alias = "go:stackencrypt:test"
+description = "Format check, vet and test the Go module (languages/golang: stackencrypt, stackauth and the internal packages) against the embedded guests; needs `wasm:guest:build` and `wasm:auth-guest:build` first"
+# The body lives in scripts/go-binding-test.sh so the macOS and Windows CI
+# jobs (which have Go but not mise) run exactly the same checks. One module
+# at languages/golang holds every Go package (ADR-0005 §4); the guest it
+# embeds is named relative to the module root.
+run = "scripts/go-binding-test.sh languages/golang"
+
+[tasks."go:lint"]
+description = "Lint and format-check the Go module (languages/golang) with golangci-lint; config in languages/golang/.golangci.yaml"
+dir = "languages/golang"
+run = "golangci-lint run ./..."
+
+[tasks."go:stackencrypt:example"]
+description = "Run the stack-encrypt Go example (languages/golang/stackencrypt/example) against real ZeroKMS; needs `stash auth login` first"
+shell = "bash -c"
+# Both guests: the example reads the profile through stackauth.
+depends = ["wasm:guest:build", "wasm:auth-guest:build"]
+run = """
+set -euo pipefail
+cd languages/golang
+# Credentials come from stackencrypt.AutoCredentials: the CS_* variables
+# if set, else the developer profile. See stackencrypt/example/README.md.
+CGO_ENABLED=0 go run ./stackencrypt/example
+"""
+
+[tasks."go:stackencrypt:example:explicit"]
+description = "Run the explicit-credentials Go example (languages/golang/stackencrypt/example/explicit) against real ZeroKMS; pass -secrets-dir, -client-id and -workspace-crn after --"
+shell = "bash -c"
+depends = ["wasm:guest:build", "wasm:auth-guest:build"]
+run = """
+set -euo pipefail
+cd languages/golang
+# Credentials come only from the flags and the secrets directory: no CS_*
+# variables, no profile. See stackencrypt/example/explicit/README.md.
+CGO_ENABLED=0 go run ./stackencrypt/example/explicit "$@"
+"""

@@ -1,0 +1,32 @@
+[package]
+name = "stack-guest-abi"
+description = "The WASI guest ABI the Go binding's guests share: allocator and buffer registry, status table, host transport import"
+version = "0.0.0"
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license-file = "LICENSE"
+# Internal plumbing for the guests under bindings/go, never a release of its
+# own; also keeps release-plz from picking it up.
+publish = false
+
+[dependencies]
+zeroize = { workspace = true }
+
+# Only `transport` (wasm32-only) needs these: the import's error type and
+# `OpaqueDebug` for its response, whose body can carry wrapped key material
+# or a credential and so never prints. Declared for that target alone, so a
+# native build carries nothing it does not use and `cargo udeps` sees none.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+thiserror = { workspace = true }
+vitaminc-protected = { workspace = true }
+
+[dev-dependencies]
+# The registry's property test (`buffers::properties`): random interleavings
+# of alloc / register / take / dealloc / wipe_all against a model of what the
+# host holds, run natively and under Miri. `std` only: the `fork` and
+# `timeout` defaults spawn processes and threads Miri cannot interpret.
+proptest = { version = "1.7", default-features = false, features = ["std"] }

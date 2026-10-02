@@ -1,0 +1,27 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - errcheck
+    - gosec
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+  exclusions:
+    presets:
+      # Unchecked Close, Flush, fmt.Fprint* and friends.
+      - std-error-handling
+    rules:
+      # Test fixtures, weak rand and subprocesses are fine in tests;
+      # guesttest is imported only by _test files.
+      - path: (_test\.go|internal/guesttest/)
+        linters:
+          - gosec
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

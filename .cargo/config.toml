@@ -1,0 +1,7 @@
+# Wasm target needs the `wasm_js` getrandom backend (used by deps that pull
+# `getrandom >= 0.3`, e.g. `rand 0.9+` via `vitaminc-random`). Without this
+# rustflag, those crates fail to compile on wasm32-unknown-unknown — the
+# stack-auth-wasm build (`languages/typescript/packages/stack-auth-wasm`).
+# See: https://docs.rs/getrandom/latest/getrandom/#opt-in-backends
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']

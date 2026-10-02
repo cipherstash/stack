@@ -1,0 +1,9 @@
+{
+  "name": "@cipherstash/profile-linux-arm64-gnu",
+  "version": "0.35.0",
+  "private": true,
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "main": "stack-profile-node.linux-arm64-gnu.node",
+  "files": ["stack-profile-node.linux-arm64-gnu.node"]
+}

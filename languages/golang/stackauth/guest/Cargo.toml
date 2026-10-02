@@ -1,0 +1,62 @@
+# The credential guest: `stack-profile` and `stack-auth` strategies under
+# WASI/wazero, embedded by the Go package
+# `stackauth` one directory up. ADR-0005 in packages/stack-encrypt/docs/adr.
+#
+# A second module rather than the crypto guest widened: this one is given a
+# directory of credentials, and that one handles plaintext and data keys.
+# Deliberately a standalone workspace, like the crypto guest: it targets
+# wasm32-wasip1 and is consumed as a .wasm artifact, so its wasm-only
+# profile and target must not leak into workspace builds.
+#
+# Build: mise run wasm:auth-guest:build   (or: cargo build --target wasm32-wasip1 --release)
+[package]
+name = "stack-auth-guest"
+description = "WASI guest exposing stack-profile and stack-auth to Go/wazero"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+# cdylib: the .wasm guest module. rlib: lets the ops/status modules
+# unit-test natively (`cargo test` here, no wasm toolchain needed).
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures = "0.3"
+cts-common = { version = "=0.43.0", default-features = false }
+url = "2"
+# Strategies and `Token`, the typed shape of `auth.json`, with default
+# features off: no reqwest, no native TLS.
+stack-auth = { path = "../../../../packages/stack-auth", default-features = false }
+# The ABI every guest under bindings/go shares: the allocator and buffer
+# registry (and with them the `se_alloc`/`se_dealloc` exports), the
+# packed-result helpers and the status table. This crate defines only the
+# exports that are its own.
+stack-guest-abi = { path = "../../../../packages/stack-guest-abi" }
+# The profile directory's API. It builds for wasm32-wasip1 (CIP-4114): the
+# hostname and the process id are native-only there, and creating a device
+# identity is CLI territory.
+stack-profile = { path = "../../../../packages/stack-profile" }
+# The FFI codec for the structured results (a list of workspace ids, the
+# fields of a token): the one codec every binding carries. Same vitaminc
+# version the crypto guest builds against.
+vitaminc-aead-value = "0.5.0"
+# The deserialized form of `secretkey.json` is wiped when it drops.
+zeroize = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"
+tempfile = "3"
+# `Controlled::risky_ref`, to read a codec value back in the tests.
+vitaminc-protected = "0.5.0"
+
+[profile.release]
+# Smaller .wasm; the guest is IO-bound on the FFI copy and the file reads,
+# not on codegen.
+opt-level = "s"
+lto = true
+strip = true

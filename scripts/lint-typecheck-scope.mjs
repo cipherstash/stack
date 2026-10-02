@@ -31,12 +31,14 @@ const REPO_ROOT = resolve(import.meta.dirname, '..')
 // with argv[2..] for tests / ad-hoc checks (each arg is a package directory).
 //
 // NESTED roots are listed separately because the walk below is one level deep,
-// matching how pnpm globs `languages/typescript/packages/*`. Three sets of
+// matching how pnpm globs `languages/typescript/packages/*`. Five sets of
 // packages sit a level further down and need their own entry here for the same
 // reason they need one in `pnpm-workspace.yaml`:
 //
 //   languages/typescript/packages/protect-ffi/platforms/*   the six per-platform binary packages
 //   packages/eql/packages/*                                 @cipherstash/eql, from the EQL subtree
+//   languages/typescript/packages/auth/platforms/*          the @cipherstash/auth platform packages
+//   languages/typescript/packages/profile/platforms/*       the @cipherstash/profile platform packages
 //   languages/typescript/packages/protect-ffi/*             the live integration suite
 //
 // The last is spelled as its PARENT rather than as the member, because the walk
@@ -55,6 +57,10 @@ const WORKSPACE_ROOTS = [
   'packages',
   'languages/typescript/packages/protect-ffi',
   'languages/typescript/packages/protect-ffi/platforms',
+  // The node bindings imported from cipherstash-suite. `auth` and `profile`
+  // themselves are one level down and found through the first root.
+  'languages/typescript/packages/auth/platforms',
+  'languages/typescript/packages/profile/platforms',
   'packages/eql/packages',
 ]
 

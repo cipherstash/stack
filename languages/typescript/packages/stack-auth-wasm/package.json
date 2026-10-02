@@ -1,0 +1,18 @@
+{
+  "name": "@cipherstash/stack-auth-wasm",
+  "version": "0.0.0-pre",
+  "description": "WebAssembly bindings for stack-auth (Supabase Edge / Deno targets)",
+  "license": "SEE LICENSE IN LICENSE",
+  "private": true,
+  "scripts": {
+    "build:wasm": "pnpm run build:bundler && pnpm run build:deno",
+    "build:bundler": "wasm-pack build --target bundler --out-dir pkg-bundler",
+    "build:deno": "wasm-pack build --target deno --out-dir pkg-deno",
+    "test:cargo": "wasm-pack test --node"
+  },
+  "files": [
+    "pkg-bundler/",
+    "pkg-deno/",
+    "README.md"
+  ]
+}

@@ -1,0 +1,3 @@
+# Cargo output of this detached workspace; the built module is copied to
+# ../wasm by `mise run wasm:auth-guest:build`.
+/target

@@ -19,6 +19,8 @@ This repository is the CipherStash Stack monorepo for JavaScript/TypeScript. It 
 | `@cipherstash/wizard` | AI-powered encryption setup |
 | `@cipherstash/protect-ffi` | Native FFI bindings to the CipherStash Client SDK — the Rust core `@cipherstash/stack` encrypts and decrypts through |
 | `@cipherstash/protect-ffi-darwin-arm64`<br>`@cipherstash/protect-ffi-darwin-x64`<br>`@cipherstash/protect-ffi-linux-arm64-gnu`<br>`@cipherstash/protect-ffi-linux-x64-gnu`<br>`@cipherstash/protect-ffi-linux-x64-musl`<br>`@cipherstash/protect-ffi-win32-x64-msvc` | Prebuilt per-platform binaries for `@cipherstash/protect-ffi`. Installed as optional dependencies; one is selected at load time for the host platform |
+| `@cipherstash/auth` | Authentication strategies for CipherStash (napi-rs native binding, with a WASM build for edge runtimes) — imported from `cipherstash/cipherstash-suite` with the `stack-auth` crate it wraps |
+| `@cipherstash/auth-darwin-arm64`<br>`@cipherstash/auth-darwin-x64`<br>`@cipherstash/auth-linux-arm64-gnu`<br>`@cipherstash/auth-linux-x64-gnu`<br>`@cipherstash/auth-linux-x64-musl`<br>`@cipherstash/auth-win32-x64-msvc` | Prebuilt per-platform binaries for `@cipherstash/auth`. Installed as optional peer dependencies; one is selected at load time for the host platform |
 | `@cipherstash/eql` | Encrypt Query Language — the PostgreSQL SQL bundle (`eql_v3` schema: domains, operators, index-term extractors) that stores and queries encrypted payloads, plus its generated TypeScript types. Applied by `stash eql install` and by the Prisma Next adapter's migrations. Released in lockstep with the `eql-bindings` Rust crate, which emits the payloads this SQL reads |
 
 This repository also carries the source of the **`eql-bindings`** Rust crate
@@ -26,12 +28,23 @@ This repository also carries the source of the **`eql-bindings`** Rust crate
 lockstep with `@cipherstash/eql`. It is in scope for security reports on the
 same terms as the npm packages above.
 
-> **Note on publishing.** Every package in the table above, including all seven
-> `@cipherstash/protect-ffi*` packages and `@cipherstash/eql`, is published from
-> this repository by `.github/workflows/release.yml`; the `eql-bindings` crate
-> is published from here by `.github/workflows/release-plz.yml`. EQL moved here
-> at the Phase 5 cutover in `docs/plans/2026-08-13-eql-monorepo-absorption.md`.
-> Releases made before it, `@cipherstash/eql@3.0.5` and earlier, were built by
+It also carries the source of two Rust crates published to crates.io,
+**`stack-auth`** and **`stack-profile`** (`packages/stack-auth`,
+`packages/stack-profile`), and of the **Go module** at `languages/golang`
+(`stackencrypt` and `stackauth`, over WASI guests built from the stack-*
+crates), which has no release yet. All three are in scope for security reports
+on the same terms as the npm packages above.
+
+> **Note on publishing.** `@cipherstash/auth` and its six platform packages,
+> and the `stack-auth` and `stack-profile` crates, are developed here but are
+> *published* from `cipherstash/cipherstash-suite` until the arming PR of the
+> stack-* crates import repoints them. Every other package in the table above,
+> including all seven `@cipherstash/protect-ffi*` packages and
+> `@cipherstash/eql`, is published from this repository by
+> `.github/workflows/release.yml`; the `eql-bindings` crate is published from
+> here by `.github/workflows/release-plz.yml`. EQL moved here at the Phase 5
+> cutover in `docs/plans/2026-08-13-eql-monorepo-absorption.md`. Releases made
+> before it, `@cipherstash/eql@3.0.5` and earlier, were built by
 > `cipherstash/encrypt-query-language`. **Source, issues, and security reports
 > for all of them belong here regardless** — that part does not depend on which
 > pipeline built the artefact.

@@ -1,0 +1,19 @@
+error[E0277]: the trait bound `CallerContext: From<AeadContext>` is not satisfied
+ --> tests/ui/aead_context_with_term.rs:8:10
+  |
+8 | #[derive(EncryptFrom)]
+  |          ^^^^^^^^^^^ the trait `From<AeadContext>` is not implemented for `CallerContext`
+  |
+  = help: the following other types implement trait `From<T>`:
+            `CallerContext` implements `From<NonEmpty<T>>`
+            `CallerContext` implements `From<i128>`
+            `CallerContext` implements `From<i16>`
+            `CallerContext` implements `From<i32>`
+            `CallerContext` implements `From<i64>`
+            `CallerContext` implements `From<i8>`
+            `CallerContext` implements `From<u128>`
+            `CallerContext` implements `From<u16>`
+          and $N others
+  = note: required for `AeadContext` to implement `Into<CallerContext>`
+  = help: see issue #48214
+  = note: this error originates in the derive macro `EncryptFrom` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -1,0 +1,71 @@
+# Rustdoc with warnings as errors: a broken intra-doc link or a rustdoc
+# warning fails the build. Doc *examples* are `test:doc:stack-auth`. Both run
+# with all features so nothing feature-gated goes unchecked; the root `doc`
+# task fans out over every `doc:<crate>`.
+["doc:stack-auth"]
+description = "Build docs for stack-auth with all features (warnings are errors)"
+env = { RUSTDOCFLAGS = "-D warnings" }
+run = "cargo doc -p stack-auth --no-deps --all-features"
+
+["test:doc:stack-auth"]
+description = "Run documentation tests for stack-auth"
+run = "mise x --env test -- cargo test -p stack-auth --doc --all-features"
+
+["test:integration:stack-auth"]
+description = "Run stack-auth Node.js integration tests"
+dir = "{{config_root}}/languages/typescript/packages/auth"
+run = [
+  "cargo build -p stack-auth-node",
+  "cp ../../../../target/debug/libstack_auth_node.dylib stack-auth-node.node 2>/dev/null || cp ../../../../target/debug/libstack_auth_node.so stack-auth-node.node",
+  "pnpm exec vitest run",
+]
+
+["crap:stack-auth"]
+description = "Gate stack-auth on the CRAP (Change Risk Anti-Patterns) metric — fails when a complex, under-tested function exceeds the threshold"
+run = [
+  # Instrument and run the unit tests, emitting LCOV coverage that `cargo crap` consumes.
+  # `stress_tests` are excluded: they are wall-clock timing/concurrency tests (real
+  # axum servers, real sleeps, sub-second expiry windows) that become flaky under
+  # llvm-cov's ~2-5x slowdown. They still run in the normal `cargo nextest` gate, and
+  # excluding them here has zero effect on the report — the deterministic unit tests
+  # already cover the same lines.
+  "mise x --env test -- cargo llvm-cov nextest -p stack-auth --all-features -E 'not test(stress_tests)' --lcov --output-path {{config_root}}/target/stack-auth-lcov.info",
+  # Score every production function. Excludes test code, examples and the node/wasm
+  # binding crates so the report reflects the core library. `--fail-above` exits
+  # non-zero when any function's CRAP score exceeds the threshold from the
+  # workspace-root .cargo-crap.toml (30), so this gates both local runs and CI.
+  # NOTE: this must stay the LAST command — the crap-stack-auth.yml CI workflow runs
+  # this task and relies on mise appending its trailing args (e.g. --format github)
+  # to this `cargo crap` invocation.
+  "mise x --env test -- cargo crap --path packages/stack-auth --lcov {{config_root}}/target/stack-auth-lcov.info --exclude 'node/**' --exclude 'wasm/**' --exclude 'examples/**' --exclude '**/tests.rs' --exclude '**/tests/**' --fail-above",
+]
+
+# Fuzz stack-auth's public AccessKey string parser (libFuzzer via cargo-fuzz).
+# Requires the nightly toolchain. Runs 60s by default; override by appending a
+# libFuzzer flag, e.g. `mise run fuzz:access-key -- -max_total_time=300` (the
+# last repeated value wins). `--sanitizer none` is safe — the parser is pure
+# safe Rust. `--target $(rustc … host)` forces the native host triple (the
+# cargo-fuzz binary may be x86_64 under Rosetta on Apple Silicon, which
+# otherwise misdetects the target). The fuzz crate lives in
+# `packages/stack-auth/fuzz/` (detached).
+["fuzz:access-key"]
+description = "Fuzz stack-auth's AccessKey string parser (libFuzzer, nightly, 60s default)"
+dir = "{{config_root}}/packages/stack-auth"
+run = "mise x --env test -- cargo +nightly fuzz run access_key_parse --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+
+# Fuzz the JWT claims decode path (Token::fuzz_decode_claims, behind the `fuzz`
+# feature). On native this is the jsonwebtoken-based decode with signature
+# validation disabled. Same flags/rationale as fuzz:access-key.
+["fuzz:jwt-decode"]
+description = "Fuzz stack-auth's JWT claims decode path (libFuzzer, nightly, 60s default)"
+dir = "{{config_root}}/packages/stack-auth"
+run = "mise x --env test -- cargo +nightly fuzz run jwt_decode --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+
+# Mutation testing (cargo-mutants) over the whole crate: what the per-PR
+# `--in-diff` gate (.github/workflows/mutants.yml) does for changed lines only.
+# Reads .cargo/mutants.toml (all features, nextest, the slow-test filter,
+# timeouts). About 15 minutes with four jobs on a laptop. The
+# stress tests are filtered out of the per-mutant run by the shared config.
+["mutants:stack-auth"]
+description = "Full mutation-testing sweep of stack-auth (cargo-mutants; ~15 min)"
+run = "mise x --env test -- cargo mutants -p stack-auth --jobs 4"
