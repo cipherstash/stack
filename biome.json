@@ -7,9 +7,9 @@
       "!**/.turbo/",
       "!**/dist",
       "!**/nix/store",
-      "!packages/protect-ffi/lib",
-      "!packages/protect-ffi/target",
-      "!packages/protect-ffi/src/eql-v3-types",
+      "!languages/typescript/packages/protect-ffi/lib",
+      "!languages/typescript/packages/protect-ffi/target",
+      "!languages/typescript/packages/protect-ffi/src/eql-v3-types",
       "!packages/eql/crates/eql-bindings/bindings",
       "!packages/eql/crates/eql-bindings/schema",
       "!packages/eql/packages/eql/src/generated",
@@ -53,7 +53,7 @@
     {
       "includes": [
         "**/src/**",
-        "examples/**",
+        "languages/typescript/examples/**",
         "!**/__tests__/**",
         "!**/*.test.ts",
         "!**/*.test-d.ts",

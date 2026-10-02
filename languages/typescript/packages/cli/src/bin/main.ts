@@ -1,0 +1,660 @@
+import { config } from 'dotenv'
+
+// Load env files in Next.js precedence order. dotenv's default behavior is to
+// not overwrite vars that are already set, so loading .env.local first means
+// its values win over .env for the same keys. Users can still set anything in
+// the real environment to override both.
+//
+// `quiet: true` suppresses dotenv v17's `injected env (N) from …` banner,
+// which it now prints to stdout on every `config()` call. Without it the CLI
+// emits four noisy, non-deterministic banner lines (with rotating tips) ahead
+// of its own output on every invocation — restoring the silent behaviour of
+// dotenv v16.
+config({ path: '.env.local', quiet: true })
+config({ path: '.env.development.local', quiet: true })
+config({ path: '.env.development', quiet: true })
+config({ path: '.env', quiet: true })
+
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import * as p from '@clack/prompts'
+import { CliExit } from '../cli/exit.js'
+import { renderCommandHelp } from '../cli/help.js'
+import { validateInstallFlags } from '../commands/db/install.js'
+// Commands that depend on @cipherstash/stack are lazy-loaded in the switch below.
+import {
+  authCommand,
+  dbStatusCommand,
+  envCommand,
+  implCommand,
+  initCommand,
+  installCommand,
+  manifestCommand,
+  planCommand,
+  preflightCommand,
+  statusCommand,
+  telemetryCommand,
+  testConnectionCommand,
+  upgradeCommand,
+  wizardCommand,
+} from '../commands/index.js'
+import { messages } from '../messages.js'
+import { pinnedSpec } from '../runtime-versions.js'
+import {
+  classifyCommand,
+  classifyErrorType,
+} from '../telemetry/classify-command.js'
+import {
+  initTelemetry,
+  maybeShowFirstRunNotice,
+  shutdownTelemetry,
+  trackCommand,
+} from '../telemetry/index.js'
+
+function isModuleNotFound(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    'code' in err &&
+    (err as { code: string }).code === 'ERR_MODULE_NOT_FOUND'
+  )
+}
+
+import {
+  detectPackageManager,
+  prodInstallCommand,
+  runnerCommand,
+} from '../commands/init/utils.js'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const pkg = JSON.parse(
+  readFileSync(join(__dirname, '../../package.json'), 'utf-8'),
+)
+
+// Detect once, share across help rendering and the requireStack hint.
+// Detection reads `npm_config_user_agent` (when the user invoked via
+// `bunx`/`pnpm dlx`/`yarn dlx`) and falls back to the lockfile in cwd.
+const PM = detectPackageManager()
+const STASH = runnerCommand(PM, 'stash')
+
+async function requireStack<T>(importFn: () => Promise<T>): Promise<T> {
+  try {
+    return await importFn()
+  } catch (err: unknown) {
+    if (isModuleNotFound(err)) {
+      p.log.error(
+        `@cipherstash/stack is required for this command.
+  Install it with: ${prodInstallCommand(PM, pinnedSpec('@cipherstash/stack'))}
+  Or run: ${STASH} init`,
+      )
+      throw new CliExit(1)
+    }
+    throw err
+  }
+}
+
+const HELP = `
+${messages.cli.versionBannerPrefix}${pkg.version}
+
+${messages.cli.usagePrefix}${STASH} <command> [options]
+
+Commands:
+  init                 Initialize CipherStash for your project
+  plan                 Draft a reviewable encryption plan at .cipherstash/plan.md
+  impl                 Execute the plan with a local agent
+  status               Displays implementation status
+  auth <subcommand>    Authenticate with CipherStash
+  wizard               AI-guided encryption setup (reads your codebase)
+  doctor               Diagnose install problems (native binaries, runtime)
+  manifest             Print the structured, versioned command surface (--json for docs/agents)
+  telemetry <sub>      Manage anonymous usage analytics (status, enable, disable)
+
+  eql preflight        Report whether this database role can install EQL, before trying
+  eql install          Scaffold stash.config.ts (if missing) and install EQL extensions
+  eql verify           Check the installed EQL surface is complete (catches partial installs)
+  eql migration        Generate an EQL v3 install migration (Drizzle, or supabase/migrations/)
+  eql repair           Repair migrations with an un-runnable ALTER COLUMN to an encrypted type
+  eql upgrade          Upgrade EQL extensions to the latest version
+  eql status           Show EQL installation status
+  eql validate         Validate your encryption schema against EQL v3
+
+  db migrate           Run pending encrypt config migrations
+  db test-connection   Test database connectivity
+
+  schema build         Build an encryption schema from your database
+
+  encrypt status       Show per-column migration status (phase, progress, drift)
+  encrypt plan         Diff intent (.cipherstash/migrations.json) vs observed state
+  encrypt backfill     Resumably encrypt plaintext into the encrypted column
+  encrypt drop         Generate a migration to drop the plaintext column
+
+  env                  Mint deployment credentials and print them as env vars
+
+Options:
+  --help, -h           Show help
+  --version, -v        Show version
+
+Run \`${STASH} <command> --help\` for a command's flags and examples
+(e.g. \`${STASH} eql install --help\`, \`${STASH} auth login --help\`).
+
+Examples:
+  ${STASH} init                     # set up CipherStash in this project
+  ${STASH} auth login               # authenticate
+  ${STASH} eql install              # install EQL extensions
+  ${STASH} manifest --json          # structured command surface for docs / agents
+`.trim()
+
+interface ParsedArgs {
+  command: string | undefined
+  subcommand: string | undefined
+  commandArgs: string[]
+  flags: Record<string, boolean>
+  values: Record<string, string>
+}
+
+function parseArgs(argv: string[]): ParsedArgs {
+  const args = argv.slice(2)
+  const command = args[0]
+  const subcommand = args[1] && !args[1].startsWith('-') ? args[1] : undefined
+  const rest = args.slice(subcommand ? 2 : 1)
+
+  const flags: Record<string, boolean> = {}
+  const values: Record<string, string> = {}
+  const commandArgs: string[] = []
+
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i]
+    if (arg.startsWith('--')) {
+      const raw = arg.slice(2)
+      const equals = raw.indexOf('=')
+      if (equals >= 0) {
+        values[raw.slice(0, equals)] = raw.slice(equals + 1)
+        continue
+      }
+      const key = raw
+      const nextArg = rest[i + 1]
+      if (nextArg !== undefined && !nextArg.startsWith('-')) {
+        values[key] = nextArg
+        i++
+      } else {
+        flags[key] = true
+      }
+    } else if (arg === '-h') {
+      // Short aliases for the two global boolean flags, normalized to their
+      // long-form keys so downstream `flags.help` / `flags.version` checks catch
+      // `stash <command> -h` too (not just a bare `stash -h`).
+      flags.help = true
+    } else if (arg === '-v') {
+      flags.version = true
+    } else {
+      commandArgs.push(arg)
+    }
+  }
+
+  return { command, subcommand, commandArgs, flags, values }
+}
+
+async function runInstall(
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+) {
+  rejectRetiredEqlFlags(flags, values)
+  await installCommand({
+    force: flags.force,
+    dryRun: flags['dry-run'],
+    supabase: flags.supabase,
+    databaseUrl: values['database-url'],
+    // An explicit `--database-url` is a one-shot install against that DB — leave
+    // the project untouched. Otherwise offer to scaffold a config for later.
+    scaffoldConfig: values['database-url'] !== undefined ? 'skip' : 'offer',
+  })
+}
+
+async function runUpgrade(
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+) {
+  rejectRetiredEqlFlags(flags, values)
+  await upgradeCommand({
+    dryRun: flags['dry-run'],
+    supabase: flags.supabase,
+    databaseUrl: values['database-url'],
+  })
+}
+
+async function runValidate(
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+) {
+  const { validateCommand } = await requireStack(
+    () => import('../commands/eql/validate.js'),
+  )
+  await validateCommand({
+    supabase: flags.supabase,
+    databaseUrl: values['database-url'],
+  })
+}
+
+function rejectRetiredEqlFlags(
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+): void {
+  const present = (key: string) =>
+    flags[key] === true || Object.hasOwn(values, key)
+  const error = validateInstallFlags({
+    eqlVersion: values['eql-version'],
+    latest: present('latest'),
+    drizzle: present('drizzle'),
+    name: values.name,
+    out: values.out,
+    migration: present('migration'),
+    direct: present('direct'),
+    migrationsDir: values['migrations-dir'],
+    excludeOperatorFamily: present('exclude-operator-family'),
+  })
+  if (error) {
+    p.log.error(error)
+    throw new CliExit(1)
+  }
+}
+
+/**
+ * `parseArgs` booleanises a `--database-url` whose value is missing (next
+ * token starts with `-`, or the flag is last), so a typo'd `--database-url
+ * --force` would silently fall back to env/config resolution — and the
+ * command would act on a different database than the user targeted, without
+ * ever naming it. Harmless for the read-only diagnostics, catastrophic for
+ * `eql install --force` (DROP SCHEMA … CASCADE, no confirmation). A valueless
+ * `--database-url` is always a typo, so `dispatch()` rejects it for EVERY
+ * command rather than per-case, keeping stdout parseable in `--json` mode
+ * (same pattern as `stash env`'s `nameMissingValue`).
+ */
+async function rejectMissingDatabaseUrlValue(
+  flags: Record<string, boolean>,
+): Promise<void> {
+  if (flags['database-url'] !== true) return
+  const message = messages.cli.databaseUrlFlagNeedsValue
+  if (flags.json) {
+    const { emitJsonError } = await import('../commands/auth/events.js')
+    emitJsonError('missing_flag_value', message)
+  } else {
+    p.log.error(message)
+  }
+  throw new CliExit(1)
+}
+
+async function runEqlCommand(
+  sub: string | undefined,
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+) {
+  switch (sub) {
+    case 'preflight':
+      await preflightCommand({
+        databaseUrl: values['database-url'],
+        json: flags.json,
+      })
+      break
+    case 'install':
+      await runInstall(flags, values)
+      break
+    case 'verify': {
+      const { verifyCommand } = await import('../commands/eql/verify.js')
+      await verifyCommand({
+        databaseUrl: values['database-url'],
+        json: flags.json,
+      })
+      break
+    }
+    case 'migration': {
+      const { eqlMigrationCommand } = await import(
+        '../commands/eql/migration.js'
+      )
+      await eqlMigrationCommand({
+        drizzle: flags.drizzle,
+        prisma: flags.prisma,
+        supabase: flags.supabase,
+        name: values.name,
+        out: values.out,
+        force: flags.force,
+        dryRun: flags['dry-run'],
+      })
+      break
+    }
+    case 'repair': {
+      const { eqlRepairCommand } = await import('../commands/eql/repair.js')
+      await eqlRepairCommand({
+        drizzle: flags.drizzle,
+        out: values.out,
+        dryRun: flags['dry-run'],
+        databaseUrl: values['database-url'],
+        migrationsTable: values['migrations-table'],
+      })
+      break
+    }
+    case 'upgrade':
+      await runUpgrade(flags, values)
+      break
+    case 'status':
+      await dbStatusCommand({ databaseUrl: values['database-url'] })
+      break
+    case 'validate':
+      await runValidate(flags, values)
+      break
+    default:
+      p.log.error(`${messages.eql.unknownSubcommand}: ${sub ?? '(none)'}`)
+      console.log()
+      console.log(HELP)
+      throw new CliExit(1)
+  }
+}
+
+async function runDbCommand(
+  sub: string | undefined,
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+) {
+  // Plumbed through every db subcommand so the URL resolver can use it as
+  // an explicit override. See languages/typescript/packages/cli/src/config/database-url.ts.
+  const databaseUrl = values['database-url']
+
+  switch (sub) {
+    // Deprecated aliases — these commands moved to the `eql` group. Keep the
+    // old spellings working so existing scripts and published docs don't
+    // break.
+    case 'install':
+      p.log.warn(messages.db.aliasDeprecated(STASH, 'install'))
+      await runInstall(flags, values)
+      break
+    case 'upgrade':
+      p.log.warn(messages.db.aliasDeprecated(STASH, 'upgrade'))
+      await runUpgrade(flags, values)
+      break
+    case 'push':
+    case 'activate': {
+      p.log.error(
+        `stash db ${sub} was removed with the EQL v2 CipherStash Proxy configuration lifecycle. EQL v3 stores query configuration in its column domains and has nothing to push or activate.`,
+      )
+      throw new CliExit(1)
+    }
+    case 'validate':
+      p.log.warn(messages.db.aliasDeprecated(STASH, 'validate'))
+      await runValidate(flags, values)
+      break
+    case 'status':
+      p.log.warn(messages.db.aliasDeprecated(STASH, 'status'))
+      await dbStatusCommand({ databaseUrl })
+      break
+    case 'test-connection':
+      await testConnectionCommand({ databaseUrl })
+      break
+    case 'migrate':
+      p.log.warn(messages.db.migrateNotImplemented(STASH))
+      break
+    default:
+      p.log.error(`${messages.db.unknownSubcommand}: ${sub ?? '(none)'}`)
+      console.log()
+      console.log(HELP)
+      throw new CliExit(1)
+  }
+}
+
+async function runEncryptCommand(
+  sub: string | undefined,
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+) {
+  switch (sub) {
+    case 'status': {
+      const { statusCommand } = await requireStack(
+        () => import('../commands/encrypt/status.js'),
+      )
+      await statusCommand()
+      break
+    }
+    case 'plan': {
+      const { planCommand } = await requireStack(
+        () => import('../commands/encrypt/plan.js'),
+      )
+      await planCommand()
+      break
+    }
+    case 'backfill': {
+      const table = requireValue(values, 'table')
+      const column = requireValue(values, 'column')
+      const { backfillCommand } = await requireStack(
+        () => import('../commands/encrypt/backfill.js'),
+      )
+      await backfillCommand({
+        table,
+        column,
+        pkColumn: values['pk-column'],
+        chunkSize: values['chunk-size']
+          ? Number(values['chunk-size'])
+          : undefined,
+        encryptedColumn: values['encrypted-column'],
+        schemaColumnKey: values['schema-column-key'],
+        confirmDualWritesDeployed: flags['confirm-dual-writes-deployed'],
+        force: flags.force,
+      })
+      break
+    }
+    case 'cutover': {
+      p.log.error(
+        '`stash encrypt cutover` was the EQL v2 rename/config-promotion command and has been removed. For EQL v3, finish the backfill, switch the application to the encrypted column by name, then run `stash encrypt drop` for the plaintext column.',
+      )
+      throw new CliExit(1)
+    }
+    case 'drop': {
+      const table = requireValue(values, 'table')
+      const column = requireValue(values, 'column')
+      const { dropCommand } = await requireStack(
+        () => import('../commands/encrypt/drop.js'),
+      )
+      await dropCommand({
+        table,
+        column,
+        migrationsDir: values['migrations-dir'],
+      })
+      break
+    }
+    default:
+      p.log.error(`Unknown encrypt subcommand: ${sub ?? '(none)'}`)
+      console.log()
+      console.log(HELP)
+      throw new CliExit(1)
+  }
+}
+
+function requireValue(values: Record<string, string>, key: string): string {
+  const v = values[key]
+  if (!v) {
+    p.log.error(`Missing required --${key} value.`)
+    throw new CliExit(1)
+  }
+  return v
+}
+
+async function runSchemaCommand(
+  sub: string | undefined,
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+) {
+  switch (sub) {
+    case 'build': {
+      const { builderCommand } = await requireStack(
+        () => import('../commands/schema/build.js'),
+      )
+      await builderCommand({
+        supabase: flags.supabase,
+        databaseUrl: values['database-url'],
+      })
+      break
+    }
+    default:
+      p.log.error(`Unknown schema subcommand: ${sub ?? '(none)'}`)
+      console.log()
+      console.log(HELP)
+      throw new CliExit(1)
+  }
+}
+
+// The CLI body. Loaded by the thin launcher in stash.ts via dynamic import so
+// that a missing native binary (evaluated when this module's command graph
+// loads) surfaces as friendly guidance rather than a raw stack trace.
+export async function run() {
+  const { command, subcommand, commandArgs, flags, values } = parseArgs(
+    process.argv,
+  )
+
+  if (!command || command === '--help' || command === '-h') {
+    console.log(HELP)
+    return
+  }
+
+  if (command === '--version' || command === '-v' || flags.version) {
+    console.log(pkg.version)
+    return
+  }
+
+  // `stash <command> --help` / `-h`: render command-specific help from the
+  // descriptor registry (e.g. `stash eql --help`, `stash eql install --help`).
+  // Falls back to the global banner when the command path matches no descriptor.
+  if (flags.help) {
+    const path = subcommand ? `${command} ${subcommand}` : command
+    console.log(renderCommandHelp(path, STASH) ?? HELP)
+    return
+  }
+
+  // Anonymous, opt-out usage analytics. The notice shows once (to stderr) and
+  // the run that shows it sends nothing; both are no-ops when telemetry is off.
+  initTelemetry(pkg.version)
+  maybeShowFirstRunNotice(STASH)
+
+  const startedAt = Date.now()
+  let success = true
+  let errorType: string | undefined
+  let exitCode: number | undefined
+
+  // Outcomes are tracked for commands that RETURN, THROW, or throw CliExit (the
+  // cooperative exit used by main.ts's own helpers and the outermost cancel
+  // handlers — see cli/exit.ts). Deep `process.exit()` calls terminate without
+  // an event by design: intercepting them globally proved unsafe (clack exits
+  // from keypress handlers; broad catches swallowed the signal).
+  try {
+    await dispatch(command, subcommand, commandArgs, flags, values)
+  } catch (err) {
+    if (err instanceof CliExit) {
+      exitCode = err.code
+      success = err.code === 0
+    } else {
+      success = false
+      errorType = classifyErrorType(err)
+      // Rethrow to bootstrap's handler ("Fatal error" + exit 1). The finally
+      // below still runs — including the awaited flush — before propagation.
+      throw err
+    }
+  } finally {
+    // Coerce command/subcommand to a known vocabulary before emit so a free-text
+    // positional (e.g. a `stash wizard "<prompt>"` description) never leaves.
+    const safe = classifyCommand(command, subcommand)
+    trackCommand({
+      command: safe.command,
+      subcommand: safe.subcommand,
+      success,
+      durationMs: Date.now() - startedAt,
+      errorType,
+    })
+    await shutdownTelemetry()
+  }
+
+  if (exitCode !== undefined) process.exit(exitCode)
+}
+
+async function dispatch(
+  command: string,
+  subcommand: string | undefined,
+  commandArgs: string[],
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+) {
+  await rejectMissingDatabaseUrlValue(flags)
+  switch (command) {
+    case 'init':
+      await initCommand(flags, values)
+      break
+    case 'plan':
+      await planCommand(flags, values)
+      break
+    case 'impl':
+      await implCommand(flags, values)
+      break
+    case 'status':
+      await statusCommand({
+        quest: flags.quest,
+        plain: flags.plain,
+        json: flags.json,
+      })
+      break
+    case 'auth': {
+      const authArgs = subcommand ? [subcommand, ...commandArgs] : commandArgs
+      await authCommand(authArgs, flags, values)
+      break
+    }
+    case 'eql':
+      await runEqlCommand(subcommand, flags, values)
+      break
+    case 'db':
+      await runDbCommand(subcommand, flags, values)
+      break
+    case 'encrypt':
+      await runEncryptCommand(subcommand, flags, values)
+      break
+    case 'schema':
+      await runSchemaCommand(subcommand, flags, values)
+      break
+    case 'env':
+      await envCommand({
+        // parseArgs puts `--write path/x` in values and bare `--write` in
+        // flags — accept both so a path after --write targets that file
+        // instead of silently printing secrets to stdout.
+        write: values.write ?? flags.write,
+        json: flags.json,
+        name: values.name,
+        // `--name` followed by another flag (or nothing) is booleanised by
+        // parseArgs; surface it as its own error instead of missing_name.
+        nameMissingValue: flags.name === true,
+        // `stash env my-app` would otherwise vanish into `subcommand`.
+        unexpectedArg: subcommand ?? commandArgs[0],
+      })
+      break
+    case 'manifest':
+      // Pure metadata (no native code) — safe to run anywhere, including when
+      // the native binary is missing.
+      manifestCommand({ json: flags.json, version: pkg.version })
+      break
+    case 'telemetry':
+      await telemetryCommand(subcommand)
+      break
+    case 'wizard': {
+      // Forward everything after `stash wizard` verbatim. The wizard package
+      // owns its own flag parsing; we don't try to interpret its surface
+      // here so it can evolve independently.
+      const wizardArgs = process.argv.slice(3)
+      await wizardCommand(wizardArgs)
+      break
+    }
+    case 'doctor': {
+      // Normally intercepted by the launcher before this module loads (so it
+      // works even when the native binary is missing); handled here too so the
+      // command still runs if run() is invoked directly.
+      const { doctorCommand } = await import('../commands/doctor/index.js')
+      await doctorCommand()
+      break
+    }
+    default:
+      console.error(`${messages.cli.unknownCommand}: ${command}\n`)
+      console.log(HELP)
+      throw new CliExit(1)
+  }
+}

@@ -1,13 +1,13 @@
 name: Tests (Rust)
 
-# The Rust half of packages/protect-ffi. Path-filtered and separate from
+# The Rust half of languages/typescript/packages/protect-ffi. Path-filtered and separate from
 # tests.yml because it is the only Rust in the repo.
 #
 # Since the absorption these checks ran NOWHERE. Phase 1 deliberately moved
 # `cargo test` + `cargo fmt --check` behind `test:cargo` and clippy behind
 # `mise run lint:rust`, to keep cargo off every contributor's default
 # `pnpm test` — but no root workflow picked them back up.
-# `packages/protect-ffi/src/lintWiring.test.ts` asserts the split from the
+# `languages/typescript/packages/protect-ffi/src/lintWiring.test.ts` asserts the split from the
 # manifest side; this is the other half, and that test now reads this file.
 #
 # The filter is broader than `crates/**`: dependency, feature and toolchain
@@ -16,17 +16,17 @@ name: Tests (Rust)
 on:
   pull_request:
     paths:
-      - 'packages/protect-ffi/crates/**'
-      - 'packages/protect-ffi/Cargo.toml'
-      - 'packages/protect-ffi/Cargo.lock'
-      - 'packages/protect-ffi/mise.toml'
-      - 'packages/protect-ffi/package.json'
+      - 'languages/typescript/packages/protect-ffi/crates/**'
+      - 'languages/typescript/packages/protect-ffi/Cargo.toml'
+      - 'languages/typescript/packages/protect-ffi/Cargo.lock'
+      - 'languages/typescript/packages/protect-ffi/mise.toml'
+      - 'languages/typescript/packages/protect-ffi/package.json'
       # Out of that package, and compiled by every check below all the same:
       # `crates/protect-ffi/Cargo.toml` carries
-      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so
+      # `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so
       # `cargo test`, `cargo fmt --check` and both clippy passes build that
       # tree. A change there can break this job in a PR touching no file under
-      # packages/protect-ffi at all. The workspace root manifest comes with it:
+      # languages/typescript/packages/protect-ffi at all. The workspace root manifest comes with it:
       # cargo reads it for the crate's workspace context, so a
       # `<key>.workspace = true` added to eql-bindings becomes a compile input
       # with no other trace. Same two entries as the native cache key in
@@ -67,7 +67,7 @@ jobs:
 
       # `working_directory` is load-bearing, not tidiness. mise reads config
       # from the current directory and its PARENTS, so an action running at the
-      # repo root never sees packages/protect-ffi/mise.toml — it would install
+      # repo root never sees languages/typescript/packages/protect-ffi/mise.toml — it would install
       # nothing and leave the config untrusted. A later `mise run` then fails
       # with "Config files ... are not trusted", which reads as a toolchain
       # problem rather than a trust one.
@@ -84,7 +84,7 @@ jobs:
       - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
           install: true
-          working_directory: packages/protect-ffi
+          working_directory: languages/typescript/packages/protect-ffi
 
       # `--all-targets` in the clippy invocation means all target KINDS (lib,
       # bins, tests, benches), not all platform targets — it lints the host and
@@ -128,5 +128,5 @@ jobs:
       # nobody runs (#145). lintWiring.test.ts asserts every `lint:rust:*` task
       # is in its `depends` list.
       - name: clippy (host + wasm32)
-        working-directory: packages/protect-ffi
+        working-directory: languages/typescript/packages/protect-ffi
         run: mise run lint:rust

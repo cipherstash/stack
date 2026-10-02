@@ -3,6 +3,9 @@ import { join } from 'node:path'
 import { workspacePackagePatterns } from '../../release-gate.mjs'
 import { REPO_ROOT } from './repo-root.mjs'
 
+/** The two roots npm packages live under: EQL's subtree, and everything else. */
+const PACKAGE_ROOTS = ['packages', 'languages/typescript/packages']
+
 /**
  * git pathspecs selecting every workspace package's `README.md`.
  *
@@ -11,7 +14,7 @@ import { REPO_ROOT } from './repo-root.mjs'
  * Both callers used to hardcode `:(glob)packages/*&#47;README.md`. `:(glob)` stops
  * `*` at a path separator — which is what makes `lib/*.ts` behave — and this
  * repo has TWO package roots nested deeper than one level:
- * `packages/protect-ffi/platforms/*` and `packages/eql/packages/*`. So the
+ * `languages/typescript/packages/protect-ffi/platforms/*` and `packages/eql/packages/*`. So the
  * hardcoded spec selected `packages/eql/README.md`, the 15 KB subtree root that
  * ships in no tarball, and never `packages/eql/packages/eql/README.md`, the
  * 518-byte file listed in that package's `files`. Same for the six per-platform
@@ -24,18 +27,20 @@ import { REPO_ROOT } from './repo-root.mjs'
  * root is covered the day it lands, rather than the day someone remembers this
  * file. Same reasoning, and the same parser, as `workspaceManifests()`.
  *
- * Narrowed to `packages/` deliberately: `examples/*` and `e2e` are workspace
- * members too, but they are private and their READMEs are not shipped to
+ * Narrowed to the two package roots deliberately:
+ * `languages/typescript/examples/*` and `e2e` are workspace members too, but they are private and their READMEs are not shipped to
  * anyone. The callers are guards on SHIPPED text.
  */
 export function packageReadmePathspecs() {
   const patterns = workspacePackagePatterns(
     readFileSync(join(REPO_ROOT, 'pnpm-workspace.yaml'), 'utf8'),
-  ).filter((pattern) => pattern.startsWith('packages/'))
+  ).filter((pattern) =>
+    PACKAGE_ROOTS.some((root) => pattern.startsWith(`${root}/`)),
+  )
 
   if (patterns.length === 0) {
     throw new Error(
-      'pnpm-workspace.yaml lists no `packages/` patterns — either the layout moved or this derivation broke. Failing rather than returning an empty pathspec list, which `git ls-files` would answer with the whole tree.',
+      'pnpm-workspace.yaml lists no `packages/` or `languages/typescript/packages/` patterns — either the layout moved or this derivation broke. Failing rather than returning an empty pathspec list, which `git ls-files` would answer with the whole tree.',
     )
   }
 

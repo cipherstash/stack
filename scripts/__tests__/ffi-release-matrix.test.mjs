@@ -15,14 +15,14 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * matrix got right for upstream and wrong here — see the header of
  * `scripts/ffi-release-matrix.mjs`.
  *
- * These checks are derived from `packages/protect-ffi/package.json` rather than
+ * These checks are derived from `languages/typescript/packages/protect-ffi/package.json` rather than
  * restated: the script the matrix names must exist, and the log file it names
  * must be the one that script actually redirects to. Rename a script or move a
  * redirect and this fails, which is the only way the matrix stays true to the
  * package.
  */
 
-const FFI = join(REPO_ROOT, 'packages/protect-ffi')
+const FFI = join(REPO_ROOT, 'languages/typescript/packages/protect-ffi')
 const pkg = JSON.parse(readFileSync(join(FFI, 'package.json'), 'utf8'))
 
 /**
@@ -103,7 +103,7 @@ describe('release matrix', () => {
     for (const entry of MATRIX) {
       expect(
         pkg.scripts[entry.script],
-        `${entry.platform} selects "${entry.script}", which packages/protect-ffi/package.json does not define`,
+        `${entry.platform} selects "${entry.script}", which languages/typescript/packages/protect-ffi/package.json does not define`,
       ).toBeDefined()
     }
   })

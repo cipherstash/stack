@@ -14,7 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(__dirname, '../..')
-const EXAMPLE_DIR = resolve(REPO_ROOT, 'examples/prisma')
+const EXAMPLE_DIR = resolve(REPO_ROOT, 'languages/typescript/examples/prisma')
 
 const authConfigured = (() => {
   if (process.env.CS_CLIENT_ID && process.env.CS_CLIENT_KEY) return true
@@ -119,7 +119,7 @@ function parseRunItCommands(readme: string): string[] {
   if (!match) {
     throw new Error(
       'parseRunItCommands: could not locate the bash code fence under `## Run it` in the README. ' +
-        'Check examples/prisma/README.md structure (expected `## Run it` heading followed by a ```bash fenced block).',
+        'Check languages/typescript/examples/prisma/README.md structure (expected `## Run it` heading followed by a ```bash fenced block).',
     )
   }
   return match[1]!
@@ -160,7 +160,7 @@ const outcomes = new Map<string, StepResult>()
 let snapDir: string
 
 describe.skipIf(!authConfigured)(
-  'examples/prisma README "Run it" walkthrough',
+  'languages/typescript/examples/prisma README "Run it" walkthrough',
   () => {
     beforeAll(async () => {
       snapDir = await snapshotTransientOutputs()

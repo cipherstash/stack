@@ -5,14 +5,17 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { createBaseProvider } from '../../packages/cli/src/commands/init/providers/base.js'
-import { createDrizzleProvider } from '../../packages/cli/src/commands/init/providers/drizzle.js'
-import { createSupabaseProvider } from '../../packages/cli/src/commands/init/providers/supabase.js'
-import type { PackageManager } from '../../packages/cli/src/commands/init/utils.js'
+import { createBaseProvider } from '../../languages/typescript/packages/cli/src/commands/init/providers/base.js'
+import { createDrizzleProvider } from '../../languages/typescript/packages/cli/src/commands/init/providers/drizzle.js'
+import { createSupabaseProvider } from '../../languages/typescript/packages/cli/src/commands/init/providers/supabase.js'
+import type { PackageManager } from '../../languages/typescript/packages/cli/src/commands/init/utils.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(__dirname, '../..')
-const WIZARD_BIN = resolve(REPO_ROOT, 'packages/wizard/dist/bin/wizard.js')
+const WIZARD_BIN = resolve(
+  REPO_ROOT,
+  'languages/typescript/packages/wizard/dist/bin/wizard.js',
+)
 
 const PMS: PackageManager[] = ['npm', 'bun', 'pnpm', 'yarn']
 const RUNNER: Record<PackageManager, string> = {
@@ -23,8 +26,14 @@ const RUNNER: Record<PackageManager, string> = {
 }
 
 const BIN = {
-  cli: resolve(REPO_ROOT, 'packages/cli/dist/bin/stash.js'),
-  wizard: resolve(REPO_ROOT, 'packages/wizard/dist/bin/wizard.js'),
+  cli: resolve(
+    REPO_ROOT,
+    'languages/typescript/packages/cli/dist/bin/stash.js',
+  ),
+  wizard: resolve(
+    REPO_ROOT,
+    'languages/typescript/packages/wizard/dist/bin/wizard.js',
+  ),
   // The legacy @cipherstash/protect `stash` bin and the @cipherstash/drizzle
   // `generate-eql-migration` bin are both gone with their packages
   // (@cipherstash/stack and @cipherstash/stack-drizzle are the successors).

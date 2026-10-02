@@ -7,15 +7,17 @@ const REPO_ROOT = resolve(import.meta.dirname, '..')
 // Files that legitimately contain a `npx` literal — keep this list
 // short and explicit so additions require deliberate review.
 const ALLOWLISTED_PATHS = new Set([
-  'packages/wizard/src/lib/detect.ts', // npm row of the PM table
-  'packages/cli/src/commands/init/utils.ts', // runnerCommand `case 'npm'`
+  'languages/typescript/packages/wizard/src/lib/detect.ts', // npm row of the PM table
+  'languages/typescript/packages/cli/src/commands/init/utils.ts', // runnerCommand `case 'npm'`
   'scripts/lint-no-hardcoded-runners.mjs', // this script's own docs
 ])
 
-// Default scan root; override with argv[2] for tests.
+// Default scan roots; override with argv[2] for tests. Every npm package but
+// EQL lives under `languages/typescript/packages`; EQL's subtree stays under
+// `packages`.
 const TARGETS = process.argv.slice(2).length
   ? process.argv.slice(2)
-  : ['packages']
+  : ['languages/typescript/packages', 'packages']
 
 // Catches:
 //   - `'npx'` / `"npx"` / `` `npx `` — bare-quoted, e.g. `?? 'npx'` or `runner = 'npx'`
@@ -186,8 +188,8 @@ if (offenders.length > 0) {
   for (const o of offenders) console.error(`  ${o}`)
   console.error(
     '\nUse the detected package manager instead. See ' +
-      'packages/cli/src/commands/init/utils.ts (runnerCommand) and ' +
-      'packages/wizard/src/lib/detect.ts (detectPackageManager).',
+      'languages/typescript/packages/cli/src/commands/init/utils.ts (runnerCommand) and ' +
+      'languages/typescript/packages/wizard/src/lib/detect.ts (detectPackageManager).',
   )
   process.exit(1)
 }

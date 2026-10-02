@@ -124,7 +124,7 @@ separate design spec plus the re-vendored OPE bundle, not as part of this change
 
 ## What we changed in this repo
 
-- `packages/stack/__tests__/schema-v3-pg.test.ts`: corrected the misleading
+- `languages/typescript/packages/stack/__tests__/schema-v3-pg.test.ts`: corrected the misleading
   comment on the range test and added an explicit ORE-total-order proof using
   pairwise `eql_v3.lt` (the only ORE-correct path on the current bundle), so the
   guarantee is asserted positively rather than merely avoided. These assertions

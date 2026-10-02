@@ -18,7 +18,7 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  * It did. Both prisma workflows carried "the step itself is only ever exercised
  * by the push-to-main run", written when the protect-ffi inputs were about to be
  * added to the `push` filter, and left in place after they were added to the
- * `pull_request` filter as well. A PR touching `packages/protect-ffi/src/**` has
+ * `pull_request` filter as well. A PR touching `languages/typescript/packages/protect-ffi/src/**` has
  * run both workflows since the day those entries landed. The comment told you it
  * could not — which is worse than no comment, because the next person reasoning
  * about protect-ffi coverage on PRs reads it and concludes there is none, and
@@ -64,7 +64,7 @@ const BUILD_FFI_ACTION = '.github/actions/build-ffi-binding'
  * binding": anything in them must miss the cache and recompile. Reusing them
  * means this scope follows the action. Add a build input to the key and the set
  * of workflows held to the invariant below grows with it; the alternative — a
- * hardcoded `packages/protect-ffi/**` — would keep passing while quietly
+ * hardcoded `languages/typescript/packages/protect-ffi/**` — would keep passing while quietly
  * describing a different package than the one CI builds.
  *
  * The action's own directory is in the set for the same reason it is in both
@@ -91,9 +91,9 @@ const BINDING_INPUTS = bindingBuildInputs()
  * Do a `paths:` entry and a build input describe overlapping trees?
  *
  * Overlap in EITHER direction, because both sides are globs and either can be
- * the broader one: the filter may say `packages/protect-ffi/src/**` against an
- * input file, or `packages/protect-ffi/crates/protect-ffi/**` against the
- * input glob `packages/protect-ffi/crates/**`. Both mean a change to the
+ * the broader one: the filter may say `languages/typescript/packages/protect-ffi/src/**` against an
+ * input file, or `languages/typescript/packages/protect-ffi/crates/protect-ffi/**` against the
+ * input glob `languages/typescript/packages/protect-ffi/crates/**`. Both mean a change to the
  * binding can trigger the workflow, which is the only question being asked.
  */
 function overlaps(entry, input) {
@@ -235,7 +235,7 @@ describe('workflow trigger comments match the trigger', () => {
     expect(
       BINDING_INPUTS,
       `No \`hashFiles(...)\` globs were parsed out of ${BUILD_FFI_ACTION}/action.yml, so "a change to the protect-ffi binding" resolves to nothing and every workflow falls out of scope. Either the cache steps moved (follow them), or the key syntax changed (update bindingBuildInputs).`,
-    ).toContain('packages/protect-ffi/crates/**')
+    ).toContain('languages/typescript/packages/protect-ffi/crates/**')
     expect(BINDING_INPUTS).toContain(`${BUILD_FFI_ACTION}/**`)
   })
 

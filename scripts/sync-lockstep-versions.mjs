@@ -17,7 +17,7 @@
 //      crate and the npm package — UNLESS the tree already carries those assets
 //      at V, in which case step 4 is skipped. See `eqlLockstepSkew` for why.
 //
-// Step 3 is not decoration. Step 2 moves a version that `packages/protect-ffi`'s
+// Step 3 is not decoration. Step 2 moves a version that `languages/typescript/packages/protect-ffi`'s
 // SEPARATE cargo workspace has pinned in its own lock, and nothing else updates
 // it — `packages/eql`'s lock is refreshed as a side effect of step 4, that one
 // by nothing at all. Since no command in this repo passes `--locked`, the stale
@@ -75,10 +75,10 @@ const SKIP_DIRS = new Set([
  * tree, repo-relative.
  *
  * DISCOVERED, not listed. The crate is consumed across cargo workspace
- * boundaries — `packages/protect-ffi/crates/protect-ffi/Cargo.toml` reaches it
- * by `path = "../../../eql/crates/eql-bindings"` — and a hardcoded list is
+ * boundaries — `languages/typescript/packages/protect-ffi/crates/protect-ffi/Cargo.toml` reaches it
+ * by `path = "../../../../../../packages/eql/crates/eql-bindings"` — and a hardcoded list is
  * exactly what was missing before: `packages/eql`'s own lock is refreshed as a
- * side effect of the SQL build below, `packages/protect-ffi`'s was refreshed by
+ * side effect of the SQL build below, `languages/typescript/packages/protect-ffi`'s was refreshed by
  * nothing, and no one noticed because no command in this repo passes
  * `--locked`.
  *
@@ -126,7 +126,7 @@ export function cargoLockWorkspaces(root) {
  * path, so the flag reads as free — but `cargo update -p X` does not update X
  * in isolation. It re-resolves the whole graph and rewrites a complete lock,
  * and offline that means every OTHER package has to be served from the local
- * registry cache; `packages/protect-ffi` has 167 of them. The release job has
+ * registry cache; `languages/typescript/packages/protect-ffi` has 167 of them. The release job has
  * no such cache — `jdx/mise-action` runs there with `cache: false`, installing
  * toolchains and populating nothing under `~/.cargo/registry`, and
  * `scripts/lint-no-workflow-caching.mjs` forbids a cache restore anywhere an

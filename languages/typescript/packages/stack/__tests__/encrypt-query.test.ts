@@ -1,0 +1,740 @@
+import 'dotenv/config'
+import { beforeAll, describe, expect, it } from 'vitest'
+import type { EncryptionClient } from '@/encryption'
+import { EncryptionErrorTypes } from '@/errors'
+import { Encryption } from '@/index'
+import {
+  articles,
+  createMockLockContext,
+  expectFailure,
+  metadata,
+  products,
+  skipWithoutLiveCredentials,
+  unwrapResult,
+  users,
+} from './fixtures'
+
+describe.skipIf(skipWithoutLiveCredentials)('encryptQuery', () => {
+  let protectClient: EncryptionClient
+
+  beforeAll(async () => {
+    protectClient = await Encryption({
+      schemas: [users, articles, products, metadata],
+    })
+  })
+
+  describe('single value encryption with explicit queryType', () => {
+    it('encrypts for equality query type', async () => {
+      const result = await protectClient.encryptQuery('test@example.com', {
+        column: users.email,
+        table: users,
+        queryType: 'equality',
+      })
+
+      const data = unwrapResult(result)
+
+      expect(data).toMatchObject({
+        i: { t: 'users', c: 'email' },
+        v: 3,
+      })
+      expect(data).toHaveProperty('hm')
+    }, 30000)
+
+    it('encrypts for freeTextSearch query type', async () => {
+      const result = await protectClient.encryptQuery('hello world', {
+        column: users.bio,
+        table: users,
+        queryType: 'freeTextSearch',
+      })
+
+      const data = unwrapResult(result)
+
+      expect(data).toMatchObject({
+        i: { t: 'users', c: 'bio' },
+        v: 3,
+      })
+      expect(data).toHaveProperty('bf')
+    }, 30000)
+
+    it('encrypts for orderAndRange query type', async () => {
+      const result = await protectClient.encryptQuery(25, {
+        column: users.age,
+        table: users,
+        queryType: 'orderAndRange',
+      })
+
+      const data = unwrapResult(result)
+
+      expect(data).toMatchObject({
+        i: { t: 'users', c: 'age' },
+        v: 3,
+      })
+      expect(data).toHaveProperty('op')
+    }, 30000)
+
+    it('answers equality through the ordering term on an order-capable column', async () => {
+      // A v3 numeric `_ord` domain carries no `hm`. Equality resolves to the
+      // same CLLW-OPE term `orderAndRange` emits — the two are distinguished by
+      // the SQL comparison operator (`=` vs `>=`), not by the ciphertext — so
+      // the default `equality → unique` mapping would wrongly reject it.
+      // Asserting `hm` is ABSENT is the load-bearing half: it fails if a future
+      // change gives the domain a `unique` index and quietly routes equality
+      // back through the HMAC.
+      const result = await protectClient.encryptQuery(25, {
+        column: users.age,
+        table: users,
+        queryType: 'equality',
+      })
+
+      const data = unwrapResult(result)
+      expect(data).toHaveProperty('op')
+      expect(data).not.toHaveProperty('hm')
+    }, 30000)
+
+    it('emits the block-ORE term on an _ord_ore domain', async () => {
+      // The other v3 ordering flavour: `_ord_ore` domains stay block-ORE (`ore`
+      // index, `ob` term) where `_ord` is CLLW-OPE. This is the explicit-
+      // queryType path, where `queryTypeToFfi` maps orderAndRange to a static
+      // `ore` and `resolveIndexType` then swaps to `ope` only when the column
+      // lacks `ore` — so this is the case where that swap must NOT fire. The
+      // auto-inference test below never reaches that branch.
+      const result = await protectClient.encryptQuery(99.99, {
+        column: products.price,
+        table: products,
+        queryType: 'orderAndRange',
+      })
+
+      const data = unwrapResult(result)
+      expect(data).toHaveProperty('ob')
+      expect(data).not.toHaveProperty('op')
+    }, 30000)
+  })
+
+  describe('auto-inference when queryType omitted', () => {
+    it('auto-infers equality for column with .equality()', async () => {
+      const result = await protectClient.encryptQuery('test@example.com', {
+        column: users.email,
+        table: users,
+      })
+
+      const data = unwrapResult(result)
+      expect(data).toHaveProperty('hm')
+    }, 30000)
+
+    it('auto-infers freeTextSearch for match-only column', async () => {
+      const result = await protectClient.encryptQuery('search content', {
+        column: articles.content,
+        table: articles,
+      })
+
+      const data = unwrapResult(result)
+      expect(data).toHaveProperty('bf')
+    }, 30000)
+
+    it('auto-infers orderAndRange for ore-only column', async () => {
+      const result = await protectClient.encryptQuery(99.99, {
+        column: products.price,
+        table: products,
+      })
+
+      const data = unwrapResult(result)
+      expect(data).toHaveProperty('ob')
+    }, 30000)
+  })
+
+  describe('edge cases', () => {
+    it('rejects NaN values', async () => {
+      const result = await protectClient.encryptQuery(Number.NaN, {
+        column: users.age,
+        table: users,
+        queryType: 'orderAndRange',
+      })
+
+      expectFailure(result, 'NaN')
+    }, 30000)
+
+    it('rejects Infinity values', async () => {
+      const result = await protectClient.encryptQuery(
+        Number.POSITIVE_INFINITY,
+        {
+          column: users.age,
+          table: users,
+          queryType: 'orderAndRange',
+        },
+      )
+
+      expectFailure(result, 'Infinity')
+    }, 30000)
+
+    it('rejects negative Infinity values', async () => {
+      const result = await protectClient.encryptQuery(
+        Number.NEGATIVE_INFINITY,
+        {
+          column: users.age,
+          table: users,
+          queryType: 'orderAndRange',
+        },
+      )
+
+      expectFailure(result, 'Infinity')
+    }, 30000)
+  })
+
+  describe('validation errors', () => {
+    it('fails when queryType does not match column config', async () => {
+      const result = await protectClient.encryptQuery('test@example.com', {
+        column: users.email,
+        table: users,
+        queryType: 'freeTextSearch', // email only has equality
+      })
+
+      expectFailure(result, 'not configured')
+    }, 30000)
+
+    it('fails when column has no indexes configured', async () => {
+      const result = await protectClient.encryptQuery('raw data', {
+        column: metadata.raw,
+        table: metadata,
+      })
+
+      expectFailure(result, 'no indexes configured')
+    }, 30000)
+
+    it('provides descriptive error for queryType mismatch', async () => {
+      // A match-only column genuinely cannot answer equality: it has no
+      // `unique` index and no ordering index to resolve through. (An
+      // order-capable column DOES answer equality — see "answers equality
+      // through the ordering term" above — so it can't carry this assertion.)
+      const result = await protectClient.encryptQuery('anything', {
+        column: articles.content,
+        table: articles,
+        queryType: 'equality',
+      })
+
+      expectFailure(result, 'unique')
+      expectFailure(
+        result,
+        'not configured',
+        EncryptionErrorTypes.EncryptionError,
+      )
+    }, 30000)
+  })
+
+  describe('value/index type compatibility', () => {
+    it('fails when encrypting number with match index (explicit queryType)', async () => {
+      const result = await protectClient.encryptQuery(123, {
+        column: articles.content, // match-only column
+        table: articles,
+        queryType: 'freeTextSearch',
+      })
+
+      expectFailure(result, 'match')
+      expectFailure(result, 'numeric')
+    }, 30000)
+
+    it('fails when encrypting number with auto-inferred match index', async () => {
+      const result = await protectClient.encryptQuery(123, {
+        column: articles.content, // match-only column, will infer 'match'
+        table: articles,
+      })
+
+      expectFailure(result, 'match')
+    }, 30000)
+
+    it('fails in batch when number used with match index', async () => {
+      const result = await protectClient.encryptQuery([
+        { value: 123, column: articles.content, table: articles },
+      ])
+
+      expectFailure(result, 'match')
+    }, 30000)
+
+    it('allows string with match index', async () => {
+      const result = await protectClient.encryptQuery('search text', {
+        column: articles.content,
+        table: articles,
+      })
+
+      const data = unwrapResult(result)
+      expect(data).toHaveProperty('bf') // bloom filter
+    }, 30000)
+
+    it('allows number with an ordering index', async () => {
+      const result = await protectClient.encryptQuery(42, {
+        column: users.age,
+        table: users,
+        queryType: 'orderAndRange',
+      })
+
+      const data = unwrapResult(result)
+      expect(data).toHaveProperty('op') // CLLW-OPE ordering term
+    }, 30000)
+  })
+
+  describe('numeric edge cases', () => {
+    it('encrypts MAX_SAFE_INTEGER', async () => {
+      const result = await protectClient.encryptQuery(Number.MAX_SAFE_INTEGER, {
+        column: users.age,
+        table: users,
+        queryType: 'orderAndRange',
+      })
+
+      const data = unwrapResult(result)
+      expect(data).toMatchObject({
+        i: { t: 'users', c: 'age' },
+        v: 3,
+      })
+      expect(data).toHaveProperty('op')
+    }, 30000)
+
+    it('encrypts MIN_SAFE_INTEGER', async () => {
+      const result = await protectClient.encryptQuery(Number.MIN_SAFE_INTEGER, {
+        column: users.age,
+        table: users,
+        queryType: 'orderAndRange',
+      })
+
+      const data = unwrapResult(result)
+      expect(data).toMatchObject({
+        i: { t: 'users', c: 'age' },
+        v: 3,
+      })
+      expect(data).toHaveProperty('op')
+    }, 30000)
+
+    it('encrypts negative zero', async () => {
+      const result = await protectClient.encryptQuery(-0, {
+        column: users.age,
+        table: users,
+        queryType: 'orderAndRange',
+      })
+
+      const data = unwrapResult(result)
+      expect(data).toHaveProperty('op')
+    }, 30000)
+  })
+
+  describe('string edge cases', () => {
+    it('encrypts empty string', async () => {
+      const result = await protectClient.encryptQuery('', {
+        column: users.email,
+        table: users,
+        queryType: 'equality',
+      })
+
+      const data = unwrapResult(result)
+      expect(data).toMatchObject({
+        i: { t: 'users', c: 'email' },
+        v: 3,
+      })
+      expect(data).toHaveProperty('hm')
+    }, 30000)
+
+    it('encrypts unicode/emoji strings', async () => {
+      const result = await protectClient.encryptQuery('Hello 世界 🌍🚀', {
+        column: users.bio,
+        table: users,
+        queryType: 'freeTextSearch',
+      })
+
+      const data = unwrapResult(result)
+      expect(data).toMatchObject({
+        i: { t: 'users', c: 'bio' },
+        v: 3,
+      })
+      expect(data).toHaveProperty('bf')
+    }, 30000)
+
+    it('encrypts strings with SQL special characters', async () => {
+      const result = await protectClient.encryptQuery(
+        "'; DROP TABLE users; --",
+        {
+          column: users.email,
+          table: users,
+          queryType: 'equality',
+        },
+      )
+
+      const data = unwrapResult(result)
+      expect(data).toMatchObject({
+        i: { t: 'users', c: 'email' },
+        v: 3,
+      })
+      expect(data).toHaveProperty('hm')
+    }, 30000)
+  })
+
+  describe('encryptQuery bulk (array overload)', () => {
+    it('encrypts multiple terms in batch', async () => {
+      const result = await protectClient.encryptQuery([
+        {
+          value: 'user@example.com',
+          column: users.email,
+          table: users,
+          queryType: 'equality',
+        },
+        {
+          value: 'search term',
+          column: users.bio,
+          table: users,
+          queryType: 'freeTextSearch',
+        },
+        {
+          value: 42,
+          column: users.age,
+          table: users,
+          queryType: 'orderAndRange',
+        },
+      ])
+
+      const data = unwrapResult(result)
+
+      expect(data).toHaveLength(3)
+      expect(data[0]).toMatchObject({ i: { t: 'users', c: 'email' } })
+      expect(data[1]).toMatchObject({ i: { t: 'users', c: 'bio' } })
+      expect(data[2]).toMatchObject({ i: { t: 'users', c: 'age' } })
+    }, 30000)
+
+    it('handles empty array', async () => {
+      // Empty arrays without opts are treated as empty batch for backward compatibility
+      const result = await protectClient.encryptQuery([])
+
+      const data = unwrapResult(result)
+      expect(data).toEqual([])
+    }, 30000)
+
+    it('auto-infers queryType when omitted', async () => {
+      const result = await protectClient.encryptQuery([
+        { value: 'user@example.com', column: users.email, table: users },
+        { value: 42, column: users.age, table: users },
+      ])
+
+      const data = unwrapResult(result)
+
+      expect(data).toHaveLength(2)
+      expect(data[0]).toHaveProperty('hm')
+      expect(data[1]).toHaveProperty('op')
+    }, 30000)
+
+    it('rejects NaN/Infinity values in batch', async () => {
+      const result = await protectClient.encryptQuery([
+        {
+          value: Number.NaN,
+          column: users.age,
+          table: users,
+          queryType: 'orderAndRange',
+        },
+        {
+          value: Number.POSITIVE_INFINITY,
+          column: users.age,
+          table: users,
+          queryType: 'orderAndRange',
+        },
+      ])
+
+      expect(result.failure).toBeDefined()
+    }, 30000)
+
+    it('rejects negative Infinity in batch', async () => {
+      const result = await protectClient.encryptQuery([
+        {
+          value: Number.NEGATIVE_INFINITY,
+          column: users.age,
+          table: users,
+          queryType: 'orderAndRange',
+        },
+      ])
+
+      expectFailure(result, 'Infinity')
+    }, 30000)
+  })
+
+  describe('bulk index preservation', () => {
+    it('handles single-item array', async () => {
+      const result = await protectClient.encryptQuery([
+        {
+          value: 'single@example.com',
+          column: users.email,
+          table: users,
+          queryType: 'equality',
+        },
+      ])
+
+      const data = unwrapResult(result)
+
+      expect(data).toHaveLength(1)
+      expect(data[0]).toMatchObject({ i: { t: 'users', c: 'email' } })
+      expect(data[0]).toHaveProperty('hm')
+    }, 30000)
+  })
+
+  describe('audit support', () => {
+    it('passes audit metadata for single query', async () => {
+      const result = await protectClient
+        .encryptQuery('test@example.com', {
+          column: users.email,
+          table: users,
+          queryType: 'equality',
+        })
+        .audit({ metadata: { userId: 'test-user' } })
+
+      const data = unwrapResult(result)
+      expect(data).toMatchObject({ i: { t: 'users', c: 'email' } })
+    }, 30000)
+
+    it('passes audit metadata for bulk query', async () => {
+      const result = await protectClient
+        .encryptQuery([
+          {
+            value: 'test@example.com',
+            column: users.email,
+            table: users,
+            queryType: 'equality',
+          },
+        ])
+        .audit({ metadata: { userId: 'test-user' } })
+
+      const data = unwrapResult(result)
+      expect(data).toHaveLength(1)
+    }, 30000)
+  })
+
+  describe('returnType formatting', () => {
+    it('returns Encrypted by default (no returnType)', async () => {
+      const result = await protectClient.encryptQuery([
+        {
+          value: 'test@example.com',
+          column: users.email,
+          table: users,
+          queryType: 'equality',
+        },
+      ])
+
+      const data = unwrapResult(result)
+
+      expect(data).toHaveLength(1)
+      expect(data[0]).toMatchObject({
+        i: { t: 'users', c: 'email' },
+        v: 3,
+      })
+      expect(typeof data[0]).toBe('object')
+    }, 30000)
+
+    it('returns composite-literal format when specified', async () => {
+      const result = await protectClient.encryptQuery([
+        {
+          value: 'test@example.com',
+          column: users.email,
+          table: users,
+          queryType: 'equality',
+          returnType: 'composite-literal',
+        },
+      ])
+
+      const data = unwrapResult(result)
+
+      expect(data).toHaveLength(1)
+      expect(typeof data[0]).toBe('string')
+      // Format: ("json")
+      expect(data[0]).toMatch(/^\(".*"\)$/)
+    }, 30000)
+
+    it('returns escaped-composite-literal format when specified', async () => {
+      const result = await protectClient.encryptQuery([
+        {
+          value: 'test@example.com',
+          column: users.email,
+          table: users,
+          queryType: 'equality',
+          returnType: 'escaped-composite-literal',
+        },
+      ])
+
+      const data = unwrapResult(result)
+
+      expect(data).toHaveLength(1)
+      expect(typeof data[0]).toBe('string')
+      // Format: "(\"json\")" - outer quotes with escaped inner quotes
+      expect(data[0]).toMatch(/^"\(.*\)"$/)
+    }, 30000)
+
+    it('returns eql format when explicitly specified', async () => {
+      const result = await protectClient.encryptQuery([
+        {
+          value: 'test@example.com',
+          column: users.email,
+          table: users,
+          queryType: 'equality',
+          returnType: 'eql',
+        },
+      ])
+
+      const data = unwrapResult(result)
+
+      expect(data).toHaveLength(1)
+      expect(data[0]).toMatchObject({
+        i: { t: 'users', c: 'email' },
+        v: 3,
+      })
+      expect(typeof data[0]).toBe('object')
+    }, 30000)
+
+    it('handles mixed returnType values in same batch', async () => {
+      const result = await protectClient.encryptQuery([
+        {
+          value: 'test@example.com',
+          column: users.email,
+          table: users,
+          queryType: 'equality',
+        }, // default
+        {
+          value: 'search term',
+          column: users.bio,
+          table: users,
+          queryType: 'freeTextSearch',
+          returnType: 'composite-literal',
+        },
+        {
+          value: 42,
+          column: users.age,
+          table: users,
+          queryType: 'orderAndRange',
+          returnType: 'escaped-composite-literal',
+        },
+      ])
+
+      const data = unwrapResult(result)
+
+      expect(data).toHaveLength(3)
+
+      // First: default (Encrypted object)
+      expect(typeof data[0]).toBe('object')
+      expect(data[0]).toMatchObject({ i: { t: 'users', c: 'email' } })
+
+      // Second: composite-literal (string)
+      expect(typeof data[1]).toBe('string')
+      expect(data[1]).toMatch(/^\(".*"\)$/)
+
+      // Third: escaped-composite-literal (string)
+      expect(typeof data[2]).toBe('string')
+      expect(data[2]).toMatch(/^"\(.*\)"$/)
+    }, 30000)
+  })
+
+  describe('single-value returnType formatting', () => {
+    it('returns Encrypted by default (no returnType)', async () => {
+      const result = await protectClient.encryptQuery('test@example.com', {
+        column: users.email,
+        table: users,
+        queryType: 'equality',
+      })
+
+      const data = unwrapResult(result)
+
+      expect(data).toMatchObject({
+        i: { t: 'users', c: 'email' },
+        v: 3,
+      })
+      expect(typeof data).toBe('object')
+    }, 30000)
+
+    it('returns composite-literal format when specified', async () => {
+      const result = await protectClient.encryptQuery('test@example.com', {
+        column: users.email,
+        table: users,
+        queryType: 'equality',
+        returnType: 'composite-literal',
+      })
+
+      const data = unwrapResult(result)
+
+      expect(typeof data).toBe('string')
+      // Format: ("json")
+      expect(data).toMatch(/^\(".*"\)$/)
+    }, 30000)
+
+    it('returns escaped-composite-literal format when specified', async () => {
+      const result = await protectClient.encryptQuery('test@example.com', {
+        column: users.email,
+        table: users,
+        queryType: 'equality',
+        returnType: 'escaped-composite-literal',
+      })
+
+      const data = unwrapResult(result)
+
+      expect(typeof data).toBe('string')
+      // Format: "(\"json\")" - outer quotes with escaped inner quotes
+      expect(data).toMatch(/^"\(.*\)"$/)
+    }, 30000)
+
+    it('returns eql format when explicitly specified', async () => {
+      const result = await protectClient.encryptQuery('test@example.com', {
+        column: users.email,
+        table: users,
+        queryType: 'equality',
+        returnType: 'eql',
+      })
+
+      const data = unwrapResult(result)
+
+      expect(data).toMatchObject({
+        i: { t: 'users', c: 'email' },
+        v: 3,
+      })
+      expect(typeof data).toBe('object')
+    }, 30000)
+  })
+
+  // These cover the SDK surface only — that `.withLockContext()` returns an
+  // executable operation. They deliberately do NOT execute.
+  //
+  // Two tests that DID execute were removed (see below). A lock context binds a
+  // data key to an end user's identity claim, which requires an
+  // `OidcFederationStrategy`-authenticated client — `skills/stash-encryption`
+  // states that a service credential "cannot be used with a lock context". This
+  // suite builds its client from the `CS_*` service credentials, so the claim
+  // could never resolve, and ZeroKMS rejects the request on the EQL v3 wire.
+  //
+  // They were never meaningful. Introduced in fea303d0, they passed against the
+  // live service while forwarding a literal `accessToken: 'mock-token'` — proof
+  // that nothing was authorising the binding. Their assertions (`i`, `v`, `hm`,
+  // `op`) are identical to the non-lock-context tests above, so they could not
+  // distinguish a bound claim from an ignored one. And per 8d707cc9, query terms
+  // are not identity-bound at all: the `hm` term is workspace-scoped and matches
+  // with or without a lock context — the identity boundary is enforced at
+  // DECRYPT.
+  //
+  // Real coverage lives where the claim can actually resolve, under
+  // CLERK_MACHINE_TOKEN + OidcFederationStrategy:
+  //   languages/typescript/packages/stack/integration/identity/matrix-identity.integration.test.ts
+  //   languages/typescript/packages/stack-drizzle/integration/lock-context.integration.test.ts
+  describe('LockContext support', () => {
+    it('single query with a lock context builds an executable operation', async () => {
+      const operation = protectClient.encryptQuery('test@example.com', {
+        column: users.email,
+        table: users,
+        queryType: 'equality',
+      })
+
+      const withContext = operation.withLockContext(createMockLockContext())
+      expect(withContext).toHaveProperty('execute')
+      expect(typeof withContext.execute).toBe('function')
+    }, 30000)
+
+    it('bulk query with a lock context builds an executable operation', async () => {
+      const operation = protectClient.encryptQuery([
+        {
+          value: 'test@example.com',
+          column: users.email,
+          table: users,
+          queryType: 'equality',
+        },
+      ])
+
+      const withContext = operation.withLockContext(createMockLockContext())
+      expect(withContext).toHaveProperty('execute')
+      expect(typeof withContext.execute).toBe('function')
+    }, 30000)
+  })
+})

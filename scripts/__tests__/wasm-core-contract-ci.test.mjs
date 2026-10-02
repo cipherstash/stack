@@ -1,27 +1,27 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import stackVitestConfig from '../../packages/stack/vitest.config.ts'
+import stackVitestConfig from '../../languages/typescript/packages/stack/vitest.config.ts'
 import wasmCoreVitestConfig, {
   WASM_CORE_SUITE,
-} from '../../packages/stack/vitest.wasm-core.config.ts'
-import supabaseVitestConfig from '../../packages/stack-supabase/vitest.config.ts'
-import { requireIntegrationEnv } from '../../packages/test-kit/src/env.ts'
+} from '../../languages/typescript/packages/stack/vitest.wasm-core.config.ts'
+import supabaseVitestConfig from '../../languages/typescript/packages/stack-supabase/vitest.config.ts'
+import { requireIntegrationEnv } from '../../languages/typescript/packages/test-kit/src/env.ts'
 import { readJsonc } from './lib/read-jsonc.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 
 /**
- * `packages/stack/__tests__/wasm-inline-core-credential-contract.test.ts` loads
+ * `languages/typescript/packages/stack/__tests__/wasm-inline-core-credential-contract.test.ts` loads
  * the REAL protect-ffi WASM core. It is NOT the only suite that does —
- * `packages/stack/integration/wasm/**`, protect-ffi's own `wasm-round-trip` /
+ * `languages/typescript/packages/stack/integration/wasm/**`, protect-ffi's own `wasm-round-trip` /
  * `wasm-error-codes`, and the Deno smoke tests in `e2e/wasm/` all do, and three
  * CI jobs build `dist/wasm/**` for them. Nor is it the only one that needs the
  * core and NOTHING ELSE — protect-ffi's `wasm-error-codes` is deliberately
  * credential-free too, but it lives in `integration-tests/`, whose other files
  * need Docker and credentials and whose workflow is path-filtered and
  * fork-skipped: the fate this arrangement declines. What put THIS suite in its
- * own config is that its alternative, `packages/stack/integration/**`, has a
+ * own config is that its alternative, `languages/typescript/packages/stack/integration/**`, has a
  * `globalSetup` requiring credentials AND a database unconditionally, throwing
  * rather than skipping — pinned by the last case in the first block below,
  * because until then that fact lived in prose alone. This docblock claimed the
@@ -31,15 +31,15 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  * What the arrangement does depend on is FOUR pieces, and losing any one leaves
  * the contract unchecked:
  *
- *   1. the exclusion in `packages/stack/vitest.config.ts`
- *   2. the `test:wasm-core` script in `packages/stack/package.json`
+ *   1. the exclusion in `languages/typescript/packages/stack/vitest.config.ts`
+ *   2. the `test:wasm-core` script in `languages/typescript/packages/stack/package.json`
  *   3. the step in the CI job that builds `dist/wasm/**`
  *   4. the `test:wasm-core` task in `turbo.json`
  *
  * Piece 3 is the quiet one: delete the step and the suite runs nowhere while
  * the exclusion keeps `pnpm test` green, so nothing says the contract stopped
  * being checked. Same shape as
- * `packages/protect-ffi/src/integrationSuiteCi.test.ts` (a suite whose workflow
+ * `languages/typescript/packages/protect-ffi/src/integrationSuiteCi.test.ts` (a suite whose workflow
  * was deposited where GitHub never reads it) and `lintWiring.test.ts`'s "a
  * check nothing invokes reads exactly like a check that passes".
  *
@@ -91,7 +91,10 @@ const VITEST_DEFAULT_TIMEOUT_MS = 5000
 const BROWSER_GUARD_SUITE = '__tests__/browser-export-condition.test.ts'
 
 const stackPackageJson = JSON.parse(
-  readFileSync(join(REPO_ROOT, 'packages/stack/package.json'), 'utf8'),
+  readFileSync(
+    join(REPO_ROOT, 'languages/typescript/packages/stack/package.json'),
+    'utf8',
+  ),
 )
 
 /** `turbo.json` carries comments, so it needs the jsonc reader. */
@@ -143,9 +146,11 @@ function excludedBy(patterns, relPath) {
 
 describe('the WASM core credential contract runs somewhere (#804)', () => {
   it('the suite the whole arrangement is about still exists', () => {
-    expect(existsSync(join(REPO_ROOT, 'packages/stack', WASM_CORE_SUITE))).toBe(
-      true,
-    )
+    expect(
+      existsSync(
+        join(REPO_ROOT, 'languages/typescript/packages/stack', WASM_CORE_SUITE),
+      ),
+    ).toBe(true)
   })
 
   it('is the only file its own config collects', () => {
@@ -177,7 +182,10 @@ describe('the WASM core credential contract runs somewhere (#804)', () => {
 
   it(`is invoked by \`${SCRIPT}\`, pointed at that config`, () => {
     const command = stackPackageJson.scripts?.[SCRIPT]
-    expect(command, `packages/stack has no \`${SCRIPT}\` script`).toBeDefined()
+    expect(
+      command,
+      `languages/typescript/packages/stack has no \`${SCRIPT}\` script`,
+    ).toBeDefined()
     expect(command).toContain('vitest.wasm-core.config.ts')
   })
 
@@ -240,15 +248,18 @@ describe('the WASM core credential contract runs somewhere (#804)', () => {
     // wrong, and nothing would say so. The reviewer who next proposes the
     // move should find this red rather than find prose.
     const globalSetup = readFileSync(
-      join(REPO_ROOT, 'packages/test-kit/src/integration/global-setup.ts'),
+      join(
+        REPO_ROOT,
+        'languages/typescript/packages/test-kit/src/integration/global-setup.ts',
+      ),
       'utf8',
     )
     // Both requirements in the UNCONDITIONAL base literal. `pgrest` is the one
     // pushed under an `if`, and that asymmetry is exactly the claim.
     expect(
       globalSetup,
-      'packages/test-kit/src/integration/global-setup.ts no longer requires BOTH `cipherstash` and `database` unconditionally.\n' +
-        `If that is deliberate, ${WASM_CORE_SUITE} can move into packages/stack/integration/wasm/ and this whole arrangement (config, script, turbo task, CI step) can go with it — see the docblocks in vitest.wasm-core.config.ts and tests.yml, which argue from this fact.`,
+      'languages/typescript/packages/test-kit/src/integration/global-setup.ts no longer requires BOTH `cipherstash` and `database` unconditionally.\n' +
+        `If that is deliberate, ${WASM_CORE_SUITE} can move into languages/typescript/packages/stack/integration/wasm/ and this whole arrangement (config, script, turbo task, CI step) can go with it — see the docblocks in vitest.wasm-core.config.ts and tests.yml, which argue from this fact.`,
     ).toMatch(
       /const requirements: Requirement\[\] = \[\s*'cipherstash',\s*'database',?\s*\]/,
     )
@@ -283,8 +294,11 @@ describe('the `browser` export-condition guard runs everywhere (#804)', () => {
   // runs only Biome). Moving it into each package's default suite is what
   // these two cases hold in place.
   const guards = [
-    { pkg: 'packages/stack', config: stackVitestConfig },
-    { pkg: 'packages/stack-supabase', config: supabaseVitestConfig },
+    { pkg: 'languages/typescript/packages/stack', config: stackVitestConfig },
+    {
+      pkg: 'languages/typescript/packages/stack-supabase',
+      config: supabaseVitestConfig,
+    },
   ]
 
   for (const { pkg, config } of guards) {
@@ -293,7 +307,7 @@ describe('the `browser` export-condition guard runs everywhere (#804)', () => {
       expect(
         existsSync(join(REPO_ROOT, pkg, relative)),
         `${pkg}/${relative} is missing.\n` +
-          `That file is the only thing stopping a \`browser\` export condition being added to quiet a bundler, which would ship a workspace secret to the browser. If it moved, move this expectation with it — and keep it somewhere \`pnpm --filter ${pkg.replace('packages/', '@cipherstash/')} test\` collects.`,
+          `That file is the only thing stopping a \`browser\` export condition being added to quiet a bundler, which would ship a workspace secret to the browser. If it moved, move this expectation with it — and keep it somewhere \`pnpm --filter ${pkg.replace(/^.*packages\//, '@cipherstash/')} test\` collects.`,
       ).toBe(true)
 
       expect(

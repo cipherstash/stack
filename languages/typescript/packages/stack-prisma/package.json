@@ -1,0 +1,105 @@
+{
+	"name": "@cipherstash/stack-prisma",
+	"version": "1.2.0",
+	"license": "MIT",
+	"author": "CipherStash <support@cipherstash.com>",
+	"description": "CipherStash extension for Prisma Next: searchable application-layer field-level encryption for Postgres (EQL v3), with domain-typed encrypted columns, the eql* query operators, bulk encrypt/decrypt middleware, and a baseline migration that installs the EQL v3 bundle.",
+	"keywords": [
+		"encrypted",
+		"prisma-next",
+		"orm",
+		"type-safe",
+		"security",
+		"postgres",
+		"eql"
+	],
+	"bugs": {
+		"url": "https://github.com/cipherstash/stack/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/cipherstash/stack.git",
+		"directory": "languages/typescript/packages/stack-prisma"
+	},
+	"type": "module",
+	"sideEffects": false,
+	"exports": {
+		"./codec-types": {
+			"types": "./dist/codec-types.d.ts",
+			"import": "./dist/codec-types.js"
+		},
+		"./column-types": {
+			"types": "./dist/column-types.d.ts",
+			"import": "./dist/column-types.js"
+		},
+		"./control": {
+			"types": "./dist/control.d.ts",
+			"import": "./dist/control.js"
+		},
+		"./operation-types": {
+			"types": "./dist/operation-types.d.ts",
+			"import": "./dist/operation-types.js"
+		},
+		"./pack": {
+			"types": "./dist/pack.d.ts",
+			"import": "./dist/pack.js"
+		},
+		"./runtime": {
+			"types": "./dist/runtime.d.ts",
+			"import": "./dist/runtime.js"
+		},
+		"./stack": {
+			"types": "./dist/stack.d.ts",
+			"import": "./dist/stack.js"
+		},
+		"./v3": {
+			"types": "./dist/v3.d.ts",
+			"import": "./dist/v3.js"
+		},
+		"./package.json": "./package.json"
+	},
+	"types": "./dist/control.d.ts",
+	"files": [
+		"dist",
+		"src",
+		"README.md",
+		"CHANGELOG.md"
+	],
+	"scripts": {
+		"build": "tsup",
+		"dev": "tsup --watch",
+		"test": "vitest run",
+		"test:coverage": "vitest run --coverage",
+		"test:live": "vitest run test/live --fileParallelism=false",
+		"test:integration": "vitest run --config integration/vitest.config.ts",
+		"typecheck": "tsc --project tsconfig.json --noEmit",
+		"lint": "biome check . --error-on-warnings",
+		"lint:fix": "biome check --write .",
+		"clean": "rm -rf dist coverage .tmp-output"
+	},
+	"dependencies": {
+		"@cipherstash/eql": "workspace:*",
+		"@cipherstash/stack": "workspace:*",
+		"@prisma/orm-family-sql": "0.17.0",
+		"@prisma/orm-framework": "0.17.0",
+		"@prisma/orm-toolchain": "0.17.0",
+		"arktype": "^2.2.3"
+	},
+	"peerDependencies": {
+		"@prisma/orm-target-postgres": "0.17.0"
+	},
+	"devDependencies": {
+		"@cipherstash/test-kit": "workspace:*",
+		"@prisma/orm-target-postgres": "0.17.0",
+		"dotenv": "17.4.2",
+		"fast-check": "^4.8.0",
+		"pathe": "^2.0.3",
+		"postgres": "^3.4.8",
+		"tsup": "catalog:repo",
+		"typescript": "catalog:repo",
+		"vitest": "catalog:repo"
+	},
+	"publishConfig": {
+		"access": "public"
+	}
+}

@@ -274,7 +274,7 @@ describe('supply chain — pnpm-lock.yaml integrity', () => {
   })
 
   it('@anthropic-ai/sdk resolves to the peer-pinned patched version (≥ 0.106.0)', () => {
-    // Not an override but a peer-resolution pin: packages/wizard depends on
+    // Not an override but a peer-resolution pin: languages/typescript/packages/wizard depends on
     // @anthropic-ai/sdk@^0.106.0 to force the auto-installed peer of
     // @anthropic-ai/claude-agent-sdk past the advisory-vulnerable 0.81.0
     // (GHSA-p7fg-763f-g4gf). The override-effect test cannot cover a peer
@@ -657,9 +657,10 @@ const ignoresAllSemverMajor = (entry: DependabotUpdate): boolean =>
 // this check exists to catch — and glob-expanding it here would hide it.
 //
 // A glob is satisfied by matching AT LEAST ONE directory holding the manifest,
-// not all of them. `/packages/*` under the npm entry would fail an every-match
-// rule against this very tree today: packages/utils/ holds only config/ and
-// logger/, with no package.json of its own.
+// not all of them. `/languages/typescript/packages/*` under the npm entry
+// would fail an every-match rule against this very tree today:
+// languages/typescript/packages/utils/ holds only config/ and logger/, with no
+// package.json of its own.
 //
 // Expanded with node:fs `globSync` (Node 22, which package.json engines already
 // require) rather than a glob library — this package has none, and a check on
@@ -755,7 +756,7 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
     // Derived from the filesystem, not from a list of ecosystems we expect —
     // so the NEXT lockfile someone adds (a new language, a nested manifest)
     // fails here instead of quietly going unmonitored. Absorbing
-    // packages/protect-ffi is precisely that event: it brought a 494-crate
+    // languages/typescript/packages/protect-ffi is precisely that event: it brought a 494-crate
     // Cargo.lock in-tree, which osv-scanner already scans for known
     // advisories (`--recursive ./` reaches it) while nothing proposed the
     // routine version bumps.
@@ -763,7 +764,7 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
     // Coverage is asserted per ECOSYSTEM, not per directory. Dependabot's npm
     // entry at `/` follows the pnpm workspace, so it reaches every member's
     // manifest through the single root `pnpm-lock.yaml`. The one lockfile that
-    // sat outside that — packages/protect-ffi/integration-tests's own
+    // sat outside that — languages/typescript/packages/protect-ffi/integration-tests's own
     // `package-lock.json`, a standalone `npm ci` harness — is gone as of
     // CIP-3744, and the suite now resolves from the repo lockfile like
     // everything else.
@@ -805,7 +806,7 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
     // wrong directory monitors nothing, and fails silently — Dependabot logs
     // "no manifest found" on a page nobody visits, and the symptom is just an
     // absence of PRs. Load-bearing for cargo, whose workspace root is
-    // packages/protect-ffi, not the repo root.
+    // languages/typescript/packages/protect-ffi, not the repo root.
     for (const entry of db.updates) {
       const ecosystem = entry['package-ecosystem']
       const manifest = MANIFEST_BY_ECOSYSTEM[ecosystem]
@@ -823,12 +824,15 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
   it('a `directories` glob is expanded; the same pattern under `directory` is not', () => {
     // No entry in .github/dependabot.yml uses `directories` today, so the glob
     // branch above ships with no live coverage — and the first person to write
-    // `directories: ["/packages/*"]` would otherwise be failed by a check
+    // `directories: ["/languages/typescript/packages/*"]` would otherwise be failed by a check
     // reporting "no package.json" at a path that was never meant to be literal.
     // Synthetic entries because this suite asserts against the real config as
     // committed; exercising a branch must not mean editing it.
     expect(
-      unmonitoredDirectories({ directories: ['/packages/*'] }, 'package.json'),
+      unmonitoredDirectories(
+        { directories: ['/languages/typescript/packages/*'] },
+        'package.json',
+      ),
     ).toEqual([])
     // Literal paths remain valid under `directories` — globbing is an
     // extension of the key, not a requirement of it.
@@ -853,7 +857,10 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
     // written there monitors nothing and must fail even though the identical
     // pattern passes above.
     expect(
-      unmonitoredDirectories({ directory: '/packages/*' }, 'package.json'),
+      unmonitoredDirectories(
+        { directory: '/languages/typescript/packages/*' },
+        'package.json',
+      ),
     ).toHaveLength(1)
     // An empty list fails too. It has no entry to be wrong about, so a
     // per-directory check reports nothing and the entry passes while

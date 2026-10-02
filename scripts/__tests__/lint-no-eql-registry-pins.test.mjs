@@ -83,7 +83,7 @@ describe('the tree it actually guards', () => {
     const { exitCode, output } = run()
     expect(output).toContain('resolves in-tree')
     expect(output).toContain(
-      '(1 exempt: packages/cli/package.json :: @cipherstash/eql-upgrade-baseline)',
+      '(1 exempt: languages/typescript/packages/cli/package.json :: @cipherstash/eql-upgrade-baseline)',
     )
     expect(exitCode).toBe(0)
   })
@@ -94,7 +94,8 @@ describe('the tree it actually guards', () => {
     // this manifest would also exit 0.
     const declaration = lint().declarations.find(
       (d) =>
-        d.file === 'packages/protect-ffi/crates/protect-ffi/Cargo.toml' &&
+        d.file ===
+          'languages/typescript/packages/protect-ffi/crates/protect-ffi/Cargo.toml' &&
         d.dependency === 'eql-bindings',
     )
     expect(declaration).toBeDefined()
@@ -122,7 +123,8 @@ describe('the tree it actually guards', () => {
     // disagreed in a database, not in CI.
     const declaration = lint().declarations.find(
       (d) =>
-        d.file === 'packages/protect-ffi/integration-tests/package.json' &&
+        d.file ===
+          'languages/typescript/packages/protect-ffi/integration-tests/package.json' &&
         d.dependency === '@cipherstash/eql',
     )
     expect(declaration).toBeDefined()
@@ -598,7 +600,9 @@ describe('pnpm-workspace.yaml: the file no manifest scan opens', () => {
   it('is collected by the walk', () => {
     // The hole this whole block is about: pnpm 10 reads `overrides` from here,
     // and the scan only ever opened `Cargo.toml` and `package.json`.
-    const root = tree({ 'pnpm-workspace.yaml': 'packages:\n  - packages/*\n' })
+    const root = tree({
+      'pnpm-workspace.yaml': 'packages:\n  - languages/typescript/packages/*\n',
+    })
     expect(manifestFiles(root)).toContain('pnpm-workspace.yaml')
   })
 
@@ -654,7 +658,7 @@ describe('pnpm-workspace.yaml: the file no manifest scan opens', () => {
       declarations(
         [
           'packages:',
-          '  - packages/*',
+          '  - languages/typescript/packages/*',
           'catalogs:',
           '  repo:',
           '    typescript: 5.9.3',
@@ -672,7 +676,7 @@ describe('pnpm-workspace.yaml: the file no manifest scan opens', () => {
     // and confirm it now exits 1.
     const root = tree({
       'pnpm-workspace.yaml':
-        "packages:\n  - packages/*\noverrides:\n  '@cipherstash/eql': 3.0.4\n",
+        "packages:\n  - languages/typescript/packages/*\noverrides:\n  '@cipherstash/eql': 3.0.4\n",
       'packages/a/package.json':
         '{"dependencies":{"@cipherstash/eql":"workspace:^"}}',
     })
@@ -683,7 +687,7 @@ describe('pnpm-workspace.yaml: the file no manifest scan opens', () => {
   it('flags a catalog entry end to end', () => {
     const root = tree({
       'pnpm-workspace.yaml':
-        "packages:\n  - packages/*\ncatalogs:\n  repo:\n    '@cipherstash/eql': 3.0.4\n",
+        "packages:\n  - languages/typescript/packages/*\ncatalogs:\n  repo:\n    '@cipherstash/eql': 3.0.4\n",
     })
     expect(run(root).exitCode).toBe(1)
   })
@@ -846,10 +850,12 @@ describe('the linter fails when its own configuration goes stale', () => {
   it('exits 2 — not 1 — when an expected declarer disappears', () => {
     const { code, err } = report({
       ...clean,
-      missingExpected: ['packages/stack/package.json :: @cipherstash/eql'],
+      missingExpected: [
+        'languages/typescript/packages/stack/package.json :: @cipherstash/eql',
+      ],
     })
     expect(code).toBe(2)
-    expect(err).toContain('packages/stack/package.json')
+    expect(err).toContain('languages/typescript/packages/stack/package.json')
     // The scan's own output, so a rename is a copy rather than a re-derivation.
     expect(err).toContain('x :: y')
   })
@@ -993,13 +999,15 @@ describe('the remediation names a specifier that packs exact', () => {
     report({
       offenders: [
         {
-          file: 'packages/cli/package.json',
+          file: 'languages/typescript/packages/cli/package.json',
           table: 'dependencies',
           dependency: '@cipherstash/eql',
           spec: '3.0.5',
         },
       ],
-      ids: ['packages/cli/package.json [dependencies] @cipherstash/eql'],
+      ids: [
+        'languages/typescript/packages/cli/package.json [dependencies] @cipherstash/eql',
+      ],
       exempted: [],
       missingSources: [],
       missingExpected: [],

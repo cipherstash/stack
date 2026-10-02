@@ -40,7 +40,7 @@ describe('CLI live-Postgres CI contract', () => {
 
   it('serializes live suites that share the EQL schemas', async () => {
     const config = await import(
-      '../../packages/cli/vitest.config.ts?cli-live-ci-contract'
+      '../../languages/typescript/packages/cli/vitest.config.ts?cli-live-ci-contract'
     )
     const live = config.default.test.projects.find(
       (project) => project.test.name === 'live',

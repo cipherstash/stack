@@ -11,7 +11,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  *
  * `scripts/sync-lockstep-versions.mjs` rewrites
  * `packages/eql/crates/eql-bindings/Cargo.toml` on every lockstep bump — that
- * is its job. `packages/protect-ffi` depends on that crate BY PATH
+ * is its job. `languages/typescript/packages/protect-ffi` depends on that crate BY PATH
  * (`crates/protect-ffi/Cargo.toml`), so its `Cargo.lock` records the version
  * too, and nothing was updating it. After the 3.0.5 bump the lock still said
  * `eql-bindings 3.0.4` and `cargo metadata --locked` exited 101.
@@ -26,7 +26,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  *
  * `--locked` is the exact check and it needs a Rust toolchain. `AGENTS.md` is
  * explicit that the default `test` and `build` scripts must never invoke cargo
- * — root `pnpm test` reaches `packages/protect-ffi`, so a cargo call on that
+ * — root `pnpm test` reaches `languages/typescript/packages/protect-ffi`, so a cargo call on that
  * path is a Rust toolchain on every contributor's machine — and `pnpm run
  * test:scripts` has the same reach, since everyone runs it.
  *
@@ -36,7 +36,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * narrower than `--locked` — a lock stale because a crate gained a NEW
  * dependency still passes here — but it is the whole of the lockstep failure
  * mode, it runs everywhere, and it costs nothing. Pairing it with a `--locked`
- * invocation on `packages/protect-ffi`'s `test:cargo` path would close the
+ * invocation on `languages/typescript/packages/protect-ffi`'s `test:cargo` path would close the
  * remainder; that script is owned elsewhere.
  */
 
@@ -174,7 +174,7 @@ describe('Cargo.lock records this tree’s crates at their real versions', () =>
   })
 
   it('locks each crate at the version its Cargo.toml declares', () => {
-    // THE DEFECT. `packages/protect-ffi/Cargo.lock` said `eql-bindings 3.0.4`
+    // THE DEFECT. `languages/typescript/packages/protect-ffi/Cargo.lock` said `eql-bindings 3.0.4`
     // while the crate said 3.0.5, because the lockstep sync rewrote the
     // manifest and no command in this repo passes `--locked`.
     const offenders = PAIRS.filter(

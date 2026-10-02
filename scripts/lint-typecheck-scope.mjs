@@ -31,13 +31,13 @@ const REPO_ROOT = resolve(import.meta.dirname, '..')
 // with argv[2..] for tests / ad-hoc checks (each arg is a package directory).
 //
 // NESTED roots are listed separately because the walk below is one level deep,
-// matching how pnpm globs `packages/*`. Three sets of packages sit a level
-// further down and need their own entry here for the same reason they need one
-// in `pnpm-workspace.yaml`:
+// matching how pnpm globs `languages/typescript/packages/*`. Three sets of
+// packages sit a level further down and need their own entry here for the same
+// reason they need one in `pnpm-workspace.yaml`:
 //
-//   packages/protect-ffi/platforms/*   the six per-platform binary packages
-//   packages/eql/packages/*            @cipherstash/eql, from the EQL subtree
-//   packages/protect-ffi/*             the live integration suite
+//   languages/typescript/packages/protect-ffi/platforms/*   the six per-platform binary packages
+//   packages/eql/packages/*                                 @cipherstash/eql, from the EQL subtree
+//   languages/typescript/packages/protect-ffi/*             the live integration suite
 //
 // The last is spelled as its PARENT rather than as the member, because the walk
 // takes roots and lists their children. That sweeps protect-ffi's non-package
@@ -50,10 +50,11 @@ const REPO_ROOT = resolve(import.meta.dirname, '..')
 // package.json (the private workspace manifest was deleted with the import), so
 // the loop skips it and only the nested member is checked.
 const WORKSPACE_ROOTS = [
+  'languages/typescript/packages',
+  'languages/typescript/examples',
   'packages',
-  'examples',
-  'packages/protect-ffi',
-  'packages/protect-ffi/platforms',
+  'languages/typescript/packages/protect-ffi',
+  'languages/typescript/packages/protect-ffi/platforms',
   'packages/eql/packages',
 ]
 
@@ -185,7 +186,7 @@ if (offenders.length > 0) {
       '  "exclude": ["dist", "node_modules"]\n\n' +
       '(`exclude` REPLACES the default list, so `node_modules` must be re-listed.)\n' +
       'Or give it an explicit `include` naming the source roots, as `e2e` and\n' +
-      '`examples/prisma` do.',
+      '`languages/typescript/examples/prisma` do.',
   )
   process.exit(1)
 }

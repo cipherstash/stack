@@ -24,7 +24,7 @@ pnpm run build
 pnpm run build:js
 ```
 
-Under the hood this uses Turborepo to build `./packages/*` with each package's `tsup` configuration.
+Under the hood this uses Turborepo to build `./languages/typescript/packages/*` with each package's `tsup` configuration.
 
 ### Dev/watch
 
@@ -71,36 +71,39 @@ If these variables are missing, tests that require live encryption will fail or 
 
 ## Repository Layout
 
-- `packages/stack`: Main package (`@cipherstash/stack`) containing the encryption client and all integrations
+Every npm package except EQL lives under `languages/typescript/`: packages in `languages/typescript/packages/`, example apps in `languages/typescript/examples/`. The root `packages/` holds EQL's subtree (and, later, Rust crates). The JavaScript root stays at the repository root: `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `turbo.json`, `.changeset/`, `biome.json`, `tsconfig.json` and `vitest.shared.ts`.
+
+- `languages/typescript/packages/stack`: Main package (`@cipherstash/stack`) containing the encryption client and all integrations
   - Subpath exports: `@cipherstash/stack`, `@cipherstash/stack/identity`, `@cipherstash/stack/schema`, `@cipherstash/stack/eql/v3`, `@cipherstash/stack/v3`, `@cipherstash/stack/types`, `@cipherstash/stack/dynamodb`, `@cipherstash/stack/encryption`, `@cipherstash/stack/errors`, `@cipherstash/stack/adapter-kit`, `@cipherstash/stack/wasm-inline`, `@cipherstash/stack/diagnostics` (the Drizzle and Supabase integrations moved to their own packages — see below)
-- `packages/cli`: The `stash` CLI — auth, init, encryption schema, and database setup (`stash eql install`). Has its own `AGENTS.md`.
-- `packages/wizard`: AI-powered encryption setup (`@cipherstash/wizard`)
-- `packages/migrate`: Plaintext-to-encrypted column migration (`@cipherstash/migrate`) — resumable backfill, per-column state
-- `packages/stack-prisma`: Prisma Next integration (`@cipherstash/stack-prisma`) — searchable field-level encryption for Postgres. **EQL v3 only**: per-domain constructors (`cipherstash.TextSearch()` / `text()` / `bigIntOrd()` / …) and `cipherstashFromStack` (the `./v3` and `./stack` entries). The EQL v2 surface was removed — the adapter's baseline migration installs the EQL v3 bundle only (works on Supabase as a non-superuser)
-- `packages/stack-drizzle`: Drizzle ORM integration (`@cipherstash/stack-drizzle`), depends on `@cipherstash/stack` — **EQL v3 only**, on the package root (the v2 surface was removed and the old `./v3` subpath collapsed into `.`). Split out of `@cipherstash/stack`.
-- `packages/stack-supabase`: Supabase integration (`@cipherstash/stack-supabase`), depends on `@cipherstash/stack` — **EQL v3 only**: `encryptedSupabase` is the v3 factory (`encryptedSupabaseV3` remains as a `@deprecated` alias). Split out of `@cipherstash/stack`. Two entries: the package root (native engine, Node) and `./wasm-inline` (WASM engine, edge — ESM-only, and declared-`schemas` only since it carries no Postgres driver).
-- `packages/nextjs`: Next.js helpers and Clerk integration (`./clerk` export)
-- `packages/utils`: Shared config (`utils/config`) and logger (`utils/logger`)
-- `packages/bench`: Performance / index-engagement benchmarks (private, not published)
-- `packages/protect-ffi`: Native FFI bindings to the CipherStash Client SDK (`@cipherstash/protect-ffi`) — the Rust core that `packages/stack` encrypts and decrypts through, absorbed from `cipherstash/protectjs-ffi`. Contains a **nested Cargo workspace** (`crates/`) and six per-platform binary packages under `platforms/*`, each published as `@cipherstash/protect-ffi-<platform>` and linked here via `workspace:*`. Also holds the repo's live FFI integration suite at `integration-tests/` — a private workspace member (`@cipherstash/ffi-integration-tests`) enrolled by its own literal entry in `pnpm-workspace.yaml`, needing Docker and credentials, and deliberately carrying **no `test` script** so `pnpm test` cannot reach it. See the "Working on protect-ffi" notes below before touching it — its default `test` and `build` are deliberately Rust-free.
-- `packages/eql`: The Encrypt Query Language subtree — the SQL bundle that stores and queries encrypted payloads — absorbed from `cipherstash/encrypt-query-language`. **The directory is the subtree root, not the package.** It was imported at a *verbatim prefix* so its repo-root-relative paths (mise tasks, `Doxyfile`, `sync-generated.mjs`) keep resolving, which puts the npm package `@cipherstash/eql` two levels down at `packages/eql/packages/eql` — the same shape as `packages/protect-ffi/platforms/*`, and enrolled the same way, by an explicit `packages/eql/packages/*` glob in `pnpm-workspace.yaml`. The subtree root deliberately carries no `package.json`. Also contains a **nested Cargo workspace** at `packages/eql/crates/` (`eql-bindings`, published in lockstep with the npm package, plus `eql-domains` / `eql-codegen` / `eql-tests-macros`, which are not), a SQLx test crate at `packages/eql/tests/sqlx`, an ~900-line `mise.toml` task surface, its own `AGENTS.md`, and `docs/`. See the "Working on EQL" notes below before touching it.
+- `languages/typescript/packages/cli`: The `stash` CLI — auth, init, encryption schema, and database setup (`stash eql install`). Has its own `AGENTS.md`.
+- `languages/typescript/packages/wizard`: AI-powered encryption setup (`@cipherstash/wizard`)
+- `languages/typescript/packages/migrate`: Plaintext-to-encrypted column migration (`@cipherstash/migrate`) — resumable backfill, per-column state
+- `languages/typescript/packages/stack-prisma`: Prisma Next integration (`@cipherstash/stack-prisma`) — searchable field-level encryption for Postgres. **EQL v3 only**: per-domain constructors (`cipherstash.TextSearch()` / `text()` / `bigIntOrd()` / …) and `cipherstashFromStack` (the `./v3` and `./stack` entries). The EQL v2 surface was removed — the adapter's baseline migration installs the EQL v3 bundle only (works on Supabase as a non-superuser)
+- `languages/typescript/packages/stack-drizzle`: Drizzle ORM integration (`@cipherstash/stack-drizzle`), depends on `@cipherstash/stack` — **EQL v3 only**, on the package root (the v2 surface was removed and the old `./v3` subpath collapsed into `.`). Split out of `@cipherstash/stack`.
+- `languages/typescript/packages/stack-supabase`: Supabase integration (`@cipherstash/stack-supabase`), depends on `@cipherstash/stack` — **EQL v3 only**: `encryptedSupabase` is the v3 factory (`encryptedSupabaseV3` remains as a `@deprecated` alias). Split out of `@cipherstash/stack`. Two entries: the package root (native engine, Node) and `./wasm-inline` (WASM engine, edge — ESM-only, and declared-`schemas` only since it carries no Postgres driver).
+- `languages/typescript/packages/nextjs`: Next.js helpers and Clerk integration (`./clerk` export)
+- `languages/typescript/packages/utils`: Shared config (`utils/config`) and logger (`utils/logger`)
+- `languages/typescript/packages/bench`: Performance / index-engagement benchmarks (private, not published)
+- `languages/typescript/packages/protect-ffi`: Native FFI bindings to the CipherStash Client SDK (`@cipherstash/protect-ffi`) — the Rust core that `languages/typescript/packages/stack` encrypts and decrypts through, absorbed from `cipherstash/protectjs-ffi`. Contains a **nested Cargo workspace** (`crates/`) and six per-platform binary packages under `platforms/*`, each published as `@cipherstash/protect-ffi-<platform>` and linked here via `workspace:*`. Also holds the repo's live FFI integration suite at `integration-tests/` — a private workspace member (`@cipherstash/ffi-integration-tests`) enrolled by its own literal entry in `pnpm-workspace.yaml`, needing Docker and credentials, and deliberately carrying **no `test` script** so `pnpm test` cannot reach it. See the "Working on protect-ffi" notes below before touching it — its default `test` and `build` are deliberately Rust-free.
+- `packages/eql`: The Encrypt Query Language subtree — the SQL bundle that stores and queries encrypted payloads — absorbed from `cipherstash/encrypt-query-language`. **The directory is the subtree root, not the package.** It was imported at a *verbatim prefix* so its repo-root-relative paths (mise tasks, `Doxyfile`, `sync-generated.mjs`) keep resolving, which puts the npm package `@cipherstash/eql` two levels down at `packages/eql/packages/eql` — the same shape as `languages/typescript/packages/protect-ffi/platforms/*`, and enrolled the same way, by an explicit `packages/eql/packages/*` glob in `pnpm-workspace.yaml`. The subtree root deliberately carries no `package.json`. Also contains a **nested Cargo workspace** at `packages/eql/crates/` (`eql-bindings`, published in lockstep with the npm package, plus `eql-domains` / `eql-codegen` / `eql-tests-macros`, which are not), a SQLx test crate at `packages/eql/tests/sqlx`, an ~900-line `mise.toml` task surface, its own `AGENTS.md`, and `docs/`. See the "Working on EQL" notes below before touching it.
   **Repository ownership:** EQL now lives in `cipherstash/stack`. File and update
   EQL issues in this repository, never in the historical
   `cipherstash/encrypt-query-language` repository. Old upstream issue and PR
   links are provenance only.
 - `e2e/*`: Cross-package end-to-end tests (package managers, supply chain, Prisma example README)
-- `examples/*`: Working apps (basic, prisma, supabase-worker)
+- `languages/typescript/examples/*`: Working apps (basic, prisma, supabase-worker)
 - `docs/plans/*`: Internal design plans. User-facing documentation lives at https://cipherstash.com/docs (not in this repo).
 - `skills/*`: Agent skills (`stash-cli`, `stash-encryption`, `stash-indexing`, `stash-deployment`, `stash-zerokms`, `stash-auth`, `stash-postgres`, `stash-edge`, `stash-drizzle`, `stash-dynamodb`, `stash-supabase`, `stash-prisma`, `stash-managed-platforms`, `stash-supply-chain-security`)
 
 ## Working on protect-ffi
 
-`packages/protect-ffi` carries one of this repo's two Cargo workspaces (the
+`languages/typescript/packages/protect-ffi` carries one of this repo's two Cargo workspaces (the
 other is `packages/eql/crates`), and its scripts are split so a Rust toolchain
 stays optional for everyone else.
 
 - **The default `test` and `build` never invoke cargo.** Root `pnpm test` runs
-  `turbo test --filter './packages/**'`, which reaches this package — so a cargo
+  `turbo test --filter './languages/typescript/packages/**' --filter
+  './packages/**'`, which reaches this package — so a cargo
   process on that path is a Rust toolchain on every contributor's machine.
   `test` is the JS chain; `build` is `tsc`.
 - **CI does build the binding, in the jobs that need it.** That is the limit of
@@ -125,7 +128,7 @@ stays optional for everyone else.
   **`--locked` is on the CHECK and deliberately not on the builds.** Nothing in
   this repo passed it at all until the #915 follow-up, and the bill came due
   through `sync-lockstep-versions.mjs`: it rewrites `eql-bindings`'s crate
-  version on every lockstep bump, `packages/protect-ffi` depends on that crate
+  version on every lockstep bump, `languages/typescript/packages/protect-ffi` depends on that crate
   by path, so its `Cargo.lock` records the version — and nothing updated it.
   After the 3.0.5 bump `cargo metadata --locked` exited 101 while every cargo
   command in CI regenerated the lock in memory, built against the regenerated
@@ -210,7 +213,7 @@ stays optional for everyone else.
 
 ### The `integration-tests/` suite
 
-`packages/protect-ffi/integration-tests/` is 19 files of **live** coverage —
+`languages/typescript/packages/protect-ffi/integration-tests/` is 19 files of **live** coverage —
 encrypt/decrypt, lock context, keysets, JS auth strategies, JSON SteVec,
 Postgres (EQL v2 *and* v3), and a WASM round trip — and it is the only place
 several of those paths are exercised at all. It needs three things a normal
@@ -218,7 +221,7 @@ several of those paths are exercised at all. It needs three things a normal
 EQL versions installed** in the database.
 
 - **It is a pnpm workspace member, and `pnpm test` must never reach it.** Named
-  literally in `pnpm-workspace.yaml` (the `packages/*` glob is one level deep and
+  literally in `pnpm-workspace.yaml` (the `languages/typescript/packages/*` glob is one level deep and
   stops short of it), so its dependencies come from the repo lockfile:
   `@cipherstash/eql` at `workspace:^`, `@cipherstash/protect-ffi` at
   `workspace:*`, `@cipherstash/auth` / `vitest` / `typescript` from
@@ -228,7 +231,8 @@ EQL versions installed** in the database.
   EMITS it — and it would have disagreed in a database, not in CI.
 
   The cost of membership: root `pnpm test` is `turbo test --filter
-  './packages/**'`, which now reaches this package. It is kept out by **naming no
+  './languages/typescript/packages/**' --filter './packages/**'`, which now
+  reaches this package. It is kept out by **naming no
   live script after a turbo task** — the suite's runners are `vitest:live` and
   `vitest:live:coverage`, which `turbo.json` knows nothing about. `test` is the
   obvious trap and `test:integration` is the less obvious one (a real turbo task,
@@ -243,7 +247,7 @@ EQL versions installed** in the database.
   fixtures are compiled too — one of them is a real `AccessKeyStrategy` call
   site, and a `tests/**/*.ts` scope would leave it checked by nothing but the
   path-filtered credentialed job.
-- **Run it locally** from `packages/protect-ffi`:
+- **Run it locally** from `languages/typescript/packages/protect-ffi`:
 
   ```bash
   mise run setup                 # pnpm install, docker compose up, EQL v2 + v3
@@ -284,7 +288,7 @@ EQL versions installed** in the database.
 - **`src/integrationSuiteCi.test.ts` asserts a root workflow still runs it.**
   The suite ran on every upstream PR and then ran *nowhere* for the whole
   absorption, because the workflow that drove it was deposited under
-  `packages/protect-ffi/.github/` — a directory GitHub never reads. That test is
+  `languages/typescript/packages/protect-ffi/.github/` — a directory GitHub never reads. That test is
   what stops it going quiet again, and it deliberately scans only the repo-root
   workflow directory.
 
@@ -299,14 +303,17 @@ monorepo, which is where the silent failures are.
 - **The package is at `packages/eql/packages/eql`, two levels down.** The
   subtree root has no `package.json` by design, so a tool that globs one level
   under `packages/` selects the root — a directory with no manifest and no
-  scripts — and not the package. That is why root `pnpm test` is
-  `turbo test --filter './packages/**'` and not `'./packages/*'`: under the
-  one-level filter the task graph contained `@cipherstash/eql#build` (pulled in
-  transitively by its consumers) and **no `#test` at all**, so its Vitest suite
-  ran nowhere while CI stayed green. `build` can stay one-level because
-  consumers pull it through `^build`. Anything else that walks `packages/*` needs
-  the same treatment — `scripts/lint-typecheck-scope.mjs` already carries the
-  two nested roots explicitly.
+  scripts — and not the package. It is also outside `languages/typescript/`,
+  where every other npm package lives. That is why root `pnpm test` is
+  `turbo test --filter './languages/typescript/packages/**' --filter
+  './packages/**'`: under a one-level `./packages/*` filter the task graph
+  contained `@cipherstash/eql#build` (pulled in transitively by its consumers)
+  and **no `#test` at all**, so its Vitest suite ran nowhere while CI stayed
+  green, and a filter naming only `languages/typescript/` drops it the same
+  way. `build` can stay one-level because consumers pull it through `^build`.
+  Anything else that walks the package roots needs the same treatment —
+  `scripts/lint-typecheck-scope.mjs` already carries the nested roots
+  explicitly.
 - **Anything invoking a mise task must run with `working_directory:
   packages/eql`.** `packages/eql/mise.toml` is ~900 lines and its
   `[task_config].includes` pulls in `tasks/`, `tasks/postgres.toml` and
@@ -476,7 +483,7 @@ monorepo, which is where the silent failures are.
   changes what the whole EQL CI surface compiles against, and with the skip in
   place the release-stopper is closed without it. If wanted, the pin belongs
   upstream and arrives by subtree pull.
-- **`eql-bindings` resolves by path from `packages/protect-ffi`, never from
+- **`eql-bindings` resolves by path from `languages/typescript/packages/protect-ffi`, never from
   crates.io**, and `scripts/lint-no-eql-registry-pins.mjs` (`pnpm run
   lint:eql-pins`) is what keeps it that way. The two halves of EQL are the Rust
   that EMITS a payload and the SQL that STORES and queries one; a registry pin
@@ -488,7 +495,7 @@ monorepo, which is where the silent failures are.
   effect). It exits **2**, not 0, when its own configuration has gone stale —
   a source it could not read, a declaration it expected and no longer sees, or
   an exemption excusing nothing. There are **no exemptions today**: the only one
-  there had ever been (`packages/protect-ffi/integration-tests`, which installed
+  there had ever been (`languages/typescript/packages/protect-ffi/integration-tests`, which installed
   with `npm ci` and could not take a `workspace:` specifier) was retired when
   that directory joined the pnpm workspace, and the guard's own staleness rule —
   keyed on "excuses nothing", not "names nothing" — is what forced it out in the
@@ -572,7 +579,7 @@ monorepo, which is where the silent failures are.
   functions the version it reports does not define.
 
   The CLI now refuses a bundle whose bytes do not hash to its own release
-  manifest (`packages/cli/src/installer/bundle-digest.ts`), but that catches a
+  manifest (`languages/typescript/packages/cli/src/installer/bundle-digest.ts`), but that catches a
   corrupt or tampered `node_modules`, **not** this — a frozen-package skew
   regenerates the manifest alongside the SQL, so the two agree locally. The
   release gate is still the only thing that notices. It `npm pack`s the frozen
@@ -602,9 +609,9 @@ monorepo, which is where the silent failures are.
 `skills/*/SKILL.md` are **published artifacts, not internal notes.** Treat a wrong
 sentence in one of them the way you'd treat a wrong line of code:
 
-- `packages/cli/tsup.config.ts` copies `skills/` into `dist/skills/`, so they ship
+- `languages/typescript/packages/cli/tsup.config.ts` copies `skills/` into `dist/skills/`, so they ship
   inside the `stash` npm tarball (and the `@cipherstash/wizard` one).
-- `installSkills()` (`packages/cli/src/commands/init/lib/install-skills.ts`) copies the
+- `installSkills()` (`languages/typescript/packages/cli/src/commands/init/lib/install-skills.ts`) copies the
   per-integration set into the user's `.claude/skills/` or `.codex/skills/` at handoff time.
 - `readBundledSkill()` inlines a skill's body into the user's `AGENTS.md` for editor
   agents (Cursor / Windsurf / Cline), and as the Codex fallback for skills that could
@@ -618,26 +625,26 @@ nothing type-checks them, and the damage lands in a customer's repo, not ours.
 
 | If you change… | Check |
 |---|---|
-| `packages/cli` commands, flags, or prompts | `skills/stash-cli` |
-| `packages/stack` encryption API, schema builders, subpath exports | `skills/stash-encryption` |
+| `languages/typescript/packages/cli` commands, flags, or prompts | `skills/stash-cli` |
+| `languages/typescript/packages/stack` encryption API, schema builders, subpath exports | `skills/stash-encryption` |
 | Drizzle / Supabase / Prisma Next / DynamoDB integrations | `skills/stash-drizzle`, `skills/stash-supabase`, `skills/stash-prisma`, `skills/stash-dynamodb` |
-| The rollout/cutover lifecycle (`packages/migrate`, `stash encrypt *`) | `skills/stash-encryption` and `skills/stash-cli` |
+| The rollout/cutover lifecycle (`languages/typescript/packages/migrate`, `stash encrypt *`) | `skills/stash-encryption` and `skills/stash-cli` |
 | The deploy sequencing / deploy-gate story, `stash env`, or platform-specific deployment guidance | `skills/stash-deployment` |
 | The managed AI platform path (Lovable, v0, Bolt, Replit) — headless auth, non-`postgres` roles, PostgREST limits | `skills/stash-managed-platforms` |
 | The `@cipherstash/eql` pin, `eql install`/`eql migration` behaviour, or index-related SQL guidance | `skills/stash-indexing` |
 | The EQL operator/domain surface (`eql_v3.query_*` casts, predicate forms) | `skills/stash-postgres` |
 | The keyset/client model (`config.keyset`, grants, the ZeroKMS access story) | `skills/stash-zerokms` — the canonical source; other skills should point here rather than restate it |
 | Auth strategies (`config.authStrategy`), the `CS_*` variables, lock context, `stash env` / `auth login` behaviour | `skills/stash-auth` — the canonical source; other skills should point here rather than restate it |
-| `packages/stack/src/wasm-inline.ts`, the WASM entry's exports, or `stash env` | `skills/stash-edge` |
+| `languages/typescript/packages/stack/src/wasm-inline.ts`, the WASM entry's exports, or `stash env` | `skills/stash-edge` |
 | pnpm config, CI workflows, dependency policy | `skills/stash-supply-chain-security` |
-| The durable agent rules themselves | `packages/cli/src/commands/init/doctrine/AGENTS-doctrine.md` |
+| The durable agent rules themselves | `languages/typescript/packages/cli/src/commands/init/doctrine/AGENTS-doctrine.md` |
 
 For CLI changes there is a mechanical check — the command registry is the source of
 truth, so diff the skill against it rather than proofreading:
 
 ```bash
 pnpm --filter stash build
-node packages/cli/dist/bin/stash.js manifest --json
+node languages/typescript/packages/cli/dist/bin/stash.js manifest --json
 ```
 
 Every command and flag named in `skills/stash-cli/SKILL.md` must resolve against that
@@ -719,9 +726,9 @@ pnpm changeset:publish
 - Import `dotenv/config` at the top when tests need environment variables.
 - Prefer testing via the public API. Avoid reaching into private internals.
 - Some tests have larger timeouts (e.g., 30s) to accommodate network calls.
-- `packages/cli` has a second suite — pty-driven E2E tests under
-  `packages/cli/tests/e2e/**` run via `pnpm --filter stash
-  test:e2e` (requires a build). See `packages/cli/AGENTS.md` for when to
+- `languages/typescript/packages/cli` has a second suite — pty-driven E2E tests under
+  `languages/typescript/packages/cli/tests/e2e/**` run via `pnpm --filter stash
+  test:e2e` (requires a build). See `languages/typescript/packages/cli/AGENTS.md` for when to
   add or update them.
 
 ## Bundling and Deployment Notes
@@ -733,12 +740,12 @@ pnpm changeset:publish
 
 ## Adding Features Safely (LLM checklist)
 
-1. Identify the target package(s) in `packages/*` and confirm whether changes affect public APIs or payload shapes.
-2. If modifying `packages/stack` encryption operations or `EncryptionClient`, ensure:
+1. Identify the target package(s) in `languages/typescript/packages/*` and confirm whether changes affect public APIs or payload shapes.
+2. If modifying `languages/typescript/packages/stack` encryption operations or `EncryptionClient`, ensure:
    - The Result contract and error type strings remain stable.
    - `.withLockContext()` remains available for affected operations.
    - ESM/CJS exports continue to work (don't break `require`).
-3. If changing schema behavior (`packages/stack` schema builders, `@cipherstash/stack/schema`), update type definitions and ensure validation still works in `EncryptionClient.init`.
+3. If changing schema behavior (`languages/typescript/packages/stack` schema builders, `@cipherstash/stack/schema`), update type definitions and ensure validation still works in `EncryptionClient.init`.
 4. Add/extend tests in the same package. For features that require live credentials, guard with env checks or provide mock-friendly paths.
 5. Run:
    - `pnpm run code:fix`
@@ -786,7 +793,7 @@ pnpm changeset:publish
 ## Useful Links
 
 - `README.md` for quickstart and feature overview
-- `packages/cli/AGENTS.md` for CLI-specific guidance
+- `languages/typescript/packages/cli/AGENTS.md` for CLI-specific guidance
 - `e2e/README.md` for the cross-package E2E suite
 - `skills/*/SKILL.md` for per-integration agent guides
 - User-facing docs (concepts, reference, how-to) live on the docs site:
