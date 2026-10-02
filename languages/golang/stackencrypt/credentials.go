@@ -9,7 +9,7 @@ import (
 	"os"
 	"sync/atomic"
 
-	"github.com/cipherstash/cipherstash-suite/bindings/go/stackauth"
+	"github.com/cipherstash/stack/languages/golang/stackauth"
 )
 
 // Credentials is where a [Client]'s ZeroKMS credentials come from: the

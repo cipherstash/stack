@@ -3,7 +3,7 @@ package stackauth
 import (
 	"errors"
 
-	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
 )
 
 // Failure kinds the profile reports. The guest reports a status code from

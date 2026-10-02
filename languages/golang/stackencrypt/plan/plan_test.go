@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/factstest"
-	se "github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt"
-	"github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt/plan"
+	"github.com/cipherstash/stack/languages/golang/internal/factstest"
+	se "github.com/cipherstash/stack/languages/golang/stackencrypt"
+	"github.com/cipherstash/stack/languages/golang/stackencrypt/plan"
 )
 
 var category = plan.Key("fides.data_categories")

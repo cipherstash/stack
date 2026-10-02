@@ -9,12 +9,12 @@ so there is no cgo and no separate Go port of the cryptography.
 The package reference is on [pkg.go.dev]; this README covers connecting,
 what happens to key material, and the errors.
 
-[pkg.go.dev]: https://pkg.go.dev/github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt
+[pkg.go.dev]: https://pkg.go.dev/github.com/cipherstash/stack/languages/golang/stackencrypt
 
 ## Install
 
 ```sh
-go get github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt
+go get github.com/cipherstash/stack/languages/golang/stackencrypt
 ```
 
 Go 1.25 or later.
@@ -29,7 +29,7 @@ safe for concurrent use.
 import (
     "context"
 
-    "github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt"
+    "github.com/cipherstash/stack/languages/golang/stackencrypt"
 )
 
 func run(ctx context.Context) error {
@@ -224,7 +224,7 @@ subpackage derives it from what the schema already says about each field
 in Go:
 
 ```go
-import "github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt/plan"
+import "github.com/cipherstash/stack/languages/golang/stackencrypt/plan"
 
 type Individual struct {
     ID         int64

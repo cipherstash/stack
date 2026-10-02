@@ -26,8 +26,8 @@ apart yourself:
 import (
     "context"
 
-    "github.com/cipherstash/cipherstash-suite/bindings/go/stackauth"
-    "github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt"
+    "github.com/cipherstash/stack/languages/golang/stackauth"
+    "github.com/cipherstash/stack/languages/golang/stackencrypt"
 )
 
 func run(ctx context.Context) error {

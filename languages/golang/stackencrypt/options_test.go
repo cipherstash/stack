@@ -11,8 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
-	"github.com/cipherstash/cipherstash-suite/bindings/go/stackauth"
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
+	"github.com/cipherstash/stack/languages/golang/stackauth"
 )
 
 // Every option sets its one field, and a later option setting the same

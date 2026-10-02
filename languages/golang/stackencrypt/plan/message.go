@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt"
+	"github.com/cipherstash/stack/languages/golang/stackencrypt"
 )
 
 var (

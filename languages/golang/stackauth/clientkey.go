@@ -1,6 +1,6 @@
 package stackauth
 
-import "github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
+import "github.com/cipherstash/stack/languages/golang/internal/guest"
 
 // ClientKey is the ZeroKMS client key as [ProfileStore.SecretKey] reads it
 // out of secretkey.json: opaque (it prints a redaction under every verb and

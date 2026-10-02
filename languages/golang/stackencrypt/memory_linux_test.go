@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guesttest"
+	"github.com/cipherstash/stack/languages/golang/internal/guesttest"
 )
 
 // The real guest's mapping, once a host-staged buffer has made it grow:

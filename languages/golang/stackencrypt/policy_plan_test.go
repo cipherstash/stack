@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/factstest"
-	se "github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt"
-	"github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt/plan"
+	"github.com/cipherstash/stack/languages/golang/internal/factstest"
+	se "github.com/cipherstash/stack/languages/golang/stackencrypt"
+	"github.com/cipherstash/stack/languages/golang/stackencrypt/plan"
 )
 
 // Validate refuses a nil type as PlanFromTags does, for the zero plan

@@ -6,7 +6,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/tetratelabs/wazero/api"
 )
 

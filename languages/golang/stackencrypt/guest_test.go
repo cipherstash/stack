@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
-	"github.com/cipherstash/cipherstash-suite/bindings/go/stackauth"
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
+	"github.com/cipherstash/stack/languages/golang/stackauth"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/sys"

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
 )
 
 // The protection is observable from the kernel's side, in

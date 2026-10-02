@@ -17,7 +17,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt"
+	"github.com/cipherstash/stack/languages/golang/stackencrypt"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 

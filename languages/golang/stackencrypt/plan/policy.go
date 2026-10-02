@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt"
+	"github.com/cipherstash/stack/languages/golang/stackencrypt"
 )
 
 // Identifier is a field's column identity: the table its message is

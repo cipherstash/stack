@@ -12,7 +12,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt/plan"
+	"github.com/cipherstash/stack/languages/golang/stackencrypt/plan"
 )
 
 // StructTags is a Go-struct fact source for tests: one fact per exported,

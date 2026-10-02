@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cipherstash/cipherstash-suite/bindings/go/stackauth"
+	"github.com/cipherstash/stack/languages/golang/stackauth"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 

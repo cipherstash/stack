@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/factstest"
-	"github.com/cipherstash/cipherstash-suite/bindings/go/stackencrypt/plan"
+	"github.com/cipherstash/stack/languages/golang/internal/factstest"
+	"github.com/cipherstash/stack/languages/golang/stackencrypt/plan"
 )
 
 // Recursive embeddings, legal in Go, which a scan of embedded structs must

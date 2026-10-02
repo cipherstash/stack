@@ -3,8 +3,8 @@ package guest_test
 import (
 	"testing"
 
-	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
-	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guesttest"
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
+	"github.com/cipherstash/stack/languages/golang/internal/guesttest"
 )
 
 // The probe's mapping, on a range committed by Reallocate after the

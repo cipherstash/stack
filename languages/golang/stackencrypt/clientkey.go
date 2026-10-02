@@ -1,6 +1,6 @@
 package stackencrypt
 
-import "github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
+import "github.com/cipherstash/stack/languages/golang/internal/guest"
 
 // ClientKey is the ZeroKMS client key: long-lived key material that lives
 // for the process. It is opaque — it prints a redaction under every verb

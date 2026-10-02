@@ -1,6 +1,6 @@
 package stackencrypt
 
-import "github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
+import "github.com/cipherstash/stack/languages/golang/internal/guest"
 
 // Failure kinds surfaced across the boundary. The guest reports a status
 // code and nothing else, so these are the whole vocabulary: they separate a

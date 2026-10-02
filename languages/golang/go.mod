@@ -1,4 +1,4 @@
-module github.com/cipherstash/cipherstash-suite/bindings/go
+module github.com/cipherstash/stack/languages/golang
 
 go 1.25.0
 

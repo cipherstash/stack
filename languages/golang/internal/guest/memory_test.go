@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guest"
-	"github.com/cipherstash/cipherstash-suite/bindings/go/internal/guesttest"
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
+	"github.com/cipherstash/stack/languages/golang/internal/guesttest"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/experimental"
