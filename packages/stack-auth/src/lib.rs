@@ -154,6 +154,12 @@ pub use stack_profile::DeviceIdentity;
 /// token issued.
 pub use cts_common::Crn;
 
+/// Deliberate mutants-gate break: no test calls this, so every mutant of it
+/// survives.
+pub fn mutants_probe(x: u8) -> bool {
+    x > 3
+}
+
 /// Token *acquisition* — strategies that produce a [`ServiceToken`].
 ///
 /// Use [`AuthStrategy`] as the consumer-facing trait (e.g. when wiring
