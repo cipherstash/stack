@@ -20,20 +20,13 @@ includes = [
 # this compiler's diagnostics. `llvm-tools-preview` is required by
 # cargo-llvm-cov to produce coverage data.
 rust = { version = "1.94.1", components = "rustc,cargo,rustfmt,rust-std,clippy,rust-docs,llvm-tools-preview", targets = "wasm32-unknown-unknown,wasm32-wasip1" }
-"cargo:cargo-nextest" = "latest"
-# Coverage → CRAP (Change Risk Anti-Patterns) metric tooling. `cargo llvm-cov`
-# produces an LCOV file that `cargo crap` scores; see `mise run crap:stack-auth`.
-"cargo:cargo-llvm-cov" = "latest"
-"cargo:cargo-crap" = "latest"
-# Mutation testing for the stack crates; config in .cargo/mutants.toml, run
-# via `mutants:<crate>`.
-"cargo:cargo-mutants" = "latest"
-# Fuzzing (libFuzzer) for the pure-`&str` parsers. The `cargo-fuzz` binary
-# installs on stable, but running a target needs the nightly toolchain
-# (`cargo +nightly fuzz run …`); see the `fuzz:*` tasks.
-"cargo:cargo-fuzz" = "latest"
-# Runs on nightly-2026-07-10: `cargo +nightly-2026-07-10 udeps`.
-"cargo:cargo-udeps" = "latest"
+# No `cargo:` tools here. mise merges config down the tree, so every tool in
+# this file is also installed for packages/eql and protect-ffi, whose CI runs
+# `mise install` and `mise run` in their own folders. mise compiles a `cargo:`
+# tool with the runner's default rustc rather than the pinned one, so one
+# `latest` that outgrows that compiler breaks jobs that never use the tool.
+# The cargo tools (nextest, llvm-cov, crap, mutants, fuzz, udeps) live in
+# mise.test.toml, pinned, and load only with `--env test` / MISE_ENV=test.
 # The Go module (languages/golang) — the wazero host of the WASI guests.
 # CGO_ENABLED=0 throughout; see `go:test`.
 go = "1.26"
@@ -211,8 +204,8 @@ cargo clippy --target wasm32-wasip1 -- -D warnings
 # and exits 0, so without -D warnings a stale link ships silently.
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --target wasm32-wasip1
 # nextest, as everywhere else; this crate is a detached workspace, so it
-# runs from here rather than a root `-p`.
-cargo nextest run
+# runs from here rather than a root `-p`. nextest is in mise.test.toml.
+mise x --env test -- cargo nextest run
 """
 
 [tasks."wasm:auth-guest:build"]
@@ -255,7 +248,7 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo clippy --target wasm32-wasip1 -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --target wasm32-wasip1
-cargo nextest run
+mise x --env test -- cargo nextest run
 """
 
 [tasks."go:test"]

@@ -627,9 +627,14 @@ The stack-* crates came from `cipherstash/cipherstash-suite`, which still owns
   three fuzz crates and the two Go guests are detached workspaces too, each
   with its own `Cargo.lock`.
 - **The toolchain is pinned in the root `mise.toml`:** Rust 1.94.1 (the
-  `stack-encrypt` `tests/ui` trybuild snapshots record its diagnostics), the
-  cargo tools, and Go 1.26. EQL's `mise.toml` overrides the Rust pin in its
-  folder. protect-ffi's does not pin Rust, so the root pin applies there.
+  `stack-encrypt` `tests/ui` trybuild snapshots record its diagnostics) and
+  Go 1.26. EQL's `mise.toml` overrides the Rust pin in its folder.
+  protect-ffi's does not pin Rust, so the root pin applies there.
+- **The cargo tools are pinned in `mise.test.toml`, not `mise.toml`:**
+  nextest, llvm-cov, crap, mutants, fuzz and udeps. EQL and protect-ffi
+  inherit the root `mise.toml`, so a cargo tool there would be built in their
+  jobs too. Reach them with `mise x --env test -- …`, as the tasks do; CI jobs
+  that use them set `MISE_ENV: test`.
 - **Run the tests with nextest, under the test env:** `mise x --env test --
   cargo nextest run --workspace --all-features`. Doc examples are `mise run
   test:doc`; rustdoc with warnings as errors is `mise run doc`.
