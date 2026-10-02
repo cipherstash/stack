@@ -21,8 +21,9 @@ import (
 
 // orderProperty checks, for random pairs of T, that the Go comparison of
 // their terms agrees with the plaintext order and that a term compares
-// equal to itself (derivation is deterministic).
-func orderProperty[T any](t *testing.T, cipher *Cipher, kind TermKind, less func(a, b T) int) {
+// equal to itself (derivation is deterministic). gen, when given, replaces
+// quick's generator for T.
+func orderProperty[T any](t *testing.T, cipher *Cipher, kind TermKind, less func(a, b T) int, gen ...func(*rand.Rand) T) {
 	t.Helper()
 	ctx := context.Background()
 	context := MustContext(fmt.Sprintf("prop/%s/%T", kind, *new(T)))
@@ -69,6 +70,13 @@ func orderProperty[T any](t *testing.T, cipher *Cipher, kind TermKind, less func
 		return sign(compare(tb, ta)) == -want
 	}
 	cfg := &quick.Config{MaxCount: 300, Rand: rand.New(rand.NewSource(int64(kind)))}
+	if len(gen) > 0 {
+		cfg.Values = func(args []reflect.Value, r *rand.Rand) {
+			for i := range args {
+				args[i] = reflect.ValueOf(gen[0](r))
+			}
+		}
+	}
 	if err := quick.Check(holds, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -104,6 +112,24 @@ func adjacentProperty[T any](t *testing.T, cipher *Cipher, kind TermKind, values
 	}
 }
 
+// collatedAlphabet holds characters that the ORE and OPE string encodings
+// keep as they are. Before deriving a term, cllw-ore's orderize_string
+// decomposes each character canonically and drops anything that is not
+// alphanumeric, whitespace or ASCII punctuation. So two strings order by
+// their UTF-8 bytes only when that collation leaves both unchanged: a
+// private-use character is dropped, and a precomposed Hangul syllable or
+// an accented letter decomposes. The non-ASCII letters here have no
+// canonical decomposition, so multi-byte UTF-8 ordering is still covered.
+var collatedAlphabet = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ßжω中")
+
+func collatedString(r *rand.Rand) string {
+	out := make([]rune, r.Intn(24))
+	for i := range out {
+		out[i] = collatedAlphabet[r.Intn(len(collatedAlphabet))]
+	}
+	return string(out)
+}
+
 func TestLiveTermOrderIsPlaintextOrder(t *testing.T) {
 	c := liveClient(t)
 	cipher := c.DefaultKeyset()
@@ -122,10 +148,17 @@ func TestLiveTermOrderIsPlaintextOrder(t *testing.T) {
 				adjacentProperty(t, cipher, kind, []int64{-1 << 63, -1<<63 + 1, -2, -1, 0, 1, 2, 1<<63 - 1}, cmp.Compare[int64])
 			})
 			t.Run("string", func(t *testing.T) {
-				// Strings order by their UTF-8 bytes; a prefix orders before
-				// its extensions.
-				orderProperty(t, cipher, kind, func(a, b string) int { return bytes.Compare([]byte(a), []byte(b)) })
-				adjacentProperty(t, cipher, kind, []string{"", "a", "aa", "ab", "b", "ba", "\x7f", "é", "éa"}, func(a, b string) int { return bytes.Compare([]byte(a), []byte(b)) })
+				// Strings order by the UTF-8 bytes of their collated form; a
+				// prefix orders before its extensions. See collatedAlphabet.
+				orderProperty(t, cipher, kind, func(a, b string) int { return bytes.Compare([]byte(a), []byte(b)) }, collatedString)
+				adjacentProperty(t, cipher, kind, []string{"", "a", "aa", "ab", "b", "ba", "ß", "ßa", "中"}, func(a, b string) int { return bytes.Compare([]byte(a), []byte(b)) })
+				// Collation drops a control or private-use character, and
+				// strips the accent from a decomposed letter, so the terms
+				// cannot tell these pairs apart.
+				same := func(a, b string) int { return 0 }
+				adjacentProperty(t, cipher, kind, []string{"", "\x7f"}, same)
+				adjacentProperty(t, cipher, kind, []string{"ab", "a\ue000b"}, same)
+				adjacentProperty(t, cipher, kind, []string{"e", "é"}, same)
 			})
 			t.Run("bytes", func(t *testing.T) {
 				orderProperty(t, cipher, kind, bytes.Compare)
