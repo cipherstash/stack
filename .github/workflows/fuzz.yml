@@ -1,0 +1,185 @@
+name: Fuzz (crates)
+
+# libFuzzer fuzzing for the stack crates' untrusted-input parsers (the
+# detached `packages/*/fuzz/` crates and the `fuzz:*` mise tasks). Ported from
+# cipherstash-suite's `fuzz.yml`, for the six targets in the imported set; the
+# suite keeps its three cts-common targets. Two jobs with different roles:
+#
+#   * fuzz-regression (pull_request and manual, blocking on PRs): builds every harness, which
+#     catches harness and API drift, and replays the committed seed corpus with
+#     `-runs=0`. Deterministic, so it is safe to gate PRs.
+#
+#   * fuzz-campaign (schedule and manual, never on PRs): the time-boxed
+#     bug-finding run. Each target's corpus persists across runs in the Actions
+#     cache, so coverage compounds; it is minimised with `cargo fuzz cmin`, and
+#     any crash reproducer is uploaded as an artifact.
+#
+# cargo-fuzz needs nightly; the tasks run `cargo +nightly fuzz`. Pull requests
+# are the only filtered event, so `push` has no filter to mirror; recorded in
+# scripts/__tests__/workflow-paths-filter-parity.test.mjs.
+
+on:
+  pull_request:
+    paths:
+      - packages/stack-auth/**
+      - packages/stack-kms/**
+      - packages/stack-encrypt/**
+      - Cargo.toml
+      - Cargo.lock
+      - mise.toml
+      - mise.test.toml
+      - .github/workflows/fuzz.yml
+      # Keep these excludes last so docs-only changes are skipped.
+      - "!**.md"
+      - "!**.example"
+  schedule:
+    # Nightly at 04:47 UTC. Scheduled runs fire from the default branch only.
+    - cron: "47 4 * * *"
+  workflow_dispatch:
+    inputs:
+      max_total_time:
+        description: "Seconds to fuzz each target (campaign job)"
+        default: "120"
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+env:
+  # The cargo tools are pinned in mise.test.toml, which mise loads only in
+  # the test environment. With no install_args, mise-action installs (and
+  # caches) the whole test toolset once: `mise run` and `mise x` install any
+  # tool of the toolset that is missing, uncached, so narrowing the install
+  # would only move the rest out of the cache.
+  MISE_ENV: test
+  RUST_BACKTRACE: full
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+
+jobs:
+  fuzz-regression:
+    name: fuzz regression (${{ matrix.slug }})
+    # Not on the nightly schedule, which is the campaign's. A manual dispatch
+    # runs both jobs.
+    if: github.event_name != 'schedule'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { task: "fuzz:access-key", slug: access-key }
+          - { task: "fuzz:jwt-decode", slug: jwt-decode }
+          - { task: "fuzz:client-key", slug: client-key }
+          - { task: "fuzz:sealed-value", slug: sealed-value }
+          - { task: "fuzz:term-decode", slug: term-decode }
+          - { task: "fuzz:check-record", slug: check-record }
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          cache: true
+
+      - name: Install the nightly toolchain (cargo-fuzz requires it)
+        run: rustup toolchain install nightly --profile minimal
+
+      # Each fuzz crate is its own workspace with its own target/.
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: |
+            packages/stack-auth/fuzz
+            packages/stack-kms/fuzz
+            packages/stack-encrypt/fuzz
+          key: ${{ matrix.slug }}
+
+      # `-runs=0` replays the committed seed corpus once and exits without
+      # fuzzing. The trailing args override the task's `-max_total_time`.
+      - name: Build the harness and replay the seed corpus (${{ matrix.slug }})
+        run: mise run ${{ matrix.task }} -- -runs=0
+
+  fuzz-campaign:
+    name: fuzz campaign (${{ matrix.slug }})
+    if: github.event_name != 'pull_request'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # `dir` and `target` drive the corpus path and `cargo fuzz cmin`.
+        include:
+          - { task: "fuzz:access-key",   slug: access-key,   dir: packages/stack-auth,    target: access_key_parse }
+          - { task: "fuzz:jwt-decode",   slug: jwt-decode,   dir: packages/stack-auth,    target: jwt_decode }
+          - { task: "fuzz:client-key",   slug: client-key,   dir: packages/stack-kms,     target: client_key_encoded }
+          - { task: "fuzz:sealed-value", slug: sealed-value, dir: packages/stack-encrypt, target: sealed_value_decode }
+          - { task: "fuzz:term-decode",  slug: term-decode,  dir: packages/stack-encrypt, target: term_decode }
+          - { task: "fuzz:check-record", slug: check-record, dir: packages/stack-encrypt, target: check_record }
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          cache: true
+
+      - name: Install the nightly toolchain (cargo-fuzz requires it)
+        run: rustup toolchain install nightly --profile minimal
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: ${{ matrix.dir }}/fuzz
+          key: ${{ matrix.slug }}
+
+      # A cache key is write-once, so save under a per-run key and restore the
+      # most recent prior corpus by prefix. The committed seeds come from the
+      # checkout and merge with the restored corpus at run time.
+      - name: Restore the corpus
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ matrix.dir }}/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.slug }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.slug }}-
+
+      # The trailing `-max_total_time` (last value wins) overrides the task's.
+      - name: Fuzz ${{ matrix.slug }}
+        env:
+          MAX_TOTAL_TIME: ${{ github.event.inputs.max_total_time || '120' }}
+        run: mise run ${{ matrix.task }} -- "-max_total_time=$MAX_TOTAL_TIME"
+
+      # Drops inputs that add no coverage, so the saved corpus stays small.
+      # Skipped when the fuzz step found a crash.
+      - name: Minimise the corpus (${{ matrix.slug }})
+        working-directory: ${{ matrix.dir }}
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          cargo +nightly fuzz cmin "$TARGET" --sanitizer none --target "$(rustc -vV | sed -n 's/^host: //p')"
+
+      # Saved even on a crash: the grown corpus is still worth keeping, and the
+      # crash input lives in artifacts/, not corpus/.
+      - name: Save the corpus
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ matrix.dir }}/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.slug }}-${{ github.run_id }}
+
+      - name: Upload the crash reproducer
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-artifacts-${{ matrix.slug }}
+          path: ${{ matrix.dir }}/fuzz/artifacts/**
+          if-no-files-found: ignore

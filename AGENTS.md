@@ -642,10 +642,24 @@ The stack-* crates came from `cipherstash/cipherstash-suite`, which still owns
   that use them set `MISE_ENV: test`.
 - **Run the tests with nextest, under the test env:** `mise x --env test --
   cargo nextest run --workspace --all-features`. Doc examples are `mise run
-  test:doc`; rustdoc with warnings as errors is `mise run doc`.
+  test:doc`; rustdoc with warnings as errors is `mise run doc`. Plain `cargo
+  test` over the workspace is not equivalent: it runs a binary's tests as
+  threads of one process, and the `stack-kms` builder tests that set
+  environment variables race there.
 - **The node bindings keep cargo off `pnpm test`.** Their `test` runs vitest
   and Biome against a binding already built with `pnpm --filter
-  @cipherstash/auth run build:debug`; `test:cargo` runs the crate's tests.
+  @cipherstash/auth --filter @cipherstash/profile run build:debug`;
+  `test:cargo` runs the crate's tests. Both builds write napi's generated
+  typings to the committed `native.d.ts`; `index.d.ts` is hand-written. After
+  a `#[napi]` change, rebuild and commit `native.d.ts`, or CI's drift guard
+  fails.
+- **CI:** `tests-crates.yml` (fmt, clippy, nextest including the trybuild
+  `tests/ui` binary, doctests, rustdoc, the node bindings and
+  `stack-auth-wasm`), `tests-golang.yml` (WASI checks, the guests, the Go
+  module on Linux, macOS and Windows, and the live tests), `crap-crates.yml`,
+  `mutants.yml`, `fuzz.yml`, `miri.yml` and `udeps.yml`.
+  `scripts/__tests__/crates-ci.test.mjs` fails when a mise task in the root
+  `mise.toml` or the five crate `tasks.toml` files loses its last CI caller.
 
 ### Fuzzing
 
@@ -660,7 +674,7 @@ mise run fuzz:access-key -- -runs=0           # replay seed corpus only (CI regr
 ```
 
 CI is split into a blocking per-PR regression replay and a nightly,
-non-blocking bug-finding campaign; the workflow arrives with the CI port.
+non-blocking bug-finding campaign (`.github/workflows/fuzz.yml`).
 Full walkthrough — layout, adding a target, the CI split — in
 [`docs/fuzzing.md`](docs/fuzzing.md). For cargo-fuzz mechanics (sanitizers,
 corpus, crash triage) use the Trail of Bits `cargo-fuzz` skill rather than a
@@ -684,8 +698,8 @@ Go side (`mise run go:test`).
 ### Mutation testing
 
 The stack crates that opt in (stack-auth, stack-encrypt) are mutation-tested
-with cargo-mutants; config in `.cargo/mutants.toml`. Once the CI port lands,
-CI gates every PR touching them with `--in-diff`: only the lines the PR changes are mutated, and
+with cargo-mutants; config in `.cargo/mutants.toml`. CI (`mutants.yml`)
+gates every PR touching them with `--in-diff`: only the lines the PR changes are mutated, and
 a surviving mutant fails the job. A full sweep is slow and is run locally:
 
 ```bash

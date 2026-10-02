@@ -1,0 +1,92 @@
+name: Unused dependencies (crates)
+
+# Fails when a crate in the root Cargo workspace declares a dependency it does
+# not use. Ported from cipherstash-suite's
+# `test-no-unused-cargo-dependencies.yml`. cargo-udeps needs nightly; the
+# toolchain is pinned so an upstream nightly regression cannot break unrelated
+# PRs. Bump it deliberately, after checking a newer nightly builds the
+# workspace. (The suite pinned 2026-07-10 because the 2026-07-14 nightly ICEs
+# on the test-harness entrypoint attribute.)
+
+on:
+  pull_request:
+    paths:
+      - packages/stack-auth/**
+      - packages/stack-profile/**
+      - packages/stack-kms/**
+      - packages/stack-encrypt/**
+      - packages/stack-encrypt-derive/**
+      - packages/stack-guest-abi/**
+      - languages/typescript/packages/auth/**
+      - languages/typescript/packages/profile/**
+      - languages/typescript/packages/stack-auth-wasm/**
+      - Cargo.toml
+      - Cargo.lock
+      - mise.test.toml
+      - .github/workflows/udeps.yml
+      # Keep these excludes last so docs-only changes are skipped.
+      - "!**.md"
+      - "!**.example"
+  push:
+    branches: [main]
+    paths:
+      - packages/stack-auth/**
+      - packages/stack-profile/**
+      - packages/stack-kms/**
+      - packages/stack-encrypt/**
+      - packages/stack-encrypt-derive/**
+      - packages/stack-guest-abi/**
+      - languages/typescript/packages/auth/**
+      - languages/typescript/packages/profile/**
+      - languages/typescript/packages/stack-auth-wasm/**
+      - Cargo.toml
+      - Cargo.lock
+      - mise.test.toml
+      - .github/workflows/udeps.yml
+      - "!**.md"
+      - "!**.example"
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+env:
+  # The cargo tools are pinned in mise.test.toml, which mise loads only in
+  # the test environment. This job calls cargo-udeps directly, never through
+  # `mise run` or `mise x`, which would install the rest of the toolset. So
+  # mise-action installs only rust and cargo-udeps.
+  MISE_ENV: test
+  RUST_BACKTRACE: full
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+  NIGHTLY_TOOLCHAIN: nightly-2026-07-10
+
+jobs:
+  udeps:
+    name: Check unused Rust dependencies
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          install_args: rust cargo:cargo-udeps
+          cache: true
+
+      - name: Install the pinned nightly toolchain
+        run: rustup toolchain install "$NIGHTLY_TOOLCHAIN" --profile minimal --no-self-update
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Check for unused dependencies
+        run: cargo "+$NIGHTLY_TOOLCHAIN" udeps --workspace --all-features --all-targets

@@ -105,6 +105,9 @@ const REPO_WRITE_JOBS = [
   // release/eql-<version> branch it must be dispatched against (release-plz
   // refuses a detached HEAD).
   '.github/workflows/release.yml / prerelease-eql-crate',
+  // pull-requests: write — posts and updates the sticky cargo-mutants report
+  // comment on the PR.
+  '.github/workflows/mutants.yml / mutants',
 ]
 
 /**

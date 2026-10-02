@@ -1,0 +1,66 @@
+name: Miri (guest ABI)
+
+# Runs the stack-guest-abi unit tests under Miri with strict provenance (the
+# `miri:stack-guest-abi` mise task). Ported from cipherstash-suite's `miri.yml`.
+# The crate is the shared ABI of the WASI guests under languages/golang: its
+# buffer registry hands raw pointers to the Go host and rebuilds owned buffers
+# from them, and Miri is the only check that sees a use-after-free, a
+# double-free, or a pointer rebuilt without provenance on that path. Miri is
+# deterministic, so a red run is a real defect or a harness that stopped
+# compiling, never flake.
+#
+# Pull requests only, so `push` has no filter to mirror; recorded in
+# scripts/__tests__/workflow-paths-filter-parity.test.mjs.
+
+on:
+  pull_request:
+    paths:
+      - packages/stack-guest-abi/**
+      - Cargo.toml
+      - Cargo.lock
+      - mise.toml
+      - .github/workflows/miri.yml
+      # Keep these excludes last so docs-only changes are skipped.
+      - "!**.md"
+      - "!**.example"
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+env:
+  RUST_BACKTRACE: full
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
+
+jobs:
+  miri-stack-guest-abi:
+    name: Miri (stack-guest-abi)
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          install_args: rust
+          cache: true
+
+      - name: Install the nightly toolchain with Miri
+        run: |
+          rustup toolchain install nightly --profile minimal --component miri
+          cargo +nightly miri setup
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Miri
+        run: mise run miri:stack-guest-abi
