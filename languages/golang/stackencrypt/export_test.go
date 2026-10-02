@@ -40,7 +40,7 @@ func withZeroKMSURL(url string) ClientOption {
 // guest under p, each context extended by ext: what the external tests
 // compare byte for byte. Test-only; not part of the package's API.
 func GuestPlanInput(p Plan, t reflect.Type, ext ...any) ([]byte, error) {
-	o := applyOptions([]Option{WithPlan(p), ExtendContext(ext...)})
+	o := applyOptions([]RecordOption{WithPlan(p), ExtendContext(ext...)})
 	bound, err := planFor(t, o)
 	if err != nil {
 		return nil, err

@@ -86,16 +86,17 @@ func (cph *Cipher) DecryptElement(ctx context.Context, ct any, aad []byte) (any,
 // encoding); a string for Match; any scalar for Ore and Ope. The result is
 // one of EqualityTerm, MatchTerm, OreTerm or OpeTerm.
 //
-// opts are the [TermOption]s a probe shares with the record calls.
-// [ExtendContext] extends context exactly as it extends each field's own
-// context in a record call, so a probe for a field written under an
-// extension is the field's context plus the same option value the rows
-// were written with, never a context spelled by hand.
+// opts are [Option]s, the options a probe shares with the record calls; a
+// [RecordOption] that only a record call takes, such as [WithPlan], does
+// not compile here. [ExtendContext] extends context exactly as it extends
+// each field's own context in a record call, so a probe for a field
+// written under an extension is the field's context plus the same option
+// value the rows were written with, never a context spelled by hand.
 //
 // Term takes a context and returns an error because it may be a ZeroKMS
 // round trip: term derivation is asynchronous in the Rust crate, and a
 // ZeroKMS backend that derives terms server-side settles the same way.
-func (cph *Cipher) Term(ctx context.Context, value any, context Context, kind TermKind, opts ...TermOption) (any, error) {
+func (cph *Cipher) Term(ctx context.Context, value any, context Context, kind TermKind, opts ...Option) (any, error) {
 	if context.node == nil {
 		return nil, fmt.Errorf("stackencrypt: term context is empty")
 	}

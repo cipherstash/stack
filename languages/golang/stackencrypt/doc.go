@@ -51,10 +51,11 @@
 // for any ordinary value or batch, one more per 500 sealed leaves beyond
 // that. Terms ([EqualityTerm], [MatchTerm], [OreTerm], [OpeTerm]) are
 // byte-equal to the ones the Rust crate derives, so a probe from
-// [Cipher.Term] compares against a stored term from any language. The
-// record calls and Term share one option type ([Option]; [TermOption] is
-// the part both accept): [ExtendContext] given to a record call and to the
-// probe extends the field's context and the probe's identically, so a
+// [Cipher.Term] compares against a stored term from any language. An
+// [Option] is the one value that serves encrypt, decrypt and probe alike;
+// a [RecordOption], such as [WithPlan], is what only a record call takes.
+// [ExtendContext] is an Option: given to a record call and to the probe it
+// extends the field's context and the probe's identically, so a
 // tenant-scoped probe is the field's own context plus the option value the
 // rows were written with, never a context spelled by hand.
 // [Cipher.Term] takes a context and returns an error from day one: term
