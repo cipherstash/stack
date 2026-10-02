@@ -422,7 +422,7 @@ function unreachableTableIssue(
   // reads compare it whole against a bare `relname` / `table_name` — so it
   // matches nothing anywhere and was reported as an unapplied migration.
   // `@cipherstash/migrate` does accept the spelling (`splitTableName` in
-  // `packages/migrate/src/version.ts`, first dot wins), so the toolchain
+  // `languages/typescript/packages/migrate/src/version.ts`, first dot wins), so the toolchain
   // disagrees with itself. Resolving it properly needs a schema-aware column
   // read, which is `fetchPhysicalColumns` — shared with `encrypt status` and
   // scoped to `current_schema()` by construction. Splitting the name here and

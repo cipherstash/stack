@@ -6,7 +6,7 @@
  * service token first, so CTS answering `402 USAGE_LIMIT_EXCEEDED` means no
  * ZeroKMS request is made at all. protect-ffi surfaces that as a thrown `Error`
  * with `authCode` and stack-auth's `help` (see `Error::auth_error` in
- * `packages/protect-ffi/crates/protect-ffi/src/lib.rs`); this asserts the SDK
+ * `languages/typescript/packages/protect-ffi/crates/protect-ffi/src/lib.rs`); this asserts the SDK
  * folds the dashboard remedy into `message` and keeps the code for branching.
  *
  * Credential-free: protect-ffi is mocked, so there is no CTS round-trip.

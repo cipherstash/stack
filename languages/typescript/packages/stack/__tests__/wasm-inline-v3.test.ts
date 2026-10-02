@@ -129,7 +129,7 @@ describe('wasm-inline is EQL v3 only (#614)', () => {
   })
 
   // #815: native throws on the PRESENCE of `config.eqlVersion`
-  // (`Object.hasOwn`, packages/stack/src/encryption/index.ts). The WASM factory
+  // (`Object.hasOwn`, languages/typescript/packages/stack/src/encryption/index.ts). The WASM factory
   // had no equivalent, so a JS/JSON caller carrying `eqlVersion: 2` got a hard
   // error on one entry and silence on the other — the exact entry-disagreement
   // #815 exists to close.

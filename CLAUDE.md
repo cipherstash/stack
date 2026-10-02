@@ -38,7 +38,7 @@ because both fail silently — nothing in CI catches either:
 
 ## Package-specific notes
 
-`packages/cli` has its own `AGENTS.md` covering the two Vitest configs (unit vs.
+`languages/typescript/packages/cli` has its own `AGENTS.md` covering the two Vitest configs (unit vs.
 the pty-driven e2e suite) and when each needs to run. Read it before touching
-`packages/cli/src/bin/main.ts`, `packages/cli/src/messages.ts`, or the command
-registry at `packages/cli/src/cli/registry.ts`.
+`languages/typescript/packages/cli/src/bin/main.ts`, `languages/typescript/packages/cli/src/messages.ts`, or the command
+registry at `languages/typescript/packages/cli/src/cli/registry.ts`.

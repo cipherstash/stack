@@ -18,7 +18,7 @@
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/cipherstash/stack.git",
-		"directory": "packages/stack-supabase"
+		"directory": "languages/typescript/packages/stack-supabase"
 	},
 	"license": "MIT",
 	"author": "CipherStash <humans@cipherstash.com>",

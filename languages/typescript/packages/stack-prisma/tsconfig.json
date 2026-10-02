@@ -5,7 +5,7 @@
     "module": "ESNext",
     "moduleDetection": "force",
     "moduleResolution": "bundler",
-    // Mirrors `packages/stack/tsconfig.json`: protect-ffi 0.24+ uses
+    // Mirrors `languages/typescript/packages/stack/tsconfig.json`: protect-ffi 0.24+ uses
     // conditional exports, and bundler resolution omits `node` by
     // default. Needed because the `@/*` mapping below pulls stack
     // SOURCE (which imports protect-ffi types) into this program.
@@ -29,7 +29,7 @@
     "baseUrl": ".",
     "paths": {
       // Resolve every consumed stack subpath to SOURCE, not `dist`
-      // (mirrors `packages/test-kit/tsconfig.json`). Without these,
+      // (mirrors `languages/typescript/packages/test-kit/tsconfig.json`). Without these,
       // `pnpm typecheck` only works after `pnpm build` — and on a
       // fresh/stale checkout the dist d.ts resolves partially, which
       // surfaces as implicit-`any` noise far from the real cause

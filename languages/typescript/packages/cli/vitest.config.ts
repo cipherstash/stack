@@ -13,7 +13,7 @@ export default defineConfig({
     // guarded-grants.live. Run in parallel forks they race; one fork lets each
     // suite see the database state its comments already assume. The unit
     // project keeps default file parallelism — serialising all ~1300 tests
-    // for the sake of four files is the `packages/migrate` fix at the wrong
+    // for the sake of four files is the `languages/typescript/packages/migrate` fix at the wrong
     // scale.
     projects: [
       {
@@ -55,15 +55,15 @@ export default defineConfig({
       // before mocking runs.
       //
       // This removes the `@cipherstash/migrate` build coupling ONLY. The suite
-      // is still not self-contained: removing `packages/stack/dist` still
+      // is still not self-contained: removing `languages/typescript/packages/stack/dist` still
       // fails 10 files, via TWO independent routes —
-      //   1. `packages/migrate/src/backfill.ts` imports `@cipherstash/stack`,
+      //   1. `languages/typescript/packages/migrate/src/backfill.ts` imports `@cipherstash/stack`,
       //      so this alias reaches it transitively; and
       //   2. `init/lib/__tests__/introspect.test.ts` imports
       //      `@cipherstash/stack/eql/v3` directly, never touching migrate.
       // Route 2 means decoupling `backfill.ts` would NOT make the suite
       // standalone. Closing both needs `stackSourceAlias`, which cannot be
-      // spread here — its `'@/'` entry (pointing at `packages/stack/src`)
+      // spread here — its `'@/'` entry (pointing at `languages/typescript/packages/stack/src`)
       // would clobber this package's own `'@/'`. That is why
       // `vitest.shared.ts` is not imported by this config (#787 review).
       '@cipherstash/migrate': resolve(__dirname, '../migrate/src/index.ts'),

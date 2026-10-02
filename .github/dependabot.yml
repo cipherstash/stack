@@ -62,7 +62,7 @@ updates:
         update-types:
           - version-update:semver-major
 
-  # ── Cargo (packages/protect-ffi — one of two Rust workspaces) ───
+  # ── Cargo (languages/typescript/packages/protect-ffi — one of two Rust workspaces) ───
   # Absorbing protect-ffi brought a 494-crate Cargo.lock in-tree. osv-scanner
   # already sees it — `--recursive ./` walks the tree and extracts every
   # lockfile it recognises — so known advisories were visible from day one, but
@@ -76,7 +76,7 @@ updates:
     # A misaimed directory fails silently: Dependabot records "no manifest
     # found" on a log page nobody visits, and the symptom is simply that no PR
     # ever arrives. The e2e test asserts this path holds a Cargo.toml.
-    directory: /packages/protect-ffi
+    directory: /languages/typescript/packages/protect-ffi
     # Monthly, where npm and actions are weekly. The deviation is about
     # validation cost, not risk appetite: a Cargo.lock bump is checked by
     # tests-rust.yml — one Blacksmith job, 45-minute timeout, cargo test +
@@ -190,7 +190,7 @@ updates:
           - patch
     ignore:
       # `cipherstash-client = "=0.42.0"` in tests/sqlx/Cargo.toml — the SAME
-      # exact pin, at the SAME version, as packages/protect-ffi. That is not a
+      # exact pin, at the SAME version, as languages/typescript/packages/protect-ffi. That is not a
       # coincidence and it is the reason the subtree was imported: the two now
       # share one release train, and a Dependabot PR that moved one workspace
       # and not the other would reintroduce precisely the skew the absorption

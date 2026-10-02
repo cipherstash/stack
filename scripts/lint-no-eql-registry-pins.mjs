@@ -9,7 +9,7 @@
  * the SQL bundle that STORES and queries one). They are released at a single
  * lockstep version for exactly that reason.
  *
- * Before the subtree import, `packages/protect-ffi` pinned `eql-bindings
+ * Before the subtree import, `languages/typescript/packages/protect-ffi` pinned `eql-bindings
  * = "=3.0.2"` from crates.io while the EQL tree carried 3.0.4. That skew was
  * benign only by luck — the Rust was byte-identical across those releases, and
  * what 3.0.3/3.0.4 changed was SQL. Phase 3 of the absorption plan replaced the
@@ -140,12 +140,12 @@ const SKIP_DIRS = new Set([
  * message rather than a re-derivation from the tree.
  */
 export const EXPECTED_DECLARERS = [
-  `packages/cli/package.json :: ${NPM_DEPENDENCY}`,
+  `languages/typescript/packages/cli/package.json :: ${NPM_DEPENDENCY}`,
   `packages/eql/tests/sqlx/Cargo.toml :: ${CARGO_DEPENDENCY}`,
-  `packages/protect-ffi/crates/protect-ffi/Cargo.toml :: ${CARGO_DEPENDENCY}`,
-  `packages/protect-ffi/integration-tests/package.json :: ${NPM_DEPENDENCY}`,
-  `packages/stack-prisma/package.json :: ${NPM_DEPENDENCY}`,
-  `packages/stack/package.json :: ${NPM_DEPENDENCY}`,
+  `languages/typescript/packages/protect-ffi/crates/protect-ffi/Cargo.toml :: ${CARGO_DEPENDENCY}`,
+  `languages/typescript/packages/protect-ffi/integration-tests/package.json :: ${NPM_DEPENDENCY}`,
+  `languages/typescript/packages/stack-prisma/package.json :: ${NPM_DEPENDENCY}`,
+  `languages/typescript/packages/stack/package.json :: ${NPM_DEPENDENCY}`,
 ]
 
 /**
@@ -171,7 +171,7 @@ export const EXPECTED_SOURCES = [WORKSPACE_FILE]
  * place the two halves of EQL can drift apart again, and the reason is what a
  * later reader needs in order to decide whether it is still true.
  *
- * There was one, for `packages/protect-ffi/integration-tests`: it was not a
+ * There was one, for `languages/typescript/packages/protect-ffi/integration-tests`: it was not a
  * pnpm workspace member, installed with `npm ci`, and so could not resolve a
  * `workspace:` specifier at all. Absorbing it into the workspace (CIP-3744) was
  * what retired the exemption — and the `staleExemptions` spelling below is what
@@ -185,7 +185,7 @@ export const EXPECTED_SOURCES = [WORKSPACE_FILE]
  */
 export const EXEMPT_DECLARATIONS = new Map([
   [
-    'packages/cli/package.json :: @cipherstash/eql-upgrade-baseline',
+    'languages/typescript/packages/cli/package.json :: @cipherstash/eql-upgrade-baseline',
     'Test-only immutable upgrade origin: the credentialed live installer test ' +
       'must install a real previously released bundle before the workspace ' +
       'installer upgrades it. Runtime `@cipherstash/eql` and the payload-emitting ' +
@@ -661,7 +661,7 @@ export function lint({
     //
     // Measured against the declarations that are ACTUALLY registry-pinned, not
     // against every declaration found. The difference is the case that already
-    // happened: `packages/protect-ffi/integration-tests` was exempt because it
+    // happened: `languages/typescript/packages/protect-ffi/integration-tests` was exempt because it
     // installed with `npm ci` and could not take a `workspace:` specifier, and
     // absorbing it into the workspace was a scheduled follow-up. When that
     // landed the manifest still declared `@cipherstash/eql` — so an

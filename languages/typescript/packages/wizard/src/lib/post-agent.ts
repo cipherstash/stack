@@ -208,7 +208,7 @@ async function rewriteEncryptedMigrations(cwd: string): Promise<{
       // partial set on the failure path. Skipping the reporting below would
       // leave the user with a failure and no list of what it changed before it
       // stopped. The CLI twin reports the partial set for the same reason —
-      // `packages/cli/src/commands/eql/migration.ts` (#786, #837).
+      // `languages/typescript/packages/cli/src/commands/eql/migration.ts` (#786, #837).
     }
 
     if (rewritten.length > 0) {

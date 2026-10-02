@@ -5,7 +5,7 @@
  * request — `mise setup` then `mise run test:integration:all`, in
  * `.github/workflows/test.yml`. The absorption copied the suite into this
  * package intact and left that workflow behind under
- * `packages/protect-ffi/.github/`, where GitHub never looks: it reads workflows
+ * `languages/typescript/packages/protect-ffi/.github/`, where GitHub never looks: it reads workflows
  * from the repository root alone. So the day protect-ffi landed in the
  * monorepo, every live encrypt / decrypt / lock-context / keyset /
  * JSON-SteVec / Postgres / WASM-round-trip assertion in it stopped executing —
@@ -106,7 +106,7 @@ const rootWorkflows = readdirSync(workflowDir)
  * parsed YAML field so reindenting, renaming the step, or moving the
  * invocation between `run:` and a composite action does not break the check.
  */
-const SUITE_DIR = 'packages/protect-ffi/integration-tests'
+const SUITE_DIR = 'languages/typescript/packages/protect-ffi/integration-tests'
 
 /**
  * Something that actually STARTS the tests. Either shape counts:
@@ -133,7 +133,7 @@ describe('integration-tests suite runs in CI', () => {
   it('reads the root workflow directory', () => {
     // The guard on the scan. A discovery test that matches zero files passes
     // and proves nothing, so pin two workflows that live at the root and
-    // nowhere else: if this resolved to `packages/protect-ffi/.github/` (the
+    // nowhere else: if this resolved to `languages/typescript/packages/protect-ffi/.github/` (the
     // dead upstream deposit) or to a directory that no longer exists, every
     // assertion below would go vacuous instead of red.
     const names = rootWorkflows.map((workflow) => workflow.name)
@@ -155,7 +155,7 @@ describe('integration-tests suite runs in CI', () => {
 
   it('names no script after a turbo task, so `pnpm test` stays credential-free', () => {
     // The cost of workspace membership, and it is not hypothetical. Root
-    // `pnpm test` is `turbo test --filter './packages/**'`, which now REACHES
+    // `pnpm test` is `turbo test --filter './languages/typescript/packages/**'`, which now REACHES
     // this package — turbo already lists `#test` in the graph and skips it only
     // because no script answers to that name. Give one that name and the repo's
     // ordinary unit-test command starts demanding Docker, a Postgres on 5436
@@ -246,7 +246,7 @@ describe('integration-tests suite runs in CI', () => {
   it('is invoked by at least one root workflow', () => {
     expect(
       suiteRunners.map((workflow) => workflow.name),
-      'No workflow in .github/workflows/ both names packages/protect-ffi/integration-tests and starts vitest. That was silently true from the absorption until integration-protect-ffi.yml landed: the suite is 19 files of live coverage that nothing ran.',
+      'No workflow in .github/workflows/ both names languages/typescript/packages/protect-ffi/integration-tests and starts vitest. That was silently true from the absorption until integration-protect-ffi.yml landed: the suite is 19 files of live coverage that nothing ran.',
     ).not.toEqual([])
   })
 

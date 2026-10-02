@@ -107,7 +107,7 @@ describe('defaultDomain', () => {
 // The marker used to be `udt_name === 'eql_v2_encrypted'` alone. v3 is the
 // default generation and its columns carry `eql_v3_*` domains, so on the
 // default path an already-encrypted column was reported as plaintext: shown
-// with its `dataType` hint and left unticked. `packages/wizard` already made
+// with its `dataType` hint and left unticked. `languages/typescript/packages/wizard` already made
 // this call, and its comment names the consequence — misreporting encrypted
 // columns as plaintext lets an agent clobber real ciphertext.
 describe('isEqlEncryptedDomain', () => {
@@ -318,7 +318,7 @@ describe('v3 domain drift guard', () => {
   // This asserts every offered domain resolves to a real factory, so a rename
   // or removal in stack fails here (in CI) rather than silently. It is the
   // enforced counterpart to the reviewer's "avoid drift" concern; a plain type
-  // alias is not enough because `packages/cli` has no `tsc --noEmit` step (its
+  // alias is not enough because `languages/typescript/packages/cli` has no `tsc --noEmit` step (its
   // build is tsup + Biome + vitest, none of which check an unused type).
   it('every domain the picker can offer is a real @cipherstash/stack/eql/v3 factory', () => {
     const dataTypes: DataType[] = [

@@ -224,7 +224,7 @@ is decided.
 
 In the project directory, you can run:
 
-Since this package was absorbed into the `cipherstash/stack` monorepo, cargo is deliberately kept off the default `build` and `test` paths: the root `pnpm test` reaches every package, and a cargo process on that path would put a Rust toolchain on every contributor's machine. The Rust work lives behind its own scripts, listed below. `packages/protect-ffi/src/lintWiring.test.ts` enforces the split.
+Since this package was absorbed into the `cipherstash/stack` monorepo, cargo is deliberately kept off the default `build` and `test` paths: the root `pnpm test` reaches every package, and a cargo process on that path would put a Rust toolchain on every contributor's machine. The Rust work lives behind its own scripts, listed below. `languages/typescript/packages/protect-ffi/src/lintWiring.test.ts` enforces the split.
 
 #### `pnpm run build`
 

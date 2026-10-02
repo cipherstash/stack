@@ -15,7 +15,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  *
  * ## Why both, and why that took a second pass
  *
- * This checked `packages/protect-ffi` ONLY, on the reasoning — written in this
+ * This checked `languages/typescript/packages/protect-ffi` ONLY, on the reasoning — written in this
  * header — that the repo "is about to grow a crates.io publisher
  * (`eql-bindings`, via release-plz, when `cipherstash/encrypt-query-language`
  * is absorbed)". The absorption happened. The publisher landed as
@@ -24,7 +24,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * workspace this file did not read. The check was strictest exactly where
  * nothing could publish and absent where something can.
  *
- * `packages/protect-ffi/crates/protect-ffi` carries no `publish` key and is
+ * `languages/typescript/packages/protect-ffi/crates/protect-ffi` carries no `publish` key and is
  * nonetheless correct: it has never been on crates.io (verified against the
  * registry API), it is a cdylib compiled into `index.node` and shipped inside
  * the six `@cipherstash/protect-ffi-<platform>` npm packages, and nothing
@@ -46,7 +46,7 @@ const WORKSPACES = [
     expects: 'crates/eql-bindings',
   },
   {
-    root: 'packages/protect-ffi',
+    root: 'languages/typescript/packages/protect-ffi',
     publishable: new Set(),
     expects: 'crates/protect-ffi',
   },

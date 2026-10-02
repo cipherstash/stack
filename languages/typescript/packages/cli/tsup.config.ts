@@ -82,7 +82,7 @@ export default defineConfig([
       // Skills live at the monorepo root and ship inside the CLI tarball so
       // `stash init` can copy them into the user's `.claude/skills/` or
       // `.codex/skills/` directory at handoff time. Mirror of
-      // packages/wizard/tsup.config.ts:24.
+      // languages/typescript/packages/wizard/tsup.config.ts:24.
       if (existsSync('../../skills')) {
         cpSync('../../skills', 'dist/skills', { recursive: true })
       }

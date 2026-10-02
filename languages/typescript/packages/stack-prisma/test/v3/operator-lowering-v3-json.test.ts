@@ -3,7 +3,7 @@
  * (`eqlJsonContains`, trait `cipherstash:searchable-json`).
  *
  * Canonical dialect (mirrors `v3Dialect.containsJson` in
- * `packages/stack-drizzle/src/v3/sql-dialect.ts`): `eql_v3_json_search` has NO
+ * `languages/typescript/packages/stack-drizzle/src/v3/sql-dialect.ts`): `eql_v3_json_search` has NO
  * `eql_v3.matches` overload — containment is the `@>` operator, whose
  * `(eql_v3_json_search, eql_v3.query_json)` form takes a NARROWED query term
  * (searchableJson → no ciphertext) cast to the irregular

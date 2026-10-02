@@ -707,8 +707,8 @@ describe.skipIf(skipWithoutLiveCredentials)('encryptQuery', () => {
   //
   // Real coverage lives where the claim can actually resolve, under
   // CLERK_MACHINE_TOKEN + OidcFederationStrategy:
-  //   packages/stack/integration/identity/matrix-identity.integration.test.ts
-  //   packages/stack-drizzle/integration/lock-context.integration.test.ts
+  //   languages/typescript/packages/stack/integration/identity/matrix-identity.integration.test.ts
+  //   languages/typescript/packages/stack-drizzle/integration/lock-context.integration.test.ts
   describe('LockContext support', () => {
     it('single query with a lock context builds an executable operation', async () => {
       const operation = protectClient.encryptQuery('test@example.com', {

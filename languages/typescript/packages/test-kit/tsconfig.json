@@ -11,7 +11,7 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
 
-    // Mirrors `packages/stack/tsconfig.json`: protect-ffi 0.24+ uses
+    // Mirrors `languages/typescript/packages/stack/tsconfig.json`: protect-ffi 0.24+ uses
     // conditional exports, and bundler resolution omits `node` by default.
     "customConditions": ["node"],
 

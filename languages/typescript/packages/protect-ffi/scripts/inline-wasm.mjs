@@ -86,7 +86,7 @@ await writeFile(pkgPath, `${JSON.stringify({ type: 'module' }, null, 2)}\n`)
 // wasm-pack writes its own `dist/wasm/.gitignore` containing `*`, on the
 // assumption that everything it generates is disposable. Three files here are
 // not: `protect_ffi.d.ts`, `protect_ffi_bg.wasm.d.ts` and `errors.d.ts` are
-// tracked so `packages/stack`'s declaration build resolves
+// tracked so `languages/typescript/packages/stack`'s declaration build resolves
 // `@cipherstash/protect-ffi/wasm-inline` without a Rust toolchain (see the
 // repo root `.gitignore`).
 //

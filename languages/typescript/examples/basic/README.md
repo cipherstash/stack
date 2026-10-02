@@ -22,7 +22,7 @@ pnpm add @cipherstash/stack dotenv
 > [!NOTE]
 > `dotenv` is only needed if you are loading credentials from a `.env` file. It is not a dependency of `@cipherstash/stack`.
 
-You can also clone this repo and run the example as-is from `examples/basic` (after `pnpm install` in the repo root and in `examples/basic`).
+You can also clone this repo and run the example as-is from `languages/typescript/examples/basic` (after `pnpm install` in the repo root and in `languages/typescript/examples/basic`).
 
 ## Configuring the basic example
 

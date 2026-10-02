@@ -19,7 +19,7 @@
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/cipherstash/stack.git",
-		"directory": "packages/stack-prisma"
+		"directory": "languages/typescript/packages/stack-prisma"
 	},
 	"type": "module",
 	"sideEffects": false,

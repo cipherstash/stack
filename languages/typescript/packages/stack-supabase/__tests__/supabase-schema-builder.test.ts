@@ -272,7 +272,7 @@ describe('ColumnMap recognises v3 columns structurally, not by class identity', 
 
   it('throws on a builder missing the v3 column surface', () => {
     // v2 columns have `build()` and `getName()` (`EncryptedColumn`,
-    // `packages/stack/src/schema/index.ts:442,449`) but neither `getEqlType()`
+    // `languages/typescript/packages/stack/src/schema/index.ts:442,449`) but neither `getEqlType()`
     // nor `getQueryCapabilities()` (`eql/v3/columns.ts:445,450`). Four probes,
     // not two, is what keeps the predicate honest.
     //

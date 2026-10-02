@@ -159,7 +159,7 @@ jobs:
           # Every path except the workflow itself gained the `packages/eql/`
           # prefix with the subtree. dorny/paths-filter matches against
           # repo-root-relative paths, so the unprefixed globs would match
-          # `packages/stack/src/**` and friends instead — firing the whole
+          # `languages/typescript/packages/stack/src/**` and friends instead — firing the whole
           # matrix on changes that cannot affect EQL, and (worse) NOT firing on
           # EQL's own `src/`, since nothing at the repo root is called that.
           #

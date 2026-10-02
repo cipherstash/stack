@@ -1,6 +1,6 @@
 /**
  * The TYPE-level half of the two-copies-of-a-class hazard that `isV3ColumnLike`
- * (`packages/stack-supabase/src/column-map.ts`) fixed at runtime.
+ * (`languages/typescript/packages/stack-supabase/src/column-map.ts`) fixed at runtime.
  *
  * `EncryptedV3Column` carries `private readonly columnName`, and TypeScript
  * compares classes with private members by DECLARATION ORIGIN, not
@@ -27,7 +27,7 @@
  *
  * Lives here rather than in a `test-d`/vitest typecheck suite because those
  * resolve `@cipherstash/stack/*` to `../stack/src` (see
- * `packages/stack-supabase/tsconfig.json`) — source against source, which never
+ * `languages/typescript/packages/stack-supabase/tsconfig.json`) — source against source, which never
  * sees how the subpaths resolve for an installed consumer. Only a gate that
  * reads `dist/` can. This one uses `moduleResolution: bundler` over relative
  * paths; `node16/wasm-inline.mts` asserts the same thing by package name through
@@ -58,7 +58,7 @@ const wasmUsers = wasmEncryptedTable('users', {
  *
  * `@cipherstash/stack-supabase` is the concrete case, and this line is what
  * replaced a text-level guard over it. `V3Schemas = Record<string, AnyV3Table>`
- * (`packages/stack-supabase/src/schema-builder.ts:7`) imports `AnyV3Table` from
+ * (`languages/typescript/packages/stack-supabase/src/schema-builder.ts:7`) imports `AnyV3Table` from
  * `@cipherstash/stack/eql/v3` — the same declaration resolved here — so pinning
  * assignability to it pins the adapter pairing too, without this package taking
  * a build-graph dependency on one that depends on it.

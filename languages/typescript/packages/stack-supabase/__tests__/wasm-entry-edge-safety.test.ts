@@ -142,10 +142,10 @@ describeBuilt('the wasm-inline entry, as emitted', () => {
  * things had been written down wrong there and both are settled here:
  *
  * - **Which package loads a binary at import.** Not `@cipherstash/protect-ffi`:
- *   `packages/protect-ffi/src/index.cts` writes `import native =
+ *   `languages/typescript/packages/protect-ffi/src/index.cts` writes `import native =
  *   require('./load.cjs')` specifically so `__importStar` cannot enumerate the
  *   `@neon-rs/load` proxy into resolving the platform binary, and
- *   `packages/protect-ffi/src/nativeLoading.test.ts` guards that. It is
+ *   `languages/typescript/packages/protect-ffi/src/nativeLoading.test.ts` guards that. It is
  *   `@cipherstash/auth`, whose Node entry evaluates its loader at module scope.
  * - **That none of it depends on introspection.** These are import-time
  *   properties of the module graph. Declaring `schemas` skips introspection
@@ -225,19 +225,19 @@ describeStackBuilt('the engine the native entry binds', () => {
     // may not exist when this suite runs.
     expect(
       readFileSync(resolve(ffi, 'load.cts'), 'utf-8'),
-      'packages/protect-ffi/src/load.cts no longer wraps its platform requires in arrows. If protect-ffi now resolves a binary at module scope it becomes a second import-time load, and the correction this file grounds is only half right.',
+      'languages/typescript/packages/protect-ffi/src/load.cts no longer wraps its platform requires in arrows. If protect-ffi now resolves a binary at module scope it becomes a second import-time load, and the correction this file grounds is only half right.',
     ).toMatch(DEFERRED_REQUIRE)
 
     expect(
       readFileSync(resolve(ffi, 'index.cts'), 'utf-8'),
-      'packages/protect-ffi/src/index.cts no longer uses `import native = require(...)`. That form is the other half of why importing protect-ffi resolves no platform binary — `import * as` would emit `__importStar`, which enumerates the proxy and forces the load.',
+      'languages/typescript/packages/protect-ffi/src/index.cts no longer uses `import native = require(...)`. That form is the other half of why importing protect-ffi resolves no platform binary — `import * as` would emit `__importStar`, which enumerates the proxy and forces the load.',
     ).toMatch(/import\s+native\s*=\s*require\(/)
 
     // The guard that owns this property in full. Duplicating its assertions
     // here would be a second, weaker copy of it.
     expect(
       existsSync(resolve(ffi, 'nativeLoading.test.ts')),
-      'packages/protect-ffi/src/nativeLoading.test.ts is gone. It is what holds protect-ffi to deferred loading; without it the two checks above are the only thing left, and they read source rather than emit.',
+      'languages/typescript/packages/protect-ffi/src/nativeLoading.test.ts is gone. It is what holds protect-ffi to deferred loading; without it the two checks above are the only thing left, and they read source rather than emit.',
     ).toBe(true)
   })
 })

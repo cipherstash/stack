@@ -657,7 +657,7 @@ describe('fresh database: both install paths must converge on eql-3.0.6', () => 
     // driving `db init` in a repo upgraded from 1.0.0 hits this refusal with no
     // route out of it. Nothing type-checks either file; this assertion is the
     // only thing holding the pair to the planner's real message.
-    // `test/v3` -> `test` -> `packages/stack-prisma` -> `packages` -> root.
+    // `test/v3` -> `test` -> `languages/typescript/packages/stack-prisma` -> `packages` -> root.
     const repoRoot = join(
       dirname(fileURLToPath(import.meta.url)),
       '..',
@@ -666,8 +666,8 @@ describe('fresh database: both install paths must converge on eql-3.0.6', () => 
       '..',
     )
     const shipped = {
-      'packages/stack-prisma/README.md': await readFile(
-        join(repoRoot, 'packages/stack-prisma/README.md'),
+      'languages/typescript/packages/stack-prisma/README.md': await readFile(
+        join(repoRoot, 'languages/typescript/packages/stack-prisma/README.md'),
         'utf8',
       ),
       'skills/stash-prisma/SKILL.md': await readFile(
@@ -768,7 +768,7 @@ describe('no seed phase run: the 3.0.5 / 3.0.6 upgrades are silently invisible',
 /**
  * SHIPPED PROSE, pinned the same way the `db init` refusal above is pinned.
  *
- * `skills/` is copied into the `stash` npm tarball by `packages/cli`'s build,
+ * `skills/` is copied into the `stash` npm tarball by `languages/typescript/packages/cli`'s build,
  * and `installSkills()` copies it from there into a customer's
  * `.claude/skills/` — so a wrong sentence in one is wrong guidance in someone
  * else's codebase. Nothing type-checks these files and no linter reads them;
@@ -780,7 +780,7 @@ describe('no seed phase run: the 3.0.5 / 3.0.6 upgrades are silently invisible',
  * reaches the repo root to hold shipped docs to a fact.
  */
 describe('shipped skills: claims verified false, which must not come back', () => {
-  // `test/v3` -> `test` -> `packages/stack-prisma` -> `packages` -> root.
+  // `test/v3` -> `test` -> `languages/typescript/packages/stack-prisma` -> `packages` -> root.
   const repoRoot = join(
     dirname(fileURLToPath(import.meta.url)),
     '..',
@@ -811,7 +811,7 @@ describe('shipped skills: claims verified false, which must not come back', () =
   }
 
   it('no skill claims the CLI pins an exact `@cipherstash/eql` version', async () => {
-    // `packages/cli` depends on the workspace package, so what it packs is
+    // `languages/typescript/packages/cli` depends on the workspace package, so what it packs is
     // whatever specifier the release resolves — and the guarantee customers
     // actually have is narrower than "pinned": one `stash` RELEASE carries one
     // resolved bundle, but a DATABASE is on whatever bundle was last applied

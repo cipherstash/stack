@@ -27,7 +27,7 @@ This is a [Turborepo](https://turbo.build/) monorepo managed with [pnpm](https:/
 
 See [AGENTS.md](./AGENTS.md) for a detailed layout, key APIs, environment variables, and gotchas — it's written for coding agents but is the most complete developer reference in the repo.
 
-### `packages/stack`
+### `languages/typescript/packages/stack`
 
 **@cipherstash/stack** is the main package published to npm. It contains the encryption client and all integrations (Drizzle, Supabase, DynamoDB, secrets, identity). This is likely where you'll spend most of your time.
 
@@ -62,7 +62,7 @@ pnpm install
 pnpm run build
 ```
 
-This triggers Turborepo's build pipeline, compiling each package in `packages/*` and linking them locally so the examples can reference them.
+This triggers Turborepo's build pipeline, compiling each package in `languages/typescript/packages/*` and linking them locally so the examples can reference them.
 
 ### 4. Run an Example App
 

@@ -17,13 +17,13 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * `repository.directory` is the quieter half. It resolves from the ROOT of the
  * repository named in `repository.url`, so `platforms/<p>` addressed a real
  * directory in the old repo and addresses nothing here, where the packages live
- * at `packages/protect-ffi/platforms/<p>`. The two fields fail differently: a
+ * at `languages/typescript/packages/protect-ffi/platforms/<p>`. The two fields fail differently: a
  * stale `url` fails the publish outright, while a `directory` that does not
  * resolve publishes fine and silently breaks the source link on the package
  * page. Only one of those gets noticed, which is why both are asserted.
  */
 
-const FFI = join(REPO_ROOT, 'packages/protect-ffi')
+const FFI = join(REPO_ROOT, 'languages/typescript/packages/protect-ffi')
 
 /** The repository these packages publish from as of the cutover. */
 const EXPECTED = 'https://github.com/cipherstash/stack'
@@ -72,7 +72,7 @@ describe('FFI manifests name this repository', () => {
         readFileSync(join(FFI, 'platforms', platform, 'package.json'), 'utf8'),
       )
       expect(pkg.repository.directory).toBe(
-        `packages/protect-ffi/platforms/${platform}`,
+        `languages/typescript/packages/protect-ffi/platforms/${platform}`,
       )
     })
   }

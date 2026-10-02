@@ -355,7 +355,7 @@ async function runDbCommand(
   values: Record<string, string>,
 ) {
   // Plumbed through every db subcommand so the URL resolver can use it as
-  // an explicit override. See packages/cli/src/config/database-url.ts.
+  // an explicit override. See languages/typescript/packages/cli/src/config/database-url.ts.
   const databaseUrl = values['database-url']
 
   switch (sub) {

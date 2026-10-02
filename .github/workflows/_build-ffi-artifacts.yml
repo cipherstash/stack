@@ -151,7 +151,7 @@ jobs:
       - name: Install node-gyp
         run: npm install -g node-gyp
 
-      # zig + cargo-zigbuild, pinned in packages/protect-ffi/mise.toml. Only the
+      # zig + cargo-zigbuild, pinned in languages/typescript/packages/protect-ffi/mise.toml. Only the
       # gnu platforms use them, so the four others skip this rather than
       # compiling cargo-zigbuild from source on runners that never call it.
       #
@@ -175,14 +175,14 @@ jobs:
         with:
           install: true
           install_args: zig cargo:cargo-zigbuild
-          working_directory: packages/protect-ffi
+          working_directory: languages/typescript/packages/protect-ffi
           cache: false
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Build binding
-        working-directory: packages/protect-ffi
+        working-directory: languages/typescript/packages/protect-ffi
         env:
           CARGO_BUILD_TARGET: ${{ matrix.cfg.target }}
           NEON_BUILD_PLATFORM: ${{ matrix.cfg.platform }}
@@ -247,7 +247,7 @@ jobs:
           fi
 
       - name: Place the binding in its platform package
-        working-directory: packages/protect-ffi
+        working-directory: languages/typescript/packages/protect-ffi
         env:
           PLATFORM: ${{ matrix.cfg.platform }}
           BUILD_LOG: ${{ matrix.cfg.log }}
@@ -280,8 +280,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ffi-dist
-          pnpm --dir "packages/protect-ffi/platforms/${PLATFORM}" pack
-          mv "packages/protect-ffi/platforms/${PLATFORM}"/*.tgz ffi-dist/
+          pnpm --dir "languages/typescript/packages/protect-ffi/platforms/${PLATFORM}" pack
+          mv "languages/typescript/packages/protect-ffi/platforms/${PLATFORM}"/*.tgz ffi-dist/
           ls ffi-dist
 
       - name: Verify the tarball is the platform package, not the wrapper
@@ -348,7 +348,7 @@ jobs:
       - name: Install node-gyp
         run: npm install -g node-gyp
 
-      # wasm-pack, pinned in packages/protect-ffi/mise.toml — `build:wasm`
+      # wasm-pack, pinned in languages/typescript/packages/protect-ffi/mise.toml — `build:wasm`
       # shells out to it and nothing else supplies it. `install_args` narrows
       # this to wasm-pack alone: a bare `mise install` would also build
       # cargo-zigbuild from source, which this job never calls. The argument is
@@ -359,7 +359,7 @@ jobs:
         with:
           install: true
           install_args: aqua:wasm-bindgen/wasm-pack
-          working_directory: packages/protect-ffi
+          working_directory: languages/typescript/packages/protect-ffi
           cache: false
 
       # `--all-targets` in the Rust lint means all target KINDS, not platforms;
@@ -374,15 +374,15 @@ jobs:
       # tracked; the runtime .js and .wasm are generated here. Without this the
       # published `./wasm` and `./wasm-inline` entries resolve to nothing.
       - name: Build WASM
-        working-directory: packages/protect-ffi
+        working-directory: languages/typescript/packages/protect-ffi
         run: pnpm run build:wasm
 
       - name: Pack the wrapper
         run: |
           set -euo pipefail
           mkdir -p ffi-dist
-          pnpm --dir packages/protect-ffi pack
-          mv packages/protect-ffi/*.tgz ffi-dist/
+          pnpm --dir languages/typescript/packages/protect-ffi pack
+          mv languages/typescript/packages/protect-ffi/*.tgz ffi-dist/
 
       - name: Verify the wrapper tarball
         run: |

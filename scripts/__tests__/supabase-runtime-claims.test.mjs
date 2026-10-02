@@ -25,13 +25,13 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * **2. Importing `@cipherstash/protect-ffi` does not load a Node-API binary.**
  * `index.ts` and `create.ts` both named it as the import-time native load. It
  * is the one package in the graph that deliberately does NOT do that:
- * `packages/protect-ffi/src/index.cts` writes `import native =
+ * `languages/typescript/packages/protect-ffi/src/index.cts` writes `import native =
  * require('./load.cjs')` precisely so `__importStar` cannot enumerate the
  * `@neon-rs/load` proxy into resolving the platform binary, and
- * `packages/protect-ffi/src/nativeLoading.test.ts` guards it. The module-
+ * `languages/typescript/packages/protect-ffi/src/nativeLoading.test.ts` guards it. The module-
  * evaluation-time `dlopen` in that graph belongs to `@cipherstash/auth`, whose
  * Node entry ends `module.exports = loadBinding()`.
- * `packages/stack-supabase/__tests__/wasm-entry-edge-safety.test.ts` holds the
+ * `languages/typescript/packages/stack-supabase/__tests__/wasm-entry-edge-safety.test.ts` holds the
  * mechanical half of this; here we only stop the wrong name being written back.
  *
  * **3. "a Worker" is ambiguous, and false under the reading most people take
@@ -51,7 +51,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * The reference doc, the two shipped documents, and the three sources whose
  * TSDoc ships in `.d.ts`.
  *
- * `packages/stack-supabase/README.md` and `skills/stash-supabase/SKILL.md`
+ * `languages/typescript/packages/stack-supabase/README.md` and `skills/stash-supabase/SKILL.md`
  * were both held off this list while #951 rewrote the same lines — the README
  * carried defect 1 verbatim, and #951's first draft kept the false `so` while
  * dropping the browser half. This comment is part of #951: both sentences now
@@ -72,11 +72,11 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  */
 const GUARDED = [
   'docs/reference/supabase-sdk.md',
-  'packages/stack-supabase/README.md',
+  'languages/typescript/packages/stack-supabase/README.md',
   'skills/stash-supabase/SKILL.md',
-  'packages/stack-supabase/src/index.ts',
-  'packages/stack-supabase/src/create.ts',
-  'packages/stack-supabase/src/wasm-inline.ts',
+  'languages/typescript/packages/stack-supabase/src/index.ts',
+  'languages/typescript/packages/stack-supabase/src/create.ts',
+  'languages/typescript/packages/stack-supabase/src/wasm-inline.ts',
 ]
 
 function read(file) {
@@ -348,7 +348,7 @@ describe('the Supabase two-entry runtime story, as written', () => {
     (file) => {
       expect(
         falseRuntimeCause(prose(file, read(file))),
-        `${file} attributes a runtime restriction to introspection or to declaring \`schemas\`. The native entry is Node-only because it binds the native engine and because its emitted bundle carries an import("pg") specifier — both true whether or not \`schemas\` is passed. See packages/stack-supabase/__tests__/wasm-entry-edge-safety.test.ts.`,
+        `${file} attributes a runtime restriction to introspection or to declaring \`schemas\`. The native entry is Node-only because it binds the native engine and because its emitted bundle carries an import("pg") specifier — both true whether or not \`schemas\` is passed. See languages/typescript/packages/stack-supabase/__tests__/wasm-entry-edge-safety.test.ts.`,
       ).toEqual([])
     },
   )
@@ -368,7 +368,7 @@ describe('the Supabase two-entry runtime story, as written', () => {
     (file) => {
       expect(
         protectFfiImportLoadClaims(prose(file, read(file))),
-        `${file} says importing \`@cipherstash/protect-ffi\` loads a native binary. It does not: packages/protect-ffi/src/index.cts uses \`import native = require('./load.cjs')\` so the @neon-rs/load proxy is never enumerated into resolving the platform binary, guarded by packages/protect-ffi/src/nativeLoading.test.ts. The module-evaluation-time load in that graph is \`@cipherstash/auth\`'s.`,
+        `${file} says importing \`@cipherstash/protect-ffi\` loads a native binary. It does not: languages/typescript/packages/protect-ffi/src/index.cts uses \`import native = require('./load.cjs')\` so the @neon-rs/load proxy is never enumerated into resolving the platform binary, guarded by languages/typescript/packages/protect-ffi/src/nativeLoading.test.ts. The module-evaluation-time load in that graph is \`@cipherstash/auth\`'s.`,
       ).toEqual([])
     },
   )

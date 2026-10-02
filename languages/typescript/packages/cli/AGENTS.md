@@ -35,11 +35,11 @@ modules import workspace packages that publish `./dist` only, so an unbuilt
 workspace fails at collection with `Failed to resolve entry for package …`
 rather than at an assertion. `vitest.config.ts` aliases `@cipherstash/migrate`
 to its source to remove one such coupling; `@cipherstash/stack` remains, reached
-via `packages/migrate/src/backfill.ts` and a direct import in
-`init/lib/__tests__/introspect.test.ts`. Deleting `packages/stack/dist` fails 10
+via `languages/typescript/packages/migrate/src/backfill.ts` and a direct import in
+`init/lib/__tests__/introspect.test.ts`. Deleting `languages/typescript/packages/stack/dist` fails 10
 files. Closing it needs `vitest.shared.ts`'s `stackSourceAlias`, which cannot be
-spread into this config: its `'@/'` points at `packages/stack/src` while this
-package's points at `packages/cli/src`, and a flat alias map admits only one —
+spread into this config: its `'@/'` points at `languages/typescript/packages/stack/src` while this
+package's points at `languages/typescript/packages/cli/src`, and a flat alias map admits only one —
 spread it after and stack's entry clobbers the CLI's, spread it before and the
 CLI's breaks stack's own source imports (#787 review).
 
@@ -98,7 +98,7 @@ exercise the same code paths.
   encryption row and exit 1, and `doctor` offers the recovery it has for an npm
   user — reinstall `node_modules` — which does not fix this. **That is a
   missing binding, not a broken checkout.** Build one (needs a Rust toolchain),
-  from `packages/protect-ffi`:
+  from `languages/typescript/packages/protect-ffi`:
 
   ```bash
   mise run build:debug   # or: pnpm --filter @cipherstash/protect-ffi build:native

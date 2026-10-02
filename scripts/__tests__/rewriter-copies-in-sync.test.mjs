@@ -7,7 +7,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * The ALTER-COLUMN rewriter exists twice: `@cipherstash/wizard`
  * runs it after its agent edits a schema, and `stash eql migration --drizzle`
  * runs it over an explicit `--out`. Both are published, neither depends on the
- * other, and `packages/utils` is not a package while `@cipherstash/test-kit` is
+ * other, and `languages/typescript/packages/utils` is not a package while `@cipherstash/test-kit` is
  * private and build-less — so there is nowhere to put shared runtime code that
  * both npm tarballs could resolve. Extracting one means either publishing a new
  * package into a fixed release group or adding `noExternal` to two CLI bundles.
@@ -20,8 +20,10 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * So: everything outside the wizard's `#region wizard-only` must match the CLI
  * copy exactly, modulo comments and the tool name in the emitted header.
  */
-const WIZARD = 'packages/wizard/src/lib/rewrite-migrations.ts'
-const CLI = 'packages/cli/src/commands/db/rewrite-migrations.ts'
+const WIZARD =
+  'languages/typescript/packages/wizard/src/lib/rewrite-migrations.ts'
+const CLI =
+  'languages/typescript/packages/cli/src/commands/db/rewrite-migrations.ts'
 
 const REGION_OPEN = '// #region wizard-only'
 const REGION_CLOSE = '// #endregion wizard-only'

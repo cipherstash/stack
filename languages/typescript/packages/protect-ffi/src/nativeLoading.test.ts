@@ -23,8 +23,8 @@
  * under the emitted entry instead of substituting an installation.
  *
  * Nothing in this file may REQUIRE a binary, though, and that is a separate
- * rule from the ones above. `packages/protect-ffi`'s `test` is the default task
- * root `pnpm test` reaches through `turbo test --filter './packages/*'`, and it
+ * rule from the ones above. `languages/typescript/packages/protect-ffi`'s `test` is the default task
+ * root `pnpm test` reaches through `turbo test --filter './languages/typescript/packages/*'`, and it
  * is deliberately Rust-free: `index.node` stopped being tarball content when
  * this package was absorbed, so on a fresh checkout there is no binary
  * anywhere and the six `platforms/*` links are empty. `lintWiring.test.ts`
@@ -146,8 +146,8 @@ const builtArtifacts = BINDING_ARTIFACTS.filter(
 )
 
 /**
- * The platform-package name in a loader failure, as `packages/cli` matches it
- * (`PLATFORM_PKG` in `packages/cli/src/native.ts`).
+ * The platform-package name in a loader failure, as `languages/typescript/packages/cli` matches it
+ * (`PLATFORM_PKG` in `languages/typescript/packages/cli/src/native.ts`).
  *
  * Copied rather than imported — this package does not depend on the CLI, and
  * should not. The coupling is the point of the assertion: `index.cts`'s doc
@@ -156,7 +156,7 @@ const builtArtifacts = BINDING_ARTIFACTS.filter(
  * the code doing that classification. Nothing checked the promise against a
  * real error until now: the CLI's own suite builds its inputs by hand
  * (`moduleError("Cannot find module '@cipherstash/protect-ffi-darwin-arm64'")`
- * in `packages/cli/src/__tests__/native.test.ts`), so it proves the matcher
+ * in `languages/typescript/packages/cli/src/__tests__/native.test.ts`), so it proves the matcher
  * matches a string, not that the string is what the loader raises.
  */
 const PLATFORM_PACKAGE =
@@ -193,10 +193,10 @@ describe('assertNativeBindingAvailable', () => {
     // suite runs where a binary is installed". That premise died with the
     // absorption. `index.node` arrived prebuilt inside the npm tarball; as a
     // workspace package it is a cargo output, the six `platforms/*` links are
-    // empty until someone builds one, and `packages/protect-ffi`'s `test` is
+    // empty until someone builds one, and `languages/typescript/packages/protect-ffi`'s `test` is
     // deliberately Rust-free. So on every fresh checkout the assertion failed
     // — and it failed under root `pnpm test`, which reaches this package via
-    // `turbo test --filter './packages/*'`.
+    // `turbo test --filter './languages/typescript/packages/*'`.
     //
     // Both branches assert. A `skipIf` here would be the trade this repo keeps
     // refusing: it goes quiet on every contributor machine, and quiet is
@@ -213,7 +213,7 @@ describe('assertNativeBindingAvailable', () => {
 
     expect(
       outcome.error,
-      `No index.node exists under packages/protect-ffi, so the loader cannot succeed and this call must throw. Looked at:\n${BINDING_ARTIFACTS.map((path) => `  ${path}`).join('\n')}\nA success here means the binding came from somewhere none of those paths covers, and the check above is then gated on a list that no longer describes reality.`,
+      `No index.node exists under languages/typescript/packages/protect-ffi, so the loader cannot succeed and this call must throw. Looked at:\n${BINDING_ARTIFACTS.map((path) => `  ${path}`).join('\n')}\nA success here means the binding came from somewhere none of those paths covers, and the check above is then gated on a list that no longer describes reality.`,
     ).toBeInstanceOf(Error)
 
     const error = outcome.error as NodeJS.ErrnoException & {
@@ -222,11 +222,11 @@ describe('assertNativeBindingAvailable', () => {
     // The contract `index.cts` documents, verified against the real thing.
     expect(
       error.code,
-      `The loader failure must reach callers unwrapped as MODULE_NOT_FOUND. \`packages/cli\`'s \`isNativeBinaryMissing\` tests \`code\` first and returns false for anything else, so a wrapped or re-thrown error turns \`stash doctor\`'s actionable "native binary missing" note back into a raw stack trace. Got: ${errorDetail}`,
+      `The loader failure must reach callers unwrapped as MODULE_NOT_FOUND. \`languages/typescript/packages/cli\`'s \`isNativeBinaryMissing\` tests \`code\` first and returns false for anything else, so a wrapped or re-thrown error turns \`stash doctor\`'s actionable "native binary missing" note back into a raw stack trace. Got: ${errorDetail}`,
     ).toBe('MODULE_NOT_FOUND')
     expect(
       `${error.message}\n${(error.requireStack ?? []).join('\n')}`,
-      `The failure must name the platform package so \`packages/cli\` can tell a missing NATIVE binary from any other missing module. Got: ${errorDetail}`,
+      `The failure must name the platform package so \`languages/typescript/packages/cli\` can tell a missing NATIVE binary from any other missing module. Got: ${errorDetail}`,
     ).toMatch(PLATFORM_PACKAGE)
   })
 

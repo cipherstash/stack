@@ -4,7 +4,7 @@ import { config } from 'dotenv'
 // same key, since dotenv does not overwrite already-set vars). `quiet: true`
 // suppresses dotenv v17's `injected env (N) from …` banner so this script does
 // not print noisy, non-deterministic lines in CI. Mirrors the CLI entrypoint
-// (packages/cli/src/bin/main.ts).
+// (languages/typescript/packages/cli/src/bin/main.ts).
 config({ path: '.env.local', quiet: true })
 config({ path: '.env.development.local', quiet: true })
 config({ path: '.env.development', quiet: true })

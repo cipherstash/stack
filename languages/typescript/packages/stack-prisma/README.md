@@ -164,7 +164,7 @@ The four `CS_*` env vars (`CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `
 
 ## Example
 
-A runnable end-to-end example lives at [`examples/prisma/`](https://github.com/cipherstash/stack/tree/main/examples/prisma) — bundles a docker-compose Postgres, a six-codec `User` schema, and a flow that exercises every operator category against a live ZeroKMS workspace.
+A runnable end-to-end example lives at [`languages/typescript/examples/prisma/`](https://github.com/cipherstash/stack/tree/main/languages/typescript/examples/prisma) — bundles a docker-compose Postgres, a six-codec `User` schema, and a flow that exercises every operator category against a live ZeroKMS workspace.
 
 ## How it works
 
@@ -185,7 +185,7 @@ plaintext and keys never reach CipherStash, and every decryption is logged for a
 
 ## Contributing
 
-See [`DEVELOPING.md`](https://github.com/cipherstash/stack/blob/main/packages/stack-prisma/DEVELOPING.md) for the source layout, two-pass codec encode + middleware rewrite lifecycle, physical-column-name routing, the `bigint → Number` SDK boundary, and other runtime-side details.
+See [`DEVELOPING.md`](https://github.com/cipherstash/stack/blob/main/languages/typescript/packages/stack-prisma/DEVELOPING.md) for the source layout, two-pass codec encode + middleware rewrite lifecycle, physical-column-name routing, the `bigint → Number` SDK boundary, and other runtime-side details.
 
 ## References
 

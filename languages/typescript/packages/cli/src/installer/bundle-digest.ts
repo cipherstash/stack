@@ -20,7 +20,7 @@
  * `@cipherstash/eql` already ships the answer — `releaseManifest`'s
  * `installSqlSha256`, generated from the same tsup run that copies the SQL into
  * `dist/sql/`. It was imported by `verify.ts` for its `eqlVersion` alone.
- * `packages/stack-prisma` has verified against it since the v3 migrations
+ * `languages/typescript/packages/stack-prisma` has verified against it since the v3 migrations
  * landed ({@link https://github.com/cipherstash/stack} —
  * `src/migration/eql-bundle-v3.ts`'s `readVerifiedInstallSql`); this is the
  * same check on the path that actually reaches customer databases.

@@ -1,7 +1,7 @@
 /**
  * A build that copies `skills/` must declare `skills/` as an input.
  *
- * `packages/cli` and `packages/wizard` both `cpSync('../../skills',
+ * `languages/typescript/packages/cli` and `languages/typescript/packages/wizard` both `cpSync('../../skills',
  * 'dist/skills')` — they consume a directory outside their own package, which
  * turbo's `$TURBO_DEFAULT$` does not cover. On its own that only meant a stale
  * cache entry stayed valid; once `build` declared `outputs: ["dist/**"]`, a

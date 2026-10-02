@@ -3,7 +3,7 @@
  *
  * Deliberately import-free. `installer/index.ts` pulls in `pg` and the EQL SQL
  * bundle, which no other package depends on; keeping the grants here lets the
- * live proof in `packages/stack/__tests__/supabase-v3-grants-pg.test.ts` assert
+ * live proof in `languages/typescript/packages/stack/__tests__/supabase-v3-grants-pg.test.ts` assert
  * against the EXACT SQL this package ships, without `@cipherstash/stack` taking
  * a dependency on `stash` (which would be a cycle — `stash` already depends on
  * `@cipherstash/stack`). Re-exported from `installer/index.ts`, which remains

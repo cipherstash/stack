@@ -13,7 +13,7 @@ This directory hosts the live-Postgres + EQL v3 bundle + ZeroKMS end-to-end harn
 ## Local setup
 
 ```bash
-docker compose -f test/e2e/docker-compose.yml up -d   # from examples/prisma
+docker compose -f test/e2e/docker-compose.yml up -d   # from languages/typescript/examples/prisma
 pnpm --filter @cipherstash/prisma-example test:e2e
 ```
 

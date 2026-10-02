@@ -17,7 +17,7 @@ import { eqlRequiresQueryDomains, introspect } from './introspect'
  *
  * Not `@cipherstash/protect-ffi`, the graph's other Node-API package: it
  * deliberately resolves nothing until first use — see
- * `packages/protect-ffi/src/index.cts` and the `nativeLoading.test.ts` beside
+ * `languages/typescript/packages/protect-ffi/src/index.cts` and the `nativeLoading.test.ts` beside
  * it. And the engine is not the only thing pinning this entry to Node: its own
  * emitted bundle carries an `import("pg")` specifier for introspection, which
  * a bundler resolves at build time. `__tests__/wasm-entry-edge-safety.test.ts`

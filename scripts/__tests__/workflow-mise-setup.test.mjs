@@ -333,7 +333,7 @@ describe('the mise setup step carries the inputs it depends on', () => {
   it('points every mise setup step at a directory that has a mise config', () => {
     // THE TRUST ERROR. mise reads config from the current directory and its
     // PARENTS, and this repo has NO mise config at its root — the two that
-    // exist are `packages/eql/mise.toml` and `packages/protect-ffi/mise.toml`.
+    // exist are `packages/eql/mise.toml` and `languages/typescript/packages/protect-ffi/mise.toml`.
     // So an action running at the default working directory finds nothing to
     // install and leaves the config untrusted, and the first `mise run` fails
     // with "Config files … are not trusted", which reads as a broken toolchain

@@ -5,7 +5,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/cipherstash/stack.git",
-    "directory": "packages/protect-ffi/platforms/win32-x64-msvc"
+    "directory": "languages/typescript/packages/protect-ffi/platforms/win32-x64-msvc"
   },
   "os": [
     "win32"

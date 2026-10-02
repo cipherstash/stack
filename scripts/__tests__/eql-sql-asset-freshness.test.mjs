@@ -275,7 +275,7 @@ describe('eqlLockstepSkew catches each way the assets can lag', () => {
 
   it('catches a digest that is not the sha256 of the file beside it', () => {
     // The hand-edited case, and the partial-copy case: a manifest asserting
-    // bytes that are not there. `packages/cli`'s installer reads the SQL
+    // bytes that are not there. `languages/typescript/packages/cli`'s installer reads the SQL
     // verbatim, so nothing downstream re-checks this.
     const { skew } = skewOf({ installDigest: 'deadbeef' })
     expect(skew.join('\n')).toMatch(

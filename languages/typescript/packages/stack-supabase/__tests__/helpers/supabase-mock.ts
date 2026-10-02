@@ -223,7 +223,7 @@ export function createMockSupabase(resultData: unknown = []) {
  *
  * Object literals, not the real classes: reproducing the split with the real
  * ones needs a built `dist/`, and `vitest.shared.ts:4-14` keeps `pnpm test`
- * free of that. `packages/stack/dist-types/wasm-inline-type-identity.ts` covers
+ * free of that. `languages/typescript/packages/stack/dist-types/wasm-inline-type-identity.ts` covers
  * the dist-level TYPE half of the same hazard.
  */
 export function wasmAuthoredV3Table(tableName: string, columnNames: string[]) {

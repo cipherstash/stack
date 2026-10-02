@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from 'vitest'
  * `accde0030…`, because upstream restored the deprecated `ste_vec_contains`
  * aliases in the real release. `stash eql install` would have executed the
  * wrong one against a customer database and reported success — the whole
- * failure is silent. `packages/stack-prisma` already refuses on this same
+ * failure is silent. `languages/typescript/packages/stack-prisma` already refuses on this same
  * digest (`readVerifiedInstallSql`); the CLI did not.
  */
 

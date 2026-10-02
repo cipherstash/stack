@@ -62,7 +62,7 @@ import {
  * absent there: pnpm rewrites the `workspace:` specifier in that table too and
  * the rewritten range does ship inside the packed `package.json`, but nothing
  * installing the package ever resolves it. The asymmetry is live in this tree —
- * `packages/stack` declares `@cipherstash/eql` under `devDependencies` and is
+ * `languages/typescript/packages/stack` declares `@cipherstash/eql` under `devDependencies` and is
  * not a finding — so it is asserted below rather than left as an absence.
  */
 const RUNTIME_TABLES = new Set([
@@ -160,7 +160,7 @@ describe('frozen-publisher runtime pins', () => {
   })
 
   it('does not fault a devDependency, which no consumer installs', () => {
-    // `packages/stack` and the protect-ffi integration suite both declare
+    // `languages/typescript/packages/stack` and the protect-ffi integration suite both declare
     // `@cipherstash/eql` under `devDependencies`. They are the cases that prove
     // the narrowing above is a decision rather than an oversight: if either
     // appears in the finding list, RUNTIME_TABLES has drifted from

@@ -160,7 +160,7 @@ describe('renderSetupPrompt — orient + route (implement mode)', () => {
       expect(out).not.toContain('{ table, column, queryType }')
     })
 
-    // `packages/cli` builds with tsup, which transpiles without type-checking,
+    // `languages/typescript/packages/cli` builds with tsup, which transpiles without type-checking,
     // and has no `typecheck` script — so `Record<Integration, …>` buys nothing
     // at build time here. An if-chain ending in a bare Drizzle `return` hands a
     // future fifth integration the exact string this helper exists to stop it

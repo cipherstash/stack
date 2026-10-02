@@ -11,7 +11,7 @@
  * `permission denied for schema eql_v3_internal` on EVERY encrypted filter:
  * `=` (eq_term), `>=` (ord_term) and `@>`/`cs` (match_term) alike.
  *
- * `packages/stack/__tests__/supabase-v3-builder.test.ts` cannot see this — it
+ * `languages/typescript/packages/stack/__tests__/supabase-v3-builder.test.ts` cannot see this — it
  * records wire strings against a mock. Only a real Postgres can.
  *
  * ## Why the grants SQL is imported from `stash`

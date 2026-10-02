@@ -243,7 +243,7 @@ Because SQL, the crate, and npm all release in lockstep at one version, **every 
 
 User-facing means: someone outside EQL would care. If in doubt, add the changeset; it's cheap.
 
-**Every EQL release needs a `@cipherstash/stack-prisma` migration on `main` before its Version Packages PR merges** — even a release whose only SQL change is the version stamp. `stack-prisma` bakes the install SQL into content-addressed migrations, and its lockstep test (`packages/stack-prisma/test/v3/migration-v3.test.ts`) requires the installed release's `installSqlSha256` to be baked by some migration. The Version Packages PR is what moves that digest, so its own CI fails until the migration exists: 3.0.6 changed only `eql_v3.version()` and the schema comment, and still failed `cipherstash/stack#938`. Build the migration from the release's SQL (the Version Packages branch has it) — see `packages/stack-prisma/DEVELOPING.md`.
+**Every EQL release needs a `@cipherstash/stack-prisma` migration on `main` before its Version Packages PR merges** — even a release whose only SQL change is the version stamp. `stack-prisma` bakes the install SQL into content-addressed migrations, and its lockstep test (`languages/typescript/packages/stack-prisma/test/v3/migration-v3.test.ts`) requires the installed release's `installSqlSha256` to be baked by some migration. The Version Packages PR is what moves that digest, so its own CI fails until the migration exists: 3.0.6 changed only `eql_v3.version()` and the schema comment, and still failed `cipherstash/stack#938`. Build the migration from the release's SQL (the Version Packages branch has it) — see `languages/typescript/packages/stack-prisma/DEVELOPING.md`.
 
 What does *not* need an entry:
 

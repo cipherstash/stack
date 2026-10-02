@@ -100,10 +100,10 @@ const DEPENDENCY_TABLES = [
  * specifier there too, and the rewritten range does ship inside the packed
  * `package.json` — but nothing installing the package ever resolves it, so an
  * unsatisfiable one breaks nobody. That asymmetry is live in this tree:
- * `packages/stack` declares `"@cipherstash/eql": "workspace:^"` under
+ * `languages/typescript/packages/stack` declares `"@cipherstash/eql": "workspace:^"` under
  * devDependencies and is not a finding — a caret there is harmless, which is
- * why it is still written that way, while `packages/cli` and
- * `packages/stack-prisma` carry the same dependency under `dependencies` and
+ * why it is still written that way, while `languages/typescript/packages/cli` and
+ * `languages/typescript/packages/stack-prisma` carry the same dependency under `dependencies` and
  * pin it with `workspace:*` so the packed range is exact.
  */
 const INSTALLED_TABLES = new Set([
@@ -161,7 +161,7 @@ export const FROZEN_PUBLISHERS = new Map([])
  * `@cipherstash/eql`, while it was frozen, was the case that proved it. The
  * subtree sat at `3.0.5` with an install bundle hashing `7ad9c9f8…` while npm's
  * `3.0.5` was `accde0030…` — upstream had restored the deprecated
- * `ste_vec_contains` aliases in the actual release. `packages/cli`'s installer
+ * `ste_vec_contains` aliases in the actual release. `languages/typescript/packages/cli`'s installer
  * reads that SQL verbatim (`readInstallSql`, no digest check), so
  * `stash eql install` would have put functions into a customer database that
  * the version it reports does not define. It was caught by a human reading the

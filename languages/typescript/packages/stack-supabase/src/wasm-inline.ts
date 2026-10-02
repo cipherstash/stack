@@ -33,7 +33,7 @@ import { adaptWasmEncryption } from './wasm-client-adapter'
  *   options object assembled as a `const` and passed by variable, which is what
  *   a Node → edge port actually holds, type-checked clean and then hit the
  *   runtime throw in `makeEncryptedSupabase`. Mirrors
- *   `WasmClientConfig.eqlVersion?: never` in `packages/stack/src/wasm-inline.ts`
+ *   `WasmClientConfig.eqlVersion?: never` in `languages/typescript/packages/stack/src/wasm-inline.ts`
  *   — same gap, same fix, one package along.
  */
 export interface EncryptedSupabaseWasmOptions<S extends V3Schemas> {

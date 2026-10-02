@@ -5,7 +5,7 @@
  * `@cipherstash/stack-supabase/wasm-inline` "must carry all four `CS_*`
  * values", because there is no `~/.cipherstash` to discover credentials from
  * on an edge runtime. That is true of exactly ONE of the three arms
- * `WasmClientConfig` accepts (`packages/stack/src/wasm-inline.ts`): the
+ * `WasmClientConfig` accepts (`languages/typescript/packages/stack/src/wasm-inline.ts`): the
  * access-key arm. On the `authStrategy` arm — the one an
  * `OidcFederationStrategy` takes, i.e. every identity-aware edge deployment —
  * `accessKey` is `never` and `workspaceCrn` is OPTIONAL, because a pre-built
@@ -29,7 +29,7 @@
  * Runs under `pnpm --filter @cipherstash/stack-supabase test:types`.
  * `@cipherstash/stack/wasm-inline` has no `paths` entry in
  * `tsconfig.json`, so it resolves through the workspace `exports` map to
- * `packages/stack/dist/wasm-inline.d.ts` — build `@cipherstash/stack` first.
+ * `languages/typescript/packages/stack/dist/wasm-inline.d.ts` — build `@cipherstash/stack` first.
  */
 
 import { encryptedTable, types } from '@cipherstash/stack/eql/v3'
@@ -158,7 +158,7 @@ describe('the edge entry `config` accepts either auth arm', () => {
  * type checker enforced it.
  *
  * Same failure mode and same fix as `WasmClientConfig.eqlVersion?: never` in
- * `packages/stack/src/wasm-inline.ts`, whose comment describes exactly this
+ * `languages/typescript/packages/stack/src/wasm-inline.ts`, whose comment describes exactly this
  * shared-config-const path; this is its sibling one package along.
  *
  * The runtime throw stays regardless — it is the backstop for plain JS, where

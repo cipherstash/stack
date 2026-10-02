@@ -90,7 +90,7 @@ function captureRefresh() {
   refreshCargoLock({
     root: '/repo',
     eqlRoot: '/repo/packages/eql',
-    workspace: 'packages/protect-ffi',
+    workspace: 'languages/typescript/packages/protect-ffi',
     run: (...args) => calls.push(args),
   })
   expect(calls).toHaveLength(1)
@@ -104,7 +104,7 @@ function captureRefresh() {
  * version. Every `Cargo.lock` that resolves that crate FROM A PATH records the
  * old one, and nothing in this repo passes `--locked`, so the stale lock is
  * regenerated on every CI run, used, and discarded — green the whole way.
- * `cargo metadata --locked` in `packages/protect-ffi` exited 101 for exactly
+ * `cargo metadata --locked` in `languages/typescript/packages/protect-ffi` exited 101 for exactly
  * this reason after the 3.0.5 bump.
  *
  * `scripts/__tests__/cargo-lock-freshness.test.mjs` is the guard that fails a
@@ -117,11 +117,11 @@ describe('lockstep Cargo.lock refresh', () => {
 
     // The floor. Discovery over a hardcoded list means a walk that stops
     // matching refreshes nothing and reports success — so an empty result is a
-    // failure, not a no-op. `packages/protect-ffi` is named because it is the
+    // failure, not a no-op. `languages/typescript/packages/protect-ffi` is named because it is the
     // consumer that broke: it path-depends on the crate from a SEPARATE cargo
     // workspace, so no eql-side build ever touches its lock.
     expect(found.length).toBeGreaterThan(0)
-    expect(found).toContain('packages/protect-ffi')
+    expect(found).toContain('languages/typescript/packages/protect-ffi')
   })
 
   test('refreshes through mise, against the named workspace', () => {
@@ -140,7 +140,9 @@ describe('lockstep Cargo.lock refresh', () => {
     expect(args).toContain('--package')
     expect(args).toContain(LOCKED_CRATE)
     expect(args).toContain('--manifest-path')
-    expect(args).toContain('/repo/packages/protect-ffi/Cargo.toml')
+    expect(args).toContain(
+      '/repo/languages/typescript/packages/protect-ffi/Cargo.toml',
+    )
   })
 
   /**
@@ -150,7 +152,7 @@ describe('lockstep Cargo.lock refresh', () => {
    * why would refreshing it need a registry? Because `cargo update -p X` does
    * not update X in isolation: it re-resolves the WHOLE graph and rewrites a
    * complete lock, and in offline mode every other package has to come from
-   * the local registry cache. `packages/protect-ffi` has 167 of them.
+   * the local registry cache. `languages/typescript/packages/protect-ffi` has 167 of them.
    *
    * The release job has no such cache. `jdx/mise-action` runs there with
    * `install: true, cache: false` — it installs toolchains and populates
@@ -210,7 +212,7 @@ describe('lockstep Cargo.lock refresh', () => {
       refreshCargoLock({
         root: '/repo',
         eqlRoot: '/repo/packages/eql',
-        workspace: 'packages/protect-ffi',
+        workspace: 'languages/typescript/packages/protect-ffi',
         run: () => {
           throw new Error('spawn mise ENOENT')
         },

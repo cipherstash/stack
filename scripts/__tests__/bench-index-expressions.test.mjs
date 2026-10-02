@@ -23,7 +23,9 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
 // bench's own EXPLAIN assertions require CipherStash credentials and never run
 // in CI.
 
-const require = createRequire(resolve(REPO_ROOT, 'packages/cli/package.json'))
+const require = createRequire(
+  resolve(REPO_ROOT, 'languages/typescript/packages/cli/package.json'),
+)
 
 /**
  * The EQL v3 bundle `stash eql install --eql-version 3` applies.
@@ -70,7 +72,7 @@ function eqlCalls(fragment) {
 }
 
 const SCHEMA_SQL = readFileSync(
-  resolve(REPO_ROOT, 'packages/bench/sql/schema.sql'),
+  resolve(REPO_ROOT, 'languages/typescript/packages/bench/sql/schema.sql'),
   'utf8',
 )
 

@@ -96,13 +96,13 @@ importers:
     dependencies:
       '@cipherstash/stack':
         specifier: workspace:*
-        version: link:../packages/stack
+        version: link:../languages/typescript/packages/stack
       '@cipherstash/wizard':
         specifier: workspace:*
-        version: link:../packages/wizard
+        version: link:../languages/typescript/packages/wizard
       stash:
         specifier: workspace:*
-        version: link:../packages/cli
+        version: link:../languages/typescript/packages/cli
     devDependencies:
       '@types/semver':
         specifier: 7.8.0
@@ -120,7 +120,7 @@ importers:
         specifier: ^2.9.0
         version: 2.9.0
 
-  examples/basic:
+  languages/typescript/examples/basic:
     dependencies:
       '@cipherstash/stack':
         specifier: workspace:*
@@ -148,7 +148,7 @@ importers:
         specifier: catalog:repo
         version: 5.9.3
 
-  examples/prisma:
+  languages/typescript/examples/prisma:
     dependencies:
       '@cipherstash/stack':
         specifier: workspace:*
@@ -179,9 +179,9 @@ importers:
         specifier: catalog:repo
         version: 4.1.11(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.12)(yaml@2.9.0))
 
-  examples/supabase-worker: {}
+  languages/typescript/examples/supabase-worker: {}
 
-  packages/bench:
+  languages/typescript/packages/bench:
     dependencies:
       '@cipherstash/stack':
         specifier: workspace:*
@@ -215,14 +215,14 @@ importers:
         specifier: catalog:repo
         version: 4.1.11(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.12)(yaml@2.9.0))
 
-  packages/cli:
+  languages/typescript/packages/cli:
     dependencies:
       '@cipherstash/auth':
         specifier: catalog:repo
         version: 0.44.0(@cipherstash/auth-darwin-arm64@0.44.0)(@cipherstash/auth-darwin-x64@0.44.0)(@cipherstash/auth-linux-arm64-gnu@0.44.0)(@cipherstash/auth-linux-x64-gnu@0.44.0)(@cipherstash/auth-linux-x64-musl@0.44.0)(@cipherstash/auth-win32-x64-msvc@0.44.0)
       '@cipherstash/eql':
         specifier: workspace:*
-        version: link:../eql/packages/eql
+        version: link:../../../../packages/eql/packages/eql
       '@cipherstash/migrate':
         specifier: workspace:*
         version: link:../migrate
@@ -298,22 +298,7 @@ importers:
         specifier: catalog:repo
         version: 0.44.0
 
-  packages/eql/packages/eql:
-    devDependencies:
-      '@types/node':
-        specifier: catalog:repo
-        version: 22.20.1
-      tsup:
-        specifier: catalog:repo
-        version: 8.5.1(jiti@2.7.0)(postcss@8.5.26)(tsx@4.23.12)(typescript@5.9.3)(yaml@2.9.0)
-      typescript:
-        specifier: catalog:repo
-        version: 5.9.3
-      vitest:
-        specifier: catalog:repo
-        version: 4.1.11(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.12)(yaml@2.9.0))
-
-  packages/migrate:
+  languages/typescript/packages/migrate:
     dependencies:
       zod:
         specifier: ^3.25.76
@@ -341,7 +326,7 @@ importers:
         specifier: catalog:repo
         version: 4.1.11(@types/node@26.2.0)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.12)(yaml@2.9.0))
 
-  packages/nextjs:
+  languages/typescript/packages/nextjs:
     dependencies:
       jose:
         specifier: ^6.2.9
@@ -370,7 +355,7 @@ importers:
         specifier: 4.62.4
         version: 4.62.4
 
-  packages/protect-ffi:
+  languages/typescript/packages/protect-ffi:
     dependencies:
       '@neon-rs/load':
         specifier: ^0.2.6
@@ -414,7 +399,7 @@ importers:
         specifier: workspace:*
         version: link:platforms/win32-x64-msvc
 
-  packages/protect-ffi/integration-tests:
+  languages/typescript/packages/protect-ffi/integration-tests:
     dependencies:
       '@cipherstash/auth':
         specifier: catalog:repo
@@ -428,7 +413,7 @@ importers:
     devDependencies:
       '@cipherstash/eql':
         specifier: workspace:^
-        version: link:../../eql/packages/eql
+        version: link:../../../../../packages/eql/packages/eql
       '@types/pg':
         specifier: ^8.23.1
         version: 8.23.1
@@ -445,19 +430,19 @@ importers:
         specifier: catalog:repo
         version: 4.1.11(@types/node@26.2.0)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.12)(yaml@2.9.0))
 
-  packages/protect-ffi/platforms/darwin-arm64: {}
+  languages/typescript/packages/protect-ffi/platforms/darwin-arm64: {}
 
-  packages/protect-ffi/platforms/darwin-x64: {}
+  languages/typescript/packages/protect-ffi/platforms/darwin-x64: {}
 
-  packages/protect-ffi/platforms/linux-arm64-gnu: {}
+  languages/typescript/packages/protect-ffi/platforms/linux-arm64-gnu: {}
 
-  packages/protect-ffi/platforms/linux-x64-gnu: {}
+  languages/typescript/packages/protect-ffi/platforms/linux-x64-gnu: {}
 
-  packages/protect-ffi/platforms/linux-x64-musl: {}
+  languages/typescript/packages/protect-ffi/platforms/linux-x64-musl: {}
 
-  packages/protect-ffi/platforms/win32-x64-msvc: {}
+  languages/typescript/packages/protect-ffi/platforms/win32-x64-msvc: {}
 
-  packages/stack:
+  languages/typescript/packages/stack:
     dependencies:
       '@byteslice/result':
         specifier: 0.2.0
@@ -480,7 +465,7 @@ importers:
     devDependencies:
       '@cipherstash/eql':
         specifier: workspace:^
-        version: link:../eql/packages/eql
+        version: link:../../../../packages/eql/packages/eql
       '@clack/prompts':
         specifier: ^1.7.0
         version: 1.7.0
@@ -555,7 +540,7 @@ importers:
         specifier: catalog:repo
         version: 0.44.0
 
-  packages/stack-drizzle:
+  languages/typescript/packages/stack-drizzle:
     dependencies:
       '@byteslice/result':
         specifier: 0.2.0
@@ -592,11 +577,11 @@ importers:
         specifier: catalog:repo
         version: 4.1.11(@types/node@26.2.0)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.12)(yaml@2.9.0))
 
-  packages/stack-prisma:
+  languages/typescript/packages/stack-prisma:
     dependencies:
       '@cipherstash/eql':
         specifier: workspace:*
-        version: link:../eql/packages/eql
+        version: link:../../../../packages/eql/packages/eql
       '@cipherstash/stack':
         specifier: workspace:*
         version: link:../stack
@@ -641,7 +626,7 @@ importers:
         specifier: catalog:repo
         version: 4.1.11(@types/node@26.2.0)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.12)(yaml@2.9.0))
 
-  packages/stack-supabase:
+  languages/typescript/packages/stack-supabase:
     dependencies:
       '@cipherstash/stack':
         specifier: workspace:*
@@ -687,7 +672,7 @@ importers:
         specifier: catalog:repo
         version: 4.1.11(@types/node@26.2.0)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.12)(yaml@2.9.0))
 
-  packages/test-kit:
+  languages/typescript/packages/test-kit:
     dependencies:
       '@cipherstash/stack':
         specifier: workspace:*
@@ -703,7 +688,7 @@ importers:
         specifier: catalog:repo
         version: 4.1.11(@types/node@26.2.0)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.12)(yaml@2.9.0))
 
-  packages/wizard:
+  languages/typescript/packages/wizard:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.234
@@ -767,6 +752,21 @@ importers:
       '@cipherstash/auth-win32-x64-msvc':
         specifier: catalog:repo
         version: 0.44.0
+
+  packages/eql/packages/eql:
+    devDependencies:
+      '@types/node':
+        specifier: catalog:repo
+        version: 22.20.1
+      tsup:
+        specifier: catalog:repo
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.26)(tsx@4.23.12)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: catalog:repo
+        version: 5.9.3
+      vitest:
+        specifier: catalog:repo
+        version: 4.1.11(@types/node@22.20.1)(@vitest/coverage-v8@4.1.11)(vite@7.3.6(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.30.2)(terser@5.44.1)(tsx@4.23.12)(yaml@2.9.0))
 
 packages:
 

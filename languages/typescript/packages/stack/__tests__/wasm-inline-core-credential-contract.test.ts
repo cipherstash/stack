@@ -49,7 +49,7 @@
  * WHERE IT RUNS, and why not with the rest of the suite. Loading the real
  * module means loading `dist/wasm/protect_ffi_inline.js`, which wasm-pack
  * emits and `pnpm install` does not — only the three `.d.ts` beside it are
- * tracked. So this file is excluded from `packages/stack/vitest.config.ts` and
+ * tracked. So this file is excluded from `languages/typescript/packages/stack/vitest.config.ts` and
  * collected by `vitest.wasm-core.config.ts` instead, run by `test:wasm-core`
  * from `tests.yml`'s `wasm-e2e-tests` job, the one job that builds it. Left in
  * the default config it does not skip — it fails to COLLECT, which is what it
@@ -327,7 +327,7 @@ describe('protect-ffi WASM core: the strategy is read before the credentials (#8
 // `@cipherstash/stack` nor `@cipherstash/stack-supabase` declares a `browser`
 // export condition — used to be asserted here. It has moved to
 // `__tests__/browser-export-condition.test.ts` (and its sibling in
-// `packages/stack-supabase/__tests__/`), because it only reads a manifest:
+// `languages/typescript/packages/stack-supabase/__tests__/`), because it only reads a manifest:
 // hosted in this file it inherited this file's exclusion from the default
 // config and so ran in one CI job and in nobody's local test run. Anyone
 // following #804 wants both files.

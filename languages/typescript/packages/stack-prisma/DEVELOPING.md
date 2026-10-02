@@ -15,7 +15,7 @@ per-column search-mode flags.
 ## Source layout
 
 ```text
-packages/stack-prisma/
+languages/typescript/packages/stack-prisma/
 ├── src/
 │   ├── contract.prisma                  PSL contract source (models NO storage — v3
 │   │                                     declares none; the bundle creates the domains)
@@ -378,7 +378,7 @@ directory: each `migration.ts` calls `readVerifiedInstallSql()`, so
 re-emitting a historical edge silently bakes the new release into it. `tsx`
 is not a dependency of this package; any workspace copy works (e.g.
 `../cli/node_modules/.bin/tsx`). Copy the new and re-emitted `migration.json` /
-`ops.json` pairs into `examples/prisma/migrations/cipherstash/` and add the new
+`ops.json` pairs into `languages/typescript/examples/prisma/migrations/cipherstash/` and add the new
 invariant to its single-line `refs/head.json`
 (`test/v3/vendored-space-parity.test.ts` enforces both). Between the two merges the live byte-identity check in
 `test/live/migration-apply-live-pg.test.ts` fails by construction (the

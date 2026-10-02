@@ -4,7 +4,7 @@ index.node
 # Generated output is not tracked — with three deliberate exceptions.
 #
 # `dist/wasm/**` comes from `wasm-pack` + `scripts/inline-wasm.mjs`, which need
-# Rust, the wasm32 target and wasm-pack. But `packages/stack` value-imports
+# Rust, the wasm32 target and wasm-pack. But `languages/typescript/packages/stack` value-imports
 # `@cipherstash/protect-ffi/wasm-inline`, so with the whole directory absent its
 # declaration build cannot resolve the module — which would put the Rust
 # toolchain on every contributor and every PR job, for a typecheck.

@@ -119,10 +119,10 @@ describe('isPackageMissing', () => {
     // interrupted install, a partially built workspace) as one the user has
     // simply not installed yet: a green row, and no reason to look further.
     //
-    // The path the CLI's own resolution produces — `packages/cli/node_modules/
+    // The path the CLI's own resolution produces — `languages/typescript/packages/cli/node_modules/
     // @cipherstash/stack/…`, the workspace's stand-in for a user's install.
     // Not `require.resolve('@cipherstash/stack/package.json')`: that returns
-    // the symlink's REAL path (`packages/stack/…`), which drops the scoped
+    // the symlink's REAL path (`languages/typescript/packages/stack/…`), which drops the scoped
     // name the bug turns on. Node raises the error either way; only the path
     // handed to it is composed here.
     //

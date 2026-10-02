@@ -3,7 +3,7 @@
  * action and the Rust workflow that shares its toolchain step.
  *
  * 1. A GitHub Actions cache restore is an untrusted write into the checkout.
- *    `packages/protect-ffi/dist/wasm` holds BOTH wasm-pack output and three
+ *    `languages/typescript/packages/protect-ffi/dist/wasm` holds BOTH wasm-pack output and three
  *    declaration files that are tracked in git (see the package `.gitignore`
  *    for why they are tracked). Caching that directory whole, on a key hashed
  *    from the Rust inputs only, means a restore replaces the checked-out
@@ -46,7 +46,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
 
 const ACTION = '.github/actions/build-ffi-binding/action.yml'
 const RUST_WORKFLOW = '.github/workflows/tests-rust.yml'
-const FFI_PKG = 'packages/protect-ffi'
+const FFI_PKG = 'languages/typescript/packages/protect-ffi'
 
 const read = (rel) => readFileSync(resolve(REPO_ROOT, rel), 'utf8')
 
@@ -268,7 +268,9 @@ describe('build-ffi-binding — cache restores cannot clobber tracked files', ()
   it('found the tracked declaration files this guard exists for', () => {
     // If `git ls-files` returns nothing here — wrong cwd, renamed directory,
     // the .gitignore negations lost — every assertion below passes vacuously.
-    const tracked = trackedUnder('packages/protect-ffi/dist/wasm')
+    const tracked = trackedUnder(
+      'languages/typescript/packages/protect-ffi/dist/wasm',
+    )
     expect(tracked.length).toBeGreaterThanOrEqual(3)
     expect(tracked.every((file) => file.endsWith('.d.ts'))).toBe(true)
   })
@@ -358,7 +360,7 @@ describe('build-ffi-binding — the WASM key covers the build it skips', () => {
  * The third question a cache key has to answer, and the one the two suites
  * above cannot see: does it cover every crate the build COMPILES?
  *
- * Both of those reason about files inside `packages/protect-ffi`. Cargo does
+ * Both of those reason about files inside `languages/typescript/packages/protect-ffi`. Cargo does
  * not. `crates/protect-ffi/Cargo.toml` carries
  *
  *     eql-bindings = { path = "../../../eql/crates/eql-bindings" }
@@ -366,7 +368,7 @@ describe('build-ffi-binding — the WASM key covers the build it skips', () => {
  * — an in-tree path dependency in a DIFFERENT package, and a genuine compile
  * input to both `index.node` and the wasm32 build. A path dep carries no
  * registry checksum, so a src-only edit under that crate touches nothing else:
- * not `packages/protect-ffi/crates/**`, not either `Cargo.toml`, and not
+ * not `languages/typescript/packages/protect-ffi/crates/**`, not either `Cargo.toml`, and not
  * `Cargo.lock` (which records the path dep by name and version, and only moves
  * when the version does). Every glob in both keys therefore hashes identically,
  * the restore hits, `Build index.node (cargo)` is SKIPPED, and every
@@ -397,7 +399,7 @@ const CARGO_ROOT_CRATE = `${FFI_PKG}/crates/protect-ffi/Cargo.toml`
  *
  * Deliberately a narrow reader over the text rather than a TOML parse: there is
  * no TOML parser in this repo's dependency tree, and `cargo metadata` would put
- * a Rust toolchain on `pnpm test:scripts` — which `packages/protect-ffi`'s
+ * a Rust toolchain on `pnpm test:scripts` — which `languages/typescript/packages/protect-ffi`'s
  * `lintWiring.test.ts` exists to keep off the JS entry points.
  *
  * It reads both spellings cargo accepts: the inline table
@@ -450,7 +452,7 @@ function parsePathDependencies(text) {
  * Every crate `cargo build` compiles into the artifact, as repo-relative
  * directories, starting from the cdylib crate and following path deps
  * transitively. The starting crate itself is excluded: it lives under
- * `packages/protect-ffi/crates/**`, which both keys already hash.
+ * `languages/typescript/packages/protect-ffi/crates/**`, which both keys already hash.
  */
 function compiledPathDependencies(rootManifestRel) {
   const crates = new Map()

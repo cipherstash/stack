@@ -7,7 +7,7 @@ operations.
 
 All work present in this monorepo is tracked in `cipherstash/stack`, including
 the absorbed EQL source under `packages/eql` and protect-ffi under
-`packages/protect-ffi`. Their former upstream repositories are historical
+`languages/typescript/packages/protect-ffi`. Their former upstream repositories are historical
 sources, not active issue trackers. Never create, move, or update an issue in
 `cipherstash/encrypt-query-language` or `cipherstash/protectjs-ffi` for work in
 this tree. Create it in `cipherstash/stack` and link historical upstream issues

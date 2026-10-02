@@ -96,7 +96,7 @@ describe('the changeset parking convention is retired, and stays retired', () =>
         '`@cipherstash/protect-ffi@0.32.0`. A file still carrying the suffix today is ' +
         'almost certainly riding a branch cut BEFORE that commit, where reactivating it ' +
         'republishes a shipped changelog entry and bumps the package again for it:\n\n' +
-        '  git log origin/main --oneline -- packages/protect-ffi/CHANGELOG.md\n\n' +
+        '  git log origin/main --oneline -- languages/typescript/packages/protect-ffi/CHANGELOG.md\n\n' +
         'Delete it if its content is already in a released CHANGELOG; `git mv` it back to ' +
         '`.md` only if it is genuinely unreleased:\n' +
         `${parked.map((name) => `  ${CHANGESET_DIR}/${name}`).join('\n')}`,

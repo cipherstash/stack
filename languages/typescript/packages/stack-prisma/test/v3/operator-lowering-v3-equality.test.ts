@@ -3,7 +3,7 @@
  * `eqlNeq`, `eqlIn`, `eqlNotIn`).
  *
  * The canonical v3 dialect (mirrors
- * `packages/stack-drizzle/src/v3/{operators,sql-dialect}.ts`):
+ * `languages/typescript/packages/stack-drizzle/src/v3/{operators,sql-dialect}.ts`):
  * operands are QUERY TERMS cast to the column domain's
  * `eql_v3.query_<domain>` type —
  *

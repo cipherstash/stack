@@ -19,7 +19,7 @@
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/cipherstash/stack.git",
-		"directory": "packages/stack-drizzle"
+		"directory": "languages/typescript/packages/stack-drizzle"
 	},
 	"license": "MIT",
 	"author": "CipherStash <humans@cipherstash.com>",

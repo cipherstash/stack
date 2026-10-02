@@ -8,10 +8,10 @@ import { REPO_ROOT } from './repo-root.mjs'
  *
  * ## Why this is derived rather than written down
  *
- * Both callers used to hardcode `:(glob)packages/*&#47;README.md`. `:(glob)` stops
+ * Both callers used to hardcode `:(glob)languages/typescript/packages/*&#47;README.md`. `:(glob)` stops
  * `*` at a path separator — which is what makes `lib/*.ts` behave — and this
  * repo has TWO package roots nested deeper than one level:
- * `packages/protect-ffi/platforms/*` and `packages/eql/packages/*`. So the
+ * `languages/typescript/packages/protect-ffi/platforms/*` and `packages/eql/packages/*`. So the
  * hardcoded spec selected `packages/eql/README.md`, the 15 KB subtree root that
  * ships in no tarball, and never `packages/eql/packages/eql/README.md`, the
  * 518-byte file listed in that package's `files`. Same for the six per-platform
@@ -24,7 +24,7 @@ import { REPO_ROOT } from './repo-root.mjs'
  * root is covered the day it lands, rather than the day someone remembers this
  * file. Same reasoning, and the same parser, as `workspaceManifests()`.
  *
- * Narrowed to `packages/` deliberately: `examples/*` and `e2e` are workspace
+ * Narrowed to `packages/` deliberately: `languages/typescript/examples/*` and `e2e` are workspace
  * members too, but they are private and their READMEs are not shipped to
  * anyone. The callers are guards on SHIPPED text.
  */
