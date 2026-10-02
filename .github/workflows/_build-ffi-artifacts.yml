@@ -171,10 +171,16 @@ jobs:
       # from the triple: scripts/ffi-release-matrix.mjs picks zigbuild, and this
       # step exists to supply what zigbuild needs. Two spellings of one rule
       # drift apart the day a platform moves between them.
+      #
+      # mise itself is pinned, at the version the auth and EQL release builds
+      # use. Unpinned, the action installs the latest mise, and
+      # mise 2026.10.0 (2 October 2026) refuses to install cargo-zigbuild until
+      # the root mise.toml's Rust is installed, which failed both gnu legs.
       - name: Install zig + cargo-zigbuild (zigbuild platforms only)
         if: ${{ matrix.cfg.script == 'zigbuild' }}
         uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
+          version: 2026.4.0
           install: true
           install_args: zig cargo:cargo-zigbuild
           working_directory: languages/typescript/packages/protect-ffi
@@ -382,6 +388,7 @@ jobs:
       - name: Install wasm-pack
         uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
+          version: 2026.4.0
           install: true
           install_args: aqua:wasm-bindgen/wasm-pack
           working_directory: languages/typescript/packages/protect-ffi

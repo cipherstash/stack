@@ -103,6 +103,26 @@ describe('_build-ffi-artifacts.yml', () => {
     // The parsed workflow, so the comment that records why is not counted.
     expect(JSON.stringify(workflow)).not.toMatch(/musl\.cc/)
   })
+
+  it('pins mise in every mise step, at the auth release build version', () => {
+    // Unpinned, the action installs the newest mise. mise 2026.10.0 refused
+    // to install cargo-zigbuild, and both gnu legs failed.
+    const miseSteps = (wf) =>
+      Object.values(wf?.jobs ?? {}).flatMap((job) =>
+        (job?.steps ?? []).filter((step) =>
+          String(step?.uses ?? '').startsWith('jdx/mise-action@'),
+        ),
+      )
+    const [auth] = miseSteps(
+      readWorkflow('.github/workflows/_build-auth-artifacts.yml'),
+    )
+    expect(auth?.with?.version).toMatch(/^\d{4}\.\d+\.\d+$/)
+    const ffi = miseSteps(workflow)
+    expect(ffi.length).toBeGreaterThanOrEqual(2)
+    for (const step of ffi) {
+      expect(step.with?.version, step.name).toBe(auth.with.version)
+    }
+  })
 })
 
 describe('ffi-preflight.yml', () => {
