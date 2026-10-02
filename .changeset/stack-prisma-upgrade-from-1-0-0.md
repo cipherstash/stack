@@ -2,7 +2,7 @@
 '@cipherstash/stack-prisma': patch
 ---
 
-Document the 1.0.0 → 3.0.5 upgrade in the package README: why
+Document the upgrade from 1.0.0 or 1.1.x in the package README: why
 `migrations/cipherstash/` must be deleted and regenerated, what each Prisma Next
 command does if it is not, and the exact `db init` refusal
 (`Operation cipherstash.upgrade-eql-v3-bundle-3.0.5 has class "data" which is

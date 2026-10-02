@@ -1,12 +1,16 @@
 /**
- * What happens to a consumer who IGNORES the 3.0.5 changeset's "Action
- * required" note — i.e. keeps a `migrations/cipherstash/` directory
- * generated against `@cipherstash/stack-prisma@1.0.0` or `@1.1.0` and
+ * What happens to a consumer who IGNORES the 3.0.5 / 3.0.6 changesets'
+ * "Action required" note — i.e. keeps a `migrations/cipherstash/` directory
+ * generated against `@cipherstash/stack-prisma@1.0.0` or `@1.1.x` and
  * upgrades the package underneath it.
  *
- * The 3.0.5 release re-emitted the published baseline
+ * The next release re-emits the published baseline
  * (`20260601T0100_install_eql_v3_bundle`): its bytes, and so its
- * `migrationHash`, moved to `bad30c9b…`. Two vendored generations precede
+ * `migrationHash`, move to `SHIPPED_BASELINE_HASH` below. (An intermediate
+ * eql-3.0.5 re-emit, `bad30c9b…`, existed only on main and was never
+ * published — 1.1.0 and 1.1.1 both ship the eql-3.0.4 baseline
+ * `1030654387…`, and the 3.0.5 and 3.0.6 upgrade edges ship together for the
+ * first time in the same release.) Two vendored generations precede
  * it and they behave DIFFERENTLY, which is why both are pinned below:
  * 1.1.0 (Prisma Next 0.17) is stale-but-intact and passes silently, while
  * 1.0.0's `sha256:`-prefixed hashes no longer verify under 0.17's hash
@@ -68,6 +72,7 @@ import {
   CIPHERSTASH_V3_302_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
+  CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
   CIPHERSTASH_V3_INVARIANTS,
 } from '../../src/extension-metadata/constants-v3'
@@ -85,6 +90,14 @@ import {
  */
 const STALE_PRE_305_BASELINE_HASH =
   '1030654387540db7a053449e478d4b198d8666b360cca9f9c265eddb83b2dd74'
+
+/**
+ * The baseline `migrationHash` this package ships today — the eql-3.0.6
+ * re-emit. Mirrors the frozen pin in `migration-v3.test.ts`; asserted here
+ * only to show the fixture is NOT the current artefact.
+ */
+const SHIPPED_BASELINE_HASH =
+  '2fdc7cafd2c6011b5129267cd77e640077fdc6401cba5a987c3f0bb412dad05c'
 
 /**
  * What `@cipherstash/stack-prisma@1.0.0` stored for the same directory, under
@@ -161,8 +174,8 @@ function descriptorPackage(dirName: string) {
  * install SQL is the same eql-3.0.4 bundle the `20260728T0000` upgrade
  * edge bakes (both pin `installSqlSha256` `63104a81…` — see
  * `migration-v3.test.ts`), and the surrounding op shape differs from
- * today's baseline only in the release string and the missing 3.0.5
- * carrier op. The reconstruction is *proved* faithful by hashing it: the
+ * today's baseline only in the release string and the missing 3.0.5 and
+ * 3.0.6 carrier ops. The reconstruction is *proved* faithful by hashing it: the
  * `migrationHash` test below demands `1030654387…`, the value 1.1.0
  * published. Content addressing makes that an exact-bytes assertion, so
  * this fixture cannot silently drift into "some old-looking baseline".
@@ -171,7 +184,9 @@ function buildStalePre305Baseline(): {
   readonly metadata: MigrationMetadata
   readonly ops: readonly SqlMigrationOp[]
 } {
-  const to304 = (text: string): string => text.replaceAll('3.0.5', '3.0.4')
+  // The shipped baseline bakes eql-3.0.6, so its release string is what
+  // rewinds to the 3.0.4 that 1.0.0 / 1.1.x shipped.
+  const to304 = (text: string): string => text.replaceAll('3.0.6', '3.0.4')
   const shipped = asSqlOps(
     descriptorPackage(CIPHERSTASH_V3_BASELINE_MIGRATION_NAME).ops,
   )
@@ -196,7 +211,7 @@ function buildStalePre305Baseline(): {
         },
       ],
     },
-    // The 3.0.2 carrier is byte-identical across 1.0.0 and 3.0.5.
+    // The 3.0.2 carrier is byte-identical across 1.0.0 and today.
     carrier302,
     {
       ...carrier304,
@@ -328,9 +343,7 @@ describe('stale vendored migrations/cipherstash/ (generated against 1.0.0 or 1.1
     expect(v3BaselineMetadata.migrationHash).not.toBe(
       STALE_PRE_305_BASELINE_HASH,
     )
-    expect(v3BaselineMetadata.migrationHash).toBe(
-      'bad30c9b3d2ad383d853cda0209eb14a031f2d107ba9cbdfb26b95d58e9aff37',
-    )
+    expect(v3BaselineMetadata.migrationHash).toBe(SHIPPED_BASELINE_HASH)
     // The stale bundle is 3.0.4: the old name only. Asserted on the STALE
     // side alone, deliberately — the shipped 3.0.5 bundle carries BOTH names
     // (the new one plus the old restored as a deprecated alias in upstream
@@ -352,9 +365,12 @@ describe('stale vendored migrations/cipherstash/ (generated against 1.0.0 or 1.1
     await vendorStalePre305Space(migrationsDir)
     const newlyWritten = await runSeedPhase(migrationsDir)
 
-    // Only the 3.0.5 directory is new; the re-emitted baseline is NOT
-    // re-materialised over the stale copy.
-    expect(newlyWritten).toEqual([CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME])
+    // Only the 3.0.5 and 3.0.6 directories are new; the re-emitted baseline
+    // is NOT re-materialised over the stale copy.
+    expect(newlyWritten).toEqual([
+      CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
+      CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
+    ])
 
     const spaceDir = spaceMigrationDirectory(
       migrationsDir,
@@ -378,7 +394,7 @@ describe('stale vendored migrations/cipherstash/ (generated against 1.0.0 or 1.1
       migrationsDir: spaceDir,
     })
     expect(problems).toEqual([])
-    expect(packages).toHaveLength(4)
+    expect(packages).toHaveLength(5)
 
     // …while `refs/head.json` IS overwritten, unconditionally, and now
     // demands an invariant the stale genesis edge does not provide. That
@@ -390,6 +406,9 @@ describe('stale vendored migrations/cipherstash/ (generated against 1.0.0 or 1.1
     expect(onDiskHead.invariants).toEqual([...headRef.invariants])
     expect(onDiskHead.invariants).toContain(
       CIPHERSTASH_V3_INVARIANTS.upgradeBundle305,
+    )
+    expect(onDiskHead.invariants).toContain(
+      CIPHERSTASH_V3_INVARIANTS.upgradeBundle306,
     )
   })
 
@@ -444,11 +463,17 @@ describe('stale vendored migrations/cipherstash/ (generated against 1.0.0 or 1.1
     ])
   })
 
-  it('an existing 1.0.0 database still upgrades correctly — only the 3.0.5 edge runs', async () => {
-    // The changeset's claim: "Your database keeps its markers, so
+  it('an existing 1.0.0 / 1.1.x database upgrades correctly — the 3.0.5 then 3.0.6 edges run', async () => {
+    // The changesets' claim: "Your database keeps its markers, so
     // already-applied invariants are not re-run — the only new work is
-    // the 3.0.5 upgrade edge." Verified here for the consumer who did
-    // NOT delete the directory, which is the strictly harder case.
+    // the upgrade edges." Verified here for the consumer who did NOT
+    // delete the directory, which is the strictly harder case.
+    //
+    // BOTH upgrade edges run, so the bundle is re-installed twice (3.0.5,
+    // then 3.0.6 over it). That is the accepted cost of keeping the 3.0.5
+    // edge — committed on main before 3.0.6, so a database built from main
+    // may already have walked it and recorded its invariant. Correct end
+    // state, one redundant bundle install.
     await vendorStalePre305Space(migrationsDir)
     await runSeedPhase(migrationsDir)
 
@@ -460,23 +485,50 @@ describe('stale vendored migrations/cipherstash/ (generated against 1.0.0 or 1.1
     )
     expect(outcome.walkedMigrationDirs).toEqual([
       CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
+      CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
     ])
     expect(outcome.providedInvariants).toEqual([
       CIPHERSTASH_V3_INVARIANTS.upgradeBundle305,
+      CIPHERSTASH_V3_INVARIANTS.upgradeBundle306,
     ])
     // The baseline is NOT re-run, so no marker-recorded invariant is
-    // re-applied and the stale bundle is never re-installed over 3.0.5.
+    // re-applied and the stale bundle is never re-installed over 3.0.6.
+    // Order matters: 3.0.6 is applied LAST, so it is what the database ends on.
     const ops = asSqlOps(outcome.pathOps)
     expect(ops.map((op) => op.id)).toEqual([
       'cipherstash.upgrade-eql-v3-bundle-3.0.5',
+      'cipherstash.upgrade-eql-v3-bundle-3.0.6',
     ])
     expect(ops[0]?.execute[0]?.sql).toContain('eql_v3.jsonb_document_contains')
+    expect(ops[1]?.execute[0]?.sql).toContain("SELECT '3.0.6';")
+  })
+
+  it('a database already at 3.0.5 (built from main) walks only the 3.0.6 edge', async () => {
+    // The reason the 3.0.5 edge is kept rather than replaced: its invariant
+    // may already be on a marker row. Such a database needs exactly one
+    // more edge.
+    await runSeedPhase(migrationsDir)
+    const outcome = requireOk(
+      await applyPath(migrationsDir, {
+        hash: headRef.hash,
+        invariants: [
+          ...INVARIANTS_PRE_305,
+          CIPHERSTASH_V3_INVARIANTS.upgradeBundle305,
+        ],
+      }),
+    )
+    expect(outcome.walkedMigrationDirs).toEqual([
+      CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
+    ])
+    expect(outcome.providedInvariants).toEqual([
+      CIPHERSTASH_V3_INVARIANTS.upgradeBundle306,
+    ])
   })
 
   it('…and identically for a consumer who DID follow the instruction', async () => {
     // Deleting `migrations/cipherstash/` and re-running `migration plan`
     // regenerates the directory from the descriptor. For an existing
-    // database the plan is the same single edge — so following the
+    // database the plan is the same two edges — so following the
     // instruction costs nothing and changes nothing here. The difference
     // only shows up on a fresh database (next two tests).
     await runSeedPhase(migrationsDir)
@@ -488,10 +540,11 @@ describe('stale vendored migrations/cipherstash/ (generated against 1.0.0 or 1.1
     )
     expect(outcome.walkedMigrationDirs).toEqual([
       CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
+      CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
     ])
   })
 
-  it('an already-3.0.5 database is a no-op — the upgrade edge does not re-run', async () => {
+  it('a database already at the head is a no-op — no upgrade edge re-runs', async () => {
     await runSeedPhase(migrationsDir)
     const outcome = requireOk(
       await applyPath(migrationsDir, {
@@ -504,8 +557,8 @@ describe('stale vendored migrations/cipherstash/ (generated against 1.0.0 or 1.1
   })
 })
 
-describe('fresh database: both install paths must converge on eql-3.0.5', () => {
-  it('a clean vendored space installs 3.0.5 from the genesis edge alone', async () => {
+describe('fresh database: both install paths must converge on eql-3.0.6', () => {
+  it('a clean vendored space installs 3.0.6 from the genesis edge alone', async () => {
     await runSeedPhase(migrationsDir)
     const outcome = requireOk(
       await applyPath(migrationsDir, { hash: null, invariants: [] }),
@@ -517,17 +570,18 @@ describe('fresh database: both install paths must converge on eql-3.0.5', () => 
 
     const ops = asSqlOps(outcome.pathOps)
     expect(ops[0]?.execute[0]?.sql).toContain('eql_v3.jsonb_document_contains')
+    expect(ops[0]?.execute[0]?.sql).toContain("SELECT '3.0.6';")
     // Every op additive, so `db init`'s additive-only policy accepts it.
     expect(opsRefusedByDbInitPolicy(ops)).toEqual([])
   })
 
-  it('a STALE vendored space still converges on 3.0.5 under `migrate` — but installs the bundle twice', async () => {
+  it('a STALE vendored space still converges on 3.0.6 under `migrate` — but installs the bundle three times', async () => {
     // `prisma-next migrate` allows every operation class, so it can walk
-    // the data-classed 3.0.5 self-edge. The end state is correct; the
-    // cost is that the stale genesis edge installs eql-3.0.4 first and
-    // the upgrade edge immediately re-installs eql-3.0.5 over it (the
-    // bundle SQL is re-install-safe, which is what makes this survivable
-    // rather than broken).
+    // the data-classed 3.0.5 and 3.0.6 self-edges. The end state is
+    // correct; the cost is that the stale genesis edge installs eql-3.0.4
+    // first and the upgrade edges re-install eql-3.0.5 and then eql-3.0.6
+    // over it (the bundle SQL is re-install-safe, which is what makes this
+    // survivable rather than broken).
     await vendorStalePre305Space(migrationsDir)
     await runSeedPhase(migrationsDir)
 
@@ -537,6 +591,7 @@ describe('fresh database: both install paths must converge on eql-3.0.5', () => 
     expect(outcome.walkedMigrationDirs).toEqual([
       CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
       CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
+      CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
     ])
     expect(outcome.providedInvariants).toEqual([...headRef.invariants].sort())
 
@@ -544,16 +599,19 @@ describe('fresh database: both install paths must converge on eql-3.0.5', () => 
     const bundleSql = ops
       .flatMap((op) => op.execute.map((step) => step.sql))
       .filter((sql) => sql.length > 0)
-    expect(bundleSql).toHaveLength(2)
+    expect(bundleSql).toHaveLength(3)
     expect(bundleSql[0]).toContain('ste_vec_contains')
-    expect(bundleSql[1]).toContain('eql_v3.jsonb_document_contains')
+    expect(bundleSql[0]).not.toContain('jsonb_document_contains')
+    expect(bundleSql[1]).toContain("SELECT '3.0.5';")
+    expect(bundleSql[2]).toContain("SELECT '3.0.6';")
   })
 
   it('DEFECT: a STALE vendored space breaks `db init`, and the refusal never names the stale directory', async () => {
     // `db init` runs additive-only. The stale genesis edge provides three
-    // of the four head-ref invariants, so the planner has to reach for the
-    // data-classed 3.0.5 self-edge — and the runner then refuses the run
-    // with a POLICY_VIOLATION naming only an operation id.
+    // of the five head-ref invariants, so the planner has to reach for the
+    // data-classed 3.0.5 and 3.0.6 self-edges — and the runner then refuses
+    // the run on the first of them with a POLICY_VIOLATION naming only an
+    // operation id.
     //
     // Pinned because it is the one path where ignoring the changeset's
     // "Action required" note actually fails, and because the message a
@@ -573,6 +631,7 @@ describe('fresh database: both install paths must converge on eql-3.0.5', () => 
     const ops = asSqlOps(outcome.pathOps)
     expect(opsRefusedByDbInitPolicy(ops)).toEqual([
       'cipherstash.upgrade-eql-v3-bundle-3.0.5',
+      'cipherstash.upgrade-eql-v3-bundle-3.0.6',
     ])
 
     // The exact refusal the user reads, reconstructed from the target's
@@ -630,7 +689,7 @@ describe('fresh database: both install paths must converge on eql-3.0.5', () => 
 
   it('the same fresh `db init` succeeds once the instruction is followed', async () => {
     // Deleting the directory and re-running the seed phase is the whole
-    // remedy: the regenerated genesis edge carries all four invariants as
+    // remedy: the regenerated genesis edge carries all five invariants as
     // additive ops, so nothing outside the policy is ever planned.
     await vendorStalePre305Space(migrationsDir)
     await rm(spaceMigrationDirectory(migrationsDir, CIPHERSTASH_SPACE_ID), {
@@ -665,8 +724,8 @@ describe('fresh database: both install paths must converge on eql-3.0.5', () => 
  * sentence gets wrong, and it is the only path in this whole area that
  * fails silently rather than loudly.
  */
-describe('no seed phase run: the 3.0.5 upgrade is silently invisible', () => {
-  it('`migrate` against an existing 1.0.0 database is a no-op — 3.0.5 never applies', async () => {
+describe('no seed phase run: the 3.0.5 / 3.0.6 upgrades are silently invisible', () => {
+  it('`migrate` against an existing 1.0.0 database is a no-op — neither upgrade applies', async () => {
     await vendorStalePre305Space(migrationsDir)
     // deliberately NO runSeedPhase — the user ran `migrate`, not `plan`
 
@@ -683,6 +742,9 @@ describe('no seed phase run: the 3.0.5 upgrade is silently invisible', () => {
     expect(outcome.contractSpaceHeadRef.invariants).not.toContain(
       CIPHERSTASH_V3_INVARIANTS.upgradeBundle305,
     )
+    expect(outcome.contractSpaceHeadRef.invariants).not.toContain(
+      CIPHERSTASH_V3_INVARIANTS.upgradeBundle306,
+    )
   })
 
   it('`db init` against a fresh database silently installs eql-3.0.4', async () => {
@@ -696,7 +758,7 @@ describe('no seed phase run: the 3.0.5 upgrade is silently invisible', () => {
     // Succeeds — every op is additive, so `db init`'s policy is happy…
     expect(opsRefusedByDbInitPolicy(ops)).toEqual([])
     // …and the database lands on the PREVIOUS bundle, with the marker
-    // recording three invariants rather than four.
+    // recording three invariants rather than five.
     expect(ops[0]?.execute[0]?.sql).toContain('ste_vec_contains')
     expect(ops[0]?.execute[0]?.sql).not.toContain('jsonb_document_contains')
     expect(outcome.providedInvariants).toEqual([...INVARIANTS_PRE_305].sort())
@@ -755,7 +817,7 @@ describe('shipped skills: claims verified false, which must not come back', () =
     // resolved bundle, but a DATABASE is on whatever bundle was last applied
     // to it, and the Prisma Next adapter installs and upgrades the bundle
     // through its own migrations without the CLI at all (this package's
-    // `migrations/` carries three upgrade edges precisely because databases
+    // `migrations/` carries four upgrade edges precisely because databases
     // sit on different bundles).
     //
     // Deliberately NOT forbidden: "the pinned bundle" / "pinned EQL v3 SQL"
