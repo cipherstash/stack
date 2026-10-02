@@ -1,5 +1,10 @@
 # npm releases (changesets)
 
+> **Historical.** This records how `@cipherstash/auth` released from
+> cipherstash-suite before the stack-* crates import. The workflows it names are
+> not in this repository. Here, `@cipherstash/auth` versions through this
+> repository's Changesets and publishes from `release.yml`; see CONTRIBUTING.md.
+
 > Adopts [changesets](https://github.com/changesets/changesets) for the `@cipherstash`
 > npm products while release-plz keeps owning the Rust crates. Tracking issue:
 > [CIP-3278](https://linear.app/cipherstash/issue/CIP-3278). Covers the full

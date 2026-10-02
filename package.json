@@ -29,7 +29,6 @@
     "clean": "rimraf --glob **/.next **/.turbo **/dist **/node_modules",
     "code:fix": "biome check --write",
     "code:check": "biome check",
-    "lint:auth-changeset": "node scripts/lint-no-auth-changeset.mjs",
     "lint:eql-pins": "node scripts/lint-no-eql-registry-pins.mjs",
     "lint:package-paths": "node scripts/lint-no-dead-package-paths.mjs",
     "lint:runners": "node scripts/lint-no-hardcoded-runners.mjs",
@@ -45,6 +44,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.9",
     "@changesets/cli": "^2.31.1",
+    "@changesets/parse": "0.4.3",
     "@types/node": "^22.20.1",
     "js-yaml": "^4.3.1",
     "rimraf": "^6.1.3",

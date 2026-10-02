@@ -21,11 +21,11 @@
  * ## A second line: the stack-* crates
  *
  * `release-plz.yml` also publishes `stack-auth` and `stack-profile` from the
- * root Cargo workspace. They are imported from cipherstash-suite with
- * `@cipherstash/auth`, and all three lines move here together in the arming PR
- * of that import (PR E), which repoints crates.io and npm trusted publishing in
+ * root Cargo workspace. They were imported from cipherstash-suite with
+ * `@cipherstash/auth`, and all three lines moved here together in the arming
+ * PR of that import, which repointed crates.io and npm trusted publishing in
  * one step. No crate is in `FROZEN_PUBLISHERS` — it is an npm map — so the
- * crates line keys on `@cipherstash/auth`, whose entries that PR deletes.
+ * crates line keys on `@cipherstash/auth`, whose entries that PR deleted.
  * `node scripts/eql-pipeline-armed.mjs crates` answers for it. The file keeps
  * its EQL name because the EQL workflows and tests name it.
  */

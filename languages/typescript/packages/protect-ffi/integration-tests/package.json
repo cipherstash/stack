@@ -10,7 +10,7 @@
     "vitest:live:coverage": "vitest run --coverage"
   },
   "dependencies": {
-    "@cipherstash/auth": "catalog:repo",
+    "@cipherstash/auth": "workspace:*",
     "@cipherstash/protect-ffi": "workspace:*",
     "pg": "8.23.0"
   },

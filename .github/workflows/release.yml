@@ -22,9 +22,9 @@ name: Release JS
 # binds to a repository AND a workflow filename, so every npm publish in this
 # repository has to happen here.
 #
-# The auth jobs are INERT while the seven auth packages are in
-# FROZEN_PUBLISHERS: the gate reports `auth=true` only for an unpublished auth
-# version, and for a frozen package that is a blocker, so `gate` fails first.
+# The auth jobs run when the gate reports `auth=true`: an auth version in the
+# tree that npm does not carry. Re-freezing the seven auth packages in
+# FROZEN_PUBLISHERS makes that version a blocker, so `gate` fails first.
 #
 # `workflow_dispatch` came with the EQL port (its prerelease path is dispatched
 # against a release branch). A dispatch reaches every job in the file, so

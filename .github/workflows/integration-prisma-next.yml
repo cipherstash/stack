@@ -34,6 +34,7 @@ on:
       - '.github/actions/integration-setup/**'
       - '.github/actions/integration-db/**'
       - '.github/actions/build-ffi-binding/**'
+      - '.github/actions/build-auth-binding/**'
       # The Rust that produces every EQL payload these suites round-trip.
       # Absorbing protect-ffi put it in-tree, so a crate change can now
       # break them in a PR that touches no TypeScript at all.
@@ -81,6 +82,7 @@ on:
       - '.github/actions/integration-setup/**'
       - '.github/actions/integration-db/**'
       - '.github/actions/build-ffi-binding/**'
+      - '.github/actions/build-auth-binding/**'
       # The Rust that produces every EQL payload these suites round-trip.
       # Absorbing protect-ffi put it in-tree, so a crate change can now
       # break them in a PR that touches no TypeScript at all.
@@ -165,6 +167,9 @@ jobs:
       # binding only.
       - name: Build the protect-ffi binding
         uses: ./.github/actions/build-ffi-binding
+
+      - name: Build the @cipherstash/auth binding
+        uses: ./.github/actions/build-auth-binding
 
       # No pre-`up` cleanup step any more: the project name is unique per job, so
       # a container leaked by a hard-killed prior run cannot hold this job's

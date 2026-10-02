@@ -1,11 +1,19 @@
+// Run by .github/workflows/require-auth-npm-changeset.yml, which decides when
+// a pull request changes what @cipherstash/auth ships.
 import fs from 'node:fs'
+import { basename } from 'node:path'
 import parseChangeset from '@changesets/parse'
 
-const changesetFiles = process.argv.slice(2).filter(Boolean)
+// The workflow's `.changeset/*.md` pathspec matches the README, which has no
+// frontmatter.
+const changesetFiles = process.argv
+  .slice(2)
+  .filter(Boolean)
+  .filter((file) => basename(file) !== 'README.md')
 
 if (changesetFiles.length === 0) {
   console.error(
-    "::error::Release-relevant stack-auth changes require an @cipherstash/auth changeset. Run 'npx changeset' and commit the generated file.",
+    "::error::Release-relevant stack-auth changes require an @cipherstash/auth changeset. Run 'pnpm changeset' and commit the generated file.",
   )
   process.exit(1)
 }
@@ -62,7 +70,7 @@ for (const changesetFile of changesetFiles) {
 
 if (!hasAuthRelease) {
   console.error(
-    "::error::Release-relevant stack-auth changes require an @cipherstash/auth changeset with a patch, minor, or major bump. Run 'npx changeset' and commit the generated file.",
+    "::error::Release-relevant stack-auth changes require an @cipherstash/auth changeset with a patch, minor, or major bump. Run 'pnpm changeset' and commit the generated file.",
   )
   process.exit(1)
 }

@@ -1,0 +1,102 @@
+name: "Require @cipherstash/auth changeset"
+
+# Ported from cipherstash-suite with the stack-* crates. A pull request that
+# changes what `@cipherstash/auth` ships must carry a changeset with a patch,
+# minor or major entry for it, even when the change is inside the Rust crate
+# and the npm API does not move: the npm binary is built from that crate, and
+# nothing else would release it.
+#
+# The paths below and the job's `git diff` pathspec are held to the same set
+# by scripts/__tests__/check-auth-npm-changeset.test.mjs. There is no `push:`
+# trigger: the check compares a pull request with its base.
+
+on:
+  pull_request:
+    paths:
+      - packages/stack-auth/Cargo.toml
+      - packages/stack-auth/src/**
+      - languages/typescript/packages/auth/**
+      - languages/typescript/packages/stack-auth-wasm/**
+      - scripts/check-auth-npm-changeset.mjs
+      - .github/workflows/require-auth-npm-changeset.yml
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  require-npm-changeset:
+    name: Require @cipherstash/auth changeset
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          # The job diffs the pull request head against its base.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6.1.0
+        name: Install pnpm
+        with:
+          run_install: false
+          cache: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      # The root alone declares `@changesets/parse`, and nothing here builds.
+      - name: Install the Changesets parser
+        run: pnpm install --frozen-lockfile --ignore-scripts --filter @cipherstash/stack-monorepo
+
+      - name: Check for an @cipherstash/auth changeset
+        env:
+          ACTOR: ${{ github.actor }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+
+          # The Version Packages PR consumes the changesets it releases.
+          if [[ "$ACTOR" == "github-actions[bot]" ]] && \
+             [[ "$HEAD_REF" == "changeset-release/main" ]]; then
+            echo "Automated Version Packages PR; release intent was already consumed"
+            exit 0
+          fi
+
+          if ! SHIPPED_CHANGES="$(
+            git diff --name-only "${BASE_SHA}...HEAD" -- \
+              packages/stack-auth/Cargo.toml \
+              packages/stack-auth/src \
+              languages/typescript/packages/auth \
+              languages/typescript/packages/stack-auth-wasm
+          )"; then
+            echo "::error::Failed to determine release-relevant stack-auth changes"
+            exit 1
+          fi
+
+          if [[ -z "$SHIPPED_CHANGES" ]]; then
+            echo "No release-relevant stack-auth changes found"
+            exit 0
+          fi
+
+          if ! CHANGESETS="$(
+            git diff --diff-filter=AM --name-only "${BASE_SHA}...HEAD" -- '.changeset/*.md'
+          )"; then
+            echo "::error::Failed to determine added or modified changesets"
+            exit 1
+          fi
+
+          mapfile -t CHANGESET_FILES <<< "$CHANGESETS"
+          node scripts/check-auth-npm-changeset.mjs "${CHANGESET_FILES[@]}"

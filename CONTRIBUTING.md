@@ -181,16 +181,27 @@ packages are a `fixed` group in [`.changeset/config.json`](./.changeset/config.j
 they always version together, so a bump to any one of them bumps all six.
 
 `@cipherstash/auth` and its six `@cipherstash/auth-*` platform packages are
-developed here but still published from `cipherstash/cipherstash-suite`. Until
-publishing moves here, do not add a changeset for them: `pnpm run
-lint:auth-changeset` fails on one, and `release:gate` blocks any version npm
-does not have. They are already their own `fixed` group in
-`.changeset/config.json`, so once publishing moves the seven release together.
+their own `fixed` group in `.changeset/config.json`, so the seven release
+together. `release.yml` builds the six platform binaries and publishes the
+seven before Changesets publishes the rest. A pull request that changes what
+`@cipherstash/auth` ships must add a changeset for `@cipherstash/auth`, even
+for an internal Rust change, because the npm binary is built from the crate:
+`require-auth-npm-changeset.yml` fails without one. Those paths are
+`packages/stack-auth/Cargo.toml`, `packages/stack-auth/src/`, and everything
+under `languages/typescript/packages/auth` and
+`languages/typescript/packages/stack-auth-wasm`.
 
 Two Rust crates, `stack-auth` and `stack-profile`, are released to crates.io,
 in one version group of their own, by release-plz from the root Cargo
-workspace — not by Changesets. Until that pipeline is armed they, too, keep
-releasing from the suite.
+workspace — not by Changesets. Nothing opens a release PR for them yet. To
+release them, bump both in a pull request of your own: the two `[package]`
+versions, their two entries in the root `[workspace.dependencies]`, the root
+`Cargo.lock` and the five detached locks (the two Go guests and the three fuzz
+crates), and both `CHANGELOG.md` files. `release-plz.yml` publishes them when
+that pull request reaches `main`. The bump edits
+`packages/stack-auth/Cargo.toml`, so the `@cipherstash/auth` changeset rule
+above applies to it too: the binding sends `stack-auth`'s version in its
+`user-agent`.
 
 ## Pre-release process
 

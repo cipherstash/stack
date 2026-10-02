@@ -614,7 +614,8 @@ describe('publishBlockers', () => {
  *
  * So the map gets a test that names what is NOT in it. `@cipherstash/eql` is
  * held to the same rule since its Phase-5 cutover, when npm and crates.io
- * trusted publishing moved here.
+ * trusted publishing moved here, and the seven `@cipherstash/auth` packages
+ * since the arming PR of the stack-* crates import.
  */
 describe('FROZEN_PUBLISHERS', () => {
   it('does not freeze the protect-ffi packages, whose publisher has moved here', () => {
@@ -634,6 +635,43 @@ describe('FROZEN_PUBLISHERS', () => {
         'made from it, and disarms `eql-pipeline-armed.mjs`.',
     ).toBe(false)
     expect(FROZEN_ARTEFACT_DIGESTS.has(EQL)).toBe(false)
+  })
+
+  it('does not freeze the @cipherstash/auth packages, whose publisher has moved here', () => {
+    // The same defect, one line along. The arming PR of the stack-* crates
+    // import repointed npm trusted publishing for the wrapper and its six
+    // platform packages at this repository and deleted their entries, in both
+    // maps.
+    expect(
+      [...FROZEN_PUBLISHERS.keys()].filter((name) => name.startsWith(AUTH)),
+      'npm trusted publishing for all seven @cipherstash/auth packages is ' +
+        'bound to this repository and `release.yml`. A frozen entry here ' +
+        'blocks the first release that bumps one of them.',
+    ).toEqual([])
+    expect(
+      [...FROZEN_ARTEFACT_DIGESTS.keys()].filter((name) =>
+        name.startsWith(AUTH),
+      ),
+    ).toEqual([])
+  })
+
+  it('does not block the first auth release published from this repository', () => {
+    // Through the REAL map, for the reason the FFI case below gives. Every auth
+    // version on npm was published from cipherstash-suite, so the first bump
+    // made here is absent from npm by definition.
+    const blockers = publishBlockers({
+      manifests: [
+        { name: AUTH, version: '0.44.1', private: false, workspaceDeps: [] },
+        {
+          name: AUTH_PLATFORM,
+          version: '0.44.1',
+          private: false,
+          workspaceDeps: [],
+        },
+      ],
+      lookup: () => ['0.44.0'],
+    })
+    expect(blockers).toEqual([])
   })
 
   it('does not block the first FFI or EQL release published from this repository', () => {
@@ -816,12 +854,11 @@ describe('the gate actually blocks the publish', () => {
  * `npmVersions` shells out to it. That also keeps this offline and
  * deterministic.
  *
- * THE REAL MAPS DO NOT FREEZE EQL, so the EQL blocking path needs a frozen
- * package, and most of these run `main()` with the EQL fixture injected
- * through its parameters — a separate process importing the module, never a
- * flag the real script reads. Two run the script itself: one holds the real
- * maps to "EQL is not frozen", and one drives the `@cipherstash/auth` freeze
- * through them.
+ * WITH THE REAL MAPS EMPTY, the blocking path needs a frozen package, so most
+ * of these run `main()` with the EQL fixture injected through its parameters —
+ * a separate process importing the module, never a flag the real script reads.
+ * Two run the script itself, to hold the real maps to "EQL is not frozen" and
+ * to "`@cipherstash/auth` is not frozen".
  *
  * THE SHIM ANSWERS `pack` AS WELL AS `view`, and that is not tidying. It used
  * to answer `view` only, so `publishedArtefactDigest`'s `npm pack` got a
@@ -861,9 +898,9 @@ describe('the gate exits non-zero when a blocker is found', () => {
         "    process.stderr.write('npm error code ETARGET\\n'); process.exit(1)\n" +
         '  }\n' +
         "  const dest = process.argv[process.argv.indexOf('--pack-destination') + 1]\n" +
-        // A `files` artefact (@cipherstash/auth): the tarball carries the
-        // tree's own bytes for every listed file, so CHECK C compares them for
-        // real and passes.
+        // A `files` artefact (none in the real map since the auth packages
+        // were unfrozen): the tarball carries the tree's own bytes for every
+        // listed file, so CHECK C compares them for real and passes.
         '  const files = JSON.parse(process.env.FAKE_NPM_FILES)[name]\n' +
         '  if (files) {\n' +
         '    for (const [published, source] of Object.entries(files)) {\n' +
@@ -1036,18 +1073,22 @@ describe('the gate exits non-zero when a blocker is found', () => {
     expect(result.stdout).toContain(`unpublished: ${EQL}`)
   })
 
-  it('blocks a stray @cipherstash/auth bump while the auth packages are frozen', () => {
-    // The auth freeze, end to end, through the real script and the real maps:
-    // npm carries the committed 0.44.0 and not the bump, so CHECK A names the
-    // bumped version and the release stops.
+  it('hands an unpublished @cipherstash/auth version to publish-auth now that this repository publishes it', () => {
+    // The arming PR's end state, end to end: npm does not carry the tree's
+    // auth version, and the gate passes and reports `auth=true`, which runs
+    // `auth-artifacts` and `publish-auth`, instead of refusing the release as
+    // a frozen publisher. Through the real script, because the real maps are
+    // what the arming PR changed.
     const result = runGate(
       { ...allPublished, [AUTH]: ['0.43.0'] },
       IN_TREE_DIGEST,
       REAL_SCRIPT,
     )
-    expect(result.status).toBe(1)
-    expect(result.stderr).toContain(`${AUTH}@0.44.0 is not on npm`)
-    expect(result.stderr).toContain('cipherstash/cipherstash-suite')
+    expect(result.stderr).toBe('')
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain(`unpublished: ${AUTH}`)
+    expect(result.stdout).toContain('ffi=false auth=true js=false')
+    expect(result.githubOutput).toBe('ffi=false\nauth=true\njs=false\n')
   })
 })
 
@@ -1460,36 +1501,31 @@ describe('reportBlockers, for a bytes skew', () => {
 })
 
 /**
- * The `files` artefact shape, which `@cipherstash/auth` needs because it has no
- * release manifest to read a digest from. The gate hashes each listed file on
- * both sides; EQL's `field` entry keeps working unchanged (every EQL test
- * above).
+ * The `files` artefact shape, for a frozen package with no release manifest to
+ * read a digest from. No entry in the real map uses it since the auth packages
+ * were unfrozen, so the fixture is the list their entry carried, read from the
+ * wrapper's `files`: the mechanism stays exercised against real bytes.
  */
 describe('a `files` artefact', () => {
   const AUTH_DIR = 'languages/typescript/packages/auth'
-  const artefact = FROZEN_ARTEFACT_DIGESTS.get(AUTH)
+  const artefact = {
+    label: 'wrapper sources and type declarations',
+    files: JSON.parse(
+      readFileSync(join(REPO_ROOT, AUTH_DIR, 'package.json'), 'utf8'),
+    )
+      .files.filter((entry) => !entry.endsWith('/'))
+      .map((file) => ({
+        inTree: `${AUTH_DIR}/${file}`,
+        published: `package/${file}`,
+      })),
+  }
 
   it('hashes every listed file in the tree, one line per file', () => {
     const lines = inTreeArtefactDigest(AUTH, artefact).split('\n')
+    expect(artefact.files).toHaveLength(15)
     expect(lines).toHaveLength(artefact.files.length)
     for (const line of lines)
       expect(line).toMatch(/^package\/\S+ [0-9a-f]{64}$/)
-  })
-
-  it('lists every tracked file the wrapper publishes, except package.json', () => {
-    // A file the wrapper publishes and the list leaves out is a file whose
-    // bytes nobody compares. `files` in package.json is what npm packs, and
-    // `wasm/` is a build output with nothing tracked behind it.
-    const manifest = JSON.parse(
-      readFileSync(join(REPO_ROOT, AUTH_DIR, 'package.json'), 'utf8'),
-    )
-    const published = manifest.files.filter((entry) => !entry.endsWith('/'))
-    expect(artefact.files.map((file) => file.inTree).sort()).toEqual(
-      published.map((file) => `${AUTH_DIR}/${file}`).sort(),
-    )
-    expect(manifest.files.filter((entry) => entry.endsWith('/'))).toEqual([
-      'wasm/',
-    ])
   })
 
   it('throws, naming the file, when a listed file is missing from the tree', () => {
@@ -1563,22 +1599,19 @@ describe('a `files` artefact', () => {
 })
 
 /**
- * The `noTreeBytes` shape: the six @cipherstash/auth platform packages publish
- * only a binary built in CI, so CHECK C has nothing to compare and skips them.
- * They are frozen all the same, so CHECK A blocks a stray version.
+ * The `noTreeBytes` shape: a platform package whose tarball holds only a
+ * binary built in CI, so CHECK C skips it and only CHECK A holds it. The six
+ * @cipherstash/auth platform packages were frozen in this shape; their entry
+ * is the fixture.
  */
 describe('a `noTreeBytes` artefact', () => {
   const platforms = workspaceManifests()
     .map((manifest) => manifest.name)
     .filter((name) => name.startsWith(`${AUTH}-`))
-
-  it('covers every @cipherstash/auth platform package in the workspace', () => {
-    expect(platforms).toHaveLength(6)
-    for (const name of platforms) {
-      expect(FROZEN_PUBLISHERS.has(name), name).toBe(true)
-      expect(FROZEN_ARTEFACT_DIGESTS.get(name).noTreeBytes, name).toMatch(/\S/)
-    }
-  })
+  const artefact = {
+    label: 'platform binary',
+    noTreeBytes: 'the published tarball holds only a binary built in CI',
+  }
 
   it('is skipped by CHECK C without asking the registry', () => {
     const name = platforms[0]
@@ -1586,7 +1619,7 @@ describe('a `noTreeBytes` artefact', () => {
       frozenBytesSkew({
         manifests: [{ name, version: '0.44.0', private: false }],
         frozen: new Map([[name, 'frozen']]),
-        artefacts: new Map([[name, FROZEN_ARTEFACT_DIGESTS.get(name)]]),
+        artefacts: new Map([[name, artefact]]),
         inTreeDigest: () => {
           throw new Error('must not read the tree')
         },
@@ -1612,15 +1645,20 @@ describe('a `noTreeBytes` artefact', () => {
     ).toThrow(/noTreeBytes/)
   })
 
-  it('still blocks a platform version npm does not carry (CHECK A)', () => {
+  it('blocks a platform version npm does not carry only while it is frozen (CHECK A)', () => {
     const name = platforms[0]
-    expect(
+    const blockers = (frozen) =>
       publishBlockers({
         manifests: [{ name, version: '0.44.1', private: false }],
         lookup: () => ['0.44.0'],
+        frozen,
       }).map(
         (blocker) => `${blocker.kind} ${blocker.package}@${blocker.version}`,
-      ),
-    ).toEqual([`frozen-publisher ${name}@0.44.1`])
+      )
+    expect(blockers(new Map([[name, 'frozen']]))).toEqual([
+      `frozen-publisher ${name}@0.44.1`,
+    ])
+    // The real map: armed, so a bump is a release, not a blocker.
+    expect(blockers(FROZEN_PUBLISHERS)).toEqual([])
   })
 })

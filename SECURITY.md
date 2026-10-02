@@ -35,19 +35,20 @@ It also carries the source of two Rust crates published to crates.io,
 crates), which has no release yet. All three are in scope for security reports
 on the same terms as the npm packages above.
 
-> **Note on publishing.** `@cipherstash/auth` and its six platform packages,
-> and the `stack-auth` and `stack-profile` crates, are developed here but are
-> *published* from `cipherstash/cipherstash-suite` until the arming PR of the
-> stack-* crates import repoints them. Every other package in the table above,
-> including all seven `@cipherstash/protect-ffi*` packages and
-> `@cipherstash/eql`, is published from this repository by
-> `.github/workflows/release.yml`; the `eql-bindings` crate is published from
-> here by `.github/workflows/release-plz.yml`. EQL moved here at the Phase 5
-> cutover in `docs/plans/2026-08-13-eql-monorepo-absorption.md`. Releases made
-> before it, `@cipherstash/eql@3.0.5` and earlier, were built by
-> `cipherstash/encrypt-query-language`. **Source, issues, and security reports
-> for all of them belong here regardless** — that part does not depend on which
-> pipeline built the artefact.
+> **Note on publishing.** Every package in the table above, including all
+> seven `@cipherstash/protect-ffi*` packages, all seven `@cipherstash/auth*`
+> packages and `@cipherstash/eql`, is published from this repository by
+> `.github/workflows/release.yml`; the `eql-bindings`, `stack-auth` and
+> `stack-profile` crates are published from here by
+> `.github/workflows/release-plz.yml`. EQL moved here at the Phase 5 cutover in
+> `docs/plans/2026-08-13-eql-monorepo-absorption.md`, and the auth packages and
+> the two crates at the arming PR of the stack-* crates import. Releases made
+> before those moves were built elsewhere: `@cipherstash/eql@3.0.5` and earlier
+> by `cipherstash/encrypt-query-language`, and `@cipherstash/auth@0.44.0` and
+> the crates' `0.42.3` and earlier by `cipherstash/cipherstash-suite`.
+> **Source, issues, and security reports for all of them belong here
+> regardless** — that part does not depend on which pipeline built the
+> artefact.
 >
 > **Do not trust this note for which repository published a given release.**
 > Registry configuration changes without touching this file, and this note has

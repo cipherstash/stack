@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { workspaceManifests } from '../release-gate.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow } from './lib/workflows.mjs'
 
@@ -168,5 +169,26 @@ describe('_build-auth-artifacts.yml', () => {
     const packs = runs(wrapper).filter((run) => /\bpack\b/.test(run))
     expect(packs.some((run) => /\bpnpm\b.*\bpack\b/.test(run))).toBe(true)
     expect(packs.some((run) => /\bnpm pack\b/.test(run))).toBe(false)
+  })
+})
+
+describe('the seven @cipherstash/auth packages', () => {
+  it('version together as one changesets fixed group', () => {
+    // The `wrapper` job refuses a tarball whose six peers differ from its own
+    // version. A package left out of the group drifts on its first bump, and
+    // that shows up mid-release rather than here.
+    const isAuth = (name) =>
+      name === '@cipherstash/auth' || name.startsWith('@cipherstash/auth-')
+    const workspace = workspaceManifests()
+      .map((manifest) => manifest.name)
+      .filter(isAuth)
+      .sort()
+    const { fixed } = JSON.parse(
+      readFileSync(join(REPO_ROOT, '.changeset/config.json'), 'utf8'),
+    )
+    const group = fixed.find((names) => names.includes('@cipherstash/auth'))
+
+    expect(workspace).toHaveLength(7)
+    expect([...(group ?? [])].sort()).toEqual(workspace)
   })
 })

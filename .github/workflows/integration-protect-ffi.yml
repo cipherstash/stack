@@ -23,7 +23,7 @@ name: Integration — protect-ffi (native + WASM)
 # queried SQL installed from the PUBLISHED EQL bundle while the payloads under
 # test were emitted by the in-tree `eql-bindings`, so the two halves of EQL could
 # disagree — and would have disagreed in a database, not in CI. `@cipherstash/eql`
-# now resolves `workspace:^`, and `@cipherstash/auth` and `vitest` take
+# now resolves `workspace:^`, `@cipherstash/auth` `workspace:*`, and `vitest`
 # `catalog:repo`.
 #
 # Separate from `tests.yml` on purpose, and separate from `tests-rust.yml`: this
@@ -39,7 +39,7 @@ on:
       # and its manifest.
       - 'languages/typescript/packages/protect-ffi/integration-tests/**'
       # The suite's dependency versions, now that it is a pnpm workspace member:
-      # `@cipherstash/auth`, `vitest` and `typescript` reach it through
+      # `vitest` and `typescript` reach it through
       # `catalog:repo`, so a catalog bump changes what this job runs while
       # editing no file under the suite. Same entry, same reason, as the other
       # integration workflows — and like them, `pnpm-lock.yaml` is deliberately
@@ -89,6 +89,15 @@ on:
       - 'packages/eql/Cargo.toml'
       - '.github/workflows/integration-protect-ffi.yml'
       - '.github/actions/build-ffi-binding/**'
+      - '.github/actions/build-auth-binding/**'
+      # `@cipherstash/auth` is a workspace package, and the SDK loads its napi
+      # module (and, for `wasm-inline`, its wasm) on import, so a change to what
+      # it ships arrives here rather than in `pnpm-workspace.yaml`. The paths of
+      # require-auth-npm-changeset.yml.
+      - 'packages/stack-auth/Cargo.toml'
+      - 'packages/stack-auth/src/**'
+      - 'languages/typescript/packages/auth/**'
+      - 'languages/typescript/packages/stack-auth-wasm/**'
       - '.github/actions/require-cs-secrets/**'
   pull_request:
     branches: ['**']
@@ -119,6 +128,15 @@ on:
       - 'packages/eql/Cargo.toml'
       - '.github/workflows/integration-protect-ffi.yml'
       - '.github/actions/build-ffi-binding/**'
+      - '.github/actions/build-auth-binding/**'
+      # `@cipherstash/auth` is a workspace package, and the SDK loads its napi
+      # module (and, for `wasm-inline`, its wasm) on import, so a change to what
+      # it ships arrives here rather than in `pnpm-workspace.yaml`. The paths of
+      # require-auth-npm-changeset.yml.
+      - 'packages/stack-auth/Cargo.toml'
+      - 'packages/stack-auth/src/**'
+      - 'languages/typescript/packages/auth/**'
+      - 'languages/typescript/packages/stack-auth-wasm/**'
       - '.github/actions/require-cs-secrets/**'
   workflow_dispatch: {}
 
@@ -289,6 +307,11 @@ jobs:
       # 19 unrelated encryption errors.
       - name: Build the protect-ffi binding
         uses: ./.github/actions/build-ffi-binding
+        with:
+          wasm: 'true'
+
+      - name: Build the @cipherstash/auth binding
+        uses: ./.github/actions/build-auth-binding
         with:
           wasm: 'true'
 
