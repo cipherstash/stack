@@ -1,5 +1,11 @@
 # @cipherstash/stack-prisma
 
+## 1.2.1
+
+### Patch Changes
+
+- @cipherstash/stack@1.2.1
+
 ## 1.2.0
 
 ### Minor Changes

@@ -1,5 +1,13 @@
 # @cipherstash/e2e
 
+## 0.0.7
+
+### Patch Changes
+
+- stash@1.2.1
+- @cipherstash/stack@1.2.1
+- @cipherstash/wizard@1.2.1
+
 ## 0.0.6
 
 ### Patch Changes

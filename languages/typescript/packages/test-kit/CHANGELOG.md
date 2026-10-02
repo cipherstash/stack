@@ -1,5 +1,11 @@
 # @cipherstash/test-kit
 
+## 0.0.5
+
+### Patch Changes
+
+- @cipherstash/stack@1.2.1
+
 ## 0.0.4
 
 ### Patch Changes

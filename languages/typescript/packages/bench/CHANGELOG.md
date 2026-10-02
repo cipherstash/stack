@@ -1,5 +1,12 @@
 # @cipherstash/bench
 
+## 0.0.9
+
+### Patch Changes
+
+- @cipherstash/stack@1.2.1
+- @cipherstash/stack-drizzle@1.2.1
+
 ## 0.0.8
 
 ### Patch Changes
