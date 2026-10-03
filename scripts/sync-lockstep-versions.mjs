@@ -593,7 +593,8 @@ function main() {
 // `fileURLToPath`, not `` `file://${process.argv[1]}` ``: the URL is
 // percent-encoded and the argv path is not, so the template form is false from
 // any checkout path containing a space — and this script's caller is
-// `changeset version && node scripts/sync-lockstep-versions.mjs`, where a
-// silent exit 0 reports a completed lockstep bump that never happened.
+// `changeset version && node scripts/sync-skill-pins.mjs && node
+// scripts/sync-lockstep-versions.mjs`, where a silent exit 0 reports a
+// completed lockstep bump that never happened.
 // `scripts/__tests__/script-main-guards.test.mjs` holds this form repo-wide.
 if (process.argv[1] === fileURLToPath(import.meta.url)) main()
