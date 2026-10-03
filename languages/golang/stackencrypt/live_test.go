@@ -220,6 +220,34 @@ func TestLiveRecordsAndTerms(t *testing.T) {
 	if err := cipher.DecryptRecords(ctx, ext, &back, ExtendContext(uint64(7))); err != nil {
 		t.Fatalf("extended record with its extension: %v", err)
 	}
+
+	// A probe takes the same option, and matches only the rows written
+	// under it: not another tenant's, and not the unextended ones.
+	tenant7, tenant8 := ExtendContext(uint64(7)), ExtendContext(uint64(8))
+	other, err := cipher.EncryptRecords(ctx, users, tenant8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scoped, err := cipher.Term(ctx, "bob@example.com", MustContext("users/email"), Equality, tenant7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !scoped.(EqualityTerm).Equal(ext[1]["Email"].Equality) {
+		t.Error("tenant probe does not equal the term written under the same extension")
+	}
+	if scoped.(EqualityTerm).Equal(other[1]["Email"].Equality) {
+		t.Error("tenant probe equals another tenant's term")
+	}
+	if scoped.(EqualityTerm).Equal(records[1]["Email"].Equality) {
+		t.Error("tenant probe equals the unextended term")
+	}
+	unscoped, err := cipher.Term(ctx, "bob@example.com", MustContext("users/email"), Equality)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unscoped.(EqualityTerm).Equal(ext[1]["Email"].Equality) {
+		t.Error("an unextended probe equals a tenant's term")
+	}
 }
 
 // An explicit plan round-trips a struct that carries no tags, and a record

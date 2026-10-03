@@ -677,7 +677,11 @@ func TestGuestAcceptsEveryEncodingThisPackageBuilds(t *testing.T) {
 			_, err := byID.Term(ctx, 1.5, c, Ore)
 			return err
 		},
-		"Term ope bytes":       func() error { _, err := def.Term(ctx, []byte{1}, MustContext("k"), Ope); return err },
+		"Term ope bytes": func() error { _, err := def.Term(ctx, []byte{1}, MustContext("k"), Ope); return err },
+		"Term ext option": func() error {
+			_, err := byID.Term(ctx, 1.5, MustContext("users/age"), Ore, ExtendContext(uint64(7), "eu"))
+			return err
+		},
 		"EncryptRecords":       func() error { _, err := def.EncryptRecords(ctx, rows); return err },
 		"EncryptRecords ext":   func() error { _, err := named.EncryptRecords(ctx, &rows, ExtendContext(uint64(7), "eu")); return err },
 		"EncryptRecord":        func() error { _, err := byID.EncryptRecord(ctx, rows[0]); return err },
@@ -731,6 +735,22 @@ func TestGuestRefusesMalformedInputsBeforeState(t *testing.T) {
 		"record without c": func() error {
 			return c.DecryptRecord(ctx, EncryptedRecord{"Age": {Equality: EqualityTerm{1}}, "Email": {Ciphertext: Sealed(fixtureLeaf)}}, new(recordRow))
 		},
+		// ExtendContext checks nothing when it is built; Context.With
+		// refuses the part when a call applies it. A call that dropped
+		// that error would run under a context missing the extension:
+		// a probe that matches no rows, or rows no probe matches.
+		"bad ext part in a term": func() error {
+			_, err := def.Term(ctx, 1, MustContext("k"), Equality, ExtendContext(1.5))
+			return err
+		},
+		"bad ext part in a record write": func() error {
+			_, err := def.EncryptRecords(ctx, []recordRow{{Age: 1, Email: "a@b.c"}}, ExtendContext(1.5))
+			return err
+		},
+		"bad ext part in a record read": func() error {
+			record := EncryptedRecord{"Age": {Ciphertext: Sealed(fixtureLeaf)}, "Email": {Ciphertext: Sealed(fixtureLeaf)}}
+			return c.DecryptRecord(ctx, record, new(recordRow), ExtendContext(1.5))
+		},
 	}
 	for name, call := range calls {
 		err := call()
@@ -738,6 +758,34 @@ func TestGuestRefusesMalformedInputsBeforeState(t *testing.T) {
 			t.Errorf("%s: reached the cipher (ErrState); must be refused at parse", name)
 		} else if err == nil {
 			t.Errorf("%s: accepted", name)
+		}
+	}
+}
+
+// A bad ExtendContext part fails the call for that reason, on the probe and
+// on both record directions. TestGuestRefusesMalformedInputsBeforeState
+// shows the call never reaches the cipher, but a call that ignored the
+// error and went on with an empty context would be refused too, by the
+// guest, for another reason; only the error's own words tell the two apart.
+func TestBadExtensionPartFailsTheCall(t *testing.T) {
+	ctx := context.Background()
+	c := rawInstance(t)
+	def := c.DefaultKeyset()
+	bad := ExtendContext(uint64(7), 1.5)
+	record := EncryptedRecord{"Age": {Ciphertext: Sealed(fixtureLeaf)}, "Email": {Ciphertext: Sealed(fixtureLeaf)}}
+	for name, call := range map[string]func() error{
+		"Term": func() error {
+			_, err := def.Term(ctx, 1, MustContext("k"), Equality, bad)
+			return err
+		},
+		"EncryptRecords": func() error {
+			_, err := def.EncryptRecords(ctx, []recordRow{{Age: 1, Email: "a@b.c"}}, bad)
+			return err
+		},
+		"DecryptRecord": func() error { return c.DecryptRecord(ctx, record, new(recordRow), bad) },
+	} {
+		if err := call(); err == nil || !strings.Contains(err.Error(), "float64 is not a context part") {
+			t.Errorf("%s with a float64 extension part: %v, want the part refused", name, err)
 		}
 	}
 }

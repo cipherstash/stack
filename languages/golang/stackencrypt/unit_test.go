@@ -128,6 +128,32 @@ func TestSelectorsSpellEveryVariant(t *testing.T) {
 	}
 }
 
+// A Context owns its parts, as an option does: NewContext and With copy a
+// byte-slice part in, so a caller's buffer reused once the context is
+// built does not change it.
+func TestContextOwnsItsByteParts(t *testing.T) {
+	root, ext := []byte("users/email"), []byte("eu")
+	c, err := NewContext(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err = c.With(ext); err != nil {
+		t.Fatal(err)
+	}
+	copy(root, "users/phone")
+	copy(ext, "us")
+	parts, ok := c.value().([]any)
+	if !ok || len(parts) != 2 {
+		t.Fatalf("context value is %#v, want a two-part list", c.value())
+	}
+	if got := string(parts[0].([]byte)); got != "users/email" {
+		t.Errorf("root part is %q after the caller's buffer changed, want \"users/email\"", got)
+	}
+	if got := string(parts[1].([]byte)); got != "eu" {
+		t.Errorf("extension part is %q after the caller's buffer changed, want \"eu\"", got)
+	}
+}
+
 func TestContextNestsToTheLeft(t *testing.T) {
 	c := MustContext("users/age")
 	if got := c.value(); got != "users/age" {
@@ -273,6 +299,153 @@ func TestExplicitPlanIsTheTagPlan(t *testing.T) {
 	explicit.Fields()[0].Context = "changed"
 	if explicit.Fields()[0].Context != "users/age" {
 		t.Fatal("Fields exposed the plan's own slice")
+	}
+}
+
+// A probe's context under ExtendContext is, byte for byte, the context the
+// record plan sends for a field with the same own context under the same
+// extension — the one place the probe and the stored term could silently
+// disagree. And it differs from the unextended context and from another
+// extension's, which is what makes the match tenant-specific.
+func TestTermExtensionMatchesRecordFieldContext(t *testing.T) {
+	type row struct {
+		Email string `stash:"context=users/email,index=eq"`
+	}
+	ext := []any{uint64(7), "eu"}
+	o := applyOptions([]RecordOption{ExtendContext(ext...)})
+	bound, err := planFor(reflect.TypeOf(row{}), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj, err := planValue(bound, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, ok := obj[0].Value.(vcvalue.Object)
+	if !ok || spec[0].Key != "context" {
+		t.Fatalf("plan field encodes as %+v", obj[0].Value)
+	}
+	fieldContext := spec[0].Value
+
+	var to termOptions
+	ExtendContext(ext...).applyTerm(&to)
+	probe, err := extend(MustContext("users/email"), to.extension)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(probe.value(), fieldContext) {
+		t.Fatalf("probe context %#v, record field context %#v", probe.value(), fieldContext)
+	}
+	if reflect.DeepEqual(MustContext("users/email").value(), fieldContext) {
+		t.Fatal("the unextended probe context equals the extended field's")
+	}
+	other, err := extend(MustContext("users/email"), []any{uint64(8), "eu"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reflect.DeepEqual(other.value(), fieldContext) {
+		t.Fatal("another tenant's probe context equals the field's")
+	}
+	// The same option value, held once and passed to both calls, is how
+	// the two sides are kept in step; it applies identically through
+	// either interface. An option that means something only on a record
+	// call is not an Option, so Cipher.Term cannot accept it and ignore it.
+	var opt RecordOption = ExtendContext(ext...)
+	if _, ok := opt.(Option); !ok {
+		t.Fatal("ExtendContext is not an Option through its RecordOption interface")
+	}
+	if _, ok := WithPlan(Plan{}).(Option); ok {
+		t.Fatal("WithPlan is an Option; Cipher.Term must not accept it")
+	}
+}
+
+// Several ExtendContext options on one call join in order, and the record
+// calls and the probe join them by the same rule: two options a and b are
+// the context ExtendContext(a, b) gives, on both sides. A rule that let a
+// later option replace an earlier one on one side only would put records
+// and probes under different contexts with no error.
+func TestSeveralExtensionsJoinInOrder(t *testing.T) {
+	type row struct {
+		Email string `stash:"context=users/email,index=eq"`
+	}
+	typ := reflect.TypeOf(row{})
+	fieldContext := func(opts ...RecordOption) any {
+		t.Helper()
+		o := applyOptions(opts)
+		bound, err := planFor(typ, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		obj, err := planValue(bound, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return obj[0].Value.(vcvalue.Object)[0].Value
+	}
+	probeContext := func(opts ...Option) any {
+		t.Helper()
+		var to termOptions
+		for _, opt := range opts {
+			opt.applyTerm(&to)
+		}
+		c, err := extend(MustContext("users/email"), to.extension)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c.value()
+	}
+
+	tenant, region := ExtendContext(uint64(7)), ExtendContext("eu")
+	want := fieldContext(ExtendContext(uint64(7), "eu"))
+	if got := fieldContext(tenant, region); !reflect.DeepEqual(got, want) {
+		t.Errorf("record: two options give %#v, one option with both parts %#v", got, want)
+	}
+	if got := probeContext(tenant, region); !reflect.DeepEqual(got, want) {
+		t.Errorf("probe: two options give %#v, the record's one-option context %#v", got, want)
+	}
+	if got := probeContext(ExtendContext(uint64(7), "eu")); !reflect.DeepEqual(got, want) {
+		t.Errorf("probe: one option gives %#v, the record's %#v", got, want)
+	}
+	// Order is part of the context: the same parts the other way round are
+	// another context, on both sides.
+	if got := fieldContext(region, tenant); reflect.DeepEqual(got, want) {
+		t.Error("record: options in the other order give the same context")
+	}
+	if got := probeContext(region, tenant); reflect.DeepEqual(got, want) {
+		t.Error("probe: options in the other order give the same context")
+	}
+	// Joining is not deduplication: the same extension given twice extends
+	// twice, which is why a call must receive it once.
+	if got := fieldContext(tenant, tenant); reflect.DeepEqual(got, fieldContext(tenant)) {
+		t.Error("record: the same extension given twice is the single-extension context")
+	}
+}
+
+// An option owns its parts. A byte-slice part is copied when the option
+// is built, so a caller's buffer reused between the write and the probe
+// does not move the context the saved option extends by, on either side.
+func TestExtendContextOwnsItsByteParts(t *testing.T) {
+	region := []byte("eu")
+	opt := ExtendContext(uint64(7), region)
+	first := applyOptions([]RecordOption{opt})
+	var firstProbe termOptions
+	opt.applyTerm(&firstProbe)
+
+	copy(region, "us")
+
+	second := applyOptions([]RecordOption{opt})
+	var secondProbe termOptions
+	opt.applyTerm(&secondProbe)
+	for name, ext := range map[string][]any{
+		"record, before": first.extension, "record, after": second.extension,
+		"probe, before": firstProbe.extension, "probe, after": secondProbe.extension,
+	} {
+		if got := string(ext[1].([]byte)); got != "eu" {
+			t.Errorf("%s: byte part is %q after the caller's buffer changed, want \"eu\"", name, got)
+		}
+	}
+	if !reflect.DeepEqual(first.extension, second.extension) || !reflect.DeepEqual(firstProbe.extension, secondProbe.extension) {
+		t.Error("the same option applied twice gave different extensions")
 	}
 }
 

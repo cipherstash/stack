@@ -79,22 +79,106 @@ type EncryptedField struct {
 // EncryptedRecord is one record's planned fields, by wire name.
 type EncryptedRecord map[string]EncryptedField
 
-// RecordOption adjusts how a record call binds its fields.
-type RecordOption func(*recordOptions)
+// RecordOption adjusts one record call: [Cipher.EncryptRecords],
+// [Cipher.EncryptRecord], [Cipher.DecryptRecords], [Cipher.DecryptRecord]
+// and the Client forms of the last two. An option is a value built by one
+// of the functions below, and a call applies the options it is given in
+// order.
+//
+// A RecordOption that is not also an [Option], such as [WithPlan], means
+// something only on a record call, so handing it to [Cipher.Term] does not
+// compile.
+type RecordOption interface {
+	applyRecord(*recordOptions)
+}
+
+// Option is a [RecordOption] that the probe call, [Cipher.Term], accepts
+// as well: what a record and the probe that matches it must agree on.
+// Every Option is a RecordOption, so one value serves the encrypt, decrypt
+// and probe calls alike, and the three cannot drift apart:
+//
+//	tenant := stackencrypt.ExtendContext(uint64(tenantID))
+//	rows, err := cipher.EncryptRecords(ctx, users, tenant)
+//	probe, err := cipher.Term(ctx, "bob@example.com", email, stackencrypt.Equality, tenant)
+//	err = cipher.DecryptRecords(ctx, rows, &back, tenant)
+type Option interface {
+	RecordOption
+	applyTerm(*termOptions)
+}
 
 type recordOptions struct {
 	extension []any
 	plan      Plan
 }
 
+type termOptions struct {
+	extension []any
+}
+
+// contextExtension is what [ExtendContext] returns.
+type contextExtension struct{ parts []any }
+
+// appendTo adds the extension's parts after any an earlier option gave:
+// the one rule for combining extensions, shared by the record calls and
+// the probe so the two cannot combine them differently.
+func (e contextExtension) appendTo(ext *[]any) {
+	*ext = append(*ext, e.parts...)
+}
+
+func (e contextExtension) applyRecord(o *recordOptions) { e.appendTo(&o.extension) }
+
+func (e contextExtension) applyTerm(o *termOptions) { e.appendTo(&o.extension) }
+
 // ExtendContext extends every field's context by parts, in order, the way
 // the Rust derive extends a field's context by the caller's
 // (encrypt_into_with_context): a field tagged context=users/age with
-// ExtendContext(uint64(7)) binds ["users/age", 7]. The same extension must
-// be given to decrypt the records.
-func ExtendContext(parts ...any) RecordOption {
-	return func(o *recordOptions) { o.extension = append(o.extension, parts...) }
+// ExtendContext(uint64(7)) binds ["users/age", 7]. On [Cipher.Term] it
+// extends the probe's context the same way, so a probe built under the
+// extension a record was written under compares against that record's
+// terms, and under any other extension, or none, against nothing.
+//
+// The same extension must be given to decrypt the records. A part's type
+// is part of the context (an int crosses as int64, so uint64(7) and 7 are
+// different contexts), which is why an extension is best held in one value
+// and passed to every call rather than spelled afresh at each. The option
+// owns its parts: a byte-slice part is copied, so a caller's buffer reused
+// after the call does not change what the option extends by.
+//
+// Several ExtendContext options on one call join in order:
+// ExtendContext(a), ExtendContext(b) is the same context as
+// ExtendContext(a, b), on a record call and on Term alike. So each call
+// must receive a given extension once. A helper that always adds the
+// tenant, called by code that adds the tenant as well, writes records
+// under [field, tenant, tenant], and a probe built with the tenant once
+// matches none of them, with no error.
+//
+// A part is checked when a call applies it, not here: a part that is not
+// a string, a byte slice or an integer fails the call it is given to.
+func ExtendContext(parts ...any) Option {
+	owned := make([]any, len(parts))
+	for i, part := range parts {
+		owned[i] = ownPart(part)
+	}
+	return contextExtension{parts: owned}
 }
+
+// extend is c extended by every part of ext, in order: the one definition
+// of how an extension applies, shared by the record plan and the probe so
+// the two cannot disagree.
+func extend(c Context, ext []any) (Context, error) {
+	for _, part := range ext {
+		var err error
+		if c, err = c.With(part); err != nil {
+			return Context{}, err
+		}
+	}
+	return c, nil
+}
+
+// planOption is what [WithPlan] returns.
+type planOption struct{ plan Plan }
+
+func (p planOption) applyRecord(o *recordOptions) { o.plan = p.plan }
 
 // WithPlan encrypts or decrypts records under an explicit plan instead of
 // the struct's `stash` tags.
@@ -108,7 +192,7 @@ func ExtendContext(parts ...any) RecordOption {
 // with the same Names and Contexts. Terms are one-way outputs, derived on
 // encryption and never sent to decrypt, so they need not match either.
 func WithPlan(p Plan) RecordOption {
-	return func(o *recordOptions) { o.plan = p }
+	return planOption{plan: p}
 }
 
 // FieldPlan is one planned field of a record.
@@ -355,10 +439,8 @@ func planValue(plan []fieldPlan, opts recordOptions) (vcvalue.Object, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, part := range opts.extension {
-			if ctx, err = ctx.With(part); err != nil {
-				return nil, err
-			}
+		if ctx, err = extend(ctx, opts.extension); err != nil {
+			return nil, err
 		}
 		outputs := make([]any, len(f.outputs))
 		for i, o := range f.outputs {
@@ -375,7 +457,7 @@ func planValue(plan []fieldPlan, opts recordOptions) (vcvalue.Object, error) {
 func applyOptions(opts []RecordOption) recordOptions {
 	var o recordOptions
 	for _, opt := range opts {
-		opt(&o)
+		opt.applyRecord(&o)
 	}
 	return o
 }

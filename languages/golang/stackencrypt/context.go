@@ -1,6 +1,7 @@
 package stackencrypt
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 )
@@ -20,6 +21,9 @@ import (
 // left, so NewContext("users/age").With(uint64(7)) is the context a row
 // sealed with encrypt_into_with_context(row, 7u64) binds for that field.
 // A one-element list is not the bare part, and this type cannot spell one.
+//
+// A Context owns its parts: a byte-slice part is copied in, so a caller's
+// buffer reused once the Context is built does not change it.
 type Context struct {
 	node any
 }
@@ -41,7 +45,7 @@ func NewContext(part any) (Context, error) {
 	if err := checkRootNonEmpty(part); err != nil {
 		return Context{}, err
 	}
-	return Context{node: part}, nil
+	return Context{node: ownPart(part)}, nil
 }
 
 // MustContext is [NewContext] for a part known to be valid; it panics
@@ -63,7 +67,17 @@ func (c Context) With(part any) (Context, error) {
 	if err := checkPart(part); err != nil {
 		return Context{}, err
 	}
-	return Context{node: []any{c.node, part}}, nil
+	return Context{node: []any{c.node, ownPart(part)}}, nil
+}
+
+// ownPart is part as a context stores it: a byte slice is copied, so
+// neither a Context nor an option that extends one ([ExtendContext])
+// aliases a caller's buffer. Every other part type is a value.
+func ownPart(part any) any {
+	if b, ok := part.([]byte); ok {
+		return bytes.Clone(b)
+	}
+	return part
 }
 
 // value renders the context in the guest's grammar: a scalar or nested
