@@ -18,7 +18,7 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  * is three hops deep and entirely invisible in the workflow file:
  *
  *     version: pnpm run version                       (release.yml)
- *       -> "changeset version && node scripts/sync-lockstep-versions.mjs"
+ *       -> "changeset version && … && node scripts/sync-lockstep-versions.mjs"
  *                                                     (root package.json)
  *          -> execFileSync('mise', ['run', 'release:prepare_bindings_assets'…])
  *                                                     (that script)
