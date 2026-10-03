@@ -220,6 +220,10 @@ jobs:
     permissions:
       contents: write # the seven git tags and the GitHub release
       id-token: write # npm OIDC trusted publishing
+    # `release` waits for npm to serve every one of these before it runs
+    # `changeset publish`. Empty when this job is skipped.
+    outputs:
+      published: ${{ steps.publish.outputs.published }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -289,7 +293,10 @@ jobs:
             published+=("${name}@${version}")
           done
           printf '%s\n' "${published[@]}" > published.txt
-          echo "version=$(meta "$wrapper" version)" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$(meta "$wrapper" version)"
+            echo "published=${published[*]}"
+          } >> "$GITHUB_OUTPUT"
 
       # Changesets tags only what IT published — `tagPublish` receives
       # `publishedPackages.filter(p => p.result === "published")` — and it skips
@@ -369,6 +376,9 @@ jobs:
     permissions:
       contents: write # the seven git tags and the GitHub release
       id-token: write # npm OIDC trusted publishing
+    # Waited for by `release`, as publish-ffi's is.
+    outputs:
+      published: ${{ steps.publish.outputs.published }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -420,7 +430,10 @@ jobs:
             published+=("${name}@${version}")
           done
           printf '%s\n' "${published[@]}" > published.txt
-          echo "version=$(meta "$wrapper" version)" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$(meta "$wrapper" version)"
+            echo "published=${published[*]}"
+          } >> "$GITHUB_OUTPUT"
 
       # Changesets tags only what it published itself, so without this an auth
       # release has no git tag and no GitHub release. The same idempotent tag
@@ -488,12 +501,12 @@ jobs:
       id-token: write # npm OIDC trusted publishing
       contents: write # changesets commits and pushes the Version Packages branch
       pull-requests: write # …and opens/updates the PR for it
-    # `published` alone is not enough: this job publishes every unpublished JS
-    # package, and a `@cipherstash/stack` release must not fire an EQL one.
+    # Read by `eql-assets`. Straight from the step, with no step in between:
+    # changesets/action sets it for whatever it published even when
+    # `changeset publish` then fails, and a job output is evaluated when the
+    # job ends, whatever its result.
     outputs:
-      eql_published: ${{ steps.eql.outputs.eql_published }}
-      eql_version: ${{ steps.eql.outputs.eql_version }}
-      eql_prerelease: ${{ steps.eql.outputs.eql_prerelease }}
+      published_packages: ${{ steps.changesets.outputs.publishedPackages }}
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
@@ -591,6 +604,19 @@ jobs:
           add_shims_to_path: false
           env: false
 
+      # BEFORE `changeset publish`. npm accepts a publish minutes before its
+      # package document lists the version, and `changeset publish` publishes
+      # every version that document does not list — the native packages again,
+      # from the workspace, with `restricted` access, which npm refuses with
+      # E402. That failed this job for protect-ffi 0.33.0 and for
+      # @cipherstash/auth 0.44.1. See scripts/wait-for-npm-versions.mjs.
+      - name: Wait for npm to list the native packages
+        timeout-minutes: 20
+        env:
+          FFI_PUBLISHED: ${{ needs.publish-ffi.outputs.published }}
+          AUTH_PUBLISHED: ${{ needs.publish-auth.outputs.published }}
+        run: node scripts/wait-for-npm-versions.mjs
+
       - name: Publish to npm
         id: changesets
         uses: changesets/action@v1.9.0
@@ -620,84 +646,108 @@ jobs:
           #   gh variable set STASH_POSTHOG_KEY --repo cipherstash/stack --body '<phc_...>'
           STASH_POSTHOG_KEY: ${{ vars.STASH_POSTHOG_KEY }}
 
-      # Read from `publishedPackages` rather than from the tree, so the SQL
-      # release, docs bundle and image tag agree with what reached npm. A re-run
-      # against an already-published version finds nothing and the EQL branch
-      # skips, which is correct.
-      - name: Resolve the published EQL version
-        id: eql
-        if: steps.changesets.outputs.published == 'true'
-        env:
-          PUBLISHED: ${{ steps.changesets.outputs.publishedPackages }}
-        run: |
-          set -euo pipefail
-          version="$(node -e "const p=JSON.parse(process.env.PUBLISHED);const e=p.find(x=>x.name==='@cipherstash/eql');console.log(e ? e.version : '')")"
-          if [ -z "$version" ]; then
-            echo "@cipherstash/eql was not part of this release"
-            exit 0
-          fi
-          if [[ "$version" == *-* ]]; then
-            prerelease=true
-          else
-            prerelease=false
-          fi
-          echo "@cipherstash/eql@${version} published (prerelease=${prerelease})"
-          {
-            echo "eql_published=true"
-            echo "eql_version=${version}"
-            echo "eql_prerelease=${prerelease}"
-          } >> "$GITHUB_OUTPUT"
-
   # ---- The EQL release line: production ------------------------------------
   #
   # EQL ships as five artefacts at one version. Changesets publishes the npm
   # package (above) and release-plz.yml the crate on the same push; the rest are
-  # built here, in the run that published, so they cannot drift from it.
+  # built here.
+  #
+  # `eql-assets` decides from npm and the tags, not from this run, so a run
+  # whose `changeset publish` failed still builds them, and so does the next
+  # push to main if that run never got this far. See
+  # scripts/eql-release-assets.mjs.
+  #
+  # `!cancelled()`, NOT the implicit `success()`, on all four: `success()`
+  # is false when ANY job up the `needs:` chain was skipped or failed, and
+  # `publish-ffi` and `publish-auth` are skipped on most releases. Each job
+  # names the results it does need instead. `always()` would also do that, and
+  # would keep them running after somebody cancelled the run.
   #
   # The `needs:` chain is load-bearing: `eql-docs` attaches to the release
   # `eql-sql` creates, and `eql-image` dispatches against the tag it produced.
 
+  eql-assets:
+    name: Does EQL still need its release assets?
+    needs: [classify, gate, release]
+    if: >-
+      !cancelled() &&
+      needs.classify.outputs.mode == 'production' &&
+      needs.gate.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      needed: ${{ steps.eql.outputs.needed }}
+      version: ${{ steps.eql.outputs.version }}
+      prerelease: ${{ steps.eql.outputs.prerelease }}
+      ref: ${{ steps.eql.outputs.ref }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      # No pnpm install: the script imports node builtins only, as `gate` does.
+      - name: Ask npm and the tags
+        id: eql
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PUBLISHED_PACKAGES: ${{ needs.release.outputs.published_packages }}
+        run: node scripts/eql-release-assets.mjs
+
   eql-sql:
     name: Build and attach the EQL SQL release
-    needs: [classify, gate, eql-armed, release]
+    needs: [classify, eql-armed, eql-assets]
     if: >-
+      !cancelled() &&
       needs.classify.outputs.mode == 'production' &&
       needs.eql-armed.outputs.armed == 'true' &&
-      needs.release.outputs.eql_published == 'true'
+      needs.eql-assets.outputs.needed == 'true'
     permissions:
       contents: write # creates the eql-<version> tag and release
     uses: ./.github/workflows/_build-eql-sql.yml
     with:
-      ref: ${{ github.sha }}
-      tag: eql-${{ needs.release.outputs.eql_version }}
+      # The commit npm's tarball was built from, which is this run's commit
+      # unless this run is repairing an older release.
+      ref: ${{ needs.eql-assets.outputs.ref }}
+      tag: eql-${{ needs.eql-assets.outputs.version }}
       attach: true
-      target_commitish: ${{ github.sha }}
-      prerelease: ${{ needs.release.outputs.eql_prerelease == 'true' }}
+      target_commitish: ${{ needs.eql-assets.outputs.ref }}
+      prerelease: ${{ needs.eql-assets.outputs.prerelease == 'true' }}
 
   eql-docs:
     name: Build and attach the EQL docs bundle
-    needs: [classify, gate, eql-armed, release, eql-sql]
+    needs: [classify, eql-armed, eql-assets, eql-sql]
     if: >-
+      !cancelled() &&
       needs.classify.outputs.mode == 'production' &&
       needs.eql-armed.outputs.armed == 'true' &&
-      needs.release.outputs.eql_published == 'true'
+      needs.eql-assets.outputs.needed == 'true' &&
+      needs.eql-sql.result == 'success'
     permissions:
       contents: write # attaches to the release eql-sql just created
     uses: ./.github/workflows/_build-eql-docs.yml
     with:
-      ref: ${{ github.sha }}
-      tag: eql-${{ needs.release.outputs.eql_version }}
+      ref: ${{ needs.eql-assets.outputs.ref }}
+      tag: eql-${{ needs.eql-assets.outputs.version }}
 
   eql-image:
     name: Dispatch the Postgres + EQL image build
-    needs: [classify, gate, eql-armed, release, eql-sql, eql-docs]
+    needs: [classify, eql-armed, eql-assets, eql-sql, eql-docs]
     # Production finals only: the floating :latest / :<version> tags must not
     # move for a prerelease. An alpha image is still buildable on demand.
     if: >-
+      !cancelled() &&
       needs.classify.outputs.mode == 'production' &&
       needs.eql-armed.outputs.armed == 'true' &&
-      needs.release.outputs.eql_published == 'true' &&
-      needs.release.outputs.eql_prerelease == 'false'
+      needs.eql-assets.outputs.needed == 'true' &&
+      needs.eql-assets.outputs.prerelease == 'false' &&
+      needs.eql-sql.result == 'success' &&
+      needs.eql-docs.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -710,7 +760,7 @@ jobs:
         # the released source even if main has advanced.
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.release.outputs.eql_version }}
+          VERSION: ${{ needs.eql-assets.outputs.version }}
         run: |
           set -euo pipefail
           # `--repo` is required: no checkout, so gh cannot infer it.
@@ -914,13 +964,14 @@ jobs:
       - eql-armed
       # `gate` and `release` are not EQL jobs, and they are the two that most
       # often decide an EQL run does nothing. `gate` exits non-zero for a frozen
-      # publisher — which is the NORMAL inert state — and skips `release`, whose
-      # `eql_published` output then gates the production EQL chain. Without them
-      # here every job below reads `skipped` and the table cannot separate
-      # "correctly inert" from "the gate refused this release" from "changesets
-      # failed", which is the distinction this job exists to draw.
+      # publisher — which is the NORMAL inert state — and skips `release` and
+      # `eql-assets`, whose `needed` output gates the production EQL chain.
+      # Without them here every job below reads `skipped` and the table cannot
+      # separate "correctly inert" from "the gate refused this release" from
+      # "changesets failed", which is the distinction this job exists to draw.
       - gate
       - release
+      - eql-assets
       - eql-sql
       - eql-docs
       - eql-image
@@ -939,6 +990,8 @@ jobs:
           ARMED: ${{ needs.eql-armed.outputs.armed }}
           GATE: ${{ needs.gate.result }}
           RELEASE: ${{ needs.release.result }}
+          EQL_ASSETS: ${{ needs.eql-assets.result }}
+          EQL_NEEDED: ${{ needs.eql-assets.outputs.needed }}
           EQL_SQL: ${{ needs.eql-sql.result }}
           EQL_DOCS: ${{ needs.eql-docs.result }}
           EQL_IMAGE: ${{ needs.eql-image.result }}
@@ -959,6 +1012,7 @@ jobs:
             echo "| --- | --- |"
             echo "| gate | ${GATE} |"
             echo "| release (changesets) | ${RELEASE} |"
+            echo "| eql-assets (needed: \`${EQL_NEEDED:-n/a}\`) | ${EQL_ASSETS} |"
             echo "| eql-sql | ${EQL_SQL} |"
             echo "| eql-docs | ${EQL_DOCS} |"
             echo "| eql-image | ${EQL_IMAGE} |"

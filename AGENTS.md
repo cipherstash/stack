@@ -207,6 +207,13 @@ stays optional for everyone else.
   bumps nothing is a no-op for all seven. `ffi-preflight.yml` is the dry run
   (`changeset publish` has no `--dry-run`); dispatch it against the Version
   Packages branch before merging a release that moves an FFI version.
+  **The `release` job waits for npm to list all seven** (and the seven
+  `@cipherstash/auth` packages `publish-auth` publishes the same way) before
+  `changeset publish`, through `scripts/wait-for-npm-versions.mjs`. npm lists
+  a publish minutes after accepting it, and `changeset publish` publishes any
+  version npm does not list yet a second time — with `restricted` access, so
+  npm refuses it with E402 and the job fails. That happened to protect-ffi
+  0.33.0 and @cipherstash/auth 0.44.1 before the wait existed.
 - **Trusted publishing binds to (repository, workflow filename).** Keep
   `release.yml` as the single npm entry point; a rename silently invalidates all
   seven publisher configurations. Each one must also list `npm publish` under
@@ -360,6 +367,17 @@ monorepo, which is where the silent failures are.
   | `release-postgres-eql-image.yml` | the GHCR image, dispatched by `release.yml` on production finals |
   | `lint-release.yml` | merged into the root file of the same name |
   | ~~`rebuild-docs.yml`~~ | **not ported.** It targeted the retired docs site through the deprecated `DOCS_WEBHOOK_URL`; versioned docs artifacts are still built by `_build-eql-docs.yml` |
+
+  **The SQL, docs and image jobs key on the registry and the tags, not on the
+  run that published.** `release.yml`'s `eql-assets` job runs
+  `scripts/eql-release-assets.mjs`, which reports the assets as owed when npm
+  carries the tree's EQL version and the `eql-<version>` tag does not exist,
+  and builds them at the commit the `@cipherstash/eql@<version>` tag names. So
+  a run whose `changeset publish` failed still builds them, and a later push
+  repairs a release that never got them — EQL 3.0.6 was the first. The four
+  jobs are `!cancelled() && …` because the implicit `success()` is false when
+  any job up the `needs:` chain was skipped, and `publish-ffi` and
+  `publish-auth` are skipped on most releases.
 
   **Inertness is a derived switch, not a flag somebody flips.** The one piece
   of state is `FROZEN_PUBLISHERS` in `scripts/release-gate.mjs` — the existing
