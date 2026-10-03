@@ -39,8 +39,11 @@ at one commit.
 The root `version` script is the mechanism:
 
 ```
-pnpm run version  ==  changeset version && node scripts/sync-lockstep-versions.mjs
+pnpm run version  ==  changeset version && node scripts/sync-skill-pins.mjs && node scripts/sync-lockstep-versions.mjs
 ```
+
+`scripts/sync-skill-pins.mjs` moves the `stash` release-train pins in `skills/`
+and does not touch EQL.
 
 1. `changeset version` consumes the pending `.changeset/*.md` files and bumps
    `packages/eql/package.json` to the next `V`.

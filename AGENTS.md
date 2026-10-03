@@ -785,6 +785,13 @@ Every command and flag named in `skills/stash-cli/SKILL.md` must resolve against
 manifest (the deprecated `db install` / `db upgrade` / `db status` aliases excepted —
 they're intentionally absent from the registry).
 
+**The version step moves the release-train pins.** `scripts/sync-skill-pins.mjs`
+runs from the root `version` script after `changeset version`. It rewrites every
+exact pin of a release-train package in `skills/`, such as
+`npx --package=stash@X.Y.Z` and `npm:@cipherstash/stack@X.Y.Z/wasm-inline`, to the
+stable version in the tree, so the Version Packages PR carries them. Name an older
+release in prose without the `name@X.Y.Z` form, or the script moves it too.
+
 Skills must not contain Linear issue IDs; they're public. GitHub issue numbers are fine.
 
 ## Supply Chain Security
