@@ -137,7 +137,7 @@ func goldenPath(name string) string {
 		stem, ext, dotted := strings.Cut(parts[i], ".")
 		if parts[i] != p || windowsDevice(stem) {
 			h := fnv.New32a()
-			h.Write([]byte(p))
+			_, _ = h.Write([]byte(p)) // a hash.Hash never returns an error
 			parts[i] = fmt.Sprintf("%s~%08x", stem, h.Sum32())
 			if dotted {
 				parts[i] += "." + ext
