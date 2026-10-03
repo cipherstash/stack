@@ -26,7 +26,9 @@
 //
 // The snapshot records what a policy stores, not what the schema calls it:
 // per message its [plan.Table]; per encrypted field its column (the record
-// key), its context, its index terms and its facts; per field decided
+// key), its context, whether its target is EQL (the context is the column
+// identity) or Custom (the target supplies it), its index terms and its
+// facts; per field decided
 // [plan.Plaintext], its name and its facts. Fields with no facts that no
 // rule names are not the policy's concern and are left out. Encrypted
 // fields are named by column, so a schema rename that the policy pins
@@ -109,7 +111,9 @@ func Golden(t testing.TB, src plan.Source, m plan.Message) {
 
 // goldenPath is the snapshot file for a test: testdata/<name>.golden, a
 // subtest's name a path below it. A character a file system could refuse
-// is spelled '_'.
+// is spelled '_', and so is a trailing dot, which Windows drops; a Windows
+// device name (CON, NUL.x, COM1) gets a '_' after it. Every platform spells
+// a name the same way, so a snapshot written on one is found on another.
 func goldenPath(name string) string {
 	parts := strings.Split(name, "/")
 	for i, p := range parts {
@@ -123,8 +127,28 @@ func goldenPath(name string) string {
 		if strings.Trim(parts[i], ".") == "" {
 			parts[i] = strings.Repeat("_", len(parts[i])+1)
 		}
+		trimmed := strings.TrimRight(parts[i], ".")
+		parts[i] = trimmed + strings.Repeat("_", len(parts[i])-len(trimmed))
+		if stem, ext, dotted := strings.Cut(parts[i], "."); windowsDevice(stem) {
+			parts[i] = stem + "_"
+			if dotted {
+				parts[i] += "." + ext
+			}
+		}
 	}
 	return filepath.Join(append([]string{"testdata"}, parts...)...) + ".golden"
+}
+
+// windowsDevice reports whether Windows reserves name as a device, with or
+// without an extension.
+func windowsDevice(name string) bool {
+	switch strings.ToUpper(name) {
+	case "CON", "PRN", "AUX", "NUL",
+		"COM0", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+		"LPT0", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9":
+		return true
+	}
+	return false
 }
 
 // rerun is the command that runs just this test with -update.

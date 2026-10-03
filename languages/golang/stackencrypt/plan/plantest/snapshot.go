@@ -32,8 +32,13 @@ type snapshot struct {
 type column struct {
 	name    string
 	context string
-	terms   []string
-	facts   []fact
+	// kind is how the context is bound: kindEQL when it is the column
+	// identity, "<table>/<column>", so the table and a column rename move
+	// it; kindCustom when the target supplies it whatever the column, so
+	// several columns may share it.
+	kind  string
+	terms []string
+	facts []fact
 	// from is the field it is decided from now; nil when read from a file.
 	from *decided
 }
@@ -49,6 +54,24 @@ type plain struct {
 type decided struct {
 	fact     plan.Fact
 	decision plan.Decision
+}
+
+// The kinds of target a column is stored as.
+const (
+	kindEQL    = "EQL"
+	kindCustom = "Custom"
+)
+
+// targetKind is kindEQL when t binds the column identity as its context,
+// as [plan.EQL] does, and kindCustom when it binds anything else, as
+// [plan.Custom] does. It asks the target rather than its type, so a typed
+// EQL target counts as EQL.
+func targetKind(t plan.Target) string {
+	probe := plan.Identifier{Table: "plantest", Column: "probe"}
+	if t.Context(probe) == probe.String() {
+		return kindEQL
+	}
+	return kindCustom
 }
 
 // fact is one annotation value.
@@ -91,6 +114,7 @@ func take(src plan.Source, m plan.Message) (snapshot, []plan.Fact, error) {
 			s.plaintext = append(s.plaintext, plain{field: f.Field, facts: factsOf(f), from: from})
 			continue
 		}
+		target, _ := d.Target()
 		fp, ok := planned[goField(f)]
 		if !ok {
 			return snapshot{}, nil, fmt.Errorf("plantest: %s is decided %v but is not in the plan", f, d)
@@ -99,7 +123,7 @@ func take(src plan.Source, m plan.Message) (snapshot, []plan.Fact, error) {
 		for i, k := range fp.Terms {
 			terms[i] = k.String()
 		}
-		s.columns = append(s.columns, column{name: fp.Name, context: fp.Context, terms: terms, facts: factsOf(f), from: from})
+		s.columns = append(s.columns, column{name: fp.Name, context: fp.Context, kind: targetKind(target), terms: terms, facts: factsOf(f), from: from})
 	}
 	s.sort()
 	return s, facts, nil
@@ -148,6 +172,7 @@ func (s snapshot) render() []byte {
 	for _, c := range s.columns {
 		fmt.Fprintf(&b, "\ncolumn %s\n", token(c.name))
 		fmt.Fprintf(&b, "  context %s\n", token(c.context))
+		fmt.Fprintf(&b, "  target %s\n", c.kind)
 		fmt.Fprintf(&b, "  terms %s\n", termList(c.terms))
 		writeFacts(&b, c.facts)
 	}
@@ -223,6 +248,8 @@ func parse(data []byte) (snapshot, error) {
 			colAt, plainAt = -1, len(s.plaintext)-1
 		case indented && toks[0] == "context" && len(toks) == 2 && colAt >= 0:
 			s.columns[colAt].context = toks[1]
+		case indented && toks[0] == "target" && len(toks) == 2 && colAt >= 0 && (toks[1] == kindEQL || toks[1] == kindCustom):
+			s.columns[colAt].kind = toks[1]
 		case indented && toks[0] == "terms" && len(toks) >= 2 && colAt >= 0:
 			if len(toks) == 2 && toks[1] == "none" {
 				s.columns[colAt].terms = nil

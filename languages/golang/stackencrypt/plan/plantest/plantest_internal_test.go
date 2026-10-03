@@ -155,6 +155,7 @@ func TestChangesAreSortedByWhatTheyCost(t *testing.T) {
 		src           plan.Source // individualV1 when nil
 		section       string      // the only section reported; "" when it does not build
 		says          []string
+		never         []string // advice that would be wrong here
 	}{
 		"identity pin dropped": {
 			before:  plan.ForMessage(nil, "individuals", plan.FirstOf(plan.When(plan.Field("medicare_number"), gov, plan.Identity("medicare_no"))).OrElse(base)),
@@ -167,6 +168,39 @@ func TestChangesAreSortedByWhatTheyCost(t *testing.T) {
 			after:   plan.ForMessage(nil, "people", base),
 			section: "CONTEXT CHANGES",
 			says:    []string{`the message's table is people, was individuals.`, `restore plan.Table("individuals")`, `its context is "people/email", was "individuals/email". Restoring plan.Table("individuals") brings it back.`},
+		},
+		"table changed, nothing encrypted": {
+			before:  plan.ForMessage(nil, "individuals", plan.When(category.Present(), plan.Plaintext())),
+			after:   plan.ForMessage(nil, "people", plan.When(category.Present(), plan.Plaintext())),
+			section: "OTHER CHANGES",
+			says:    []string{"the message's table is people, was individuals. No context moves with it"},
+		},
+		"table changed, only Custom targets": {
+			before:  plan.ForMessage(nil, "individuals", plan.When(category.Under("user"), plan.Encrypt(plan.Custom("pii/v1"))).OrElse(base)),
+			after:   plan.ForMessage(nil, "people", plan.When(category.Under("user"), plan.Encrypt(plan.Custom("pii/v1"))).OrElse(base)),
+			section: "OTHER CHANGES",
+			says:    []string{"the message's table is people, was individuals. No context moves with it"},
+		},
+		"table and a table-shaped Custom context changed": {
+			before:  plan.ForMessage(nil, "individuals", plan.FirstOf(plan.When(plan.Field("medicare_number"), plan.Encrypt(plan.Custom("individuals/medicare_number")))).OrElse(base)),
+			after:   plan.ForMessage(nil, "people", plan.FirstOf(plan.When(plan.Field("medicare_number"), plan.Encrypt(plan.Custom("people/medicare_number")))).OrElse(base)),
+			section: "CONTEXT CHANGES",
+			says:    []string{`column medicare_number: its context is "people/medicare_number", was "individuals/medicare_number". No plan.Column or plan.Identity pin`},
+			// Restoring the table leaves the Custom context as it is.
+			never: []string{`was "individuals/medicare_number". Restoring`},
+		},
+		"table changed and field renamed": {
+			before:  plan.ForMessage(nil, "individuals", base),
+			after:   plan.ForMessage(nil, "people", base),
+			src:     individualV2(),
+			section: "CONTEXT CHANGES",
+			says:    []string{`Restoring plan.Table("individuals") and pinning the rule that decides field medicare_no (MedicareNo) with plan.Column("medicare_number") brings it back.`},
+		},
+		"target kind changed under the same context": {
+			before:  plan.ForMessage(nil, "individuals", base),
+			after:   plan.ForMessage(nil, "individuals", plan.FirstOf(plan.When(plan.Field("medicare_number"), plan.Encrypt(plan.Custom("individuals/medicare_number", se.Equality)))).OrElse(base)),
+			section: "OTHER CHANGES",
+			says:    []string{"column medicare_number: its target is Custom, was EQL, under the same context."},
 		},
 		"custom context changed": {
 			before:  plan.ForMessage(nil, "individuals", plan.FirstOf(plan.When(plan.Field("medicare_number"), plan.Encrypt(plan.Custom("gov/v1")))).OrElse(base)),
@@ -242,6 +276,11 @@ func TestChangesAreSortedByWhatTheyCost(t *testing.T) {
 			}
 			_, err := check(path, src, tc.after, false, "RERUN")
 			mustContain(t, err, tc.says...)
+			for _, never := range tc.never {
+				if strings.Contains(err.Error(), never) {
+					t.Errorf("failure says %q:\n%s", never, err)
+				}
+			}
 			if tc.section == "" {
 				return
 			}
@@ -265,6 +304,29 @@ func TestALostContextWithNoCandidate(t *testing.T) {
 	)
 	_, err := check(path, gone, m, false, "RERUN")
 	mustContain(t, err, "CONTEXT CHANGES", `column medicare_number: no field writes its context "individuals/medicare_number" any more. If its field was renamed, pin the renamed field's rule with plan.Column("medicare_number")`)
+}
+
+// Custom columns may share a context, so a new one under the context of
+// one that disappeared is no evidence of a database rename, and the
+// context is not lost while another column still writes it.
+func TestSharedCustomContextIsNotARename(t *testing.T) {
+	m := plan.ForMessage(nil, "individuals", plan.When(category.Under("user"), plan.Encrypt(plan.Custom("pii/v1"))))
+	path, _ := record(t, proto(
+		plan.Fact{Field: "a", GoField: "A", Number: 1, Annotations: classified("user.name")},
+		plan.Fact{Field: "b", GoField: "B", Number: 2, Annotations: classified("user.name")},
+	), m)
+	_, err := check(path, proto(
+		plan.Fact{Field: "b", GoField: "B", Number: 2, Annotations: classified("user.name")},
+		plan.Fact{Field: "c", GoField: "C", Number: 3, Annotations: classified("user.content")},
+	), m, false, "RERUN")
+	mustContain(t, err, "OTHER CHANGES",
+		`column a is no longer written. Its context "pii/v1" is not lost, since columns b, c still write it`,
+		`new column c, under "pii/v1"`)
+	for _, never := range []string{"RENAME COLUMN", "CONTEXT CHANGES"} {
+		if strings.Contains(err.Error(), never) {
+			t.Errorf("failure says %q:\n%s", never, err)
+		}
+	}
 }
 
 // Two new columns with the facts of the one that disappeared: no guess,
@@ -314,11 +376,13 @@ table individuals
 
 column email
   context individuals/email
+  target EQL
   terms eq match
   fact fides.data_categories user.contact.email
 
 column medicare_number
   context individuals/medicare_number
+  target EQL
   terms eq
   fact fides.data_categories user.government_id
 
@@ -336,10 +400,14 @@ func TestSnapshotRoundTrips(t *testing.T) {
 	odd := []string{"", "with space", `"quoted"`, "new\nline", "tab\there", "naïve", "#hash", "none", "a=b,c"}
 	s := snapshot{table: "odd table"}
 	for i, v := range odd {
-		s.columns = append(s.columns, column{name: v + string(rune('a'+i)), context: v, terms: []string{"eq", "ore"}, facts: []fact{{v, v}, {"k", v}}})
+		kind := kindEQL
+		if i%2 == 1 {
+			kind = kindCustom
+		}
+		s.columns = append(s.columns, column{name: v + string(rune('a'+i)), context: v, kind: kind, terms: []string{"eq", "ore"}, facts: []fact{{v, v}, {"k", v}}})
 		s.plaintext = append(s.plaintext, plain{field: v + string(rune('a'+i)), facts: []fact{{v, "x"}}})
 	}
-	s.columns = append(s.columns, column{name: "bare", context: "t/bare"})
+	s.columns = append(s.columns, column{name: "bare", context: "t/bare", kind: kindEQL})
 	for i := range s.columns {
 		sortFacts(s.columns[i].facts)
 	}
@@ -443,6 +511,16 @@ func TestGoldenPathAndRerun(t *testing.T) {
 		"TestPolicy/a:b*c?":            filepath.Join("testdata", "TestPolicy", "a_b_c_.golden"),
 		"TestPolicy/..":                filepath.Join("testdata", "TestPolicy", "___.golden"),
 		"TestPolicy/v1.2+build_name-x": filepath.Join("testdata", "TestPolicy", "v1.2+build_name-x.golden"),
+		// Windows reserves device names, with any extension, and drops a
+		// trailing dot; every platform spells them the same way.
+		"TestPolicy/CON":        filepath.Join("testdata", "TestPolicy", "CON_.golden"),
+		"TestPolicy/nul.golden": filepath.Join("testdata", "TestPolicy", "nul_.golden.golden"),
+		"TestPolicy/Com1.a.b":   filepath.Join("testdata", "TestPolicy", "Com1_.a.b.golden"),
+		"TestPolicy/LPT9":       filepath.Join("testdata", "TestPolicy", "LPT9_.golden"),
+		"AUX/individuals":       filepath.Join("testdata", "AUX_", "individuals.golden"),
+		"TestPolicy/CONSOLE":    filepath.Join("testdata", "TestPolicy", "CONSOLE.golden"),
+		"TestPolicy/name.":      filepath.Join("testdata", "TestPolicy", "name_.golden"),
+		"TestPolicy/name../x":   filepath.Join("testdata", "TestPolicy", "name__", "x.golden"),
 	} {
 		if got := goldenPath(name); got != want {
 			t.Errorf("goldenPath(%q) = %q, want %q", name, got, want)

@@ -58,15 +58,25 @@ func (c changes) String() string {
 func compare(old, cur snapshot, facts []plan.Fact, m plan.Message) changes {
 	var c changes
 	if old.table != cur.table {
-		c.contexts = append(c.contexts, fmt.Sprintf("the message's table is %s, was %s. The table is the first half of every EQL column's context; restore plan.Table(%q).",
-			token(cur.table), token(old.table), old.table))
+		// Only an EQL column's context is under the table; a Custom one is
+		// the target's own, and a plaintext field has none.
+		if slices.ContainsFunc(old.columns, func(o column) bool { return o.kind == kindEQL }) {
+			c.contexts = append(c.contexts, fmt.Sprintf("the message's table is %s, was %s. The table is the first half of every EQL column's context; restore plan.Table(%q).",
+				token(cur.table), token(old.table), old.table))
+		} else {
+			c.other = append(c.other, fmt.Sprintf("the message's table is %s, was %s. No context moves with it: the message has no EQL column, whose context is the only one under the table.",
+				token(cur.table), token(old.table)))
+		}
 	}
 
 	oldCols, curCols := byName(old.columns), byName(cur.columns)
 	oldPlain, curPlain := byField(old.plaintext), byField(cur.plaintext)
-	oldContexts := map[string]bool{}
+	oldContexts, curContexts := map[string]bool{}, map[string][]string{}
 	for _, o := range old.columns {
 		oldContexts[o.context] = true
+	}
+	for _, n := range cur.columns {
+		curContexts[n.context] = append(curContexts[n.context], token(n.name))
 	}
 	// The entries now that an old one accounts for, and the old plaintext
 	// fields an entry now accounts for.
@@ -83,9 +93,12 @@ func compare(old, cur snapshot, facts []plan.Fact, m plan.Message) changes {
 			continue
 		}
 		// A database column rename: a new column under the same context.
+		// Only an EQL context is evidence of one, being the column's own
+		// identity; Custom columns may share a context with no relation
+		// between them.
 		if n, ok := only(cur.columns, func(n column) bool {
 			_, before := oldCols[n.name]
-			return !before && !seenCol[n.name] && n.context == o.context
+			return !before && !seenCol[n.name] && n.context == o.context && o.kind == kindEQL && n.kind == kindEQL
 		}); ok {
 			seenCol[n.name] = true
 			c.migrations = append(c.migrations, fmt.Sprintf("column %s is now stored in column %s, under the same context: the database column is renamed with it (ALTER TABLE ... RENAME COLUMN).",
@@ -102,6 +115,18 @@ func compare(old, cur snapshot, facts []plan.Fact, m plan.Message) changes {
 			seenPlain[p.field] = true
 			c.migrations = append(c.migrations, fmt.Sprintf("column %s is now field %s, decided Plaintext. Rows already written hold ciphertexts under %q, which a migration must decrypt before the field is read as plaintext.",
 				token(o.name), token(p.field), o.context))
+			continue
+		}
+		// The context is still written, by a column sharing a Custom
+		// context: nothing already written stops decrypting, but nothing
+		// reads this column.
+		if writers := curContexts[o.context]; len(writers) > 0 {
+			still := "column " + writers[0] + " still writes it"
+			if len(writers) > 1 {
+				still = "columns " + strings.Join(writers, ", ") + " still write it"
+			}
+			c.other = append(c.other, fmt.Sprintf("column %s is no longer written. Its context %q is not lost, since %s, but no field reads column %s now: if its field was renamed, pin the renamed field's rule with plan.Column(%q).",
+				token(o.name), o.context, still, token(o.name), o.name))
 			continue
 		}
 		// The context is lost. The only new column with the same facts,
@@ -164,41 +189,54 @@ func (c *changes) stored(o, n column) {
 		c.migrations = append(c.migrations, fmt.Sprintf("column %s: its terms are [%s], were [%s]. Rows already written carry the terms they were written with until they are re-encrypted, so a query on a new term misses them.",
 			token(n.name), termList(n.terms), termList(o.terms)))
 	}
+	if o.kind != n.kind {
+		c.other = append(c.other, fmt.Sprintf("column %s: its target is %s, was %s, under the same context.", token(n.name), n.kind, o.kind))
+	}
 	if !slices.Equal(o.facts, n.facts) {
 		c.other = append(c.other, fmt.Sprintf("column %s: its facts are [%s], were [%s].", token(n.name), factList(n.facts), factList(o.facts)))
 	}
 }
 
 // pinAdvice says how to store the field from in the old column under the
-// old context again: the old table, when the context was under it and the
-// table moved; the pin that does, checked by building the plan with it; or
+// old context again, each answer checked by building the plan with it: the
+// old table, when the table moved, with a pin if it needs one; a pin; or
 // why no pin can.
 func pinAdvice(m plan.Message, facts []plan.Fact, from *decided, old column, oldTable string) string {
 	if from == nil {
 		return ""
 	}
-	if oldTable != string(m.Table()) && strings.HasPrefix(old.context, oldTable+"/") {
-		return fmt.Sprintf("Restoring plan.Table(%q) brings it back.", oldTable)
+	if oldTable != string(m.Table()) {
+		if pin, ok := pin(m, plan.Table(oldTable), facts, from, old.name, old.context); ok {
+			if pin == "" {
+				return fmt.Sprintf("Restoring plan.Table(%q) brings it back.", oldTable)
+			}
+			return fmt.Sprintf("Restoring plan.Table(%q) and pinning the rule that decides field %s with %s brings it back.", oldTable, fieldName(from), pin)
+		}
 	}
-	if pin := pin(m, facts, from, old.name, old.context); pin != "" {
+	if pin, ok := pin(m, m.Table(), facts, from, old.name, old.context); ok {
 		return fmt.Sprintf("Pinning the rule that decides field %s with %s keeps it.", fieldName(from), pin)
 	}
 	return fmt.Sprintf("No plan.Column or plan.Identity pin on the rule that decides field %s brings it back: the context comes from the target itself (a plan.Custom context, or a change of target), so restore that.", fieldName(from))
 }
 
 // pin is the rule options, spelled as Go, that store the field from as
-// column under context again, checked by building the plan with them; ""
-// when none does.
-func pin(m plan.Message, facts []plan.Fact, from *decided, column, context string) string {
+// column under context again in table, checked by building the plan with
+// them, and whether any does. With m's own table it tries only pins; with
+// another, no pin first ("").
+func pin(m plan.Message, table plan.Table, facts []plan.Fact, from *decided, column, context string) (string, bool) {
 	if column == "" {
-		return ""
+		return "", false
 	}
 	type try struct {
 		spelled string
 		opts    []plan.RuleOption
 	}
-	tries := []try{{fmt.Sprintf("plan.Column(%q)", column), []plan.RuleOption{plan.Column(column)}}}
-	if id, ok := strings.CutPrefix(context, string(m.Table())+"/"); ok && id != "" {
+	var tries []try
+	if table != m.Table() {
+		tries = append(tries, try{})
+	}
+	tries = append(tries, try{fmt.Sprintf("plan.Column(%q)", column), []plan.RuleOption{plan.Column(column)}})
+	if id, ok := strings.CutPrefix(context, string(table)+"/"); ok && id != "" {
 		tries = append(tries,
 			try{fmt.Sprintf("plan.Identity(%q)", id), []plan.RuleOption{plan.Identity(id)}},
 			try{fmt.Sprintf("plan.Column(%q), plan.Identity(%q)", column, id), []plan.RuleOption{plan.Column(column), plan.Identity(id)}},
@@ -206,17 +244,17 @@ func pin(m plan.Message, facts []plan.Fact, from *decided, column, context strin
 	}
 	for _, t := range tries {
 		rule := plan.When(plan.Field(from.fact.Field), from.decision, t.opts...)
-		p, err := plan.ForMessage(m.Msg(), m.Table(), rule.OrElse(m.Decide)).Build(facts)
+		p, err := plan.ForMessage(m.Msg(), table, rule.OrElse(m.Decide)).Build(facts)
 		if err != nil {
 			continue
 		}
 		for _, fp := range p.Fields() {
 			if fp.Field == goField(from.fact) && fp.Name == column && fp.Context == context {
-				return t.spelled
+				return t.spelled, true
 			}
 		}
 	}
-	return ""
+	return "", false
 }
 
 // only is the one element of s that keep accepts, if exactly one does.
