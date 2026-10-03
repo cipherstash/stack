@@ -296,6 +296,51 @@ their record key, and `plan.Identity` is refused. The plan a
 policy builds is a `Plan` like any other: the guest receives the same bytes
 as for the equivalent hand-built plan.
 
+### Checking contexts in with a golden test
+
+Nothing on the write path notices a changed context: rename a proto or
+struct field with no pin and new rows are simply written under a new one,
+while the rows already written stop decrypting. The `plan/plantest` package
+turns that into a test failure:
+
+```go
+import "github.com/cipherstash/stack/languages/golang/stackencrypt/plan/plantest"
+
+func TestIndividualsPolicy(t *testing.T) {
+    plantest.Golden(t, source, Individuals)
+}
+```
+
+Run it once with `go test -run '^TestIndividualsPolicy$' -update` to write
+`testdata/TestIndividualsPolicy.golden`, and check the file in. It lists the
+message's table and, for every field the policy decides, what it is stored
+as: an encrypted field's column, context, index terms and facts, or a
+plaintext field's name and facts.
+
+```text
+table individuals
+
+column email
+  context individuals/email
+  terms eq match
+  fact fides.data_categories user.contact.email
+
+column medicare_number
+  context individuals/medicare_number
+  terms eq
+  fact fides.data_categories user.government_id
+```
+
+From then on the test builds the plan as `MustPlanFor` does at startup and
+fails when it no longer matches the file, sorting the changes by what they
+cost. A changed context is data loss and is reported first, with the
+`plan.Column` (or `plan.Identity`) pin that keeps it; a changed target, such
+as different index terms or a plaintext field now encrypted, is a migration;
+anything else, such as a new field, is reported last. Encrypted fields are
+listed by column, not by field name, so a rename the policy pins leaves the
+file unchanged and the test passes. When a change is intended, rerun with
+`-update` and review the diff.
+
 ## Errors
 
 Errors are sentinel values, matched with `errors.Is`. The wasm guest
