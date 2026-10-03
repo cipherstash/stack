@@ -65,13 +65,15 @@ const (
 // targetKind is kindEQL when t binds the column identity as its context,
 // as [plan.EQL] does, and kindCustom when it binds anything else, as
 // [plan.Custom] does. It asks the target rather than its type, so a typed
-// EQL target counts as EQL.
+// EQL target counts as EQL. It asks twice, with two identities: a Custom
+// context is fixed, so it may equal one of them but never both.
 func targetKind(t plan.Target) string {
-	probe := plan.Identifier{Table: "plantest", Column: "probe"}
-	if t.Context(probe) == probe.String() {
-		return kindEQL
+	for _, probe := range []plan.Identifier{{Table: "plantest", Column: "a"}, {Table: "plantest", Column: "b"}} {
+		if t.Context(probe) != probe.String() {
+			return kindCustom
+		}
 	}
-	return kindCustom
+	return kindEQL
 }
 
 // fact is one annotation value.

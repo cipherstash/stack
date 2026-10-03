@@ -329,6 +329,27 @@ func TestSharedCustomContextIsNotARename(t *testing.T) {
 	}
 }
 
+// A Custom context that happens to be spelled like an identity is still
+// Custom: the kind is not read off one sample.
+func TestTargetKind(t *testing.T) {
+	for _, tc := range []struct {
+		target plan.Target
+		want   string
+	}{
+		{plan.EQL(), kindEQL},
+		{plan.EQL(se.Equality, se.Match), kindEQL},
+		{plan.Custom("pii/v1"), kindCustom},
+		{plan.Custom("plantest/a"), kindCustom},
+		{plan.Custom("plantest/b"), kindCustom},
+		{plan.Custom("plantest/probe"), kindCustom},
+		{plan.Custom("individuals/email"), kindCustom},
+	} {
+		if got := targetKind(tc.target); got != tc.want {
+			t.Errorf("targetKind(%v) = %s, want %s", tc.target, got, tc.want)
+		}
+	}
+}
+
 // Two new columns with the facts of the one that disappeared: no guess,
 // and the generic advice.
 func TestAmbiguousRenameIsNotGuessed(t *testing.T) {
@@ -508,22 +529,30 @@ func TestGoldenPathAndRerun(t *testing.T) {
 	for name, want := range map[string]string{
 		"TestPolicy":                   filepath.Join("testdata", "TestPolicy.golden"),
 		"TestPolicy/individuals":       filepath.Join("testdata", "TestPolicy", "individuals.golden"),
-		"TestPolicy/a:b*c?":            filepath.Join("testdata", "TestPolicy", "a_b_c_.golden"),
-		"TestPolicy/..":                filepath.Join("testdata", "TestPolicy", "___.golden"),
 		"TestPolicy/v1.2+build_name-x": filepath.Join("testdata", "TestPolicy", "v1.2+build_name-x.golden"),
-		// Windows reserves device names, with any extension, and drops a
-		// trailing dot; every platform spells them the same way.
-		"TestPolicy/CON":        filepath.Join("testdata", "TestPolicy", "CON_.golden"),
-		"TestPolicy/nul.golden": filepath.Join("testdata", "TestPolicy", "nul_.golden.golden"),
-		"TestPolicy/Com1.a.b":   filepath.Join("testdata", "TestPolicy", "Com1_.a.b.golden"),
-		"TestPolicy/LPT9":       filepath.Join("testdata", "TestPolicy", "LPT9_.golden"),
-		"AUX/individuals":       filepath.Join("testdata", "AUX_", "individuals.golden"),
-		"TestPolicy/CONSOLE":    filepath.Join("testdata", "TestPolicy", "CONSOLE.golden"),
-		"TestPolicy/name.":      filepath.Join("testdata", "TestPolicy", "name_.golden"),
-		"TestPolicy/name../x":   filepath.Join("testdata", "TestPolicy", "name__", "x.golden"),
+		"TestPolicy/CONSOLE":           filepath.Join("testdata", "TestPolicy", "CONSOLE.golden"),
+		// Spelled differently, so hashed.
+		"TestPolicy/a:b*c?":   filepath.Join("testdata", "TestPolicy", "a_b_c_~e7b9b9a8.golden"),
+		"TestPolicy/..":       filepath.Join("testdata", "TestPolicy", "___~a3d4a70d.golden"),
+		"TestPolicy/name.":    filepath.Join("testdata", "TestPolicy", "name_~19e5c1d8.golden"),
+		"TestPolicy/name../x": filepath.Join("testdata", "TestPolicy", "name__~bab05642", "x.golden"),
+		// Windows reserves device names, with any extension: the hash goes
+		// before the first dot, so the stem is no longer one.
+		"TestPolicy/CON":        filepath.Join("testdata", "TestPolicy", "CON~3367e86b.golden"),
+		"TestPolicy/nul.golden": filepath.Join("testdata", "TestPolicy", "nul~80e138eb.golden.golden"),
+		"TestPolicy/Com1.a.b":   filepath.Join("testdata", "TestPolicy", "Com1~14b3c4c0.a.b.golden"),
+		"TestPolicy/LPT9":       filepath.Join("testdata", "TestPolicy", "LPT9~891f37a2.golden"),
+		"AUX/individuals":       filepath.Join("testdata", "AUX~679e8439", "individuals.golden"),
 	} {
 		if got := goldenPath(name); got != want {
 			t.Errorf("goldenPath(%q) = %q, want %q", name, got, want)
+		}
+	}
+	// Names that differ only in what is respelled, or in a respelling and
+	// what it is respelled to, keep their own snapshots.
+	for _, pair := range [][2]string{{"T/a:b", "T/a?b"}, {"T/a:b", "T/a_b"}, {"T/CON", "T/CON_"}, {"T/x.", "T/x_"}, {"T/..", "T/___"}} {
+		if a, b := goldenPath(pair[0]), goldenPath(pair[1]); a == b {
+			t.Errorf("goldenPath(%q) and goldenPath(%q) are both %q", pair[0], pair[1], a)
 		}
 	}
 	if got, want := rerun("TestPolicy/a.b"), `go test -run '^TestPolicy$/^a\.b$' -update`; got != want {

@@ -54,6 +54,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"hash/fnv"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -111,9 +112,13 @@ func Golden(t testing.TB, src plan.Source, m plan.Message) {
 
 // goldenPath is the snapshot file for a test: testdata/<name>.golden, a
 // subtest's name a path below it. A character a file system could refuse
-// is spelled '_', and so is a trailing dot, which Windows drops; a Windows
-// device name (CON, NUL.x, COM1) gets a '_' after it. Every platform spells
-// a name the same way, so a snapshot written on one is found on another.
+// is spelled '_', and so is a trailing dot, which Windows drops. A name
+// spelled differently from the test's, or one Windows reserves as a device
+// (CON, NUL.x, COM1), takes '~' and a hash of the test's spelling before
+// its first dot, so two tests never share a snapshot: "a:b" and "a?b" are
+// a_b~<hash>.golden with different hashes, and no name spelled as it is
+// contains '~'. Every platform spells a name the same way, so a snapshot
+// written on one is found on another.
 func goldenPath(name string) string {
 	parts := strings.Split(name, "/")
 	for i, p := range parts {
@@ -129,8 +134,11 @@ func goldenPath(name string) string {
 		}
 		trimmed := strings.TrimRight(parts[i], ".")
 		parts[i] = trimmed + strings.Repeat("_", len(parts[i])-len(trimmed))
-		if stem, ext, dotted := strings.Cut(parts[i], "."); windowsDevice(stem) {
-			parts[i] = stem + "_"
+		stem, ext, dotted := strings.Cut(parts[i], ".")
+		if parts[i] != p || windowsDevice(stem) {
+			h := fnv.New32a()
+			h.Write([]byte(p))
+			parts[i] = fmt.Sprintf("%s~%08x", stem, h.Sum32())
 			if dotted {
 				parts[i] += "." + ext
 			}
