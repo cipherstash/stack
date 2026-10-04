@@ -1,22 +1,14 @@
 mod common;
 
+use eql_bindings::encryption::NativeCiphertextVisitor as NativeLeaf;
 use eql_bindings::v3::terms::{Ciphertext, Hmac256};
 use eql_bindings::v3::text::{TextEq, TextEqQuery};
 use eql_bindings::{Identifier, SchemaVersion};
-use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
-use stack_encrypt::{
-    Cipher, CipherText, Encrypt, Error, IntoAad, NonEmpty, SealedValue, StackCipherText,
-};
+use stack_encrypt::target::transcode::{Reader, Transcode};
+use stack_encrypt::{Cipher, Encrypt, IntoAad, NonEmpty};
 
 fn column() -> NonEmpty<Identifier> {
     Identifier::for_column("users", "email").unwrap()
-}
-struct NativeLeaf;
-impl Visitor for NativeLeaf {
-    type Value = StackCipherText;
-    fn sealed(self, leaf: SealedValue) -> Result<Self::Value, Error> {
-        Ok(CipherText::Single(leaf))
-    }
 }
 
 #[tokio::test]

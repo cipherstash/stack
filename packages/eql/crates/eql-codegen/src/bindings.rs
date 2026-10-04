@@ -304,15 +304,41 @@ fn render_query_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
     }
 }
 
-/// Text equality is the first supported encryption domain. Keep attributes in
-/// the generator so regeneration preserves the opt-in derives without enabling
-/// other domains before their operations and plaintext contracts are supported.
+/// The `(family, domain)` pairs whose generated structs carry the opt-in
+/// `stack-encrypt` derives. Text equality is the first; every other stored
+/// domain has a reason in [`encryption_gap`], and a test holds the two
+/// together so a new domain cannot arrive without either a derive or a reason.
+pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[("text", "eq")];
+
+/// Why a stored domain carries no `stack-encrypt` derive yet, or `None` when
+/// it does. Derived from the catalog's own facts (family, terms), not from a
+/// per-domain list, so it answers for a domain added tomorrow.
+pub fn encryption_gap(family: &DomainFamily, domain: &Domain) -> Option<&'static str> {
+    if ENCRYPTION_DOMAINS.contains(&(family.name, domain.name)) {
+        return None;
+    }
+    Some(if family.name != "text" {
+        "only the text family's plaintext encoding is specified for the stack-encrypt \
+         producer profile; the numeric, date, boolean and JSON encodings are plan section 2 \
+         and have not been settled"
+    } else if domain.terms.iter().any(|t| !matches!(t, Term::Hm)) {
+        "ordering and match terms need stack-encrypt operations that have not landed \
+         (block-ORE and OPE term derivation, bloom-filter match terms)"
+    } else {
+        "the storage-only text domain follows once TextEq is proven end to end in \
+         PostgreSQL and the interoperability matrix is recorded"
+    })
+}
+
+/// Keep attributes in the generator so regeneration preserves the opt-in
+/// derives without enabling other domains before their operations and
+/// plaintext contracts are supported ([`ENCRYPTION_DOMAINS`]).
 fn encryption_attrs(
     family: &DomainFamily,
     domain: &Domain,
     query: bool,
 ) -> (TokenStream, TokenStream, TokenStream) {
-    if family.name != "text" || domain.name != "eq" {
+    if encryption_gap(family, domain).is_some() {
         return Default::default();
     }
     let decrypt = (!query).then(
@@ -329,7 +355,7 @@ fn encryption_attrs(
         quote! {
             #[cfg_attr(doc, doc = "")]
             #[cfg_attr(doc, doc = #plaintext)]
-            #[cfg_attr(doc, doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.")]
+            #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.")]
             #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = " See the [complete encryption example](crate::encryption#example).")]
             #[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::EncryptFrom))]
             #decrypt
@@ -1404,5 +1430,37 @@ mod tests {
         assert!(out.find("use a::A;").unwrap() < out.find("use b::B;").unwrap());
         // Idempotent: re-running rustfmt over the output changes nothing.
         assert_eq!(rustfmt(&out), out);
+    }
+    /// Plan section 5: catalog-derived coverage, with an explicit reason for
+    /// every domain that carries no derive. The catalog is the input, so a
+    /// domain added tomorrow fails here until it has a derive or a reason.
+    #[test]
+    fn every_stored_domain_has_an_encryption_derive_or_a_reason() {
+        let mut derived = Vec::new();
+        for (family, domain) in stored_payload_domains() {
+            match encryption_gap(family, domain) {
+                None => derived.push((family.name, domain.name)),
+                Some(reason) => assert!(
+                    !reason.is_empty(),
+                    "{}: an empty reason explains nothing",
+                    domain.full_name(family.name)
+                ),
+            }
+        }
+        // Every derived pair is a real catalog domain, and every catalog
+        // derive is listed: the list and the catalog agree both ways.
+        assert_eq!(derived, ENCRYPTION_DOMAINS.to_vec());
+        // The generated attributes follow the same answer: exactly the listed
+        // pairs carry the opt-in derive.
+        for (family, domain) in stored_payload_domains() {
+            let (attrs, _, _) = encryption_attrs(family, domain, false);
+            let has_derive = attrs.to_string().contains("stack_encrypt :: EncryptFrom");
+            assert_eq!(
+                has_derive,
+                ENCRYPTION_DOMAINS.contains(&(family.name, domain.name)),
+                "{}",
+                domain.full_name(family.name)
+            );
+        }
     }
 }

@@ -56,7 +56,7 @@ impl DomainType for Text {
     doc = " Plaintext input and decrypted output: [`String`]. With the `stack-encrypt` feature, implements `EncryptFrom<String>` and `DecryptInto<String>`."
 )]
 #[cfg_attr(
-    doc,
+    all(doc, feature = "stack-encrypt"),
     doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`."
 )]
 #[cfg_attr(
@@ -340,7 +340,7 @@ impl DomainType for TextSearch {
     doc = " Plaintext input: [`String`]. With the `stack-encrypt` feature, implements `EncryptFrom<String>` to build equality query terms. Query operands do not decrypt."
 )]
 #[cfg_attr(
-    doc,
+    all(doc, feature = "stack-encrypt"),
     doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`."
 )]
 #[cfg_attr(

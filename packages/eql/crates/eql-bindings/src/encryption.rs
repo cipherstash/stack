@@ -20,12 +20,17 @@
 //! The output type selects the encryption operations: [`TextEq`] includes
 //! ciphertext and an equality term, while [`TextEqQuery`] contains only the term.
 //!
+//! An [`Identifier`] is Stack Encrypt's [`Describe`]: its ZeroKMS descriptor is
+//! the table and the column as two parts, rendered `users/email`, the same
+//! context and descriptor as the two-segment [`stack_encrypt::Label`]. A
+//! direct consumer of Stack Encrypt names its data with a `Label`; an EQL
+//! consumer names it with an `Identifier`, and the two interoperate.
+//!
 //! This complete example runs locally without credentials. It uses real
 //! encryption with `stack_kms::FakeDataKeySource`, whose keys exist only for
 //! this process. Add `stack-encrypt`, `stack-kms` (with `default-features = false`
 //! and `features = ["test-support"]`), and `tokio` (with `features = ["rt", "macros"]`)
-//! to your example's dependencies. Stack Encrypt is currently unpublished;
-//! use the local development helper described in the crate README.
+//! to your example's dependencies.
 //!
 //! The code below is executed by `cargo test -p eql-encryption-tests --test
 //! text_eq_example`. It is excluded from this crate's doctests so its optional
@@ -72,9 +77,9 @@ use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
 use stack_encrypt::target::{self, AeadContext, CallerContext};
 use stack_encrypt::{
-    CipherText, ContextPiece, Decrypt, DecryptField, DecryptInto, Decryptable, Decryption, Encrypt,
-    EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty, NonEmpty, SealedValue,
-    StackCipherText,
+    CipherText, ContextPiece, Decrypt, DecryptField, DecryptInto, Decryptable, Decryption,
+    Describe, DescriptorBuilder, Encrypt, EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty,
+    NonEmpty, SealedValue, StackCipherText,
 };
 use vitaminc_prf::PrfValue;
 
@@ -110,13 +115,27 @@ impl MaybeEmpty for Identifier {
         self.t.is_empty() || self.c.is_empty()
     }
 }
+/// The identifier's descriptor is the table and the column, two parts: it
+/// renders `users/email` in the ZeroKMS log, and a table or column that
+/// contains `/` is escaped rather than read as two. The same two parts are the
+/// context the ciphertext is sealed under and the equality term is derived
+/// under ([`IntoContext`] below returns [`Describe::to_context`]), so the
+/// descriptor ZeroKMS binds and the AAD never disagree. It is the same
+/// context as the two-segment [`stack_encrypt::Label`] and as the pair a
+/// `#[stash(struct = .., context = "<table>")]` derive binds.
+impl Describe for Identifier {
+    fn describe(&self, out: &mut DescriptorBuilder) {
+        let _ = out.text(self.t.as_str()).text(self.c.as_str());
+    }
+}
+
 // One context view serves both derivations: vitaminc's `IntoAad` and
 // `IntoPrfContext` are blankets over `IntoContext`, so the ciphertext AAD, the
 // ZeroKMS descriptor and the equality term's PRF context all see the same
-// (table, column) pair.
+// (table, column) pair — the one `Describe` pushes.
 impl<'a> IntoContext<'a> for Identifier {
     fn into_context(self) -> ContextPiece<'a> {
-        (self.t, self.c).into_context()
+        self.to_context()
     }
 }
 
@@ -158,7 +177,11 @@ impl<S: Encrypt + Clone> EncryptFrom<S> for Ciphertext {
     }
 }
 
-struct NativeCiphertextVisitor;
+/// Reads a stored `c` back as the native sealed leaf it encodes. Public for
+/// the encryption test crate, which opens the leaf with Stack Encrypt directly
+/// to prove the two decryption paths agree; not part of the supported API.
+#[doc(hidden)]
+pub struct NativeCiphertextVisitor;
 impl Visitor for NativeCiphertextVisitor {
     type Value = StackCipherText;
     fn sealed(self, leaf: SealedValue) -> Result<Self::Value, Error> {
@@ -217,5 +240,52 @@ impl Decryptable for Hmac256 {
 impl<P, Ctx> DecryptField<P, Ctx> for Hmac256 {
     fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use stack_encrypt::{nonempty, Descriptor, Label};
+
+    use super::*;
+
+    fn id(t: &str, c: &str) -> Identifier {
+        Identifier {
+            t: t.into(),
+            c: c.into(),
+        }
+    }
+
+    #[test]
+    fn an_identifier_describes_as_table_slash_column() {
+        let email = id("users", "email");
+        assert_eq!(email.descriptor().as_str(), "users/email");
+        assert_eq!(Descriptor::of(email.clone()).as_str(), "users/email");
+        // Through `for_column`, the context the targets are sealed under.
+        let column = Identifier::for_column("users", "email").unwrap();
+        assert_eq!(Descriptor::of(column).as_str(), "users/email");
+    }
+
+    #[test]
+    fn an_identifier_is_the_two_segment_label_and_the_derive_pair() {
+        let email = id("users", "email");
+        let label = Label::new(["users", "email"]).unwrap();
+        assert_eq!(email.to_context(), label.to_context());
+        assert_eq!(email.clone().into_context(), label.into_context());
+        assert_eq!(
+            email.into_context(),
+            nonempty!("users").with("email").into_context()
+        );
+    }
+
+    #[test]
+    fn a_separator_in_a_name_is_escaped_never_a_third_part() {
+        let odd = id("users/email", "x");
+        assert_eq!(odd.descriptor().as_str(), "b64:dXNlcnMvZW1haWw=/x");
+        assert_ne!(odd.descriptor(), id("users", "email").descriptor());
+        assert_ne!(
+            odd.descriptor(),
+            Descriptor::of(nonempty!("users").with("email").with("x"))
+        );
     }
 }
