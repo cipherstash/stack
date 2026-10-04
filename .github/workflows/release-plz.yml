@@ -182,10 +182,7 @@ jobs:
   # `@cipherstash/auth` entry, which that PR deleted when crates.io and npm
   # trusted publishing moved here together. crates.io needs a Trusted
   # Publishing entry for every published crate naming cipherstash/stack +
-  # release-plz.yml. Trusted Publishing is configured on an existing crate, so
-  # a crate's first version (stack-kms, stack-encrypt, stack-encrypt-derive at
-  # 0.1.0) is published by hand; this job then finds it on crates.io and skips
-  # it.
+  # release-plz.yml.
   #
   # Publish-only: nothing here opens a release PR, so a version bump of these
   # crates is a hand-made pull request. `release-plz update` cannot version

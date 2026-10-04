@@ -183,7 +183,7 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! those are the service's, and tests of them belong against a real ZeroKMS.
 //! It lives behind this crate's `test-support` feature, so add
 //! `stack-encrypt = { version = "..", features = ["test-support"] }` to your
-//! `[dev-dependencies]`. stack-kms is re-exported as [`kms`](crate::kms), so
+//! `[dev-dependencies]`. stack-kms is re-exported as [`kms`], so
 //! there is no separate stack-kms dependency to keep in step:
 //!
 //! ```
