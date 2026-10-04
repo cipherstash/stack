@@ -1,0 +1,11 @@
+error: an empty `context` is rejected when a value is encrypted: name the field (e.g. "email"), or drop the attribute to use the inferred pair `("<context>", "<field>")`
+  --> tests/ui/empty_context.rs:10:23
+   |
+10 |     #[stash(context = "")]
+   |                       ^^
+
+error: an empty `context` is rejected when a value is encrypted: name the field (e.g. "users/email"), or drop the attribute to hand the field the caller's context
+  --> tests/ui/empty_context.rs:17:23
+   |
+17 |     #[stash(context = "")]
+   |                       ^^

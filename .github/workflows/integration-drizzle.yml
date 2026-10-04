@@ -16,43 +16,43 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/stack/src/eql/v3/**'
-      - 'packages/stack-drizzle/**'
+      - 'languages/typescript/packages/stack/src/eql/v3/**'
+      - 'languages/typescript/packages/stack-drizzle/**'
       # Source layers the adapter's encoding/round-trip rests on: a break here
       # (not just under src/eql/v3) can produce wrong rows, so trigger the live
       # suite that would catch it.
-      - 'packages/stack/src/encryption/**'
-      - 'packages/stack/src/schema/**'
-      - 'packages/stack/integration/**'
+      - 'languages/typescript/packages/stack/src/encryption/**'
+      - 'languages/typescript/packages/stack/src/schema/**'
+      - 'languages/typescript/packages/stack/integration/**'
       # The WASM family suite (integration/wasm/**) exercises this entry:
-      - 'packages/stack/src/wasm-inline.ts'
+      - 'languages/typescript/packages/stack/src/wasm-inline.ts'
       # The DynamoDB adapter, and the entry/type modules the suites import
       # directly. `integration/shared/v2-decrypt-compat` and its
       # `integration/wasm/` twin (both selected below) are the repo's only live
       # EQL v2 read coverage, and they exercise the DynamoDB legacy path, so a
       # change here must run them. Pinned by
       # scripts/__tests__/integration-workflow-paths.test.mjs.
-      - 'packages/stack/src/dynamodb/**'
-      - 'packages/stack/src/index.ts'
-      - 'packages/stack/src/types.ts'
+      - 'languages/typescript/packages/stack/src/dynamodb/**'
+      - 'languages/typescript/packages/stack/src/index.ts'
+      - 'languages/typescript/packages/stack/src/types.ts'
       # Those same v2 suites mint their fixtures by importing
       # `@cipherstash/protect-ffi` directly. A native-module bump is the change
       # most able to break v2 payload deserialization and it touches NO source
       # directory, so without these two entries the only suites that would catch
       # it never start. They are the files a bump actually edits: exact pins
       # (`protect-ffi`, `@cipherstash/eql`) live in the package manifest,
-      # `catalog:` ones (`@cipherstash/auth`, which moves in lockstep with
-      # protect-ffi for the WASM entry) in the workspace catalog.
+      # `catalog:` ones in the workspace catalog.
       #
       # `pnpm-lock.yaml` is deliberately NOT listed. It changes on roughly every
       # dependency bump in the monorepo — far more often than either file here —
       # and these are credentialed, database-backed jobs. Nothing is lost: a
-      # protect-ffi or auth version change cannot reach the lockfile without
-      # editing one of the two manifests below first.
-      - 'packages/stack/package.json'
+      # protect-ffi version change cannot reach the lockfile without editing
+      # one of the two manifests below first, and an auth one edits its own
+      # manifest, under the auth paths below.
+      - 'languages/typescript/packages/stack/package.json'
       - 'pnpm-workspace.yaml'
-      - 'packages/test-kit/**'
-      - 'packages/cli/src/installer/**'
+      - 'languages/typescript/packages/test-kit/**'
+      - 'languages/typescript/packages/cli/src/installer/**'
       - 'local/docker-compose.postgres.yml'
       - 'local/docker-compose.supabase.yml'
       - 'local/supabase-init.sql'
@@ -60,6 +60,15 @@ on:
       - '.github/actions/integration-setup/**'
       - '.github/actions/integration-db/**'
       - '.github/actions/build-ffi-binding/**'
+      - '.github/actions/build-auth-binding/**'
+      # `@cipherstash/auth` is a workspace package, and the SDK loads its napi
+      # module (and, for `wasm-inline`, its wasm) on import, so a change to what
+      # it ships arrives here rather than in `pnpm-workspace.yaml`. The paths of
+      # require-auth-npm-changeset.yml.
+      - 'packages/stack-auth/Cargo.toml'
+      - 'packages/stack-auth/src/**'
+      - 'languages/typescript/packages/auth/**'
+      - 'languages/typescript/packages/stack-auth-wasm/**'
       # The Rust that produces every EQL payload these suites round-trip.
       # Absorbing protect-ffi put it in-tree, so a crate change can now
       # break them in a PR that touches no TypeScript at all.
@@ -69,12 +78,12 @@ on:
       # without touching a .rs file, and package.json / mise.toml carry the
       # build scripts and the toolchain pin. Matching the filter in
       # tests-rust.yml, which already covers all four.
-      - 'packages/protect-ffi/crates/**'
-      - 'packages/protect-ffi/src/**'
-      - 'packages/protect-ffi/Cargo.toml'
-      - 'packages/protect-ffi/Cargo.lock'
-      - 'packages/protect-ffi/package.json'
-      - 'packages/protect-ffi/mise.toml'
+      - 'languages/typescript/packages/protect-ffi/crates/**'
+      - 'languages/typescript/packages/protect-ffi/src/**'
+      - 'languages/typescript/packages/protect-ffi/Cargo.toml'
+      - 'languages/typescript/packages/protect-ffi/Cargo.lock'
+      - 'languages/typescript/packages/protect-ffi/package.json'
+      - 'languages/typescript/packages/protect-ffi/mise.toml'
       # The non-cargo half of `build:wasm`, and the reason this job passes
       # `wasm: 'true'`: `tsc -p tsconfig.wasm-errors.json`, then a
       # `postbuild:wasm` hook running `scripts/inline-wasm.mjs`, which is what
@@ -85,11 +94,11 @@ on:
       # two entries the workflow does not trigger at all, so neither the rebuild
       # nor the only suite that loads it ever runs.
       # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
-      - 'packages/protect-ffi/tsconfig.wasm-errors.json'
-      - 'packages/protect-ffi/scripts/inline-wasm.mjs'
+      - 'languages/typescript/packages/protect-ffi/tsconfig.wasm-errors.json'
+      - 'languages/typescript/packages/protect-ffi/scripts/inline-wasm.mjs'
       # Out of that package, and compiled into the same two artifacts: the
       # cdylib crate carries
-      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so the
       # EQL wire types are linked into `index.node` and into
       # `protect_ffi_inline.js`. Both cache keys in
       # `.github/actions/build-ffi-binding` hash them, so an edit here misses
@@ -101,43 +110,43 @@ on:
     branches: ['**']
     # Repeated verbatim: GitHub Actions does not support YAML anchors/aliases.
     paths:
-      - 'packages/stack/src/eql/v3/**'
-      - 'packages/stack-drizzle/**'
+      - 'languages/typescript/packages/stack/src/eql/v3/**'
+      - 'languages/typescript/packages/stack-drizzle/**'
       # Source layers the adapter's encoding/round-trip rests on: a break here
       # (not just under src/eql/v3) can produce wrong rows, so trigger the live
       # suite that would catch it.
-      - 'packages/stack/src/encryption/**'
-      - 'packages/stack/src/schema/**'
-      - 'packages/stack/integration/**'
+      - 'languages/typescript/packages/stack/src/encryption/**'
+      - 'languages/typescript/packages/stack/src/schema/**'
+      - 'languages/typescript/packages/stack/integration/**'
       # The WASM family suite (integration/wasm/**) exercises this entry:
-      - 'packages/stack/src/wasm-inline.ts'
+      - 'languages/typescript/packages/stack/src/wasm-inline.ts'
       # The DynamoDB adapter, and the entry/type modules the suites import
       # directly. `integration/shared/v2-decrypt-compat` and its
       # `integration/wasm/` twin (both selected below) are the repo's only live
       # EQL v2 read coverage, and they exercise the DynamoDB legacy path, so a
       # change here must run them. Pinned by
       # scripts/__tests__/integration-workflow-paths.test.mjs.
-      - 'packages/stack/src/dynamodb/**'
-      - 'packages/stack/src/index.ts'
-      - 'packages/stack/src/types.ts'
+      - 'languages/typescript/packages/stack/src/dynamodb/**'
+      - 'languages/typescript/packages/stack/src/index.ts'
+      - 'languages/typescript/packages/stack/src/types.ts'
       # Those same v2 suites mint their fixtures by importing
       # `@cipherstash/protect-ffi` directly. A native-module bump is the change
       # most able to break v2 payload deserialization and it touches NO source
       # directory, so without these two entries the only suites that would catch
       # it never start. They are the files a bump actually edits: exact pins
       # (`protect-ffi`, `@cipherstash/eql`) live in the package manifest,
-      # `catalog:` ones (`@cipherstash/auth`, which moves in lockstep with
-      # protect-ffi for the WASM entry) in the workspace catalog.
+      # `catalog:` ones in the workspace catalog.
       #
       # `pnpm-lock.yaml` is deliberately NOT listed. It changes on roughly every
       # dependency bump in the monorepo — far more often than either file here —
       # and these are credentialed, database-backed jobs. Nothing is lost: a
-      # protect-ffi or auth version change cannot reach the lockfile without
-      # editing one of the two manifests below first.
-      - 'packages/stack/package.json'
+      # protect-ffi version change cannot reach the lockfile without editing
+      # one of the two manifests below first, and an auth one edits its own
+      # manifest, under the auth paths below.
+      - 'languages/typescript/packages/stack/package.json'
       - 'pnpm-workspace.yaml'
-      - 'packages/test-kit/**'
-      - 'packages/cli/src/installer/**'
+      - 'languages/typescript/packages/test-kit/**'
+      - 'languages/typescript/packages/cli/src/installer/**'
       - 'local/docker-compose.postgres.yml'
       - 'local/docker-compose.supabase.yml'
       - 'local/supabase-init.sql'
@@ -145,6 +154,15 @@ on:
       - '.github/actions/integration-setup/**'
       - '.github/actions/integration-db/**'
       - '.github/actions/build-ffi-binding/**'
+      - '.github/actions/build-auth-binding/**'
+      # `@cipherstash/auth` is a workspace package, and the SDK loads its napi
+      # module (and, for `wasm-inline`, its wasm) on import, so a change to what
+      # it ships arrives here rather than in `pnpm-workspace.yaml`. The paths of
+      # require-auth-npm-changeset.yml.
+      - 'packages/stack-auth/Cargo.toml'
+      - 'packages/stack-auth/src/**'
+      - 'languages/typescript/packages/auth/**'
+      - 'languages/typescript/packages/stack-auth-wasm/**'
       # The Rust that produces every EQL payload these suites round-trip.
       # Absorbing protect-ffi put it in-tree, so a crate change can now
       # break them in a PR that touches no TypeScript at all.
@@ -154,12 +172,12 @@ on:
       # without touching a .rs file, and package.json / mise.toml carry the
       # build scripts and the toolchain pin. Matching the filter in
       # tests-rust.yml, which already covers all four.
-      - 'packages/protect-ffi/crates/**'
-      - 'packages/protect-ffi/src/**'
-      - 'packages/protect-ffi/Cargo.toml'
-      - 'packages/protect-ffi/Cargo.lock'
-      - 'packages/protect-ffi/package.json'
-      - 'packages/protect-ffi/mise.toml'
+      - 'languages/typescript/packages/protect-ffi/crates/**'
+      - 'languages/typescript/packages/protect-ffi/src/**'
+      - 'languages/typescript/packages/protect-ffi/Cargo.toml'
+      - 'languages/typescript/packages/protect-ffi/Cargo.lock'
+      - 'languages/typescript/packages/protect-ffi/package.json'
+      - 'languages/typescript/packages/protect-ffi/mise.toml'
       # The non-cargo half of `build:wasm`, and the reason this job passes
       # `wasm: 'true'`: `tsc -p tsconfig.wasm-errors.json`, then a
       # `postbuild:wasm` hook running `scripts/inline-wasm.mjs`, which is what
@@ -170,11 +188,11 @@ on:
       # two entries the workflow does not trigger at all, so neither the rebuild
       # nor the only suite that loads it ever runs.
       # Pinned by scripts/__tests__/wasm-build-inputs-paths-filter.test.mjs.
-      - 'packages/protect-ffi/tsconfig.wasm-errors.json'
-      - 'packages/protect-ffi/scripts/inline-wasm.mjs'
+      - 'languages/typescript/packages/protect-ffi/tsconfig.wasm-errors.json'
+      - 'languages/typescript/packages/protect-ffi/scripts/inline-wasm.mjs'
       # Out of that package, and compiled into the same two artifacts: the
       # cdylib crate carries
-      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so the
       # EQL wire types are linked into `index.node` and into
       # `protect_ffi_inline.js`. Both cache keys in
       # `.github/actions/build-ffi-binding` hash them, so an edit here misses
@@ -273,6 +291,11 @@ jobs:
       # matrix — which loads the real WASM, unlike the mocked unit tests.
       - name: Build the protect-ffi binding
         uses: ./.github/actions/build-ffi-binding
+        with:
+          wasm: 'true'
+
+      - name: Build the @cipherstash/auth binding
+        uses: ./.github/actions/build-auth-binding
         with:
           wasm: 'true'
 

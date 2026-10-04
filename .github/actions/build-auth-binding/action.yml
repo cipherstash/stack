@@ -1,0 +1,73 @@
+name: Build the @cipherstash/auth binding
+description: >-
+  Compile `languages/typescript/packages/auth` into what its JS consumers load
+  at runtime — the napi module (cargo, debug) and optionally `wasm/`
+  (wasm-pack) — then prove they load.
+
+  WHY THIS EXISTS: `@cipherstash/stack`, `stash`, `@cipherstash/wizard` and the
+  protect-ffi integration suite take `@cipherstash/auth` from the workspace.
+  It ships source only there, and its `index.js` loads the napi module on
+  import, so every job that imports the SDK or runs the CLI builds it first.
+  From npm, the platform package brought a prebuilt `.node`. Without this, those
+  jobs fail with `Failed to load native binding for linux-x64`. It is the auth
+  half of `.github/actions/build-ffi-binding`, and runs after it;
+  scripts/__tests__/auth-binding-step-order.test.mjs holds the jobs to that.
+
+  DO NOT USE FROM A PUBLISHING WORKFLOW: release builds go through
+  `_build-auth-artifacts.yml`, which compiles every platform from scratch.
+
+inputs:
+  wasm:
+    description: >-
+      Also build `wasm/`, which `@cipherstash/auth/wasm-inline` imports and
+      `@cipherstash/stack/wasm-inline` re-exports. Pass it where the job passes
+      `wasm: true` to build-ffi-binding.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    # The runner's cargo, as build-ffi-binding uses for `index.node`. Writes
+    # the typings to the committed `native.d.ts`, so the tree stays clean.
+    - name: Build the napi module (cargo)
+      shell: bash
+      run: pnpm --filter @cipherstash/auth run build:debug
+
+    # The root mise.toml pins wasm-pack for this build. `install_args` narrows
+    # the install to it: the root also pins Rust, Go and golangci-lint, which
+    # this needs none of. Same action and pin as build-ffi-binding.
+    - name: Install wasm-pack
+      if: inputs.wasm == 'true'
+      uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+      with:
+        install: true
+        install_args: aqua:wasm-bindgen/wasm-pack
+        working_directory: .
+
+    - name: Add the wasm32 target
+      if: inputs.wasm == 'true'
+      shell: bash
+      run: rustup target add wasm32-unknown-unknown
+
+    - name: Build wasm/ (wasm-pack)
+      if: inputs.wasm == 'true'
+      shell: bash
+      run: pnpm --filter @cipherstash/auth run build:wasm
+
+    - name: Verify the binding loads
+      shell: bash
+      working-directory: languages/typescript/packages/auth
+      env:
+        WANT_WASM: ${{ inputs.wasm }}
+      run: |
+        set -euo pipefail
+
+        # index.js loads the napi module when it is required.
+        node -e "require('./index.js')"
+        echo "the napi module loads"
+
+        if [ "$WANT_WASM" = "true" ]; then
+          node --input-type=module -e "await import('./wasm-inline.mjs')"
+          echo "wasm/ loads"
+        fi

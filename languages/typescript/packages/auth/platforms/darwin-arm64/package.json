@@ -1,0 +1,19 @@
+{
+  "name": "@cipherstash/auth-darwin-arm64",
+  "version": "0.44.1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cipherstash/stack.git",
+    "directory": "languages/typescript/packages/auth/platforms/darwin-arm64"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "main": "stack-auth-node.darwin-arm64.node",
+  "files": [
+    "stack-auth-node.darwin-arm64.node"
+  ]
+}

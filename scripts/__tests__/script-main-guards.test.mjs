@@ -22,11 +22,12 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * The failure mode is why this guard is repo-wide rather than a comment on the
  * one file that got it wrong. A silent exit 0 is indistinguishable from
  * success to every caller: `package.json`'s `version` script is
- * `changeset version && node scripts/sync-lockstep-versions.mjs`, and the `&&`
- * means the no-op reports success while `changeset version` has already bumped
- * the npm package — producing exactly the lockstep skew that script exists to
- * prevent. CI never sees it (`/home/runner/work/stack/stack` has no space), so
- * nothing but this test stands between the outlier and a release.
+ * `changeset version && node scripts/sync-skill-pins.mjs && node
+ * scripts/sync-lockstep-versions.mjs`, and the `&&` means the no-op reports
+ * success while `changeset version` has already bumped the npm package —
+ * producing exactly the lockstep skew that script exists to prevent. CI
+ * never sees it (`/home/runner/work/stack/stack` has no space), so nothing
+ * but this test stands between the outlier and a release.
  */
 
 /** Absolute paths of every `scripts/*.mjs` that is not a test or config file. */

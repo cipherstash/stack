@@ -1,0 +1,22 @@
+{
+  "name": "@cipherstash/auth-linux-x64-musl",
+  "version": "0.44.1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cipherstash/stack.git",
+    "directory": "languages/typescript/packages/auth/platforms/linux-x64-musl"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "stack-auth-node.linux-x64-musl.node",
+  "files": [
+    "stack-auth-node.linux-x64-musl.node"
+  ],
+  "libc": [
+    "musl"
+  ]
+}

@@ -14,11 +14,13 @@ This is a [Turborepo](https://turbo.build/) monorepo managed with [pnpm](https:/
 
 ```text
 .
-├── packages/
-│   ├── stack/            <-- Main package (@cipherstash/stack)
-│   ├── cli/              <-- The `stash` CLI
-│   └── ...               <-- stack-drizzle, stack-supabase, stack-prisma, nextjs, migrate, wizard, ...
-├── examples/             <-- Runnable example apps
+├── languages/typescript/
+│   ├── packages/
+│   │   ├── stack/        <-- Main package (@cipherstash/stack)
+│   │   ├── cli/          <-- The `stash` CLI
+│   │   └── ...           <-- stack-drizzle, stack-supabase, stack-prisma, nextjs, migrate, wizard, ...
+│   └── examples/         <-- Runnable example apps
+├── packages/eql/         <-- EQL (@cipherstash/eql and its Rust crates)
 ├── e2e/                  <-- Cross-package end-to-end tests
 ├── skills/               <-- Agent skills
 ├── .changeset/
@@ -27,13 +29,13 @@ This is a [Turborepo](https://turbo.build/) monorepo managed with [pnpm](https:/
 
 See [AGENTS.md](./AGENTS.md) for a detailed layout, key APIs, environment variables, and gotchas — it's written for coding agents but is the most complete developer reference in the repo.
 
-### `packages/stack`
+### `languages/typescript/packages/stack`
 
 **@cipherstash/stack** is the main package published to npm. It contains the encryption client and all integrations (Drizzle, Supabase, DynamoDB, secrets, identity). This is likely where you'll spend most of your time.
 
-### `examples/` Directory
+### `languages/typescript/examples/` Directory
 
-The `examples/` directory contains applications demonstrating how to use `@cipherstash/stack`. They reference the local workspace packages, so you can verify your changes in a real application scenario.
+The `languages/typescript/examples/` directory contains applications demonstrating how to use `@cipherstash/stack`. They reference the local workspace packages, so you can verify your changes in a real application scenario.
 
 ## Setup Instructions
 
@@ -62,7 +64,7 @@ pnpm install
 pnpm run build
 ```
 
-This triggers Turborepo's build pipeline, compiling each package in `packages/*` and linking them locally so the examples can reference them.
+This triggers Turborepo's build pipeline, compiling each package in `languages/typescript/packages/*` and linking them locally so the examples can reference them.
 
 ### 4. Run an Example App
 
@@ -72,7 +74,7 @@ Start the dev script, which watches for changes to the packages and is picked up
 pnpm run dev
 ```
 
-Then navigate to one of the examples in `examples/` and follow its README.
+Then navigate to one of the examples in `languages/typescript/examples/` and follow its README.
 
 ## Making Changes
 
@@ -177,6 +179,29 @@ The `stash` / `@cipherstash/stack` / `@cipherstash/stack-drizzle` /
 `@cipherstash/stack-supabase` / `@cipherstash/stack-prisma` / `@cipherstash/wizard`
 packages are a `fixed` group in [`.changeset/config.json`](./.changeset/config.json):
 they always version together, so a bump to any one of them bumps all six.
+
+`@cipherstash/auth` and its six `@cipherstash/auth-*` platform packages are
+their own `fixed` group in `.changeset/config.json`, so the seven release
+together. `release.yml` builds the six platform binaries and publishes the
+seven before Changesets publishes the rest. A pull request that changes what
+`@cipherstash/auth` ships must add a changeset for `@cipherstash/auth`, even
+for an internal Rust change, because the npm binary is built from the crate:
+`require-auth-npm-changeset.yml` fails without one. Those paths are
+`packages/stack-auth/Cargo.toml`, `packages/stack-auth/src/`, and everything
+under `languages/typescript/packages/auth` and
+`languages/typescript/packages/stack-auth-wasm`.
+
+Two Rust crates, `stack-auth` and `stack-profile`, are released to crates.io,
+in one version group of their own, by release-plz from the root Cargo
+workspace — not by Changesets. Nothing opens a release PR for them yet. To
+release them, bump both in a pull request of your own: the two `[package]`
+versions, their two entries in the root `[workspace.dependencies]`, the root
+`Cargo.lock` and the five detached locks (the two Go guests and the three fuzz
+crates), and both `CHANGELOG.md` files. `release-plz.yml` publishes them when
+that pull request reaches `main`. The bump edits
+`packages/stack-auth/Cargo.toml`, so the `@cipherstash/auth` changeset rule
+above applies to it too: the binding sends `stack-auth`'s version in its
+`user-agent`.
 
 ## Pre-release process
 

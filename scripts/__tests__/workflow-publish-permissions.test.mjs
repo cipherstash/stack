@@ -41,9 +41,11 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  * which is the exact shape this file exists to stop. Adding a publisher means
  * editing this line — deliberately, in the same diff.
  */
-const OIDC_JOBS = [
+const PUBLISH_OIDC_JOBS = [
   // Uploads the seven prebuilt FFI tarballs. Publishes, so it needs OIDC.
   '.github/workflows/release.yml / publish-ffi',
+  // The same for the seven prebuilt @cipherstash/auth tarballs.
+  '.github/workflows/release.yml / publish-auth',
   // `changeset publish` for the JS packages, plus the Version Packages PR.
   '.github/workflows/release.yml / release',
   // The EQL prerelease path publishes @cipherstash/eql directly rather than
@@ -54,7 +56,30 @@ const OIDC_JOBS = [
   // could not stay a two-line one: the workflow filename is bound at crates.io
   // rather than npm, but the scope is the same scope.
   '.github/workflows/release-plz.yml / release',
+  // release-plz publishes stack-auth and stack-profile from the root Cargo
+  // workspace: the same crates.io token exchange, a second release line.
+  '.github/workflows/release-plz.yml / release-crates',
 ]
+
+/**
+ * Jobs that mint OIDC for a named non-publishing exchange.
+ *
+ * Kept separate from `PUBLISH_OIDC_JOBS`: treating every OIDC holder as an npm
+ * publisher was true before the Claude reviewer arrived, but OIDC is a
+ * transport rather than a registry capability. An entry here needs a concrete
+ * exchange and reason so an arbitrary new holder still fails closed below.
+ */
+const NON_PUBLISH_OIDC_JOBS = [
+  // Exchanges GitHub identity for a short-lived, inference-only Anthropic
+  // credential. It cannot publish a package; pull-requests: write is solely for
+  // the advisory review comments. That holds only while the job passes
+  // `github_token`: without it the action makes a second OIDC exchange, for a
+  // Claude GitHub App token with write access to contents, pull requests and
+  // issues (asserted in claude-review-workflow.test.mjs).
+  '.github/workflows/claude-review.yml / review',
+]
+
+const OIDC_JOBS = [...PUBLISH_OIDC_JOBS, ...NON_PUBLISH_OIDC_JOBS]
 
 /**
  * The jobs in a publishing workflow that may hold ANY writable scope. A
@@ -85,6 +110,9 @@ const REPO_WRITE_JOBS = [
   // release/eql-<version> branch it must be dispatched against (release-plz
   // refuses a detached HEAD).
   '.github/workflows/release.yml / prerelease-eql-crate',
+  // pull-requests: write — posts and updates the sticky cargo-mutants report
+  // comment on the PR.
+  '.github/workflows/mutants.yml / mutants',
 ]
 
 /**
@@ -144,7 +172,12 @@ const workflows = workflowFiles().map((file) => {
 })
 
 /** Is this the `<file> / <job>` of a job sanctioned to publish? */
-const sanctioned = (file, name) => OIDC_JOBS.includes(`${file} / ${name}`)
+const sanctioned = (file, name) =>
+  PUBLISH_OIDC_JOBS.includes(`${file} / ${name}`)
+
+/** Is this a reviewed OIDC holder whose exchange cannot publish packages? */
+const nonPublishingOidc = (file, name) =>
+  NON_PUBLISH_OIDC_JOBS.includes(`${file} / ${name}`)
 
 /** …and of a job sanctioned to hold a writable scope at all? */
 const mayWrite = (file, name) => REPO_WRITE_JOBS.includes(`${file} / ${name}`)
@@ -187,13 +220,15 @@ describe('supply chain — a publishing workflow grants OIDC per job', () => {
     const offenders = workflows
       // A workflow is a publishing one if it holds the credential ANYWHERE —
       // by sanction above, or by a job that granted itself `id-token: write`
-      // without being listed. The second disjunct matters: an unsanctioned
-      // publisher must not also switch this check off for the file it is in.
+      // without being classified as a known non-publishing exchange. The
+      // second disjunct matters: an unsanctioned publisher must not also switch
+      // this check off for the file it is in.
       .filter(({ file, workflowLevel, jobs }) =>
         jobs.some(
           ([name, job]) =>
             sanctioned(file, name) ||
-            effective(job, workflowLevel)?.['id-token'] === 'write',
+            (effective(job, workflowLevel)?.['id-token'] === 'write' &&
+              !nonPublishingOidc(file, name)),
         ),
       )
       .flatMap(({ file, workflowLevel, jobs }) =>
@@ -212,12 +247,12 @@ describe('supply chain — a publishing workflow grants OIDC per job', () => {
     ).toEqual([])
   })
 
-  it('never sanctions a write without sanctioning it as a write', () => {
-    // The one way the split above could go wrong: a publisher added to
-    // `OIDC_JOBS` and not carried into `REPO_WRITE_JOBS`. It is spelled as a
-    // spread today, so this cannot fail — which is the point. It fails the day
-    // somebody writes the two lists out separately, before the third check
-    // starts reporting a publisher as an offender.
+  it('never classifies an OIDC holder without sanctioning its writes', () => {
+    // The one way the split above could go wrong: an OIDC holder added to the
+    // classified set and not carried into `REPO_WRITE_JOBS`. It is spelled as
+    // a spread today, so this cannot fail — which is the point. It fails the
+    // day somebody writes the two lists out separately, before the third check
+    // starts reporting the holder as an offender.
     const missing = OIDC_JOBS.filter(
       (entry) => !REPO_WRITE_JOBS.includes(entry),
     )
@@ -229,7 +264,9 @@ describe('supply chain — a publishing workflow grants OIDC per job', () => {
     // to the REPOSITORY default, which is settings-controlled and outside this
     // tree. A publishing workflow must not have its floor set somewhere a
     // reviewer of this repo cannot see.
-    const publishing = new Set(OIDC_JOBS.map((entry) => entry.split(' / ')[0]))
+    const publishing = new Set(
+      PUBLISH_OIDC_JOBS.map((entry) => entry.split(' / ')[0]),
+    )
     const offenders = workflows
       .filter(
         ({ file, workflowLevel }) =>

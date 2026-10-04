@@ -1,0 +1,39 @@
+[package]
+name = "stack-encrypt-derive"
+description = "Derive macros for stack-encrypt's target-directed encryption"
+version = "0.2.0"
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license-file = "LICENSE"
+# Published to crates.io by release-plz.yml, in the `stack-encrypt` version
+# group: stack-encrypt is the only crate that should depend on this one (the
+# macros are re-exported from there), and the two release together.
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "3", features = ["full", "extra-traits"] }
+
+# The dev-dependencies below are used only by the crate-level doctests.
+# `cargo-udeps` cannot see into rustdoc, so it reports them as unused.
+[package.metadata.cargo-udeps.ignore]
+development = ["stack-encrypt", "tokio"]
+
+[dev-dependencies]
+# The plain-segment rule is copied from stack-encrypt (a proc-macro crate cannot
+# depend on the crate it serves); its test reads the fixture both suites share.
+serde_json = { workspace = true }
+# The crate-level examples are real doctests, run against the fake key
+# source. A dev-dependency cycle back to `stack-encrypt` is the usual shape
+# for a derive crate (cf. serde_derive -> serde). The fake key source comes
+# through stack-encrypt's `test-support` feature, as a user's tests take it, so
+# these doctests are what exercises that forwarding.
+stack-encrypt = { path = "../stack-encrypt", features = ["test-support"] }
+tokio = { workspace = true, features = ["rt", "macros"] }

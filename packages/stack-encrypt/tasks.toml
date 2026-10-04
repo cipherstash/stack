@@ -1,0 +1,74 @@
+["crap:stack-encrypt"]
+description = "Gate stack-encrypt on the CRAP (Change Risk Anti-Patterns) metric — fails when a complex, under-tested function exceeds the threshold"
+run = [
+  # Instrument and run the unit and integration tests, emitting LCOV coverage
+  # that `cargo crap` consumes. `--all-features` so the `dynamic` module (the
+  # FFI value model every binding funnels through) is scored, not skipped as
+  # uninstrumented. The trybuild UI suite is excluded: it compiles the derive's
+  # compile-fail cases in a scratch cargo project, which contributes nothing to
+  # this crate's coverage and only slows the instrumented run.
+  "mise x --env test -- cargo llvm-cov nextest -p stack-encrypt --all-features -E 'not binary(ui)' --lcov --output-path {{config_root}}/target/stack-encrypt-lcov.info",
+  # Score every production function. Excludes test code, the examples, and the
+  # detached fuzz crate (which lives under this package's directory and would
+  # otherwise be walked as production source). `--fail-above` exits non-zero
+  # when any function's CRAP score exceeds the threshold from the workspace-root
+  # .cargo-crap.toml (30), so this gates both local runs and CI.
+  # NOTE: this must stay the LAST command — the crap-crates.yml CI
+  # workflow runs this task and relies on mise appending its trailing args
+  # (e.g. --format github) to this `cargo crap` invocation.
+  "mise x --env test -- cargo crap --path packages/stack-encrypt --lcov {{config_root}}/target/stack-encrypt-lcov.info --exclude 'examples/**' --exclude 'fuzz/**' --exclude '**/tests/**' --fail-above",
+]
+
+# Fuzz the frozen v1 leaf byte decoder (`SealedValue::from_bytes`, also
+# `TryFrom<&[u8]>`). This is what a stored ciphertext column comes back
+# through, so it is the crate's widest untrusted-input parser: it must never
+# panic, and a leaf it accepts must re-encode to exactly the bytes it was
+# decoded from (the format is documented as lossless). Same flags and
+# rationale as `fuzz:access-key` in stack-auth: nightly, `--sanitizer none`
+# (pure safe Rust), and the native host triple. The fuzz crate lives in
+# `packages/stack-encrypt/fuzz/` (detached).
+["fuzz:sealed-value"]
+description = "Fuzz stack-encrypt's frozen leaf byte decoder, SealedValue::from_bytes (libFuzzer, nightly, 60s default)"
+dir = "{{config_root}}/packages/stack-encrypt"
+run = "mise x --env test -- cargo +nightly fuzz run sealed_value_decode --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+
+# Fuzz the SEM index-term byte decoders — every `from_bytes` / `TryFrom<&[u8]>`
+# a stored term comes back through (equality, match, ORE and OPE). One target
+# for all four: each is a length or range check over the same untrusted
+# slice, so a separate campaign per kind would only split the corpus.
+["fuzz:term-decode"]
+description = "Fuzz stack-encrypt's SEM index-term byte decoders (libFuzzer, nightly, 60s default)"
+dir = "{{config_root}}/packages/stack-encrypt"
+run = "mise x --env test -- cargo +nightly fuzz run term_decode --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+
+# Fuzz the stored-record preflight (`dynamic::record::check_record`) with
+# structure-aware inputs: an `Arbitrary`-derived mirror of a plan value and
+# a ciphertext tree, checked against a model of the documented record rules
+# — in particular that a passthrough under a field's `"c"` is refused, which
+# is what stops a rewritten stored tree being reported as a decrypt.
+["fuzz:check-record"]
+description = "Fuzz stack-encrypt's stored-record preflight against a model of its rules (structure-aware, libFuzzer, nightly, 60s default)"
+dir = "{{config_root}}/packages/stack-encrypt"
+run = "mise x --env test -- cargo +nightly fuzz run check_record --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+
+# Rustdoc with warnings as errors: a broken intra-doc link or a rustdoc
+# warning fails the build. Doc *examples* are `test:doc:stack-encrypt`. Both run
+# with all features so nothing feature-gated goes unchecked; the root `doc`
+# task fans out over every `doc:<crate>`.
+["doc:stack-encrypt"]
+description = "Build docs for stack-encrypt with all features (warnings are errors)"
+env = { RUSTDOCFLAGS = "-D warnings" }
+run = "cargo doc -p stack-encrypt --no-deps --all-features"
+
+["test:doc:stack-encrypt"]
+description = "Run documentation tests for stack-encrypt"
+run = "mise x --env test -- cargo test -p stack-encrypt --doc --all-features"
+
+# Mutation testing (cargo-mutants) over the whole crate: what the per-PR
+# `--in-diff` gate (.github/workflows/mutants.yml) does for changed lines only.
+# Reads .cargo/mutants.toml (all features, nextest, the slow-test filter,
+# timeouts). About 60 minutes with four jobs on a laptop. The
+# trybuild UI suite is filtered out of the per-mutant run by the shared config.
+["mutants:stack-encrypt"]
+description = "Full mutation-testing sweep of stack-encrypt (cargo-mutants; ~60 min)"
+run = "mise x --env test -- cargo mutants -p stack-encrypt --jobs 4"

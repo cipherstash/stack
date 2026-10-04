@@ -109,11 +109,11 @@ jobs:
           echo "OPENSSL_STATIC=1" >> $env:GITHUB_ENV
 
       # The aarch64 linker, for the one platform that cross-compiles to it.
-      # Scoped to that platform rather than to Linux: `linux-x64-musl` puts
-      # musl.cc's own `x86_64-linux-musl-gcc` on PATH below and never calls
-      # this one, and `linux-x64-gnu` is a native x86_64 build — so the other
-      # two legs were paying an `apt-get update` (full package indexes) plus a
-      # ~200MB toolchain they do not link against.
+      # Scoped to that platform rather than to Linux: `linux-x64-musl` builds
+      # inside Alpine below with Alpine's own compiler, and `linux-x64-gnu` is
+      # a native x86_64 build — so the other two legs were paying an
+      # `apt-get update` (full package indexes) plus a ~200MB toolchain they do
+      # not link against.
       - name: Install cross-compile toolchain (linux-arm64-gnu)
         if: ${{ matrix.cfg.platform == 'linux-arm64-gnu' }}
         run: |
@@ -134,11 +134,12 @@ jobs:
       # the no-caching gate, so not adding a fourth action to that list is worth
       # something on its own.
       - name: Add the Rust target
+        if: ${{ matrix.cfg.platform != 'linux-x64-musl' }}
         env:
           CARGO_BUILD_TARGET: ${{ matrix.cfg.target }}
         run: rustup target add "$CARGO_BUILD_TARGET"
 
-      - uses: pnpm/action-setup@v6.0.10
+      - uses: pnpm/action-setup@v6.1.0
         with:
           run_install: false
           cache: false
@@ -149,9 +150,10 @@ jobs:
           package-manager-cache: false
 
       - name: Install node-gyp
+        if: ${{ matrix.cfg.platform != 'linux-x64-musl' }}
         run: npm install -g node-gyp
 
-      # zig + cargo-zigbuild, pinned in packages/protect-ffi/mise.toml. Only the
+      # zig + cargo-zigbuild, pinned in languages/typescript/packages/protect-ffi/mise.toml. Only the
       # gnu platforms use them, so the four others skip this rather than
       # compiling cargo-zigbuild from source on runners that never call it.
       #
@@ -169,75 +171,43 @@ jobs:
       # from the triple: scripts/ffi-release-matrix.mjs picks zigbuild, and this
       # step exists to supply what zigbuild needs. Two spellings of one rule
       # drift apart the day a platform moves between them.
+      #
+      # mise itself is pinned, at the version the auth and EQL release builds
+      # use. Unpinned, the action installs the latest mise, and
+      # mise 2026.10.0 (2 October 2026) refuses to install cargo-zigbuild until
+      # the root mise.toml's Rust is installed, which failed both gnu legs.
       - name: Install zig + cargo-zigbuild (zigbuild platforms only)
         if: ${{ matrix.cfg.script == 'zigbuild' }}
         uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
+          version: 2026.4.0
           install: true
           install_args: zig cargo:cargo-zigbuild
-          working_directory: packages/protect-ffi
+          working_directory: languages/typescript/packages/protect-ffi
           cache: false
 
       - name: Install dependencies
+        if: ${{ matrix.cfg.platform != 'linux-x64-musl' }}
         run: pnpm install --frozen-lockfile
 
       - name: Build binding
-        working-directory: packages/protect-ffi
+        if: ${{ matrix.cfg.platform != 'linux-x64-musl' }}
+        working-directory: languages/typescript/packages/protect-ffi
         env:
           CARGO_BUILD_TARGET: ${{ matrix.cfg.target }}
           NEON_BUILD_PLATFORM: ${{ matrix.cfg.platform }}
           BUILD_SCRIPT: ${{ matrix.cfg.script }}
-          # The musl cross toolchain is fetched from musl.cc over plain HTTPS
-          # with no signature to check, and whatever it hands back LINKS THE
-          # BINARY that this workflow publishes to npm with provenance — a
-          # provenance attestation says where a build ran, not that its inputs
-          # were the intended ones. Upstream's build.yml took the download on
-          # trust; this pins it.
-          #
-          # Trust-on-first-use, and worth being precise about what that buys:
-          # the digest was taken from two independent fetches of the current
-          # artifact (2026-08-11), so it does not authenticate musl.cc — it
-          # makes any later substitution a hard failure instead of a silent one.
-          # If musl.cc rebuilds the tarball this step fails; re-verify the new
-          # artifact deliberately and update the digest here, do not delete the
-          # check to unblock a release.
-          MUSL_TOOLCHAIN_URL: https://musl.cc/x86_64-linux-musl-native.tgz
-          MUSL_TOOLCHAIN_SHA256: eb1db6f0f3c2bdbdbfb993d7ef7e2eeef82ac1259f6a6e1757c33a97dbcef3ad
         # No `--` separator anywhere below: npm strips it, pnpm forwards it
         # verbatim, and these scripts end in `> cargo.log` — so a forwarded flag
         # lands after the redirect and cargo rejects it as a positional.
         run: |
           set -euo pipefail
-          # `x86_64-unknown-linux-musl` -> `x86_64-linux-musl-gcc`. Parameter
-          # expansion rather than upstream's `sed`, and assigned before export
-          # rather than through it: actionlint runs shellcheck over `run:`
-          # blocks and the original spelling draws SC2001 and SC2155.
-          #
-          # Each linker variable is exported by the branch that reads it. Set
-          # unconditionally, as upstream had them, both are also set on Windows
-          # and on the two Darwin legs — where `CARGO_TARGET_..._MUSL_LINKER`
-          # ends up naming `x86_64-apple-darwin-gcc`, a binary that does not
-          # exist and that nothing on those platforms reads.
-          linker="${CARGO_BUILD_TARGET/unknown-/}-gcc"
-          if [[ "$CARGO_BUILD_TARGET" =~ musl ]]; then
-            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$linker"
-            wget -4 -O musl-native.tgz "$MUSL_TOOLCHAIN_URL"
-            # Verified BEFORE anything is unpacked: a tarball that fails this
-            # check must not have written a single file, least of all one on the
-            # PATH the compiler is about to use.
-            echo "${MUSL_TOOLCHAIN_SHA256}  musl-native.tgz" | sha256sum -c - || {
-              echo "::error::musl toolchain digest mismatch — got $(sha256sum musl-native.tgz | cut -d' ' -f1)"
-              exit 1; }
-            # Extracted once, into /opt, which is the copy the PATH below names.
-            # Upstream also unpacked a second copy into the working directory
-            # and never used it.
-            sudo tar zxf musl-native.tgz -C /opt/
-            export PATH="/opt/x86_64-linux-musl-native/bin/:${PATH}"
-            # Keeps the binary dynamically linked against musl, which is what
-            # makes the libc check in ffi-preflight.yml meaningful.
-            export RUSTFLAGS="-C target-feature=-crt-static"
-            pnpm run "$BUILD_SCRIPT"
-          elif [ "$BUILD_SCRIPT" = zigbuild ]; then
+          if [ "$BUILD_SCRIPT" = zigbuild ]; then
+            # `aarch64-unknown-linux-gnu` -> `aarch64-linux-gnu-gcc`. Parameter
+            # expansion rather than upstream's `sed`, and assigned before
+            # export rather than through it: actionlint runs shellcheck over
+            # `run:` blocks and the original spelling draws SC2001 and SC2155.
+            linker="${CARGO_BUILD_TARGET/unknown-/}-gcc"
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="$linker"
             # cargo-zigbuild >= 0.23.0 no longer reads CARGO_BUILD_TARGET from
             # the environment, so the glibc-pinned target is passed as a flag.
@@ -246,8 +216,59 @@ jobs:
             pnpm run "$BUILD_SCRIPT"
           fi
 
+      # The musl binary is built inside Alpine Linux, a musl system, so the
+      # compiler and its runtime libraries are musl's own. The toolchain this
+      # leg used to download from musl.cc timed out from GitHub's runners on
+      # six tries on 2 October 2026, and its digest pinned the file without
+      # authenticating its source. The image is pinned by digest because its
+      # output is published with provenance, and it is the image that
+      # _build-auth-artifacts.yml builds `@cipherstash/auth` in.
+      #
+      # `-crt-static` keeps the binary linked against musl at load time, which
+      # a Node.js native module needs, and which the C library check below
+      # reads. Rust is the runner image's version, as on the other five legs.
+      # The build script, log and placement are the host legs' own.
+      - name: Build the binding in Alpine (linux-x64-musl)
+        if: ${{ matrix.cfg.platform == 'linux-x64-musl' }}
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.cfg.target }}
+          PLATFORM: ${{ matrix.cfg.platform }}
+          BUILD_SCRIPT: ${{ matrix.cfg.script }}
+          BUILD_LOG: ${{ matrix.cfg.log }}
+          ALPINE_NODE_IMAGE: node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
+        run: |
+          set -euo pipefail
+          rust_version=$(rustc --version | cut -d' ' -f2)
+          pnpm_spec=$(node -p "require('./package.json').packageManager")
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/build" -w /build \
+            -e CARGO_BUILD_TARGET -e PLATFORM -e BUILD_SCRIPT -e BUILD_LOG \
+            -e RUST_VERSION="$rust_version" -e PNPM_SPEC="$pnpm_spec" \
+            -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+            -e RUSTFLAGS="-C target-feature=-crt-static" \
+            "$ALPINE_NODE_IMAGE" sh -euc '
+              trap "chown -R \"\$HOST_UID:\$HOST_GID\" /build" EXIT
+              apk add --no-cache build-base cmake perl linux-headers git curl rustup
+              rustup-init -y --profile minimal --default-toolchain "$RUST_VERSION" --target "$CARGO_BUILD_TARGET"
+              . "$HOME/.cargo/env"
+              corepack enable
+              corepack prepare "$PNPM_SPEC" --activate
+              pnpm install --frozen-lockfile --ignore-scripts --filter "@cipherstash/protect-ffi..."
+              cd languages/typescript/packages/protect-ffi
+              NEON_BUILD_PLATFORM="$PLATFORM" pnpm run "$BUILD_SCRIPT"
+              # The same placement as the host legs, here because the cargo
+              # log names the artifact by its path inside this container.
+              pnpm exec neon dist -n protect-ffi -o "platforms/$PLATFORM/index.node" < "$BUILD_LOG"
+              test -s "platforms/$PLATFORM/index.node"
+              # Load it here, on musl: readelf only infers that it will load,
+              # and this also catches a missing runtime library or an
+              # unresolved symbol, in every build, release builds included.
+              node -e "require(process.argv[1])" "$PWD/platforms/$PLATFORM/index.node"
+            '
+
       - name: Place the binding in its platform package
-        working-directory: packages/protect-ffi
+        if: ${{ matrix.cfg.platform != 'linux-x64-musl' }}
+        working-directory: languages/typescript/packages/protect-ffi
         env:
           PLATFORM: ${{ matrix.cfg.platform }}
           BUILD_LOG: ${{ matrix.cfg.log }}
@@ -269,6 +290,16 @@ jobs:
             -o "platforms/${PLATFORM}/index.node" < "${BUILD_LOG}"
           test -s "platforms/${PLATFORM}/index.node"
 
+      # Every build checks which C library its binary links, so a release
+      # cannot publish a musl binary that links glibc even if nobody ran
+      # ffi-preflight first. The rules are in scripts/check-c-library.sh, which
+      # every workflow that checks a Linux binary runs.
+      - name: Check which C library the binary links
+        if: ${{ runner.os == 'Linux' }}
+        env:
+          PLATFORM: ${{ matrix.cfg.platform }}
+        run: scripts/check-c-library.sh "$PLATFORM" "languages/typescript/packages/protect-ffi/platforms/${PLATFORM}/index.node"
+
       # `pnpm pack` writes into the packed package's own directory by default,
       # and `--pack-destination` resolves relative to `--dir` rather than to the
       # CWD (verified). Packing to the default location and moving the result
@@ -280,8 +311,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ffi-dist
-          pnpm --dir "packages/protect-ffi/platforms/${PLATFORM}" pack
-          mv "packages/protect-ffi/platforms/${PLATFORM}"/*.tgz ffi-dist/
+          pnpm --dir "languages/typescript/packages/protect-ffi/platforms/${PLATFORM}" pack
+          mv "languages/typescript/packages/protect-ffi/platforms/${PLATFORM}"/*.tgz ffi-dist/
           ls ffi-dist
 
       - name: Verify the tarball is the platform package, not the wrapper
@@ -335,7 +366,7 @@ jobs:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      - uses: pnpm/action-setup@v6.0.10
+      - uses: pnpm/action-setup@v6.1.0
         with:
           run_install: false
           cache: false
@@ -348,7 +379,7 @@ jobs:
       - name: Install node-gyp
         run: npm install -g node-gyp
 
-      # wasm-pack, pinned in packages/protect-ffi/mise.toml — `build:wasm`
+      # wasm-pack, pinned in languages/typescript/packages/protect-ffi/mise.toml — `build:wasm`
       # shells out to it and nothing else supplies it. `install_args` narrows
       # this to wasm-pack alone: a bare `mise install` would also build
       # cargo-zigbuild from source, which this job never calls. The argument is
@@ -357,9 +388,10 @@ jobs:
       - name: Install wasm-pack
         uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
+          version: 2026.4.0
           install: true
           install_args: aqua:wasm-bindgen/wasm-pack
-          working_directory: packages/protect-ffi
+          working_directory: languages/typescript/packages/protect-ffi
           cache: false
 
       # `--all-targets` in the Rust lint means all target KINDS, not platforms;
@@ -374,15 +406,15 @@ jobs:
       # tracked; the runtime .js and .wasm are generated here. Without this the
       # published `./wasm` and `./wasm-inline` entries resolve to nothing.
       - name: Build WASM
-        working-directory: packages/protect-ffi
+        working-directory: languages/typescript/packages/protect-ffi
         run: pnpm run build:wasm
 
       - name: Pack the wrapper
         run: |
           set -euo pipefail
           mkdir -p ffi-dist
-          pnpm --dir packages/protect-ffi pack
-          mv packages/protect-ffi/*.tgz ffi-dist/
+          pnpm --dir languages/typescript/packages/protect-ffi pack
+          mv languages/typescript/packages/protect-ffi/*.tgz ffi-dist/
 
       - name: Verify the wrapper tarball
         run: |

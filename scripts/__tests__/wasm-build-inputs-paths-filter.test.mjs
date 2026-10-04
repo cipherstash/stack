@@ -24,7 +24,7 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  *
  * That was live, twice.
  *
- *  - `packages/protect-ffi/scripts/inline-wasm.mjs` and
+ *  - `languages/typescript/packages/protect-ffi/scripts/inline-wasm.mjs` and
  *    `tsconfig.wasm-errors.json` are both in the WASM key (they are
  *    `build:wasm`'s non-cargo half) and neither was listed in
  *    `integration-drizzle.yml` — the workflow whose `CS_IT_SUITE` selects
@@ -32,7 +32,7 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  *    emits. Reported in review on #863; this file was written for it.
  *  - `packages/eql/crates/**` and `packages/eql/Cargo.toml` are in BOTH keys —
  *    `crates/protect-ffi/Cargo.toml` carries
- *    `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so that
+ *    `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so that
  *    tree compiles into `index.node` — and five path-filtered workflows that
  *    build or compile the binding did not list them. Four of them run the
  *    action NATIVELY (`wasm:` left at its default), so the first version of
@@ -60,7 +60,7 @@ const CACHE_ACTION = /^actions\/cache(\/(restore|save))?@/
 const FILTERED_EVENTS = ['push', 'pull_request']
 
 /** The package whose Rust both cache keys are about. */
-const FFI_PACKAGE = 'packages/protect-ffi'
+const FFI_PACKAGE = 'languages/typescript/packages/protect-ffi'
 const FFI_PACKAGE_NAME = '@cipherstash/protect-ffi'
 
 /** What a command has to reach before it is compiling anything. */
@@ -108,8 +108,8 @@ function cachedPaths(step) {
  * Everything before a glob's first wildcard SEGMENT — the deepest path both a
  * cache pattern and a `paths:` entry can be compared on.
  *
- * `packages/protect-ffi/crates/**` -> `packages/protect-ffi/crates`
- * `packages/protect-ffi/src/errors.ts` -> itself (no wildcard)
+ * `languages/typescript/packages/protect-ffi/crates/**` -> `languages/typescript/packages/protect-ffi/crates`
+ * `languages/typescript/packages/protect-ffi/src/errors.ts` -> itself (no wildcard)
  */
 function literalPrefix(pattern) {
   const segments = pattern.split('/')
@@ -123,7 +123,7 @@ function literalPrefix(pattern) {
  * The patterns a key hashes that are BUILD INPUTS, which is not all of them.
  *
  * A key hashes files for two different reasons, and only one of them implies a
- * trigger. `packages/protect-ffi/dist/wasm/*.d.ts` is in the WASM key because
+ * trigger. `languages/typescript/packages/protect-ffi/dist/wasm/*.d.ts` is in the WASM key because
  * those declarations are tracked in git AND inside the cached directory, so a
  * restore would overwrite them — hashing them makes any restore that lands
  * necessarily byte-identical (see the action's comment, and the first suite in
@@ -294,7 +294,7 @@ function usesAction(relPath, { wasmOnly = false } = {}) {
  * Compiles this package's Rust — through the action, or directly.
  *
  * The direct forms are scoped: either the command targets the package by name
- * (`pnpm --filter @cipherstash/protect-ffi …`, `pnpm --dir packages/protect-ffi
+ * (`pnpm --filter @cipherstash/protect-ffi …`, `pnpm --dir languages/typescript/packages/protect-ffi
  * …`) or the step runs INSIDE it, so a `cargo` elsewhere in the monorepo — the
  * EQL workspace has its own, with its own workflows — is not mistaken for this
  * one.
@@ -395,7 +395,7 @@ const KEYS = [
   {
     id: 'wasm',
     step: WASM_CACHE_STEP,
-    what: '`packages/protect-ffi/dist/wasm/**` — including `protect_ffi_inline.js`, the bundle `@cipherstash/stack/wasm-inline` imports',
+    what: '`languages/typescript/packages/protect-ffi/dist/wasm/**` — including `protect_ffi_inline.js`, the bundle `@cipherstash/stack/wasm-inline` imports',
     reaches: "runs the action with `wasm: 'true'`",
     workflows: ALL_WORKFLOWS.filter((relPath) =>
       usesAction(relPath, { wasmOnly: true }),
@@ -430,7 +430,7 @@ describe('the FFI cache keys and the filters that trigger them agree', () => {
 
   it('derives the commands that compile this package Rust', () => {
     // The native key's consumers are not only the action's callers, so the
-    // discovery reads `packages/protect-ffi`'s own scripts and mise tasks. If
+    // discovery reads `languages/typescript/packages/protect-ffi`'s own scripts and mise tasks. If
     // either set empties, `compilesFfiRust` degrades to "uses the action" and
     // a workflow like tests-rust.yml silently stops being checked.
     expect(

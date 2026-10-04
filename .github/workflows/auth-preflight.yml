@@ -1,0 +1,155 @@
+name: Auth release pre-flight
+
+# The `@cipherstash/auth` counterpart of ffi-preflight.yml: build the real
+# seven tarballs, check each binary is the architecture and libc its package
+# name claims, then install the host-matching pair into a scratch project and
+# load it. Point it at the Version Packages PR branch so the tarballs carry the
+# versions that will publish.
+#
+# It never publishes, and cannot: no `id-token` permission, no secret passed to
+# the call below, no `registry-url` on setup-node, and no NPM_TOKEN or
+# NODE_AUTH_TOKEN anywhere. Adding any one of them turns this into a publisher.
+#
+# Dispatch-only, so it can run only once it is on the default branch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Ref to build and test (e.g. changeset-release/main)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  artifacts:
+    name: Build artifacts
+    uses: ./.github/workflows/_build-auth-artifacts.yml
+    with:
+      ref: ${{ inputs.ref }}
+
+  smoke:
+    name: Install and smoke-test
+    needs: [artifacts]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # For scripts/check-c-library.sh, from the commit the binaries were built
+      # from, so this job applies the rules the build applied. Before the
+      # download, because a checkout empties the directory it checks out into.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+          sparse-checkout: scripts
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: auth-tarballs
+          path: auth-dist
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      # npm refuses to install a platform package whose os/cpu does not match
+      # (EBADPLATFORM), so the five non-host tarballs are checked statically.
+      - name: Verify each binary's architecture
+        run: |
+          set -euo pipefail
+          declare -A EXPECT=(
+            [darwin-arm64]='Mach-O 64-bit.*arm64'
+            [darwin-x64]='Mach-O 64-bit.*x86_64'
+            [linux-arm64-gnu]='ELF 64-bit.*ARM aarch64'
+            [linux-x64-gnu]='ELF 64-bit.*x86-64'
+            [linux-x64-musl]='ELF 64-bit.*x86-64'
+            [win32-x64-msvc]='PE32\+.*x86-64'
+          )
+          checked=0
+          mkdir -p probe && cd probe
+          for tgz in ../auth-dist/*.tgz ; do
+            name=$(tar xzOf "$tgz" package/package.json | node -p \
+              "JSON.parse(require('node:fs').readFileSync(0,'utf8')).name")
+            platform="${name#@cipherstash/auth-}"
+            [ "$platform" = "$name" ] && continue
+            test -n "${EXPECT[$platform]+set}" || {
+              echo "::error::no expected architecture recorded for $platform"; exit 1; }
+            rm -rf x && mkdir x && tar xzf "$tgz" -C x
+            binary="x/package/stack-auth-node.${platform}.node"
+            desc=$(file -b "$binary")
+            echo "$platform: $desc"
+            [[ "$desc" =~ ${EXPECT[$platform]} ]] || {
+              echo "::error::$platform binary is '$desc', expected ${EXPECT[$platform]}"
+              exit 1; }
+            # `file` cannot tell gnu from musl; the C library check can.
+            if [[ "$platform" == linux-* ]]; then
+              "$GITHUB_WORKSPACE/scripts/check-c-library.sh" "$platform" "$binary"
+            fi
+            checked=$((checked + 1))
+          done
+          test "$checked" -eq "${#EXPECT[@]}" || {
+            echo "::error::checked $checked platform binaries, expected ${#EXPECT[@]}"
+            exit 1; }
+
+      - name: Install the wrapper and the host platform package
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/smoke && cd /tmp/smoke
+          echo '{"name":"smoke","version":"1.0.0","type":"module","private":true}' > package.json
+          wrapper=$(ls "$GITHUB_WORKSPACE"/auth-dist/cipherstash-auth-[0-9]*.tgz)
+          host=$(ls "$GITHUB_WORKSPACE"/auth-dist/cipherstash-auth-linux-x64-gnu-*.tgz)
+          npm install --no-audit --no-fund "$wrapper" "$host"
+
+      # Pure: no client, no credentials, no network. The CommonJS entry loads
+      # the native binding at require time, so a missing or wrong binary fails
+      # here.
+      - name: Smoke-test the installed artifact
+        run: |
+          set -euo pipefail
+          cd /tmp/smoke
+          cat > smoke.mjs <<'EOF'
+          import { createRequire } from 'node:module'
+          const require = createRequire(import.meta.url)
+          const auth = require('@cipherstash/auth')
+          for (const name of ['AccessKeyStrategy', 'AutoStrategy', 'OidcFederationStrategy']) {
+            if (typeof auth[name] !== 'function') throw new Error('no ' + name)
+          }
+          const cookies = await import('@cipherstash/auth/cookies')
+          if (Object.keys(cookies).length === 0) throw new Error('./cookies did not resolve')
+          const inline = await import('@cipherstash/auth/wasm-inline')
+          if (Object.keys(inline).length === 0) throw new Error('./wasm-inline did not resolve')
+          console.log('smoke OK')
+          EOF
+          node smoke.mjs
+
+      # The host step above installs only linux-x64-gnu, the runner's own
+      # platform. The musl binary loads only where musl is the C library, so it
+      # is installed and loaded inside Alpine, from the image the build uses.
+      - name: Smoke-test the musl artifact inside Alpine
+        env:
+          ALPINE_NODE_IMAGE: node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
+        run: |
+          set -euo pipefail
+          wrapper=$(basename "$(ls "$GITHUB_WORKSPACE"/auth-dist/cipherstash-auth-[0-9]*.tgz)")
+          musl=$(basename "$(ls "$GITHUB_WORKSPACE"/auth-dist/cipherstash-auth-linux-x64-musl-*.tgz)")
+          docker run --rm -v "$GITHUB_WORKSPACE/auth-dist:/dist:ro" \
+            -e WRAPPER="$wrapper" -e MUSL="$musl" \
+            "$ALPINE_NODE_IMAGE" sh -euc '
+              mkdir -p /tmp/smoke && cd /tmp/smoke
+              echo "{\"name\":\"smoke\",\"version\":\"1.0.0\",\"private\":true}" > package.json
+              npm install --no-audit --no-fund "/dist/$WRAPPER" "/dist/$MUSL"
+              node -e "
+                const auth = require(\"@cipherstash/auth\")
+                for (const name of [\"AccessKeyStrategy\", \"AutoStrategy\", \"OidcFederationStrategy\"]) {
+                  if (typeof auth[name] !== \"function\") throw new Error(\"no \" + name)
+                }
+                console.log(\"musl smoke OK\")
+              "
+            '

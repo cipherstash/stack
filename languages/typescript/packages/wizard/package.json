@@ -1,0 +1,65 @@
+{
+	"name": "@cipherstash/wizard",
+	"version": "1.2.1",
+	"description": "AI-powered encryption setup for CipherStash. Reads your codebase, picks columns to encrypt, and wires everything up.",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/cipherstash/stack.git",
+		"directory": "languages/typescript/packages/wizard"
+	},
+	"license": "MIT",
+	"author": "CipherStash <humans@cipherstash.com>",
+	"files": [
+		"dist",
+		"dist/skills",
+		"README.md",
+		"LICENSE",
+		"CHANGELOG.md"
+	],
+	"type": "module",
+	"bin": {
+		"stash-wizard": "./dist/bin/wizard.js"
+	},
+	"sideEffects": false,
+	"scripts": {
+		"build": "tsup",
+		"postbuild": "chmod +x ./dist/bin/wizard.js",
+		"dev": "tsup --watch",
+		"test": "vitest run",
+		"typecheck": "tsc --project tsconfig.json --noEmit",
+		"lint": "biome check ."
+	},
+	"dependencies": {
+		"@anthropic-ai/claude-agent-sdk": "^0.3.234",
+		"@anthropic-ai/sdk": "^0.117.1",
+		"@cipherstash/auth": "workspace:*",
+		"@clack/prompts": "1.7.0",
+		"dotenv": "17.4.2",
+		"pg": "8.23.0",
+		"picocolors": "^1.1.1",
+		"posthog-node": "^5.49.1",
+		"zod": "^3.25.76"
+	},
+	"//optionalDependencies": "@cipherstash/auth ships per-platform native bindings as optional peerDependencies. pnpm does not auto-install platform-matched optional peer deps, so we declare them here as optionalDependencies — pnpm then picks the binary matching the host's os/cpu (from each sub-package's own package.json) and ignores the rest. All seven are workspace packages in one changesets `fixed` group, so `workspace:*` packs the same exact version for each.",
+	"optionalDependencies": {
+		"@cipherstash/auth-darwin-arm64": "workspace:*",
+		"@cipherstash/auth-darwin-x64": "workspace:*",
+		"@cipherstash/auth-linux-arm64-gnu": "workspace:*",
+		"@cipherstash/auth-linux-x64-gnu": "workspace:*",
+		"@cipherstash/auth-linux-x64-musl": "workspace:*",
+		"@cipherstash/auth-win32-x64-msvc": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/pg": "^8.23.1",
+		"tsup": "catalog:repo",
+		"tsx": "catalog:repo",
+		"typescript": "catalog:repo",
+		"vitest": "catalog:repo"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"engines": {
+		"node": ">=22"
+	}
+}

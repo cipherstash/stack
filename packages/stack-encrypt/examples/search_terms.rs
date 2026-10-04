@@ -1,0 +1,167 @@
+//! Searchable Encrypted Metadata, leaf by leaf.
+//!
+//! Shows each index-term primitive on its own through the target-directed
+//! `encrypt_into` API: equality terms (exact match), match terms (full-text
+//! containment), and ORE/OPE terms (range queries) — all generated locally
+//! from a deterministic per-keyset index key, then compared the way a server
+//! would compare them: without ever seeing a plaintext.
+//!
+//! Run with:
+//!
+//! ```sh
+//! cargo run -p stack-encrypt --example search_terms
+//! ```
+//!
+//! Talks to real ZeroKMS. On a developer machine, `npx stash auth login` is
+//! sufficient: the cipher finds both the access token and the client key in
+//! the CLI's profile directory. In CI, set `CS_CLIENT_ACCESS_KEY` /
+//! `CS_WORKSPACE_CRN` and `CS_CLIENT_ID` / `CS_CLIENT_KEY` instead (see the
+//! `zerokms_auth` example for the lookup order).
+
+use stack_encrypt::sem::{EqualityTerm, MatchTerm, OreTerm};
+use stack_encrypt::target::EncryptInto;
+use stack_encrypt::{nonempty, EncryptFrom, StackCipher, StackCipherText};
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // `StackCipher::new()` builds a ZeroKMS client from the environment and
+    // loads the keyset's index key once, during construction.
+    let cipher = StackCipher::new().await?;
+    // Terms bind to a keyset: this handle derives every term under the
+    // default keyset's index key.
+    let terms = cipher.default_keyset();
+    println!("cipher ready on keyset {}", terms.keyset_id());
+
+    // One cipher serves write time and query time; terms are deterministic
+    // under the same index key + context, which is what makes them queryable.
+    // Deriving a term touches no data keys, so a query builder never calls
+    // ZeroKMS to build a probe.
+
+    // --- Equality: exact-match lookups --------------------------------------
+    //
+    // The context, the pair ("users", "email"), domain-separates terms per
+    // field: the same
+    // value indexed under another field can never produce a colliding term.
+
+    let stored: EqualityTerm = "alice@example.com"
+        .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
+        .await?;
+
+    let hit: EqualityTerm = "alice@example.com"
+        .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
+        .await?;
+    let miss: EqualityTerm = "bob@example.com"
+        .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
+        .await?;
+    let wrong_field: EqualityTerm = "alice@example.com"
+        .encrypt_into_with_context(&terms, nonempty!("users").with("name"))
+        .await?;
+
+    println!("\nequality:");
+    println!("  same value, same field   => match: {}", stored == hit);
+    println!("  different value          => match: {}", stored == miss);
+    println!(
+        "  same value, other field  => match: {}",
+        stored == wrong_field
+    );
+
+    // --- Match: full-text containment ---------------------------------------
+    //
+    // Text is tokenized locally (3-grams by default), each token is PRF'd, and
+    // the outputs fold into Bloom-filter bit positions. A query matches when
+    // its positions are a subset of the stored term's (Bloom semantics: false
+    // positives possible, false negatives not).
+
+    let bio: MatchTerm = "alice, senior cryptography engineer"
+        .to_string()
+        .encrypt_into_with_context(&terms, nonempty!("users").with("bio"))
+        .await?;
+
+    for query in ["crypto", "engineer", "plumber"] {
+        let probe: MatchTerm = query
+            .to_string()
+            .encrypt_into_with_context(&terms, nonempty!("users").with("bio"))
+            .await?;
+        println!("match: bio contains {query:?} => {}", bio.contains(&probe));
+    }
+    println!(
+        "  (stored term is just bit positions: {:?} ...)",
+        &bio.positions()[..bio.positions().len().min(8)]
+    );
+
+    // --- ORE: range queries --------------------------------------------------
+    //
+    // CLLW ORE ciphertexts compare like their plaintexts. The per-field ORE
+    // key is derived *through the PRF* from the context alone — the plaintext
+    // never enters the PRF, so under the coming 2-party ZeroKMS PRF backend
+    // the key derivation becomes an auditable server event while values stay
+    // local.
+
+    let age_30: OreTerm<u32> = 30u32
+        .encrypt_into_with_context(&terms, nonempty!("users").with("age"))
+        .await?;
+    let age_45: OreTerm<u32> = 45u32
+        .encrypt_into_with_context(&terms, nonempty!("users").with("age"))
+        .await?;
+    let query_40: OreTerm<u32> = 40u32
+        .encrypt_into_with_context(&terms, nonempty!("users").with("age"))
+        .await?;
+
+    println!("\nore (WHERE age > 40):");
+    println!("  age 30 > 40 => {}", age_30 > query_40);
+    println!("  age 45 > 40 => {}", age_45 > query_40);
+
+    // Strings order lexicographically.
+    let apple: OreTerm<&str> = "apple"
+        .encrypt_into_with_context(&terms, nonempty!("users").with("name"))
+        .await?;
+    let banana: OreTerm<&str> = "banana"
+        .encrypt_into_with_context(&terms, nonempty!("users").with("name"))
+        .await?;
+    println!("  \"apple\" < \"banana\" => {}", apple < banana);
+
+    // --- The same terms, as a record --------------------------------------------
+    //
+    // Leaf by leaf is the query side. On the write side a field is stored
+    // as *every* term it needs beside its ciphertext, in one shape: derive
+    // `EncryptFrom` for that shape and each field of it is derived from the
+    // one value under the one context — byte-identical to the leaves above,
+    // so a probe built leaf by leaf finds what the record stored.
+    #[derive(EncryptFrom)]
+    #[stash(plaintext = String)]
+    struct SearchableEmail {
+        c: StackCipherText,
+        eq: EqualityTerm,
+        text: MatchTerm,
+        ord: OreTerm<String>,
+    }
+
+    let record: SearchableEmail = "alice@example.com"
+        .to_string()
+        .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
+        .await?;
+    let probe: MatchTerm = "example"
+        .to_string()
+        .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
+        .await?;
+    println!("\nrecord:");
+    println!(
+        "  equality term equals the leaf's => {}",
+        record.eq == stored
+    );
+    println!(
+        "  match: contains \"example\"      => {}",
+        record.text.contains(&probe)
+    );
+    println!(
+        "  ore: sorts after \"alice\"       => {}",
+        record.ord
+            > "alice"
+                .to_string()
+                .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
+                .await?
+    );
+    let _ = record.c; // the ciphertext, opened with `decrypt_into` under the same context
+
+    Ok(())
+}

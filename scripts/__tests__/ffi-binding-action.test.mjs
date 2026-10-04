@@ -3,7 +3,7 @@
  * action and the Rust workflow that shares its toolchain step.
  *
  * 1. A GitHub Actions cache restore is an untrusted write into the checkout.
- *    `packages/protect-ffi/dist/wasm` holds BOTH wasm-pack output and three
+ *    `languages/typescript/packages/protect-ffi/dist/wasm` holds BOTH wasm-pack output and three
  *    declaration files that are tracked in git (see the package `.gitignore`
  *    for why they are tracked). Caching that directory whole, on a key hashed
  *    from the Rust inputs only, means a restore replaces the checked-out
@@ -46,7 +46,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
 
 const ACTION = '.github/actions/build-ffi-binding/action.yml'
 const RUST_WORKFLOW = '.github/workflows/tests-rust.yml'
-const FFI_PKG = 'packages/protect-ffi'
+const FFI_PKG = 'languages/typescript/packages/protect-ffi'
 
 const read = (rel) => readFileSync(resolve(REPO_ROOT, rel), 'utf8')
 
@@ -268,7 +268,9 @@ describe('build-ffi-binding — cache restores cannot clobber tracked files', ()
   it('found the tracked declaration files this guard exists for', () => {
     // If `git ls-files` returns nothing here — wrong cwd, renamed directory,
     // the .gitignore negations lost — every assertion below passes vacuously.
-    const tracked = trackedUnder('packages/protect-ffi/dist/wasm')
+    const tracked = trackedUnder(
+      'languages/typescript/packages/protect-ffi/dist/wasm',
+    )
     expect(tracked.length).toBeGreaterThanOrEqual(3)
     expect(tracked.every((file) => file.endsWith('.d.ts'))).toBe(true)
   })
@@ -358,15 +360,15 @@ describe('build-ffi-binding — the WASM key covers the build it skips', () => {
  * The third question a cache key has to answer, and the one the two suites
  * above cannot see: does it cover every crate the build COMPILES?
  *
- * Both of those reason about files inside `packages/protect-ffi`. Cargo does
+ * Both of those reason about files inside `languages/typescript/packages/protect-ffi`. Cargo does
  * not. `crates/protect-ffi/Cargo.toml` carries
  *
- *     eql-bindings = { path = "../../../eql/crates/eql-bindings" }
+ *     eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }
  *
  * — an in-tree path dependency in a DIFFERENT package, and a genuine compile
  * input to both `index.node` and the wasm32 build. A path dep carries no
  * registry checksum, so a src-only edit under that crate touches nothing else:
- * not `packages/protect-ffi/crates/**`, not either `Cargo.toml`, and not
+ * not `languages/typescript/packages/protect-ffi/crates/**`, not either `Cargo.toml`, and not
  * `Cargo.lock` (which records the path dep by name and version, and only moves
  * when the version does). Every glob in both keys therefore hashes identically,
  * the restore hits, `Build index.node (cargo)` is SKIPPED, and every
@@ -387,6 +389,14 @@ describe('build-ffi-binding — the WASM key covers the build it skips', () => {
  * dependency's dev-deps, so requiring them in the key would bust the cache on
  * edits that cannot reach the artifact. (`eql-bindings` has one — `eql-domains`,
  * its parity oracle — so this is a live distinction, not a hypothetical.)
+ *
+ * An `optional = true` path dependency is followed only when a dependent turns
+ * it on: the features it requests of that crate (plus `default`, unless it says
+ * `default-features = false`) expand through the crate's `[features]` table to
+ * `dep:NAME`, `NAME` or `NAME/feature`. A weak `NAME?/feature` does not turn
+ * it on, as in cargo. `eql-bindings`' optional `stack-encrypt` is the live case:
+ * protect-ffi enables no feature of it, so stack-encrypt is not compiled into
+ * the binding and its sources are not part of the key.
  */
 
 const CARGO_ROOT_CRATE = `${FFI_PKG}/crates/protect-ffi/Cargo.toml`
@@ -397,7 +407,7 @@ const CARGO_ROOT_CRATE = `${FFI_PKG}/crates/protect-ffi/Cargo.toml`
  *
  * Deliberately a narrow reader over the text rather than a TOML parse: there is
  * no TOML parser in this repo's dependency tree, and `cargo metadata` would put
- * a Rust toolchain on `pnpm test:scripts` — which `packages/protect-ffi`'s
+ * a Rust toolchain on `pnpm test:scripts` — which `languages/typescript/packages/protect-ffi`'s
  * `lintWiring.test.ts` exists to keep off the JS entry points.
  *
  * It reads both spellings cargo accepts: the inline table
@@ -406,6 +416,9 @@ const CARGO_ROOT_CRATE = `${FFI_PKG}/crates/protect-ffi/Cargo.toml`
  * `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]` is read the same
  * as `[dependencies]` — the wasm and native halves of this crate declare
  * different dependency sets and both compile.
+ *
+ * Each dependency carries `optional`, the `features` it requests of the
+ * dependency, and whether it keeps the dependency's `default` features.
  *
  * Exported shape is a pure function of the text so `the manifest reader is
  * sound` below can exercise it on a literal, rather than on whatever the real
@@ -437,26 +450,159 @@ function parsePathDependencies(text) {
       const inline = /^([A-Za-z0-9_-]+)\s*=\s*\{(.*)\}$/.exec(line)
       if (!inline) continue
       const path = /\bpath\s*=\s*"([^"]+)"/.exec(inline[2])
-      if (path) found.push({ name: inline[1], path: path[1] })
+      if (path)
+        found.push({ name: inline[1], path: path[1], ...depOptions(inline[2]) })
     } else if (namedDep) {
+      // The section's keys arrive one per line; collect them into the entry
+      // its `path =` line creates (or will create), whatever their order.
+      let entry = found.find((dep) => dep.section === section)
+      if (!entry) {
+        entry = { section, name: namedDep[3], keys: '' }
+        found.push(entry)
+      }
+      entry.keys += ` ${line},`
       const path = /^path\s*=\s*"([^"]+)"$/.exec(line)
-      if (path) found.push({ name: namedDep[3], path: path[1] })
+      if (path) entry.path = path[1]
     }
   }
   return found
+    .filter((dep) => dep.path !== undefined)
+    .map((dep) =>
+      dep.section === undefined
+        ? dep
+        : { name: dep.name, path: dep.path, ...depOptions(dep.keys) },
+    )
+}
+
+/** `optional`, `features` and `default-features` of one dependency's keys. */
+function depOptions(keys) {
+  const features = /\bfeatures\s*=\s*\[([^\]]*)\]/.exec(
+    keys.replace(/\bdefault-features\s*=\s*\w+/, ''),
+  )
+  return {
+    optional: /\boptional\s*=\s*true\b/.test(keys),
+    features: [...(features?.[1] ?? '').matchAll(/"([^"]+)"/g)].map(
+      ([, feature]) => feature,
+    ),
+    defaultFeatures: !/\bdefault-features\s*=\s*false\b/.test(keys),
+  }
+}
+
+/**
+ * A manifest's `[features]` table, as feature name -> its entries. Arrays may
+ * span lines.
+ */
+function parseFeatures(text) {
+  const features = new Map()
+  let inFeatures = false
+  let pending = null
+  for (const raw of text.split('\n')) {
+    const line = raw.replace(/#.*$/, '').trim()
+    if (pending) {
+      pending.body += ` ${line}`
+      if (line.includes(']')) {
+        features.set(pending.name, entriesOf(pending.body))
+        pending = null
+      }
+      continue
+    }
+    const header = /^\[([^\]]+)\]$/.exec(line)
+    if (header) {
+      inFeatures = header[1] === 'features'
+      continue
+    }
+    if (!inFeatures) continue
+    const feature = /^([A-Za-z0-9_-]+)\s*=\s*\[(.*)$/.exec(line)
+    if (!feature) continue
+    if (feature[2].includes(']'))
+      features.set(feature[1], entriesOf(feature[2]))
+    else pending = { name: feature[1], body: feature[2] }
+  }
+  return features
+}
+
+function entriesOf(body) {
+  return [...body.matchAll(/"([^"]+)"/g)].map(([, entry]) => entry)
+}
+
+/**
+ * The optional dependencies, and the features of each dependency, that a
+ * crate's enabled features turn on, given the features its dependent requested
+ * and whether `default` is on.
+ */
+function enabledByFeatures(features, requested, defaults) {
+  const queue = [...requested, ...(defaults ? ['default'] : [])]
+  const seen = new Set()
+  const deps = new Set()
+  const depFeatures = new Map()
+  // `NAME?/feature` is weak: it never turns NAME on, but it is not discarded
+  // either. If some other enabled feature turns NAME on, cargo applies the
+  // weak request too. Collected here and applied once the enabled set is
+  // known, so the answer does not depend on which feature was walked first.
+  const weak = []
+  const want = (dep, depFeature) =>
+    depFeatures.set(dep, [...(depFeatures.get(dep) ?? []), depFeature])
+  while (queue.length > 0) {
+    const feature = queue.shift()
+    if (seen.has(feature)) continue
+    seen.add(feature)
+    // An optional dependency's implicit feature: requesting `NAME` turns it on.
+    if (!features.has(feature)) deps.add(feature)
+    for (const entry of features.get(feature) ?? []) {
+      if (entry.startsWith('dep:')) {
+        deps.add(entry.slice(4))
+      } else if (entry.includes('/')) {
+        const [dep, depFeature] = entry.split('/')
+        if (dep.endsWith('?')) {
+          weak.push([dep.slice(0, -1), depFeature])
+          continue
+        }
+        deps.add(dep)
+        want(dep, depFeature)
+      } else {
+        queue.push(entry)
+      }
+    }
+  }
+  for (const [dep, depFeature] of weak) {
+    if (deps.has(dep)) want(dep, depFeature)
+  }
+  return { deps, depFeatures }
+}
+
+/**
+ * Whether a crate reached again needs no second walk: everything this edge
+ * asks of it, an earlier visit already asked. `prior` is what that visit
+ * requested (`undefined` on a first visit), `wanted` the features this edge
+ * adds, `defaultFeatures` whether this edge turns `default` on. Cargo compiles
+ * the UNION of what every dependent asks, so a visit asking for more of either
+ * must walk the crate again — otherwise the path dependencies its new features
+ * enable stay out of the cache key.
+ */
+function alreadyWalked(prior, wanted, defaultFeatures) {
+  return (
+    prior !== undefined &&
+    wanted.every((feature) => prior.features.has(feature)) &&
+    (prior.defaults || !defaultFeatures)
+  )
 }
 
 /**
  * Every crate `cargo build` compiles into the artifact, as repo-relative
  * directories, starting from the cdylib crate and following path deps
  * transitively. The starting crate itself is excluded: it lives under
- * `packages/protect-ffi/crates/**`, which both keys already hash.
+ * `languages/typescript/packages/protect-ffi/crates/**`, which both keys already hash.
  */
 function compiledPathDependencies(rootManifestRel) {
   const crates = new Map()
   const unresolved = []
+  // Per manifest, the features requested of it so far and whether `default`
+  // is on. A crate reached again with more of either is walked again: the
+  // union is what cargo compiles.
+  const requested = new Map([
+    [rootManifestRel, { features: new Set(), defaults: true }],
+  ])
   const queue = [rootManifestRel]
-  const seen = new Set([rootManifestRel])
 
   while (queue.length > 0) {
     const manifestRel = queue.shift()
@@ -465,15 +611,31 @@ function compiledPathDependencies(rootManifestRel) {
       unresolved.push(manifestRel)
       continue
     }
-    for (const dep of parsePathDependencies(readFileSync(full, 'utf8'))) {
+    const text = readFileSync(full, 'utf8')
+    const asked = requested.get(manifestRel)
+    const enabled = enabledByFeatures(
+      parseFeatures(text),
+      asked.features,
+      asked.defaults,
+    )
+    for (const dep of parsePathDependencies(text)) {
+      if (dep.optional && !enabled.deps.has(dep.name)) continue
       const dirRel = relative(
         REPO_ROOT,
         resolve(dirname(full), dep.path),
       ).replaceAll('\\', '/')
       const depManifest = `${dirRel}/Cargo.toml`
       if (!crates.has(dirRel)) crates.set(dirRel, dep.name)
-      if (seen.has(depManifest)) continue
-      seen.add(depManifest)
+      const wanted = [
+        ...dep.features,
+        ...(enabled.depFeatures.get(dep.name) ?? []),
+      ]
+      const prior = requested.get(depManifest)
+      if (alreadyWalked(prior, wanted, dep.defaultFeatures)) continue
+      requested.set(depManifest, {
+        features: new Set([...(prior?.features ?? []), ...wanted]),
+        defaults: (prior?.defaults ?? false) || dep.defaultFeatures,
+      })
       queue.push(depManifest)
     }
   }
@@ -539,14 +701,94 @@ describe('build-ffi-binding — the keys cover every crate the build compiles', 
       native = { path = "../native" }
 
       [dependencies.sectioned]
+      optional = true
       path = "../sectioned"
+      features = ["x"]
+
+      [target.'cfg(unix)'.dependencies]
+      gated = { path = "../gated", optional = true, default-features = false, features = ["a", "b"] }
     `)
+    const plain = { optional: false, features: [], defaultFeatures: true }
     expect(deps).toEqual([
-      { name: 'inline', path: '../inline' },
-      { name: 'codegen', path: '../codegen' },
-      { name: 'native', path: '../native' },
-      { name: 'sectioned', path: '../sectioned' },
+      { name: 'inline', path: '../inline', ...plain },
+      { name: 'codegen', path: '../codegen', ...plain },
+      { name: 'native', path: '../native', ...plain },
+      {
+        name: 'sectioned',
+        path: '../sectioned',
+        optional: true,
+        features: ['x'],
+        defaultFeatures: true,
+      },
+      {
+        name: 'gated',
+        path: '../gated',
+        optional: true,
+        features: ['a', 'b'],
+        defaultFeatures: false,
+      },
     ])
+  })
+
+  it('follows an optional path dependency only when a feature turns it on', () => {
+    // The live case: `eql-bindings` declares `stack-encrypt` optional, and
+    // protect-ffi enables no feature of it, so stack-encrypt is not compiled
+    // into the binding. Reading every `path =` as a compile input would put its
+    // sources in the key and bust the cache on edits that cannot reach it.
+    const features = parseFeatures(`
+      [features]
+      default = ["std"]
+      std = []
+      crypto = ["dep:gated", "helper/extra"]
+      weak = ["lazy?/extra"]
+      multi = [
+        "crypto",
+      ]
+    `)
+    expect(enabledByFeatures(features, [], true).deps).toEqual(new Set())
+    expect(enabledByFeatures(features, ['crypto'], false).deps).toEqual(
+      new Set(['gated', 'helper']),
+    )
+    expect(enabledByFeatures(features, ['multi'], false).deps).toEqual(
+      new Set(['gated', 'helper']),
+    )
+    expect(
+      enabledByFeatures(features, ['crypto'], false).depFeatures.get('helper'),
+    ).toEqual(['extra'])
+    expect(enabledByFeatures(features, ['weak'], false).deps).toEqual(new Set())
+    // …but once another feature turns the dependency on, the weak request
+    // applies — whichever order the two features are walked in. Dropping it
+    // would omit a feature that may enable a further path dependency, and the
+    // key would miss a real build input.
+    for (const order of [
+      ['weak', 'lazy'],
+      ['lazy', 'weak'],
+    ]) {
+      const on = enabledByFeatures(features, order, false)
+      expect(on.deps).toEqual(new Set(['lazy']))
+      expect(on.depFeatures.get('lazy')).toEqual(['extra'])
+    }
+    // An optional dependency's implicit feature.
+    expect(enabledByFeatures(features, ['gated'], false).deps).toEqual(
+      new Set(['gated']),
+    )
+  })
+
+  it('re-walks a crate reached again with more features or with defaults on', () => {
+    // The walk below runs this against the real tree, where no crate is
+    // reached twice with different feature sets today, so the rule only ever
+    // sees `prior === undefined` there. Wrong in the other direction, a crate
+    // reached first without a feature and later with one is not walked again,
+    // and the path dependencies that feature enables stay out of the key.
+    const lean = { features: new Set(['a']), defaults: false }
+    expect(alreadyWalked(undefined, [], true)).toBe(false)
+    expect(alreadyWalked(lean, ['a'], false)).toBe(true)
+    expect(alreadyWalked(lean, [], false)).toBe(true)
+    expect(alreadyWalked(lean, ['a', 'b'], false)).toBe(false)
+    expect(alreadyWalked(lean, ['a'], true)).toBe(false)
+    const full = { features: new Set(['a']), defaults: true }
+    expect(alreadyWalked(full, ['a'], true)).toBe(true)
+    expect(alreadyWalked(full, ['b'], true)).toBe(false)
   })
 
   it('found the path dependencies it means to check', () => {

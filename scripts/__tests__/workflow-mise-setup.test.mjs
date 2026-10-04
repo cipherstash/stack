@@ -18,7 +18,7 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  * is three hops deep and entirely invisible in the workflow file:
  *
  *     version: pnpm run version                       (release.yml)
- *       -> "changeset version && node scripts/sync-lockstep-versions.mjs"
+ *       -> "changeset version && … && node scripts/sync-lockstep-versions.mjs"
  *                                                     (root package.json)
  *          -> execFileSync('mise', ['run', 'release:prepare_bindings_assets'…])
  *                                                     (that script)
@@ -332,14 +332,18 @@ describe('the mise setup step carries the inputs it depends on', () => {
 
   it('points every mise setup step at a directory that has a mise config', () => {
     // THE TRUST ERROR. mise reads config from the current directory and its
-    // PARENTS, and this repo has NO mise config at its root — the two that
-    // exist are `packages/eql/mise.toml` and `packages/protect-ffi/mise.toml`.
-    // So an action running at the default working directory finds nothing to
-    // install and leaves the config untrusted, and the first `mise run` fails
-    // with "Config files … are not trusted", which reads as a broken toolchain
-    // rather than a wrong directory. In `release.yml` that file is also where
-    // the Rust toolchain comes from (`[tools] rust`), so the same input is what
-    // makes the step a cargo setup; there is deliberately no second one.
+    // PARENTS. The repo has three mise configs: the root `mise.toml` (the
+    // stack-* crates and the Go module), `packages/eql/mise.toml` and
+    // `languages/typescript/packages/protect-ffi/mise.toml`. A job pointed at
+    // the wrong one installs the wrong tools and leaves the config it needs
+    // untrusted, and the first `mise run` fails with "Config files … are not
+    // trusted", which reads as a broken toolchain rather than a wrong
+    // directory. So every step names its directory, even a root job
+    // (`working_directory: .`): with a root config, an unset directory would
+    // now find the ROOT config and quietly pass an EQL job that forgot
+    // `packages/eql`. In `release.yml` the named file is also where the Rust
+    // toolchain comes from (`[tools] rust`), so the same input is what makes
+    // the step a cargo setup; there is deliberately no second one.
     const offenders = MISE_STEPS.filter(({ inputs }) => {
       const dir = inputs?.working_directory
       if (typeof dir !== 'string' || dir.trim() === '') return true
@@ -353,7 +357,7 @@ describe('the mise setup step carries the inputs it depends on', () => {
 
     expect(
       offenders,
-      'These `jdx/mise-action` steps do not name a directory containing a mise config. There is no mise config at the repo root, so mise installs nothing and marks the config untrusted — the first `mise run` then fails with a TRUST error that looks like a toolchain problem.',
+      'These `jdx/mise-action` steps do not name a directory containing a mise config. Set `working_directory:` explicitly — `.` for the root `mise.toml` (the stack-* crates and Go), `packages/eql` or `languages/typescript/packages/protect-ffi` for theirs. Without it mise reads whichever config the default directory reaches, installs the wrong tools, and leaves the one the job needs untrusted — the first `mise run` then fails with a TRUST error that looks like a toolchain problem.',
     ).toEqual([])
   })
 

@@ -22,11 +22,11 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * sentence — the docs should state the CONDITION under which it fires and point
  * at `node scripts/release-gate.mjs` for the answer.
  *
- * The second half is the deletion that is already scheduled. Phase 5 removes
- * the `@cipherstash/eql` entry from the map, and on that day both documents
- * become wrong in the other direction — still instructing agents about a freeze
- * that no longer exists. Keyed on the map rather than on a date, so the cutover
- * PR cannot land the code change without the prose.
+ * The second half is the deletion. Phase 5 removed the `@cipherstash/eql`
+ * entry from the map, which made every document wrong in the other direction —
+ * still instructing agents about a freeze that no longer existed. Keyed on the
+ * map rather than on a date, so the cutover PR could not land the code change
+ * without the prose, and so a package frozen later is held to the same rule.
  *
  * THE THIRD DRIFT, and the reason `SECURITY.md` is now in the list. Its "Note
  * on publishing" named the seven `@cipherstash/protect-ffi*` packages as still
@@ -47,21 +47,38 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  */
 
 const EQL = '@cipherstash/eql'
+const AUTH = '@cipherstash/auth'
 
-/** Where the freeze is explained, and the instruction each file carries. */
+/**
+ * Where each freeze is explained, and the instruction each file carries.
+ *
+ * `pkg` is the map key the instruction is about. The @cipherstash/auth freeze
+ * (the wrapper and its six platform packages, keyed here by the wrapper) was
+ * deleted by the arming PR of the stack-* crates import. Its rows stay, so
+ * neither document can describe it again; `historical` is the wording each
+ * instruction was written for, which keeps an assertion of absence able to
+ * fail.
+ */
 const DOCS = [
   {
+    pkg: EQL,
     file: 'AGENTS.md',
     // Both spellings resolve to "the `@cipherstash/eql` entry", which is the
     // thing Phase 5 deletes — matching that keeps the guard anchored to the
     // instruction rather than to a paragraph that may be rewritten.
     instruction: /`@cipherstash\/eql` entry/,
+    historical: 'Delete the `@cipherstash/eql` entry in the Phase-5 cutover.',
   },
   {
+    pkg: EQL,
     file: 'docs/plans/2026-08-13-eql-monorepo-absorption.md',
     instruction: /`@cipherstash\/eql` entry/,
+    historical:
+      'Phase-5 action: delete the `@cipherstash/eql` entry from ' +
+      '`FROZEN_PUBLISHERS`, nothing more.',
   },
   {
+    pkg: EQL,
     file: 'SECURITY.md',
     // Not a regex, and deliberately: this is `foreignPublishClaims` run over
     // the file, so the SAME extractor that forbids a wrong name below is what
@@ -69,6 +86,28 @@ const DOCS = [
     // would otherwise silently turn the prohibition into a no-op while this
     // assertion went on passing against a pattern nothing else uses.
     instruction: (body) => foreignPublishClaims(body).includes(EQL),
+    historical:
+      '> `@cipherstash/eql` and the `eql-bindings` crate are\n' +
+      '> developed here but are *published* from `cipherstash/encrypt-query-language`\n' +
+      '> until the Phase 5 cutover in\n',
+  },
+  {
+    pkg: AUTH,
+    file: 'AGENTS.md',
+    instruction: /`@cipherstash\/auth\*?` entries/,
+    historical:
+      '**Delete the `@cipherstash/auth*` entries in the arming PR of the stack-*\n' +
+      '  crates import.**',
+  },
+  {
+    pkg: AUTH,
+    file: 'SECURITY.md',
+    instruction: (body) => foreignPublishClaims(body).includes(AUTH),
+    historical:
+      '> **Note on publishing.** `@cipherstash/auth` and its six platform packages,\n' +
+      '> and the `stack-auth` and `stack-profile` crates, are developed here but are\n' +
+      '> *published* from `cipherstash/cipherstash-suite` until the arming PR of the\n' +
+      '> stack-* crates import repoints them.\n',
   },
 ]
 
@@ -179,28 +218,33 @@ const satisfies = (instruction, body) =>
   typeof instruction === 'function' ? instruction(body) : instruction.test(body)
 
 describe('frozen-publisher docs track the map', () => {
-  it('still has a frozen entry to document', () => {
-    // The map going empty is the Phase-5 end state and a legitimate one — but
-    // it must arrive with the doc edits below, not ahead of them. An empty map
-    // here means every `iff` assertion is vacuous, so say so out loud.
-    expect(FROZEN_PUBLISHERS.size).toBeGreaterThan(0)
-  })
-
   it.each(DOCS)(
-    '$file documents the eql freeze iff the map carries it',
-    ({ file, instruction }) => {
-      expect(
-        satisfies(instruction, read(file)),
-        FROZEN_PUBLISHERS.has(EQL)
-          ? `${file} no longer tells an agent about the ${EQL} freeze, but ` +
-              'FROZEN_PUBLISHERS still carries it.'
-          : `${EQL} has left FROZEN_PUBLISHERS (Phase-5 cutover), so ${file} ` +
-              'must stop instructing agents about the freeze.',
-      ).toBe(FROZEN_PUBLISHERS.has(EQL))
+    '$file instruction still recognises the $pkg freeze wording it was written for',
+    ({ instruction, historical }) => {
+      // With EQL out of the map, the `iff` below asserts ABSENCE, which an
+      // instruction that matches nothing passes vacuously. The pre-cutover
+      // wording is the fixture that keeps it able to fail.
+      expect(satisfies(instruction, flatten(historical))).toBe(true)
     },
   )
 
-  it.each(DOCS)('$file freezes only what the map freezes', ({ file }) => {
+  it.each(DOCS)(
+    '$file documents the $pkg freeze iff the map carries it',
+    ({ pkg, file, instruction }) => {
+      expect(
+        satisfies(instruction, read(file)),
+        FROZEN_PUBLISHERS.has(pkg)
+          ? `${file} no longer tells an agent about the ${pkg} freeze, but ` +
+              'FROZEN_PUBLISHERS still carries it.'
+          : `${pkg} has left FROZEN_PUBLISHERS (its publishing cutover), so ${file} ` +
+              'must stop instructing agents about the freeze.',
+      ).toBe(FROZEN_PUBLISHERS.has(pkg))
+    },
+  )
+
+  const FILES = [...new Set(DOCS.map(({ file }) => file))]
+
+  it.each(FILES)('%s freezes only what the map freezes', (file) => {
     const claimed = [...new Set(foreignPublishClaims(read(file)))]
     expect(
       claimed.filter((name) => !FROZEN_PUBLISHERS.has(name)),
@@ -212,7 +256,7 @@ describe('frozen-publisher docs track the map', () => {
     ).toEqual([])
   })
 
-  it.each(DOCS)('$file asserts no live gate verdict', ({ file }) => {
+  it.each(FILES)('%s asserts no live gate verdict', (file) => {
     const body = read(file)
     expect(
       LIVE_VERDICT_CLAIMS.filter((claim) => claim.test(body)).map(String),

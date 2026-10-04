@@ -12,24 +12,24 @@ on:
     branches:
       - 'main'
     paths:
-      - 'packages/stack/src/eql/v3/**'
-      - 'packages/stack-drizzle/**'
-      - 'packages/stack-supabase/**'
+      - 'languages/typescript/packages/stack/src/eql/v3/**'
+      - 'languages/typescript/packages/stack-drizzle/**'
+      - 'languages/typescript/packages/stack-supabase/**'
       # Shared match-index defaults live outside src/eql/v3 but shape every
       # emitted v3 match block (load-bearing `k`/`m` ciphertext params), so edits
       # here must trigger the v3 gate too.
-      - 'packages/stack/src/schema/match-defaults.ts'
-      - 'packages/stack/package.json'
+      - 'languages/typescript/packages/stack/src/schema/match-defaults.ts'
+      - 'languages/typescript/packages/stack/package.json'
       - '.github/workflows/fta-v3.yml'
   pull_request:
     branches:
       - "**"
     paths:
-      - 'packages/stack/src/eql/v3/**'
-      - 'packages/stack-drizzle/**'
-      - 'packages/stack-supabase/**'
-      - 'packages/stack/src/schema/match-defaults.ts'
-      - 'packages/stack/package.json'
+      - 'languages/typescript/packages/stack/src/eql/v3/**'
+      - 'languages/typescript/packages/stack-drizzle/**'
+      - 'languages/typescript/packages/stack-supabase/**'
+      - 'languages/typescript/packages/stack/src/schema/match-defaults.ts'
+      - 'languages/typescript/packages/stack/package.json'
       - '.github/workflows/fta-v3.yml'
 
 permissions:
@@ -44,7 +44,7 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v6.0.10
+      - uses: pnpm/action-setup@v6.1.0
         name: Install pnpm
         with:
           run_install: false

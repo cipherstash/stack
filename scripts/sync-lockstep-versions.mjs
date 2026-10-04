@@ -11,13 +11,14 @@
 // It (paths relative to the monorepo root):
 //   1. reads V from packages/eql/packages/eql/package.json,
 //   2. sets packages/eql/crates/eql-bindings/Cargo.toml [package] version = V,
-//   3. re-resolves that crate in every Cargo.lock that records it from a path,
+//   3. re-resolves that crate in every Cargo.lock that records it from a path
+//      at another version — a lock already at V is left alone,
 //   4. runs `mise run release:prepare_bindings_assets --version V`, which builds
 //      the exact-version SQL and writes it (+ release manifests) into both the
 //      crate and the npm package — UNLESS the tree already carries those assets
 //      at V, in which case step 4 is skipped. See `eqlLockstepSkew` for why.
 //
-// Step 3 is not decoration. Step 2 moves a version that `packages/protect-ffi`'s
+// Step 3 is not decoration. Step 2 moves a version that `languages/typescript/packages/protect-ffi`'s
 // SEPARATE cargo workspace has pinned in its own lock, and nothing else updates
 // it — `packages/eql`'s lock is refreshed as a side effect of step 4, that one
 // by nothing at all. Since no command in this repo passes `--locked`, the stale
@@ -42,13 +43,16 @@ export function bumpCargoPackageVersion(cargo, version) {
   if (!packageSection) {
     throw new Error('no [package] section found in Cargo.toml')
   }
-  const updated = packageSection[0].replace(
-    /^version = "[^"]*"$/m,
-    `version = "${version}"`,
-  )
-  if (updated === packageSection[0]) {
+  const versionLine = /^version = "[^"]*"$/m
+  if (!versionLine.test(packageSection[0])) {
     throw new Error('did not find a version line in the [package] section')
   }
+  // Already at the target is not an error: every release that leaves EQL's
+  // version alone reaches this with the version unchanged.
+  const updated = packageSection[0].replace(
+    versionLine,
+    `version = "${version}"`,
+  )
   return cargo.replace(packageSection[0], updated)
 }
 
@@ -72,10 +76,10 @@ const SKIP_DIRS = new Set([
  * tree, repo-relative.
  *
  * DISCOVERED, not listed. The crate is consumed across cargo workspace
- * boundaries — `packages/protect-ffi/crates/protect-ffi/Cargo.toml` reaches it
- * by `path = "../../../eql/crates/eql-bindings"` — and a hardcoded list is
+ * boundaries — `languages/typescript/packages/protect-ffi/crates/protect-ffi/Cargo.toml` reaches it
+ * by `path = "../../../../../../packages/eql/crates/eql-bindings"` — and a hardcoded list is
  * exactly what was missing before: `packages/eql`'s own lock is refreshed as a
- * side effect of the SQL build below, `packages/protect-ffi`'s was refreshed by
+ * side effect of the SQL build below, `languages/typescript/packages/protect-ffi`'s was refreshed by
  * nothing, and no one noticed because no command in this repo passes
  * `--locked`.
  *
@@ -93,19 +97,26 @@ export function cargoLockWorkspaces(root) {
       }
       if (entry.name !== 'Cargo.lock') continue
       const lock = readFileSync(join(abs, entry.name), 'utf8')
-      const records = lock
-        .split(/^\[\[package\]\]$/m)
-        .slice(1)
-        .some(
-          (block) =>
-            new RegExp(`^name = "${LOCKED_CRATE}"$`, 'm').test(block) &&
-            !/^source = "/m.test(block),
-        )
-      if (records) found.push(relative(root, abs).split(sep).join('/'))
+      if (pathLockedVersion(lock) !== null) {
+        found.push(relative(root, abs).split(sep).join('/'))
+      }
     }
   }
   walk(root)
   return found.sort()
+}
+
+/** The version a `Cargo.lock` records for `LOCKED_CRATE` from a path, or null. */
+export function pathLockedVersion(lock) {
+  for (const block of lock.split(/^\[\[package\]\]$/m).slice(1)) {
+    if (
+      new RegExp(`^name = "${LOCKED_CRATE}"$`, 'm').test(block) &&
+      !/^source = "/m.test(block)
+    ) {
+      return /^version = "([^"]*)"$/m.exec(block)?.[1] ?? null
+    }
+  }
+  return null
 }
 
 /**
@@ -119,22 +130,23 @@ export function cargoLockWorkspaces(root) {
  * `eql-codegen` for the SQL build a few lines below, so there is one Rust here
  * rather than two.
  *
- * NOT `--offline`, however tempting it looks. `eql-bindings` resolves from a
- * path, so the flag reads as free — but `cargo update -p X` does not update X
- * in isolation. It re-resolves the whole graph and rewrites a complete lock,
- * and offline that means every OTHER package has to be served from the local
- * registry cache; `packages/protect-ffi` has 167 of them. The release job has
- * no such cache — `jdx/mise-action` runs there with `cache: false`, installing
- * toolchains and populating nothing under `~/.cargo/registry`, and
- * `scripts/lint-no-workflow-caching.mjs` forbids a cache restore anywhere an
- * artifact is published. So `--offline` died on the first call with
- * `error: no matching package named \`chrono\` found`, taking `pnpm run version`
- * with it AFTER `changeset version` had rewritten every manifest and CHANGELOG.
+ * `--workspace`, NOT `--package eql-bindings`. A path dependency's version is
+ * read from its manifest, so `--workspace` records the bump and keeps every
+ * other locked edge. `--package` also re-picks the edges whose requirement
+ * spans several semver-incompatible `windows-sys` versions (`winapi-util`
+ * 0.1.11 asks for `>=0.48.0, <=0.61`). Every pick is valid, so `--locked`
+ * passes either way, but each run moves them: Version Packages #1020 rewrote
+ * one with no EQL bump at all. cargo 1.90.0, 1.94.1 and 1.99.0 all do it.
  *
- * The two resolutions agree where both can run — verified byte-identical on the
- * 3.0.4 -> 3.0.5 bump, `windows-sys` edges included — so this is a change of
- * where the step works, not of what it produces. Asserted, with the CI
- * precondition it depends on, in scripts/__tests__/sync-lockstep-versions.test.mjs.
+ * NOT `--offline`, however tempting it looks. `cargo update` re-resolves the
+ * whole graph, and offline that means every OTHER package has to be served
+ * from the local registry cache; `languages/typescript/packages/protect-ffi`
+ * has 167 of them. The release job has no such cache — `jdx/mise-action` runs
+ * there with `cache: false`, and `scripts/lint-no-workflow-caching.mjs`
+ * forbids a cache restore anywhere an artifact is published. So `--offline`
+ * died on the first call with `error: no matching package named \`chrono\`
+ * found`, taking `pnpm run version` with it AFTER `changeset version` had
+ * rewritten every manifest and CHANGELOG.
  *
  * `--manifest-path` rather than a second `cwd`, so every cargo invocation in
  * this script runs from the one directory whose mise config is trusted.
@@ -155,13 +167,59 @@ export function refreshCargoLock({
       '--',
       'cargo',
       'update',
-      '--package',
-      LOCKED_CRATE,
+      '--workspace',
       '--manifest-path',
       join(root, workspace, 'Cargo.toml'),
     ],
     { cwd: eqlRoot, stdio: 'inherit' },
   )
+}
+
+/**
+ * Step 3: refresh each lock that records `LOCKED_CRATE` at another version.
+ *
+ * A lock already at `version` is not handed to cargo at all, so a release that
+ * does not bump EQL leaves every `Cargo.lock` byte-for-byte as it was. A lock
+ * that still disagrees after cargo ran fails the release here, before the SQL
+ * build, rather than in `cargo-lock-freshness.test.mjs` on the next PR.
+ */
+export function refreshCargoLocks({
+  root,
+  eqlRoot,
+  version,
+  run = execFileSync,
+  log = console.log,
+}) {
+  const workspaces = cargoLockWorkspaces(root)
+  if (workspaces.length === 0) {
+    throw new Error(
+      `no Cargo.lock under ${root} records \`${LOCKED_CRATE}\` as a path dependency — ` +
+        'the scan that finds the locks to refresh has stopped matching, so the bump above ' +
+        'would leave every one of them stale.',
+    )
+  }
+  const lockedIn = (workspace) =>
+    pathLockedVersion(readFileSync(join(root, workspace, 'Cargo.lock'), 'utf8'))
+
+  const refreshed = []
+  for (const workspace of workspaces) {
+    if (lockedIn(workspace) === version) {
+      log(
+        `${workspace}/Cargo.lock already records ${LOCKED_CRATE} ${version}; not running cargo`,
+      )
+      continue
+    }
+    refreshCargoLock({ root, eqlRoot, workspace, run })
+    const after = lockedIn(workspace)
+    if (after !== version) {
+      throw new Error(
+        `cargo update ran in ${workspace} and its Cargo.lock records ${LOCKED_CRATE} ` +
+          `${after}, not ${version}.`,
+      )
+    }
+    refreshed.push(workspace)
+  }
+  return { workspaces, refreshed }
 }
 
 /**
@@ -514,17 +572,11 @@ function main() {
   // Before the SQL build, not after: this is cheap, so a cargo that cannot run
   // should stop the release in seconds rather than after a full eql-codegen
   // compile.
-  const workspaces = cargoLockWorkspaces(stackRoot)
-  if (workspaces.length === 0) {
-    throw new Error(
-      `no Cargo.lock under ${stackRoot} records \`${LOCKED_CRATE}\` as a path dependency — ` +
-        'the scan that finds the locks to refresh has stopped matching, so the bump above ' +
-        'would leave every one of them stale.',
-    )
-  }
-  for (const workspace of workspaces) {
-    refreshCargoLock({ root: stackRoot, eqlRoot, workspace })
-  }
+  const { workspaces, refreshed } = refreshCargoLocks({
+    root: stackRoot,
+    eqlRoot,
+    version,
+  })
 
   // Build the exact-version SQL and copy it (+ manifests) into both packages —
   // unless the tree already carries them at this version.
@@ -532,7 +584,8 @@ function main() {
 
   console.log(
     `synced EQL lockstep version ${version} to Cargo.toml, ` +
-      `${workspaces.length} Cargo.lock (${workspaces.join(', ')}) + bundled SQL assets ` +
+      `${refreshed.length} of ${workspaces.length} Cargo.lock refreshed ` +
+      `(${refreshed.join(', ') || 'none needed it'}) + bundled SQL assets ` +
       `(${assets.action})`,
   )
 }
@@ -540,7 +593,8 @@ function main() {
 // `fileURLToPath`, not `` `file://${process.argv[1]}` ``: the URL is
 // percent-encoded and the argv path is not, so the template form is false from
 // any checkout path containing a space — and this script's caller is
-// `changeset version && node scripts/sync-lockstep-versions.mjs`, where a
-// silent exit 0 reports a completed lockstep bump that never happened.
+// `changeset version && node scripts/sync-skill-pins.mjs && node
+// scripts/sync-lockstep-versions.mjs`, where a silent exit 0 reports a
+// completed lockstep bump that never happened.
 // `scripts/__tests__/script-main-guards.test.mjs` holds this form repo-wide.
 if (process.argv[1] === fileURLToPath(import.meta.url)) main()

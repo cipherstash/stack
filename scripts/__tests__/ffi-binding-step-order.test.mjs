@@ -192,6 +192,7 @@ const EXPECTED_CREDENTIALED_JOBS = [
   '.github/workflows/tests.yml / run-tests',
   '.github/workflows/tests.yml / run-tests-bun',
   '.github/workflows/tests.yml / wasm-e2e-tests',
+  '.github/workflows/tests-golang.yml / live',
 ]
 
 /**
@@ -207,7 +208,7 @@ const EXPECTED_CREDENTIALED_JOBS = [
  *
  * The two entries are the EQL suite, and they are the first jobs in this repo
  * to encrypt WITHOUT the Node binding. `index.node` is the Node-API wrapper
- * `packages/stack` loads; these are Rust tests linking `cipherstash-client`
+ * `languages/typescript/packages/stack` loads; these are Rust tests linking `cipherstash-client`
  * directly, so a `build-ffi-binding` step here would compile a binding nothing
  * in the job can load and add minutes to the critical path of a suite that
  * already compiles its own encryption core. They still hold live credentials —
@@ -227,6 +228,10 @@ const BINDING_EXEMPT_JOBS = new Map([
   [
     '.github/workflows/test-eql.yml / e2e',
     'Rust: the proptest-e2e oracle encrypts through cipherstash-client, and never loads index.node or dist/wasm.',
+  ],
+  [
+    '.github/workflows/tests-golang.yml / live',
+    'Go and Rust: the Go live tests encrypt through the stack-encrypt WASI guest, and the stack-encrypt examples link the crate directly. Neither loads index.node or dist/wasm.',
   ],
 ])
 
@@ -346,7 +351,7 @@ describe('protect-ffi binding builds after the secrets pre-flight', () => {
  * already pair the two actions, so a job that never builds the binding at all
  * is invisible to them — it is not failing them, it is not in them.
  *
- * That gap is not theoretical. `packages/protect-ffi` is a workspace package
+ * That gap is not theoretical. `languages/typescript/packages/protect-ffi` is a workspace package
  * now, so `lib/`, `index.node` and `dist/wasm/**` are BUILD OUTPUTS rather than
  * tarball contents, and every job that encrypts has to produce them itself. Two
  * credentialed jobs in `tests.yml` were missed when the `workspace:*` links
@@ -354,7 +359,7 @@ describe('protect-ffi binding builds after the secrets pre-flight', () => {
  * `tests/prisma-example-readme.e2e.test.ts`, whose `describe.skipIf` un-skips
  * the moment CS_CLIENT_ID and CS_CLIENT_KEY are set, and whose `pnpm start`
  * step encrypts for real) and `run-tests-bun` (writes the four CS_* into
- * `packages/stack/.env`, then runs 120 `packages/stack` suites of which only 8
+ * `languages/typescript/packages/stack/.env`, then runs 120 `languages/typescript/packages/stack` suites of which only 8
  * mock protect-ffi).
  *
  * The failure mode is `Cannot find module '.../index.node'`, reported once per
@@ -390,7 +395,7 @@ describe('every credentialed job builds the protect-ffi binding', () => {
 
     expect(
       offenders,
-      `These jobs receive CipherStash credentials but never run ${BUILD_FFI}.\n\`packages/protect-ffi\` is a workspace package: \`lib/\`, \`index.node\` and \`dist/wasm/**\` are build outputs, not tarball contents, so a job that encrypts or decrypts must build them itself. Without the step the suite fails with \`Cannot find module '.../protect-ffi-linux-x64-gnu/index.node'\`, once per test.\nAdd the step AFTER any \`${REQUIRE_SECRETS}\` pre-flight and BEFORE anything that consumes the binding. Pass \`wasm: 'true'\` only if the job loads the real WASM build.\nIf a job genuinely does not need it, add it to BINDING_EXEMPT_JOBS with the reason.`,
+      `These jobs receive CipherStash credentials but never run ${BUILD_FFI}.\n\`languages/typescript/packages/protect-ffi\` is a workspace package: \`lib/\`, \`index.node\` and \`dist/wasm/**\` are build outputs, not tarball contents, so a job that encrypts or decrypts must build them itself. Without the step the suite fails with \`Cannot find module '.../protect-ffi-linux-x64-gnu/index.node'\`, once per test.\nAdd the step AFTER any \`${REQUIRE_SECRETS}\` pre-flight and BEFORE anything that consumes the binding. Pass \`wasm: 'true'\` only if the job loads the real WASM build.\nIf a job genuinely does not need it, add it to BINDING_EXEMPT_JOBS with the reason.`,
     ).toEqual([])
   })
 })
@@ -407,7 +412,7 @@ describe('every credentialed job builds the protect-ffi binding', () => {
  * because the job is a legitimate new entry rather than a missing old one.
  *
  * `tests.yml`'s `run-tests-bun` was the live instance: it writes all four CS_*
- * into `packages/stack/.env` and runs `./.github/actions/build-ffi-binding`
+ * into `languages/typescript/packages/stack/.env` and runs `./.github/actions/build-ffi-binding`
  * with no pre-flight before it. It appeared in `EXPECTED_CREDENTIALED_JOBS`,
  * satisfied the coverage check, and generated zero ordering assertions.
  *

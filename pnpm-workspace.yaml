@@ -1,21 +1,30 @@
 packages:
-  - packages/*
+  # Every npm package except EQL lives under languages/typescript/. The root
+  # packages/ holds EQL's subtree, and later the Rust crates.
+  - languages/typescript/packages/*
   # The six per-platform binary packages for @cipherstash/protect-ffi. The
-  # `packages/*` glob above already covers the wrapper itself; these are nested
-  # a level deeper and need their own entry.
-  - packages/protect-ffi/platforms/*
+  # glob above already covers the wrapper itself; these are nested a level
+  # deeper and need their own entry.
+  - languages/typescript/packages/protect-ffi/platforms/*
+  # The node bindings imported from cipherstash-suite. `auth`, `profile` and
+  # `stack-auth-wasm` sit one level down and are already selected by the first
+  # glob; the per-platform packages of `@cipherstash/auth` and
+  # `@cipherstash/profile` are a level deeper, like protect-ffi's.
+  - languages/typescript/packages/auth/platforms/*
+  - languages/typescript/packages/profile/platforms/*
   # @cipherstash/eql, from the encrypt-query-language subtree. The subtree is
   # imported at a VERBATIM prefix so its repo-root-relative paths keep resolving
   # (mise tasks, Doxyfile, sync-generated.mjs), which puts the npm package two
-  # levels down. `packages/*` matches the subtree ROOT, which carries no
-  # package.json by design — the private @cipherstash/eql-workspace manifest was
-  # deleted so this glob contributes exactly one member.
+  # levels down. The subtree ROOT carries no package.json by design — the
+  # private @cipherstash/eql-workspace manifest was deleted so the subtree
+  # contributes exactly one member, through this glob.
   - packages/eql/packages/*
   # The protect-ffi live integration suite. Nested a level deeper than
-  # `packages/*` reaches, like the two entries above, and named literally
-  # rather than globbed because `packages/protect-ffi/*` would also select
-  # `crates/`, `docs/`, `lib/`, `scripts/` and `src/` — directories with no
-  # package.json, which pnpm rejects rather than skips.
+  # `languages/typescript/packages/*` reaches, like the platform entry above,
+  # and named literally rather than globbed because
+  # `languages/typescript/packages/protect-ffi/*` would also select `crates/`,
+  # `docs/`, `lib/`, `scripts/` and `src/` — directories with no package.json,
+  # which pnpm rejects rather than skips.
   #
   # It kept its own `package-lock.json` and installed with `npm ci` until
   # CIP-3744. That was the last registry pin of `@cipherstash/eql` in the tree:
@@ -23,31 +32,12 @@ packages:
   # published bundle while the payloads under test came from the in-tree
   # `eql-bindings` — exactly the skew the subtree import exists to make
   # unrepresentable.
-  - packages/protect-ffi/integration-tests
-  - examples/*
+  - languages/typescript/packages/protect-ffi/integration-tests
+  - languages/typescript/examples/*
   - e2e
 
 catalogs:
   repo:
-    # @cipherstash/auth ships per-platform native bindings as optional
-    # peerDependencies. pnpm does not auto-install platform-matched
-    # optional peer deps, so the consuming packages (stack, cli, wizard)
-    # declare them as `optionalDependencies` via `catalog:repo`.
-    #
-    # LOCKSTEP IS LOAD-BEARING, not tidiness: auth pins its bindings as
-    # EXACT-version optional peer deps, so a skewed set makes npm nest
-    # per-consumer binding copies that the hoisted auth package cannot
-    # resolve — every project-local install of the CLI/SDK then dies with
-    # "Failed to load native binding" (the 1.0.0-rc.2 B1 bug). Enforced by
-    # e2e/tests/supply-chain.e2e.test.ts; Dependabot ignores all seven
-    # names — bump them together, manually.
-    '@cipherstash/auth': 0.44.0
-    '@cipherstash/auth-darwin-arm64': 0.44.0
-    '@cipherstash/auth-darwin-x64': 0.44.0
-    '@cipherstash/auth-linux-arm64-gnu': 0.44.0
-    '@cipherstash/auth-linux-x64-gnu': 0.44.0
-    '@cipherstash/auth-linux-x64-musl': 0.44.0
-    '@cipherstash/auth-win32-x64-msvc': 0.44.0
     '@types/node': 22.20.1
     tsup: 8.5.1
     tsx: 4.23.12
@@ -55,9 +45,8 @@ catalogs:
     vitest: 4.1.11
     # Must track `vitest` exactly: the coverage provider is versioned in
     # lockstep with the runner, and vitest refuses to start against a mismatched
-    # one ("Vitest failed to load @vitest/coverage-v8"). Catalogued for the same
-    # reason the auth bindings are, and enforced the same way — by a test rather
-    # than by this comment: see `e2e/tests/supply-chain.e2e.test.ts`. Dependabot
+    # one ("Vitest failed to load @vitest/coverage-v8"). Enforced by a test
+    # rather than by this comment: see `e2e/tests/supply-chain.e2e.test.ts`. Dependabot
     # groups both under `dev-dependencies` and will otherwise move one alone.
     '@vitest/coverage-v8': 4.1.11
   security:
@@ -75,7 +64,7 @@ catalogs:
 # Related, but NOT fixable as an override: @anthropic-ai/sdk (alert #128,
 # GHSA-p7fg-763f-g4gf) is an auto-installed *peer* of claude-agent-sdk, and
 # pnpm overrides rewrite peer ranges, not peer resolutions. It is fixed by an
-# explicit dependency in packages/wizard — that dep is a peer-resolution pin
+# explicit dependency in languages/typescript/packages/wizard — that dep is a peer-resolution pin
 # (wizard never imports the sdk directly); do not remove it as "unused".
 overrides:
   # #96, #115-#127 — Next.js middleware bypass / SSRF / DoS / XSS batch
@@ -156,7 +145,9 @@ overrides:
   # shape as the js-yaml 4.x entry above. Reached through ajv.
   # #198 CVE-2026-75899, CVE-2026-75931, CVE-2026-75975, CVE-2026-76172 — raised
   # to 3.1.6.
-  'fast-uri@<3.1.6': '3.1.6'
+  # #215 CVE-2026-84394 (GHSA-58mr-gqgx-xq4g) — raised to 3.1.7 (published
+  # 2026-09-02).
+  'fast-uri@<3.1.7': '3.1.7'
   # GHSA-f88m-g3jw-g9cj — sharp's vendored libvips carries multiple High
   # libvips CVEs (CVE-2026-33327, CVE-2026-33328, CVE-2026-35590,
   # CVE-2026-35591), fixed >=0.35.0. Pulled in as an optional dependency of
@@ -180,14 +171,14 @@ blockExoticSubdeps: true
 #                                 retired @prisma-next/* scope is kept for
 #                                 historical installs while anything still pins
 #                                 0.16)
-#   - @cipherstash/auth*         CipherStash-published auth strategies (NAPI +
-#                                 WASM-inline variant); also tracked in lockstep
-#                                 with protect-ffi for the WASM path.
+#
+# @cipherstash/auth* was listed here until the stack-* crates import made the
+# seven packages workspace packages, for the same reason as the EQL entry below.
 #
 # @cipherstash/eql was listed here until the encrypt-query-language subtree
 # landed. It is now a workspace package, so no pnpm install ever resolves it
 # from the registry and the entry became dead config. The last holdout was
-# packages/protect-ffi/integration-tests, which pinned it by version and
+# languages/typescript/packages/protect-ffi/integration-tests, which pinned it by version and
 # installed with `npm ci` — outside pnpm entirely, so minimumReleaseAge never
 # applied there either. That directory is a workspace member as of CIP-3744 and
 # resolves `workspace:^`, so there is now nothing in the tree that could.
@@ -195,5 +186,3 @@ minimumReleaseAgeExclude:
   - '@prisma-next/*'
   - '@prisma/orm-*'
   - 'prisma-next'
-  - '@cipherstash/auth'
-  - '@cipherstash/auth-*'

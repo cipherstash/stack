@@ -1,0 +1,5 @@
+error: `struct = ..` needs a `context = ".."` beside it naming the stored data (e.g. `#[stash(struct = User, context = "users")]`): each field is derived under the pair `("<context>", "<field>")`, and the prefix is part of the stored data's identity, so it is given explicitly rather than inferred from the Rust type's name
+  --> tests/ui/struct_without_context.rs:13:18
+   |
+13 | #[stash(struct = User)]
+   |                  ^^^^

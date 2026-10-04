@@ -13,11 +13,16 @@ import {
  *
  * `FROZEN_PUBLISHERS` in `scripts/release-gate.mjs` lists the packages that
  * live in this repo but are published from somewhere else. `@cipherstash/eql`
- * is the only one left — published from `cipherstash/encrypt-query-language`
- * until the Phase-5 cutover. (The seven protect-ffi packages were on that list
- * too, until their own cutover moved publishing here.) For the duration of such
- * a split, a version of the frozen package can appear on npm WITHOUT passing
- * through this repository at all.
+ * was the last one, published from `cipherstash/encrypt-query-language` until
+ * its Phase-5 cutover; the seven protect-ffi packages left before it. For the
+ * duration of such a split, a version of the frozen package can appear on npm
+ * WITHOUT passing through this repository at all.
+ *
+ * The map is empty now, so the real-tree assertion below checks nothing until
+ * the next package is frozen. The rest drive the same scan with EQL's old
+ * freeze injected, which is the shape this rule was written against and the
+ * one the real tree still carries (`workspace:*` in `stash` and
+ * `@cipherstash/stack-prisma`).
  *
  * That is fine for a `workspace:` specifier as pnpm resolves it in the
  * workspace — it resolves in-tree, by definition. It is not fine for what pnpm
@@ -57,7 +62,7 @@ import {
  * absent there: pnpm rewrites the `workspace:` specifier in that table too and
  * the rewritten range does ship inside the packed `package.json`, but nothing
  * installing the package ever resolves it. The asymmetry is live in this tree —
- * `packages/stack` declares `@cipherstash/eql` under `devDependencies` and is
+ * `languages/typescript/packages/stack` declares `@cipherstash/eql` under `devDependencies` and is
  * not a finding — so it is asserted below rather than left as an absence.
  */
 const RUNTIME_TABLES = new Set([
@@ -66,13 +71,20 @@ const RUNTIME_TABLES = new Set([
   'peerDependencies',
 ])
 
+/** EQL's pre-cutover freeze, as a fixture. */
+const FROZEN_EQL = new Map([
+  ['@cipherstash/eql', 'publisher not repointed yet'],
+])
+
 /** Every frozen-publisher `workspace:` declaration in the tree, as data. */
-function frozenDeclarations() {
-  const manifests = workspaceManifests()
+function frozenDeclarations({
+  frozen = FROZEN_PUBLISHERS,
+  manifests = workspaceManifests(),
+} = {}) {
   const byName = new Map(manifests.map((manifest) => [manifest.name, manifest]))
   return manifests.flatMap((manifest) =>
     (manifest.workspaceDeps ?? [])
-      .filter((dep) => FROZEN_PUBLISHERS.has(dep.name))
+      .filter((dep) => frozen.has(dep.name))
       .map((dep) => {
         const target = byName.get(dep.name)
         return {
@@ -91,22 +103,54 @@ function frozenDeclarations() {
 /** The id a finding is reported by — the string a reader has to go and find. */
 const declarationId = (d) => `${d.consumer} [${d.table}] :: ${d.dependency}`
 
+/** Runtime declarations of a frozen package that do not pack exact. */
+const loosePins = (declarations) =>
+  declarations
+    .filter((d) => !d.consumerPrivate && RUNTIME_TABLES.has(d.table))
+    .filter((d) => d.packed !== d.targetVersion)
+    .map((d) => `${declarationId(d)} = ${d.spec} -> packs as ${d.packed}`)
+
 describe('frozen-publisher runtime pins', () => {
   it('packs every runtime frozen-publisher dependency as an exact version', () => {
-    const loose = frozenDeclarations()
-      .filter((d) => !d.consumerPrivate && RUNTIME_TABLES.has(d.table))
-      .filter((d) => d.packed !== d.targetVersion)
-      .map((d) => `${declarationId(d)} = ${d.spec} -> packs as ${d.packed}`)
+    expect(loosePins(frozenDeclarations())).toEqual([])
+  })
 
-    expect(loose).toEqual([])
+  it('packs EQL exact in the real tree, with EQL frozen by fixture', () => {
+    expect(loosePins(frozenDeclarations({ frozen: FROZEN_EQL }))).toEqual([])
+  })
+
+  it('faults a caret on a frozen package in a runtime table', () => {
+    // Without this, a scan that flagged nothing would be indistinguishable
+    // from a tree that has nothing to flag.
+    const manifests = [
+      { name: '@cipherstash/eql', version: '3.0.5', private: false },
+      {
+        name: 'stash',
+        version: '1.0.0',
+        private: false,
+        workspaceDeps: [
+          {
+            table: 'dependencies',
+            name: '@cipherstash/eql',
+            spec: 'workspace:^',
+          },
+        ],
+      },
+    ]
+    expect(
+      loosePins(frozenDeclarations({ frozen: FROZEN_EQL, manifests })),
+    ).toEqual([
+      'stash [dependencies] :: @cipherstash/eql = workspace:^ -> packs as ^3.0.5',
+    ])
   })
 
   it('sees the declarations it is supposed to be checking', () => {
     // A scan that stops matching exits green having checked nothing — the
     // failure mode `EXPECTED_DECLARERS` guards in the sibling linter. The floor
-    // here is the same idea: a frozen publisher must still be reachable from a
-    // published package's runtime tables, or the assertion above is vacuous.
-    const runtime = frozenDeclarations().filter(
+    // here is the same idea: the fixture freeze must still be reachable from a
+    // published package's runtime tables, or the fixture-driven assertion
+    // above is vacuous.
+    const runtime = frozenDeclarations({ frozen: FROZEN_EQL }).filter(
       (d) => !d.consumerPrivate && RUNTIME_TABLES.has(d.table),
     )
     expect(runtime.length).toBeGreaterThan(0)
@@ -116,7 +160,7 @@ describe('frozen-publisher runtime pins', () => {
   })
 
   it('does not fault a devDependency, which no consumer installs', () => {
-    // `packages/stack` and the protect-ffi integration suite both declare
+    // `languages/typescript/packages/stack` and the protect-ffi integration suite both declare
     // `@cipherstash/eql` under `devDependencies`. They are the cases that prove
     // the narrowing above is a decision rather than an oversight: if either
     // appears in the finding list, RUNTIME_TABLES has drifted from
@@ -128,7 +172,7 @@ describe('frozen-publisher runtime pins', () => {
     // consumer. `@cipherstash/ffi-integration-tests` is private and packs into
     // no tarball at all — `consumerPrivate` already excuses it one filter up,
     // so it would not be a finding even in a runtime table.
-    const dev = frozenDeclarations().filter(
+    const dev = frozenDeclarations({ frozen: FROZEN_EQL }).filter(
       (d) =>
         d.dependency === '@cipherstash/eql' && d.table === 'devDependencies',
     )

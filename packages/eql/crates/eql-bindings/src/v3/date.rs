@@ -9,6 +9,11 @@ use ts_rs::TS;
 /// `public.eql_v3_date` — storage-only domain.
 ///
 /// Operators: none. Required keys: `v` `i` `c`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL date reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -40,6 +45,11 @@ impl DomainType for Date {
 /// `public.eql_v3_date_eq` — equality domain.
 ///
 /// Operators: `=` `<>`. Required keys: `v` `i` `c` `hm`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL date reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -72,6 +82,11 @@ impl DomainType for DateEq {
 /// `public.eql_v3_date_ord_ore` — ordering domain.
 ///
 /// Operators: `=` `<>` `<` `<=` `>` `>=`. Required keys: `v` `i` `c` `ob`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL date reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -104,6 +119,11 @@ impl DomainType for DateOrdOre {
 /// `public.eql_v3_date_ord` — ordering domain.
 ///
 /// Operators: `=` `<>` `<` `<=` `>` `>=`. Required keys: `v` `i` `c` `op`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL date reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -136,6 +156,11 @@ impl DomainType for DateOrd {
 /// `public.eql_v3_date_ord_ope` — ordering domain.
 ///
 /// Operators: `=` `<>` `<` `<=` `>` `>=`. Required keys: `v` `i` `c` `op`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL date reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -168,6 +193,11 @@ impl DomainType for DateOrdOpe {
 /// `eql_v3.query_date_eq` — equality domain query operand.
 ///
 /// Operators: `=` `<>`. Required keys: `v` `i` `hm`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL date reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -199,6 +229,11 @@ impl DomainType for DateEqQuery {
 /// `eql_v3.query_date_ord_ore` — ordering domain query operand.
 ///
 /// Operators: `=` `<>` `<` `<=` `>` `>=`. Required keys: `v` `i` `ob`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL date reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -230,6 +265,11 @@ impl DomainType for DateOrdOreQuery {
 /// `eql_v3.query_date_ord` — ordering domain query operand.
 ///
 /// Operators: `=` `<>` `<` `<=` `>` `>=`. Required keys: `v` `i` `op`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL date reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]
@@ -261,6 +301,11 @@ impl DomainType for DateOrdQuery {
 /// `eql_v3.query_date_ord_ope` — ordering domain query operand.
 ///
 /// Operators: `=` `<>` `<` `<=` `>` `>=`. Required keys: `v` `i` `op`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL date reference](https://cipherstash.com/docs/reference/eql/dates-and-times) for SQL domain variants, operators, and query examples."
+)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
 #[serde(deny_unknown_fields)]

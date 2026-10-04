@@ -1,4 +1,4 @@
 - packages/protect
 - packages/schema
 - packages/protect-dynamodb
-- packages/stack
+- languages/typescript/packages/stack

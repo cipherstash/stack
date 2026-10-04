@@ -1,0 +1,72 @@
+[package]
+name = "protect-ffi"
+version = "0.1.0"
+# Never published to crates.io. This crate is a cdylib compiled into
+# `index.node` and shipped inside the `@cipherstash/protect-ffi-<platform>` npm
+# packages; it has no Rust-consumer identity. Without this key cargo treats it
+# as publishable, so the release-plz adoption that arrives with the EQL import
+# would try to publish it. Guarded by
+# `scripts/__tests__/cargo-publish-opt-out.test.mjs`.
+publish = false
+license = "MIT"
+description = "Native FFI bindings to the CipherStash Client SDK"
+repository = "https://github.com/cipherstash/stack"
+edition = "2021"
+exclude = ["index.node"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+base85 = "2.0.0"
+chrono = { version = "0.4.42", default-features = false, features = ["serde"] }
+cipherstash-client = { version = "=0.42.3", features = ["tokio"] }
+cts-common = { version = "=0.42.3", default-features = false }
+# In-tree, not from crates.io. This is the anti-skew guarantee the EQL import
+# was for: the Rust that emits EQL payloads and the SQL that stores them now
+# move together, because they are the same commit. A registry pin here lets the
+# two drift silently — the failure mode is a payload the installed SQL cannot
+# read, and it surfaces in a customer's database rather than in CI. Guarded by
+# `scripts/lint-no-eql-registry-pins.mjs`.
+#
+# `packages/eql/crates/eql-bindings` is a member of the EQL Cargo workspace, not
+# this one. Cargo accepts a path dep across workspaces (the crate declares no
+# `[lints] workspace = true`, so it carries nothing to inherit), and the two
+# workspaces stay separate deliberately — see Phase 3 of
+# `docs/plans/2026-08-13-eql-monorepo-absorption.md`.
+eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }
+stack-auth = { version = "=0.42.3" }
+hex = "0.4.3"
+# Carries the error code across the FFI boundary (#146). `derive` is the only
+# feature wanted: `fancy` pulls in the terminal-size / colour-support crates the
+# graphical reporter needs, which is a CLI concern and would not build for
+# `wasm32-unknown-unknown`. miette is already in the tree on both targets —
+# cipherstash-client, stack-auth and cts-common all depend on it.
+miette = { version = "7.6", default-features = false, features = ["derive"] }
+once_cell = "1.20.2"
+rust_decimal = "1.37"
+serde = "1.0.218"
+serde_json = { version = "1.0.139", features = ["raw_value"] }
+thiserror = "2.0.18"
+uuid = { version = "1.7", features = ["serde"] }
+vitaminc = { version = "=0.1.0-pre4.2", features = ["random", "protected"] }
+zeroize = { version = "1.8", features = ["derive"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+neon = { version = "1", features = ["serde", "tokio"] }
+stack-profile = { version = "=0.42.3" }
+tokio = { version = "1", features = ["full"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "sync"] }
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+serde-wasm-bindgen = "0.6"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["console"] }
+console_error_panic_hook = "0.1"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[dev-dependencies]
+quickcheck = "1.0.3"
+quickcheck_macros = "1.0.3"

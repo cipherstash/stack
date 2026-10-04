@@ -96,44 +96,47 @@ describe('supply chain — pnpm configuration', () => {
     }
   })
 
-  it('@cipherstash/auth and its six platform bindings are catalog-pinned in lockstep', () => {
+  it('@cipherstash/auth and its six platform bindings resolve from the workspace in lockstep', () => {
     // Not tidiness — a load-bearing invariant. @cipherstash/auth pins its
     // bindings as EXACT-version optional peerDependencies, while stash /
     // stack / wizard declare the bindings in their own optionalDependencies
-    // (pnpm doesn't auto-install optional peer deps). If the seven catalog
-    // entries skew, npm nests per-consumer binding copies that the hoisted
-    // auth package cannot resolve, and every project-local install of the
-    // CLI/SDK dies at startup with "Failed to load native binding". That is
-    // exactly what happened in 1.0.0-rc.2: Dependabot bumped the six
-    // bindings to 0.42.0 while the ignored @cipherstash/auth stayed 0.41.0.
-    // Dependabot now ignores all seven names; this test catches every other
-    // way the set can drift.
+    // (pnpm doesn't auto-install optional peer deps). If the seven skew, npm
+    // nests per-consumer binding copies that the hoisted auth package cannot
+    // resolve, and every project-local install of the CLI/SDK dies at startup
+    // with "Failed to load native binding" — 1.0.0-rc.2, when they were
+    // registry pins. As workspace packages in one changesets `fixed` group
+    // (auth-build-artifacts.test.mjs), `workspace:*` packs each range as the
+    // same exact version, and a catalog entry would be a pin that can drift.
+    const isAuth = (name: string) =>
+      name === '@cipherstash/auth' || name.startsWith('@cipherstash/auth-')
     const ws = readYaml('pnpm-workspace.yaml') as {
       catalogs?: Record<string, Record<string, string>>
     }
-    const repo = ws.catalogs?.repo ?? {}
-    const authEntries = Object.entries(repo).filter(
-      ([name]) =>
-        name === '@cipherstash/auth' || name.startsWith('@cipherstash/auth-'),
-    )
-    // The wrapper + the six platform bindings. A count change means a
-    // binding was added/removed upstream — update the consumers' package
-    // JSONs and this expectation together.
-    expect(authEntries.length).toBe(7)
-    const versions = new Set(authEntries.map(([, v]) => v))
+    expect(Object.keys(ws.catalogs?.repo ?? {}).filter(isAuth)).toEqual([])
+
+    const specifiers = globSync('languages/typescript/**/package.json', {
+      cwd: REPO_ROOT,
+      exclude: (path) => path.includes('node_modules'),
+    }).flatMap((file) => {
+      const manifest = readJson(file) as Record<string, unknown>
+      return [
+        'dependencies',
+        'devDependencies',
+        'optionalDependencies',
+      ].flatMap((table) =>
+        Object.entries((manifest[table] ?? {}) as Record<string, string>)
+          .filter(([name]) => isAuth(name))
+          .map(([name, range]) => `${file} ${name}@${range}`),
+      )
+    })
+    // stack, stash and wizard declare all seven; the protect-ffi suite one.
+    expect(specifiers.length).toBeGreaterThanOrEqual(22)
     expect(
-      versions.size,
-      `@cipherstash/auth* catalog entries have skewed versions: ${authEntries
-        .map(([n, v]) => `${n}@${v}`)
-        .join(', ')}`,
-    ).toBe(1)
+      specifiers.filter((entry) => !entry.endsWith('@workspace:*')),
+    ).toEqual([])
   })
 
   it('vitest and @vitest/coverage-v8 are catalog-pinned in lockstep', () => {
-    // The same shape as the auth set above, one dependency along, and it needs
-    // its own assertion because that one filters on the `@cipherstash/auth`
-    // prefix and cannot see this pair.
-    //
     // `@vitest/coverage-v8` is versioned against the runner, not
     // independently: vitest refuses to start against a mismatched provider
     // ("Vitest failed to load @vitest/coverage-v8"). Both are in the
@@ -274,7 +277,7 @@ describe('supply chain — pnpm-lock.yaml integrity', () => {
   })
 
   it('@anthropic-ai/sdk resolves to the peer-pinned patched version (≥ 0.106.0)', () => {
-    // Not an override but a peer-resolution pin: packages/wizard depends on
+    // Not an override but a peer-resolution pin: languages/typescript/packages/wizard depends on
     // @anthropic-ai/sdk@^0.106.0 to force the auto-installed peer of
     // @anthropic-ai/claude-agent-sdk past the advisory-vulnerable 0.81.0
     // (GHSA-p7fg-763f-g4gf). The override-effect test cannot cover a peer
@@ -657,9 +660,10 @@ const ignoresAllSemverMajor = (entry: DependabotUpdate): boolean =>
 // this check exists to catch — and glob-expanding it here would hide it.
 //
 // A glob is satisfied by matching AT LEAST ONE directory holding the manifest,
-// not all of them. `/packages/*` under the npm entry would fail an every-match
-// rule against this very tree today: packages/utils/ holds only config/ and
-// logger/, with no package.json of its own.
+// not all of them. `/languages/typescript/packages/*` under the npm entry
+// would fail an every-match rule against this very tree today:
+// languages/typescript/packages/utils/ holds only config/ and logger/, with no
+// package.json of its own.
 //
 // Expanded with node:fs `globSync` (Node 22, which package.json engines already
 // require) rather than a glob library — this package has none, and a check on
@@ -755,7 +759,7 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
     // Derived from the filesystem, not from a list of ecosystems we expect —
     // so the NEXT lockfile someone adds (a new language, a nested manifest)
     // fails here instead of quietly going unmonitored. Absorbing
-    // packages/protect-ffi is precisely that event: it brought a 494-crate
+    // languages/typescript/packages/protect-ffi is precisely that event: it brought a 494-crate
     // Cargo.lock in-tree, which osv-scanner already scans for known
     // advisories (`--recursive ./` reaches it) while nothing proposed the
     // routine version bumps.
@@ -763,7 +767,7 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
     // Coverage is asserted per ECOSYSTEM, not per directory. Dependabot's npm
     // entry at `/` follows the pnpm workspace, so it reaches every member's
     // manifest through the single root `pnpm-lock.yaml`. The one lockfile that
-    // sat outside that — packages/protect-ffi/integration-tests's own
+    // sat outside that — languages/typescript/packages/protect-ffi/integration-tests's own
     // `package-lock.json`, a standalone `npm ci` harness — is gone as of
     // CIP-3744, and the suite now resolves from the repo lockfile like
     // everything else.
@@ -805,7 +809,7 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
     // wrong directory monitors nothing, and fails silently — Dependabot logs
     // "no manifest found" on a page nobody visits, and the symptom is just an
     // absence of PRs. Load-bearing for cargo, whose workspace root is
-    // packages/protect-ffi, not the repo root.
+    // languages/typescript/packages/protect-ffi, not the repo root.
     for (const entry of db.updates) {
       const ecosystem = entry['package-ecosystem']
       const manifest = MANIFEST_BY_ECOSYSTEM[ecosystem]
@@ -823,12 +827,15 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
   it('a `directories` glob is expanded; the same pattern under `directory` is not', () => {
     // No entry in .github/dependabot.yml uses `directories` today, so the glob
     // branch above ships with no live coverage — and the first person to write
-    // `directories: ["/packages/*"]` would otherwise be failed by a check
+    // `directories: ["/languages/typescript/packages/*"]` would otherwise be failed by a check
     // reporting "no package.json" at a path that was never meant to be literal.
     // Synthetic entries because this suite asserts against the real config as
     // committed; exercising a branch must not mean editing it.
     expect(
-      unmonitoredDirectories({ directories: ['/packages/*'] }, 'package.json'),
+      unmonitoredDirectories(
+        { directories: ['/languages/typescript/packages/*'] },
+        'package.json',
+      ),
     ).toEqual([])
     // Literal paths remain valid under `directories` — globbing is an
     // extension of the key, not a requirement of it.
@@ -853,7 +860,10 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
     // written there monitors nothing and must fail even though the identical
     // pattern passes above.
     expect(
-      unmonitoredDirectories({ directory: '/packages/*' }, 'package.json'),
+      unmonitoredDirectories(
+        { directory: '/languages/typescript/packages/*' },
+        'package.json',
+      ),
     ).toHaveLength(1)
     // An empty list fails too. It has no entry to be wrong about, so a
     // per-directory check reports nothing and the entry passes while

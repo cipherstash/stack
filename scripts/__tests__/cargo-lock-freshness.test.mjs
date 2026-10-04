@@ -1,5 +1,5 @@
-import { readdirSync, readFileSync } from 'node:fs'
-import { join, relative, sep } from 'node:path'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { dirname, join, relative, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 
@@ -11,7 +11,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  *
  * `scripts/sync-lockstep-versions.mjs` rewrites
  * `packages/eql/crates/eql-bindings/Cargo.toml` on every lockstep bump — that
- * is its job. `packages/protect-ffi` depends on that crate BY PATH
+ * is its job. `languages/typescript/packages/protect-ffi` depends on that crate BY PATH
  * (`crates/protect-ffi/Cargo.toml`), so its `Cargo.lock` records the version
  * too, and nothing was updating it. After the 3.0.5 bump the lock still said
  * `eql-bindings 3.0.4` and `cargo metadata --locked` exited 101.
@@ -26,7 +26,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  *
  * `--locked` is the exact check and it needs a Rust toolchain. `AGENTS.md` is
  * explicit that the default `test` and `build` scripts must never invoke cargo
- * — root `pnpm test` reaches `packages/protect-ffi`, so a cargo call on that
+ * — root `pnpm test` reaches `languages/typescript/packages/protect-ffi`, so a cargo call on that
  * path is a Rust toolchain on every contributor's machine — and `pnpm run
  * test:scripts` has the same reach, since everyone runs it.
  *
@@ -36,7 +36,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * narrower than `--locked` — a lock stale because a crate gained a NEW
  * dependency still passes here — but it is the whole of the lockstep failure
  * mode, it runs everywhere, and it costs nothing. Pairing it with a `--locked`
- * invocation on `packages/protect-ffi`'s `test:cargo` path would close the
+ * invocation on `languages/typescript/packages/protect-ffi`'s `test:cargo` path would close the
  * remainder; that script is owned elsewhere.
  */
 
@@ -77,12 +77,33 @@ function findFiles(name) {
  * `version = "…"` line, and reading "the first version in the file" would pick
  * up whichever came first.
  */
-function crateManifest(source) {
+function crateManifest(source, file) {
   const section = source.match(/^\[package\]\n(?:(?!^\[).*\n)*/m)
   if (!section) return null
   const name = /^name = "([^"]*)"$/m.exec(section[0])
-  const version = /^version = "([^"]*)"$/m.exec(section[0])
-  return name && version ? { name: name[1], version: version[1] } : null
+  const version = /^version\.workspace = true$/m.test(section[0])
+    ? workspaceVersion(file)
+    : /^version = "([^"]*)"$/m.exec(section[0])?.[1]
+  return name && version ? { name: name[1], version } : null
+}
+
+/**
+ * `[workspace.package] version` from the nearest enclosing workspace root, for
+ * a crate that declares `version.workspace = true` (the node binding crates in
+ * the root workspace).
+ */
+function workspaceVersion(file) {
+  let dir = dirname(dirname(join(REPO_ROOT, file)))
+  for (;;) {
+    const manifest = join(dir, 'Cargo.toml')
+    if (existsSync(manifest)) {
+      const source = readFileSync(manifest, 'utf8')
+      const table = source.match(/^\[workspace\.package\]\n(?:(?!^\[).*\n)*/m)
+      if (table) return /^version = "([^"]*)"$/m.exec(table[0])?.[1] ?? null
+    }
+    if (dir === REPO_ROOT || dirname(dir) === dir) return null
+    dir = dirname(dir)
+  }
 }
 
 /**
@@ -112,7 +133,7 @@ export function localLockEntries(source) {
 const CRATES = new Map()
 const AMBIGUOUS = []
 for (const file of findFiles('Cargo.toml')) {
-  const crate = crateManifest(readFileSync(join(REPO_ROOT, file), 'utf8'))
+  const crate = crateManifest(readFileSync(join(REPO_ROOT, file), 'utf8'), file)
   if (!crate) continue // a virtual manifest: `[workspace]` with no `[package]`
   const existing = CRATES.get(crate.name)
   if (existing && existing.version !== crate.version) {
@@ -148,9 +169,31 @@ describe('Cargo.lock records this tree’s crates at their real versions', () =>
     // Named specifically because it is the one with a mechanism actively
     // pushing it out of sync: `scripts/sync-lockstep-versions.mjs` writes its
     // `Cargo.toml` on every release. If this crate ever drops out of the pair
-    // set, the check that matters most has silently stopped running.
-    expect(PAIRS.filter(({ name }) => name === 'eql-bindings').length).toBe(
-      LOCKS.length,
+    // set, the check that matters most has silently stopped running. It is
+    // in the two locks whose workspaces build it; the stack-* workspaces do
+    // not depend on it.
+    expect(
+      PAIRS.filter(({ name }) => name === 'eql-bindings')
+        .map(({ lock }) => lock)
+        .sort(),
+    ).toEqual([
+      'languages/typescript/packages/protect-ffi/Cargo.lock',
+      'packages/eql/Cargo.lock',
+    ])
+  })
+
+  it('finds the root lock and the five detached stack-* locks', () => {
+    // The root workspace and the workspaces it excludes: the three cargo-fuzz
+    // crates and the two Go WASI guests, each with its own lock.
+    expect(LOCKS).toEqual(
+      expect.arrayContaining([
+        'Cargo.lock',
+        'packages/stack-auth/fuzz/Cargo.lock',
+        'packages/stack-kms/fuzz/Cargo.lock',
+        'packages/stack-encrypt/fuzz/Cargo.lock',
+        'languages/golang/stackencrypt/guest/Cargo.lock',
+        'languages/golang/stackauth/guest/Cargo.lock',
+      ]),
     )
   })
 
@@ -174,7 +217,7 @@ describe('Cargo.lock records this tree’s crates at their real versions', () =>
   })
 
   it('locks each crate at the version its Cargo.toml declares', () => {
-    // THE DEFECT. `packages/protect-ffi/Cargo.lock` said `eql-bindings 3.0.4`
+    // THE DEFECT. `languages/typescript/packages/protect-ffi/Cargo.lock` said `eql-bindings 3.0.4`
     // while the crate said 3.0.5, because the lockstep sync rewrote the
     // manifest and no command in this repo passes `--locked`.
     const offenders = PAIRS.filter(

@@ -35,6 +35,7 @@
  * pointing at a version nobody can install.
  */
 import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import {
   appendFileSync,
   globSync,
@@ -54,6 +55,18 @@ const REPO_ROOT = resolve(import.meta.dirname, '..')
  * separates the two publisher branches.
  */
 export const FFI_PREFIX = '@cipherstash/protect-ffi'
+
+/**
+ * The second native-binary line: the `@cipherstash/auth` napi wrapper and its
+ * six `@cipherstash/auth-*` platform packages, imported from cipherstash-suite
+ * with the stack-* crates. Same reasoning as `FFI_PREFIX`: without its own
+ * branch an unpublished auth version reads as `js`, and `changeset publish`
+ * then packs the platform workspaces, which have no `.node` binary in them.
+ *
+ * A prefix, not a name: no other workspace package starts with it —
+ * `@cipherstash/stack-auth-wasm` does not.
+ */
+export const AUTH_PREFIX = '@cipherstash/auth'
 
 /**
  * Names whose committed version is absent from the registry.
@@ -76,9 +89,12 @@ export function unpublished(manifests, lookup) {
 
 /** Which publisher branches the unpublished set requires. */
 export function classify(names) {
+  const native = (name) =>
+    name.startsWith(FFI_PREFIX) || name.startsWith(AUTH_PREFIX)
   return {
     ffi: names.some((name) => name.startsWith(FFI_PREFIX)),
-    js: names.some((name) => !name.startsWith(FFI_PREFIX)),
+    auth: names.some((name) => name.startsWith(AUTH_PREFIX)),
+    js: names.some((name) => !native(name)),
   }
 }
 
@@ -100,10 +116,10 @@ const DEPENDENCY_TABLES = [
  * specifier there too, and the rewritten range does ship inside the packed
  * `package.json` — but nothing installing the package ever resolves it, so an
  * unsatisfiable one breaks nobody. That asymmetry is live in this tree:
- * `packages/stack` declares `"@cipherstash/eql": "workspace:^"` under
+ * `languages/typescript/packages/stack` declares `"@cipherstash/eql": "workspace:^"` under
  * devDependencies and is not a finding — a caret there is harmless, which is
- * why it is still written that way, while `packages/cli` and
- * `packages/stack-prisma` carry the same dependency under `dependencies` and
+ * why it is still written that way, while `languages/typescript/packages/cli` and
+ * `languages/typescript/packages/stack-prisma` carry the same dependency under `dependencies` and
  * pin it with `workspace:*` so the packed range is exact.
  */
 const INSTALLED_TABLES = new Set([
@@ -126,8 +142,13 @@ const INSTALLED_TABLES = new Set([
  * whether it is still true, in the shape of `EXEMPT_DECLARATIONS` in
  * `scripts/lint-no-eql-registry-pins.mjs`.
  *
- * Each entry is DELETED by the cutover that repoints its publisher — for
- * `@cipherstash/eql` that is the Phase-5 release cutover.
+ * Each entry is DELETED by the cutover that repoints its publisher.
+ * `@cipherstash/eql`'s Phase-5 release cutover repointed npm and crates.io
+ * trusted publishing at this repository and deleted its entry here, and the
+ * arming PR of the stack-* crates import did the same for the seven
+ * `@cipherstash/auth` packages, which is why the map is empty. Empty is a
+ * legitimate state, not a retired mechanism — the next package that lives
+ * here before its publisher moves goes back in, with its artefact below.
  *
  * DELETE IT IN THAT PR, not afterwards. An entry left behind does not fail on
  * the day it goes wrong, it fails on the next release: while the package sits
@@ -139,14 +160,7 @@ const INSTALLED_TABLES = new Set([
  * `release-gate.test.mjs` now asserts their absence, so the map has a test for
  * what is NOT in it as well as what is.
  */
-export const FROZEN_PUBLISHERS = new Map([
-  [
-    '@cipherstash/eql',
-    'Still published from cipherstash/encrypt-query-language — the npm provenance on ' +
-      '3.0.5 names that repository and `release.yml` here carries no NPM_TOKEN. Repointing ' +
-      'is Phase 5 of docs/plans/2026-08-13-eql-monorepo-absorption.md.',
-  ],
-])
+export const FROZEN_PUBLISHERS = new Map([])
 
 /**
  * For each frozen package, the artefact whose bytes must equal the published
@@ -161,13 +175,15 @@ export const FROZEN_PUBLISHERS = new Map([
  * the digest manifest is regenerated with the artefact and goes on agreeing
  * with it. Only the registry disagrees.
  *
- * `@cipherstash/eql` is the case that proves it. The subtree sat at `3.0.5`
- * with an install bundle hashing `7ad9c9f8…` while npm's `3.0.5` was
- * `accde0030…` — upstream had restored the deprecated `ste_vec_contains`
- * aliases in the actual release. `packages/cli`'s installer reads that SQL
- * verbatim (`readInstallSql`, no digest check), so `stash eql install` would
- * have put functions into a customer database that the version it reports does
- * not define. It was caught by a human reading the diff.
+ * `@cipherstash/eql`, while it was frozen, was the case that proved it. The
+ * subtree sat at `3.0.5` with an install bundle hashing `7ad9c9f8…` while npm's
+ * `3.0.5` was `accde0030…` — upstream had restored the deprecated
+ * `ste_vec_contains` aliases in the actual release. `languages/typescript/packages/cli`'s installer
+ * reads that SQL verbatim (`readInstallSql`, no digest check), so
+ * `stash eql install` would have put functions into a customer database that
+ * the version it reports does not define. It was caught by a human reading the
+ * diff. `release-gate.test.mjs` keeps that entry as a fixture, so the `field`
+ * check is still driven over the real tree although no entry here uses it.
  *
  * The digest is read from each side's release manifest rather than hashed
  * here: the manifest is the artefact's own statement about itself, so a
@@ -179,22 +195,28 @@ export const FROZEN_PUBLISHERS = new Map([
  * that by equality, so a frozen publisher added without an artefact fails
  * rather than silently getting no bytes check. Both entries are DELETED
  * together by the cutover that repoints the publisher.
+ *
+ * ## Three shapes of entry
+ *
+ *   * `field` — a digest read out of a release manifest on each side, as for
+ *     `@cipherstash/eql` while it was frozen (the fixture in
+ *     `release-gate.test.mjs`).
+ *   * `files` — for a package with no such manifest. The gate hashes each
+ *     listed file with sha256, in the tree and in the published tarball, and
+ *     a mismatch names the file. `@cipherstash/auth` was frozen in this shape
+ *     from the stack-* crates import until its arming PR: the list was every
+ *     tracked file the wrapper publishes except `package.json`, which
+ *     publishing rewrites. Such a list cannot see a compiled binary's source.
+ *   * `noTreeBytes` — a package whose tarball holds nothing the tree has, only
+ *     a binary built in CI. CHECK C skips it, and the string says why. The
+ *     entry still exists so the key-equality test holds, and CHECK A still
+ *     blocks a version npm does not carry. The six `@cipherstash/auth-*`
+ *     platform packages were frozen in this shape.
+ *
+ * No entry uses any of the three shapes today. They stay, with their tests,
+ * for the next package that lives here before its publisher moves.
  */
-export const FROZEN_ARTEFACT_DIGESTS = new Map([
-  [
-    '@cipherstash/eql',
-    {
-      label: 'install SQL (sql/release-manifest.json :: installSqlSha256)',
-      // Repo-relative. The subtree root carries no package.json, so the npm
-      // package is two levels down — see AGENTS.md, "Working on EQL".
-      inTree: 'packages/eql/packages/eql/sql/release-manifest.json',
-      // Inside the tarball, under its `package/` prefix. `sql/` is a build
-      // output there, published as `dist/sql/`.
-      published: 'package/dist/sql/release-manifest.json',
-      field: 'installSqlSha256',
-    },
-  ],
-])
+export const FROZEN_ARTEFACT_DIGESTS = new Map([])
 
 /**
  * The range pnpm writes into the packed `package.json` for a `workspace:`
@@ -491,6 +513,21 @@ export function frozenBytesSkew({
       )
     }
 
+    // Nothing in the tree to compare. An empty reason is a declaration that
+    // has lost its justification, so it throws like a missing artefact.
+    if ('noTreeBytes' in artefact) {
+      if (
+        typeof artefact.noTreeBytes !== 'string' ||
+        artefact.noTreeBytes.trim() === ''
+      ) {
+        throw new Error(
+          `${name} declares \`noTreeBytes\` with no reason. Say why the tarball ` +
+            'holds nothing the tree has, or declare a `field` or `files` artefact.',
+        )
+      }
+      continue
+    }
+
     const published = publishedDigest(name, version, artefact)
     if (published === null || published === undefined) continue
 
@@ -501,12 +538,38 @@ export function frozenBytesSkew({
         package: name,
         version,
         label: artefact.label,
-        local,
-        published,
+        ...differingLines(local, published),
       })
     }
   }
   return blockers
+}
+
+/**
+ * For a `files` artefact, only the files that differ.
+ *
+ * Its digest is one `<published path> <sha256>` line per file, so the lines
+ * that differ are the files that differ, and the report names them rather
+ * than printing fifteen hashes. A `field` digest is a single line, and passes
+ * through unchanged.
+ */
+function differingLines(local, published) {
+  const left = String(local).split('\n')
+  const right = String(published).split('\n')
+  if (left.length === 1 && right.length === 1) return { local, published }
+  const only = (lines, other) =>
+    lines.filter((line) => !other.includes(line)).join('\n              ')
+  return { local: only(left, right), published: only(right, left) }
+}
+
+/** One `<published path> <sha256>` line per listed file. */
+function fileDigests(files, read) {
+  return files
+    .map(({ published }) => {
+      const hash = createHash('sha256').update(read(published)).digest('hex')
+      return `${published} ${hash}`
+    })
+    .join('\n')
 }
 
 /**
@@ -648,8 +711,31 @@ function digestField(manifest, artefact, source) {
   return value
 }
 
-/** The digest an artefact's IN-TREE release manifest claims for itself. */
+/**
+ * The digest an artefact's IN-TREE release manifest claims for itself — or,
+ * for a `files` artefact, the sha256 of each listed file on disk.
+ *
+ * A listed file that is missing THROWS, naming it: a stale list must not pass
+ * quietly, for the same reason a missing field throws.
+ */
 export function inTreeArtefactDigest(_name, artefact) {
+  if (artefact.files) {
+    const byPublished = new Map(
+      artefact.files.map((file) => [file.published, file.inTree]),
+    )
+    return fileDigests(artefact.files, (published) => {
+      const inTree = byPublished.get(published)
+      try {
+        return readFileSync(join(REPO_ROOT, inTree))
+      } catch (err) {
+        throw new Error(
+          `${inTree} is listed in FROZEN_ARTEFACT_DIGESTS but cannot be read ` +
+            `(${err.code ?? err.message}). Fix the list rather than leaving the ` +
+            'check disarmed.',
+        )
+      }
+    })
+  }
   const path = join(REPO_ROOT, artefact.inTree)
   return digestField(
     JSON.parse(readFileSync(path, 'utf8')),
@@ -683,12 +769,12 @@ export function inTreeArtefactDigest(_name, artefact) {
  *
  * `ETARGET` AS WELL AS `E404`. npm answers a missing PACKAGE with `E404` and a
  * missing VERSION of an existing package with `ETARGET` — and the second is the
- * case this function documents: `@cipherstash/eql@<next>` on every release
- * before upstream publishes it. Classifying on `E404` alone turned that into an
- * uncaught throw with an empty reason, raised while building the blocker array,
- * so `reportBlockers` never ran and the actionable `frozen-publisher` message
- * was never printed. Both codes are registry ANSWERS, not transport failures;
- * anything else still throws.
+ * case this function documents: `@cipherstash/eql@<next>` was exactly that on
+ * every release while upstream still published it. Classifying on `E404`
+ * alone turned that into an uncaught throw with an empty reason, raised while
+ * building the blocker array, so `reportBlockers` never ran and the actionable
+ * `frozen-publisher` message was never printed. Both codes are registry
+ * ANSWERS, not transport failures; anything else still throws.
  */
 export function publishedArtefactDigest(name, version, artefact) {
   const spec = `${name}@${version}`
@@ -715,12 +801,15 @@ export function publishedArtefactDigest(name, version, artefact) {
       )
     }
 
+    // One member for a `field` artefact, every listed file for a `files` one.
+    // A member missing from the tarball fails the extraction, which names it.
+    const members = artefact.files
+      ? artefact.files.map((file) => file.published)
+      : [artefact.published]
     try {
-      execFileSync(
-        'tar',
-        ['-xzf', join(dir, packed), '-C', dir, artefact.published],
-        { stdio: ['ignore', 'pipe', 'pipe'] },
-      )
+      execFileSync('tar', ['-xzf', join(dir, packed), '-C', dir, ...members], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
     } catch (err) {
       // Already fail-closed — this call sits outside the E404 catch above — but
       // the message was `Command failed: tar -xzf …` with tar's own stderr
@@ -728,12 +817,17 @@ export function publishedArtefactDigest(name, version, artefact) {
       // the one worth naming: the published layout moved.
       const text = `${err.stdout ?? ''}${err.stderr ?? ''}`
       throw new Error(
-        `${spec}: could not extract \`${artefact.published}\` from the published tarball. ` +
+        `${spec}: could not extract \`${members.join('`, `')}\` from the published tarball. ` +
           'The package layout has changed — update the `published` path in ' +
           `FROZEN_ARTEFACT_DIGESTS.\n${text.trim() || err.message}`,
       )
     }
 
+    if (artefact.files) {
+      return fileDigests(artefact.files, (published) =>
+        readFileSync(join(dir, published)),
+      )
+    }
     return digestField(
       JSON.parse(readFileSync(join(dir, artefact.published), 'utf8')),
       artefact,
@@ -852,7 +946,16 @@ export function reportBlockers(blockers) {
   )
 }
 
-function main() {
+/**
+ * The maps are parameters so the process tests can drive the blocking path
+ * with a fixture, whatever the real maps hold. Deliberately not reachable
+ * from the command line: no flag or environment variable changes what a real
+ * run freezes.
+ */
+export function main({
+  frozen = FROZEN_PUBLISHERS,
+  artefacts = FROZEN_ARTEFACT_DIGESTS,
+} = {}) {
   const manifests = workspaceManifests()
   // One cache across both questions: `unpublished` and `publishBlockers` ask
   // the registry about overlapping sets, and `npm view` is a network round trip
@@ -864,20 +967,23 @@ function main() {
   }
 
   const missing = unpublished(manifests, lookup)
-  const { ffi, js } = classify(missing)
+  const { ffi, auth, js } = classify(missing)
 
   console.log(
     missing.length
       ? `unpublished: ${missing.join(', ')}`
       : 'nothing to publish — every committed version is on the registry',
   )
-  console.log(`ffi=${ffi} js=${js}`)
+  console.log(`ffi=${ffi} auth=${auth} js=${js}`)
 
-  // `ffi` and `js` only: the unpublished list was written here too and no job
+  // The three flags only: the unpublished list was written here too and no job
   // ever declared it as an output, so it was reachable by nothing. The
   // `console.log` above is where that list is actually read, in the job log.
   if (process.env.GITHUB_OUTPUT) {
-    appendFileSync(process.env.GITHUB_OUTPUT, `ffi=${ffi}\njs=${js}\n`)
+    appendFileSync(
+      process.env.GITHUB_OUTPUT,
+      `ffi=${ffi}\nauth=${auth}\njs=${js}\n`,
+    )
   }
 
   // AFTER the outputs are written, and before anything acts on them. The
@@ -892,9 +998,11 @@ function main() {
   // that downloads anything, and there is no point paying for a tarball on a
   // run that is already refusing for a reason a tarball cannot change.
   const blockers = [
-    ...publishBlockers({ manifests, lookup }),
+    ...publishBlockers({ manifests, lookup, frozen }),
     ...frozenBytesSkew({
       manifests,
+      frozen,
+      artefacts,
       inTreeDigest: inTreeArtefactDigest,
       publishedDigest: publishedArtefactDigest,
     }),
@@ -905,7 +1013,6 @@ function main() {
   }
 }
 
-// Importable without running: the unit tests exercise the two pure functions
-// above, and neither the workspace scan nor the registry lookups may fire on
-// import.
+// Importable without running: the unit tests exercise the functions above,
+// and neither the workspace scan nor the registry lookups may fire on import.
 if (process.argv[1] === fileURLToPath(import.meta.url)) main()

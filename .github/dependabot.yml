@@ -43,17 +43,6 @@ updates:
         patterns:
           - "@types/*"
     ignore:
-      # Catalog-managed; bump manually via pnpm-workspace.yaml + changeset.
-      - dependency-name: "@cipherstash/auth"
-      # The platform bindings MUST move in lockstep with @cipherstash/auth:
-      # auth pins them as exact-version optional peer deps, so a skewed set
-      # makes npm nest per-consumer binding copies the hoisted auth package
-      # cannot resolve, and every project-local install of the CLI/SDK dies
-      # with "Failed to load native binding". Dependabot once bumped these
-      # six to 0.42.0 while the ignored auth stayed 0.41.0 (the rc.2 B1
-      # bug). Bump all seven catalog entries together, manually. Lockstep is
-      # enforced by e2e/tests/supply-chain.e2e.test.ts.
-      - dependency-name: "@cipherstash/auth-*"
       # 0.x bumps ship breaking type changes (e.g. 0.2 → 0.3 tightened the
       # FailureOption constraint). Review and apply manually.
       - dependency-name: "@byteslice/result"
@@ -62,7 +51,7 @@ updates:
         update-types:
           - version-update:semver-major
 
-  # ── Cargo (packages/protect-ffi — one of two Rust workspaces) ───
+  # ── Cargo (languages/typescript/packages/protect-ffi — one of two Rust workspaces) ───
   # Absorbing protect-ffi brought a 494-crate Cargo.lock in-tree. osv-scanner
   # already sees it — `--recursive ./` walks the tree and extracts every
   # lockfile it recognises — so known advisories were visible from day one, but
@@ -76,7 +65,7 @@ updates:
     # A misaimed directory fails silently: Dependabot records "no manifest
     # found" on a log page nobody visits, and the symptom is simply that no PR
     # ever arrives. The e2e test asserts this path holds a Cargo.toml.
-    directory: /packages/protect-ffi
+    directory: /languages/typescript/packages/protect-ffi
     # Monthly, where npm and actions are weekly. The deviation is about
     # validation cost, not risk appetite: a Cargo.lock bump is checked by
     # tests-rust.yml — one Blacksmith job, 45-minute timeout, cargo test +
@@ -126,13 +115,12 @@ updates:
           - patch
     ignore:
       # The CipherStash crates are pinned with EXACT `=` requirements in
-      # crates/protect-ffi/Cargo.toml and are the same release train as the
-      # @cipherstash/auth catalog entries above — cipherstash-client,
-      # cts-common, stack-auth and stack-profile all sit at =0.42.0, matching
-      # the catalog's 0.42.0. Dependabot bumping a subset is the Rust version
-      # of the rc.2 B1 bug recorded above: it would rewrite one `=` pin and
-      # leave the rest, and the crates do not tolerate skew. Bump them
-      # together, manually, in step with the npm catalog.
+      # crates/protect-ffi/Cargo.toml and are one release train —
+      # cipherstash-client, cts-common, stack-auth and stack-profile all sit at
+      # the same `=` version. Dependabot bumping a subset would rewrite one `=`
+      # pin and leave the rest, and the crates do not tolerate skew (a skewed
+      # @cipherstash/auth platform set was the npm form of this, the rc.2 B1
+      # bug). Bump them together, manually.
       #
       # Caveat worth knowing: `ignore` suppresses Dependabot SECURITY PRs too,
       # not just version updates. osv-scanner is the compensating control —
@@ -190,7 +178,7 @@ updates:
           - patch
     ignore:
       # `cipherstash-client = "=0.42.0"` in tests/sqlx/Cargo.toml — the SAME
-      # exact pin, at the SAME version, as packages/protect-ffi. That is not a
+      # exact pin, at the SAME version, as languages/typescript/packages/protect-ffi. That is not a
       # coincidence and it is the reason the subtree was imported: the two now
       # share one release train, and a Dependabot PR that moved one workspace
       # and not the other would reintroduce precisely the skew the absorption
@@ -207,6 +195,75 @@ updates:
       # a registry version for a crate we release here would fight the lockstep
       # version hook (scripts/sync-lockstep-versions.mjs).
       - dependency-name: "eql-bindings"
+      # Major bumps are reviewed and applied manually, not by Dependabot.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  # ── Cargo (the root workspace — the stack-* crates) ─────────────
+  # The root workspace (the six stack-* crates and the three node binding
+  # crates) and the five detached workspaces beside it: the three cargo-fuzz
+  # crates and the two Go WASI guests. Each has its own Cargo.lock, and each
+  # is its own workspace root, so each is listed.
+  - package-ecosystem: cargo
+    directories:
+      - /
+      - /packages/stack-auth/fuzz
+      - /packages/stack-kms/fuzz
+      - /packages/stack-encrypt/fuzz
+      - /languages/golang/stackencrypt/guest
+      - /languages/golang/stackauth/guest
+    # Monthly, matching the other two cargo entries.
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - supply-chain
+    commit-message:
+      prefix: "chore"
+      include: scope
+    groups:
+      cargo-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Released from cipherstash-suite: stack-auth's API carries their types,
+      # so they move in lockstep with the suite, by hand. The guests pin them
+      # with `=`; the root Cargo.toml pins recipher and cllw-ore with `=`, and
+      # gives cts-common and zerokms-protocol caret requirements.
+      - dependency-name: "cts-common"
+      - dependency-name: "zerokms-protocol"
+      - dependency-name: "recipher"
+      - dependency-name: "cllw-ore"
+      # vitaminc is pinned at 0.5.0 across the crates and the guests; the
+      # guests' `FfiValue: Decrypt` bound fails if two versions resolve.
+      - dependency-name: "vitaminc*"
+      # Major bumps are reviewed and applied manually, not by Dependabot.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  # ── Go (languages/golang) ──────────────────────────────────────
+  - package-ecosystem: gomod
+    directory: /languages/golang
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - supply-chain
+    commit-message:
+      prefix: "chore"
+      include: scope
+    ignore:
       # Major bumps are reviewed and applied manually, not by Dependabot.
       - dependency-name: "*"
         update-types:

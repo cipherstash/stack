@@ -4,18 +4,20 @@ import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 
 /**
- * Every crate in BOTH nested Cargo workspaces must opt out of crates.io unless
- * it is deliberately allowlisted below.
+ * Every crate in every Cargo workspace must opt out of crates.io unless it is
+ * deliberately allowlisted below: the root workspace (the stack-* crates),
+ * EQL, protect-ffi, and the single-package workspaces the root excludes (the
+ * three cargo-fuzz crates and the two Go WASI guests).
  *
  * A crate with no `publish` key is publishable BY DEFAULT, and release-plz
- * publishes every workspace member that has not opted out. The convention is
- * exactly one publishable crate per workspace with every other member
- * explicitly `publish = false`, so release-plz needs no per-package
- * configuration.
+ * publishes every workspace member that has not opted out. So every member
+ * not on its workspace's allowlist below is explicitly `publish = false`:
+ * EQL publishes one crate, the root workspace five (each in a release-plz
+ * version group, pinned by `release-plz-root-config.test.mjs`).
  *
  * ## Why both, and why that took a second pass
  *
- * This checked `packages/protect-ffi` ONLY, on the reasoning — written in this
+ * This checked `languages/typescript/packages/protect-ffi` ONLY, on the reasoning — written in this
  * header — that the repo "is about to grow a crates.io publisher
  * (`eql-bindings`, via release-plz, when `cipherstash/encrypt-query-language`
  * is absorbed)". The absorption happened. The publisher landed as
@@ -24,7 +26,7 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * workspace this file did not read. The check was strictest exactly where
  * nothing could publish and absent where something can.
  *
- * `packages/protect-ffi/crates/protect-ffi` carries no `publish` key and is
+ * `languages/typescript/packages/protect-ffi/crates/protect-ffi` carries no `publish` key and is
  * nonetheless correct: it has never been on crates.io (verified against the
  * registry API), it is a cdylib compiled into `index.node` and shipped inside
  * the six `@cipherstash/protect-ffi-<platform>` npm packages, and nothing
@@ -46,10 +48,35 @@ const WORKSPACES = [
     expects: 'crates/eql-bindings',
   },
   {
-    root: 'packages/protect-ffi',
+    root: 'languages/typescript/packages/protect-ffi',
     publishable: new Set(),
     expects: 'crates/protect-ffi',
   },
+  {
+    // The root workspace. The stack-* crates' release-plz step publishes
+    // exactly these five: stack-auth and stack-profile, and stack-kms,
+    // stack-encrypt and stack-encrypt-derive (which `eql-bindings`'
+    // `stack-encrypt` feature depends on from crates.io). stack-guest-abi is
+    // the Go guests' internal ABI and stays unpublished.
+    root: '.',
+    publishable: new Set([
+      'packages/stack-auth',
+      'packages/stack-profile',
+      'packages/stack-kms',
+      'packages/stack-encrypt',
+      'packages/stack-encrypt-derive',
+    ]),
+    expects: 'packages/stack-auth',
+  },
+  // Single-package workspaces: `[workspace]` with no members, so the package
+  // at the root is the one member.
+  ...[
+    'packages/stack-auth/fuzz',
+    'packages/stack-kms/fuzz',
+    'packages/stack-encrypt/fuzz',
+    'languages/golang/stackencrypt/guest',
+    'languages/golang/stackauth/guest',
+  ].map((root) => ({ root, publishable: new Set(), expects: '.' })),
 ]
 
 /**
@@ -64,8 +91,11 @@ const WORKSPACES = [
  */
 function workspaceMembers(WORKSPACE) {
   const manifest = readFileSync(join(WORKSPACE, 'Cargo.toml'), 'utf8')
-  const block = /^members\s*=\s*\[([^\]]*)\]/m.exec(manifest)?.[1] ?? ''
-  return [...block.matchAll(/"([^"]+)"/g)]
+  const block = /^members\s*=\s*\[([^\]]*)\]/m.exec(manifest)?.[1]
+  // A `[workspace]` with no `members` whose manifest is also a `[package]`:
+  // cargo's single-package workspace, whose one member is the root itself.
+  if (block === undefined && /^\[package\]$/m.test(manifest)) return ['.']
+  return [...(block ?? '').matchAll(/"([^"]+)"/g)]
     .flatMap(([, pattern]) =>
       pattern.endsWith('/*')
         ? readdirSync(join(WORKSPACE, pattern.slice(0, -2)), {

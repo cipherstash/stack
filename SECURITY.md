@@ -19,6 +19,8 @@ This repository is the CipherStash Stack monorepo for JavaScript/TypeScript. It 
 | `@cipherstash/wizard` | AI-powered encryption setup |
 | `@cipherstash/protect-ffi` | Native FFI bindings to the CipherStash Client SDK — the Rust core `@cipherstash/stack` encrypts and decrypts through |
 | `@cipherstash/protect-ffi-darwin-arm64`<br>`@cipherstash/protect-ffi-darwin-x64`<br>`@cipherstash/protect-ffi-linux-arm64-gnu`<br>`@cipherstash/protect-ffi-linux-x64-gnu`<br>`@cipherstash/protect-ffi-linux-x64-musl`<br>`@cipherstash/protect-ffi-win32-x64-msvc` | Prebuilt per-platform binaries for `@cipherstash/protect-ffi`. Installed as optional dependencies; one is selected at load time for the host platform |
+| `@cipherstash/auth` | Authentication strategies for CipherStash (napi-rs native binding, with a WASM build for edge runtimes) — imported from `cipherstash/cipherstash-suite` with the `stack-auth` crate it wraps |
+| `@cipherstash/auth-darwin-arm64`<br>`@cipherstash/auth-darwin-x64`<br>`@cipherstash/auth-linux-arm64-gnu`<br>`@cipherstash/auth-linux-x64-gnu`<br>`@cipherstash/auth-linux-x64-musl`<br>`@cipherstash/auth-win32-x64-msvc` | Prebuilt per-platform binaries for `@cipherstash/auth`. Installed as optional peer dependencies; one is selected at load time for the host platform |
 | `@cipherstash/eql` | Encrypt Query Language — the PostgreSQL SQL bundle (`eql_v3` schema: domains, operators, index-term extractors) that stores and queries encrypted payloads, plus its generated TypeScript types. Applied by `stash eql install` and by the Prisma Next adapter's migrations. Released in lockstep with the `eql-bindings` Rust crate, which emits the payloads this SQL reads |
 
 This repository also carries the source of the **`eql-bindings`** Rust crate
@@ -26,12 +28,41 @@ This repository also carries the source of the **`eql-bindings`** Rust crate
 lockstep with `@cipherstash/eql`. It is in scope for security reports on the
 same terms as the npm packages above.
 
-> **Note on publishing.** `@cipherstash/eql` and the `eql-bindings` crate are
-> developed here but are *published* from `cipherstash/encrypt-query-language`
-> until the Phase 5 cutover in
-> `docs/plans/2026-08-13-eql-monorepo-absorption.md` completes. Everything else
-> in the table above, including all seven `@cipherstash/protect-ffi*` packages,
-> is published from this repository by `.github/workflows/release.yml`.
+It also carries the source of five Rust crates published to crates.io,
+**`stack-auth`** and **`stack-profile`** (`packages/stack-auth`,
+`packages/stack-profile`) and **`stack-kms`**, **`stack-encrypt`** and
+**`stack-encrypt-derive`** (`packages/stack-kms`, `packages/stack-encrypt`,
+`packages/stack-encrypt-derive`), and of the **Go module** at
+`languages/golang` (`stackencrypt` and `stackauth`, over WASI guests built
+from the stack-* crates), which has no release yet. All of these are in scope
+for security reports on the same terms as the npm packages above.
+
+The five stack-* crates are licensed under the PolyForm Internal Use License
+1.0.0 (each crate's `LICENSE`), not the repository's MIT licence: they may be
+used for internal business operations only, and not redistributed. That
+includes the optional `stack-encrypt` feature of the MIT-licensed
+`eql-bindings` crate, which depends on `stack-encrypt` and so is usable only
+under the same terms.
+
+The `eql-encryption-tests` Rust crate (`packages/eql/tests/encryption`) is
+an unpublished test harness for these bindings. It uses real encryption with
+a fake key source, executes the Rustdoc text encryption example, and provides
+optional disposable PostgreSQL coverage. It adds no published package or
+production service.
+
+> **Note on publishing.** Every package in the table above, including all
+> seven `@cipherstash/protect-ffi*` packages, all seven `@cipherstash/auth*`
+> packages and `@cipherstash/eql`, is published from this repository by
+> `.github/workflows/release.yml`; the `eql-bindings`, `stack-auth`,
+> `stack-profile`, `stack-kms`, `stack-encrypt` and `stack-encrypt-derive`
+> crates are published from here by `.github/workflows/release-plz.yml` (the
+> first version of each of the last three was published by hand, because
+> crates.io configures Trusted Publishing on an existing crate). EQL moved here at the Phase 5 cutover in
+> `docs/plans/2026-08-13-eql-monorepo-absorption.md`, and the auth packages and
+> the two crates at the arming PR of the stack-* crates import. Releases made
+> before those moves were built elsewhere: `@cipherstash/eql@3.0.5` and earlier
+> by `cipherstash/encrypt-query-language`, and `@cipherstash/auth@0.44.0` and
+> the crates' `0.42.3` and earlier by `cipherstash/cipherstash-suite`.
 > **Source, issues, and security reports for all of them belong here
 > regardless** — that part does not depend on which pipeline built the
 > artefact.
@@ -52,8 +83,8 @@ same terms as the npm packages above.
 >
 > `scripts/__tests__/frozen-publisher-docs.test.mjs` now holds this paragraph to
 > `FROZEN_PUBLISHERS` in `scripts/release-gate.mjs`. It fails if the note names
-> a package the map does not freeze, and fails again on the Phase-5 cutover that
-> empties the map — so the next half of this note to go stale does so loudly.
+> a package the map does not freeze, or stops naming `@cipherstash/eql` while
+> the map freezes it — so the next sentence here to go stale does so loudly.
 
 **Security fixes are released for the latest release line of each package.** Security reports are welcome for any version, but fixes land in the latest release — if you are running an older major version, plan to upgrade to receive them.
 
@@ -112,7 +143,7 @@ The following are **in scope**:
 
 The following are **out of scope**:
 
-- Example applications in the `examples` dir (though we are still grateful for any relevant disclosures there)
+- Example applications in the `languages/typescript/examples` dir (though we are still grateful for any relevant disclosures there)
 - Social engineering, physical attacks, or denial-of-service
 - Attacks requiring privileged access to developer machines or CI/CD infrastructure
 
@@ -154,19 +185,29 @@ CI. See `skills/stash-supply-chain-security/SKILL.md` for the full guide.
 The `release.yml` workflow publishes packages to npm using OIDC trusted
 publishing (`id-token: write`). There is no long-lived `NPM_TOKEN` — the
 workflow deliberately avoids one, and setting one would bypass trusted
-publishing. `release-plz.yml` publishes the `eql-bindings` crate to crates.io
-over the same token exchange, and likewise carries no `CARGO_REGISTRY_TOKEN`.
+publishing. `release-plz.yml` publishes the `eql-bindings` crate and the stack-* crates to
+crates.io over the same token exchange, and likewise carries no
+`CARGO_REGISTRY_TOKEN`.
 Both bind to a *workflow filename* at the registry, so renaming either file
 silently invalidates its publisher configuration.
 
-`scripts/__tests__/workflow-publish-permissions.test.mjs` holds the shape those
-two files must keep, as two separate equalities: who may publish (`id-token:
-write`, granted per job and never at workflow level, where it would be inherited
-by every job in a file the registry already trusts), and who may write to the
-repository at all. They are separate because a publishing workflow also contains
-jobs that create a release or dispatch another workflow — holding one does not
-confer the other. Both are equalities, so either addition has to be argued for
-in the same diff.
+`scripts/__tests__/workflow-publish-permissions.test.mjs` classifies every job
+that may mint an OIDC token. Publishers and named non-publishing exchanges are
+kept in separate lists, but the jobs holding `id-token: write` are asserted
+against their union in a single equality; the separate lists feed separate
+predicates (only publishers' workflows have their sibling jobs held read-only).
+The jobs that may write to the repository are a reviewed allowlist that includes
+every OIDC holder. The distinction matters because OIDC is a transport, not itself a
+publishing capability: `claude-review.yml` exchanges its token with Anthropic
+for an inference-only API credential, while the registry-bound release
+workflows exchange theirs with npm or crates.io. `claude-review.yml` passes the
+job's own `GITHUB_TOKEN` to the action as `github_token`. Without that input
+the action makes a second exchange, for a Claude GitHub App installation token
+with write access to contents, pull requests and issues, which the job's
+`permissions:` block does not limit. With it, the job's `contents: read` and
+`pull-requests: write` are what a review can do on GitHub. Every grant remains
+per job, never at workflow level, and any new holder or writer must be
+justified in the same diff.
 
 [GitHub Actions cache poisoning is a known attack][1] against credential-bearing
 workflows. The mechanism is:

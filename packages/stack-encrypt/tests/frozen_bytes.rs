@@ -1,0 +1,563 @@
+//! Byte-level pins for the frozen encodings stack-encrypt commits to across
+//! languages:
+//!
+//! * the [`SealedValue`] leaf layout
+//!   (`version ‖ keyset_id ‖ iv ‖ tag_len ‖ tag ‖ local_ciphertext`) — the
+//!   storage
+//!   format a database column holds, and
+//! * the index-term encodings (equality: raw 32 bytes; match: LE `u16`
+//!   positions; ORE/OPE: raw CLLW ciphertext bytes).
+//!
+//! These are the vectors a language binding's decoder tests against — the
+//! Go side decodes exactly these hex strings. `tests/term_bytes.rs` pins the
+//! *derivations* (PRF domains and framing); this file pins the *encodings*
+//! of the results. Breaking a pin here breaks a consumer: for the leaf it
+//! moves the storage format and demands a `SealedValue::FORMAT_VERSION` bump;
+//! for the equality and ORE/OPE terms it moves the bytes a column holds; for
+//! the match term it moves the wasm/FFI transport shape (no column holds
+//! that byte string — the stored and queried contract is the position list,
+//! which maps to an integer-array column), and every binding decoding it
+//! silently stops agreeing.
+
+use std::borrow::Cow;
+
+use stack_encrypt::nonempty;
+use stack_encrypt::sem::{DefaultMatch, EqualityTerm, MatchTerm, OpeTerm, OreTerm, TermBytesError};
+use stack_encrypt::target::EncryptInto;
+use stack_encrypt::{CipherText, Error, LeafBytesError, SealedValue, StackCipher};
+use stack_kms::{
+    DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy,
+    IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
+};
+use uuid::Uuid;
+
+async fn cipher() -> StackCipher<FakeDataKeySource> {
+    StackCipher::builder()
+        .kms(FakeDataKeySource::new())
+        .init()
+        .await
+        .expect("build cipher")
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// =============================================================================
+// SealedValue leaf
+// =============================================================================
+
+/// A leaf from fixed parts, so the encoding is deterministic. The
+/// "ciphertext" is not a real AEAD output — encoding is structural and must
+/// not care.
+fn fixture_leaf() -> SealedValue {
+    let keyset_id = Uuid::from_bytes(*b"keyset-fixture16");
+    let iv: stack_kms::Iv = *b"0123456789abcdef";
+    SealedValue::from_parts(
+        keyset_id,
+        iv,
+        vec![0xAA, 0xBB, 0xCC],
+        vec![0xDE, 0xAD, 0xBE, 0xEF],
+    )
+    .expect("fixture tag fits the length field")
+}
+
+#[test]
+fn sealed_value_layout_is_pinned() {
+    let bytes = fixture_leaf().to_bytes();
+
+    // version(01) ‖ keyset_id(16 raw UUID bytes: ASCII "keyset-fixture16") ‖
+    // iv(16 bytes: ASCII "0123456789abcdef") ‖ tag_len(0300 — 3, u16 LE) ‖
+    // tag(aabbcc) ‖ local_ciphertext(deadbeef)
+    assert_eq!(
+        hex(&bytes),
+        "016b65797365742d666978747572653136303132333435363738396162636465660300aabbccdeadbeef"
+    );
+}
+
+#[test]
+fn sealed_value_from_bytes_inverts_to_bytes() {
+    let original = fixture_leaf();
+    let bytes = original.to_bytes();
+    let decoded = SealedValue::from_bytes(&bytes).expect("decode leaf");
+
+    assert_eq!(decoded.keyset_id(), original.keyset_id());
+    assert_eq!(decoded.iv(), original.iv());
+    assert_eq!(decoded.tag(), original.tag());
+    assert_eq!(decoded.ciphertext(), original.ciphertext());
+
+    // The std conversion is the same decoder.
+    let converted = SealedValue::try_from(bytes.as_slice()).expect("TryFrom decode");
+    assert_eq!(converted.keyset_id(), original.keyset_id());
+    assert_eq!(converted.ciphertext(), original.ciphertext());
+}
+
+#[test]
+fn sealed_value_rejects_unknown_version() {
+    let mut bytes = fixture_leaf().to_bytes();
+    bytes[0] = 2;
+    assert!(matches!(
+        SealedValue::from_bytes(&bytes),
+        Err(LeafBytesError::UnknownVersion(2))
+    ));
+}
+
+#[test]
+fn sealed_value_rejects_truncation() {
+    let bytes = fixture_leaf().to_bytes();
+
+    // Every prefix shorter than the tag's end is truncated: empty,
+    // mid-keyset-id, mid-iv, mid-length-field, and mid-tag. (Anything at or
+    // past the tag's end parses — the local ciphertext takes the remainder,
+    // and proving *it* whole is the AEAD open's job.)
+    let tag_end = 1 + 16 + 16 + 2 + 3;
+    for len in 0..tag_end {
+        assert!(
+            matches!(
+                SealedValue::from_bytes(&bytes[..len]),
+                Err(LeafBytesError::Truncated)
+            ),
+            "prefix of {len} bytes must be rejected"
+        );
+    }
+    assert!(SealedValue::from_bytes(&bytes[..tag_end]).is_ok());
+}
+
+#[test]
+fn sealed_value_decodes_the_shortest_leaf_the_layout_allows() {
+    // An empty tag and an empty ciphertext leave exactly the fixed-width
+    // fields: version ‖ keyset_id ‖ iv ‖ tag_len. That is a whole leaf —
+    // structurally, whatever the AEAD makes of it — and one byte less is
+    // truncated. With a non-empty tag the tag check would reject a short
+    // buffer anyway, so only this shape pins the fixed-width check itself.
+    let leaf = SealedValue::from_parts(Uuid::nil(), [7; 16], Vec::new(), Vec::new())
+        .expect("an empty tag fits");
+    let bytes = leaf.to_bytes();
+    assert_eq!(
+        bytes.len(),
+        1 + 16 + 16 + 2,
+        "an empty tag and ciphertext should leave only the fixed-width fields"
+    );
+
+    let decoded = SealedValue::from_bytes(&bytes).expect("the fixed fields alone are a leaf");
+    assert_eq!(
+        decoded.keyset_id(),
+        Uuid::nil(),
+        "the keyset id should survive the round trip"
+    );
+    assert_eq!(
+        decoded.iv(),
+        &[7; 16],
+        "the iv should survive the round trip"
+    );
+    assert!(decoded.tag().is_empty(), "the tag should decode as empty");
+    assert!(
+        decoded.ciphertext().is_empty(),
+        "the ciphertext should decode as empty"
+    );
+
+    assert!(
+        matches!(
+            SealedValue::from_bytes(&bytes[..bytes.len() - 1]),
+            Err(LeafBytesError::Truncated)
+        ),
+        "one byte short of the fixed-width fields should be truncated"
+    );
+}
+
+#[test]
+fn sealed_value_accepts_the_longest_tag_the_length_field_frames() {
+    // `u16::MAX` bytes is the last tag the length field can state, so it is
+    // a valid leaf — and it must survive the byte format intact.
+    let tag = vec![0x5A; usize::from(u16::MAX)];
+    let leaf = SealedValue::from_parts(Uuid::nil(), [0; 16], tag.clone(), vec![0xDE, 0xAD])
+        .expect("a u16::MAX-byte tag fits the length field");
+
+    let decoded = SealedValue::from_bytes(&leaf.to_bytes()).expect("decode leaf");
+    assert_eq!(
+        decoded.tag(),
+        tag.as_slice(),
+        "a u16::MAX-byte tag should survive the round trip intact"
+    );
+    assert_eq!(
+        decoded.ciphertext(),
+        [0xDE, 0xAD].as_slice(),
+        "the ciphertext after the longest tag should still be framed correctly"
+    );
+}
+
+#[test]
+fn sealed_value_rejects_oversized_tag_on_construction() {
+    // `to_bytes` is infallible because the tag can never outgrow the `u16`
+    // length field: the only constructor that could admit one rejects it.
+    let result = SealedValue::from_parts(
+        Uuid::nil(),
+        [0; 16],
+        vec![0; usize::from(u16::MAX) + 1],
+        vec![0xDE, 0xAD],
+    );
+    assert!(matches!(
+        result,
+        Err(LeafBytesError::TagTooLong(len)) if len == usize::from(u16::MAX) + 1
+    ));
+}
+
+#[tokio::test]
+async fn sealed_leaf_survives_persistence_via_bytes() {
+    // The format round-trips a *real* leaf: encrypt, encode, decode, decrypt.
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let ct = keyset
+        .encrypt("durable".to_string(), b"ctx".as_slice())
+        .await
+        .expect("encrypt");
+    let leaf = match ct {
+        CipherText::Single(leaf) => leaf,
+        other => panic!("expected a Single leaf, got {other:?}"),
+    };
+    let bytes = leaf.to_bytes();
+    let restored = SealedValue::from_bytes(&bytes).expect("decode leaf");
+
+    let pt: String = cipher
+        .decrypt(CipherText::Single(restored), b"ctx".as_slice())
+        .await
+        .expect("decoded leaf must decrypt");
+    assert_eq!(pt, "durable");
+}
+
+#[tokio::test]
+async fn sealed_value_keyset_id_is_authenticated() {
+    // The keyset id is bound into the leaf's AAD: a leaf re-pointed at another
+    // keyset fails to open. (The fake source ignores keyset ids, so the key
+    // retrieve itself succeeds — the AEAD is what refuses.)
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let aad = b"ctx".as_slice();
+    let ct = keyset
+        .encrypt("durable".to_string(), aad)
+        .await
+        .expect("encrypt");
+    let leaf = match ct {
+        CipherText::Single(leaf) => leaf,
+        other => panic!("expected a Single leaf, got {other:?}"),
+    };
+    let (keyset_id, iv, tag, bytes) = leaf.into_parts();
+    let other_keyset = Uuid::from_bytes(*b"another-keyset16");
+    assert_ne!(keyset_id, other_keyset);
+    let tampered = SealedValue::from_parts(other_keyset, iv, tag, bytes).expect("rebuild leaf");
+
+    let result = cipher
+        .decrypt::<String, _>(CipherText::Single(tampered), aad)
+        .await;
+    assert!(
+        matches!(result, Err(Error::Aead)),
+        "a leaf re-pointed at another keyset must not decrypt: {result:?}"
+    );
+}
+
+/// Delegates to [`FakeDataKeySource`] but inflates every generated key tag
+/// past the `u16` length field — the misbehaving custom [`DataKeySource`] the
+/// seal path must reject, rather than build a leaf whose `to_bytes` writes a
+/// saturated length field that `from_bytes` no longer inverts.
+struct OversizedTagSource(FakeDataKeySource);
+
+impl DataKeySource for OversizedTagSource {
+    async fn generate_keys(
+        &self,
+        payloads: Vec<GenerateKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<Cow<'_, UnverifiedContext>>,
+    ) -> Result<Vec<DataKeyWithTag>, stack_kms::Error> {
+        let mut keys = self
+            .0
+            .generate_keys(payloads, keyset_id, unverified_context)
+            .await?;
+        for key in &mut keys {
+            key.tag = vec![0; usize::from(u16::MAX) + 1];
+        }
+        Ok(keys)
+    }
+
+    async fn retrieve_keys(
+        &self,
+        payloads: Vec<RetrieveKeyPayload<'_>>,
+        keyset_id: Option<Uuid>,
+        unverified_context: Option<&UnverifiedContext>,
+    ) -> Result<Vec<DataKey>, stack_kms::Error> {
+        self.0
+            .retrieve_keys(payloads, keyset_id, unverified_context)
+            .await
+    }
+}
+
+impl IndexKeySource for OversizedTagSource {
+    async fn load_index_key(
+        &self,
+        keyset_id: Option<IdentifiedBy>,
+    ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
+        self.0.load_index_key(keyset_id).await
+    }
+}
+
+#[tokio::test]
+async fn seal_rejects_a_key_tag_the_length_field_cannot_frame() {
+    let cipher = StackCipher::builder()
+        .kms(OversizedTagSource(FakeDataKeySource::new()))
+        .init()
+        .await
+        .expect("build cipher");
+
+    let result = cipher
+        .default_keyset()
+        .encrypt("boundary".to_string(), b"ctx".as_slice())
+        .await;
+    assert!(
+        matches!(result, Err(Error::Aead)),
+        "an oversized key tag must fail the seal, not mis-encode: {result:?}"
+    );
+}
+
+// =============================================================================
+// Terms
+// =============================================================================
+
+#[tokio::test]
+async fn equality_term_encoding_is_the_raw_prf_bytes() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let term = keyset
+        .equality_term("alice", nonempty!("users/email"))
+        .await
+        .expect("equality term");
+
+    // The derivation is pinned in term_bytes.rs; here: encoding = identity
+    // over those 32 bytes, and from_bytes is its inverse.
+    assert_eq!(term.as_ref(), term.as_bytes());
+    assert_eq!(term.to_bytes(), term.as_bytes());
+    assert_eq!(EqualityTerm::from_bytes(*term.as_bytes()), term);
+
+    // The std conversion is the same decoder, over a slice of unknown length.
+    assert_eq!(
+        EqualityTerm::try_from(term.to_bytes().as_slice()).expect("TryFrom decode"),
+        term
+    );
+    // And the owned conversion out is the same encoding.
+    let bytes = term.to_bytes();
+    assert_eq!(
+        Vec::<u8>::from(term),
+        bytes,
+        "the owned conversion should produce the same encoding as to_bytes"
+    );
+}
+
+#[test]
+fn equality_term_try_from_rejects_wrong_length() {
+    assert_eq!(
+        EqualityTerm::try_from([0u8; 31].as_slice()),
+        Err(TermBytesError::WrongEqualityTermLength(31))
+    );
+    assert_eq!(
+        EqualityTerm::try_from([0u8; 33].as_slice()),
+        Err(TermBytesError::WrongEqualityTermLength(33))
+    );
+}
+
+#[tokio::test]
+async fn match_term_bytes_are_pinned() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let term = keyset
+        .match_terms::<DefaultMatch>("alice smith", nonempty!("users/name"))
+        .await
+        .expect("match term");
+
+    // The little-endian u16 encoding of the positions pinned in
+    // term_bytes.rs, in sorted order.
+    let bytes = term.to_bytes();
+    assert_eq!(
+        hex(&bytes),
+        "040005000a000d000e001e002700350038003d0055005e005f0064006f007d007f009c00ad00bc00bd00ca00d000e000e500ef00"
+    );
+    assert_eq!(
+        MatchTerm::<DefaultMatch>::from_bytes(&bytes).expect("decode match term"),
+        term
+    );
+    // The std conversion is the same decoder.
+    assert_eq!(
+        MatchTerm::<DefaultMatch>::try_from(bytes.as_slice()).expect("TryFrom decode"),
+        term
+    );
+}
+
+/// `Debug` shows the positions — the stored, queried form — and nothing
+/// else.
+#[test]
+fn match_term_debug_is_its_positions() {
+    let term = MatchTerm::<DefaultMatch>::from_positions(vec![17, 3]).expect("in range");
+    assert_eq!(
+        format!("{term:?}"),
+        "MatchTerm { positions: [3, 17] }",
+        "Debug should show only the sorted positions"
+    );
+}
+
+#[test]
+fn match_term_from_bytes_rejects_odd_length() {
+    assert_eq!(
+        MatchTerm::<DefaultMatch>::from_bytes(&[0x21]),
+        Err(TermBytesError::OddMatchTermLength(1))
+    );
+}
+
+#[test]
+fn match_term_from_bytes_rejects_positions_outside_the_filter() {
+    // `DefaultMatch` is a 256-bit filter, so genuine positions are 0..256 and
+    // the high byte of every LE u16 is zero. A position at the filter size,
+    // and the 0xffff a wrong-endian decoder produces, are both rejected —
+    // they would otherwise decode cleanly and then silently never match.
+    assert_eq!(
+        MatchTerm::<DefaultMatch>::from_bytes(&[0x00, 0x01]),
+        Err(TermBytesError::MatchPositionOutOfRange {
+            position: 256,
+            filter_size: 256,
+        })
+    );
+    assert_eq!(
+        MatchTerm::<DefaultMatch>::from_bytes(&[0xff, 0xff]),
+        Err(TermBytesError::MatchPositionOutOfRange {
+            position: 0xffff,
+            filter_size: 256,
+        })
+    );
+    // Byte-swapping a genuine term is exactly that failure: position 0x21
+    // becomes 0x2100.
+    assert!(matches!(
+        MatchTerm::<DefaultMatch>::from_bytes(&[0x00, 0x21]),
+        Err(TermBytesError::MatchPositionOutOfRange { .. })
+    ));
+
+    // In-range positions round-trip, through both constructors.
+    let positions = vec![0u16, 1, 255];
+    let term = MatchTerm::<DefaultMatch>::from_positions(positions.clone()).expect("in range");
+    assert_eq!(term.positions(), positions.as_slice());
+    assert_eq!(
+        MatchTerm::<DefaultMatch>::from_bytes(&term.to_bytes()).expect("decode"),
+        term
+    );
+    assert_eq!(
+        MatchTerm::<DefaultMatch>::from_positions(vec![256]),
+        Err(TermBytesError::MatchPositionOutOfRange {
+            position: 256,
+            filter_size: 256,
+        })
+    );
+}
+
+#[tokio::test]
+async fn ore_term_encoding_is_the_raw_cllw_bytes() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let term: OreTerm<u32> = 42u32
+        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
+        .await
+        .expect("ore term");
+
+    // Byte-identical to the raw CLLW output pinned in term_bytes.rs — the
+    // wrapper adds no framing. Same *shape* as the CLLW bytes EQL stores, but
+    // not comparable with rows cipherstash-client wrote: the key derivations
+    // differ (see the `sem` module docs).
+    assert_eq!(
+        hex(term.as_bytes()),
+        "1ae5f8558dc2d7dddd6c5b714e9d285586a1b8390d9140421e78906cba1bd651"
+    );
+    assert_eq!(term.to_bytes(), term.as_bytes());
+    assert_eq!(term.as_ref(), term.as_bytes());
+    assert_eq!(
+        OreTerm::<u32>::from_bytes(term.as_bytes()).expect("decode ore term"),
+        term
+    );
+    // The std conversion is the same decoder.
+    assert_eq!(
+        OreTerm::<u32>::try_from(term.as_bytes()).expect("TryFrom decode"),
+        term
+    );
+}
+
+#[tokio::test]
+async fn ope_term_encoding_is_the_raw_cllw_bytes() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let term: OpeTerm<u32> = 42u32
+        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
+        .await
+        .expect("ope term");
+
+    assert_eq!(
+        hex(term.as_bytes()),
+        "00837615a1ea2fdcbebf7efe34cf4d2ee432c7eeff84fbd72e1bf05efa2338033c"
+    );
+    assert_eq!(
+        OpeTerm::<u32>::from_bytes(term.as_bytes()).expect("decode ope term"),
+        term
+    );
+    assert_eq!(
+        OpeTerm::<u32>::try_from(term.as_bytes()).expect("TryFrom decode"),
+        term
+    );
+}
+
+#[test]
+fn ore_term_from_bytes_rejects_wrong_length() {
+    // u32 → OreCllw8V1<32>: exactly 32 bytes.
+    assert_eq!(
+        OreTerm::<u32>::from_bytes(&[0u8; 31]),
+        Err(TermBytesError::MalformedCllwCiphertext(31))
+    );
+    assert_eq!(
+        OreTerm::<u32>::from_bytes(&[0u8; 33]),
+        Err(TermBytesError::MalformedCllwCiphertext(33))
+    );
+    // u32 → OpeCllw8V1<33>: exactly 33 bytes.
+    assert_eq!(
+        OpeTerm::<u32>::from_bytes(&[0u8; 32]),
+        Err(TermBytesError::MalformedCllwCiphertext(32))
+    );
+}
+
+#[tokio::test]
+async fn variable_length_ore_and_ope_terms_decode() {
+    // String sources produce variable-length CLLW ciphertexts (8 bytes per
+    // plaintext byte; OPE adds a leading carry byte) — their decode path is
+    // the length-validating TryFrom in cllw-ore.
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let ore: OreTerm<String> = "alice"
+        .to_string()
+        .encrypt_into_with_context(&keyset, nonempty!("users/name"))
+        .await
+        .expect("ore term");
+    assert_eq!(ore.as_bytes().len(), 5 * 8);
+    assert_eq!(
+        OreTerm::<String>::from_bytes(ore.as_bytes()).expect("decode"),
+        ore
+    );
+    assert_eq!(
+        OreTerm::<String>::from_bytes(&ore.as_bytes()[1..]),
+        Err(TermBytesError::MalformedCllwCiphertext(5 * 8 - 1))
+    );
+
+    let ope: OpeTerm<String> = "alice"
+        .to_string()
+        .encrypt_into_with_context(&keyset, nonempty!("users/name"))
+        .await
+        .expect("ope term");
+    assert_eq!(ope.as_bytes().len(), 5 * 8 + 1);
+    assert_eq!(
+        OpeTerm::<String>::from_bytes(ope.as_bytes()).expect("decode"),
+        ope
+    );
+    assert_eq!(
+        OpeTerm::<String>::from_bytes(&ope.as_bytes()[1..]),
+        Err(TermBytesError::MalformedCllwCiphertext(5 * 8))
+    );
+}

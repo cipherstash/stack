@@ -1,5 +1,5 @@
 # Live references
 
-- `packages/stack/src/encryption/index.ts` is the client.
-- `packages/cli` owns the `stash` binary; see `./packages/cli/AGENTS.md`.
-- `packages/stack-drizzle` and `packages/stack-supabase` are the split adapters.
+- `languages/typescript/packages/stack/src/encryption/index.ts` is the client.
+- `languages/typescript/packages/cli` owns the `stash` binary; see `./languages/typescript/packages/cli/AGENTS.md`.
+- `languages/typescript/packages/stack-drizzle` and `languages/typescript/packages/stack-supabase` are the split adapters.

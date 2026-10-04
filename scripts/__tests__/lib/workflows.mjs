@@ -22,7 +22,7 @@ import { REPO_ROOT } from './repo-root.mjs'
 /**
  * Where GitHub reads workflows from — and the only place it reads them from. A
  * workflow file deposited under a package's own `.github/workflows` is inert,
- * which is the failure `packages/protect-ffi/src/integrationSuiteCi.test.ts`
+ * which is the failure `languages/typescript/packages/protect-ffi/src/integrationSuiteCi.test.ts`
  * exists to catch.
  */
 export const WORKFLOW_DIR = '.github/workflows'

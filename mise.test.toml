@@ -1,0 +1,42 @@
+# The `test` environment: `mise x --env test -- …` in the root and stack-*
+# tasks, and MISE_ENV=test in the CI jobs that run them. Carried from
+# cipherstash-suite, keeping only what the stack crates read; the suite's CTS,
+# ZeroKMS and database settings serve services this repository does not run.
+#
+# The cargo tools live here rather than in mise.toml so that packages/eql and
+# protect-ffi, which inherit the root mise.toml, do not install them (see the
+# note in mise.toml). Each is pinned: mise compiles a `cargo:` tool with the
+# runner's default rustc, not the root's 1.94.1, so a `latest` that raises its
+# minimum Rust fails the install. cargo-udeps 0.1.61 did exactly that
+# (cargo@0.96 needs rustc 1.93; the Ubuntu runners ship 1.92). Bump a pin
+# deliberately, after checking it still builds with the runners' rustc.
+[tools]
+"cargo:cargo-nextest" = "0.9.146"
+# Coverage → CRAP (Change Risk Anti-Patterns) metric tooling. `cargo llvm-cov`
+# produces an LCOV file that `cargo crap` scores; see `mise run crap:stack-auth`.
+# cargo-llvm-cov needs the root rust's `llvm-tools-preview` component.
+"cargo:cargo-llvm-cov" = "0.9.1"
+"cargo:cargo-crap" = "0.6.1"
+# Mutation testing for the stack crates; config in .cargo/mutants.toml, run
+# via `mutants:<crate>`.
+"cargo:cargo-mutants" = "27.1.0"
+# Fuzzing (libFuzzer) for the pure-`&str` parsers. The `cargo-fuzz` binary
+# installs on stable, but running a target needs the nightly toolchain
+# (`cargo +nightly fuzz run …`); see the `fuzz:*` tasks.
+"cargo:cargo-fuzz" = "0.13.2"
+# Runs on nightly-2026-07-10: `cargo +nightly-2026-07-10 udeps`. 0.1.60, not
+# 0.1.61: see above.
+"cargo:cargo-udeps" = "0.1.60"
+
+[env]
+# Annoyingly if you pass --env test to mise it doesn't set this automatically
+MISE_ENV = "test"
+
+# Local service hosts, as in the suite. The stack-auth tests set their own
+# values with temp-env where they depend on one.
+CS_CTS_HOST = "http://localhost:3001"
+CS_IDP_HOST = "http://localhost:3030"
+CS_IDP_CLIENT_ID = "admin_test_client_id"
+CS_VITUR_HOST = "http://localhost:3002"
+CS_TEST_ZEROKMS_HOST = "http://localhost:3002"
+CS_REGION = "ap-southeast-2.aws"

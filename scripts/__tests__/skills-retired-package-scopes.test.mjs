@@ -1,7 +1,7 @@
 /**
  * A shipped skill must not name a package that no longer exists.
  *
- * `skills/*` are published artefacts: `packages/cli/tsup.config.ts` copies them
+ * `skills/*` are published artefacts: `languages/typescript/packages/cli/tsup.config.ts` copies them
  * into the `stash` tarball and `installSkills()` copies them into a customer's
  * `.claude/skills/`. A code sample there is not compiled by anything — not by
  * `tsc`, not by Biome, not by any suite in this repo — so an import naming a

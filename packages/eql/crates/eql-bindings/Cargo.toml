@@ -1,6 +1,6 @@
 [package]
 name = "eql-bindings"
-version = "3.0.5"
+version = "3.0.6"
 edition = "2021"
 description = "Canonical wire types for EQL payloads — single source of truth for Rust, TypeScript (ts-rs), and JSON Schema (schemars)."
 # crates.io metadata. `license` is REQUIRED by crates.io — publish fails without
@@ -33,6 +33,31 @@ serde_json = "1"
 # caught by the `types:check` gate on the committed TS/JSON output.
 ts-rs = { version = "10", features = ["no-serde-warnings"] }
 schemars = "1"
+# stack-encrypt lives in this repository (packages/stack-encrypt). The path
+# builds against it in-tree; `version` is what crates.io resolves for the
+# PUBLISHED eql-bindings. So the stack-encrypt this names must be on crates.io
+# before eql-bindings is, and must carry the API `src/encryption.rs` compiles
+# against (`Describe`, `Description`, `Label`, `target::transcode`). 0.1.0 did
+# not: it shipped before they landed, and the path build cannot notice,
+# because it compiles whatever the tree holds. Two guards compile this feature
+# from the PACKAGED crate against the registry stack-encrypt instead:
+# `cargo publish --dry-run --all-features` in test-eql.yml at PR time, and
+# `publish_all_features` in ../../release-plz.toml at release time.
+stack-encrypt = { path = "../../../stack-encrypt", version = "0.2.0", optional = true, default-features = false }
+# The vitaminc line stack-encrypt is built on. `PrfValue` is named from this
+# crate directly (stack-encrypt re-exports only `IntoPrfContext` and
+# `PrfContext`), and two vitaminc lines in one graph do not interoperate, so
+# the requirement is stack-encrypt's.
+vitaminc-prf = { version = "0.5.0", optional = true }
+base64 = { version = "0.22", optional = true }
+hex = { version = "0.4", optional = true }
+
+[features]
+default = []
+stack-encrypt = ["dep:stack-encrypt", "dep:vitaminc-prf", "dep:base64", "dep:hex"]
+
+[package.metadata.docs.rs]
+features = ["stack-encrypt"]
 
 [dev-dependencies]
 # Parity oracle: tests/catalog_parity.rs asserts the v3 domain inventory

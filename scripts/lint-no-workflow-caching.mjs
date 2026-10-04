@@ -17,6 +17,11 @@ const TARGETS = process.argv.slice(2).length
       // calls it too — cannot become a way to build these artifacts under
       // different rules.
       '.github/workflows/_build-ffi-artifacts.yml',
+      // The @cipherstash/auth line, for the same reasons: the reusable build
+      // publishes through release.yml's publish-auth, and its dry-run caller
+      // must not build the same tarballs under other rules.
+      '.github/workflows/_build-auth-artifacts.yml',
+      '.github/workflows/auth-preflight.yml',
       // The EQL release line. The two reusables are reached from release.yml
       // anyway and named for the same reason `_build-ffi-artifacts.yml` is: a
       // second caller must not become a way to build them under other rules.
@@ -75,7 +80,7 @@ const PARENT_USES = /^\.\.\//
 // `useblacksmith/cache@v5` and `Swatinem/rust-cache@v2`: `OK`, exit 0. Both are
 // live-relevant here — eleven jobs in this repo run on `blacksmith-*` runners,
 // where `useblacksmith/cache` is the documented drop-in for `actions/cache`,
-// and the absorbed Cargo workspace at `packages/protect-ffi` is exactly where
+// and the absorbed Cargo workspace at `languages/typescript/packages/protect-ffi` is exactly where
 // someone reaches for `Swatinem/rust-cache`.
 //
 // The obvious repair is to enumerate the cache actions — by name
@@ -162,7 +167,7 @@ const AUDITED_ACTIONS = new Map([
   ['actions/upload-artifact', { cacheInput: null }],
   ['actions/download-artifact', { cacheInput: null }],
   // Supplies zig + cargo-zigbuild (the glibc-pinned gnu builds) and wasm-pack,
-  // all pinned in packages/protect-ffi/mise.toml. `cache` DEFAULTS TO TRUE, so
+  // all pinned in languages/typescript/packages/protect-ffi/mise.toml. `cache` DEFAULTS TO TRUE, so
   // an omitted key is a cache restore — and the generic `with.cache` rule below
   // fires only on a truthy value, which is how a mise-action step carrying no
   // `cache:` passed this gate. SHA-pinned at every call site.

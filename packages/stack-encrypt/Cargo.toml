@@ -1,0 +1,107 @@
+[package]
+name = "stack-encrypt"
+description = "Encrypt Rust values under per-value ZeroKMS data keys via the vitaminc cipher traits"
+version = "0.2.0"
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+license-file = "LICENSE"
+# Published to crates.io by release-plz.yml; release-plz.toml puts it in the
+# `stack-encrypt` version group.
+
+[dependencies]
+# `profile` (native only; stack-kms gates it off wasm32 itself) lets
+# `StackCipher::new()` fall back to the client key `stash auth login` writes
+# to the profile directory (`secretkey.json`) when CS_CLIENT_ID /
+# CS_CLIENT_KEY are not set — the same place `AutoStrategy` finds the token.
+stack-kms = { path = "../stack-kms", version = "0.1.0", default-features = false, features = ["profile"] }
+# `StackCipher::new()` builds a ZeroKMS client from the environment, so its
+# return type names the auto-detected auth strategy. Only needed with `http`.
+stack-auth = { workspace = true, optional = true }
+# `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`, re-exported from `target`.
+stack-encrypt-derive = { path = "../stack-encrypt-derive", version = "0.2.0" }
+
+# The workspace vitaminc (0.5.0): one canonical context encoding shared by
+# the AEAD and PRF derivations (`IntoContext`, cipherstash/vitaminc#339),
+# `NonEmpty::with`, `From<integer> for NonEmpty` (#314) and the parts view
+# (#318), all of which this crate relies on. All five must share one
+# version or the aead crate is duplicated.
+vitaminc-aead = { workspace = true }
+# `dynamic`: the runtime value model every language binding funnels through.
+vitaminc-aead-value = { workspace = true, optional = true }
+vitaminc-encrypt = { workspace = true }
+vitaminc-hmac = { workspace = true }
+vitaminc-prf = { workspace = true }
+vitaminc-protected = { workspace = true }
+serde = { workspace = true }
+# `Descriptor`: the base64 rendering of a non-textual context for ZeroKMS.
+base64ct = { version = "1.7", features = ["alloc"] }
+
+cllw-ore = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+zeroize = { workspace = true }
+
+[features]
+default = ["http"]
+# `StackCipher::new()` / `StackCipher::builder().init()` from the environment:
+# the default HTTP transport in stack-kms and the auto-detected auth strategy
+# in stack-auth. Off, a cipher is built over an explicit `DataKeySource`
+# (`StackCipher::builder().kms(..)`) and no HTTP client or TLS stack is in
+# the dependency graph — the shape the WASI/wazero guest builds against.
+http = ["dep:stack-auth", "stack-auth/http", "stack-kms/http"]
+# `stack_encrypt::dynamic`: encrypt and decrypt values whose types are known
+# only at runtime, as an FFI binding's are. Off by default — it is only of
+# use to a binding author, and it pulls `vitaminc-aead-value` in.
+dynamic = ["dep:vitaminc-aead-value"]
+# `stack_encrypt::kms::FakeDataKeySource`: the in-memory key source for tests
+# with no ZeroKMS, so a caller's dev-dependency on stack-encrypt is enough and
+# no direct stack-kms dependency has to agree with this crate's.
+test-support = ["stack-kms/test-support"]
+
+[dev-dependencies]
+serde_json = { workspace = true }
+# `default-features = false` here too: dev-dependency features unify into the
+# `cargo test -p stack-encrypt --no-default-features` graph, so leaving the
+# default on would silently pull `stack-kms/http` -> `stack-auth/http` ->
+# reqwest back into the "no HTTP" gate (`wasm:no-http-test`). The tests only
+# need `FakeDataKeySource` (`test-support`).
+stack-kms = { path = "../stack-kms", default-features = false, features = ["test-support"] }
+# To build the request errors ZeroKMS answers a keyset lookup with (a name it
+# does not know, a request that got no answer) in a test double. Already in
+# the no-HTTP graph through stack-kms; it has no features of its own.
+zerokms-protocol = { workspace = true }
+tokio = { workspace = true, features = ["rt", "macros"] }
+# Compile-fail tests for the derive diagnostics (`tests/ui`).
+trybuild = "1"
+
+# The derive diagnostics are recorded with every feature on, as `test:unit`
+# and CI run them. They cannot hold under both feature sets — rustc lists a
+# trait's other implementors in its help, and the `dynamic` feature's
+# `FfiValue` joins one such list and pushes another entry off it — so the
+# test is only built with that feature rather than skipped at runtime.
+[[test]]
+name = "ui"
+required-features = ["dynamic"]
+
+[[example]]
+name = "encrypted_record"
+required-features = ["http"]
+
+[[example]]
+name = "mixed_user"
+required-features = ["http"]
+
+[[example]]
+name = "search_terms"
+required-features = ["http"]
+
+[[example]]
+name = "zerokms_auth"
+required-features = ["http"]
+
+[package.metadata.docs.rs]
+all-features = true

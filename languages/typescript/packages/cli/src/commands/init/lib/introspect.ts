@@ -1,0 +1,373 @@
+import * as p from '@clack/prompts'
+import { createPgClient } from '@/db/client.js'
+import type { ColumnDef, DataType, SchemaDef, V3Domain } from '../types.js'
+
+export interface DbColumn {
+  columnName: string
+  dataType: string
+  udtName: string
+  isEqlEncrypted: boolean
+}
+
+export interface DbTable {
+  tableName: string
+  columns: DbColumn[]
+}
+
+/**
+ * Map a Postgres `udt_name` (e.g. `int4`, `timestamptz`) onto the CipherStash
+ * `DataType` taxonomy. Anything we can't classify falls back to `string`,
+ * which is the safest "treat the value as opaque text" default.
+ */
+export function pgTypeToDataType(udtName: string): DataType {
+  switch (udtName) {
+    case 'int2':
+    case 'int4':
+    case 'int8':
+    case 'float4':
+    case 'float8':
+    case 'numeric':
+      return 'number'
+    case 'bool':
+      return 'boolean'
+    case 'date':
+    case 'timestamp':
+    case 'timestamptz':
+      return 'date'
+    case 'json':
+    case 'jsonb':
+      return 'json'
+    default:
+      return 'string'
+  }
+}
+
+/**
+ * Is this column already managed by CipherStash?
+ *
+ * Both generations count. v3 is the sole generation this workspace authors,
+ * and its columns carry per-domain types (`eql_v3_text_search`,
+ * `eql_v3_integer_ord`, …) rather than v2's single `eql_v2_encrypted` udt —
+ * so keying on the v2 name alone, as this did, reported every column on the
+ * default path as plaintext. That is the dangerous direction to be wrong in:
+ * an encrypted column shown as plaintext invites the caller to encrypt it a
+ * second time. `languages/typescript/packages/wizard` already carries this predicate; the two
+ * should agree.
+ *
+ * Deliberately not `classifyEqlDomain` from `@cipherstash/migrate`, despite
+ * the dependency being present: that answers "which generation authors this",
+ * Legacy `eql_v2_encrypted` remains recognisable for read-only diagnostics even
+ * though v2 is no longer authorable.
+ * The question here is "is this encrypted at all", which v2 answers yes to.
+ *
+ * The trailing underscore matters — a bare `eql_v3` prefix would also claim a
+ * hypothetical future `eql_v30_*`.
+ */
+export function isEqlEncryptedDomain(udtName: string): boolean {
+  return udtName === 'eql_v2_encrypted' || udtName.startsWith('eql_v3_')
+}
+
+/**
+ * Read every base table in the `public` schema along with its columns.
+ *
+ * The EQL domain markers tell us a column is already managed by CipherStash —
+ * useful for re-runs against a partially set up DB so we can pre-select those
+ * columns rather than asking the user to reconfirm.
+ */
+export async function introspectDatabase(
+  databaseUrl: string,
+): Promise<DbTable[]> {
+  // pg.Client defaults `connectionTimeoutMillis` to "no timeout"; without
+  // this, an unreachable / firewalled database silently hangs the spinner
+  // until the user kills the process. 10 s is generous for healthy hosts
+  // and short enough to surface a real failure quickly.
+  const client = createPgClient(databaseUrl, {
+    connectionTimeoutMillis: 10_000,
+  })
+  try {
+    await client.connect()
+
+    const { rows } = await client.query<{
+      table_name: string
+      column_name: string
+      data_type: string
+      udt_name: string
+    }>(`
+      SELECT c.table_name, c.column_name, c.data_type, c.udt_name
+      FROM information_schema.columns c
+      JOIN information_schema.tables t
+        ON t.table_name = c.table_name AND t.table_schema = c.table_schema
+      WHERE c.table_schema = 'public'
+        AND t.table_type = 'BASE TABLE'
+      ORDER BY c.table_name, c.ordinal_position
+    `)
+
+    const tableMap = new Map<string, DbColumn[]>()
+    for (const row of rows) {
+      const cols = tableMap.get(row.table_name) ?? []
+      cols.push({
+        columnName: row.column_name,
+        dataType: row.data_type,
+        udtName: row.udt_name,
+        isEqlEncrypted: isEqlEncryptedDomain(row.udt_name),
+      })
+      tableMap.set(row.table_name, cols)
+    }
+
+    return Array.from(tableMap.entries()).map(([tableName, columns]) => ({
+      tableName,
+      columns,
+    }))
+  } finally {
+    await client.end()
+  }
+}
+
+/**
+ * The v3 domains offerable for a scaffolded column of the given `DataType`,
+ * ordered narrowest→widest so the interactive picker reads as an escalating
+ * ladder. Each domain's query capability is fixed by its type — there is no
+ * capability tuple. `boolean` has exactly one storage-only domain; `json` has
+ * exactly one queryable domain (encrypted containment + selectors). Numeric
+ * and date types collapse to the `Integer*` / `Date*` families because
+ * `pgTypeToDataType` carries no width/precision signal.
+ */
+export function candidateDomains(
+  dataType: DataType,
+): Array<{ value: V3Domain; label: string; hint: string }> {
+  // Hints show capability + the operators/functions each domain answers.
+  // EQL v3 emits `eql_v3.*()` function calls for comparison/match (not native
+  // SQL operators); JSON is the exception, using real `@>` (containment) and
+  // `->` (selector) operators. The bracketed sets below are logical shorthand
+  // matching the Drizzle-facing operator names, grounded in the v3 sql-dialect.
+  switch (dataType) {
+    case 'string':
+      return [
+        {
+          value: 'Text',
+          label: 'Text',
+          hint: 'storage only — encrypt/decrypt, no queries',
+        },
+        { value: 'TextEq', label: 'TextEq', hint: 'equality (=, <>, IN)' },
+        {
+          value: 'TextOrd',
+          label: 'TextOrd',
+          hint: 'equality + order/range (=, <, >, <=, >=, BETWEEN, ORDER BY)',
+        },
+        {
+          value: 'TextMatch',
+          label: 'TextMatch',
+          hint: 'free-text match only (matches())',
+        },
+        {
+          value: 'TextSearch',
+          label: 'TextSearch',
+          hint: 'equality + order/range + free-text (=, <, >, BETWEEN, ORDER BY, matches())',
+        },
+      ]
+    case 'number':
+      return [
+        { value: 'Integer', label: 'Integer', hint: 'storage only' },
+        {
+          value: 'IntegerEq',
+          label: 'IntegerEq',
+          hint: 'equality (=, <>, IN)',
+        },
+        {
+          value: 'IntegerOrd',
+          label: 'IntegerOrd',
+          hint: 'equality + order/range (=, <, >, <=, >=, BETWEEN, ORDER BY)',
+        },
+      ]
+    case 'date':
+      return [
+        { value: 'Date', label: 'Date', hint: 'storage only' },
+        { value: 'DateEq', label: 'DateEq', hint: 'equality (=, <>, IN)' },
+        {
+          value: 'DateOrd',
+          label: 'DateOrd',
+          hint: 'equality + order/range (=, <, >, <=, >=, BETWEEN, ORDER BY)',
+        },
+      ]
+    case 'boolean':
+      return [{ value: 'Boolean', label: 'Boolean', hint: 'storage only' }]
+    case 'json':
+      return [
+        {
+          value: 'Json',
+          label: 'Json',
+          hint: 'encrypted-JSONB containment + selectors (@>, ->; =, <, >, BETWEEN, ORDER BY at a path)',
+        },
+      ]
+  }
+}
+
+/**
+ * The default domain pre-selected in the picker: the widest searchable domain
+ * for the type. Mirrors the pre-v3 scaffold, which enabled every capability on
+ * every selected column by default. Reads the last entry of the `candidateDomains`
+ * list (ordered narrowest→widest) so the "widest is the default" invariant has a
+ * single source of truth — reordering a candidate list moves the default with it,
+ * and the two can never silently drift.
+ *
+ * Accepts either a `DataType` (looks the candidates up) or an already-computed
+ * candidate list, so a caller that already holds the options — like the picker
+ * loop — can reuse them instead of recomputing `candidateDomains`.
+ */
+export function defaultDomain(
+  from: DataType | Array<{ value: V3Domain }>,
+): V3Domain {
+  const options = Array.isArray(from) ? from : candidateDomains(from)
+  return options[options.length - 1].value
+}
+
+/**
+ * Interactive multi-select: which columns in which table should be encrypted?
+ *
+ * Returns `undefined` if the user cancels at any prompt — callers should
+ * propagate the cancellation rather than treating it as "no columns selected".
+ *
+ * Pre-selects columns that already carry an EQL domain so re-running on a
+ * partially encrypted DB is a no-op by default.
+ */
+export async function selectTableColumns(
+  tables: DbTable[],
+): Promise<SchemaDef | undefined> {
+  const selectedTable = await p.select({
+    message: 'Which table do you want to encrypt columns in?',
+    options: tables.map((t) => {
+      const eqlCount = t.columns.filter((c) => c.isEqlEncrypted).length
+      const hint =
+        eqlCount > 0
+          ? `${t.columns.length} columns, ${eqlCount} already encrypted`
+          : `${t.columns.length} column${t.columns.length !== 1 ? 's' : ''}`
+      return { value: t.tableName, label: t.tableName, hint }
+    }),
+  })
+
+  if (p.isCancel(selectedTable)) return undefined
+
+  const table = tables.find((t) => t.tableName === selectedTable)
+  if (!table) return undefined
+
+  const eqlColumns = table.columns.filter((c) => c.isEqlEncrypted)
+
+  if (eqlColumns.length > 0) {
+    p.log.info(
+      `Detected ${eqlColumns.length} already-encrypted column${eqlColumns.length !== 1 ? 's' : ''} (${[...new Set(eqlColumns.map((c) => c.udtName))].join(', ')}) — pre-selected for you.`,
+    )
+  }
+
+  const selectedColumns = await p.multiselect({
+    message: `Which columns in "${selectedTable}" should be in the encryption schema?`,
+    options: table.columns.map((col) => ({
+      value: col.columnName,
+      label: col.columnName,
+      hint: col.isEqlEncrypted ? col.udtName : col.dataType,
+    })),
+    required: true,
+    initialValues: eqlColumns.map((c) => c.columnName),
+  })
+
+  if (p.isCancel(selectedColumns)) return undefined
+
+  const columns: ColumnDef[] = []
+  for (const colName of selectedColumns) {
+    const dbCol = table.columns.find((c) => c.columnName === colName)
+    if (!dbCol) {
+      // Unreachable — multiselect only emits values from the source array.
+      throw new Error(`Column ${colName} not found in table ${selectedTable}`)
+    }
+    const dataType = pgTypeToDataType(dbCol.udtName)
+    const options = candidateDomains(dataType)
+
+    // Single-domain types (boolean, json) have nothing to choose — assign the
+    // only domain without interrupting the user with a one-option prompt.
+    if (options.length === 1) {
+      columns.push({ name: colName, domain: options[0].value })
+      continue
+    }
+
+    const domain = await p.select<V3Domain>({
+      message: `Encryption domain for "${colName}" (${dataType})?`,
+      options,
+      initialValue: defaultDomain(options),
+    })
+
+    if (p.isCancel(domain)) return undefined
+
+    columns.push({ name: colName, domain })
+  }
+
+  p.log.success(
+    `Schema defined: ${selectedTable} with ${columns.length} encrypted column${columns.length !== 1 ? 's' : ''}`,
+  )
+
+  return { tableName: selectedTable, columns }
+}
+
+/**
+ * Connect, introspect, and let the user pick columns in one or more tables.
+ *
+ * Returns `undefined` for any of:
+ * - connection failure
+ * - empty database (no public tables)
+ * - user cancellation at any prompt
+ *
+ * Callers distinguish "user wanted no schemas" from "DB has nothing to pick"
+ * by also checking `introspectDatabase` separately when needed.
+ */
+export async function buildSchemasFromDatabase(
+  databaseUrl: string,
+): Promise<SchemaDef[] | undefined> {
+  const s = p.spinner()
+  s.start('Connecting to database and reading schema...')
+
+  let tables: DbTable[]
+  try {
+    tables = await introspectDatabase(databaseUrl)
+  } catch (error) {
+    s.stop('Failed to connect to database.')
+    p.log.error(error instanceof Error ? error.message : 'Unknown error')
+    return undefined
+  }
+
+  if (tables.length === 0) {
+    s.stop('No tables found in the public schema.')
+    return undefined
+  }
+
+  s.stop(
+    `Found ${tables.length} table${tables.length !== 1 ? 's' : ''} in the public schema.`,
+  )
+
+  const schemas: SchemaDef[] = []
+  // Track names already configured this run so we never offer the same
+  // table twice — picking it again would push a duplicate `SchemaDef` and
+  // emit duplicate encrypted-column declarations downstream.
+  const alreadySelected = new Set<string>()
+
+  while (true) {
+    const remaining = tables.filter((t) => !alreadySelected.has(t.tableName))
+    if (remaining.length === 0) break
+
+    const schema = await selectTableColumns(remaining)
+    if (!schema) return undefined
+
+    alreadySelected.add(schema.tableName)
+    schemas.push(schema)
+
+    // No tables left after this one — skip the redundant "another?" prompt.
+    if (alreadySelected.size === tables.length) break
+
+    const addMore = await p.confirm({
+      message: 'Encrypt columns in another table?',
+      initialValue: false,
+    })
+
+    if (p.isCancel(addMore)) return undefined
+    if (!addMore) break
+  }
+
+  return schemas
+}

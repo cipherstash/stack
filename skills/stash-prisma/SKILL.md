@@ -183,19 +183,19 @@ npx prisma-next migration plan
 
 The database is untouched by this: markers are keyed by invariant, so
 already-applied invariants do not re-run and the only new work is the upgrade
-edge.
+edges.
 
 Skipping it is not always fatal, which is what makes it easy to miss. 1.0.0
-shipped the baseline at **eql-3.0.4**; later versions bake **eql-3.0.5** into the
-same baseline directory (`20260601T0100_install_eql_v3_bundle`), so its bytes and
+and 1.1.x shipped the baseline at **eql-3.0.4**; later versions bake **eql-3.0.6**
+into the same baseline directory (`20260601T0100_install_eql_v3_bundle`), so its bytes and
 its `migrationHash` changed:
 
 | You run | With a stale `migrations/cipherstash/` |
 | --- | --- |
 | `prisma-next migration plan` | Succeeds, silently keeping the stale baseline — no hash mismatch, because it is intact, just old. |
-| `prisma-next migrate` (existing database) | Correct: applies the 3.0.5 upgrade edge only. |
-| `prisma-next migrate` (fresh database) | Correct end state, but installs eql-3.0.4 and then immediately re-installs eql-3.0.5 over it. |
-| `prisma-next db init` (fresh database) | **Fails**: `Operation cipherstash.upgrade-eql-v3-bundle-3.0.5 has class "data" which is not allowed by policy.` `db init` is additive-only and the stale baseline does not carry the 3.0.5 invariant, so the planner has to reach for the data-classed upgrade edge. The message does not say any of that — the remedy is the `rm -rf` above. |
+| `prisma-next migrate` (existing database) | Correct: applies the 3.0.5 and 3.0.6 upgrade edges only (the bundle is re-installed twice). |
+| `prisma-next migrate` (fresh database) | Correct end state, but installs eql-3.0.4 and then immediately re-installs eql-3.0.5 and eql-3.0.6 over it. |
+| `prisma-next db init` (fresh database) | **Fails**: `Operation cipherstash.upgrade-eql-v3-bundle-3.0.5 has class "data" which is not allowed by policy.` `db init` is additive-only and the stale baseline does not carry the 3.0.5 or 3.0.6 invariants, so the planner has to reach for the data-classed upgrade edges. The message does not say any of that — the remedy is the `rm -rf` above. |
 
 Upgrading and then running `migrate` or `db init` **without** planning first
 leaves the newer bundle off disk entirely, so it is silently skipped and the

@@ -76,7 +76,7 @@ build step.
 ```ts
 import {
   Encryption, encryptedTable, types, isEncrypted,
-} from 'npm:@cipherstash/stack@1.1.1/wasm-inline'
+} from 'npm:@cipherstash/stack@1.2.1/wasm-inline'
 ```
 
 **Pin an exact version.** Deno caches by specifier, so an unpinned import
@@ -91,7 +91,7 @@ name everywhere:
 ```jsonc
 {
   "imports": {
-    "@cipherstash/stack/wasm-inline": "npm:@cipherstash/stack@1.1.1/wasm-inline"
+    "@cipherstash/stack/wasm-inline": "npm:@cipherstash/stack@1.2.1/wasm-inline"
   }
 }
 ```
@@ -486,7 +486,7 @@ entry is ESM-only. Move the consumer to ESM.
 **Missing `CS_*` at runtime** — the secret store was never populated, or the
 function was served without `--env-file`. Validate the ones you pass at handler entry
 and return an actionable error rather than letting client construction fail
-opaquely; the example in `examples/supabase-worker` does exactly this.
+opaquely; the example in `languages/typescript/examples/supabase-worker` does exactly this.
 
 **Encryption works, search returns zero rows** — not a credential problem: a
 keyset mismatch fails everything loudly, decrypt included (see [Keysets and
@@ -514,5 +514,5 @@ user-scoped, so it is reused across invocations on a warm isolate.
   wherever the app runs).
 - `stash-supabase` — the PostgREST wrapper, for Supabase apps that are not
   writing raw SQL.
-- Working example: `examples/supabase-worker` in the `cipherstash/stack` repo.
+- Working example: `languages/typescript/examples/supabase-worker` in the `cipherstash/stack` repo.
 - Bundling guide: https://cipherstash.com/docs/stack/deploy/bundling

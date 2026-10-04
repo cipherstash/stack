@@ -1,0 +1,27 @@
+# Fuzz stack-kms's public client-key material decoder
+# (`ClientKey::from_encoded_v1`, hex or base64 then CBOR keyset decoding), via
+# libFuzzer/cargo-fuzz. Requires the nightly toolchain. Runs 60s by default;
+# override by appending a libFuzzer flag, e.g.
+# `mise run fuzz:client-key -- -max_total_time=300` (the last repeated value
+# wins). `--sanitizer none` is safe — the decode path is pure safe Rust.
+# `--target $(rustc … host)` forces the native host triple (the cargo-fuzz
+# binary may be x86_64 under Rosetta on Apple Silicon, which otherwise
+# misdetects the target). The fuzz crate lives in `packages/stack-kms/fuzz/`
+# (detached).
+["fuzz:client-key"]
+description = "Fuzz stack-kms's client-key material decoder (libFuzzer, nightly, 60s default)"
+dir = "{{config_root}}/packages/stack-kms"
+run = "mise x --env test -- cargo +nightly fuzz run client_key_encoded --sanitizer none --target $(rustc -vV | sed -n 's/^host: //p') -- -max_total_time=60"
+
+# Rustdoc with warnings as errors: a broken intra-doc link or a rustdoc
+# warning fails the build. Doc *examples* are `test:doc:stack-kms`. Both run
+# with all features so nothing feature-gated goes unchecked; the root `doc`
+# task fans out over every `doc:<crate>`.
+["doc:stack-kms"]
+description = "Build docs for stack-kms with all features (warnings are errors)"
+env = { RUSTDOCFLAGS = "-D warnings" }
+run = "cargo doc -p stack-kms --no-deps --all-features"
+
+["test:doc:stack-kms"]
+description = "Run documentation tests for stack-kms"
+run = "mise x --env test -- cargo test -p stack-kms --doc --all-features"

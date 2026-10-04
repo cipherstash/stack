@@ -36,7 +36,10 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
 const REPO_ROOT = resolve(import.meta.dirname, '..')
-const PLATFORMS_DIR = join(REPO_ROOT, 'packages/protect-ffi/platforms')
+const PLATFORMS_DIR = join(
+  REPO_ROOT,
+  'languages/typescript/packages/protect-ffi/platforms',
+)
 
 /**
  * Where each platform builds.

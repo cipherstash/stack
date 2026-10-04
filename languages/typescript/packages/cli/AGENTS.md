@@ -1,0 +1,156 @@
+# `stash` — agent notes
+
+## Two test suites
+
+This package has **two** Vitest configs (plus a self-skipping live-Postgres mode under the first). Run the right one for the change.
+
+| Command | Config | Scope | Needs build? |
+| --- | --- | --- | --- |
+| `pnpm --filter stash test` | `vitest.config.ts` | Unit tests under `src/__tests__/**` and `src/**/__tests__/**` | **Partly** — needs `@cipherstash/stack` built (see below). Turbo's `^build` supplies it in CI. |
+| `pnpm --filter stash test:e2e` | `vitest.integration.config.ts` | E2E tests under `tests/e2e/**.e2e.test.ts` driving the built `dist/bin/stash.js` through a real pty (`node-pty`) | **Yes** — run `pnpm --filter stash build` first, or use the turbo `test:e2e` task which depends on `build`. One test also needs protect-ffi's native binding, which no `build` produces (see below). |
+
+The unit config explicitly excludes `tests/e2e/**` so the default `pnpm test`
+stays fast.
+
+**Live-Postgres suites run under the unit config but self-skip.**
+`src/**/__tests__/**.live.test.ts` gate on `STASH_TEST_DATABASE_URL` via
+`describe.skip`, so `pnpm --filter stash test` stays green with no database and
+CI reports them as skipped. To actually run them:
+
+```bash
+docker compose -f local/docker-compose.postgres.yml up -d --wait
+STASH_TEST_DATABASE_URL=postgres://cipherstash:password@localhost:55432/cipherstash \
+  pnpm --filter stash test
+```
+
+They need Postgres only — no CipherStash credentials. Reach for one when a
+change turns on a real SQL string, a real SQLSTATE, or a driver type
+conversion: a faked `pg` returns whatever the test author typed, so none of
+those is observable under it. `commands/eql/__tests__/applied.live.test.ts` is
+the worked example — it found that a missing *schema* raises `42P01`, not the
+`3F000` the code's own comment assumed.
+
+It is **not** fully self-contained, despite running standalone in CI. Some `src`
+modules import workspace packages that publish `./dist` only, so an unbuilt
+workspace fails at collection with `Failed to resolve entry for package …`
+rather than at an assertion. `vitest.config.ts` aliases `@cipherstash/migrate`
+to its source to remove one such coupling; `@cipherstash/stack` remains, reached
+via `languages/typescript/packages/migrate/src/backfill.ts` and a direct import in
+`init/lib/__tests__/introspect.test.ts`. Deleting `languages/typescript/packages/stack/dist` fails 10
+files. Closing it needs `vitest.shared.ts`'s `stackSourceAlias`, which cannot be
+spread into this config: its `'@/'` points at `languages/typescript/packages/stack/src` while this
+package's points at `languages/typescript/packages/cli/src`, and a flat alias map admits only one —
+spread it after and stack's entry clobbers the CLI's, spread it before and the
+CLI's breaks stack's own source imports (#787 review).
+
+## When to add or update an E2E test
+
+Update `tests/e2e/**` whenever you:
+
+- Add or rename a top-level command, subcommand, or flag (smoke tests assert
+  on help text, command names, and unknown-command behavior).
+- Change the user-facing string for an exit message that an existing E2E
+  asserts on (e.g. cancellation text, "Unknown auth command", the
+  `db migrate` stub warning). Strings that tests assert on live in
+  `src/messages.ts` — update the constant there and both prod and tests
+  pick it up. *Don't* hard-code the new wording in a test.
+- Touch `src/bin/stash.ts` argv parsing, exit codes, or top-level error
+  handling.
+- Add a new clack prompt that changes the *first* prompt rendered for a
+  command currently covered by E2E (the cancel test waits for a specific
+  prompt label).
+
+You do **not** need to add an E2E test for every new flag or branch — keep
+E2E coverage to the highest-value flows. Unit tests still own the bulk of
+behaviour coverage.
+
+## How the harness works
+
+`tests/helpers/pty.ts` exports `render(args, opts?)` which spawns
+`dist/bin/stash.js` inside a real pseudo-terminal and returns:
+
+- `output` — cumulative ANSI-stripped stdout.
+- `raw` — same, with ANSI escapes preserved (handy when debugging).
+- `waitFor(text|regex, timeoutMs?)` — polls until the match appears.
+- `key(name)` — sends keystrokes (`Enter`, `Up`, `Down`, `CtrlC`, etc.).
+- `write(string)` — raw stdin write.
+- `exit` — promise resolving to `{ exitCode, signal? }`.
+- `kill(signal?)` — terminate the pty.
+
+A real pty is required because `@clack/prompts` switches stdin to raw mode
+and renders differently when stdout isn't a TTY; piped-stdin mocks don't
+exercise the same code paths.
+
+## Gotchas
+
+- **Build before E2E.** `dist/bin/stash.js` is the artifact under test. The
+  turbo `test:e2e` task already depends on `build`, but if you invoke the
+  script directly you must build first.
+- **`doctor.e2e.test.ts` also needs protect-ffi's native binding, and no
+  `build` produces one.** `stash doctor` probes the encryption engine by
+  *calling* through `@cipherstash/stack/diagnostics` — importing it proves
+  nothing, since the neon load is lazy. `@cipherstash/stack` is a devDependency
+  of this package, so in the workspace the probe always resolves it and never
+  takes the "not installed, that's fine" arm; and the workspace-linked
+  `@cipherstash/protect-ffi-<platform>` carries no `index.node` until cargo has
+  run (protect-ffi's `build` is `tsc`, deliberately cargo-free — see the root
+  `AGENTS.md`). Without a binding the healthy-install test fails on a red
+  encryption row and exit 1, and `doctor` offers the recovery it has for an npm
+  user — reinstall `node_modules` — which does not fix this. **That is a
+  missing binding, not a broken checkout.** Build one (needs a Rust toolchain),
+  from `languages/typescript/packages/protect-ffi`:
+
+  ```bash
+  mise run build:debug   # or: pnpm --filter @cipherstash/protect-ffi build:native
+  ```
+
+  CI never hits this: the `run-tests` job in `tests.yml` runs
+  `.github/actions/build-ffi-binding` long before the CLI E2E step, and that
+  action caches on a hash of the Rust inputs, so a JS-only PR pays a restore.
+  Only the healthy-path test needs a real binding: `doctor-missing-binary`
+  stages the absence itself, in the spawned CLI, and passes either way.
+- **macOS spawn-helper exec bit.** pnpm strips the executable bit when
+  unpacking node-pty's prebuilds. The helper auto-fixes this at module load
+  via `ensureSpawnHelperExecutable`. If you see `posix_spawnp failed` after
+  reinstalling `node_modules`, the chmod logic should handle it on next
+  test run; if not, manually `chmod +x` the helper under
+  `node_modules/.pnpm/node-pty@*/node_modules/node-pty/prebuilds/<plat>/spawn-helper`.
+- **Don't broaden the cancel test target.** `auth login` was chosen because
+  the region picker runs before any network I/O. Don't move the cancel
+  assertion to a command that hits the auth server or DB before the first
+  prompt — flaky.
+- **Region resolution is CI-aware.** `resolveRegion` (in
+  `src/commands/auth/region.ts`) mirrors the `DATABASE_URL` resolver: it only
+  renders the interactive picker when `stdin.isTTY` **and** `CI` is unset, and
+  otherwise honours `--region` / `STASH_REGION` or exits with an actionable
+  error (JSON in `--json` mode). Because the pty harness defaults `CI=true`,
+  the interactive-cancel test passes `env: { CI: '' }` to force the picker to
+  render. The pure helpers (`normalizeRegion`, `regionSlugs`) and the resolver
+  policy have unit coverage in `src/commands/auth/__tests__/region.test.ts` —
+  the module imports no native code, so it runs under the fast unit config.
+- **Use `src/messages.ts` for assertion-stable strings.** The module is a
+  single typed `as const` object grouping copy by area (`cli`, `auth`,
+  `db`). Prod call sites import the same constants the tests do, so a copy
+  tweak only needs to land in one place. Add to `messages.ts` only when a
+  test actually asserts on the string — premature extraction is worse
+  than copy-paste here. For literals tests don't touch (e.g. command
+  names like `init`, `eql install`), keep them inline.
+- **Telemetry.** The CLI has anonymous, opt-out usage analytics in
+  `src/telemetry/` (posthog-node, loaded lazily only when an event is
+  actually sent). It ships dormant — a real project key is embedded only by
+  the release build (`STASH_POSTHOG_KEY` repo variable → tsup define) — and
+  is force-disabled in every pty e2e child via `STASH_TELEMETRY_DISABLED=1`
+  in `tests/helpers/pty.ts`. Two contracts to preserve when touching it:
+  (1) event VALUES are closed vocabularies — `classifyCommand` /
+  `classifyErrorType` in `src/telemetry/classify-command.ts` must wrap
+  anything argv- or error-derived before emit; (2) never intercept
+  `process.exit` with a thrown signal — @clack/core exits from keypress
+  handlers and several commands have broad catches, so interception breaks
+  cancel flows (tried and reverted; see `src/cli/exit.ts`). Commands that
+  terminate via deep `process.exit()` are simply not tracked; cooperative
+  exits use `throw new CliExit(code)` from verified-unwindable sites only.
+
+## Plan and rationale
+
+Background, alternative approaches considered, and the phase-2 messages
+module are in `docs/plans/cli-pty-integration-tests.md`.

@@ -1,0 +1,10 @@
+github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20260902024806-f2c7f7d17fbc h1:iGbTgv9Kx5SaTI2tPxaxwDvS5BXZUO565N00cxRVwC8=
+github.com/cipherstash/vitaminc/bindings/go/vcffi v0.0.0-20260902024806-f2c7f7d17fbc/go.mod h1:6jpaqAo6f7rjWuxoti0Ymoi9DQZyxpnieWVudhXv38Y=
+github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20260902024806-f2c7f7d17fbc h1:vlrjoILAURGfpBWucVZEywK22k4lfky1xGDIKV6kqNg=
+github.com/cipherstash/vitaminc/bindings/go/vcvalue v0.0.0-20260902024806-f2c7f7d17fbc/go.mod h1:RJODA1DCSm4H+1pbmCzDdT2pAIkxhinwIu6ewjh5sPs=
+github.com/tetratelabs/wazero v1.12.0 h1:DuWcpNu/FzgEXgGBDp8J1Spc+CWOvvtvVyjKlaZopYU=
+github.com/tetratelabs/wazero v1.12.0/go.mod h1:LvKtzl2RqO4gyF27BiXU+nKAjcV8f38U+kP/q2vgxh0=
+golang.org/x/oauth2 v0.37.0 h1:JUlcxA8oAtauLfiH8FX2/FkAWHAdi0QtGCGc+hofE98=
+golang.org/x/oauth2 v0.37.0/go.mod h1:IxwZNxUULJmpBFf9K/9NTMSIfZZuvuTy1gGxhigP/58=
+golang.org/x/sys v0.48.0 h1:bbX/i/6MgT9BVLM9RT1thmxL04yeTAhbEz4SyadbXoo=
+golang.org/x/sys v0.48.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=

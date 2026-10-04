@@ -1,0 +1,36 @@
+{
+  "_comment": "One rule, two suites. A Label segment is plain exactly when the descriptor renders it verbatim. The Rust unit test in src/descriptor.rs and the Go test in languages/golang/stackencrypt/label_test.go both read this file, so the two implementations of the rule cannot drift apart silently.",
+  "plain": [
+    "users",
+    "email_address",
+    "naïve",
+    "with space",
+    "b64",
+    "x7",
+    "a-b",
+    "a.b",
+    "A_B"
+  ],
+  "not_plain": [
+    "",
+    "b64:",
+    "b64:x",
+    "7",
+    "0users",
+    "-x",
+    "a/b",
+    "/",
+    "(a)",
+    "a)",
+    "(a",
+    "a\tb",
+    "a\nb",
+    "ab",
+    "ab",
+    "users​",
+    "users‮",
+    "­x",
+    "a﻿b",
+    "a⁠b"
+  ]
+}

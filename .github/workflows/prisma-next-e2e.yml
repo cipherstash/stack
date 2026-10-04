@@ -3,7 +3,7 @@ name: Prisma Next E2E
 # End-to-end tests for `@cipherstash/stack-prisma`: spins up a real
 # Postgres container, applies the cipherstash baseline migration
 # (EQL bundle install) + the example app's schema, then runs the
-# suite at `examples/prisma/test/e2e/` against a live ZeroKMS
+# suite at `languages/typescript/examples/prisma/test/e2e/` against a live ZeroKMS
 # workspace.
 #
 # Triggers only on changes that affect the package or the example
@@ -15,8 +15,8 @@ on:
     branches:
       - main
     paths:
-      - 'packages/stack-prisma/**'
-      - 'examples/prisma/**'
+      - 'languages/typescript/packages/stack-prisma/**'
+      - 'languages/typescript/examples/prisma/**'
       - '.github/workflows/prisma-next-e2e.yml'
       # This suite encrypts against the live service, so the native binding and
       # the action that builds it are inputs to it. Added with that build step:
@@ -25,15 +25,16 @@ on:
       # what makes that a gate rather than a report — a PR touching any of these
       # runs the suite before the change lands, not after.
       - '.github/actions/build-ffi-binding/**'
-      - 'packages/protect-ffi/crates/**'
-      - 'packages/protect-ffi/src/**'
-      - 'packages/protect-ffi/Cargo.toml'
-      - 'packages/protect-ffi/Cargo.lock'
-      - 'packages/protect-ffi/package.json'
-      - 'packages/protect-ffi/mise.toml'
+      - '.github/actions/build-auth-binding/**'
+      - 'languages/typescript/packages/protect-ffi/crates/**'
+      - 'languages/typescript/packages/protect-ffi/src/**'
+      - 'languages/typescript/packages/protect-ffi/Cargo.toml'
+      - 'languages/typescript/packages/protect-ffi/Cargo.lock'
+      - 'languages/typescript/packages/protect-ffi/package.json'
+      - 'languages/typescript/packages/protect-ffi/mise.toml'
       # Out of that package, and a compile input all the same: the cdylib
       # crate carries
-      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so the
       # EQL wire types are linked into the `index.node` this job encrypts
       # through. The native cache key in `.github/actions/build-ffi-binding`
       # hashes both, so an edit here misses that cache and the binding gets
@@ -47,8 +48,8 @@ on:
     branches:
       - '**'
     paths:
-      - 'packages/stack-prisma/**'
-      - 'examples/prisma/**'
+      - 'languages/typescript/packages/stack-prisma/**'
+      - 'languages/typescript/examples/prisma/**'
       - '.github/workflows/prisma-next-e2e.yml'
       # The same entries as under `push` above, and the copy that does the
       # work: a PR touching the native binding or the action that builds it
@@ -58,15 +59,16 @@ on:
       # scripts/__tests__/workflow-paths-filter-parity.test.mjs compares the
       # two copies.)
       - '.github/actions/build-ffi-binding/**'
-      - 'packages/protect-ffi/crates/**'
-      - 'packages/protect-ffi/src/**'
-      - 'packages/protect-ffi/Cargo.toml'
-      - 'packages/protect-ffi/Cargo.lock'
-      - 'packages/protect-ffi/package.json'
-      - 'packages/protect-ffi/mise.toml'
+      - '.github/actions/build-auth-binding/**'
+      - 'languages/typescript/packages/protect-ffi/crates/**'
+      - 'languages/typescript/packages/protect-ffi/src/**'
+      - 'languages/typescript/packages/protect-ffi/Cargo.toml'
+      - 'languages/typescript/packages/protect-ffi/Cargo.lock'
+      - 'languages/typescript/packages/protect-ffi/package.json'
+      - 'languages/typescript/packages/protect-ffi/mise.toml'
       # Out of that package, and a compile input all the same: the cdylib
       # crate carries
-      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so the
       # EQL wire types are linked into the `index.node` this job encrypts
       # through. The native cache key in `.github/actions/build-ffi-binding`
       # hashes both, so an edit here misses that cache and the binding gets
@@ -103,7 +105,7 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v6.0.10
+      - uses: pnpm/action-setup@v6.1.0
         name: Install pnpm
         with:
           run_install: false
@@ -137,7 +139,7 @@ jobs:
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
       # This suite encrypts against the live service, so it needs the native
-      # binding — `packages/protect-ffi` is a workspace package now, so
+      # binding — `languages/typescript/packages/protect-ffi` is a workspace package now, so
       # `index.node` is a build output rather than tarball contents. This step
       # runs on push to main and on any PR whose diff matches the paths filter
       # above, the absorption PR that introduced the need included: that PR
@@ -147,6 +149,9 @@ jobs:
       - name: Build the protect-ffi binding
         uses: ./.github/actions/build-ffi-binding
 
+      - name: Build the @cipherstash/auth binding
+        uses: ./.github/actions/build-auth-binding
+
       # Write the CS_* credentials and the harness DATABASE_URL into the
       # example app's .env so the runtime + the `prisma-next migration
       # apply` invocation in global-setup both pick them up. The harness
@@ -154,14 +159,14 @@ jobs:
       # the container, but the migration:apply subprocess relies on
       # prisma-next.config.ts → process.env['DATABASE_URL'] being set
       # before the test runner spawns it.
-      - name: Create .env file in examples/prisma
+      - name: Create .env file in languages/typescript/examples/prisma
         run: |
-          touch ./examples/prisma/.env
-          echo "DATABASE_URL=postgres://cipherstash:cipherstash@localhost:54329/cipherstash_e2e" >> ./examples/prisma/.env
-          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./examples/prisma/.env
-          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./examples/prisma/.env
-          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./examples/prisma/.env
-          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./examples/prisma/.env
+          touch ./languages/typescript/examples/prisma/.env
+          echo "DATABASE_URL=postgres://cipherstash:cipherstash@localhost:54329/cipherstash_e2e" >> ./languages/typescript/examples/prisma/.env
+          echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./languages/typescript/examples/prisma/.env
+          echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./languages/typescript/examples/prisma/.env
+          echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./languages/typescript/examples/prisma/.env
+          echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./languages/typescript/examples/prisma/.env
 
       # Build via turbo so the `^build` dependency on
       # `@cipherstash/stack` (which `@cipherstash/stack-prisma` imports
@@ -176,7 +181,7 @@ jobs:
         run: pnpm exec turbo run emit --filter @cipherstash/prisma-example
 
       - name: Start E2E Postgres container
-        working-directory: examples/prisma
+        working-directory: languages/typescript/examples/prisma
         run: |
           docker compose -f test/e2e/docker-compose.yml up -d
           # Wait for pg_isready before handing off to the suite — the
@@ -194,5 +199,5 @@ jobs:
 
       - name: Stop E2E Postgres container
         if: always()
-        working-directory: examples/prisma
+        working-directory: languages/typescript/examples/prisma
         run: docker compose -f test/e2e/docker-compose.yml down -v

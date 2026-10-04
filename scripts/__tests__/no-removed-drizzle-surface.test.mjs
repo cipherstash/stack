@@ -35,9 +35,9 @@ const SHIPPED_GLOBS = [
   'README.md',
   'AGENTS.md',
   // `stash init` writes these strings into the user's project as real source.
-  'packages/cli/src/commands/init/utils.ts',
-  ':(glob)packages/cli/src/commands/init/lib/*.ts',
-  ':(glob)packages/cli/src/commands/init/doctrine/*.md',
+  'languages/typescript/packages/cli/src/commands/init/utils.ts',
+  ':(glob)languages/typescript/packages/cli/src/commands/init/lib/*.ts',
+  ':(glob)languages/typescript/packages/cli/src/commands/init/doctrine/*.md',
 ]
 
 /** Tracked files matching the shipped globs, via git so it honours .gitignore. */
@@ -55,14 +55,14 @@ describe('removed stack-drizzle surface is absent from shipped files', () => {
   it('finds the shipped file set (guards against a silently-empty glob)', () => {
     expect(files.length).toBeGreaterThan(5)
     expect(files).toContain('skills/stash-drizzle/SKILL.md')
-    expect(files).toContain('packages/stack/README.md')
-    // The two roots nested deeper than `packages/*`. Pinned by name because
+    expect(files).toContain('languages/typescript/packages/stack/README.md')
+    // The two roots nested deeper than one level. Pinned by name because
     // they are what the hardcoded `:(glob)packages/*/README.md` silently
     // missed: `:(glob)` does not cross `/`, so it selected the EQL subtree
     // ROOT's README — which ships in no tarball — instead of the package's.
     expect(files).toContain('packages/eql/packages/eql/README.md')
     expect(files).toContain(
-      'packages/protect-ffi/platforms/linux-x64-gnu/README.md',
+      'languages/typescript/packages/protect-ffi/platforms/linux-x64-gnu/README.md',
     )
   })
 

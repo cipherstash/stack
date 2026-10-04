@@ -1,12 +1,12 @@
 import { existsSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import cliVitestConfig from '../../packages/cli/vitest.config.ts'
+import cliVitestConfig from '../../languages/typescript/packages/cli/vitest.config.ts'
 
 /**
- * `packages/cli/vitest.config.ts` carries its own alias map, outside the one
+ * `languages/typescript/packages/cli/vitest.config.ts` carries its own alias map, outside the one
  * `vitest-shared-alias.test.mjs` guards. It has to: closing the CLI suite's
  * remaining build coupling would need `stackSourceAlias`, whose `'@/'` entry
- * points at `packages/stack/src` and would clobber the CLI's own `'@/'`. So the
+ * points at `languages/typescript/packages/stack/src` and would clobber the CLI's own `'@/'`. So the
  * map is package-local and needs its own guard, for the same reason — an alias
  * pointing at a moved file fails LATE, with a "failed to resolve import" naming
  * a path nobody wrote.
@@ -39,11 +39,11 @@ const targets = Object.entries(aliases)
     target.endsWith('/') ? target.slice(0, -1) : target,
   ])
 
-describe('packages/cli vitest alias map', () => {
+describe('languages/typescript/packages/cli vitest alias map', () => {
   it('is the object-of-strings form this guard can read', () => {
     expect(
       nonStringTargets.map(([specifier]) => specifier),
-      'packages/cli/vitest.config.ts switched away from the object-of-strings alias form. Update this guard to walk the new shape — do not delete it.',
+      'languages/typescript/packages/cli/vitest.config.ts switched away from the object-of-strings alias form. Update this guard to walk the new shape — do not delete it.',
     ).toEqual([])
   })
 

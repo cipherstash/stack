@@ -1,6 +1,6 @@
 name: Prisma Example README E2E
 
-# Outside-in walkthrough of `examples/prisma/README.md`'s "Run it"
+# Outside-in walkthrough of `languages/typescript/examples/prisma/README.md`'s "Run it"
 # section: copies .env.example, brings up the bundled Postgres, runs
 # `pnpm install`, `pnpm emit`, `pnpm migration:plan --name initial`,
 # `pnpm migration:apply`, then `pnpm start`, asserting each command
@@ -16,7 +16,7 @@ on:
     branches:
       - main
     paths:
-      - 'examples/prisma/**'
+      - 'languages/typescript/examples/prisma/**'
       - '.github/workflows/prisma-example-readme-e2e.yml'
       # The walkthrough encrypts against the live service, so the native
       # binding and the action that builds it are inputs to this suite. Added
@@ -26,15 +26,16 @@ on:
       # report — a PR touching any of these runs the walkthrough before the
       # change lands, not after.
       - '.github/actions/build-ffi-binding/**'
-      - 'packages/protect-ffi/crates/**'
-      - 'packages/protect-ffi/src/**'
-      - 'packages/protect-ffi/Cargo.toml'
-      - 'packages/protect-ffi/Cargo.lock'
-      - 'packages/protect-ffi/package.json'
-      - 'packages/protect-ffi/mise.toml'
+      - '.github/actions/build-auth-binding/**'
+      - 'languages/typescript/packages/protect-ffi/crates/**'
+      - 'languages/typescript/packages/protect-ffi/src/**'
+      - 'languages/typescript/packages/protect-ffi/Cargo.toml'
+      - 'languages/typescript/packages/protect-ffi/Cargo.lock'
+      - 'languages/typescript/packages/protect-ffi/package.json'
+      - 'languages/typescript/packages/protect-ffi/mise.toml'
       # Out of that package, and a compile input all the same: the cdylib
       # crate carries
-      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so the
       # EQL wire types are linked into the `index.node` this job encrypts
       # through. The native cache key in `.github/actions/build-ffi-binding`
       # hashes both, so an edit here misses that cache and the binding gets
@@ -48,7 +49,7 @@ on:
     branches:
       - '**'
     paths:
-      - 'examples/prisma/**'
+      - 'languages/typescript/examples/prisma/**'
       - '.github/workflows/prisma-example-readme-e2e.yml'
       # The same entries as under `push` above, and the copy that does the
       # work: a PR touching the native binding or the action that builds it
@@ -58,15 +59,16 @@ on:
       # scripts/__tests__/workflow-paths-filter-parity.test.mjs compares the
       # two copies.)
       - '.github/actions/build-ffi-binding/**'
-      - 'packages/protect-ffi/crates/**'
-      - 'packages/protect-ffi/src/**'
-      - 'packages/protect-ffi/Cargo.toml'
-      - 'packages/protect-ffi/Cargo.lock'
-      - 'packages/protect-ffi/package.json'
-      - 'packages/protect-ffi/mise.toml'
+      - '.github/actions/build-auth-binding/**'
+      - 'languages/typescript/packages/protect-ffi/crates/**'
+      - 'languages/typescript/packages/protect-ffi/src/**'
+      - 'languages/typescript/packages/protect-ffi/Cargo.toml'
+      - 'languages/typescript/packages/protect-ffi/Cargo.lock'
+      - 'languages/typescript/packages/protect-ffi/package.json'
+      - 'languages/typescript/packages/protect-ffi/mise.toml'
       # Out of that package, and a compile input all the same: the cdylib
       # crate carries
-      # `eql-bindings = { path = "../../../eql/crates/eql-bindings" }`, so the
+      # `eql-bindings = { path = "../../../../../../packages/eql/crates/eql-bindings" }`, so the
       # EQL wire types are linked into the `index.node` this job encrypts
       # through. The native cache key in `.github/actions/build-ffi-binding`
       # hashes both, so an edit here misses that cache and the binding gets
@@ -102,7 +104,7 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v6.0.10
+      - uses: pnpm/action-setup@v6.1.0
         name: Install pnpm
         with:
           run_install: false
@@ -135,7 +137,7 @@ jobs:
           client-access-key: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
 
       # The walkthrough encrypts against the live service, so it needs the
-      # native binding — `packages/protect-ffi` is a workspace package now, so
+      # native binding — `languages/typescript/packages/protect-ffi` is a workspace package now, so
       # `index.node` is a build output rather than tarball contents. This step
       # runs on push to main and on any PR whose diff matches the paths filter
       # above, the absorption PR that introduced the need included: that PR
@@ -145,9 +147,12 @@ jobs:
       - name: Build the protect-ffi binding
         uses: ./.github/actions/build-ffi-binding
 
+      - name: Build the @cipherstash/auth binding
+        uses: ./.github/actions/build-auth-binding
+
       # Build via turbo so `^build` on `@cipherstash/stack-prisma` and
       # its `@cipherstash/stack` peer is honoured. The test's
-      # `pnpm install` subprocess inside `examples/prisma/` is a no-op
+      # `pnpm install` subprocess inside `languages/typescript/examples/prisma/` is a no-op
       # given the lockfile is already in steady state from this step.
       - name: Build @cipherstash/stack-prisma
         run: pnpm exec turbo run build --filter @cipherstash/stack-prisma
@@ -157,5 +162,5 @@ jobs:
 
       - name: Tear down bundled Postgres (best-effort)
         if: always()
-        working-directory: examples/prisma
+        working-directory: languages/typescript/examples/prisma
         run: docker compose down -v || true

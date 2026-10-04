@@ -7,9 +7,9 @@ mise.local.toml
 # Three generated WASM declaration files are tracked deliberately. They have to
 # be re-included from HERE: git cannot re-include a file whose parent directory
 # is excluded, and the bare `dist` above excludes the directory itself, so a
-# negation in packages/protect-ffi/.gitignore has no effect on its own.
+# negation in languages/typescript/packages/protect-ffi/.gitignore has no effect on its own.
 #
-# Why they are tracked at all: `packages/stack` value-imports
+# Why they are tracked at all: `languages/typescript/packages/stack` value-imports
 # `@cipherstash/protect-ffi/wasm-inline`, so its declaration build cannot
 # resolve the module unless these exist. Generating them needs Rust, the wasm32
 # target and wasm-pack — which would land on every contributor and every PR job
@@ -17,14 +17,14 @@ mise.local.toml
 # so declarations alone suffice; verified by deleting every `.js` and `.wasm`
 # under dist/wasm and running stack's build, test:types:dist, test:types and
 # unit suite green. The runtime output (7.4MB, regenerated each release) is
-# still ignored. See packages/protect-ffi/.gitignore for the sibling rules.
-!packages/protect-ffi/dist/
-packages/protect-ffi/dist/*
-!packages/protect-ffi/dist/wasm/
-packages/protect-ffi/dist/wasm/*
-!packages/protect-ffi/dist/wasm/protect_ffi.d.ts
-!packages/protect-ffi/dist/wasm/protect_ffi_bg.wasm.d.ts
-!packages/protect-ffi/dist/wasm/errors.d.ts
+# still ignored. See languages/typescript/packages/protect-ffi/.gitignore for the sibling rules.
+!languages/typescript/packages/protect-ffi/dist/
+languages/typescript/packages/protect-ffi/dist/*
+!languages/typescript/packages/protect-ffi/dist/wasm/
+languages/typescript/packages/protect-ffi/dist/wasm/*
+!languages/typescript/packages/protect-ffi/dist/wasm/protect_ffi.d.ts
+!languages/typescript/packages/protect-ffi/dist/wasm/protect_ffi_bg.wasm.d.ts
+!languages/typescript/packages/protect-ffi/dist/wasm/errors.d.ts
 
 # dependencies
 /node_modules
@@ -91,3 +91,22 @@ sql/cipherstash-*.sql
 .cipherstash/
 
 notes/
+
+# Rust crates imported from cipherstash-suite (packages/stack-*).
+# cargo-fuzz: crash artifacts, coverage data, and the corpus that grows during
+# a campaign. Ignore the generated corpus entries but keep the hand-written seed
+# corpora (committed as `valid-*`) tracked. The fuzz crates' Cargo.lock files
+# are tracked here, unlike in the suite, so `--locked` and Dependabot see them.
+packages/*/fuzz/artifacts/
+packages/*/fuzz/coverage/
+packages/*/fuzz/corpus/*/*
+!packages/*/fuzz/corpus/*/valid-*
+# cargo-mutants output (`mise run mutants:<crate>` writes it to the cwd).
+mutants.out/
+
+# The Go module's embedded WASI guests: build outputs of `mise run
+# wasm:guest:build` and `mise run wasm:auth-guest:build`.
+languages/golang/stackencrypt/wasm/*.wasm
+languages/golang/stackauth/wasm/*.wasm
+languages/golang/stackencrypt/wasm/*.sha256
+languages/golang/stackauth/wasm/*.sha256

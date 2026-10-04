@@ -108,7 +108,9 @@ const EXPECTED_ASYMMETRIES = new Map([
     // `changeset version` runs scripts/sync-lockstep-versions.mjs, which
     // rewrites packages/eql/crates/eql-bindings/Cargo.toml and the SQL assets
     // beside it, so every version-moving commit touches `packages/eql/**`.
-    // The list itself is kept honest by eql-workflow-filters.test.mjs.
+    // The list itself is kept honest by eql-workflow-filters.test.mjs. The
+    // stack-* crates line holds the same way: a bump of either crate edits its
+    // own `packages/stack-*/Cargo.toml`, which the filter names.
     'push is the only trigger; a pull_request copy would make a crates.io publisher reachable from a fork',
   ],
   [
@@ -129,6 +131,12 @@ const EXPECTED_ASYMMETRIES = new Map([
     // would hurt (a narrower `pull_request` filter, so the PR that breaks the
     // release machinery never runs the check) is what the single list IS.
     'pull_request is the only trigger; a post-merge copy would report a release-blocking finding too late to act on',
+  ],
+  [
+    '.github/workflows/require-auth-npm-changeset.yml',
+    // Its list is held to the job's own `git diff` pathspec by
+    // check-auth-npm-changeset.test.mjs, which is the second copy here.
+    'pull_request is the only trigger; the check diffs a pull request against its base, which a push does not have',
   ],
   [
     '.github/workflows/test-eql.yml',
@@ -158,6 +166,26 @@ const EXPECTED_ASYMMETRIES = new Map([
     // second list to drift from, and the direction that would hurt (a narrower
     // PR filter) does not exist because PRs never run it.
     'push to main and a nightly schedule are the only triggers; a 60-minute bench deliberately stays off the PR path',
+  ],
+  // The four PR gates ported with the stack-* crates. Each has no `push:`
+  // trigger, as in cipherstash-suite: they gate a change before it merges,
+  // and the post-merge coverage of the same crates is tests-crates.yml and
+  // tests-golang.yml, which filter both events and are parity-checked.
+  [
+    '.github/workflows/crap-crates.yml',
+    'pull_request is the only filtered trigger; a CRAP gate on a merged change reports too late to block it',
+  ],
+  [
+    '.github/workflows/mutants.yml',
+    'pull_request is the only filtered trigger; `--in-diff` needs a PR base to diff against, and a dispatch sweeps unfiltered',
+  ],
+  [
+    '.github/workflows/fuzz.yml',
+    'pull_request (corpus regression) is the only filtered trigger; the campaign runs on a nightly schedule, which takes no paths',
+  ],
+  [
+    '.github/workflows/miri.yml',
+    'pull_request is the only filtered trigger; Miri is deterministic, so a post-merge run would repeat the PR result',
   ],
 ])
 
