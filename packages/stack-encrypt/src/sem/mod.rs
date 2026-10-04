@@ -11,7 +11,7 @@
 //! ```
 //!
 //! * [`EqualityTerm`] — a PRF of the whole value; exact-match queries.
-//! * [`MatchTerm`] — the value is tokenized locally, each token is PRF'd, and
+//! * [`MatchTerms`] — the value is tokenized locally, each token is PRF'd, and
 //!   the outputs fold into Bloom-filter bit positions; full-text match
 //!   queries. Tokenizer/filter parameters are a *type-level* config
 //!   ([`MatchConfig`]) so write-time and query-time terms agree by
@@ -87,9 +87,9 @@
 //!   ([`as_bytes`](EqualityTerm::as_bytes) /
 //!   [`to_bytes`](EqualityTerm::to_bytes) /
 //!   [`from_bytes`](EqualityTerm::from_bytes)).
-//! * [`MatchTerm`] — the sorted, de-duplicated bit positions, each a
-//!   little-endian `u16` ([`to_bytes`](MatchTerm::to_bytes) /
-//!   [`from_bytes`](MatchTerm::from_bytes)).
+//! * [`MatchTerms`] — the sorted, de-duplicated bit positions, each a
+//!   little-endian `u16` ([`to_bytes`](MatchTerms::to_bytes) /
+//!   [`from_bytes`](MatchTerms::from_bytes)).
 //! * [`OreTerm`] / [`OpeTerm`] — the raw CLLW ciphertext bytes, unframed
 //!   ([`as_bytes`](OreTerm::as_bytes) / [`to_bytes`](OreTerm::to_bytes) /
 //!   [`from_bytes`](OreTerm::from_bytes)).
@@ -98,7 +98,7 @@
 //! [`TermBytesError`]; [`EqualityTerm`] additionally keeps an infallible
 //! [`from_bytes`](EqualityTerm::from_bytes) over a `[u8; 32]`. `as_bytes`
 //! exists only where the term *is* a contiguous buffer (equality, ORE, OPE);
-//! a [`MatchTerm`] is canonically a position list, so it has none.
+//! a [`MatchTerms`] is canonically a position list, so it has none.
 //!
 //! For equality and ORE/OPE the transport bytes are also the stored form,
 //! and they share the *shape* of the v1 / `cipherstash-client` encodings — a
@@ -106,7 +106,7 @@
 //! hex-encodes into its `hm` / `oc` / `op` fields with its hex and JSON
 //! framing sitting *above* them. A match term is the exception: what is
 //! stored and queried is the position list
-//! ([`positions`](MatchTerm::positions)), which maps to an integer-array
+//! ([`positions`](MatchTerms::positions)), which maps to an integer-array
 //! column (EQL sends `bf` as a JSON integer array) — no column holds the
 //! `u16` byte string, which is stack-encrypt's own shape and exists so a
 //! binding can carry the term across the boundary without inventing a
@@ -214,7 +214,7 @@ pub enum TermBytesError {
     /// Match-term bytes are not a whole number of little-endian `u16`
     /// positions.
     #[error("match-term bytes must be little-endian u16 positions, got an odd length of {0}")]
-    OddMatchTermLength(usize),
+    OddMatchTermsLength(usize),
     /// A decoded position lies outside the Bloom filter the term's
     /// [`MatchConfig`] fixes. Genuine positions are always masked into
     /// `0..m`, so an out-of-range one means the bytes were not written by
@@ -416,7 +416,7 @@ impl MatchOptions {
     }
 }
 
-/// Type-level match configuration: the [`MatchOptions`] a [`MatchTerm<Self>`]
+/// Type-level match configuration: the [`MatchOptions`] a [`MatchTerms<Self>`]
 /// is generated with. Putting the configuration on the *type* means a record
 /// field and the query probing it agree on tokenizer and filter parameters by
 /// construction. Define your own by implementing this on a marker type.
@@ -434,15 +434,24 @@ impl MatchConfig for DefaultMatch {
     }
 }
 
-/// A match (full-text) index term: the set bit positions of a Bloom filter over
-/// the PRF outputs of the value's tokens, generated under the [`MatchConfig`]
-/// `O`. Positions are sorted and de-duplicated.
-pub struct MatchTerm<O = DefaultMatch> {
+/// The match (full-text) terms of a value: the set bit positions of a Bloom
+/// filter over the PRF outputs of the value's tokens, generated under the
+/// [`MatchConfig`] `O`. Positions are sorted and de-duplicated.
+///
+/// The name is plural because the value is a *set*: every token contributes
+/// `k` positions, and a query matches when its positions are a subset of the
+/// stored ones ([`contains`](Self::contains)). An equality or ORE term is one
+/// comparand; this is many. (It was named `MatchTerm` in stack-encrypt 0.2.)
+pub struct MatchTerms<O = DefaultMatch> {
     positions: Vec<u16>,
     _config: PhantomData<fn() -> O>,
 }
 
-impl<O> MatchTerm<O> {
+/// Renamed to [`MatchTerms`]: the value is a set of terms, not one.
+#[deprecated(since = "0.3.0", note = "renamed to `MatchTerms`")]
+pub type MatchTerm<O = DefaultMatch> = MatchTerms<O>;
+
+impl<O> MatchTerms<O> {
     /// Wrap positions that are already known to be in range — sorting and
     /// de-duplicating them into the canonical order. Private because nothing
     /// outside can know the range holds: the generator's positions are masked
@@ -491,7 +500,7 @@ impl<O> MatchTerm<O> {
     /// query. Term generation already refuses to build such a term
     /// ([`TermError::EmptyTermText`]); this guards any other
     /// (e.g. deserialized) source of an empty term.
-    pub fn contains(&self, query: &MatchTerm<O>) -> bool {
+    pub fn contains(&self, query: &MatchTerms<O>) -> bool {
         !query.positions.is_empty()
             && query
                 .positions
@@ -503,7 +512,7 @@ impl<O> MatchTerm<O> {
 /// Rebuilding a term needs the [`MatchConfig`]: it fixes the filter size `m`
 /// every genuine position is below, and a position outside it is a decoding
 /// bug rather than a term.
-impl<O: MatchConfig> MatchTerm<O> {
+impl<O: MatchConfig> MatchTerms<O> {
     /// Rebuild a term from stored positions — the inverse of
     /// [`positions`](Self::positions) /
     /// [`into_positions`](Self::into_positions), for terms persisted
@@ -534,7 +543,7 @@ impl<O: MatchConfig> MatchTerm<O> {
     /// never matches. Rejects an odd-length buffer.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, TermBytesError> {
         if !bytes.len().is_multiple_of(2) {
-            return Err(TermBytesError::OddMatchTermLength(bytes.len()));
+            return Err(TermBytesError::OddMatchTermsLength(bytes.len()));
         }
         Self::from_positions(
             bytes
@@ -545,8 +554,8 @@ impl<O: MatchConfig> MatchTerm<O> {
     }
 }
 
-/// [`MatchTerm::from_bytes`] as a std conversion — the same decoder.
-impl<O: MatchConfig> TryFrom<&[u8]> for MatchTerm<O> {
+/// [`MatchTerms::from_bytes`] as a std conversion — the same decoder.
+impl<O: MatchConfig> TryFrom<&[u8]> for MatchTerms<O> {
     type Error = TermBytesError;
 
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
@@ -554,27 +563,27 @@ impl<O: MatchConfig> TryFrom<&[u8]> for MatchTerm<O> {
     }
 }
 
-impl<O> fmt::Debug for MatchTerm<O> {
+impl<O> fmt::Debug for MatchTerms<O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MatchTerm")
+        f.debug_struct("MatchTerms")
             .field("positions", &self.positions)
             .finish()
     }
 }
 
-impl<O> Clone for MatchTerm<O> {
+impl<O> Clone for MatchTerms<O> {
     fn clone(&self) -> Self {
         Self::normalised(self.positions.clone())
     }
 }
 
-impl<O> PartialEq for MatchTerm<O> {
+impl<O> PartialEq for MatchTerms<O> {
     fn eq(&self, other: &Self) -> bool {
         self.positions == other.positions
     }
 }
 
-impl<O> Eq for MatchTerm<O> {}
+impl<O> Eq for MatchTerms<O> {}
 
 /// A [`PrfVisitor`] that folds a sequence of per-token PRF blocks into
 /// Bloom-filter bit positions: `k` little-endian 2-byte slices of each block,
@@ -604,7 +613,7 @@ impl<P: Send + 'static> PrfVisitor<[u8; 32], P> for BloomVisitor {
             // `k <= 16` (checked in `MatchOptions::validate`), so the `k`
             // 2-byte slices are disjoint; masking to `m - 1` maps each u16 into
             // the filter's `m` positions. The same token in a query text hits
-            // the same `k` positions, which is what `MatchTerm::contains` tests.
+            // the same `k` positions, which is what `MatchTerms::contains` tests.
             for i in 0..self.k {
                 let chunk = [block[2 * i], block[2 * i + 1]];
                 positions.push(u16::from_le_bytes(chunk) & self.mask);
@@ -630,7 +639,7 @@ fn match_term<O>(
     text: &str,
     context: Context<'_>,
     options: MatchOptions,
-) -> Result<MatchTerm<O>, TermError> {
+) -> Result<MatchTerms<O>, TermError> {
     let mask = options.validate()?;
     let tokens = tokenize::tokenize(text, options.tokenizer, options.downcase);
     if tokens.is_empty() {
@@ -644,14 +653,14 @@ fn match_term<O>(
         .map_err(TermError::from_prf)?;
     // Every position came out of the visitor masked to `m - 1`, so the range
     // check `from_positions` applies is already satisfied by construction.
-    Ok(MatchTerm::normalised(positions))
+    Ok(MatchTerms::normalised(positions))
 }
 
 /// A match term of any text source, generated under `O`'s options. Under
 /// the local HMAC backend, derived during the synchronous build — the
 /// returned [`Pending`] carries no requests (tokenize makes the one
 /// necessary copy of the text).
-impl<'c, S, K, O, T> Term<S, K, NonEmpty<T>> for MatchTerm<O>
+impl<'c, S, K, O, T> Term<S, K, NonEmpty<T>> for MatchTerms<O>
 where
     S: AsRef<str>,
     O: MatchConfig,
@@ -708,7 +717,7 @@ macro_rules! index_term {
 }
 
 index_term!(EqualityTerm);
-index_term!(MatchTerm<O>, O: MatchConfig);
+index_term!(MatchTerms<O>, O: MatchConfig);
 index_term!(OreTerm<T>, T: CllwOreEncrypt);
 index_term!(OpeTerm<T>, T: CllwOpeEncrypt);
 
@@ -1060,7 +1069,7 @@ impl<K> KeysetCipher<'_, K> {
     /// define a marker type implementing [`MatchConfig`].
     ///
     /// The same call serves both write time (index the stored text) and query
-    /// time (index the probe text, then test [`MatchTerm::contains`]
+    /// time (index the probe text, then test [`MatchTerms::contains`]
     /// server-side).
     ///
     /// Fails with [`TermError::EmptyTermText`] — as
@@ -1072,7 +1081,7 @@ impl<K> KeysetCipher<'_, K> {
         &self,
         text: &str,
         descriptor: NonEmpty<impl IntoPrfContext<'c>>,
-    ) -> Pending<'_, MatchTerm<O>, K>
+    ) -> Pending<'_, MatchTerms<O>, K>
     where
         O: MatchConfig + MaybeSend,
     {

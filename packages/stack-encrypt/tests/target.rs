@@ -8,7 +8,7 @@ use std::cmp::Ordering;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
-use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerm, OreTerm};
+use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OreTerm};
 use stack_encrypt::target::{
     ciphertext, equality, CallerContext, DeclaredContext, DecryptFrom, DecryptInto, Decryption,
     EncryptFrom, EncryptInto, Encryption, Pending, Request,
@@ -164,12 +164,12 @@ async fn match_leaf_supports_containment_queries() {
     let generator = generator().await;
     let generator = generator.default_keyset();
 
-    let stored: MatchTerm = "alice wonderland"
+    let stored: MatchTerms = "alice wonderland"
         .to_string()
         .encrypt_into_with_context(&generator, nonempty!("users/bio"))
         .await
         .unwrap();
-    let query: MatchTerm = "wonder"
+    let query: MatchTerms = "wonder"
         .to_string()
         .encrypt_into_with_context(&generator, nonempty!("users/bio"))
         .await
@@ -195,7 +195,7 @@ async fn match_leaf_config_is_type_level() {
     let generator = generator().await;
     let generator = generator.default_keyset();
 
-    let term: MatchTerm<SmallFilter> = "a longer piece of text"
+    let term: MatchTerms<SmallFilter> = "a longer piece of text"
         .to_string()
         .encrypt_into_with_context(&generator, nonempty!("users/bio"))
         .await
@@ -204,7 +204,7 @@ async fn match_leaf_config_is_type_level() {
 
     // The same text under the default config is a different (larger-filter)
     // term — and a different type, so the two cannot be compared by mistake.
-    let default_term: MatchTerm = "a longer piece of text"
+    let default_term: MatchTerms = "a longer piece of text"
         .to_string()
         .encrypt_into_with_context(&generator, nonempty!("users/bio"))
         .await
@@ -712,7 +712,7 @@ async fn a_failed_field_fails_the_record_before_any_kms_call() {
     let cipher = cipher.default_keyset();
     let b = "b".to_string();
 
-    let zipped = MatchTerm::<SmallFilter>::encrypt_from(&"", &cipher, nonempty!("users/x"))
+    let zipped = MatchTerms::<SmallFilter>::encrypt_from(&"", &cipher, nonempty!("users/x"))
         .zip(StackCipherText::encrypt_from(
             &b,
             &cipher,
@@ -862,12 +862,12 @@ async fn terms_rehydrate_from_persisted_parts() {
     let rehydrated = EqualityTerm::from_bytes(eq.clone().into_bytes());
     assert_eq!(eq, rehydrated);
 
-    let stored: MatchTerm = "alice wonderland"
+    let stored: MatchTerms = "alice wonderland"
         .to_string()
         .encrypt_into_with_context(&generator, nonempty!("users/bio"))
         .await
         .unwrap();
-    let query: MatchTerm = "wonder"
+    let query: MatchTerms = "wonder"
         .to_string()
         .encrypt_into_with_context(&generator, nonempty!("users/bio"))
         .await
@@ -876,7 +876,7 @@ async fn terms_rehydrate_from_persisted_parts() {
     // range-checks against the config's filter size).
     let mut positions = stored.clone().into_positions();
     positions.reverse();
-    let rehydrated: MatchTerm = MatchTerm::from_positions(positions).unwrap();
+    let rehydrated: MatchTerms = MatchTerms::from_positions(positions).unwrap();
     assert_eq!(stored, rehydrated);
     assert!(rehydrated.contains(&query));
 }

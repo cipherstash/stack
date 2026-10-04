@@ -1,7 +1,7 @@
 //! A single operation in owned mode asks nothing of the plaintext beyond the
 //! operation's own capability: no `Clone`, so a value that is moved and
 //! wiped can be sealed or indexed.
-use stack_encrypt::sem::{CllwOpeEncrypt, CllwOreEncrypt, EqualityTerm, MatchTerm, OpeTerm, OreTerm};
+use stack_encrypt::sem::{CllwOpeEncrypt, CllwOreEncrypt, EqualityTerm, MatchTerms, OpeTerm, OreTerm};
 use stack_encrypt::target::{
     ciphertext, equality, matching, ope, ore, CallerContext, Owned, Pending,
 };
@@ -23,7 +23,7 @@ fn index<'a, S: vitaminc_prf::PrfValue>(
 fn search<'a, S: AsRef<str>>(
     keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
     value: S,
-) -> Pending<'a, MatchTerm, FakeDataKeySource> {
+) -> Pending<'a, MatchTerms, FakeDataKeySource> {
     keyset.run(matching::<_, _, Owned, _>(), value, CallerContext::from(nonempty!("column")))
 }
 // Bounded only by the scheme's own trait: `CllwOreEncrypt` and

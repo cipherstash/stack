@@ -12,7 +12,7 @@ help: the trait `DecryptField<u32, CallerContext>` is not implemented for `Opaqu
   = help: the following other types implement trait `DecryptField<P, Ctx>`:
             `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` implements `DecryptField<P, Ctx>`
             `EqualityTerm` implements `DecryptField<P, Ctx>`
-            `MatchTerm<O>` implements `DecryptField<P, Ctx>`
+            `MatchTerms<O>` implements `DecryptField<P, Ctx>`
             `OpeTerm<T>` implements `DecryptField<P, Ctx>`
             `Option<T>` implements `DecryptField<Option<P>, Ctx>`
             `OreTerm<T>` implements `DecryptField<P, Ctx>`
@@ -35,7 +35,7 @@ help: the trait `Decryptable` is not implemented for `Opaque`
    = help: the following other types implement trait `Decryptable`:
              CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>
              EqualityTerm
-             MatchTerm<O>
+             MatchTerms<O>
              OpeTerm<T>
              Option<T>
              OreTerm<T>

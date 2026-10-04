@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use stack_encrypt::sem::{DefaultMatch, EqualityTerm, MatchTerm, OpeTerm, OreTerm};
+use stack_encrypt::sem::{DefaultMatch, EqualityTerm, MatchTerms, OpeTerm, OreTerm};
 
 // Fuzz the SEM index-term byte decoders: stored terms come back through these
 // before comparison, so the bytes are attacker-controlled and decoding must
@@ -19,7 +19,7 @@ fuzz_target!(|bytes: &[u8]| {
             "EqualityTerm decode is not lossless"
         );
     }
-    let _ = MatchTerm::<DefaultMatch>::from_bytes(bytes);
+    let _ = MatchTerms::<DefaultMatch>::from_bytes(bytes);
     // One fixed-width and one variable-width CLLW output each for ORE and OPE.
     if let Ok(term) = OreTerm::<u64>::from_bytes(bytes) {
         assert_eq!(

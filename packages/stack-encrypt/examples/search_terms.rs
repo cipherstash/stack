@@ -18,7 +18,7 @@
 //! `CS_WORKSPACE_CRN` and `CS_CLIENT_ID` / `CS_CLIENT_KEY` instead (see the
 //! `zerokms_auth` example for the lookup order).
 
-use stack_encrypt::sem::{EqualityTerm, MatchTerm, OreTerm};
+use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
 use stack_encrypt::target::EncryptInto;
 use stack_encrypt::{nonempty, EncryptFrom, StackCipher, StackCipherText};
 
@@ -72,13 +72,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // its positions are a subset of the stored term's (Bloom semantics: false
     // positives possible, false negatives not).
 
-    let bio: MatchTerm = "alice, senior cryptography engineer"
+    let bio: MatchTerms = "alice, senior cryptography engineer"
         .to_string()
         .encrypt_into_with_context(&terms, nonempty!("users").with("bio"))
         .await?;
 
     for query in ["crypto", "engineer", "plumber"] {
-        let probe: MatchTerm = query
+        let probe: MatchTerms = query
             .to_string()
             .encrypt_into_with_context(&terms, nonempty!("users").with("bio"))
             .await?;
@@ -132,7 +132,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     struct SearchableEmail {
         c: StackCipherText,
         eq: EqualityTerm,
-        text: MatchTerm,
+        text: MatchTerms,
         ord: OreTerm<String>,
     }
 
@@ -140,7 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .to_string()
         .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
         .await?;
-    let probe: MatchTerm = "example"
+    let probe: MatchTerms = "example"
         .to_string()
         .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
         .await?;

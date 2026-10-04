@@ -9,7 +9,7 @@
 //! What a reader hands over is what the cipher produced, no more: a sealed
 //! leaf or marker is authenticated ciphertext, but passthrough metadata and
 //! terms are not, and a visitor must not present them as such.
-use crate::sem::{EqualityTerm, MatchConfig, MatchTerm, OpeTerm, OreTerm};
+use crate::sem::{EqualityTerm, MatchConfig, MatchTerms, OpeTerm, OreTerm};
 use crate::{BoxedPassthrough, CipherText, Error, SealedValue, StackCipherText};
 
 /// An encrypted output that can drive a destination visitor.
@@ -107,7 +107,7 @@ pub trait Visitor: Sized {
     /// # Errors
     ///
     /// Refuses with [`Error::UnsupportedShape`] unless overridden.
-    fn matching<O: MatchConfig>(self, _: MatchTerm<O>) -> Result<Self::Value, Error> {
+    fn matching<O: MatchConfig>(self, _: MatchTerms<O>) -> Result<Self::Value, Error> {
         Err(Error::UnsupportedShape)
     }
     /// An order-revealing term. One-way, and not authenticated.
@@ -195,7 +195,7 @@ impl Reader for EqualityTerm {
         visitor.equality(self)
     }
 }
-impl<O: MatchConfig> Reader for MatchTerm<O> {
+impl<O: MatchConfig> Reader for MatchTerms<O> {
     fn read<V: Visitor>(self, visitor: V) -> Result<V::Value, Error> {
         visitor.matching(self)
     }

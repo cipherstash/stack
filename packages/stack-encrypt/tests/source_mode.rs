@@ -17,7 +17,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use stack_encrypt::sem::{EqualityTerm, MatchTerm};
+use stack_encrypt::sem::{EqualityTerm, MatchTerms};
 use stack_encrypt::target::{
     ciphertext, equality, matching, AeadContext, Borrowed, CallerContext, Encryption, Owned,
 };
@@ -169,12 +169,12 @@ async fn a_plaintext_that_is_not_clone_derives_a_match_term_alone() {
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
 
-    let term: MatchTerm = keyset
+    let term: MatchTerms = keyset
         .run(matching::<_, _, Owned, _>(), Secret::new(NUMBER), caller())
         .await
         .unwrap();
 
-    let expected: MatchTerm = keyset.match_terms(NUMBER, context()).await.unwrap();
+    let expected: MatchTerms = keyset.match_terms(NUMBER, context()).await.unwrap();
     assert_eq!(
         term, expected,
         "an owned match term should be byte-identical to the same text's term"
@@ -310,11 +310,11 @@ async fn a_match_term_never_copies_its_text() {
     let keyset = cipher.default_keyset();
 
     let (value, clones) = Counted::new(NUMBER);
-    let _: MatchTerm = keyset
+    let _: MatchTerms = keyset
         .run(matching::<_, _, Borrowed, _>(), &value, caller())
         .await
         .unwrap();
-    let _: MatchTerm = keyset
+    let _: MatchTerms = keyset
         .run(matching::<_, _, Owned, _>(), value, caller())
         .await
         .unwrap();
@@ -430,12 +430,12 @@ async fn an_owned_plaintext_is_dropped_before_its_key_request_is_sent() {
         1,
         "matching: dropped before run returns"
     );
-    let term: MatchTerm = pending.await.unwrap();
+    let term: MatchTerms = pending.await.unwrap();
     assert_eq!(
         drops.load(Ordering::SeqCst),
         1,
         "matching: dropped exactly once"
     );
-    let expected: MatchTerm = keyset.match_terms(NUMBER, context()).await.unwrap();
+    let expected: MatchTerms = keyset.match_terms(NUMBER, context()).await.unwrap();
     assert_eq!(term, expected, "the term is the text's term");
 }

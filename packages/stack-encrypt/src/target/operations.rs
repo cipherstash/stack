@@ -422,7 +422,7 @@ term_operation!(
 term_operation!(
     /// The match term of any text `S` under the context the tree hands it,
     /// tokenised and hashed as `O` declares.
-    matching, crate::sem::MatchTerm<O>, view, [O: crate::sem::MatchConfig + 'static], [S: AsRef<str>]
+    matching, crate::sem::MatchTerms<O>, view, [O: crate::sem::MatchConfig + 'static], [S: AsRef<str>]
 );
 term_operation!(
     /// The order-revealing term of `S` under the context the tree hands it.
@@ -735,7 +735,7 @@ impl<S: vitaminc_prf::PrfValue + Clone> EncryptFrom<S> for crate::sem::EqualityT
     }
 }
 impl<S: AsRef<str>, O: crate::sem::MatchConfig + 'static> EncryptFrom<S>
-    for crate::sem::MatchTerm<O>
+    for crate::sem::MatchTerms<O>
 {
     type Context = CallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>

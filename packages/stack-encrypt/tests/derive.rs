@@ -10,7 +10,7 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 
 use cllw_ore::CllwOreEncrypt;
 use common::{counting_cipher, stack_cipher};
-use stack_encrypt::sem::{EqualityTerm, MatchTerm, OreTerm};
+use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
 use stack_encrypt::target::{AeadContext, DecryptFrom, EncryptInto};
 use stack_encrypt::{
     nonempty, ContextPiece, DecryptField, DecryptInto, Decryptable, EncryptFrom, Error,
@@ -63,13 +63,13 @@ async fn a_derived_record_is_the_hand_written_one() {
 }
 
 /// No `plaintext`: one impl generic over it, accepting whatever every leaf
-/// accepts — here any text type, since `MatchTerm` wants `AsRef<str>` — and
+/// accepts — here any text type, since `MatchTerms` wants `AsRef<str>` — and
 /// decrypting to whatever the ciphertext field opens to.
 #[derive(EncryptFrom, DecryptInto)]
 struct SearchableText {
     c: StackCipherText,
     hm: EqualityTerm,
-    m: MatchTerm,
+    m: MatchTerms,
 }
 
 /// Tuple structs assign by index.
@@ -127,7 +127,7 @@ async fn a_generic_plaintext_record_accepts_what_its_leaves_accept() {
         .encrypt_into_with_context(&generator, nonempty!("users/name"))
         .await
         .unwrap();
-    let m: MatchTerm = "alice"
+    let m: MatchTerms = "alice"
         .to_string()
         .encrypt_into_with_context(&generator, nonempty!("users/name"))
         .await

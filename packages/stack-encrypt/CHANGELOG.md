@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose result type does not fix the mode must name it; `Borrowed` is the
   old behaviour. In return `ciphertext`, `equality`, `ore` and `ope` no
   longer ask `S: Clone` themselves: only borrowed mode does.
+- `sem::MatchTerm` is renamed `MatchTerms`: a match index produces a set of
+  terms, not one. `MatchTerm` remains as a deprecated alias.
+- `TermBytesError::OddMatchTermLength` is renamed `OddMatchTermsLength`. An
+  enum variant cannot be aliased, so a `match` that names it must change.
 
 ### Added
 

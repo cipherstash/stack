@@ -25,7 +25,7 @@ Current targets:
 | `fuzz:jwt-decode`    | `stack-auth`  | `jwt_decode`          | JWT claims (`Token::fuzz_decode_claims`)      |
 | `fuzz:client-key`    | `stack-kms`   | `client_key_encoded`  | `ClientKey::from_encoded_v1` (hex or base64)  |
 | `fuzz:sealed-value`  | `stack-encrypt` | `sealed_value_decode` | `SealedValue::from_bytes` (frozen v1 leaf); accepted input must re-encode to itself |
-| `fuzz:term-decode`   | `stack-encrypt` | `term_decode`       | the SEM term decoders (`EqualityTerm`, `MatchTerm`, `OreTerm`, `OpeTerm` `from_bytes`) |
+| `fuzz:term-decode`   | `stack-encrypt` | `term_decode`       | the SEM term decoders (`EqualityTerm`, `MatchTerms`, `OreTerm`, `OpeTerm` `from_bytes`) |
 | `fuzz:check-record`  | `stack-encrypt` | `check_record`      | `dynamic::record::check_record` over an `Arbitrary`-derived plan and tree, against a model of the record rules (structure-aware) |
 
 Each target is a few lines — `libfuzzer-sys` hands a `&str` (or `&[u8]`
