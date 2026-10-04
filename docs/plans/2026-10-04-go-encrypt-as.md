@@ -92,20 +92,40 @@ operations reached through a different Go shape. Lands before #971 is needed.
 ### The API
 
 ```go
+// A record type and its plan, as today: from struct tags, or built by hand.
+type User struct {
+    ID    int64  `stash:"-"`
+    Email string `stash:"label=users/email,index=eq;match"`
+    Age   uint32 `stash:"label=users/age,index=eq;ore"`
+}
+usersPlan, err := stackencrypt.PlanFromTags(reflect.TypeOf(User{}))
+email, err := stackencrypt.ParseLabel("users/email")
+
 // Ciphertext only: one value, one context. The Cipher chooses the keyset.
-ct, err := keyset.Encrypt(ctx, value, label.Context(), opts...)
-pt, err := client.Decrypt(ctx, ct, label.Context(), opts...)
+ct, err := keyset.Encrypt(ctx, value, email.Context(), opts...)
+pt, err := client.Decrypt(ctx, ct, email.Context(), opts...)
 
 // Into a target. The target carries the output type; EncryptAs returns it.
-term, err := stackencrypt.EncryptAs(ctx, keyset, "bob@example.com", stackencrypt.Equality.Under(email))
-rows, err := stackencrypt.EncryptAs(ctx, keyset, users, usersPlan.Rows())      // []EncryptedRecord
-user, err := stackencrypt.DecryptAs(ctx, client, rows[0], stackencrypt.RowOf[User](usersPlan))
+// A term target is a term kind UNDER a context: the context is part of a
+// term's identity, so the same value under users/email and under users/name
+// is two different terms. `Under` is stack-encrypt's own word for giving a
+// subtree its context (`Encryption::under`).
+probe, err := stackencrypt.EncryptAs(ctx, keyset, "bob@example.com", stackencrypt.Equality.Under(email.Context()))
+row, err   := stackencrypt.EncryptAs(ctx, keyset, users[0], usersPlan.Target())        // EncryptedRecord
+user, err  := stackencrypt.DecryptAs(ctx, client, row, stackencrypt.Into[User](usersPlan))
 
-// The batched form, which EncryptAs and DecryptAs are sugar over.
-email := stackencrypt.Prepare("alice@example.com", stackencrypt.Equality.Under(emailLabel))
-rows  := stackencrypt.Prepare(users, usersPlan.Rows())
-back  := stackencrypt.Open(stored, stackencrypt.RowOf[User](usersPlan))
-err := stackencrypt.Run(ctx, keyset, email, rows, back)                         // one ZeroKMS request
+// Many sources into one target: one call, one ZeroKMS request. The target is
+// the same value; only the source is a slice. Works for every target, so many
+// probes under one context are spelled the same way as many rows.
+rows, err  := stackencrypt.EncryptAll(ctx, keyset, users, usersPlan.Target())          // []EncryptedRecord
+users, err  = stackencrypt.DecryptAll(ctx, client, rows, stackencrypt.Into[User](usersPlan))
+
+// The batched form, which EncryptAs / EncryptAll and DecryptAs / DecryptAll
+// are sugar over. Pendings of different targets run as one request.
+p1 := stackencrypt.Prepare("alice@example.com", stackencrypt.Equality.Under(email.Context()))
+p2 := stackencrypt.PrepareAll(users, usersPlan.Target())
+p3 := stackencrypt.Open(stored, stackencrypt.Into[User](usersPlan))
+err  = stackencrypt.Run(ctx, keyset, p1, p2, p3)                                       // one ZeroKMS request
 ```
 
 Shapes, with the Rust they mirror:
@@ -115,9 +135,11 @@ Shapes, with the Rust they mirror:
 | `Target[O]` | the `Target` type parameter of `encrypt_as` |
 | `Reader[P]` | the plaintext type of `decrypt_as` plus its `ExpectedContext` |
 | `Prepare(source, Target[O]) Pending[O]` | `source.encrypt_into(..)` before `.await` |
+| `PrepareAll(sources, Target[O]) Pending[[]O]` | a `Vec` source, or several `encrypt_into` under `Pending::all` |
 | `Open(stored, Reader[P]) Pending[P]` | `stored.decrypt_into(..)` before `.await` |
 | `Run(ctx, scope, ...Pending)` | `Pending::all(..).await` |
 | `EncryptAs` / `DecryptAs` | `encrypt_as` / `decrypt_as` on one value |
+| `EncryptAll` / `DecryptAll` | the same over a slice of sources, one request |
 | `Element[T]` as a reader | `Element<T>` |
 
 Points of detail, each of which the PR settles in godoc:
@@ -127,20 +149,23 @@ Points of detail, each of which the PR settles in godoc:
   panics, which is the one place a panic is right: it is unreachable by any
   input, only by a wrong program.
 - **Go methods take no type parameters**, so `Prepare`, `Open`, `EncryptAs`,
-  `DecryptAs`, `RowOf` and `ElementOf` are package functions. `Run` takes a
+  `DecryptAs`, `EncryptAll`, `DecryptAll`, `Into` and `ElementOf` are package
+  functions. `Run` takes a
   `Scope`, which both `*Cipher` (encrypt and decrypt) and `*Client` (decrypt;
   the payload names its keyset) implement. A pending that needs a keyset run
   under a `*Client` is refused at run time with a clear error, the one check
   the type system cannot make.
 - **Targets available in Phase A**: a term kind under a context
   (`Equality.Under(c)`, `Match.Under(c)`, `Ore.Under(c)`, `Ope.Under(c)`,
-  giving `Target[EqualityTerm]` and so on); a plan's rows (`plan.Rows()`,
-  `Target[[]EncryptedRecord]` from a slice source, and `plan.Row()` for one).
-  The current record output map stays until Phase B replaces it with domains.
+  giving `Target[EqualityTerm]` and so on), and a plan (`plan.Target()`,
+  `Target[EncryptedRecord]`). A target describes ONE output; a slice of
+  sources goes through `EncryptAll` / `PrepareAll` with the same target, so
+  there is no separate rows target. The current record output map stays until
+  Phase B replaces it with domains.
 - **Readers available in Phase A**: `Plaintext[T](c)` for a ciphertext under
   context `c` (the `Decrypt` counterpart in batched form), `ElementOf[T](c)`
-  for one element of a sealed sequence, `RowOf[T](plan)` and `RowsOf[T](plan)`
-  for records. `DecryptElement` and friends are gone; element is a reader.
+  for one element of a sealed sequence, and `Into[T](plan)` for a record,
+  decoded into `T` per the plan. `DecryptElement` and friends are gone; element is a reader.
 - **Options**. `TargetOption` is accepted by target constructors and
   `Prepare`: `ExtendContext(parts...)` today; lock entries later. `RunOption`
   is accepted by `Run`, `Encrypt`, `Decrypt`, `EncryptAs` and `DecryptAs`:
@@ -205,7 +230,7 @@ var users = plan.ForMessage(&User{}, "users", plan.FirstOf(
     plan.When(category.Under("user.contact.email"), plan.Encrypt(eqlv3.TextEqDomain())),
     plan.When(category.Under("system"), plan.Plaintext()),
 ))
-rows, err := stackencrypt.EncryptAs(ctx, keyset, userSlice, users.Rows())        // []eqlv3.Row
+rows, err := stackencrypt.EncryptAll(ctx, keyset, userSlice, users.Target())     // []eqlv3.Row
 ```
 
 ### Decisions carried from #1046
