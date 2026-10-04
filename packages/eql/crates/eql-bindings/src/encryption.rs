@@ -78,7 +78,7 @@ use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
 use stack_encrypt::target::{self, AeadContext, CallerContext};
 use stack_encrypt::{
     CipherText, ContextPiece, Decrypt, DecryptField, DecryptInto, Decryptable, Decryption,
-    Describe, DescriptorBuilder, Encrypt, EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty,
+    Describe, Description, Encrypt, EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty,
     NonEmpty, SealedValue, StackCipherText,
 };
 use vitaminc_prf::PrfValue;
@@ -124,8 +124,8 @@ impl MaybeEmpty for Identifier {
 /// context as the two-segment [`stack_encrypt::Label`] and as the pair a
 /// `#[stash(struct = .., context = "<table>")]` derive binds.
 impl Describe for Identifier {
-    fn describe(&self, out: &mut DescriptorBuilder) {
-        let _ = out.text(self.t.as_str()).text(self.c.as_str());
+    fn describe(&self) -> Description {
+        Description::text(self.t.as_str()).then_text(self.c.as_str())
     }
 }
 
