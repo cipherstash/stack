@@ -54,10 +54,13 @@ been released, so the old functions are removed, not deprecated.
 
 ## Decisions (settled with Dan, 2026-10-04)
 
-1. **`Encrypt` takes a `Context`, never raw bytes.** Today's `aad []byte`
-   renders an escaped descriptor and was a footgun. No escape hatch. (The Rust
-   `encrypt` also accepts raw bytes as AAD; whether it should is a separate
-   question, logged under Open questions.)
+1. **`Encrypt` takes a `Context`.** Today's `aad []byte` parameter is gone;
+   the context is spelled the same way as everywhere else in the binding.
+   Raw bytes stay possible, as they are in Rust (`&[u8]: IntoContext` is one
+   bytes part): a Go caller writes `NewContext(rawBytes)`, which is the same
+   bytes part, so what Rust can seal under Go can too. The change is that the
+   bytes are a `Context` like any other, not a separate parameter type that
+   steered callers away from naming their data.
 2. **A target is a value that carries its output type: option B.** One
    function, `EncryptAs(ctx, keyset, source, target)`, with the return type
    inferred from the target argument. Nothing the caller writes can disagree
@@ -256,17 +259,14 @@ interoperability matrix in `eql-bindings/README.md`.
 
 ## Non-goals
 
-- Changing the Rust API. The `encrypt` raw-AAD question is logged, not acted
-  on.
+- Changing the Rust API. `encrypt` keeps accepting raw bytes as a context
+  part, and so does Go through `NewContext(bytes)`; neither side changes.
 - The Node binding, which uses `cipherstash-client`, not stack-encrypt.
 - Domains beyond those with Rust derives; they arrive by regeneration.
 - Lock and audit context themselves; this plan only leaves them a place.
 
 ## Open questions
 
-- **Rust `encrypt` with raw bytes as AAD.** Go drops it as a footgun; Rust
-  keeps it today. Decide separately whether `encrypt` should take only
-  `impl IntoContext` values with parts.
 - **Guest module growth** from `eql-bindings`: measured in Phase B's PR.
 - **`eqlv3` as a package or a separate `go.mod`**: a package, per decision 6
   as read; correct if a separate module was meant.
