@@ -289,7 +289,7 @@ func newPlan(fields []FieldPlan) (Plan, error) {
 			return Plan{}, fmt.Errorf("plan field %s: the Go field is planned twice", f.Field)
 		}
 		seenField[f.Field] = true
-		if f.Context.node == nil {
+		if f.Context.isZero() {
 			return Plan{}, fmt.Errorf("plan field %s: a planned field needs a context", f.Field)
 		}
 		pf := planField{field: f.Field, name: f.Field, context: f.Context}
@@ -358,7 +358,7 @@ func PlanFromTags(t reflect.Type) (Plan, error) {
 			key, value, _ := strings.Cut(opt, "=")
 			switch key {
 			case "label", "context":
-				if pf.Context.node != nil {
+				if !pf.Context.isZero() {
 					return Plan{}, fmt.Errorf("stackencrypt: field %s.%s: label= and context= both given; a field has one own context", t, f.Name)
 				}
 				var err error

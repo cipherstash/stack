@@ -1,7 +1,10 @@
 package stackencrypt
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -52,7 +55,7 @@ func TestLabelRendersAsItsDisplayAndBindsTheMatchingContext(t *testing.T) {
 	if reflect.DeepEqual(MustContext("users/age").value(), label(t, "users/age").Context().value()) {
 		t.Error(`NewContext("users/age") and label(t, "users/age") bind the same context`)
 	}
-	if got := (Label{}).Context(); got.node != nil {
+	if got := (Label{}).Context(); !got.isZero() {
 		t.Errorf("zero Label's Context = %#v, want the zero Context", got)
 	}
 }
@@ -94,12 +97,35 @@ func TestLabelRefusesSegmentsThatWouldNotRenderVerbatim(t *testing.T) {
 			t.Errorf("ParseLabel(%q) succeeded; want a refusal", text)
 		}
 	}
-	// Plain text that the descriptor would render verbatim passes: these
-	// are the same strings Rust's plain_text_and_label_segments_are_one_rule
-	// accepts.
-	for _, ok := range []string{"users", "email_address", "naïve", "with space", "b64", "x7", "a-b"} {
+}
+
+// The segment rule is one rule in two languages. Rust's
+// plain_text_and_label_segments_are_one_rule reads the same fixture, so a
+// change to either implementation that the other does not follow fails here
+// or there.
+func TestLabelSegmentRuleMatchesTheSharedFixture(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "packages", "stack-encrypt", "tests", "fixtures", "label_segments.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Plain    []string `json:"plain"`
+		NotPlain []string `json:"not_plain"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.Plain) == 0 || len(fixture.NotPlain) == 0 {
+		t.Fatalf("fixture is empty: %+v", fixture)
+	}
+	for _, ok := range fixture.Plain {
 		if _, err := NewLabel(ok); err != nil {
 			t.Errorf("NewLabel(%q) = %v, want ok", ok, err)
+		}
+	}
+	for _, bad := range fixture.NotPlain {
+		if _, err := NewLabel(bad); err == nil {
+			t.Errorf("NewLabel(%q) succeeded; want a refusal", bad)
 		}
 	}
 }

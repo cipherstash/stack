@@ -110,3 +110,26 @@ func checkPart(part any) error {
 		return fmt.Errorf("stackencrypt: %T is not a context part (string, []byte or integer)", part)
 	}
 }
+
+// isZero reports whether c is the zero Context, which binds nothing: what a
+// plan field without a context, or a zero Label, carries.
+func (c Context) isZero() bool { return c.node == nil }
+
+// flatContext is the context a [Label] binds: one segment is the bare part,
+// as NewContext makes it; two or more are a flat list of the segments. The
+// segments are plain by construction, so no part check is needed, and a
+// list is never built from one part (a one-element list is a different
+// context from the bare part, and this type cannot spell one).
+func flatContext(segments []string) Context {
+	switch len(segments) {
+	case 0:
+		return Context{}
+	case 1:
+		return Context{node: segments[0]}
+	}
+	parts := make([]any, len(segments))
+	for i, s := range segments {
+		parts[i] = s
+	}
+	return Context{node: parts}
+}

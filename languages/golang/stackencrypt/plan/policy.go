@@ -20,7 +20,9 @@ type Identifier struct {
 	Column string
 }
 
-// String renders the identifier as its descriptor, "<table>/<column>".
+// String joins the table and the column with '/', for messages. The context
+// an EQL target binds, and the descriptor ZeroKMS logs for it, is
+// [Identifier.Label], which refuses a name this joining would misrender.
 func (id Identifier) String() string { return id.Table + "/" + id.Column }
 
 // Label is the identifier as the two-segment [stackencrypt.Label] an EQL

@@ -86,19 +86,7 @@ func (l Label) String() string { return strings.Join(l.segments, labelSeparator)
 // Context is the label as the context a field or probe binds. A zero
 // Label gives the zero Context, which every call refuses as "needs a
 // context".
-func (l Label) Context() Context {
-	switch len(l.segments) {
-	case 0:
-		return Context{}
-	case 1:
-		return Context{node: l.segments[0]}
-	}
-	parts := make([]any, len(l.segments))
-	for i, s := range l.segments {
-		parts[i] = s
-	}
-	return Context{node: parts}
-}
+func (l Label) Context() Context { return flatContext(l.segments) }
 
 // ErrEmptyLabel is [NewLabel]'s refusal of no segments at all.
 var ErrEmptyLabel = errors.New("stackencrypt: a label needs at least one segment")
@@ -126,7 +114,7 @@ func checkSegment(index int, s string) error {
 	}
 	for _, r := range s {
 		if r == '/' {
-			return &LabelError{Index: index, Reason: "contains the separator '/'"}
+			return &LabelError{Index: index, Reason: "contains '/', the separator"}
 		}
 		if unicode.IsControl(r) || r == '(' || r == ')' {
 			return &LabelError{Index: index, Reason: fmt.Sprintf("contains %q, which the descriptor reserves", r)}

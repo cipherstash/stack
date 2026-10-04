@@ -97,7 +97,7 @@ func (cph *Cipher) DecryptElement(ctx context.Context, ct any, aad []byte) (any,
 // round trip: term derivation is asynchronous in the Rust crate, and a
 // ZeroKMS backend that derives terms server-side settles the same way.
 func (cph *Cipher) Term(ctx context.Context, value any, context Context, kind TermKind, opts ...Option) (any, error) {
-	if context.node == nil {
+	if context.isZero() {
 		return nil, fmt.Errorf("stackencrypt: term context is empty")
 	}
 	var o termOptions

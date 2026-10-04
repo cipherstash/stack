@@ -123,18 +123,20 @@ impl Field {
 pub(crate) enum OwnContext {
     /// `#[stash(context = "...")]`: one text part, exactly as written.
     Literal(LitStr),
-    /// What a `struct` derive infers: the pair (container prefix, column),
-    /// two parts, so it renders `prefix/column` without the column name
-    /// having to be joined into, or kept out of, a string.
-    Column { table: LitStr, column: LitStr },
+    /// What a `struct` derive infers: the pair (container `context` prefix,
+    /// plaintext field name), two parts, so it renders `prefix/field` without
+    /// the field name having to be joined into, or kept out of, a string. The
+    /// derive knows no tables (ADR-0003); a consumer whose prefix is a table
+    /// gets EQL's `(table, column)` shape from it.
+    Prefixed { prefix: LitStr, field: LitStr },
 }
 impl OwnContext {
     /// The `NonEmpty` the derive hands `under` / `extend`.
     fn expr(&self, krate: &Path) -> TokenStream {
         match self {
             Self::Literal(lit) => quote!(#krate::nonempty!(#lit)),
-            Self::Column { table, column } => {
-                quote!(#krate::nonempty!(#table).with(#column))
+            Self::Prefixed { prefix, field } => {
+                quote!(#krate::nonempty!(#prefix).with(#field))
             }
         }
     }
@@ -387,9 +389,9 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                                     Member::Named(ident) => ident.to_string(),
                                     Member::Unnamed(index) => index.index.to_string(),
                                 };
-                                Some(OwnContext::Column {
-                                    table: prefix.clone(),
-                                    column: LitStr::new(&column, member.span()),
+                                Some(OwnContext::Prefixed {
+                                    prefix: prefix.clone(),
+                                    field: LitStr::new(&column, member.span()),
                                 })
                             };
                             Kind::Derived {
@@ -611,8 +613,8 @@ mod tests {
     fn own(field: &Field) -> String {
         match field.field_context() {
             FieldContext::Own(OwnContext::Literal(lit)) => lit.value(),
-            FieldContext::Own(OwnContext::Column { table, column }) => {
-                format!("({}, {})", table.value(), column.value())
+            FieldContext::Own(OwnContext::Prefixed { prefix, field }) => {
+                format!("({}, {})", prefix.value(), field.value())
             }
             other => panic!("expected a context of the field's own, got {other:?}"),
         }

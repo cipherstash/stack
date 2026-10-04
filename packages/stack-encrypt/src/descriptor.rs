@@ -24,8 +24,8 @@
 //! [`IntoContext`] — a literal, a pair, an integer, a `NonEmpty` chain — and
 //! is arbitrary: a direct consumer of this crate seals under whatever parts
 //! name its data. A [`Describe`] value is one whose parts *are* a descriptor
-//! of its own: the identity data is keyed under, pushed as parts into a
-//! [`DescriptorBuilder`] so the implementor never writes rendered text.
+//! of its own: the identity data is keyed under, returned as the parts of a
+//! [`Description`] so the implementor never writes rendered text.
 //! [`Label`] is the first-class one — a path of plain segments, written and
 //! read as `users/email` — and EQL's identifier (a table and a column) is the
 //! same shape. Both are contexts too, through the same parts, so what
@@ -283,13 +283,15 @@ impl Descriptor {
 /// Implement it for the type that names where a value lives — a table and a
 /// column, a document path, a tenant's record kind — and that name is what
 /// ZeroKMS binds into the data key and logs on every retrieval. An
-/// implementor pushes **parts** into a [`DescriptorBuilder`]; it never
-/// writes the rendered string. The one renderer, [`Descriptor::from_piece`],
-/// turns the parts into the string, so two implementors render alike only
-/// when their parts are alike, and a part that contains the separator is
-/// escaped rather than read as two. That is what keeps an open trait safe
-/// as a key-derivation input: the implementor chooses *what* the identity
-/// is, this crate chooses how it is spelled.
+/// implementor returns the **parts** of its name as a [`Description`]; it
+/// never writes the rendered string. The one renderer,
+/// [`Descriptor::from_piece`], turns the parts into the string, so two
+/// implementors render alike only when their parts are alike, and a part
+/// that contains the separator is escaped rather than read as two. That is
+/// what keeps an open trait safe as a key-derivation input: the implementor
+/// chooses *what* the identity is, this crate chooses how it is spelled. A
+/// `Description` is built from its first part, so a description can never
+/// be empty: there is no way to key under nothing by forgetting a part.
 ///
 /// A `Describe` type is sealed under as a context through the same parts:
 /// [`to_context`](Self::to_context) is the [`ContextPiece`] the type's
@@ -299,7 +301,7 @@ impl Descriptor {
 /// (a table and a column) is the same shape with two.
 ///
 /// ```
-/// use stack_encrypt::{ContextPiece, Describe, DescriptorBuilder, IntoContext};
+/// use stack_encrypt::{ContextPiece, Describe, Description, IntoContext};
 ///
 /// /// A column of a database table.
 /// struct Column {
@@ -308,8 +310,8 @@ impl Descriptor {
 /// }
 ///
 /// impl Describe for Column {
-///     fn describe(&self, out: &mut DescriptorBuilder) {
-///         out.text(self.table).text(self.name);
+///     fn describe(&self) -> Description {
+///         Description::text(self.table).then_text(self.name)
 ///     }
 /// }
 ///
@@ -327,17 +329,16 @@ impl Descriptor {
 /// assert_eq!(odd.descriptor().as_str(), "b64:dXNlcnMvZW1haWw=/x");
 /// ```
 pub trait Describe {
-    /// Push the parts of this value's descriptor, in order. Push at least
-    /// one: a value with no parts describes as the empty list, `()`.
-    fn describe(&self, out: &mut DescriptorBuilder);
+    /// The parts of this value's descriptor, in order, starting from the
+    /// first: [`Description::text`] or [`Description::part`], then
+    /// [`then_text`](Description::then_text) / [`then`](Description::then).
+    fn describe(&self) -> Description;
 
-    /// The parts as one context piece: the single part pushed, or the list
-    /// of the parts pushed. What the type's [`IntoContext`] returns, so the
-    /// AAD and the descriptor are derived from one tree.
+    /// The parts as one context piece: the single part, or the list of the
+    /// parts. What the type's [`IntoContext`] returns, so the AAD and the
+    /// descriptor are derived from one tree.
     fn to_context(&self) -> ContextPiece<'static> {
-        let mut out = DescriptorBuilder::new();
-        self.describe(&mut out);
-        out.finish()
+        self.describe().into_context()
     }
 
     /// The descriptor ZeroKMS binds and logs: [`to_context`](Self::to_context)
@@ -347,72 +348,61 @@ pub trait Describe {
     }
 }
 
-impl<T: Describe + ?Sized> Describe for &T {
-    fn describe(&self, out: &mut DescriptorBuilder) {
-        (**self).describe(out)
-    }
-}
-
-/// Collects the parts of a [`Describe`] value's descriptor.
+/// The parts of a [`Describe`] value's descriptor: a first part and any
+/// number after it.
 ///
-/// It takes parts, never rendered text, so an implementor cannot write a
+/// It holds parts, never rendered text, so an implementor cannot write a
 /// separator, an escape prefix or a parenthesis into the descriptor: each
 /// part is rendered by [`Descriptor::from_piece`] under the frozen rules,
-/// and text that would read as another form is escaped there.
-#[derive(Debug, Default)]
-pub struct DescriptorBuilder {
-    parts: Vec<ContextPiece<'static>>,
+/// and text that would read as another form is escaped there. It is built
+/// from its first part, so there is no empty description.
+///
+/// As a context ([`IntoContext`]), one part is that part — a one-segment
+/// name is the same context as the bare literal — and two or more are a
+/// flat list of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Description {
+    first: ContextPiece<'static>,
+    rest: Vec<ContextPiece<'static>>,
 }
 
-impl DescriptorBuilder {
-    /// A builder with no parts.
-    pub fn new() -> Self {
-        Self::default()
+impl Description {
+    /// A description whose first part is text. Plain text (see [`Label`])
+    /// renders verbatim; any other text renders escaped.
+    pub fn text(first: impl Into<String>) -> Self {
+        Self::part(ContextPiece::Text(Cow::Owned(first.into())))
     }
 
-    /// Push a text part. Plain text (see [`Label`]) renders verbatim; any
-    /// other text renders escaped.
-    pub fn text(&mut self, text: impl Into<String>) -> &mut Self {
-        self.parts.push(ContextPiece::Text(Cow::Owned(text.into())));
+    /// A description whose first part is any context part — an integer, a
+    /// bytes part, a nested list — as the context encoding sees it.
+    pub fn part<'a>(first: impl IntoContext<'a>) -> Self {
+        Self {
+            first: first.into_context().into_owned(),
+            rest: Vec::new(),
+        }
+    }
+
+    /// Append a text part.
+    pub fn then_text(self, text: impl Into<String>) -> Self {
+        self.then(ContextPiece::Text(Cow::Owned(text.into())))
+    }
+
+    /// Append any context part.
+    pub fn then<'a>(mut self, part: impl IntoContext<'a>) -> Self {
+        self.rest.push(part.into_context().into_owned());
         self
     }
+}
 
-    /// Push a bytes part. It renders as plain text when it is UTF-8 plain
-    /// text, escaped otherwise.
-    pub fn bytes(&mut self, bytes: impl Into<Vec<u8>>) -> &mut Self {
-        self.parts
-            .push(ContextPiece::Bytes(Cow::Owned(bytes.into())));
-        self
-    }
-
-    /// Push any context part — an integer, a nested list, a pre-encoded
-    /// context — as the context encoding sees it.
-    pub fn part<'a>(&mut self, part: impl IntoContext<'a>) -> &mut Self {
-        self.parts.push(part.into_context().into_owned());
-        self
-    }
-
-    /// How many parts have been pushed.
-    pub fn len(&self) -> usize {
-        self.parts.len()
-    }
-
-    /// Whether no part has been pushed yet.
-    pub fn is_empty(&self) -> bool {
-        self.parts.is_empty()
-    }
-
-    /// The parts as one context piece: a single part is that part (so one
-    /// text segment is the same context as the bare literal), and any
-    /// other count is a list of them.
-    pub fn finish(mut self) -> ContextPiece<'static> {
-        match self.parts.pop() {
-            Some(part) if self.parts.is_empty() => part,
-            Some(part) => {
-                self.parts.push(part);
-                ContextPiece::List(self.parts)
-            }
-            None => ContextPiece::List(self.parts),
+impl<'a> IntoContext<'a> for Description {
+    fn into_context(self) -> ContextPiece<'a> {
+        if self.rest.is_empty() {
+            self.first
+        } else {
+            let mut parts = Vec::with_capacity(1 + self.rest.len());
+            parts.push(self.first);
+            parts.extend(self.rest);
+            ContextPiece::List(parts)
         }
     }
 }
@@ -545,10 +535,11 @@ impl Label {
 }
 
 impl Describe for Label {
-    fn describe(&self, out: &mut DescriptorBuilder) {
-        for segment in self.segments() {
-            let _ = out.text(segment);
-        }
+    fn describe(&self) -> Description {
+        let mut segments = self.segments();
+        // A label has at least one segment by construction.
+        let first = segments.next().unwrap_or("");
+        segments.fold(Description::text(first), Description::then_text)
     }
 }
 
@@ -1066,36 +1057,40 @@ mod label_tests {
         );
     }
 
+    /// The one fixture both suites read; the Go label test reads the same
+    /// file, so the Rust and Go rules cannot drift apart silently.
+    fn segment_fixture() -> (Vec<String>, Vec<String>) {
+        let json: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/label_segments.json"))
+                .expect("a valid fixture");
+        let list = |key: &str| {
+            json[key]
+                .as_array()
+                .expect("an array")
+                .iter()
+                .map(|v| v.as_str().expect("a string").to_owned())
+                .collect::<Vec<_>>()
+        };
+        (list("plain"), list("not_plain"))
+    }
+
     #[test]
     fn plain_text_and_label_segments_are_one_rule() {
         // The renderer writes verbatim exactly what a label accepts: tie the
-        // two so neither can be loosened alone.
-        for text in [
-            "users",
-            "email_address",
-            "naïve",
-            "with space",
-            "b64",
-            "x7",
-            "a-b",
-            "",
-            "b64:",
-            "b64:x",
-            "7",
-            "-x",
-            "a/b",
-            "(a)",
-            "a)",
-            "a\nb",
-            "a\u{7f}b",
-        ] {
-            let plain = Descriptor::is_plain(text);
-            assert_eq!(plain, Label::new([text]).is_ok(), "{text:?}");
+        // two so neither can be loosened alone, on the fixture Go reads too.
+        let (plain, not_plain) = segment_fixture();
+        assert!(!plain.is_empty() && !not_plain.is_empty());
+        for text in &plain {
+            assert!(Descriptor::is_plain(text), "{text:?}");
+            assert!(Label::new([text]).is_ok(), "{text:?}");
             // And verbatim means verbatim: a plain text's descriptor is itself.
-            if plain {
-                assert_eq!(Descriptor::of(text).as_str(), text);
-            } else if !text.is_empty() {
-                assert_ne!(Descriptor::of(text).as_str(), text);
+            assert_eq!(Descriptor::of(text.as_str()).as_str(), text);
+        }
+        for text in &not_plain {
+            assert!(!Descriptor::is_plain(text), "{text:?}");
+            assert!(Label::new([text]).is_err(), "{text:?}");
+            if !text.is_empty() {
+                assert_ne!(Descriptor::of(text.as_str()).as_str(), text);
             }
         }
     }
@@ -1144,23 +1139,25 @@ mod label_tests {
     }
 
     impl Describe for Column {
-        fn describe(&self, out: &mut DescriptorBuilder) {
-            let _ = out.text(self.table).text(self.name);
+        fn describe(&self) -> Description {
+            Description::text(self.table).then_text(self.name)
         }
     }
 
     struct Tenant(u64);
 
     impl Describe for Tenant {
-        fn describe(&self, out: &mut DescriptorBuilder) {
-            let _ = out.text("tenant").part(self.0);
+        fn describe(&self) -> Description {
+            Description::text("tenant").then(self.0)
         }
     }
 
-    struct Nothing;
+    struct One;
 
-    impl Describe for Nothing {
-        fn describe(&self, _: &mut DescriptorBuilder) {}
+    impl Describe for One {
+        fn describe(&self) -> Description {
+            Description::text("users")
+        }
     }
 
     #[test]
@@ -1175,9 +1172,7 @@ mod label_tests {
             Descriptor::from_piece(&email.to_context()),
             email.descriptor()
         );
-        let by_ref: &Column = &email;
-        assert_eq!(Describe::descriptor(&by_ref), email.descriptor());
-        // Parts it pushes that are not plain are escaped, never read as
+        // Parts it gives that are not plain are escaped, never read as
         // structure: the implementor cannot smuggle a separator in.
         let odd = Column {
             table: "users/email",
@@ -1191,24 +1186,13 @@ mod label_tests {
         assert_eq!(paren.descriptor().as_str(), "b64:KHVzZXJz/b64:ZW1haWwp");
         // Any context part: an integer renders by its width.
         assert_eq!(Tenant(7).descriptor().as_str(), "tenant/7u64");
-        // One part is the bare part; none is the empty list.
-        struct One;
-        impl Describe for One {
-            fn describe(&self, out: &mut DescriptorBuilder) {
-                let _ = out.text("users");
-            }
-        }
+        // One part is the bare part, the same context as the literal.
         assert_eq!(One.to_context(), "users".into_context());
-        assert_eq!(Nothing.descriptor().as_str(), "()");
-        let mut builder = DescriptorBuilder::new();
-        assert!(builder.is_empty());
-        let _ = builder.bytes(b"users".to_vec()).text("email");
-        assert!(!builder.is_empty());
-        assert_eq!(builder.len(), 2);
-        assert_eq!(
-            Descriptor::from_piece(&builder.finish()).as_str(),
-            "users/email"
-        );
+        assert_eq!(One.descriptor().as_str(), "users");
+        // A description starting from a non-text part, and bytes as a part.
+        let bytes_first = Description::part(b"users".as_slice()).then_text("email");
+        assert_eq!(Descriptor::of(bytes_first).as_str(), "users/email");
+        assert_eq!(Descriptor::of(Description::part(7u64)).as_str(), "7u64");
     }
 
     #[test]
@@ -1216,7 +1200,7 @@ mod label_tests {
         // Golden renderings. Changing any of these re-keys every value ever
         // sealed under the shape, so a change here is a migration, not a
         // refactor.
-        let cases: [(ContextPiece<'static>, &str); 9] = [
+        let cases: [(ContextPiece<'static>, &str); 8] = [
             ("users".into_context(), "users"),
             (label(&["users", "email"]).to_context(), "users/email"),
             (label(&["a", "b", "c"]).to_context(), "a/b/c"),
@@ -1230,7 +1214,6 @@ mod label_tests {
             ("users/email".into_context(), "b64:dXNlcnMvZW1haWw="),
             (7u64.into_context(), "7u64"),
             ((-3i32).into_context(), "4294967293u32"),
-            (Nothing.to_context(), "()"),
         ];
         for (piece, want) in cases {
             assert_eq!(Descriptor::from_piece(&piece).as_str(), want);

@@ -351,8 +351,8 @@ way:
   field when the record is sealed with `encrypt_into` (no caller context).
   A list is what the Rust derive produces when it *extends* every field's
   context with the caller's: `encrypt_into_with_context(row, 7u64)` seals
-  `users/email` under `("users/email", 7u64)`, descriptor
-  `users/email|7u64`, and the plan spells that as `["users/email", 7u64]`
+  the `users.email` field under `(("users", "email"), 7u64)`, descriptor
+  `(users/email)/7u64`, and the plan spells that as `[["users", "email"], 7u64]`
   — the same bytes on the AAD side (a list is an `AadPiece::List`, PAE of
   its parts like a tuple) and on the PRF side (leaves carry vitaminc's own
   typed encodings, lists are `PrfContext::pae`). Rows sealed from Rust
@@ -460,7 +460,8 @@ ct, _ := cipher.Encrypt(ctx, user, aad)   // map[string]any of stackencrypt.Seal
 pt, _ := client.Decrypt(ctx, ct, aad)     // any keyset
 
 rows, _ := cipher.EncryptRecords(ctx, users) // one ZeroKMS call for the slice
-probe, _ := cipher.Term(ctx, uint32(34), stackencrypt.MustContext("users/age"), stackencrypt.Equality)
+age, _ := stackencrypt.ParseLabel("users/age")       // the field's name, as its `label=` tag spells it
+probe, _ := cipher.Term(ctx, uint32(34), age.Context(), stackencrypt.Equality)
 ```
 
 - `stackencrypt.Sealed` — the Phase 2 leaf; `driver.Valuer` + `sql.Scanner`

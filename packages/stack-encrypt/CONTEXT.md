@@ -3,7 +3,7 @@
 Client-side encryption of values under per-value ZeroKMS data keys, and the
 derivation of searchable index terms from the same values. Covers
 `stack-encrypt`, `stack-encrypt-derive`, and the WASI guest in
-`bindings/go/stackencrypt/guest` that exposes them to Go.
+`languages/golang/stackencrypt/guest` that exposes them to Go.
 
 ## Language
 
@@ -90,12 +90,13 @@ _Avoid_: key name, key id, path (that is a `Label`)
 **Describe**:
 The trait of a value whose parts are a descriptor of its own — the identity
 data is keyed under, as opposed to an arbitrary context. An implementor
-pushes parts into a `DescriptorBuilder` and never writes rendered text, so
-the one renderer keeps distinct values apart whoever implements it. Open:
-a consumer's own column or document type implements it; `Label` and EQL's
-`Identifier` do. A `Describe` type is also a context, through the same
-parts (`to_context` is what its `IntoContext` returns).
-_Avoid_: descriptor trait, Descriptor (the rendered string)
+returns its parts as a `Description`, built from a first part so it is never
+empty, and never writes rendered text, so the one renderer keeps distinct
+values apart whoever implements it. Open: a consumer's own column or
+document type implements it; `Label` does, and EQL's `Identifier` does once
+stack#971 lands. A `Describe` type is also a context, through the same parts
+(`to_context` is what its `IntoContext` returns).
+_Avoid_: descriptor trait, Descriptor (the rendered string), DescriptorBuilder
 
 **Label**:
 The *name* of the data a value is sealed under (`users/email`,
@@ -109,7 +110,7 @@ name is a `Label`, a flat list; the scope is `with`, which appends and nests
 `Label`. A two-segment label is the context a `struct = ..` derive binds for
 a field, so a label opens a row a derive wrote. An EQL consumer names its
 data with an `Identifier`, a two-segment label.
-_Avoid_: path, identifier (that is EQL's two-segment case), prefix
+_Avoid_: identifier (that is EQL's two-segment case), prefix, column context
 
 **Leaf**:
 An output type that authenticates or derives directly — a ciphertext or a

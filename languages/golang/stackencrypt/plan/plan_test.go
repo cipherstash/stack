@@ -277,7 +277,6 @@ func TestBuildRefusesMalformedDecisions(t *testing.T) {
 		"identity on plain":  {"t", plan.When(plan.Field("a"), plan.Plaintext(), plan.Identity("c")), plan.ErrInvalid, "Plaintext"},
 		"identity on custom": {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.Custom("ctx")), plan.Identity("c")), plan.ErrInvalid, "context is fixed"},
 		"slash in identity":  {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL()), plan.Column("c"), plan.Identity("x/y")), plan.ErrInvalid, "contains '/'"},
-		"slash, renamed":     {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL()), plan.Column("x/y"), plan.Identity("c")), plan.ErrInvalid, "contains '/'"},
 		"zero decision":      {"t", plan.When(plan.Field("a"), plan.Decision{}), plan.ErrInvalid, "zero Decision"},
 		"empty context":      {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.Custom(""))), plan.ErrInvalid, "empty context"},
 		"nil policy":         {"t", nil, plan.ErrUnmatched, ""},
@@ -484,4 +483,19 @@ func label(t testing.TB, s string) se.Label {
 		t.Fatal(err)
 	}
 	return l
+}
+
+// With the identity pinned, the storage column is only the record key, as a
+// Custom target's is: a '/' in it names a database column, not a context, so
+// it is accepted and the context stays the pinned identity's label.
+func TestASlashInARenamedStorageColumnIsOnlyARecordKey(t *testing.T) {
+	facts := []plan.Fact{{Field: "blob", GoField: "Blob", Annotations: []plan.Annotation{{Key: "k", Values: []string{"v"}}}}}
+	p, err := plan.ForMessage(nil, "t", plan.When(plan.Field("blob"), plan.Encrypt(plan.EQL()), plan.Column("blob/v1"), plan.Identity("blob"))).Build(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := p.Fields()[0]
+	if f.Name != "blob/v1" || !reflect.DeepEqual(f.Context, label(t, "t/blob").Context()) {
+		t.Fatalf("field = %+v, want record key blob/v1 under t/blob", f)
+	}
 }
