@@ -142,7 +142,11 @@ func recordsAndTerms(ctx context.Context, cipher *stackencrypt.Cipher) ([]stacke
 	// being searched for. It never touches the ciphertext — matching is what
 	// the term is for.
 	fmt.Println()
-	probe, err := cipher.Term(ctx, "bob@example.com", stackencrypt.MustContext("users/email"), stackencrypt.Equality)
+	emailCtx, err := stackencrypt.PlanContext("users/email")
+	if err != nil {
+		return nil, fmt.Errorf("the probe's context: %w", err)
+	}
+	probe, err := cipher.Term(ctx, "bob@example.com", emailCtx, stackencrypt.Equality)
 	if err != nil {
 		return nil, fmt.Errorf("deriving a probe: %w", err)
 	}
@@ -155,7 +159,11 @@ func recordsAndTerms(ctx context.Context, cipher *stackencrypt.Cipher) ([]stacke
 	// A term is bound to its context. The same value under another field's
 	// context is a different term, which is what stops a match in one column
 	// from being a match in another.
-	wrong, err := cipher.Term(ctx, "bob@example.com", stackencrypt.MustContext("users/name"), stackencrypt.Equality)
+	nameCtx, err := stackencrypt.PlanContext("users/name")
+	if err != nil {
+		return nil, fmt.Errorf("the probe's context: %w", err)
+	}
+	wrong, err := cipher.Term(ctx, "bob@example.com", nameCtx, stackencrypt.Equality)
 	if err != nil {
 		return nil, fmt.Errorf("deriving a probe: %w", err)
 	}

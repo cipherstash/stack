@@ -210,7 +210,7 @@ func TestPlanFromTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	age := obj[0].Value.(vcvalue.Object)
-	if got := age[0].Value; !reflect.DeepEqual(got, []any{"users/age", uint64(7)}) {
+	if got := age[0].Value; !reflect.DeepEqual(got, []any{[]any{"users", "age"}, uint64(7)}) {
 		t.Fatalf("extended context = %v", got)
 	}
 	if _, err := vcffi.Marshal(obj); err != nil {
@@ -329,17 +329,17 @@ func TestTermExtensionMatchesRecordFieldContext(t *testing.T) {
 
 	var to termOptions
 	ExtendContext(ext...).applyTerm(&to)
-	probe, err := extend(MustContext("users/email"), to.extension)
+	probe, err := extend(planContext(t, "users/email"), to.extension)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(probe.value(), fieldContext) {
 		t.Fatalf("probe context %#v, record field context %#v", probe.value(), fieldContext)
 	}
-	if reflect.DeepEqual(MustContext("users/email").value(), fieldContext) {
+	if reflect.DeepEqual(planContext(t, "users/email").value(), fieldContext) {
 		t.Fatal("the unextended probe context equals the extended field's")
 	}
-	other, err := extend(MustContext("users/email"), []any{uint64(8), "eu"})
+	other, err := extend(planContext(t, "users/email"), []any{uint64(8), "eu"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +388,7 @@ func TestSeveralExtensionsJoinInOrder(t *testing.T) {
 		for _, opt := range opts {
 			opt.applyTerm(&to)
 		}
-		c, err := extend(MustContext("users/email"), to.extension)
+		c, err := extend(planContext(t, "users/email"), to.extension)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -784,5 +784,40 @@ func TestTermOrderingAgreesWithRust(t *testing.T) {
 	// first difference, and an empty term is less than any other.
 	if OreTerm(nil).Compare(OreTerm{1}) != -1 || (OreTerm{1}).Compare(OreTerm(nil)) != 1 || OreTerm(nil).Compare(OreTerm(nil)) != 0 {
 		t.Error("empty ORE terms do not order by length")
+	}
+}
+
+// planContext is PlanContext for a context known to be valid: the probe
+// context a plan field's Context binds.
+func planContext(t *testing.T, s string) Context {
+	t.Helper()
+	c, err := PlanContext(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// A plan field's "table/column" is the pair a Rust struct derive binds,
+// rendering the descriptor table/column; a context with no "/" is one part.
+func TestPlanContextSpellsATableAndAColumnAsAPair(t *testing.T) {
+	for in, want := range map[string]any{
+		"users/age": []any{"users", "age"},
+		"users":     "users",
+	} {
+		if got := planContext(t, in).value(); !reflect.DeepEqual(got, want) {
+			t.Errorf("PlanContext(%q) = %#v, want %#v", in, got, want)
+		}
+	}
+	for _, bad := range []string{"a/b/c", "/age", "users/", "/", ""} {
+		if _, err := PlanContext(bad); err == nil {
+			t.Errorf("PlanContext(%q) succeeded; want a refusal", bad)
+		}
+		if bad == "" {
+			continue // NewPlan's own "needs a context" refusal covers it.
+		}
+		if _, err := NewPlan(FieldPlan{Field: "Age", Context: bad}); err == nil {
+			t.Errorf("NewPlan accepted context %q", bad)
+		}
 	}
 }

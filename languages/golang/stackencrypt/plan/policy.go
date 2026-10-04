@@ -51,9 +51,11 @@ func (t eqlTarget) Context(id Identifier) string   { return id.String() }
 func (t eqlTarget) String() string                 { return "EQL(" + termList(t.terms) + ")" }
 
 // Custom is a non-EQL target: the field binds context, whatever its
-// column, and derives the given terms. The context need not be
-// table/column shaped; it is the policy's to choose and, like any context,
-// must never change once data is written under it.
+// column, and derives the given terms. The context is the policy's to
+// choose and, like any context, must never change once data is written
+// under it. It follows [stackencrypt.FieldPlan.Context]'s rule: one part,
+// or two separated by a single "/" ("notes/v1" binds the pair
+// ["notes", "v1"]); more than one "/" is refused when the plan is built.
 func Custom(context string, terms ...stackencrypt.TermKind) Target {
 	return customTarget{context: context, terms: slices.Clone(terms)}
 }

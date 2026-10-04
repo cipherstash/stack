@@ -28,8 +28,9 @@ import (
 //	    Notes string `stash:"context=users/notes"`                // sealed only
 //	}
 //
-// Options are comma-separated: `context=<part>` (required for a planned
-// field — the field's own context, a string part), `index=<kind>[;<kind>]`
+// Options are comma-separated: `context=<table>/<column>` (required for a
+// planned field — the field's own context; see [FieldPlan.Context]),
+// `index=<kind>[;<kind>]`
 // (eq, match, ore, ope), and `name=<wire name>` (the record key; the Go
 // field name otherwise). A field tagged `-` or `plain`, or not tagged at
 // all, is not part of the record: it never crosses the boundary, and stays
@@ -132,7 +133,7 @@ func (e contextExtension) applyTerm(o *termOptions) { e.appendTo(&o.extension) }
 // ExtendContext extends every field's context by parts, in order, the way
 // the Rust derive extends a field's context by the caller's
 // (encrypt_into_with_context): a field tagged context=users/age with
-// ExtendContext(uint64(7)) binds ["users/age", 7]. On [Cipher.Term] it
+// ExtendContext(uint64(7)) binds [["users", "age"], 7]. On [Cipher.Term] it
 // extends the probe's context the same way, so a probe built under the
 // extension a record was written under compares against that record's
 // terms, and under any other extension, or none, against nothing.
@@ -202,8 +203,15 @@ type FieldPlan struct {
 	// Name is the record key the field's outputs are stored under: the
 	// column name, in EQL terms. Field when empty.
 	Name string
-	// Context is the field's own encryption context, a string part; the
-	// record call extends it by any ExtendContext parts. Required.
+	// Context is the field's own encryption context; the record call
+	// extends it by any ExtendContext parts. Required.
+	//
+	// "users/age" is a table and a column: it crosses the boundary as the
+	// two-part context ["users", "age"] — what a Rust `#[derive(EncryptFrom)]`
+	// with `struct = .., context = "users"` binds its `age` field under, and
+	// what renders the ZeroKMS descriptor users/age. A probe for the field is
+	// built with [PlanContext]. A context with no "/" is one part, as
+	// NewContext makes it; more than one "/", or an empty side, is refused.
 	Context string
 	// Terms lists the terms to derive beside the ciphertext, in order.
 	Terms []TermKind
@@ -274,6 +282,9 @@ func newPlan(fields []FieldPlan) (Plan, error) {
 		seenField[f.Field] = true
 		if f.Context == "" {
 			return Plan{}, fmt.Errorf("plan field %s: a planned field needs a context", f.Field)
+		}
+		if _, err := PlanContext(f.Context); err != nil {
+			return Plan{}, fmt.Errorf("plan field %s: %w", f.Field, err)
 		}
 		pf := planField{field: f.Field, name: f.Field, context: f.Context}
 		if f.Name != "" {
@@ -435,7 +446,7 @@ func planFor(t reflect.Type, o recordOptions) ([]fieldPlan, error) {
 func planValue(plan []fieldPlan, opts recordOptions) (vcvalue.Object, error) {
 	out := make(vcvalue.Object, 0, len(plan))
 	for _, f := range plan {
-		ctx, err := NewContext(f.context)
+		ctx, err := PlanContext(f.context)
 		if err != nil {
 			return nil, err
 		}
@@ -452,6 +463,29 @@ func planValue(plan []fieldPlan, opts recordOptions) (vcvalue.Object, error) {
 		}})
 	}
 	return out, nil
+}
+
+// PlanContext is the context a [FieldPlan] whose Context is s binds:
+// "table/column" as the two-part context [table, column], anything without
+// a "/" as one part. A [Cipher.Term] probe for a planned field is built
+// with it, so the probe and the field cannot spell their context apart:
+//
+//	email, err := stackencrypt.PlanContext("users/email")
+//	if err != nil { ... }
+//	probe, err := cipher.Term(ctx, "bob@example.com", email, stackencrypt.Equality)
+func PlanContext(s string) (Context, error) {
+	table, column, paired := strings.Cut(s, "/")
+	if !paired {
+		return NewContext(s)
+	}
+	if table == "" || column == "" || strings.Contains(column, "/") {
+		return Context{}, fmt.Errorf("context %q: give one part, or a table and a column as \"<table>/<column>\"", s)
+	}
+	ctx, err := NewContext(table)
+	if err != nil {
+		return Context{}, err
+	}
+	return ctx.With(column)
 }
 
 func applyOptions(opts []RecordOption) recordOptions {

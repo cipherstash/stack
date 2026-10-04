@@ -148,7 +148,11 @@ func run(ctx context.Context, cfg config, secrets secrets) error {
 	if err != nil {
 		return fmt.Errorf("encrypting records: %w", err)
 	}
-	probe, err := cipher.Term(ctx, "bob@example.com", stackencrypt.MustContext("users/email"), stackencrypt.Equality)
+	emailCtx, err := stackencrypt.PlanContext("users/email")
+	if err != nil {
+		return fmt.Errorf("the probe's context: %w", err)
+	}
+	probe, err := cipher.Term(ctx, "bob@example.com", emailCtx, stackencrypt.Equality)
 	if err != nil {
 		return fmt.Errorf("deriving a probe: %w", err)
 	}

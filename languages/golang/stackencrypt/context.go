@@ -14,12 +14,14 @@ import (
 //
 // A Context is a part or a list of parts. A part is a string, a byte slice
 // or an integer (int32, int64, uint32, uint64; Go's int is sent as int64).
-// [NewContext] makes a one-part context — the bare part, the shape a Rust
-// `#[derive(EncryptFrom)]` field is sealed under when the caller supplies no
-// context of its own. [Context.With] extends it as Rust's NonEmpty::with
-// does: the result is the two-element list [previous, part], nesting to the
-// left, so NewContext("users/age").With(uint64(7)) is the context a row
-// sealed with encrypt_into_with_context(row, 7u64) binds for that field.
+// [NewContext] makes a one-part context — the bare part, what a Rust
+// `#[stash(context = "..")]` literal binds. [Context.With] extends it as
+// Rust's NonEmpty::with does: the result is the two-element list
+// [previous, part], nesting to the left. So NewContext("users").With("age")
+// is the pair a Rust `struct = .., context = "users"` derive binds its `age`
+// field under — and a plan field's "users/age" — rendering the ZeroKMS
+// descriptor users/age; extended With(uint64(7)) it is what a row sealed
+// with encrypt_into_with_context(row, 7u64) binds for that field.
 // A one-element list is not the bare part, and this type cannot spell one.
 //
 // A Context owns its parts: a byte-slice part is copied in, so a caller's
