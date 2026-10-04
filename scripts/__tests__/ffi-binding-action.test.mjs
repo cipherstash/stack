@@ -571,6 +571,23 @@ function enabledByFeatures(features, requested, defaults) {
 }
 
 /**
+ * Whether a crate reached again needs no second walk: everything this edge
+ * asks of it, an earlier visit already asked. `prior` is what that visit
+ * requested (`undefined` on a first visit), `wanted` the features this edge
+ * adds, `defaultFeatures` whether this edge turns `default` on. Cargo compiles
+ * the UNION of what every dependent asks, so a visit asking for more of either
+ * must walk the crate again — otherwise the path dependencies its new features
+ * enable stay out of the cache key.
+ */
+function alreadyWalked(prior, wanted, defaultFeatures) {
+  return (
+    prior !== undefined &&
+    wanted.every((feature) => prior.features.has(feature)) &&
+    (prior.defaults || !defaultFeatures)
+  )
+}
+
+/**
  * Every crate `cargo build` compiles into the artifact, as repo-relative
  * directories, starting from the cdylib crate and following path deps
  * transitively. The starting crate itself is excluded: it lives under
@@ -614,13 +631,7 @@ function compiledPathDependencies(rootManifestRel) {
         ...(enabled.depFeatures.get(dep.name) ?? []),
       ]
       const prior = requested.get(depManifest)
-      if (
-        prior &&
-        wanted.every((feature) => prior.features.has(feature)) &&
-        (prior.defaults || !dep.defaultFeatures)
-      ) {
-        continue
-      }
+      if (alreadyWalked(prior, wanted, dep.defaultFeatures)) continue
       requested.set(depManifest, {
         features: new Set([...(prior?.features ?? []), ...wanted]),
         defaults: (prior?.defaults ?? false) || dep.defaultFeatures,
@@ -761,6 +772,23 @@ describe('build-ffi-binding — the keys cover every crate the build compiles', 
     expect(enabledByFeatures(features, ['gated'], false).deps).toEqual(
       new Set(['gated']),
     )
+  })
+
+  it('re-walks a crate reached again with more features or with defaults on', () => {
+    // The walk below runs this against the real tree, where no crate is
+    // reached twice with different feature sets today, so the rule only ever
+    // sees `prior === undefined` there. Wrong in the other direction, a crate
+    // reached first without a feature and later with one is not walked again,
+    // and the path dependencies that feature enables stay out of the key.
+    const lean = { features: new Set(['a']), defaults: false }
+    expect(alreadyWalked(undefined, [], true)).toBe(false)
+    expect(alreadyWalked(lean, ['a'], false)).toBe(true)
+    expect(alreadyWalked(lean, [], false)).toBe(true)
+    expect(alreadyWalked(lean, ['a', 'b'], false)).toBe(false)
+    expect(alreadyWalked(lean, ['a'], true)).toBe(false)
+    const full = { features: new Set(['a']), defaults: true }
+    expect(alreadyWalked(full, ['a'], true)).toBe(true)
+    expect(alreadyWalked(full, ['b'], true)).toBe(false)
   })
 
   it('found the path dependencies it means to check', () => {
