@@ -74,13 +74,40 @@ _Avoid_: scope (that is a `Pending`'s), shared context, per-operation context
 **Descriptor**:
 The context, rendered as the string ZeroKMS binds into every data key and
 logs per retrieval, rendered from the context's parts: plain text verbatim,
-integers by their width, sign-blind (`7u64`, and `7i64` is `7u64`), a
-composite's parts joined by `|` (`users/email|7u64`); text that could read as
-another form is `b64:`-escaped, and an empty part inside a list is the bare
-`b64:`. Injective over encodings, and finer than them for a pre-encoded
-`Aad` (opaque bytes) and for shapes that encode alike (`None` vs `0u64`):
-seal and open must present the context in the same shape.
-_Avoid_: key name, key id
+integers by their width, sign-blind (`7u64`, and `7i64` is `7u64`), a list's
+parts joined by `/` (`users/email`; a nested list is parenthesised,
+`(users/email)/7u64`); text that could read as another form — containing
+`/`, `(` or `)`, beginning with `b64:`, a digit or `-` — is `b64:`-escaped,
+so one text part can never read as two, and an empty part inside a list is
+the bare `b64:`. Rendered by one function, `Descriptor::from_piece`, and
+**frozen**: a change re-keys everything. Finer than the encodings for a
+pre-encoded `Aad` (opaque bytes) and coarser for shapes that render alike
+(`7i64` and `7u64`): seal and open must present the context in the same
+shape. The descriptor is derived, never authored: nothing takes a descriptor
+string from a caller.
+_Avoid_: key name, key id, path (that is a `Label`)
+
+**Describe**:
+The trait of a value whose parts are a descriptor of its own — the identity
+data is keyed under, as opposed to an arbitrary context. An implementor
+pushes parts into a `DescriptorBuilder` and never writes rendered text, so
+the one renderer keeps distinct values apart whoever implements it. Open:
+a consumer's own column or document type implements it; `Label` and EQL's
+`Identifier` do. A `Describe` type is also a context, through the same
+parts (`to_context` is what its `IntoContext` returns).
+_Avoid_: descriptor trait, Descriptor (the rendered string)
+
+**Label**:
+The first-class `Describe` type: a path of plain segments, each checked
+(non-empty, no `/`, `(`, `)` or control characters, not beginning with
+`b64:`, a digit or `-`), so it renders verbatim and its `Display`
+(`users/email`) is its descriptor and parses back losslessly. One segment is
+the bare literal; two are the pair a `struct = ..` derive binds
+(`nonempty!("users").with("email")`); three or more are a flat list
+(`a/b/c`), which a nesting `with` chain is not. A direct consumer of the
+crate names its data with a `Label`; an EQL consumer names it with an
+`Identifier`, the same shape with exactly two segments.
+_Avoid_: path, name, identifier (that is EQL's two-segment case)
 
 **Leaf**:
 An output type that authenticates or derives directly — a ciphertext or a

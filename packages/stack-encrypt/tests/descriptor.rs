@@ -11,7 +11,10 @@ mod common;
 use common::recording_cipher;
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{DecryptFrom, EncryptInto};
-use stack_encrypt::{nonempty, DecryptInto, Descriptor, EncryptFrom, Error, StackCipherText};
+use stack_encrypt::{
+    nonempty, DecryptInto, Describe, Descriptor, EncryptFrom, Error, Label, NonEmpty,
+    StackCipherText,
+};
 
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(plaintext = u32)]
@@ -60,6 +63,35 @@ async fn a_leaf_sends_its_context_as_the_descriptor_both_ways() -> Result<(), Er
     let sent = sent.lock().expect("lock").clone();
     assert_eq!(sent.generated(), ["users/email"]);
     assert_eq!(sent.retrieved(), ["users/email"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_label_is_sealed_under_the_descriptor_it_spells() -> Result<(), Error> {
+    let (cipher, sent) = recording_cipher().await;
+    let keyset = cipher.default_keyset();
+
+    // A direct consumer names its data with a `Label`; what it writes is
+    // what ZeroKMS binds and logs, and the pair-form context opens it.
+    let email = Label::parse("users/email").expect("a plain label");
+    assert_eq!(email.descriptor().as_str(), "users/email");
+    let ct: StackCipherText = "alice"
+        .encrypt_into_with_context(&keyset, NonEmpty::from(email.clone()))
+        .await?;
+    let _: String = ct
+        .decrypt_into(&cipher, nonempty!("users").with("email"))
+        .await?;
+
+    // Extended by a row id like any context head.
+    let row = NonEmpty::from(email).with(7u64);
+    let ct: StackCipherText = "alice".encrypt_into_with_context(&keyset, row).await?;
+    let _: String = ct
+        .decrypt_into(&cipher, nonempty!("users").with("email").with(7u64))
+        .await?;
+
+    let sent = sent.lock().expect("lock").clone();
+    assert_eq!(sent.generated(), ["users/email", "(users/email)/7u64"]);
+    assert_eq!(sent.retrieved(), ["users/email", "(users/email)/7u64"]);
     Ok(())
 }
 

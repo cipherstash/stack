@@ -178,9 +178,9 @@ func (m Message) field(f Fact) (stackencrypt.FieldPlan, string, bool, error) {
 			}
 		}
 	}
-	context := d.target.Context(Identifier{Table: string(m.table), Column: identity})
-	if context == "" {
-		return none(fmt.Errorf("%w: target %v gives an empty context", ErrInvalid, d.target))
+	context, err := d.target.Context(Identifier{Table: string(m.table), Column: identity})
+	if err != nil {
+		return none(fmt.Errorf("%w: target %v: %v", ErrInvalid, d.target, err))
 	}
 	return stackencrypt.FieldPlan{
 		Field:   f.goField(),

@@ -111,8 +111,8 @@ func liveClient(t *testing.T) *Client {
 
 type liveUser struct {
 	ID    int64  `stash:"-"`
-	Age   uint32 `stash:"context=users/age,index=eq;ore"`
-	Email string `stash:"context=users/email,index=eq;match"`
+	Age   uint32 `stash:"label=users/age,index=eq;ore"`
+	Email string `stash:"label=users/email,index=eq;match"`
 }
 
 func TestLiveValueRoundTrip(t *testing.T) {
@@ -261,8 +261,8 @@ func TestLiveExplicitPlanRoundTrip(t *testing.T) {
 		Email string
 	}
 	plan, err := NewPlan(
-		FieldPlan{Field: "Age", Context: "users/age", Terms: []TermKind{Equality, Ore}},
-		FieldPlan{Field: "Email", Context: "users/email", Terms: []TermKind{Equality, Match}},
+		FieldPlan{Field: "Age", Context: MustLabel("users/age").Context(), Terms: []TermKind{Equality, Ore}},
+		FieldPlan{Field: "Email", Context: MustLabel("users/email").Context(), Terms: []TermKind{Equality, Match}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -290,7 +290,7 @@ func TestLiveExplicitPlanRoundTrip(t *testing.T) {
 
 	// A plan naming a field the record does not carry is refused before
 	// any key is requested.
-	other, err := NewPlan(FieldPlan{Field: "Email", Name: "email", Context: "users/email"})
+	other, err := NewPlan(FieldPlan{Field: "Email", Name: "email", Context: MustLabel("users/email").Context()})
 	if err != nil {
 		t.Fatal(err)
 	}

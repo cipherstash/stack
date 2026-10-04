@@ -471,8 +471,8 @@ probe, _ := cipher.Term(ctx, uint32(34), stackencrypt.MustContext("users/age"), 
   ```go
   type User struct {
       ID    int64  `stash:"plain"`
-      Age   uint32 `stash:"context=users/age,index=eq;ore"`
-      Email string `stash:"context=users/email,index=eq;match"`
+      Age   uint32 `stash:"label=users/age,index=eq;ore"`
+      Email string `stash:"label=users/email,index=eq;match"`
   }
   ```
 

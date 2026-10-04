@@ -22,12 +22,12 @@ import (
 )
 
 // A record type. The `stash` tag is the Go stand-in for Rust's
-// `#[derive(EncryptFrom)]`: `context=` is the field's own encryption
+// `#[derive(EncryptFrom)]`: `label=` is the field's own encryption
 // context, `index=` the terms to derive beside the ciphertext.
 type user struct {
 	ID    int64  `stash:"-"`
-	Email string `stash:"context=users/email,index=eq;match"`
-	Age   uint32 `stash:"context=users/age,index=eq;ore"`
+	Email string `stash:"label=users/email,index=eq;match"`
+	Age   uint32 `stash:"label=users/age,index=eq;ore"`
 }
 
 func main() {
@@ -142,11 +142,11 @@ func recordsAndTerms(ctx context.Context, cipher *stackencrypt.Cipher) ([]stacke
 	// being searched for. It never touches the ciphertext — matching is what
 	// the term is for.
 	fmt.Println()
-	emailCtx, err := stackencrypt.PlanContext("users/email")
+	emailCtx, err := stackencrypt.ParseLabel("users/email")
 	if err != nil {
-		return nil, fmt.Errorf("the probe's context: %w", err)
+		return nil, fmt.Errorf("the probe's label: %w", err)
 	}
-	probe, err := cipher.Term(ctx, "bob@example.com", emailCtx, stackencrypt.Equality)
+	probe, err := cipher.Term(ctx, "bob@example.com", emailCtx.Context(), stackencrypt.Equality)
 	if err != nil {
 		return nil, fmt.Errorf("deriving a probe: %w", err)
 	}
@@ -159,11 +159,11 @@ func recordsAndTerms(ctx context.Context, cipher *stackencrypt.Cipher) ([]stacke
 	// A term is bound to its context. The same value under another field's
 	// context is a different term, which is what stops a match in one column
 	// from being a match in another.
-	nameCtx, err := stackencrypt.PlanContext("users/name")
+	nameCtx, err := stackencrypt.ParseLabel("users/name")
 	if err != nil {
-		return nil, fmt.Errorf("the probe's context: %w", err)
+		return nil, fmt.Errorf("the probe's label: %w", err)
 	}
-	wrong, err := cipher.Term(ctx, "bob@example.com", nameCtx, stackencrypt.Equality)
+	wrong, err := cipher.Term(ctx, "bob@example.com", nameCtx.Context(), stackencrypt.Equality)
 	if err != nil {
 		return nil, fmt.Errorf("deriving a probe: %w", err)
 	}

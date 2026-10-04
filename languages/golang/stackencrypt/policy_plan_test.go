@@ -14,7 +14,7 @@ import (
 // Validate refuses a nil type as PlanFromTags does, for the zero plan
 // and a built one alike, rather than dereferencing it.
 func TestValidateRefusesANilType(t *testing.T) {
-	built, err := se.NewPlan(se.FieldPlan{Field: "A", Context: "t/a"})
+	built, err := se.NewPlan(se.FieldPlan{Field: "A", Context: se.MustLabel("t/a").Context()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,8 +44,8 @@ func TestPolicyPlanIsTheHandBuiltPlan(t *testing.T) {
 		plan.When(category.Under("user"), plan.Encrypt(plan.EQL())),
 		plan.When(category.Present(), plan.Plaintext()),
 	)
-	email := se.FieldPlan{Field: "Email", Name: "email", Context: "individuals/email", Terms: []se.TermKind{se.Equality, se.Match}}
-	name := se.FieldPlan{Field: "Name", Name: "name", Context: "individuals/name"}
+	email := se.FieldPlan{Field: "Email", Name: "email", Context: se.MustLabel("individuals/email").Context(), Terms: []se.TermKind{se.Equality, se.Match}}
+	name := se.FieldPlan{Field: "Name", Name: "name", Context: se.MustLabel("individuals/name").Context()}
 	for label, tc := range map[string]struct {
 		pins     []plan.RuleOption
 		medicare se.FieldPlan
@@ -54,12 +54,12 @@ func TestPolicyPlanIsTheHandBuiltPlan(t *testing.T) {
 		// database would have it; Column alone sets the identity too.
 		"column": {
 			[]plan.RuleOption{plan.Column("medicare_number")},
-			se.FieldPlan{Field: "MedicareNo", Name: "medicare_number", Context: "individuals/medicare_number", Terms: []se.TermKind{se.Equality, se.Ore}},
+			se.FieldPlan{Field: "MedicareNo", Name: "medicare_number", Context: se.MustLabel("individuals/medicare_number").Context(), Terms: []se.TermKind{se.Equality, se.Ore}},
 		},
 		// After a database rename: the new column, the old identity.
 		"renamed column": {
 			[]plan.RuleOption{plan.Column("medicare_num"), plan.Identity("medicare_number")},
-			se.FieldPlan{Field: "MedicareNo", Name: "medicare_num", Context: "individuals/medicare_number", Terms: []se.TermKind{se.Equality, se.Ore}},
+			se.FieldPlan{Field: "MedicareNo", Name: "medicare_num", Context: se.MustLabel("individuals/medicare_number").Context(), Terms: []se.TermKind{se.Equality, se.Ore}},
 		},
 	} {
 		individuals := plan.ForMessage(&individual{}, "individuals", plan.FirstOf(

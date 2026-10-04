@@ -23,14 +23,16 @@ import (
 //
 //	type User struct {
 //	    ID    int64  `stash:"-"`                                  // not sent to the guest
-//	    Age   uint32 `stash:"context=users/age,index=eq;ore"`     // sealed + equality and ORE terms
-//	    Email string `stash:"context=users/email,index=eq;match"` // sealed + equality and match terms
-//	    Notes string `stash:"context=users/notes"`                // sealed only
+//	    Age   uint32 `stash:"label=users/age,index=eq;ore"`     // sealed + equality and ORE terms
+//	    Email string `stash:"label=users/email,index=eq;match"` // sealed + equality and match terms
+//	    Notes string `stash:"label=users/notes"`                // sealed only
 //	}
 //
-// Options are comma-separated: `context=<table>/<column>` (required for a
-// planned field — the field's own context; see [FieldPlan.Context]),
-// `index=<kind>[;<kind>]`
+// Options are comma-separated: the field's own context as either
+// `label=<table>/<column>` (a [Label], parsed with [ParseLabel]) or
+// `context=<part>` (one arbitrary text part, as [NewContext] makes it, what
+// a Rust `#[stash(context = "..")]` literal binds) — exactly one of the two,
+// required for a planned field; see [FieldPlan.Context] — `index=<kind>[;<kind>]`
 // (eq, match, ore, ope), and `name=<wire name>` (the record key; the Go
 // field name otherwise). A field tagged `-` or `plain`, or not tagged at
 // all, is not part of the record: it never crosses the boundary, and stays
@@ -41,19 +43,19 @@ import (
 //	plan, err := stackencrypt.NewPlan(
 //	    stackencrypt.FieldPlan{
 //	        Field:   "Age",
-//	        Context: "users/age",
+//	        Context: stackencrypt.MustLabel("users/age").Context(),
 //	        Terms: []stackencrypt.TermKind{
 //	            stackencrypt.Equality, stackencrypt.Ore,
 //	        },
 //	    },
 //	    stackencrypt.FieldPlan{
 //	        Field:   "Email",
-//	        Context: "users/email",
+//	        Context: stackencrypt.MustLabel("users/email").Context(),
 //	        Terms: []stackencrypt.TermKind{
 //	            stackencrypt.Equality, stackencrypt.Match,
 //	        },
 //	    },
-//	    stackencrypt.FieldPlan{Field: "Notes", Context: "users/notes"},
+//	    stackencrypt.FieldPlan{Field: "Notes", Context: stackencrypt.MustLabel("users/notes").Context()},
 //	)
 //	records, err := cipher.EncryptRecords(
 //	    ctx, users, stackencrypt.WithPlan(plan),
@@ -132,7 +134,7 @@ func (e contextExtension) applyTerm(o *termOptions) { e.appendTo(&o.extension) }
 
 // ExtendContext extends every field's context by parts, in order, the way
 // the Rust derive extends a field's context by the caller's
-// (encrypt_into_with_context): a field tagged context=users/age with
+// (encrypt_into_with_context): a field tagged label=users/age with
 // ExtendContext(uint64(7)) binds [["users", "age"], 7]. On [Cipher.Term] it
 // extends the probe's context the same way, so a probe built under the
 // extension a record was written under compares against that record's
@@ -206,13 +208,15 @@ type FieldPlan struct {
 	// Context is the field's own encryption context; the record call
 	// extends it by any ExtendContext parts. Required.
 	//
-	// "users/age" is a table and a column: it crosses the boundary as the
-	// two-part context ["users", "age"] — what a Rust `#[derive(EncryptFrom)]`
-	// with `struct = .., context = "users"` binds its `age` field under, and
-	// what renders the ZeroKMS descriptor users/age. A probe for the field is
-	// built with [PlanContext]. A context with no "/" is one part, as
-	// NewContext makes it; more than one "/", or an empty side, is refused.
-	Context string
+	// A field stored in a database is named by a [Label] — a table and a
+	// column, MustLabel("users/age").Context(): the pair ["users", "age"]
+	// a Rust `#[derive(EncryptFrom)]` with `struct = .., context = "users"`
+	// binds its `age` field under, rendering the ZeroKMS descriptor
+	// users/age. Any other context is one [NewContext] makes: an arbitrary
+	// part, what a Rust `#[stash(context = "..")]` literal binds, rendered
+	// escaped if it would read as something else. A probe for the field
+	// ([Cipher.Term]) takes the same Context, so the two cannot drift.
+	Context Context
 	// Terms lists the terms to derive beside the ciphertext, in order.
 	Terms []TermKind
 }
@@ -235,7 +239,7 @@ type planData struct {
 type planField struct {
 	field   string
 	name    string
-	context string
+	context Context
 	terms   []TermKind
 }
 
@@ -251,7 +255,7 @@ func (f planField) outputs() []string {
 }
 
 // NewPlan validates the fields and returns the plan. Every field needs a
-// Field and a Context; Go field names must be unique, and so must record
+// Field and a non-zero Context; Go field names must be unique, and so must record
 // names (Name, or Field); Terms must be kinds this package defines, each
 // at most once per field. A plan is built once and reused across calls,
 // like the type it describes.
@@ -280,11 +284,8 @@ func newPlan(fields []FieldPlan) (Plan, error) {
 			return Plan{}, fmt.Errorf("plan field %s: the Go field is planned twice", f.Field)
 		}
 		seenField[f.Field] = true
-		if f.Context == "" {
+		if f.Context.node == nil {
 			return Plan{}, fmt.Errorf("plan field %s: a planned field needs a context", f.Field)
-		}
-		if _, err := PlanContext(f.Context); err != nil {
-			return Plan{}, fmt.Errorf("plan field %s: %w", f.Field, err)
 		}
 		pf := planField{field: f.Field, name: f.Field, context: f.Context}
 		if f.Name != "" {
@@ -351,8 +352,22 @@ func PlanFromTags(t reflect.Type) (Plan, error) {
 		for _, opt := range strings.Split(tag, ",") {
 			key, value, _ := strings.Cut(opt, "=")
 			switch key {
-			case "context":
-				pf.Context = value
+			case "label", "context":
+				if pf.Context.node != nil {
+					return Plan{}, fmt.Errorf("stackencrypt: field %s.%s: label= and context= both given; a field has one own context", t, f.Name)
+				}
+				var err error
+				if key == "label" {
+					var l Label
+					if l, err = ParseLabel(value); err == nil {
+						pf.Context = l.Context()
+					}
+				} else {
+					pf.Context, err = NewContext(value)
+				}
+				if err != nil {
+					return Plan{}, fmt.Errorf("stackencrypt: field %s.%s: %s=%q: %w", t, f.Name, key, value, err)
+				}
 			case "name":
 				if value == "" {
 					return Plan{}, fmt.Errorf("stackencrypt: field %s.%s: name must not be empty", t, f.Name)
@@ -386,9 +401,9 @@ func PlanFromTags(t reflect.Type) (Plan, error) {
 // fieldPlan is one planned field bound to a struct type: the plan's field
 // resolved to its index.
 type fieldPlan struct {
-	index   int    // struct field index
-	name    string // wire name
-	context string // the field's own context part
+	index   int     // struct field index
+	name    string  // wire name
+	context Context // the field's own context
 	outputs []string
 }
 
@@ -446,11 +461,8 @@ func planFor(t reflect.Type, o recordOptions) ([]fieldPlan, error) {
 func planValue(plan []fieldPlan, opts recordOptions) (vcvalue.Object, error) {
 	out := make(vcvalue.Object, 0, len(plan))
 	for _, f := range plan {
-		ctx, err := PlanContext(f.context)
+		ctx, err := extend(f.context, opts.extension)
 		if err != nil {
-			return nil, err
-		}
-		if ctx, err = extend(ctx, opts.extension); err != nil {
 			return nil, err
 		}
 		outputs := make([]any, len(f.outputs))
@@ -463,29 +475,6 @@ func planValue(plan []fieldPlan, opts recordOptions) (vcvalue.Object, error) {
 		}})
 	}
 	return out, nil
-}
-
-// PlanContext is the context a [FieldPlan] whose Context is s binds:
-// "table/column" as the two-part context [table, column], anything without
-// a "/" as one part. A [Cipher.Term] probe for a planned field is built
-// with it, so the probe and the field cannot spell their context apart:
-//
-//	email, err := stackencrypt.PlanContext("users/email")
-//	if err != nil { ... }
-//	probe, err := cipher.Term(ctx, "bob@example.com", email, stackencrypt.Equality)
-func PlanContext(s string) (Context, error) {
-	table, column, paired := strings.Cut(s, "/")
-	if !paired {
-		return NewContext(s)
-	}
-	if table == "" || column == "" || strings.Contains(column, "/") {
-		return Context{}, fmt.Errorf("context %q: give one part, or a table and a column as \"<table>/<column>\"", s)
-	}
-	ctx, err := NewContext(table)
-	if err != nil {
-		return Context{}, err
-	}
-	return ctx.With(column)
 }
 
 func applyOptions(opts []RecordOption) recordOptions {

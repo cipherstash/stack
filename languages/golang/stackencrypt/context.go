@@ -19,7 +19,7 @@ import (
 // Rust's NonEmpty::with does: the result is the two-element list
 // [previous, part], nesting to the left. So NewContext("users").With("age")
 // is the pair a Rust `struct = .., context = "users"` derive binds its `age`
-// field under — and a plan field's "users/age" — rendering the ZeroKMS
+// field under — and MustLabel("users/age").Context() — rendering the ZeroKMS
 // descriptor users/age; extended With(uint64(7)) it is what a row sealed
 // with encrypt_into_with_context(row, 7u64) binds for that field.
 // A one-element list is not the bare part, and this type cannot spell one.

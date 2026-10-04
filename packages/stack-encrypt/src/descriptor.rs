@@ -20,6 +20,17 @@
 //! tag, so changing the rendering strands every key issued under the old
 //! one.
 //!
+//! Two kinds of value sit under the renderer. A **context** is anything
+//! [`IntoContext`] — a literal, a pair, an integer, a `NonEmpty` chain — and
+//! is arbitrary: a direct consumer of this crate seals under whatever parts
+//! name its data. A [`Describe`] value is one whose parts *are* a descriptor
+//! of its own: the identity data is keyed under, pushed as parts into a
+//! [`DescriptorBuilder`] so the implementor never writes rendered text.
+//! [`Label`] is the first-class one — a path of plain segments, written and
+//! read as `users/email` — and EQL's identifier (a table and a column) is the
+//! same shape. Both are contexts too, through the same parts, so what
+//! ZeroKMS binds and what the AEAD seals under never disagree.
+//!
 //! The descriptor follows the context's **parts**, not its encoded bytes,
 //! so it and the AEAD encoding can disagree about whether two contexts are
 //! one. They disagree in both directions, each in named cases:
@@ -42,10 +53,13 @@
 //! both times, text or bytes as it was sealed — not merely one with the
 //! same bytes, and not merely one with the same descriptor.
 
+use std::borrow::Cow;
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use base64ct::{Base64Url, Encoding};
 use vitaminc_aead::{ContextPiece, IntoAad, IntoContext};
+use vitaminc_protected::{MaybeEmpty, NonEmpty};
 
 /// A context rendered as the string sent to ZeroKMS with every data-key
 /// request. See the [module docs](self).
@@ -219,20 +233,15 @@ impl Descriptor {
     }
 
     fn render_int(value: &impl std::fmt::Display, suffix: &str, out: &mut String) {
-        use std::fmt::Write as _;
         // Writing to a `String` cannot fail.
         let _ = write!(out, "{value}{suffix}");
     }
 
     /// Text that renders verbatim: non-empty, and nothing another form
-    /// begins with or contains.
+    /// begins with or contains — exactly what a [`Label`] segment may be.
+    /// One definition serves both, so a label always renders verbatim.
     fn is_plain(text: &str) -> bool {
-        !text.is_empty()
-            && !text.starts_with(Self::BASE64_PREFIX)
-            && !text.starts_with(|c: char| c.is_ascii_digit() || c == '-')
-            && !text
-                .chars()
-                .any(|c| c.is_control() || matches!(c, '/' | '(' | ')'))
+        Label::check_segment(0, text).is_ok()
     }
 
     /// The rendered string, as sent to ZeroKMS.
@@ -266,6 +275,330 @@ impl Descriptor {
             Err(crate::Error::DescriptorTooLong { len: self.len() })
         }
     }
+}
+
+/// A value with a ZeroKMS descriptor of its own: the identity data is keyed
+/// under. See the [module docs](self).
+///
+/// Implement it for the type that names where a value lives — a table and a
+/// column, a document path, a tenant's record kind — and that name is what
+/// ZeroKMS binds into the data key and logs on every retrieval. An
+/// implementor pushes **parts** into a [`DescriptorBuilder`]; it never
+/// writes the rendered string. The one renderer, [`Descriptor::from_piece`],
+/// turns the parts into the string, so two implementors render alike only
+/// when their parts are alike, and a part that contains the separator is
+/// escaped rather than read as two. That is what keeps an open trait safe
+/// as a key-derivation input: the implementor chooses *what* the identity
+/// is, this crate chooses how it is spelled.
+///
+/// A `Describe` type is sealed under as a context through the same parts:
+/// [`to_context`](Self::to_context) is the [`ContextPiece`] the type's
+/// [`IntoContext`] must return, so the descriptor ZeroKMS binds and the AAD
+/// the ciphertext is sealed under are one value seen two ways. [`Label`] is
+/// the ready-made implementor, a path of plain segments; EQL's identifier
+/// (a table and a column) is the same shape with two.
+///
+/// ```
+/// use stack_encrypt::{ContextPiece, Describe, DescriptorBuilder, IntoContext};
+///
+/// /// A column of a database table.
+/// struct Column {
+///     table: &'static str,
+///     name: &'static str,
+/// }
+///
+/// impl Describe for Column {
+///     fn describe(&self, out: &mut DescriptorBuilder) {
+///         out.text(self.table).text(self.name);
+///     }
+/// }
+///
+/// // Sealed under as a context through the same two parts.
+/// impl<'a> IntoContext<'a> for Column {
+///     fn into_context(self) -> ContextPiece<'a> {
+///         self.to_context()
+///     }
+/// }
+///
+/// let email = Column { table: "users", name: "email" };
+/// assert_eq!(email.descriptor().as_str(), "users/email");
+/// // A part containing the separator is one part, escaped — never a pair.
+/// let odd = Column { table: "users/email", name: "x" };
+/// assert_eq!(odd.descriptor().as_str(), "b64:dXNlcnMvZW1haWw=/x");
+/// ```
+pub trait Describe {
+    /// Push the parts of this value's descriptor, in order. Push at least
+    /// one: a value with no parts describes as the empty list, `()`.
+    fn describe(&self, out: &mut DescriptorBuilder);
+
+    /// The parts as one context piece: the single part pushed, or the list
+    /// of the parts pushed. What the type's [`IntoContext`] returns, so the
+    /// AAD and the descriptor are derived from one tree.
+    fn to_context(&self) -> ContextPiece<'static> {
+        let mut out = DescriptorBuilder::new();
+        self.describe(&mut out);
+        out.finish()
+    }
+
+    /// The descriptor ZeroKMS binds and logs: [`to_context`](Self::to_context)
+    /// rendered by [`Descriptor::from_piece`].
+    fn descriptor(&self) -> Descriptor {
+        Descriptor::from_piece(&self.to_context())
+    }
+}
+
+impl<T: Describe + ?Sized> Describe for &T {
+    fn describe(&self, out: &mut DescriptorBuilder) {
+        (**self).describe(out)
+    }
+}
+
+/// Collects the parts of a [`Describe`] value's descriptor.
+///
+/// It takes parts, never rendered text, so an implementor cannot write a
+/// separator, an escape prefix or a parenthesis into the descriptor: each
+/// part is rendered by [`Descriptor::from_piece`] under the frozen rules,
+/// and text that would read as another form is escaped there.
+#[derive(Debug, Default)]
+pub struct DescriptorBuilder {
+    parts: Vec<ContextPiece<'static>>,
+}
+
+impl DescriptorBuilder {
+    /// A builder with no parts.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Push a text part. Plain text (see [`Label`]) renders verbatim; any
+    /// other text renders escaped.
+    pub fn text(&mut self, text: impl Into<String>) -> &mut Self {
+        self.parts.push(ContextPiece::Text(Cow::Owned(text.into())));
+        self
+    }
+
+    /// Push a bytes part. It renders as plain text when it is UTF-8 plain
+    /// text, escaped otherwise.
+    pub fn bytes(&mut self, bytes: impl Into<Vec<u8>>) -> &mut Self {
+        self.parts
+            .push(ContextPiece::Bytes(Cow::Owned(bytes.into())));
+        self
+    }
+
+    /// Push any context part — an integer, a nested list, a pre-encoded
+    /// context — as the context encoding sees it.
+    pub fn part<'a>(&mut self, part: impl IntoContext<'a>) -> &mut Self {
+        self.parts.push(part.into_context().into_owned());
+        self
+    }
+
+    /// How many parts have been pushed.
+    pub fn len(&self) -> usize {
+        self.parts.len()
+    }
+
+    /// Whether no part has been pushed yet.
+    pub fn is_empty(&self) -> bool {
+        self.parts.is_empty()
+    }
+
+    /// The parts as one context piece: a single part is that part (so one
+    /// text segment is the same context as the bare literal), and any
+    /// other count is a list of them.
+    pub fn finish(mut self) -> ContextPiece<'static> {
+        match self.parts.pop() {
+            Some(part) if self.parts.is_empty() => part,
+            Some(part) => {
+                self.parts.push(part);
+                ContextPiece::List(self.parts)
+            }
+            None => ContextPiece::List(self.parts),
+        }
+    }
+}
+
+/// A path of plain segments: the descriptor a direct consumer of this crate
+/// writes for the data it keys — `users/email`, `documents/v2/body`.
+///
+/// Every segment is **plain** — non-empty, no control characters, none of
+/// `/`, `(`, `)`, not beginning with `b64:`, a digit or `-` — which is
+/// exactly the text [`Descriptor::from_piece`] renders verbatim. So a
+/// `Label` renders as its segments joined by [`/`](Descriptor::SEPARATOR),
+/// its [`Display`](std::fmt::Display) *is* its descriptor, and
+/// [`parse`](Self::parse) reads that string back losslessly: no segment can
+/// contain the separator, so the split is unambiguous. A string that is not
+/// a label is refused with a [`LabelError`] naming the segment, never
+/// escaped silently.
+///
+/// A one-segment label is the same context as the bare text literal
+/// (`Label::new(["users"])` is `nonempty!("users")`), and a two-segment one
+/// is the same as the pair (`Label::new(["users", "email"])` is
+/// `nonempty!("users").with("email")`, what a `struct = ..` derive binds).
+/// A label of three or more segments is a flat list, `a/b/c`, which the
+/// nesting `with` chain is not (`(a/b)/c`).
+///
+/// ```
+/// use stack_encrypt::{nonempty, Descriptor, Label, NonEmpty};
+///
+/// let email = Label::new(["users", "email"])?;
+/// assert_eq!(email.to_string(), "users/email");
+/// assert_eq!(Descriptor::of(&email), Descriptor::of(nonempty!("users").with("email")));
+/// assert_eq!(Label::parse("users/email")?, email);
+///
+/// // Extended with a row id, like any context head.
+/// let row = NonEmpty::from(email).with(7u64);
+/// assert_eq!(Descriptor::of(row).as_str(), "(users/email)/7u64");
+///
+/// // Not a label: the separator inside a segment, and an empty segment.
+/// assert!(Label::new(["users/email"]).is_err());
+/// assert!(Label::parse("users//email").is_err());
+/// # Ok::<(), stack_encrypt::LabelError>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Label(Box<[Box<str>]>);
+
+impl Label {
+    /// A label from its segments, each checked to be plain.
+    pub fn new<I>(segments: I) -> Result<Self, LabelError>
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        let segments = segments
+            .into_iter()
+            .enumerate()
+            .map(|(index, segment)| {
+                let segment = segment.as_ref();
+                Self::check_segment(index, segment)?;
+                Ok(Box::from(segment))
+            })
+            .collect::<Result<Box<[Box<str>]>, LabelError>>()?;
+        if segments.is_empty() {
+            return Err(LabelError::Empty);
+        }
+        Ok(Self(segments))
+    }
+
+    /// A label from its rendered form: segments separated by
+    /// [`/`](Descriptor::SEPARATOR). The inverse of
+    /// [`Display`](std::fmt::Display).
+    pub fn parse(text: &str) -> Result<Self, LabelError> {
+        Self::new(text.split(Descriptor::SEPARATOR))
+    }
+
+    /// The segments, in order; at least one.
+    pub fn segments(&self) -> impl ExactSizeIterator<Item = &str> + '_ {
+        self.0.iter().map(|s| &**s)
+    }
+
+    /// Whether `segment` is plain, as the error that says why not. This
+    /// is the one definition of plain text: [`Descriptor::from_piece`]
+    /// renders verbatim exactly what passes here.
+    fn check_segment(index: usize, segment: &str) -> Result<(), LabelError> {
+        if segment.is_empty() {
+            return Err(LabelError::EmptySegment { index });
+        }
+        if segment.starts_with(Descriptor::BASE64_PREFIX)
+            || segment.starts_with(|c: char| c.is_ascii_digit() || c == '-')
+        {
+            return Err(LabelError::ReservedPrefix { index });
+        }
+        for found in segment.chars() {
+            if found == Descriptor::SEPARATOR {
+                return Err(LabelError::Separator { index });
+            }
+            if found.is_control() || matches!(found, '(' | ')') {
+                return Err(LabelError::Reserved { index, found });
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Describe for Label {
+    fn describe(&self, out: &mut DescriptorBuilder) {
+        for segment in self.segments() {
+            let _ = out.text(segment);
+        }
+    }
+}
+
+impl<'a> IntoContext<'a> for Label {
+    fn into_context(self) -> ContextPiece<'a> {
+        self.to_context()
+    }
+}
+
+impl<'a> IntoContext<'a> for &'a Label {
+    fn into_context(self) -> ContextPiece<'a> {
+        self.to_context()
+    }
+}
+
+/// Never empty: a label has at least one non-empty segment.
+impl MaybeEmpty for Label {
+    fn is_empty(&self) -> bool {
+        false
+    }
+}
+
+/// A label is nonempty by construction, so it needs no runtime check to be
+/// the context a target-directed leaf takes.
+impl From<Label> for NonEmpty<Label> {
+    #[allow(
+        clippy::expect_used,
+        reason = "NonEmpty::new fails only when MaybeEmpty::is_empty is true, and Label's is_empty is false by definition (directly above); NonEmpty has no unchecked constructor"
+    )]
+    fn from(label: Label) -> Self {
+        NonEmpty::new(label).expect("a label has at least one non-empty segment")
+    }
+}
+
+impl std::fmt::Display for Label {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, segment) in self.segments().enumerate() {
+            if i > 0 {
+                f.write_char(Descriptor::SEPARATOR)?;
+            }
+            f.write_str(segment)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::str::FromStr for Label {
+    type Err = LabelError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        Self::parse(text)
+    }
+}
+
+/// Why a string is not a [`Label`] segment. `index` is the segment's
+/// position, counting from zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum LabelError {
+    /// No segments at all.
+    #[error("a label needs at least one segment")]
+    Empty,
+    /// The segment is the empty string.
+    #[error("label segment {index} is empty")]
+    EmptySegment { index: usize },
+    /// The segment contains the separator, [`/`](Descriptor::SEPARATOR).
+    #[error(
+        "label segment {index} contains the separator '{}'",
+        Descriptor::SEPARATOR
+    )]
+    Separator { index: usize },
+    /// The segment contains a control character or a parenthesis, which
+    /// the descriptor reserves.
+    #[error("label segment {index} contains {found:?}, which the descriptor reserves")]
+    Reserved { index: usize, found: char },
+    /// The segment begins like another descriptor form: `b64:`, a digit or
+    /// `-`.
+    #[error("label segment {index} begins like another descriptor form (`b64:`, a digit or `-`)")]
+    ReservedPrefix { index: usize },
 }
 
 impl std::fmt::Display for Descriptor {
@@ -573,6 +906,304 @@ mod tests {
             for (j, b) in all.iter().enumerate() {
                 assert_eq!(i == j, a == b, "{a} vs {b}");
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use std::collections::HashMap;
+
+    use vitaminc_protected::nonempty;
+
+    use super::*;
+
+    fn label(segments: &[&str]) -> Label {
+        Label::new(segments).expect("a plain label")
+    }
+
+    #[test]
+    fn a_label_renders_as_its_display_and_parses_back() {
+        for segments in [
+            &["users"][..],
+            &["users", "email"],
+            &["documents", "v2", "body"],
+            &["naïve", "ünïcode", "with space"],
+        ] {
+            let label = label(segments);
+            let text = label.to_string();
+            assert_eq!(text, segments.join("/"));
+            assert_eq!(Descriptor::of(&label).as_str(), text, "{label}");
+            assert_eq!(Descriptor::of(label.clone()).as_str(), text, "{label}");
+            assert_eq!(label.descriptor().as_str(), text, "{label}");
+            assert_eq!(Label::parse(&text).as_ref(), Ok(&label), "{text}");
+            assert_eq!(text.parse::<Label>().as_ref(), Ok(&label), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_label_is_the_same_context_as_the_literal_and_the_pair() {
+        // One segment is the bare literal; two are the pair a `struct = ..`
+        // derive binds. Same parts, so the AEAD and the descriptor agree.
+        assert_eq!(label(&["users"]).to_context(), "users".into_context());
+        assert_eq!(
+            label(&["users", "email"]).to_context(),
+            nonempty!("users").with("email").into_context()
+        );
+        assert_eq!(
+            Descriptor::of(label(&["users", "email"])),
+            Descriptor::of(nonempty!("users").with("email"))
+        );
+        // Extended like any head: the row-scoped pair.
+        assert_eq!(
+            Descriptor::of(NonEmpty::from(label(&["users", "email"])).with(7u64)).as_str(),
+            "(users/email)/7u64"
+        );
+        // Three segments are a flat list, which the nesting chain is not.
+        assert_eq!(Descriptor::of(label(&["a", "b", "c"])).as_str(), "a/b/c");
+        assert_eq!(
+            Descriptor::of(nonempty!("a").with("b").with("c")).as_str(),
+            "(a/b)/c"
+        );
+    }
+
+    #[test]
+    fn a_label_never_collides_with_text_that_contains_the_separator() {
+        let pair = Descriptor::of(label(&["users", "email"]));
+        assert_eq!(pair.as_str(), "users/email");
+        assert_ne!(Descriptor::of("users/email"), pair);
+        assert_ne!(Descriptor::of(nonempty!("users/email")), pair);
+        assert_eq!(
+            Label::new(["users/email"]),
+            Err(LabelError::Separator { index: 0 })
+        );
+    }
+
+    #[test]
+    fn every_way_a_segment_is_not_plain_is_named() {
+        assert_eq!(Label::new(Vec::<&str>::new()), Err(LabelError::Empty));
+        assert_eq!(Label::parse(""), Err(LabelError::EmptySegment { index: 0 }));
+        assert_eq!(
+            Label::parse("users//email"),
+            Err(LabelError::EmptySegment { index: 1 })
+        );
+        assert_eq!(
+            Label::parse("users/"),
+            Err(LabelError::EmptySegment { index: 1 })
+        );
+        assert_eq!(
+            Label::new(["users", "a/b"]),
+            Err(LabelError::Separator { index: 1 })
+        );
+        assert_eq!(
+            Label::new(["b64:x"]),
+            Err(LabelError::ReservedPrefix { index: 0 })
+        );
+        assert_eq!(
+            Label::new(["users", "7"]),
+            Err(LabelError::ReservedPrefix { index: 1 })
+        );
+        assert_eq!(
+            Label::new(["-x"]),
+            Err(LabelError::ReservedPrefix { index: 0 })
+        );
+        assert_eq!(
+            Label::new(["a(b"]),
+            Err(LabelError::Reserved {
+                index: 0,
+                found: '('
+            })
+        );
+        assert_eq!(
+            Label::new(["a)b"]),
+            Err(LabelError::Reserved {
+                index: 0,
+                found: ')'
+            })
+        );
+        assert_eq!(
+            Label::new(["a\tb"]),
+            Err(LabelError::Reserved {
+                index: 0,
+                found: '\t'
+            })
+        );
+        assert_eq!(
+            Label::new(["a\u{85}b"]),
+            Err(LabelError::Reserved {
+                index: 0,
+                found: '\u{85}'
+            })
+        );
+    }
+
+    #[test]
+    fn plain_text_and_label_segments_are_one_rule() {
+        // The renderer writes verbatim exactly what a label accepts: tie the
+        // two so neither can be loosened alone.
+        for text in [
+            "users",
+            "email_address",
+            "naïve",
+            "with space",
+            "b64",
+            "x7",
+            "a-b",
+            "",
+            "b64:",
+            "b64:x",
+            "7",
+            "-x",
+            "a/b",
+            "(a)",
+            "a)",
+            "a\nb",
+            "a\u{7f}b",
+        ] {
+            let plain = Descriptor::is_plain(text);
+            assert_eq!(plain, Label::new([text]).is_ok(), "{text:?}");
+            // And verbatim means verbatim: a plain text's descriptor is itself.
+            if plain {
+                assert_eq!(Descriptor::of(text).as_str(), text);
+            } else if !text.is_empty() {
+                assert_ne!(Descriptor::of(text).as_str(), text);
+            }
+        }
+    }
+
+    #[test]
+    fn distinct_labels_render_apart() {
+        // Every label of up to three segments over a small alphabet,
+        // including segments that look like each other's joins: no two
+        // render the same, and none renders like a literal containing `/`.
+        let alphabet = ["a", "b", "ab", "a_b", "ba"];
+        let mut seen: HashMap<String, Label> = HashMap::new();
+        let mut labels = Vec::new();
+        for x in alphabet {
+            labels.push(label(&[x]));
+            for y in alphabet {
+                labels.push(label(&[x, y]));
+                for z in alphabet {
+                    labels.push(label(&[x, y, z]));
+                }
+            }
+        }
+        for l in labels {
+            let rendered = Descriptor::of(&l).as_str().to_owned();
+            if let Some(other) = seen.insert(rendered.clone(), l.clone()) {
+                panic!("{l} and {other} both render {rendered}");
+            }
+            // A literal spelling the joined string is a different context —
+            // except the one-segment label, which *is* the literal.
+            if l.segments().len() > 1 {
+                assert_ne!(
+                    Descriptor::of(rendered.as_str()).as_str(),
+                    rendered.as_str(),
+                    "{l}"
+                );
+                assert_ne!(Descriptor::of(rendered.as_str()), Descriptor::of(&l), "{l}");
+            } else {
+                assert_eq!(Descriptor::of(rendered.as_str()), Descriptor::of(&l), "{l}");
+            }
+        }
+        assert_eq!(seen.len(), 5 + 25 + 125);
+    }
+
+    struct Column {
+        table: &'static str,
+        name: &'static str,
+    }
+
+    impl Describe for Column {
+        fn describe(&self, out: &mut DescriptorBuilder) {
+            let _ = out.text(self.table).text(self.name);
+        }
+    }
+
+    struct Tenant(u64);
+
+    impl Describe for Tenant {
+        fn describe(&self, out: &mut DescriptorBuilder) {
+            let _ = out.text("tenant").part(self.0);
+        }
+    }
+
+    struct Nothing;
+
+    impl Describe for Nothing {
+        fn describe(&self, _: &mut DescriptorBuilder) {}
+    }
+
+    #[test]
+    fn a_describe_implementor_goes_through_the_one_renderer() {
+        let email = Column {
+            table: "users",
+            name: "email",
+        };
+        assert_eq!(email.descriptor().as_str(), "users/email");
+        assert_eq!(email.descriptor(), label(&["users", "email"]).descriptor());
+        assert_eq!(
+            Descriptor::from_piece(&email.to_context()),
+            email.descriptor()
+        );
+        let by_ref: &Column = &email;
+        assert_eq!(Describe::descriptor(&by_ref), email.descriptor());
+        // Parts it pushes that are not plain are escaped, never read as
+        // structure: the implementor cannot smuggle a separator in.
+        let odd = Column {
+            table: "users/email",
+            name: "x",
+        };
+        assert_eq!(odd.descriptor().as_str(), "b64:dXNlcnMvZW1haWw=/x");
+        let paren = Column {
+            table: "(users",
+            name: "email)",
+        };
+        assert_eq!(paren.descriptor().as_str(), "b64:KHVzZXJz/b64:ZW1haWwp");
+        // Any context part: an integer renders by its width.
+        assert_eq!(Tenant(7).descriptor().as_str(), "tenant/7u64");
+        // One part is the bare part; none is the empty list.
+        struct One;
+        impl Describe for One {
+            fn describe(&self, out: &mut DescriptorBuilder) {
+                let _ = out.text("users");
+            }
+        }
+        assert_eq!(One.to_context(), "users".into_context());
+        assert_eq!(Nothing.descriptor().as_str(), "()");
+        let mut builder = DescriptorBuilder::new();
+        assert!(builder.is_empty());
+        let _ = builder.bytes(b"users".to_vec()).text("email");
+        assert_eq!(builder.len(), 2);
+        assert_eq!(
+            Descriptor::from_piece(&builder.finish()).as_str(),
+            "users/email"
+        );
+    }
+
+    #[test]
+    fn the_rendering_is_frozen() {
+        // Golden renderings. Changing any of these re-keys every value ever
+        // sealed under the shape, so a change here is a migration, not a
+        // refactor.
+        let cases: [(ContextPiece<'static>, &str); 9] = [
+            ("users".into_context(), "users"),
+            (label(&["users", "email"]).to_context(), "users/email"),
+            (label(&["a", "b", "c"]).to_context(), "a/b/c"),
+            (
+                NonEmpty::from(label(&["users", "email"]))
+                    .with(7u64)
+                    .into_context(),
+                "(users/email)/7u64",
+            ),
+            (nonempty!("a").with("b").with("c").into_context(), "(a/b)/c"),
+            ("users/email".into_context(), "b64:dXNlcnMvZW1haWw="),
+            (7u64.into_context(), "7u64"),
+            ((-3i32).into_context(), "4294967293u32"),
+            (Nothing.to_context(), "()"),
+        ];
+        for (piece, want) in cases {
+            assert_eq!(Descriptor::from_piece(&piece).as_str(), want);
         }
     }
 }

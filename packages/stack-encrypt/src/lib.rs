@@ -282,7 +282,7 @@ pub use cipher::{
     BoxedPassthrough, Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue,
     StackCipher, StackCipherBuilder, StackCipherText, StackDecipher,
 };
-pub use descriptor::Descriptor;
+pub use descriptor::{Describe, Descriptor, DescriptorBuilder, Label, LabelError};
 pub use keyset::KeysetCipher;
 // stack-kms is a public dependency: `StackCipher` is generic over its
 // `DataKeySource`, and `StackCipherBuilder::kms` takes its `StackKms`. It is
