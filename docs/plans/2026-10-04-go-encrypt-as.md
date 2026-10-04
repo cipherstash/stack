@@ -40,8 +40,10 @@ been released, so the old functions are removed, not deprecated.
   `NonEmpty<impl IntoContext>` in Rust. See `packages/stack-encrypt/CONTEXT.md`.
 - **Label**: a name for data, `users/email`, as a flat list of plain segments;
   the first-class `Describe` type. EQL's identifier is a two-segment label.
-- **Target**: what `encrypt_as` produces. In Go, a value of type `Target[O]`
-  whose type parameter `O` is the Go type of the output.
+- **Target**: what `encrypt_as` produces. In Go, an interface `Target[O]`
+  whose type parameter `O` is the Go type of the output; a `Plan` is one, and
+  so is a term kind under a context. Its one method is unexported and names
+  `O`, which is what lets Go infer the output type from the argument.
 - **Reader**: the decrypt-side counterpart, `Reader[P]`, whose `P` is the
   plaintext type produced.
 - **Pending**: a prepared operation that has not yet reached ZeroKMS. `Run`
@@ -63,7 +65,10 @@ been released, so the old functions are removed, not deprecated.
    steered callers away from naming their data.
 2. **A target is a value that carries its output type: option B.** One
    function, `EncryptAs(ctx, keyset, source, target)`, with the return type
-   inferred from the target argument. Nothing the caller writes can disagree
+   inferred from the target argument. `Target[O]` is an interface whose
+   unexported method names `O`; Go (1.21 and later) infers `O` from a
+   concrete implementor such as a `Plan`, so a plan is passed as it is, with
+   no conversion call. Checked with a small program before this was written. Nothing the caller writes can disagree
    with anything else, so misuse is a compile error rather than a runtime one.
    Rejected: a type parameter plus a `WithPlan` option (two things decide the
    target and can conflict), and "everything is a plan" (outputs lose their
@@ -106,24 +111,25 @@ ct, err := keyset.Encrypt(ctx, value, email.Context(), opts...)
 pt, err := client.Decrypt(ctx, ct, email.Context(), opts...)
 
 // Into a target. The target carries the output type; EncryptAs returns it.
+// A Plan is a target (Target[EncryptedRecord]), so it is passed as it is.
 // A term target is a term kind UNDER a context: the context is part of a
 // term's identity, so the same value under users/email and under users/name
 // is two different terms. `Under` is stack-encrypt's own word for giving a
 // subtree its context (`Encryption::under`).
 probe, err := stackencrypt.EncryptAs(ctx, keyset, "bob@example.com", stackencrypt.Equality.Under(email.Context()))
-row, err   := stackencrypt.EncryptAs(ctx, keyset, users[0], usersPlan.Target())        // EncryptedRecord
+row, err   := stackencrypt.EncryptAs(ctx, keyset, users[0], usersPlan)                 // EncryptedRecord
 user, err  := stackencrypt.DecryptAs(ctx, client, row, stackencrypt.Into[User](usersPlan))
 
 // Many sources into one target: one call, one ZeroKMS request. The target is
 // the same value; only the source is a slice. Works for every target, so many
 // probes under one context are spelled the same way as many rows.
-rows, err  := stackencrypt.EncryptAll(ctx, keyset, users, usersPlan.Target())          // []EncryptedRecord
+rows, err  := stackencrypt.EncryptAll(ctx, keyset, users, usersPlan)                   // []EncryptedRecord
 users, err  = stackencrypt.DecryptAll(ctx, client, rows, stackencrypt.Into[User](usersPlan))
 
 // The batched form, which EncryptAs / EncryptAll and DecryptAs / DecryptAll
 // are sugar over. Pendings of different targets run as one request.
 p1 := stackencrypt.Prepare("alice@example.com", stackencrypt.Equality.Under(email.Context()))
-p2 := stackencrypt.PrepareAll(users, usersPlan.Target())
+p2 := stackencrypt.PrepareAll(users, usersPlan)
 p3 := stackencrypt.Open(stored, stackencrypt.Into[User](usersPlan))
 err  = stackencrypt.Run(ctx, keyset, p1, p2, p3)                                       // one ZeroKMS request
 ```
@@ -132,7 +138,7 @@ Shapes, with the Rust they mirror:
 
 | Go | Rust |
 |---|---|
-| `Target[O]` | the `Target` type parameter of `encrypt_as` |
+| `Target[O]` (an interface; `Plan` and term targets implement it) | the `Target` type parameter of `encrypt_as` |
 | `Reader[P]` | the plaintext type of `decrypt_as` plus its `ExpectedContext` |
 | `Prepare(source, Target[O]) Pending[O]` | `source.encrypt_into(..)` before `.await` |
 | `PrepareAll(sources, Target[O]) Pending[[]O]` | a `Vec` source, or several `encrypt_into` under `Pending::all` |
@@ -157,8 +163,9 @@ Points of detail, each of which the PR settles in godoc:
   the type system cannot make.
 - **Targets available in Phase A**: a term kind under a context
   (`Equality.Under(c)`, `Match.Under(c)`, `Ore.Under(c)`, `Ope.Under(c)`,
-  giving `Target[EqualityTerm]` and so on), and a plan (`plan.Target()`,
-  `Target[EncryptedRecord]`). A target describes ONE output; a slice of
+  giving `Target[EqualityTerm]` and so on), and a `Plan`, which implements
+  `Target[EncryptedRecord]` itself and is passed directly. A target describes
+  ONE output; a slice of
   sources goes through `EncryptAll` / `PrepareAll` with the same target, so
   there is no separate rows target. The current record output map stays until
   Phase B replaces it with domains.
@@ -230,7 +237,7 @@ var users = plan.ForMessage(&User{}, "users", plan.FirstOf(
     plan.When(category.Under("user.contact.email"), plan.Encrypt(eqlv3.TextEqDomain())),
     plan.When(category.Under("system"), plan.Plaintext()),
 ))
-rows, err := stackencrypt.EncryptAll(ctx, keyset, userSlice, users.Target())     // []eqlv3.Row
+rows, err := stackencrypt.EncryptAll(ctx, keyset, userSlice, users)              // []eqlv3.Row
 ```
 
 ### Decisions carried from #1046
