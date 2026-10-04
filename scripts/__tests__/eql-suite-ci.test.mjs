@@ -243,19 +243,105 @@ describe('the relevance filter still selects the imported tree', () => {
     .filter((uses) => uses.startsWith('./'))
     .map((uses) => `${uses.slice('./'.length)}/`)
 
+  /**
+   * The third legitimate class: crates OUTSIDE the subtree that the EQL Cargo
+   * workspace compiles by `path =`. `eql-bindings`' `stack-encrypt` feature
+   * reaches `packages/stack-encrypt`, which reaches `stack-kms` and
+   * `stack-encrypt-derive`; a change to any of them changes what the
+   * `rust-crates` job compiles, so each belongs in the relevance filter as
+   * `<dir>/**`. Derived from the manifests, transitively, rather than listed:
+   * a new path dependency outside the subtree is allowed the day it lands,
+   * and an unrelated root path still fails. Those crates also inherit
+   * versions through `workspace = true` from the ROOT `Cargo.toml`, so that
+   * one file is allowed whenever any reached manifest inherits.
+   */
+  const externalPathDependencies = (() => {
+    const dirs = new Set()
+    let inherits = false
+    const members = [
+      ...readdirSync(join(REPO_ROOT, EQL_PREFIX, 'crates')).map(
+        (name) => `${EQL_PREFIX}crates/${name}`,
+      ),
+      ...readdirSync(join(REPO_ROOT, EQL_PREFIX, 'tests')).map(
+        (name) => `${EQL_PREFIX}tests/${name}`,
+      ),
+    ]
+    const queue = members.filter((dir) =>
+      existsSync(join(REPO_ROOT, dir, 'Cargo.toml')),
+    )
+    const seen = new Set()
+    while (queue.length > 0) {
+      const dir = queue.shift()
+      if (seen.has(dir)) continue
+      seen.add(dir)
+      const manifest = readFileSync(join(REPO_ROOT, dir, 'Cargo.toml'), 'utf8')
+      if (!dir.startsWith(EQL_PREFIX)) {
+        dirs.add(dir)
+        if (/\bworkspace\s*=\s*true\b/.test(manifest)) inherits = true
+      }
+      // A dependency's inline table: `name = { path = "…", … }`. A `[[bin]]`
+      // or `[[test]]` `path = "src/x.rs"` names a file, not a crate, and is
+      // dropped below by having no Cargo.toml under it.
+      for (const [, target] of manifest.matchAll(
+        /^\s*[A-Za-z0-9_-]+\s*=\s*\{[^}]*\bpath\s*=\s*"([^"]+)"/gm,
+      )) {
+        const depDir = relative(REPO_ROOT, join(REPO_ROOT, dir, target))
+          .split(sep)
+          .join('/')
+        if (existsSync(join(REPO_ROOT, depDir, 'Cargo.toml')))
+          queue.push(depDir)
+      }
+    }
+    return { dirs: [...dirs].sort(), inherits }
+  })()
+
+  it('finds the path dependencies the EQL workspace reaches outside the subtree', () => {
+    // The scan guard for the class below: `eql-bindings`' `stack-encrypt`
+    // feature is the live case. If this derives nothing, the exception list
+    // is empty and every stack-crate entry in the filter reads as an offender —
+    // the right failure — but a parser that stopped matching the manifests
+    // would ALSO read as "nothing reached", so the two are told apart here.
+    expect(
+      externalPathDependencies.dirs,
+      'No `path =` dependency outside `packages/eql/` was derived from the EQL workspace manifests. If `eql-bindings` dropped its `stack-encrypt` feature this is right and the stack-crate entries should leave the filter too; otherwise the manifest reader stopped matching.',
+    ).toContain('packages/stack-encrypt')
+  })
+
   it('prefixes every source path with the subtree root', () => {
-    // Two legitimate exceptions, both outside the subtree by nature: the
-    // workflow's own path, and a composite action it `uses:`.
+    // Three legitimate exceptions, all outside the subtree by nature: the
+    // workflow's own path, a composite action it `uses:`, and a crate the
+    // workspace compiles by path (plus the root manifest it inherits from).
+    const external = externalPathDependencies.dirs.map((dir) => `${dir}/**`)
     const offenders = filterPaths.filter(
       (path) =>
         path !== EQL_WORKFLOW &&
         !path.startsWith(EQL_PREFIX) &&
-        !localActionPrefixes.some((prefix) => path.startsWith(prefix)),
+        !localActionPrefixes.some((prefix) => path.startsWith(prefix)) &&
+        !external.includes(path) &&
+        !(externalPathDependencies.inherits && path === 'Cargo.toml'),
     )
 
     expect(
       offenders,
-      `These \`paths:\` entries in ${EQL_WORKFLOW} are not under \`${EQL_PREFIX}\`, are not the workflow itself, and are not a composite action it \`uses:\`. dorny/paths-filter matches repo-root-relative paths, so after the subtree import an unprefixed glob matches the WRONG tree — \`src/**\` selects \`languages/typescript/packages/stack/src/**\` and never \`packages/eql/src/**\`. The heavy jobs then skip on real EQL changes, report \`skipped\`, and \`ci-required\` treats skipped as pass.\n${offenders.map((p) => `  ${p}`).join('\n')}`,
+      `These \`paths:\` entries in ${EQL_WORKFLOW} are not under \`${EQL_PREFIX}\`, are not the workflow itself, are not a composite action it \`uses:\`, and are not a crate the EQL workspace compiles by path (${external.join(', ')}). dorny/paths-filter matches repo-root-relative paths, so after the subtree import an unprefixed glob matches the WRONG tree — \`src/**\` selects \`languages/typescript/packages/stack/src/**\` and never \`packages/eql/src/**\`. The heavy jobs then skip on real EQL changes, report \`skipped\`, and \`ci-required\` treats skipped as pass.\n${offenders.map((p) => `  ${p}`).join('\n')}`,
+    ).toEqual([])
+  })
+
+  it('selects every crate the EQL workspace compiles by path', () => {
+    // The other direction: a path dependency outside the subtree that the
+    // filter does NOT select is a job that compiles a crate and never runs on
+    // a change to it — the gap commit 7219ea1ad repaired by hand, now derived.
+    const missing = externalPathDependencies.dirs
+      .map((dir) => `${dir}/**`)
+      .filter((glob) => !filterPaths.includes(glob))
+    if (
+      externalPathDependencies.inherits &&
+      !filterPaths.includes('Cargo.toml')
+    )
+      missing.push('Cargo.toml')
+    expect(
+      missing,
+      `The EQL workspace compiles these by path and the relevance filter in ${EQL_WORKFLOW} does not select them, so the \`rust-crates\` job skips on a change that can break it. Add each to the filter — and, because the three copies are held equal, to the \`push: paths:\` list and to bench-eql.yml in the same edit.\n${missing.map((p) => `  ${p}`).join('\n')}`,
     ).toEqual([])
   })
 })

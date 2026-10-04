@@ -280,6 +280,44 @@ cargo clippy -p eql-domains -p eql-codegen -p eql-tests-macros -p eql-bindings -
 cargo test -p eql-domains -p eql-codegen -p eql-tests-macros -p eql-bindings
 """
 
+[tasks."test:encryption"]
+description = "Compile, lint and test the opt-in stack-encrypt feature of eql-bindings and the eql-encryption-tests crate (no database; real crypto, fake KMS)"
+dir = "{{config_root}}"
+run = """
+#!/usr/bin/env bash
+# Kept apart from `test:crates`: the stack-encrypt feature pulls the Stack
+# Encrypt tree (vitaminc, stack-kms) into the build, and the lean set is lean
+# on purpose. `--locked`: this is a CHECK, and the EQL lockfile is the one the
+# lockstep bump moves (see "Working on EQL" in the root AGENTS.md).
+set -euo pipefail
+cargo test --locked -p eql-bindings --features stack-encrypt
+cargo test --locked -p eql-encryption-tests
+cargo clippy --locked -p eql-bindings -p eql-encryption-tests --all-features --all-targets -- -D warnings
+"""
+
+[tasks."test:encryption:postgres"]
+description = "Install the EQL bundle into the database EQL_TEST_DATABASE_URL names and run the stack-encrypt PostgreSQL test against it (fresh encryption, fake KMS)"
+dir = "{{config_root}}"
+run = """
+#!/usr/bin/env bash
+# One connection string serves psql and the test, so the two cannot point at
+# different databases. psql accepts a libpq conninfo string as its dbname.
+set -euo pipefail
+: "${EQL_TEST_DATABASE_URL:?set EQL_TEST_DATABASE_URL to a libpq connection string for a disposable PostgreSQL}"
+psql "$EQL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f crates/eql-bindings/sql/cipherstash-encrypt.sql
+cargo test --locked -p eql-encryption-tests --test text_eq -- --ignored
+"""
+
+[tasks."check:encryption:wasi"]
+description = "Compile eql-bindings with the stack-encrypt feature for wasm32-wasip1 (no HTTP), as the Go guest builds it"
+dir = "{{config_root}}"
+run = """
+#!/usr/bin/env bash
+set -euo pipefail
+rustup target add wasm32-wasip1
+cargo check --locked -p eql-bindings --features stack-encrypt --target wasm32-wasip1
+"""
+
 [tasks."types:generate"]
 description = "Regenerate eql-bindings TypeScript bindings and JSON Schemas from the Rust types (no database required)"
 dir = "{{config_root}}"

@@ -100,6 +100,15 @@ on:
       - "packages/eql/docker/**"
       - "packages/eql/README.md"
       - "packages/eql/SUPABASE.md"
+      # The `rust-crates` job's encryption steps compile these by PATH
+      # (`eql-bindings`' `stack-encrypt` feature), and `workspace = true`
+      # versions in their manifests resolve from the root `Cargo.toml`. The
+      # derived-filter guard cannot see them: they are outside `packages/eql/`,
+      # and a mise task body names a cargo package, not a path.
+      - "packages/stack-encrypt/**"
+      - "packages/stack-encrypt-derive/**"
+      - "packages/stack-kms/**"
+      - "Cargo.toml"
   schedule:
     - cron: "0 4 * * *"      # 04:00 UTC daily; full matrix, off the merge path
   merge_group: {}            # inert today (no queue); kept so enabling one works
@@ -193,6 +202,10 @@ jobs:
               - "packages/eql/docker/**"
               - "packages/eql/README.md"
               - "packages/eql/SUPABASE.md"
+              - "packages/stack-encrypt/**"
+              - "packages/stack-encrypt-derive/**"
+              - "packages/stack-kms/**"
+              - "Cargo.toml"
 
       # Explicit default (not `|| 'true'`, which trips GitHub's inconsistent
       # treatment of the string 'false'). push/schedule/merge_group/dispatch
@@ -561,23 +574,22 @@ jobs:
           rustup component add --toolchain "${active_rust_toolchain}" rustfmt clippy
           mise run test:crates
 
+      # The three encryption checks are mise tasks rather than raw cargo here,
+      # so `eql-suite-ci.test.mjs` counts them among the cargo tasks a root
+      # workflow must reach, and `eql-workflow-filters.test.mjs` derives the
+      # paths they read. The database task takes the connection from
+      # EQL_TEST_DATABASE_URL alone; the port is written once more, in the
+      # service's `ports:`, which no expression can reach from here.
+      - name: Test Rust text equality
+        run: mise run test:encryption
+
       - name: Test Rust text equality with PostgreSQL
         env:
-          PGPASSWORD: postgres
           EQL_TEST_DATABASE_URL: "host=localhost port=7433 user=postgres password=postgres dbname=postgres"
-        run: |
-          set -euo pipefail
-          cargo test --locked -p eql-bindings --features stack-encrypt
-          cargo test --locked -p eql-encryption-tests
-          cargo clippy --locked -p eql-bindings -p eql-encryption-tests --all-features --all-targets -- -D warnings
-          psql -h localhost -p 7433 -U postgres -d postgres -v ON_ERROR_STOP=1 -f crates/eql-bindings/sql/cipherstash-encrypt.sql
-          cargo test --locked -p eql-encryption-tests --test text_eq -- --ignored
+        run: mise run test:encryption:postgres
 
       - name: Compile Rust text equality for WASI without HTTP
-        run: |
-          set -euo pipefail
-          rustup target add wasm32-wasip1
-          cargo check --locked -p eql-bindings --features stack-encrypt --target wasm32-wasip1
+        run: mise run check:encryption:wasi
 
       # Freshness gate for the eql-types codegen output: regenerate the
       # TypeScript bindings and JSON Schemas and fail if the checked-in

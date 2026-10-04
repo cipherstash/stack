@@ -64,6 +64,10 @@ on:
       - "packages/eql/docker/**"
       - "packages/eql/README.md"
       - "packages/eql/SUPABASE.md"
+      - "packages/stack-encrypt/**"
+      - "packages/stack-encrypt-derive/**"
+      - "packages/stack-kms/**"
+      - "Cargo.toml"
 
   schedule:
     # 02:00 UTC daily
