@@ -379,29 +379,39 @@ set is renamed once the Go surface settles (`se_encrypt`, `se_decrypt`,
 
 ## Other languages
 
-Checked 2026-10-04 against Node/TS, Python and C#, none of which is being
-built yet. The result: one guest, many hosts. The Go guest does no I/O of its
-own (it asks the host for HTTP and for a bearer token through
-`transport_send` and `token_get`), and `stack-guest-abi` exists so every
-guest reads identically to its host. With ADR-0007 there is no executor to
-port, so a binding is a **host** plus a **chain in that language**.
+Checked 2026-10-04 against Node/TS, Python and C#, and then the JVM, PHP,
+Ruby, Swift and Kotlin on mobile, Dart, Elixir, C and C++, R and Julia. None
+is being built yet.
+
+**Native bindings are the default; Wasm only where it is the reason for the
+binding.** A binding is a thin **shell** in the host language's native
+extension mechanism (napi-rs, PyO3, JNI or Panama, a cdylib with a C header
+for Swift, Dart, PHP, Ruby, R and Julia), running stack-encrypt in-process
+with its own HTTP client, stack-auth's strategies, and the host's own async
+runtime. The WASI guest is one shell among them, used where native is not
+available or is the thing being avoided: Go (no cgo), the edge runtimes
+(Cloudflare Workers, Supabase Edge, Deno Deploy, browsers), and anywhere
+sandboxing the cryptographic code is itself the requirement.
+
+With ADR-0007 there is no executor to port either way: every shell lowers a
+plan into the same `dynamic` entry. What a shell writes is a conversion from
+the host's values to `FfiValue` (direct in napi-rs and PyO3; the byte codec,
+Go's `vcvalue`, is a guest concern), a mapping from the error type to the
+language's errors, the chain, and whatever memory hygiene the platform allows.
+A guest host additionally supplies the two imports, HTTP transport and a token
+source.
 
 | Concern | Rust | Go | Node/TS | Python | C# |
 |---|---|---|---|---|---|
+| Shell | in-process | WASI guest (wazero) | napi; the guest for `wasm-inline` on the edge | PyO3 | P/Invoke to a cdylib |
 | Finalizer | `.await` | `Run(ctx)` | `await` (thenable chain) | `await` plus sync `.run()` | `await` (`GetAwaiter`) or `RunAsync(ct)` |
 | Plan from a type | derive | tags, `PlanOf[T]()` | schema builder or decorators | `Plan.of(User)` over `Annotated` | attributes; reflection or a source generator |
 | Index applies to type | compile time | `Build()` | partly via conditional types | build | partly via constraints |
 | Typed output | `Encrypted<Terms>`, derived struct | `EncryptedRecord`; `Plan[T]` later | inferred from the plan | dict or the dataclass | `Plan<T>`, `Task<T>` |
 | Query form | source type | source struct | overloads or union | runtime type | overloads |
-| Transport | in-process | WASI guest (wazero) | napi shell, or the guest under `WebAssembly` | PyO3 shell, or the guest under wasmtime | P/Invoke cdylib, or the guest under Wasmtime .NET |
 
-Every host supplies the same four things and nothing else: an HTTP transport
-and a token source behind the guest's two imports; an encoder and decoder for
-the `FfiValue` transport codec (Go's `vcvalue` is the model, and this is the
-one piece of real per-language work); a mapping from the status table to the
-language's errors; and whatever memory hygiene the platform allows. The
-fail-closed `build()` checks are the floor everywhere; compile-time checks are
-a bonus where the language has them.
+The fail-closed `build()` checks are the floor everywhere; compile-time checks
+are a bonus where the language has them.
 
 **TypeScript already has a plan in another spelling.** `encryptedTable('users',
 { email: types.TextEq() })` is `Plan::context("users").fields()
@@ -410,35 +420,32 @@ Today that schema drives cipherstash-client through protect-ffi, a second
 engine. The intended path is to retire protect-ffi and ship a new major of
 `@cipherstash/stack` on stack-encrypt, with breaking changes; that release is
 the TS version of retiring `dynamic::record`, and the schema builder becomes
-the TS spelling of a plan.
+the TS spelling of a plan. Its Node entry is a napi shell; only `wasm-inline`
+uses the guest.
 
 ### Where the design strains
 
-Checked against the JVM, PHP, Ruby, Swift and Kotlin on mobile, Dart, Elixir,
-C and C++, R and Julia as well. None breaks it; two places need a decision:
-
-1. **The guest's synchronous transport import, on single-threaded async
-   hosts.** `transport_send` is synchronous from the guest's point of view
-   and the ABI relies on it ("`block_on` never parks"). A wazero host function
-   may block a goroutine; a Wasm import in Node, a browser, Deno, Bun or an
-   edge worker may not block the event loop, and a BEAM NIF may not block a
-   scheduler. Native shells (napi, PyO3) can await and escape this; the TS
-   edge path (`wasm-inline`) cannot. Asyncify, JSPI and a worker with
-   `Atomics.wait` are each fragile. The robust fix is latent in `Pending`,
-   which already separates building requests from dispatching them: the guest
-   exports the two halves, the host performs the ZeroKMS round trip in its own
-   idiom, and the guest does no I/O at all. **A guest-ABI requirement to settle
-   before the edge binding is built**, not before.
-2. **Plaintext type in dynamically typed hosts.** Index semantics are
-   type-specific (`Match` is text only; `Ore` on `34` and `34.0` differ;
-   JavaScript's one number type cannot hold an `i64` without `BigInt`). A
-   plain JS object, PHP array, Ruby hash or R data frame does not say what
-   `34` is. **The plan carries a type per field**, and `build()` refuses an
-   index on a field whose type it cannot resolve; typed hosts fill it from the
-   type, dynamic hosts state it, and the guest verifies each tagged value
-   against the declaration rather than trusting the host. The TS schema
-   builder already does this (`types.IntegerOrd()`). A wire-format addition,
-   so it goes in the first engine PR.
+1. **Plaintext type in dynamically typed hosts.** Independent of the shell.
+   Index semantics are type-specific (`Match` is text only; `Ore` on `34` and
+   `34.0` differ; JavaScript's one number type cannot hold an `i64` without
+   `BigInt`). A plain JS object, PHP array, Ruby hash or R data frame does not
+   say what `34` is. **The plan carries a type per field**, and `build()`
+   refuses an index on a field whose type it cannot resolve; typed hosts fill
+   it from the type, dynamic hosts state it, and the engine verifies each
+   tagged value against the declaration rather than trusting the shell. The TS
+   schema builder already does this (`types.IntegerOrd()`). A wire-format
+   addition, so it goes in the first engine PR.
+2. **The guest's synchronous transport import, on the edge path only.**
+   `transport_send` is synchronous from the guest's point of view and the ABI
+   relies on it ("`block_on` never parks"). A wazero host function may block a
+   goroutine, so Go is fine; a Wasm import in a browser, Deno, Bun or an edge
+   worker may not block the event loop. Native shells never meet this. The
+   one binding that does is TypeScript's `wasm-inline`. Asyncify, JSPI and a
+   worker with `Atomics.wait` are each fragile; the robust fix is latent in
+   `Pending`, which already separates building requests from dispatching them:
+   the guest exports the two halves, the host performs the ZeroKMS round trip
+   in its own idiom, and the guest does no I/O. **A guest-ABI requirement to
+   settle before the edge binding is built**, and not before.
 
 Encrypting inside the database (a Postgres extension, PL/pgSQL) is outside the
 model rather than a strain: it puts key material in the database.
