@@ -3304,7 +3304,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "stack-encrypt",
- "stack-kms",
  "syn 3.0.3",
  "tokio",
 ]

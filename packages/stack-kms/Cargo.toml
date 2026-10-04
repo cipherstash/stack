@@ -9,9 +9,8 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 license-file = "LICENSE"
-# Not yet released: keep release-plz from picking this crate up (it processes
-# any workspace crate whose Cargo.toml lacks `publish = false`).
-publish = false
+# Published to crates.io by release-plz.yml; release-plz.toml puts it in the
+# `stack-kms` version group.
 
 [features]
 default = ["profile", "http"]

@@ -9,9 +9,9 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 license-file = "LICENSE"
-# Not yet released, like stack-encrypt (which is the only crate that should
-# depend on this one: the macros are re-exported from there).
-publish = false
+# Published to crates.io by release-plz.yml, in the `stack-encrypt` version
+# group: stack-encrypt is the only crate that should depend on this one (the
+# macros are re-exported from there), and the two release together.
 
 [lib]
 proc-macro = true
@@ -24,12 +24,13 @@ syn = { version = "3", features = ["full", "extra-traits"] }
 # The dev-dependencies below are used only by the crate-level doctests.
 # `cargo-udeps` cannot see into rustdoc, so it reports them as unused.
 [package.metadata.cargo-udeps.ignore]
-development = ["stack-encrypt", "stack-kms", "tokio"]
+development = ["stack-encrypt", "tokio"]
 
 [dev-dependencies]
 # The crate-level examples are real doctests, run against the fake key
 # source. A dev-dependency cycle back to `stack-encrypt` is the usual shape
-# for a derive crate (cf. serde_derive -> serde).
-stack-encrypt = { path = "../stack-encrypt" }
-stack-kms = { path = "../stack-kms", features = ["test-support"] }
+# for a derive crate (cf. serde_derive -> serde). The fake key source comes
+# through stack-encrypt's `test-support` feature, as a user's tests take it, so
+# these doctests are what exercises that forwarding.
+stack-encrypt = { path = "../stack-encrypt", features = ["test-support"] }
 tokio = { workspace = true, features = ["rt", "macros"] }
