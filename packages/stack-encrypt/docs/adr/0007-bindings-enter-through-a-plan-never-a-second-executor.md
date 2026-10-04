@@ -74,10 +74,10 @@ Option 3.
 - The combinators stay public as the extension point (custom targets, EQL
   domain types, `transcode`) but are not a front door. An `Encryption` is
   single-use and is not data, so it could never have been a plan.
-- Term derivation awaits the keyset's index key per field, so a plan cannot
-  yet hand back a `Pending` synchronously; awaiting one operation hides this
-  and a batch is an `async fn`. Hoisting the load is a contained follow-up,
-  not a condition of this decision.
+- A plan yields a `Pending` synchronously, like a typed target: term
+  derivation is local to the keyset cipher, whose index key was loaded when
+  the keyset was resolved. `dynamic::record::encrypt` is `async` today only
+  because it settles each term eagerly; the lowering removes that.
 - The plan grammar is now wire format shared by the derive, the guest and
   Go. A change to it is a change to all three, which is the point.
 

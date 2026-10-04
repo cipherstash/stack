@@ -286,11 +286,15 @@ this on the method.
   per-field loop, batching and output shaping are deleted. The
   tagged-versus-untagged divergence closes because both paths seal leaves
   through the same code.
-- **The Index-key load.** Term derivation awaits the keyset's index key per
-  field, which is why `dynamic::record::encrypt` is an `async fn` and cannot
-  hand back a `Pending` synchronously. `.await` on one operation hides this.
-  `all(..)` is an async function and works as written. Hoisting the load so a
-  plan yields a `Pending` directly is a contained follow-up.
+- **A plan yields a `Pending` synchronously.** Term derivation is local:
+  `KeysetCipher::equality_term` and its siblings are plain functions that run
+  the PRF the keyset cipher already holds (the index key was loaded once, when
+  `cipher.keyset(..)` resolved the keyset) and return `Pending::ready`. The
+  typed term operations are synchronous for the same reason.
+  `dynamic::record::encrypt` is an `async fn` only because it settles each
+  term's ready pending eagerly instead of zipping it into the batch; lowering
+  it into the builder removes that, with nothing to hoist. An earlier draft of
+  this document claimed a per-field index-key load here; there is none.
 
 ## The index crates
 
@@ -425,6 +429,5 @@ field targets. Module size is measured in that PR and reported, not hidden.
 - **The decrypt side of the one-value chain**: `decrypt(ct).using(&age_plan)`
   returns the plaintext type the plan was built for; whether a hand-built plan
   carries `S` or the caller names it is settled in the builder PR.
-- **The index-key hoist** so a plan yields a `Pending` synchronously.
 - **`eqlv3` as a package or a separate `go.mod`**: a package as read; correct
   if a separate module was meant.
