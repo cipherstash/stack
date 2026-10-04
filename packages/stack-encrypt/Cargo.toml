@@ -11,19 +11,18 @@ categories.workspace = true
 license-file = "LICENSE"
 # Not yet released: keep release-plz from picking this crate up (it processes
 # any workspace crate whose Cargo.toml lacks `publish = false`).
-publish = false
 
 [dependencies]
 # `profile` (native only; stack-kms gates it off wasm32 itself) lets
 # `StackCipher::new()` fall back to the client key `stash auth login` writes
 # to the profile directory (`secretkey.json`) when CS_CLIENT_ID /
 # CS_CLIENT_KEY are not set — the same place `AutoStrategy` finds the token.
-stack-kms = { path = "../stack-kms", default-features = false, features = ["profile"] }
+stack-kms = { path = "../stack-kms", version = "0.1.0", default-features = false, features = ["profile"] }
 # `StackCipher::new()` builds a ZeroKMS client from the environment, so its
 # return type names the auto-detected auth strategy. Only needed with `http`.
 stack-auth = { workspace = true, optional = true }
 # `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`, re-exported from `target`.
-stack-encrypt-derive = { path = "../stack-encrypt-derive" }
+stack-encrypt-derive = { path = "../stack-encrypt-derive", version = "0.1.0" }
 
 # The workspace vitaminc (0.5.0): one canonical context encoding shared by
 # the AEAD and PRF derivations (`IntoContext`, cipherstash/vitaminc#339),

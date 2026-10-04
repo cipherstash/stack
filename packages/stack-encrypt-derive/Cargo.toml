@@ -11,7 +11,6 @@ categories.workspace = true
 license-file = "LICENSE"
 # Not yet released, like stack-encrypt (which is the only crate that should
 # depend on this one: the macros are re-exported from there).
-publish = false
 
 [lib]
 proc-macro = true

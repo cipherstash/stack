@@ -54,11 +54,18 @@ const WORKSPACES = [
   },
   {
     // The root workspace. The stack-* crates' release-plz step publishes
-    // exactly these two (the stack-kms, stack-encrypt, stack-encrypt-derive
-    // and stack-guest-abi names are unclaimed on crates.io, and publishing
-    // them is a separate decision).
+    // exactly these five: stack-auth and stack-profile, and stack-kms,
+    // stack-encrypt and stack-encrypt-derive (which `eql-bindings`'
+    // `stack-encrypt` feature depends on from crates.io). stack-guest-abi is
+    // the Go guests' internal ABI and stays unpublished.
     root: '.',
-    publishable: new Set(['packages/stack-auth', 'packages/stack-profile']),
+    publishable: new Set([
+      'packages/stack-auth',
+      'packages/stack-profile',
+      'packages/stack-kms',
+      'packages/stack-encrypt',
+      'packages/stack-encrypt-derive',
+    ]),
     expects: 'packages/stack-auth',
   },
   // Single-package workspaces: `[workspace]` with no members, so the package

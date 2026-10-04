@@ -10,9 +10,10 @@ import { readWorkflow } from './lib/workflows.mjs'
  *
  * `publish = false` in a crate's manifest stops `release-plz release` from
  * uploading it, but not `release-plz update` from bumping its version and
- * writing its changelog. So the two published crates, `stack-auth` and
- * `stack-profile`, share one `version_group`, and every other member carries
- * `release = false`. A member added to the workspace without a line here would
+ * writing its changelog. So the published crates are each in a named
+ * `version_group` (`stack-auth` and `stack-profile` in one, `stack-kms`,
+ * `stack-encrypt` and `stack-encrypt-derive` in another), and every other
+ * member carries `release = false`. A member added to the workspace without a line here would
  * be versioned on the next release-plz run.
  *
  * Each of those members also carries `publish = false`. The workspace table
@@ -28,7 +29,15 @@ import { readWorkflow } from './lib/workflows.mjs'
 
 const WORKFLOW = '.github/workflows/release-plz.yml'
 const CONFIG = 'release-plz.toml'
-const PUBLISHED = ['stack-auth', 'stack-profile']
+// Each published crate, and the version group it releases in.
+const GROUPS = {
+  'stack-auth': 'stack-auth',
+  'stack-profile': 'stack-auth',
+  'stack-kms': 'stack-encrypt',
+  'stack-encrypt': 'stack-encrypt',
+  'stack-encrypt-derive': 'stack-encrypt',
+}
+const PUBLISHED = Object.keys(GROUPS).sort()
 
 /** The root workspace's members, as `{ path, name, publish }`. */
 function rootMembers() {
@@ -78,7 +87,7 @@ describe('root release-plz.toml', () => {
     )
   })
 
-  it('releases exactly the crates that may publish, in one version group', () => {
+  it('releases exactly the crates that may publish, each in its version group', () => {
     const publishable = members
       .filter((member) => member.publish)
       .map((member) => member.name)
@@ -91,11 +100,9 @@ describe('root release-plz.toml', () => {
       .sort()
     expect(released).toEqual(PUBLISHED)
 
-    const groups = new Set(
-      PUBLISHED.map((name) => packages.get(name)?.versionGroup),
-    )
-    expect([...groups]).toHaveLength(1)
-    expect([...groups][0]).toBeTruthy()
+    for (const name of PUBLISHED) {
+      expect(packages.get(name)?.versionGroup, name).toBe(GROUPS[name])
+    }
   })
 
   it('opts every unpublished member out of publishing here too', () => {

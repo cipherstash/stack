@@ -28,19 +28,23 @@ This repository also carries the source of the **`eql-bindings`** Rust crate
 lockstep with `@cipherstash/eql`. It is in scope for security reports on the
 same terms as the npm packages above.
 
-It also carries the source of two Rust crates published to crates.io,
+It also carries the source of five Rust crates published to crates.io,
 **`stack-auth`** and **`stack-profile`** (`packages/stack-auth`,
-`packages/stack-profile`), and of the **Go module** at `languages/golang`
-(`stackencrypt` and `stackauth`, over WASI guests built from the stack-*
-crates), which has no release yet. All three are in scope for security reports
-on the same terms as the npm packages above.
+`packages/stack-profile`) and **`stack-kms`**, **`stack-encrypt`** and
+**`stack-encrypt-derive`** (`packages/stack-kms`, `packages/stack-encrypt`,
+`packages/stack-encrypt-derive`), and of the **Go module** at
+`languages/golang` (`stackencrypt` and `stackauth`, over WASI guests built
+from the stack-* crates), which has no release yet. All of these are in scope
+for security reports on the same terms as the npm packages above.
 
 > **Note on publishing.** Every package in the table above, including all
 > seven `@cipherstash/protect-ffi*` packages, all seven `@cipherstash/auth*`
 > packages and `@cipherstash/eql`, is published from this repository by
-> `.github/workflows/release.yml`; the `eql-bindings`, `stack-auth` and
-> `stack-profile` crates are published from here by
-> `.github/workflows/release-plz.yml`. EQL moved here at the Phase 5 cutover in
+> `.github/workflows/release.yml`; the `eql-bindings`, `stack-auth`,
+> `stack-profile`, `stack-kms`, `stack-encrypt` and `stack-encrypt-derive`
+> crates are published from here by `.github/workflows/release-plz.yml` (the
+> first version of each of the last three was published by hand, because
+> crates.io configures Trusted Publishing on an existing crate). EQL moved here at the Phase 5 cutover in
 > `docs/plans/2026-08-13-eql-monorepo-absorption.md`, and the auth packages and
 > the two crates at the arming PR of the stack-* crates import. Releases made
 > before those moves were built elsewhere: `@cipherstash/eql@3.0.5` and earlier
@@ -168,8 +172,9 @@ CI. See `skills/stash-supply-chain-security/SKILL.md` for the full guide.
 The `release.yml` workflow publishes packages to npm using OIDC trusted
 publishing (`id-token: write`). There is no long-lived `NPM_TOKEN` — the
 workflow deliberately avoids one, and setting one would bypass trusted
-publishing. `release-plz.yml` publishes the `eql-bindings` crate to crates.io
-over the same token exchange, and likewise carries no `CARGO_REGISTRY_TOKEN`.
+publishing. `release-plz.yml` publishes the `eql-bindings` crate and the stack-* crates to
+crates.io over the same token exchange, and likewise carries no
+`CARGO_REGISTRY_TOKEN`.
 Both bind to a *workflow filename* at the registry, so renaming either file
 silently invalidates its publisher configuration.
 

@@ -4,17 +4,26 @@
 # `manifest_path: Cargo.toml` and `config: release-plz.toml`. The EQL workspace
 # has its own file at packages/eql/release-plz.toml.
 #
-# Two crates publish from here, `stack-auth` and `stack-profile`, in one
-# version group of their own. In cipherstash-suite they shared a group with
-# `cipherstash-client`, which stays there. Every other workspace member is
-# `publish = false` in its Cargo.toml and is also listed below with
-# `release = false`, so `release-plz update` does not bump its version or
-# write its changelog either. Each also repeats `publish = false`: the
-# workspace `publish = true` applies to every package that does not override
-# it, and release-plz refuses to run when that contradicts the Cargo.toml.
+# Five crates publish from here, in two version groups:
 #
-# Tags are release-plz's default, `stack-auth-v<semver>` and
-# `stack-profile-v<semver>`. No workflow triggers on either.
+# - `stack-auth` and `stack-profile` (the 0.43 line). In cipherstash-suite
+#   they shared a group with `cipherstash-client`, which stays there.
+# - `stack-kms`, `stack-encrypt` and `stack-encrypt-derive` (from 0.1.0).
+#   `stack-encrypt` depends on the other two by path and version, and the
+#   derive emits code against `stack-encrypt`'s traits, so they move as one.
+#   `eql-bindings` depends on `stack-encrypt` (its optional `stack-encrypt`
+#   feature), so a crates.io release of `eql-bindings` needs the matching
+#   `stack-encrypt` published first.
+#
+# Every other workspace member is `publish = false` in its Cargo.toml and is
+# also listed below with `release = false`, so `release-plz update` does not
+# bump its version or write its changelog either. Each also repeats
+# `publish = false`: the workspace `publish = true` applies to every package
+# that does not override it, and release-plz refuses to run when that
+# contradicts the Cargo.toml.
+#
+# Tags are release-plz's default, `<crate>-v<semver>`. No workflow triggers
+# on any of them.
 
 [workspace]
 changelog_config = "cliff.toml"
@@ -34,18 +43,15 @@ version_group = "stack-auth"
 
 [[package]]
 name = "stack-kms"
-release = false
-publish = false
+version_group = "stack-encrypt"
 
 [[package]]
 name = "stack-encrypt"
-release = false
-publish = false
+version_group = "stack-encrypt"
 
 [[package]]
 name = "stack-encrypt-derive"
-release = false
-publish = false
+version_group = "stack-encrypt"
 
 [[package]]
 name = "stack-guest-abi"
