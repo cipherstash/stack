@@ -294,7 +294,13 @@ this on the method.
   `dynamic::record::encrypt` is an `async fn` only because it settles each
   term's ready pending eagerly instead of zipping it into the batch; lowering
   it into the builder removes that, with nothing to hoist. An earlier draft of
-  this document claimed a per-field index-key load here; there is none.
+  this document claimed a per-field index-key load here; there is none. The
+  future this guards is the opposite one: term derivation may one day be a
+  ZeroKMS call (a PRF derived server-side, batched with the data keys in one
+  round trip, which `pending::dispatch` already names as the one place that
+  changes). That arrives as a new `Request` kind whose fulfilment reads the
+  term from `Responses`, so an index still returns a `Pending` synchronously
+  and no plan, chain, derive or binding changes shape.
 
 ## The index crates
 

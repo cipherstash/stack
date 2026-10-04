@@ -77,7 +77,10 @@ Option 3.
 - A plan yields a `Pending` synchronously, like a typed target: term
   derivation is local to the keyset cipher, whose index key was loaded when
   the keyset was resolved. `dynamic::record::encrypt` is `async` today only
-  because it settles each term eagerly; the lowering removes that.
+  because it settles each term eagerly; the lowering removes that. Should
+  term derivation become a ZeroKMS call, it arrives as a new `Request` kind
+  batched with the data keys, and a plan still yields a `Pending`
+  synchronously.
 - The plan grammar is now wire format shared by the derive, the guest and
   Go. A change to it is a change to all three, which is the point.
 
