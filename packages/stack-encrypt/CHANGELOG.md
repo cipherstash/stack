@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Breaking
+
+- **A target description carries a source mode.** `Encryption` gains a
+  last type parameter, `M: SourceMode = Borrowed`, saying how it is handed
+  its plaintext. Code that names `Encryption<'s, S, T, K, Ctx>` still
+  compiles and means the borrowed mode it always ran in.
+- `ciphertext`, `equality`, `matching`, `ore` and `ope` gain a source-mode
+  type parameter, `M`. A turbofish must name it: `ciphertext::<S, K, M>()`,
+  and in `matching` it comes before `O` (`matching::<S, K, M, O>()`). A call
+  whose result type does not fix the mode must name it; `Borrowed` is the
+  old behaviour. In return `ciphertext`, `equality`, `ore` and `ope` no
+  longer ask `S: Clone` themselves: only borrowed mode does.
+
+### Added
+
+- `KeysetCipher::run`: run a description held in a variable over a value,
+  under a context, without an `EncryptFrom` declaration.
+- `target::{SourceMode, ConsumeSource, ShareSource, Borrowed, Owned}`. In
+  `Owned` mode a description is handed the plaintext by value, so a single
+  operation consumes it with no copy and a plaintext that is not `Clone`
+  (a zeroizing FFI value) can be sealed or indexed. The traits are sealed.
+
 ## [0.2.0] - 2026-10-04
 
 ### Breaking

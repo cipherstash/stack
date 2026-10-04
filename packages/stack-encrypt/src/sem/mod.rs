@@ -341,13 +341,13 @@ where
 /// carries no requests.
 impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for EqualityTerm
 where
-    S: PrfValue + Clone,
+    S: PrfValue,
     T: IntoPrfContext<'c>,
 {
     // Derived locally: no data key, no descriptor.
 
     fn encrypt_from<'a>(
-        source: &S,
+        source: S,
         cipher: &'a KeysetCipher<'_, K>,
         context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
@@ -355,7 +355,7 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = equality(cipher.prf(), source.clone(), context).map_err(Error::from);
+        let term = equality(cipher.prf(), source, context).map_err(Error::from);
         Pending::ready(cipher, term)
     }
 }
@@ -660,7 +660,7 @@ where
     // Derived locally: no data key, no descriptor.
 
     fn encrypt_from<'a>(
-        source: &S,
+        source: S,
         cipher: &'a KeysetCipher<'_, K>,
         context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
@@ -942,14 +942,14 @@ where
 /// carries no requests.
 impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for OreTerm<S>
 where
-    S: CllwOreEncrypt + Clone + Send + 'static,
+    S: CllwOreEncrypt + Send + 'static,
     S::Output: Send + 'static,
     T: IntoPrfContext<'c>,
 {
     // Derived locally: no data key, no descriptor.
 
     fn encrypt_from<'a>(
-        source: &S,
+        source: S,
         cipher: &'a KeysetCipher<'_, K>,
         context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
@@ -957,7 +957,7 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = ore(cipher.prf(), source.clone(), context).map_err(Error::from);
+        let term = ore(cipher.prf(), source, context).map_err(Error::from);
         Pending::ready(cipher, term)
     }
 }
@@ -967,14 +967,14 @@ where
 /// carries no requests.
 impl<'c, S, K, T> Term<S, K, NonEmpty<T>> for OpeTerm<S>
 where
-    S: CllwOpeEncrypt + Clone + Send + 'static,
+    S: CllwOpeEncrypt + Send + 'static,
     S::Output: Send + 'static,
     T: IntoPrfContext<'c>,
 {
     // Derived locally: no data key, no descriptor.
 
     fn encrypt_from<'a>(
-        source: &S,
+        source: S,
         cipher: &'a KeysetCipher<'_, K>,
         context: NonEmpty<T>,
     ) -> Pending<'a, Self, K>
@@ -982,7 +982,7 @@ where
         Self: 'a,
     {
         let context = context.into_prf_context().into_owned();
-        let term = ope(cipher.prf(), source.clone(), context).map_err(Error::from);
+        let term = ope(cipher.prf(), source, context).map_err(Error::from);
         Pending::ready(cipher, term)
     }
 }

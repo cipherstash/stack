@@ -60,6 +60,13 @@
 //! New cryptographic operations belong in core; output adapters cannot install an
 //! execution callback. The separate cipher-directed API remains public.
 //!
+//! Those schemes consume the plaintext. A description is handed it by
+//! reference by default, and an operation clones it before consuming it, so a
+//! declaration's plaintext is `Clone`. A plaintext that must not be copied
+//! runs in [`Owned`] mode through [`KeysetCipher::run`](crate::KeysetCipher::run):
+//! a single operation takes the value with no copy, and only
+//! [`Encryption::zip`] asks for `Clone`. See [`SourceMode`].
+//!
 //! # Collections and authentication
 //!
 //! `Vec<Target>` describes independently encrypted rows under the same context.
@@ -83,6 +90,7 @@ pub(crate) mod core;
 mod operations;
 mod pending;
 mod request;
+mod source;
 pub mod transcode;
 
 pub(crate) use self::core::{decipher_pending, seal_pending};
@@ -93,4 +101,5 @@ pub use operations::{
 };
 pub use pending::{CipherScope, Pending, PendingFuture};
 pub use request::{Request, Responses};
+pub use source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
 pub use stack_encrypt_derive::{DecryptInto, EncryptFrom};
