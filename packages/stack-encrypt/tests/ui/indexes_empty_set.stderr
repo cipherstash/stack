@@ -1,0 +1,59 @@
+error[E0277]: `()` is not a set of indexes over `u32`
+ --> tests/ui/indexes_empty_set.rs:7:57
+  |
+7 |     let _ = indexed::<u32, FakeDataKeySource, Borrowed, _>(());
+  |                                                         ^ expected one index, or a tuple of two to four, each defined over `u32`
+  |
+  = help: the trait `Indexes<u32>` is not implemented for `()`
+  = note: `()` is not a set of indexes: a field with no index is `ciphertext()` alone
+help: the following other types implement trait `Indexes<S>`
+ --> src/target/index.rs
+  |
+  |           impl<S, $($name: Index<S>),+> Indexes<S> for ($($name,)+) {
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |           |
+  |           `(A, B)`
+  |           `(A, B, C)`
+  |           `(A, B, C, D)`
+...
+  | /     tuple_of_indexes! {
+  | |         (A 0, B 1) => (A, B),
+  | |         (A 0, B 1, C 2) => ((A, B), C),
+  | |         (A 0, B 1, C 2, D 3) => (((A, B), C), D),
+  | |     }
+  | |_____- in this macro invocation
+note: required by a bound in `indexed`
+ --> src/target/index.rs
+  |
+  | pub fn indexed<'s, S, K, M, X>(
+  |        ------- required by a bound in this function
+...
+  |     X: Indexes<S>,
+  |        ^^^^^^^^^^ required by this bound in `indexed`
+  = note: this error originates in the macro `tuple_of_indexes` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: `()` is not a set of indexes over `u32`
+ --> tests/ui/indexes_empty_set.rs:7:13
+  |
+7 |     let _ = indexed::<u32, FakeDataKeySource, Borrowed, _>(());
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected one index, or a tuple of two to four, each defined over `u32`
+  |
+  = help: the trait `Indexes<u32>` is not implemented for `()`
+  = note: `()` is not a set of indexes: a field with no index is `ciphertext()` alone
+help: the following other types implement trait `Indexes<S>`
+ --> src/target/index.rs
+  |
+  |           impl<S, $($name: Index<S>),+> Indexes<S> for ($($name,)+) {
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |           |
+  |           `(A, B)`
+  |           `(A, B, C)`
+  |           `(A, B, C, D)`
+...
+  | /     tuple_of_indexes! {
+  | |         (A 0, B 1) => (A, B),
+  | |         (A 0, B 1, C 2) => ((A, B), C),
+  | |         (A 0, B 1, C 2, D 3) => (((A, B), C), D),
+  | |     }
+  | |_____- in this macro invocation
+  = note: this error originates in the macro `tuple_of_indexes` (in Nightly builds, run with -Z macro-backtrace for more info)

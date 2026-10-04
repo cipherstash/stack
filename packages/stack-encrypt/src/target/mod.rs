@@ -87,6 +87,7 @@
 //! `EncryptTarget` and `DecryptTarget` are no longer extension points.
 mod context;
 pub(crate) mod core;
+mod index;
 mod operations;
 mod pending;
 mod request;
@@ -95,9 +96,12 @@ pub mod transcode;
 
 pub(crate) use self::core::{decipher_pending, seal_pending};
 pub use context::{AeadContext, CallerContext, DeclaredContext, ExpectedContext, Extends};
+pub use index::{
+    indexed, At, Encrypted, Equality, Index, IndexSpec, Indexes, Match, Ope, Ore, Select, Whole,
+};
 pub use operations::{
-    ciphertext, equality, matching, ope, open, ore, DecryptField, DecryptFrom, DecryptInto,
-    Decryptable, Decryption, EncryptFrom, EncryptInto, Encryption,
+    ciphertext, equality, matching, ope, open, ore, passthrough, DecryptField, DecryptFrom,
+    DecryptInto, Decryptable, Decryption, EncryptFrom, EncryptInto, Encryption,
 };
 pub use pending::{CipherScope, Pending, PendingFuture};
 pub use request::{Request, Responses};

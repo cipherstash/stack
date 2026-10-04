@@ -367,6 +367,32 @@ pub fn ciphertext<'s, S: crate::Encrypt + 's, K: 'static, M: ConsumeSource<'s, S
         ),
     }
 }
+/// Carry the plaintext through unchanged: the output is the source itself,
+/// and the context the description is handed is ignored.
+///
+/// This is a field that is present in a record's output so the record is
+/// whole, and is **not encrypted and not authenticated**: nothing binds it
+/// to the ciphertexts beside it, so whoever can write the stored record can
+/// change it undetected. A field that must stay readable but be
+/// tamper-evident is not a passthrough: seal it, with an equality index
+/// beside it for lookup ([`indexed`](super::indexed) with
+/// [`Equality`](super::Equality)).
+///
+/// In [`Owned`](super::Owned) mode the value is moved through; in the
+/// default [`Borrowed`] mode it is cloned once, which is what
+/// `M: ConsumeSource<'s, S>` asks. `Ctx` is whatever the surrounding tree
+/// hands its fields, so a passthrough zips beside any of them.
+pub fn passthrough<'s, S, K, M, Ctx>() -> Encryption<'s, S, S, K, Ctx, M>
+where
+    S: MaybeSend + 'static,
+    K: 'static,
+    M: ConsumeSource<'s, S>,
+    Ctx: 's,
+{
+    Encryption {
+        build: Box::new(move |source, cipher, _| Pending::ready(cipher, Ok(M::take(source)))),
+    }
+}
 /// A term operation: `$function` produces `$output` from any `S` satisfying
 /// the bounds, under the [`CallerContext`] the tree hands it.
 ///
@@ -585,6 +611,11 @@ impl<K: 'static> KeysetCipher<'_, K> {
     /// #     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(f)
     /// # }
     /// ```
+    ///
+    /// The opening side is [`run_decryption`](Self::run_decryption): an
+    /// [`Encryption`] is run with its source and context, a [`Decryption`]
+    /// already holds both. Either is single-use; a saved plan builds a fresh
+    /// one per call.
     pub fn run<'a, 's, S: 's, T: 'static, Ctx, M: SourceMode<'s, S>>(
         &'a self,
         encryption: Encryption<'s, S, T, K, Ctx, M>,
@@ -592,6 +623,35 @@ impl<K: 'static> KeysetCipher<'_, K> {
         context: Ctx,
     ) -> Pending<'a, T, K> {
         (encryption.build)(source, self, context)
+    }
+    /// Run a [`Decryption`] held in a variable under this keyset: the
+    /// counterpart of [`run`](Self::run), and what
+    /// [`decrypt_as`](Self::decrypt_as) does with a type's declaration. A
+    /// leaf sealed under another keyset is refused
+    /// ([`Error::ForeignKeyset`]) before any key is retrieved.
+    ///
+    /// ```
+    /// # async fn example() -> Result<(), stack_encrypt::Error> {
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::target::{self, AeadContext, Decryption};
+    /// use stack_encrypt::{nonempty, StackCipher, StackCipherText};
+    ///
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let keyset = cipher.default_keyset();
+    /// let context = || AeadContext::from(nonempty!("users/email"));
+    /// let sealed: StackCipherText = keyset.encrypt_as(&"bob@example.com".to_string(), context()).await?;
+    ///
+    /// let opening: Decryption<String, _> = target::open(sealed, context());
+    /// assert_eq!(keyset.run_decryption(opening).await?, "bob@example.com");
+    /// # Ok(())
+    /// # }
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+    /// ```
+    pub fn run_decryption<'a, P: 'static>(
+        &'a self,
+        decryption: Decryption<P, K>,
+    ) -> Pending<'a, P, K> {
+        decryption.open_in(self)
     }
     /// Recover `P` from `source`, as its declaration describes. A leaf sealed
     /// under another keyset is refused ([`Error::ForeignKeyset`]) before any
@@ -608,6 +668,15 @@ impl<K: 'static> KeysetCipher<'_, K> {
     }
 }
 impl<K: 'static> StackCipher<K> {
+    /// Run a [`Decryption`] held in a variable through the client: leaves
+    /// from any of its keysets open here. See
+    /// [`KeysetCipher::run_decryption`], which refuses a foreign one.
+    pub fn run_decryption<'a, P: 'static>(
+        &'a self,
+        decryption: Decryption<P, K>,
+    ) -> Pending<'a, P, K> {
+        decryption.open_in(self)
+    }
     /// Recover `P` from `source`, as its declaration describes. Leaves from
     /// any of the client's keysets open here.
     pub fn decrypt_as<'a, P: 'static, T>(
