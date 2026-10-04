@@ -161,13 +161,16 @@ assumed. Outcomes against today's sources:
 | Writer | Reader and query producer | Outcome |
 | --- | --- | --- |
 | Rust (`stack-encrypt` profile) | Rust (`stack-encrypt` profile) | **Proven.** `tests/encryption/tests/text_eq.rs`: JSON round trip, both canonical directions, PostgreSQL insert and equality query. |
-| JS / FFI (`cipherstash-client` profile) | Rust | **Not supported.** `c` lacks the `stack-encrypt:1:` prefix and is refused loudly on decryption. A Rust probe against such a column is accepted by SQL and matches nothing — see [#1051](https://github.com/cipherstash/stack/issues/1051). |
+| JS / FFI (`cipherstash-client` profile) | Rust | **Not supported.** `c` lacks the `stack-encrypt:1:` prefix and is refused loudly on decryption. A Rust probe against such a column is accepted by SQL and matches nothing. |
 | Rust (`stack-encrypt` profile) | JS / FFI | **Not supported.** The JS reader does not know the `stack-encrypt:1:` prefix and the two profiles' equality terms never match. |
 
 Rows 2 and 3 need compatible encryption, decryption and index derivation on
-both sides before they can change; that is upstream work, not a flag. Until
-#1051 lands, a new-profile probe against an old-producer column returns zero
-rows with no error, so pick one profile per column and record it.
+both sides before they can change; that is upstream work, not a flag. This
+profile is an interim step on EQL v3: nothing in a `v: 3` payload marks which
+producer made an equality term, so a new-profile probe against an old-producer
+column returns zero rows with no error. The separation will come from the EQL
+version itself (v4), not from a marker inside v3. Until then, one profile per
+column, and record which.
 
 ### Developing the `stack-encrypt` feature
 

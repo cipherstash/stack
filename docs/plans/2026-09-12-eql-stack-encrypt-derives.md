@@ -14,8 +14,9 @@
 > Of section 1's requirements: the interoperability matrix is recorded in the
 > `eql-bindings` README with one proven row and two unsupported ones. "New-profile
 > query terms must never silently probe a column indexed by the old producer" is
-> documented but not enforced; that is
-> [#1051](https://github.com/cipherstash/stack/issues/1051). Of section 5: the
+> documented but deliberately not enforced within v3: the profile split will be
+> carried by the EQL version (v4), and the v3 profile is an interim step for a
+> single consumer who knows the risk. Of section 5: the
 > catalog-derived coverage assertion exists (`eql-codegen`'s
 > `every_stored_domain_has_an_encryption_derive_or_a_reason`); foreign-keyset
 > rejection and real ZeroKMS tests are still absent and wait on #1046's live
