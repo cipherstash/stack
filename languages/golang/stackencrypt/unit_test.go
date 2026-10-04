@@ -197,9 +197,9 @@ func TestPlanFromTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []fieldPlan{
-		{index: 1, name: "Age", context: MustLabel("users/age").Context(), outputs: []string{"c", "eq", "ore"}},
-		{index: 2, name: "email", context: MustLabel("users/email").Context(), outputs: []string{"c", "eq", "match"}},
-		{index: 3, name: "Notes", context: MustLabel("users/notes").Context(), outputs: []string{"c"}},
+		{index: 1, name: "Age", context: label(t, "users/age").Context(), outputs: []string{"c", "eq", "ore"}},
+		{index: 2, name: "email", context: label(t, "users/email").Context(), outputs: []string{"c", "eq", "match"}},
+		{index: 3, name: "Notes", context: label(t, "users/notes").Context(), outputs: []string{"c"}},
 	}
 	if !reflect.DeepEqual(plan, want) {
 		t.Fatalf("plan = %+v\nwant %+v", plan, want)
@@ -252,9 +252,9 @@ func TestPlanFromTags(t *testing.T) {
 func TestExplicitPlanIsTheTagPlan(t *testing.T) {
 	typ := reflect.TypeOf(taggedUser{})
 	explicit, err := NewPlan(
-		FieldPlan{Field: "Age", Context: MustLabel("users/age").Context(), Terms: []TermKind{Equality, Ore}},
-		FieldPlan{Field: "Email", Name: "email", Context: MustLabel("users/email").Context(), Terms: []TermKind{Equality, Match}},
-		FieldPlan{Field: "Notes", Context: MustLabel("users/notes").Context()},
+		FieldPlan{Field: "Age", Context: label(t, "users/age").Context(), Terms: []TermKind{Equality, Ore}},
+		FieldPlan{Field: "Email", Name: "email", Context: label(t, "users/email").Context(), Terms: []TermKind{Equality, Match}},
+		FieldPlan{Field: "Notes", Context: label(t, "users/notes").Context()},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -297,7 +297,7 @@ func TestExplicitPlanIsTheTagPlan(t *testing.T) {
 	}
 	// Fields returns a copy.
 	explicit.Fields()[0].Context = MustContext("changed")
-	if !reflect.DeepEqual(explicit.Fields()[0].Context, MustLabel("users/age").Context()) {
+	if !reflect.DeepEqual(explicit.Fields()[0].Context, label(t, "users/age").Context()) {
 		t.Fatal("Fields exposed the plan's own slice")
 	}
 }
@@ -329,17 +329,17 @@ func TestTermExtensionMatchesRecordFieldContext(t *testing.T) {
 
 	var to termOptions
 	ExtendContext(ext...).applyTerm(&to)
-	probe, err := extend(MustLabel("users/email").Context(), to.extension)
+	probe, err := extend(label(t, "users/email").Context(), to.extension)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(probe.value(), fieldContext) {
 		t.Fatalf("probe context %#v, record field context %#v", probe.value(), fieldContext)
 	}
-	if reflect.DeepEqual(MustLabel("users/email").Context().value(), fieldContext) {
+	if reflect.DeepEqual(label(t, "users/email").Context().value(), fieldContext) {
 		t.Fatal("the unextended probe context equals the extended field's")
 	}
-	other, err := extend(MustLabel("users/email").Context(), []any{uint64(8), "eu"})
+	other, err := extend(label(t, "users/email").Context(), []any{uint64(8), "eu"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +388,7 @@ func TestSeveralExtensionsJoinInOrder(t *testing.T) {
 		for _, opt := range opts {
 			opt.applyTerm(&to)
 		}
-		c, err := extend(MustLabel("users/email").Context(), to.extension)
+		c, err := extend(label(t, "users/email").Context(), to.extension)
 		if err != nil {
 			t.Fatal(err)
 		}

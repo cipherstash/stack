@@ -21,11 +21,15 @@ import (
 // segment can contain the separator), and a string that is not a label is
 // refused with a [LabelError] naming the segment, never escaped silently.
 //
-// As a context ([Label.Context]): one segment is the bare part, the same
-// context as NewContext(segment) and a Rust `#[stash(context = "..")]`
-// literal; two are the pair NewContext(table).With(column), what a Rust
-// `struct = .., context = "<table>"` derive binds; three or more are a flat
-// list, a/b/c, which the nesting With chain ((a/b)/c) is not.
+// A Label is the one way to spell a name, and [Label.Context] is the one
+// context it binds: its segments as a flat list, a/b/c. [Context.With] is
+// not another way to build a label. It scopes a context by appending a part
+// — a tenant, a row id — and nests, so "that column, row 7" reads as
+// (users/email)/7u64 and cannot be confused with a three-segment name. The
+// two meet at one point by design: a two-segment label is the same context
+// as a Rust `struct = .., context = "<table>"` derive binds for a field,
+// which is how a Go label opens a row a Rust derive wrote. A one-segment
+// label is the bare part, the same as NewContext(segment).
 type Label struct {
 	segments []string
 }
@@ -51,19 +55,6 @@ func NewLabel(segments ...string) (Label, error) {
 // refused (an empty segment), as is "" (one empty segment).
 func ParseLabel(s string) (Label, error) {
 	return NewLabel(strings.Split(s, labelSeparator)...)
-}
-
-// MustLabel is [ParseLabel] for a label known to be valid; it panics
-// otherwise. For string literals in plans and probes:
-//
-//	email := stackencrypt.MustLabel("users/email")
-//	probe, err := cipher.Term(ctx, "bob@example.com", email.Context(), stackencrypt.Equality)
-func MustLabel(s string) Label {
-	l, err := ParseLabel(s)
-	if err != nil {
-		panic(err)
-	}
-	return l
 }
 
 // Segments returns the label's segments, in order; at least one.

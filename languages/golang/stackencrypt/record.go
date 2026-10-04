@@ -38,24 +38,29 @@ import (
 // all, is not part of the record: it never crosses the boundary, and stays
 // the caller's to store. Unexported fields are ignored.
 //
-// The same plan, built by hand:
+// The same plan, built by hand. Each field's context is a [Label], the
+// table and the column; [ParseLabel] refuses a name that would not render
+// as itself, so check its error:
 //
+//	age, err := stackencrypt.ParseLabel("users/age")
+//	email, err := stackencrypt.ParseLabel("users/email")
+//	notes, err := stackencrypt.ParseLabel("users/notes")
 //	plan, err := stackencrypt.NewPlan(
 //	    stackencrypt.FieldPlan{
 //	        Field:   "Age",
-//	        Context: stackencrypt.MustLabel("users/age").Context(),
+//	        Context: age.Context(),
 //	        Terms: []stackencrypt.TermKind{
 //	            stackencrypt.Equality, stackencrypt.Ore,
 //	        },
 //	    },
 //	    stackencrypt.FieldPlan{
 //	        Field:   "Email",
-//	        Context: stackencrypt.MustLabel("users/email").Context(),
+//	        Context: email.Context(),
 //	        Terms: []stackencrypt.TermKind{
 //	            stackencrypt.Equality, stackencrypt.Match,
 //	        },
 //	    },
-//	    stackencrypt.FieldPlan{Field: "Notes", Context: stackencrypt.MustLabel("users/notes").Context()},
+//	    stackencrypt.FieldPlan{Field: "Notes", Context: notes.Context()},
 //	)
 //	records, err := cipher.EncryptRecords(
 //	    ctx, users, stackencrypt.WithPlan(plan),
@@ -209,7 +214,7 @@ type FieldPlan struct {
 	// extends it by any ExtendContext parts. Required.
 	//
 	// A field stored in a database is named by a [Label] — a table and a
-	// column, MustLabel("users/age").Context(): the pair ["users", "age"]
+	// column, ParseLabel("users/age") then .Context(): the pair ["users", "age"]
 	// a Rust `#[derive(EncryptFrom)]` with `struct = .., context = "users"`
 	// binds its `age` field under, rendering the ZeroKMS descriptor
 	// users/age. Any other context is one [NewContext] makes: an arbitrary

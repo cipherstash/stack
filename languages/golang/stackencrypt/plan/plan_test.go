@@ -43,10 +43,10 @@ func TestPolicyBuildsThePlan(t *testing.T) {
 	// Columns are the schema's spelling of the Go field: what the Rust
 	// derive binds and the database names.
 	want := []se.FieldPlan{
-		{Field: "Email", Name: "email", Context: se.MustLabel("individuals/email").Context(), Terms: []se.TermKind{se.Equality, se.Match}},
-		{Field: "Name", Name: "name", Context: se.MustLabel("individuals/name").Context()},
+		{Field: "Email", Name: "email", Context: label(t, "individuals/email").Context(), Terms: []se.TermKind{se.Equality, se.Match}},
+		{Field: "Name", Name: "name", Context: label(t, "individuals/name").Context()},
 		// The per-message rule wins over the base's government_id rule.
-		{Field: "MedicareNo", Name: "medicare_number", Context: se.MustLabel("individuals/medicare_number").Context(), Terms: []se.TermKind{se.Equality, se.Ore}},
+		{Field: "MedicareNo", Name: "medicare_number", Context: label(t, "individuals/medicare_number").Context(), Terms: []se.TermKind{se.Equality, se.Ore}},
 	}
 	if got := p.Fields(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("fields =\n%+v\nwant\n%+v", got, want)
@@ -146,7 +146,7 @@ func TestUnclassifiedFieldsAreLeftOutUnlessNamed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []se.FieldPlan{{Field: "Notes", Name: "notes", Context: se.MustLabel("individuals/notes").Context()}}
+	want := []se.FieldPlan{{Field: "Notes", Name: "notes", Context: label(t, "individuals/notes").Context()}}
 	if got := p.Fields(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("fields = %+v, want %+v", got, want)
 	}
@@ -174,7 +174,7 @@ func TestColumnPinSurvivesRenames(t *testing.T) {
 		t.Fatal(err)
 	}
 	f1, f2 := p1.Fields()[0], p2.Fields()[0]
-	want := se.MustLabel("individuals/medicare_number").Context()
+	want := label(t, "individuals/medicare_number").Context()
 	if !reflect.DeepEqual(f1.Context, want) || !reflect.DeepEqual(f2.Context, f1.Context) {
 		t.Fatalf("contexts %v, %v: want both individuals/medicare_number", f1.Context, f2.Context)
 	}
@@ -186,7 +186,7 @@ func TestColumnPinSurvivesRenames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := unpinned.Fields()[0].Context; !reflect.DeepEqual(got, se.MustLabel("individuals/medicare_no").Context()) {
+	if got := unpinned.Fields()[0].Context; !reflect.DeepEqual(got, label(t, "individuals/medicare_no").Context()) {
 		t.Fatalf("unpinned context = %v", got)
 	}
 }
@@ -215,7 +215,7 @@ func TestIdentityKeepsTheContextThroughAColumnRename(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 			continue
 		}
-		want := []se.FieldPlan{{Field: "MedicareNo", Name: tc.key, Context: se.MustLabel(tc.context).Context(), Terms: []se.TermKind{se.Equality}}}
+		want := []se.FieldPlan{{Field: "MedicareNo", Name: tc.key, Context: label(t, tc.context).Context(), Terms: []se.TermKind{se.Equality}}}
 		if got := p.Fields(); !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: fields = %+v, want %+v", name, got, want)
 		}
@@ -237,7 +237,7 @@ func TestContextsByTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []se.FieldPlan{
-		{Field: "Email", Name: "email", Context: se.MustLabel("users/email").Context(), Terms: []se.TermKind{se.Equality}},
+		{Field: "Email", Name: "email", Context: label(t, "users/email").Context(), Terms: []se.TermKind{se.Equality}},
 		// A custom target's context is its own; the pin names the record key only.
 		{Field: "Blob", Name: "blob_v1", Context: se.MustContext("tenant-blobs/v1"), Terms: []se.TermKind{se.Ope}},
 	}
@@ -474,4 +474,14 @@ func TestWhenRefusesANilMatcher(t *testing.T) {
 		}
 	}()
 	plan.When(nil, plan.Plaintext())
+}
+
+// label is se.ParseLabel for a label the test knows to be valid.
+func label(t testing.TB, s string) se.Label {
+	t.Helper()
+	l, err := se.ParseLabel(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return l
 }

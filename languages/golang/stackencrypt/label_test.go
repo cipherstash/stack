@@ -41,16 +41,16 @@ func TestLabelRendersAsItsDisplayAndBindsTheMatchingContext(t *testing.T) {
 			t.Errorf("NewLabel(segments of %q) = %#v, %v", text, again, err)
 		}
 	}
-	if got := MustLabel("users/age").Context().value(); !reflect.DeepEqual(got, pair.value()) {
+	if got := label(t, "users/age").Context().value(); !reflect.DeepEqual(got, pair.value()) {
 		t.Errorf("a two-segment label is not the With pair: %#v vs %#v", got, pair.value())
 	}
-	if got := MustLabel("users").Context().value(); !reflect.DeepEqual(got, MustContext("users").value()) {
+	if got := label(t, "users").Context().value(); !reflect.DeepEqual(got, MustContext("users").value()) {
 		t.Errorf("a one-segment label is not the bare part: %#v", got)
 	}
 	// A literal containing '/' is one part, not the pair: the two spell
 	// different contexts, as in Rust.
-	if reflect.DeepEqual(MustContext("users/age").value(), MustLabel("users/age").Context().value()) {
-		t.Error(`NewContext("users/age") and MustLabel("users/age") bind the same context`)
+	if reflect.DeepEqual(MustContext("users/age").value(), label(t, "users/age").Context().value()) {
+		t.Error(`NewContext("users/age") and label(t, "users/age") bind the same context`)
 	}
 	if got := (Label{}).Context(); got.node != nil {
 		t.Errorf("zero Label's Context = %#v, want the zero Context", got)
@@ -102,12 +102,17 @@ func TestLabelRefusesSegmentsThatWouldNotRenderVerbatim(t *testing.T) {
 			t.Errorf("NewLabel(%q) = %v, want ok", ok, err)
 		}
 	}
-	defer func() {
-		if recover() == nil {
-			t.Error("MustLabel of a bad label did not panic")
-		}
-	}()
-	MustLabel("users/")
+}
+
+// label is ParseLabel for a label the test knows to be valid: the fixture
+// form of the error-returning constructor, since there is no panicking one.
+func label(t testing.TB, s string) Label {
+	t.Helper()
+	l, err := ParseLabel(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return l
 }
 
 // A struct tag names a field's own context as a label or as one part,

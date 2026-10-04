@@ -38,7 +38,7 @@
 //! `zerokms_auth` example for the lookup order).
 
 use stack_encrypt::{
-    Cipher, CipherText, Decipher, Decrypt, Encrypt, IntoAad, StackCipher, StackCipherText,
+    Cipher, CipherText, Decipher, Decrypt, Encrypt, IntoAad, Label, StackCipher, StackCipherText,
     Unspecified,
 };
 use vitaminc_aead::{DecipherVisitor, MapAccess, MapCipher, Passthrough};
@@ -175,11 +175,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     ];
 
+    // The context names the data: a `Label` is the first-class spelling of a
+    // name, here the users record at schema version 1, rendering `users/v1`
+    // in the ZeroKMS log. (EQL's `Identifier`, a table and a column, is the
+    // same shape with two segments.)
+    let record = Label::new(["users", "v1"])?;
+
     // One call, one batched generate_keys round-trip for every encrypted leaf
     // in the whole Vec (here: 3 rows x 2 encrypted fields = 6 data keys).
     let ciphertext = cipher
         .default_keyset()
-        .encrypt(users, ("users", "v1"))
+        .encrypt(users, record.clone())
         .await?;
 
     println!("what the stored ciphertext reveals:");
@@ -187,7 +193,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // One batched retrieve_keys round-trip, then a crypto-free structural
     // decode back into the typed rows. The AAD must match the encrypt call.
-    let users: Vec<User> = cipher.decrypt(ciphertext, ("users", "v1")).await?;
+    let users: Vec<User> = cipher.decrypt(ciphertext, record).await?;
 
     println!("\ndecrypted rows:");
     for user in &users {

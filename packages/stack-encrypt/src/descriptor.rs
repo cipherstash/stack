@@ -430,12 +430,16 @@ impl DescriptorBuilder {
 /// a label is refused with a [`LabelError`] naming the segment, never
 /// escaped silently.
 ///
-/// A one-segment label is the same context as the bare text literal
-/// (`Label::new(["users"])` is `nonempty!("users")`), and a two-segment one
-/// is the same as the pair (`Label::new(["users", "email"])` is
-/// `nonempty!("users").with("email")`, what a `struct = ..` derive binds).
-/// A label of three or more segments is a flat list, `a/b/c`, which the
-/// nesting `with` chain is not (`(a/b)/c`).
+/// A `Label` is the one way to spell a name, and it is one context: its
+/// segments as a flat list, `a/b/c`. [`NonEmpty::with`] is not another way
+/// to build one. It *scopes* a context by appending a part — a tenant, a row
+/// id — and nests, so "that column, row 7" renders `(users/email)/7u64` and
+/// cannot be confused with a three-segment name. The two meet at one point
+/// by design: a two-segment label is the same context as the pair a
+/// `struct = .., context = "<table>"` derive binds for a field
+/// (`nonempty!("users").with("email")`), which is how a label opens a row a
+/// derive wrote. A one-segment label is the bare text part, the same as
+/// `nonempty!("users")`.
 ///
 /// ```
 /// use stack_encrypt::{nonempty, Descriptor, Label, NonEmpty};
@@ -1174,6 +1178,7 @@ mod label_tests {
         let mut builder = DescriptorBuilder::new();
         assert!(builder.is_empty());
         let _ = builder.bytes(b"users".to_vec()).text("email");
+        assert!(!builder.is_empty());
         assert_eq!(builder.len(), 2);
         assert_eq!(
             Descriptor::from_piece(&builder.finish()).as_str(),

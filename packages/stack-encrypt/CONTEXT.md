@@ -101,10 +101,12 @@ _Avoid_: descriptor trait, Descriptor (the rendered string)
 The first-class `Describe` type: a path of plain segments, each checked
 (non-empty, no `/`, `(`, `)` or control characters, not beginning with
 `b64:`, a digit or `-`), so it renders verbatim and its `Display`
-(`users/email`) is its descriptor and parses back losslessly. One segment is
-the bare literal; two are the pair a `struct = ..` derive binds
-(`nonempty!("users").with("email")`); three or more are a flat list
-(`a/b/c`), which a nesting `with` chain is not. A direct consumer of the
+(`users/email`) is its descriptor and parses back losslessly. The one way to
+spell a name, binding one context: its segments as a flat list. `with` is
+not another way to build a label; it scopes a context by appending a part
+(tenant, row id) and nests, `(users/email)/7u64`. The two meet where a
+two-segment label equals the pair a `struct = ..` derive binds, which is how a
+label opens a row a derive wrote. A direct consumer of the
 crate names its data with a `Label`; an EQL consumer names it with an
 `Identifier`, the same shape with exactly two segments.
 _Avoid_: path, name, identifier (that is EQL's two-segment case)

@@ -183,7 +183,7 @@ func TestLiveRecordsAndTerms(t *testing.T) {
 		t.Fatalf("records = %+v", records)
 	}
 
-	probe, err := cipher.Term(ctx, uint32(34), MustContext("users/age"), Equality)
+	probe, err := cipher.Term(ctx, uint32(34), label(t, "users/age").Context(), Equality)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestLiveRecordsAndTerms(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scoped, err := cipher.Term(ctx, "bob@example.com", MustContext("users/email"), Equality, tenant7)
+	scoped, err := cipher.Term(ctx, "bob@example.com", label(t, "users/email").Context(), Equality, tenant7)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestLiveRecordsAndTerms(t *testing.T) {
 	if scoped.(EqualityTerm).Equal(records[1]["Email"].Equality) {
 		t.Error("tenant probe equals the unextended term")
 	}
-	unscoped, err := cipher.Term(ctx, "bob@example.com", MustContext("users/email"), Equality)
+	unscoped, err := cipher.Term(ctx, "bob@example.com", label(t, "users/email").Context(), Equality)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,8 +261,8 @@ func TestLiveExplicitPlanRoundTrip(t *testing.T) {
 		Email string
 	}
 	plan, err := NewPlan(
-		FieldPlan{Field: "Age", Context: MustLabel("users/age").Context(), Terms: []TermKind{Equality, Ore}},
-		FieldPlan{Field: "Email", Context: MustLabel("users/email").Context(), Terms: []TermKind{Equality, Match}},
+		FieldPlan{Field: "Age", Context: label(t, "users/age").Context(), Terms: []TermKind{Equality, Ore}},
+		FieldPlan{Field: "Email", Context: label(t, "users/email").Context(), Terms: []TermKind{Equality, Match}},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -290,7 +290,7 @@ func TestLiveExplicitPlanRoundTrip(t *testing.T) {
 
 	// A plan naming a field the record does not carry is refused before
 	// any key is requested.
-	other, err := NewPlan(FieldPlan{Field: "Email", Name: "email", Context: MustLabel("users/email").Context()})
+	other, err := NewPlan(FieldPlan{Field: "Email", Name: "email", Context: label(t, "users/email").Context()})
 	if err != nil {
 		t.Fatal(err)
 	}

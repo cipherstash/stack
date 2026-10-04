@@ -621,7 +621,7 @@ func TestMismatchedPlanIsRefusedBeforeTheGuest(t *testing.T) {
 	ctx := context.Background()
 	c := rawInstance(t)
 	record := EncryptedRecord{"Age": {Ciphertext: Sealed(fixtureLeaf)}}
-	plan, err := NewPlan(FieldPlan{Field: "Email", Name: "email", Context: MustLabel("users/email").Context()})
+	plan, err := NewPlan(FieldPlan{Field: "Email", Name: "email", Context: label(t, "users/email").Context()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -654,8 +654,8 @@ func TestGuestAcceptsEveryEncodingThisPackageBuilds(t *testing.T) {
 		Email string
 	}
 	plan, err := NewPlan(
-		FieldPlan{Field: "Age", Context: MustLabel("users/age").Context(), Terms: []TermKind{Equality, Ore}},
-		FieldPlan{Field: "Email", Context: MustLabel("users/email").Context(), Terms: []TermKind{Equality, Match}},
+		FieldPlan{Field: "Age", Context: label(t, "users/age").Context(), Terms: []TermKind{Equality, Ore}},
+		FieldPlan{Field: "Email", Context: label(t, "users/email").Context(), Terms: []TermKind{Equality, Match}},
 	)
 	if err != nil {
 		t.Fatal(err)
