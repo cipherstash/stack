@@ -535,6 +535,13 @@ function enabledByFeatures(features, requested, defaults) {
   const seen = new Set()
   const deps = new Set()
   const depFeatures = new Map()
+  // `NAME?/feature` is weak: it never turns NAME on, but it is not discarded
+  // either. If some other enabled feature turns NAME on, cargo applies the
+  // weak request too. Collected here and applied once the enabled set is
+  // known, so the answer does not depend on which feature was walked first.
+  const weak = []
+  const want = (dep, depFeature) =>
+    depFeatures.set(dep, [...(depFeatures.get(dep) ?? []), depFeature])
   while (queue.length > 0) {
     const feature = queue.shift()
     if (seen.has(feature)) continue
@@ -546,14 +553,19 @@ function enabledByFeatures(features, requested, defaults) {
         deps.add(entry.slice(4))
       } else if (entry.includes('/')) {
         const [dep, depFeature] = entry.split('/')
-        // `NAME?/feature` is weak: it never turns NAME on.
-        if (dep.endsWith('?')) continue
+        if (dep.endsWith('?')) {
+          weak.push([dep.slice(0, -1), depFeature])
+          continue
+        }
         deps.add(dep)
-        depFeatures.set(dep, [...(depFeatures.get(dep) ?? []), depFeature])
+        want(dep, depFeature)
       } else {
         queue.push(entry)
       }
     }
+  }
+  for (const [dep, depFeature] of weak) {
+    if (deps.has(dep)) want(dep, depFeature)
   }
   return { deps, depFeatures }
 }
@@ -733,6 +745,18 @@ describe('build-ffi-binding — the keys cover every crate the build compiles', 
       enabledByFeatures(features, ['crypto'], false).depFeatures.get('helper'),
     ).toEqual(['extra'])
     expect(enabledByFeatures(features, ['weak'], false).deps).toEqual(new Set())
+    // …but once another feature turns the dependency on, the weak request
+    // applies — whichever order the two features are walked in. Dropping it
+    // would omit a feature that may enable a further path dependency, and the
+    // key would miss a real build input.
+    for (const order of [
+      ['weak', 'lazy'],
+      ['lazy', 'weak'],
+    ]) {
+      const on = enabledByFeatures(features, order, false)
+      expect(on.deps).toEqual(new Set(['lazy']))
+      expect(on.depFeatures.get('lazy')).toEqual(['extra'])
+    }
     // An optional dependency's implicit feature.
     expect(enabledByFeatures(features, ['gated'], false).deps).toEqual(
       new Set(['gated']),
