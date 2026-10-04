@@ -407,8 +407,41 @@ a bonus where the language has them.
 { email: types.TextEq() })` is `Plan::context("users").fields()
 .encrypt_into::<TextEq>("email")`, with the EQL domain as the field's target.
 Today that schema drives cipherstash-client through protect-ffi, a second
-engine. Converging the schema builder onto the plan grammar is the TS version
-of retiring `dynamic::record`; see the open questions.
+engine. The intended path is to retire protect-ffi and ship a new major of
+`@cipherstash/stack` on stack-encrypt, with breaking changes; that release is
+the TS version of retiring `dynamic::record`, and the schema builder becomes
+the TS spelling of a plan.
+
+### Where the design strains
+
+Checked against the JVM, PHP, Ruby, Swift and Kotlin on mobile, Dart, Elixir,
+C and C++, R and Julia as well. None breaks it; two places need a decision:
+
+1. **The guest's synchronous transport import, on single-threaded async
+   hosts.** `transport_send` is synchronous from the guest's point of view
+   and the ABI relies on it ("`block_on` never parks"). A wazero host function
+   may block a goroutine; a Wasm import in Node, a browser, Deno, Bun or an
+   edge worker may not block the event loop, and a BEAM NIF may not block a
+   scheduler. Native shells (napi, PyO3) can await and escape this; the TS
+   edge path (`wasm-inline`) cannot. Asyncify, JSPI and a worker with
+   `Atomics.wait` are each fragile. The robust fix is latent in `Pending`,
+   which already separates building requests from dispatching them: the guest
+   exports the two halves, the host performs the ZeroKMS round trip in its own
+   idiom, and the guest does no I/O at all. **A guest-ABI requirement to settle
+   before the edge binding is built**, not before.
+2. **Plaintext type in dynamically typed hosts.** Index semantics are
+   type-specific (`Match` is text only; `Ore` on `34` and `34.0` differ;
+   JavaScript's one number type cannot hold an `i64` without `BigInt`). A
+   plain JS object, PHP array, Ruby hash or R data frame does not say what
+   `34` is. **The plan carries a type per field**, and `build()` refuses an
+   index on a field whose type it cannot resolve; typed hosts fill it from the
+   type, dynamic hosts state it, and the guest verifies each tagged value
+   against the declaration rather than trusting the host. The TS schema
+   builder already does this (`types.IntegerOrd()`). A wire-format addition,
+   so it goes in the first engine PR.
+
+Encrypting inside the database (a Postgres extension, PL/pgSQL) is outside the
+model rather than a strain: it puts key material in the database.
 
 ## EQL v3 domains as field targets
 
@@ -440,7 +473,8 @@ field targets. Module size is measured in that PR and reported, not hidden.
 ## Sequencing
 
 1. **Engine additions in stack-encrypt**: `passthrough()`, execute-by-value,
-   `Index<S>` / `Indexes<S>` / `indexed()`, `Encrypted<Terms>`. One PR;
+   `Index<S>` / `Indexes<S>` / `indexed()`, `Encrypted<Terms>`, and a type
+   per field in the plan grammar (see "Where the design strains"). One PR;
    stack-encrypt 0.3.0. The combinators' public surface does not shrink.
 2. **The builder**, lowering to the engine, with the one-value chain, the
    fields chain, `Plan`, `using`, `query`, `decrypt`, `all`. Same or next PR.
