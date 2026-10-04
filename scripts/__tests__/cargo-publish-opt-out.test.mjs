@@ -10,10 +10,10 @@ import { REPO_ROOT } from './lib/repo-root.mjs'
  * three cargo-fuzz crates and the two Go WASI guests).
  *
  * A crate with no `publish` key is publishable BY DEFAULT, and release-plz
- * publishes every workspace member that has not opted out. The convention is
- * exactly one publishable crate per workspace with every other member
- * explicitly `publish = false`, so release-plz needs no per-package
- * configuration.
+ * publishes every workspace member that has not opted out. So every member
+ * not on its workspace's allowlist below is explicitly `publish = false`:
+ * EQL publishes one crate, the root workspace five (each in a release-plz
+ * version group, pinned by `release-plz-root-config.test.mjs`).
  *
  * ## Why both, and why that took a second pass
  *

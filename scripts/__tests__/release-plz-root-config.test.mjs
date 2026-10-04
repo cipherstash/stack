@@ -48,6 +48,7 @@ function rootMembers() {
     return {
       path,
       name: /^name\s*=\s*"([^"]+)"/m.exec(crate)?.[1],
+      version: /^version\s*=\s*"([^"]+)"/m.exec(crate)?.[1],
       publish: !/^publish\s*=\s*false$/m.test(crate),
     }
   })
@@ -114,6 +115,40 @@ describe('root release-plz.toml', () => {
     for (const name of PUBLISHED) {
       expect(packages.get(name)?.publish, name).toBe(true)
     }
+  })
+
+  it('gives the crates of one version group one version', () => {
+    // Bumps here are hand-written pull requests and `semver_check` is off, so
+    // nothing else stops a stack-encrypt bump that leaves stack-encrypt-derive
+    // behind from building and releasing.
+    const versions = new Map()
+    for (const { name, version } of members) {
+      const group = GROUPS[name]
+      if (!group) continue
+      expect(version, name).toBeTruthy()
+      versions.set(group, [
+        ...(versions.get(group) ?? []),
+        `${name}@${version}`,
+      ])
+    }
+    for (const [group, crates] of versions) {
+      const distinct = new Set(crates.map((crate) => crate.split('@')[1]))
+      expect(
+        distinct.size,
+        `version group ${group}: ${crates.join(', ')}`,
+      ).toBe(1)
+    }
+  })
+
+  it('pre-flights every published crate before importing the signing key', () => {
+    // The loop decides whether the GPG key is imported. A published crate
+    // missing from it reads as "already on crates.io", so its release would
+    // go out with an unsigned commit and tag, and nothing would say so.
+    const steps = readWorkflow(WORKFLOW)?.jobs?.['release-crates']?.steps ?? []
+    const preflight = steps.find((step) => step?.id === 'preflight')
+    const loop = /for crate in ([^;]+); do/.exec(preflight?.run ?? '')?.[1]
+    expect(loop, 'the preflight loop').toBeTruthy()
+    expect(loop.trim().split(/\s+/).sort()).toEqual(PUBLISHED)
   })
 
   it('points the changelog at a file that exists', () => {
