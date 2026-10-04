@@ -433,8 +433,15 @@ uses the guest.
    refuses an index on a field whose type it cannot resolve; typed hosts fill
    it from the type, dynamic hosts state it, and the engine verifies each
    tagged value against the declaration rather than trusting the shell. The TS
-   schema builder already does this (`types.IntegerOrd()`). A wire-format
-   addition, so it goes in the first engine PR.
+   schema builder already does this (`types.IntegerOrd()`). The type is
+   load-bearing three times: `encrypt` uses it to admit indexes and derive the
+   right term bytes, `query` to read the probe value (`query(34)` against a
+   `u64` field is a `u64` term), and `decrypt` to know what to hand back in a
+   host with no type to infer from (an Integer, not a Float; bytes, not a
+   String). The vocabulary is vitaminc's frozen tag table plus the composite
+   kinds, not new names. A wire-format addition, so it goes in the first
+   engine PR. This is the one gap in the plan approach itself that the
+   language check found.
 2. **The guest's synchronous transport import, on the edge path only.**
    `transport_send` is synchronous from the guest's point of view and the ABI
    relies on it ("`block_on` never parks"). A wazero host function may block a
