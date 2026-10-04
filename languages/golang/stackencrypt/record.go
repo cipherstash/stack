@@ -354,13 +354,15 @@ func PlanFromTags(t reflect.Type) (Plan, error) {
 			continue
 		}
 		pf := FieldPlan{Field: f.Name, Name: f.Name}
+		var ownKey string // the option that set pf.Context, for the message on a second one
 		for _, opt := range strings.Split(tag, ",") {
 			key, value, _ := strings.Cut(opt, "=")
 			switch key {
 			case "label", "context":
-				if !pf.Context.isZero() {
-					return Plan{}, fmt.Errorf("stackencrypt: field %s.%s: label= and context= both given; a field has one own context", t, f.Name)
+				if ownKey != "" {
+					return Plan{}, fmt.Errorf("stackencrypt: field %s.%s: %s= and %s= both given; a field has one own context", t, f.Name, ownKey, key)
 				}
+				ownKey = key
 				var err error
 				if key == "label" {
 					var l Label

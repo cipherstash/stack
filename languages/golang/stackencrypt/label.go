@@ -44,8 +44,9 @@ import (
 //
 // # Segments
 //
-// Every segment is plain — non-empty, no control characters, none of '/',
-// '(' or ')', not beginning with "b64:", a digit or '-' — which is exactly
+// Every segment is plain — non-empty, no control or invisible format
+// characters (zero-width and bidirectional marks), none of '/', '(' or ')',
+// not beginning with "b64:", a digit or '-' — which is exactly
 // the text the descriptor renders verbatim. So a Label's [Label.String] is
 // its descriptor, [ParseLabel] reads that string back losslessly (no
 // segment can contain the separator), and a string that is not a label is
@@ -119,6 +120,18 @@ func checkSegment(index int, s string) error {
 		if unicode.IsControl(r) || r == '(' || r == ')' {
 			return &LabelError{Index: index, Reason: fmt.Sprintf("contains %q, which the descriptor reserves", r)}
 		}
+		if strings.ContainsRune(invisible, r) {
+			return &LabelError{Index: index, Reason: fmt.Sprintf("contains %q, an invisible format character", r)}
+		}
 	}
 	return nil
 }
+
+// invisible is the format characters with no glyph of their own: the soft
+// hyphen, the Arabic letter mark, the Mongolian vowel separator, the
+// zero-width characters, the bidirectional embeddings, overrides and
+// isolates, and the byte-order mark. unicode.IsControl covers only Cc;
+// these are Cf. A name containing one prints like another name in the
+// ZeroKMS log, so they are refused beside the control characters. The same
+// list as Rust's Label::INVISIBLE; the shared fixture holds the two together.
+const invisible = "\u00ad\u061c\u180e\u200b\u200c\u200d\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2060\u2061\u2062\u2063\u2064\u2066\u2067\u2068\u2069\ufeff"

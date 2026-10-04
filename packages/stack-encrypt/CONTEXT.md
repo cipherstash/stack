@@ -101,8 +101,8 @@ _Avoid_: descriptor trait, Descriptor (the rendered string), DescriptorBuilder
 **Label**:
 The *name* of the data a value is sealed under (`users/email`,
 `documents/v2/body`): the first-class `Describe` type, a path of plain
-segments, each checked (non-empty, no `/`, `(`, `)` or control characters,
-not beginning with `b64:`, a digit or `-`), so its `Display` is its
+segments, each checked (non-empty; no `/`, `(`, `)`, control or invisible
+format characters; not beginning with `b64:`, a digit or `-`), so its `Display` is its
 descriptor and parses back losslessly. A context carries a name and,
 optionally, a *scope* (a tenant, a row id), and each has one spelling: the
 name is a `Label`, a flat list; the scope is `with`, which appends and nests

@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -60,7 +61,14 @@ func (t eqlTarget) Terms() []stackencrypt.TermKind { return slices.Clone(t.terms
 func (t eqlTarget) Context(id Identifier) (stackencrypt.Context, error) {
 	l, err := id.Label()
 	if err != nil {
-		return stackencrypt.Context{}, err
+		// The label error names a segment index; the caller gave a table and
+		// a column identity, so say which of those it was.
+		half, name := "table", id.Table
+		var le *stackencrypt.LabelError
+		if errors.As(err, &le) && le.Index == 1 {
+			half, name = "column identity", id.Column
+		}
+		return stackencrypt.Context{}, fmt.Errorf("%s %q cannot name a context: %w", half, name, err)
 	}
 	return l.Context(), nil
 }

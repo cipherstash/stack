@@ -385,13 +385,42 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                             } else if let Some(lit) = attrs.context {
                                 Some(OwnContext::Literal(lit))
                             } else {
-                                let column = match &from {
+                                // The inferred second segment must render
+                                // verbatim, or the descriptor would not name
+                                // the field. A named field is a Rust identifier
+                                // and plain unless raw; a tuple index begins with
+                                // a digit, which the descriptor reserves.
+                                let field = match &from {
                                     Member::Named(ident) => ident.to_string(),
-                                    Member::Unnamed(index) => index.index.to_string(),
+                                    Member::Unnamed(index) => {
+                                        return Err(syn::Error::new(
+                                            member.span(),
+                                            format!(
+                                                "a tuple field has no name to infer a context \
+                                                 from: its index `{0}` begins with a digit, \
+                                                 which a descriptor reserves, so `(\"{1}\", \
+                                                 \"{0}\")` would render escaped; give the \
+                                                 field `#[stash(context = \"..\")]`",
+                                                index.index,
+                                                prefix.value()
+                                            ),
+                                        ));
+                                    }
                                 };
+                                if !crate::attrs::is_plain_segment(&field) {
+                                    return Err(syn::Error::new(
+                                        member.span(),
+                                        format!(
+                                            "the field name `{field}` is not a plain descriptor \
+                                             segment, so `(\"{}\", \"{field}\")` would render \
+                                             escaped; give the field `#[stash(context = \"..\")]`",
+                                            prefix.value()
+                                        ),
+                                    ));
+                                }
                                 Some(OwnContext::Prefixed {
                                     prefix: prefix.clone(),
-                                    field: LitStr::new(&column, member.span()),
+                                    field: LitStr::new(&field, member.span()),
                                 })
                             };
                             Kind::Derived {
@@ -870,15 +899,42 @@ mod tests {
     }
 
     #[test]
-    fn a_tuple_struct_is_reached_and_named_by_index() {
-        let record = parse(parse_quote! {
+    fn a_tuple_struct_is_reached_by_index_and_must_name_its_contexts() {
+        // An index is no name for a context: it begins with a digit, which a
+        // descriptor reserves, so the bare form is refused…
+        let err = parse(parse_quote! {
             #[stash(struct = Reading, context = "readings")]
             struct EncryptedReading(EncryptedAge, StackCipherText);
         })
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("index `0` begins with a digit"),
+            "{err}"
+        );
+        // …and each field names its own, still reached by index.
+        let record = parse(parse_quote! {
+            #[stash(struct = Reading, context = "readings")]
+            struct EncryptedReading(
+                #[stash(context = "reading_value")] EncryptedAge,
+                #[stash(context = "reading_unit")] StackCipherText,
+            );
+        })
         .unwrap();
         assert!(matches!(record.fields[1].from(), Some(Member::Unnamed(i)) if i.index == 1));
-        assert_eq!(own(&record.fields[0]), "(readings, 0)");
-        assert_eq!(own(&record.fields[1]), "(readings, 1)");
+        assert_eq!(own(&record.fields[0]), "reading_value");
+        assert_eq!(own(&record.fields[1]), "reading_unit");
+    }
+
+    #[test]
+    fn a_container_prefix_that_is_not_plain_is_refused() {
+        let err = parse(parse_quote! {
+            #[stash(struct = User, context = "public/users")]
+            struct Encrypted {
+                email: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("must be plain"), "{err}");
     }
 
     #[test]

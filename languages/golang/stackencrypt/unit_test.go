@@ -297,7 +297,7 @@ func TestExplicitPlanIsTheTagPlan(t *testing.T) {
 	}
 	// Fields returns a copy.
 	explicit.Fields()[0].Context = MustContext("changed")
-	if !reflect.DeepEqual(explicit.Fields()[0].Context, label(t, "users/age").Context()) {
+	if !explicit.Fields()[0].Context.Equal(label(t, "users/age").Context()) {
 		t.Fatal("Fields exposed the plan's own slice")
 	}
 }

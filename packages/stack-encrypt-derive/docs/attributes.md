@@ -98,9 +98,13 @@ A `struct = ..` derive needs no attribute on its fields. With
 `#[stash(struct = User, context = "users")]`, a field `age` is derived from
 `user.age` under the **pair** `("users", "age")` — two context parts, which
 render the ZeroKMS descriptor `users/age`; a field `email` from `user.email`
-under `("users", "email")`; a tuple struct's `.0` under `("users", "0")`. The
-first part is the container's `context` and the second the *plaintext*
-field's name, so `#[stash(from = email_address)] email: ..` is derived under
+under `("users", "email")`. The first part is the container's `context` and
+the second the *plaintext* field's name. Both must be plain descriptor
+segments (no `/`, `(`, `)`, control or invisible character; not beginning
+with `b64:`, a digit or `-`), or the descriptor would render escaped and the
+ZeroKMS log would not name the column: the derive refuses a prefix such as
+`"public/users"` (write `"users"`), and a tuple field — whose index begins
+with a digit — must carry its own `context = ".."`. So `#[stash(from = email_address)] email: ..` is derived under
 `("users", "email_address")`: both parts name the stored field, not the
 encrypted struct. Nothing is pluralised or otherwise guessed. The pair is
 what `nonempty!("users").with("age")` spells at a call site, and what a

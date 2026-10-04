@@ -169,7 +169,10 @@ func (m Message) field(f Fact) (stackencrypt.FieldPlan, string, bool, error) {
 	// key, so it may contain anything.
 	context, err := d.target.Context(Identifier{Table: string(m.table), Column: identity})
 	if err != nil {
-		return none(fmt.Errorf("%w: target %v: %v", ErrInvalid, d.target, err))
+		// Both errors stay reachable: ErrInvalid for the policy's caller, and
+		// the target's own (a *stackencrypt.LabelError, say) for one that
+		// wants to know which name was wrong.
+		return none(fmt.Errorf("%w: target %v: %w", ErrInvalid, d.target, err))
 	}
 	return stackencrypt.FieldPlan{
 		Field:   f.goField(),

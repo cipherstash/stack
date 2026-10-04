@@ -175,7 +175,7 @@ func TestColumnPinSurvivesRenames(t *testing.T) {
 	}
 	f1, f2 := p1.Fields()[0], p2.Fields()[0]
 	want := label(t, "individuals/medicare_number").Context()
-	if !reflect.DeepEqual(f1.Context, want) || !reflect.DeepEqual(f2.Context, f1.Context) {
+	if !f1.Context.Equal(want) || !f2.Context.Equal(f1.Context) {
 		t.Fatalf("contexts %v, %v: want both individuals/medicare_number", f1.Context, f2.Context)
 	}
 	if f2.Name != "medicare_number" || f2.Field != "MedicareNo" {
@@ -186,7 +186,7 @@ func TestColumnPinSurvivesRenames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := unpinned.Fields()[0].Context; !reflect.DeepEqual(got, label(t, "individuals/medicare_no").Context()) {
+	if got := unpinned.Fields()[0].Context; !got.Equal(label(t, "individuals/medicare_no").Context()) {
 		t.Fatalf("unpinned context = %v", got)
 	}
 }
@@ -277,6 +277,13 @@ func TestBuildRefusesMalformedDecisions(t *testing.T) {
 		"identity on plain":  {"t", plan.When(plan.Field("a"), plan.Plaintext(), plan.Identity("c")), plan.ErrInvalid, "Plaintext"},
 		"identity on custom": {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.Custom("ctx")), plan.Identity("c")), plan.ErrInvalid, "context is fixed"},
 		"slash in identity":  {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL()), plan.Column("c"), plan.Identity("x/y")), plan.ErrInvalid, "contains '/'"},
+		// Identifier.Label() refuses more than '/': every reason a segment is
+		// not plain, named as the table or the column identity it came from.
+		"digit in table":     {"2024_events", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL())), plan.ErrInvalid, `table "2024_events"`},
+		"digit in column":    {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL()), plan.Column("2fa_secret")), plan.ErrInvalid, `column identity "2fa_secret"`},
+		"b64 in column":      {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL()), plan.Column("b64:x")), plan.ErrInvalid, "another descriptor form"},
+		"paren in column":    {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL()), plan.Column("a(b")), plan.ErrInvalid, "reserves"},
+		"invisible in table": {"users\u200b", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL())), plan.ErrInvalid, "invisible"},
 		"zero decision":      {"t", plan.When(plan.Field("a"), plan.Decision{}), plan.ErrInvalid, "zero Decision"},
 		"empty context":      {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.Custom(""))), plan.ErrInvalid, "empty context"},
 		"nil policy":         {"t", nil, plan.ErrUnmatched, ""},
@@ -495,7 +502,36 @@ func TestASlashInARenamedStorageColumnIsOnlyARecordKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := p.Fields()[0]
-	if f.Name != "blob/v1" || !reflect.DeepEqual(f.Context, label(t, "t/blob").Context()) {
+	if f.Name != "blob/v1" || !f.Context.Equal(label(t, "t/blob").Context()) {
 		t.Fatalf("field = %+v, want record key blob/v1 under t/blob", f)
+	}
+}
+
+// The label error survives the wrapping, so a caller can learn which half
+// of the identifier was wrong rather than only that the decision is invalid.
+func TestABadIdentifierKeepsItsLabelError(t *testing.T) {
+	facts := []plan.Fact{{Field: "a", Annotations: []plan.Annotation{{Key: "k", Values: []string{"v"}}}}}
+	_, err := plan.ForMessage(nil, "a/b", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL()))).Build(facts)
+	var le *se.LabelError
+	if !errors.Is(err, plan.ErrInvalid) || !errors.As(err, &le) || le.Index != 0 {
+		t.Fatalf("err = %v; want ErrInvalid wrapping a LabelError for segment 0", err)
+	}
+	if !strings.Contains(err.Error(), `table "a/b"`) {
+		t.Errorf("err = %v; want the table named", err)
+	}
+}
+
+// Only an EQL target's context is built from the table, so a message whose
+// every encrypted field has a Custom target builds with a table name that
+// would not be a plain segment. Recorded, not endorsed: the table is unused
+// by such a field's context.
+func TestACustomOnlyMessageTakesAnyTableName(t *testing.T) {
+	facts := []plan.Fact{{Field: "a", Annotations: []plan.Annotation{{Key: "k", Values: []string{"v"}}}}}
+	p, err := plan.ForMessage(nil, "a/b", plan.When(plan.Field("a"), plan.Encrypt(plan.Custom("ctx")))).Build(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Fields()[0].Context; !got.Equal(se.MustContext("ctx")) {
+		t.Errorf("context = %v, want the custom part", got)
 	}
 }

@@ -46,8 +46,10 @@ fixed shape). Issue #1049 and the review of #1050 named the split.
    literal `"users/email"` and the pair `("users", "email")` would derive
    the same key.
 3. **The pair everywhere, `/` as the separator, and escape any text part
-   that could read as another form.** A part containing `/`, `(`, `)` or a
-   control character, or beginning with `b64:`, a digit or `-`, renders as
+   that could read as another form.** A part containing `/`, `(`, `)`, a
+   control character or an invisible format character (a zero-width or
+   bidirectional mark, which would print as another name in the log), or
+   beginning with `b64:`, a digit or `-`, renders as
    `b64:` plus URL-safe base64. The standard base64 alphabet contains `/`,
    so it could not be used.
 

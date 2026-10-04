@@ -164,6 +164,9 @@ func TestTagsSpellALabelOrOneContextPart(t *testing.T) {
 		"both": reflect.TypeOf(struct {
 			A string `stash:"label=t/a,context=a"`
 		}{}),
+		"label twice": reflect.TypeOf(struct {
+			A string `stash:"label=t/a,label=t/b"`
+		}{}),
 		"bad label": reflect.TypeOf(struct {
 			A string `stash:"label=t/a/"`
 		}{}),
@@ -181,4 +184,58 @@ func TestTagsSpellALabelOrOneContextPart(t *testing.T) {
 	if _, err := NewPlan(FieldPlan{Field: "A"}); err == nil || !strings.Contains(err.Error(), "needs a context") {
 		t.Errorf("NewPlan without a context = %v", err)
 	}
+}
+
+// A repeated option is reported as what the author wrote, not as a mix of
+// the two keys.
+func TestARepeatedOwnContextOptionNamesItself(t *testing.T) {
+	_, err := PlanFromTags(reflect.TypeOf(struct {
+		A string `stash:"context=a,context=b"`
+	}{}))
+	if err == nil || !strings.Contains(err.Error(), "context= and context= both given") {
+		t.Errorf("err = %v, want the repeated option named", err)
+	}
+}
+
+// A Label owns its segments, as a Context owns its parts: NewLabel copies
+// the slice in and Segments copies it out, so neither side can change the
+// name the data is keyed under through a shared array.
+func TestLabelOwnsItsSegments(t *testing.T) {
+	segments := []string{"users", "email"}
+	l, err := NewLabel(segments...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	segments[1] = "phone"
+	if l.String() != "users/email" {
+		t.Errorf("label followed the caller's slice: %s", l)
+	}
+	out := l.Segments()
+	out[0] = "accounts"
+	if l.String() != "users/email" {
+		t.Errorf("label followed the returned slice: %s", l)
+	}
+}
+
+// Equal is the supported comparison: == on two list contexts panics.
+func TestContextEqualComparesParts(t *testing.T) {
+	pair := label(t, "users/email").Context()
+	if !pair.Equal(label(t, "users/email").Context()) {
+		t.Error("equal labels compare unequal")
+	}
+	if pair.Equal(label(t, "users/phone").Context()) || pair.Equal(MustContext("users/email")) {
+		t.Error("different contexts compare equal")
+	}
+	if !MustContext("users").Equal(label(t, "users").Context()) {
+		t.Error("a one-segment label is not the bare part")
+	}
+	if (Context{}).Equal(pair) || !(Context{}).Equal(Context{}) {
+		t.Error("the zero Context compares wrongly")
+	}
+	defer func() {
+		if recover() == nil {
+			t.Error("== on list contexts did not panic; Equal's reason to exist is gone, revisit its doc")
+		}
+	}()
+	_ = pair == label(t, "users/email").Context()
 }

@@ -132,8 +132,10 @@ impl Descriptor {
     /// # Frozen rendering
     ///
     /// * A **text** part, or a **bytes** part that is UTF-8, renders
-    ///   **verbatim** when it is *plain*: non-empty, no control characters,
-    ///   none of `/`, `(`, `)`, not beginning with
+    ///   **verbatim** when it is *plain*: non-empty, no control characters
+    ///   and no invisible format characters (zero-width and bidirectional
+    ///   marks, which would print as another name), none of `/`, `(`, `)`,
+    ///   not beginning with
     ///   [`b64:`](Self::BASE64_PREFIX), and not beginning with an ASCII digit
     ///   or `-`. So a table and a column are two parts — the pair
     ///   `("users", "email")` renders `users/email`, readable in the ZeroKMS
@@ -290,8 +292,13 @@ impl Descriptor {
 /// that contains the separator is escaped rather than read as two. That is
 /// what keeps an open trait safe as a key-derivation input: the implementor
 /// chooses *what* the identity is, this crate chooses how it is spelled. A
-/// `Description` is built from its first part, so a description can never
-/// be empty: there is no way to key under nothing by forgetting a part.
+/// `Description` is built from its first part, so a part cannot be forgotten.
+/// The parts themselves are not checked: `Description::text("")` is the
+/// empty text part and, alone, renders the empty descriptor, which binds no
+/// identity, and `Description::part(None::<&str>)` renders `()`. A name
+/// taken from a runtime string belongs in a [`Label`], which refuses what
+/// would not render as itself; `Description` is for a type whose parts are
+/// fixed by its definition.
 ///
 /// A `Describe` type is sealed under as a context through the same parts:
 /// [`to_context`](Self::to_context) is the [`ContextPiece`] the type's
@@ -464,7 +471,8 @@ impl<'a> IntoContext<'a> for Description {
 ///
 /// # Segments
 ///
-/// Every segment is **plain** — non-empty, no control characters, none of
+/// Every segment is **plain** — non-empty, no control or invisible format
+/// characters (zero-width and bidirectional marks), none of
 /// `/`, `(`, `)`, not beginning with `b64:`, a digit or `-` — which is
 /// exactly the text [`Descriptor::from_piece`] renders verbatim. So a
 /// `Label` renders as its segments joined by [`/`](Descriptor::SEPARATOR),
@@ -526,12 +534,28 @@ impl Label {
             if found == Descriptor::SEPARATOR {
                 return Err(LabelError::Separator { index });
             }
-            if found.is_control() || matches!(found, '(' | ')') {
+            if found.is_control() || Self::INVISIBLE.contains(&found) || matches!(found, '(' | ')')
+            {
                 return Err(LabelError::Reserved { index, found });
             }
         }
         Ok(())
     }
+
+    /// Format characters with no glyph of their own: the soft hyphen, the
+    /// Arabic letter mark, the Mongolian vowel separator, the zero-width
+    /// characters, the bidirectional embeddings, overrides and isolates, and
+    /// the byte-order mark. `char::is_control` covers only `Cc`; these are
+    /// `Cf`. A name containing one prints like another name in the ZeroKMS
+    /// log, which is what a plain segment exists to prevent, so they are
+    /// refused beside the control characters. The Go binding carries the
+    /// same list, and the shared fixture holds the two together.
+    const INVISIBLE: &'static [char] = &[
+        '\u{00AD}', '\u{061C}', '\u{180E}', '\u{200B}', '\u{200C}', '\u{200D}', '\u{200E}',
+        '\u{200F}', '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}', '\u{2060}',
+        '\u{2061}', '\u{2062}', '\u{2063}', '\u{2064}', '\u{2066}', '\u{2067}', '\u{2068}',
+        '\u{2069}', '\u{FEFF}',
+    ];
 }
 
 impl Describe for Label {
@@ -611,8 +635,8 @@ pub enum LabelError {
         Descriptor::SEPARATOR
     )]
     Separator { index: usize },
-    /// The segment contains a control character or a parenthesis, which
-    /// the descriptor reserves.
+    /// The segment contains a control character, an invisible format
+    /// character or a parenthesis, which the descriptor reserves.
     #[error("label segment {index} contains {found:?}, which the descriptor reserves")]
     Reserved { index: usize, found: char },
     /// The segment begins like another descriptor form: `b64:`, a digit or
@@ -1200,7 +1224,7 @@ mod label_tests {
         // Golden renderings. Changing any of these re-keys every value ever
         // sealed under the shape, so a change here is a migration, not a
         // refactor.
-        let cases: [(ContextPiece<'static>, &str); 8] = [
+        let cases: [(ContextPiece<'static>, &str); 11] = [
             ("users".into_context(), "users"),
             (label(&["users", "email"]).to_context(), "users/email"),
             (label(&["a", "b", "c"]).to_context(), "a/b/c"),
@@ -1214,6 +1238,18 @@ mod label_tests {
             ("users/email".into_context(), "b64:dXNlcnMvZW1haWw="),
             (7u64.into_context(), "7u64"),
             ((-3i32).into_context(), "4294967293u32"),
+            // A list inside a description nests, as it does anywhere: an
+            // implementor that returns one does not get a flat label.
+            (
+                Description::text("a")
+                    .then(nonempty!("b").with("c"))
+                    .into_context(),
+                "a/(b/c)",
+            ),
+            // A description's parts are not checked: the empty text part
+            // alone is the empty descriptor, and an absent part is `()`.
+            (Description::text(String::new()).into_context(), ""),
+            (Description::part(None::<&str>).into_context(), "()"),
         ];
         for (piece, want) in cases {
             assert_eq!(Descriptor::from_piece(&piece).as_str(), want);

@@ -3303,6 +3303,7 @@ version = "0.2.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "serde_json",
  "stack-encrypt",
  "syn 3.0.3",
  "tokio",

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"reflect"
 )
 
 // Context is the encryption context a record field or a term probe binds:
@@ -26,6 +27,10 @@ import (
 //
 // A Context owns its parts: a byte-slice part is copied in, so a caller's
 // buffer reused once the Context is built does not change it.
+//
+// Compare two Contexts with [Context.Equal]. Do not use == and do not use a
+// Context as a map key: a list context holds a slice, and Go panics when it
+// compares those.
 type Context struct {
 	node any
 }
@@ -110,6 +115,12 @@ func checkPart(part any) error {
 		return fmt.Errorf("stackencrypt: %T is not a context part (string, []byte or integer)", part)
 	}
 }
+
+// Equal reports whether c and other are the same context: the same parts,
+// in the same order, with the same types, so a probe built from one matches
+// terms written under the other. This is the supported comparison; == on
+// two Contexts panics when either holds a list.
+func (c Context) Equal(other Context) bool { return reflect.DeepEqual(c.node, other.node) }
 
 // isZero reports whether c is the zero Context, which binds nothing: what a
 // plan field without a context, or a zero Label, carries.
