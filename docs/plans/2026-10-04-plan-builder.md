@@ -377,6 +377,39 @@ set is renamed once the Go surface settles (`se_encrypt`, `se_decrypt`,
 `se_query`, with the plan as an argument), and the element exports fold into
 `se_decrypt`.
 
+## Other languages
+
+Checked 2026-10-04 against Node/TS, Python and C#, none of which is being
+built yet. The result: one guest, many hosts. The Go guest does no I/O of its
+own (it asks the host for HTTP and for a bearer token through
+`transport_send` and `token_get`), and `stack-guest-abi` exists so every
+guest reads identically to its host. With ADR-0007 there is no executor to
+port, so a binding is a **host** plus a **chain in that language**.
+
+| Concern | Rust | Go | Node/TS | Python | C# |
+|---|---|---|---|---|---|
+| Finalizer | `.await` | `Run(ctx)` | `await` (thenable chain) | `await` plus sync `.run()` | `await` (`GetAwaiter`) or `RunAsync(ct)` |
+| Plan from a type | derive | tags, `PlanOf[T]()` | schema builder or decorators | `Plan.of(User)` over `Annotated` | attributes; reflection or a source generator |
+| Index applies to type | compile time | `Build()` | partly via conditional types | build | partly via constraints |
+| Typed output | `Encrypted<Terms>`, derived struct | `EncryptedRecord`; `Plan[T]` later | inferred from the plan | dict or the dataclass | `Plan<T>`, `Task<T>` |
+| Query form | source type | source struct | overloads or union | runtime type | overloads |
+| Transport | in-process | WASI guest (wazero) | napi shell, or the guest under `WebAssembly` | PyO3 shell, or the guest under wasmtime | P/Invoke cdylib, or the guest under Wasmtime .NET |
+
+Every host supplies the same four things and nothing else: an HTTP transport
+and a token source behind the guest's two imports; an encoder and decoder for
+the `FfiValue` transport codec (Go's `vcvalue` is the model, and this is the
+one piece of real per-language work); a mapping from the status table to the
+language's errors; and whatever memory hygiene the platform allows. The
+fail-closed `build()` checks are the floor everywhere; compile-time checks are
+a bonus where the language has them.
+
+**TypeScript already has a plan in another spelling.** `encryptedTable('users',
+{ email: types.TextEq() })` is `Plan::context("users").fields()
+.encrypt_into::<TextEq>("email")`, with the EQL domain as the field's target.
+Today that schema drives cipherstash-client through protect-ffi, a second
+engine. Converging the schema builder onto the plan grammar is the TS version
+of retiring `dynamic::record`; see the open questions.
+
 ## EQL v3 domains as field targets
 
 Depends on #971 (EQL v3 `TextEq` / `TextEqQuery` in `eql-bindings`, and
@@ -435,5 +468,8 @@ field targets. Module size is measured in that PR and reported, not hidden.
 - **The decrypt side of the one-value chain**: `decrypt(ct).using(&age_plan)`
   returns the plaintext type the plan was built for; whether a hand-built plan
   carries `S` or the caller names it is settled in the builder PR.
+- **Converging the TypeScript schema builder onto the plan grammar**, so
+  `@cipherstash/stack` stops being a second engine beside stack-encrypt.
+  Out of scope here; recorded so a TS binding does not grow an executor.
 - **`eqlv3` as a package or a separate `go.mod`**: a package as read; correct
   if a separate module was meant.
