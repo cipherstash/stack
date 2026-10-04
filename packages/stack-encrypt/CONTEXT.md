@@ -46,15 +46,17 @@ leaf requires a nonempty context, validated by Vitamin C and owned in a
 record deriving terms threads to every field) or an `AeadContext` (the AAD
 encoding alone — what a ciphertext is sealed and opened under; a record
 deriving terms hands its ciphertext fields that half of its `CallerContext`);
-a `nonempty!("users/email")` literal, a `NonEmpty::new(value)?` at runtime,
-or a bare integer. It becomes the ciphertext's associated data,
+a `nonempty!("users").with("email")` pair (a table and a column are two
+parts, rendered `users/email`), a `NonEmpty::new(value)?` at runtime, or a
+bare integer. It becomes the ciphertext's associated data,
 the term's PRF context, and the ZeroKMS descriptor of the data key.
 _Avoid_: AAD (that is one of its encodings, not the concept), lock context
 
 **Own context**:
-The context a field carries itself: a `context = ".."` literal, or the one a
-`struct = ..` derive infers as `<struct context>/<field>`. A caller's context
-*extends* it (`("users/age", id)`); it is never discarded. A subtree of a
+The context a field carries itself: a `context = ".."` literal (one text
+part, exactly as written), or the pair a `struct = ..` derive infers,
+`(<struct context>, <field>)`. A caller's context *extends* it
+(`(("users", "age"), id)`); it is never discarded. A subtree of a
 declaration is given one with `under` (the caller's is then optional) or
 `extend` (the caller's stays required).
 _Avoid_: default context, field prefix

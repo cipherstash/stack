@@ -12,7 +12,7 @@
 use super::context::{AeadContext, CallerContext, DeclaredContext, Extends};
 use super::core::{encrypt_native, open_native, Term};
 use super::{CipherScope, Pending};
-use crate::{Error, KeysetCipher, NonEmpty, StackCipher, StackCipherText};
+use crate::{Error, IntoContext, KeysetCipher, NonEmpty, StackCipher, StackCipherText};
 use stack_kms::MaybeSend;
 use std::fmt;
 
@@ -230,7 +230,10 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// its own cannot be run under `()`. Available wherever a
     /// [`CallerContext`] can become what the subtree needs: a leaf of either
     /// kind, or a record whose own contexts a caller's extends.
-    pub fn under(self, own: NonEmpty<&'static str>) -> Encryption<'s, S, T, K, DeclaredContext>
+    pub fn under(
+        self,
+        own: NonEmpty<impl IntoContext<'static> + MaybeSend + 's>,
+    ) -> Encryption<'s, S, T, K, DeclaredContext>
     where
         Ctx: From<CallerContext>,
     {
@@ -245,7 +248,10 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// an [`AeadContext`] for a record that only seals — and the same one
     /// context reaches every operation beneath; the difference from `under`
     /// is only whether `()` can satisfy the result.
-    pub fn extend<C>(self, own: NonEmpty<&'static str>) -> Encryption<'s, S, T, K, C>
+    pub fn extend<C>(
+        self,
+        own: NonEmpty<impl IntoContext<'static> + MaybeSend + 's>,
+    ) -> Encryption<'s, S, T, K, C>
     where
         C: Extends + 's,
         Ctx: From<C>,

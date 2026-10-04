@@ -26,7 +26,7 @@
 //!
 //! * The descriptor is *finer* for a pre-encoded
 //!   [`Context`](vitaminc_aead::Context), which is one opaque bytes part.
-//!   `("tenant", 7u64)` renders `tenant|7u64`; the same tuple passed
+//!   `("tenant", 7u64)` renders `tenant/7u64`; the same tuple passed
 //!   through `into_aad()` first encodes to the same AAD bytes but renders
 //!   `b64:` + those bytes. ZeroKMS refuses what the AEAD would open.
 //! * The descriptor is *coarser* for shapes that render alike but encode
@@ -44,7 +44,7 @@
 
 use std::sync::Arc;
 
-use base64ct::{Base64, Encoding};
+use base64ct::{Base64Url, Encoding};
 use vitaminc_aead::{ContextPiece, IntoAad, IntoContext};
 
 /// A context rendered as the string sent to ZeroKMS with every data-key
@@ -68,7 +68,7 @@ impl Descriptor {
     pub const BASE64_PREFIX: &'static str = "b64:";
 
     /// The separator between the parts of a list.
-    pub const SEPARATOR: char = '|';
+    pub const SEPARATOR: char = '/';
 
     /// The longest descriptor ZeroKMS accepts, in bytes of the rendered
     /// string: the protocol's [`MAX_DESCRIPTOR_LEN`](crate::kms::MAX_DESCRIPTOR_LEN).
@@ -92,12 +92,14 @@ impl Descriptor {
     /// ```
     /// use stack_encrypt::{nonempty, Descriptor};
     ///
-    /// // A textual context is its own descriptor.
-    /// assert_eq!(Descriptor::of("users/email").as_str(), "users/email");
+    /// // A table and a column are two parts, joined by `/`.
+    /// let column = nonempty!("users").with("email");
+    /// assert_eq!(Descriptor::of(column).as_str(), "users/email");
     ///
-    /// // A composite renders its parts in order: a field bound to a row id.
-    /// let row = nonempty!("users/email").with(7u64);
-    /// assert_eq!(Descriptor::of(row).as_str(), "users/email|7u64");
+    /// // A composite renders its parts in order: that column bound to a row
+    /// // id. The nested pair is parenthesised.
+    /// let row = column.with(7u64);
+    /// assert_eq!(Descriptor::of(row).as_str(), "(users/email)/7u64");
     /// assert!(Descriptor::of(row).fits());
     ///
     /// // Rendered from the parts, so it follows the encoding: integers are
@@ -105,7 +107,7 @@ impl Descriptor {
     /// // could read as another form is escaped.
     /// assert_eq!(Descriptor::of(7i64), Descriptor::of(7u64));
     /// assert_eq!(Descriptor::of(Some("")).as_str(), "(b64:)");
-    /// assert_eq!(Descriptor::of("a|b").as_str(), "b64:YXxi");
+    /// assert_eq!(Descriptor::of("users/email").as_str(), "b64:dXNlcnMvZW1haWw=");
     /// ```
     pub fn of<'a>(context: impl IntoContext<'a>) -> Self {
         Self::from_piece(&context.into_context())
@@ -117,12 +119,14 @@ impl Descriptor {
     ///
     /// * A **text** part, or a **bytes** part that is UTF-8, renders
     ///   **verbatim** when it is *plain*: non-empty, no control characters,
-    ///   none of `|`, `(`, `)`, not beginning with
+    ///   none of `/`, `(`, `)`, not beginning with
     ///   [`b64:`](Self::BASE64_PREFIX), and not beginning with an ASCII digit
-    ///   or `-`. So a `&str` context — `users/email` — is its own
-    ///   descriptor, readable in the ZeroKMS log. Any other text or bytes
-    ///   part renders as `b64:` followed by the standard (padded) base64 of
-    ///   its bytes; an **empty** part is therefore the bare prefix, `b64:`,
+    ///   or `-`. So a table and a column are two parts — the pair
+    ///   `("users", "email")` renders `users/email`, readable in the ZeroKMS
+    ///   log — and a single text part containing `/` is escaped, so it can
+    ///   never be mistaken for one. Any other text or bytes part renders as
+    ///   `b64:` followed by the URL-safe (padded) base64 of its bytes: the
+    ///   standard alphabet's `/` would read as a separator; an **empty** part is therefore the bare prefix, `b64:`,
     ///   so `Some("")` is `(b64:)` and `None` is `()`. Text and bytes with
     ///   the same bytes render the same, though since vitaminc 0.5 they
     ///   encode differently: the rendering is of the parts, not the bytes.
@@ -133,11 +137,12 @@ impl Descriptor {
     ///   leaf's type tag carries the signedness, so `7i64` and `7u64` are
     ///   two contexts to the AEAD; the rendering, frozen before that, does
     ///   not follow.
-    /// * A **list** renders its parts joined by [`|`](Self::SEPARATOR). At
+    /// * A **list** renders its parts joined by [`/`](Self::SEPARATOR). At
     ///   the root, a list of two or more parts has no delimiters —
-    ///   `nonempty!("users/email").with(7u64)` is `users/email|7u64` — and
-    ///   any other list, nested or of fewer than two parts, is parenthesised:
-    ///   `(users/email)`, `()`, `a|(b|c)`.
+    ///   `nonempty!("users").with("email")` is `users/email` — and any other
+    ///   list, nested or of fewer than two parts, is parenthesised:
+    ///   `(users/email)/7u64` for that pair extended with a row id, `()`,
+    ///   `a/(b/c)`.
     /// * At the root, the empty text or bytes part — the `()` AAD, or `""` —
     ///   renders as the empty string, which is what ZeroKMS receives when a
     ///   caller opts out of descriptors.
@@ -208,7 +213,7 @@ impl Descriptor {
             Ok(text) if Self::is_plain(text) => out.push_str(text),
             _ => {
                 out.push_str(Self::BASE64_PREFIX);
-                out.push_str(&Base64::encode_string(bytes));
+                out.push_str(&Base64Url::encode_string(bytes));
             }
         }
     }
@@ -227,7 +232,7 @@ impl Descriptor {
             && !text.starts_with(|c: char| c.is_ascii_digit() || c == '-')
             && !text
                 .chars()
-                .any(|c| c.is_control() || matches!(c, '|' | '(' | ')'))
+                .any(|c| c.is_control() || matches!(c, '/' | '(' | ')'))
     }
 
     /// The rendered string, as sent to ZeroKMS.
@@ -284,23 +289,20 @@ mod tests {
 
     #[test]
     fn a_textual_context_is_its_own_descriptor() {
-        assert_eq!(Descriptor::of("users/email").as_str(), "users/email");
+        assert_eq!(Descriptor::of("users").as_str(), "users");
+        assert_eq!(Descriptor::of(nonempty!("users")).as_str(), "users");
         assert_eq!(
-            Descriptor::of(nonempty!("users/email")).as_str(),
-            "users/email"
+            Descriptor::of(String::from("naïve ünïcode")).as_str(),
+            "naïve ünïcode"
         );
         assert_eq!(
-            Descriptor::of(String::from("naïve/ünïcode")).as_str(),
-            "naïve/ünïcode"
-        );
-        assert_eq!(
-            Descriptor::of(b"users/email".as_slice()).as_str(),
-            "users/email",
+            Descriptor::of(b"users".as_slice()).as_str(),
+            "users",
             "bytes that are text render as the text they encode to"
         );
         assert_eq!(
-            Descriptor::of(Context::from_encoded(b"users/email")).as_str(),
-            "users/email",
+            Descriptor::of(Context::from_encoded(b"users")).as_str(),
+            "users",
             "already-encoded AAD renders by its bytes"
         );
     }
@@ -336,7 +338,7 @@ mod tests {
     /// Every view of a descriptor is the one rendering ZeroKMS is sent.
     #[test]
     fn display_and_as_ref_are_the_rendering() {
-        let descriptor = Descriptor::of(nonempty!("users/email"));
+        let descriptor = Descriptor::of(nonempty!("users").with("email"));
         assert_eq!(descriptor.to_string(), "users/email");
         assert_eq!(AsRef::<str>::as_ref(&descriptor), "users/email");
     }
@@ -370,18 +372,18 @@ mod tests {
         // differently (a one-element list and an empty one).
         assert_eq!(Descriptor::of(Some("")).as_str(), "(b64:)");
         assert_eq!(Descriptor::of(None::<&str>).as_str(), "()");
-        assert_eq!(Descriptor::of(("", "")).as_str(), "b64:|b64:");
+        assert_eq!(Descriptor::of(("", "")).as_str(), "b64:/b64:");
         assert_eq!(
-            Descriptor::of(nonempty!("users/email").with(Some(""))).as_str(),
-            "users/email|(b64:)"
+            Descriptor::of(nonempty!("users").with(Some(""))).as_str(),
+            "users/(b64:)"
         );
         assert_eq!(
-            Descriptor::of(nonempty!("users/email").with(None::<&str>)).as_str(),
-            "users/email|()"
+            Descriptor::of(nonempty!("users").with(None::<&str>)).as_str(),
+            "users/()"
         );
         assert_eq!(
-            Descriptor::of(nonempty!("users/email").with("")).as_str(),
-            "users/email|b64:"
+            Descriptor::of(nonempty!("users").with("")).as_str(),
+            "users/b64:"
         );
     }
 
@@ -403,8 +405,8 @@ mod tests {
         }
         check(7u64, 7i64);
         check(-3i32, 4_294_967_293u32);
-        check("users/email", b"users/email".as_slice());
-        check(("a|b", 7u64), (b"a|b".as_slice(), 7i64));
+        check("users", b"users".as_slice());
+        check(("a/b", 7u64), (b"a/b".as_slice(), 7i64));
 
         // The empty root renders as the empty string whatever its shape.
         assert_eq!(
@@ -421,7 +423,7 @@ mod tests {
         // bytes. Seal and open must present the context in the same shape.
         let structured = Descriptor::of(("tenant", 7u64));
         let encoded = Descriptor::of(("tenant", 7u64).into_aad());
-        assert_eq!(structured.as_str(), "tenant|7u64");
+        assert_eq!(structured.as_str(), "tenant/7u64");
         assert!(encoded.as_str().starts_with(Descriptor::BASE64_PREFIX));
         assert_ne!(structured, encoded);
 
@@ -441,22 +443,27 @@ mod tests {
     #[test]
     fn composites_render_their_parts_in_order() {
         assert_eq!(
-            Descriptor::of(nonempty!("users/email").with(7u64)).as_str(),
-            "users/email|7u64"
+            Descriptor::of(nonempty!("users").with("email")).as_str(),
+            "users/email"
         );
         assert_eq!(
-            Descriptor::of(NonEmpty::new("users/email").unwrap().with(7u64)),
-            Descriptor::of(("users/email", 7u64)),
+            Descriptor::of(nonempty!("users").with("email").with(7u64)).as_str(),
+            "(users/email)/7u64",
+            "`with` nests to the left, so the pair is a parenthesised part"
+        );
+        assert_eq!(
+            Descriptor::of(NonEmpty::new("users").unwrap().with(7u64)),
+            Descriptor::of(("users", 7u64)),
             "NonEmpty is transparent to the rendering"
         );
         assert_eq!(
-            Descriptor::of(("tenant", ("users/email", 7u64))).as_str(),
-            "tenant|(users/email|7u64)",
+            Descriptor::of(("tenant", (("users", "email"), 7u64))).as_str(),
+            "tenant/((users/email)/7u64)",
             "a nested list is parenthesised"
         );
         assert_eq!(
-            Descriptor::of(Some("users/email")).as_str(),
-            "(users/email)",
+            Descriptor::of(Some("users")).as_str(),
+            "(users)",
             "a one-part list is parenthesised even at the root"
         );
         assert_eq!(Descriptor::of(None::<&str>).as_str(), "()");
@@ -475,9 +482,17 @@ mod tests {
         let text = Descriptor::of("b64:YQ==");
         assert_eq!(text.as_str(), "b64:YjY0OllRPT0=");
         assert_ne!(text, Descriptor::of("a"));
-        // The list separator and delimiters.
-        assert_eq!(Descriptor::of("a|b").as_str(), "b64:YXxi");
+        // The list separator and delimiters. A single part containing `/` is
+        // escaped, so `"users/email"` can never read as the pair
+        // `("users", "email")`.
+        assert_eq!(Descriptor::of("a/b").as_str(), "b64:YS9i");
+        assert_ne!(
+            Descriptor::of("users/email"),
+            Descriptor::of(("users", "email")),
+        );
         assert_eq!(Descriptor::of("(a)").as_str(), "b64:KGEp");
+        // `|` is plain text now; it was the separator before.
+        assert_eq!(Descriptor::of("a|b").as_str(), "a|b");
         // A leading digit or sign, which is how an integer begins.
         assert_eq!(Descriptor::of("7u64").as_str(), "b64:N3U2NA==");
         assert_eq!(Descriptor::of("-x").as_str(), "b64:LXg=");
@@ -491,9 +506,9 @@ mod tests {
         assert!(!Descriptor::of("a".repeat(513)).fits());
         assert!(!Descriptor::of("ü".repeat(512)).fits());
         assert_eq!(Descriptor::of("ü".repeat(256)).len(), 512);
-        // The escape grows a part: 400 bytes of text with a `|` renders as
+        // The escape grows a part: 400 bytes of text with a `/` renders as
         // `b64:` + 536 base64 characters.
-        let escaped = Descriptor::of(format!("|{}", "a".repeat(399)));
+        let escaped = Descriptor::of(format!("/{}", "a".repeat(399)));
         assert_eq!(escaped.len(), 4 + 536);
         assert!(!escaped.fits());
     }
@@ -510,7 +525,9 @@ mod tests {
 
     #[test]
     fn invalid_utf8_renders_base64() {
-        assert_eq!(Descriptor::of(&[0xff, 0xfe][..]).as_str(), "b64://4=");
+        // URL-safe base64: the standard alphabet's `//4=` would read as
+        // separators.
+        assert_eq!(Descriptor::of(&[0xff, 0xfe][..]).as_str(), "b64:__4=");
     }
 
     #[test]
@@ -541,6 +558,16 @@ mod tests {
             Descriptor::of("7"),
             Descriptor::of(&[0xff, 0xfe][..]),
             Descriptor::of(()),
+            // What `/` as the separator must keep apart: a pair from the same
+            // text joined, a split moved across the separator, and joined
+            // text that spells a nested list.
+            Descriptor::of(("users", "email")),
+            Descriptor::of(nonempty!("users").with("email").with(7u64)),
+            Descriptor::of(("a/b", "c")),
+            Descriptor::of(("a", "b/c")),
+            Descriptor::of(("a", ("b", "c"))),
+            Descriptor::of("(users/email)/7u64"),
+            Descriptor::of("a|b"),
         ];
         for (i, a) in all.iter().enumerate() {
             for (j, b) in all.iter().enumerate() {

@@ -19,7 +19,7 @@ pub(crate) struct ContainerAttrs {
     /// field says otherwise. Exclusive with `plaintext`; requires `context`.
     pub(crate) by_field: Option<Type>,
     /// `#[stash(context = "...")]` on the container: the first half of every
-    /// field's inferred context — `"<context>/<field>"`. Names the stored
+    /// field's inferred context, the pair `("<context>", "<field>")`. Names the stored
     /// data, not the Rust type: it is part of the stored data's identity, so
     /// it is given explicitly rather than inferred from a name a refactor
     /// can change. Only meaningful with `struct`.
@@ -149,7 +149,7 @@ impl ContainerAttrs {
                     by_field,
                     "`struct = ..` needs a `context = \"..\"` beside it naming the stored data \
                      (e.g. `#[stash(struct = User, context = \"users\")]`): each field is derived \
-                     under `\"<context>/<field>\"`, and the prefix is part of the stored data's \
+                     under the pair `(\"<context>\", \"<field>\")`, and the prefix is part of the stored data's \
                      identity, so it is given explicitly rather than inferred from the Rust \
                      type's name",
                 ));

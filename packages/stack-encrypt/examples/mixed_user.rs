@@ -177,14 +177,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // One call, one batched generate_keys round-trip for every encrypted leaf
     // in the whole Vec (here: 3 rows x 2 encrypted fields = 6 data keys).
-    let ciphertext = cipher.default_keyset().encrypt(users, "users/v1").await?;
+    let ciphertext = cipher
+        .default_keyset()
+        .encrypt(users, ("users", "v1"))
+        .await?;
 
     println!("what the stored ciphertext reveals:");
     describe(&ciphertext, 1);
 
     // One batched retrieve_keys round-trip, then a crypto-free structural
     // decode back into the typed rows. The AAD must match the encrypt call.
-    let users: Vec<User> = cipher.decrypt(ciphertext, "users/v1").await?;
+    let users: Vec<User> = cipher.decrypt(ciphertext, ("users", "v1")).await?;
 
     println!("\ndecrypted rows:");
     for user in &users {

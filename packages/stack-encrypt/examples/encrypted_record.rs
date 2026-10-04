@@ -55,7 +55,7 @@ struct User {
 }
 
 /// `User`, encrypted field by field: `age` from `user.age` under
-/// `"users/age"`, `email` from `user.email` under `"users/email"`. The prefix
+/// `("users", "age")`, `email` from `user.email` under `("users", "email")`. The prefix
 /// is named once, explicitly — it is part of the stored data's identity, so
 /// it is never inferred from a Rust type name — and the field half follows
 /// the plaintext field.
@@ -108,7 +108,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // WHERE age = 34: compare equality terms.
     let probe: EqualityTerm = 34u32
-        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
+        .encrypt_into_with_context(&keyset, nonempty!("users").with("age"))
         .await?;
     let equal: Vec<usize> = (0..table.len())
         .filter(|&i| table[i].age.eq == probe)
@@ -117,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // WHERE age > 40: compare ORE terms.
     let bound: OreTerm<u32> = 40u32
-        .encrypt_into_with_context(&keyset, nonempty!("users/age"))
+        .encrypt_into_with_context(&keyset, nonempty!("users").with("age"))
         .await?;
     let over_40: Vec<usize> = (0..table.len())
         .filter(|&i| table[i].age.ord > bound)
@@ -153,10 +153,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- Binding a value to its record ----------------------------------------
 
     // A context the caller passes *extends* every field's own: under the
-    // record's id, `age` is sealed under `("users/age", id)` and opens only
+    // record's id, `age` is sealed under `(("users", "age"), id)` and opens only
     // there — a ciphertext can no longer be moved between records of the
     // same table. The price is that its terms are scoped to that record too:
-    // a probe built under `"users/age"` alone never matches them, so extend
+    // a probe built under `("users", "age")` alone never matches them, so extend
     // where a value is read by id, not where it is searched across rows.
     let id = 42u64;
     let alice = User {
@@ -174,7 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         !unscoped.is_empty()
     );
     let scoped: EqualityTerm = 34u32
-        .encrypt_into_with_context(&keyset, nonempty!("users/age").with(id))
+        .encrypt_into_with_context(&keyset, nonempty!("users").with("age").with(id))
         .await?;
     println!(
         "  ...and a probe built under the same id: {}",

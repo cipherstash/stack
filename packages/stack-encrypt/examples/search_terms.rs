@@ -39,21 +39,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // --- Equality: exact-match lookups --------------------------------------
     //
-    // The context ("users/email") domain-separates terms per field: the same
+    // The context, the pair ("users", "email"), domain-separates terms per
+    // field: the same
     // value indexed under another field can never produce a colliding term.
 
     let stored: EqualityTerm = "alice@example.com"
-        .encrypt_into_with_context(&terms, nonempty!("users/email"))
+        .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
         .await?;
 
     let hit: EqualityTerm = "alice@example.com"
-        .encrypt_into_with_context(&terms, nonempty!("users/email"))
+        .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
         .await?;
     let miss: EqualityTerm = "bob@example.com"
-        .encrypt_into_with_context(&terms, nonempty!("users/email"))
+        .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
         .await?;
     let wrong_field: EqualityTerm = "alice@example.com"
-        .encrypt_into_with_context(&terms, nonempty!("users/name"))
+        .encrypt_into_with_context(&terms, nonempty!("users").with("name"))
         .await?;
 
     println!("\nequality:");
@@ -73,13 +74,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bio: MatchTerm = "alice, senior cryptography engineer"
         .to_string()
-        .encrypt_into_with_context(&terms, nonempty!("users/bio"))
+        .encrypt_into_with_context(&terms, nonempty!("users").with("bio"))
         .await?;
 
     for query in ["crypto", "engineer", "plumber"] {
         let probe: MatchTerm = query
             .to_string()
-            .encrypt_into_with_context(&terms, nonempty!("users/bio"))
+            .encrypt_into_with_context(&terms, nonempty!("users").with("bio"))
             .await?;
         println!("match: bio contains {query:?} => {}", bio.contains(&probe));
     }
@@ -97,13 +98,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // local.
 
     let age_30: OreTerm<u32> = 30u32
-        .encrypt_into_with_context(&terms, nonempty!("users/age"))
+        .encrypt_into_with_context(&terms, nonempty!("users").with("age"))
         .await?;
     let age_45: OreTerm<u32> = 45u32
-        .encrypt_into_with_context(&terms, nonempty!("users/age"))
+        .encrypt_into_with_context(&terms, nonempty!("users").with("age"))
         .await?;
     let query_40: OreTerm<u32> = 40u32
-        .encrypt_into_with_context(&terms, nonempty!("users/age"))
+        .encrypt_into_with_context(&terms, nonempty!("users").with("age"))
         .await?;
 
     println!("\nore (WHERE age > 40):");
@@ -112,10 +113,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Strings order lexicographically.
     let apple: OreTerm<&str> = "apple"
-        .encrypt_into_with_context(&terms, nonempty!("users/name"))
+        .encrypt_into_with_context(&terms, nonempty!("users").with("name"))
         .await?;
     let banana: OreTerm<&str> = "banana"
-        .encrypt_into_with_context(&terms, nonempty!("users/name"))
+        .encrypt_into_with_context(&terms, nonempty!("users").with("name"))
         .await?;
     println!("  \"apple\" < \"banana\" => {}", apple < banana);
 
@@ -137,11 +138,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let record: SearchableEmail = "alice@example.com"
         .to_string()
-        .encrypt_into_with_context(&terms, nonempty!("users/email"))
+        .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
         .await?;
     let probe: MatchTerm = "example"
         .to_string()
-        .encrypt_into_with_context(&terms, nonempty!("users/email"))
+        .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
         .await?;
     println!("\nrecord:");
     println!(
@@ -157,7 +158,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         record.ord
             > "alice"
                 .to_string()
-                .encrypt_into_with_context(&terms, nonempty!("users/email"))
+                .encrypt_into_with_context(&terms, nonempty!("users").with("email"))
                 .await?
     );
     let _ = record.c; // the ciphertext, opened with `decrypt_into` under the same context

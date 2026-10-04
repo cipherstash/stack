@@ -512,13 +512,13 @@ async fn a_struct_is_one_batched_call_and_rebuilds_its_plaintext() {
     // Each field's terms are what a query site derives under the field's
     // inferred context: the prefix and the plaintext field's name.
     let age_hm: EqualityTerm = 42u32
-        .encrypt_into_with_context(&generator, nonempty!("user/age"))
+        .encrypt_into_with_context(&generator, nonempty!("user").with("age"))
         .await
         .unwrap();
     assert_eq!(row.age.hm, age_hm);
     let email_hm: EqualityTerm = user()
         .email
-        .encrypt_into_with_context(&generator, nonempty!("user/email"))
+        .encrypt_into_with_context(&generator, nonempty!("user").with("email"))
         .await
         .unwrap();
     assert_eq!(row.email_eq, email_hm);
@@ -570,12 +570,12 @@ async fn a_struct_extends_its_contexts_with_the_callers() {
         .unwrap();
     assert_eq!(generates.load(AtomicOrdering::SeqCst), 1);
     let age_hm: EqualityTerm = 42u32
-        .encrypt_into_with_context(&generator, nonempty!("user/age").with(7u64))
+        .encrypt_into_with_context(&generator, nonempty!("user").with("age").with(7u64))
         .await
         .unwrap();
     assert_eq!(row.age.hm, age_hm);
     let unextended: EqualityTerm = 42u32
-        .encrypt_into_with_context(&generator, nonempty!("user/age"))
+        .encrypt_into_with_context(&generator, nonempty!("user").with("age"))
         .await
         .unwrap();
     assert_ne!(row.age.hm, unextended);
@@ -627,7 +627,7 @@ async fn a_struct_field_opened_under_the_wrong_context_fails() {
     let transplanted: Result<u32, _> = row
         .age
         .c
-        .decrypt_into(&cipher, nonempty!("user/height"))
+        .decrypt_into(&cipher, nonempty!("user").with("height"))
         .await;
     assert!(matches!(transplanted, Err(Error::Aead)));
 }
@@ -665,7 +665,7 @@ async fn a_struct_nests_in_a_struct_via_nested() {
 
     // The inner struct's fields are still under their own contexts.
     let age_hm: EqualityTerm = 42u32
-        .encrypt_into_with_context(&generator, nonempty!("user/age"))
+        .encrypt_into_with_context(&generator, nonempty!("user").with("age"))
         .await
         .unwrap();
     assert_eq!(row.user.age.hm, age_hm);
@@ -679,7 +679,7 @@ async fn a_struct_nests_in_a_struct_via_nested() {
     let row: EncryptedAccount = account.encrypt_into(&keyset).await.unwrap();
     let plan: String = row
         .plan
-        .decrypt_into(&cipher, nonempty!("accounts/plan"))
+        .decrypt_into(&cipher, nonempty!("accounts").with("plan"))
         .await
         .unwrap();
     assert_eq!(plan, "pro");
@@ -692,13 +692,13 @@ async fn a_struct_nests_in_a_struct_via_nested() {
         .await
         .unwrap();
     let age_hm: EqualityTerm = 42u32
-        .encrypt_into_with_context(&generator, nonempty!("user/age").with(9u64))
+        .encrypt_into_with_context(&generator, nonempty!("user").with("age").with(9u64))
         .await
         .unwrap();
     assert_eq!(row.user.age.hm, age_hm);
     let plan: String = row
         .plan
-        .decrypt_into(&cipher, nonempty!("accounts/plan").with(9u64))
+        .decrypt_into(&cipher, nonempty!("accounts").with("plan").with(9u64))
         .await
         .unwrap();
     assert_eq!(plan, "pro");
@@ -736,7 +736,7 @@ async fn a_tuple_plaintext_is_reached_and_rebuilt_by_index() {
     let row: EncryptedReading = reading.encrypt_into(&keyset).await.unwrap();
 
     let hm: EqualityTerm = 21u32
-        .encrypt_into_with_context(&generator, nonempty!("reading/0"))
+        .encrypt_into_with_context(&generator, nonempty!("reading").with("0"))
         .await
         .unwrap();
     assert_eq!(row.0.hm, hm);
@@ -776,7 +776,10 @@ async fn a_field_with_its_own_context_may_be_a_record_with_declared_contexts() {
 
     let row: WrappedUser = user().encrypt_into(&keyset).await.unwrap();
     let age_hm: EqualityTerm = 42u32
-        .encrypt_into_with_context(&generator, nonempty!("user/age").with(nonempty!("wrapped")))
+        .encrypt_into_with_context(
+            &generator,
+            nonempty!("user").with("age").with(nonempty!("wrapped")),
+        )
         .await
         .unwrap();
     assert_eq!(row.user.age.hm, age_hm);
