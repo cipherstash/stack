@@ -22,7 +22,7 @@ use vitaminc_protected::{Controlled, OpaqueDebug, Protected};
 use zeroize::Zeroizing;
 
 use super::{utf8, Error};
-use crate::sem::{CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch};
+use crate::sem::{CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch, MatchConfig};
 use crate::{IntoPrfContext, KeysetCipher, NonEmpty};
 
 /// Which index term to derive.
@@ -69,6 +69,22 @@ impl TermKind {
             }
             TermKind::Match => matches!(scalar, Scalar::Text(_)),
             TermKind::Ore | TermKind::Ope => true,
+        }
+    }
+}
+
+/// A term kind as the index it names: the data form of the typed
+/// [`Index`](crate::target::Index) set. A dynamic term derives under the
+/// default match configuration, so that is what [`TermKind::Match`] lowers
+/// to.
+impl From<TermKind> for crate::target::IndexSpec {
+    fn from(kind: TermKind) -> Self {
+        use crate::target::IndexSpec;
+        match kind {
+            TermKind::Equality => IndexSpec::Equality,
+            TermKind::Match => IndexSpec::Match(<DefaultMatch as MatchConfig>::options()),
+            TermKind::Ore => IndexSpec::Ore,
+            TermKind::Ope => IndexSpec::Ope,
         }
     }
 }
@@ -583,6 +599,25 @@ mod tests {
 
     mod given_a_term_kind {
         use super::*;
+
+        #[test]
+        fn it_lowers_to_the_index_spec_with_the_same_key() {
+            use crate::target::IndexSpec;
+            let cases = [
+                (TermKind::Equality, IndexSpec::Equality),
+                (
+                    TermKind::Match,
+                    IndexSpec::Match(crate::sem::MatchOptions::default()),
+                ),
+                (TermKind::Ore, IndexSpec::Ore),
+                (TermKind::Ope, IndexSpec::Ope),
+            ];
+            for (kind, spec) in cases {
+                let lowered = IndexSpec::from(kind);
+                assert_eq!(lowered.key(), kind.key(), "{kind} keeps its key");
+                assert_eq!(lowered, spec, "{kind} lowers to its index");
+            }
+        }
 
         #[test]
         fn its_key_is_how_a_plan_spells_it() {

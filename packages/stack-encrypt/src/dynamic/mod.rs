@@ -41,19 +41,25 @@
 //! them. Their long-term home is beside vitaminc's frozen tag table, which
 //! already owns this class of constant.
 //!
-//! For the same reason the enums that spell them — [`Output`] and
-//! [`TermKind`] — are *not* `#[non_exhaustive]`, against this workspace's
+//! A plan field's `"type"` names ([`FieldType`]: `"int64"`, `"string"`, …)
+//! are wire format in the same way: a binding spells them, and a stored row
+//! opens only under the type it was sealed as.
+//!
+//! For the same reason the enums that spell them — [`Output`],
+//! [`TermKind`] and [`FieldType`] — are *not* `#[non_exhaustive]`, against this workspace's
 //! usual rule for public enums: a new output is a wire-format addition every
 //! binding has to be taught, and an exhaustive match is how the compiler
 //! tells a binding author that. [`Scope`] is exhaustive for a different
 //! reason, given on the type.
 mod context;
+mod field_type;
 pub mod record;
 mod term;
 
 use std::fmt;
 
 pub use context::{borrowed, context};
+pub use field_type::FieldType;
 pub use record::{FieldPlan, Output, Plan};
 pub use term::{term, Scalar, TermKind};
 /// vitaminc's language-neutral value tree — the runtime value every binding
@@ -113,7 +119,10 @@ fn utf8(s: &vitaminc_aead_value::Utf8String) -> Option<&str> {
 /// The split that matters to a caller is malformed input versus something
 /// else: every variant but [`Cipher`](Error::Cipher) and
 /// [`Internal`](Error::Internal) is a statement about the value or the
-/// request, decided before any key is minted or retrieved. `Cipher` is the
+/// request, decided before any key is minted or retrieved — save one: a
+/// typed field's opened value is checked against its declared type once it
+/// is open (the type tag is inside the AEAD envelope), and a mismatch is
+/// still [`Record`](Error::Record), a statement about the stored data. `Cipher` is the
 /// operation failing; `Internal` is this module's own bug. A binding maps
 /// them to its own status codes on those lines, and must not report
 /// `Internal` as the caller's fault.
@@ -140,15 +149,18 @@ pub enum Error {
     },
 
     /// A record plan is malformed: not an object of field specs, empty,
-    /// missing or duplicating an output, or carrying a key that is not
-    /// `"context"` or `"outputs"`.
+    /// missing or duplicating an output, carrying a key that is not
+    /// `"context"`, `"outputs"` or `"type"`, naming a type that is not one,
+    /// or asking for an index its declared type is not defined for.
     #[error("record plan is malformed")]
     Plan,
 
     /// A record source does not fit its plan: not an object (or an array of
     /// them), a field the plan does not name, a plan field the source does
     /// not carry or carries twice, or a passthrough or a repeated map key
-    /// under a field the plan seals.
+    /// under a field the plan seals, or a value of another type than its
+    /// field declares. Also a query value that cannot be read as its field's
+    /// type ([`FieldType::read`]).
     #[error("record source does not fit the plan")]
     Source,
 
@@ -156,7 +168,8 @@ pub enum Error {
     /// them), a ciphertext-bearing field that is absent or given twice, or
     /// has no `"c"` node or two of them, a repeated map key under `"c"`, or
     /// a passthrough under `"c"` — which would hand back unauthenticated
-    /// bytes as if they had been opened.
+    /// bytes as if they had been opened — or a typed field that opens to a
+    /// value of another type than it declares.
     #[error("stored record does not fit the plan")]
     Record,
 
