@@ -148,6 +148,27 @@ these payloads through the existing `public.eql_v3_text_eq` and
 `eql_v3.query_text_eq` domains and their equality extractor index. Writers and
 query producers for these values must use this same profile.
 
+The `Identifier` stored in `i` is Stack Encrypt's `Describe`: its ZeroKMS
+descriptor is `<table>/<column>`, two parts, the same context and descriptor as
+a two-segment `stack_encrypt::Label`. A table or column containing `/` is
+escaped in the descriptor rather than read as two names.
+
+### Interoperability matrix
+
+The plan asked for the three producer/reader pairings to be proven rather than
+assumed. Outcomes against today's sources:
+
+| Writer | Reader and query producer | Outcome |
+| --- | --- | --- |
+| Rust (`stack-encrypt` profile) | Rust (`stack-encrypt` profile) | **Proven.** `tests/encryption/tests/text_eq.rs`: JSON round trip, both canonical directions, PostgreSQL insert and equality query. |
+| JS / FFI (`cipherstash-client` profile) | Rust | **Not supported.** `c` lacks the `stack-encrypt:1:` prefix and is refused loudly on decryption. A Rust probe against such a column is accepted by SQL and matches nothing — see [#1051](https://github.com/cipherstash/stack/issues/1051). |
+| Rust (`stack-encrypt` profile) | JS / FFI | **Not supported.** The JS reader does not know the `stack-encrypt:1:` prefix and the two profiles' equality terms never match. |
+
+Rows 2 and 3 need compatible encryption, decryption and index derivation on
+both sides before they can change; that is upstream work, not a flag. Until
+#1051 lands, a new-profile probe against an old-producer column returns zero
+rows with no error, so pick one profile per column and record it.
+
 ### Developing the `stack-encrypt` feature
 
 Stack Encrypt lives in this repository (`packages/stack-encrypt`), and the
@@ -156,12 +177,9 @@ published `eql-bindings` resolves the version from crates.io. Publish the
 matching `stack-encrypt` before releasing an `eql-bindings` that needs it.
 
 ```bash
-# From packages/eql:
-cargo test -p eql-encryption-tests
-cargo test -p eql-bindings --features stack-encrypt
-
-# Against a disposable PostgreSQL database, using fresh encryption and a fake KMS:
-psql "$EQL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 \
-  -f crates/eql-bindings/sql/cipherstash-encrypt.sql
-cargo test -p eql-encryption-tests --test text_eq -- --ignored
+# From packages/eql. The mise tasks are what CI runs (test-eql.yml, `rust-crates`).
+mise run test:encryption            # feature tests, the test crate, clippy; no database
+EQL_TEST_DATABASE_URL="host=localhost port=5432 user=postgres password=postgres dbname=postgres" \
+  mise run test:encryption:postgres # installs the EQL bundle, then the PostgreSQL test
+mise run check:encryption:wasi      # wasm32-wasip1, no HTTP
 ```

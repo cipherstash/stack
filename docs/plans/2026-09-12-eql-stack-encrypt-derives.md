@@ -10,6 +10,17 @@
 > `cipherstash-suite` and publishing "the suite crates" are historical:
 > stack-kms, stack-encrypt and stack-encrypt-derive now publish from this
 > repository.
+>
+> Of section 1's requirements: the interoperability matrix is recorded in the
+> `eql-bindings` README with one proven row and two unsupported ones. "New-profile
+> query terms must never silently probe a column indexed by the old producer" is
+> documented but not enforced; that is
+> [#1051](https://github.com/cipherstash/stack/issues/1051). Of section 5: the
+> catalog-derived coverage assertion exists (`eql-codegen`'s
+> `every_stored_domain_has_an_encryption_derive_or_a_reason`); foreign-keyset
+> rejection and real ZeroKMS tests are still absent and wait on #1046's live
+> suite. `Identifier` implements Stack Encrypt's `Describe`, so its descriptor is
+> defined by the one renderer rather than by this crate.
 
 Status (2026-09-12): implemented locally in `stack` and the sibling `cipherstash-suite`
 checkout; neither repository has been committed or published.
@@ -38,7 +49,7 @@ No existing-column or mixed JS/Rust producer compatibility is claimed.
 Local instructions and profile details are in
 [`eql-bindings/README.md`](../../packages/eql/crates/eql-bindings/README.md).
 The integration tests are in
-[`tests/encryption`](../../packages/eql/tests/encryption/tests/stack_encrypt.rs).
+[`tests/encryption`](../../packages/eql/tests/encryption/tests/text_eq.rs).
 
 
 Inspected on 2026-09-12: `stack` at `013e3ff3` and the local
