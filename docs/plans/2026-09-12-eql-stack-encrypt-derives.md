@@ -42,9 +42,9 @@ Validation completed:
   the separate `eql-encryption-tests` crate, preserving lean default tests.
 
 Release prerequisites remain: publish `stack-encrypt` 0.2.0 (the version the
-feature names; 0.1.0 shipped without `Describe`, and the packaged-crate
-verification below is red until 0.2.0 is on crates.io), and perform live
-ZeroKMS authorization checks. The clean-package verification is now in CI:
+feature names; 0.1.0 shipped without `Describe`, and until 0.2.0 is on
+crates.io the packaged-crate verification below warns on PRs and refuses the
+`eql-bindings` publish), and perform live ZeroKMS authorization checks. The clean-package verification is now in CI:
 `cargo publish --dry-run --all-features` on every PR, and `publish_all_features`
 in release-plz at publish time. Local tests use real cryptography
 with the suite's test key source, which cannot establish authorization behavior.

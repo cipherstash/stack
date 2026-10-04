@@ -520,8 +520,11 @@ monorepo, which is where the silent failures are.
   reach crates.io before eql-bindings does (the root release-plz line is
   publish-only — a stack-* version moves by a hand-edited `Cargo.toml`, and
   cargo refuses a requirement the in-tree path dependency does not satisfy, so
-  the bump lands in the stack-encrypt PR first); the dry-run step is RED on a
-  PR that names an unpublished stack-encrypt, correctly, until it ships; and
+  the bump lands in the stack-encrypt PR first); on a PR that names a
+  stack-encrypt not yet on crates.io the dry-run step cannot build against
+  the registry and says so as a WARNING rather than failing, because that PR
+  merges before the crate can ship and the case is already loud at publish —
+  only a version that resolves and then does not compile fails the step; and
   `release-plz.yml`'s `release` job runs after `release-crates` so that on a
   push releasing both, the crate eql-bindings resolves exists by the time it
   looks.

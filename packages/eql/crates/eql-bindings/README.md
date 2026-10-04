@@ -183,8 +183,10 @@ every in-tree test passed against the newer tree. So the feature is also built
 from the packaged crate against the registry: `cargo publish -p eql-bindings
 --dry-run --all-features` in CI, and `publish_all_features` in
 `packages/eql/release-plz.toml` at release time. Bump the requirement in
-`Cargo.toml` only together with (or after) the `stack-encrypt` release that
-carries what the feature needs; the dry run is red until that release exists.
+`Cargo.toml` together with the `stack-encrypt` bump that carries what the
+feature needs. While that version is not yet on crates.io the dry run cannot
+build against the registry and warns instead of failing; the release-time
+verify still refuses to publish `eql-bindings` until it is.
 
 ```bash
 # From packages/eql. The mise tasks are what CI runs (test-eql.yml, `rust-crates`).
