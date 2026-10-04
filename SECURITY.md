@@ -37,6 +37,13 @@ It also carries the source of five Rust crates published to crates.io,
 from the stack-* crates), which has no release yet. All of these are in scope
 for security reports on the same terms as the npm packages above.
 
+The five stack-* crates are licensed under the PolyForm Internal Use License
+1.0.0 (each crate's `LICENSE`), not the repository's MIT licence: they may be
+used for internal business operations only, and not redistributed. That
+includes the optional `stack-encrypt` feature of the MIT-licensed
+`eql-bindings` crate, which depends on `stack-encrypt` and so is usable only
+under the same terms.
+
 > **Note on publishing.** Every package in the table above, including all
 > seven `@cipherstash/protect-ffi*` packages, all seven `@cipherstash/auth*`
 > packages and `@cipherstash/eql`, is published from this repository by
