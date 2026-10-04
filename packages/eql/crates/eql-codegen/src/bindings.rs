@@ -130,18 +130,23 @@ fn struct_doc_lines(full: &str, domain: &Domain) -> [String; 3] {
 /// exported to TypeScript and JSON Schema. The site groups domain variants by
 /// plaintext family, including their query operands.
 fn reference_docs(family: &DomainFamily) -> TokenStream {
-    let page = match family.name {
-        "integer" | "smallint" | "bigint" | "numeric" | "real" | "double" => "numbers",
-        "date" | "timestamp" => "dates-and-times",
-        "text" => "text",
-        "boolean" => "booleans",
-        "json" => "json",
+    // The page and the link's label come from one match, so the label cannot
+    // disagree with the hand-written types beside the generated ones: the
+    // SteVec types in json.rs say "EQL JSON reference", and the generated
+    // `Json` storage struct must say the same, not "EQL json reference".
+    let (page, label) = match family.name {
+        "integer" | "smallint" | "bigint" | "numeric" | "real" | "double" => {
+            ("numbers", family.name)
+        }
+        "date" | "timestamp" => ("dates-and-times", family.name),
+        "text" => ("text", family.name),
+        "boolean" => ("booleans", family.name),
+        "json" => ("json", "JSON"),
         other => panic!("missing CipherStash documentation page for {other:?}"),
     };
     let reference = format!(
-        " See the [EQL {} reference](https://cipherstash.com/docs/reference/eql/{page}) \
-         for SQL domain variants, operators, and query examples.",
-        family.name
+        " See the [EQL {label} reference](https://cipherstash.com/docs/reference/eql/{page}) \
+         for SQL domain variants, operators, and query examples."
     );
     quote! {
         #[cfg_attr(doc, doc = "")]
@@ -324,9 +329,15 @@ pub fn encryption_gap(family: &DomainFamily, domain: &Domain) -> Option<&'static
     } else if domain.terms.iter().any(|t| !matches!(t, Term::Hm)) {
         "ordering and match terms need stack-encrypt operations that have not landed \
          (block-ORE and OPE term derivation, bloom-filter match terms)"
-    } else {
+    } else if domain.terms.is_empty() {
         "the storage-only text domain follows once TextEq is proven end to end in \
          PostgreSQL and the interoperability matrix is recorded"
+    } else {
+        // Reached by an equality-only text domain other than `eq`: nothing in
+        // the catalog today, but the branch above would otherwise call it
+        // storage-only, which it is not.
+        "an equality-only text domain carries the same term TextEq does and derives the \
+         same way; it is not listed in ENCRYPTION_DOMAINS yet"
     })
 }
 
@@ -1440,27 +1451,72 @@ mod tests {
         for (family, domain) in stored_payload_domains() {
             match encryption_gap(family, domain) {
                 None => derived.push((family.name, domain.name)),
-                Some(reason) => assert!(
-                    !reason.is_empty(),
-                    "{}: an empty reason explains nothing",
-                    domain.full_name(family.name)
-                ),
+                // Every reason is a string literal, so "not empty" cannot
+                // fail; what can is a reason that describes a different
+                // domain than the one it is given. Each reason is tied to the
+                // catalog fact that selects it.
+                Some(reason) => {
+                    let full = domain.full_name(family.name);
+                    let expected = if family.name != "text" {
+                        "only the text family"
+                    } else if domain.terms.iter().any(|t| !matches!(t, Term::Hm)) {
+                        "ordering and match terms"
+                    } else {
+                        assert!(
+                            domain.terms.is_empty(),
+                            "{full}: an hm-only text domain other than eq is not in the catalog"
+                        );
+                        "storage-only text domain"
+                    };
+                    assert!(reason.contains(expected), "{full}: {reason}");
+                }
             }
         }
         // Every derived pair is a real catalog domain, and every catalog
         // derive is listed: the list and the catalog agree both ways.
         assert_eq!(derived, ENCRYPTION_DOMAINS.to_vec());
-        // The generated attributes follow the same answer: exactly the listed
-        // pairs carry the opt-in derive.
+        // The generated attributes follow the same answer, for the stored
+        // struct and its query twin: exactly the listed pairs carry
+        // `EncryptFrom`, and only a stored struct carries `DecryptInto`,
+        // because a query operand cannot recover plaintext. Checked here
+        // rather than left to the `compile_fail` doctest on the committed
+        // text.rs, which fails only after someone regenerates it.
         for (family, domain) in stored_payload_domains() {
-            let (attrs, _, _) = encryption_attrs(family, domain, false);
-            let has_derive = attrs.to_string().contains("stack_encrypt :: EncryptFrom");
-            assert_eq!(
-                has_derive,
-                ENCRYPTION_DOMAINS.contains(&(family.name, domain.name)),
-                "{}",
-                domain.full_name(family.name)
-            );
+            let listed = ENCRYPTION_DOMAINS.contains(&(family.name, domain.name));
+            for query in [false, true] {
+                let attrs = encryption_attrs(family, domain, query).0.to_string();
+                assert_eq!(
+                    attrs.contains("stack_encrypt :: EncryptFrom"),
+                    listed,
+                    "{} (query = {query})",
+                    domain.full_name(family.name)
+                );
+                assert_eq!(
+                    attrs.contains("stack_encrypt :: DecryptInto"),
+                    listed && !query,
+                    "{} (query = {query}): a query operand never decrypts",
+                    domain.full_name(family.name)
+                );
+            }
         }
+    }
+
+    #[test]
+    fn an_equality_only_text_domain_is_not_called_storage_only() {
+        // Not in the catalog, which is why the branch needs a synthetic
+        // domain: the only text domain reaching the hm-only branch today has
+        // no terms, so a wrong reason there would survive every catalog walk.
+        let family = DomainFamily {
+            name: "text",
+            domains: &[],
+        };
+        let hm_only = Domain {
+            name: "eq_v2",
+            terms: &[Term::Hm],
+            shape: eql_domains::Shape::Scalar,
+        };
+        let reason = encryption_gap(&family, &hm_only).unwrap();
+        assert!(reason.contains("equality-only"), "{reason}");
+        assert!(!reason.contains("storage-only"), "{reason}");
     }
 }

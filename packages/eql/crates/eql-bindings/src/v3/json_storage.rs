@@ -12,7 +12,7 @@ use ts_rs::TS;
 #[cfg_attr(doc, doc = "")]
 #[cfg_attr(
     doc,
-    doc = " See the [EQL json reference](https://cipherstash.com/docs/reference/eql/json) for SQL domain variants, operators, and query examples."
+    doc = " See the [EQL JSON reference](https://cipherstash.com/docs/reference/eql/json) for SQL domain variants, operators, and query examples."
 )]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[ts(export, export_to = "v3/")]
