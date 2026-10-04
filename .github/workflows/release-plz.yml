@@ -91,13 +91,16 @@ jobs:
     # from crates.io, so on a push that releases both, publishing in parallel
     # races this job's resolution against the other job's upload. Ordered,
     # the stack-* crates land first and this job's verify finds them.
-    # `always()` because `release-crates` is skipped on every push that moves
-    # no stack-* crate, and a skipped dependency would otherwise skip this job
-    # too; its FAILURE still stops this one, since the crates it needed did
-    # not publish.
+    # `!cancelled()`, not the implicit `success()`: `release-crates` is
+    # skipped on every push that moves no stack-* crate, and a skipped
+    # dependency would otherwise skip this job too. Not `always()` either:
+    # that would start this job after somebody cancelled the run, and a
+    # crates.io upload cannot be undone, only yanked (see the same rule on
+    # the publishing jobs in release.yml). A FAILURE of `release-crates`
+    # still stops this one, since the crates it needed did not publish.
     needs: [eql-armed, release-crates]
     if: >-
-      always()
+      !cancelled()
       && needs.eql-armed.outputs.armed == 'true'
       && (needs.release-crates.result == 'success' || needs.release-crates.result == 'skipped')
     # GitHub-hosted, matching this repo's other publishing jobs.
