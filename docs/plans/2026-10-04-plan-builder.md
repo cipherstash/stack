@@ -98,10 +98,17 @@ split was the problem, not the function names:
 4. **A plan is the chain without the value.** `Plan::context(..)` starts the
    saved form; `build()` validates whole-plan rules; `.using(&plan)` runs it.
    `for` was wanted and is a keyword in Rust and Go; `using` was chosen.
-5. **Two field verbs plus passthrough.** `encrypt(name)` seals with no index;
-   `encrypt_index(name, indexes)` seals with a non-empty index set (one index
-   or a tuple); `passthrough(name)` carries the field unsealed, mirroring the
-   lower-level API's word. `plaintext` was rejected for the same reason.
+5. **Three field verbs plus passthrough.** `encrypt(name)` seals with no
+   index; `encrypt_index(name, indexes)` seals with a non-empty index set (one
+   index or a tuple); `index(name, indexes)` derives the indexes alone, with
+   no ciphertext, so the field is written and searched but comes back from
+   `decrypt` only if an index's own output is reversible; `passthrough(name)`
+   carries the field unsealed, mirroring the lower-level API's word.
+   `plaintext` was rejected for the same reason. JSON is an `index` field:
+   the SteVec has no canonical `c` beside it, its entries carry the node
+   ciphertexts and entry 0 is the document's, so it is an index whose output
+   happens to be reversible, not a target (`encrypt_into` was considered and
+   rejected for it).
 6. **Indexes are types on the Rust side, data at the boundary.** An
    `Index<S>` trait generic over the plaintext, so an index that does not
    apply to a type (`Match` on an integer) does not compile. Tuples of
@@ -109,6 +116,11 @@ split was the problem, not the function names:
    index set is a compile error rather than a quiet `encrypt`. `spec()`
    lowers an index to data for the FFI and for saved plans. The trait lives
    in a core crate so the index implementations can move to their own crates.
+   An index answers queries by **source type**: `Equality` answers a query
+   whose source is the field's own type; `Json` answers a `Value`
+   (containment), a `JsonPath` (a selector, for `->`) and a `JsonAtPath`
+   (equality at a path). `Indexes::select::<I>()` picks the index, the query's
+   source type picks the form, and `.equality()` on a scalar field is sugar.
 7. **The chain's output is `Encrypted<Terms>` with the terms as a tuple, read
    by destructuring.** Named accessors (`out.ore()`) need type-level tuple
    search and serve a case that barely exists; a typed struct with named
@@ -155,9 +167,10 @@ let (eq, ore): (EqualityTerm, OreTerm<u32>) = out.terms;
 
 // A value sealed field by field, each field under users/<field>.
 let row = cipher.encrypt(&user).context("users").fields()
-    .encrypt_index("email", (Equality, Match::default()))
+    .encrypt_index("email", (Equality, Match::default()))   // ciphertext with indexes beside it
     .encrypt_index("age",   (Equality, Ore))
-    .encrypt("notes")
+    .index("attrs", Json::default())                         // indexes alone: the searchable document is the stored form
+    .encrypt("notes")                                        // ciphertext alone
     .passthrough("id")
     .keyset("tenant-42")
     .await?;
@@ -185,6 +198,12 @@ let row   = cipher.encrypt(&user).using(&users_plan).extend(tenant_id).await?;
 // and asking for an index the field never declared is an error.
 let email_plan = users_plan.field("email")?;
 let q = cipher.query("bob@example.com").using(&email_plan).equality().await?;
+
+// A JSON field answers three query forms, chosen by the source type.
+let attrs_plan = users_plan.field("attrs")?;
+let q = cipher.query(json!({"role": "admin"})).using(&attrs_plan).await?;                     // containment
+let q = cipher.query(JsonPath::root().field("role")).using(&attrs_plan).await?;              // selector, for ->
+let q = cipher.query(JsonPath::root().field("role").value("admin")).using(&attrs_plan).await?; // equality at a path
 
 // Several operations, one ZeroKMS request.
 let (row, q) = stack_encrypt::all((
@@ -218,6 +237,7 @@ this on the method.
 | `Plan::context("users")` | the `NonEmpty<impl IntoContext>` handed to `under` | with `fields()`, each field gets `Label::new([table, field])` |
 | `with(idx)` / `encrypt_index(name, idx)` | `ciphertext::<S>().accepting::<CallerContext>().zip(equality()).zip(matching::<O>())…` then `map` into `Encrypted<Terms>` | each `Index<S>` returns its `term_operation` constructor; the tuple folds with `zip` |
 | `encrypt(name)` | `ciphertext::<S>()` alone | `under` accepts it: `AeadContext: From<CallerContext>` |
+| `index(name, idx)` | the index operations alone, zipped, no `ciphertext()` | `Json` is one such operation; it mints one document key and seals every entry under it, a **new core operation** (one generate request, a fulfilment that seals N entries with selector-derived nonces) |
 | `passthrough(name)` | **new** `passthrough::<S>()` | build is `Pending::ready(cipher, Ok(source.clone()))`, ignores the context |
 | `fields()` | `project(select)` per field, `.under(label)`, `zip` across fields, `map` into the record | `project` is the derive's `struct = ..` mode; for the FFI `select` picks by name from an `FfiValue` object |
 | `build()` | boxes the finished `Encryption<S, Out, K, DeclaredContext>` inside a reusable recipe | whole-plan rules checked here: names once, labels plain, no shared label, passthrough not indexed |
@@ -244,6 +264,14 @@ this on the method.
    trivial. `Indexes::select::<I>()` serves the query side. `()` does not
    implement `Indexes`.
 4. **The one-value chain's `Encrypted<Terms>` output type.**
+5. **The JSON index**: `Json: Index<Value>` with its options (array index
+   mode, `Compat` or `Standard`, case filters) on the struct, producing a
+   searchable document; the MAC `prefix` of today's `JsonIndexer` is replaced
+   by the field's context. One new core operation seals N entries under one
+   data key with selector-derived nonces. EQL's `eql_v3_json` domain is the
+   `EncryptFrom` that wraps the document into `{v, k, i, h, sv}`, the way
+   `TextEq` wraps an equality term. Decrypt of an extracted entry (`->`)
+   grafts the document header onto it.
 
 ### Consolidation
 
@@ -278,17 +306,35 @@ the type.
 ## The Go mirror
 
 Go mirrors the chain with one difference: no `await`, so the finalizer is an
-explicit `Run(ctx)`. The plan is a value, because in Go it is produced by the
-policy package (`plan.PlanFor`) and by struct tags (`PlanFromTags`), and
-because it is the data the guest receives.
+explicit `Run(ctx)`. One verb, `Encrypt`, for a tree and for a plan alike.
+The plan is a value, because in Go it is produced by the policy package
+(`plan.PlanFor`) and by struct tags, and because it is the data the guest
+receives.
 
 ```go
+// One value, one tree. The full chain: plan built and run in one call.
+ct, err  := cipher.Encrypt(doc).Context("documents/v2/body").Run(ctx)
+row, err := cipher.Encrypt(user).Context("users").Fields().
+    EncryptIndex("email", stackencrypt.Equality, stackencrypt.Match).
+    EncryptIndex("age", stackencrypt.Equality, stackencrypt.Ore).
+    Index("attrs", stackencrypt.Json()).
+    Encrypt("notes").
+    Passthrough("id").
+    Run(ctx)                                   // Build()'s validation happens here, same errors
+
+// The same chain without the value: a plan.
 usersPlan, err := stackencrypt.PlanContext("users").Fields().
     EncryptIndex("email", stackencrypt.Equality, stackencrypt.Match).
     EncryptIndex("age", stackencrypt.Equality, stackencrypt.Ore).
+    Index("attrs", stackencrypt.Json()).
     Encrypt("notes").
     Passthrough("id").
     Build()
+
+// Struct tags are Go's derive. They are never applied silently: the plan is
+// named, and PlanOf reads and caches the tags, the Go spelling of
+// EncryptedUser::plan(). A chain with no Using is the tree, as it reads.
+usersPlan := stackencrypt.PlanOf[User]()
 
 row,  err := cipher.Encrypt(user).Using(usersPlan).Run(ctx)
 rows, err := cipher.Encrypt(users).Using(usersPlan).Run(ctx)
@@ -305,8 +351,10 @@ q,    err := cipher.Query("bob@example.com").Using(emailPlan).Equality().Run(ctx
   `EncryptedField`. A typed `Plan[T]` through a generic struct, giving
   `Encrypt(ctx, T)` and `Decrypt(..) (T, error)`, is an open question below.
 - Removed: `Encrypt(…, aad []byte)`, `EncryptElement`, `DecryptElement`,
-  `EncryptRecord(s)`, `DecryptRecord(s)`, `Term`, `RecordOption`, `WithPlan`.
-  The binding has never been released, so they are removed, not deprecated.
+  `EncryptRecord(s)`, `DecryptRecord(s)`, `Term`, `RecordOption`, `WithPlan`,
+  `PlanFromTags` (replaced by `PlanOf[T]`) and the "zero Plan means the
+  struct's tags" rule. The binding has never been released, so they are
+  removed, not deprecated.
 - Mixed batches: `Prepare` on each chain and one `stackencrypt.Run(ctx, p1,
   p2)`, mirroring `all(..)`. Sugar, not the entry point.
 
@@ -328,9 +376,15 @@ Depends on #971 (EQL v3 `TextEq` / `TextEqQuery` in `eql-bindings`, and
 ```rust
 let users_plan = Plan::context("users").fields()
     .encrypt_into::<TextEq>("email")          // the domain's own EncryptFrom; renders {"v":3,"i":{"t":"users","c":"email"},…}
+    .encrypt_into::<Json>("attrs")            // eql_v3_json wraps the Json index's document into {v, k, i, h, sv}
     .encrypt_index("age", (Equality, Ore))
     .build()?;
 ```
+
+A domain is a target wrapping an index's output for EQL's wire format; the
+index itself stays in stack-encrypt. The JSON domain is the clearest case: the
+`Json` index produces the searchable document, and `eql_v3_json` is the
+`EncryptFrom` that frames it.
 
 In Go the domain types are emitted by `eql-codegen` into
 `stackencrypt/eqlv3`, inside the one Go module and the one WASI guest, every

@@ -43,12 +43,17 @@ _Avoid_: schema (that is the source's shape, which a plan does not describe),
 mapping, config, target (a plan may name a target type for a field)
 
 **Index**:
-A declared derivation of a search value beside a ciphertext — equality,
-match, ORE or OPE — named in a plan. A type on the Rust side, generic over
-the plaintext, so an index that does not apply to a type (match on an
-integer) does not compile; data at a binding boundary. What an index
-produces is its term or terms.
-_Avoid_: term (that is what an index produces), output, search type
+A declared derivation of a searchable value from a plaintext — equality,
+match, ORE, OPE or JSON — named in a plan. A field carries indexes beside its
+ciphertext, or indexes alone, in which case it is written and searched but
+never read back unless an index's own output is reversible (the JSON index's
+is; a term is not). A type on the Rust side, generic over the plaintext, so
+an index that does not apply to a type (match on an integer) does not
+compile; data at a binding boundary. An index answers queries by source
+type: a scalar index answers one, the JSON index answers containment, a
+path, and a value at a path.
+_Avoid_: term (that is what an index produces), output, search type, target
+(the JSON index replaces the ciphertext but is still an index)
 
 **Ciphertext transcoding**:
 Construction or inspection of an encrypted target through its native encrypted
@@ -171,7 +176,9 @@ _Avoid_: searchable type, indexed type
 
 **Term**:
 A deterministic, one-way value an index derives from a plaintext under a
-context — one for equality, ORE or OPE; a set of them for match.
+context — one for equality, ORE or OPE; a set of them for match. The JSON
+index produces a searchable document instead: entries whose selectors are
+terms and whose ciphertexts are the nodes, under one data key.
 _Avoid_: index (that is the declaration; a term is what it produces), token,
 hash
 
