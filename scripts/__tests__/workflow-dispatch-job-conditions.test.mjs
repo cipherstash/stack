@@ -188,6 +188,9 @@ const PERMISSIVE_NEEDS = {
   gate: { result: 'success', outputs: { ffi: 'true', auth: 'true' } },
   'publish-ffi': { result: 'success' },
   'publish-auth': { result: 'success' },
+  // release-plz.yml's `release` runs after the stack-* crates job and accepts
+  // a skipped one; held to success here, like the other upstream results.
+  'release-crates': { result: 'success' },
   release: { result: 'success', outputs: { published_packages: '' } },
   'eql-assets': {
     result: 'success',

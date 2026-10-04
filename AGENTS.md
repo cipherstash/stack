@@ -85,7 +85,7 @@ Every npm package except EQL lives under `languages/typescript/`: packages in `l
 - `languages/typescript/packages/utils`: Shared config (`utils/config`) and logger (`utils/logger`)
 - `languages/typescript/packages/bench`: Performance / index-engagement benchmarks (private, not published)
 - `languages/typescript/packages/protect-ffi`: Native FFI bindings to the CipherStash Client SDK (`@cipherstash/protect-ffi`) — the Rust core that `languages/typescript/packages/stack` encrypts and decrypts through, absorbed from `cipherstash/protectjs-ffi`. Contains a **nested Cargo workspace** (`crates/`) and six per-platform binary packages under `platforms/*`, each published as `@cipherstash/protect-ffi-<platform>` and linked here via `workspace:*`. Also holds the repo's live FFI integration suite at `integration-tests/` — a private workspace member (`@cipherstash/ffi-integration-tests`) enrolled by its own literal entry in `pnpm-workspace.yaml`, needing Docker and credentials, and deliberately carrying **no `test` script** so `pnpm test` cannot reach it. See the "Working on protect-ffi" notes below before touching it — its default `test` and `build` are deliberately Rust-free.
-- `packages/eql`: The Encrypt Query Language subtree — the SQL bundle that stores and queries encrypted payloads — absorbed from `cipherstash/encrypt-query-language`. **The directory is the subtree root, not the package.** It was imported at a *verbatim prefix* so its repo-root-relative paths (mise tasks, `Doxyfile`, `sync-generated.mjs`) keep resolving, which puts the npm package `@cipherstash/eql` two levels down at `packages/eql/packages/eql` — the same shape as `languages/typescript/packages/protect-ffi/platforms/*`, and enrolled the same way, by an explicit `packages/eql/packages/*` glob in `pnpm-workspace.yaml`. The subtree root deliberately carries no `package.json`. Also contains a **nested Cargo workspace** at `packages/eql/crates/` (`eql-bindings`, published in lockstep with the npm package, plus `eql-domains` / `eql-codegen` / `eql-tests-macros`, which are not), a SQLx test crate at `packages/eql/tests/sqlx`, an ~900-line `mise.toml` task surface, its own `AGENTS.md`, and `docs/`. See the "Working on EQL" notes below before touching it.
+- `packages/eql`: The Encrypt Query Language subtree — the SQL bundle that stores and queries encrypted payloads — absorbed from `cipherstash/encrypt-query-language`. **The directory is the subtree root, not the package.** It was imported at a *verbatim prefix* so its repo-root-relative paths (mise tasks, `Doxyfile`, `sync-generated.mjs`) keep resolving, which puts the npm package `@cipherstash/eql` two levels down at `packages/eql/packages/eql` — the same shape as `languages/typescript/packages/protect-ffi/platforms/*`, and enrolled the same way, by an explicit `packages/eql/packages/*` glob in `pnpm-workspace.yaml`. The subtree root deliberately carries no `package.json`. Also contains a **nested Cargo workspace** at `packages/eql/crates/` (`eql-bindings`, published in lockstep with the npm package, plus `eql-domains` / `eql-codegen` / `eql-tests-macros`, which are not), a SQLx test crate at `packages/eql/tests/sqlx`, an unpublished encryption test crate at `packages/eql/tests/encryption` (real encryption with a fake key source, the executable Rustdoc example at `packages/eql/crates/eql-bindings/src/encryption/example.rs`, plus optional PostgreSQL coverage), an ~900-line `mise.toml` task surface, its own `AGENTS.md`, and `docs/`. See the "Working on EQL" notes below before touching it.
   **Repository ownership:** EQL now lives in `cipherstash/stack`. File and update
   EQL issues in this repository, never in the historical
   `cipherstash/encrypt-query-language` repository. Old upstream issue and PR
@@ -504,6 +504,30 @@ monorepo, which is where the silent failures are.
   changes what the whole EQL CI surface compiles against, and with the skip in
   place the release-stopper is closed without it. If wanted, the pin belongs
   upstream and arrives by subtree pull.
+- **`eql-bindings`' `stack-encrypt` feature names a stack-encrypt VERSION, and
+  the published crate is built against that version, not the tree.** The
+  dependency is `path` + `version`: the path is what every in-tree job
+  compiles, the version is what crates.io resolves once `cargo publish` strips
+  the path. The two agree only if the stack-encrypt on crates.io at that
+  version has the API `src/encryption.rs` uses — and nothing in a path build
+  can tell. stack-encrypt 0.1.0 shipped without `Describe`, and the feature
+  would have published against it while every test passed. Two guards compile
+  the feature FROM THE PACKAGED CRATE against the registry: `cargo publish
+  --dry-run --all-features` in `test-eql.yml`'s `rust-crates` job, and
+  `publish_all_features = true` in `packages/eql/release-plz.toml`. Without
+  `--all-features` both verify the default feature set, which is the feature
+  off. Consequences: the stack-encrypt a bump of that requirement names must
+  reach crates.io before eql-bindings does (the root release-plz line is
+  publish-only — a stack-* version moves by a hand-edited `Cargo.toml`, and
+  cargo refuses a requirement the in-tree path dependency does not satisfy, so
+  the bump lands in the stack-encrypt PR first); on a PR that names a
+  stack-encrypt not yet on crates.io the dry-run step cannot build against
+  the registry and says so as a WARNING rather than failing, because that PR
+  merges before the crate can ship and the case is already loud at publish —
+  only a version that resolves and then does not compile fails the step; and
+  `release-plz.yml`'s `release` job runs after `release-crates` so that on a
+  push releasing both, the crate eql-bindings resolves exists by the time it
+  looks.
 - **`eql-bindings` resolves by path from `languages/typescript/packages/protect-ffi`, never from
   crates.io**, and `scripts/lint-no-eql-registry-pins.mjs` (`pnpm run
   lint:eql-pins`) is what keeps it that way. The two halves of EQL are the Rust

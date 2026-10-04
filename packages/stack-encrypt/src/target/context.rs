@@ -50,10 +50,10 @@ impl CallerContext {
         nonempty(self)
     }
     /// The own context `own`, extended by this caller context: the field's
-    /// literal is the prefix, this context the extension, exactly as a
-    /// `struct = T` derive composes them — `("users/age", id)`. The own
+    /// own context is the prefix, this context the extension, exactly as a
+    /// `struct = T` derive composes them — `(("users", "age"), id)`. The own
     /// context is never discarded.
-    pub fn extend(self, own: NonEmpty<&'static str>) -> Self {
+    pub fn extend<'c, O: IntoContext<'c>>(self, own: NonEmpty<O>) -> Self {
         own.with(self).into()
     }
 }
@@ -97,23 +97,24 @@ impl AeadContext {
     }
     /// The own context `own`, extended by this caller context, as
     /// [`CallerContext::extend`] does for a record that derives terms: the
-    /// field's literal is the prefix, this context the extension.
-    pub fn extend(self, own: NonEmpty<&'static str>) -> Self {
+    /// field's own context is the prefix, this context the extension.
+    pub fn extend<'c, O: IntoContext<'c>>(self, own: NonEmpty<O>) -> Self {
         own.with(self).into()
     }
 }
 
 /// A caller's context of either kind, extending a field's own context: what
 /// [`Encryption::extend`](super::Encryption::extend) asks of the context a
-/// subtree is run under. An own context is a `NonEmpty<&'static str>` — the
-/// derive emits a `nonempty!(..)` for a literal — so an empty one is refused
-/// at compile time, and extending cannot fail.
+/// subtree is run under. An own context is a `NonEmpty<_>` — the derive emits
+/// `nonempty!(..)` for a literal and `nonempty!(prefix).with(column)` for the
+/// pair it infers — so an empty one is refused at compile time, and extending
+/// cannot fail.
 ///
 /// Sealed: the two core-owned types are the two kinds, and a context that
 /// extends is one whose encodings the core built.
 pub trait Extends: sealed::Sealed + Sized {
     /// The own context `own`, extended by this one.
-    fn extend(self, own: NonEmpty<&'static str>) -> Self;
+    fn extend<'c, O: IntoContext<'c>>(self, own: NonEmpty<O>) -> Self;
 }
 mod sealed {
     pub trait Sealed {}
@@ -121,12 +122,12 @@ mod sealed {
     impl Sealed for super::AeadContext {}
 }
 impl Extends for CallerContext {
-    fn extend(self, own: NonEmpty<&'static str>) -> Self {
+    fn extend<'c, O: IntoContext<'c>>(self, own: NonEmpty<O>) -> Self {
         CallerContext::extend(self, own)
     }
 }
 impl Extends for AeadContext {
-    fn extend(self, own: NonEmpty<&'static str>) -> Self {
+    fn extend<'c, O: IntoContext<'c>>(self, own: NonEmpty<O>) -> Self {
         AeadContext::extend(self, own)
     }
 }
@@ -157,9 +158,9 @@ impl<'a, T: IntoContext<'a>> From<NonEmpty<T>> for DeclaredContext {
 }
 impl DeclaredContext {
     /// The context one field is derived under: its own `own`, extended by
-    /// the caller's context if one was given — `"users/age"` as it is under
-    /// `()`, `("users/age", id)` under a caller's `id`.
-    pub fn under(self, own: NonEmpty<&'static str>) -> CallerContext {
+    /// the caller's context if one was given — `("users", "age")` as it is
+    /// under `()`, `(("users", "age"), id)` under a caller's `id`.
+    pub fn under<'c, O: IntoContext<'c>>(self, own: NonEmpty<O>) -> CallerContext {
         match self.0 {
             Some(caller) => caller.extend(own),
             None => own.into(),

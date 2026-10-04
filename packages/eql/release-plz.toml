@@ -37,3 +37,15 @@ publish = true
 # semver_check is noisy for a pre-1.0 crate and duplicated by the PR review;
 # disabled to match cipherstash-suite.
 semver_check = false
+# Verify the packaged crate with EVERY feature on. `cargo publish` verifies the
+# default feature set, and eql-bindings' `stack-encrypt` feature is off by
+# default, so a plain publish compiles none of the code that depends on
+# stack-encrypt. It would ship a feature that does not build against the
+# crates.io stack-encrypt its `version` names: docs.rs enables the feature and
+# goes red, and a consumer enabling it fails to compile. The in-tree path
+# dependency cannot catch this — it builds against whatever
+# packages/stack-encrypt holds, released or not. With `--all-features` the
+# verify step resolves stack-encrypt from the REGISTRY and refuses to publish
+# an eql-bindings whose feature does not build there. The PR-time twin is the
+# `cargo publish --dry-run --all-features` step in test-eql.yml.
+publish_all_features = true

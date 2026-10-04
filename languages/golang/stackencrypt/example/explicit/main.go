@@ -30,7 +30,7 @@ import (
 
 type user struct {
 	ID    int64  `stash:"-"`
-	Email string `stash:"context=users/email,index=eq"`
+	Email string `stash:"label=users/email,index=eq"`
 }
 
 type config struct {
@@ -148,7 +148,11 @@ func run(ctx context.Context, cfg config, secrets secrets) error {
 	if err != nil {
 		return fmt.Errorf("encrypting records: %w", err)
 	}
-	probe, err := cipher.Term(ctx, "bob@example.com", stackencrypt.MustContext("users/email"), stackencrypt.Equality)
+	emailCtx, err := stackencrypt.ParseLabel("users/email")
+	if err != nil {
+		return fmt.Errorf("the probe's label: %w", err)
+	}
+	probe, err := cipher.Term(ctx, "bob@example.com", emailCtx.Context(), stackencrypt.Equality)
 	if err != nil {
 		return fmt.Errorf("deriving a probe: %w", err)
 	}

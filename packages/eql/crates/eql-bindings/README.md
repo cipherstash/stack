@@ -98,3 +98,100 @@ evolution plan.
 
 [`ts-rs`]: https://github.com/Aleph-Alpha/ts-rs
 [`schemars`]: https://graham.cool/schemars/
+
+## Rust text equality with Stack Encrypt
+
+The optional `stack-encrypt` feature enables `EncryptFrom<String>` for `TextEq`
+and `TextEqQuery`, and `DecryptInto<String>` for `TextEq`. Other domains do not
+yet expose these conversions. The derives are emitted by `eql-codegen`.
+
+The generated API docs include a complete, executable example in the
+`eql_bindings::encryption` module, from cipher setup through decryption. Its
+[source](src/encryption/example.rs) is also run by the encryption test crate:
+
+```bash
+# From packages/eql:
+cargo test -p eql-encryption-tests --test text_eq_example
+```
+
+With an initialized cipher, the essential calls are:
+
+```rust,ignore
+use eql_bindings::{Identifier, v3::text::{TextEq, TextEqQuery}};
+
+let column = Identifier::for_column("users", "email")?;
+let keyset = cipher.default_keyset();
+let email = "alice@example.com".to_owned();
+let stored: TextEq = keyset.encrypt_as(&email, column.clone()).await?;
+let query: TextEqQuery = keyset.encrypt_as(&email, column.clone()).await?;
+let opened: String = cipher.decrypt_as(stored, column.into()).await?;
+```
+
+Both identifier components must be nonempty. Encryption stores the identifier
+in `i`; its table and column supply the ciphertext AAD, term context, and ZeroKMS
+descriptor. The storage field names `c` and `hm` add no further context.
+Decryption validates `i` before retrieving keys. Passing an expected identifier,
+as above, also checks the destination. `Default::default()` uses the stored
+identifier alone, so moving a complete payload with its original `i` still opens.
+
+Ciphertext uses Vitamin C's native string encoding. Equality uses its exact
+string PRF input, with no normalization or case folding: `café` and
+`cafe\u{301}`, or `Alice` and `alice`, produce different terms. A query contains
+only `v`, `i`, and `hm` and requests no data keys. Neither EQL type implements
+the plaintext-side `Encrypt` or `Decrypt` traits.
+
+This is a **new producer profile**, independent of existing cipherstash-client
+ciphertext and terms. `c` is `stack-encrypt:1:` followed by padded standard base64 of Stack
+Encrypt's native `SealedValue` bytes; `hm` is the native 32-byte equality term
+encoded as hex. Serde handles the final EQL JSON envelope only. SQL consumes
+these payloads through the existing `public.eql_v3_text_eq` and
+`eql_v3.query_text_eq` domains and their equality extractor index. Writers and
+query producers for these values must use this same profile.
+
+The `Identifier` stored in `i` is Stack Encrypt's `Describe`: its ZeroKMS
+descriptor is `<table>/<column>`, two parts, the same context and descriptor as
+a two-segment `stack_encrypt::Label`. A table or column containing `/` is
+escaped in the descriptor rather than read as two names.
+
+### Interoperability matrix
+
+The plan asked for the three producer/reader pairings to be proven rather than
+assumed. Outcomes against today's sources:
+
+| Writer | Reader and query producer | Outcome |
+| --- | --- | --- |
+| Rust (`stack-encrypt` profile) | Rust (`stack-encrypt` profile) | **Proven.** `tests/encryption/tests/text_eq.rs`: JSON round trip, both canonical directions, PostgreSQL insert and equality query. |
+| JS / FFI (`cipherstash-client` profile) | Rust | **Not supported.** `c` lacks the `stack-encrypt:1:` prefix and is refused loudly on decryption. A Rust probe against such a column is accepted by SQL and matches nothing. |
+| Rust (`stack-encrypt` profile) | JS / FFI | **Not supported.** The JS reader does not know the `stack-encrypt:1:` prefix and the two profiles' equality terms never match. |
+
+Rows 2 and 3 need compatible encryption, decryption and index derivation on
+both sides before they can change; that is upstream work, not a flag. This
+profile is an interim step on EQL v3: nothing in a `v: 3` payload marks which
+producer made an equality term, so a new-profile probe against an old-producer
+column returns zero rows with no error. The separation will come from the EQL
+version itself (v4), not from a marker inside v3. Until then, one profile per
+column, and record which.
+
+### Developing the `stack-encrypt` feature
+
+Stack Encrypt lives in this repository (`packages/stack-encrypt`), and the
+feature depends on it by path and version: in-tree builds use the path, and the
+published `eql-bindings` resolves the version from crates.io. The two agree only
+when the `stack-encrypt` on crates.io at that version has the API this feature
+uses, which a path build cannot check — 0.1.0 shipped without `Describe`, and
+every in-tree test passed against the newer tree. So the feature is also built
+from the packaged crate against the registry: `cargo publish -p eql-bindings
+--dry-run --all-features` in CI, and `publish_all_features` in
+`packages/eql/release-plz.toml` at release time. Bump the requirement in
+`Cargo.toml` together with the `stack-encrypt` bump that carries what the
+feature needs. While that version is not yet on crates.io the dry run cannot
+build against the registry and warns instead of failing; the release-time
+verify still refuses to publish `eql-bindings` until it is.
+
+```bash
+# From packages/eql. The mise tasks are what CI runs (test-eql.yml, `rust-crates`).
+mise run test:encryption            # feature tests, the test crate, clippy; no database
+EQL_TEST_DATABASE_URL="host=localhost port=5432 user=postgres password=postgres dbname=postgres" \
+  mise run test:encryption:postgres # installs the EQL bundle, then the PostgreSQL test
+mise run check:encryption:wasi      # wasm32-wasip1, no HTTP
+```

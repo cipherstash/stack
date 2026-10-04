@@ -24,8 +24,8 @@ import (
 func TestCommitRecordsPreservesRowsAndIsAtomic(t *testing.T) {
 	type row struct {
 		ID    int64  `stash:"-"`
-		Age   uint8  `stash:"context=users/age"`
-		Email string `stash:"context=users/email"`
+		Age   uint8  `stash:"label=users/age"`
+		Email string `stash:"label=users/email"`
 	}
 	plan, err := planFor(reflect.TypeOf(row{}), recordOptions{})
 	if err != nil {
@@ -183,9 +183,9 @@ func TestContextNestsToTheLeft(t *testing.T) {
 
 type taggedUser struct {
 	ID     int64  `stash:"-"`
-	Age    uint32 `stash:"context=users/age,index=eq;ore"`
-	Email  string `stash:"context=users/email,index=eq;match,name=email"`
-	Notes  string `stash:"context=users/notes"`
+	Age    uint32 `stash:"label=users/age,index=eq;ore"`
+	Email  string `stash:"label=users/email,index=eq;match,name=email"`
+	Notes  string `stash:"label=users/notes"`
 	Plain  string `stash:"plain"`
 	NoTag  string
 	hidden string `stash:"context=x"` //nolint:unused // proves unexported fields are skipped
@@ -197,9 +197,9 @@ func TestPlanFromTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []fieldPlan{
-		{index: 1, name: "Age", context: "users/age", outputs: []string{"c", "eq", "ore"}},
-		{index: 2, name: "email", context: "users/email", outputs: []string{"c", "eq", "match"}},
-		{index: 3, name: "Notes", context: "users/notes", outputs: []string{"c"}},
+		{index: 1, name: "Age", context: label(t, "users/age").Context(), outputs: []string{"c", "eq", "ore"}},
+		{index: 2, name: "email", context: label(t, "users/email").Context(), outputs: []string{"c", "eq", "match"}},
+		{index: 3, name: "Notes", context: label(t, "users/notes").Context(), outputs: []string{"c"}},
 	}
 	if !reflect.DeepEqual(plan, want) {
 		t.Fatalf("plan = %+v\nwant %+v", plan, want)
@@ -210,7 +210,7 @@ func TestPlanFromTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	age := obj[0].Value.(vcvalue.Object)
-	if got := age[0].Value; !reflect.DeepEqual(got, []any{"users/age", uint64(7)}) {
+	if got := age[0].Value; !reflect.DeepEqual(got, []any{[]any{"users", "age"}, uint64(7)}) {
 		t.Fatalf("extended context = %v", got)
 	}
 	if _, err := vcffi.Marshal(obj); err != nil {
@@ -252,9 +252,9 @@ func TestPlanFromTags(t *testing.T) {
 func TestExplicitPlanIsTheTagPlan(t *testing.T) {
 	typ := reflect.TypeOf(taggedUser{})
 	explicit, err := NewPlan(
-		FieldPlan{Field: "Age", Context: "users/age", Terms: []TermKind{Equality, Ore}},
-		FieldPlan{Field: "Email", Name: "email", Context: "users/email", Terms: []TermKind{Equality, Match}},
-		FieldPlan{Field: "Notes", Context: "users/notes"},
+		FieldPlan{Field: "Age", Context: label(t, "users/age").Context(), Terms: []TermKind{Equality, Ore}},
+		FieldPlan{Field: "Email", Name: "email", Context: label(t, "users/email").Context(), Terms: []TermKind{Equality, Match}},
+		FieldPlan{Field: "Notes", Context: label(t, "users/notes").Context()},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -296,8 +296,8 @@ func TestExplicitPlanIsTheTagPlan(t *testing.T) {
 		t.Fatalf("bound plans differ:\n%+v\n%+v", viaOption, viaTags)
 	}
 	// Fields returns a copy.
-	explicit.Fields()[0].Context = "changed"
-	if explicit.Fields()[0].Context != "users/age" {
+	explicit.Fields()[0].Context = MustContext("changed")
+	if !explicit.Fields()[0].Context.Equal(label(t, "users/age").Context()) {
 		t.Fatal("Fields exposed the plan's own slice")
 	}
 }
@@ -309,7 +309,7 @@ func TestExplicitPlanIsTheTagPlan(t *testing.T) {
 // extension's, which is what makes the match tenant-specific.
 func TestTermExtensionMatchesRecordFieldContext(t *testing.T) {
 	type row struct {
-		Email string `stash:"context=users/email,index=eq"`
+		Email string `stash:"label=users/email,index=eq"`
 	}
 	ext := []any{uint64(7), "eu"}
 	o := applyOptions([]RecordOption{ExtendContext(ext...)})
@@ -329,17 +329,17 @@ func TestTermExtensionMatchesRecordFieldContext(t *testing.T) {
 
 	var to termOptions
 	ExtendContext(ext...).applyTerm(&to)
-	probe, err := extend(MustContext("users/email"), to.extension)
+	probe, err := extend(label(t, "users/email").Context(), to.extension)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(probe.value(), fieldContext) {
 		t.Fatalf("probe context %#v, record field context %#v", probe.value(), fieldContext)
 	}
-	if reflect.DeepEqual(MustContext("users/email").value(), fieldContext) {
+	if reflect.DeepEqual(label(t, "users/email").Context().value(), fieldContext) {
 		t.Fatal("the unextended probe context equals the extended field's")
 	}
-	other, err := extend(MustContext("users/email"), []any{uint64(8), "eu"})
+	other, err := extend(label(t, "users/email").Context(), []any{uint64(8), "eu"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func TestTermExtensionMatchesRecordFieldContext(t *testing.T) {
 // and probes under different contexts with no error.
 func TestSeveralExtensionsJoinInOrder(t *testing.T) {
 	type row struct {
-		Email string `stash:"context=users/email,index=eq"`
+		Email string `stash:"label=users/email,index=eq"`
 	}
 	typ := reflect.TypeOf(row{})
 	fieldContext := func(opts ...RecordOption) any {
@@ -388,7 +388,7 @@ func TestSeveralExtensionsJoinInOrder(t *testing.T) {
 		for _, opt := range opts {
 			opt.applyTerm(&to)
 		}
-		c, err := extend(MustContext("users/email"), to.extension)
+		c, err := extend(label(t, "users/email").Context(), to.extension)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -462,7 +462,7 @@ func TestPlanBindsByFieldName(t *testing.T) {
 	if _, err := PlanFromTags(typ); err == nil {
 		t.Fatal("untagged struct has a tag plan")
 	}
-	ok, err := NewPlan(FieldPlan{Field: "Email", Context: "c"})
+	ok, err := NewPlan(FieldPlan{Field: "Email", Context: MustContext("c")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,7 +478,7 @@ func TestPlanBindsByFieldName(t *testing.T) {
 		"unexported": "hidden",
 		"promoted":   "Inner",
 	} {
-		p, err := NewPlan(FieldPlan{Field: field, Context: "c"})
+		p, err := NewPlan(FieldPlan{Field: field, Context: MustContext("c")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -494,12 +494,12 @@ func TestPlanBindsByFieldName(t *testing.T) {
 func TestNewPlanRefusesMalformedFields(t *testing.T) {
 	for name, fields := range map[string][]FieldPlan{
 		"no fields":      nil,
-		"no field name":  {{Context: "c"}},
+		"no field name":  {{Context: MustContext("c")}},
 		"no context":     {{Field: "A"}},
-		"unknown kind":   {{Field: "A", Context: "c", Terms: []TermKind{TermKind(9)}}},
-		"duplicate name": {{Field: "A", Context: "c", Name: "x"}, {Field: "B", Context: "c", Name: "x"}},
-		"field twice":    {{Field: "A", Name: "x", Context: "c"}, {Field: "A", Name: "y", Context: "d"}},
-		"term twice":     {{Field: "A", Context: "c", Terms: []TermKind{Equality, Equality}}},
+		"unknown kind":   {{Field: "A", Context: MustContext("c"), Terms: []TermKind{TermKind(9)}}},
+		"duplicate name": {{Field: "A", Context: MustContext("c"), Name: "x"}, {Field: "B", Context: MustContext("c"), Name: "x"}},
+		"field twice":    {{Field: "A", Name: "x", Context: MustContext("c")}, {Field: "A", Name: "y", Context: MustContext("d")}},
+		"term twice":     {{Field: "A", Context: MustContext("c"), Terms: []TermKind{Equality, Equality}}},
 	} {
 		if _, err := NewPlan(fields...); err == nil {
 			t.Errorf("%s: plan accepted", name)

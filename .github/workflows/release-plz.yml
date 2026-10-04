@@ -2,8 +2,9 @@ name: "Release crates (crates.io)"
 
 # Publishes two crates.io release lines via release-plz (crates.io Trusted
 # Publishing over OIDC — no CARGO_REGISTRY_TOKEN): `eql-bindings` from
-# packages/eql (`release`), and `stack-auth` + `stack-profile` from the root
-# workspace (`release-crates`, described above its own jobs at the end).
+# packages/eql (`release`), and the stack-* crates from the root workspace
+# (`release-crates`, described above its own jobs at the end). `release` runs
+# after `release-crates`: see the comment on its `needs:`.
 # Everything from here to `permissions:` is about the EQL line.
 #
 # THE FILENAME CANNOT CHANGE: crates.io binds the publisher to it.
@@ -85,8 +86,23 @@ jobs:
 
   release:
     name: "Release"
-    needs: [eql-armed]
-    if: needs.eql-armed.outputs.armed == 'true'
+    # AFTER `release-crates`, not beside it. eql-bindings' `stack-encrypt`
+    # feature names a stack-encrypt VERSION, and `cargo publish` resolves it
+    # from crates.io, so on a push that releases both, publishing in parallel
+    # races this job's resolution against the other job's upload. Ordered,
+    # the stack-* crates land first and this job's verify finds them.
+    # `!cancelled()`, not the implicit `success()`: `release-crates` is
+    # skipped on every push that moves no stack-* crate, and a skipped
+    # dependency would otherwise skip this job too. Not `always()` either:
+    # that would start this job after somebody cancelled the run, and a
+    # crates.io upload cannot be undone, only yanked (see the same rule on
+    # the publishing jobs in release.yml). A FAILURE of `release-crates`
+    # still stops this one, since the crates it needed did not publish.
+    needs: [eql-armed, release-crates]
+    if: >-
+      !cancelled()
+      && needs.eql-armed.outputs.armed == 'true'
+      && (needs.release-crates.result == 'success' || needs.release-crates.result == 'skipped')
     # GitHub-hosted, matching this repo's other publishing jobs.
     runs-on: ubuntu-latest
     timeout-minutes: 30

@@ -64,9 +64,9 @@ pub(crate) enum Kind {
     /// Derived from the source through the field type's own `EncryptFrom`.
     Derived {
         /// This field's own context, if it has one: a `#[stash(context =
-        /// "...")]` literal, or the `"<prefix>/<field>"` a `struct` derive
+        /// "...")]` literal, or the `(prefix, field)` pair a `struct` derive
         /// infers. A context the caller passes extends it either way.
-        context: Option<LitStr>,
+        context: Option<OwnContext>,
         /// With `struct = ..`: the plaintext field this one is derived
         /// from — its own name, or the `#[stash(from = field)]` override.
         /// `None` for a `plaintext` record, whose fields are all derived
@@ -96,7 +96,7 @@ impl Field {
     ///
     /// A field with a context of its own — a literal, or the one a `struct`
     /// derive infers — is derived under it as it is when the caller passes
-    /// `()`, and under it *extended* with the caller's (`("users/age", id)`)
+    /// `()`, and under it *extended* with the caller's (`(("users", "age"), id)`)
     /// when the caller passes a `NonEmpty<_>`. A field with none is handed
     /// the caller's context as it is, and its type decides what that means:
     /// a nested `struct` derive composes it with its own contexts; a leaf
@@ -118,13 +118,37 @@ impl Field {
     }
 }
 
+/// A derived field's own context.
+#[cfg_attr(test, derive(Debug))]
+pub(crate) enum OwnContext {
+    /// `#[stash(context = "...")]`: one text part, exactly as written.
+    Literal(LitStr),
+    /// What a `struct` derive infers: the pair (container `context` prefix,
+    /// plaintext field name), two parts, so it renders `prefix/field` without
+    /// the field name having to be joined into, or kept out of, a string. The
+    /// derive knows no tables (ADR-0003); a consumer whose prefix is a table
+    /// gets EQL's `(table, column)` shape from it.
+    Prefixed { prefix: LitStr, field: LitStr },
+}
+impl OwnContext {
+    /// The `NonEmpty` the derive hands `under` / `extend`.
+    fn expr(&self, krate: &Path) -> TokenStream {
+        match self {
+            Self::Literal(lit) => quote!(#krate::nonempty!(#lit)),
+            Self::Prefixed { prefix, field } => {
+                quote!(#krate::nonempty!(#prefix).with(#field))
+            }
+        }
+    }
+}
+
 /// Where a derived field's context comes from. See [`Field::field_context`].
 #[cfg_attr(test, derive(Debug))]
 pub(crate) enum FieldContext<'a> {
     /// A context of the field's own — `#[stash(context = "...")]`, or the
-    /// `"<prefix>/<field>"` a `struct` derive infers: as it is under `()`,
+    /// `(prefix, field)` pair a `struct` derive infers: as it is under `()`,
     /// extended with the caller's context under `NonEmpty<_>`.
-    Own(&'a LitStr),
+    Own(&'a OwnContext),
     /// No context of its own: handed the caller's as it is — `()`, or the
     /// record's associated context.
     Caller,
@@ -270,7 +294,7 @@ pub(crate) fn trait_impl(
 
 /// The fields, with what a `struct` derive (`prefix` is the container's
 /// `context`) fills in: `from` is the field's own name and `context` is
-/// `"<prefix>/<from>"`, each unless the field gives its own.
+/// the pair `("<prefix>", "<from>")`, each unless the field gives its own.
 /// `#[stash(nested)]` opts a field out of the inferred context — it is handed
 /// the caller's as it is, which a nested `struct` derive (a type carrying its
 /// own contexts) composes with them and a leaf accepts only as a
@@ -311,8 +335,8 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                 if context.value().is_empty() {
                     let message = if prefix.is_some() {
                         "an empty `context` is rejected when a value is encrypted: name the \
-                         field (e.g. \"users/email\"), or drop the attribute to use the inferred \
-                         `\"<context>/<field>\"`"
+                         field (e.g. \"email\"), or drop the attribute to use the inferred \
+                         pair `(\"<context>\", \"<field>\")`"
                     } else {
                         "an empty `context` is rejected when a value is encrypted: name the \
                          field (e.g. \"users/email\"), or drop the attribute to hand the field \
@@ -359,14 +383,45 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                                 // is handed the caller's (`FieldContext::Caller`).
                                 None
                             } else if let Some(lit) = attrs.context {
-                                Some(lit)
+                                Some(OwnContext::Literal(lit))
                             } else {
-                                let column = match &from {
+                                // The inferred second segment must render
+                                // verbatim, or the descriptor would not name
+                                // the field. A named field is a Rust identifier
+                                // and plain unless raw; a tuple index begins with
+                                // a digit, which the descriptor reserves.
+                                let field = match &from {
                                     Member::Named(ident) => ident.to_string(),
-                                    Member::Unnamed(index) => index.index.to_string(),
+                                    Member::Unnamed(index) => {
+                                        return Err(syn::Error::new(
+                                            member.span(),
+                                            format!(
+                                                "a tuple field has no name to infer a context \
+                                                 from: its index `{0}` begins with a digit, \
+                                                 which a descriptor reserves, so `(\"{1}\", \
+                                                 \"{0}\")` would render escaped; give the \
+                                                 field `#[stash(context = \"..\")]`",
+                                                index.index,
+                                                prefix.value()
+                                            ),
+                                        ));
+                                    }
                                 };
-                                let prefix = prefix.value();
-                                Some(LitStr::new(&format!("{prefix}/{column}"), member.span()))
+                                if !crate::attrs::is_plain_segment(&field) {
+                                    return Err(syn::Error::new(
+                                        member.span(),
+                                        format!(
+                                            "the field name `{field}` is not a plain descriptor \
+                                             segment, so `(\"{}\", \"{field}\")` would render \
+                                             escaped; give the field `#[stash(context = \"..\")]`",
+                                            prefix.value()
+                                        ),
+                                    ));
+                                }
+                                Some(OwnContext::Prefixed {
+                                    prefix: prefix.clone(),
+                                    field: LitStr::new(&field, member.span()),
+                                })
                             };
                             Kind::Derived {
                                 context,
@@ -374,7 +429,7 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                             }
                         }
                         None => Kind::Derived {
-                            context: attrs.context,
+                            context: attrs.context.map(OwnContext::Literal),
                             from: None,
                         },
                     },
@@ -482,12 +537,13 @@ impl Record {
         let krate = &self.krate;
         let span = field.ty.span();
         match field.field_context() {
-            FieldContext::Own(lit) => {
+            FieldContext::Own(own) => {
+                let own = respan(own.expr(krate), span);
                 if self.declared_contexts() {
-                    quote_spanned!(span=> .under(#krate::nonempty!(#lit)))
+                    quote_spanned!(span=> .under(#own))
                 } else {
                     let threaded = respan(self.threaded_context().into_token_stream(), span);
-                    quote_spanned!(span=> .extend::<#threaded>(#krate::nonempty!(#lit)))
+                    quote_spanned!(span=> .extend::<#threaded>(#own))
                 }
             }
             FieldContext::Caller => {
@@ -530,13 +586,14 @@ impl Record {
         let krate = &self.krate;
         match field.field_context() {
             FieldContext::Caller => quote!(::core::clone::Clone::clone(&__context)),
-            FieldContext::Own(lit) => {
+            FieldContext::Own(own) => {
                 let method = if self.declared_contexts() {
                     quote!(under)
                 } else {
                     quote!(extend)
                 };
-                quote!(::core::clone::Clone::clone(&__context).#method(#krate::nonempty!(#lit)))
+                let own = own.expr(krate);
+                quote!(::core::clone::Clone::clone(&__context).#method(#own))
             }
         }
     }
@@ -584,7 +641,10 @@ mod tests {
     /// The field's own context, for assertions.
     fn own(field: &Field) -> String {
         match field.field_context() {
-            FieldContext::Own(lit) => lit.value(),
+            FieldContext::Own(OwnContext::Literal(lit)) => lit.value(),
+            FieldContext::Own(OwnContext::Prefixed { prefix, field }) => {
+                format!("({}, {})", prefix.value(), field.value())
+            }
             other => panic!("expected a context of the field's own, got {other:?}"),
         }
     }
@@ -824,10 +884,10 @@ mod tests {
         );
         // Own name under the container's prefix.
         assert!(matches!(age.from(), Some(Member::Named(m)) if m == "age"));
-        assert_eq!(own(age), "user_profiles/age");
+        assert_eq!(own(age), "(user_profiles, age)");
         // `from` overrides the field; the context follows the plaintext field.
         assert!(matches!(email.from(), Some(Member::Named(m)) if m == "email_address"));
-        assert_eq!(own(email), "user_profiles/email_address");
+        assert_eq!(own(email), "(user_profiles, email_address)");
         // `context` is taken verbatim; like the inferred ones, the caller's
         // context extends it.
         assert!(matches!(name.from(), Some(Member::Named(m)) if m == "name"));
@@ -839,15 +899,42 @@ mod tests {
     }
 
     #[test]
-    fn a_tuple_struct_is_reached_and_named_by_index() {
-        let record = parse(parse_quote! {
+    fn a_tuple_struct_is_reached_by_index_and_must_name_its_contexts() {
+        // An index is no name for a context: it begins with a digit, which a
+        // descriptor reserves, so the bare form is refused…
+        let err = parse(parse_quote! {
             #[stash(struct = Reading, context = "readings")]
             struct EncryptedReading(EncryptedAge, StackCipherText);
         })
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("index `0` begins with a digit"),
+            "{err}"
+        );
+        // …and each field names its own, still reached by index.
+        let record = parse(parse_quote! {
+            #[stash(struct = Reading, context = "readings")]
+            struct EncryptedReading(
+                #[stash(context = "reading_value")] EncryptedAge,
+                #[stash(context = "reading_unit")] StackCipherText,
+            );
+        })
         .unwrap();
         assert!(matches!(record.fields[1].from(), Some(Member::Unnamed(i)) if i.index == 1));
-        assert_eq!(own(&record.fields[0]), "readings/0");
-        assert_eq!(own(&record.fields[1]), "readings/1");
+        assert_eq!(own(&record.fields[0]), "reading_value");
+        assert_eq!(own(&record.fields[1]), "reading_unit");
+    }
+
+    #[test]
+    fn a_container_prefix_that_is_not_plain_is_refused() {
+        let err = parse(parse_quote! {
+            #[stash(struct = User, context = "public/users")]
+            struct Encrypted {
+                email: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("must be plain"), "{err}");
     }
 
     #[test]

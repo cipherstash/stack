@@ -1083,8 +1083,8 @@ mod tests {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let requests = vec![
-            Request::generate_under(Descriptor::of("users/email")),
-            Request::generate_under(Descriptor::of("users/name")),
+            Request::generate_under(Descriptor::of(("users", "email"))),
+            Request::generate_under(Descriptor::of(("users", "name"))),
         ];
         let pairs: Vec<(Iv, Vec<u8>)> = Pending::request(&keyset, requests, |responses| {
             (0..2)
@@ -1104,7 +1104,7 @@ mod tests {
 
         let requests: Vec<Request> = pairs
             .iter()
-            .zip(["users/name", "users/email"])
+            .zip([("users", "name"), ("users", "email")])
             .map(|((iv, tag), descriptor)| {
                 Request::retrieve_under(
                     *iv,

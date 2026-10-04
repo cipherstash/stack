@@ -1,7 +1,7 @@
 [package]
 name = "stack-encrypt-derive"
 description = "Derive macros for stack-encrypt's target-directed encryption"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -27,6 +27,9 @@ syn = { version = "3", features = ["full", "extra-traits"] }
 development = ["stack-encrypt", "tokio"]
 
 [dev-dependencies]
+# The plain-segment rule is copied from stack-encrypt (a proc-macro crate cannot
+# depend on the crate it serves); its test reads the fixture both suites share.
+serde_json = { workspace = true }
 # The crate-level examples are real doctests, run against the fake key
 # source. A dev-dependency cycle back to `stack-encrypt` is the usual shape
 # for a derive crate (cf. serde_derive -> serde). The fake key source comes

@@ -3,7 +3,7 @@
 Client-side encryption of values under per-value ZeroKMS data keys, and the
 derivation of searchable index terms from the same values. Covers
 `stack-encrypt`, `stack-encrypt-derive`, and the WASI guest in
-`bindings/go/stackencrypt/guest` that exposes them to Go.
+`languages/golang/stackencrypt/guest` that exposes them to Go.
 
 ## Language
 
@@ -46,15 +46,17 @@ leaf requires a nonempty context, validated by Vitamin C and owned in a
 record deriving terms threads to every field) or an `AeadContext` (the AAD
 encoding alone — what a ciphertext is sealed and opened under; a record
 deriving terms hands its ciphertext fields that half of its `CallerContext`);
-a `nonempty!("users/email")` literal, a `NonEmpty::new(value)?` at runtime,
-or a bare integer. It becomes the ciphertext's associated data,
+a `nonempty!("users").with("email")` pair (a table and a column are two
+parts, rendered `users/email`), a `NonEmpty::new(value)?` at runtime, or a
+bare integer. It becomes the ciphertext's associated data,
 the term's PRF context, and the ZeroKMS descriptor of the data key.
 _Avoid_: AAD (that is one of its encodings, not the concept), lock context
 
 **Own context**:
-The context a field carries itself: a `context = ".."` literal, or the one a
-`struct = ..` derive infers as `<struct context>/<field>`. A caller's context
-*extends* it (`("users/age", id)`); it is never discarded. A subtree of a
+The context a field carries itself: a `context = ".."` literal (one text
+part, exactly as written), or the pair a `struct = ..` derive infers,
+`(<struct context>, <field>)`. A caller's context *extends* it
+(`(("users", "age"), id)`); it is never discarded. A subtree of a
 declaration is given one with `under` (the caller's is then optional) or
 `extend` (the caller's stays required).
 _Avoid_: default context, field prefix
@@ -72,13 +74,43 @@ _Avoid_: scope (that is a `Pending`'s), shared context, per-operation context
 **Descriptor**:
 The context, rendered as the string ZeroKMS binds into every data key and
 logs per retrieval, rendered from the context's parts: plain text verbatim,
-integers by their width, sign-blind (`7u64`, and `7i64` is `7u64`), a
-composite's parts joined by `|` (`users/email|7u64`); text that could read as
-another form is `b64:`-escaped, and an empty part inside a list is the bare
-`b64:`. Injective over encodings, and finer than them for a pre-encoded
-`Aad` (opaque bytes) and for shapes that encode alike (`None` vs `0u64`):
-seal and open must present the context in the same shape.
-_Avoid_: key name, key id
+integers by their width, sign-blind (`7u64`, and `7i64` is `7u64`), a list's
+parts joined by `/` (`users/email`; a nested list is parenthesised,
+`(users/email)/7u64`); text that could read as another form — containing
+`/`, `(` or `)`, beginning with `b64:`, a digit or `-` — is `b64:`-escaped,
+so one text part can never read as two, and an empty part inside a list is
+the bare `b64:`. Rendered by one function, `Descriptor::from_piece`, and
+**frozen**: a change re-keys everything. Finer than the encodings for a
+pre-encoded `Aad` (opaque bytes) and coarser for shapes that render alike
+(`7i64` and `7u64`): seal and open must present the context in the same
+shape. The descriptor is derived, never authored: nothing takes a descriptor
+string from a caller.
+_Avoid_: key name, key id, path (that is a `Label`)
+
+**Describe**:
+The trait of a value whose parts are a descriptor of its own — the identity
+data is keyed under, as opposed to an arbitrary context. An implementor
+returns its parts as a `Description`, built from a first part so it is never
+empty, and never writes rendered text, so the one renderer keeps distinct
+values apart whoever implements it. Open: a consumer's own column or
+document type implements it; `Label` does, and EQL's `Identifier` does once
+stack#971 lands. A `Describe` type is also a context, through the same parts
+(`to_context` is what its `IntoContext` returns).
+_Avoid_: descriptor trait, Descriptor (the rendered string), DescriptorBuilder
+
+**Label**:
+The *name* of the data a value is sealed under (`users/email`,
+`documents/v2/body`): the first-class `Describe` type, a path of plain
+segments, each checked (non-empty; no `/`, `(`, `)`, control or invisible
+format characters; not beginning with `b64:`, a digit or `-`), so its `Display` is its
+descriptor and parses back losslessly. A context carries a name and,
+optionally, a *scope* (a tenant, a row id), and each has one spelling: the
+name is a `Label`, a flat list; the scope is `with`, which appends and nests
+(`(users/email)/7u64`). Never build a name with `with` or put a scope in a
+`Label`. A two-segment label is the context a `struct = ..` derive binds for
+a field, so a label opens a row a derive wrote. An EQL consumer names its
+data with an `Identifier`, a two-segment label.
+_Avoid_: identifier (that is EQL's two-segment case), prefix, column context
 
 **Leaf**:
 An output type that authenticates or derives directly — a ciphertext or a

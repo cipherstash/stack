@@ -19,7 +19,7 @@ pub(crate) struct ContainerAttrs {
     /// field says otherwise. Exclusive with `plaintext`; requires `context`.
     pub(crate) by_field: Option<Type>,
     /// `#[stash(context = "...")]` on the container: the first half of every
-    /// field's inferred context — `"<context>/<field>"`. Names the stored
+    /// field's inferred context, the pair `("<context>", "<field>")`. Names the stored
     /// data, not the Rust type: it is part of the stored data's identity, so
     /// it is given explicitly rather than inferred from a name a refactor
     /// can change. Only meaningful with `struct`.
@@ -149,7 +149,7 @@ impl ContainerAttrs {
                     by_field,
                     "`struct = ..` needs a `context = \"..\"` beside it naming the stored data \
                      (e.g. `#[stash(struct = User, context = \"users\")]`): each field is derived \
-                     under `\"<context>/<field>\"`, and the prefix is part of the stored data's \
+                     under the pair `(\"<context>\", \"<field>\")`, and the prefix is part of the stored data's \
                      identity, so it is given explicitly rather than inferred from the Rust \
                      type's name",
                 ));
@@ -170,6 +170,16 @@ impl ContainerAttrs {
                     context.span(),
                     "an empty `context` is rejected when a value is encrypted: name the stored \
                      data (e.g. \"users\")",
+                ));
+            }
+            if !is_plain_segment(&context.value()) {
+                return Err(syn::Error::new(
+                    context.span(),
+                    "a container `context` is the first segment of every field's ZeroKMS \
+                     descriptor, so it must be plain: no `/`, `(`, `)`, control or invisible \
+                     character, and not beginning with `b64:`, a digit or `-`; otherwise it \
+                     would render escaped and the log would not name the table. For the table \
+                     `public.users` write `context = \"users\"`",
                 ));
             }
         }
@@ -297,5 +307,59 @@ impl FieldAttrs {
         }
 
         Ok(parsed)
+    }
+}
+
+/// Whether `text` renders verbatim in a ZeroKMS descriptor: the plain-segment
+/// rule of `stack_encrypt::Label`, copied here because a proc-macro crate
+/// cannot depend on the crate it serves. The test below reads the fixture the
+/// Rust and Go suites share, so this copy cannot drift from them.
+pub(crate) fn is_plain_segment(text: &str) -> bool {
+    const INVISIBLE: &[char] = &[
+        '\u{00AD}', '\u{061C}', '\u{180E}', '\u{200B}', '\u{200C}', '\u{200D}', '\u{200E}',
+        '\u{200F}', '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}', '\u{2060}',
+        '\u{2061}', '\u{2062}', '\u{2063}', '\u{2064}', '\u{2066}', '\u{2067}', '\u{2068}',
+        '\u{2069}', '\u{FEFF}',
+    ];
+    !text.is_empty()
+        && !text.starts_with("b64:")
+        && !text.starts_with(|c: char| c.is_ascii_digit() || c == '-')
+        && !text
+            .chars()
+            .any(|c| c.is_control() || INVISIBLE.contains(&c) || matches!(c, '/' | '(' | ')'))
+}
+
+#[cfg(test)]
+mod plain_segment_tests {
+    use super::is_plain_segment;
+
+    /// The derive is the third reader of `label_segments.json`, beside the
+    /// stack-encrypt and Go suites: one list of what is plain.
+    #[test]
+    fn the_copied_rule_matches_the_shared_fixture() {
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../stack-encrypt/tests/fixtures/label_segments.json"
+        ))
+        .expect("a valid fixture");
+        let list = |key: &str| {
+            json[key]
+                .as_array()
+                .expect("an array")
+                .iter()
+                .map(|v| v.as_str().expect("a string").to_owned())
+                .collect::<Vec<_>>()
+        };
+        let (plain, not_plain) = (list("plain"), list("not_plain"));
+        assert!(!plain.is_empty() && !not_plain.is_empty());
+        for text in &plain {
+            assert!(is_plain_segment(text), "{text:?}");
+        }
+        for text in &not_plain {
+            assert!(!is_plain_segment(text), "{text:?}");
+        }
+        // The names the derive infers are Rust identifiers, which are plain
+        // unless raw; an index is not.
+        assert!(is_plain_segment("email_address"));
+        assert!(!is_plain_segment("0"));
     }
 }

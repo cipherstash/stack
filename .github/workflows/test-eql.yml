@@ -100,6 +100,20 @@ on:
       - "packages/eql/docker/**"
       - "packages/eql/README.md"
       - "packages/eql/SUPABASE.md"
+      # The `rust-crates` job's encryption steps compile these by PATH
+      # (`eql-bindings`' `stack-encrypt` feature): stack-encrypt, its derive
+      # and stack-kms through `path =`, and stack-auth and stack-profile
+      # through `workspace = true` entries the root `Cargo.toml` resolves to
+      # paths. The mise-task derivation in eql-workflow-filters.test.mjs
+      # cannot see them (a task body names a cargo package, not a path); the
+      # manifest walk in eql-suite-ci.test.mjs does, and fails when one of them
+      # is missing from this list.
+      - "packages/stack-encrypt/**"
+      - "packages/stack-encrypt-derive/**"
+      - "packages/stack-kms/**"
+      - "packages/stack-auth/**"
+      - "packages/stack-profile/**"
+      - "Cargo.toml"
   schedule:
     - cron: "0 4 * * *"      # 04:00 UTC daily; full matrix, off the merge path
   merge_group: {}            # inert today (no queue); kept so enabling one works
@@ -193,6 +207,12 @@ jobs:
               - "packages/eql/docker/**"
               - "packages/eql/README.md"
               - "packages/eql/SUPABASE.md"
+              - "packages/stack-encrypt/**"
+              - "packages/stack-encrypt-derive/**"
+              - "packages/stack-kms/**"
+              - "packages/stack-auth/**"
+              - "packages/stack-profile/**"
+              - "Cargo.toml"
 
       # Explicit default (not `|| 'true'`, which trips GitHub's inconsistent
       # treatment of the string 'false'). push/schedule/merge_group/dispatch
@@ -520,6 +540,18 @@ jobs:
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
+    services:
+      encryption-postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 7433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -549,6 +581,23 @@ jobs:
           rustup component add --toolchain "${active_rust_toolchain}" rustfmt clippy
           mise run test:crates
 
+      # The three encryption checks are mise tasks rather than raw cargo here,
+      # so `eql-suite-ci.test.mjs` counts them among the cargo tasks a root
+      # workflow must reach, and `eql-workflow-filters.test.mjs` derives the
+      # paths they read. The database task takes the connection from
+      # EQL_TEST_DATABASE_URL alone; the port is written once more, in the
+      # service's `ports:`, which no expression can reach from here.
+      - name: Test Rust text equality
+        run: mise run test:encryption
+
+      - name: Test Rust text equality with PostgreSQL
+        env:
+          EQL_TEST_DATABASE_URL: "host=localhost port=7433 user=postgres password=postgres dbname=postgres"
+        run: mise run test:encryption:postgres
+
+      - name: Compile Rust text equality for WASI without HTTP
+        run: mise run check:encryption:wasi
+
       # Freshness gate for the eql-types codegen output: regenerate the
       # TypeScript bindings and JSON Schemas and fail if the checked-in
       # copies differ. Reuses the toolchain from the step above.
@@ -562,9 +611,46 @@ jobs:
       # a real path dependency without a version — on the PR rather than at
       # release time. No token needed. `--allow-dirty` tolerates any files the
       # preceding regenerate-and-diff steps leave in the working tree.
+      #
+      # `--all-features`: the verify step compiles the DEFAULT feature set
+      # unless told otherwise, and the `stack-encrypt` feature is off by
+      # default — so this step passed while that feature did not build against
+      # the crates.io stack-encrypt the manifest names. Every other job here
+      # compiles stack-encrypt by PATH, from the tree, and cannot notice; the
+      # packaged manifest has no `path`, so this verify resolves stack-encrypt
+      # from the REGISTRY, which is the build a consumer and docs.rs get.
+      # release-plz does the same at publish time (`publish_all_features` in
+      # packages/eql/release-plz.toml).
+      #
+      # Two ways the verify can fail, and only one of them is this step's job.
+      # A stack-encrypt VERSION that is not on crates.io yet fails resolution
+      # ("failed to select a version") before anything compiles. That is the
+      # ordinary state of a PR that bumps the requirement: the stack-encrypt it
+      # names ships from main, this PR is not on main, and the two cannot be
+      # published in the other order. It is also already loud where it
+      # matters — `cargo publish` refuses it at release time, and
+      # release-plz.yml publishes the stack-* crates before eql-bindings — so
+      # here it is a warning, not a failure, and the registry build is left to
+      # the release. A version that RESOLVES and then does not compile is the
+      # silent case, the one a path build can never see, and that fails.
       - name: Verify eql-bindings packages cleanly for crates.io
         run: |
-          cargo publish -p eql-bindings --dry-run --allow-dirty
+          set -euo pipefail
+          # cargo's own status is kept in `status`: `|| status=$?` reads it
+          # before anything else runs. (`status=$?` on the line after an `if`
+          # reads the if's status, which is 0 when its condition failed, so a
+          # version that resolves and then fails to compile would exit 0.)
+          status=0
+          out="$(cargo publish -p eql-bindings --dry-run --allow-dirty --all-features 2>&1)" || status=$?
+          printf '%s\n' "$out"
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+          if grep -qF 'failed to select a version for the requirement `stack-encrypt' <<<"$out"; then
+            echo "::warning title=eql-bindings not verified against the registry::The stack-encrypt version eql-bindings names is not on crates.io yet, so the packaged crate could not be built against the registry here. release-plz builds it at publish time (publish_all_features in packages/eql/release-plz.toml) and refuses to publish eql-bindings until that stack-encrypt has shipped."
+            exit 0
+          fi
+          exit "$status"
 
   codegen:
     name: "Encrypted-domain codegen"

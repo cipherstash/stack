@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -20,10 +21,20 @@ type Identifier struct {
 	Column string
 }
 
-// String is the context an EQL target binds: "<table>/<column>", the
-// shape the Rust derive gives a `#[stash(struct = T, context = "<table>")]`
-// field.
+// String joins the table and the column with '/', for messages. The context
+// an EQL target binds, and the descriptor ZeroKMS logs for it, is
+// [Identifier.Label], which refuses a name this joining would misrender.
 func (id Identifier) String() string { return id.Table + "/" + id.Column }
+
+// Label is the identifier as the two-segment [stackencrypt.Label] an EQL
+// target binds: the shape the Rust derive gives a
+// `#[stash(struct = T, context = "<table>")]` field, and what EQL's own
+// Identifier describes. It is refused when either half is not plain —
+// contains '/', '(' or ')', a control character, or begins with "b64:", a
+// digit or '-' — since such a name would not render as itself.
+func (id Identifier) Label() (stackencrypt.Label, error) {
+	return stackencrypt.NewLabel(id.Table, id.Column)
+}
 
 // Target is what an encrypted field is stored as: the index terms derived
 // beside its ciphertext, and the context it binds. The context is the
@@ -32,12 +43,12 @@ type Target interface {
 	// Terms lists the index terms to derive, in order.
 	Terms() []stackencrypt.TermKind
 	// Context returns the field's context given its column identity. An
-	// EQL target returns id.String(); a custom target returns its own.
-	Context(id Identifier) string
+	// EQL target binds id.Label(); a custom target returns its own.
+	Context(id Identifier) (stackencrypt.Context, error)
 }
 
 // EQL is an EQL column target: the field binds its column identity
-// ([Identifier.String]) as its context and derives the given terms. Typed
+// ([Identifier.Label]) as its context and derives the given terms. Typed
 // EQL targets (a text-with-equality column, say) are this with the terms
 // filled in, and implement [Target] the same way.
 func EQL(terms ...stackencrypt.TermKind) Target {
@@ -47,13 +58,30 @@ func EQL(terms ...stackencrypt.TermKind) Target {
 type eqlTarget struct{ terms []stackencrypt.TermKind }
 
 func (t eqlTarget) Terms() []stackencrypt.TermKind { return slices.Clone(t.terms) }
-func (t eqlTarget) Context(id Identifier) string   { return id.String() }
-func (t eqlTarget) String() string                 { return "EQL(" + termList(t.terms) + ")" }
+func (t eqlTarget) Context(id Identifier) (stackencrypt.Context, error) {
+	l, err := id.Label()
+	if err != nil {
+		// The label error names a segment index; the caller gave a table and
+		// a column identity, so say which of those it was.
+		half, name := "table", id.Table
+		var le *stackencrypt.LabelError
+		if errors.As(err, &le) && le.Index == 1 {
+			half, name = "column identity", id.Column
+		}
+		return stackencrypt.Context{}, fmt.Errorf("%s %q cannot name a context: %w", half, name, err)
+	}
+	return l.Context(), nil
+}
+func (t eqlTarget) String() string { return "EQL(" + termList(t.terms) + ")" }
 
 // Custom is a non-EQL target: the field binds context, whatever its
-// column, and derives the given terms. The context need not be
-// table/column shaped; it is the policy's to choose and, like any context,
-// must never change once data is written under it.
+// column, and derives the given terms. The context is the policy's to
+// choose and, like any context, must never change once data is written
+// under it. It is one arbitrary text part, exactly as written — what
+// [stackencrypt.NewContext] makes and a Rust `#[stash(context = "..")]`
+// literal binds — so a '/' in it is text, not a separator: "notes/v1" is
+// one part, rendered escaped in the ZeroKMS log, never the table/column
+// pair. A table and a column are an [EQL] target.
 func Custom(context string, terms ...stackencrypt.TermKind) Target {
 	return customTarget{context: context, terms: slices.Clone(terms)}
 }
@@ -64,7 +92,9 @@ type customTarget struct {
 }
 
 func (t customTarget) Terms() []stackencrypt.TermKind { return slices.Clone(t.terms) }
-func (t customTarget) Context(Identifier) string      { return t.context }
+func (t customTarget) Context(Identifier) (stackencrypt.Context, error) {
+	return stackencrypt.NewContext(t.context)
+}
 func (t customTarget) String() string {
 	return fmt.Sprintf("Custom(%q%s)", t.context, prefixed(termList(t.terms)))
 }
