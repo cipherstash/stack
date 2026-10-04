@@ -148,7 +148,7 @@ impl Scalar {
 /// ```
 /// use stack_encrypt::dynamic::{context, term, FfiValue, Scalar, TermKind};
 /// use stack_encrypt::StackCipher;
-/// use stack_kms::FakeDataKeySource;
+/// use stack_encrypt::kms::FakeDataKeySource;
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 /// let cipher = StackCipher::builder()

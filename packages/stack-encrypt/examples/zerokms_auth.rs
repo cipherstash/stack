@@ -14,8 +14,8 @@
 //! anywhere, and CI builds it either way.
 
 use stack_auth::{AuthError, AuthStrategyFn, SecretToken, ServiceToken};
+use stack_encrypt::kms::{EnvKeyProvider, StackKmsBuilder};
 use stack_encrypt::StackCipher;
-use stack_kms::{EnvKeyProvider, StackKmsBuilder};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

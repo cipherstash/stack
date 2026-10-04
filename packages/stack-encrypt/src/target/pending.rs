@@ -22,7 +22,7 @@ use super::request::{tally, Request, RequestKind, Responses};
 use crate::{Descriptor, Error, KeysetCipher, StackCipher};
 
 /// The boxed fulfilment: consumes this pending's slice of the responses and
-/// produces the output. The `Send` split mirrors [`stack_kms::MaybeSend`] —
+/// produces the output. The `Send` split mirrors [`kms::MaybeSend`](crate::kms::MaybeSend) —
 /// the underlying ZeroKMS futures are not `Send` on wasm32.
 #[cfg(not(target_arch = "wasm32"))]
 type FulfilBox<'a, T> = Box<dyn FnOnce(&mut Responses) -> Result<T, Error> + Send + 'a>;

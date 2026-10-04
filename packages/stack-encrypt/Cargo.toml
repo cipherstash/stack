@@ -57,6 +57,10 @@ http = ["dep:stack-auth", "stack-auth/http", "stack-kms/http"]
 # only at runtime, as an FFI binding's are. Off by default — it is only of
 # use to a binding author, and it pulls `vitaminc-aead-value` in.
 dynamic = ["dep:vitaminc-aead-value"]
+# `stack_encrypt::kms::FakeDataKeySource`: the in-memory key source for tests
+# with no ZeroKMS, so a caller's dev-dependency on stack-encrypt is enough and
+# no direct stack-kms dependency has to agree with this crate's.
+test-support = ["stack-kms/test-support"]
 
 [dev-dependencies]
 serde_json = { workspace = true }

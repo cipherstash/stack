@@ -71,7 +71,7 @@ impl Descriptor {
     pub const SEPARATOR: char = '|';
 
     /// The longest descriptor ZeroKMS accepts, in bytes of the rendered
-    /// string: the protocol's [`MAX_DESCRIPTOR_LEN`](stack_kms::MAX_DESCRIPTOR_LEN).
+    /// string: the protocol's [`MAX_DESCRIPTOR_LEN`](crate::kms::MAX_DESCRIPTOR_LEN).
     /// ZeroKMS derives key material over a fixed block of that size holding
     /// the descriptor, so a longer one cannot be bound. Every data-key
     /// request checks its descriptors against this before anything is sent

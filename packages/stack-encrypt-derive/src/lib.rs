@@ -6,7 +6,7 @@
 //! ```
 //! use stack_encrypt::{EncryptFrom, DecryptInto, StackCipher, StackCipherText, nonempty};
 //! use stack_encrypt::sem::EqualityTerm;
-//! use stack_kms::FakeDataKeySource;
+//! use stack_encrypt::kms::FakeDataKeySource;
 //!
 //! #[derive(EncryptFrom, DecryptInto)]
 //! #[stash(plaintext = String)]
@@ -63,7 +63,7 @@
 //!     CipherText, Decryptable, Encrypt, EncryptFrom, Encryption, Error, SealedValue, StackCipher,
 //!     nonempty,
 //! };
-//! use stack_kms::FakeDataKeySource;
+//! use stack_encrypt::kms::FakeDataKeySource;
 //!
 //! /// A column that stores one sealed leaf as bytes.
 //! struct LeafBytes(Vec<u8>);

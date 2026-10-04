@@ -11,9 +11,9 @@ import { readWorkflow } from './lib/workflows.mjs'
  * `publish = false` in a crate's manifest stops `release-plz release` from
  * uploading it, but not `release-plz update` from bumping its version and
  * writing its changelog. So the published crates are each in a named
- * `version_group` (`stack-auth` and `stack-profile` in one, `stack-kms`,
- * `stack-encrypt` and `stack-encrypt-derive` in another), and every other
- * member carries `release = false`. A member added to the workspace without a line here would
+ * `version_group` (`stack-auth` with `stack-profile`, `stack-kms` alone, and
+ * `stack-encrypt` with `stack-encrypt-derive`), and every other member
+ * carries `release = false`. A member added to the workspace without a line here would
  * be versioned on the next release-plz run.
  *
  * Each of those members also carries `publish = false`. The workspace table
@@ -33,7 +33,7 @@ const CONFIG = 'release-plz.toml'
 const GROUPS = {
   'stack-auth': 'stack-auth',
   'stack-profile': 'stack-auth',
-  'stack-kms': 'stack-encrypt',
+  'stack-kms': 'stack-kms',
   'stack-encrypt': 'stack-encrypt',
   'stack-encrypt-derive': 'stack-encrypt',
 }

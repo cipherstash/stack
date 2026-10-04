@@ -144,7 +144,7 @@ pub enum Error {
     /// Building a ZeroKMS client from the environment failed: credentials or
     /// client key missing or malformed.
     ///
-    /// Boxed rather than naming `stack_kms::StackKmsBuilderError` directly:
+    /// Boxed rather than naming `stack_encrypt::kms::StackKmsBuilderError` directly:
     /// that type only exists with `http`, and a variant whose presence tracks
     /// a feature is not additive — feature unification elsewhere in the graph
     /// would then change this enum's shape under a downstream match.
@@ -234,8 +234,8 @@ impl From<Unspecified> for Error {
 }
 
 /// The CipherStash cipher, scoped to one client: a ZeroKMS client (a
-/// [`DataKeySource`] — production: [`stack_kms::StackKms`]; tests:
-/// `stack_kms::FakeDataKeySource`) and the keysets that client uses.
+/// [`DataKeySource`] — production: [`kms::StackKms`](crate::kms::StackKms); tests:
+/// `stack_encrypt::kms::FakeDataKeySource`) and the keysets that client uses.
 ///
 /// Per-leaf keying is deliberate: every value access requires its own data-key
 /// retrieval, so individual value accesses are visible (and auditable) as
@@ -292,7 +292,7 @@ different data-key source entirely:"#
 /// ```
 /// # async fn example() -> Result<(), stack_encrypt::Error> {
 /// use stack_encrypt::StackCipher;
-/// use stack_kms::FakeDataKeySource;
+/// use stack_encrypt::kms::FakeDataKeySource;
 ///
 /// let cipher = StackCipher::builder()
 ///     .kms(FakeDataKeySource::new())
@@ -401,7 +401,7 @@ impl<K: IndexKeySource> StackCipher<K> {
     /// ```
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
     /// use stack_encrypt::{nonempty, StackCipher};
-    /// use stack_kms::{FakeDataKeySource, IdentifiedBy};
+    /// use stack_encrypt::kms::{FakeDataKeySource, IdentifiedBy};
     ///
     /// let cipher = StackCipher::builder()
     ///     .kms(FakeDataKeySource::new())
@@ -611,9 +611,9 @@ impl StackCipherBuilder<FromEnv> {
     /// from the environment.
     ///
     /// This is the seam for a custom authentication strategy: build a
-    /// [`stack_kms::StackKms`] — with `stack_kms::StackKmsBuilder`,
+    /// [`kms::StackKms`](crate::kms::StackKms) — with `stack_encrypt::kms::StackKmsBuilder`,
     /// or over the host's own transport — and hand it over. It is also how
-    /// tests inject `stack_kms::FakeDataKeySource`.
+    /// tests inject `stack_encrypt::kms::FakeDataKeySource`.
     pub fn kms<K>(self, kms: K) -> StackCipherBuilder<K> {
         StackCipherBuilder {
             kms,
@@ -666,7 +666,7 @@ impl<K: DataKeySource + IndexKeySource> StackCipherBuilder<K> {
 }
 
 /// Build the local HMAC-SHA256 PRF from a per-keyset
-/// [`IndexKey`](stack_kms::IndexKey), wiping the intermediate stack copy of the
+/// [`IndexKey`](crate::kms::IndexKey), wiping the intermediate stack copy of the
 /// raw key bytes.
 fn hmac_prf_from_index_key(index_key: &stack_kms::IndexKey) -> vitaminc_hmac::HmacSha256Prf {
     use zeroize::Zeroize;

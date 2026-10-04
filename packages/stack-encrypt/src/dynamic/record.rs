@@ -322,7 +322,7 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
 /// ```
 /// use stack_encrypt::dynamic::{record, FfiValue, Scope};
 /// use stack_encrypt::StackCipher;
-/// use stack_kms::FakeDataKeySource;
+/// use stack_encrypt::kms::FakeDataKeySource;
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 /// let cipher = StackCipher::builder()

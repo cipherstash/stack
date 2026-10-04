@@ -50,8 +50,8 @@
 //!
 //! The backend today is the local
 //! [`HmacSha256Prf`] — keyed by the
-//! deterministic per-keyset [`IndexKey`](stack_kms::IndexKey) from
-//! [`stack_kms::IndexKeySource`], loaded when the keyset is selected — so
+//! deterministic per-keyset [`IndexKey`](crate::kms::IndexKey) from
+//! [`kms::IndexKeySource`](crate::kms::IndexKeySource), loaded when the keyset is selected — so
 //! every derivation completes with no I/O and an [`EncryptFrom`](crate::EncryptFrom) term
 //! carries **no requests** in its [`Pending`]. That is the backend's
 //! property, not the API's: the term is a `Pending` either way. The next
