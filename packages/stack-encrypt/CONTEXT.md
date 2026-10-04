@@ -10,12 +10,19 @@ derivation of searchable index terms from the same values. Covers
 **Cipher-directed**:
 Encryption driven by the value's shape: the value's `Encrypt` implementation
 walks the cipher and the caller decides the context, which may be absent.
+Nothing declares an index and no output type is involved. One of the two
+preferred entry points for a native Rust caller, and the one path every
+binding has natively.
 _Avoid_: raw path, low-level path
 
 **Target-directed**:
 Encryption driven by the output type: the type being produced (a ciphertext, a
 term, a record) declares what it is derived from, which operations produce it,
-and which context it demands; execution belongs to the cipher.
+and which context it demands; execution belongs to the cipher. Rust-only: a
+hand-written `EncryptFrom` type, the combinators, and the derive. With
+cipher-directed, the preferred entry point for a native Rust caller. A
+binding reaches indexes and field-by-field encryption only through a plan
+lowered from data, which runs the same engine.
 _Avoid_: typed path, high-level path
 
 **Operation description**:
@@ -167,6 +174,13 @@ A deterministic, one-way value an index derives from a plaintext under a
 context — one for equality, ORE or OPE; a set of them for match.
 _Avoid_: index (that is the declaration; a term is what it produces), token,
 hash
+
+**Query**:
+Deriving the terms for a plaintext under a field's plan, with no ciphertext,
+to match terms already stored. A query against an index the plan never
+declared is refused, so a query cannot silently match nothing.
+_Avoid_: probe, search term, lookup, encrypt query (that is the TypeScript
+package's method name, not the concept)
 
 **Pending**:
 An output whose local work (term derivation, per-leaf sealing plan) is done
