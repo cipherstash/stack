@@ -67,6 +67,8 @@ on:
       - "packages/stack-encrypt/**"
       - "packages/stack-encrypt-derive/**"
       - "packages/stack-kms/**"
+      - "packages/stack-auth/**"
+      - "packages/stack-profile/**"
       - "Cargo.toml"
 
   schedule:

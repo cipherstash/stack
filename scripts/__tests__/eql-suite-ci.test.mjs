@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, relative, sep } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 import { REPO_ROOT } from './lib/repo-root.mjs'
@@ -254,7 +254,47 @@ describe('the relevance filter still selects the imported tree', () => {
    * and an unrelated root path still fails. Those crates also inherit
    * versions through `workspace = true` from the ROOT `Cargo.toml`, so that
    * one file is allowed whenever any reached manifest inherits.
+   *
+   * `name = { workspace = true }` is a path dependency too when the workspace
+   * manifest's `[workspace.dependencies]` entry carries a `path` — which is
+   * how `stack-kms` reaches `packages/stack-auth` and `packages/stack-profile`.
+   * A scan of literal `path =` keys stopped there, so a pull request touching
+   * only one of those two crates read as irrelevant to EQL while the
+   * `rust-crates` job compiled it. The lookup goes through the nearest
+   * ancestor `[workspace]` manifest of the crate that inherits, which is what
+   * cargo reads.
    */
+  const workspaceDependencyPaths = (dir) => {
+    let current = dir
+    while (current !== '' && current !== '.') {
+      current = dirname(current)
+      const candidate = join(
+        REPO_ROOT,
+        current === '' ? 'Cargo.toml' : `${current}/Cargo.toml`,
+      )
+      if (!existsSync(candidate)) continue
+      const text = readFileSync(candidate, 'utf8')
+      if (!/^\s*\[workspace\]/m.test(text)) continue
+      const section =
+        /^\[workspace\.dependencies\]\n([\s\S]*?)(?=^\[|$(?![\r\n]))/m.exec(
+          text,
+        )?.[1] ?? ''
+      const paths = new Map()
+      for (const [, name, target] of section.matchAll(
+        /^\s*([A-Za-z0-9_-]+)\s*=\s*\{[^}]*\bpath\s*=\s*"([^"]+)"/gm,
+      )) {
+        paths.set(
+          name,
+          relative(REPO_ROOT, join(REPO_ROOT, current, target))
+            .split(sep)
+            .join('/'),
+        )
+      }
+      return paths
+    }
+    return new Map()
+  }
+
   const externalPathDependencies = (() => {
     const dirs = new Set()
     let inherits = false
@@ -291,6 +331,21 @@ describe('the relevance filter still selects the imported tree', () => {
         if (existsSync(join(REPO_ROOT, depDir, 'Cargo.toml')))
           queue.push(depDir)
       }
+      // `name = { workspace = true, … }`: a path dependency when the workspace
+      // manifest says so. Resolved lazily — most EQL members inherit nothing.
+      const inherited = [
+        ...manifest.matchAll(
+          /^\s*([A-Za-z0-9_-]+)\s*=\s*\{[^}]*\bworkspace\s*=\s*true\b/gm,
+        ),
+      ].map(([, name]) => name)
+      if (inherited.length > 0) {
+        const paths = workspaceDependencyPaths(dir)
+        for (const name of inherited) {
+          const depDir = paths.get(name)
+          if (depDir && existsSync(join(REPO_ROOT, depDir, 'Cargo.toml')))
+            queue.push(depDir)
+        }
+      }
     }
     return { dirs: [...dirs].sort(), inherits }
   })()
@@ -305,6 +360,15 @@ describe('the relevance filter still selects the imported tree', () => {
       externalPathDependencies.dirs,
       'No `path =` dependency outside `packages/eql/` was derived from the EQL workspace manifests. If `eql-bindings` dropped its `stack-encrypt` feature this is right and the stack-crate entries should leave the filter too; otherwise the manifest reader stopped matching.',
     ).toContain('packages/stack-encrypt')
+    // The `workspace = true` half of the reader, on its live case: stack-kms
+    // reaches stack-auth through the root `[workspace.dependencies]`. If this
+    // derives nothing, the two stack-auth / stack-profile filter entries read
+    // as offenders below — the right failure for a dropped dependency, and
+    // the wrong one for a reader that stopped resolving `workspace = true`.
+    expect(
+      externalPathDependencies.dirs,
+      'No `workspace = true` dependency resolved to a path through the root `[workspace.dependencies]`. If stack-kms no longer depends on stack-auth this is right; otherwise the workspace-dependency reader stopped matching.',
+    ).toContain('packages/stack-auth')
   })
 
   it('prefixes every source path with the subtree root', () => {
