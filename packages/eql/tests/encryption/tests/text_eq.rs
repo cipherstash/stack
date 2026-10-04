@@ -1,5 +1,6 @@
 mod common;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use eql_bindings::encryption::NativeCiphertextVisitor as NativeLeaf;
 use eql_bindings::v3::terms::{Ciphertext, Hmac256};
 use eql_bindings::v3::text::{TextEq, TextEqQuery};
@@ -29,6 +30,15 @@ async fn text_round_trips_through_json_and_both_canonical_directions() {
         assert_eq!(json["v"], 3);
         assert_eq!(json["i"], serde_json::json!({"t":"users", "c":"email"}));
         assert_eq!(json.as_object().unwrap().len(), 4);
+        // The marker is the only thing that separates this producer profile
+        // from cipherstash-client ciphertext in the same column. Encryption
+        // and decryption read one constant, so a round trip cannot notice it
+        // changing; rows written under the old text would then stop opening.
+        let encoded = json["c"].as_str().unwrap();
+        assert!(
+            encoded.starts_with("stack-encrypt:1:"),
+            "the stored ciphertext carries the producer and version marker: {encoded}"
+        );
         let stored: TextEq = serde_json::from_value(json).unwrap();
         let native = stored.c.clone().read(NativeLeaf).unwrap();
         let opened: String = cipher.decrypt(native, column()).await.unwrap();
@@ -56,6 +66,26 @@ async fn text_round_trips_through_json_and_both_canonical_directions() {
             opened, value,
             "native ciphertext opens through the EQL target"
         );
+    }
+}
+
+#[tokio::test]
+async fn repeated_text_encryption_uses_distinct_ciphertexts_and_one_equality_term() {
+    // The two properties equality search rests on: `hm` is the same for the
+    // same value and column, so a query finds every matching row, and `c`
+    // differs on every write, so an observer of the column cannot see which
+    // rows hold the same value. A seal that reused a nonce would keep every
+    // single-write round trip green.
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let value = "alice@example.com".to_owned();
+    let first: TextEq = keyset.encrypt_as(&value, column()).await.unwrap();
+    let second: TextEq = keyset.encrypt_as(&value, column()).await.unwrap();
+    assert_ne!(first.c, second.c, "each write seals under a fresh data key");
+    assert_eq!(first.hm, second.hm, "equality search matches through hm");
+    for record in [first, second] {
+        let opened: String = cipher.decrypt_as(record, column().into()).await.unwrap();
+        assert_eq!(opened, value);
     }
 }
 
@@ -159,8 +189,23 @@ async fn context_and_encoding_failures_are_rejected_before_retrieving_keys() {
             .await
             .is_err());
     }
+    // A payload the TypeScript stack wrote carries no marker. The README says
+    // decryption rejects it with an error that names the producer; if the
+    // marker check moved behind the base64 decode, the user would read
+    // "invalid base64" instead, and `is_err()` alone would not notice.
+    let mut legacy = stored.clone();
+    legacy.c = Ciphertext("legacy-ciphertext".into());
+    let error = cipher
+        .decrypt_as::<String, _>(legacy, Default::default())
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("unsupported EQL ciphertext producer or version"),
+        "a legacy payload is refused by name, not by a decode error: {error}"
+    );
     for encoded in [
-        "legacy-ciphertext",
         "stack-encrypt:2:00000",
         "stack-encrypt:1:",
         "stack-encrypt:1:~",
@@ -186,6 +231,39 @@ async fn context_and_encoding_failures_are_rejected_before_retrieving_keys() {
         "a different nonempty stored identifier fails authentication"
     );
     assert_eq!(calls.lock().unwrap().retrieve.len(), 1);
+}
+
+#[tokio::test]
+async fn one_changed_byte_in_a_valid_body_fails_authentication() {
+    // Every rejected input above is structurally invalid and never reaches the
+    // authentication tag. This one does: the body decodes, the leaf parses,
+    // the key is retrieved, and the AEAD refuses it — which is the only test
+    // that the base64 transcoding carries the sealed bytes through unchanged.
+    // A transcoding that truncated or reordered them would surface as a wrong
+    // plaintext or a decode error in a customer database, not here.
+    let (cipher, calls) = common::cipher().await;
+    let stored: TextEq = cipher
+        .default_keyset()
+        .encrypt_as(&"secret".to_owned(), column())
+        .await
+        .unwrap();
+    let body = stored.c.0.strip_prefix("stack-encrypt:1:").unwrap();
+    let mut bytes = STANDARD.decode(body).unwrap();
+    let last = bytes.len() - 1;
+    bytes[last] ^= 1;
+    let mut tampered = stored.clone();
+    tampered.c = Ciphertext(format!("stack-encrypt:1:{}", STANDARD.encode(&bytes)));
+    assert!(cipher
+        .decrypt_as::<String, _>(tampered, column().into())
+        .await
+        .is_err());
+    assert_eq!(
+        calls.lock().unwrap().retrieve.len(),
+        1,
+        "the tampered body was decoded and parsed; the failure is authentication"
+    );
+    let opened: String = cipher.decrypt_as(stored, column().into()).await.unwrap();
+    assert_eq!(opened, "secret", "the untouched record still opens");
 }
 
 #[tokio::test]

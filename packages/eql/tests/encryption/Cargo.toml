@@ -21,3 +21,6 @@ serde_json = "1"
 uuid = "1"
 tokio = { version = "1", features = ["rt", "macros"] }
 postgres = "0.19"
+# The tampering test decodes a stored body, changes one byte and re-encodes
+# it. The same line eql-bindings uses, so the lockfile gains no second copy.
+base64 = "0.22"
