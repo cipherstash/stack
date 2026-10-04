@@ -86,10 +86,19 @@ Option 3. In detail:
 - `stack-encrypt` 0.1.0 was published with the `|` rendering before this
   landed. Any key minted through 0.1.0 renders its descriptor differently
   from the same context under this rendering and cannot be retrieved by it.
-  The decision taken with #1050 was not to bump the version for this: the
-  0.1.0 release has a single known consumer, aware of the change, and the
-  release tooling bumps on the next release in the ordinary way. A reader
-  who finds `users|email` in a ZeroKMS log is looking at a 0.1.0 key.
+  A reader who finds `users|email` in a ZeroKMS log is looking at a 0.1.0
+  key.
+- **This ships as 0.2.0**, with `stack-encrypt-derive` in the same version
+  group. The first revision of #1050 deferred the bump — one known consumer,
+  aware of the change — on the assumption that the release tooling would
+  bump on the next release. It would not: the root release-plz line is
+  publish-only, and a stack-* version moves only when a pull request edits
+  `Cargo.toml`. The bump also has a consumer that needs it to be a specific
+  number: `eql-bindings`' `stack-encrypt` feature (#971) names the
+  stack-encrypt version it compiles against, and that version has to be one
+  that carries `Describe`, `Description` and `Label`, which 0.1.0 does not.
+  Cargo rejects a `version` requirement the in-tree path dependency does not
+  satisfy, so the bump has to land here, before #971 can name it.
 - A `/` inside a name is legal but ugly: it renders escaped. `Label` refuses
   such a segment instead, so a consumer who wants a readable log uses a
   `Label` and finds out at construction.
