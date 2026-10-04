@@ -98,18 +98,18 @@ parts (`to_context` is what its `IntoContext` returns).
 _Avoid_: descriptor trait, Descriptor (the rendered string)
 
 **Label**:
-The first-class `Describe` type: a path of plain segments, each checked
-(non-empty, no `/`, `(`, `)` or control characters, not beginning with
-`b64:`, a digit or `-`), so it renders verbatim and its `Display`
-(`users/email`) is its descriptor and parses back losslessly. The one way to
-spell a name, binding one context: its segments as a flat list. `with` is
-not another way to build a label; it scopes a context by appending a part
-(tenant, row id) and nests, `(users/email)/7u64`. The two meet where a
-two-segment label equals the pair a `struct = ..` derive binds, which is how a
-label opens a row a derive wrote. A direct consumer of the
-crate names its data with a `Label`; an EQL consumer names it with an
-`Identifier`, the same shape with exactly two segments.
-_Avoid_: path, name, identifier (that is EQL's two-segment case)
+The *name* of the data a value is sealed under (`users/email`,
+`documents/v2/body`): the first-class `Describe` type, a path of plain
+segments, each checked (non-empty, no `/`, `(`, `)` or control characters,
+not beginning with `b64:`, a digit or `-`), so its `Display` is its
+descriptor and parses back losslessly. A context carries a name and,
+optionally, a *scope* (a tenant, a row id), and each has one spelling: the
+name is a `Label`, a flat list; the scope is `with`, which appends and nests
+(`(users/email)/7u64`). Never build a name with `with` or put a scope in a
+`Label`. A two-segment label is the context a `struct = ..` derive binds for
+a field, so a label opens a row a derive wrote. An EQL consumer names its
+data with an `Identifier`, a two-segment label.
+_Avoid_: path, identifier (that is EQL's two-segment case), prefix
 
 **Leaf**:
 An output type that authenticates or derives directly — a ciphertext or a

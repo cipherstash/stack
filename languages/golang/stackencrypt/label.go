@@ -8,11 +8,41 @@ import (
 	"unicode"
 )
 
-// Label is a path of plain segments: how a direct consumer names the data
-// it keys — "users/email", "documents/v2/body" — and the one context whose
-// ZeroKMS descriptor is the string it is written as. It is the Go form of
-// Rust's stack_encrypt::Label; EQL's identifier, a table and a column, is
-// the same shape with exactly two segments ([plan.Identifier]).
+// Label names the data a field or a probe binds: a table and a column
+// ("users/email"), a document path ("documents/v2/body"), any name a direct
+// consumer chooses. ZeroKMS binds the data key to that name and writes it in
+// its log, spelled exactly as given. It is the Go form of Rust's
+// stack_encrypt::Label; EQL's identifier, a table and a column, is a Label of
+// two segments ([plan.Identifier]).
+//
+// # Naming and scoping
+//
+// A context carries two kinds of information, and each has one spelling:
+//
+//   - A name says WHAT the data is. Spell it as a Label.
+//   - A scope says WHICH slice of that data: a tenant, a row. Spell it by
+//     extending the name's context with [Context.With], or with the
+//     [ExtendContext] option on a record call.
+//
+// In practice:
+//
+//	What you mean             Spelling                                                ZeroKMS log
+//	the users.email column    label, _ := ParseLabel("users/email")                   users/email
+//	that column, tenant 7     label.Context().With(uint64(7))                         (users/email)/7u64
+//	a deeper name             ParseLabel("documents/v2/body")                         documents/v2/body
+//	a one-part name           ParseLabel("users"), the same as NewContext("users")    users
+//
+// Do not build a name with With, and do not put a scope into a Label. The
+// renderer keeps the two apart: a name is one flat list, a scope nests. So
+// (users/email)/7u64 is never read as a three-segment name, and
+// documents/v2/body is never read as a scoped column.
+//
+// A two-segment Label binds the same context a Rust
+// `#[stash(struct = .., context = "<table>")]` derive gives a field. That is
+// what lets a Go label open a row a Rust derive wrote, and a probe built from
+// the label match the terms the derive produced.
+//
+// # Segments
 //
 // Every segment is plain — non-empty, no control characters, none of '/',
 // '(' or ')', not beginning with "b64:", a digit or '-' — which is exactly
@@ -20,16 +50,6 @@ import (
 // its descriptor, [ParseLabel] reads that string back losslessly (no
 // segment can contain the separator), and a string that is not a label is
 // refused with a [LabelError] naming the segment, never escaped silently.
-//
-// A Label is the one way to spell a name, and [Label.Context] is the one
-// context it binds: its segments as a flat list, a/b/c. [Context.With] is
-// not another way to build a label. It scopes a context by appending a part
-// — a tenant, a row id — and nests, so "that column, row 7" reads as
-// (users/email)/7u64 and cannot be confused with a three-segment name. The
-// two meet at one point by design: a two-segment label is the same context
-// as a Rust `struct = .., context = "<table>"` derive binds for a field,
-// which is how a Go label opens a row a Rust derive wrote. A one-segment
-// label is the bare part, the same as NewContext(segment).
 type Label struct {
 	segments []string
 }

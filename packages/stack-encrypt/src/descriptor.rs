@@ -417,8 +417,62 @@ impl DescriptorBuilder {
     }
 }
 
-/// A path of plain segments: the descriptor a direct consumer of this crate
-/// writes for the data it keys — `users/email`, `documents/v2/body`.
+/// The name of the data a value is sealed under: a table and a column
+/// (`users/email`), a document path (`documents/v2/body`), any name a direct
+/// consumer of this crate chooses. ZeroKMS binds the data key to that name
+/// and writes it in its log, spelled exactly as given. EQL's identifier, a
+/// table and a column, is a `Label` of two segments.
+///
+/// # Naming and scoping
+///
+/// A context carries two kinds of information, and each has one spelling:
+///
+/// * A **name** says *what* the data is. Spell it as a `Label`.
+/// * A **scope** says *which* slice of that data: a tenant, a row. Spell it
+///   by extending the name with [`NonEmpty::with`] (or, on a derived record,
+///   by the caller's context, which extends every field's own).
+///
+/// | What you mean | Spelling | ZeroKMS log |
+/// |---|---|---|
+/// | the `users.email` column | `Label::parse("users/email")?` | `users/email` |
+/// | that column, tenant 7 | `NonEmpty::from(label).with(7u64)` | `(users/email)/7u64` |
+/// | a deeper name | `Label::parse("documents/v2/body")?` | `documents/v2/body` |
+/// | a one-part name | `Label::parse("users")?`, the same as `nonempty!("users")` | `users` |
+///
+/// Do not build a name with `with`, and do not put a scope into a `Label`.
+/// The renderer keeps the two apart: a name is one flat list, a scope nests.
+/// So `(users/email)/7u64` is never read as a three-segment name, and
+/// `documents/v2/body` is never read as a scoped column.
+///
+/// A two-segment `Label` binds the same context a
+/// `#[stash(struct = .., context = "<table>")]` derive gives a field, which
+/// the derive spells `nonempty!("users").with("email")`. That is what lets a
+/// label open a row a derive wrote, and a probe built from the label match
+/// the terms the derive produced.
+///
+/// ```
+/// use stack_encrypt::{nonempty, Descriptor, Label, NonEmpty};
+///
+/// // A name.
+/// let email = Label::parse("users/email")?;
+/// assert_eq!(email.to_string(), "users/email");
+/// assert_eq!(Descriptor::of(&email).as_str(), "users/email");
+/// assert_eq!(Label::new(["users", "email"])?, email);
+///
+/// // The same column, scoped to tenant 7.
+/// let tenant_7 = NonEmpty::from(email.clone()).with(7u64);
+/// assert_eq!(Descriptor::of(tenant_7).as_str(), "(users/email)/7u64");
+///
+/// // What a `struct = .., context = "users"` derive binds its `email` field under.
+/// assert_eq!(Descriptor::of(&email), Descriptor::of(nonempty!("users").with("email")));
+///
+/// // Not a label: the separator inside a segment, and an empty segment.
+/// assert!(Label::new(["users/email"]).is_err());
+/// assert!(Label::parse("users//email").is_err());
+/// # Ok::<(), stack_encrypt::LabelError>(())
+/// ```
+///
+/// # Segments
 ///
 /// Every segment is **plain** — non-empty, no control characters, none of
 /// `/`, `(`, `)`, not beginning with `b64:`, a digit or `-` — which is
@@ -429,35 +483,6 @@ impl DescriptorBuilder {
 /// contain the separator, so the split is unambiguous. A string that is not
 /// a label is refused with a [`LabelError`] naming the segment, never
 /// escaped silently.
-///
-/// A `Label` is the one way to spell a name, and it is one context: its
-/// segments as a flat list, `a/b/c`. [`NonEmpty::with`] is not another way
-/// to build one. It *scopes* a context by appending a part — a tenant, a row
-/// id — and nests, so "that column, row 7" renders `(users/email)/7u64` and
-/// cannot be confused with a three-segment name. The two meet at one point
-/// by design: a two-segment label is the same context as the pair a
-/// `struct = .., context = "<table>"` derive binds for a field
-/// (`nonempty!("users").with("email")`), which is how a label opens a row a
-/// derive wrote. A one-segment label is the bare text part, the same as
-/// `nonempty!("users")`.
-///
-/// ```
-/// use stack_encrypt::{nonempty, Descriptor, Label, NonEmpty};
-///
-/// let email = Label::new(["users", "email"])?;
-/// assert_eq!(email.to_string(), "users/email");
-/// assert_eq!(Descriptor::of(&email), Descriptor::of(nonempty!("users").with("email")));
-/// assert_eq!(Label::parse("users/email")?, email);
-///
-/// // Extended with a row id, like any context head.
-/// let row = NonEmpty::from(email).with(7u64);
-/// assert_eq!(Descriptor::of(row).as_str(), "(users/email)/7u64");
-///
-/// // Not a label: the separator inside a segment, and an empty segment.
-/// assert!(Label::new(["users/email"]).is_err());
-/// assert!(Label::parse("users//email").is_err());
-/// # Ok::<(), stack_encrypt::LabelError>(())
-/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Label(Box<[Box<str>]>);
 
