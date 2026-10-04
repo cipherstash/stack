@@ -17,6 +17,10 @@ written. The reasons are in "Why the first draft was dropped".
 `TextEq` / `TextEqQuery` through stack-encrypt), #1025 (`plantest.Golden`)
 **Followed by:** the audit-context PR and the lock-context PR, which attach to
 the calls this plan shapes
+**Records:** ADR-0007 (bindings enter through a plan, never a second
+executor); glossary changes in `packages/stack-encrypt/CONTEXT.md` (Plan,
+Index, Term, Field-by-field record, Passthrough, Identity, Query, and the two
+directions)
 
 ## Goal
 
@@ -124,6 +128,18 @@ split was the problem, not the function names:
     Custom targets, EQL domain types and `transcode` keep using them.
 11. **Variables that hold a plan are named as plans**: `users_plan`,
     `email_plan`, never `users`.
+12. **The plan is the only front door for a binding; native Rust keeps its
+    two.** Cipher-directed and target-directed encryption remain the preferred
+    entry points for a Rust caller, and target-directed is Rust-only. The
+    chain is their fluent spelling: `cipher.encrypt(&v).context(c)` is
+    cipher-directed, `cipher.encrypt(&v).using(T::plan())` is target-directed
+    through the derive, and `.with((Equality, Ore))` on a value is
+    target-directed without declaring a type, which has no spelling today. A
+    hand-built `Plan::context(..).fields()..` at run time is what a binding
+    lowers data into and what the derive emits; a Rust caller with a struct in
+    hand uses the derive. Recorded as ADR-0007
+    (`packages/stack-encrypt/docs/adr/0007-…`), which also forbids a second
+    executor beside the engine.
 
 ## The Rust API
 
