@@ -635,12 +635,17 @@ jobs:
       # silent case, the one a path build can never see, and that fails.
       - name: Verify eql-bindings packages cleanly for crates.io
         run: |
-          if out="$(cargo publish -p eql-bindings --dry-run --allow-dirty --all-features 2>&1)"; then
-            printf '%s\n' "$out"
+          set -euo pipefail
+          # cargo's own status is kept in `status`: `|| status=$?` reads it
+          # before anything else runs. (`status=$?` on the line after an `if`
+          # reads the if's status, which is 0 when its condition failed, so a
+          # version that resolves and then fails to compile would exit 0.)
+          status=0
+          out="$(cargo publish -p eql-bindings --dry-run --allow-dirty --all-features 2>&1)" || status=$?
+          printf '%s\n' "$out"
+          if [ "$status" -eq 0 ]; then
             exit 0
           fi
-          status=$?
-          printf '%s\n' "$out"
           if grep -qF 'failed to select a version for the requirement `stack-encrypt' <<<"$out"; then
             echo "::warning title=eql-bindings not verified against the registry::The stack-encrypt version eql-bindings names is not on crates.io yet, so the packaged crate could not be built against the registry here. release-plz builds it at publish time (publish_all_features in packages/eql/release-plz.toml) and refuses to publish eql-bindings until that stack-encrypt has shipped."
             exit 0
