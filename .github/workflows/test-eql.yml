@@ -561,8 +561,6 @@ jobs:
           rustup component add --toolchain "${active_rust_toolchain}" rustfmt clippy
           mise run test:crates
 
-      # Registry builds require the unpublished Stack Encrypt crates from
-      # cipherstash-suite#2215 to be published before this change merges.
       - name: Test Rust text equality with PostgreSQL
         env:
           PGPASSWORD: postgres

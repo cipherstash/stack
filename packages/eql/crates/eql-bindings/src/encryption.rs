@@ -72,9 +72,9 @@ use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
 use stack_encrypt::target::{self, AeadContext, CallerContext};
 use stack_encrypt::{
-    Aad, AadPiece, CipherText, Decrypt, DecryptField, DecryptInto, Decryptable, Decryption,
-    Encrypt, EncryptFrom, Encryption, Error, IntoAad, IntoPrfContext, MaybeEmpty, NonEmpty,
-    PrfContext, SealedValue, StackCipherText,
+    CipherText, ContextPiece, Decrypt, DecryptField, DecryptInto, Decryptable, Decryption, Encrypt,
+    EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty, NonEmpty, SealedValue,
+    StackCipherText,
 };
 use vitaminc_prf::PrfValue;
 
@@ -110,17 +110,13 @@ impl MaybeEmpty for Identifier {
         self.t.is_empty() || self.c.is_empty()
     }
 }
-impl<'a> IntoAad<'a> for Identifier {
-    fn into_aad(self) -> Aad<'a> {
-        (self.t, self.c).into_aad()
-    }
-    fn into_aad_piece(self) -> AadPiece<'a> {
-        (self.t, self.c).into_aad_piece()
-    }
-}
-impl<'a> IntoPrfContext<'a> for Identifier {
-    fn into_prf_context(self) -> PrfContext<'a> {
-        (self.t, self.c).into_prf_context()
+// One context view serves both derivations: vitaminc's `IntoAad` and
+// `IntoPrfContext` are blankets over `IntoContext`, so the ciphertext AAD, the
+// ZeroKMS descriptor and the equality term's PRF context all see the same
+// (table, column) pair.
+impl<'a> IntoContext<'a> for Identifier {
+    fn into_context(self) -> ContextPiece<'a> {
+        (self.t, self.c).into_context()
     }
 }
 
@@ -154,11 +150,11 @@ impl Reader for Ciphertext {
 
 impl<S: Encrypt + Clone> EncryptFrom<S> for Ciphertext {
     type Context = AeadContext;
-    fn encryption<'s, K: 'static>(context: Self::Context) -> Encryption<'s, S, Self, K>
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
-        target::ciphertext(context).transcode()
+        target::ciphertext().transcode()
     }
 }
 
@@ -208,11 +204,11 @@ impl Transcode for Hmac256 {
 }
 impl<S: PrfValue + Clone> EncryptFrom<S> for Hmac256 {
     type Context = CallerContext;
-    fn encryption<'s, K: 'static>(context: Self::Context) -> Encryption<'s, S, Self, K>
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
-        target::equality(context).transcode()
+        target::equality().transcode()
     }
 }
 impl Decryptable for Hmac256 {

@@ -110,9 +110,8 @@ The generated API docs include a complete, executable example in the
 [source](src/encryption/example.rs) is also run by the encryption test crate:
 
 ```bash
-# From packages/eql, using the unpublished suite checkout:
-bash tasks/dev/with-stack-encrypt.sh /path/to/cipherstash-suite \
-  test -p eql-encryption-tests --test text_eq_example
+# From packages/eql:
+cargo test -p eql-encryption-tests --test text_eq_example
 ```
 
 With an initialized cipher, the essential calls are:
@@ -149,25 +148,20 @@ these payloads through the existing `public.eql_v3_text_eq` and
 `eql_v3.query_text_eq` domains and their equality extractor index. Writers and
 query producers for these values must use this same profile.
 
-### Developing against the unpublished crates
+### Developing the `stack-encrypt` feature
 
-Stack Encrypt and its runtime prerequisites must be published before the normal
-registry-based build, CI, and `eql-bindings` publication can succeed. Regenerate
-`Cargo.lock` without local overrides once they are published, before merging.
-During development, use a checkout containing
-[cipherstash-suite#2215](https://github.com/cipherstash/cipherstash-suite/pull/2215)
-(tested with commit `cbb3e000009b5974e90ec7da98d015b4b19a7270`):
+Stack Encrypt lives in this repository (`packages/stack-encrypt`), and the
+feature depends on it by path and version: in-tree builds use the path, and the
+published `eql-bindings` resolves the version from crates.io. Publish the
+matching `stack-encrypt` before releasing an `eql-bindings` that needs it.
 
 ```bash
-# From packages/eql. Generates a temporary Cargo patch; no local paths are committed.
-bash tasks/dev/with-stack-encrypt.sh /path/to/cipherstash-suite \
-  test -p eql-encryption-tests
-bash tasks/dev/with-stack-encrypt.sh /path/to/cipherstash-suite \
-  test -p eql-bindings --features stack-encrypt
+# From packages/eql:
+cargo test -p eql-encryption-tests
+cargo test -p eql-bindings --features stack-encrypt
 
 # Against a disposable PostgreSQL database, using fresh encryption and a fake KMS:
 psql "$EQL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 \
   -f crates/eql-bindings/sql/cipherstash-encrypt.sql
-bash tasks/dev/with-stack-encrypt.sh /path/to/cipherstash-suite \
-  test -p eql-encryption-tests --test text_eq -- --ignored
+cargo test -p eql-encryption-tests --test text_eq -- --ignored
 ```
