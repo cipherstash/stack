@@ -504,6 +504,27 @@ monorepo, which is where the silent failures are.
   changes what the whole EQL CI surface compiles against, and with the skip in
   place the release-stopper is closed without it. If wanted, the pin belongs
   upstream and arrives by subtree pull.
+- **`eql-bindings`' `stack-encrypt` feature names a stack-encrypt VERSION, and
+  the published crate is built against that version, not the tree.** The
+  dependency is `path` + `version`: the path is what every in-tree job
+  compiles, the version is what crates.io resolves once `cargo publish` strips
+  the path. The two agree only if the stack-encrypt on crates.io at that
+  version has the API `src/encryption.rs` uses — and nothing in a path build
+  can tell. stack-encrypt 0.1.0 shipped without `Describe`, and the feature
+  would have published against it while every test passed. Two guards compile
+  the feature FROM THE PACKAGED CRATE against the registry: `cargo publish
+  --dry-run --all-features` in `test-eql.yml`'s `rust-crates` job, and
+  `publish_all_features = true` in `packages/eql/release-plz.toml`. Without
+  `--all-features` both verify the default feature set, which is the feature
+  off. Consequences: the stack-encrypt a bump of that requirement names must
+  reach crates.io before eql-bindings does (the root release-plz line is
+  publish-only — a stack-* version moves by a hand-edited `Cargo.toml`, and
+  cargo refuses a requirement the in-tree path dependency does not satisfy, so
+  the bump lands in the stack-encrypt PR first); the dry-run step is RED on a
+  PR that names an unpublished stack-encrypt, correctly, until it ships; and
+  `release-plz.yml`'s `release` job runs after `release-crates` so that on a
+  push releasing both, the crate eql-bindings resolves exists by the time it
+  looks.
 - **`eql-bindings` resolves by path from `languages/typescript/packages/protect-ffi`, never from
   crates.io**, and `scripts/lint-no-eql-registry-pins.mjs` (`pnpm run
   lint:eql-pins`) is what keeps it that way. The two halves of EQL are the Rust

@@ -176,8 +176,15 @@ column, and record which.
 
 Stack Encrypt lives in this repository (`packages/stack-encrypt`), and the
 feature depends on it by path and version: in-tree builds use the path, and the
-published `eql-bindings` resolves the version from crates.io. Publish the
-matching `stack-encrypt` before releasing an `eql-bindings` that needs it.
+published `eql-bindings` resolves the version from crates.io. The two agree only
+when the `stack-encrypt` on crates.io at that version has the API this feature
+uses, which a path build cannot check — 0.1.0 shipped without `Describe`, and
+every in-tree test passed against the newer tree. So the feature is also built
+from the packaged crate against the registry: `cargo publish -p eql-bindings
+--dry-run --all-features` in CI, and `publish_all_features` in
+`packages/eql/release-plz.toml` at release time. Bump the requirement in
+`Cargo.toml` only together with (or after) the `stack-encrypt` release that
+carries what the feature needs; the dry run is red until that release exists.
 
 ```bash
 # From packages/eql. The mise tasks are what CI runs (test-eql.yml, `rust-crates`).

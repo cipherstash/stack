@@ -604,9 +604,21 @@ jobs:
       # a real path dependency without a version — on the PR rather than at
       # release time. No token needed. `--allow-dirty` tolerates any files the
       # preceding regenerate-and-diff steps leave in the working tree.
+      #
+      # `--all-features`: the verify step compiles the DEFAULT feature set
+      # unless told otherwise, and the `stack-encrypt` feature is off by
+      # default — so this step passed while that feature did not build against
+      # the crates.io stack-encrypt the manifest names. Every other job here
+      # compiles stack-encrypt by PATH, from the tree, and cannot notice; the
+      # packaged manifest has no `path`, so this verify resolves stack-encrypt
+      # from the REGISTRY, which is the build a consumer and docs.rs get.
+      # release-plz does the same at publish time (`publish_all_features` in
+      # packages/eql/release-plz.toml). The step is RED while the stack-encrypt
+      # version eql-bindings names is not yet on crates.io: that is the true
+      # state of the tree, and it clears when that crate ships.
       - name: Verify eql-bindings packages cleanly for crates.io
         run: |
-          cargo publish -p eql-bindings --dry-run --allow-dirty
+          cargo publish -p eql-bindings --dry-run --allow-dirty --all-features
 
   codegen:
     name: "Encrypted-domain codegen"

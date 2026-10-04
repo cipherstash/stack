@@ -1232,6 +1232,7 @@ dependencies = [
 name = "eql-encryption-tests"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "eql-bindings",
  "postgres",
  "serde",
@@ -4220,7 +4221,7 @@ dependencies = [
 
 [[package]]
 name = "stack-encrypt"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64ct",
  "cllw-ore 0.5.0",
@@ -4239,7 +4240,7 @@ dependencies = [
 
 [[package]]
 name = "stack-encrypt-derive"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proc-macro2",
  "quote",

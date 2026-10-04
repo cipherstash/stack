@@ -41,9 +41,12 @@ Validation completed:
 - Root workflow wiring guards pass. Encryption integration dependencies live in
   the separate `eql-encryption-tests` crate, preserving lean default tests.
 
-Release prerequisites remain: publish the suite crates, regenerate both EQL and
-FFI lockfiles against registry dependencies, run the clean-package verification,
-and perform live ZeroKMS authorization checks. Local tests use real cryptography
+Release prerequisites remain: publish `stack-encrypt` 0.2.0 (the version the
+feature names; 0.1.0 shipped without `Describe`, and the packaged-crate
+verification below is red until 0.2.0 is on crates.io), and perform live
+ZeroKMS authorization checks. The clean-package verification is now in CI:
+`cargo publish --dry-run --all-features` on every PR, and `publish_all_features`
+in release-plz at publish time. Local tests use real cryptography
 with the suite's test key source, which cannot establish authorization behavior.
 No existing-column or mixed JS/Rust producer compatibility is claimed.
 
@@ -347,8 +350,10 @@ See Cargo's [dependency publication rules](https://doc.rust-lang.org/cargo/refer
 Coordinate suite publication prerequisites first, then the EQL release using
 this repository's existing lockstep process. The existing EQL CI job already
 runs `cargo publish -p eql-bindings --dry-run --allow-dirty`; preserve that gate
-and also verify the new feature from the packaged artifact. Do not alter release
-arming/trusted-publishing configuration as part of adding derives.
+and also verify the new feature from the packaged artifact (done: the step and
+the release-plz publish both pass `--all-features`, which is what makes the
+verify compile the feature against the registry `stack-encrypt`). Do not alter
+release arming/trusted-publishing configuration as part of adding derives.
 
 Add rustdoc/examples, a compatibility/profile note, and a root
 `.changeset/` entry for `@cipherstash/eql` (minor if additive; reassess if phase 1
