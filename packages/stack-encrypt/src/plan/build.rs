@@ -1122,7 +1122,7 @@ pub(crate) fn check_indexes(at: &str, indexes: &[IndexSpec]) -> Result<(), PlanE
 /// those are the likelier mistakes.
 fn check_pair<S, K>(earlier: &Declared<S, K>, field: &Declared<S, K>) -> Result<(), PlanError> {
     if earlier.name == field.name {
-        let target = |f: &Declared<S, K>| f.kind == FieldKind::EncryptInto;
+        let target = |f: &Declared<S, K>| matches!(f.kind, FieldKind::EncryptInto);
         if target(earlier) != target(field) {
             return Err(PlanError::TargetWithVerbs {
                 field: field.name.to_string(),
