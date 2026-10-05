@@ -266,8 +266,12 @@ A plan takes its context from exactly one of three sources:
    field was sealed under.
 
 Two sources is an error. `.extend(parts)` is the only way to add to the
-context, and it extends whichever source the plan has. `build()` refuses a
-fields plan whose label would be empty.
+context, and it extends whichever source the plan has. A plan given two
+sources is refused (`TwoContextSources`), at build or when the call adds one.
+A plan run with no source is refused at run, before any key request
+(`NoContext`), because only the call can supply one. A context field's value
+must be a plain label segment (a `String` or `Label`); an integer tenant id goes
+in `.extend(parts)`.
 
 ### The typed verb and the picker
 
@@ -276,7 +280,7 @@ decides the field's layout and the queries it answers. It has two positions:
 
 ```rust
 // Field form: the field's layout is TextEq's.
-Plan::fields().context("users").encrypt_into::<TextEq>("email")
+Plan::fields().context("users").encrypt_into::<TextEq, _>("email")
 
 // One-value form: each tuple element is an EncryptFrom<S>.
 Plan::value::<String>().encrypt_into::<(Ciphertext, Hmac256)>()
@@ -292,13 +296,35 @@ accessor:
 
 ```rust
 .encrypt_index::<String>("email", (Equality, Match::default()))          // by name, through Field<String>
-.encrypt_index(("email", |u: &User| &u.email), (Equality, Match::default())) // picker: the type is inferred
+.encrypt_index(pick("email", |u: &User| &u.email), (Equality, Match::default())) // picker: the type is inferred
 ```
 
 A bare name is looked up through the value's `Field<F>` impl, which is what a
 dynamic value (`FfiValue`) provides. The picker reads the field directly and
 needs no turbofish. The derive emits the picker form; bindings use names. The
 picker is Rust-only.
+
+Two spellings follow from how Rust infers types:
+
+- A closure picker is written `pick("email", |u: &User| &u.email)`, not as a
+  bare tuple `("email", |u| &u.email)`, because Rust infers no higher-ranked
+  closure signature inside a tuple. A bare tuple holding a function item or
+  function pointer, `("email", email_fn)`, works as well.
+- The field form of `encrypt_into` takes two type arguments, `::<T, _>(field)`
+  (the field's type is inferred), because Rust has no partial turbofish. The
+  one-value form takes one: `Plan::value::<S>().encrypt_into::<(A, B)>()`.
+
+`EncryptFrom::indexes() -> Vec<IndexSpec>` is a defaulted method (empty unless
+overridden) with which a typed target says which queries it answers. A typed
+field whose target declares no indexes answers no queries; a query for anything
+else is refused. Each term type names its own index, `Encrypted<Terms>` names
+its set, and a tuple concatenates.
+
+The built plan's accessors: `Plan::field_plans()` returns the field
+descriptions (`Plan::fields()` is the start, so it cannot be the accessor);
+`Plan::label()` and `FieldPlan::label()` return `Option<&Label>` (there is no
+label until the call supplies the context); `Plan::context_field()` returns
+`Option<&str>`.
 
 ### What `passthrough` means
 
@@ -317,14 +343,15 @@ this on the method.
 | `Plan::value::<S>()`, `Plan::fields()`, `.context(c)` | the `NonEmpty<impl IntoContext>` handed to `under` | with `fields()`, each field gets `Label::new([context, identity])` |
 | `with(idx)` / `encrypt_index(name, idx)` | `indexed::<S>(idx)`: `ciphertext().accepting::<CallerContext>().zip(..)…` then `map` into `Encrypted<Terms>` | each `Index<S>` returns its term operation; the tuple folds with `zip` |
 | `encrypt_into::<T>(name)`, and the one-value form | `<T as EncryptFrom<F>>::encryption().under(label)` | the target's own description; no builder work |
+| `EncryptFrom::indexes()` on a typed field | the indexes a query against that field may name | defaulted to empty: a typed field whose target declares none answers no queries (`IndexNotDeclared`) |
 | `with(idx)` as `encrypt_into::<Encrypted<Terms>>` | `Encrypted<Terms>: EncryptFrom<S>`, whose `encryption()` is `indexed()` | both spellings lower to the same `indexed()`; a standing byte-identity test covers every index combination |
 | `encrypt(name)` | `ciphertext::<S>()` alone | `under` accepts it: `AeadContext: From<CallerContext>` |
 | `index(name, idx)` | the index operations alone, zipped, no `ciphertext()` | `Json` is one such operation; it mints one document key and seals every entry under it, a **new core operation** (one generate request, a fulfilment that seals N entries with selector-derived nonces) |
 | `passthrough(name)` | `passthrough::<S>()` (#1069) | build is `Pending::ready(cipher, Ok(source))`, ignores the context |
 | `context_field(name)` | `passthrough()` for that field; its value is the context every other field runs `under` | on open, the field's value is the `ExpectedContext` each field is opened under, so a record whose context field was changed in storage does not open |
 | `fields()`, a field by name | `project_by` (crate-internal) through the value's `Field<F>`, `.under(label)`, `zip` across fields, `map` into the record | the path a dynamic value (`FfiValue`) takes |
-| `fields()`, a field by picker `(name, accessor)` | `project(accessor)` | the derive's `struct = ..` mode today; borrowed-only |
-| `build()` | a reusable recipe that produces a fresh `Encryption` per run | whole-plan rules checked here: names once, labels plain, no shared identity, passthrough not indexed, one context source, no empty label |
+| `fields()`, a field by picker `pick(name, accessor)` | `project(accessor)` | the derive's `struct = ..` mode today; borrowed-only |
+| `build()` | a reusable recipe that produces a fresh `Encryption` per run | whole-plan rules checked here: names once, labels plain, no shared identity, passthrough not indexed, one context source |
 | `using(&plan)` | `KeysetCipher::run(encryption, source, ctx)` (#1068) of `Plan::encryption()` | execute-by-value; `encrypt_as` does this for a type through `T::encryption()` |
 | `extend(parts)` | the runtime `DeclaredContext` value, `DeclaredContext::extend(own)` | not a combinator; it is the `ctx` argument |
 | `keyset(..)` | the `KeysetCipher` passed to build; `Pending::scoped_to` | |
@@ -546,7 +573,7 @@ are a bonus where the language has them.
 
 **TypeScript already has a plan in another spelling.** `encryptedTable('users',
 { email: types.TextEq() })` is `Plan::context("users").fields()
-.encrypt_into::<TextEq>("email")`, with the EQL domain as the field's target.
+.encrypt_into::<TextEq, _>("email")`, with the EQL domain as the field's target.
 Today that schema drives cipherstash-client through protect-ffi, a second
 engine. The intended path is to retire protect-ffi and ship a new major of
 `@cipherstash/stack` on stack-encrypt, with breaking changes; that release is
@@ -622,8 +649,8 @@ assembles EQL types from them:
 
   ```rust
   let users_plan = Plan::context("users").fields()
-      .encrypt_into::<TextEq>("email")     // TextEq's own EncryptFrom decides the layout
-      .encrypt_into::<Json>("attrs")       // EQL's JSON type frames the Json index's document
+      .encrypt_into::<TextEq, _>("email")     // TextEq's own EncryptFrom decides the layout
+      .encrypt_into::<Json, _>("attrs")       // EQL's JSON type frames the Json index's document
       .encrypt_index::<u32>("age", (Equality, Ore))
       .build()?;
   ```
