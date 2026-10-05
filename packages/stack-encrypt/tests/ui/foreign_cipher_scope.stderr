@@ -34,10 +34,10 @@ error[E0053]: method `keyset` has an incompatible type for trait
   --> tests/ui/foreign_cipher_scope.rs:16:25
    |
 16 |     fn keyset(&self) -> Option<Uuid> {
-   |                         ^^^^^^^^^^^^ expected `KeysetId`, found `Uuid`
+   |                         ^^^^^^^^^^^^ expected `KeysetId`, found `uuid::Uuid`
    |
    = note: expected signature `fn(&AnyKeyset<'a, K>) -> Option<KeysetId>`
-              found signature `fn(&AnyKeyset<'a, K>) -> Option<Uuid>`
+              found signature `fn(&AnyKeyset<'a, K>) -> Option<uuid::Uuid>`
 help: change the output type to match the trait
    |
 16 -     fn keyset(&self) -> Option<Uuid> {

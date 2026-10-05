@@ -9,9 +9,8 @@
 
 mod common;
 
-use std::sync::atomic::Ordering;
-
 use common::{counting_cipher, stack_cipher};
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 use stack_encrypt::sem::{
     DefaultMatch, EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreTerm, Tokenizer,
 };
@@ -21,7 +20,6 @@ use stack_encrypt::target::{
     Indexes, Match, Ope, Ore, Owned,
 };
 use stack_encrypt::{nonempty, DecryptInto, EncryptFrom, Error, StackCipherText};
-use stack_kms::{FakeDataKeySource, IdentifiedBy};
 use vitaminc_protected::{Controlled, Protected};
 
 fn caller() -> CallerContext {
@@ -103,7 +101,7 @@ mod given_equality_and_ore_over_a_string {
 
     #[tokio::test]
     async fn owned_mode_derives_the_same_terms_and_seals_from_one_key_request() {
-        let (cipher, generates, _) = counting_cipher().await;
+        let (cipher, provider) = counting_cipher().await;
         let keyset = cipher.default_keyset();
         let email = "bob@example.com".to_string();
 
@@ -115,7 +113,7 @@ mod given_equality_and_ore_over_a_string {
             )
             .await
             .expect("owned");
-        assert_eq!(generates.load(Ordering::SeqCst), 1, "one batched request");
+        assert_eq!(provider.call_counts().0, 1, "one batched request");
         let borrowed = keyset
             .run(
                 indexed::<String, _, Borrowed, _>((Equality, Ore)),
@@ -409,7 +407,7 @@ mod given_a_passthrough {
 
     #[tokio::test]
     async fn borrowed_hands_back_a_copy_with_no_key_request_whatever_the_context() {
-        let (cipher, generates, retrieves) = counting_cipher().await;
+        let (cipher, provider) = counting_cipher().await;
         let keyset = cipher.default_keyset();
         let id = "row-7".to_string();
         // `()` is a context no operation can run under, so a passthrough
@@ -419,8 +417,8 @@ mod given_a_passthrough {
             .await
             .expect("passthrough");
         assert_eq!(out, id);
-        assert_eq!(generates.load(Ordering::SeqCst), 0, "nothing is sealed");
-        assert_eq!(retrieves.load(Ordering::SeqCst), 0);
+        assert_eq!(provider.call_counts().0, 0, "nothing is sealed");
+        assert_eq!(provider.call_counts().1, 0);
     }
 
     #[tokio::test]
@@ -442,18 +440,14 @@ mod given_a_passthrough {
     /// ciphertext: one key request, and the carried value is the source.
     #[tokio::test]
     async fn beside_a_sealed_field_it_is_carried_unsealed() {
-        let (cipher, generates, _) = counting_cipher().await;
+        let (cipher, provider) = counting_cipher().await;
         let keyset = cipher.default_keyset();
         let value = "carried".to_string();
         let both: Encryption<'_, String, (StackCipherText, String), _, AeadContext> =
             ciphertext::<String, _, Borrowed>().zip(passthrough::<String, _, Borrowed, _>());
         let (sealed, carried) = keyset.run(both, &value, aead()).await.expect("run");
         assert_eq!(carried, value);
-        assert_eq!(
-            generates.load(Ordering::SeqCst),
-            1,
-            "one batch, for the ciphertext"
-        );
+        assert_eq!(provider.call_counts().0, 1, "one batch, for the ciphertext");
         let opened: String = keyset.decrypt_as(sealed, aead()).await.expect("open");
         assert_eq!(opened, value);
     }
@@ -475,10 +469,10 @@ mod given_a_decryption_held_in_a_variable {
             .await
             .unwrap();
 
-        let opening: Decryption<String, FakeDataKeySource> =
+        let opening: Decryption<String, FakeKeysetRegistry> =
             stack_encrypt::target::open(sealed, aead());
         assert_eq!(keyset.run_decryption(opening).await.unwrap(), "secret");
-        let opening: Decryption<String, FakeDataKeySource> =
+        let opening: Decryption<String, FakeKeysetRegistry> =
             stack_encrypt::target::open(again, aead());
         assert_eq!(cipher.run_decryption(opening).await.unwrap(), "secret");
     }
@@ -486,14 +480,8 @@ mod given_a_decryption_held_in_a_variable {
     #[tokio::test]
     async fn a_keyset_refuses_another_keysets_leaf_and_the_client_opens_it() {
         let cipher = stack_cipher().await;
-        let acme = cipher
-            .keyset(IdentifiedBy::Name("acme".to_string().into()))
-            .await
-            .unwrap();
-        let globex = cipher
-            .keyset(IdentifiedBy::Name("globex".to_string().into()))
-            .await
-            .unwrap();
+        let acme = cipher.keyset("acme").await.unwrap();
+        let globex = cipher.keyset("globex").await.unwrap();
         let sealed: StackCipherText = acme
             .encrypt_as(&"secret".to_string(), aead())
             .await

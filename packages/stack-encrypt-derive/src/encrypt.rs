@@ -103,7 +103,7 @@ fn struct_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Tok
             /// field's type, not the indexes it declares, so this fails
             /// when the plan is built, not at compile time; every other
             /// input whose plan would not build does not compile.
-            pub fn plan<__K: 'static>() -> ::core::result::Result<#krate::Plan<#source, __K>, #krate::Error> {
+            pub fn plan<__K: #krate::KeysetRegistry + 'static>() -> ::core::result::Result<#krate::Plan<#source, __K>, #krate::Error> {
                 #krate::Plan::context(#prefix)
                     .fields::<#source, __K>()
                     #(#verbs)*

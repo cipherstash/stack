@@ -88,7 +88,7 @@ async fn a_label_is_sealed_under_the_descriptor_it_spells() -> Result<(), Error>
         .decrypt_into(&cipher, nonempty!("users").with("email").with(7u64))
         .await?;
 
-    let sent = sent.lock().expect("lock").clone();
+    let sent = sent.calls();
     assert_eq!(sent.generated(), ["users/email", "(users/email)/7u64"]);
     assert_eq!(sent.retrieved(), ["users/email", "(users/email)/7u64"]);
     Ok(())

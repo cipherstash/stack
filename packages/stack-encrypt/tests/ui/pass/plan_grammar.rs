@@ -1,7 +1,7 @@
 //! The widened plan grammar compiles in each of its spellings: the two
 //! starts, a picker with a closure (through `pick`) and with a function, and
 //! `encrypt_into` in both positions.
-use stack_encrypt::kms::FakeDataKeySource;
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 use stack_encrypt::plan::pick;
 use stack_encrypt::sem::{EqualityTerm, MatchTerms};
 use stack_encrypt::{Encrypted, Equality, Ore, Plan, StackCipherText};
@@ -16,7 +16,7 @@ fn age(u: &User) -> &u32 {
 }
 
 fn main() {
-    let _ = Plan::fields::<User, FakeDataKeySource>()
+    let _ = Plan::fields::<User, FakeKeysetRegistry>()
         .context("users")
         .encrypt_into::<Encrypted<(EqualityTerm, MatchTerms)>, _>(pick("email", |u: &User| &u.email))
         .encrypt_index(("age", age), (Equality, Ore))

@@ -146,7 +146,9 @@ enum Opening<T, K: KeysetRegistry> {
     Failed(Error),
     Open(Open<T, K>),
 }
-impl<'s, S: 's, T, K: KeysetRegistry, Ctx, M: SourceMode<'s, S>> fmt::Debug for Encryption<'s, S, T, K, Ctx, M> {
+impl<'s, S: 's, T, K: KeysetRegistry, Ctx, M: SourceMode<'s, S>> fmt::Debug
+    for Encryption<'s, S, T, K, Ctx, M>
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Encryption").finish_non_exhaustive()
     }
@@ -311,7 +313,7 @@ impl<'s, S: 's, T: 'static, K: KeysetRegistry + 'static, Ctx: 's, M: SourceMode<
     }
 }
 
-impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
+impl<'s, S: 's, T: 'static, K: KeysetRegistry + 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// Lift a description of a field to a description of the struct that
     /// holds it, which is how a `struct = T` derive composes its fields.
     ///
@@ -389,8 +391,14 @@ where
     }
 }
 
-impl<'s, S: 's, T: 'static, K: KeysetRegistry + 'static, Ctx: 's + Clone + MaybeSend + 'static, M>
-    Encryption<'s, S, T, K, Ctx, M>
+impl<
+        's,
+        S: 's,
+        T: 'static,
+        K: KeysetRegistry + 'static,
+        Ctx: 's + Clone + MaybeSend + 'static,
+        M,
+    > Encryption<'s, S, T, K, Ctx, M>
 where
     M: SourceMode<'s, S>,
 {
@@ -426,8 +434,12 @@ where
 /// `Encrypt` consumes the plaintext. In [`Owned`](super::Owned) mode it is
 /// handed over, so `S` need not be `Clone`; in the default [`Borrowed`] mode
 /// it is cloned once, which is what `M: ConsumeSource<'s, S>` asks.
-pub fn ciphertext<'s, S: crate::Encrypt + 's, K: KeysetRegistry + 'static, M: ConsumeSource<'s, S>>(
-) -> Encryption<'s, S, StackCipherText, K, AeadContext, M> {
+pub fn ciphertext<
+    's,
+    S: crate::Encrypt + 's,
+    K: KeysetRegistry + 'static,
+    M: ConsumeSource<'s, S>,
+>() -> Encryption<'s, S, StackCipherText, K, AeadContext, M> {
     Encryption {
         build: Box::new(
             move |source, cipher, cx: AeadContext| match cx.validated() {
@@ -455,7 +467,7 @@ pub fn ciphertext<'s, S: crate::Encrypt + 's, K: KeysetRegistry + 'static, M: Co
 pub fn passthrough<'s, S, K, M, Ctx>() -> Encryption<'s, S, S, K, Ctx, M>
 where
     S: MaybeSend + 'static,
-    K: 'static,
+    K: KeysetRegistry + 'static,
     M: ConsumeSource<'s, S>,
     Ctx: 's,
 {
@@ -476,7 +488,7 @@ macro_rules! term_operation {
         $function:ident, $output:ty, consume, [$($generics:tt)*], [$($bounds:tt)*]
     ) => {
         $(#[$doc])*
-        pub fn $function<'s, S, K: 'static, M: ConsumeSource<'s, S>, $($generics)*>(
+        pub fn $function<'s, S, K: KeysetRegistry + 'static, M: ConsumeSource<'s, S>, $($generics)*>(
         ) -> Encryption<'s, S, $output, K, CallerContext, M>
         where
             S: 's,
@@ -656,12 +668,13 @@ impl<K: KeysetRegistry + 'static> KeysetCipher<'_, K> {
     ///
     /// ```
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
-    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::registry::fake::FakeKeysetRegistry;
+    /// use stack_encrypt::StackCipherBuilder;
     /// use stack_encrypt::target::{self, AeadContext, Owned};
     /// use stack_encrypt::{nonempty, StackCipher, StackCipherText};
     /// use vitaminc_protected::Protected;
     ///
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let cipher = StackCipherBuilder::new().registry(FakeKeysetRegistry::new()).init().await?;
     /// let keyset = cipher.default_keyset();
     /// // `Protected<String>` is deliberately not `Clone`: it is moved in, and
     /// // the one copy is wiped once it is sealed.
@@ -708,11 +721,12 @@ impl<K: KeysetRegistry + 'static> KeysetCipher<'_, K> {
     ///
     /// ```
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
-    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::registry::fake::FakeKeysetRegistry;
+    /// use stack_encrypt::StackCipherBuilder;
     /// use stack_encrypt::target::{self, AeadContext, Decryption};
     /// use stack_encrypt::{nonempty, StackCipher, StackCipherText};
     ///
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let cipher = StackCipherBuilder::new().registry(FakeKeysetRegistry::new()).init().await?;
     /// let keyset = cipher.default_keyset();
     /// let context = || AeadContext::from(nonempty!("users/email"));
     /// let sealed: StackCipherText = keyset.encrypt_as(&"bob@example.com".to_string(), context()).await?;

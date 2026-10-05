@@ -4,10 +4,10 @@
 //! the value — and the refusal names `zip`, not the operations.
 use stack_encrypt::target::{ciphertext, equality, CallerContext, Owned};
 use stack_encrypt::{nonempty, Encrypt, KeysetCipher};
-use stack_kms::FakeDataKeySource;
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 
 fn seal_and_index<S: Encrypt + vitaminc_prf::PrfValue>(
-    keyset: &KeysetCipher<'_, FakeDataKeySource>,
+    keyset: &KeysetCipher<'_, FakeKeysetRegistry>,
     value: S,
 ) {
     let both = ciphertext::<_, _, Owned>()

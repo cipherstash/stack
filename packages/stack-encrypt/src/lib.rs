@@ -284,7 +284,7 @@ pub mod registry;
 pub mod sem;
 pub mod target;
 
-pub use registry::{KeysetId, KeysetRef, KeysetRegistry, Resolved};
+pub use registry::{KeysetId, KeysetRef, KeysetRegistry, NoRegistry, Resolved};
 
 pub use cipher::{
     BoxedPassthrough, Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue,

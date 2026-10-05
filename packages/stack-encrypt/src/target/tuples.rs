@@ -13,8 +13,9 @@ use super::operations::{
     DecryptField, DecryptInto, Decryptable, Decryption, EncryptFrom, Encryption,
 };
 use super::IndexSpec;
+use crate::registry::KeysetRegistry;
 use crate::Error;
-use stack_kms::MaybeSend;
+use vitaminc_kms::provider::MaybeSend;
 
 /// The one context two targets can be handed together: what a tuple of
 /// targets takes, so each element receives the same value (ADR-0004).
@@ -88,7 +89,7 @@ macro_rules! tuple_of_targets {
             joined!(S; $first $(, $rest)+): Into<$first::Context> $(+ Into<$rest::Context>)+,
         {
             type Context = joined!(S; $first $(, $rest)+);
-            fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+            fn encryption<'s, K: KeysetRegistry + 'static>() -> Encryption<'s, S, Self, K, Self::Context>
             where
                 S: 's,
             {
@@ -119,7 +120,7 @@ macro_rules! tuple_of_targets {
             $($rest: DecryptField<P, CallerContext>,)+
         {
             type Context = CallerContext;
-            fn decryption<K: 'static>(self, context: CallerContext) -> Decryption<P, K> {
+            fn decryption<K: KeysetRegistry + 'static>(self, context: CallerContext) -> Decryption<P, K> {
                 let ($first, $($rest),+) = self;
                 $first
                     .decryption_field(context.clone())
@@ -137,7 +138,7 @@ macro_rules! tuple_of_targets {
             Self: DecryptInto<P> + Decryptable,
             Ctx: Into<<Self as DecryptInto<P>>::Context>,
         {
-            fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
+            fn decryption_field<K: KeysetRegistry + 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
                 if !<Self as Decryptable>::DECRYPTABLE {
                     return None;
                 }

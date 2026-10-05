@@ -7,10 +7,10 @@ mod common;
 use std::sync::atomic::Ordering;
 
 use common::{counting_cipher, loads_counting_cipher, recording_cipher, stack_cipher};
-use stack_encrypt::kms::{FakeDataKeySource, IdentifiedBy};
 use stack_encrypt::plan::{
     Field, FieldKind, FieldSchema, FieldValues, Fields, Operation, PlanError,
 };
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
 use stack_encrypt::target::{
     self, indexed, passthrough, Borrowed, DeclaredContext, Encrypted, Encryption, IndexSpec,
@@ -98,7 +98,7 @@ impl Field<u32> for Loose {
 type EmailTerms = (EqualityTerm, MatchTerms);
 type AgeTerms = (EqualityTerm, OreTerm<u32>);
 
-fn users_plan<K: 'static>() -> Plan<User, K> {
+fn users_plan<K: stack_encrypt::KeysetRegistry + 'static>() -> Plan<User, K> {
     Plan::context("users")
         .fields()
         .encrypt_index::<String>("email", (Equality, Match::default()))
@@ -116,7 +116,7 @@ fn plan_error<T: std::fmt::Debug>(result: Result<T, Error>) -> PlanError {
     }
 }
 
-fn leaf_keyset(ciphertext: &StackCipherText) -> uuid::Uuid {
+fn leaf_keyset(ciphertext: &StackCipherText) -> stack_encrypt::KeysetId {
     match ciphertext {
         CipherText::Single(leaf) => leaf.keyset_id(),
         other => panic!("expected a single leaf, got {other:?}"),
@@ -132,7 +132,8 @@ type HandOut = (
     ),
     u64,
 );
-fn hand_composed<'s, K: 'static>() -> Encryption<'s, User, HandOut, K, DeclaredContext> {
+fn hand_composed<'s, K: stack_encrypt::KeysetRegistry + 'static>(
+) -> Encryption<'s, User, HandOut, K, DeclaredContext> {
     indexed::<String, _, Borrowed, _>((Equality, Match::default()))
         .under(nonempty!("users").with("email"))
         .project(|u: &User| &u.email)
@@ -164,15 +165,15 @@ async fn the_chain_is_the_hand_composed_combinators_field_for_field() {
         .passthrough::<u64>("id")
         .await
         .unwrap();
-    let chain_sent = sent.lock().unwrap().generated();
-    sent.lock().unwrap().generate.clear();
+    let chain_sent = sent.calls().generated();
+    sent.clear();
 
     let keyset = cipher.default_keyset();
     let (((email, age), notes), id) = keyset
         .run(hand_composed(), &user, DeclaredContext::default())
         .await
         .unwrap();
-    let hand_sent = sent.lock().unwrap().generated();
+    let hand_sent = sent.calls().generated();
 
     assert_eq!(
         row.names().collect::<Vec<_>>(),
@@ -351,7 +352,7 @@ async fn a_query_extended_like_the_write_matches_it() {
 #[tokio::test]
 async fn a_query_against_an_undeclared_index_or_type_is_refused() {
     let cipher = stack_cipher().await;
-    let users_plan: Plan<User, FakeDataKeySource> = users_plan();
+    let users_plan: Plan<User, FakeKeysetRegistry> = users_plan();
     let age_plan = users_plan.field("age").unwrap();
     let notes_plan = users_plan.field("notes").unwrap();
 
@@ -446,7 +447,7 @@ async fn the_one_tree_chain_is_the_cipher_directed_call_under_the_label() {
         .context("documents/v2/body")
         .await
         .unwrap();
-    assert_eq!(sent.lock().unwrap().generated(), ["documents/v2/body"]);
+    assert_eq!(sent.calls().generated(), ["documents/v2/body"]);
     let label = Label::parse("documents/v2/body").unwrap();
     let back: String = cipher.decrypt(ct, label.clone()).await.unwrap();
     assert_eq!(back, body);
@@ -466,7 +467,7 @@ async fn extend_extends_every_field_and_reading_back_needs_it() {
         .await
         .unwrap();
     assert_eq!(
-        sent.lock().unwrap().generated(),
+        sent.calls().generated(),
         [
             "(users/email)/7u64",
             "(users/age)/7u64",
@@ -488,8 +489,11 @@ async fn extend_extends_every_field_and_reading_back_needs_it() {
         .await
         .unwrap();
     assert!(
-        matches!(cipher.open(row).using(&users_plan).await, Err(Error::Aead)),
-        "the fake key source ignores descriptors, so a missing extension reaches the AEAD"
+        matches!(
+            cipher.open(row).using(&users_plan).await,
+            Err(Error::Provider(_))
+        ),
+        "the fake provider is bound, so a missing extension is refused at the key retrieval, as ZeroKMS refuses it"
     );
 }
 
@@ -507,7 +511,7 @@ async fn a_one_value_plan_extended_on_write_needs_the_extension_to_query_and_ope
     let write = || cipher.encrypt(&34u32).using(&age_plan).extend(7u64);
 
     let out = write().await.unwrap();
-    assert_eq!(sent.lock().unwrap().generated(), ["(users/age)/7u64"]);
+    assert_eq!(sent.calls().generated(), ["(users/age)/7u64"]);
 
     let query = |parts: Option<u64>| {
         let chain = cipher.query(&34u32).using(&age_plan).equality();
@@ -528,13 +532,16 @@ async fn a_one_value_plan_extended_on_write_needs_the_extension_to_query_and_ope
         .unwrap();
     assert_eq!(back, 34);
     let unextended = cipher.open(write().await.unwrap()).using(&age_plan).await;
-    assert!(matches!(unextended, Err(Error::Aead)), "{unextended:?}");
+    assert!(
+        matches!(unextended, Err(Error::Provider(_))),
+        "{unextended:?}"
+    );
     let other = cipher
         .open(write().await.unwrap())
         .using(&age_plan)
         .extend(8u64)
         .await;
-    assert!(matches!(other, Err(Error::Aead)), "{other:?}");
+    assert!(matches!(other, Err(Error::Provider(_))), "{other:?}");
 }
 
 /// The `index` verb writes terms alone: no data key is asked for, the
@@ -553,7 +560,7 @@ async fn an_index_only_field_matches_its_query_and_mints_no_data_key() {
         .unwrap();
     let mut row = cipher.encrypt(&user()).using(&tokens_plan).await.unwrap();
     assert_eq!(
-        sent.lock().unwrap().generated(),
+        sent.calls().generated(),
         ["users/age", "users/notes"],
         "an index-only field asks for no data key"
     );
@@ -589,7 +596,7 @@ async fn a_second_extend_replaces_the_first() {
         .await
         .unwrap();
     assert_eq!(
-        sent.lock().unwrap().generated(),
+        sent.calls().generated(),
         [
             "(users/email)/7u64",
             "(users/age)/7u64",
@@ -675,7 +682,7 @@ async fn decrypt_returns_what_can_come_back_and_refuses_a_mismatched_row() {
 
 #[tokio::test]
 async fn a_value_that_does_not_match_the_plan_is_refused_without_a_key_request() {
-    let (cipher, generates, _) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let loose_plan: Plan<Loose, _> = Plan::context("users")
         .fields()
         .encrypt_index::<String>("email", Equality)
@@ -693,7 +700,7 @@ async fn a_value_that_does_not_match_the_plan_is_refused_without_a_key_request()
         .using(&loose_plan)
         .await
         .is_ok());
-    generates.store(0, Ordering::SeqCst);
+    provider.clear();
 
     assert_eq!(
         plan_error(
@@ -717,7 +724,7 @@ async fn a_value_that_does_not_match_the_plan_is_refused_without_a_key_request()
             field: "age".into()
         }
     );
-    assert_eq!(generates.load(Ordering::SeqCst), 0, "no key requested");
+    assert_eq!(provider.call_counts().0, 0, "no key requested");
 
     // A field the value names but cannot produce at the plan's type.
     let wrong_type: Plan<Loose, _> = Plan::context("users")
@@ -770,7 +777,7 @@ async fn a_value_that_does_not_match_the_plan_is_refused_without_a_key_request()
             expected: "alloc::string::String"
         }
     );
-    assert_eq!(generates.load(Ordering::SeqCst), 0, "no key requested");
+    assert_eq!(provider.call_counts().0, 0, "no key requested");
 }
 
 /// A chain naming a keyset is checked before the keyset is loaded: a plan
@@ -978,7 +985,7 @@ async fn a_passthrough_name_need_not_be_a_label_segment() {
     );
 
     let sealed = Plan::context("users")
-        .fields::<Odd, FakeDataKeySource>()
+        .fields::<Odd, FakeKeysetRegistry>()
         .encrypt::<String>("2fa_enabled")
         .build();
     assert!(matches!(
@@ -986,7 +993,7 @@ async fn a_passthrough_name_need_not_be_a_label_segment() {
         PlanError::FieldLabel { field, .. } if field == "2fa_enabled"
     ));
     let indexed = Plan::context("users")
-        .fields::<Odd, FakeDataKeySource>()
+        .fields::<Odd, FakeKeysetRegistry>()
         .index::<u64>("created(utc)", Equality)
         .build();
     assert!(matches!(
@@ -997,16 +1004,16 @@ async fn a_passthrough_name_need_not_be_a_label_segment() {
 
 #[tokio::test]
 async fn every_build_error_is_its_own() {
-    fn fields() -> stack_encrypt::plan::FieldsBuilder<User, FakeDataKeySource> {
+    fn fields() -> stack_encrypt::plan::FieldsBuilder<User, FakeKeysetRegistry> {
         Plan::context("users").fields()
     }
     let build =
-        |b: stack_encrypt::plan::FieldsBuilder<User, FakeDataKeySource>| plan_error(b.build());
+        |b: stack_encrypt::plan::FieldsBuilder<User, FakeKeysetRegistry>| plan_error(b.build());
 
     assert!(matches!(
         plan_error(
             Plan::context("users//x")
-                .fields::<User, FakeDataKeySource>()
+                .fields::<User, FakeKeysetRegistry>()
                 .build()
         ),
         PlanError::ContextLabel(_)
@@ -1129,7 +1136,7 @@ async fn every_build_error_is_its_own() {
     );
     // The schema checks: a field the type lacks, one at the wrong type, and
     // one of the type's the plan leaves unnamed.
-    let complete = |b: stack_encrypt::plan::FieldsBuilder<User, FakeDataKeySource>| {
+    let complete = |b: stack_encrypt::plan::FieldsBuilder<User, FakeKeysetRegistry>| {
         b.encrypt_index::<String>("email", Equality)
             .encrypt::<u32>("age")
             .encrypt::<String>("notes")
@@ -1225,7 +1232,7 @@ async fn match_options_must_agree_for_a_query_to_be_declared() {
         }
     }
     let cipher = stack_cipher().await;
-    let users_plan: Plan<User, FakeDataKeySource> = users_plan();
+    let users_plan: Plan<User, FakeKeysetRegistry> = users_plan();
     let email_plan = users_plan.field("email").unwrap();
     let refused = plan_error(
         cipher
@@ -1252,7 +1259,7 @@ async fn match_options_must_agree_for_a_query_to_be_declared() {
 
 #[tokio::test]
 async fn all_settles_several_chains_in_one_request() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let users_plan: Plan<User, _> = users_plan();
     let email_plan = users_plan.field("email").unwrap();
     let user = user();
@@ -1266,7 +1273,7 @@ async fn all_settles_several_chains_in_one_request() {
     ))
     .await
     .unwrap();
-    assert_eq!(generates.load(Ordering::SeqCst), 1, "one generate call");
+    assert_eq!(provider.call_counts().0, 1, "one generate call");
     let email: &Encrypted<EmailTerms> = row.get("email").unwrap();
     assert_eq!(email.terms.0, probe);
 
@@ -1278,12 +1285,8 @@ async fn all_settles_several_chains_in_one_request() {
     ))
     .await
     .unwrap();
-    assert_eq!(
-        generates.load(Ordering::SeqCst),
-        2,
-        "one more generate call"
-    );
-    assert_eq!(retrieves.load(Ordering::SeqCst), 1, "one retrieve call");
+    assert_eq!(provider.call_counts().0, 2, "one more generate call");
+    assert_eq!(provider.call_counts().1, 1, "one retrieve call");
     assert_eq!(c.get::<String>("notes").unwrap(), "likes cheese");
     let (_, _, _, d) = stack_encrypt::all((
         cipher.encrypt(&doc).context("docs"),
@@ -1298,19 +1301,16 @@ async fn all_settles_several_chains_in_one_request() {
     ))
     .await
     .unwrap();
-    assert_eq!(generates.load(Ordering::SeqCst), 3);
-    assert_eq!(retrieves.load(Ordering::SeqCst), 2);
+    assert_eq!(provider.call_counts().0, 3);
+    assert_eq!(provider.call_counts().1, 2);
     assert_eq!(d.len(), 4);
     let _ = b;
 }
 
 #[tokio::test]
 async fn all_runs_under_one_named_keyset_and_refuses_two() {
-    let (cipher, generates, _) = counting_cipher().await;
-    let tenant = cipher
-        .keyset(IdentifiedBy::Name("tenant".to_string().into()))
-        .await
-        .unwrap();
+    let (cipher, provider) = counting_cipher().await;
+    let tenant = cipher.keyset("tenant").await.unwrap();
     let doc = String::from("doc");
 
     let (a, b) = stack_encrypt::all((
@@ -1332,7 +1332,10 @@ async fn all_runs_under_one_named_keyset_and_refuses_two() {
         tenant.keyset_id(),
         "one chain names it for all"
     );
-    generates.store(0, Ordering::SeqCst);
+    provider.clear();
+    for name in ["tenant", "other"] {
+        cipher.registry().keyset(name).expect("minted").1.clear();
+    }
 
     let refused = stack_encrypt::all((
         cipher.encrypt(&doc).context("docs").keyset("tenant"),
@@ -1340,11 +1343,12 @@ async fn all_runs_under_one_named_keyset_and_refuses_two() {
     ))
     .await;
     assert!(matches!(refused, Err(Error::KeysetMismatch { .. })));
-    assert_eq!(
-        generates.load(Ordering::SeqCst),
-        0,
-        "refused before any request"
-    );
+    // Each keyset has its own provider: none of the three was asked.
+    for name in ["tenant", "other"] {
+        let (_, named) = cipher.registry().keyset(name).expect("minted");
+        assert_eq!(named.call_counts().0, 0, "refused before any request");
+    }
+    assert_eq!(provider.call_counts().0, 0, "refused before any request");
 }
 
 /// A batch settles through one client and resolves every keyset it names
@@ -1402,11 +1406,15 @@ async fn all_refuses_chains_from_two_ciphers() {
 /// other chains mint under.
 #[tokio::test]
 async fn all_lets_an_unnamed_opening_read_any_keyset() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
-    let tenant = cipher
-        .keyset(IdentifiedBy::Name("tenant".to_string().into()))
-        .await
-        .unwrap();
+    let (cipher, provider) = counting_cipher().await;
+    let tenant = cipher.keyset("tenant").await.unwrap();
+    // Each keyset has its own provider; the openings below retrieve from both.
+    let (_, tenant_provider) = cipher.registry().keyset("tenant").expect("minted");
+    let counts = || {
+        let (g, r) = provider.call_counts();
+        let (tg, tr) = tenant_provider.call_counts();
+        (g + tg, r + tr)
+    };
     let default = cipher.default_keyset().keyset_id();
     let docs_plan = Plan::context("docs")
         .with::<String, _>(Equality)
@@ -1423,7 +1431,8 @@ async fn all_lets_an_unnamed_opening_read_any_keyset() {
     };
     let (first, second, third) = (tenant_row().await, tenant_row().await, tenant_row().await);
     let default_row = cipher.encrypt(&doc).using(&docs_plan).await.unwrap();
-    generates.store(0, Ordering::SeqCst);
+    provider.clear();
+    tenant_provider.clear();
 
     let (written, opened) = stack_encrypt::all((
         cipher.encrypt(&doc).context("docs"),
@@ -1433,8 +1442,8 @@ async fn all_lets_an_unnamed_opening_read_any_keyset() {
     .unwrap();
     assert_eq!(leaf_keyset(&written), default, "minted under the default");
     assert_eq!(opened, "doc", "a tenant row opens beside a default write");
-    assert_eq!(generates.load(Ordering::SeqCst), 1);
-    assert_eq!(retrieves.load(Ordering::SeqCst), 1);
+    assert_eq!(counts().0, 1);
+    assert_eq!(counts().1, 1);
 
     let (written, opened, also) = stack_encrypt::all((
         cipher.encrypt(&doc).context("docs").keyset("tenant"),
@@ -1447,7 +1456,7 @@ async fn all_lets_an_unnamed_opening_read_any_keyset() {
     assert_eq!(opened, "doc", "a default row opens beside a tenant write");
     assert_eq!(also, "doc");
     assert_eq!(
-        retrieves.load(Ordering::SeqCst),
+        counts().1,
         3,
         "the unnamed openings: one retrieve per keyset they read"
     );
@@ -1478,10 +1487,10 @@ async fn all_lets_an_unnamed_opening_read_any_keyset() {
 /// key is requested, however valid its siblings are.
 #[tokio::test]
 async fn all_refuses_a_bad_chain_beside_a_good_one_before_any_request() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let users_plan: Plan<User, _> = users_plan();
     let row = cipher.encrypt(&user()).using(&users_plan).await.unwrap();
-    generates.store(0, Ordering::SeqCst);
+    provider.clear();
     let document = String::from("doc");
     let result = stack_encrypt::all((
         cipher.encrypt(&document).context("docs"),
@@ -1497,17 +1506,14 @@ async fn all_refuses_a_bad_chain_beside_a_good_one_before_any_request() {
         plan_error(result),
         PlanError::NotInPlan { field } if field == "age"
     ));
-    assert_eq!(generates.load(Ordering::SeqCst), 0);
-    assert_eq!(retrieves.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.call_counts().0, 0);
+    assert_eq!(provider.call_counts().1, 0);
 }
 
 #[tokio::test]
 async fn keyset_selects_the_minting_keyset_and_scopes_an_opening() {
     let cipher = stack_cipher().await;
-    let tenant = cipher
-        .keyset(IdentifiedBy::Name("tenant".to_string().into()))
-        .await
-        .unwrap();
+    let tenant = cipher.keyset("tenant").await.unwrap();
     let default = cipher.default_keyset().keyset_id();
     let doc = String::from("doc");
 
@@ -1557,32 +1563,24 @@ async fn keyset_selects_the_minting_keyset_and_scopes_an_opening() {
 
 #[tokio::test]
 async fn a_collection_runs_in_one_request() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let users_plan: Plan<User, _> = users_plan();
     let users = vec![user(), user(), user()];
 
     let rows = cipher.encrypt(&users).using(&users_plan).await.unwrap();
     assert_eq!(rows.len(), 3);
-    assert_eq!(
-        generates.load(Ordering::SeqCst),
-        1,
-        "one generate for every row"
-    );
+    assert_eq!(provider.call_counts().0, 1, "one generate for every row");
     let rows = cipher
         .encrypt(&users[..2])
         .using(&users_plan)
         .await
         .unwrap();
     assert_eq!(rows.len(), 2);
-    assert_eq!(generates.load(Ordering::SeqCst), 2);
+    assert_eq!(provider.call_counts().0, 2);
 
     let back = cipher.open(rows).using(&users_plan).await.unwrap();
     assert_eq!(back.len(), 2);
-    assert_eq!(
-        retrieves.load(Ordering::SeqCst),
-        1,
-        "one retrieve for every row"
-    );
+    assert_eq!(provider.call_counts().1, 1, "one retrieve for every row");
     assert_eq!(back[1].get::<u32>("age"), Some(&34));
 
     let ages = vec![1u32, 2, 3];
@@ -1594,18 +1592,20 @@ async fn a_collection_runs_in_one_request() {
     assert_eq!(out.len(), 3);
     let out = cipher.encrypt(&ages[1..]).using(&age_plan).await.unwrap();
     assert_eq!(out.len(), 2);
-    assert_eq!(generates.load(Ordering::SeqCst), 4);
+    assert_eq!(provider.call_counts().0, 4);
 }
 
 #[tokio::test]
 async fn nothing_touches_a_key_before_the_await() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let users_plan: Plan<User, _> = users_plan();
     let user = user();
 
     let chain = cipher.encrypt(&user).using(&users_plan).keyset("tenant");
     drop(chain);
-    assert_eq!(generates.load(Ordering::SeqCst), 0);
+    let (_, tenant) = cipher.registry().keyset("tenant").expect("minted");
+    assert_eq!(tenant.call_counts().0, 0);
+    assert_eq!(provider.call_counts().0, 0);
 
     // A chain yields its Pending synchronously: terms derived, key requests
     // queued, nothing sent until it is awaited.
@@ -1614,13 +1614,13 @@ async fn nothing_touches_a_key_before_the_await() {
         .encrypt(&user)
         .using(&users_plan)
         .prepare(&keyset, false);
-    assert_eq!(generates.load(Ordering::SeqCst), 0, "prepared, not sent");
+    assert_eq!(provider.call_counts().0, 0, "prepared, not sent");
     let row = pending.await.unwrap();
-    assert_eq!(generates.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.call_counts().0, 1);
     let pending = cipher.open(row).using(&users_plan).prepare(&keyset, true);
-    assert_eq!(retrieves.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.call_counts().1, 0);
     assert!(pending.await.is_ok());
-    assert_eq!(retrieves.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.call_counts().1, 1);
 }
 
 #[tokio::test]
@@ -1670,7 +1670,7 @@ async fn a_plan_lowers_to_an_encryption_and_a_decryption_held_by_value() {
 
 #[test]
 fn a_plan_is_data_its_fields_say_what_they_declare() {
-    let users_plan: Plan<User, FakeDataKeySource> = users_plan();
+    let users_plan: Plan<User, FakeKeysetRegistry> = users_plan();
     assert_eq!(users_plan.label().unwrap().to_string(), "users");
     let fields: Vec<_> = users_plan.field_plans().collect();
     assert_eq!(fields.len(), 4);
@@ -1686,7 +1686,7 @@ fn a_plan_is_data_its_fields_say_what_they_declare() {
     assert_eq!(fields[3].kind(), FieldKind::Passthrough);
     assert_eq!(fields[3].label(), None, "a passthrough field has no label");
 
-    let renamed: Plan<User, FakeDataKeySource> = Plan::context("users")
+    let renamed: Plan<User, FakeKeysetRegistry> = Plan::context("users")
         .fields()
         .encrypt::<String>("email")
         .identity("contact")
@@ -1700,7 +1700,7 @@ fn a_plan_is_data_its_fields_say_what_they_declare() {
         "users/contact",
         "a pinned identity keys the field, not its name"
     );
-    let index_only: Plan<User, FakeDataKeySource> = Plan::context("users")
+    let index_only: Plan<User, FakeKeysetRegistry> = Plan::context("users")
         .fields()
         .index::<String>("email", Equality)
         .encrypt::<u32>("age")
@@ -1713,7 +1713,7 @@ fn a_plan_is_data_its_fields_say_what_they_declare() {
     let shown = format!("{users_plan:?}");
     assert!(shown.starts_with(r#"Plan { context: "users", fields: [FieldPlan { name: "email""#));
     let builder = Plan::context("users")
-        .fields::<User, FakeDataKeySource>()
+        .fields::<User, FakeKeysetRegistry>()
         .encrypt::<u32>("age");
     assert_eq!(
         format!("{builder:?}"),
@@ -1771,11 +1771,8 @@ async fn a_keyset_choice_names_what_it_holds() {
     let cipher = stack_cipher().await;
     let handle: stack_encrypt::plan::KeysetChoice<'_, _> = (&cipher.default_keyset()).into();
     assert!(format!("{handle:?}").starts_with("Handle(KeysetCipher"));
-    let named: stack_encrypt::plan::KeysetChoice<'_, FakeDataKeySource> = "tenant".into();
-    assert_eq!(
-        format!("{named:?}"),
-        r#"Named(Name(Name { inner: "tenant" }))"#
-    );
+    let named: stack_encrypt::plan::KeysetChoice<'_, FakeKeysetRegistry> = "tenant".into();
+    assert_eq!(format!("{named:?}"), r#"Named(Name("tenant"))"#);
 }
 
 /// A context or keyset name held in a `String` is passed by reference, as
@@ -1783,10 +1780,7 @@ async fn a_keyset_choice_names_what_it_holds() {
 #[tokio::test]
 async fn a_borrowed_string_names_a_context_and_a_keyset() {
     let cipher = stack_cipher().await;
-    let tenant = cipher
-        .keyset(IdentifiedBy::Name("tenant".to_string().into()))
-        .await
-        .unwrap();
+    let tenant = cipher.keyset("tenant").await.unwrap();
     let context = String::from("users/age");
     let tenant_name = String::from("tenant");
 
@@ -1822,10 +1816,7 @@ async fn a_borrowed_string_names_a_context_and_a_keyset() {
 #[tokio::test]
 async fn every_chain_honours_its_named_keyset() {
     let cipher = stack_cipher().await;
-    let tenant = cipher
-        .keyset(IdentifiedBy::Name("tenant".to_string().into()))
-        .await
-        .unwrap();
+    let tenant = cipher.keyset("tenant").await.unwrap();
     let id = tenant.keyset_id();
     assert_ne!(id, cipher.default_keyset().keyset_id());
     let user = user();
@@ -1890,4 +1881,4 @@ async fn every_chain_honours_its_named_keyset() {
 
 // `StackCipher` must stay nameable in this binary's imports.
 #[allow(dead_code)]
-fn _cipher_type(_: &StackCipher<FakeDataKeySource>) {}
+fn _cipher_type(_: &StackCipher<FakeKeysetRegistry>) {}

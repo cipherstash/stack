@@ -6,8 +6,6 @@
 
 mod common;
 
-use stack_encrypt::KeysetRegistry;
-
 use cllw_ore::CllwOreEncrypt;
 use common::{counting_cipher, recording_cipher, stack_cipher};
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
@@ -242,7 +240,7 @@ where
     EqualityTerm: EncryptFrom<S>,
 {
     type Context = <EqualityTerm as EncryptFrom<S>>::Context;
-    fn encryption<'s, K: KeysetRegistry + 'static>(
+    fn encryption<'s, K: stack_encrypt::KeysetRegistry + 'static>(
     ) -> stack_encrypt::Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
@@ -300,7 +298,7 @@ impl Decryptable for Lying {
 }
 
 impl<P, Ctx> DecryptField<P, Ctx> for Lying {
-    fn decryption_field<K: KeysetRegistry + 'static>(
+    fn decryption_field<K: stack_encrypt::KeysetRegistry + 'static>(
         self,
         _context: Ctx,
     ) -> Option<stack_encrypt::Decryption<P, K>> {
@@ -736,15 +734,14 @@ async fn a_struct_nests_in_a_struct_as_an_ordinary_field() {
         .unwrap();
     assert_eq!(recovered, account);
 
-    // And not under another. The fake key source ignores descriptors, so the
-    // AEAD refuses; ZeroKMS would refuse the key retrieval first
-    // (`Error::Kms`).
+    // And not under another. The fake provider is bound, so the key
+    // retrieval is refused, as ZeroKMS refuses it.
     let row: EncryptedAccount = account
         .encrypt_into_with_context(&keyset, 9u64)
         .await
         .unwrap();
     let other = Account::decrypt_from_with_context(row, &cipher, 8u64).await;
-    assert!(matches!(other, Err(Error::Aead)), "{other:?}");
+    assert!(matches!(other, Err(Error::Provider(_))), "{other:?}");
 }
 
 /// A tuple-struct plaintext is reached by index — inferred for a tuple
@@ -860,7 +857,7 @@ mod the_plan_writes_what_the_derive_writes {
         }
     }
 
-    fn accounts_plan<K: 'static>() -> Plan<Account, K> {
+    fn accounts_plan<K: stack_encrypt::KeysetRegistry + 'static>() -> Plan<Account, K> {
         Plan::context("accounts")
             .fields()
             .encrypt_into::<EncryptedUser, _>(pick("user", |a: &Account| &a.user))
@@ -880,12 +877,12 @@ mod the_plan_writes_what_the_derive_writes {
             .using(&accounts_plan)
             .await
             .unwrap();
-        let plan_sent = sent.lock().unwrap().generated();
-        sent.lock().unwrap().generate.clear();
+        let plan_sent = sent.calls().generated();
+        sent.clear();
         let derived: EncryptedAccount = account().encrypt_into(&keyset).await.unwrap();
         assert_eq!(
             plan_sent,
-            sent.lock().unwrap().generated(),
+            sent.calls().generated(),
             "every data key under the same descriptor"
         );
 
@@ -947,10 +944,10 @@ mod the_plan_writes_what_the_derive_writes {
             .build()
             .unwrap();
         let mut planned = cipher.encrypt(&user()).using(&users_plan).await.unwrap();
-        let plan_sent = sent.lock().unwrap().generated();
-        sent.lock().unwrap().generate.clear();
+        let plan_sent = sent.calls().generated();
+        sent.clear();
         let derived: EncryptedUser = user().encrypt_into(&keyset).await.unwrap();
-        assert_eq!(plan_sent, sent.lock().unwrap().generated());
+        assert_eq!(plan_sent, sent.calls().generated());
         let age: EncryptedAge = planned.take("age").unwrap();
         let email: Encrypted<(EqualityTerm, MatchTerms)> = planned.take("email").unwrap();
         assert_eq!(age.hm, derived.age.hm);
@@ -993,7 +990,7 @@ mod the_plan_writes_what_the_derive_writes {
         }
     }
 
-    fn records_plan<K: 'static>() -> Plan<TenantRecord, K> {
+    fn records_plan<K: stack_encrypt::KeysetRegistry + 'static>() -> Plan<TenantRecord, K> {
         Plan::fields()
             .context_field(pick("tenant", |r: &TenantRecord| &r.tenant))
             .encrypt_into::<(StackCipherText, EqualityTerm), _>(pick(
@@ -1024,7 +1021,7 @@ mod the_plan_writes_what_the_derive_writes {
             .await
             .unwrap();
         assert_eq!(
-            sent.lock().unwrap().generated(),
+            sent.calls().generated(),
             ["tenants/acme/email", "tenants/acme/email"],
             "the field is sealed under the context the derive is handed"
         );
@@ -1057,7 +1054,7 @@ mod the_plan_writes_what_the_derive_writes {
 
     #[tokio::test]
     async fn both_refuse_a_mismatched_expected_context_before_any_key_request() {
-        let (cipher, _, retrieves) = counting_cipher().await;
+        let (cipher, provider) = counting_cipher().await;
         let keyset = cipher.default_keyset();
         let records_plan = records_plan();
 
@@ -1087,6 +1084,6 @@ mod the_plan_writes_what_the_derive_writes {
             matches!(refused, Err(Error::ContextMismatch { .. })),
             "{refused:?}"
         );
-        assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 0);
+        assert_eq!(provider.call_counts().1, 0);
     }
 }

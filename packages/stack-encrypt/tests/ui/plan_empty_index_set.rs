@@ -2,7 +2,7 @@
 //! of indexes. A field with no index is `encrypt(name)`.
 use stack_encrypt::plan::{Field, Fields};
 use stack_encrypt::Plan;
-use stack_kms::FakeDataKeySource;
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 
 struct User {
     age: u32,
@@ -20,6 +20,6 @@ impl Field<u32> for User {
 
 fn main() {
     let _ = Plan::context("users")
-        .fields::<User, FakeDataKeySource>()
+        .fields::<User, FakeKeysetRegistry>()
         .encrypt_index::<u32>("age", ());
 }

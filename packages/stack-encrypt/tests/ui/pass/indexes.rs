@@ -3,7 +3,7 @@
 //! defined for, in either source mode.
 use stack_encrypt::sem::{MatchConfig, MatchOptions};
 use stack_encrypt::target::{indexed, Borrowed, Equality, Match, Ope, Ore, Owned};
-use stack_kms::FakeDataKeySource;
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 
 struct Words;
 impl MatchConfig for Words {
@@ -13,17 +13,17 @@ impl MatchConfig for Words {
 }
 
 fn main() {
-    let _ = indexed::<u32, FakeDataKeySource, Borrowed, _>(Equality);
-    let _ = indexed::<u32, FakeDataKeySource, Borrowed, _>((Equality, Ore));
-    let _ = indexed::<u32, FakeDataKeySource, Owned, _>((Equality, Ore, Ope));
-    let _ = indexed::<String, FakeDataKeySource, Borrowed, _>(Match::default());
-    let _ = indexed::<String, FakeDataKeySource, Borrowed, _>((
+    let _ = indexed::<u32, FakeKeysetRegistry, Borrowed, _>(Equality);
+    let _ = indexed::<u32, FakeKeysetRegistry, Borrowed, _>((Equality, Ore));
+    let _ = indexed::<u32, FakeKeysetRegistry, Owned, _>((Equality, Ore, Ope));
+    let _ = indexed::<String, FakeKeysetRegistry, Borrowed, _>(Match::default());
+    let _ = indexed::<String, FakeKeysetRegistry, Borrowed, _>((
         Equality,
         Match::<Words>::new(),
         Ore,
         Ope,
     ));
-    let _ = indexed::<String, FakeDataKeySource, Owned, _>((
+    let _ = indexed::<String, FakeKeysetRegistry, Owned, _>((
         Equality,
         Match::default(),
         Ore,

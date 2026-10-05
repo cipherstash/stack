@@ -5,7 +5,12 @@ error[E0277]: the trait bound `(): KeysetRegistry` is not satisfied
   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `KeysetRegistry` is not implemented for `()`
   |
 help: the following other types implement trait `KeysetRegistry`
- --> src/registry/fake.rs
+ --> src/registry.rs
+  |
+  |   impl KeysetRegistry for NoRegistry {
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoRegistry`
+  |
+ ::: src/registry/fake.rs
   |
   |   impl KeysetRegistry for FakeKeysetRegistry {
   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `FakeKeysetRegistry`
@@ -17,12 +22,12 @@ help: the following other types implement trait `KeysetRegistry`
   | |     C: stack_auth::AuthStrategyBounds,
   | |     for<'a> &'a C: stack_auth::AuthStrategy,
   | |     Conn: stack_kms::ZeroKMSConnection + Send + Sync,
-  | |_____________________________________________________^ `Arc<stack_kms::client::StackKms<C, Conn>>`
+  | |_____________________________________________________^ `Arc<StackKms<C, Conn>>`
 note: required by a bound in `Encryption`
  --> src/target/operations.rs
   |
-  | pub struct Encryption<'s, S, T, K: KeysetRegistry, Ctx> {
-  |                                    ^^^^^^^^^^^^^^ required by this bound in `Encryption`
+  | pub struct Encryption<'s, S: 's, T, K: KeysetRegistry, Ctx, M: SourceMode<'s, S> = Borrowed> {
+  |                                        ^^^^^^^^^^^^^^ required by this bound in `Encryption`
 
 error[E0277]: the trait bound `(): KeysetRegistry` is not satisfied
  --> tests/ui/execution_callback.rs:6:16
@@ -34,7 +39,12 @@ error[E0277]: the trait bound `(): KeysetRegistry` is not satisfied
   | |__________^ the trait `KeysetRegistry` is not implemented for `()`
   |
 help: the following other types implement trait `KeysetRegistry`
- --> src/registry/fake.rs
+ --> src/registry.rs
+  |
+  |   impl KeysetRegistry for NoRegistry {
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoRegistry`
+  |
+ ::: src/registry/fake.rs
   |
   |   impl KeysetRegistry for FakeKeysetRegistry {
   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `FakeKeysetRegistry`
@@ -46,12 +56,12 @@ help: the following other types implement trait `KeysetRegistry`
   | |     C: stack_auth::AuthStrategyBounds,
   | |     for<'a> &'a C: stack_auth::AuthStrategy,
   | |     Conn: stack_kms::ZeroKMSConnection + Send + Sync,
-  | |_____________________________________________________^ `Arc<stack_kms::client::StackKms<C, Conn>>`
+  | |_____________________________________________________^ `Arc<StackKms<C, Conn>>`
 note: required by a bound in `Encryption`
  --> src/target/operations.rs
   |
-  | pub struct Encryption<'s, S, T, K: KeysetRegistry, Ctx> {
-  |                                    ^^^^^^^^^^^^^^ required by this bound in `Encryption`
+  | pub struct Encryption<'s, S: 's, T, K: KeysetRegistry, Ctx, M: SourceMode<'s, S> = Borrowed> {
+  |                                        ^^^^^^^^^^^^^^ required by this bound in `Encryption`
 
 error[E0277]: the trait bound `(): KeysetRegistry` is not satisfied
  --> tests/ui/execution_callback.rs:6:29
@@ -60,7 +70,12 @@ error[E0277]: the trait bound `(): KeysetRegistry` is not satisfied
   |                             ^^^^^^ the trait `KeysetRegistry` is not implemented for `()`
   |
 help: the following other types implement trait `KeysetRegistry`
- --> src/registry/fake.rs
+ --> src/registry.rs
+  |
+  |   impl KeysetRegistry for NoRegistry {
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoRegistry`
+  |
+ ::: src/registry/fake.rs
   |
   |   impl KeysetRegistry for FakeKeysetRegistry {
   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `FakeKeysetRegistry`
@@ -72,7 +87,7 @@ help: the following other types implement trait `KeysetRegistry`
   | |     C: stack_auth::AuthStrategyBounds,
   | |     for<'a> &'a C: stack_auth::AuthStrategy,
   | |     Conn: stack_kms::ZeroKMSConnection + Send + Sync,
-  | |_____________________________________________________^ `Arc<stack_kms::client::StackKms<C, Conn>>`
+  | |_____________________________________________________^ `Arc<StackKms<C, Conn>>`
 note: required by a bound in `KeysetCipher`
  --> src/keyset.rs
   |
@@ -86,7 +101,12 @@ error[E0277]: the trait bound `(): KeysetRegistry` is not satisfied
   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `KeysetRegistry` is not implemented for `()`
   |
 help: the following other types implement trait `KeysetRegistry`
- --> src/registry/fake.rs
+ --> src/registry.rs
+  |
+  |   impl KeysetRegistry for NoRegistry {
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoRegistry`
+  |
+ ::: src/registry/fake.rs
   |
   |   impl KeysetRegistry for FakeKeysetRegistry {
   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `FakeKeysetRegistry`
@@ -98,7 +118,7 @@ help: the following other types implement trait `KeysetRegistry`
   | |     C: stack_auth::AuthStrategyBounds,
   | |     for<'a> &'a C: stack_auth::AuthStrategy,
   | |     Conn: stack_kms::ZeroKMSConnection + Send + Sync,
-  | |_____________________________________________________^ `Arc<stack_kms::client::StackKms<C, Conn>>`
+  | |_____________________________________________________^ `Arc<StackKms<C, Conn>>`
 note: required by a bound in `stack_encrypt::Pending`
  --> src/target/pending.rs
   |

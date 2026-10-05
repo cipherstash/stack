@@ -8,7 +8,7 @@ use std::marker::PhantomData;
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::DeclaredContext;
 use stack_encrypt::{EncryptFrom, Encrypted, StackCipher, StackCipherText};
-use stack_kms::FakeDataKeySource;
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 
 struct User<'a> {
     email: String,
@@ -26,11 +26,11 @@ struct EncryptedUser<'a> {
     source: PhantomData<&'a ()>,
 }
 
-async fn round_trip(cipher: &StackCipher<FakeDataKeySource>) {
+async fn round_trip(cipher: &StackCipher<FakeKeysetRegistry>) {
     let keyset = cipher.default_keyset();
     let user = User { email: "bob@example.com".into(), age: 34, note: "static" };
     let record: EncryptedUser<'_> = keyset.encrypt_as(&user, DeclaredContext::default()).await.unwrap();
-    let _ = EncryptedUser::plan::<FakeDataKeySource>().unwrap();
+    let _ = EncryptedUser::plan::<FakeKeysetRegistry>().unwrap();
     let _ = record;
 }
 

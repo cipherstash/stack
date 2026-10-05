@@ -93,6 +93,12 @@ impl FakeProvider {
         (calls.generate.len(), calls.retrieve.len())
     }
 
+    /// Forget every call recorded so far, so a test can assert on what
+    /// happens after a setup step only.
+    pub fn clear(&self) {
+        *self.lock() = Calls::default();
+    }
+
     /// A poisoned lock only means another test thread panicked mid-record;
     /// the record is still a valid record.
     fn lock(&self) -> MutexGuard<'_, Calls> {

@@ -190,3 +190,57 @@ mod tests {
         assert_eq!(id.to_string(), "01234567-89ab-cdef-0123-456789abcdef");
     }
 }
+
+/// The registry of a plan that is never run.
+///
+/// [`Plan::context`](crate::Plan::context), [`Plan::fields`](crate::Plan::fields)
+/// and [`Plan::value`](crate::Plan::value) are associated functions of
+/// `Plan<(), NoRegistry>`, so a caller starts a plan without naming a type.
+/// A plan's registry parameter must be a [`KeysetRegistry`], so the anchor
+/// needs one too. `NoRegistry` has no values: no cipher can be built over
+/// it, and none of its methods can be called.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoRegistry {}
+
+impl KeysetRegistry for NoRegistry {
+    type Provider = NoRegistry;
+    type Error = std::convert::Infallible;
+
+    async fn resolve(
+        &self,
+        _keyset: &KeysetRef,
+    ) -> Result<Option<Resolved<Self::Provider>>, Self::Error> {
+        match *self {}
+    }
+}
+
+impl KeyProvider<32> for NoRegistry {
+    type Error = std::convert::Infallible;
+
+    // Any values do: there is no `NoRegistry` to ask.
+    const RECONSTRUCTION: KeyReconstruction = KeyReconstruction::ClientAndServer;
+    const ISOLATION: KeyIsolation = KeyIsolation::PerValue;
+    const BINDING: BindingSupport = BindingSupport::Bound;
+
+    async fn generate_keys(
+        &self,
+        _bindings: &[Binding<'_>],
+    ) -> Result<Vec<GeneratedDataKey<32>>, Self::Error> {
+        match *self {}
+    }
+
+    async fn retrieve_keys(
+        &self,
+        _keys: &[(KeyId, Binding<'_>)],
+    ) -> Result<Vec<ProviderProtected<[u8; 32]>>, Self::Error> {
+        match *self {}
+    }
+}
+
+impl IndexKeyProvider<32> for NoRegistry {
+    type Error = std::convert::Infallible;
+
+    async fn load_index_key(&self) -> Result<IndexKeyMaterial<32>, Self::Error> {
+        match *self {}
+    }
+}
