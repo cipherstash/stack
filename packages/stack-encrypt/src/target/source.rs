@@ -5,11 +5,18 @@
 /// A description's plaintext is handed to it by reference: the default mode,
 /// and the one every [`EncryptFrom`](super::EncryptFrom) declaration runs in.
 /// An operation that consumes the plaintext clones it.
+///
+/// This is a mode, not a value: the enum is uninhabited, so no `Borrowed`
+/// ever exists and it never holds a plaintext. Its `Debug` can print nothing.
 #[derive(Debug)]
 pub enum Borrowed {}
 
 /// A description's plaintext is handed to it by value. A single operation
 /// consumes it without a copy; only fan-out over it needs `Clone`.
+///
+/// Uninhabited like [`Borrowed`]: a mode that never holds the plaintext. The
+/// value itself lives only inside the description's closure, which has no
+/// `Debug`, and in the [`Pending`](super::Pending) output.
 #[derive(Debug)]
 pub enum Owned {}
 
