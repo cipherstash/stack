@@ -12,13 +12,13 @@ use std::sync::atomic::Ordering;
 
 use common::{counting_cipher, loads_counting_cipher, recording_cipher, stack_cipher};
 use stack_encrypt::kms::FakeDataKeySource;
-use stack_encrypt::plan::{pick, Field, FieldKind, FieldValues, Fields, PlanError};
+use stack_encrypt::plan::{pick, Field, FieldKind, FieldValues, Fields, Opens, PlanError, Runs};
 use stack_encrypt::sem::{
     EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreTerm, Tokenizer,
 };
 use stack_encrypt::target::{
-    CallerContext, DecryptField, DecryptInto, Decryptable, Decryption, EncryptFrom, Encrypted,
-    Encryption, IndexSpec, Indexes, TermSet,
+    CallerContext, DeclaredContext, DecryptField, DecryptInto, Decryptable, Decryption,
+    EncryptFrom, Encrypted, Encryption, IndexSpec, Indexes, TermSet,
 };
 use stack_encrypt::{
     nonempty, Decrypt, Encrypt, Equality, Error, Label, Match, Ope, Ore, Plan, StackCipherText,
@@ -521,6 +521,193 @@ async fn a_context_refused_at_the_call_never_loads_the_keyset_it_names() {
     let refused = cipher.open(pairs).using(&pair_plan).keyset("tenant").await;
     assert_eq!(plan_error(refused), PlanError::NoContext);
     assert_eq!(loads.load(Ordering::SeqCst), 0, "no keyset was loaded");
+}
+
+/// A batch checks the context its call names once, apart from its items:
+/// an empty slice or `Vec` runs no item, and is still refused a context
+/// missing or given twice before the keyset the chain names is loaded,
+/// for a fields plan and a one-value plan, run or opened.
+#[tokio::test]
+async fn an_empty_batch_has_its_context_refused_before_the_keyset_loads() {
+    let (cipher, loads) = loads_counting_cipher().await;
+    let users_plan = contextless_plan();
+    let fixed_users = Plan::context("users")
+        .fields()
+        .encrypt_index(("email", email), Equality)
+        .encrypt(("age", age))
+        .build()
+        .unwrap();
+    let records_plan = records_plan();
+    let age_plan = Plan::value::<u32>().with(Equality).build().unwrap();
+    let fixed_age = Plan::context("ages")
+        .with::<u32, _>(Equality)
+        .build()
+        .unwrap();
+    let no_users: Vec<User> = Vec::new();
+    let no_records: Vec<TenantRecord> = Vec::new();
+    let no_ages: Vec<u32> = Vec::new();
+
+    let refused = cipher
+        .encrypt(&no_users)
+        .using(&users_plan)
+        .keyset("tenant")
+        .await;
+    assert_eq!(plan_error(refused), PlanError::NoContext);
+    let refused = cipher
+        .encrypt(no_users.as_slice())
+        .using(&users_plan)
+        .keyset("tenant")
+        .await;
+    assert_eq!(plan_error(refused), PlanError::NoContext);
+    let refused = cipher
+        .encrypt(&no_users)
+        .context("users")
+        .using(&fixed_users)
+        .keyset("tenant")
+        .await;
+    assert_eq!(plan_error(refused), two("the plan", "the call"));
+    let refused = cipher
+        .encrypt(no_users.as_slice())
+        .context("users")
+        .using(&fixed_users)
+        .keyset("tenant")
+        .await;
+    assert_eq!(plan_error(refused), two("the plan", "the call"));
+    let refused = cipher
+        .encrypt(&no_records)
+        .context("tenants/acme")
+        .using(&records_plan)
+        .keyset("tenant")
+        .await;
+    assert_eq!(plan_error(refused), two("a context field", "the call"));
+
+    let refused = cipher
+        .encrypt(&no_ages)
+        .using(&age_plan)
+        .keyset("tenant")
+        .await;
+    assert_eq!(plan_error(refused), PlanError::NoContext);
+    let refused = cipher
+        .encrypt(no_ages.as_slice())
+        .context("ages")
+        .using(&fixed_age)
+        .keyset("tenant")
+        .await;
+    assert_eq!(plan_error(refused), two("the plan", "the call"));
+
+    let refused = cipher
+        .open(Vec::<FieldValues>::new())
+        .using(&users_plan)
+        .keyset("tenant")
+        .await;
+    assert_eq!(plan_error(refused), PlanError::NoContext);
+    let refused = cipher
+        .open(Vec::<FieldValues>::new())
+        .context("users")
+        .using(&fixed_users)
+        .keyset("tenant")
+        .await;
+    assert_eq!(plan_error(refused), two("the plan", "the call"));
+    assert_eq!(loads.load(Ordering::SeqCst), 0, "no keyset was loaded");
+
+    // A context field's expected value is checked against each record, so
+    // an empty batch of them has nothing to refuse.
+    let opened = cipher
+        .open(Vec::<FieldValues>::new())
+        .context("tenants/acme")
+        .using(&records_plan)
+        .await
+        .unwrap();
+    assert!(opened.is_empty());
+    let sealed = cipher
+        .encrypt(&no_users)
+        .context("users")
+        .using(&users_plan)
+        .await
+        .unwrap();
+    assert!(sealed.is_empty());
+}
+
+/// Run or opened without a chain, an empty batch's description fails on
+/// the same context a chain refuses, so the two never disagree.
+#[tokio::test]
+async fn an_empty_batch_description_fails_on_the_context_a_chain_refuses() {
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let users_plan = contextless_plan();
+    let fixed_users = Plan::context("users")
+        .fields()
+        .encrypt(("age", age))
+        .build()
+        .unwrap();
+    let age_plan = Plan::value::<u32>().with(Equality).build().unwrap();
+    let users = || Some(Label::parse("users").unwrap());
+    let no_users: Vec<User> = Vec::new();
+
+    let refused = Runs::<Vec<User>, _>::pending(
+        &users_plan,
+        &keyset,
+        &no_users,
+        None,
+        DeclaredContext::default(),
+    )
+    .await;
+    assert_eq!(plan_error(refused), PlanError::NoContext);
+    let refused = Runs::<[User], _>::pending(
+        &fixed_users,
+        &keyset,
+        &no_users,
+        users(),
+        DeclaredContext::default(),
+    )
+    .await;
+    assert_eq!(plan_error(refused), two("the plan", "the call"));
+    let refused = Runs::<Vec<u32>, _>::pending(
+        &age_plan,
+        &keyset,
+        &Vec::new(),
+        None,
+        DeclaredContext::default(),
+    )
+    .await;
+    assert_eq!(plan_error(refused), PlanError::NoContext);
+    let run = Runs::<Vec<User>, _>::pending(
+        &users_plan,
+        &keyset,
+        &no_users,
+        users(),
+        DeclaredContext::default(),
+    )
+    .await;
+    assert!(run.unwrap().is_empty());
+
+    let opening = Opens::<Vec<FieldValues>, _>::decryption(
+        &users_plan,
+        Vec::new(),
+        None,
+        DeclaredContext::default(),
+    );
+    assert_eq!(
+        plan_error(keyset.run_decryption(opening).await),
+        PlanError::NoContext
+    );
+    let opening = Opens::<Vec<FieldValues>, _>::decryption(
+        &fixed_users,
+        Vec::new(),
+        users(),
+        DeclaredContext::default(),
+    );
+    assert_eq!(
+        plan_error(keyset.run_decryption(opening).await),
+        two("the plan", "the call")
+    );
+    let opening = Opens::<Vec<FieldValues>, _>::decryption(
+        &fixed_users,
+        Vec::new(),
+        None,
+        DeclaredContext::default(),
+    );
+    assert!(keyset.run_decryption(opening).await.unwrap().is_empty());
 }
 
 /// `.extend(parts)` reaches every field of a plan whose context is read

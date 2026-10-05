@@ -315,6 +315,13 @@ impl<S, X> ValuePlan<S, X> {
         resolve_context(self.context.as_ref(), call)
     }
 
+    /// The context the call names against the plan's own: exactly one of
+    /// them, which is all a one-value plan checks before a run or an
+    /// opening.
+    fn check_call(&self, call: Option<&Label>) -> Result<(), Error> {
+        Ok(self.resolve(call.cloned()).map(drop)?)
+    }
+
     /// The description one run of this plan executes, given the context the
     /// call names (for a plan built without one; `None` otherwise):
     /// the layout `.under(context)`. A context missing or given twice is a
@@ -375,12 +382,12 @@ where
     }
 
     fn check(&self, _source: &S, context: Option<&Label>) -> Result<(), Error> {
-        Ok(self.resolve(context.cloned()).map(drop)?)
+        self.check_call(context)
     }
 }
 
 runs_over_collections! {
-    [S, X, K] ValuePlan<S, X> => S where [X: ValueShape<S>, K: 'static];
+    [S, X, K] ValuePlan<S, X> => S where [X: ValueShape<S>, K: 'static] check_call;
 }
 
 impl<S, X> ValuePlan<S, X> {
@@ -444,7 +451,7 @@ macro_rules! indexed_opens {
                 self.open_one(record, context, extend)
             }
             fn check(&self, _: &$record, context: Option<&Label>) -> Result<(), Error> {
-                Ok(self.resolve(context.cloned()).map(drop)?)
+                self.check_call(context)
             }
         }
         impl<S, X, K, $($generics)*> Opens<Vec<$record>, K> for ValuePlan<S, Indexed<X>>
@@ -462,7 +469,7 @@ macro_rules! indexed_opens {
                 self.open_all(records, context, extend)
             }
             fn check(&self, _: &Vec<$record>, context: Option<&Label>) -> Result<(), Error> {
-                Ok(self.resolve(context.cloned()).map(drop)?)
+                self.check_call(context)
             }
         }
     )+};
@@ -491,7 +498,7 @@ where
         self.open_one(record, context, extend)
     }
     fn check(&self, _: &T, context: Option<&Label>) -> Result<(), Error> {
-        Ok(self.resolve(context.cloned()).map(drop)?)
+        self.check_call(context)
     }
 }
 
@@ -512,6 +519,6 @@ where
         self.open_all(records, context, extend)
     }
     fn check(&self, _: &Vec<T>, context: Option<&Label>) -> Result<(), Error> {
-        Ok(self.resolve(context.cloned()).map(drop)?)
+        self.check_call(context)
     }
 }

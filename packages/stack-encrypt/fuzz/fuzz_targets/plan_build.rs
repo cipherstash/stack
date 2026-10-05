@@ -13,7 +13,7 @@
 //! it), and a field may be declared as the plan's context field, so a
 //! context can also be given twice.
 //!
-//! Four invariants. Building and rendering never panic, whatever the
+//! Five invariants. Building and rendering never panic, whatever the
 //! names. A plan built with its context gives every sealed or indexed field
 //! a well-formed label: `<context>/<identity>`, which renders and parses
 //! back to itself; a plan without one gives none, and keys each such field
@@ -21,12 +21,16 @@
 //! no label, so a plan of passthrough fields with distinct names, under a
 //! plain context or none, builds whatever text the names are. And a plan
 //! whose context is given twice is refused with `TwoContextSources`.
+//! And a built plan checks an empty batch's call context as it would one
+//! record's: run with none and no context of its own is `NoContext`, run
+//! with one beside its own is `TwoContextSources`, and opened likewise,
+//! except that a context field's expected value waits for a record.
 
 use std::collections::HashSet;
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-use stack_encrypt::plan::{FieldKind, FieldValues, PlanError};
+use stack_encrypt::plan::{FieldKind, FieldValues, Opens, PlanError, Runs};
 use stack_encrypt::{Equality, Error, Label, Plan};
 
 /// A name: one of a few that collide or sit on a rule's edge, or free text.
@@ -135,8 +139,10 @@ fuzz_target!(|input: Input| {
                     .unwrap_or(&declared.name)
                     .as_str();
                 assert_eq!(built.identity(), identity);
-                let keys_nothing =
-                    matches!(built.kind(), FieldKind::Passthrough | FieldKind::ContextField);
+                let keys_nothing = matches!(
+                    built.kind(),
+                    FieldKind::Passthrough | FieldKind::ContextField
+                );
                 match (built.label(), &context) {
                     (None, Some(_)) => assert!(keys_nothing),
                     (None, None) => {
@@ -160,6 +166,40 @@ fuzz_target!(|input: Input| {
                 assert!(plan.field(built.name()).is_ok());
             }
             let _ = format!("{plan:?}");
+
+            let has_own = context.is_some() || context_fields == 1;
+            let call = Label::parse("users").expect("a plain label");
+            for call in [None, Some(&call)] {
+                let expected = match (has_own, call.is_some()) {
+                    (false, false) => Some(PlanError::NoContext),
+                    (true, true) => Some(PlanError::TwoContextSources {
+                        first: if context_fields == 1 {
+                            "a context field"
+                        } else {
+                            "the plan"
+                        },
+                        second: "the call",
+                    }),
+                    _ => None,
+                };
+                let run = Runs::<Vec<FieldValues>, ()>::check(&plan, &Vec::new(), call);
+                match (&expected, run) {
+                    (None, Ok(())) => {}
+                    (Some(expected), Err(Error::Plan(error))) => assert_eq!(&error, expected),
+                    (expected, run) => panic!("an empty run checked {run:?}, not {expected:?}"),
+                }
+                let opened = Opens::<Vec<FieldValues>, ()>::check(&plan, &Vec::new(), call);
+                match (&expected, opened) {
+                    (_, Ok(())) if context_fields == 1 => {}
+                    (None, Ok(())) => {}
+                    (Some(expected), Err(Error::Plan(error))) if context_fields == 0 => {
+                        assert_eq!(&error, expected)
+                    }
+                    (expected, opened) => {
+                        panic!("an empty opening checked {opened:?}, not {expected:?}")
+                    }
+                }
+            }
         }
         Err(Error::Plan(error)) => {
             assert!(

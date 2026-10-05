@@ -1324,6 +1324,13 @@ impl<S: 'static, K: 'static> Plan<S, K> {
         }
     }
 
+    /// The context the call names against the plan's own source, apart
+    /// from any value: exactly one of them. A batch asks this once, so an
+    /// empty one is refused as one value would be.
+    fn check_call(&self, call: Option<&Label>) -> Result<(), Error> {
+        Ok(self.base(call.cloned()).map(drop)?)
+    }
+
     /// A value against the plan, as running it checks it under the context
     /// the call names: one context source, the value's fields are the
     /// plan's (when it reads any by name), each is of the type the plan
@@ -1350,6 +1357,20 @@ impl<S: 'static, K: 'static> Plan<S, K> {
     fn check_opening(&self, record: &FieldValues, call: Option<&Label>) -> Result<(), Error> {
         self.check_record(record)?;
         self.opening_base(record, call.cloned()).map(drop)
+    }
+
+    /// The context the call names against the plan's own source, as
+    /// opening checks it apart from any record: exactly one, for a plan
+    /// that does not read its context from a field. For one that does, the
+    /// call names what the record's field should hold, which only a record
+    /// can answer. A batch asks this once, so an empty one is refused as
+    /// one record would be.
+    fn check_opening_call(&self, call: Option<&Label>) -> Result<(), Error> {
+        match &self.inner.source {
+            Source::Field(_) => Ok(()),
+            Source::Plan(label) => Ok(resolve_context(Some(label), call.cloned()).map(drop)?),
+            Source::Call => Ok(resolve_context(None, call.cloned()).map(drop)?),
+        }
     }
 
     /// The context a stored record opens under.
@@ -1545,9 +1566,11 @@ impl<S: 'static, K: 'static> Runs<S, K> for Plan<S, K> {
 }
 
 /// A collection of sources runs one description per item, merged into one
-/// batch.
+/// batch. The context the call names is checked once, by the plan's
+/// `$check_call`, before any item: an empty collection runs no item, and
+/// would otherwise accept a context missing or given twice.
 macro_rules! runs_over_collections {
-    ($([$($generics:tt)*] $plan:ty => $item:ty where [$($bounds:tt)*];)+) => {$(
+    ($([$($generics:tt)*] $plan:ty => $item:ty where [$($bounds:tt)*] $check_call:ident;)+) => {$(
         impl<$($generics)*> Runs<[$item], K> for $plan where $($bounds)* {
             type Output = Vec<<Self as Runs<$item, K>>::Output>;
             fn pending<'p>(
@@ -1557,6 +1580,9 @@ macro_rules! runs_over_collections {
                 context: Option<Label>,
                 extend: DeclaredContext,
             ) -> Pending<'p, Self::Output, K> {
+                if let Err(error) = self.$check_call(context.as_ref()) {
+                    return Pending::failed(keyset, error);
+                }
                 Pending::all(
                     keyset,
                     source
@@ -1574,6 +1600,7 @@ macro_rules! runs_over_collections {
                 )
             }
             fn check(&self, source: &[$item], context: Option<&Label>) -> Result<(), Error> {
+                self.$check_call(context)?;
                 source
                     .iter()
                     .try_for_each(|item| Runs::<$item, K>::check(self, item, context))
@@ -1598,7 +1625,7 @@ macro_rules! runs_over_collections {
 }
 pub(crate) use runs_over_collections;
 runs_over_collections! {
-    [S, K] Plan<S, K> => S where [S: 'static, K: 'static];
+    [S, K] Plan<S, K> => S where [S: 'static, K: 'static] check_call;
 }
 
 impl<S: 'static, K: 'static> Opens<FieldValues, K> for Plan<S, K> {
@@ -1624,6 +1651,9 @@ impl<S: 'static, K: 'static> Opens<Vec<FieldValues>, K> for Plan<S, K> {
         context: Option<Label>,
         extend: DeclaredContext,
     ) -> Decryption<Vec<FieldValues>, K> {
+        if let Err(error) = self.check_opening_call(context.as_ref()) {
+            return Decryption::failed(error);
+        }
         Decryption::all(
             records
                 .into_iter()
@@ -1631,6 +1661,7 @@ impl<S: 'static, K: 'static> Opens<Vec<FieldValues>, K> for Plan<S, K> {
         )
     }
     fn check(&self, records: &Vec<FieldValues>, context: Option<&Label>) -> Result<(), Error> {
+        self.check_opening_call(context)?;
         records
             .iter()
             .try_for_each(|record| self.check_opening(record, context))
