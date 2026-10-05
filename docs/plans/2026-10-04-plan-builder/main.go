@@ -9,7 +9,8 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	"example.com/app/blocklist"
+	"example.com/app/contacts"
+	"example.com/app/crm"
 	"example.com/app/documents"
 	"example.com/app/users"
 	"github.com/cipherstash/stack/languages/golang/stackencrypt"
@@ -34,9 +35,10 @@ func run(ctx context.Context) error {
 	}
 	defer db.Close()
 
-	const tenant = "tenant-42"
-	cipher := client.Keyset(stackencrypt.KeysetName(tenant))
-	store := users.NewSQLStore(db, client)
+	// One cipher for each tenant: its keyset, and its part of every field's
+	// context. Every call through this cipher carries both.
+	cipher := client.Keyset(stackencrypt.KeysetName("tenant-42")).Extend("tenant-42")
+	store := users.NewSQLStore(db)
 
 	alice := users.User{
 		ID:       1,
@@ -51,34 +53,30 @@ func run(ctx context.Context) error {
 		{ID: 3, Email: "carol@example.com", Age: 52, Attrs: map[string]any{"role": "admin"}},
 	}
 
-	if err := store.Create(ctx, tenant, alice); err != nil {
+	if err := store.Create(ctx, cipher, alice); err != nil {
 		return err
 	}
-	if err := store.Import(ctx, tenant, newHires); err != nil {
-		return err
-	}
-
-	bobs, err := store.FindByEmail(ctx, tenant, "bob@example.com")
-	if err != nil {
-		return err
-	}
-	admins, err := store.WithRole(ctx, tenant, "admin")
-	if err != nil {
-		return err
-	}
-	adults, err := store.OldestFirst(ctx, tenant, 18)
-	if err != nil {
-		return err
-	}
-	if _, err := users.RoundTripForTenant(ctx, cipher, "tenant-42-region-ap", alice); err != nil {
+	if err := store.Import(ctx, cipher, newHires); err != nil {
 		return err
 	}
 
-	blocked := blocklist.New(db, cipher)
-	if err := blocked.Block(ctx, "spam@example.net"); err != nil {
+	bobs, err := store.FindByEmail(ctx, cipher, "bob@example.com")
+	if err != nil {
 		return err
 	}
-	isBlocked, err := blocked.Blocked(ctx, "spam@example.net")
+	admins, err := store.WithRole(ctx, cipher, "admin")
+	if err != nil {
+		return err
+	}
+	adults, err := store.AtLeast(ctx, cipher, 18)
+	if err != nil {
+		return err
+	}
+
+	// Two types in one ZeroKMS request.
+	list := []crm.Contact{{ID: 9, Email: "dan@example.com", PhoneNumber: "+61 400 000 000"}}
+	encryptedUsers, encryptedContacts, err := stackencrypt.Batch2(ctx, cipher,
+		users.Encryption(newHires), contacts.Encryption(list))
 	if err != nil {
 		return err
 	}
@@ -92,7 +90,8 @@ func run(ctx context.Context) error {
 	}
 
 	// Print ids and counts only. Every other value here is plaintext.
-	fmt.Println("bob:", ids(bobs), "admins:", ids(admins), "adults, oldest first:", ids(adults), "blocked:", isBlocked)
+	fmt.Println("bob:", ids(bobs), "admins:", ids(admins), "adults:", ids(adults),
+		"batched:", len(encryptedUsers), len(encryptedContacts))
 	return nil
 }
 

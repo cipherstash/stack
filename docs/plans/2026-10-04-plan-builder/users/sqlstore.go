@@ -4,45 +4,30 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"slices"
 
 	"github.com/cipherstash/stack/languages/golang/stackencrypt"
 )
 
 const (
-	columns    = `id, email, email_eq, email_match, age, age_eq, age_ore, attrs, notes`
-	insertUser = `INSERT INTO users (` + columns + `) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+	columns    = `id, email, age, attrs, notes`
+	insertUser = `INSERT INTO users (` + columns + `) VALUES ($1, $2, $3, $4, $5)`
 	selectUser = `SELECT ` + columns + ` FROM users`
 )
 
-// SQLStore keeps users in Postgres through database/sql. Each tenant has its
-// own keyset; every tenant shares the plan.
+// SQLStore keeps users in Postgres through database/sql. Each field is one
+// EQL column, so the generated type's fields go straight to Exec and Scan.
 type SQLStore struct {
-	db     *sql.DB
-	client *stackencrypt.Client
+	db *sql.DB
 }
 
-func NewSQLStore(db *sql.DB, client *stackencrypt.Client) *SQLStore {
-	return &SQLStore{db: db, client: client}
-}
-
-func (s *SQLStore) cipher(tenant string) *stackencrypt.Cipher {
-	return s.client.Keyset(stackencrypt.KeysetName(tenant))
-}
-
-func (s *SQLStore) Create(ctx context.Context, tenant string, user User) error {
-	encrypted, err := stackencrypt.Encrypt(ctx, s.cipher(tenant), []User{user})
-	if err != nil {
-		return fmt.Errorf("encrypt user %d: %w", user.ID, err)
-	}
-	_, err = s.db.ExecContext(ctx, insertUser, args(encrypted[0])...)
-	return err
+func NewSQLStore(db *sql.DB) *SQLStore {
+	return &SQLStore{db: db}
 }
 
 // Import encrypts every user in one ZeroKMS request, then inserts them in one
 // transaction.
-func (s *SQLStore) Import(ctx context.Context, tenant string, people []User) error {
-	encrypted, err := stackencrypt.Encrypt(ctx, s.cipher(tenant), people)
+func (s *SQLStore) Import(ctx context.Context, cipher *stackencrypt.Cipher, people []User) error {
+	encrypted, err := Encrypt(ctx, cipher, people)
 	if err != nil {
 		return fmt.Errorf("encrypt %d users: %w", len(people), err)
 	}
@@ -59,56 +44,54 @@ func (s *SQLStore) Import(ctx context.Context, tenant string, people []User) err
 	}
 	defer stmt.Close()
 
-	for _, enc := range encrypted {
-		if _, err := stmt.ExecContext(ctx, args(enc)...); err != nil {
-			return fmt.Errorf("insert user %d: %w", enc.ID, err)
+	for _, e := range encrypted {
+		if _, err := stmt.ExecContext(ctx, e.ID, e.Email, e.Age, e.Attrs, e.Notes); err != nil {
+			return fmt.Errorf("insert user %d: %w", e.ID, err)
 		}
 	}
 	return tx.Commit()
 }
 
-func (s *SQLStore) FindByEmail(ctx context.Context, tenant, email string) ([]User, error) {
-	cipher := s.cipher(tenant)
-	term, err := UserFields.Email.Equality(ctx, cipher, email)
-	if err != nil {
-		return nil, err
-	}
-	encrypted, err := s.query(ctx, selectUser+` WHERE email_eq = $1`, term)
-	if err != nil {
-		return nil, err
-	}
-	return stackencrypt.Decrypt(ctx, cipher, encrypted)
+func (s *SQLStore) Create(ctx context.Context, cipher *stackencrypt.Cipher, user User) error {
+	return s.Import(ctx, cipher, []User{user})
 }
 
-// OldestFirst returns users aged minAge or over, oldest first. ORE terms
-// compare in Go; a range scan inside the database needs EQL's ORE operators.
-func (s *SQLStore) OldestFirst(ctx context.Context, tenant string, minAge uint32) ([]User, error) {
-	cipher := s.cipher(tenant)
-	floor, err := UserFields.Age.Ore(ctx, cipher, minAge)
+func (s *SQLStore) FindByEmail(ctx context.Context, cipher *stackencrypt.Cipher, email string) ([]User, error) {
+	query, err := Fields.Email.Query(ctx, cipher, email)
 	if err != nil {
 		return nil, err
 	}
-	encrypted, err := s.query(ctx, selectUser)
+	encrypted, err := s.query(ctx, selectUser+` WHERE email = $1::eql_v3.query_text_search`, query)
 	if err != nil {
 		return nil, err
 	}
-	encrypted = slices.DeleteFunc(encrypted, func(e EncryptedUser) bool { return e.Age.Ore.Compare(floor) < 0 })
-	slices.SortFunc(encrypted, func(a, b EncryptedUser) int { return b.Age.Ore.Compare(a.Age.Ore) })
-	return stackencrypt.Decrypt(ctx, cipher, encrypted)
+	return Decrypt(ctx, cipher, encrypted)
 }
 
-func (s *SQLStore) WithRole(ctx context.Context, tenant, role string) ([]User, error) {
-	cipher := s.cipher(tenant)
-	contains, err := UserFields.Attrs.Contains(ctx, cipher, map[string]any{"role": role})
+// AtLeast returns users aged minAge or over, youngest first. Postgres compares
+// and sorts the encrypted column through EQL's operators.
+func (s *SQLStore) AtLeast(ctx context.Context, cipher *stackencrypt.Cipher, minAge int32) ([]User, error) {
+	query, err := Fields.Age.Query(ctx, cipher, minAge)
 	if err != nil {
 		return nil, err
 	}
-	// Illustrative: the containment predicate is EQL's.
-	encrypted, err := s.query(ctx, selectUser+` WHERE attrs @> $1`, contains)
+	encrypted, err := s.query(ctx, selectUser+` WHERE age >= $1::eql_v3.query_integer_ord ORDER BY age`, query)
 	if err != nil {
 		return nil, err
 	}
-	return stackencrypt.Decrypt(ctx, cipher, encrypted)
+	return Decrypt(ctx, cipher, encrypted)
+}
+
+func (s *SQLStore) WithRole(ctx context.Context, cipher *stackencrypt.Cipher, role string) ([]User, error) {
+	query, err := Fields.Attrs.Contains(ctx, cipher, map[string]any{"role": role})
+	if err != nil {
+		return nil, err
+	}
+	encrypted, err := s.query(ctx, selectUser+` WHERE attrs @> $1::eql_v3.query_json`, query)
+	if err != nil {
+		return nil, err
+	}
+	return Decrypt(ctx, cipher, encrypted)
 }
 
 func (s *SQLStore) query(ctx context.Context, q string, params ...any) ([]EncryptedUser, error) {
@@ -121,16 +104,10 @@ func (s *SQLStore) query(ctx context.Context, q string, params ...any) ([]Encryp
 	var found []EncryptedUser
 	for rs.Next() {
 		var e EncryptedUser
-		if err := rs.Scan(&e.ID, &e.Email.Ciphertext, &e.Email.Equality, &e.Email.Match,
-			&e.Age.Ciphertext, &e.Age.Equality, &e.Age.Ore, &e.Attrs, &e.Notes); err != nil {
+		if err := rs.Scan(&e.ID, &e.Email, &e.Age, &e.Attrs, &e.Notes); err != nil {
 			return nil, err
 		}
 		found = append(found, e)
 	}
 	return found, rs.Err()
-}
-
-func args(e EncryptedUser) []any {
-	return []any{e.ID, e.Email.Ciphertext, e.Email.Equality, e.Email.Match,
-		e.Age.Ciphertext, e.Age.Equality, e.Age.Ore, e.Attrs, e.Notes}
 }

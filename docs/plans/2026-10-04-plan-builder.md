@@ -40,8 +40,8 @@ the tagged encoding).
 
 After this work there is one front end, a **plan builder**, with three
 authors: a person writing a chain, the derive writing it from attributes, and
-the FFI writing it from data. The Go binding uses the same plans in Go's own
-call shape. The combinators stay public as the extension point. Everything a Rust caller, the
+the FFI writing it from data. The Go SDK declares the same thing with struct tags and
+generated code. The combinators stay public as the extension point. Everything a Rust caller, the
 derive, Go and the guest produce for the same declaration is the same bytes
 by construction, because it is the same code.
 
@@ -101,8 +101,8 @@ split was the problem, not the function names:
    await nothing has touched a key.
 2. **The context slot is named `context`.** It is the honest name for what is
    supplied. `under` was rejected (borrowed from `Encryption::under`, and
-   opaque to a reader). The Go binding has no `context` method; see "The Go
-   binding".
+   opaque to a reader). The Go SDK has no `context` method; see "The Go
+   SDK".
 3. **Field-by-field is a modifier, `.fields()`, not a second verb.**
    `columns` was rejected as database-centric; the SDKs are not only for
    databases. `fields` is the derive docs' own phrase ("field by field") and
@@ -501,12 +501,15 @@ them on the struct and lowers them through `spec()`. The data form is what
 crosses the FFI and what a saved plan in Go holds; the Rust side never loses
 the type.
 
-## The Go binding
+## The Go SDK
 
-Go uses the same plans as Rust, in Go's own call shape.
-A struct's `stash` tags declare its plan, and a generator, `stashgen`, writes the encrypted type and the plan from them.
-Every operation takes `ctx` first and the cipher second, and it returns a concrete type.
-The compiler checks each field, each index and each storage struct.
+The Go SDK is what a Go program uses: struct tags, a generator, and the code the generator writes.
+The binding is the WASI interface between that code and the Rust engine.
+The SDK follows [the language SDK design principles](../sdk-design-principles.md).
+
+A struct's `stash` tags declare how each field is encrypted.
+A generator, `stashgen`, writes the encrypted type and its functions from the tags.
+A program calls those functions, and it never builds or names a plan.
 [The Go examples](2026-10-04-plan-builder/README.md) show each part below as a complete program.
 
 ```go
@@ -514,64 +517,27 @@ The compiler checks each field, each index and each storage struct.
 type User struct {
 	_     struct{} `stash:"context=users"`
 	ID    int64    `stash:"id,passthrough"`
-	Email string   `stash:"email,encrypt,index=equality;match"`
-	Age   uint32   `stash:"age,encrypt,index=equality;ore"`
-	Notes string   `stash:"notes,encrypt"`
+	Email string   `stash:"email,encrypt_into=TextSearch"`
+	Age   int32    `stash:"age,encrypt_into=IntegerOrd"`
 }
 
 cipher := client.Keyset(stackencrypt.KeysetName("tenant-42"))
 
-encrypted, err := stackencrypt.Encrypt(ctx, cipher, people)            // []EncryptedUser, one ZeroKMS request
-users, err := stackencrypt.Decrypt(ctx, client, encrypted)             // []User
-term, err := UserFields.Email.Equality(ctx, cipher, "bob@example.com") // EqualityTerm
-
-_ = encrypted[0].Email.Equality // EqualityTerm
-_ = encrypted[0].Email.Ore      // does not compile: email declares no ORE index
+encrypted, err := users.Encrypt(ctx, cipher, people)                   // []users.EncryptedUser, one ZeroKMS request
+people, err := users.Decrypt(ctx, cipher, encrypted)                   // []users.User
+query, err := users.Fields.Email.Query(ctx, cipher, "bob@example.com") // eql.TextSearchQuery
 ```
 
-### Struct tags
+### Use the SDK
 
-The `stash` tag on each field declares what the plan does with it:
-
-| Tag | Field verb |
-|---|---|
-| `` _ struct{} `stash:"context=users"` `` | the plan's context |
-| `stash:"notes,encrypt"` | `Encrypt` |
-| `stash:"email,encrypt,index=equality;match"` | `EncryptIndex` |
-| `stash:"attrs,index=json"` | `Index` |
-| `stash:"id,passthrough"` | `Passthrough` |
-| `stash:"-"` | `Omit` |
-
-The first part of a tag is the field's name in the plan, which is the column name in a database.
-The index names are `equality`, `match`, `ore`, `ope` and `json`.
-An index takes its options in the tag, in parentheses after its name.
-The fields of an embedded struct are fields of the outer struct.
-Only `stashgen` reads these tags, and no function reads them at run time.
-
-### stashgen
-
-`stashgen` is a Go command that reads the `stash` tags of a struct and writes its encrypted type.
-It is at `languages/golang/cmd/stashgen`.
-
-#### Use stashgen
-
-1. Add the tool to your module.
+1. Add the generator to your module.
    This needs Go 1.24 or later.
 
    ```sh
    go get -tool github.com/cipherstash/stack/languages/golang/cmd/stashgen
    ```
 
-2. Put `stash` tags on the struct, and a `go:generate` comment beside it.
-
-   ```go
-   //go:generate go tool stashgen -type User
-   type User struct {
-   	_     struct{} `stash:"context=users"`
-   	ID    int64    `stash:"id,passthrough"`
-   	Email string   `stash:"email,encrypt,index=equality;match"`
-   }
-   ```
+2. Put a `stash` tag on every exported field of the struct, and a `go:generate` comment beside it.
 
 3. Run the generator.
    It writes `user_stash.go` beside the struct.
@@ -582,111 +548,215 @@ It is at `languages/golang/cmd/stashgen`.
 
 4. Commit the generated file.
 
-5. Call the generated code.
+5. Call the generated functions where you write and read.
 
    ```go
-   encrypted, err := stackencrypt.Encrypt(ctx, cipher, []User{alice})
-   term, err := UserFields.Email.Equality(ctx, cipher, "bob@example.com")
+   encrypted, err := users.Encrypt(ctx, cipher, people)
+   people, err := users.Decrypt(ctx, cipher, encrypted)
    ```
 
-6. Run the generator again after each change to the struct or to a tag.
+6. Store the encrypted type.
+   Each field is one column, so `database/sql`, pgx, sqlx and GORM take it as it is.
+
+7. Run the generator again after each change to the struct or to a tag.
    A change to the fields of the struct stops the build until you do.
 
-7. In CI, run the generator and fail when a generated file changes.
+8. In CI, run the generator and fail when a generated file changes.
 
    ```sh
    go generate ./... && git diff --exit-code
    ```
 
-Three more cases use the same steps with one more flag or one more file:
-
-- To encrypt into a GORM model, an sqlc model or another storage struct, add `-row`. See "Storage structs".
-- To encrypt a type from another package, add `-for`. See "Types in another package".
-- To decide the plan from a policy, write a generate program. See "Plans from a policy".
-
 The rest of this section is the reference.
 
-#### Flags
+### Struct tags
 
-| Flag | Meaning |
+The first part of a tag is the field's name, which is the column name in a database.
+
+| Tag | Meaning |
 |---|---|
-| `-type T` | The struct that carries the `stash` tags. Required. |
-| `-row Name=R` | A storage struct `R`, and the name of the variable that encrypts into it. Any number. |
-| `-row Name=R:D` | The same, for an `R` that cannot carry tags. The struct `D` declares the tags. |
-| `-for P.F` | `T` declares the plan for `F`, a type in another package. |
-| `-output file` | The file to write. The default is the type's name in lower case, with `_stash.go`. |
+| `` _ struct{} `stash:"context=users"` `` | the context of every field in the struct |
+| `stash:"email,encrypt_into=TextSearch"` | seal the field into one EQL value, with the indexes that EQL type has |
+| `stash:"notes,encrypt"` | seal the field, with no index |
+| `stash:"email,encrypt,index=equality;match"` | seal the field, and derive each index beside it |
+| `stash:"attrs,index=json"` | derive the index alone |
+| `stash:"id,passthrough"` | store the field as it is |
+| `stash:"-"` | leave the field out |
+| `` _ struct{} `stash:"context=documents,opaque"` `` | seal the struct as one value |
 
-#### How stashgen reads a package
+The index names are `equality`, `match`, `ore`, `ope` and `json`.
+An index takes its options in the tag, in parentheses after its name.
+These words are the same as the Rust API's words for the same behaviour.
 
-The generator loads the package with `golang.org/x/tools/go/packages` and reads types, not text.
-It runs none of the package's code.
-It ignores its own output file when it loads the package, so a stale file does not stop it.
-The same input always gives the same file: fields keep their declared order, and the file carries no version and no time.
+An `opaque` struct has no tags on its fields.
+Nothing inside it can be read or searched on its own.
+A value with no struct around it is a struct with one field.
 
-#### What stashgen writes
+### Columns
+
+A field maps to its columns in one of two layouts.
+
+**One EQL column for each field** is the layout to use.
+`encrypt_into` names an EQL type, and the generated field holds one EQL value.
+The value has the ciphertext and every term, and Postgres searches it through EQL's operators.
+The generated type is then flat: one field, one column.
+
+**Separate columns** is the other layout.
+`encrypt,index=...` gives one column for the ciphertext and one for each term.
+The generated field is then a struct with one field for each output, such as `Email.Ciphertext` and `Email.Equality`.
+Every sealed field gets such a struct, including a field with one output.
+A library that maps one struct field to one column needs a model for this layout.
+
+### What stashgen writes
 
 For `-type User`, the file `user_stash.go` holds:
 
 - **`EncryptedUser`.**
-  It has one field for each field of `User` that the plan stores.
-  A field with one output has that output's type, such as `Ciphertext`.
-  A field with more outputs has its own struct, such as `EncryptedUserEmail`, with one field for each output.
-- **The plan.**
-  The file declares it as data, and converts values with plain assignments.
-  Generated code uses no reflection.
-- **A `StashPlan` method on `User` and on `EncryptedUser`.**
-  The method gives each type the `Planned` interface.
-  `stackencrypt.Encrypt` and `stackencrypt.Decrypt` then find the plan and the result type from the value.
-- **`UserFields`.**
+  It has one field for each field of `User` that is stored, with the same name.
+  A passthrough field keeps its Go type.
+- **`Encrypt` and `Decrypt`.**
+  `Encrypt` takes a `[]User` and returns a `[]EncryptedUser`.
+  `Decrypt` goes the other way.
+- **`Fields`.**
   It has one entry for each sealed field.
-  An entry encrypts one value of that field, and it has a query method only for an index the field declares.
+  An entry encrypts one value of that field, and it has a query method only for what the field declares.
+- **`Encryption` and `Decryption`.**
+  They describe the same work without running it, for a batch.
+- **Print methods on `EncryptedUser`.**
+  `String` and `LogValue` print the passthrough fields and hide the sealed ones.
+- **The declaration.**
+  It is data that only generated code uses, and no function a program calls names it.
 
 The file also converts `User` to a copy of its fields, so a change to the fields of `User` stops the build.
-The generated code copies a passthrough field itself, so that field does not cross into the guest.
+Generated code uses no reflection.
 See [`users/model.go`](2026-10-04-plan-builder/users/model.go) and [`users/user_stash.go`](2026-10-04-plan-builder/users/user_stash.go).
 
-#### What stashgen refuses
+### Calls
 
-`stashgen` stops with an error, and writes no file, for each of these:
+| Call | Returns |
+|---|---|
+| `users.Encrypt(ctx, c *stackencrypt.Cipher, vs []User)` | `[]EncryptedUser` |
+| `users.Decrypt(ctx, d stackencrypt.Decrypter, es []EncryptedUser)` | `[]User` |
+| `users.Fields.Email.Encrypt(ctx, c, v string)` | the field's generated type, for an update of one column |
+| `users.Fields.Email.Query(ctx, c, v string)` | an EQL query value, for a field with `encrypt_into` |
+| `users.Fields.Email.Equality`, `.Match`, `.Ore`, `.Ope` | one term, for a field with `index=` |
+| `users.Fields.Attrs.Contains(ctx, c, v)` | a JSON containment query |
+| `users.Encryption(vs []User)`, `users.Decryption(es []EncryptedUser)` | a `stackencrypt.Operation`, for a batch |
+| `stackencrypt.Batch2(ctx, c, a, b)`, `Batch3` | the result of each operation |
 
-- an exported field with no `stash` tag;
-- a tag that does not parse, or two fields with one name;
-- a struct with no `context=` field;
-- an index that does not apply to the field's Go type, such as `match` on a `uint32`;
-- a field type that the engine cannot seal;
-- a `passthrough` field that has an index.
+Every call also returns an `error`.
+`Encrypt` and `Decrypt` take a slice, and send one ZeroKMS request for all of it.
+The result has one element for each element of the input, in the same order.
+For one value, pass a slice with one element.
 
-#### Storage structs
+A field entry's `Encrypt` and its query methods take one value.
+A term derives with no request, so there is nothing to batch.
 
-A storage struct has one field for each column.
-It can come from any tool, such as GORM, sqlc, ent or sqlboiler, because `stashgen` reads Go types and not a tool's own format.
-Each of its fields carries a `stash` tag that names one output:
+`Batch2` and `Batch3` run operations on two or three types in one ZeroKMS request.
+Each returns one typed result for each operation.
+
+```go
+encryptedUsers, encryptedContacts, err := stackencrypt.Batch2(ctx, cipher,
+	users.Encryption(people), contacts.Encryption(list))
+```
+
+`*Client` and `*Cipher` both implement `Decrypter`.
+A `*Client` decrypts each value under the keyset that sealed it.
+A `*Cipher` also refuses a value from another keyset, with `ErrForeignKeyset`.
+
+### The cipher
+
+The cipher holds what changes from one caller to the next: the keyset, and any extension of the context.
+
+```go
+cipher := client.Keyset(stackencrypt.KeysetName("tenant-42")).Extend("tenant-42")
+```
+
+`Extend` returns a cipher that extends the context of every field, in every call through it.
+No call takes a keyset or a context.
+So the write, the query and the read cannot use different ones.
+
+### Names
+
+In a package with one tagged struct, the generated names are `Encrypt`, `Decrypt` and `Fields`.
+The package name says what they encrypt: `users.Encrypt`.
+
+A package holds one function named `Encrypt`.
+For a second struct in the package, `-name Account` gives `EncryptAccount`, `DecryptAccount` and `AccountFields`.
+The flag works on any struct, so both can carry a name.
+The generator stops when two structs in a package would both write `Encrypt`.
+
+### Embedded structs, unexported fields and other tags
+
+**An embedded struct of your own** adds its tagged fields to the outer struct.
+
+**An embedded struct from another package** cannot carry tags, so one tag on the embedded field decides for all of its fields:
+
+```go
+type Account struct {
+	_          struct{} `stash:"context=accounts"`
+	gorm.Model          `stash:",passthrough"`
+	Email      string   `stash:"email,encrypt_into=TextEq" gorm:"uniqueIndex"`
+}
+```
+
+`stash:",passthrough"` stores every field of the embedded struct as it is, and `stash:"-"` leaves them all out.
+The generated type embeds the same struct, so its own tags still apply.
+With no tag on the embedded field, the generator stops and names the fields.
+
+**Tags for other libraries**, such as `gorm`, `db` and `json`, are copied to the same field of the generated type.
+
+**An unexported field with no `stash` tag** is ignored, with three notices:
+
+- `stashgen` prints a warning.
+- The generated file names the field in a comment.
+- The program prints a warning to stderr, once for each type, on first use.
+
+`stash:"-"` on the field states the choice, and all three notices stop.
+See [`accounts/account.go`](2026-10-04-plan-builder/accounts/account.go).
+
+### Printing
+
+A generated type hides its sealed fields when a program prints or logs it.
+
+The struct you wrote is not protected.
+A `User` that a program prints or logs shows every field.
+The SDK gives four tools for that:
+
+- `stashgen` warns when a struct has sealed fields and no `String` and `LogValue` methods.
+- The program prints the same warning to stderr, once for each type, on first use.
+- `-redact` makes `stashgen` write those two methods on the struct.
+- A `go vet` check reports a struct with sealed fields that is passed to `fmt`, `log` or `slog`.
+
+No warning, error or log line from the SDK holds a plaintext value.
+Each names the type and the field only.
+
+### Models
+
+A model is a struct with one field for each column, such as a GORM model.
+With one EQL column for each field, the generated type is already such a struct, and no model is needed.
+
+sqlc writes its own row struct in every case.
+With one EQL column for each field, that struct has the same fields as the generated type, and Go converts one to the other.
+A change to either struct stops the build.
+See [`users/sqlcstore.go`](2026-10-04-plan-builder/users/sqlcstore.go).
+
+With separate columns, `-record Rows=ContactRow` names a model.
+Each field of the model carries a `stash` tag that names one output:
 `stash:"email"` is the ciphertext of `email`, and `stash:"email,equality"` is its equality term.
-For sqlc, a `go_struct_tag` override puts the tag on the generated model.
+`stashgen` writes `EncryptRows` and `DecryptRows`, which return and take the model.
 
-For `-row UserRows=UserRow`, `stashgen` writes `UserRows`, a `RowPlan[User, UserRow]`.
-Its `Encrypt` returns a `[]UserRow`, and its `Decrypt` takes one.
-The generator refuses a storage struct that has a field with no tag.
-It also refuses one that has no field for an output of the plan.
-
-Some tools give no way to put a tag on the struct they write.
-For those, `-row Name=R:D` names a struct `D` in your own package.
-`D` has the same field names as `R`, and its fields carry the tags.
-
-The generated file also holds a copy of the storage struct's fields, and it converts between the copy and the struct.
+The generated file holds a copy of the model's fields, and it converts between the copy and the model.
 Go allows that conversion only while the two have the same fields, with the same types, in the same order.
-So a change to the storage struct stops the build until `go generate` runs again.
+So a change to the model stops the build until `go generate` runs again.
 
-That conversion needs a struct whose fields are all exported.
-A struct from another package with an unexported field, such as a protobuf message or an ent entity, cannot convert.
-For such a struct the generated file assigns each field by name.
-The compiler then finds a removed field and a field with a new type, and CI finds an added field.
-See [`users/gormstore.go`](2026-10-04-plan-builder/users/gormstore.go) and [`users/sqlcstore.go`](2026-10-04-plan-builder/users/sqlcstore.go).
+For a model that cannot carry tags, `-record Rows=R:D` names a struct `D` in your own package that declares them.
+See [`contacts/contacts.go`](2026-10-04-plan-builder/contacts/contacts.go).
 
-#### Types in another package
+### Types in another package
 
-A type in another package cannot carry `stash` tags, and it cannot get a `StashPlan` method.
-For such a type, a struct in your own package declares the plan:
+A type in another package cannot carry `stash` tags.
+For such a type, a struct in your own package declares them:
 
 ```go
 //go:generate go tool stashgen -type contactStash -for crm.Contact
@@ -701,13 +771,47 @@ type contactStash struct {
 
 `stashgen` matches each field to the field of `crm.Contact` with the same name and type.
 It refuses a field of `crm.Contact` that the struct does not name.
-It writes `EncryptedContact`, `ContactFields` and an exported `ContactPlan`, a `RowPlan[crm.Contact, EncryptedContact]`.
+The generated functions have the same names and shapes as for a struct of your own.
 The file converts `crm.Contact` to a copy of its fields, so a change to `crm.Contact` stops the build.
-See [`contacts/contacts.go`](2026-10-04-plan-builder/contacts/contacts.go).
 
-#### Plans from a policy
+That conversion needs a struct whose fields are all exported.
+A struct from another package with an unexported field, such as a protobuf message, cannot convert.
+For such a struct the generated file assigns each field by name.
+The compiler then finds a removed field and a field with a new type, and CI finds an added field.
 
-A policy decides a plan from the data categories that a schema gives each field.
+### stashgen reference
+
+`stashgen` is a Go command at `languages/golang/cmd/stashgen`.
+
+| Flag | Meaning |
+|---|---|
+| `-type T` | The struct that carries the `stash` tags. Required. |
+| `-name N` | Write `EncryptN`, `DecryptN` and `NFields`. |
+| `-for P.F` | `T` declares the tags for `F`, a type in another package. |
+| `-record Name=R` | A model `R` for separate columns. Writes `EncryptName` and `DecryptName`. Any number. |
+| `-record Name=R:D` | The same, for an `R` that cannot carry tags. The struct `D` declares them. |
+| `-redact` | Write `String` and `LogValue` methods on `T`. |
+| `-output file` | The file to write. The default is the type's name in lower case, with `_stash.go`. |
+
+The generator loads the package with `golang.org/x/tools/go/packages` and reads types, not text.
+It runs none of the package's code.
+It ignores its own output file when it loads the package, so a stale file does not stop it.
+The same input always gives the same file: fields keep their declared order, and the file carries no version and no time.
+
+`stashgen` stops with an error, and writes no file, for each of these:
+
+- an exported field with no `stash` tag;
+- a tag that does not parse, or two fields with one name;
+- a struct with no `context=` field;
+- an index or an EQL type that does not apply to the field's Go type, such as `match` on an `int32`;
+- a field type that the engine cannot seal;
+- a `passthrough` field that has an index;
+- a model with a field that has no tag, or with no field for an output;
+- two structs in one package that would both write `Encrypt`.
+
+### Declarations from a policy
+
+A policy decides what to encrypt from the data categories that a schema gives each field.
 The policy is Go code, so a program must run it.
 That program is a generate program that you own, and `go generate` runs it:
 
@@ -728,7 +832,7 @@ The application never runs the policy.
 
 - A field that no rule decides stops `go generate`, with the field's name and its annotations.
 - A change to the policy changes the generated file, so a reviewer reads what the change encrypts.
-- A field that the policy stores as plaintext is a plain field of the generated type.
+- A field that the policy stores as plaintext is a passthrough field of the generated type.
 
 The generate program imports the package that holds the type.
 So that package must build when the generated file is stale.
@@ -736,146 +840,90 @@ The generated file carries the build constraint `!stashgen`, and the generate pr
 Code that uses the generated names goes in another package.
 See [`policy/policy.go`](2026-10-04-plan-builder/policy/policy.go), [`cmd/genplans/main.go`](2026-10-04-plan-builder/cmd/genplans/main.go) and [`individualstore/store.go`](2026-10-04-plan-builder/individualstore/store.go).
 
-#### When the compiler finds a mistake
+### When a mistake is found
+
+The SDK finds each mistake at the earliest of these stages: the compiler, `go generate`, CI, and the running program.
+The running program finds only a mistake that depends on data.
 
 | Mistake | Found by |
 |---|---|
-| A read of an output that the plan does not declare, such as `enc.Email.Ore` | the compiler |
-| A query for an index that the field does not declare | the compiler |
-| `stackencrypt.Encrypt` with a type that has no plan | the compiler |
-| A change to a storage struct, or to a type in another package | the compiler |
-| A field added to a struct from another package that has an unexported field | CI |
+| A read of an output that the field does not declare | the compiler |
+| A query that the field does not declare | the compiler |
+| An encrypted value passed where another type's is expected | the compiler |
 | A field added to, removed from or retyped in the tagged struct | the compiler |
-| A tag that does not parse, or a field that no policy rule decides | `go generate` |
+| A change to a model, to sqlc's row struct, or to a type in another package | the compiler |
 | A generated file and a library from versions that do not agree | the compiler |
+| A tag that does not parse, an untagged field, or a field that no policy rule decides | `go generate` |
+| A field added to a struct from another package that has an unexported field | CI |
 | A change to a tag or to a policy, with no `go generate` run | CI |
+| A value that does not decrypt, or that decrypts to another type | the running program, as an error |
 
 CI runs `go generate ./...` and fails when a generated file differs from the committed file.
-The compiler does not make those two checks.
 
-### Plan types
+No function in the SDK or in generated code panics for a declaration, and none has a name that starts with `Must`.
 
-`RowPlan[T, R]` is the one plan type in `stackencrypt`.
-It encrypts a `T` into an `R` and decrypts an `R` into a `T`.
-Only generated code makes one.
-A program reaches it through `stackencrypt.Encrypt`, or through a generated variable such as `UserRows`.
-A plan does not change after it is built, and any number of goroutines can use it at the same time.
+### What crosses the binding
 
-No function that a program calls has a name that starts with `Must`.
-No function in the binding panics for a plan, in generated code or in any other code.
+The engine does all encryption, decryption and term derivation.
+Generated code sends the engine the full declaration: every field, including each passthrough field and each field left out.
+It sends the value of each sealed field.
+It does not send the value of a passthrough field, and it copies that value to the generated type itself.
 
-### Support for generated code
+Generated code assembles an EQL value from the engine's ciphertext and terms.
+A cross-language fixture guards those bytes: encode in Rust, decode and encode again in Go, and compare.
 
-The package `stackencrypt/gensupport` holds what only generated code calls:
-
-- `Plan` declares the fields and their indexes as data.
-  `EncryptIndex` and `Index` take one index and then any number more, so an empty index set does not compile.
-- `Generated[T, E]` holds the plan and four conversion functions, and `New` makes a `RowPlan[T, E]` from it.
-- `Rows` makes a `RowPlan[T, R]` for a storage struct from a generated plan and two conversions.
-- `Field[V]` is the plan for one field, and a generated field entry holds one.
-- `Values` holds plaintext values by field name, and `Get[V]` reads one as the Go type `V`.
-- `Record` holds the outputs of each field by name.
-
-No function in this package panics.
-`New` only stores what it is given.
-The engine checks a plan when an operation first sends it to the guest, and that operation returns the error.
-
-A generated file and the library must be from versions that agree.
-Each generated file names a constant, such as `gensupport.GeneratedVersion1`, that only such a library declares.
+The package `stackencrypt/gensupport` holds what only generated code calls.
+No function in it panics.
+Each generated file names a constant, such as `gensupport.GeneratedVersion1`, that only a library of an agreeing version declares.
 So a file from another version does not compile.
-
-### The policy package
-
-`plan.Policy`, `plan.When`, `plan.FirstOf` and `plan.ForMessage` keep their form.
-`plan.EQL` takes `stackencrypt.Index` values.
-`stashgen.Generate` runs the policy, as "Plans from a policy" describes.
-
-### Indexes
-
-`Index` is an interface that only `stackencrypt` implements.
-`Equality`, `Ore` and `Ope` are values.
-`Match(opts ...MatchOption)` and `JSON(opts ...JSONOption)` are constructors that take the index's options.
-
-### Operations
-
-| Call | Returns |
-|---|---|
-| `Encrypt(ctx, c *Cipher, vs []T, opts ...Option)`, for a `Planned` type | `[]E`, where `E` is the generated type |
-| `Decrypt(ctx, d Decrypter, es []E, opts ...Option)` | `[]T` |
-| `RowPlan[T, R]`: the same two, as methods | `[]R` in place of `[]E` |
-| A generated field entry, such as `UserFields.Email`: `Encrypt` | the field's generated type |
-| A generated field entry: `Equality`, `Match`, `Ore`, `Ope` | `EqualityTerm`, `MatchTerm`, `OreTerm`, `OpeTerm` |
-| A generated field entry: `Contains`, `EqualAt` | `JSONQuery` |
-| A generated field entry: `Selector` | `JSONSelector` |
-| `Cipher.Encrypt(ctx, v any, c Context, opts ...Option)` | `Ciphertext`, one tree |
-| `DecryptValue[T](ctx, d Decrypter, ct Ciphertext, c Context, opts ...Option)` | `T` |
-
-Every call also returns an `error`.
-`Encrypt` and `Decrypt` take a slice, and send one ZeroKMS request for all of it.
-The result has one element for each element of the input, in the same order.
-For one value, pass a slice with one element.
-There is no second form for one value.
-
-`NewContext(bytes)` makes a `Context` from raw bytes, the same bytes part that Rust accepts.
-See [`users/sqlstore.go`](2026-10-04-plan-builder/users/sqlstore.go) and [`documents/documents.go`](2026-10-04-plan-builder/documents/documents.go).
-
-`*Client` and `*Cipher` both implement `Decrypter`.
-A `*Client` decrypts each leaf under the keyset that sealed it.
-A `*Cipher` also refuses a leaf from another keyset, with `ErrForeignKeyset`.
-
-The cipher holds the keyset: `client.Keyset(stackencrypt.KeysetName("tenant-42"))`.
-No call takes a keyset option.
-
-`ExtendContext(parts ...any)` is the one `Option`.
-It extends the context of every field in the plan.
-The write, the query and the read must pass the same parts.
-See [`users/extend.go`](2026-10-04-plan-builder/users/extend.go).
-
-### Output types
-
-`Ciphertext`, each term type, `JSONDocument`, `JSONQuery` and `JSONSelector` implement `driver.Valuer`.
-`Ciphertext`, each term type and `JSONDocument` also implement `sql.Scanner`.
-So a field of a generated type, or of a storage struct, goes straight to `ExecContext` and to `Scan`.
 
 ### Errors
 
-The generator and the compiler find a mistake in a plan, so no operation returns an error for one.
-An operation returns an error for a key, for the network, or for stored data:
+The generator and the compiler find a mistake in a declaration, so no call returns an error for one.
+A call returns an error for a key, for the network, or for stored data:
 
-- `ErrForeignKeyset`: a `*Cipher` got a leaf that another keyset sealed.
-- A ciphertext that does not decrypt under the plan's context.
+- `ErrForeignKeyset`: a `*Cipher` got a value that another keyset sealed.
+- A ciphertext that does not decrypt under the field's context.
 - A decrypted value that is not the field's Go type.
 
 Use `errors.Is` and `errors.As` to read it.
-No error holds a plaintext value.
 
-### Databases and ORMs
+### Databases
 
-- **database/sql:** pass the fields of the generated type to `ExecContext`, and `Scan` into them.
+The SDK is tested with `database/sql`, pgx, sqlc and GORM.
+
+Every stored type implements `driver.Valuer` and `sql.Scanner`.
+A library that uses those two interfaces works with the SDK.
+A failure with such a library is a bug in the SDK.
+
+Encryption happens before the database library gets the value.
+A driver's value hook gets no `context.Context` and one field at a time, so it cannot batch a request.
+
+- **database/sql and pgx:** pass the fields of the generated type to `ExecContext`, and `Scan` into them.
   See [`users/sqlstore.go`](2026-10-04-plan-builder/users/sqlstore.go).
-- **GORM:** the store encrypts and decrypts outside GORM, and the GORM model is a storage struct.
+- **GORM:** the generated type is the model.
   See [`users/gormstore.go`](2026-10-04-plan-builder/users/gormstore.go).
-- **sqlc:** column overrides set each column's `go_type`, and `go_struct_tag` puts the `stash` tag on the generated struct.
-  The sqlc model is a storage struct, and an `INSERT` params struct converts from it.
-  See [`users/sqlcstore.go`](2026-10-04-plan-builder/users/sqlcstore.go) and [`sqlc/sqlc.yaml`](2026-10-04-plan-builder/sqlc/sqlc.yaml).
-- **sqlc with EQL domain columns:** sqlc reads a file that declares the domains in place of the EQL install bundle, which it cannot parse.
-  See [the three rules for EQL domain columns](2026-10-04-plan-builder/README.md#use-sqlc-with-eql-domain-columns).
+- **sqlc:** type overrides give each EQL column its Go type, and sqlc's row struct converts to the generated type.
+  sqlc reads a file that declares the EQL domains in place of the EQL install bundle, which it cannot parse.
+  See [the three rules for EQL columns](2026-10-04-plan-builder/README.md#use-sqlc-with-eql-columns).
+
+The SDK gives the values for a search, and the program writes the SQL that uses them.
 
 ### Removed
 
-The binding has never been released, so these are removed, not deprecated:
+The existing Go package has never been released, so these are removed, not deprecated:
 
-- `Cipher.Encrypt(ctx, v, aad []byte)`: `Cipher.Encrypt` takes a `Context`.
-- `Cipher.Decrypt` and `Client.Decrypt`: `DecryptValue[T]` replaces them.
+- `Cipher.Encrypt`, `Cipher.Decrypt` and `Client.Decrypt`: an `opaque` struct replaces them.
 - `EncryptElement` and `DecryptElement`.
 - `EncryptRecord`, `EncryptRecords`, `DecryptRecord` and `DecryptRecords`, on `Cipher` and on `Client`.
 - `EncryptedRecord` and `EncryptedField`: a generated type replaces them.
-- `Cipher.Term`: the query methods of a generated field entry replace it.
-- `RecordOption` and `WithPlan`.
-- `TermKind`: `Index` replaces it.
+- `Cipher.Term`: the query methods of a field entry replace it.
+- `RecordOption`, `WithPlan` and `ExtendContext`: `Cipher.Extend` replaces the last.
+- `TermKind`: `Index` replaces it, for generated code.
 - `Plan`, `FieldPlan`, `NewPlan` and `Plan.Validate`: the generator replaces them.
-- `PlanFromTags`, and every other function that reads `stash` tags at run time: the generator replaces them.
+- `PlanFromTags`, and every other function that reads `stash` tags at run time.
 - `plan.PlanFor` and `plan.MustPlanFor`: `stashgen.Generate` replaces them.
+- `Context`, `NewContext`, `Label`, `NewLabel` and `ParseLabel`: the `context=` tag replaces them.
 - The rule that a zero `Plan` means the struct's tags.
 - `Sealed`, `SealedNone`, `SealedEmptyMap` and `SealedEmptySeq` as storage types: `Ciphertext` replaces them.
 
@@ -1071,9 +1119,23 @@ Then:
 
 ## Open questions
 
-- **A batch across plans in Go.**
-  `Encrypt` and `Decrypt` batch the values of one plan.
-  The Go form of `all(..)` gives a typed handle for each operation, and the Go PR settles its spelling.
+- **The Go EQL names.**
+  The package `eql`, its type names and the values of `encrypt_into` are placeholders.
+  The EQL typed verb (#1062) settles them.
+- **Query building in Go.**
+  The SDK gives the values for a search, and the program writes the SQL.
+  A design for building that SQL is separate work.
+- **A `go vet` check.**
+  It reports a struct with sealed fields that a program prints, and an `Encrypt` call inside a loop.
+  Its design is separate work.
+- **A change to a declaration over time.**
+  This design covers one version of a declaration.
+  Reading data that an older declaration wrote needs its own design.
+- **How the generator gets the engine's rules.**
+  The generator must refuse what the engine refuses, from one source of rules.
+  Whether it calls the engine or reads rules the engine publishes is not decided.
+- **The policy package.**
+  Its approach is under review, so "Declarations from a policy" can change.
 - **Converging the TypeScript schema builder onto the plan grammar**, so
   `@cipherstash/stack` stops being a second engine beside stack-encrypt.
   Out of scope here; recorded so a TS binding does not grow an executor.

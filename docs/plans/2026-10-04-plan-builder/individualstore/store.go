@@ -10,21 +10,21 @@ import (
 )
 
 func Create(ctx context.Context, db *sql.DB, cipher *stackencrypt.Cipher, person individuals.Individual) error {
-	encrypted, err := stackencrypt.Encrypt(ctx, cipher, []individuals.Individual{person})
+	encrypted, err := individuals.Encrypt(ctx, cipher, []individuals.Individual{person})
 	if err != nil {
 		return err
 	}
-	enc := encrypted[0]
+	e := encrypted[0]
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO individuals (id, nickname, name, email, email_eq, email_match, medicare_number, medicare_number_eq)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		enc.ID, enc.Nickname, enc.Name, enc.Email.Ciphertext, enc.Email.Equality, enc.Email.Match,
-		enc.MedicareNo.Ciphertext, enc.MedicareNo.Equality)
+		e.ID, e.Nickname, e.Name.Ciphertext, e.Email.Ciphertext, e.Email.Equality, e.Email.Match,
+		e.MedicareNo.Ciphertext, e.MedicareNo.Equality)
 	return err
 }
 
 func IDByMedicare(ctx context.Context, db *sql.DB, cipher *stackencrypt.Cipher, medicareNo string) (int64, error) {
-	term, err := individuals.IndividualFields.MedicareNo.Equality(ctx, cipher, medicareNo)
+	term, err := individuals.Fields.MedicareNo.Equality(ctx, cipher, medicareNo)
 	if err != nil {
 		return 0, err
 	}
