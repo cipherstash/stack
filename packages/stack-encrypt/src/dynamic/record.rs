@@ -53,40 +53,53 @@ use stack_kms::DataKeySource;
 use vitaminc_aead_value::FfiValue;
 use vitaminc_protected::Protected;
 
-use super::{borrowed, term, utf8, Error, FieldType, Scalar, Scope, TermKind};
-use crate::target::Pending;
+use super::{borrowed, term, utf8, Error, FieldType, Scalar, Scope};
+use crate::target::{IndexSpec, Pending};
 use crate::{
     BoxedPassthrough, CipherText, ContextPiece, Encrypt, KeysetCipher, NonEmpty, StackCipherText,
 };
 
 /// What a plan field asks for.
 ///
-/// The strings are wire format twice over: they are how a binding spells an
+/// The keys are wire format twice over: they are how a binding spells an
 /// output, *and* the keys of the per-field output map in the stored result.
 /// That is why this enum is exhaustive — see the [module docs](super#stability).
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Output {
     /// `"c"` — the field's [`StackCipherText`].
     Ciphertext,
-    /// An index term: `"eq"`, `"match"`, `"ore"` or `"ope"`.
-    Term(TermKind),
+    /// An index term, keyed `"eq"`, `"match"`, `"ore"` or `"ope"`: the
+    /// index, with its options, that derives it.
+    Term(IndexSpec),
 }
 
 impl Output {
-    /// The output a key names, or `None` for a key that is not one.
+    /// The output a bare key names, or `None` for a key that is not one. A
+    /// `"match"` key names the match index under default options; a plan
+    /// spells other options in the object form [`from_value`](Self::from_value)
+    /// reads.
     pub fn parse(s: &str) -> Option<Self> {
-        Some(match s {
-            "c" => Output::Ciphertext,
-            "eq" => Output::Term(TermKind::Equality),
-            "match" => Output::Term(TermKind::Match),
-            "ore" => Output::Term(TermKind::Ore),
-            "ope" => Output::Term(TermKind::Ope),
-            _ => return None,
-        })
+        match s {
+            "c" => Some(Output::Ciphertext),
+            _ => IndexSpec::parse(s).map(Output::Term),
+        }
+    }
+
+    /// Read one entry of a plan's `"outputs"` list: `"c"`, or an index in
+    /// its wire form ([`IndexSpec::from_value`]; see [`plan`]).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Plan`] for anything else.
+    pub fn from_value(value: &FfiValue) -> Result<Self, Error> {
+        match value {
+            FfiValue::String(s) if utf8(s) == Some("c") => Ok(Output::Ciphertext),
+            _ => IndexSpec::from_value(value).map(Output::Term),
+        }
     }
 
     /// The map key this output rides under.
-    pub fn key(self) -> &'static str {
+    pub fn key(&self) -> &'static str {
         match self {
             Output::Ciphertext => "c",
             Output::Term(kind) => kind.key(),
@@ -124,7 +137,10 @@ impl FieldPlan {
     ///
     /// # Errors
     ///
-    /// [`Error::Plan`] if `outputs` is empty or names an output twice.
+    /// [`Error::Plan`] if `outputs` is empty or names an output twice. Two
+    /// outputs with the same [key](Output::key) are the same output — two
+    /// match indexes under different options would both ride under
+    /// `"match"` — so they are refused too.
     pub fn new(
         name: impl Into<String>,
         context: NonEmpty<ContextPiece<'static>>,
@@ -134,7 +150,10 @@ impl FieldPlan {
             return Err(Error::Plan);
         }
         for (at, output) in outputs.iter().enumerate() {
-            if outputs[..at].contains(output) {
+            if outputs[..at]
+                .iter()
+                .any(|prior| prior.key() == output.key())
+            {
                 return Err(Error::Plan);
             }
         }
@@ -156,7 +175,7 @@ impl FieldPlan {
     pub fn with_type(mut self, field_type: FieldType) -> Result<Self, Error> {
         for output in &self.outputs {
             if let Output::Term(kind) = output {
-                if !field_type.admits(*kind) {
+                if !field_type.admits(kind) {
                     return Err(Error::Plan);
                 }
             }
@@ -248,8 +267,30 @@ impl Plan {
 /// The plan is an [`FfiValue::Object`]:
 ///
 /// ```text
-/// { <field>: { "context": <context>, "outputs": [ "c" | "eq" | "match" | "ore" | "ope", ... ], "type": <type> }, ... }
+/// { <field>: { "context": <context>, "outputs": [ "c" | <index>, ... ], "type": <type> }, ... }
 /// ```
+///
+/// `<index>` is an index in its wire form, which is its key — `"eq"`,
+/// `"match"`, `"ore"` or `"ope"` — save for a match index with options other
+/// than the defaults, which is a one-entry object mapping `"match"` to them:
+///
+/// ```text
+/// { "match": { "tokenizer": "standard" | { "ngram": <length> },
+///              "downcase": <bool>, "k": <int>, "m": <int> } }
+/// ```
+///
+/// A bare `"match"` is the default options ([`MatchOptions::default`]:
+/// 3-grams, downcased, `k = 3`, `m = 256`), so a plan written before options
+/// had a wire form means what it always meant. In the object form each
+/// option is optional and defaults the same way; an unknown or repeated
+/// option, or a set the match scheme refuses (`k` outside `3..=16`, `m` not
+/// a power of two in `32..=65536`, a zero n-gram length), is refused. The
+/// other three indexes have no options and no object form. A field names
+/// each output key at most once, so it carries at most one match index.
+/// [`IndexSpec::to_value`] writes this form and [`IndexSpec::from_value`]
+/// reads it.
+///
+/// [`MatchOptions::default`]: crate::sem::MatchOptions::default
 ///
 /// `"type"` is optional, and names a [`FieldType`] (`"int64"`, `"string"`,
 /// …; see [`FieldType::name`]). Declared, it is checked against the field's
@@ -263,7 +304,8 @@ impl Plan {
 /// # Examples
 ///
 /// ```
-/// use stack_encrypt::dynamic::{record, FfiValue, Output, TermKind};
+/// use stack_encrypt::dynamic::{record, FfiValue, Output};
+/// use stack_encrypt::target::IndexSpec;
 ///
 /// // As a binding would decode it from its caller: seal `age` under the
 /// // pair ("users", "age") and index it for equality.
@@ -291,7 +333,7 @@ impl Plan {
 /// assert_eq!(plan.fields()[0].name(), "age");
 /// assert_eq!(
 ///     plan.fields()[0].outputs(),
-///     [Output::Ciphertext, Output::Term(TermKind::Equality)]
+///     [Output::Ciphertext, Output::Term(IndexSpec::Equality)]
 /// );
 /// # Ok::<(), stack_encrypt::dynamic::Error>(())
 /// ```
@@ -301,8 +343,9 @@ impl Plan {
 /// [`Error::Plan`] for a plan that is not an object of field specs, an
 /// empty plan, a field named twice, a spec with a key other than
 /// `"context"`, `"outputs"` and `"type"` or with one given twice, missing
-/// `"context"` or `"outputs"`, an output list that is not a list of known
-/// output names, is empty, or names an output twice, a `"type"` that is not
+/// `"context"` or `"outputs"`, an output list that is not a list of
+/// outputs (`"c"` or an index in its wire form, above), is empty, or names
+/// an output key twice, a `"type"` that is not
 /// a string naming a [`FieldType`], or a type that does not admit one of
 /// the field's index outputs. [`Error::Context`] for a `"context"` that is
 /// present but is not a context, or renders empty.
@@ -330,14 +373,10 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
                     let FfiValue::Array(items) = value else {
                         return Err(Error::Plan);
                     };
-                    let mut parsed = Vec::with_capacity(items.len());
-                    for item in &items {
-                        let FfiValue::String(s) = item else {
-                            return Err(Error::Plan);
-                        };
-                        let key = utf8(s).ok_or(Error::Plan)?;
-                        parsed.push(Output::parse(key).ok_or(Error::Plan)?);
-                    }
+                    let parsed = items
+                        .iter()
+                        .map(Output::from_value)
+                        .collect::<Result<Vec<_>, _>>()?;
                     outputs = Some(parsed);
                 }
                 "type" if field_type.is_none() => {
@@ -857,7 +896,7 @@ fn source_rows(source: FfiValue, plan: &Plan) -> Result<Rows<Vec<FfiValue>>, Err
 
 /// A source value against its plan field: a typed field needs a value of
 /// its type, every term output needs a scalar the scheme defines the term
-/// for ([`TermKind::supports`]), and a ciphertext output refuses a
+/// for ([`IndexSpec::supports`]), and a ciphertext output refuses a
 /// passthrough, or a repeated map key, anywhere in the value
 /// ([`check_tree`]).
 fn check_field(value: &FfiValue, field: &FieldPlan) -> Result<(), Error> {
@@ -870,9 +909,9 @@ fn check_field(value: &FfiValue, field: &FieldPlan) -> Result<(), Error> {
         match output {
             Output::Ciphertext => check_tree(value)?,
             Output::Term(kind) => {
-                let scalar = Scalar::of(value, *kind)?;
+                let scalar = Scalar::of(value, kind)?;
                 if !kind.supports(&scalar) {
-                    return Err(Error::Term { kind: *kind });
+                    return Err(Error::Term { kind: kind.clone() });
                 }
             }
         }
@@ -949,7 +988,7 @@ where
             .outputs
             .iter()
             .find_map(|o| match o {
-                Output::Term(kind) => Some(*kind),
+                Output::Term(kind) => Some(kind),
                 Output::Ciphertext => None,
             })
             .map(|kind| Scalar::of(&value, kind))
@@ -964,7 +1003,7 @@ where
             let scalar = scalar.clone().ok_or(Error::Internal)?;
             outputs.push((
                 output.key(),
-                Slot::Term(term(cipher, scalar, *kind, context.clone()).await?),
+                Slot::Term(term(cipher, scalar, kind, context.clone()).await?),
             ));
         }
 
@@ -1254,8 +1293,8 @@ mod tests {
                 plan.fields()[0].outputs(),
                 [
                     Output::Ciphertext,
-                    Output::Term(TermKind::Equality),
-                    Output::Term(TermKind::Ore)
+                    Output::Term(IndexSpec::Equality),
+                    Output::Term(IndexSpec::Ore)
                 ],
                 "outputs keep their spelled order"
             );
@@ -1266,7 +1305,9 @@ mod tests {
             );
             assert_eq!(
                 plan.fields()[2].outputs(),
-                [Output::Term(TermKind::Match)],
+                [Output::Term(IndexSpec::Match(
+                    crate::sem::MatchOptions::default()
+                ))],
                 "a field can be indexed and never sealed"
             );
             assert!(
@@ -1407,7 +1448,7 @@ mod tests {
                     FieldPlan::new(
                         "age",
                         ctx.clone(),
-                        vec![Output::Term(TermKind::Ore), Output::Term(TermKind::Ore)]
+                        vec![Output::Term(IndexSpec::Ore), Output::Term(IndexSpec::Ore)]
                     ),
                     Err(Error::Plan)
                 ),
@@ -1417,6 +1458,101 @@ mod tests {
                 FieldPlan::new("age", ctx, vec![Output::Ciphertext]).is_ok(),
                 "one output is a plan"
             );
+        }
+
+        /// A match index with non-default options is spelled in a plan as
+        /// an object, parses to the index carrying them, and still rides
+        /// under the `"match"` key; the bare key stays the defaults.
+        #[test]
+        fn a_match_index_with_options_parses_from_its_object_form() {
+            let wide = obj(vec![(
+                "match",
+                obj(vec![
+                    ("tokenizer", s("standard")),
+                    ("downcase", FfiValue::Bool(false)),
+                    ("k", FfiValue::UInt32(6)),
+                    ("m", FfiValue::UInt32(1024)),
+                ]),
+            )]);
+            let plan = plan(obj(vec![(
+                "nick",
+                obj(vec![
+                    ("context", s("users/nick")),
+                    ("outputs", FfiValue::Array(vec![s("c"), wide])),
+                ]),
+            )]))
+            .expect("parses");
+            let options = crate::sem::MatchOptions {
+                tokenizer: crate::sem::Tokenizer::Standard,
+                downcase: false,
+                k: 6,
+                m: 1024,
+            };
+            assert_eq!(
+                plan.fields()[0].outputs(),
+                [Output::Ciphertext, Output::Term(IndexSpec::Match(options))]
+            );
+            assert_eq!(plan.fields()[0].outputs()[1].key(), "match");
+        }
+
+        /// Two match indexes in one field would both ride under `"match"`,
+        /// so a field names an output key once whatever the options.
+        #[test]
+        fn a_field_refuses_two_match_indexes_under_different_options() {
+            let wide = obj(vec![("match", obj(vec![("k", FfiValue::UInt32(6))]))]);
+            let parsed = plan(obj(vec![(
+                "nick",
+                obj(vec![
+                    ("context", s("users/nick")),
+                    ("outputs", FfiValue::Array(vec![s("match"), wide])),
+                ]),
+            )]));
+            assert!(
+                matches!(parsed, Err(Error::Plan)),
+                "two match outputs are one key twice"
+            );
+            let ctx = context(s("users/nick")).expect("context");
+            let by_hand = FieldPlan::new(
+                "nick",
+                ctx,
+                vec![
+                    Output::Term(IndexSpec::Match(crate::sem::MatchOptions::default())),
+                    Output::Term(IndexSpec::Match(crate::sem::MatchOptions {
+                        k: 6,
+                        ..crate::sem::MatchOptions::default()
+                    })),
+                ],
+            );
+            assert!(matches!(by_hand, Err(Error::Plan)), "and by hand alike");
+        }
+
+        /// An output list entry is `"c"` or an index in its wire form, and
+        /// nothing else; a malformed match object is a plan error.
+        #[test]
+        fn an_output_that_is_not_one_is_refused() {
+            for (label, output) in [
+                ("an unknown key", s("cc")),
+                ("a number", FfiValue::UInt32(1)),
+                (
+                    "an object for the ciphertext",
+                    obj(vec![("c", obj(vec![]))]),
+                ),
+                (
+                    "match options out of bounds",
+                    obj(vec![("match", obj(vec![("k", FfiValue::UInt32(2))]))]),
+                ),
+            ] {
+                let parsed = plan(obj(vec![(
+                    "nick",
+                    obj(vec![
+                        ("context", s("users/nick")),
+                        ("outputs", FfiValue::Array(vec![output])),
+                    ]),
+                )]));
+                assert!(matches!(parsed, Err(Error::Plan)), "{label}");
+            }
+            assert_eq!(Output::parse("c"), Some(Output::Ciphertext));
+            assert_eq!(Output::parse("cc"), None);
         }
 
         /// The whole-plan rules hold for a plan built by hand, not only for
@@ -1536,7 +1672,7 @@ mod tests {
                         matches!(
                             e,
                             Error::Term {
-                                kind: TermKind::Match
+                                kind: IndexSpec::Match(_)
                             }
                         )
                     },
@@ -1552,7 +1688,7 @@ mod tests {
                         matches!(
                             e,
                             Error::Term {
-                                kind: TermKind::Match
+                                kind: IndexSpec::Match(_)
                             }
                         )
                     },
@@ -1592,7 +1728,7 @@ mod tests {
                 matches!(
                     err,
                     Some(Error::Term {
-                        kind: TermKind::Match
+                        kind: IndexSpec::Match(_)
                     })
                 ),
                 "encrypt refuses a value with no such term: {err:?}"
@@ -1616,7 +1752,7 @@ mod tests {
                 matches!(
                     err,
                     Some(Error::Term {
-                        kind: TermKind::Equality
+                        kind: IndexSpec::Equality
                     })
                 ),
                 "no PRF encoding exists for a float: {err:?}"
@@ -1708,7 +1844,7 @@ mod tests {
             let eq = term(
                 &keyset,
                 Scalar::U32(34),
-                TermKind::Equality,
+                &IndexSpec::Equality,
                 age_ctx.clone(),
             )
             .await
@@ -1718,7 +1854,7 @@ mod tests {
                 eq,
                 "the equality term is the standalone derivation under the plan context"
             );
-            let ore = term(&keyset, Scalar::U32(34), TermKind::Ore, age_ctx)
+            let ore = term(&keyset, Scalar::U32(34), &IndexSpec::Ore, age_ctx)
                 .await
                 .expect("standalone ore term");
             assert_eq!(
@@ -1726,15 +1862,63 @@ mod tests {
                 ore,
                 "the ore term is the standalone derivation under the plan context"
             );
-            let scalar = Scalar::of(&s("al smith"), TermKind::Match).expect("text");
-            let matched = term(&keyset, scalar, TermKind::Match, nick_ctx)
-                .await
-                .expect("standalone match term");
+            let scalar = Scalar::of(
+                &s("al smith"),
+                &IndexSpec::Match(crate::sem::MatchOptions::default()),
+            )
+            .expect("text");
+            let matched = term(
+                &keyset,
+                scalar,
+                &IndexSpec::Match(crate::sem::MatchOptions::default()),
+                nick_ctx,
+            )
+            .await
+            .expect("standalone match term");
             assert_eq!(
                 term_bytes(&node(&mut nick, "match")),
                 matched,
                 "the match term is the standalone derivation under the plan context"
             );
+        }
+
+        /// A plan's match options reach the term: the stored `"match"`
+        /// term is the derivation under those options, not the defaults.
+        #[tokio::test]
+        async fn a_match_term_derives_under_the_plan_options() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let options = crate::sem::MatchOptions {
+                k: 6,
+                m: 1024,
+                ..crate::sem::MatchOptions::default()
+            };
+            let plan = plan(obj(vec![(
+                "nick",
+                obj(vec![
+                    ("context", s("users/nick")),
+                    (
+                        "outputs",
+                        FfiValue::Array(vec![IndexSpec::Match(options.clone()).to_value()]),
+                    ),
+                ]),
+            )]))
+            .expect("parses");
+            let ctx = plan.fields()[0].context().clone();
+            let row = obj(vec![("nick", s("al smith"))]);
+            let mut fields = map(encrypt(&keyset, row, &plan).await.expect("encrypt"));
+            let mut nick = map(node(&mut fields, "nick"));
+            let stored = term_bytes(&node(&mut nick, "match"));
+
+            let kind = IndexSpec::Match(options);
+            let scalar = Scalar::of(&s("al smith"), &kind).expect("text");
+            let expected = term(&keyset, scalar.clone(), &kind, ctx.clone())
+                .await
+                .expect("standalone");
+            assert_eq!(stored, expected, "the term is the plan options' derivation");
+            let default = IndexSpec::Match(crate::sem::MatchOptions::default());
+            let under_default = term(&keyset, scalar, &default, ctx).await.expect("default");
+            assert_ne!(stored, under_default, "and not the defaults'");
         }
 
         #[tokio::test]
@@ -2207,7 +2391,7 @@ mod tests {
             let field = FieldPlan::new(
                 "age",
                 context(s("users/age")).expect("context"),
-                vec![Output::Ciphertext, Output::Term(TermKind::Equality)],
+                vec![Output::Ciphertext, Output::Term(IndexSpec::Equality)],
             )
             .expect("field");
             assert_eq!(field.field_type(), None, "untyped until declared");
@@ -2355,11 +2539,11 @@ mod tests {
 
             let declared = field.field_type().expect("typed");
             let value = declared.read(FfiValue::Float64(34.0)).expect("an exact 34");
-            let scalar = Scalar::of(&value, TermKind::Equality).expect("scalar");
+            let scalar = Scalar::of(&value, &IndexSpec::Equality).expect("scalar");
             let probe = term(
                 &keyset,
                 scalar,
-                TermKind::Equality,
+                &IndexSpec::Equality,
                 field.view().expect("view"),
             )
             .await

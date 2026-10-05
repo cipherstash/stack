@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   terms, not one. `MatchTerm` remains as a deprecated alias.
 - `TermBytesError::OddMatchTermLength` is renamed `OddMatchTermsLength`. An
   enum variant cannot be aliased, so a `match` that names it must change.
+- `dynamic::TermKind` is gone; `target::IndexSpec` is the one data form of
+  an index. `Output::Term`, `Error::Term`'s `kind`, `Scalar::of` and
+  `dynamic::term` take an `IndexSpec` (the last two by reference), and
+  `Output` is no longer `Copy`. A plan's wire form is unchanged: a bare
+  `"match"` still means the default options.
 
 ### Added
 
@@ -32,6 +37,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Owned` mode a description is handed the plaintext by value, so a single
   operation consumes it with no copy and a plaintext that is not `Clone`
   (a zeroizing FFI value) can be sealed or indexed. The traits are sealed.
+- Indexes as types: `target::{Index, Indexes, Equality, Match, Ore, Ope}`,
+  `indexed`, `Encrypted`, `Select` / `At` / `Whole`. A match index on an
+  integer does not compile, and an index set is one index or a tuple of two
+  to four, never `()`. `Index::spec` lowers an index to its `IndexSpec`.
+- `target::passthrough`: a field carried unsealed and unauthenticated.
+- `KeysetCipher::run_decryption` and `StackCipher::run_decryption`: run a
+  `Decryption` held in a variable.
+- A dynamic plan's match index can carry options, as
+  `{"match": {"tokenizer", "downcase", "k", "m"}}`.
 
 ## [0.2.0] - 2026-10-04
 

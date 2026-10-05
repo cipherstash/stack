@@ -27,13 +27,14 @@ use std::fmt;
 
 use vitaminc_aead_value::{tags, FfiValue};
 
-use super::{Error, TermKind};
+use super::Error;
+use crate::target::IndexSpec;
 
 /// The type of a plan field's values.
 ///
 /// The [`name`](Self::name) strings are wire format, spelled by a binding in
 /// a plan's `"type"` key, so this enum is exhaustive for the reason
-/// [`TermKind`] is (see the [module docs](super#stability)).
+/// [`IndexSpec`] is (see the [module docs](super#stability)).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum FieldType {
     /// `"bool"`: [`FfiValue::Bool`], tags `BOOL_FALSE` and `BOOL_TRUE`.
@@ -151,17 +152,18 @@ impl FieldType {
 
     /// Whether the scheme defines a `kind` term for values of this type.
     ///
-    /// The same table as [`TermKind::supports`], stated over types instead
+    /// The same table as [`IndexSpec::supports`], stated over types instead
     /// of values, so a plan can be refused when it is built rather than when
     /// its first value arrives: equality over every integer, text and bytes
     /// (no floats, no booleans); match over text alone; ORE and OPE over
-    /// every scalar. A composite has no term.
-    pub fn admits(self, kind: TermKind) -> bool {
+    /// every scalar. A composite has no term. Only the index's kind
+    /// matters: a match index's options do not change what it applies to.
+    pub fn admits(self, kind: &IndexSpec) -> bool {
         use FieldType::*;
         match kind {
-            TermKind::Equality => matches!(self, Int32 | Int64 | UInt32 | UInt64 | String | Bytes),
-            TermKind::Match => self == String,
-            TermKind::Ore | TermKind::Ope => !matches!(self, Array | Object),
+            IndexSpec::Equality => matches!(self, Int32 | Int64 | UInt32 | UInt64 | String | Bytes),
+            IndexSpec::Match(_) => self == String,
+            IndexSpec::Ore | IndexSpec::Ope => !matches!(self, Array | Object),
         }
     }
 
@@ -274,6 +276,7 @@ impl Number {
 mod tests {
     use super::*;
     use crate::dynamic::Scalar;
+    use crate::sem::{MatchOptions, Tokenizer};
     use vitaminc_protected::Protected;
 
     /// One value of every field type.
@@ -293,12 +296,14 @@ mod tests {
         }
     }
 
-    const KINDS: [TermKind; 4] = [
-        TermKind::Equality,
-        TermKind::Match,
-        TermKind::Ore,
-        TermKind::Ope,
-    ];
+    fn kinds() -> [IndexSpec; 4] {
+        [
+            IndexSpec::Equality,
+            IndexSpec::Match(MatchOptions::default()),
+            IndexSpec::Ore,
+            IndexSpec::Ope,
+        ]
+    }
 
     #[test]
     fn every_name_parses_back_to_its_type_and_nothing_else_parses() {
@@ -379,29 +384,48 @@ mod tests {
         }
     }
 
-    /// `admits` is `TermKind::supports` stated over types: the two tables
+    /// `admits` is `IndexSpec::supports` stated over types: the two tables
     /// cannot disagree about any scalar, and a composite admits nothing.
     #[test]
     fn admits_agrees_with_supports_for_every_scalar_type() {
         for ty in FieldType::all() {
-            for kind in KINDS {
-                match Scalar::of(&sample(ty), kind) {
+            for kind in kinds() {
+                match Scalar::of(&sample(ty), &kind) {
                     Ok(scalar) => {
-                        assert_eq!(ty.admits(kind), kind.supports(&scalar), "{ty} and {kind}")
+                        assert_eq!(ty.admits(&kind), kind.supports(&scalar), "{ty} and {kind}")
                     }
-                    Err(_) => assert!(!ty.admits(kind), "{ty} is not a scalar"),
+                    Err(_) => assert!(!ty.admits(&kind), "{ty} is not a scalar"),
                 }
             }
         }
         // Spelled out, so the table reads without the cross-check.
-        assert!(FieldType::UInt64.admits(TermKind::Equality));
-        assert!(!FieldType::Float64.admits(TermKind::Equality));
-        assert!(!FieldType::Bool.admits(TermKind::Equality));
-        assert!(FieldType::String.admits(TermKind::Match));
-        assert!(!FieldType::Bytes.admits(TermKind::Match));
-        assert!(FieldType::Float64.admits(TermKind::Ore));
-        assert!(!FieldType::Object.admits(TermKind::Ope));
-        assert!(!FieldType::Array.admits(TermKind::Ore));
+        assert!(FieldType::UInt64.admits(&IndexSpec::Equality));
+        assert!(!FieldType::Float64.admits(&IndexSpec::Equality));
+        assert!(!FieldType::Bool.admits(&IndexSpec::Equality));
+        assert!(FieldType::String.admits(&IndexSpec::Match(MatchOptions::default())));
+        assert!(!FieldType::Bytes.admits(&IndexSpec::Match(MatchOptions::default())));
+        assert!(FieldType::Float64.admits(&IndexSpec::Ore));
+        assert!(!FieldType::Object.admits(&IndexSpec::Ope));
+        assert!(!FieldType::Array.admits(&IndexSpec::Ore));
+    }
+
+    /// A match index's options are not part of what it applies to: text
+    /// admits it under any options, and nothing else does.
+    #[test]
+    fn admits_ignores_match_options() {
+        let wide = IndexSpec::Match(MatchOptions {
+            tokenizer: Tokenizer::Standard,
+            downcase: false,
+            k: 6,
+            m: 1024,
+        });
+        for ty in FieldType::all() {
+            assert_eq!(
+                ty.admits(&wide),
+                ty == FieldType::String,
+                "{ty} admits a non-default match exactly when it is text"
+            );
+        }
     }
 
     fn read(ty: FieldType, value: FfiValue) -> Option<FfiValue> {

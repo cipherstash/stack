@@ -318,13 +318,15 @@ mod tests {
 
     #[test]
     fn dynamic_input_errors_are_encoding_and_a_library_bug_is_internal() {
-        use stack_encrypt::dynamic::{Error, TermKind};
+        use stack_encrypt::dynamic::Error;
+        use stack_encrypt::sem::MatchOptions;
+        use stack_encrypt::target::IndexSpec;
         for (label, err) in [
             ("a bad context", Error::Context),
             (
                 "a bad term request",
                 Error::Term {
-                    kind: TermKind::Match,
+                    kind: IndexSpec::Match(MatchOptions::default()),
                 },
             ),
             ("a bad plan", Error::Plan),

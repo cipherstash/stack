@@ -31,7 +31,9 @@
 //! ABI's numeric term kinds, and the mapping from a library error to a
 //! status code.
 
-use stack_encrypt::dynamic::{self, Scalar, Scope, TermKind};
+use stack_encrypt::dynamic::{self, Scalar, Scope};
+use stack_encrypt::sem::MatchOptions;
+use stack_encrypt::target::IndexSpec;
 use stack_encrypt::{
     BoxedPassthrough, CipherText, Element, Encrypt, KeysetCipher, SealedValue, StackCipherText,
 };
@@ -173,25 +175,29 @@ where
     // `STATUS_ENCODING` here, before any derivation.
     let context = dynamic::context(decode_value(context)?).map_err(|e| status_for_dynamic(&e))?;
     let (scalar, kind) = parse_term(decode_value(value)?, kind)?;
-    dynamic::term(cipher, scalar, kind, context)
+    dynamic::term(cipher, scalar, &kind, context)
         .await
         .map_err(|e| status_for_dynamic(&e))
 }
 
 /// The static half of a term: the kind is one of the ABI's table, the value
 /// is a scalar, and the scheme defines the pair
-/// ([`TermKind::supports`]). Shared by [`term`] and [`validate::term`] so
+/// ([`IndexSpec::supports`]). Shared by [`term`] and [`validate::term`] so
 /// the ABI refuses exactly what the operation would, before any keyset is
 /// resolved.
-fn parse_term(value: FfiValue, kind: u32) -> Result<(Scalar, TermKind), u32> {
+///
+/// The ABI's kind codes carry no options, so [`TERM_MATCH`] is the match
+/// index under the default options, the same index a plan's bare `"match"`
+/// names.
+fn parse_term(value: FfiValue, kind: u32) -> Result<(Scalar, IndexSpec), u32> {
     let kind = match kind {
-        TERM_EQUALITY => TermKind::Equality,
-        TERM_MATCH => TermKind::Match,
-        TERM_ORE => TermKind::Ore,
-        TERM_OPE => TermKind::Ope,
+        TERM_EQUALITY => IndexSpec::Equality,
+        TERM_MATCH => IndexSpec::Match(MatchOptions::default()),
+        TERM_ORE => IndexSpec::Ore,
+        TERM_OPE => IndexSpec::Ope,
         _ => return Err(STATUS_ENCODING),
     };
-    let scalar = Scalar::of(&value, kind).map_err(|e| status_for_dynamic(&e))?;
+    let scalar = Scalar::of(&value, &kind).map_err(|e| status_for_dynamic(&e))?;
     if !kind.supports(&scalar) {
         return Err(STATUS_ENCODING);
     }
@@ -283,7 +289,7 @@ pub mod validate {
     /// A term's inputs, as [`term`] takes them: the context decodes and is
     /// non-empty, the kind is one of [`TERM_EQUALITY`] .. [`TERM_OPE`], and
     /// the value is a scalar the scheme defines that term for
-    /// ([`TermKind::supports`]).
+    /// ([`IndexSpec::supports`]).
     pub fn term(value: &[u8], context: &[u8], kind: u32) -> Result<(), u32> {
         dynamic::context(decode_value(context)?)
             .map(drop)

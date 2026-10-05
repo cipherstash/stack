@@ -46,7 +46,7 @@
 //! opens only under the type it was sealed as.
 //!
 //! For the same reason the enums that spell them — [`Output`],
-//! [`TermKind`] and [`FieldType`] — are *not* `#[non_exhaustive]`, against this workspace's
+//! [`IndexSpec`] and [`FieldType`] — are *not* `#[non_exhaustive]`, against this workspace's
 //! usual rule for public enums: a new output is a wire-format addition every
 //! binding has to be taught, and an exhaustive match is how the compiler
 //! tells a binding author that. [`Scope`] is exhaustive for a different
@@ -61,13 +61,14 @@ use std::fmt;
 pub use context::{borrowed, context};
 pub use field_type::FieldType;
 pub use record::{FieldPlan, Output, Plan};
-pub use term::{term, Scalar, TermKind};
+pub use term::{term, Scalar};
 /// vitaminc's language-neutral value tree — the runtime value every binding
 /// funnels through. Its transport codec is `vitaminc_aead_value::transport`,
 /// which stays the binding's: this crate takes and returns values, never
 /// encoded bytes.
 pub use vitaminc_aead_value::FfiValue;
 
+use crate::target::IndexSpec;
 use crate::{KeysetCipher, StackCipher};
 
 /// Which cipher an opening operation decrypts through: the client, or one
@@ -141,11 +142,11 @@ pub enum Error {
     /// container, null or passthrough (which have no term semantics at all),
     /// or a scalar outside the kind's domain — equality over a float or a
     /// boolean, match over anything but text. See
-    /// [`TermKind::supports`].
+    /// [`IndexSpec::supports`].
     #[error("no {kind} term is defined for this value")]
     Term {
-        /// The kind that was asked for.
-        kind: TermKind,
+        /// The index that was asked for.
+        kind: IndexSpec,
     },
 
     /// A record plan is malformed: not an object of field specs, empty,

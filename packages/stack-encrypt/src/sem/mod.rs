@@ -367,7 +367,7 @@ where
 /// Options controlling match-term generation. The defaults mirror the existing
 /// match indexer: 3-gram tokens, downcased, `k = 3` hash slices into an
 /// `m = 256`-bit filter.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct MatchOptions {
     /// How text splits into tokens.
     pub tokenizer: Tokenizer,
@@ -397,7 +397,7 @@ impl MatchOptions {
     // Bounds mirror the v1 match indexer (`cipherstash-core`'s
     // `bloom_filter`: K_MIN/K_MAX/M_MIN/M_MAX) so the same configuration
     // validates identically across the two stacks.
-    fn validate(&self) -> Result<u16, TermError> {
+    pub(crate) fn validate(&self) -> Result<u16, TermError> {
         if let Tokenizer::Ngram { length: 0 } = self.tokenizer {
             return Err(TermError::InvalidOptions(
                 "n-gram length must be at least 1",
@@ -1085,12 +1085,26 @@ impl<K> KeysetCipher<'_, K> {
     where
         O: MatchConfig + MaybeSend,
     {
-        let term = match_term(
-            self.prf(),
-            text,
-            descriptor.into_prf_context(),
-            O::options(),
-        );
+        self.match_terms_under(text, descriptor, O::options())
+    }
+
+    /// [`match_terms`](Self::match_terms) under runtime options, for the
+    /// `dynamic` path, whose plan carries a match index's options as data
+    /// (an `IndexSpec::Match`). Not public: the typed API keeps the options
+    /// on the type so a stored field and its probe cannot disagree, and a
+    /// binding reaches this only through a plan that names the options for
+    /// both.
+    #[cfg_attr(not(feature = "dynamic"), allow(dead_code))]
+    pub(crate) fn match_terms_under<'c, O>(
+        &self,
+        text: &str,
+        descriptor: NonEmpty<impl IntoPrfContext<'c>>,
+        options: MatchOptions,
+    ) -> Pending<'_, MatchTerms<O>, K>
+    where
+        O: MatchConfig + MaybeSend,
+    {
+        let term = match_term(self.prf(), text, descriptor.into_prf_context(), options);
         Pending::ready(self, term.map_err(Error::from))
     }
 

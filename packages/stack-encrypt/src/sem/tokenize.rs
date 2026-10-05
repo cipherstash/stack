@@ -11,7 +11,7 @@
 //! split produces, which only add noise bits to every filter).
 
 /// How text is split into tokens before each token is run through the PRF.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Tokenizer {
     /// Sliding character n-grams of the given length over the whole text
     /// (whitespace included). Text shorter than `length` yields **no tokens**,

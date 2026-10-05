@@ -64,13 +64,18 @@ use crate::StackCipherText;
 
 /// An index lowered to data: what crosses the FFI boundary and what a saved
 /// plan holds. The Rust side keeps the type ([`Index`]); a binding, which
-/// has no type to name, speaks this.
+/// has no type to name, speaks this. It is the one data form of an index:
+/// the `dynamic` record plan, its term derivation and the Go guest all
+/// spell an index as an `IndexSpec`, options included.
 ///
 /// The [`key`](Self::key) strings are the output keys of the `dynamic` record
 /// format (`"eq"`, `"match"`, `"ore"`, `"ope"`), so they are wire format;
-/// that is why this enum is exhaustive, as `dynamic::TermKind` is: a new
-/// index is something every binding has to be taught.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// that is why this enum is exhaustive: a new index is something every
+/// binding has to be taught. With the `dynamic` feature, a plan spells an
+/// index as its key, or, for a match index with non-default options, as an
+/// object carrying them; `dynamic::record::plan` documents that shape, and
+/// `IndexSpec::from_value` / `IndexSpec::to_value` read and write it.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum IndexSpec {
     /// Equality (exact match).
     Equality,
@@ -83,8 +88,12 @@ pub enum IndexSpec {
 }
 
 impl IndexSpec {
-    /// The output key this index's term rides under in a record, and the
-    /// string a binding spells it as.
+    /// The output key this index's term rides under in a record.
+    ///
+    /// This is the kind alone. It is the whole wire form of every index but
+    /// a match index with non-default options, whose options it drops; to
+    /// write an index to a plan, use the serialiser (`IndexSpec::to_value`,
+    /// with the `dynamic` feature), which keeps them.
     pub fn key(&self) -> &'static str {
         match self {
             IndexSpec::Equality => "eq",
