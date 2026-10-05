@@ -110,3 +110,4 @@ pub use pending::{CipherScope, Pending, PendingFuture};
 pub use request::{Request, Responses};
 pub use source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
 pub use stack_encrypt_derive::{DecryptInto, EncryptFrom};
+pub use tuples::JoinContext;

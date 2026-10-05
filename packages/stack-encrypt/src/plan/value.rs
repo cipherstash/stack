@@ -6,14 +6,18 @@ use std::marker::PhantomData;
 
 use super::build::{
     check_declared, check_indexes, resolve_context, runs_over_collections, IntoLabel, Opens,
-    PlanContext, Runs, FROM_PLAN,
+    PlanContext, Runs, FROM_CALL, FROM_FIELD, FROM_PLAN,
 };
 use super::PlanError;
 use crate::target::{
     indexed, Borrowed, CallerContext, DeclaredContext, DecryptInto, Decryption, EncryptFrom,
-    Encrypted, Encryption, IndexSpec, Indexes, Pending,
+    Encrypted, Encryption, ExpectedContext, IndexSpec, Indexes, Pending,
 };
-use crate::{Error, KeysetCipher, Label, LabelError, NonEmpty, Plan, StackCipherText};
+use crate::{
+    Error, IntoContext, KeysetCipher, Label, LabelError, MaybeEmpty, NonEmpty, Plan,
+    StackCipherText,
+};
+use stack_kms::MaybeSend;
 
 impl Plan<(), ()> {
     /// Start a one-value plan over plaintext `S`, with no context yet: give
@@ -119,6 +123,153 @@ impl<S> ValueStart<S> {
     }
 }
 
+impl<S> ValueStart<S> {
+    /// Take the plan's context from the call, and carry it out beside the
+    /// output, typed `C`: the one-value form of a fields plan's
+    /// [`context_field`](super::FieldsBuilder::context_field), and what a
+    /// `plaintext = S` derive with `#[stash(context_field)]` is.
+    ///
+    /// The call hands the context over as a `NonEmpty<C>`; the output is
+    /// `(C, T)`, the context as given beside the target's layout. The
+    /// stored context is **unsealed and unauthenticated**, as a passthrough
+    /// is: what protects the record is that the target was sealed under it.
+    /// When the record is opened
+    /// ([`decryption_with_context`](ValuePlan::decryption_with_context)), the
+    /// stored context is checked first against the one the caller expects
+    /// ([`ExpectedContext`]): a mismatch is
+    /// [`Error::ContextMismatch`](crate::Error::ContextMismatch), before any
+    /// key is requested.
+    ///
+    /// A context field is the plan's one context source, so a build-time
+    /// [`context`](Self::context) beside it is
+    /// [`PlanError::TwoContextSources`] at `build()`.
+    pub fn context_field<C>(self) -> ContextFieldStart<S, C> {
+        ContextFieldStart {
+            sources: self.sources,
+            plaintext: PhantomData,
+        }
+    }
+}
+
+/// A one-value plan whose context is carried out beside its output, before
+/// its layout is chosen; see [`ValueStart::context_field`].
+pub struct ContextFieldStart<S, C> {
+    sources: Vec<Result<Label, LabelError>>,
+    plaintext: PhantomData<fn(&S) -> C>,
+}
+
+impl<S, C> fmt::Debug for ContextFieldStart<S, C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ContextFieldStart")
+            .field("context", &self.sources)
+            .field("stored", &std::any::type_name::<C>())
+            .finish()
+    }
+}
+
+impl<S, C> ContextFieldStart<S, C> {
+    /// Lay the value out as the target `T` does, under the call's context,
+    /// and carry that context out beside it: the output is `(C, T)`.
+    pub fn encrypt_into<T>(self) -> ValuePlanBuilder<S, Stored<C, T>>
+    where
+        T: EncryptFrom<S>,
+    {
+        ValuePlanBuilder {
+            sources: self.sources,
+            shape: Stored(PhantomData),
+            plaintext: PhantomData,
+        }
+    }
+}
+
+/// A one-value plan's layout when its context is carried out beside its
+/// target `T` ([`ValueStart::context_field`]): its output is `(C, T)`.
+pub struct Stored<C, T>(PhantomData<fn() -> (C, T)>);
+
+impl<C, T> Clone for Stored<C, T> {
+    fn clone(&self) -> Self {
+        Self(PhantomData)
+    }
+}
+impl<C, T> fmt::Debug for Stored<C, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Stored<{}, {}>",
+            std::any::type_name::<C>(),
+            std::any::type_name::<T>()
+        )
+    }
+}
+
+impl<S, C, T: EncryptFrom<S>> ValuePlanBuilder<S, Stored<C, T>> {
+    /// Validate the plan: no build-time context beside the context field,
+    /// and no index named twice.
+    ///
+    /// # Errors
+    ///
+    /// [`PlanError::TwoContextSources`] or [`PlanError::DuplicateIndex`],
+    /// in [`Error::Plan`].
+    pub fn build(self) -> Result<ValuePlan<S, Stored<C, T>>, Error> {
+        if !self.sources.is_empty() {
+            return Err(PlanError::TwoContextSources {
+                first: FROM_PLAN,
+                second: FROM_FIELD,
+            }
+            .into());
+        }
+        check_indexes("the value", &T::indexes())?;
+        Ok(ValuePlan {
+            context: None,
+            shape: self.shape,
+            plaintext: PhantomData,
+        })
+    }
+}
+
+impl<S, C, T> ValuePlan<S, Stored<C, T>> {
+    /// The description of one run: `T`'s layout under the context the call
+    /// hands over, which is carried out beside it as the record's `C`.
+    /// Run it with [`KeysetCipher::run`] and a `NonEmpty<C>`.
+    pub fn encryption_with_context<'s, K: 'static>(
+        &self,
+    ) -> Encryption<'s, S, (C, T), K, NonEmpty<C>>
+    where
+        S: 's,
+        T: EncryptFrom<S>,
+        CallerContext: Into<T::Context>,
+        NonEmpty<C>: Into<CallerContext>,
+        C: Clone + MaybeSend + 'static,
+    {
+        T::encryption()
+            .accepting::<CallerContext>()
+            .accepting::<NonEmpty<C>>()
+            .map_with_context(|target, context: NonEmpty<C>| (context.into_inner(), target))
+    }
+
+    /// The opening of a stored `(C, T)`: the stored context checked against
+    /// `expected` (which [`ExpectedContext::default`] leaves unchecked beyond
+    /// being nonempty), before any key is requested, then `T` opened under
+    /// it through its own [`DecryptInto`].
+    pub fn decryption_with_context<K: 'static>(
+        &self,
+        record: (C, T),
+        expected: ExpectedContext<C>,
+    ) -> Decryption<S, K>
+    where
+        S: 'static,
+        T: DecryptInto<S>,
+        NonEmpty<C>: Into<T::Context>,
+        C: MaybeEmpty + PartialEq + IntoContext<'static>,
+    {
+        let (stored, target) = record;
+        match expected.validate(stored) {
+            Ok(context) => target.decryption(context.into()),
+            Err(error) => Decryption::failed(error),
+        }
+    }
+}
+
 impl PlanContext {
     /// One value, sealed under the context with `indexes` beside it: a
     /// one-value plan, whose output is an [`Encrypted<Terms>`].
@@ -167,7 +318,8 @@ mod sealed {
 /// A [`Typed`] layout is one for every target, whatever context the target
 /// takes; it is a [`ValueShape`] only when a [`CallerContext`] converts
 /// into that context. A target whose context is, say, a `NonEmpty<u64>`
-/// builds.
+/// builds, and runs through
+/// [`encryption_with_context`](ValuePlan::encryption_with_context).
 pub trait ValueLayout<S>: sealed::Sealed + Clone {
     /// What one run produces.
     type Output: 'static;
@@ -388,6 +540,36 @@ where
         let label = self.resolve(call)?;
         check_declared(&label.to_string(), &self.shape.specs(), index)?;
         Ok(label)
+    }
+}
+
+impl<S, T> ValuePlan<S, Typed<T>> {
+    /// The description of one run under a context the caller hands over
+    /// whole, of any type `C` the target accepts: `T`'s layout,
+    /// `.accepting::<C>()`. This is how a derived `plaintext = S` record
+    /// runs its plan, so a caller's context reaches every output exactly as
+    /// it was given (a `NonEmpty<_>` of any context type, an integer, or an
+    /// [`AeadContext`](crate::target::AeadContext) for a target of
+    /// ciphertexts alone), not parsed into a [`Label`] first.
+    ///
+    /// For a plan built without a context; one built with its own fails
+    /// with [`PlanError::TwoContextSources`], without I/O.
+    pub fn encryption_with_context<'s, K: 'static, C>(&self) -> Encryption<'s, S, T, K, C>
+    where
+        S: 's,
+        T: EncryptFrom<S>,
+        C: Into<T::Context> + 's,
+    {
+        match self.context {
+            None => T::encryption().accepting::<C>(),
+            Some(_) => Encryption::failed(
+                PlanError::TwoContextSources {
+                    first: FROM_PLAN,
+                    second: FROM_CALL,
+                }
+                .into(),
+            ),
+        }
     }
 }
 
