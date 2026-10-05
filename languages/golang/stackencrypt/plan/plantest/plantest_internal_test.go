@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -640,24 +641,67 @@ func TestGoldenPathAndRerun(t *testing.T) {
 			t.Errorf("goldenPath(%q) and goldenPath(%q) are both %q", pair[0], pair[1], a)
 		}
 	}
-	if got, want := rerun("TestPolicy/a.b"), `go test -run '^TestPolicy$/^a\.b$' -update`; got != want {
-		t.Errorf("rerun = %s, want %s", got, want)
+	for name, want := range map[string]string{
+		"TestPolicy":     `go test -run '^TestPolicy$' -update`,
+		"TestPolicy/a.b": `go test -run '^TestPolicy$/^a\.b$' -update`,
+	} {
+		if got := rerun(name); got != want {
+			t.Errorf("rerun(%q) = %s, want %s", name, got, want)
+		}
 	}
 }
 
+// updateFlag points lookupFlag at a flag set of the test's own holding
+// -update at on, so no test sets the flag the whole binary shares.
+func updateFlag(t *testing.T, on bool) {
+	t.Helper()
+	fs := flag.NewFlagSet(t.Name(), flag.ContinueOnError)
+	fs.Bool("update", on, "")
+	saved := lookupFlag
+	lookupFlag = fs.Lookup
+	t.Cleanup(func() { lookupFlag = saved })
+}
+
 func TestUpdateFlag(t *testing.T) {
-	f := flag.Lookup("update")
-	if f == nil {
+	if flag.Lookup("update") == nil {
 		t.Fatal("-update is not registered")
 	}
-	if updating() {
-		t.Skip("run with -update")
-	}
-	if err := f.Value.Set("true"); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = f.Value.Set("false") }()
+	updateFlag(t, true)
 	if !updating() {
 		t.Error("updating() does not follow -update")
+	}
+	updateFlag(t, false)
+	if updating() {
+		t.Error("updating() is on without -update")
+	}
+	lookupFlag = func(string) *flag.Flag { return nil }
+	if updating() {
+		t.Error("updating() is on with no -update flag")
+	}
+}
+
+// recorder stands in for *testing.T to read what Golden reports.
+type recorder struct {
+	*testing.T
+	failed bool
+	msg    string
+}
+
+func (r *recorder) Error(args ...any) { r.failed = true; r.msg = fmt.Sprint(args...) }
+
+// Golden itself fails the test, naming the snapshot it looked for, and
+// not only check: a Golden that logged instead would pass every caller.
+func TestGoldenReportsAMissingSnapshot(t *testing.T) {
+	updateFlag(t, false) // never write into testdata, even under -update
+	r := &recorder{T: t}
+	Golden(r, individualV1(), plan.ForMessage(nil, "individuals", base))
+	if !r.failed {
+		t.Fatal("Golden passed with no snapshot checked in")
+	}
+	if !strings.Contains(r.msg, filepath.Join("testdata", t.Name()+".golden")) {
+		t.Errorf("message does not name the snapshot path: %s", r.msg)
+	}
+	if !strings.Contains(r.msg, rerun(t.Name())) {
+		t.Errorf("message does not give the command that writes it: %s", r.msg)
 	}
 }

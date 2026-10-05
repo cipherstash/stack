@@ -71,9 +71,14 @@ func init() {
 	}
 }
 
+// lookupFlag finds a flag on the default flag set. It is a variable so a
+// test can read -update from a flag set of its own instead of setting the
+// one the whole test binary shares.
+var lookupFlag = flag.Lookup
+
 // updating reports whether the test binary was run with -update.
 func updating() bool {
-	f := flag.Lookup("update")
+	f := lookupFlag("update")
 	if f == nil {
 		return false
 	}
