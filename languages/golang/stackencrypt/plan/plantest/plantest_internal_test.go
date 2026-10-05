@@ -6,6 +6,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -104,10 +105,12 @@ func TestRenameWithoutAPinIsAContextChange(t *testing.T) {
 		"-  context individuals/medicare_number",
 		"+  context individuals/medicare_no",
 	)
-	// A context change is data loss, not a migration or a new column.
-	if strings.Contains(err.Error(), "TARGET CHANGES") || strings.Contains(err.Error(), "OTHER CHANGES") {
-		t.Errorf("a rename is reported as more than a context change:\n%s", err)
+	// A context change is data loss, not a migration. The new column is
+	// still listed, since the guess may be wrong.
+	if strings.Contains(err.Error(), "TARGET CHANGES") {
+		t.Errorf("a rename is reported as a migration:\n%s", err)
 	}
+	mustContain(t, err, "OTHER CHANGES", "new column medicare_no, under \"individuals/medicare_no\", with terms [eq]. It is also named above as a possible rename of column medicare_number.")
 
 	pinned := plan.ForMessage(nil, "individuals", plan.FirstOf(
 		plan.When(plan.Field("medicare_no"), plan.Encrypt(plan.EQL(se.Equality)), plan.Column("medicare_number")),
@@ -153,7 +156,8 @@ func TestChangesAreSortedByWhatTheyCost(t *testing.T) {
 	for name, tc := range map[string]struct {
 		before, after plan.Message
 		src           plan.Source // individualV1 when nil
-		section       string      // the only section reported; "" when it does not build
+		section       string      // the section reported; "" when it does not build
+		also          []string    // further sections reported
 		says          []string
 		never         []string // advice that would be wrong here
 	}{
@@ -194,6 +198,7 @@ func TestChangesAreSortedByWhatTheyCost(t *testing.T) {
 			after:   plan.ForMessage(nil, "people", base),
 			src:     individualV2(),
 			section: "CONTEXT CHANGES",
+			also:    []string{"OTHER CHANGES"},
 			says:    []string{`Restoring plan.Table("individuals") and pinning the rule that decides field medicare_no (MedicareNo) with plan.Column("medicare_number") brings it back.`},
 		},
 		"target kind changed under the same context": {
@@ -285,8 +290,9 @@ func TestChangesAreSortedByWhatTheyCost(t *testing.T) {
 				return
 			}
 			for _, s := range []string{"CONTEXT CHANGES", "TARGET CHANGES", "OTHER CHANGES"} {
-				if got := strings.Contains(err.Error(), s); got != (s == tc.section) {
-					t.Errorf("reports %s = %v, want only %s:\n%s", s, got, tc.section, err)
+				want := s == tc.section || slices.Contains(tc.also, s)
+				if got := strings.Contains(err.Error(), s); got != want {
+					t.Errorf("reports %s = %v, want %s and %v only:\n%s", s, got, tc.section, tc.also, err)
 				}
 			}
 		})
@@ -329,6 +335,34 @@ func TestSharedCustomContextIsNotARename(t *testing.T) {
 	}
 }
 
+// An unrelated field added as another is removed, with the same facts,
+// looks like a rename. The guess says it may be one, warns against the
+// pin if it is not, and still lists the new column, so the developer can
+// tell which it is.
+func TestARenameGuessStatesTheOtherReading(t *testing.T) {
+	m := plan.ForMessage(nil, "individuals", base)
+	path, _ := record(t, proto(
+		plan.Fact{Field: "id", GoField: "Id", Number: 1},
+		plan.Fact{Field: "home_phone", GoField: "HomePhone", Number: 2, Annotations: classified("user.contact.phone")},
+	), m)
+	_, err := check(path, proto(
+		plan.Fact{Field: "id", GoField: "Id", Number: 1},
+		plan.Fact{Field: "work_phone", GoField: "WorkPhone", Number: 3, Annotations: classified("user.contact.phone")},
+	), m, false, "RERUN")
+	mustContain(t, err,
+		"CONTEXT CHANGES",
+		`column home_phone: no field writes its context "individuals/home_phone" any more.`,
+		`Field work_phone (WorkPhone) now writes column work_phone under "individuals/work_phone" with the same facts, so it may be the same field renamed:`,
+		`with plan.Column("home_phone") keeps it.`,
+		"If work_phone is instead a new field and home_phone was removed, do not pin it: that would store two fields in column home_phone under one context.",
+		"OTHER CHANGES",
+		`new column work_phone, under "individuals/work_phone", with terms [none]. It is also named above as a possible rename of column home_phone.`,
+	)
+	if strings.Contains(err.Error(), "likely") {
+		t.Errorf("the guess is stated as likely:\n%s", err)
+	}
+}
+
 // A Custom context that happens to be spelled like an identity is still
 // Custom: the kind is not read off one sample.
 func TestTargetKind(t *testing.T) {
@@ -363,7 +397,7 @@ func TestAmbiguousRenameIsNotGuessed(t *testing.T) {
 	)
 	_, err := check(path, split, m, false, "RERUN")
 	mustContain(t, err, "If its field was renamed", "new column medicare_a", "new column medicare_b")
-	if strings.Contains(err.Error(), "likely the same field renamed") {
+	if strings.Contains(err.Error(), "may be the same field renamed") {
 		t.Errorf("guessed a rename between two candidates:\n%s", err)
 	}
 }

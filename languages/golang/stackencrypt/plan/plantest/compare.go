@@ -130,16 +130,23 @@ func compare(old, cur snapshot, facts []plan.Fact, m plan.Message) changes {
 			continue
 		}
 		// The context is lost. The only new column with the same facts,
-		// under a context new to the snapshot, is most likely the same
-		// field renamed.
+		// under a context new to the snapshot, may be the same field
+		// renamed. Matching facts are no proof: an unrelated new field can
+		// carry the same ones, and pinning it would store two fields in one
+		// column. So the guess states both readings, and the column is
+		// still listed as new.
 		msg := fmt.Sprintf("column %s: no field writes its context %q any more.", token(o.name), o.context)
 		if n, ok := only(cur.columns, func(n column) bool {
 			_, before := oldCols[n.name]
 			return !before && !seenCol[n.name] && !oldContexts[n.context] && len(o.facts) > 0 && slices.Equal(n.facts, o.facts)
 		}); ok {
 			seenCol[n.name] = true
-			msg += fmt.Sprintf(" Field %s now writes column %s under %q with the same facts, so it is likely the same field renamed. %s",
-				fieldName(n.from), token(n.name), n.context, pinAdvice(m, facts, n.from, o, old.table))
+			msg += fmt.Sprintf(" Field %s now writes column %s under %q with the same facts, so it may be the same field renamed: %s"+
+				" If %s is instead a new field and %s was removed, do not pin it: that would store two fields in column %s under one context.",
+				fieldName(n.from), token(n.name), n.context, pinAdvice(m, facts, n.from, o, old.table),
+				token(n.name), token(o.name), token(o.name))
+			c.other = append(c.other, fmt.Sprintf("new column %s, under %q, with terms [%s]. It is also named above as a possible rename of column %s.",
+				token(n.name), n.context, termList(n.terms), token(o.name)))
 			c.stored(o, n)
 		} else {
 			msg += fmt.Sprintf(" If its field was renamed, pin the renamed field's rule with plan.Column(%q); if it was removed, rows written under it can no longer be read through this policy.", o.name)
