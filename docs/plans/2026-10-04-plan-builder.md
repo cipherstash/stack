@@ -40,8 +40,8 @@ the tagged encoding).
 
 After this work there is one front end, a **plan builder**, with three
 authors: a person writing a chain, the derive writing it from attributes, and
-the FFI writing it from data. The Go binding mirrors the same chain. The
-combinators stay public as the extension point. Everything a Rust caller, the
+the FFI writing it from data. The Go binding uses the same plans in Go's own
+call shape. The combinators stay public as the extension point. Everything a Rust caller, the
 derive, Go and the guest produce for the same declaration is the same bytes
 by construction, because it is the same code.
 
@@ -101,8 +101,8 @@ split was the problem, not the function names:
    await nothing has touched a key.
 2. **The context slot is named `context`.** It is the honest name for what is
    supplied. `under` was rejected (borrowed from `Encryption::under`, and
-   opaque to a reader). Go accepts the clash with `context.Context`; every
-   Go call's first argument is already `ctx`.
+   opaque to a reader). The Go binding has no `context` method; see "The Go
+   binding".
 3. **Field-by-field is a modifier, `.fields()`, not a second verb.**
    `columns` was rejected as database-centric; the SDKs are not only for
    databases. `fields` is the derive docs' own phrase ("field by field") and
@@ -501,63 +501,199 @@ them on the struct and lowers them through `spec()`. The data form is what
 crosses the FFI and what a saved plan in Go holds; the Rust side never loses
 the type.
 
-## The Go mirror
+## The Go binding
 
-> #1070 replaces this chain with a generator, `stashgen`, that writes each
-> type's encrypted type and plan as data; this section is the first sketch.
-
-Go mirrors the chain with one difference: no `await`, so the finalizer is an
-explicit `Run(ctx)`. One verb, `Encrypt`, for a tree and for a plan alike.
-The plan is a value, because in Go it is produced by the policy package
-(`plan.PlanFor`) and by struct tags, and because it is the data the guest
-receives.
+Go uses the same plans as Rust, in Go's own call shape.
+A plan is built and checked once, then held in a package-level variable.
+Every operation is a method on a typed plan.
+It takes `ctx` first and the cipher second, and it returns a concrete type.
+[The Go examples](2026-10-04-plan-builder/README.md) show each part below as a complete program.
 
 ```go
-// One value, one tree. The full chain: plan built and run in one call.
-ct, err  := cipher.Encrypt(doc).Context("documents/v2/body").Run(ctx)
-row, err := cipher.Encrypt(user).Context("users").Fields().
-    EncryptIndex("email", stackencrypt.Equality, stackencrypt.Match).
-    EncryptIndex("age", stackencrypt.Equality, stackencrypt.Ore).
-    Index("attrs", stackencrypt.Json()).
-    Encrypt("notes").
-    Passthrough("id").
-    Run(ctx)                                   // Build()'s validation happens here, same errors
+type User struct {
+	_     struct{} `stash:"context=users"`
+	ID    int64    `stash:"id,passthrough"`
+	Email string   `stash:"email,encrypt,index=equality;match"`
+	Age   uint32   `stash:"age,encrypt,index=equality;ore"`
+	Notes string   `stash:"notes,encrypt"`
+}
 
-// The same chain without the value: a plan.
-usersPlan, err := stackencrypt.PlanContext("users").Fields().
-    EncryptIndex("email", stackencrypt.Equality, stackencrypt.Match).
-    EncryptIndex("age", stackencrypt.Equality, stackencrypt.Ore).
-    Index("attrs", stackencrypt.Json()).
-    Encrypt("notes").
-    Passthrough("id").
-    Build()
+var (
+	usersPlan = stackencrypt.MustBind[User](stackencrypt.MustPlanOf[User]())
+	emailPlan = stackencrypt.MustField[string](usersPlan, "email")
+)
 
-// Struct tags are Go's derive. They are never applied silently: the plan is
-// named, and PlanOf reads and caches the tags, the Go spelling of
-// EncryptedUser::plan(). A chain with no Using is the tree, as it reads.
-usersPlan := stackencrypt.PlanOf[User]()
+cipher := client.Keyset(stackencrypt.KeysetName("tenant-42"))
 
-row,  err := cipher.Encrypt(user).Using(usersPlan).Run(ctx)
-rows, err := cipher.Encrypt(users).Using(usersPlan).Run(ctx)
-err        = cipher.Decrypt(row).Using(usersPlan).Into(&user).Run(ctx)
-emailPlan, err := usersPlan.Field("email")
-q,    err := cipher.Query("bob@example.com").Using(emailPlan).Equality().Run(ctx)
+record, err := usersPlan.Encrypt(ctx, cipher, alice)            // EncryptedRecord
+records, err := usersPlan.EncryptAll(ctx, cipher, people)       // []EncryptedRecord, one ZeroKMS request
+user, err := usersPlan.Decrypt(ctx, client, record)             // User
+term, err := emailPlan.Equality(ctx, cipher, "bob@example.com") // EqualityTerm
 ```
 
-- Indexes are the existing `TermKind` values (data); Go has no way to make
-  `Match` on an integer a compile error, so it is a `Build()` error, as today.
-- `Encrypt` takes a `Context` where today it takes `aad []byte`; raw bytes
-  stay possible as `NewContext(bytes)`, the same bytes part Rust accepts.
-- The output types are what the binding has: `EncryptedRecord` and
-  `EncryptedField`. A typed `Plan[T]` is superseded by #1070's generated
-  types.
-- Removed: `Encrypt(…, aad []byte)`, `EncryptElement`, `DecryptElement`,
-  `EncryptRecord(s)`, `DecryptRecord(s)`, `Term`, `RecordOption`, `WithPlan`,
-  `PlanFromTags` (replaced by `PlanOf[T]`) and the "zero Plan means the
-  struct's tags" rule. The binding has never been released, so they are
-  removed, not deprecated.
-- Mixed batches: `Prepare` on each chain and one `stackencrypt.Run(ctx, p1,
-  p2)`, mirroring `all(..)`. Sugar, not the entry point.
+### Plan types
+
+Four types hold a plan:
+
+- `Plan` is the untyped data form.
+  `NewPlan`, `PlanOf` and the policy package make one, and the guest receives one.
+- `RecordPlan[T]` is a `Plan` that `Bind[T]` binds to the struct type `T`.
+- `ValuePlan[T]` is a plan for one value of type `T`.
+  `NewValuePlan[T]` makes one, and `Field[V]` takes one field of a record plan as one.
+- `RowPlan[T, R]` is a record plan whose output is the storage struct `R`.
+  `NewRowPlan[R]` makes one.
+
+Each constructor returns an error, and each has a `Must` form that panics, for package-level variables.
+A plan does not change after it is built, and any number of goroutines can use it at the same time.
+See [`users/model.go`](2026-10-04-plan-builder/users/model.go) and [`blocklist/blocklist.go`](2026-10-04-plan-builder/blocklist/blocklist.go).
+
+### Plans from struct tags
+
+`PlanOf[T]` reads the `stash` tag on each field of `T`:
+
+| Tag | Field verb |
+|---|---|
+| `` _ struct{} `stash:"context=users"` `` | the plan's context |
+| `stash:"notes,encrypt"` | `Encrypt` |
+| `stash:"email,encrypt,index=equality;match"` | `EncryptIndex` |
+| `stash:"attrs,index=json"` | `Index` |
+| `stash:"id,passthrough"` | `Passthrough` |
+| `stash:"-"` | `Omit` |
+
+The index names are `equality`, `match`, `ore`, `ope` and `json`.
+`PlanOf` refuses an exported field with no `stash` tag.
+It ignores unexported fields.
+The fields of an embedded struct are fields of the outer struct.
+
+### The builder
+
+`NewPlan` makes the same kind of plan without tags:
+
+```go
+contactsPlan, err := stackencrypt.NewPlan("contacts").
+	Passthrough("id").
+	EncryptIndex("email", stackencrypt.Equality, stackencrypt.Match()).
+	EncryptIndex("phone_number", stackencrypt.Equality).
+	Omit("internal").
+	Build()
+```
+
+A field name is the record key, which is the column name in a database.
+`EncryptIndex` and `Index` take one index and then any number more, so an empty index set does not compile.
+Each method returns a new builder and does not change the builder it is called on.
+`Build` checks the whole-plan rules and returns a `Plan`.
+See [`contacts/contacts.go`](2026-10-04-plan-builder/contacts/contacts.go).
+
+`Bind[T]` matches each plan field to a field of `T`.
+It uses the `stash` tag name first, then the Go field name that a policy fact records, then the Go field name in snake_case.
+It refuses a plan field with no match, and a field of `T` that the plan does not name.
+It also refuses an index that does not apply to the field's Go type, such as `Match` on an integer.
+
+### The policy package
+
+`plan.PlanFor` makes a `Plan` from facts and a policy.
+`plan.EQL` takes `stackencrypt.Index` values.
+A field that the policy stores as plaintext is an `Omit` field in the plan, so `Bind` accepts the struct.
+See [`individuals/individuals.go`](2026-10-04-plan-builder/individuals/individuals.go).
+
+### Indexes
+
+`Index` is an interface that only `stackencrypt` implements.
+`Equality`, `Ore` and `Ope` are values.
+`Match(opts ...MatchOption)` and `JSON(opts ...JSONOption)` are constructors that take the index's options.
+
+### Operations
+
+| Method | Returns |
+|---|---|
+| `RecordPlan[T].Encrypt(ctx, c *Cipher, v T, opts ...Option)` | `EncryptedRecord` |
+| `RecordPlan[T].EncryptAll(ctx, c *Cipher, vs []T, opts ...Option)` | `[]EncryptedRecord` |
+| `RecordPlan[T].Decrypt(ctx, d Decrypter, r EncryptedRecord, opts ...Option)` | `T` |
+| `RecordPlan[T].DecryptAll(ctx, d Decrypter, rs []EncryptedRecord, opts ...Option)` | `[]T` |
+| `RowPlan[T, R]`: the same four methods | `R` in place of `EncryptedRecord` |
+| `ValuePlan[T]`: the same four methods | `EncryptedField` in place of `EncryptedRecord` |
+| `ValuePlan[T].Equality(ctx, c *Cipher, v T, opts ...Option)` | `EqualityTerm` |
+| `ValuePlan[T].Match`, `ValuePlan[T].Ore`, `ValuePlan[T].Ope` | `MatchTerm`, `OreTerm`, `OpeTerm` |
+| `ValuePlan[T].Contains(ctx, c *Cipher, v T, opts ...Option)` | `JSONQuery` |
+| `ValuePlan[T].Selector(ctx, c *Cipher, path JSONPath, opts ...Option)` | `JSONSelector` |
+| `ValuePlan[T].EqualAt(ctx, c *Cipher, path JSONPath, v any, opts ...Option)` | `JSONQuery` |
+| `Cipher.Encrypt(ctx, v any, c Context, opts ...Option)` | `Ciphertext`, one tree |
+| `DecryptValue[T](ctx, d Decrypter, ct Ciphertext, c Context, opts ...Option)` | `T` |
+
+Every method also returns an `error`.
+`EncryptAll` and `DecryptAll` send one ZeroKMS request for the whole slice.
+A query method for an index that the field does not declare returns `ErrIndexNotDeclared`.
+`NewContext(bytes)` makes a `Context` from raw bytes, the same bytes part that Rust accepts.
+See [`users/sqlstore.go`](2026-10-04-plan-builder/users/sqlstore.go) and [`documents/documents.go`](2026-10-04-plan-builder/documents/documents.go).
+
+`*Client` and `*Cipher` both implement `Decrypter`.
+A `*Client` decrypts each leaf under the keyset that sealed it.
+A `*Cipher` also refuses a leaf from another keyset, with `ErrForeignKeyset`.
+
+The cipher holds the keyset: `client.Keyset(stackencrypt.KeysetName("tenant-42"))`.
+No call takes a keyset option.
+
+`ExtendContext(parts ...any)` is the one `Option`.
+It extends the context of every field in the plan.
+The write, the query and the read must pass the same parts.
+See [`users/extend.go`](2026-10-04-plan-builder/users/extend.go).
+
+### Output types
+
+`EncryptedRecord.Field(name)` returns the named field's `EncryptedField`.
+For a name that the plan does not have, it returns `ErrUnknownField` and never a zero value.
+`EncryptedField` holds `Ciphertext`, `Equality`, `Match`, `Ore`, `Ope` and `JSON`.
+An output that the plan does not declare is nil.
+
+`Ciphertext`, each term type, `JSONDocument`, `JSONQuery` and `JSONSelector` implement `driver.Valuer`.
+`Ciphertext`, each term type and `JSONDocument` also implement `sql.Scanner`.
+
+`NewRowPlan[R]` reads the `stash` tags of `R`.
+`stash:"email"` holds the field's ciphertext, and `stash:"email,equality"` holds one of its terms.
+`NewRowPlan` refuses a field of `R` with no tag, and a plan output with no field in `R`.
+
+### Errors
+
+`Build`, `Bind`, `NewRowPlan`, `Field` and every operation return a `*PlanError`.
+A `*PlanError` names the field and wraps one rule:
+
+- `ErrUnknownField`: the plan has no field with that name.
+- `ErrMissingField`: a plan field is not in the value.
+- `ErrUnplannedField`: the value has a field that the plan does not name.
+- `ErrIndexNotDeclared`: the field does not declare that index.
+- `ErrIndexType`: the index does not apply to the field's type.
+
+Use `errors.As` and `errors.Is` to read it.
+No error holds a plaintext value.
+
+### Databases and ORMs
+
+- **database/sql:** the `R` of a `RowPlan` is the row struct.
+  Pass its fields to `ExecContext`, and `Scan` into them.
+  See [`users/sqlstore.go`](2026-10-04-plan-builder/users/sqlstore.go).
+- **GORM:** the store encrypts and decrypts outside GORM, and `R` is the GORM model.
+  See [`users/gormstore.go`](2026-10-04-plan-builder/users/gormstore.go).
+- **sqlc:** column overrides set each column's `go_type`, and `go_struct_tag` puts the `stash` tag on the generated struct.
+  The generated model is `R`, and an `INSERT` params struct converts from it.
+  See [`users/sqlcstore.go`](2026-10-04-plan-builder/users/sqlcstore.go) and [`sqlc/sqlc.yaml`](2026-10-04-plan-builder/sqlc/sqlc.yaml).
+- **sqlc with EQL domain columns:** sqlc reads a file that declares the domains in place of the EQL install bundle, which it cannot parse.
+  See [the three rules for EQL domain columns](2026-10-04-plan-builder/README.md#use-sqlc-with-eql-domain-columns).
+
+### Removed
+
+The binding has never been released, so these are removed, not deprecated:
+
+- `Cipher.Encrypt(ctx, v, aad []byte)`: `Cipher.Encrypt` takes a `Context`.
+- `Cipher.Decrypt` and `Client.Decrypt`: `DecryptValue[T]` replaces them.
+- `EncryptElement` and `DecryptElement`.
+- `EncryptRecord`, `EncryptRecords`, `DecryptRecord` and `DecryptRecords`, on `Cipher` and on `Client`: `RecordPlan[T]` replaces them.
+- `Cipher.Term`: the query methods of `ValuePlan[T]` replace it.
+- `RecordOption` and `WithPlan`.
+- `TermKind`: `Index` replaces it.
+- `FieldPlan`, `NewPlan(fields ...FieldPlan)` and `Plan.Validate`: the builder and `Bind[T]` replace them.
+- `PlanFromTags`: `PlanOf[T]` replaces it.
+- The rule that a zero `Plan` means the struct's tags.
+- `Sealed`, `SealedNone`, `SealedEmptyMap` and `SealedEmptySeq` as storage types: `Ciphertext` replaces them.
 
 ### The guest
 
@@ -595,11 +731,11 @@ source.
 | Concern | Rust | Go | Node/TS | Python | C# |
 |---|---|---|---|---|---|
 | Shell | in-process | WASI guest (wazero) | napi; the guest for `wasm-inline` on the edge | PyO3 | P/Invoke to a cdylib |
-| Finalizer | `.await` | `Run(ctx)` | `await` (thenable chain) | `await` plus sync `.run()` | `await` (`GetAwaiter`) or `RunAsync(ct)` |
-| Plan from a type | derive | tags, `PlanOf[T]()` | schema builder or decorators | `Plan.of(User)` over `Annotated` | attributes; reflection or a source generator |
-| Index applies to type | compile time | `Build()` | partly via conditional types | build | partly via constraints |
-| Typed output | `Encrypted<Terms>`, derived struct | `EncryptedRecord`; `Plan[T]` later | inferred from the plan | dict or the dataclass | `Plan<T>`, `Task<T>` |
-| Query form | source type | source struct | overloads or union | runtime type | overloads |
+| Finalizer | `.await` | none: each method runs when called, `ctx` first | `await` (thenable chain) | `await` plus sync `.run()` | `await` (`GetAwaiter`) or `RunAsync(ct)` |
+| Plan from a type | derive | tags, `PlanOf[T]()` then `Bind[T]` | schema builder or decorators | `Plan.of(User)` over `Annotated` | attributes; reflection or a source generator |
+| Index applies to type | compile time | `Bind[T]` | partly via conditional types | build | partly via constraints |
+| Typed output | `Encrypted<Terms>`, derived struct | `RecordPlan[T]`, `RowPlan[T, R]`, `ValuePlan[T]` | inferred from the plan | dict or the dataclass | `Plan<T>`, `Task<T>` |
+| Query form | source type | one method for each form | overloads or union | runtime type | overloads |
 
 The fail-closed `build()` checks are the floor everywhere; compile-time checks
 are a bonus where the language has them.
@@ -751,6 +887,9 @@ Then:
 
 ## Open questions
 
+- **A batch across plans in Go.**
+  `EncryptAll` and `DecryptAll` batch the values of one plan.
+  The Go form of `all(..)` gives a typed handle for each operation, and the Go PR settles its spelling.
 - **Converging the TypeScript schema builder onto the plan grammar**, so
   `@cipherstash/stack` stops being a second engine beside stack-encrypt.
   Out of scope here; recorded so a TS binding does not grow an executor.
