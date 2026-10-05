@@ -6,7 +6,7 @@ import (
 	"errors"
 
 	"example.com/app/internal/userdb"
-	"github.com/cipherstash/stack/languages/golang/stackencrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt"
 )
 
 var ErrNotFound = errors.New("users: not found")
@@ -24,7 +24,7 @@ func NewSQLCStore(db *sql.DB) *SQLCStore {
 	return &SQLCStore{db: db, queries: userdb.New(db)}
 }
 
-func (s *SQLCStore) Import(ctx context.Context, cipher *stackencrypt.Cipher, people []User) error {
+func (s *SQLCStore) Import(ctx context.Context, cipher *encrypt.Cipher, people []User) error {
 	encrypted, err := Encrypt(ctx, cipher, people)
 	if err != nil {
 		return err
@@ -45,7 +45,7 @@ func (s *SQLCStore) Import(ctx context.Context, cipher *stackencrypt.Cipher, peo
 	return tx.Commit()
 }
 
-func (s *SQLCStore) Get(ctx context.Context, cipher *stackencrypt.Cipher, id int64) (User, error) {
+func (s *SQLCStore) Get(ctx context.Context, cipher *encrypt.Cipher, id int64) (User, error) {
 	row, err := s.queries.GetUser(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrNotFound
@@ -60,7 +60,7 @@ func (s *SQLCStore) Get(ctx context.Context, cipher *stackencrypt.Cipher, id int
 	return users[0], nil
 }
 
-func (s *SQLCStore) FindByEmail(ctx context.Context, cipher *stackencrypt.Cipher, email string) ([]User, error) {
+func (s *SQLCStore) FindByEmail(ctx context.Context, cipher *encrypt.Cipher, email string) ([]User, error) {
 	query, err := Fields.Email.Query(ctx, cipher, email)
 	if err != nil {
 		return nil, err
@@ -78,7 +78,7 @@ func (s *SQLCStore) FindByEmail(ctx context.Context, cipher *stackencrypt.Cipher
 
 // ChangeEmail rewrites one field. One EQL column holds the ciphertext and
 // its term, so they cannot go out of step.
-func (s *SQLCStore) ChangeEmail(ctx context.Context, cipher *stackencrypt.Cipher, id int64, email string) error {
+func (s *SQLCStore) ChangeEmail(ctx context.Context, cipher *encrypt.Cipher, id int64, email string) error {
 	sealed, err := Fields.Email.Encrypt(ctx, cipher, email)
 	if err != nil {
 		return err

@@ -6,8 +6,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/cipherstash/stack/languages/golang/stackencrypt"
-	"github.com/cipherstash/stack/languages/golang/stackencrypt/gensupport"
+	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt/gensupport"
 )
 
 // Stops compiling when the library does not accept this version of generated file.
@@ -17,7 +17,7 @@ const _ = gensupport.GeneratedVersion1
 // LogValue method. Write them, or run stashgen with -redact.
 
 type EncryptedDocument struct {
-	Sealed stackencrypt.Ciphertext
+	Sealed encrypt.Ciphertext
 }
 
 func (e EncryptedDocument) String() string {
@@ -72,18 +72,18 @@ var codec = gensupport.New(gensupport.Generated[Document, EncryptedDocument]{
 	},
 })
 
-func Encrypt(ctx context.Context, cipher *stackencrypt.Cipher, documents []Document) ([]EncryptedDocument, error) {
+func Encrypt(ctx context.Context, cipher *encrypt.Cipher, documents []Document) ([]EncryptedDocument, error) {
 	return codec.Encrypt(ctx, cipher, documents)
 }
 
-func Decrypt(ctx context.Context, d stackencrypt.Decrypter, encrypted []EncryptedDocument) ([]Document, error) {
+func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedDocument) ([]Document, error) {
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
-func EncryptInto(dst *[]EncryptedDocument, documents []Document) stackencrypt.Operation {
+func EncryptInto(dst *[]EncryptedDocument, documents []Document) encrypt.Operation {
 	return codec.EncryptInto(dst, documents)
 }
 
-func DecryptInto(dst *[]Document, encrypted []EncryptedDocument) stackencrypt.Operation {
+func DecryptInto(dst *[]Document, encrypted []EncryptedDocument) encrypt.Operation {
 	return codec.DecryptInto(dst, encrypted)
 }

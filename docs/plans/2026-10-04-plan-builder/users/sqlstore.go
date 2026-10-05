@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/cipherstash/stack/languages/golang/stackencrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt"
 )
 
 const (
@@ -26,7 +26,7 @@ func NewSQLStore(db *sql.DB) *SQLStore {
 
 // Import encrypts every user in one ZeroKMS request, then inserts them in one
 // transaction.
-func (s *SQLStore) Import(ctx context.Context, cipher *stackencrypt.Cipher, people []User) error {
+func (s *SQLStore) Import(ctx context.Context, cipher *encrypt.Cipher, people []User) error {
 	encrypted, err := Encrypt(ctx, cipher, people)
 	if err != nil {
 		return fmt.Errorf("encrypt %d users: %w", len(people), err)
@@ -52,13 +52,13 @@ func (s *SQLStore) Import(ctx context.Context, cipher *stackencrypt.Cipher, peop
 	return tx.Commit()
 }
 
-func (s *SQLStore) Create(ctx context.Context, cipher *stackencrypt.Cipher, user User) error {
+func (s *SQLStore) Create(ctx context.Context, cipher *encrypt.Cipher, user User) error {
 	return s.Import(ctx, cipher, []User{user})
 }
 
 // FindByEmail matches the whole address. Postgres compares the encrypted
 // column through EQL's = operator.
-func (s *SQLStore) FindByEmail(ctx context.Context, cipher *stackencrypt.Cipher, email string) ([]User, error) {
+func (s *SQLStore) FindByEmail(ctx context.Context, cipher *encrypt.Cipher, email string) ([]User, error) {
 	query, err := Fields.Email.Query(ctx, cipher, email)
 	if err != nil {
 		return nil, err

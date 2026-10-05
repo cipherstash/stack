@@ -5,7 +5,7 @@ package accounts
 import (
 	"context"
 
-	"github.com/cipherstash/stack/languages/golang/stackencrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"gorm.io/gorm"
 )
 
@@ -30,7 +30,7 @@ type Account struct {
 
 func (EncryptedAccount) TableName() string { return "accounts" }
 
-func Create(ctx context.Context, db *gorm.DB, cipher *stackencrypt.Cipher, accounts []Account) error {
+func Create(ctx context.Context, db *gorm.DB, cipher *encrypt.Cipher, accounts []Account) error {
 	encrypted, err := Encrypt(ctx, cipher, accounts)
 	if err != nil {
 		return err

@@ -3,7 +3,7 @@ package users
 import (
 	"context"
 
-	"github.com/cipherstash/stack/languages/golang/stackencrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"gorm.io/gorm"
 )
 
@@ -22,7 +22,7 @@ func NewGormStore(db *gorm.DB) *GormStore {
 	return &GormStore{db: db}
 }
 
-func (s *GormStore) Create(ctx context.Context, cipher *stackencrypt.Cipher, people ...User) error {
+func (s *GormStore) Create(ctx context.Context, cipher *encrypt.Cipher, people ...User) error {
 	encrypted, err := Encrypt(ctx, cipher, people)
 	if err != nil {
 		return err
@@ -30,7 +30,7 @@ func (s *GormStore) Create(ctx context.Context, cipher *stackencrypt.Cipher, peo
 	return s.db.WithContext(ctx).CreateInBatches(encrypted, 500).Error
 }
 
-func (s *GormStore) FindByEmail(ctx context.Context, cipher *stackencrypt.Cipher, email string) ([]User, error) {
+func (s *GormStore) FindByEmail(ctx context.Context, cipher *encrypt.Cipher, email string) ([]User, error) {
 	query, err := Fields.Email.Query(ctx, cipher, email)
 	if err != nil {
 		return nil, err

@@ -13,7 +13,7 @@ import (
 	"example.com/app/crm"
 	"example.com/app/documents"
 	"example.com/app/users"
-	"github.com/cipherstash/stack/languages/golang/stackencrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt"
 )
 
 func main() {
@@ -23,7 +23,7 @@ func main() {
 }
 
 func run(ctx context.Context) error {
-	client, err := stackencrypt.NewClient(ctx, stackencrypt.WithCredentials(stackencrypt.AutoCredentials()))
+	client, err := encrypt.NewClient(ctx, encrypt.WithCredentials(encrypt.AutoCredentials()))
 	if err != nil {
 		return err
 	}
@@ -37,7 +37,7 @@ func run(ctx context.Context) error {
 
 	// One cipher for each tenant: its keyset, and its part of every field's
 	// context. Every call through this cipher carries both.
-	cipher := client.Keyset(stackencrypt.KeysetName("tenant-42")).Extend("tenant-42")
+	cipher := client.Keyset(encrypt.KeysetName("tenant-42")).Extend("tenant-42")
 	store := users.NewSQLStore(db)
 
 	alice := users.User{ID: 1, Email: "alice@example.com", Name: "Alice Ng", Internal: "never stored"}
@@ -62,7 +62,7 @@ func run(ctx context.Context) error {
 	list := []crm.Contact{{ID: 9, Email: "dan@example.com", PhoneNumber: "+61 400 000 000"}}
 	var encryptedUsers []users.EncryptedUser
 	var encryptedContacts []contacts.EncryptedContact
-	err = stackencrypt.Batch(ctx, cipher,
+	err = encrypt.Batch(ctx, cipher,
 		users.EncryptInto(&encryptedUsers, newHires),
 		contacts.EncryptInto(&encryptedContacts, list),
 	)

@@ -8,7 +8,7 @@ package userdb
 import (
 	"context"
 
-	"github.com/cipherstash/stack/languages/golang/stackencrypt/eql"
+	"github.com/cipherstash/stack/languages/golang/encrypt/eql"
 )
 
 const createUser = `-- name: CreateUser :exec

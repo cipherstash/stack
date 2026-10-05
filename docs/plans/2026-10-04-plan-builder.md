@@ -506,6 +506,7 @@ the type.
 The Go SDK is what a Go program uses: struct tags, a generator, and the code the generator writes.
 The binding is the WASI interface between that code and the Rust engine.
 The SDK follows [the language SDK design principles](../sdk-design-principles.md).
+Its package is `encrypt`, at `languages/golang/encrypt`.
 
 A struct's `stash` tags declare how each field is encrypted.
 A generator, `stashgen`, writes the encrypted type and its functions from the tags.
@@ -521,7 +522,7 @@ type User struct {
 	Name  string   `stash:"name,encrypt_into=TextEq"`
 }
 
-cipher := client.Keyset(stackencrypt.KeysetName("tenant-42"))
+cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
 
 encrypted, err := users.Encrypt(ctx, cipher, people)                   // []users.EncryptedUser, one ZeroKMS request
 people, err := users.Decrypt(ctx, cipher, encrypted)                   // []users.User
@@ -610,7 +611,7 @@ A library that maps one struct field to one column needs a model for this layout
 ### EQL types
 
 An EQL type is the Go type of one EQL column.
-`eql-codegen` writes the package `stackencrypt/eql` from the EQL catalog.
+`eql-codegen` writes the package `encrypt/eql` from the EQL catalog.
 It is a package in the Go module, and not a module of its own.
 The same catalog gives the Rust and TypeScript types, so a type has one name in every language, such as `TextEq`.
 The JSON type is the exception: its Go name is `JSON`.
@@ -678,14 +679,14 @@ See [`users/model.go`](2026-10-04-plan-builder/users/model.go) and [`users/user_
 
 | Call | Returns |
 |---|---|
-| `users.Encrypt(ctx, c *stackencrypt.Cipher, vs []User)` | `[]EncryptedUser` |
-| `users.Decrypt(ctx, d stackencrypt.Decrypter, es []EncryptedUser)` | `[]User` |
+| `users.Encrypt(ctx, c *encrypt.Cipher, vs []User)` | `[]EncryptedUser` |
+| `users.Decrypt(ctx, d encrypt.Decrypter, es []EncryptedUser)` | `[]User` |
 | `users.Fields.Email.Encrypt(ctx, c, v string)` | the field's generated type, for an update of one column |
 | `users.Fields.Email.Query(ctx, c, v string)` | an EQL query value, for a field with `encrypt_into` |
 | `users.Fields.Email.Equality`, `.Match`, `.Ore`, `.Ope` | one term, for a field with `index=` |
-| `users.EncryptInto(dst *[]EncryptedUser, vs []User)` | a `stackencrypt.Operation`, for a batch |
-| `users.DecryptInto(dst *[]User, es []EncryptedUser)` | a `stackencrypt.Operation`, for a batch |
-| `stackencrypt.Batch(ctx, c, ops ...Operation)` | nothing; it writes each result to its `dst` |
+| `users.EncryptInto(dst *[]EncryptedUser, vs []User)` | a `encrypt.Operation`, for a batch |
+| `users.DecryptInto(dst *[]User, es []EncryptedUser)` | a `encrypt.Operation`, for a batch |
+| `encrypt.Batch(ctx, c, ops ...Operation)` | nothing; it writes each result to its `dst` |
 
 Every call also returns an `error`.
 `Encrypt` and `Decrypt` take a slice, and send one ZeroKMS request for all of it.
@@ -703,7 +704,7 @@ The compiler checks that the variable has the result's type.
 var encryptedUsers []users.EncryptedUser
 var encryptedContacts []contacts.EncryptedContact
 
-err := stackencrypt.Batch(ctx, cipher,
+err := encrypt.Batch(ctx, cipher,
 	users.EncryptInto(&encryptedUsers, people),
 	contacts.EncryptInto(&encryptedContacts, list),
 )
@@ -718,7 +719,7 @@ A `*Cipher` also refuses a value from another keyset, with `ErrForeignKeyset`.
 The cipher holds what changes from one caller to the next: the keyset, and any extension of the context.
 
 ```go
-cipher := client.Keyset(stackencrypt.KeysetName("tenant-42")).Extend("tenant-42")
+cipher := client.Keyset(encrypt.KeysetName("tenant-42")).Extend("tenant-42")
 ```
 
 `Extend` returns a cipher that extends the context of every field, in every call through it.
@@ -922,7 +923,7 @@ It does not send the value of a passthrough field, and it copies that value to t
 Generated code assembles an EQL value from the engine's ciphertext and terms.
 A cross-language fixture guards those bytes: encode in Rust, decode and encode again in Go, and compare.
 
-The package `stackencrypt/gensupport` holds what only generated code calls.
+The package `encrypt/gensupport` holds what only generated code calls.
 No function in it panics.
 Each generated file names a constant, such as `gensupport.GeneratedVersion1`, that only a library of an agreeing version declares.
 So a file from another version does not compile.
@@ -963,6 +964,7 @@ The SDK gives the values for a search, and the program writes the SQL that uses 
 
 The existing Go package has never been released, so these are removed, not deprecated:
 
+- The package name `stackencrypt`: the package is `encrypt`.
 - `Cipher.Encrypt`, `Cipher.Decrypt` and `Client.Decrypt`: an `opaque` struct replaces them.
 - `EncryptElement` and `DecryptElement`.
 - `EncryptRecord`, `EncryptRecords`, `DecryptRecord` and `DecryptRecords`, on `Cipher` and on `Client`.

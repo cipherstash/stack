@@ -6,7 +6,7 @@ import (
 	"context"
 	"database/sql"
 
-	"github.com/cipherstash/stack/languages/golang/stackencrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt"
 )
 
 //go:generate go tool stashgen -type Document
@@ -18,7 +18,7 @@ type Document struct {
 	Tags  []string
 }
 
-func Save(ctx context.Context, db *sql.DB, cipher *stackencrypt.Cipher, id int64, doc Document) error {
+func Save(ctx context.Context, db *sql.DB, cipher *encrypt.Cipher, id int64, doc Document) error {
 	encrypted, err := Encrypt(ctx, cipher, []Document{doc})
 	if err != nil {
 		return err
@@ -28,9 +28,9 @@ func Save(ctx context.Context, db *sql.DB, cipher *stackencrypt.Cipher, id int64
 }
 
 // Load decrypts with the client, which opens each value under the keyset that
-// sealed it. A *stackencrypt.Cipher would also refuse a value from another
+// sealed it. A *encrypt.Cipher would also refuse a value from another
 // keyset.
-func Load(ctx context.Context, db *sql.DB, client *stackencrypt.Client, id int64) (Document, error) {
+func Load(ctx context.Context, db *sql.DB, client *encrypt.Client, id int64) (Document, error) {
 	var encrypted EncryptedDocument
 	if err := db.QueryRowContext(ctx, `SELECT body FROM documents WHERE id = $1`, id).Scan(&encrypted.Sealed); err != nil {
 		return Document{}, err

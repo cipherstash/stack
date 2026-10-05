@@ -6,9 +6,9 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/cipherstash/stack/languages/golang/stackencrypt"
-	"github.com/cipherstash/stack/languages/golang/stackencrypt/eql"
-	"github.com/cipherstash/stack/languages/golang/stackencrypt/gensupport"
+	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt/eql"
+	"github.com/cipherstash/stack/languages/golang/encrypt/gensupport"
 )
 
 // Stops compiling when the library does not accept this version of generated file.
@@ -44,8 +44,8 @@ type userShape struct {
 
 var declaration = gensupport.Declare("users").
 	Passthrough("id").
-	EncryptIndex("email", stackencrypt.Equality).
-	EncryptIndex("name", stackencrypt.Equality).
+	EncryptIndex("email", encrypt.Equality).
+	EncryptIndex("name", encrypt.Equality).
 	Omit("internal")
 
 var codec = gensupport.New(gensupport.Generated[User, EncryptedUser]{
@@ -80,22 +80,22 @@ var codec = gensupport.New(gensupport.Generated[User, EncryptedUser]{
 
 // Encrypt seals every user in one ZeroKMS request. The result has one element
 // for each user, in the same order.
-func Encrypt(ctx context.Context, cipher *stackencrypt.Cipher, users []User) ([]EncryptedUser, error) {
+func Encrypt(ctx context.Context, cipher *encrypt.Cipher, users []User) ([]EncryptedUser, error) {
 	return codec.Encrypt(ctx, cipher, users)
 }
 
 // Decrypt opens every value in one ZeroKMS request.
-func Decrypt(ctx context.Context, d stackencrypt.Decrypter, encrypted []EncryptedUser) ([]User, error) {
+func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedUser) ([]User, error) {
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
-// EncryptInto and DecryptInto describe the same work for stackencrypt.Batch,
+// EncryptInto and DecryptInto describe the same work for encrypt.Batch,
 // which runs it and writes the result to dst.
-func EncryptInto(dst *[]EncryptedUser, users []User) stackencrypt.Operation {
+func EncryptInto(dst *[]EncryptedUser, users []User) encrypt.Operation {
 	return codec.EncryptInto(dst, users)
 }
 
-func DecryptInto(dst *[]User, encrypted []EncryptedUser) stackencrypt.Operation {
+func DecryptInto(dst *[]User, encrypted []EncryptedUser) encrypt.Operation {
 	return codec.DecryptInto(dst, encrypted)
 }
 
@@ -111,12 +111,12 @@ type EmailField struct {
 	field gensupport.Field[string]
 }
 
-func (f EmailField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string) (eql.TextEq, error) {
+func (f EmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	return eql.NewTextEq(out), err
 }
 
-func (f EmailField) Query(ctx context.Context, c *stackencrypt.Cipher, v string) (eql.TextEqQuery, error) {
+func (f EmailField) Query(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
 	out, err := f.field.Query(ctx, c, v)
 	return eql.NewTextEqQuery(out), err
 }
@@ -125,12 +125,12 @@ type NameField struct {
 	field gensupport.Field[string]
 }
 
-func (f NameField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string) (eql.TextEq, error) {
+func (f NameField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	return eql.NewTextEq(out), err
 }
 
-func (f NameField) Query(ctx context.Context, c *stackencrypt.Cipher, v string) (eql.TextEqQuery, error) {
+func (f NameField) Query(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
 	out, err := f.field.Query(ctx, c, v)
 	return eql.NewTextEqQuery(out), err
 }

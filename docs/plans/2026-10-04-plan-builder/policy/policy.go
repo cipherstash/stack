@@ -4,8 +4,8 @@ package policy
 
 import (
 	"example.com/app/individuals"
-	"github.com/cipherstash/stack/languages/golang/stackencrypt"
-	"github.com/cipherstash/stack/languages/golang/stackencrypt/plan"
+	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt/plan"
 )
 
 var category = plan.Key("fides.data_categories")
@@ -33,14 +33,14 @@ var Source = plan.SourceFunc(func(msg any) ([]plan.Fact, error) {
 })
 
 var Base = plan.FirstOf(
-	plan.When(category.Under("user.government_id"), plan.Encrypt(plan.EQL(stackencrypt.Equality))),
-	plan.When(category.Under("user.contact.email"), plan.Encrypt(plan.EQL(stackencrypt.Equality, stackencrypt.Match()))),
+	plan.When(category.Under("user.government_id"), plan.Encrypt(plan.EQL(encrypt.Equality))),
+	plan.When(category.Under("user.contact.email"), plan.Encrypt(plan.EQL(encrypt.Equality, encrypt.Match()))),
 	plan.When(category.Under("user"), plan.Encrypt(plan.EQL())),
 )
 
 var Individuals = plan.ForMessage(individuals.Individual{}, plan.Table("individuals"),
 	plan.FirstOf(
-		plan.When(plan.Field("medicare_no"), plan.Encrypt(plan.EQL(stackencrypt.Equality)),
+		plan.When(plan.Field("medicare_no"), plan.Encrypt(plan.EQL(encrypt.Equality)),
 			plan.Column("medicare_number")),
 	).OrElse(Base),
 )

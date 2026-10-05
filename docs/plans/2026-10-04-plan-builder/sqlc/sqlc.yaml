@@ -11,6 +11,6 @@ sql:
         out: ../internal/userdb
         overrides:
           - db_type: "public.eql_v3_text_eq"
-            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt/eql, type: TextEq }
+            go_type: { import: github.com/cipherstash/stack/languages/golang/encrypt/eql, type: TextEq }
           - db_type: "eql_v3.query_text_eq"
-            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt/eql, type: TextEqQuery }
+            go_type: { import: github.com/cipherstash/stack/languages/golang/encrypt/eql, type: TextEqQuery }

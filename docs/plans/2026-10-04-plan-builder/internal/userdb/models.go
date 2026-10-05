@@ -5,7 +5,7 @@
 package userdb
 
 import (
-	"github.com/cipherstash/stack/languages/golang/stackencrypt/eql"
+	"github.com/cipherstash/stack/languages/golang/encrypt/eql"
 )
 
 type User struct {

@@ -6,10 +6,10 @@ import (
 	"database/sql"
 
 	"example.com/app/individuals"
-	"github.com/cipherstash/stack/languages/golang/stackencrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt"
 )
 
-func Create(ctx context.Context, db *sql.DB, cipher *stackencrypt.Cipher, person individuals.Individual) error {
+func Create(ctx context.Context, db *sql.DB, cipher *encrypt.Cipher, person individuals.Individual) error {
 	encrypted, err := individuals.Encrypt(ctx, cipher, []individuals.Individual{person})
 	if err != nil {
 		return err
@@ -23,7 +23,7 @@ func Create(ctx context.Context, db *sql.DB, cipher *stackencrypt.Cipher, person
 	return err
 }
 
-func IDByMedicare(ctx context.Context, db *sql.DB, cipher *stackencrypt.Cipher, medicareNo string) (int64, error) {
+func IDByMedicare(ctx context.Context, db *sql.DB, cipher *encrypt.Cipher, medicareNo string) (int64, error) {
 	term, err := individuals.Fields.MedicareNo.Equality(ctx, cipher, medicareNo)
 	if err != nil {
 		return 0, err

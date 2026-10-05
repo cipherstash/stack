@@ -7,8 +7,8 @@ import (
 	"log/slog"
 
 	"example.com/app/crm"
-	"github.com/cipherstash/stack/languages/golang/stackencrypt"
-	"github.com/cipherstash/stack/languages/golang/stackencrypt/gensupport"
+	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt/gensupport"
 )
 
 // Stops compiling when the library does not accept this version of generated file.
@@ -24,14 +24,14 @@ type EncryptedContact struct {
 }
 
 type EncryptedContactEmail struct {
-	Ciphertext stackencrypt.Ciphertext
-	Equality   stackencrypt.EqualityTerm
-	Match      stackencrypt.MatchTerm
+	Ciphertext encrypt.Ciphertext
+	Equality   encrypt.EqualityTerm
+	Match      encrypt.MatchTerm
 }
 
 type EncryptedContactPhoneNumber struct {
-	Ciphertext stackencrypt.Ciphertext
-	Equality   stackencrypt.EqualityTerm
+	Ciphertext encrypt.Ciphertext
+	Equality   encrypt.EqualityTerm
 }
 
 func (e EncryptedContact) String() string {
@@ -54,8 +54,8 @@ type contactShape struct {
 
 var declaration = gensupport.Declare("contacts").
 	Passthrough("id").
-	EncryptIndex("email", stackencrypt.Equality, stackencrypt.Match()).
-	EncryptIndex("phone_number", stackencrypt.Equality).
+	EncryptIndex("email", encrypt.Equality, encrypt.Match()).
+	EncryptIndex("phone_number", encrypt.Equality).
 	Omit("internal")
 
 var codec = gensupport.New(gensupport.Generated[crm.Contact, EncryptedContact]{
@@ -92,19 +92,19 @@ var codec = gensupport.New(gensupport.Generated[crm.Contact, EncryptedContact]{
 	},
 })
 
-func Encrypt(ctx context.Context, cipher *stackencrypt.Cipher, contacts []crm.Contact) ([]EncryptedContact, error) {
+func Encrypt(ctx context.Context, cipher *encrypt.Cipher, contacts []crm.Contact) ([]EncryptedContact, error) {
 	return codec.Encrypt(ctx, cipher, contacts)
 }
 
-func Decrypt(ctx context.Context, d stackencrypt.Decrypter, encrypted []EncryptedContact) ([]crm.Contact, error) {
+func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedContact) ([]crm.Contact, error) {
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
-func EncryptInto(dst *[]EncryptedContact, contacts []crm.Contact) stackencrypt.Operation {
+func EncryptInto(dst *[]EncryptedContact, contacts []crm.Contact) encrypt.Operation {
 	return codec.EncryptInto(dst, contacts)
 }
 
-func DecryptInto(dst *[]crm.Contact, encrypted []EncryptedContact) stackencrypt.Operation {
+func DecryptInto(dst *[]crm.Contact, encrypted []EncryptedContact) encrypt.Operation {
 	return codec.DecryptInto(dst, encrypted)
 }
 
@@ -120,7 +120,7 @@ type EmailField struct {
 	field gensupport.Field[string]
 }
 
-func (f EmailField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string) (EncryptedContactEmail, error) {
+func (f EmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedContactEmail, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
 		return EncryptedContactEmail{}, err
@@ -128,11 +128,11 @@ func (f EmailField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v strin
 	return EncryptedContactEmail{Ciphertext: out.Ciphertext, Equality: out.Equality, Match: out.Match}, nil
 }
 
-func (f EmailField) Equality(ctx context.Context, c *stackencrypt.Cipher, v string) (stackencrypt.EqualityTerm, error) {
+func (f EmailField) Equality(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
 	return f.field.Equality(ctx, c, v)
 }
 
-func (f EmailField) Match(ctx context.Context, c *stackencrypt.Cipher, v string) (stackencrypt.MatchTerm, error) {
+func (f EmailField) Match(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.MatchTerm, error) {
 	return f.field.Match(ctx, c, v)
 }
 
@@ -140,7 +140,7 @@ type PhoneNumberField struct {
 	field gensupport.Field[string]
 }
 
-func (f PhoneNumberField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string) (EncryptedContactPhoneNumber, error) {
+func (f PhoneNumberField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedContactPhoneNumber, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
 		return EncryptedContactPhoneNumber{}, err
@@ -148,7 +148,7 @@ func (f PhoneNumberField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v
 	return EncryptedContactPhoneNumber{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
-func (f PhoneNumberField) Equality(ctx context.Context, c *stackencrypt.Cipher, v string) (stackencrypt.EqualityTerm, error) {
+func (f PhoneNumberField) Equality(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
 	return f.field.Equality(ctx, c, v)
 }
 
@@ -156,11 +156,11 @@ func (f PhoneNumberField) Equality(ctx context.Context, c *stackencrypt.Cipher, 
 // two have the same fields, with the same types, in the same order.
 type rowsShape struct {
 	ID            int64
-	Email         stackencrypt.Ciphertext
-	EmailEq       stackencrypt.EqualityTerm
-	EmailMatch    stackencrypt.MatchTerm
-	PhoneNumber   stackencrypt.Ciphertext
-	PhoneNumberEq stackencrypt.EqualityTerm
+	Email         encrypt.Ciphertext
+	EmailEq       encrypt.EqualityTerm
+	EmailMatch    encrypt.MatchTerm
+	PhoneNumber   encrypt.Ciphertext
+	PhoneNumberEq encrypt.EqualityTerm
 }
 
 var rowsCodec = gensupport.Records(codec,
@@ -184,10 +184,10 @@ var rowsCodec = gensupport.Records(codec,
 	},
 )
 
-func EncryptRows(ctx context.Context, cipher *stackencrypt.Cipher, contacts []crm.Contact) ([]ContactRow, error) {
+func EncryptRows(ctx context.Context, cipher *encrypt.Cipher, contacts []crm.Contact) ([]ContactRow, error) {
 	return rowsCodec.Encrypt(ctx, cipher, contacts)
 }
 
-func DecryptRows(ctx context.Context, d stackencrypt.Decrypter, rows []ContactRow) ([]crm.Contact, error) {
+func DecryptRows(ctx context.Context, d encrypt.Decrypter, rows []ContactRow) ([]crm.Contact, error) {
 	return rowsCodec.Decrypt(ctx, d, rows)
 }

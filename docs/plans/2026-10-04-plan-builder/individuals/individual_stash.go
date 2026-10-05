@@ -8,8 +8,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/cipherstash/stack/languages/golang/stackencrypt"
-	"github.com/cipherstash/stack/languages/golang/stackencrypt/gensupport"
+	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt/gensupport"
 )
 
 // Stops compiling when the library does not accept this version of generated file.
@@ -27,18 +27,18 @@ type EncryptedIndividual struct {
 }
 
 type EncryptedIndividualName struct {
-	Ciphertext stackencrypt.Ciphertext
+	Ciphertext encrypt.Ciphertext
 }
 
 type EncryptedIndividualEmail struct {
-	Ciphertext stackencrypt.Ciphertext
-	Equality   stackencrypt.EqualityTerm
-	Match      stackencrypt.MatchTerm
+	Ciphertext encrypt.Ciphertext
+	Equality   encrypt.EqualityTerm
+	Match      encrypt.MatchTerm
 }
 
 type EncryptedIndividualMedicareNo struct {
-	Ciphertext stackencrypt.Ciphertext
-	Equality   stackencrypt.EqualityTerm
+	Ciphertext encrypt.Ciphertext
+	Equality   encrypt.EqualityTerm
 }
 
 func (e EncryptedIndividual) String() string {
@@ -63,8 +63,8 @@ type individualShape struct {
 var declaration = gensupport.Declare("individuals").
 	Passthrough("id").
 	Encrypt("name").
-	EncryptIndex("email", stackencrypt.Equality, stackencrypt.Match()).
-	EncryptIndex("medicare_number", stackencrypt.Equality).
+	EncryptIndex("email", encrypt.Equality, encrypt.Match()).
+	EncryptIndex("medicare_number", encrypt.Equality).
 	Passthrough("nickname")
 
 var codec = gensupport.New(gensupport.Generated[Individual, EncryptedIndividual]{
@@ -107,19 +107,19 @@ var codec = gensupport.New(gensupport.Generated[Individual, EncryptedIndividual]
 	},
 })
 
-func Encrypt(ctx context.Context, cipher *stackencrypt.Cipher, individuals []Individual) ([]EncryptedIndividual, error) {
+func Encrypt(ctx context.Context, cipher *encrypt.Cipher, individuals []Individual) ([]EncryptedIndividual, error) {
 	return codec.Encrypt(ctx, cipher, individuals)
 }
 
-func Decrypt(ctx context.Context, d stackencrypt.Decrypter, encrypted []EncryptedIndividual) ([]Individual, error) {
+func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedIndividual) ([]Individual, error) {
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
-func EncryptInto(dst *[]EncryptedIndividual, individuals []Individual) stackencrypt.Operation {
+func EncryptInto(dst *[]EncryptedIndividual, individuals []Individual) encrypt.Operation {
 	return codec.EncryptInto(dst, individuals)
 }
 
-func DecryptInto(dst *[]Individual, encrypted []EncryptedIndividual) stackencrypt.Operation {
+func DecryptInto(dst *[]Individual, encrypted []EncryptedIndividual) encrypt.Operation {
 	return codec.DecryptInto(dst, encrypted)
 }
 
@@ -133,7 +133,7 @@ type MedicareNoField struct {
 	field gensupport.Field[string]
 }
 
-func (f MedicareNoField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string) (EncryptedIndividualMedicareNo, error) {
+func (f MedicareNoField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (EncryptedIndividualMedicareNo, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	if err != nil {
 		return EncryptedIndividualMedicareNo{}, err
@@ -141,6 +141,6 @@ func (f MedicareNoField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v 
 	return EncryptedIndividualMedicareNo{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
 }
 
-func (f MedicareNoField) Equality(ctx context.Context, c *stackencrypt.Cipher, v string) (stackencrypt.EqualityTerm, error) {
+func (f MedicareNoField) Equality(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
 	return f.field.Equality(ctx, c, v)
 }

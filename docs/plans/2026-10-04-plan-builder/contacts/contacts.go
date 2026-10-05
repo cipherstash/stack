@@ -7,7 +7,7 @@ import (
 	"database/sql"
 
 	"example.com/app/crm"
-	"github.com/cipherstash/stack/languages/golang/stackencrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"gorm.io/gorm"
 )
 
@@ -27,18 +27,18 @@ type contactStash struct {
 // ContactRow is a model: one field for each column. Each tag names the output
 // the field holds.
 type ContactRow struct {
-	ID            int64                     `stash:"id"`
-	Email         stackencrypt.Ciphertext   `stash:"email"`
-	EmailEq       stackencrypt.EqualityTerm `stash:"email,equality"`
-	EmailMatch    stackencrypt.MatchTerm    `stash:"email,match"`
-	PhoneNumber   stackencrypt.Ciphertext   `stash:"phone_number"`
-	PhoneNumberEq stackencrypt.EqualityTerm `stash:"phone_number,equality"`
+	ID            int64                `stash:"id"`
+	Email         encrypt.Ciphertext   `stash:"email"`
+	EmailEq       encrypt.EqualityTerm `stash:"email,equality"`
+	EmailMatch    encrypt.MatchTerm    `stash:"email,match"`
+	PhoneNumber   encrypt.Ciphertext   `stash:"phone_number"`
+	PhoneNumberEq encrypt.EqualityTerm `stash:"phone_number,equality"`
 }
 
 func (ContactRow) TableName() string { return "contacts" }
 
 // Create writes with database/sql and passes each output itself.
-func Create(ctx context.Context, db *sql.DB, cipher *stackencrypt.Cipher, list []crm.Contact) error {
+func Create(ctx context.Context, db *sql.DB, cipher *encrypt.Cipher, list []crm.Contact) error {
 	encrypted, err := Encrypt(ctx, cipher, list)
 	if err != nil {
 		return err
@@ -57,7 +57,7 @@ func Create(ctx context.Context, db *sql.DB, cipher *stackencrypt.Cipher, list [
 }
 
 // CreateWithGORM writes the model, which GORM maps one field to one column.
-func CreateWithGORM(ctx context.Context, db *gorm.DB, cipher *stackencrypt.Cipher, list []crm.Contact) error {
+func CreateWithGORM(ctx context.Context, db *gorm.DB, cipher *encrypt.Cipher, list []crm.Contact) error {
 	rows, err := EncryptRows(ctx, cipher, list)
 	if err != nil {
 		return err
@@ -65,7 +65,7 @@ func CreateWithGORM(ctx context.Context, db *gorm.DB, cipher *stackencrypt.Ciphe
 	return db.WithContext(ctx).Create(&rows).Error
 }
 
-func IDByPhone(ctx context.Context, db *sql.DB, cipher *stackencrypt.Cipher, phone string) (int64, error) {
+func IDByPhone(ctx context.Context, db *sql.DB, cipher *encrypt.Cipher, phone string) (int64, error) {
 	term, err := Fields.PhoneNumber.Equality(ctx, cipher, phone)
 	if err != nil {
 		return 0, err

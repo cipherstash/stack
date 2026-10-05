@@ -6,9 +6,9 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/cipherstash/stack/languages/golang/stackencrypt"
-	"github.com/cipherstash/stack/languages/golang/stackencrypt/eql"
-	"github.com/cipherstash/stack/languages/golang/stackencrypt/gensupport"
+	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt/eql"
+	"github.com/cipherstash/stack/languages/golang/encrypt/gensupport"
 	"gorm.io/gorm"
 )
 
@@ -56,7 +56,7 @@ var declaration = gensupport.Declare("accounts").
 	Passthrough("created_at").
 	Passthrough("updated_at").
 	Passthrough("deleted_at").
-	EncryptIndex("email", stackencrypt.Equality).
+	EncryptIndex("email", encrypt.Equality).
 	Omit("token")
 
 var codec = gensupport.New(gensupport.Generated[Account, EncryptedAccount]{
@@ -81,19 +81,19 @@ var codec = gensupport.New(gensupport.Generated[Account, EncryptedAccount]{
 	},
 })
 
-func Encrypt(ctx context.Context, cipher *stackencrypt.Cipher, accounts []Account) ([]EncryptedAccount, error) {
+func Encrypt(ctx context.Context, cipher *encrypt.Cipher, accounts []Account) ([]EncryptedAccount, error) {
 	return codec.Encrypt(ctx, cipher, accounts)
 }
 
-func Decrypt(ctx context.Context, d stackencrypt.Decrypter, encrypted []EncryptedAccount) ([]Account, error) {
+func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedAccount) ([]Account, error) {
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
-func EncryptInto(dst *[]EncryptedAccount, accounts []Account) stackencrypt.Operation {
+func EncryptInto(dst *[]EncryptedAccount, accounts []Account) encrypt.Operation {
 	return codec.EncryptInto(dst, accounts)
 }
 
-func DecryptInto(dst *[]Account, encrypted []EncryptedAccount) stackencrypt.Operation {
+func DecryptInto(dst *[]Account, encrypted []EncryptedAccount) encrypt.Operation {
 	return codec.DecryptInto(dst, encrypted)
 }
 
@@ -107,12 +107,12 @@ type EmailField struct {
 	field gensupport.Field[string]
 }
 
-func (f EmailField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string) (eql.TextEq, error) {
+func (f EmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
 	return eql.NewTextEq(out), err
 }
 
-func (f EmailField) Query(ctx context.Context, c *stackencrypt.Cipher, v string) (eql.TextEqQuery, error) {
+func (f EmailField) Query(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
 	out, err := f.field.Query(ctx, c, v)
 	return eql.NewTextEqQuery(out), err
 }
