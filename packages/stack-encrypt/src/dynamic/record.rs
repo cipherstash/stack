@@ -2352,6 +2352,32 @@ mod tests {
             );
         }
 
+        /// The parser applies `"type"` after it has read every key, so a
+        /// spec that declares its type before its outputs is checked the
+        /// same way: admitted when the type admits the indexes, refused
+        /// when it does not.
+        #[test]
+        fn the_plan_reads_a_type_given_before_the_outputs() {
+            let early = |ty: &str| {
+                obj(vec![
+                    ("type", s(ty)),
+                    ("outputs", strings(&["c", "eq"])),
+                    ("context", s("users/age")),
+                ])
+            };
+            let parsed = plan(obj(vec![("age", early("uint64"))])).expect("parses");
+            assert_eq!(parsed.fields()[0].field_type(), Some(ValueKind::UInt64));
+            assert_eq!(
+                parsed.fields()[0].outputs(),
+                [Output::Ciphertext, Output::Term(IndexSpec::Equality)]
+            );
+            let refused = plan(obj(vec![("age", early("float64"))]));
+            assert!(
+                matches!(refused, Err(Error::Plan)),
+                "equality on a float is refused whatever the key order: {refused:?}"
+            );
+        }
+
         #[test]
         fn the_plan_refuses_an_unresolvable_type_or_one_that_does_not_admit_an_index() {
             let refused: [(&str, FfiValue); 8] = [
@@ -2552,15 +2578,103 @@ mod tests {
             let value =
                 crate::dynamic::read(declared, FfiValue::Float64(34.0)).expect("an exact 34");
             let scalar = Scalar::of(&value, &IndexSpec::Equality).expect("scalar");
-            let probe = term(
+            let query = term(
                 &keyset,
                 scalar,
                 &IndexSpec::Equality,
                 field.view().expect("view"),
             )
             .await
-            .expect("probe");
-            assert_eq!(probe, stored);
+            .expect("query term");
+            assert_eq!(query, stored);
+        }
+
+        /// An index-only field has no ciphertext, so it is not among the
+        /// opened values. The typed field after it is checked against its
+        /// own type, not against the index-only field's.
+        #[tokio::test]
+        async fn decrypt_skips_an_index_only_field_when_it_checks_types() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = plan(obj(vec![
+                ("age", typed("users/age", &["eq"], "uint64")),
+                ("name", typed("users/name", &["c"], "string")),
+            ]))
+            .expect("plan");
+            let sealed = encrypt(
+                &keyset,
+                obj(vec![("age", FfiValue::UInt64(34)), ("name", s("bob"))]),
+                &plan,
+            )
+            .await
+            .expect("seal");
+            let opened = object(
+                decrypt(Scope::Client(&cipher), sealed, &plan)
+                    .await
+                    .expect("name is checked as a string, not as a uint64"),
+            );
+            assert_eq!(keys(&opened), ["name"]);
+            assert_eq!(text_of(&opened[0].1), "bob");
+        }
+
+        /// A typed composite field opens as its declared kind, with its
+        /// entries, including when it is empty: an empty `[]` that opened
+        /// as `{}` would fail every read of an `"array"` field.
+        #[tokio::test]
+        async fn a_typed_composite_field_round_trips_even_when_empty() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            for (ty, value, len) in [
+                ("object", obj(vec![("home", s("a@x"))]), 1),
+                ("object", FfiValue::Object(vec![]), 0),
+                (
+                    "array",
+                    FfiValue::Array(vec![s("a"), FfiValue::UInt32(1)]),
+                    2,
+                ),
+                ("array", FfiValue::Array(vec![]), 0),
+            ] {
+                let plan = plan(obj(vec![("doc", typed("users/doc", &["c"], ty))])).expect("plan");
+                let sealed = encrypt(&keyset, obj(vec![("doc", value)]), &plan)
+                    .await
+                    .expect("seal");
+                let opened = decrypt(Scope::Client(&cipher), sealed, &plan)
+                    .await
+                    .expect("a composite opens as its declared kind");
+                let (_, doc) = object(opened).into_iter().next().expect("doc");
+                match (ty, doc) {
+                    ("object", FfiValue::Object(entries)) => assert_eq!(entries.len(), len),
+                    ("array", FfiValue::Array(items)) => assert_eq!(items.len(), len),
+                    (ty, _) => panic!("a {ty} field opened as another kind"),
+                }
+            }
+        }
+
+        /// `check_record` does not open anything, so it cannot see a
+        /// typed field's type: the tag is inside the AEAD envelope. A record
+        /// sealed as another type passes it, and only `decrypt` refuses it.
+        #[tokio::test]
+        async fn check_record_accepts_a_record_sealed_as_another_type() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let untyped = plan(obj(vec![("age", spec(s("users/age"), &["c"]))])).expect("plan");
+            let as_uint64 =
+                plan(obj(vec![("age", typed("users/age", &["c"], "uint64"))])).expect("plan");
+
+            let sealed = encrypt(&keyset, obj(vec![("age", FfiValue::UInt32(34))]), &untyped)
+                .await
+                .expect("seal");
+            check_record(sealed, &as_uint64).expect("the type is not visible without opening");
+
+            let sealed = encrypt(&keyset, obj(vec![("age", FfiValue::UInt32(34))]), &untyped)
+                .await
+                .expect("seal");
+            let result = decrypt(Scope::Client(&cipher), sealed, &as_uint64).await;
+            assert!(
+                matches!(result, Err(Error::Record)),
+                "decrypt is where the type is checked: {:?}",
+                result.err()
+            );
         }
     }
 }

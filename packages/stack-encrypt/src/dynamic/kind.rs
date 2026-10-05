@@ -72,9 +72,10 @@ pub fn admits(kind: ValueKind, index: &IndexSpec) -> bool {
 /// width or kind is converted when the conversion is exact: an integer in
 /// range, or a float with no fractional part in range, for an integer kind
 /// (a JavaScript `34` arrives as a float); an integer or float the target
-/// float kind represents exactly, for a float kind. Nothing else converts:
-/// a string is never parsed as a number, and a number never becomes a
-/// string.
+/// float kind represents exactly, for a float kind. A NaN is never
+/// converted, in either float direction: it equals nothing, so no
+/// conversion of it is exact. Nothing else converts: a string is never
+/// parsed as a number, and a number never becomes a string.
 ///
 /// This is for a query: what a host hands over to search with. A value
 /// being sealed is not converted; it must already be of the field's kind,
@@ -163,10 +164,11 @@ impl Number {
     }
 
     /// The `f64` this number is exactly, if it is one: an integer whose
-    /// conversion does not round.
+    /// conversion does not round, or a float that is not a NaN. A NaN is
+    /// never exact, because it does not equal itself.
     fn exact_f64(self) -> Option<f64> {
         match self {
-            Number::Float(f) => Some(f),
+            Number::Float(f) => (!f.is_nan()).then_some(f),
             Number::Integer(i) => {
                 let f = i as f64;
                 (f as i128 == i).then_some(f)
@@ -174,8 +176,8 @@ impl Number {
         }
     }
 
-    /// The `f32` this number is exactly, if it is one. A NaN is never
-    /// exact, because it does not equal itself.
+    /// The `f32` this number is exactly, if it is one. A NaN is refused by
+    /// `exact_f64` before it gets here.
     fn exact_f32(self) -> Option<f32> {
         let f = self.exact_f64()?;
         let narrowed = f as f32;
@@ -284,8 +286,13 @@ mod tests {
             let read = read_ok(kind, sample(kind)).expect("its own kind");
             assert!(kind.holds(&read));
         }
+        // Already of the kind: returned as it is, not converted, so a NaN
+        // the host sent as the field's own float kind is not refused here.
         assert!(
             matches!(read_ok(ValueKind::Float32, FfiValue::Float32(f32::NAN)), Some(FfiValue::Float32(f)) if f.is_nan())
+        );
+        assert!(
+            matches!(read_ok(ValueKind::Float64, FfiValue::Float64(f64::NAN)), Some(FfiValue::Float64(f)) if f.is_nan())
         );
     }
 
@@ -359,6 +366,34 @@ mod tests {
         }
     }
 
+    /// The first float past each integer range is refused, and the last
+    /// one inside it converts exactly. A float cast straight to the integer
+    /// type (`f as u64`) would saturate instead: a JavaScript 2^64 would
+    /// read as `u64::MAX` and derive a term for a different number.
+    #[test]
+    fn read_refuses_a_float_at_the_first_value_past_an_integer_range() {
+        let two_63 = 9_223_372_036_854_775_808.0_f64;
+        let two_64 = 18_446_744_073_709_551_616.0_f64;
+        assert!(read_ok(ValueKind::Int64, FfiValue::Float64(two_63)).is_none());
+        assert!(matches!(
+            read_ok(ValueKind::Int64, FfiValue::Float64(-two_63)),
+            Some(FfiValue::Int64(i64::MIN))
+        ));
+        assert!(read_ok(ValueKind::UInt64, FfiValue::Float64(two_64)).is_none());
+        assert!(matches!(
+            read_ok(
+                ValueKind::UInt64,
+                FfiValue::Float64(18_446_744_073_709_549_568.0)
+            ),
+            Some(FfiValue::UInt64(18_446_744_073_709_549_568))
+        ));
+        assert!(read_ok(ValueKind::UInt32, FfiValue::Float64(4_294_967_296.0)).is_none());
+        assert!(matches!(
+            read_ok(ValueKind::UInt32, FfiValue::Float64(4_294_967_295.0)),
+            Some(FfiValue::UInt32(u32::MAX))
+        ));
+    }
+
     #[test]
     fn read_converts_an_exactly_representable_number_to_a_float_kind() {
         assert!(
@@ -386,7 +421,6 @@ mod tests {
             (ValueKind::Float64, FfiValue::UInt64(u64::MAX)),
             (ValueKind::Float32, FfiValue::UInt32(16_777_217)),
             (ValueKind::Float32, FfiValue::Float64(0.1)),
-            (ValueKind::Float32, FfiValue::Float64(f64::NAN)),
         ];
         for (at, (kind, value)) in refused.into_iter().enumerate() {
             assert!(
@@ -394,6 +428,20 @@ mod tests {
                 "case {at}, as {kind}"
             );
         }
+    }
+
+    /// A NaN converts in neither float direction: it equals nothing, so no
+    /// conversion of it is exact, and a query for one could match nothing.
+    #[test]
+    fn read_refuses_a_nan_in_both_float_directions() {
+        assert!(matches!(
+            read(ValueKind::Float32, FfiValue::Float64(f64::NAN)),
+            Err(Error::Source)
+        ));
+        assert!(matches!(
+            read(ValueKind::Float64, FfiValue::Float32(f32::NAN)),
+            Err(Error::Source)
+        ));
     }
 
     #[test]
