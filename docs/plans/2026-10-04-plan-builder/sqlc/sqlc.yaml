@@ -1,37 +1,23 @@
 version: "2"
 sql:
   - engine: postgresql
-    schema: schema.sql
+    schema:
+      - eql-domains.sql
+      - schema.sql
     queries: query.sql
     gen:
       go:
-        package: userdb
-        out: ../internal/userdb
+        package: eqldb
+        out: ../internal/eqldb
         emit_db_tags: true
         overrides:
-          - column: users.id
-            go_struct_tag: 'stash:"id"'
-          - column: users.email
-            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt, type: Ciphertext }
-            go_struct_tag: 'stash:"email"'
-          - column: users.email_eq
-            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt, type: EqualityTerm }
-            go_struct_tag: 'stash:"email,equality"'
-          - column: users.email_match
-            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt, type: MatchTerm }
-            go_struct_tag: 'stash:"email,match"'
-          - column: users.age
-            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt, type: Ciphertext }
-            go_struct_tag: 'stash:"age"'
-          - column: users.age_eq
-            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt, type: EqualityTerm }
-            go_struct_tag: 'stash:"age,equality"'
-          - column: users.age_ore
-            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt, type: OreTerm }
-            go_struct_tag: 'stash:"age,ore"'
-          - column: users.attrs
-            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt, type: JSONDocument }
-            go_struct_tag: 'stash:"attrs,json"'
-          - column: users.notes
-            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt, type: Ciphertext }
-            go_struct_tag: 'stash:"notes"'
+          - db_type: "public.eql_v3_text_search"
+            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt/eqlv3, type: TextSearch }
+          - db_type: "public.eql_v3_integer_ord"
+            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt/eqlv3, type: IntegerOrd }
+          - db_type: "public.eql_v3_json_search"
+            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt/eqlv3, type: JSONSearch }
+          - db_type: "eql_v3.query_text_search"
+            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt/eqlv3, type: QueryTextSearch }
+          - db_type: "eql_v3.query_integer_ord"
+            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt/eqlv3, type: QueryIntegerOrd }

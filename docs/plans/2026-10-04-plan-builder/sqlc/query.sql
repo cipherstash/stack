@@ -1,15 +1,13 @@
 -- name: CreateUser :exec
-INSERT INTO users (id, email, email_eq, email_match, age, age_eq, age_ore, attrs, notes)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+INSERT INTO users (id, email, age, attrs) VALUES ($1, $2, $3, $4);
 
--- name: GetUser :one
-SELECT * FROM users WHERE id = $1;
-
+-- One cast, straight to the query domain: sqlc types a parameter by its first
+-- cast, so ::jsonb::eql_v3.query_text_search would generate json.RawMessage.
 -- name: FindUsersByEmail :many
-SELECT * FROM users WHERE email_eq = $1;
+SELECT * FROM users WHERE email = sqlc.arg(email)::eql_v3.query_text_search;
 
--- name: ListUsers :many
-SELECT * FROM users ORDER BY id;
+-- name: SearchUsersByEmail :many
+SELECT * FROM users WHERE email @@ sqlc.arg(pattern)::eql_v3.query_text_search;
 
--- name: UpdateUserEmail :exec
-UPDATE users SET email = $2, email_eq = $3, email_match = $4 WHERE id = $1;
+-- name: ListUsersOlderThan :many
+SELECT * FROM users WHERE age > sqlc.arg(min_age)::eql_v3.query_integer_ord ORDER BY age;
