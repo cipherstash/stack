@@ -493,6 +493,113 @@ async fn extend_extends_every_field_and_reading_back_needs_it() {
     );
 }
 
+/// `.extend(..)` through a one-value plan reaches the write, the query and
+/// the open: the data key is asked for under the extended label, a query
+/// term matches only under the same extension, and the value opens only
+/// with it.
+#[tokio::test]
+async fn a_one_value_plan_extended_on_write_needs_the_extension_to_query_and_open() {
+    let (cipher, sent) = recording_cipher().await;
+    let age_plan = Plan::context("users/age")
+        .with::<u32, _>(Equality)
+        .build()
+        .unwrap();
+    let write = || cipher.encrypt(&34u32).using(&age_plan).extend(7u64);
+
+    let out = write().await.unwrap();
+    assert_eq!(sent.lock().unwrap().generated(), ["(users/age)/7u64"]);
+
+    let query = |parts: Option<u64>| {
+        let chain = cipher.query(&34u32).using(&age_plan).equality();
+        match parts {
+            Some(parts) => chain.extend(parts),
+            None => chain,
+        }
+    };
+    assert_eq!(query(Some(7)).await.unwrap(), out.terms);
+    assert_ne!(query(None).await.unwrap(), out.terms);
+    assert_ne!(query(Some(8)).await.unwrap(), out.terms);
+
+    let back: u32 = cipher
+        .open(out)
+        .using(&age_plan)
+        .extend(7u64)
+        .await
+        .unwrap();
+    assert_eq!(back, 34);
+    let unextended = cipher.open(write().await.unwrap()).using(&age_plan).await;
+    assert!(matches!(unextended, Err(Error::Aead)), "{unextended:?}");
+    let other = cipher
+        .open(write().await.unwrap())
+        .using(&age_plan)
+        .extend(8u64)
+        .await;
+    assert!(matches!(other, Err(Error::Aead)), "{other:?}");
+}
+
+/// The `index` verb writes terms alone: no data key is asked for, the
+/// query of the field matches the stored term, and the terms are the bytes
+/// `encrypt_index` writes for the same field.
+#[tokio::test]
+async fn an_index_only_field_matches_its_query_and_mints_no_data_key() {
+    let (cipher, sent) = recording_cipher().await;
+    let tokens_plan: Plan<User, _> = Plan::context("users")
+        .fields()
+        .index::<String>("email", (Equality, Match::default()))
+        .encrypt::<u32>("age")
+        .encrypt::<String>("notes")
+        .passthrough::<u64>("id")
+        .build()
+        .unwrap();
+    let mut row = cipher.encrypt(&user()).using(&tokens_plan).await.unwrap();
+    assert_eq!(
+        sent.lock().unwrap().generated(),
+        ["users/age", "users/notes"],
+        "an index-only field asks for no data key"
+    );
+    let (eq, matching): EmailTerms = row.take("email").unwrap();
+
+    let email_plan = tokens_plan.field("email").unwrap();
+    let query = cipher
+        .query("bob@example.com")
+        .using(&email_plan)
+        .equality()
+        .await
+        .unwrap();
+    assert_eq!(query, eq, "the query derives under the write's label");
+
+    // Byte-identical to the terms `encrypt_index` writes for the same field.
+    let mut sealed = cipher.encrypt(&user()).using(&users_plan()).await.unwrap();
+    let sealed: Encrypted<EmailTerms> = sealed.take("email").unwrap();
+    assert_eq!(eq, sealed.terms.0);
+    assert_eq!(matching.to_bytes(), sealed.terms.1.to_bytes());
+}
+
+/// A second `.extend(..)` replaces the first: every data key is asked for
+/// under the last extension only, and the record opens with it alone.
+#[tokio::test]
+async fn a_second_extend_replaces_the_first() {
+    let (cipher, sent) = recording_cipher().await;
+    let users_plan: Plan<User, _> = users_plan();
+    let row = cipher
+        .encrypt(&user())
+        .using(&users_plan)
+        .extend(1u64)
+        .extend(7u64)
+        .await
+        .unwrap();
+    assert_eq!(
+        sent.lock().unwrap().generated(),
+        [
+            "(users/email)/7u64",
+            "(users/age)/7u64",
+            "(users/notes)/7u64"
+        ]
+    );
+    let back = cipher.open(row).using(&users_plan).extend(7u64).await;
+    assert!(back.is_ok(), "{back:?}");
+}
+
 #[tokio::test]
 async fn decrypt_returns_what_can_come_back_and_refuses_a_mismatched_row() {
     let cipher = stack_cipher().await;
