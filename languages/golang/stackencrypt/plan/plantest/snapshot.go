@@ -66,14 +66,82 @@ const (
 // as [plan.EQL] does, and kindCustom when it binds anything else, as
 // [plan.Custom] does. It asks the target rather than its type, so a typed
 // EQL target counts as EQL. It asks twice, with two identities: a Custom
-// context is fixed, so it may equal one of them but never both.
-func targetKind(t plan.Target) string {
+// context is fixed, so it may equal one of them but never both. A target
+// that refuses either identity is an error, not a kind.
+func targetKind(t plan.Target) (string, error) {
 	for _, probe := range []plan.Identifier{{Table: "plantest", Column: "a"}, {Table: "plantest", Column: "b"}} {
-		if t.Context(probe) != probe.String() {
-			return kindCustom
+		got, err := t.Context(probe)
+		if err != nil {
+			return "", fmt.Errorf("plantest: target %v refuses the identity %s: %w", t, probe, err)
+		}
+		label, err := probe.Label()
+		if err != nil {
+			return "", fmt.Errorf("plantest: the probe identity %s: %w", probe, err)
+		}
+		if !got.Equal(label.Context()) {
+			return kindCustom, nil
 		}
 	}
-	return kindEQL
+	return kindEQL, nil
+}
+
+// contextText is the text a snapshot stores for a column's context, the
+// same text the policy spells it with. An EQL column's context is its
+// identity's label, the pair (table, column identity), stored as
+// "<table>/<identity>"; a Custom column's is the one text part
+// [plan.Custom] was given, stored as written. The two are told apart by
+// the column's target line, not by the text. The text is checked against
+// the context the plan actually binds, so the file cannot name a context
+// the plan does not use.
+func contextText(table string, kind string, d plan.Decision, fp stackencrypt.FieldPlan) (string, error) {
+	var text string
+	var want stackencrypt.Context
+	switch kind {
+	case kindEQL:
+		identity := d.Identity()
+		if identity == "" {
+			identity = fp.Name
+		}
+		label, err := plan.Identifier{Table: table, Column: identity}.Label()
+		if err != nil {
+			return "", fmt.Errorf("plantest: column %q: %w", fp.Name, err)
+		}
+		text, want = label.String(), label.Context()
+	default:
+		// A Custom context has no accessor: plan.Custom renders its
+		// argument quoted, as Custom("<context>", ...), so read it back.
+		target, _ := d.Target()
+		spelled, ok := strings.CutPrefix(fmt.Sprint(target), "Custom(")
+		var err error
+		if ok {
+			if text, err = strconv.QuotedPrefix(spelled); err == nil {
+				text, err = strconv.Unquote(text)
+			}
+		}
+		if !ok || err != nil {
+			return "", fmt.Errorf("plantest: column %q: cannot spell the context of target %v; a target that does not bind its column identity must be plan.Custom", fp.Name, target)
+		}
+		if want, err = stackencrypt.NewContext(text); err != nil {
+			return "", fmt.Errorf("plantest: column %q: %w", fp.Name, err)
+		}
+	}
+	if !want.Equal(fp.Context) {
+		return "", fmt.Errorf("plantest: column %q: the plan binds a context other than %q", fp.Name, text)
+	}
+	return text, nil
+}
+
+// contextOf is the context a snapshot's column names, rebuilt from its
+// text and target kind: what [contextText] wrote.
+func contextOf(c column) (stackencrypt.Context, error) {
+	if c.kind == kindEQL {
+		label, err := stackencrypt.ParseLabel(c.context)
+		if err != nil {
+			return stackencrypt.Context{}, err
+		}
+		return label.Context(), nil
+	}
+	return stackencrypt.NewContext(c.context)
 }
 
 // fact is one annotation value.
@@ -125,7 +193,15 @@ func take(src plan.Source, m plan.Message) (snapshot, []plan.Fact, error) {
 		for i, k := range fp.Terms {
 			terms[i] = k.String()
 		}
-		s.columns = append(s.columns, column{name: fp.Name, context: fp.Context, kind: targetKind(target), terms: terms, facts: factsOf(f), from: from})
+		kind, err := targetKind(target)
+		if err != nil {
+			return snapshot{}, nil, err
+		}
+		context, err := contextText(s.table, kind, d, fp)
+		if err != nil {
+			return snapshot{}, nil, err
+		}
+		s.columns = append(s.columns, column{name: fp.Name, context: context, kind: kind, terms: terms, facts: factsOf(f), from: from})
 	}
 	s.sort()
 	return s, facts, nil

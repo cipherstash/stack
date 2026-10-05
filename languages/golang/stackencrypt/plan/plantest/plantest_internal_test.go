@@ -204,11 +204,18 @@ func TestChangesAreSortedByWhatTheyCost(t *testing.T) {
 			also:    []string{"OTHER CHANGES"},
 			says:    []string{`Restoring plan.Table("individuals") and pinning the rule that decides field medicare_no (MedicareNo) with plan.Column("medicare_number") brings it back.`},
 		},
-		"target kind changed under the same context": {
+		// The Custom text reads like the EQL identity, but it is one text
+		// part, not the (table, column) pair: a different context.
+		"target kind changed, the context spelled the same": {
 			before:  plan.ForMessage(nil, "individuals", base),
 			after:   plan.ForMessage(nil, "individuals", plan.FirstOf(plan.When(plan.Field("medicare_number"), plan.Encrypt(plan.Custom("individuals/medicare_number", se.Equality)))).OrElse(base)),
-			section: "OTHER CHANGES",
-			says:    []string{"column medicare_number: its target is Custom, was EQL, under the same context."},
+			section: "CONTEXT CHANGES",
+			also:    []string{"OTHER CHANGES"},
+			says: []string{
+				`column medicare_number: its context is "individuals/medicare_number" (one Custom text part), was "individuals/medicare_number" (the EQL table/column pair).`,
+				"column medicare_number: its target is Custom, was EQL.",
+			},
+			never: []string{"under the same context"},
 		},
 		"target kind and context changed": {
 			before:  plan.ForMessage(nil, "individuals", base),
@@ -413,9 +420,32 @@ func TestTargetKind(t *testing.T) {
 		{plan.Custom("plantest/probe"), kindCustom},
 		{plan.Custom("individuals/email"), kindCustom},
 	} {
-		if got := targetKind(tc.target); got != tc.want {
+		got, err := targetKind(tc.target)
+		if err != nil {
+			t.Errorf("targetKind(%v): %v", tc.target, err)
+			continue
+		}
+		if got != tc.want {
 			t.Errorf("targetKind(%v) = %s, want %s", tc.target, got, tc.want)
 		}
+	}
+}
+
+// refusingTarget refuses every identity, as a target with a bad context
+// would.
+type refusingTarget struct{}
+
+func (refusingTarget) Terms() []se.TermKind { return nil }
+func (refusingTarget) Context(plan.Identifier) (se.Context, error) {
+	return se.Context{}, errors.New("no context here")
+}
+
+// A target that refuses the probe identities is an error, not a kind: a
+// Custom guess would hide it.
+func TestTargetKindReportsARefusal(t *testing.T) {
+	kind, err := targetKind(refusingTarget{})
+	if err == nil || !strings.Contains(err.Error(), "no context here") {
+		t.Fatalf("targetKind = %q, %v; want the target's error", kind, err)
 	}
 }
 

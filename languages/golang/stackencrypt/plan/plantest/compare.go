@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cipherstash/stack/languages/golang/stackencrypt/plan"
@@ -73,10 +74,10 @@ func compare(old, cur snapshot, facts []plan.Fact, m plan.Message) changes {
 	oldPlain, curPlain := byField(old.plaintext), byField(cur.plaintext)
 	oldContexts, curContexts := map[string]bool{}, map[string][]string{}
 	for _, o := range old.columns {
-		oldContexts[o.context] = true
+		oldContexts[contextKey(o)] = true
 	}
 	for _, n := range cur.columns {
-		curContexts[n.context] = append(curContexts[n.context], token(n.name))
+		curContexts[contextKey(n)] = append(curContexts[contextKey(n)], token(n.name))
 	}
 	// The entries now that an old one accounts for, and the old plaintext
 	// fields an entry now accounts for.
@@ -85,9 +86,9 @@ func compare(old, cur snapshot, facts []plan.Fact, m plan.Message) changes {
 	for _, o := range old.columns {
 		if n, ok := curCols[o.name]; ok {
 			seenCol[n.name] = true
-			if n.context != o.context {
-				c.contexts = append(c.contexts, fmt.Sprintf("column %s: its context is %q, was %q. %s",
-					token(o.name), n.context, o.context, pinAdvice(m, facts, n.from, o, old.table)))
+			if !sameContext(o, n) {
+				c.contexts = append(c.contexts, fmt.Sprintf("column %s: its context is %s, was %s. %s",
+					token(o.name), spellContext(n, o), spellContext(o, n), pinAdvice(m, facts, n.from, o, old.table)))
 			}
 			c.stored(o, n)
 			continue
@@ -120,7 +121,7 @@ func compare(old, cur snapshot, facts []plan.Fact, m plan.Message) changes {
 		// The context is still written, by a column sharing a Custom
 		// context: nothing already written stops decrypting, but nothing
 		// reads this column.
-		if writers := curContexts[o.context]; len(writers) > 0 {
+		if writers := curContexts[contextKey(o)]; len(writers) > 0 {
 			still := "column " + writers[0] + " still writes it"
 			if len(writers) > 1 {
 				still = "columns " + strings.Join(writers, ", ") + " still write it"
@@ -138,7 +139,7 @@ func compare(old, cur snapshot, facts []plan.Fact, m plan.Message) changes {
 		msg := fmt.Sprintf("column %s: no field writes its context %q any more.", token(o.name), o.context)
 		if n, ok := only(cur.columns, func(n column) bool {
 			_, before := oldCols[n.name]
-			return !before && !seenCol[n.name] && !oldContexts[n.context] && len(o.facts) > 0 && slices.Equal(n.facts, o.facts)
+			return !before && !seenCol[n.name] && !oldContexts[contextKey(n)] && len(o.facts) > 0 && slices.Equal(n.facts, o.facts)
 		}); ok {
 			seenCol[n.name] = true
 			msg += fmt.Sprintf(" Field %s now writes column %s under %q with the same facts, so it may be the same field renamed: %s"+
@@ -199,7 +200,7 @@ func (c *changes) stored(o, n column) {
 	if o.kind != n.kind {
 		// A changed context is reported on its own, under CONTEXT CHANGES.
 		where := ", under the same context"
-		if o.context != n.context {
+		if !sameContext(o, n) {
 			where = ""
 		}
 		c.other = append(c.other, fmt.Sprintf("column %s: its target is %s, was %s%s.", token(n.name), n.kind, o.kind, where))
@@ -207,6 +208,28 @@ func (c *changes) stored(o, n column) {
 	if !slices.Equal(o.facts, n.facts) {
 		c.other = append(c.other, fmt.Sprintf("column %s: its facts are [%s], were [%s].", token(n.name), factList(n.facts), factList(o.facts)))
 	}
+}
+
+// contextKey names a column's context exactly: its text and its target
+// kind. An EQL context is the pair (table, column identity) and a Custom
+// one is a single text part, so an EQL column and a Custom one never share
+// a context, even when the Custom text reads "<table>/<column>".
+func contextKey(c column) string { return c.kind + " " + c.context }
+
+// sameContext reports whether a and b bind the same context.
+func sameContext(a, b column) bool { return contextKey(a) == contextKey(b) }
+
+// spellContext quotes c's context for a message comparing it with other's.
+// When the two read the same but differ in kind, it says which shape each
+// is, since the text alone would read as no change.
+func spellContext(c, other column) string {
+	if c.context != other.context || c.kind == other.kind {
+		return strconv.Quote(c.context)
+	}
+	if c.kind == kindEQL {
+		return fmt.Sprintf("%q (the EQL table/column pair)", c.context)
+	}
+	return fmt.Sprintf("%q (one Custom text part)", c.context)
 }
 
 // pinAdvice says how to store the field from in the old column under the
@@ -218,14 +241,14 @@ func pinAdvice(m plan.Message, facts []plan.Fact, from *decided, old column, old
 		return ""
 	}
 	if oldTable != string(m.Table()) {
-		if pin, ok := pin(m, plan.Table(oldTable), facts, from, old.name, old.context); ok {
+		if pin, ok := pin(m, plan.Table(oldTable), facts, from, old); ok {
 			if pin == "" {
 				return fmt.Sprintf("Restoring plan.Table(%q) brings it back.", oldTable)
 			}
 			return fmt.Sprintf("Restoring plan.Table(%q) and pinning the rule that decides field %s with %s brings it back.", oldTable, fieldName(from), pin)
 		}
 	}
-	if pin, ok := pin(m, m.Table(), facts, from, old.name, old.context); ok {
+	if pin, ok := pin(m, m.Table(), facts, from, old); ok {
 		return fmt.Sprintf("Pinning the rule that decides field %s with %s keeps it.", fieldName(from), pin)
 	}
 	return fmt.Sprintf("No plan.Column or plan.Identity pin on the rule that decides field %s brings it back: the context comes from the target itself (a plan.Custom context, or a change of target), so restore that.", fieldName(from))
@@ -235,8 +258,13 @@ func pinAdvice(m plan.Message, facts []plan.Fact, from *decided, old column, old
 // column under context again in table, checked by building the plan with
 // them, and whether any does. With m's own table it tries only pins; with
 // another, no pin first ("").
-func pin(m plan.Message, table plan.Table, facts []plan.Fact, from *decided, column, context string) (string, bool) {
+func pin(m plan.Message, table plan.Table, facts []plan.Fact, from *decided, old column) (string, bool) {
+	column, context := old.name, old.context
 	if column == "" {
+		return "", false
+	}
+	want, err := contextOf(old)
+	if err != nil {
 		return "", false
 	}
 	type try struct {
@@ -261,7 +289,7 @@ func pin(m plan.Message, table plan.Table, facts []plan.Fact, from *decided, col
 			continue
 		}
 		for _, fp := range p.Fields() {
-			if fp.Field == goField(from.fact) && fp.Name == column && fp.Context == context {
+			if fp.Field == goField(from.fact) && fp.Name == column && fp.Context.Equal(want) {
 				return t.spelled, true
 			}
 		}
