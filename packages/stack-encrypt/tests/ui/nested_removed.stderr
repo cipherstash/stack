@@ -1,0 +1,5 @@
+error: `nested` is no longer accepted: a field whose type is a record is an ordinary field, derived under `("<context>", "<field>")` like any other, and its own fields sit under that. Omit `nested`
+  --> tests/ui/nested_removed.rs:23:13
+   |
+23 |     #[stash(nested)]
+   |             ^^^^^^

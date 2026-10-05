@@ -99,11 +99,10 @@ impl Field {
     /// `()`, and under it *extended* with the caller's (`(("users", "age"), id)`)
     /// when the caller passes a `NonEmpty<_>`. A field with none is handed
     /// the caller's context as it is, and its type decides what that means:
-    /// a nested `struct` derive composes it with its own contexts; a leaf
-    /// accepts it only as a `NonEmpty<_>`, so under the record's `()` impl
-    /// such a leaf is a compile error — at the field, since a `from` field's
-    /// obligation is checked in the body against the plaintext field's type
-    /// the derive cannot name — and the fix is a `context = ".."` on it.
+    /// a record field composes it with its own contexts; a leaf accepts it
+    /// only as a `NonEmpty<_>`, so under the record's `()` impl such a leaf
+    /// is a compile error, at the field, and the fix is a `context = ".."` on
+    /// it. Every field of a `struct` derive has a context of its own.
     ///
     /// Only called for derived fields: a `default` field is not derived from
     /// the source and is never handed a context at all.
@@ -294,12 +293,9 @@ pub(crate) fn trait_impl(
 
 /// The fields, with what a `struct` derive (`prefix` is the container's
 /// `context`) fills in: `from` is the field's own name and `context` is
-/// the pair `("<prefix>", "<from>")`, each unless the field gives its own.
-/// `#[stash(nested)]` opts a field out of the inferred context — it is handed
-/// the caller's as it is, which a nested `struct` derive (a type carrying its
-/// own contexts) composes with them and a leaf accepts only as a
-/// `NonEmpty<_>`. `from` and `nested` reach into the plaintext, so they
-/// exist only with `struct = ..`.
+/// the pair `("<prefix>", "<from>")`; `identity` replaces the second half.
+/// `from` and `identity` reach into the plaintext, so they exist only with
+/// `struct = ..`.
 fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
     fields
         .iter()
@@ -317,14 +313,6 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                         "`from = ..` reaches into a field of the plaintext, which is what \
                          `#[stash(struct = ..)]` does: a `plaintext` record derives every field \
                          from the whole value",
-                    ));
-                }
-                if attrs.nested {
-                    return Err(syn::Error::new_spanned(
-                        &field.ty,
-                        "`nested` opts a field out of the context a `struct` derive infers, so \
-                         it applies only with `struct = ..`; a `plaintext` record's field with no \
-                         `context` is already handed the caller's",
                     ));
                 }
                 if let Some(identity) = &attrs.identity {
@@ -396,8 +384,7 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                     || attrs.context.is_some()
                     || attrs.identity.is_some()
                     || attrs.from.is_some()
-                    || attrs.decrypt
-                    || attrs.nested)
+                    || attrs.decrypt)
             {
                 return Err(syn::Error::new_spanned(
                     &field.ty,
@@ -413,12 +400,11 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                             || attrs.identity.is_some()
                             || attrs.from.is_some()
                             || attrs.decrypt
-                            || attrs.nested
                         {
                             return Err(syn::Error::new_spanned(
                                 &field.ty,
                                 "a `default` field is not derived from the source, so `context`, \
-                             `identity`, `from`, `decrypt` and `nested` do not apply to it",
+                             `identity`, `from` and `decrypt` do not apply to it",
                             ));
                         }
                         Kind::Default(default)
@@ -426,11 +412,7 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                     None => match prefix {
                         Some(prefix) => {
                             let from = attrs.from.unwrap_or_else(|| member.clone());
-                            let context = if attrs.nested {
-                                // The field's type carries its own contexts; it
-                                // is handed the caller's (`FieldContext::Caller`).
-                                None
-                            } else if let Some(identity) = attrs.identity {
+                            let context = if let Some(identity) = attrs.identity {
                                 // Checked plain above.
                                 Some(OwnContext::Prefixed {
                                     prefix: prefix.clone(),
@@ -578,7 +560,7 @@ impl Record {
     /// when some other field is a bare leaf and it cannot. A field with none
     /// is handed the threaded context as it is, converted into whatever its
     /// type declares it needs: the AEAD half for a ciphertext, unchanged for
-    /// a term, composed with its own contexts by a nested record, and — for
+    /// a term, composed with its own contexts by a record field, and — for
     /// a leaf reached through a record that may run under `()` — refused,
     /// at the field.
     ///
@@ -959,19 +941,6 @@ mod tests {
             err.to_string().contains("`context_field` is metadata"),
             "{err}"
         );
-
-        let err = parse(parse_quote! {
-            #[stash(struct = Account, context = "accounts")]
-            struct Rec {
-                #[stash(nested, identity = "member")]
-                user: EncryptedUser,
-            }
-        })
-        .unwrap_err();
-        assert!(
-            err.to_string().contains("`identity` does not apply"),
-            "{err}"
-        );
     }
 
     #[test]
@@ -1008,7 +977,6 @@ mod tests {
                 email: StackCipherText,
                 #[stash(identity = "full_name")]
                 name: StackCipherText,
-                #[stash(nested)]
                 address: EncryptedAddress,
                 #[stash(default)]
                 version: u8,
@@ -1033,9 +1001,9 @@ mod tests {
         // `identity` replaces the segment, never the prefix above it.
         assert!(matches!(name.from(), Some(Member::Named(m)) if m == "name"));
         assert_eq!(own(name), "(user_profiles, full_name)");
-        // `nested`: no inferred context — the field is handed the caller's.
+        // A record-typed field is an ordinary field: the inferred pair.
         assert!(matches!(address.from(), Some(Member::Named(m)) if m == "address"));
-        assert!(matches!(address.field_context(), FieldContext::Caller));
+        assert_eq!(own(address), "(user_profiles, address)");
         assert!(!version.is_derived());
     }
 
@@ -1157,26 +1125,30 @@ mod tests {
     }
 
     #[test]
-    fn nested_applies_only_with_struct_and_excludes_context() {
-        let err = parse(parse_quote! {
-            #[stash(plaintext = User)]
-            struct Rec {
-                #[stash(nested)]
-                user: EncryptedUser,
-            }
-        })
-        .unwrap_err();
-        assert!(err.to_string().contains("applies only with `struct = ..`"));
-
-        let err = parse(parse_quote! {
-            #[stash(struct = Account, context = "accounts")]
-            struct Rec {
-                #[stash(nested, context = "accounts/user")]
-                user: EncryptedUser,
-            }
-        })
-        .unwrap_err();
-        assert!(err.to_string().contains("`context` does not apply"));
+    fn nested_is_refused_and_the_message_says_to_omit_it() {
+        for input in [
+            parse_quote! {
+                #[stash(struct = Account, context = "accounts")]
+                struct Rec {
+                    #[stash(nested)]
+                    user: EncryptedUser,
+                }
+            },
+            parse_quote! {
+                #[stash(plaintext = User)]
+                struct Rec {
+                    #[stash(nested)]
+                    user: EncryptedUser,
+                }
+            },
+        ] {
+            let message = parse(input).unwrap_err().to_string();
+            assert!(
+                message.contains("`nested` is no longer accepted"),
+                "{message}"
+            );
+            assert!(message.contains("Omit `nested`"), "{message}");
+        }
     }
 
     #[test]

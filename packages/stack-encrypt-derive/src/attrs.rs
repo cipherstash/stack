@@ -229,11 +229,6 @@ pub(crate) struct FieldAttrs {
     pub(crate) default: Option<Option<Expr>>,
     /// `#[stash(decrypt)]`: decryption opens this field.
     pub(crate) decrypt: bool,
-    /// `#[stash(nested)]`: with `struct = ..`, do not infer a context for
-    /// this field — hand it the caller's as it is, because its type (a
-    /// nested `struct` derive) carries its own contexts and composes them
-    /// with it.
-    pub(crate) nested: bool,
 }
 
 impl FieldAttrs {
@@ -297,36 +292,21 @@ impl FieldAttrs {
                     parsed.decrypt = true;
                     return Ok(());
                 }
+                // Removed rather than unknown, so the message can say what
+                // to write instead.
                 if meta.path.is_ident("nested") {
-                    if parsed.nested {
-                        return Err(meta.error("`nested` is given twice"));
-                    }
-                    parsed.nested = true;
-                    return Ok(());
+                    return Err(meta.error(
+                        "`nested` is no longer accepted: a field whose type is a record is an \
+                         ordinary field, derived under `(\"<context>\", \"<field>\")` like any \
+                         other, and its own fields sit under that. Omit `nested`",
+                    ));
                 }
                 Err(meta.error(
                     "unsupported field attribute; expected `context_field`, `context = \"...\"`, \
-                     `identity = \"...\"`, `from = field`, `default`, `default = expr`, `decrypt` \
-                     or `nested`",
+                     `identity = \"...\"`, `from = field`, `default`, `default = expr` or \
+                     `decrypt`",
                 ))
             })?;
-        }
-
-        if parsed.nested {
-            if let Some(context) = &parsed.context {
-                return Err(syn::Error::new(
-                    context.span(),
-                    "`nested` hands this field the caller's context because its type carries its \
-                     own, so `context` does not apply: give one or the other",
-                ));
-            }
-            if let Some(identity) = &parsed.identity {
-                return Err(syn::Error::new(
-                    identity.span(),
-                    "`nested` hands this field the caller's context because its type carries its \
-                     own, so `identity` does not apply: give one or the other",
-                ));
-            }
         }
 
         Ok(parsed)

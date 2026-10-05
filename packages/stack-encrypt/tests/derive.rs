@@ -635,19 +635,19 @@ struct Account {
     plan: String,
 }
 
-/// A struct nesting a struct: `#[stash(nested)]` opts the field out of the
-/// inferred context — the inner struct carries its own — so it is handed
-/// the caller's context as it is, which the inner struct composes with them.
+/// A struct nesting a struct: the record-typed field is an ordinary field,
+/// derived under the inferred pair `("accounts", "user")` like any other,
+/// and the inner struct's own fields sit under that: their contexts are
+/// extended by it, as by any context the inner struct is handed.
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(struct = Account, context = "accounts")]
 struct EncryptedAccount {
-    #[stash(nested)]
     user: EncryptedUser,
     plan: StackCipherText,
 }
 
 #[tokio::test]
-async fn a_struct_nests_in_a_struct_via_nested() {
+async fn a_struct_nests_in_a_struct_as_an_ordinary_field() {
     let (cipher, generates, retrieves) = counting_cipher().await;
     let keyset = cipher.default_keyset();
     let generator = stack_cipher().await;
@@ -660,9 +660,15 @@ async fn a_struct_nests_in_a_struct_via_nested() {
     let row: EncryptedAccount = account.encrypt_into(&keyset).await.unwrap();
     assert_eq!(generates.load(AtomicOrdering::SeqCst), 1);
 
-    // The inner struct's fields are still under their own contexts.
+    // The inner struct's fields are under their own contexts, extended by
+    // the outer field's pair.
     let age_hm: EqualityTerm = 42u32
-        .encrypt_into_with_context(&generator, nonempty!("user").with("age"))
+        .encrypt_into_with_context(
+            &generator,
+            nonempty!("user")
+                .with("age")
+                .with(nonempty!("accounts").with("user")),
+        )
         .await
         .unwrap();
     assert_eq!(row.user.age.hm, age_hm);
@@ -681,15 +687,21 @@ async fn a_struct_nests_in_a_struct_via_nested() {
         .unwrap();
     assert_eq!(plan, "pro");
 
-    // An extension reaches the nested struct unchanged and is composed with
-    // its own contexts there: the inner `age` is under `("user/age", id)`,
-    // the outer `plan` under `("accounts/plan", id)`.
+    // An extension extends the outer field's pair, which the inner struct
+    // composes with its own contexts: the inner `age` is under
+    // `("user/age", ("accounts/user", id))`, the outer `plan` under
+    // `("accounts/plan", id)`.
     let row: EncryptedAccount = account
         .encrypt_into_with_context(&keyset, 9u64)
         .await
         .unwrap();
     let age_hm: EqualityTerm = 42u32
-        .encrypt_into_with_context(&generator, nonempty!("user").with("age").with(9u64))
+        .encrypt_into_with_context(
+            &generator,
+            nonempty!("user")
+                .with("age")
+                .with(nonempty!("accounts").with("user").with(9u64)),
+        )
         .await
         .unwrap();
     assert_eq!(row.user.age.hm, age_hm);

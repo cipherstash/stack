@@ -34,7 +34,6 @@ literal.
 | `from = field` / `from = 0` | With `struct` only: derive this field from `plaintext.field` (or `plaintext.0` for a tuple struct) when its name differs from its plaintext field's. |
 | `default` / `default = expr` | Not derived: filled with `Default::default()` or `expr`. Never encrypted, never authenticated. |
 | `decrypt` | Decryption opens this field (`DecryptInto` only). Needed only when the field types cannot decide it — see below. |
-| `nested` | With `struct` only: infer no context for this field — it is handed the caller's context as it is, which its type (a nested `struct` derive carrying its own contexts) composes with them. Excludes `context`. |
 
 Each derive emits one declaration per plaintext, with an associated `Context`.
 A record with `#[stash(context_field)]` on a field of type `T` requires
@@ -113,10 +112,9 @@ two-segment `Label` spells. `#[stash(identity = "nickname")] name: ..`
 replaces the second part only: the field is derived under
 `("users", "nickname")`. A field of a `struct` derive cannot be given a
 context of its own (`context = ".."` on it is refused): it always sits under
-the record's.
-`nested` on a field infers none — the field is handed the caller's context
-as it is, which a nested `struct` derive (carrying its own contexts) composes
-with them and a leaf accepts only as a `NonEmpty<T>`.
+the record's. A field whose type is itself a record (a `struct` derive, say)
+is an ordinary field: it is handed its pair, and the inner record's own
+fields sit under it, their contexts extended by it.
 
 A context passed by the caller extends every field's: under
 `user.encrypt_into_with_context(&keyset, 7u64)` the `age` field is derived
@@ -144,8 +142,8 @@ Before such a rename, pin the old name as the field's segment with
 `("<context>", "old_name")` while the plaintext field moves.
 
 A `struct` derive has no field derived from the whole plaintext, and a
-`plaintext` record has none derived from a field of it: `from`, `identity`
-and `nested` exist only with `struct`, a field `context` only with
+`plaintext` record has none derived from a field of it: `from` and
+`identity` exist only with `struct`, a field `context` only with
 `plaintext`, and the two container attributes are exclusive.
 
 ## Which field decryption opens
