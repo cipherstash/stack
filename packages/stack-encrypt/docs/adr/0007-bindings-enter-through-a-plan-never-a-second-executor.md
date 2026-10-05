@@ -6,6 +6,12 @@ extends: ADR-0003, ADR-0004
 
 # Bindings enter the engine through a plan lowered from data, never through a second executor
 
+> **Amended 2026-10-04**, after the first implementation PRs (#1068, #1069,
+> #1071). The decision is unchanged. Amended: when the derive emits the plan
+> (after its grammar is narrowed to the plan's), how EQL types are assembled
+> (per language, from standard outputs), and the consequence that the EQL
+> encoding lives twice.
+
 Stack Encrypt has one execution engine: the `Encryption` and `Decryption`
 descriptions in `target/` and the batched `Pending` they produce. ADR-0003
 made targets declarative and put execution in the cipher; ADR-0004 threaded
@@ -57,7 +63,19 @@ Option 3.
   additions the engine lacked: a `passthrough()` constructor, execution of a
   description held by value, and `Index<S>` / `Indexes<S>` so a tuple of
   indexes composes once in the engine.
-- The derive emits the builder rather than the combinators.
+- The derive emits the builder rather than the combinators, once the two
+  speak one grammar. The derive's attribute grammar is first narrowed to the
+  plan's: it loses the field-level literal context (replaced by `identity`),
+  non-plain literal contexts, `nested`, and a second output per source field.
+  The plan then gains what the derive needs: the typed verb `encrypt_into`,
+  `context_field`, the picker (a field name with an accessor) and the two
+  starts, `Plan::value::<S>()` and `Plan::fields()`. The typed parts are
+  Rust-only and have no data form. Only then does the derive emit the plan.
+- The engine returns standard outputs (ciphertexts, terms, passthrough
+  values) and never an EQL type. Each language assembles EQL types from
+  them: Rust through the EQL type's own `EncryptFrom`, Go through generated
+  code. There is no registry of EQL types and no target name in the data
+  grammar, so the guest stays EQL-free.
 - `dynamic::record` parses a data plan and drives the builder. The one step
   that stays dynamic is dispatching a runtime scalar to a typed index. Its own
   per-field loop, batching and output shaping are removed.
@@ -83,6 +101,13 @@ Option 3.
   synchronously.
 - The plan grammar is now wire format shared by the derive, the guest and
   Go. A change to it is a change to all three, which is the point.
+- The EQL byte encoding lives twice, in `eql-bindings` (Rust) and in a Go EQL
+  package, because Go assembles EQL types itself. A standing cross-language
+  fixture guards it: encode in Rust, decode and re-encode in Go, compare the
+  bytes. That is a fixture holding two encoders together, the thing this ADR
+  rejects for executors; it is accepted here because an encoder is a pure
+  function of standard outputs, with no keys, batching or context rules in
+  it, and the alternative is EQL inside the guest.
 
 The design history, the names rejected on the way and the sequencing are in
 `docs/plans/2026-10-04-plan-builder.md`.
