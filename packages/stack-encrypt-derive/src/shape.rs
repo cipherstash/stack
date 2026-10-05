@@ -844,10 +844,16 @@ mod tests {
                 );
                 assert!(
                     message.contains(
-                        "all outputs of a `plaintext = T` record share the caller's context"
+                        "All outputs of a `plaintext = T` record share the caller's context"
                     ),
                     "{message}"
                 );
+                // A 0.2.0 user is told the replacement moves their data.
+                assert!(
+                    message.contains("a different context from the old literal"),
+                    "{message}"
+                );
+                assert!(message.contains("re-encrypt that data"), "{message}");
                 assert!(message.contains("identity = \"..\""), "{message}");
                 assert!(
                     message.contains("a fields plan that picks the same source twice"),
@@ -1173,6 +1179,11 @@ mod tests {
                 "{message}"
             );
             assert!(message.contains("Omit `nested`"), "{message}");
+            assert!(
+                message.contains("a different context from the one `nested` gave"),
+                "{message}"
+            );
+            assert!(message.contains("re-encrypt that data"), "{message}");
         }
     }
 

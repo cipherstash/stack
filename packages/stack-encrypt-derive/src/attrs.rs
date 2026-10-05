@@ -159,7 +159,7 @@ impl ContainerAttrs {
                     context.span(),
                     "a container `context` is the prefix of the per-field contexts and applies \
                      only with `struct = ..`; a `plaintext` record's fields take the caller's \
-                     context, or a `context = \"..\"` of their own",
+                     context",
                 ));
             }
             _ => {}
@@ -244,11 +244,14 @@ impl FieldAttrs {
                 // literal of its own has no plan form.
                 if meta.path.is_ident("context") {
                     return Err(meta.error(
-                        "a field-level `context = \"..\"` is no longer accepted: all outputs of a \
-                         `plaintext = T` record share the caller's context, and every field of a \
-                         `struct = ..` derive sits under the record's context (key it under \
-                         another segment with `identity = \"..\"`). Writing one value under two \
-                         contexts (a dual write) is a fields plan that picks the same source \
+                        "a field-level `context = \"..\"` is no longer accepted (0.2.0 accepted \
+                         it). All outputs of a `plaintext = T` record share the caller's context, \
+                         so remove it there; every field of a `struct = ..` derive sits under the \
+                         record's context, so key it under another segment with \
+                         `identity = \"..\"`. Either replacement is a different context from the \
+                         old literal: data written with the literal does not decrypt under it and \
+                         its terms do not match, so re-encrypt that data. Writing one value under \
+                         two contexts (a dual write) is a fields plan that picks the same source \
                          twice, not a derive",
                     ));
                 }
@@ -297,9 +300,12 @@ impl FieldAttrs {
                 // to write instead.
                 if meta.path.is_ident("nested") {
                     return Err(meta.error(
-                        "`nested` is no longer accepted: a field whose type is a record is an \
-                         ordinary field, derived under `(\"<context>\", \"<field>\")` like any \
-                         other, and its own fields sit under that. Omit `nested`",
+                        "`nested` is no longer accepted (0.2.0 accepted it): a field whose type \
+                         is a record is an ordinary field, derived under \
+                         `(\"<context>\", \"<field>\")` like any other, and its own fields sit \
+                         under that. Omit `nested`. That is a different context from the one \
+                         `nested` gave the inner fields: data written with `nested` does not \
+                         decrypt without it and its terms do not match, so re-encrypt that data",
                     ));
                 }
                 Err(meta.error(

@@ -7,7 +7,7 @@ All attributes live under `#[stash(...)]`.
 | Attribute | Effect |
 |---|---|
 | `plaintext = Type` | The record is an encrypted form of `Type`, every field derived from the whole value. Repeatable: one impl per listed type. Omit it for an impl generic over the plaintext (see below). |
-| `struct = Type` | The record encrypts the struct `Type` field by field: every derived field is derived from the plaintext field of its own name, under the context `"<context>/<field>"` (see [Structs, field by field](#structs-field-by-field)). Exclusive with `plaintext`; requires `context`. |
+| `struct = Type` | The record encrypts the struct `Type` field by field: every derived field is derived from the plaintext field of its own name, under the pair `("<context>", "<field>")` (see [Structs, field by field](#structs-field-by-field)). Exclusive with `plaintext`; requires `context`. |
 | `context = "..."` | With `struct` only: the first half of every field's inferred context — the stored data's name. Required, never inferred from the type's name, and must not be empty. |
 | `context_type = Type` | The record's associated `Context`, for a record whose fields take the caller's context: what the caller passes. Defaults to `CallerContext`; `AeadContext` for a record made only of ciphertexts, so an `IntoAad`-only context type is accepted (see [Which context a record takes](#which-context-a-record-takes)). Not with `context_field` or `struct`. |
 | `crate = "path"` | Where to find `stack_encrypt` in the generated code (default `::stack_encrypt`), for use through a re-export. |
@@ -40,6 +40,14 @@ All outputs of a `plaintext = T` record share the caller's context; every
 field of a `struct` derive sits under the record's (`identity` keys it under
 another segment of it). Writing one value under two different contexts, a
 dual write, is a fields plan that picks the same source twice, not a derive.
+
+Upgrading from 0.2.0, which accepted a field `context = ".."` and
+`#[stash(nested)]`: removing the field literal (on a `plaintext = T` record),
+writing `identity = ".."` in its place (on a `struct` derive field), or
+removing `nested` each keys the field under a **different** context from the
+one 0.2.0 used. Data written by 0.2.0 under the old form does not decrypt
+under the new one, and its terms do not match new query terms, so re-encrypt
+that data.
 
 Each derive emits one declaration per plaintext, with an associated `Context`.
 A record with `#[stash(context_field)]` on a field of type `T` requires
@@ -149,8 +157,8 @@ Before such a rename, pin the old name as the field's segment with
 
 A `struct` derive has no field derived from the whole plaintext, and a
 `plaintext` record has none derived from a field of it: `from` and
-`identity` exist only with `struct`, a field `context` only with
-`plaintext`, and the two container attributes are exclusive.
+`identity` exist only with `struct`, and the two container attributes are
+exclusive.
 
 ## Which field decryption opens
 
