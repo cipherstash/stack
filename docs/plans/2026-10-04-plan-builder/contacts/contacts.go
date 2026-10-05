@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 )
 
-//go:generate go tool stashgen -type contactStash -for crm.Contact -record Rows=ContactRow
+//go:generate go tool stashgen -type contactStash -for crm.Contact -model Rows=ContactRow
 
 // contactStash declares the tags for crm.Contact, which cannot carry them.
 // stashgen matches each field to the crm.Contact field with the same name and

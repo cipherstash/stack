@@ -152,7 +152,7 @@ func (f PhoneNumberField) Equality(ctx context.Context, c *stackencrypt.Cipher, 
 	return f.field.Equality(ctx, c, v)
 }
 
-// The -record flag: ContactRow converts to and from its shape only while the
+// The -model flag: ContactRow converts to and from its shape only while the
 // two have the same fields, with the same types, in the same order.
 type rowsShape struct {
 	ID            int64

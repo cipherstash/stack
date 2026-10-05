@@ -741,7 +741,7 @@ With one EQL column for each field, that struct has the same fields as the gener
 A change to either struct stops the build.
 See [`users/sqlcstore.go`](2026-10-04-plan-builder/users/sqlcstore.go).
 
-With separate columns, `-record Rows=ContactRow` names a model.
+With separate columns, `-model Rows=ContactRow` names a model.
 Each field of the model carries a `stash` tag that names one output:
 `stash:"email"` is the ciphertext of `email`, and `stash:"email,equality"` is its equality term.
 `stashgen` writes `EncryptRows` and `DecryptRows`, which return and take the model.
@@ -750,7 +750,7 @@ The generated file holds a copy of the model's fields, and it converts between t
 Go allows that conversion only while the two have the same fields, with the same types, in the same order.
 So a change to the model stops the build until `go generate` runs again.
 
-For a model that cannot carry tags, `-record Rows=R:D` names a struct `D` in your own package that declares them.
+For a model that cannot carry tags, `-model Rows=R:D` names a struct `D` in your own package that declares them.
 See [`contacts/contacts.go`](2026-10-04-plan-builder/contacts/contacts.go).
 
 ### Types in another package
@@ -788,8 +788,8 @@ The compiler then finds a removed field and a field with a new type, and CI find
 | `-type T` | The struct that carries the `stash` tags. Required. |
 | `-name N` | Write `EncryptN`, `DecryptN` and `NFields`. |
 | `-for P.F` | `T` declares the tags for `F`, a type in another package. |
-| `-record Name=R` | A model `R` for separate columns. Writes `EncryptName` and `DecryptName`. Any number. |
-| `-record Name=R:D` | The same, for an `R` that cannot carry tags. The struct `D` declares them. |
+| `-model Name=R` | A model `R` for separate columns. Writes `EncryptName` and `DecryptName`. Any number. |
+| `-model Name=R:D` | The same, for an `R` that cannot carry tags. The struct `D` declares them. |
 | `-redact` | Write `String` and `LogValue` methods on `T`. |
 | `-output file` | The file to write. The default is the type's name in lower case, with `_stash.go`. |
 
