@@ -11,11 +11,11 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 
 use common::{counting_cipher, recording_cipher, stack_cipher};
 use stack_encrypt::kms::FakeDataKeySource;
-use stack_encrypt::plan::pick;
-use stack_encrypt::sem::{EqualityTerm, OpeTerm, OreTerm};
+use stack_encrypt::plan::{pick, FieldValues};
+use stack_encrypt::sem::{EqualityTerm, MatchTerms, OpeTerm, OreTerm};
 use stack_encrypt::target::{
-    AeadContext, CallerContext, DeclaredContext, DecryptFrom, EncryptInto, Encrypted, Encryption,
-    ExpectedContext, IndexSpec,
+    AeadContext, CallerContext, DeclaredContext, DecryptField, DecryptFrom, Decryptable,
+    Decryption, EncryptInto, Encrypted, Encryption, ExpectedContext, IndexSpec,
 };
 use stack_encrypt::{
     nonempty, DecryptInto, EncryptFrom, Error, NonEmpty, Plan, PlanError, StackCipherText,
@@ -74,6 +74,7 @@ async fn a_plaintext_record_writes_what_the_old_chain_wrote() {
         assert_eq!(derived.hm, legacy.hm, "the same term");
         {
             let sent = sent.lock().unwrap();
+            assert_eq!(sent.generate.len(), 2, "one request per record");
             let generated = sent.generated();
             assert_eq!(generated.len(), 2);
             assert_eq!(generated[0], generated[1], "the same descriptor");
@@ -493,9 +494,11 @@ async fn a_struct_record_writes_what_the_old_chain_wrote() {
         assert_eq!(derived.age.ob, legacy.age.ob);
         {
             let sent = sent.lock().unwrap();
-            let generated = sent.generated();
-            let (new, old) = generated.split_at(generated.len() / 2);
-            assert_eq!(new, old, "the same descriptors, in the same order");
+            assert_eq!(sent.generate.len(), 2, "one request per record");
+            assert_eq!(
+                sent.generate[0], sent.generate[1],
+                "the same descriptors, in the same order"
+            );
         }
 
         let crossed = EncryptedUser {
@@ -511,17 +514,22 @@ async fn a_struct_record_writes_what_the_old_chain_wrote() {
     }
 }
 
-#[test]
-fn a_struct_record_plan_is_the_hand_written_chain() {
-    let derived = EncryptedUser::plan::<FakeDataKeySource>().unwrap();
-    let by_hand: Plan<User, FakeDataKeySource> = Plan::context("users")
+/// `EncryptedUser`'s plan, written by hand.
+fn users_plan_by_hand<K: 'static>() -> Plan<User, K> {
+    Plan::context("users")
         .fields()
         .encrypt_into::<Encrypted<EqualityTerm>, _>(pick("email", |u: &User| &u.email))
         .encrypt_into::<StackCipherText, _>(pick("name", |u: &User| &u.name))
         .identity("nickname")
         .encrypt_into::<Age, _>(pick("age", |u: &User| &u.age))
         .build()
-        .unwrap();
+        .unwrap()
+}
+
+#[test]
+fn a_struct_record_plan_is_the_hand_written_chain() {
+    let derived = EncryptedUser::plan::<FakeDataKeySource>().unwrap();
+    let by_hand: Plan<User, FakeDataKeySource> = users_plan_by_hand();
     assert_eq!(format!("{derived:?}"), format!("{by_hand:?}"));
     let labels: Vec<_> = derived
         .field_plans()
@@ -539,8 +547,42 @@ fn a_struct_record_plan_is_the_hand_written_chain() {
     assert_eq!(derived.field("age").unwrap().indexes(), [IndexSpec::Ore]);
 }
 
-/// Every plan the derive emits builds: the run-time refusal is unreachable
-/// for these inputs, because the derive refused the rest at compile time.
+/// A `struct` record whose field type declares one index twice: the other
+/// plan refusal the derive cannot see at compile time.
+#[allow(dead_code)] // never built: refusing it is the point
+#[derive(EncryptFrom)]
+#[stash(struct = User, context = "users")]
+struct TwoEqualitiesInAField {
+    email: Encrypted<(EqualityTerm, EqualityTerm)>,
+}
+
+#[tokio::test]
+async fn a_field_declaring_one_index_twice_is_refused_before_any_request() {
+    let refused = TwoEqualitiesInAField::plan::<FakeDataKeySource>();
+    assert!(
+        matches!(
+            &refused,
+            Err(Error::Plan(PlanError::DuplicateIndex { at, index: "eq" })) if at == "email"
+        ),
+        "{:?}",
+        refused.err()
+    );
+    let (cipher, generates, _) = counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let result = keyset
+        .encrypt_as::<_, TwoEqualitiesInAField>(&user(), DeclaredContext::default())
+        .await;
+    assert!(
+        matches!(result, Err(Error::Plan(PlanError::DuplicateIndex { .. }))),
+        "{:?}",
+        result.err()
+    );
+    assert_eq!(generates.load(AtomicOrdering::SeqCst), 0);
+}
+
+/// Every plan the derive emits builds, except where an output's type
+/// declares an index another declares too: the derive sees types, not the
+/// indexes they declare, and refused every other input at compile time.
 #[test]
 fn every_derived_plan_builds() {
     assert!(EncryptedUser::plan::<FakeDataKeySource>().is_ok());
@@ -551,7 +593,11 @@ fn every_derived_plan_builds() {
     assert!(Shadowed::plan::<String>().is_ok());
     assert!(
         TwoEqualities::plan::<String>().is_err(),
-        "the one exception"
+        "two outputs of one index"
+    );
+    assert!(
+        TwoEqualitiesInAField::plan::<FakeDataKeySource>().is_err(),
+        "a field type of one index twice"
     );
 }
 
@@ -565,4 +611,241 @@ fn a_context_field_plan_debugs_its_stored_context_and_target() {
     let plan = format!("{plan:?}");
     assert!(plan.contains("Stored<alloc::string::String, "), "{plan}");
     assert!(plan.contains("EqualityTerm"), "{plan}");
+}
+
+// --- The derived `struct` record and the same plan written by hand -----------
+
+/// The derive's `struct` opener (written out by the derive) and the plan's
+/// opening (`Plan::decryption`) each encode `<context>/<identity>` extended
+/// by the caller's context. Each opens what the other wrote, for every field
+/// kind the record has (an index field, an identity-pinned field, a nested
+/// record) and with and without an extension; and the derived record sends
+/// ZeroKMS exactly what the hand-written plan sends, in one request each.
+#[tokio::test]
+async fn a_struct_record_and_its_plan_written_by_hand_open_each_other() {
+    for extend in [DeclaredContext::from(()), DeclaredContext::from(7u64)] {
+        let (cipher, sent) = recording_cipher().await;
+        let keyset = cipher.default_keyset();
+        let by_hand = users_plan_by_hand();
+
+        let derived: EncryptedUser = keyset.encrypt_as(&user(), extend.clone()).await.unwrap();
+        let mut written = cipher
+            .encrypt(&user())
+            .using(&by_hand)
+            .extend(extend.clone())
+            .await
+            .unwrap();
+        {
+            let sent = sent.lock().unwrap();
+            assert_eq!(sent.generate.len(), 2, "one request per record");
+            assert_eq!(sent.generate[0], sent.generate[1], "the same descriptors");
+        }
+
+        // The plan's output, opened through the derived record.
+        let email: Encrypted<EqualityTerm> = written.take("email").unwrap();
+        assert_eq!(email.terms, derived.email.terms, "the same term");
+        let crossed = EncryptedUser {
+            email,
+            name: written.take("name").unwrap(),
+            age: written.take("age").unwrap(),
+            v: 3,
+        };
+        let opened = User::decrypt_from_with_context(crossed, &cipher, extend.clone())
+            .await
+            .unwrap();
+        assert_eq!(opened, user());
+
+        // The derived record, opened through the plan.
+        let mut values = FieldValues::new();
+        values
+            .insert("email", derived.email)
+            .insert("name", derived.name)
+            .insert("age", derived.age);
+        let opened = cipher
+            .open(values)
+            .using(&by_hand)
+            .extend(extend)
+            .await
+            .unwrap();
+        assert_eq!(opened.get::<String>("email"), Some(&user().email));
+        assert_eq!(opened.get::<String>("name"), Some(&user().name));
+        assert_eq!(opened.get::<u32>("age"), Some(&user().age));
+    }
+}
+
+// --- A record whose ciphertext is last -----------------------------------------
+
+/// Five outputs, its one ciphertext last: a tuple of targets holds up to
+/// five, so the plan's target nests the tail, `(A, B, C, (D, E))`, and the
+/// ciphertext sits in the nested tuple.
+#[allow(dead_code)] // only `hm` and the opening are read
+#[derive(EncryptFrom, DecryptInto)]
+#[stash(plaintext = String)]
+struct CiphertextLast {
+    hm: EqualityTerm,
+    m: MatchTerms,
+    ob: OreTerm<String>,
+    op: OpeTerm<String>,
+    c: StackCipherText,
+}
+
+#[tokio::test]
+async fn the_one_decryptable_output_opens_from_the_nested_tail() {
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let context = || nonempty!("names");
+    let value = "alice".to_string();
+
+    // Through the derived record.
+    let record: CiphertextLast = value
+        .encrypt_into_with_context(&keyset, context())
+        .await
+        .unwrap();
+    let hm: EqualityTerm = value
+        .encrypt_into_with_context(&keyset, context())
+        .await
+        .unwrap();
+    assert_eq!(record.hm, hm);
+    let opened: String = record.decrypt_into(&cipher, context()).await.unwrap();
+    assert_eq!(opened, value);
+
+    // Through the plan, whose output is the nested tuple and which opens it
+    // through the tuple's own `DecryptInto`.
+    let plan = CiphertextLast::plan::<String>().unwrap();
+    let outputs = cipher
+        .encrypt(&value)
+        .context("names")
+        .using(&plan)
+        .await
+        .unwrap();
+    let (plan_hm, _, _, (_, _)) = &outputs;
+    assert_eq!(*plan_hm, hm);
+    let opened = cipher
+        .open(outputs)
+        .context("names")
+        .using(&plan)
+        .await
+        .unwrap();
+    assert_eq!(opened, value);
+}
+
+// --- A record's context field, through its plan ----------------------------------
+
+#[tokio::test]
+async fn a_context_field_plan_refuses_an_empty_stored_context_before_any_request() {
+    let (cipher, _, retrieves) = counting_cipher().await;
+    let keyset = cipher.default_keyset();
+    let value = "bob@example.com".to_string();
+    let plan = Scoped::plan::<String>().unwrap();
+    let (_, sealed) = keyset
+        .run(plan.encryption_with_context(), &value, tenant())
+        .await
+        .unwrap();
+
+    // The stored context is not authenticated: a row can hold an empty one.
+    let refused = keyset
+        .run_decryption(
+            plan.decryption_with_context((String::new(), sealed), ExpectedContext::default()),
+        )
+        .await;
+    assert!(refused.is_err(), "{:?}", refused.ok());
+    assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 0);
+}
+
+/// The derived `context_field` record's opener (written out by the derive)
+/// and `ValuePlan::decryption_with_context` each check the stored context
+/// and open under it: each opens what the other wrote.
+#[tokio::test]
+async fn a_context_field_record_and_its_plan_open_each_other() {
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let value = "bob@example.com".to_string();
+    let plan = Scoped::plan::<String>().unwrap();
+
+    // The derived record, opened through the plan.
+    let derived: Scoped = keyset.encrypt_as(&value, tenant()).await.unwrap();
+    let opened = keyset
+        .run_decryption(
+            plan.decryption_with_context((derived.i, (derived.c, derived.hm)), tenant().into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(opened, value);
+
+    // The plan's output, opened through the derived record.
+    let (i, (c, hm)) = keyset
+        .run(plan.encryption_with_context(), &value, tenant())
+        .await
+        .unwrap();
+    let crossed = Scoped { i, c, hm, v: 3 };
+    let opened: String = cipher.decrypt_as(crossed, tenant().into()).await.unwrap();
+    assert_eq!(opened, value);
+}
+
+// --- A record that declares its context type ----------------------------------
+
+#[derive(EncryptFrom, DecryptInto)]
+#[stash(plaintext = String, context_type = NonEmpty<u64>)]
+struct Tenanted {
+    c: StackCipherText,
+}
+
+/// A term whose context is a `NonEmpty<u64>`, not a `CallerContext`.
+#[derive(Debug, PartialEq)]
+struct TenantTag(EqualityTerm);
+impl EncryptFrom<String> for TenantTag {
+    type Context = NonEmpty<u64>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context> {
+        <EqualityTerm as EncryptFrom<String>>::encryption()
+            .accepting::<NonEmpty<u64>>()
+            .map(TenantTag)
+    }
+    fn indexes() -> Vec<IndexSpec> {
+        vec![IndexSpec::Equality]
+    }
+}
+impl Decryptable for TenantTag {
+    const DECRYPTABLE: bool = false;
+}
+impl<P, Ctx> DecryptField<P, Ctx> for TenantTag {
+    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
+        None
+    }
+}
+
+/// One output, whose context is the record's `NonEmpty<u64>`.
+#[derive(EncryptFrom, DecryptInto)]
+#[stash(plaintext = String, context_type = NonEmpty<u64>)]
+struct WrappedTenanted {
+    inner: Tenanted,
+}
+
+/// Two outputs sharing the record's `NonEmpty<u64>`, one of them decryptable.
+#[derive(EncryptFrom, DecryptInto)]
+#[stash(plaintext = String, context_type = NonEmpty<u64>)]
+struct TenantedPair {
+    inner: Tenanted,
+    tag: TenantTag,
+}
+
+/// A record declaring `context_type = NonEmpty<u64>` is sealed and opened
+/// under that context, never a `CallerContext` it could not take, and
+/// writes what its outputs write alone.
+#[tokio::test]
+async fn a_record_keeps_its_declared_context_type() {
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let value = "bob@example.com".to_string();
+    let tenant = || NonEmpty::from(7u64);
+
+    let wrapped: WrappedTenanted = keyset.encrypt_as(&value, tenant()).await.unwrap();
+    let opened: String = cipher.decrypt_as(wrapped, tenant()).await.unwrap();
+    assert_eq!(opened, value);
+
+    let pair: TenantedPair = keyset.encrypt_as(&value, tenant()).await.unwrap();
+    let tag: TenantTag = keyset.encrypt_as(&value, tenant()).await.unwrap();
+    assert_eq!(pair.tag, tag, "the record's term is the target's");
+    let opened: String = cipher.decrypt_as(pair, tenant()).await.unwrap();
+    assert_eq!(opened, value);
+    assert!(TenantedPair::plan::<String>().is_ok());
 }

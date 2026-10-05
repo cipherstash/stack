@@ -97,9 +97,12 @@ fn struct_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Tok
             ///
             /// # Errors
             ///
-            /// The plan's own build errors, in `Error::Plan`. The derive
-            /// refuses at compile time every input whose plan would not
-            /// build, so this does not fail for derived output.
+            /// The plan's own build errors, in `Error::Plan`: a field whose
+            /// type declares one index twice (`PlanError::DuplicateIndex`,
+            /// `Encrypted<(EqualityTerm, EqualityTerm)>`). The derive sees a
+            /// field's type, not the indexes it declares, so this fails
+            /// when the plan is built, not at compile time; every other
+            /// input whose plan would not build does not compile.
             pub fn plan<__K: 'static>() -> ::core::result::Result<#krate::Plan<#source, __K>, #krate::Error> {
                 #krate::Plan::context(#prefix)
                     .fields::<#source, __K>()
@@ -149,7 +152,7 @@ fn struct_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Tok
 fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> TokenStream {
     let krate = &record.krate;
     let name = &input.ident;
-    let (tuple, pattern, _) = outputs(fields, |_| TokenStream::new());
+    let (tuple, pattern) = outputs(fields);
     let stored = record.context_field().map(|field| field.ty.clone());
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let plan = match &stored {
@@ -162,11 +165,13 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
             /// # Errors
             ///
             /// The plan's own build errors, in `Error::Plan`: two outputs
-            /// that declare the same index.
+            /// that declare the same index (`PlanError::DuplicateIndex`).
+            /// The derive sees the outputs' types, not the indexes they
+            /// declare, so this fails when the plan is built, not at
+            /// compile time.
             pub fn plan<__S>() -> ::core::result::Result<#krate::plan::ValuePlan<__S, #krate::plan::Typed<#tuple>>, #krate::Error>
             where
                 #tuple: #krate::target::EncryptFrom<__S>,
-                #krate::plan::Typed<#tuple>: #krate::plan::ValueShape<__S>,
             {
                 #krate::Plan::value::<__S>().encrypt_into::<#tuple>().build()
             }
@@ -181,7 +186,10 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
             /// # Errors
             ///
             /// The plan's own build errors, in `Error::Plan`: two outputs
-            /// that declare the same index.
+            /// that declare the same index (`PlanError::DuplicateIndex`).
+            /// The derive sees the outputs' types, not the indexes they
+            /// declare, so this fails when the plan is built, not at
+            /// compile time.
             pub fn plan<__S>() -> ::core::result::Result<#krate::plan::ValuePlan<__S, #krate::plan::Stored<#stored, #tuple>>, #krate::Error>
             where
                 #tuple: #krate::target::EncryptFrom<__S>,
@@ -227,9 +235,6 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
         predicates.push(parse_quote!(#tuple: #krate::target::EncryptFrom<#source>));
         let body = match &stored {
             None => {
-                predicates.push(
-                    parse_quote!(#krate::plan::Typed<#tuple>: #krate::plan::ValueShape<#source>),
-                );
                 predicates.push(parse_quote!(#context: Into<#tuple_context>));
                 quote! {
                     __plan

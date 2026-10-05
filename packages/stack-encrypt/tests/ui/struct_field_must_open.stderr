@@ -1,0 +1,53 @@
+error[E0277]: the trait bound `&str: Decrypt<'static>` is not satisfied
+  --> tests/ui/struct_field_must_open.rs:29:11
+   |
+29 |     name: StackCipherText,
+   |           ^^^^^^^^^^^^^^^ the trait `Decrypt<'static>` is not implemented for `&str`
+   |
+help: the trait `Decrypt<'static>` is not implemented for `&str`
+      but trait `Decrypt<'_>` is implemented for `std::string::String`
+  --> $CARGO/vitaminc-aead-$VERSION/src/decrypt/impls.rs
+   |
+   | impl<'c> Decrypt<'c> for String {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: for that trait implementation, expected `std::string::String`, found `&str`
+   = note: required for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` to implement `DecryptInto<&str>`
+   = note: required for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` to implement `DecryptField<&str, CallerContext>`
+note: required by a bound in `FieldsBuilder::<S, K>::encrypt_into`
+  --> src/plan/build.rs
+   |
+   |     pub fn encrypt_into<T, F>(self, field: impl FieldRef<S, F>) -> Self
+   |            ------------ required by a bound in this associated function
+...
+   |         T: EncryptFrom<F> + Decryptable + DecryptField<F, CallerContext> + Send,
+   |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `FieldsBuilder::<S, K>::encrypt_into`
+
+error[E0277]: the trait bound `Opaque: DecryptField<std::string::String, CallerContext>` is not satisfied
+  --> tests/ui/struct_field_must_open.rs:30:10
+   |
+30 |     bio: Opaque,
+   |          ^^^^^^ unsatisfied trait bound
+   |
+help: the trait `DecryptField<std::string::String, CallerContext>` is not implemented for `Opaque`
+  --> tests/ui/struct_field_must_open.rs:15:1
+   |
+15 | struct Opaque(#[allow(dead_code)] StackCipherText);
+   | ^^^^^^^^^^^^^
+   = help: the following other types implement trait `DecryptField<P, Ctx>`:
+             `(A, B)` implements `DecryptField<P, Ctx>`
+             `(A, B, C)` implements `DecryptField<P, Ctx>`
+             `(A, B, C, D)` implements `DecryptField<P, Ctx>`
+             `(A, B, C, D, E)` implements `DecryptField<P, Ctx>`
+             `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` implements `DecryptField<P, Ctx>`
+             `Encrypted<Terms>` implements `DecryptField<P, Ctx>`
+             `EqualityTerm` implements `DecryptField<P, Ctx>`
+             `MatchTerms<O>` implements `DecryptField<P, Ctx>`
+           and $N others
+note: required by a bound in `FieldsBuilder::<S, K>::encrypt_into`
+  --> src/plan/build.rs
+   |
+   |     pub fn encrypt_into<T, F>(self, field: impl FieldRef<S, F>) -> Self
+   |            ------------ required by a bound in this associated function
+...
+   |         T: EncryptFrom<F> + Decryptable + DecryptField<F, CallerContext> + Send,
+   |                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `FieldsBuilder::<S, K>::encrypt_into`

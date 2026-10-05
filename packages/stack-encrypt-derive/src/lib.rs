@@ -50,10 +50,10 @@
 //!
 //! `#[derive(EncryptFrom)]` emits the record's plan, `Record::plan()`, and
 //! its `EncryptFrom::encryption()` runs that plan and maps the outputs into
-//! the struct; the derive names plan verbs and nothing beneath them, so a
-//! derived record and the same chain written by hand cannot drift apart
-//! (see `stack_encrypt::plan`, "The derive emits a plan", for a worked
-//! example):
+//! the struct. On the encrypt side the derive names plan verbs and nothing
+//! beneath them, so a derived record and the same plan written by hand
+//! cannot drift apart (see `stack_encrypt::plan`, "The derive emits a plan",
+//! for a worked example):
 //!
 //! - a `struct = User, context = "users"` record emits
 //!   `Plan::context("users").fields()` with
@@ -66,12 +66,30 @@
 //!   Its `EncryptFrom::indexes()` is the outputs' indexes, so a derived
 //!   record used as a plan field answers the queries its terms support.
 //!
-//! The derive refuses at compile time every input whose plan would not
-//! build. `DecryptInto` opens a `plaintext = T` record's outputs as the
-//! plan's one-value target does (the tuple's own `DecryptInto`), or the
-//! output `#[stash(decrypt)]` names; a `struct` record opens each field
-//! through its own `DecryptField` under `<context>/<identity>`, which is what
-//! the plan's opening of a typed field does.
+//! A plan seals and opens each field, so every field type of a `struct`
+//! record implements `DecryptField<F, CallerContext>` for the plaintext
+//! field `F` it is derived from, even when the record derives `EncryptFrom`
+//! alone: every target in `stack_encrypt` and every record deriving
+//! `DecryptInto` does. That is refused at compile time, at the field: a
+//! plaintext field that is borrowed (`&'static str`) cannot be opened into,
+//! so derive from an owned field (`String`), or encrypt the borrowed value
+//! through a `plaintext` record.
+//!
+//! Every other input whose plan would not build is refused at compile time
+//! too, except one the derive cannot see: an index declared twice. The
+//! derive sees field types by name, not the indexes they declare, so a
+//! `plaintext` record with two outputs of one index (`EqualityTerm` twice)
+//! and a `struct` record whose field type declares one index twice
+//! (`Encrypted<(EqualityTerm, EqualityTerm)>`) compile, and `Record::plan()`
+//! returns `Error::Plan(PlanError::DuplicateIndex { .. })`; encrypting
+//! through the record fails with that error, before any key is requested.
+//!
+//! On the decrypt side, `DecryptInto` opens a `plaintext = T` record through
+//! its one decryptable output (or the one `#[stash(decrypt)]` names) under
+//! the record's context, and a `struct` record opens each field through its
+//! own `DecryptField` under `<context>/<identity>`, extended by the caller's
+//! context. Neither goes through the plan: each is written out by the
+//! derive, and the crate's tests open what one writes through the other.
 //!
 //! # A field in your own storage format
 //!
@@ -158,7 +176,9 @@
 //! To recover the plaintext through the record rather than the canonical path,
 //! the field type also implements `DecryptInto` and `DecryptField`, and the
 //! record derives `DecryptInto`; the crate's `transcode` integration test shows
-//! the full set.
+//! the full set. A field of a `struct = ..` record needs `DecryptField` even
+//! when the record derives `EncryptFrom` alone, because the record's plan
+//! opens each field (see "The record's plan").
 //!
 #![doc = include_str!("../docs/attributes.md")]
 #![doc(html_favicon_url = "https://cipherstash.com/favicon.ico")]

@@ -547,24 +547,21 @@ impl Record {
 }
 /// The outputs of a `plaintext` record's derived `fields`, as the plan's
 /// one-value target sees them: the tuple of their types (the type itself
-/// for one field), the pattern binding each to its local, and the tuple of
-/// `value(field)`s. A tuple of targets is a target for up to four elements,
-/// so a longer record nests: `(A, B, C, (D, E, ..))`.
-pub(crate) fn outputs(
-    fields: &[&Field],
-    value: impl Fn(&Field) -> TokenStream + Copy,
-) -> (TokenStream, TokenStream, TokenStream) {
+/// for one field), and the pattern binding each to its local. A tuple of
+/// targets is a target for up to five elements; a record of more than four
+/// outputs nests the rest in its fourth: `(A, B, C, (D, E, ..))`.
+pub(crate) fn outputs(fields: &[&Field]) -> (TokenStream, TokenStream) {
     match fields {
         [field] => {
             let ty = &field.ty;
             let local = &field.local;
-            (quote!(#ty), quote!(#local), value(field))
+            (quote!(#ty), quote!(#local))
         }
         _ => {
             let (flat, rest) = if fields.len() <= 4 {
                 (fields, None)
             } else {
-                (&fields[..3], Some(outputs(&fields[3..], value)))
+                (&fields[..3], Some(outputs(&fields[3..])))
             };
             let mut types: Vec<TokenStream> = flat
                 .iter()
@@ -580,17 +577,11 @@ pub(crate) fn outputs(
                     quote!(#local)
                 })
                 .collect();
-            let mut values: Vec<TokenStream> = flat.iter().map(|field| value(field)).collect();
-            if let Some((ty, pattern, value)) = rest {
+            if let Some((ty, pattern)) = rest {
                 types.push(ty);
                 patterns.push(pattern);
-                values.push(value);
             }
-            (
-                quote!((#(#types),*)),
-                quote!((#(#patterns),*)),
-                quote!((#(#values),*)),
-            )
+            (quote!((#(#types),*)), quote!((#(#patterns),*)))
         }
     }
 }
