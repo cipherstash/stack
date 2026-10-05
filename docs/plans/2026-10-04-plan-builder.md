@@ -521,13 +521,12 @@ type User struct {
 
 cipher := client.Keyset(stackencrypt.KeysetName("tenant-42"))
 
-enc, err := stackencrypt.Encrypt(ctx, cipher, alice)                   // EncryptedUser
-all, err := stackencrypt.EncryptAll(ctx, cipher, people)               // []EncryptedUser, one ZeroKMS request
-user, err := stackencrypt.Decrypt(ctx, client, enc)                    // User
+encrypted, err := stackencrypt.Encrypt(ctx, cipher, people)            // []EncryptedUser, one ZeroKMS request
+users, err := stackencrypt.Decrypt(ctx, client, encrypted)             // []User
 term, err := UserFields.Email.Equality(ctx, cipher, "bob@example.com") // EqualityTerm
 
-_ = enc.Email.Equality // EqualityTerm
-_ = enc.Email.Ore      // does not compile: email declares no ORE index
+_ = encrypted[0].Email.Equality // EqualityTerm
+_ = encrypted[0].Email.Ore      // does not compile: email declares no ORE index
 ```
 
 ### Struct tags
@@ -551,14 +550,63 @@ Only `stashgen` reads these tags, and no function reads them at run time.
 
 ### stashgen
 
-`stashgen` is a Go command at `languages/golang/cmd/stashgen`.
-A module adds it with `go get -tool`, and `go generate` runs it from a comment beside the type:
+`stashgen` is a Go command that reads the `stash` tags of a struct and writes its encrypted type.
+It is at `languages/golang/cmd/stashgen`.
 
-```go
-//go:generate go tool stashgen -type User -row UserRows=UserRow -row SQLCUsers=userdb.User
-```
+#### Use stashgen
 
-It takes these flags:
+1. Add the tool to your module.
+   This needs Go 1.24 or later.
+
+   ```sh
+   go get -tool github.com/cipherstash/stack/languages/golang/cmd/stashgen
+   ```
+
+2. Put `stash` tags on the struct, and a `go:generate` comment beside it.
+
+   ```go
+   //go:generate go tool stashgen -type User
+   type User struct {
+   	_     struct{} `stash:"context=users"`
+   	ID    int64    `stash:"id,passthrough"`
+   	Email string   `stash:"email,encrypt,index=equality;match"`
+   }
+   ```
+
+3. Run the generator.
+   It writes `user_stash.go` beside the struct.
+
+   ```sh
+   go generate ./...
+   ```
+
+4. Commit the generated file.
+
+5. Call the generated code.
+
+   ```go
+   encrypted, err := stackencrypt.Encrypt(ctx, cipher, []User{alice})
+   term, err := UserFields.Email.Equality(ctx, cipher, "bob@example.com")
+   ```
+
+6. Run the generator again after each change to the struct or to a tag.
+   A change to the fields of the struct stops the build until you do.
+
+7. In CI, run the generator and fail when a generated file changes.
+
+   ```sh
+   go generate ./... && git diff --exit-code
+   ```
+
+Three more cases use the same steps with one more flag or one more file:
+
+- To encrypt into a GORM model, an sqlc model or another storage struct, add `-row`. See "Storage structs".
+- To encrypt a type from another package, add `-for`. See "Types in another package".
+- To decide the plan from a policy, write a generate program. See "Plans from a policy".
+
+The rest of this section is the reference.
+
+#### Flags
 
 | Flag | Meaning |
 |---|---|
@@ -568,7 +616,9 @@ It takes these flags:
 | `-for P.F` | `T` declares the plan for `F`, a type in another package. |
 | `-output file` | The file to write. The default is the type's name in lower case, with `_stash.go`. |
 
-`stashgen` loads the package with `golang.org/x/tools/go/packages` and reads types, not text.
+#### How stashgen reads a package
+
+The generator loads the package with `golang.org/x/tools/go/packages` and reads types, not text.
 It runs none of the package's code.
 It ignores its own output file when it loads the package, so a stale file does not stop it.
 The same input always gives the same file: fields keep their declared order, and the file carries no version and no time.
@@ -615,7 +665,7 @@ Each of its fields carries a `stash` tag that names one output:
 For sqlc, a `go_struct_tag` override puts the tag on the generated model.
 
 For `-row UserRows=UserRow`, `stashgen` writes `UserRows`, a `RowPlan[User, UserRow]`.
-Its `Encrypt` returns a `UserRow`, and its `Decrypt` takes one.
+Its `Encrypt` returns a `[]UserRow`, and its `Decrypt` takes one.
 The generator refuses a storage struct that has a field with no tag.
 It also refuses one that has no field for an output of the plan.
 
@@ -750,11 +800,9 @@ So a file from another version does not compile.
 
 | Call | Returns |
 |---|---|
-| `Encrypt(ctx, c *Cipher, v T, opts ...Option)`, for a `Planned` type | the generated type `E` |
-| `EncryptAll(ctx, c *Cipher, vs []T, opts ...Option)` | `[]E` |
-| `Decrypt(ctx, d Decrypter, e E, opts ...Option)` | `T` |
-| `DecryptAll(ctx, d Decrypter, es []E, opts ...Option)` | `[]T` |
-| `RowPlan[T, R]`: the same four, as methods | `R` in place of `E` |
+| `Encrypt(ctx, c *Cipher, vs []T, opts ...Option)`, for a `Planned` type | `[]E`, where `E` is the generated type |
+| `Decrypt(ctx, d Decrypter, es []E, opts ...Option)` | `[]T` |
+| `RowPlan[T, R]`: the same two, as methods | `[]R` in place of `[]E` |
 | A generated field entry, such as `UserFields.Email`: `Encrypt` | the field's generated type |
 | A generated field entry: `Equality`, `Match`, `Ore`, `Ope` | `EqualityTerm`, `MatchTerm`, `OreTerm`, `OpeTerm` |
 | A generated field entry: `Contains`, `EqualAt` | `JSONQuery` |
@@ -763,7 +811,11 @@ So a file from another version does not compile.
 | `DecryptValue[T](ctx, d Decrypter, ct Ciphertext, c Context, opts ...Option)` | `T` |
 
 Every call also returns an `error`.
-`EncryptAll` and `DecryptAll` send one ZeroKMS request for the whole slice.
+`Encrypt` and `Decrypt` take a slice, and send one ZeroKMS request for all of it.
+The result has one element for each element of the input, in the same order.
+For one value, pass a slice with one element.
+There is no second form for one value.
+
 `NewContext(bytes)` makes a `Context` from raw bytes, the same bytes part that Rust accepts.
 See [`users/sqlstore.go`](2026-10-04-plan-builder/users/sqlstore.go) and [`documents/documents.go`](2026-10-04-plan-builder/documents/documents.go).
 
@@ -1020,7 +1072,7 @@ Then:
 ## Open questions
 
 - **A batch across plans in Go.**
-  `EncryptAll` and `DecryptAll` batch the values of one plan.
+  `Encrypt` and `Decrypt` batch the values of one plan.
   The Go form of `all(..)` gives a typed handle for each operation, and the Go PR settles its spelling.
 - **Converging the TypeScript schema builder onto the plan grammar**, so
   `@cipherstash/stack` stops being a second engine beside stack-encrypt.

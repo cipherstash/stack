@@ -39,7 +39,7 @@ func NewGormStore(db *gorm.DB, client *stackencrypt.Client) *GormStore {
 
 func (s *GormStore) Create(ctx context.Context, tenant string, people ...User) error {
 	cipher := s.client.Keyset(stackencrypt.KeysetName(tenant))
-	rows, err := UserRows.EncryptAll(ctx, cipher, people)
+	rows, err := UserRows.Encrypt(ctx, cipher, people)
 	if err != nil {
 		return err
 	}
@@ -56,5 +56,5 @@ func (s *GormStore) FindByEmail(ctx context.Context, tenant, email string) ([]Us
 	if err := s.db.WithContext(ctx).Where("email_eq = ?", term).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	return UserRows.DecryptAll(ctx, cipher, rows)
+	return UserRows.Decrypt(ctx, cipher, rows)
 }

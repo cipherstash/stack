@@ -12,12 +12,16 @@ import (
 func RoundTripForTenant(ctx context.Context, cipher *stackencrypt.Cipher, part string, user User) (User, error) {
 	extend := stackencrypt.ExtendContext(part)
 
-	enc, err := stackencrypt.Encrypt(ctx, cipher, user, extend)
+	encrypted, err := stackencrypt.Encrypt(ctx, cipher, []User{user}, extend)
 	if err != nil {
 		return User{}, err
 	}
 	if _, err := UserFields.Email.Equality(ctx, cipher, user.Email, extend); err != nil {
 		return User{}, err
 	}
-	return stackencrypt.Decrypt(ctx, cipher, enc, extend)
+	users, err := stackencrypt.Decrypt(ctx, cipher, encrypted, extend)
+	if err != nil {
+		return User{}, err
+	}
+	return users[0], nil
 }

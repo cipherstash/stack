@@ -26,10 +26,11 @@ func New(db *sql.DB, cipher *stackencrypt.Cipher) *List {
 }
 
 func (l *List) Block(ctx context.Context, email string) error {
-	enc, err := stackencrypt.Encrypt(ctx, l.cipher, Blocked{Email: email})
+	encrypted, err := stackencrypt.Encrypt(ctx, l.cipher, []Blocked{{Email: email}})
 	if err != nil {
 		return err
 	}
+	enc := encrypted[0]
 	_, err = l.db.ExecContext(ctx,
 		`INSERT INTO blocked_emails (email, email_eq) VALUES ($1, $2) ON CONFLICT (email_eq) DO NOTHING`,
 		enc.Email.Ciphertext, enc.Email.Equality)
@@ -67,7 +68,7 @@ func (l *List) All(ctx context.Context) ([]string, error) {
 	if err := rs.Err(); err != nil {
 		return nil, err
 	}
-	blocked, err := stackencrypt.DecryptAll(ctx, l.cipher, encrypted)
+	blocked, err := stackencrypt.Decrypt(ctx, l.cipher, encrypted)
 	if err != nil {
 		return nil, err
 	}

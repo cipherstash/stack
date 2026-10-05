@@ -23,10 +23,11 @@ type contactStash struct {
 }
 
 func Create(ctx context.Context, db *sql.DB, cipher *stackencrypt.Cipher, contact crm.Contact) error {
-	enc, err := ContactPlan.Encrypt(ctx, cipher, contact)
+	encrypted, err := ContactPlan.Encrypt(ctx, cipher, []crm.Contact{contact})
 	if err != nil {
 		return err
 	}
+	enc := encrypted[0]
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO contacts (id, email, email_eq, email_match, phone_number, phone_number_eq)
 		VALUES ($1, $2, $3, $4, $5, $6)`,

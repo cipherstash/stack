@@ -10,10 +10,11 @@ import (
 )
 
 func Create(ctx context.Context, db *sql.DB, cipher *stackencrypt.Cipher, person individuals.Individual) error {
-	enc, err := stackencrypt.Encrypt(ctx, cipher, person)
+	encrypted, err := stackencrypt.Encrypt(ctx, cipher, []individuals.Individual{person})
 	if err != nil {
 		return err
 	}
+	enc := encrypted[0]
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO individuals (id, nickname, name, email, email_eq, email_match, medicare_number, medicare_number_eq)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,

@@ -28,20 +28,20 @@ func (s *SQLCStore) cipher(tenant string) *stackencrypt.Cipher {
 }
 
 func (s *SQLCStore) Create(ctx context.Context, tenant string, user User) error {
-	row, err := SQLCUsers.Encrypt(ctx, s.cipher(tenant), user)
+	rows, err := SQLCUsers.Encrypt(ctx, s.cipher(tenant), []User{user})
 	if err != nil {
 		return fmt.Errorf("encrypt user %d: %w", user.ID, err)
 	}
 	// CreateUserParams has the same fields as userdb.User, in the same order,
 	// so Go converts one to the other. If a change to the query breaks that,
 	// this line stops compiling.
-	return s.queries.CreateUser(ctx, userdb.CreateUserParams(row))
+	return s.queries.CreateUser(ctx, userdb.CreateUserParams(rows[0]))
 }
 
 // Import encrypts every user in one ZeroKMS request, then inserts them in one
 // transaction.
 func (s *SQLCStore) Import(ctx context.Context, tenant string, people []User) error {
-	rows, err := SQLCUsers.EncryptAll(ctx, s.cipher(tenant), people)
+	rows, err := SQLCUsers.Encrypt(ctx, s.cipher(tenant), people)
 	if err != nil {
 		return fmt.Errorf("encrypt %d users: %w", len(people), err)
 	}
@@ -69,7 +69,11 @@ func (s *SQLCStore) Get(ctx context.Context, tenant string, id int64) (User, err
 	if err != nil {
 		return User{}, err
 	}
-	return SQLCUsers.Decrypt(ctx, s.cipher(tenant), row)
+	users, err := SQLCUsers.Decrypt(ctx, s.cipher(tenant), []userdb.User{row})
+	if err != nil {
+		return User{}, err
+	}
+	return users[0], nil
 }
 
 func (s *SQLCStore) FindByEmail(ctx context.Context, tenant, email string) ([]User, error) {
@@ -82,7 +86,7 @@ func (s *SQLCStore) FindByEmail(ctx context.Context, tenant, email string) ([]Us
 	if err != nil {
 		return nil, err
 	}
-	return SQLCUsers.DecryptAll(ctx, cipher, rows)
+	return SQLCUsers.Decrypt(ctx, cipher, rows)
 }
 
 func (s *SQLCStore) List(ctx context.Context, tenant string) ([]User, error) {
@@ -90,7 +94,7 @@ func (s *SQLCStore) List(ctx context.Context, tenant string) ([]User, error) {
 	if err != nil {
 		return nil, err
 	}
-	return SQLCUsers.DecryptAll(ctx, s.cipher(tenant), rows)
+	return SQLCUsers.Decrypt(ctx, s.cipher(tenant), rows)
 }
 
 // ChangeEmail rewrites one field. The email field owns three columns, and all

@@ -31,18 +31,18 @@ func (s *SQLStore) cipher(tenant string) *stackencrypt.Cipher {
 }
 
 func (s *SQLStore) Create(ctx context.Context, tenant string, user User) error {
-	enc, err := stackencrypt.Encrypt(ctx, s.cipher(tenant), user)
+	encrypted, err := stackencrypt.Encrypt(ctx, s.cipher(tenant), []User{user})
 	if err != nil {
 		return fmt.Errorf("encrypt user %d: %w", user.ID, err)
 	}
-	_, err = s.db.ExecContext(ctx, insertUser, args(enc)...)
+	_, err = s.db.ExecContext(ctx, insertUser, args(encrypted[0])...)
 	return err
 }
 
 // Import encrypts every user in one ZeroKMS request, then inserts them in one
 // transaction.
 func (s *SQLStore) Import(ctx context.Context, tenant string, people []User) error {
-	encrypted, err := stackencrypt.EncryptAll(ctx, s.cipher(tenant), people)
+	encrypted, err := stackencrypt.Encrypt(ctx, s.cipher(tenant), people)
 	if err != nil {
 		return fmt.Errorf("encrypt %d users: %w", len(people), err)
 	}
@@ -77,7 +77,7 @@ func (s *SQLStore) FindByEmail(ctx context.Context, tenant, email string) ([]Use
 	if err != nil {
 		return nil, err
 	}
-	return stackencrypt.DecryptAll(ctx, cipher, encrypted)
+	return stackencrypt.Decrypt(ctx, cipher, encrypted)
 }
 
 // OldestFirst returns users aged minAge or over, oldest first. ORE terms
@@ -94,7 +94,7 @@ func (s *SQLStore) OldestFirst(ctx context.Context, tenant string, minAge uint32
 	}
 	encrypted = slices.DeleteFunc(encrypted, func(e EncryptedUser) bool { return e.Age.Ore.Compare(floor) < 0 })
 	slices.SortFunc(encrypted, func(a, b EncryptedUser) int { return b.Age.Ore.Compare(a.Age.Ore) })
-	return stackencrypt.DecryptAll(ctx, cipher, encrypted)
+	return stackencrypt.Decrypt(ctx, cipher, encrypted)
 }
 
 func (s *SQLStore) WithRole(ctx context.Context, tenant, role string) ([]User, error) {
@@ -108,7 +108,7 @@ func (s *SQLStore) WithRole(ctx context.Context, tenant, role string) ([]User, e
 	if err != nil {
 		return nil, err
 	}
-	return stackencrypt.DecryptAll(ctx, cipher, encrypted)
+	return stackencrypt.Decrypt(ctx, cipher, encrypted)
 }
 
 func (s *SQLStore) query(ctx context.Context, q string, params ...any) ([]EncryptedUser, error) {
