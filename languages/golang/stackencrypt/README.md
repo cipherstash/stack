@@ -296,50 +296,100 @@ their record key, and `plan.Identity` is refused. The plan a
 policy builds is a `Plan` like any other: the guest receives the same bytes
 as for the equivalent hand-built plan.
 
-### Checking contexts in with a golden test
+### Catch a changed context with a golden test
 
-Nothing on the write path notices a changed context: rename a proto or
-struct field with no pin and new rows are simply written under a new one,
-while the rows already written stop decrypting. The `plan/plantest` package
-turns that into a test failure:
+A field's context must never change after you write data under it.
+The library binds the context into every ciphertext and index term it writes for the field.
+If the context changes, the rows you already wrote stop decrypting, and their index terms stop matching queries.
 
-```go
-import "github.com/cipherstash/stack/languages/golang/stackencrypt/plan/plantest"
+You get no error when a context changes.
+If you rename a proto field or a Go struct field, its context changes too.
+Your code then writes new rows under the new context.
+To keep the old context, pin the column with `plan.Column` in the field's rule.
 
-func TestIndividualsPolicy(t *testing.T) {
-    plantest.Golden(t, source, Individuals)
-}
-```
+The `plan/plantest` package makes a changed context fail a test.
+It gives you a golden test.
+A golden test compares the plan with a file you commit, called the golden file.
 
-Run it once with `go test -run '^TestIndividualsPolicy$' -update` to write
-`testdata/TestIndividualsPolicy.golden`, and check the file in. It lists the
-message's table and, for every field the policy decides, what it is stored
-as: an encrypted field's column, context, index terms and facts, or a
-plaintext field's name and facts.
+To add the test:
+
+1. Write a test that calls `plantest.Golden` with your source and your policy:
+
+   ```go
+   import "github.com/cipherstash/stack/languages/golang/stackencrypt/plan/plantest"
+
+   func TestIndividualsPolicy(t *testing.T) {
+       plantest.Golden(t, source, Individuals)
+   }
+   ```
+
+   The plantest package defines the `-update` flag.
+   If your test package defines its own `-update` flag, remove it, and read plantest's flag instead:
+
+   ```go
+   func update() bool {
+       f := flag.Lookup("update")
+       return f != nil && f.Value.String() == "true"
+   }
+   ```
+
+2. Run the test once with `-update`.
+   This writes the golden file to `testdata/TestIndividualsPolicy.golden`:
+
+   ```sh
+   go test -run '^TestIndividualsPolicy$' -update
+   ```
+
+3. Read the golden file, then commit it.
+
+The golden file names the message's table.
+It also lists each field the policy decides:
+
+- An encrypted field shows its column, context, target, index terms and facts.
+- A plaintext field shows its name and facts.
+
+This is the golden file for the `Individuals` policy above:
 
 ```text
+# Written by plantest.Golden: what the policy stores each field it decides as.
+# Regenerate it with go test -update; do not edit it by hand.
+# A column's context is bound into every ciphertext and query term written under it, so once a row is written it must never change.
+
 table individuals
 
 column email
   context individuals/email
+  target EQL
   terms eq match
   fact fides.data_categories user.contact.email
 
 column medicare_number
   context individuals/medicare_number
+  target EQL
   terms eq
   fact fides.data_categories user.government_id
 ```
 
-From then on the test builds the plan as `MustPlanFor` does at startup and
-fails when it no longer matches the file, sorting the changes by what they
-cost. A changed context is data loss and is reported first, with the
-`plan.Column` (or `plan.Identity`) pin that keeps it; a changed target, such
-as different index terms or a plaintext field now encrypted, is a migration;
-anything else, such as a new field, is reported last. Encrypted fields are
-listed by column, not by field name, so a rename the policy pins leaves the
-file unchanged and the test passes. When a change is intended, rerun with
-`-update` and review the diff.
+After that, each test run builds the plan the same way `MustPlanFor` does at startup.
+If the plan does not match the golden file, the test fails.
+The failure lists each change, with the most costly changes first:
+
+1. **Context changes.**
+   These lose data.
+   If a rename caused the change, the failure names the `plan.Column` or `plan.Identity` pin that keeps the old context.
+2. **Target changes.**
+   These need a migration.
+   For example, the index terms are different, or a plaintext field is now encrypted.
+3. **Other changes.**
+   These do not affect rows you already wrote.
+   For example, the policy decides a new field.
+
+The golden file lists encrypted fields by column, not by field name.
+If you rename a field and your policy pins its column, the file stays the same and the test passes.
+
+Change a context only before you write rows under it, or ship a migration with the change.
+If you made a change on purpose, run the test again with `-update`.
+Then read the diff of the golden file before you commit it.
 
 ## Errors
 
