@@ -409,6 +409,82 @@ fn records_plan<K: 'static>() -> Plan<TenantRecord, K> {
         .unwrap()
 }
 
+/// `.extend(parts)` reaches every field of a plan whose context is read
+/// from the value, and the same parts are needed to open it.
+#[tokio::test]
+async fn an_extension_reaches_every_field_of_a_context_field_plan() {
+    let (cipher, sent) = recording_cipher().await;
+    let records_plan = records_plan();
+    let record = cipher
+        .encrypt(&tenant_record())
+        .using(&records_plan)
+        .extend(7u64)
+        .await
+        .unwrap();
+    assert_eq!(
+        sent.lock().unwrap().generated(),
+        ["(tenants/acme/email)/7u64"]
+    );
+    let back = cipher
+        .open(record)
+        .using(&records_plan)
+        .extend(7u64)
+        .await
+        .unwrap();
+    assert_eq!(back.get::<String>("email"), Some(&tenant_record().email));
+
+    let record = cipher
+        .encrypt(&tenant_record())
+        .using(&records_plan)
+        .extend(7u64)
+        .await
+        .unwrap();
+    assert!(matches!(
+        cipher.open(record).using(&records_plan).await,
+        Err(Error::Aead)
+    ));
+}
+
+/// A `Vec` through a context-field plan seals each record under its own
+/// tenant, and a context the caller expects is checked against every
+/// record of it.
+#[tokio::test]
+async fn a_vec_through_a_context_field_plan_seals_each_record_under_its_own_tenant() {
+    let (cipher, sent) = recording_cipher().await;
+    let records_plan = records_plan();
+    let globex = TenantRecord {
+        tenant: "tenants/globex".into(),
+        ..tenant_record()
+    };
+    let records = vec![tenant_record(), globex];
+    let written = cipher.encrypt(&records).using(&records_plan).await.unwrap();
+    assert_eq!(
+        sent.lock().unwrap().generated(),
+        ["tenants/acme/email", "tenants/globex/email"],
+    );
+    let back = cipher.open(written).using(&records_plan).await.unwrap();
+    assert_eq!(
+        back[0].get::<String>("tenant").map(String::as_str),
+        Some("tenants/acme")
+    );
+    assert_eq!(
+        back[1].get::<String>("tenant").map(String::as_str),
+        Some("tenants/globex")
+    );
+    assert_eq!(back[1].get::<String>("email"), Some(&tenant_record().email));
+
+    let written = cipher.encrypt(&records).using(&records_plan).await.unwrap();
+    let refused = cipher
+        .open(written)
+        .context("tenants/acme")
+        .using(&records_plan)
+        .await;
+    assert!(
+        matches!(refused, Err(Error::ContextMismatch { .. })),
+        "{refused:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_context_field_is_the_context_of_every_other_field() {
     let (cipher, sent) = recording_cipher().await;
@@ -1210,6 +1286,45 @@ async fn a_pinned_identity_rescues_a_field_name_that_is_not_plain() {
         plan_error(refused),
         PlanError::FieldLabel { field, .. } if field == "2fa_secret"
     ));
+}
+
+/// In a plan built without a context, a pinned identity still keys the
+/// field: the write, the query and the open all use `<call>/<identity>`,
+/// never the field's name.
+#[tokio::test]
+async fn a_pinned_identity_keys_a_call_context_plan_for_query_and_open() {
+    #[derive(Clone)]
+    struct Reading(u32);
+    let (cipher, sent) = recording_cipher().await;
+    let readings_plan: Plan<Reading, _> = Plan::fields()
+        .encrypt_index(pick("0", |r: &Reading| &r.0), Equality)
+        .identity("value")
+        .build()
+        .unwrap();
+    let mut record = cipher
+        .encrypt(&Reading(21))
+        .context("reading")
+        .using(&readings_plan)
+        .await
+        .unwrap();
+    assert_eq!(sent.lock().unwrap().generated(), ["reading/value"]);
+    let stored: Encrypted<EqualityTerm> = record.take("0").unwrap();
+    let query_value = cipher
+        .query(&21u32)
+        .context("reading")
+        .using(&readings_plan.field("0").unwrap())
+        .equality()
+        .await
+        .unwrap();
+    assert_eq!(query_value, stored.terms);
+    record.insert("0", stored);
+    let back = cipher
+        .open(record)
+        .context("reading")
+        .using(&readings_plan)
+        .await
+        .unwrap();
+    assert_eq!(back.get::<u32>("0"), Some(&21));
 }
 
 // --- Targets declare their indexes --------------------------------------------
