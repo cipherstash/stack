@@ -88,12 +88,11 @@ the term's PRF context, and the ZeroKMS descriptor of the data key.
 _Avoid_: AAD (that is one of its encodings, not the concept), lock context
 
 **Own context**:
-The context a field carries itself: a `context = ".."` literal (one text
-part, exactly as written), or the pair a `struct = ..` derive infers,
-`(<struct context>, <field>)`. A caller's context *extends* it
-(`(("users", "age"), id)`); it is never discarded. A subtree of a
-declaration is given one with `under` (the caller's is then optional) or
-`extend` (the caller's stays required).
+The context a field carries itself: `<record context>/<identity>`, where the
+identity defaults to the field's name and `identity = ".."` pins it (see
+**Identity**). A caller's context *extends* it (`(("users", "age"), id)`); it
+is never discarded. A subtree of a declaration is given one with `under` (the
+caller's is then optional) or `extend` (the caller's stays required).
 _Avoid_: default context, field prefix
 
 **Context field**:
