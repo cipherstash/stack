@@ -54,6 +54,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under the same context as before (an equality term is the same bytes), so
   stored data still opens and its terms still match; what changes is the
   record's shape, one field where it held two.
+- **The plan API listed under Added changes shape before its first
+  release** (none of this is in 0.2.0; it matters only to code built
+  against the unreleased tree). `Plan::fields()` now starts a fields plan,
+  so a built plan's field iterator is `Plan::field_plans()`. A one-value
+  plan is `ValuePlan<S, Indexed<X>>` (from `with`) or
+  `ValuePlan<S, Typed<T>>` (from `encrypt_into`), in place of
+  `ValuePlan<S, X>`. `Plan::label` and `ValuePlan::label` return
+  `Option<&Label>` (`None` for a plan whose context comes from the call or
+  a context field), as `FieldPlan::label` does. `Runs::pending`,
+  `Opens::decryption`, `Plan::encryption`, `Plan::decryption` and
+  `ValuePlan::encryption` take the context the call names (an
+  `Option<Label>`) beside the extension, and `Runs::check` /
+  `Opens::check` take it too. The field verbs take a `FieldRef` (a name or
+  a picker) in place of `&str`; a name still works as before.
 
 ### Added
 
@@ -66,7 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Indexes as types: `target::{Index, Indexes, Equality, Match, Ore, Ope}`,
   `indexed`, `Encrypted`, `Select` / `At` / `Whole`. A match index on an
   integer does not compile, and an index set is one index or a tuple of two
-  to four, never `()`. `Index::spec` lowers an index to its `IndexSpec`.
+  to five, never `()`. `Index::spec` lowers an index to its `IndexSpec`.
 - `target::passthrough`: a field carried unsealed and unauthenticated.
 - `KeysetCipher::run_decryption` and `StackCipher::run_decryption`: run a
   `Decryption` held in a variable.
@@ -103,7 +117,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A passthrough field's name may be any text: it is under no label, so
   `FieldPlan::label` is `None` for one.
 - `IntoLabel` for `&String`, and `KeysetChoice` from a `&String`.
-- `target::TermSet`: a term type, or a tuple of two to four, names the
+- `target::TermSet`: a term type, or a tuple of two to five, names the
   indexes that derive it (`MatchTerms<O>` names `Match<O>`, options
   included).
 - `Encrypted<Terms>` is a target: it implements `EncryptFrom<S>`
@@ -113,6 +127,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `stack-encrypt-derive`: `#[stash(identity = "..")]` on a field of a
   `struct = ..` derive keys it under that segment in place of the plaintext
   field's name, the plan builder's `.identity(segment)`.
+- Two plan starts, each with an optional `.context(c)`: `Plan::fields()`
+  (field by field) and `Plan::value::<S>()` (one value, then `.with(indexes)`
+  or `.encrypt_into::<T>()`). `Plan::context(c).fields()` / `.with(..)` keep
+  working.
+- A plan's context comes from exactly one place: the plan, the call that
+  runs it (`cipher.encrypt(&v).context(c).using(&plan)`, and `.context(c)`
+  on `cipher.query(..)` and `cipher.open(..)`), or a field of the value
+  (`FieldsBuilder::context_field`, carried as a passthrough and checked on
+  open against the context the caller expects). Two is
+  `PlanError::TwoContextSources`; none is `PlanError::NoContext`, raised
+  before any key is requested. `Plan::context_field()` names the field.
+- `encrypt_into::<T, _>(field)` on a fields plan, and
+  `Plan::value::<S>().encrypt_into::<T>()`: the field or value is laid out by
+  the target `T`'s own `EncryptFrom`, under `<context>/<identity>`, and
+  answers the queries `T` declares. A field is a target or data verbs, never
+  both (`PlanError::TargetWithVerbs`).
+- `EncryptFrom::indexes()`: the indexes a target's terms answer, as data
+  (empty by default; terms, `Encrypted<Terms>` and tuples name theirs).
+- A tuple of two to five targets is a target (`EncryptFrom`, `Decryptable`,
+  `DecryptInto`, `DecryptField`): each element derived from the one
+  plaintext under one context, opened through the element that holds a
+  ciphertext. A tuple of terms alone is no field to open a record through.
+- Pickers: every field verb takes a `FieldRef`, a name or a name with an
+  accessor (`plan::pick("email", |u: &User| &u.email)`), which reads the
+  field directly and needs no `Fields` impl or turbofish.
+- `FieldPlan::identity()`; a pinned identity lets a field name that is not a
+  plain segment (`"0"`, `"2fa_secret"`) be sealed and queried.
+- `PlanError::IndexOptions`: a query asked for an index the field declares
+  with other match options.
 
 ## [0.2.0] - 2026-10-04
 
