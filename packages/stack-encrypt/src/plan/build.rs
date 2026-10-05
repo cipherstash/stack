@@ -611,7 +611,6 @@ where
 }
 
 impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
-    #[allow(clippy::too_many_arguments)]
     fn declare<F: 'static>(
         mut self,
         name: Arc<str>,
