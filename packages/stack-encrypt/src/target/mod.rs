@@ -99,6 +99,7 @@ pub use context::{AeadContext, CallerContext, DeclaredContext, ExpectedContext, 
 pub use index::{
     indexed, At, Encrypted, Equality, Index, IndexSpec, Indexes, Match, Ope, Ore, Select, Whole,
 };
+pub(crate) use operations::inspect;
 pub use operations::{
     ciphertext, equality, matching, ope, open, ore, passthrough, DecryptField, DecryptFrom,
     DecryptInto, Decryptable, Decryption, EncryptFrom, EncryptInto, Encryption,

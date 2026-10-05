@@ -218,6 +218,11 @@ pub enum Error {
     /// `DecryptField`, never a data error.
     #[error("a field declared decryptable was not opened by its DecryptField implementation")]
     NotOpened,
+    /// A [plan](crate::plan) was refused: it did not validate when it was
+    /// built, or the value, row or query it was run with does not match it.
+    /// Always raised before any key is requested.
+    #[error(transparent)]
+    Plan(#[from] crate::plan::PlanError),
 }
 
 #[cfg(feature = "http")]

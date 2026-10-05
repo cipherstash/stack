@@ -275,6 +275,7 @@ pub mod descriptor;
 #[cfg(feature = "dynamic")]
 pub mod dynamic;
 pub mod keyset;
+pub mod plan;
 pub mod sem;
 pub mod target;
 
@@ -284,6 +285,7 @@ pub use cipher::{
 };
 pub use descriptor::{Describe, Description, Descriptor, Label, LabelError};
 pub use keyset::KeysetCipher;
+pub use plan::{all, Plan, PlanError};
 // stack-kms is a public dependency: `StackCipher` is generic over its
 // `DataKeySource`, and `StackCipherBuilder::kms` takes its `StackKms`. It is
 // versioned on its own (release-plz.toml), so a caller reaches it through

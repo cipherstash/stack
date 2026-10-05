@@ -1,0 +1,24 @@
+error[E0277]: the trait bound `stack_encrypt::Ore: Select<stack_encrypt::Equality, _>` is not satisfied
+ --> tests/ui/plan_query_undeclared_index.rs:8:51
+  |
+8 |     let _ = cipher.query(&34u32).using(&age_plan).equality();
+  |                                                   ^^^^^^^^ the trait `Select<stack_encrypt::Equality, _>` is not implemented for `stack_encrypt::Ore`
+  |
+  = help: the following other types implement trait `Select<I, Position>`:
+            `(A, B)` implements `Select<A, At<0>>`
+            `(A, B)` implements `Select<B, At<1>>`
+            `(A, B, C)` implements `Select<A, At<0>>`
+            `(A, B, C)` implements `Select<B, At<1>>`
+            `(A, B, C)` implements `Select<C, At<2>>`
+            `(A, B, C, D)` implements `Select<A, At<0>>`
+            `(A, B, C, D)` implements `Select<B, At<1>>`
+            `(A, B, C, D)` implements `Select<C, At<2>>`
+            `(A, B, C, D)` implements `Select<D, At<3>>`
+note: required by a bound in `QueryUsing::<'a, F, ValuePlan<F, X>, K>::equality`
+ --> src/plan/chain.rs
+  |
+  |     pub fn equality<At>(self) -> QueryIndex<'a, F, Equality, K>
+  |            -------- required by a bound in this associated function
+...
+  |         X: Select<Equality, At>,
+  |            ^^^^^^^^^^^^^^^^^^^^ required by this bound in `QueryUsing::<'a, F, ValuePlan<F, X>, K>::equality`

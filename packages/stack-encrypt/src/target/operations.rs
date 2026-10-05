@@ -317,6 +317,38 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
             build: Box::new(move |source, cipher, cx| (self.build)(select(source), cipher, cx)),
         }
     }
+    /// [`project`](Self::project) for a field picked by name at run time, as
+    /// a plan's `fields()` does: `select` may capture the name, and may fail
+    /// (the value has no such field, or not of this type), in which case the
+    /// description yields that error without I/O.
+    ///
+    /// Crate-internal: the plan builder is its one caller, and what `select`
+    /// captures is a field name. The public combinator stays the
+    /// capture-free `project`.
+    pub(crate) fn project_by<P: 's, G>(self, select: G) -> Encryption<'s, P, T, K, Ctx>
+    where
+        G: for<'b> FnOnce(&'b P) -> Result<&'b S, Error> + MaybeSend + 's,
+    {
+        Encryption {
+            build: Box::new(move |source, cipher, cx| match select(source) {
+                Ok(field) => (self.build)(field, cipher, cx),
+                Err(error) => Pending::failed(cipher, error),
+            }),
+        }
+    }
+}
+
+/// A description that only checks the borrowed source, yielding `()` or the
+/// error without I/O. Zipped beside a record's fields, a failed check fails
+/// the whole record before any key is requested. Crate-internal: the plan
+/// builder uses it to refuse a value whose fields the plan does not match.
+pub(crate) fn inspect<'s, S: 's, K: 'static, Ctx: 's, C>(check: C) -> Encryption<'s, S, (), K, Ctx>
+where
+    C: FnOnce(&S) -> Result<(), Error> + MaybeSend + 's,
+{
+    Encryption {
+        build: Box::new(move |source, cipher, _| Pending::ready(cipher, check(source))),
+    }
 }
 
 impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's + Clone + MaybeSend + 'static, M>
