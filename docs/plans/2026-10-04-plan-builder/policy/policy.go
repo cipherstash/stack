@@ -16,6 +16,12 @@ func categories(values ...string) []plan.Annotation {
 
 // Source states the facts a schema reader would produce. A protobuf source
 // reads the same facts from descriptors and their custom options.
+//
+// A fact has two names because the schema and the Go struct spell a field
+// differently. Field is the schema's name: rules match on it, and it names
+// the column unless plan.Column sets another. GoField is the field of
+// individuals.Individual that holds the value, and the generator gives the
+// field of EncryptedIndividual the same name. With no GoField, Field is both.
 var Source = plan.SourceFunc(func(msg any) ([]plan.Fact, error) {
 	return []plan.Fact{
 		{Field: "id", GoField: "ID"},
