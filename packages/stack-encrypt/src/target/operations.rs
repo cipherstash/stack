@@ -213,6 +213,8 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     /// [`Owned`](super::Owned) mode this side gets a clone and `other` takes
     /// ownership, so a chain of `n` operations makes `n - 1` copies rather
     /// than `n`, and only here does an owned plaintext need to be `Clone`.
+    /// In Owned mode, a match term next to an operation that consumes the
+    /// value still needs `S: Clone`.
     pub fn zip<U: 'static>(
         self,
         other: Encryption<'s, S, U, K, Ctx, M>,

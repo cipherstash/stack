@@ -324,3 +324,118 @@ async fn a_match_term_never_copies_its_text() {
         "a match term reads its text in either mode"
     );
 }
+
+// --- When an owned plaintext is dropped -------------------------------------
+
+/// A plaintext that counts its drops, so a test can say when an owned value
+/// is let go. Its operations take the text out of it, as a zeroizing type
+/// would hand its bytes over, and the husk drops at the end of the call.
+struct Dropped {
+    text: String,
+    drops: Arc<AtomicUsize>,
+}
+
+impl Dropped {
+    fn new(text: &str) -> (Self, Arc<AtomicUsize>) {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let value = Self {
+            text: text.to_string(),
+            drops: drops.clone(),
+        };
+        (value, drops)
+    }
+}
+impl Drop for Dropped {
+    fn drop(&mut self) {
+        let _ = self.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+impl Encrypt for Dropped {
+    fn encrypt_with_aad<'a, C, A>(mut self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
+    where
+        C: Cipher,
+        A: IntoAad<'a>,
+    {
+        std::mem::take(&mut self.text).encrypt_with_aad(cipher, aad)
+    }
+}
+impl PrfValue for Dropped {
+    fn prf_visit_with_context<'a, P, V, C>(
+        mut self,
+        prf: &P,
+        context: C,
+        visitor: V,
+    ) -> P::Ok<V::Value>
+    where
+        P: Prf,
+        V: PrfVisitor<P::Block, P::Passthrough>,
+        C: IntoPrfContext<'a>,
+    {
+        std::mem::take(&mut self.text).prf_visit_with_context(prf, context, visitor)
+    }
+}
+impl AsRef<str> for Dropped {
+    fn as_ref(&self) -> &str {
+        &self.text
+    }
+}
+
+/// Owned mode exists so a zeroizing plaintext moves once and is wiped. Each
+/// operation must let it go while the description runs, before `run`
+/// returns its `Pending` — not keep it alive across the key request.
+#[tokio::test]
+async fn an_owned_plaintext_is_dropped_before_its_key_request_is_sent() {
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+
+    let (value, drops) = Dropped::new(NUMBER);
+    let pending = keyset.run(ciphertext::<_, _, Owned>(), value, aead());
+    assert_eq!(
+        drops.load(Ordering::SeqCst),
+        1,
+        "ciphertext: dropped before the request is sent"
+    );
+    let sealed: StackCipherText = pending.await.unwrap();
+    assert_eq!(
+        drops.load(Ordering::SeqCst),
+        1,
+        "ciphertext: dropped exactly once"
+    );
+    let opened: String = cipher.decrypt_as(sealed, aead()).await.unwrap();
+    assert_eq!(
+        opened, NUMBER,
+        "the text was sealed before the husk dropped"
+    );
+
+    let (value, drops) = Dropped::new(NUMBER);
+    let pending = keyset.run(equality::<_, _, Owned>(), value, caller());
+    assert_eq!(
+        drops.load(Ordering::SeqCst),
+        1,
+        "equality: dropped before run returns"
+    );
+    let term: EqualityTerm = pending.await.unwrap();
+    assert_eq!(
+        drops.load(Ordering::SeqCst),
+        1,
+        "equality: dropped exactly once"
+    );
+    let expected = keyset.equality_term(NUMBER, context()).await.unwrap();
+    assert_eq!(term, expected, "the term is the text's term");
+
+    let (value, drops) = Dropped::new(NUMBER);
+    let pending = keyset.run(matching::<_, _, Owned, _>(), value, caller());
+    assert_eq!(
+        drops.load(Ordering::SeqCst),
+        1,
+        "matching: dropped before run returns"
+    );
+    let term: MatchTerm = pending.await.unwrap();
+    assert_eq!(
+        drops.load(Ordering::SeqCst),
+        1,
+        "matching: dropped exactly once"
+    );
+    let expected: MatchTerm = keyset.match_terms(NUMBER, context()).await.unwrap();
+    assert_eq!(term, expected, "the term is the text's term");
+}
