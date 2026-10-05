@@ -186,16 +186,17 @@ already-applied invariants do not re-run and the only new work is the upgrade
 edges.
 
 Skipping it is not always fatal, which is what makes it easy to miss. 1.0.0
-and 1.1.x shipped the baseline at **eql-3.0.4**; later versions bake **eql-3.0.6**
-into the same baseline directory (`20260601T0100_install_eql_v3_bundle`), so its bytes and
-its `migrationHash` changed:
+and 1.1.x shipped the baseline at **eql-3.0.4**, and 1.2.x shipped it at
+**eql-3.0.6**; later versions bake **eql-3.1.0** into the same baseline directory
+(`20260601T0100_install_eql_v3_bundle`), so its bytes and its `migrationHash`
+changed:
 
 | You run | With a stale `migrations/cipherstash/` |
 | --- | --- |
 | `prisma-next migration plan` | Succeeds, silently keeping the stale baseline — no hash mismatch, because it is intact, just old. |
-| `prisma-next migrate` (existing database) | Correct: applies the 3.0.5 and 3.0.6 upgrade edges only (the bundle is re-installed twice). |
-| `prisma-next migrate` (fresh database) | Correct end state, but installs eql-3.0.4 and then immediately re-installs eql-3.0.5 and eql-3.0.6 over it. |
-| `prisma-next db init` (fresh database) | **Fails**: `Operation cipherstash.upgrade-eql-v3-bundle-3.0.5 has class "data" which is not allowed by policy.` `db init` is additive-only and the stale baseline does not carry the 3.0.5 or 3.0.6 invariants, so the planner has to reach for the data-classed upgrade edges. The message does not say any of that — the remedy is the `rm -rf` above. |
+| `prisma-next migrate` (existing database) | Correct: applies only the upgrade edges the database has not walked. A 1.2.x database walks the 3.1.0 edge; a 1.0.0 or 1.1.x one walks 3.0.5, 3.0.6 and 3.1.0 (the bundle is re-installed three times). |
+| `prisma-next migrate` (fresh database) | Correct end state, but installs the stale baseline's bundle and then immediately re-installs each newer one over it. |
+| `prisma-next db init` (fresh database) | **Fails.** From a 1.0.0 or 1.1.x space: `Operation cipherstash.upgrade-eql-v3-bundle-3.0.5 has class "data" which is not allowed by policy.` From a 1.2.x space: `Operation cipherstash.upgrade-eql-v3-bundle-3.1.0 has class "data" which is not allowed by policy.` `db init` is additive-only and the stale baseline does not carry the newer invariants, so the planner has to reach for the data-classed upgrade edges. The message does not say any of that — the remedy is the `rm -rf` above. |
 
 Upgrading and then running `migrate` or `db init` **without** planning first
 leaves the newer bundle off disk entirely, so it is silently skipped and the

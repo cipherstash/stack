@@ -151,12 +151,16 @@ export const CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME =
 export const CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME =
   '20261002T0000_upgrade_eql_v3_3_0_6'
 
+export const CIPHERSTASH_V3_310_UPGRADE_MIGRATION_NAME =
+  '20261005T0000_upgrade_eql_v3_3_1_0'
+
 export const CIPHERSTASH_V3_INVARIANTS = {
   installBundle: 'cipherstash:install-eql-v3-bundle-v1',
   upgradeBundle302: 'cipherstash:upgrade-eql-v3-bundle-3.0.2-v1',
   upgradeBundle304: 'cipherstash:upgrade-eql-v3-bundle-3.0.4-v1',
   upgradeBundle305: 'cipherstash:upgrade-eql-v3-bundle-3.0.5-v1',
   upgradeBundle306: 'cipherstash:upgrade-eql-v3-bundle-3.0.6-v1',
+  upgradeBundle310: 'cipherstash:upgrade-eql-v3-bundle-3.1.0-v1',
 } as const
 
 // v3's OWN extension identity (decision 1b) — DISTINCT from the v2

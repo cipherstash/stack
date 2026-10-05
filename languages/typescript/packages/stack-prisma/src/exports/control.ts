@@ -63,6 +63,12 @@ import v3Upgrade306Metadata from '../../migrations/20261002T0000_upgrade_eql_v3_
 import v3Upgrade306Ops from '../../migrations/20261002T0000_upgrade_eql_v3_3_0_6/ops.json' with {
   type: 'json',
 }
+import v3Upgrade310Metadata from '../../migrations/20261005T0000_upgrade_eql_v3_3_1_0/migration.json' with {
+  type: 'json',
+}
+import v3Upgrade310Ops from '../../migrations/20261005T0000_upgrade_eql_v3_3_1_0/ops.json' with {
+  type: 'json',
+}
 import headRef from '../../migrations/refs/head.json' with { type: 'json' }
 import contractJson from '../contract.json' with { type: 'json' }
 import {
@@ -70,6 +76,7 @@ import {
   CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
+  CIPHERSTASH_V3_310_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
 } from '../extension-metadata/constants-v3'
 import { cipherstashPackMeta } from '../extension-metadata/descriptor-meta'
@@ -123,11 +130,16 @@ const cipherstashContractSpace = contractSpaceFromJson<Contract<SqlStorage>>({
       metadata: v3Upgrade305Metadata,
       ops: v3Upgrade305Ops,
     },
-    // The release the baseline currently bakes.
     {
       dirName: CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
       metadata: v3Upgrade306Metadata,
       ops: v3Upgrade306Ops,
+    },
+    // The release the baseline currently bakes.
+    {
+      dirName: CIPHERSTASH_V3_310_UPGRADE_MIGRATION_NAME,
+      metadata: v3Upgrade310Metadata,
+      ops: v3Upgrade310Ops,
     },
   ],
   headRef,
