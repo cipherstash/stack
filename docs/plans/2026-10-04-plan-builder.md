@@ -611,6 +611,7 @@ A library that maps one struct field to one column needs a model for this layout
 
 An EQL type is the Go type of one EQL column.
 `eql-codegen` writes the package `stackencrypt/eql` from the EQL catalog.
+It is a package in the Go module, and not a module of its own.
 The same catalog gives the Rust and TypeScript types, so a type has one name in every language, such as `TextEq`.
 The JSON type is the exception: its Go name is `JSON`.
 
@@ -635,12 +636,18 @@ Each type has a query type, with `Query` after its name: `TextEqQuery`.
 The value of `encrypt_into` is the Go type name.
 
 The engine produces one EQL type today: `TextEq`.
-The other types wait for two pieces of work in the engine:
+The other types wait for work in the engine:
 
-- how the number, date, boolean and JSON families encode a plaintext;
-- ordering and match terms in the form that EQL stores.
+- **Every family but `Text`:** how the family encodes a plaintext is not specified.
+- **`Match`, `Ord`, `OrdOpe` and `Search`:** the engine derives match and OPE terms, but no EQL type is built from them yet.
+- **`OrdOre` and `SearchOre`:** EQL stores a block ORE term, and the engine derives a CLLW ORE term.
+  The two are different algorithms.
+- **`JSON`:** the JSON index is a new operation in the engine.
 
 `stashgen` refuses an EQL type that the engine cannot produce.
+
+Separate columns work today for four terms: equality, match, ORE and OPE.
+The engine derives all four, and the existing Go package returns them.
 For a field that needs an ordering or a match search today, use separate columns.
 
 ### What stashgen writes
@@ -1179,6 +1186,3 @@ Then:
 - **Converging the TypeScript schema builder onto the plan grammar**, so
   `@cipherstash/stack` stops being a second engine beside stack-encrypt.
   Out of scope here; recorded so a TS binding does not grow an executor.
-- **The Go EQL package (`eqlv3` in the first draft) as a package or a
-  separate `go.mod`**: a package as read; correct if a separate module was
-  meant.
