@@ -68,7 +68,7 @@ pub enum FieldKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FieldPlan {
     name: Arc<str>,
-    label: Label,
+    label: Option<Label>,
     kind: FieldKind,
     indexes: Vec<IndexSpec>,
     type_id: TypeId,
@@ -82,9 +82,10 @@ impl FieldPlan {
     }
 
     /// The label the field is sealed and indexed under:
-    /// `<context>/<identity>`.
-    pub fn label(&self) -> &Label {
-        &self.label
+    /// `<context>/<identity>`. `None` for a passthrough field, which is
+    /// neither sealed nor indexed, so its name need not be a label segment.
+    pub fn label(&self) -> Option<&Label> {
+        self.label.as_ref()
     }
 
     /// What the field does with its value.
@@ -113,13 +114,13 @@ impl FieldPlan {
                 expected: self.type_name,
             });
         }
-        if !self.indexes.contains(index) {
-            return Err(PlanError::IndexNotDeclared {
+        match &self.label {
+            Some(label) if self.indexes.contains(index) => Ok(label.clone()),
+            _ => Err(PlanError::IndexNotDeclared {
                 field: self.name.to_string(),
                 index: index.key(),
-            });
+            }),
         }
-        Ok(self.label.clone())
     }
 }
 
@@ -618,6 +619,10 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     /// readable but be tamper-evident is not a passthrough: seal it with an
     /// [`Equality`](crate::Equality) index beside it. Lowers to
     /// [`passthrough`]`()`, which ignores the context.
+    ///
+    /// A passthrough field is under no label, so its name may be any text
+    /// (`"2fa_enabled"`, `"created(utc)"`): it is only the record key. An
+    /// [`identity`](Self::identity) pinned on it keys nothing.
     pub fn passthrough<F>(self, name: &str) -> Self
     where
         S: Field<F>,
@@ -665,13 +670,15 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     ///
     /// - [`PlanError::ContextLabel`]: the context is not a plain label;
     /// - [`PlanError::IdentityWithoutField`]: `identity` came before any field;
-    /// - [`PlanError::FieldLabel`]: a field name or identity is not a plain
-    ///   segment;
+    /// - [`PlanError::FieldLabel`]: the name or identity of a sealed or
+    ///   indexed field is not a plain segment (a passthrough field's name
+    ///   may be any text: it is under no label);
     /// - [`PlanError::DuplicateIndex`]: a field names one index twice;
     /// - [`PlanError::PassthroughIndexed`]: a field is both passthrough and
     ///   indexed;
     /// - [`PlanError::DuplicateField`]: a field is named twice;
-    /// - [`PlanError::SharedIdentity`]: two fields share one identity;
+    /// - [`PlanError::SharedIdentity`]: two sealed or indexed fields share
+    ///   one identity;
     /// - with a type [`schema`](Fields::schema):
     ///   [`PlanError::NotInValue`] for a field the type does not have,
     ///   [`PlanError::FieldType`] for one declared at the wrong type, and
@@ -706,14 +713,22 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
         }
         let mut fields = Vec::with_capacity(self.fields.len());
         for (at, field) in self.fields.iter().enumerate() {
-            let identity = field.identity.as_deref().unwrap_or(&field.name);
             check_indexes(&field.name, &field.indexes)?;
-            let label = Label::new(context.segments().chain([&*field.name]))
-                .and_then(|_| Label::new(context.segments().chain([identity])))
-                .map_err(|source| PlanError::FieldLabel {
-                    field: field.name.to_string(),
-                    source,
-                })?;
+            let label = match field.kind {
+                // Carried as it is, under no label: its name is only the
+                // record key, so any text will do.
+                FieldKind::Passthrough => None,
+                _ => {
+                    let identity = field.identity.as_deref().unwrap_or(&field.name);
+                    let label = Label::new(context.segments().chain([&*field.name]))
+                        .and_then(|_| Label::new(context.segments().chain([identity])))
+                        .map_err(|source| PlanError::FieldLabel {
+                            field: field.name.to_string(),
+                            source,
+                        })?;
+                    Some(label)
+                }
+            };
             for earlier in &self.fields[..at] {
                 check_pair(earlier, field)?;
             }
@@ -777,6 +792,10 @@ fn check_pair<S, K>(earlier: &Declared<S, K>, field: &Declared<S, K>) -> Result<
         return Err(PlanError::DuplicateField {
             field: field.name.to_string(),
         });
+    }
+    // A passthrough field keys nothing, so it shares no identity.
+    if earlier.kind == FieldKind::Passthrough || field.kind == FieldKind::Passthrough {
+        return Ok(());
     }
     let identity =
         |f: &Declared<S, K>| -> Arc<str> { Arc::clone(f.identity.as_ref().unwrap_or(&f.name)) };
@@ -886,13 +905,20 @@ impl<S: 'static, K: 'static> Plan<S, K> {
         for field in &self.inner.fields {
             let name = Arc::clone(&field.plan.name);
             record = record
-                .zip((field.lower)(PhantomData, &field.plan.label))
+                .zip((field.lower)(PhantomData, self.field_label(&field.plan)))
                 .map(move |(mut slots, slot)| {
                     slots.push((name, slot));
                     slots
                 });
         }
         record.map(FieldValues::from_slots)
+    }
+
+    /// The label a field lowers and opens under. A passthrough field has
+    /// none and its lowering and opening ignore what they are given, so it
+    /// is handed the plan's context.
+    fn field_label<'p>(&'p self, field: &'p FieldPlan) -> &'p Label {
+        field.label.as_ref().unwrap_or(&self.inner.context)
     }
 
     /// A value against the plan, as running it checks it: the value's
@@ -967,7 +993,7 @@ impl<S: 'static, K: 'static> Plan<S, K> {
                 Some(slot) => {
                     let sealed_under = context
                         .clone()
-                        .under(NonEmpty::from(field.plan.label.clone()));
+                        .under(NonEmpty::from(self.field_label(&field.plan).clone()));
                     open(field.plan.name(), slot, sealed_under.into())
                         .unwrap_or_else(|error| Decryption::failed(error.into()))
                 }

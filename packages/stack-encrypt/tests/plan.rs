@@ -795,6 +795,99 @@ async fn a_refused_chain_never_loads_the_keyset_it_names() {
     assert_eq!(loads.load(Ordering::SeqCst), 1, "a valid chain loads it");
 }
 
+/// A record whose stored column names are not label segments: a digit
+/// first, a reserved character.
+struct Odd {
+    user_id: String,
+    two_factor: u64,
+    created: u64,
+    id: u64,
+}
+impl Fields for Odd {
+    fn field_names(&self) -> Vec<&str> {
+        vec!["user_id", "2fa_enabled", "created(utc)", "id"]
+    }
+}
+impl Field<String> for Odd {
+    fn field(&self, name: &str) -> Option<&String> {
+        (name == "user_id").then_some(&self.user_id)
+    }
+}
+impl Field<u64> for Odd {
+    fn field(&self, name: &str) -> Option<&u64> {
+        match name {
+            "2fa_enabled" => Some(&self.two_factor),
+            "created(utc)" => Some(&self.created),
+            "id" => Some(&self.id),
+            _ => None,
+        }
+    }
+}
+
+/// A passthrough field is under no label, so its name is only the record
+/// key: any text builds, round-trips, and shares no identity with a sealed
+/// field. A sealed or indexed field's name is still a label segment.
+#[tokio::test]
+async fn a_passthrough_name_need_not_be_a_label_segment() {
+    let cipher = stack_cipher().await;
+    let odd_plan: Plan<Odd, _> = Plan::context("users")
+        .fields()
+        .encrypt::<String>("user_id")
+        .identity("id")
+        .passthrough::<u64>("2fa_enabled")
+        .passthrough::<u64>("created(utc)")
+        .passthrough::<u64>("id")
+        .build()
+        .unwrap();
+    assert_eq!(odd_plan.field("2fa_enabled").unwrap().label(), None);
+
+    let value = Odd {
+        user_id: "u-1".into(),
+        two_factor: 1,
+        created: 1_700_000_000,
+        id: 42,
+    };
+    let row = cipher.encrypt(&value).using(&odd_plan).await.unwrap();
+    assert_eq!(row.get::<u64>("created(utc)"), Some(&1_700_000_000));
+    let back = cipher.open(row).using(&odd_plan).await.unwrap();
+    assert_eq!(back.get::<String>("user_id").unwrap(), "u-1");
+    assert_eq!(back.get::<u64>("2fa_enabled"), Some(&1));
+    assert_eq!(back.get::<u64>("id"), Some(&42));
+
+    let passthrough_plan = odd_plan.field("2fa_enabled").unwrap();
+    assert_eq!(
+        plan_error(
+            cipher
+                .query(&1u64)
+                .using(&passthrough_plan)
+                .equality()
+                .await
+        ),
+        PlanError::IndexNotDeclared {
+            field: "2fa_enabled".into(),
+            index: "eq"
+        },
+        "a passthrough field answers no query"
+    );
+
+    let sealed = Plan::context("users")
+        .fields::<Odd, FakeDataKeySource>()
+        .encrypt::<String>("2fa_enabled")
+        .build();
+    assert!(matches!(
+        plan_error(sealed),
+        PlanError::FieldLabel { field, .. } if field == "2fa_enabled"
+    ));
+    let indexed = Plan::context("users")
+        .fields::<Odd, FakeDataKeySource>()
+        .index::<u64>("created(utc)", Equality)
+        .build();
+    assert!(matches!(
+        plan_error(indexed),
+        PlanError::FieldLabel { field, .. } if field == "created(utc)"
+    ));
+}
+
 #[tokio::test]
 async fn every_build_error_is_its_own() {
     fn fields() -> stack_encrypt::plan::FieldsBuilder<User, FakeDataKeySource> {
@@ -1462,7 +1555,7 @@ fn a_plan_is_data_its_fields_say_what_they_declare() {
     let fields: Vec<_> = users_plan.fields().collect();
     assert_eq!(fields.len(), 4);
     assert_eq!(fields[0].name(), "email");
-    assert_eq!(fields[0].label().to_string(), "users/email");
+    assert_eq!(fields[0].label().unwrap().to_string(), "users/email");
     assert_eq!(fields[0].kind(), FieldKind::EncryptIndex);
     assert_eq!(fields[0].indexes()[0], IndexSpec::Equality);
     assert_eq!(fields[0].indexes()[1].key(), "match");
@@ -1471,6 +1564,7 @@ fn a_plan_is_data_its_fields_say_what_they_declare() {
     assert_eq!(fields[2].kind(), FieldKind::Encrypt);
     assert!(fields[2].indexes().is_empty());
     assert_eq!(fields[3].kind(), FieldKind::Passthrough);
+    assert_eq!(fields[3].label(), None, "a passthrough field has no label");
 
     let renamed: Plan<User, FakeDataKeySource> = Plan::context("users")
         .fields()
@@ -1482,7 +1576,7 @@ fn a_plan_is_data_its_fields_say_what_they_declare() {
         .build()
         .unwrap();
     assert_eq!(
-        renamed.field("email").unwrap().label().to_string(),
+        renamed.field("email").unwrap().label().unwrap().to_string(),
         "users/contact",
         "a pinned identity keys the field, not its name"
     );

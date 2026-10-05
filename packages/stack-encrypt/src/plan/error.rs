@@ -14,8 +14,9 @@ pub enum PlanError {
     /// The plan's context is not a plain label.
     #[error("the plan's context is not a plain label: {0}")]
     ContextLabel(#[source] LabelError),
-    /// A field's name, or the identity it is keyed under, is not a plain
-    /// label segment.
+    /// A sealed or indexed field's name, or the identity it is keyed
+    /// under, is not a plain label segment. A passthrough field is under no
+    /// label, so its name is never refused for this.
     #[error("field {field:?} is not a plain label segment: {source}")]
     FieldLabel {
         /// The field.
@@ -34,8 +35,10 @@ pub enum PlanError {
         /// The field.
         field: String,
     },
-    /// Two fields are keyed under one identity, so their data would share
-    /// one context and their terms would be interchangeable.
+    /// Two sealed or indexed fields are keyed under one identity, so their
+    /// data would share one context and their terms would be
+    /// interchangeable. A passthrough field keys nothing and shares no
+    /// identity.
     #[error("fields {first:?} and {second:?} are both keyed under identity {identity:?}")]
     SharedIdentity {
         /// The identity both use.
