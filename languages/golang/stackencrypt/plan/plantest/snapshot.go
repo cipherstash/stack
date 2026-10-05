@@ -187,11 +187,18 @@ func (s snapshot) render() []byte {
 
 // termList spells a column's terms, "none" for none: an unindexed column
 // is a decision too, and says nothing about the value but its ciphertext.
+// Each term goes through token like every other value, so a term name
+// with a space could not split into two. Term names are TermKind.String()
+// values, none of them "none".
 func termList(terms []string) string {
 	if len(terms) == 0 {
 		return "none"
 	}
-	return strings.Join(terms, " ")
+	parts := make([]string, len(terms))
+	for i, t := range terms {
+		parts[i] = token(t)
+	}
+	return strings.Join(parts, " ")
 }
 
 func writeFacts(b *bytes.Buffer, facts []fact) {

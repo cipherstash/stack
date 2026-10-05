@@ -499,7 +499,7 @@ func TestSnapshotRoundTrips(t *testing.T) {
 		if context == "" {
 			context = "t/empty"
 		}
-		s.columns = append(s.columns, column{name: v + string(rune('a'+i)), context: context, kind: kind, terms: []string{"eq", "ore"}, facts: []fact{{v, v}, {"k", v}}})
+		s.columns = append(s.columns, column{name: v + string(rune('a'+i)), context: context, kind: kind, terms: []string{"eq", "ore", "odd term"}, facts: []fact{{v, v}, {"k", v}}})
 		s.plaintext = append(s.plaintext, plain{field: v + string(rune('a'+i)), facts: []fact{{v, "x"}}})
 	}
 	s.columns = append(s.columns, column{name: "bare", context: "t/bare", kind: kindEQL})
