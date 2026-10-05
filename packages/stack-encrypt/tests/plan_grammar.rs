@@ -10,7 +10,7 @@ mod common;
 use std::fmt::Debug;
 use std::sync::atomic::Ordering;
 
-use common::{counting_cipher, recording_cipher, stack_cipher};
+use common::{counting_cipher, loads_counting_cipher, recording_cipher, stack_cipher};
 use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::plan::{pick, Field, FieldKind, FieldValues, Fields, PlanError};
 use stack_encrypt::sem::{
@@ -407,6 +407,120 @@ fn records_plan<K: 'static>() -> Plan<TenantRecord, K> {
         .encrypt_index(("email", record_email), Equality)
         .build()
         .unwrap()
+}
+
+/// A context refused at the call (missing, given twice, not a label, or a
+/// context field that disagrees with the one expected) is refused before
+/// the keyset the chain names is loaded, for every plan kind and for a
+/// `Vec` as for one value.
+#[tokio::test]
+async fn a_context_refused_at_the_call_never_loads_the_keyset_it_names() {
+    let (cipher, loads) = loads_counting_cipher().await;
+    let users_plan = contextless_plan();
+    let records_plan = records_plan();
+    let age_plan = Plan::value::<u32>().with(Equality).build().unwrap();
+    let pair_plan = Plan::value::<u32>()
+        .encrypt_into::<(StackCipherText, EqualityTerm)>()
+        .build()
+        .unwrap();
+    let in_hand = |context: &'static str| {
+        let cipher = &cipher;
+        let pair_plan = &pair_plan;
+        async move {
+            cipher
+                .encrypt(&7u32)
+                .context(context)
+                .using(pair_plan)
+                .await
+                .unwrap()
+        }
+    };
+    let record = cipher
+        .encrypt(&tenant_record())
+        .using(&records_plan)
+        .await
+        .unwrap();
+    let sealed_age = cipher
+        .encrypt(&7u32)
+        .context("ages")
+        .using(&age_plan)
+        .await
+        .unwrap();
+    let pair = in_hand("ages").await;
+    let pairs = vec![in_hand("ages").await];
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        0,
+        "the default keyset is in hand"
+    );
+
+    let refused = cipher
+        .encrypt(&user())
+        .using(&users_plan)
+        .keyset("tenant")
+        .await;
+    assert_eq!(plan_error(refused), PlanError::NoContext);
+    let refused = cipher
+        .encrypt(&vec![user()])
+        .context("users//x")
+        .using(&users_plan)
+        .keyset("tenant")
+        .await;
+    assert!(matches!(plan_error(refused), PlanError::ContextLabel(_)));
+    let refused = cipher
+        .encrypt(&tenant_record())
+        .context("users")
+        .using(&records_plan)
+        .keyset("tenant")
+        .await;
+    assert!(matches!(
+        plan_error(refused),
+        PlanError::TwoContextSources { .. }
+    ));
+    let bad_tenant = TenantRecord {
+        tenant: "tenants//acme".into(),
+        ..tenant_record()
+    };
+    let refused = cipher
+        .encrypt(&bad_tenant)
+        .using(&records_plan)
+        .keyset("tenant")
+        .await;
+    assert!(matches!(plan_error(refused), PlanError::ContextLabel(_)));
+    let refused = cipher
+        .open(record)
+        .context("tenants/globex")
+        .using(&records_plan)
+        .keyset("tenant")
+        .await;
+    assert!(
+        matches!(refused, Err(Error::ContextMismatch { .. })),
+        "{refused:?}"
+    );
+
+    let refused = cipher
+        .encrypt(&7u32)
+        .using(&age_plan)
+        .keyset("tenant")
+        .await;
+    assert_eq!(plan_error(refused), PlanError::NoContext);
+    let refused = cipher
+        .encrypt(&vec![7u32])
+        .using(&pair_plan)
+        .keyset("tenant")
+        .await;
+    assert_eq!(plan_error(refused), PlanError::NoContext);
+    let refused = cipher
+        .open(sealed_age)
+        .using(&age_plan)
+        .keyset("tenant")
+        .await;
+    assert_eq!(plan_error(refused), PlanError::NoContext);
+    let refused = cipher.open(pair).using(&pair_plan).keyset("tenant").await;
+    assert_eq!(plan_error(refused), PlanError::NoContext);
+    let refused = cipher.open(pairs).using(&pair_plan).keyset("tenant").await;
+    assert_eq!(plan_error(refused), PlanError::NoContext);
+    assert_eq!(loads.load(Ordering::SeqCst), 0, "no keyset was loaded");
 }
 
 /// `.extend(parts)` reaches every field of a plan whose context is read
