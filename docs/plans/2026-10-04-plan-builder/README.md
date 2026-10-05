@@ -11,7 +11,7 @@ The module path is `example.com/app`.
 | [`main.go`](main.go) | A client, one cipher for each tenant, and a batch of two types in one request |
 | [`users/model.go`](users/model.go) | A struct with `stash` tags, and the `go:generate` line |
 | [`users/user_stash.go`](users/user_stash.go) | The file `stashgen` writes: the encrypted type, `Encrypt`, `Decrypt` and `Fields` |
-| [`users/sqlstore.go`](users/sqlstore.go) | `database/sql`: batch insert in a transaction, and three searches |
+| [`users/sqlstore.go`](users/sqlstore.go) | `database/sql`: batch insert in a transaction, and a search by email |
 | [`users/gormstore.go`](users/gormstore.go) | GORM, with the generated type as the model |
 | [`users/sqlcstore.go`](users/sqlcstore.go) | sqlc, with its row struct converted to the generated type |
 | [`sqlc/`](sqlc/) | The schema, the queries and the overrides that generate [`internal/userdb/`](internal/userdb/) |
@@ -22,6 +22,8 @@ The module path is `example.com/app`.
 | [`cmd/genplans/main.go`](cmd/genplans/main.go) | The generate program that runs the policy |
 | [`individuals/`](individuals/) | A type with no tags, and the file the policy gives |
 | [`individualstore/store.go`](individualstore/store.go) | A store that uses that generated type |
+
+The `users` example uses `TextEq`, which is the one EQL type the engine produces today.
 
 ## What was checked
 
@@ -36,7 +38,7 @@ The module path is `example.com/app`.
 | The files `stashgen` writes | Not run. `stashgen` does not exist, and the five `_stash.go` files are written by hand. |
 | The SDK can be built with these signatures | Not run. |
 | The code works with a database, GORM or pgx | Not run. Nothing here has connected to a database. |
-| The EQL types, and how generated code assembles them | Not run. The package name and type names are placeholders. |
+| The EQL types, and how generated code assembles them | Not run. `eql-codegen` does not write Go yet, and the examples use a stub of `eql.TextEq`. |
 | The steps in "Use the SDK" | Not run. Nobody has followed them. |
 
 ## Generate the sqlc package
@@ -52,8 +54,8 @@ Three rules apply when a column has an EQL type:
   sqlc cannot parse the EQL install bundle, because it rejects function overloads that differ only by `text` and `text[]`.
   The file [`sqlc/eql-domains.sql`](sqlc/eql-domains.sql) declares each domain as `jsonb`, and the database still gets the real bundle from `stash eql install`.
 - **Spell a `db_type` override exactly as the schema spells the type.**
-  `public.eql_v3_text_search` and `eql_v3_text_search` are two different spellings to sqlc.
+  `public.eql_v3_text_eq` and `eql_v3_text_eq` are two different spellings to sqlc.
   An override with the other spelling matches nothing, and the column becomes `interface{}`.
 - **Cast a query parameter once, straight to the query domain.**
   sqlc types a parameter by its first cast.
-  `$1::eql_v3.query_text_search` gets the override type, and `$1::jsonb::eql_v3.query_text_search` gets `json.RawMessage`.
+  `$1::eql_v3.query_text_eq` gets the override type, and `$1::jsonb::eql_v3.query_text_eq` gets `json.RawMessage`.

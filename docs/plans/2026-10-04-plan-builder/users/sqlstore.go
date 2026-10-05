@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	columns    = `id, email, age, attrs, notes`
-	insertUser = `INSERT INTO users (` + columns + `) VALUES ($1, $2, $3, $4, $5)`
+	columns    = `id, email, name`
+	insertUser = `INSERT INTO users (` + columns + `) VALUES ($1, $2, $3)`
 	selectUser = `SELECT ` + columns + ` FROM users`
 )
 
@@ -45,7 +45,7 @@ func (s *SQLStore) Import(ctx context.Context, cipher *stackencrypt.Cipher, peop
 	defer stmt.Close()
 
 	for _, e := range encrypted {
-		if _, err := stmt.ExecContext(ctx, e.ID, e.Email, e.Age, e.Attrs, e.Notes); err != nil {
+		if _, err := stmt.ExecContext(ctx, e.ID, e.Email, e.Name); err != nil {
 			return fmt.Errorf("insert user %d: %w", e.ID, err)
 		}
 	}
@@ -56,58 +56,29 @@ func (s *SQLStore) Create(ctx context.Context, cipher *stackencrypt.Cipher, user
 	return s.Import(ctx, cipher, []User{user})
 }
 
+// FindByEmail matches the whole address. Postgres compares the encrypted
+// column through EQL's = operator.
 func (s *SQLStore) FindByEmail(ctx context.Context, cipher *stackencrypt.Cipher, email string) ([]User, error) {
 	query, err := Fields.Email.Query(ctx, cipher, email)
 	if err != nil {
 		return nil, err
 	}
-	encrypted, err := s.query(ctx, selectUser+` WHERE email = $1::eql_v3.query_text_search`, query)
-	if err != nil {
-		return nil, err
-	}
-	return Decrypt(ctx, cipher, encrypted)
-}
-
-// AtLeast returns users aged minAge or over, youngest first. Postgres compares
-// and sorts the encrypted column through EQL's operators.
-func (s *SQLStore) AtLeast(ctx context.Context, cipher *stackencrypt.Cipher, minAge int32) ([]User, error) {
-	query, err := Fields.Age.Query(ctx, cipher, minAge)
-	if err != nil {
-		return nil, err
-	}
-	encrypted, err := s.query(ctx, selectUser+` WHERE age >= $1::eql_v3.query_integer_ord ORDER BY age`, query)
-	if err != nil {
-		return nil, err
-	}
-	return Decrypt(ctx, cipher, encrypted)
-}
-
-func (s *SQLStore) WithRole(ctx context.Context, cipher *stackencrypt.Cipher, role string) ([]User, error) {
-	query, err := Fields.Attrs.Contains(ctx, cipher, map[string]any{"role": role})
-	if err != nil {
-		return nil, err
-	}
-	encrypted, err := s.query(ctx, selectUser+` WHERE attrs @> $1::eql_v3.query_json`, query)
-	if err != nil {
-		return nil, err
-	}
-	return Decrypt(ctx, cipher, encrypted)
-}
-
-func (s *SQLStore) query(ctx context.Context, q string, params ...any) ([]EncryptedUser, error) {
-	rs, err := s.db.QueryContext(ctx, q, params...)
+	rs, err := s.db.QueryContext(ctx, selectUser+` WHERE email = $1::eql_v3.query_text_eq`, query)
 	if err != nil {
 		return nil, err
 	}
 	defer rs.Close()
 
-	var found []EncryptedUser
+	var encrypted []EncryptedUser
 	for rs.Next() {
 		var e EncryptedUser
-		if err := rs.Scan(&e.ID, &e.Email, &e.Age, &e.Attrs, &e.Notes); err != nil {
+		if err := rs.Scan(&e.ID, &e.Email, &e.Name); err != nil {
 			return nil, err
 		}
-		found = append(found, e)
+		encrypted = append(encrypted, e)
 	}
-	return found, rs.Err()
+	if err := rs.Err(); err != nil {
+		return nil, err
+	}
+	return Decrypt(ctx, cipher, encrypted)
 }

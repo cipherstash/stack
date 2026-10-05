@@ -12,35 +12,27 @@ import (
 )
 
 const createUser = `-- name: CreateUser :exec
-INSERT INTO users (id, email, age, attrs, notes) VALUES ($1, $2, $3, $4, $5)
+INSERT INTO users (id, email, name) VALUES ($1, $2, $3)
 `
 
 type CreateUserParams struct {
 	ID    int64
-	Email eql.TextSearch
-	Age   eql.IntegerOrd
-	Attrs eql.JSON
-	Notes eql.Text
+	Email eql.TextEq
+	Name  eql.TextEq
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) error {
-	_, err := q.db.ExecContext(ctx, createUser,
-		arg.ID,
-		arg.Email,
-		arg.Age,
-		arg.Attrs,
-		arg.Notes,
-	)
+	_, err := q.db.ExecContext(ctx, createUser, arg.ID, arg.Email, arg.Name)
 	return err
 }
 
 const findUsersByEmail = `-- name: FindUsersByEmail :many
-SELECT id, email, age, attrs, notes FROM users WHERE email = $1::eql_v3.query_text_search
+SELECT id, email, name FROM users WHERE email = $1::eql_v3.query_text_eq
 `
 
 // One cast, straight to the query domain: sqlc types a parameter by its first
-// cast, so ::jsonb::eql_v3.query_text_search would generate json.RawMessage.
-func (q *Queries) FindUsersByEmail(ctx context.Context, email eql.TextSearchQuery) ([]User, error) {
+// cast, so ::jsonb::eql_v3.query_text_eq would generate json.RawMessage.
+func (q *Queries) FindUsersByEmail(ctx context.Context, email eql.TextEqQuery) ([]User, error) {
 	rows, err := q.db.QueryContext(ctx, findUsersByEmail, email)
 	if err != nil {
 		return nil, err
@@ -49,13 +41,7 @@ func (q *Queries) FindUsersByEmail(ctx context.Context, email eql.TextSearchQuer
 	var items []User
 	for rows.Next() {
 		var i User
-		if err := rows.Scan(
-			&i.ID,
-			&i.Email,
-			&i.Age,
-			&i.Attrs,
-			&i.Notes,
-		); err != nil {
+		if err := rows.Scan(&i.ID, &i.Email, &i.Name); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -70,24 +56,18 @@ func (q *Queries) FindUsersByEmail(ctx context.Context, email eql.TextSearchQuer
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, email, age, attrs, notes FROM users WHERE id = $1
+SELECT id, email, name FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
 	row := q.db.QueryRowContext(ctx, getUser, id)
 	var i User
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.Age,
-		&i.Attrs,
-		&i.Notes,
-	)
+	err := row.Scan(&i.ID, &i.Email, &i.Name)
 	return i, err
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, email, age, attrs, notes FROM users ORDER BY id
+SELECT id, email, name FROM users ORDER BY id
 `
 
 func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
@@ -99,46 +79,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 	var items []User
 	for rows.Next() {
 		var i User
-		if err := rows.Scan(
-			&i.ID,
-			&i.Email,
-			&i.Age,
-			&i.Attrs,
-			&i.Notes,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listUsersAtLeast = `-- name: ListUsersAtLeast :many
-SELECT id, email, age, attrs, notes FROM users WHERE age >= $1::eql_v3.query_integer_ord ORDER BY age
-`
-
-func (q *Queries) ListUsersAtLeast(ctx context.Context, minAge eql.IntegerOrdQuery) ([]User, error) {
-	rows, err := q.db.QueryContext(ctx, listUsersAtLeast, minAge)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []User
-	for rows.Next() {
-		var i User
-		if err := rows.Scan(
-			&i.ID,
-			&i.Email,
-			&i.Age,
-			&i.Attrs,
-			&i.Notes,
-		); err != nil {
+		if err := rows.Scan(&i.ID, &i.Email, &i.Name); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

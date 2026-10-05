@@ -517,15 +517,15 @@ A program calls those functions, and it never builds or names a plan.
 type User struct {
 	_     struct{} `stash:"context=users"`
 	ID    int64    `stash:"id,passthrough"`
-	Email string   `stash:"email,encrypt_into=TextSearch"`
-	Age   int32    `stash:"age,encrypt_into=IntegerOrd"`
+	Email string   `stash:"email,encrypt_into=TextEq"`
+	Name  string   `stash:"name,encrypt_into=TextEq"`
 }
 
 cipher := client.Keyset(stackencrypt.KeysetName("tenant-42"))
 
 encrypted, err := users.Encrypt(ctx, cipher, people)                   // []users.EncryptedUser, one ZeroKMS request
 people, err := users.Decrypt(ctx, cipher, encrypted)                   // []users.User
-query, err := users.Fields.Email.Query(ctx, cipher, "bob@example.com") // eql.TextSearchQuery
+query, err := users.Fields.Email.Query(ctx, cipher, "bob@example.com") // eql.TextEqQuery
 ```
 
 ### Use the SDK
@@ -576,7 +576,7 @@ The first part of a tag is the field's name, which is the column name in a datab
 | Tag | Meaning |
 |---|---|
 | `` _ struct{} `stash:"context=users"` `` | the context of every field in the struct |
-| `stash:"email,encrypt_into=TextSearch"` | seal the field into one EQL value, with the indexes that EQL type has |
+| `stash:"email,encrypt_into=TextEq"` | seal the field into one EQL value, with the terms that EQL type has |
 | `stash:"notes,encrypt"` | seal the field, with no index |
 | `stash:"email,encrypt,index=equality;match"` | seal the field, and derive each index beside it |
 | `stash:"attrs,index=json"` | derive the index alone |
@@ -606,6 +606,42 @@ The generated type is then flat: one field, one column.
 The generated field is then a struct with one field for each output, such as `Email.Ciphertext` and `Email.Equality`.
 Every sealed field gets such a struct, including a field with one output.
 A library that maps one struct field to one column needs a model for this layout.
+
+### EQL types
+
+An EQL type is the Go type of one EQL column.
+`eql-codegen` writes the package `stackencrypt/eql` from the EQL catalog.
+The same catalog gives the Rust and TypeScript types, so a type has one name in every language, such as `TextEq`.
+The JSON type is the exception: its Go name is `JSON`.
+
+A type name is a family and a suffix.
+The families are `Text`, `Integer`, `Smallint`, `Bigint`, `Numeric`, `Real`, `Double`, `Date`, `Timestamp`, `Boolean` and `JSON`.
+The suffix says what a query can do:
+
+| Suffix | Terms | Operators |
+|---|---|---|
+| none | none | none; the value is stored and read |
+| `Eq` | equality | `=` `<>` |
+| `Ord`, `OrdOpe` | OPE | `=` `<>` `<` `<=` `>` `>=` |
+| `OrdOre` | ORE | `=` `<>` `<` `<=` `>` `>=` |
+| `Match` | match | `@@` |
+| `Search` | equality, OPE and match | all of them |
+| `SearchOre` | equality, ORE and match | all of them |
+
+In the `Text` family, the three `Ord` suffixes carry equality too.
+`Match`, `Search` and `SearchOre` are for `Text` only, and `Boolean` has no suffix.
+
+Each type has a query type, with `Query` after its name: `TextEqQuery`.
+The value of `encrypt_into` is the Go type name.
+
+The engine produces one EQL type today: `TextEq`.
+The other types wait for two pieces of work in the engine:
+
+- how the number, date, boolean and JSON families encode a plaintext;
+- ordering and match terms in the form that EQL stores.
+
+`stashgen` refuses an EQL type that the engine cannot produce.
+For a field that needs an ordering or a match search today, use separate columns.
 
 ### What stashgen writes
 
@@ -640,7 +676,6 @@ See [`users/model.go`](2026-10-04-plan-builder/users/model.go) and [`users/user_
 | `users.Fields.Email.Encrypt(ctx, c, v string)` | the field's generated type, for an update of one column |
 | `users.Fields.Email.Query(ctx, c, v string)` | an EQL query value, for a field with `encrypt_into` |
 | `users.Fields.Email.Equality`, `.Match`, `.Ore`, `.Ope` | one term, for a field with `index=` |
-| `users.Fields.Attrs.Contains(ctx, c, v)` | a JSON containment query |
 | `users.EncryptInto(dst *[]EncryptedUser, vs []User)` | a `stackencrypt.Operation`, for a batch |
 | `users.DecryptInto(dst *[]User, es []EncryptedUser)` | a `stackencrypt.Operation`, for a batch |
 | `stackencrypt.Batch(ctx, c, ops ...Operation)` | nothing; it writes each result to its `dst` |
@@ -812,6 +847,7 @@ The same input always gives the same file: fields keep their declared order, and
 - a struct with no `context=` field;
 - an index or an EQL type that does not apply to the field's Go type, such as `match` on an `int32`;
 - a field type that the engine cannot seal;
+- an EQL type that the engine cannot produce yet;
 - a `passthrough` field that has an index;
 - a model with a field that has no tag, or with no field for an output;
 - two structs in one package that would both write `Encrypt`.
@@ -1126,9 +1162,6 @@ Then:
 
 ## Open questions
 
-- **The Go EQL names.**
-  The package `eql`, its type names and the values of `encrypt_into` are placeholders.
-  The EQL typed verb (#1062) settles them.
 - **Query building in Go.**
   The SDK gives the values for a search, and the program writes the SQL.
   A design for building that SQL is separate work.

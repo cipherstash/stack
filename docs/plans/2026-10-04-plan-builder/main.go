@@ -40,17 +40,10 @@ func run(ctx context.Context) error {
 	cipher := client.Keyset(stackencrypt.KeysetName("tenant-42")).Extend("tenant-42")
 	store := users.NewSQLStore(db)
 
-	alice := users.User{
-		ID:       1,
-		Email:    "alice@example.com",
-		Age:      34,
-		Attrs:    map[string]any{"role": "admin", "team": "payments"},
-		Notes:    "Prefers email.",
-		Internal: "never stored",
-	}
+	alice := users.User{ID: 1, Email: "alice@example.com", Name: "Alice Ng", Internal: "never stored"}
 	newHires := []users.User{
-		{ID: 2, Email: "bob@example.com", Age: 17, Attrs: map[string]any{"role": "intern"}, Notes: "Starts Monday."},
-		{ID: 3, Email: "carol@example.com", Age: 52, Attrs: map[string]any{"role": "admin"}},
+		{ID: 2, Email: "bob@example.com", Name: "Bob Tran"},
+		{ID: 3, Email: "carol@example.com", Name: "Carol Diaz"},
 	}
 
 	if err := store.Create(ctx, cipher, alice); err != nil {
@@ -61,14 +54,6 @@ func run(ctx context.Context) error {
 	}
 
 	bobs, err := store.FindByEmail(ctx, cipher, "bob@example.com")
-	if err != nil {
-		return err
-	}
-	admins, err := store.WithRole(ctx, cipher, "admin")
-	if err != nil {
-		return err
-	}
-	adults, err := store.AtLeast(ctx, cipher, 18)
 	if err != nil {
 		return err
 	}
@@ -94,8 +79,7 @@ func run(ctx context.Context) error {
 	}
 
 	// Print ids and counts only. Every other value here is plaintext.
-	fmt.Println("bob:", ids(bobs), "admins:", ids(admins), "adults:", ids(adults),
-		"batched:", len(encryptedUsers), len(encryptedContacts))
+	fmt.Println("bob:", ids(bobs), "batched:", len(encryptedUsers), len(encryptedContacts))
 	return nil
 }
 

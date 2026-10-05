@@ -36,7 +36,7 @@ func (s *GormStore) FindByEmail(ctx context.Context, cipher *stackencrypt.Cipher
 		return nil, err
 	}
 	var encrypted []EncryptedUser
-	err = s.db.WithContext(ctx).Where("email = ?::eql_v3.query_text_search", query).Find(&encrypted).Error
+	err = s.db.WithContext(ctx).Where("email = ?::eql_v3.query_text_eq", query).Find(&encrypted).Error
 	if err != nil {
 		return nil, err
 	}

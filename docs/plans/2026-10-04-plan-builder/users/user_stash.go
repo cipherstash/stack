@@ -18,19 +18,17 @@ const _ = gensupport.GeneratedVersion1
 // method. Write them, or run stashgen with -redact.
 
 type EncryptedUser struct {
-	ID    int64          `db:"id" gorm:"primaryKey"`
-	Email eql.TextSearch `db:"email"`
-	Age   eql.IntegerOrd `db:"age"`
-	Attrs eql.JSON       `db:"attrs"`
-	Notes eql.Text       `db:"notes"`
+	ID    int64      `db:"id" gorm:"primaryKey"`
+	Email eql.TextEq `db:"email"`
+	Name  eql.TextEq `db:"name"`
 }
 
 func (e EncryptedUser) String() string {
-	return gensupport.Redacted("EncryptedUser", map[string]any{"ID": e.ID}, "Email", "Age", "Attrs", "Notes")
+	return gensupport.Redacted("EncryptedUser", map[string]any{"ID": e.ID}, "Email", "Name")
 }
 
 func (e EncryptedUser) LogValue() slog.Value {
-	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Email", "Age", "Attrs", "Notes")
+	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Email", "Name")
 }
 
 // Stops compiling when User gains, loses, reorders or retypes a field.
@@ -40,18 +38,14 @@ type userShape struct {
 	_        struct{}
 	ID       int64
 	Email    string
-	Age      int32
-	Attrs    map[string]any
-	Notes    string
+	Name     string
 	Internal string
 }
 
 var declaration = gensupport.Declare("users").
 	Passthrough("id").
-	EncryptIndex("email", stackencrypt.Equality, stackencrypt.Ore, stackencrypt.Match()).
-	EncryptIndex("age", stackencrypt.Equality, stackencrypt.Ore).
-	Index("attrs", stackencrypt.JSON()).
-	Encrypt("notes").
+	EncryptIndex("email", stackencrypt.Equality).
+	EncryptIndex("name", stackencrypt.Equality).
 	Omit("internal")
 
 var codec = gensupport.New(gensupport.Generated[User, EncryptedUser]{
@@ -59,24 +53,17 @@ var codec = gensupport.New(gensupport.Generated[User, EncryptedUser]{
 	Declaration:     declaration,
 	PrintsPlaintext: true,
 	Source: func(v User) gensupport.Values {
-		return gensupport.Values{"email": v.Email, "age": v.Age, "attrs": v.Attrs, "notes": v.Notes}
+		return gensupport.Values{"email": v.Email, "name": v.Name}
 	},
 	Seal: func(v User, rec gensupport.Record) EncryptedUser {
 		return EncryptedUser{
 			ID:    v.ID,
-			Email: eql.NewTextSearch(rec["email"]),
-			Age:   eql.NewIntegerOrd(rec["age"]),
-			Attrs: eql.NewJSON(rec["attrs"]),
-			Notes: eql.NewText(rec["notes"]),
+			Email: eql.NewTextEq(rec["email"]),
+			Name:  eql.NewTextEq(rec["name"]),
 		}
 	},
 	Open: func(e EncryptedUser) gensupport.Record {
-		return gensupport.Record{
-			"email": e.Email.Outputs(),
-			"age":   e.Age.Outputs(),
-			"attrs": e.Attrs.Outputs(),
-			"notes": e.Notes.Outputs(),
-		}
+		return gensupport.Record{"email": e.Email.Outputs(), "name": e.Name.Outputs()}
 	},
 	Value: func(e EncryptedUser, vals gensupport.Values) (User, error) {
 		v := User{ID: e.ID}
@@ -84,13 +71,7 @@ var codec = gensupport.New(gensupport.Generated[User, EncryptedUser]{
 		if v.Email, err = gensupport.Get[string](vals, "email"); err != nil {
 			return User{}, err
 		}
-		if v.Age, err = gensupport.Get[int32](vals, "age"); err != nil {
-			return User{}, err
-		}
-		if v.Attrs, err = gensupport.Get[map[string]any](vals, "attrs"); err != nil {
-			return User{}, err
-		}
-		if v.Notes, err = gensupport.Get[string](vals, "notes"); err != nil {
+		if v.Name, err = gensupport.Get[string](vals, "name"); err != nil {
 			return User{}, err
 		}
 		return v, nil
@@ -120,63 +101,36 @@ func DecryptInto(dst *[]User, encrypted []EncryptedUser) stackencrypt.Operation 
 
 var Fields = struct {
 	Email EmailField
-	Age   AgeField
-	Attrs AttrsField
-	Notes NotesField
+	Name  NameField
 }{
 	Email: EmailField{gensupport.NewField[string](declaration, "email")},
-	Age:   AgeField{gensupport.NewField[int32](declaration, "age")},
-	Attrs: AttrsField{gensupport.NewField[map[string]any](declaration, "attrs")},
-	Notes: NotesField{gensupport.NewField[string](declaration, "notes")},
+	Name:  NameField{gensupport.NewField[string](declaration, "name")},
 }
 
 type EmailField struct {
 	field gensupport.Field[string]
 }
 
-func (f EmailField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string) (eql.TextSearch, error) {
+func (f EmailField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string) (eql.TextEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.NewTextSearch(out), err
+	return eql.NewTextEq(out), err
 }
 
-func (f EmailField) Query(ctx context.Context, c *stackencrypt.Cipher, v string) (eql.TextSearchQuery, error) {
+func (f EmailField) Query(ctx context.Context, c *stackencrypt.Cipher, v string) (eql.TextEqQuery, error) {
 	out, err := f.field.Query(ctx, c, v)
-	return eql.NewTextSearchQuery(out), err
+	return eql.NewTextEqQuery(out), err
 }
 
-type AgeField struct {
-	field gensupport.Field[int32]
-}
-
-func (f AgeField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v int32) (eql.IntegerOrd, error) {
-	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.NewIntegerOrd(out), err
-}
-
-func (f AgeField) Query(ctx context.Context, c *stackencrypt.Cipher, v int32) (eql.IntegerOrdQuery, error) {
-	out, err := f.field.Query(ctx, c, v)
-	return eql.NewIntegerOrdQuery(out), err
-}
-
-type AttrsField struct {
-	field gensupport.Field[map[string]any]
-}
-
-func (f AttrsField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v map[string]any) (eql.JSON, error) {
-	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.NewJSON(out), err
-}
-
-func (f AttrsField) Contains(ctx context.Context, c *stackencrypt.Cipher, v map[string]any) (eql.JSONQuery, error) {
-	out, err := f.field.Contains(ctx, c, v)
-	return eql.JSONQuery(out.JSON), err
-}
-
-type NotesField struct {
+type NameField struct {
 	field gensupport.Field[string]
 }
 
-func (f NotesField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string) (eql.Text, error) {
+func (f NameField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string) (eql.TextEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.NewText(out), err
+	return eql.NewTextEq(out), err
+}
+
+func (f NameField) Query(ctx context.Context, c *stackencrypt.Cipher, v string) (eql.TextEqQuery, error) {
+	out, err := f.field.Query(ctx, c, v)
+	return eql.NewTextEqQuery(out), err
 }

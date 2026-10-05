@@ -10,8 +10,6 @@ import (
 
 type User struct {
 	ID    int64
-	Email eql.TextSearch
-	Age   eql.IntegerOrd
-	Attrs eql.JSON
-	Notes eql.Text
+	Email eql.TextEq
+	Name  eql.TextEq
 }
