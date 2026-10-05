@@ -92,8 +92,8 @@ describe('Claude pull-request review', () => {
     expect(condition).toContain("github.event.pull_request.user.type != 'Bot'")
   })
 
-  it('uses a GitHub-hosted runner and cancels superseded reviews', () => {
-    expect(review['runs-on']).toBe('ubuntu-latest')
+  it('uses a Blacksmith arm64 runner and cancels superseded reviews', () => {
+    expect(review['runs-on']).toBe('blacksmith-2vcpu-ubuntu-2404-arm')
     expect(workflow.concurrency).toEqual({
       group: `${gha('github.workflow')}-${gha('github.event.pull_request.number')}`,
       'cancel-in-progress': true,

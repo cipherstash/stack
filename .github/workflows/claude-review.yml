@@ -32,7 +32,7 @@ jobs:
       || github.event.pull_request.head.repo.full_name == github.repository)
       && github.event.pull_request.draft != true
       && github.event.pull_request.user.type != 'Bot'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     timeout-minutes: ${{ matrix.lens.timeout_minutes }}
     permissions:
       contents: read
