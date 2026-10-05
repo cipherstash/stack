@@ -15,15 +15,15 @@ type Cipher<'k> = KeysetCipher<'k, FakeDataKeySource>;
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(plaintext = u32)]
 struct Pinned {
-    #[stash(context = "legacy/age")]
+    #[stash(context = "legacy_age")]
     c: StackCipherText,
 }
 
 async fn pinned(cipher: &Cipher<'_>, tenant_id: u64) -> Result<(), stack_encrypt::Error> {
-    // Sealed under "legacy/age".
+    // Sealed under "legacy_age".
     let p: Pinned = 42u32.encrypt_into(cipher).await?;
     let _: u32 = p.decrypt_into(cipher, ()).await?;
-    // Sealed under ("legacy/age", tenant_id).
+    // Sealed under ("legacy_age", tenant_id).
     let p: Pinned = 42u32.encrypt_into_with_context(cipher, tenant_id).await?;
     let _: u32 = p.decrypt_into(cipher, NonEmpty::from(tenant_id)).await?;
     Ok(())

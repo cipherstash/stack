@@ -29,7 +29,7 @@ literal.
 | Attribute | Effect |
 |---|---|
 | `context_field` | Store the caller’s typed context here and recover it on decryption. Exactly one per record; excludes the other field attributes and literal contexts. |
-| `context = "..."` | With a `plaintext` record only: derive this field under exactly this context, extended by the one the caller passes for the record like any other. A query-side term built under the same literal — extended the same way — matches it. Must not be empty. Refused on a field of a `struct` derive, which sits under the record's context: use `identity`. |
+| `context = "..."` | With a `plaintext` record only: derive this field under exactly this context, extended by the one the caller passes for the record like any other. A query-side term built under the same literal — extended the same way — matches it. One plain segment (`"email"`, not `"users/email"`), as a plan's context segments are. Refused on a field of a `struct` derive, which sits under the record's context: use `identity`. |
 | `identity = "..."` | With `struct` only: key this field under the segment `identity` instead of the plaintext field's name, so it is derived under `("<context>", "<identity>")`. One plain segment. The plan builder's `.identity(segment)`. |
 | `from = field` / `from = 0` | With `struct` only: derive this field from `plaintext.field` (or `plaintext.0` for a tuple struct) when its name differs from its plaintext field's. |
 | `default` / `default = expr` | Not derived: filled with `Default::default()` or `expr`. Never encrypted, never authenticated. |

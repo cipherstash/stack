@@ -37,7 +37,7 @@ struct Sealed {
 struct Shadowed {
     #[stash(decrypt)]
     c: StackCipherText,
-    #[stash(context = "legacy/name")]
+    #[stash(context = "legacy_name")]
     shadow: StackCipherText,
 }
 

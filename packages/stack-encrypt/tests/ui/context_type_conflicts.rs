@@ -20,7 +20,7 @@ struct Stored {
 #[derive(EncryptFrom)]
 #[stash(plaintext = String, context_type = stack_encrypt::target::AeadContext)]
 struct Declared {
-    #[stash(context = "users/name")]
+    #[stash(context = "name")]
     c: StackCipherText,
 }
 

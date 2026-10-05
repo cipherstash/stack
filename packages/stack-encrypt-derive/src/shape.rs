@@ -360,8 +360,21 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                     return Err(syn::Error::new(
                         context.span(),
                         "an empty `context` is rejected when a value is encrypted: name the \
-                         field (e.g. \"users/email\"), or drop the attribute to hand the field \
-                         the caller's context",
+                         field (e.g. \"email\"), or drop the attribute to hand the field the \
+                         caller's context",
+                    ));
+                }
+                // A literal is one text part. A plan's context is a label
+                // of plain segments, so a literal the plan can say is a
+                // plain segment: `"users/email"` would be one escaped part
+                // here and two segments there, two different contexts.
+                if !crate::attrs::is_plain_segment(&context.value()) {
+                    return Err(syn::Error::new(
+                        context.span(),
+                        "a literal `context` is one label segment, so it must be plain: no `/`, \
+                         `(`, `)`, control or invisible character, and not beginning with \
+                         `b64:`, a digit or `-`; otherwise it would render escaped. Name the \
+                         field with one plain segment (e.g. `context = \"email\"`)",
                     ));
                 }
             }
@@ -724,7 +737,7 @@ mod tests {
             parse_quote! {
                 #[stash(plaintext = User)]
                 struct Row {
-                    #[stash(from = age, context = "users/age")]
+                    #[stash(from = age, context = "age")]
                     age: EncryptedAge,
                 }
             },
@@ -789,7 +802,7 @@ mod tests {
 
         let err = parse(parse_quote! {
             struct Rec {
-                #[stash(context = "users/email", context = "users/name")]
+                #[stash(context = "email", context = "name")]
                 c: StackCipherText,
             }
         })
@@ -799,8 +812,8 @@ mod tests {
         // Also across two `#[stash(..)]` attributes on the same field.
         let err = parse(parse_quote! {
             struct Rec {
-                #[stash(context = "users/email")]
-                #[stash(context = "users/name")]
+                #[stash(context = "email")]
+                #[stash(context = "name")]
                 c: StackCipherText,
             }
         })
@@ -1054,6 +1067,33 @@ mod tests {
     }
 
     #[test]
+    fn a_field_literal_context_is_one_plain_segment() {
+        for context in ["users/email", "(email)", "0email", "b64:x", "-email"] {
+            let err = parse(parse_quote! {
+                #[stash(plaintext = String)]
+                struct Rec {
+                    #[stash(context = #context)]
+                    c: StackCipherText,
+                }
+            })
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("one label segment"),
+                "{context:?}: {err}"
+            );
+        }
+        let record = parse(parse_quote! {
+            #[stash(plaintext = String)]
+            struct Rec {
+                #[stash(context = "email")]
+                c: StackCipherText,
+            }
+        })
+        .unwrap();
+        assert_eq!(own(&record.fields[0]), "email");
+    }
+
+    #[test]
     fn a_container_prefix_that_is_not_plain_is_refused() {
         let err = parse(parse_quote! {
             #[stash(struct = User, context = "public/users")]
@@ -1178,7 +1218,7 @@ mod tests {
             #[stash(plaintext = String, context_type = AeadContext)]
             struct Rec {
                 c: StackCipherText,
-                #[stash(context = "legacy/name")]
+                #[stash(context = "legacy_name")]
                 shadow: StackCipherText,
             }
         })
@@ -1242,7 +1282,7 @@ mod tests {
         let err = parse(parse_quote! {
             #[stash(context_type = AeadContext)]
             struct Rec {
-                #[stash(context = "users/name")]
+                #[stash(context = "name")]
                 c: StackCipherText,
             }
         })
@@ -1271,7 +1311,7 @@ mod tests {
         let record = parse(parse_quote! {
             #[stash(plaintext = u32, plaintext = u64)]
             struct Rec {
-                #[stash(context = "users/age", decrypt)]
+                #[stash(context = "age", decrypt)]
                 c: StackCipherText,
                 hm: EqualityTerm,
                 #[stash(default = SchemaVersion::V3)]
@@ -1284,7 +1324,7 @@ mod tests {
         assert_eq!(record.fields.len(), 3);
         // Nothing is derived from a field of the plaintext.
         assert!(record.fields.iter().all(|f| f.from().is_none()));
-        assert_eq!(own(&record.fields[0]), "users/age");
+        assert_eq!(own(&record.fields[0]), "age");
         assert!(record.fields[0].decrypt);
         assert!(record.fields[1].is_derived());
         assert!(matches!(

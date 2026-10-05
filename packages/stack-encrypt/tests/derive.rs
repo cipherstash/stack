@@ -180,7 +180,7 @@ async fn a_generic_plaintext_record_accepts_what_its_leaves_accept() {
 struct Doubled {
     #[stash(decrypt)]
     c: StackCipherText,
-    #[stash(context = "doubled/shadow")]
+    #[stash(context = "shadow")]
     shadow: StackCipherText,
 }
 
@@ -209,17 +209,14 @@ async fn decrypt_marks_the_field_when_the_types_cannot_choose() {
     assert_eq!(opened, 9);
     // The unmarked ciphertext is still a ciphertext, just not the record's —
     // and its literal context is extended by the caller's like any other:
-    // sealed under `("doubled/shadow", "doubled")`.
+    // sealed under `("shadow", "doubled")`.
     let doubled: Doubled = 9u32
         .encrypt_into_with_context(&keyset, nonempty!("doubled"))
         .await
         .unwrap();
     let shadow: u32 = doubled
         .shadow
-        .decrypt_into(
-            &cipher,
-            nonempty!("doubled/shadow").with(nonempty!("doubled")),
-        )
+        .decrypt_into(&cipher, nonempty!("shadow").with(nonempty!("doubled")))
         .await
         .unwrap();
     assert_eq!(shadow, 9);
@@ -798,7 +795,7 @@ async fn a_field_with_its_own_context_may_be_a_record_with_declared_contexts() {
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(plaintext = u32)]
 struct PinnedAge {
-    #[stash(context = "legacy/age")]
+    #[stash(context = "legacy_age")]
     c: StackCipherText,
 }
 
@@ -809,7 +806,7 @@ struct PinnedAge {
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(plaintext = u32)]
 struct AuditedAge {
-    #[stash(context = "audit/age", decrypt)]
+    #[stash(context = "audit", decrypt)]
     audit: StackCipherText,
     age: PinnedAge,
 }
@@ -826,7 +823,7 @@ async fn a_bare_record_field_takes_the_callers_context_beside_a_leaf_with_its_ow
     // The leaf: its own literal, extended by the caller's.
     let audit: u32 = row
         .audit
-        .decrypt_into(&cipher, nonempty!("audit/age").with(nonempty!("tenant")))
+        .decrypt_into(&cipher, nonempty!("audit").with(nonempty!("tenant")))
         .await
         .unwrap();
     assert_eq!(audit, 42);
@@ -834,7 +831,7 @@ async fn a_bare_record_field_takes_the_callers_context_beside_a_leaf_with_its_ow
     let age: u32 = row
         .age
         .c
-        .decrypt_into(&cipher, nonempty!("legacy/age").with(nonempty!("tenant")))
+        .decrypt_into(&cipher, nonempty!("legacy_age").with(nonempty!("tenant")))
         .await
         .unwrap();
     assert_eq!(age, 42);
