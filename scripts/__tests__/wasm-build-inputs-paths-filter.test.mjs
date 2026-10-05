@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
+import { filterCovers } from './lib/paths-filter.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 
@@ -502,7 +503,7 @@ describe('the FFI cache keys and the filters that trigger them agree', () => {
         it(`${relPath} (${event}) triggers on every ${key.id} build input`, () => {
           const uncovered = inputs.filter(
             (pattern) =>
-              !paths.some((entry) => entryCovers(entry, pattern)) &&
+              !filterCovers(paths, pattern, entryCovers) &&
               !KNOWN_UNCOVERED.has(gapKey(relPath, pattern)),
           )
           expect(
@@ -525,10 +526,7 @@ describe('the FFI cache keys and the filters that trigger them agree', () => {
           .flatMap(filteredEvents)
           .flatMap(({ relPath, paths }) =>
             inputs
-              .filter(
-                (pattern) =>
-                  !paths.some((entry) => entryCovers(entry, pattern)),
-              )
+              .filter((pattern) => !filterCovers(paths, pattern, entryCovers))
               .map((pattern) => gapKey(relPath, pattern)),
           )
       }),

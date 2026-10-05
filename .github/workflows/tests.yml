@@ -7,6 +7,11 @@ on:
   pull_request:
     branches:
       - "**"
+    # Plan documents under docs/plans/ need none of these jobs. Later patterns
+    # win, so the negation has to come after the catch-all.
+    paths:
+      - '**'
+      - '!docs/plans/**'
 
 jobs:
   # Biome format + lint. Its own job (no DB, no credentials, node-agnostic) so it

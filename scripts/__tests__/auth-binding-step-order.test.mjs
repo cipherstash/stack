@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { filterCovers } from './lib/paths-filter.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 
 /**
@@ -81,6 +82,8 @@ describe('the @cipherstash/auth binding is built wherever the SDK runs', () => {
   })
 })
 
+const same = (entry, input) => entry === input
+
 /** The `paths:` lists of a workflow's filtered events. */
 const filters = (relPath) => {
   const wf = readWorkflow(relPath)
@@ -110,7 +113,9 @@ describe('a change to the auth binding starts the jobs that load it', () => {
 
   it.each(users)('%s filters on the action', (relPath) => {
     for (const paths of filters(relPath)) {
-      expect(paths).toContain('.github/actions/build-auth-binding/**')
+      expect(
+        filterCovers(paths, '.github/actions/build-auth-binding/**', same),
+      ).toBe(true)
     }
   })
 
@@ -131,7 +136,9 @@ describe('a change to the auth binding starts the jobs that load it', () => {
       const lists = filters(relPath)
       expect(lists.length).toBe(2)
       for (const paths of lists) {
-        expect(shipped.filter((path) => !paths.includes(path))).toEqual([])
+        expect(
+          shipped.filter((path) => !filterCovers(paths, path, same)),
+        ).toEqual([])
       }
     },
   )

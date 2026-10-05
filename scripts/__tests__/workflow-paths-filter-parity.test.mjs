@@ -123,6 +123,13 @@ const EXPECTED_ASYMMETRIES = new Map([
     'push is deliberately unfiltered (branches: [main]), so main runs a superset of what PRs run',
   ],
   [
+    '.github/workflows/tests.yml',
+    // `push: branches: [main]` has no `paths:`, so main runs everything and only
+    // pull requests skip `docs/plans/**`. A `push` filter narrower than the
+    // `pull_request` one is unreachable when `push` is unfiltered.
+    'push is deliberately unfiltered (branches: [main]), so main runs a superset of what PRs run',
+  ],
+  [
     '.github/workflows/lint-release.yml',
     // There is no `push:` trigger at all — this gate exists to catch a broken
     // release workflow BEFORE it merges, and a copy running after the merge

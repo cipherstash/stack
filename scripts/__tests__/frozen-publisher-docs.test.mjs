@@ -71,14 +71,6 @@ const DOCS = [
   },
   {
     pkg: EQL,
-    file: 'docs/plans/2026-08-13-eql-monorepo-absorption.md',
-    instruction: /`@cipherstash\/eql` entry/,
-    historical:
-      'Phase-5 action: delete the `@cipherstash/eql` entry from ' +
-      '`FROZEN_PUBLISHERS`, nothing more.',
-  },
-  {
-    pkg: EQL,
     file: 'SECURITY.md',
     // Not a regex, and deliberately: this is `foreignPublishClaims` run over
     // the file, so the SAME extractor that forbids a wrong name below is what
@@ -138,10 +130,9 @@ const REGISTRY_HEAD_CLAIMS = [/\bnpm['’]s newest is\b/]
  * The files that TELL SOMEONE WHAT TO DO about the gate: the gate itself, the
  * CI step that runs it, and the suite that documents it.
  *
- * `docs/plans/*` is deliberately outside this list. A plan is a dated record of
- * an investigation, and rewriting its findings every time the registry moves
- * would destroy the record rather than correct it — which is why the plan is
- * held to `LIVE_VERDICT_CLAIMS` (instructions to an agent) and not to this.
+ * `docs/plans/*` is outside this list and outside `DOCS`. A plan is a dated
+ * record, and `tests.yml` does not run on a change that touches only
+ * `docs/plans/`, so nothing here may read one.
  */
 const OPERATIONAL = [
   'scripts/release-gate.mjs',

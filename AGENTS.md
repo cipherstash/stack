@@ -604,8 +604,8 @@ monorepo, which is where the silent failures are.
   the stack-* crates import. A package absorbed before its publisher moves
   goes back in, with its artefact in `FROZEN_ARTEFACT_DIGESTS`, and both
   entries are deleted in the PR that repoints its publisher — not afterwards.
-  `scripts/__tests__/frozen-publisher-docs.test.mjs` holds this file, the EQL
-  plan and `SECURITY.md`'s "Note on publishing" to the map — the last being
+  `scripts/__tests__/frozen-publisher-docs.test.mjs` holds this file and
+  `SECURITY.md`'s "Note on publishing" to the map — the last being
   the one file that tells a reporter which pipeline built the artefact they
   are reporting on. `release-gate.test.mjs` asserts the map carries no EQL,
   auth or FFI name: the seven protect-ffi packages were left in it after
