@@ -756,7 +756,7 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     }
 
     /// Seal the field `field` with `indexes` beside its ciphertext, all
-    /// under `<context>/<identity>`: one index, or a tuple of two to four.
+    /// under `<context>/<identity>`: one index, or a tuple of two to five.
     /// The record holds an [`Encrypted<Terms>`](crate::Encrypted). Lowers to
     /// [`indexed`]`(indexes).under(label)`, which is also what
     /// `encrypt_into::<Encrypted<Terms>, _>` lowers to.

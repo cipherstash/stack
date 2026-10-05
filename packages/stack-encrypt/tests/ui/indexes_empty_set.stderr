@@ -2,7 +2,7 @@ error[E0277]: `()` is not a set of indexes over `u32`
  --> tests/ui/indexes_empty_set.rs:7:57
   |
 7 |     let _ = indexed::<u32, FakeDataKeySource, Borrowed, _>(());
-  |                                                         ^ expected one index, or a tuple of two to four, each defined over `u32`
+  |                                                         ^ expected one index, or a tuple of two to five, each defined over `u32`
   |
   = help: the trait `Indexes<u32>` is not implemented for `()`
   = note: `()` is not a set of indexes: a field with no index is `ciphertext()` alone
@@ -15,11 +15,13 @@ help: the following other types implement trait `Indexes<S>`
   |           `(A, B)`
   |           `(A, B, C)`
   |           `(A, B, C, D)`
+  |           `(A, B, C, D, E)`
 ...
   | /     tuple_of_indexes! {
   | |         (A 0, B 1) => (A, B),
   | |         (A 0, B 1, C 2) => ((A, B), C),
   | |         (A 0, B 1, C 2, D 3) => (((A, B), C), D),
+  | |         (A 0, B 1, C 2, D 3, E 4) => ((((A, B), C), D), E),
   | |     }
   | |_____- in this macro invocation
 note: required by a bound in `indexed`
@@ -36,7 +38,7 @@ error[E0277]: `()` is not a set of indexes over `u32`
  --> tests/ui/indexes_empty_set.rs:7:13
   |
 7 |     let _ = indexed::<u32, FakeDataKeySource, Borrowed, _>(());
-  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected one index, or a tuple of two to four, each defined over `u32`
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected one index, or a tuple of two to five, each defined over `u32`
   |
   = help: the trait `Indexes<u32>` is not implemented for `()`
   = note: `()` is not a set of indexes: a field with no index is `ciphertext()` alone
@@ -49,11 +51,13 @@ help: the following other types implement trait `Indexes<S>`
   |           `(A, B)`
   |           `(A, B, C)`
   |           `(A, B, C, D)`
+  |           `(A, B, C, D, E)`
 ...
   | /     tuple_of_indexes! {
   | |         (A 0, B 1) => (A, B),
   | |         (A 0, B 1, C 2) => ((A, B), C),
   | |         (A 0, B 1, C 2, D 3) => (((A, B), C), D),
+  | |         (A 0, B 1, C 2, D 3, E 4) => ((((A, B), C), D), E),
   | |     }
   | |_____- in this macro invocation
   = note: this error originates in the macro `tuple_of_indexes` (in Nightly builds, run with -Z macro-backtrace for more info)

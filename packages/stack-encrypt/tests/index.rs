@@ -608,6 +608,22 @@ mod given_encrypted_terms_as_a_target {
             (Match::<Words>::new(), Ope, Ore, Equality),
         )
         .await;
+        // Five: every index once, and a second match index under other options.
+        same_bytes::<
+            String,
+            (
+                EqualityTerm,
+                MatchTerms,
+                OreTerm<String>,
+                OpeTerm<String>,
+                MatchTerms<Words>,
+            ),
+            _,
+        >(
+            "Hello World".into(),
+            (Equality, Match::default(), Ore, Ope, Match::<Words>::new()),
+        )
+        .await;
     }
 
     #[tokio::test]

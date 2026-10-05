@@ -366,7 +366,7 @@ impl<'a, S: ?Sized, K: 'static> EncryptWithContext<'a, S, K> {
     }
 
     /// Seal the value with `indexes` beside it: one index or a tuple of
-    /// two to four, each defined over the value's type. The output is an
+    /// two to five, each defined over the value's type. The output is an
     /// [`Encrypted<Terms>`](crate::Encrypted), terms read by destructuring.
     pub fn with<X: Indexes<S>>(self, indexes: X) -> EncryptIndexed<'a, S, X, K>
     where

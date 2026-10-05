@@ -1,4 +1,4 @@
-//! The index sets that must compile: one index, tuples of two to four, a
+//! The index sets that must compile: one index, tuples of two to five, a
 //! default and a configured match index, over the plaintexts each is
 //! defined for, in either source mode.
 use stack_encrypt::sem::{MatchConfig, MatchOptions};
@@ -22,5 +22,12 @@ fn main() {
         Match::<Words>::new(),
         Ore,
         Ope,
+    ));
+    let _ = indexed::<String, FakeDataKeySource, Owned, _>((
+        Equality,
+        Match::default(),
+        Ore,
+        Ope,
+        Match::<Words>::new(),
     ));
 }

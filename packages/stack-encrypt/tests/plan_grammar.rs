@@ -691,6 +691,33 @@ async fn a_typed_text_field_is_the_data_verbs_bytes_for_every_index_set() {
     .await;
 }
 
+/// Five indexes compile (there are four index kinds, so the fifth is a
+/// second match index under other options), but a field holds one term per
+/// kind, so both spellings refuse the set when the plan is built.
+#[test]
+fn a_five_index_field_is_refused_by_both_spellings() {
+    let refused = || PlanError::DuplicateIndex {
+        at: "v".into(),
+        index: "match",
+    };
+    let typed = Plan::context("t")
+        .fields::<One<String>, FakeDataKeySource>()
+        .encrypt_into::<Encrypted<(EqualityTerm, M, OreTerm<String>, OpeTerm<String>, W)>, _>(pick(
+            "v",
+            |o: &One<String>| &o.v,
+        ))
+        .build();
+    assert_eq!(plan_error(typed), refused());
+    let data = Plan::context("t")
+        .fields::<One<String>, FakeDataKeySource>()
+        .encrypt_index(
+            pick("v", |o: &One<String>| &o.v),
+            (Equality, Match::default(), Ore, Ope, Match::<Words>::new()),
+        )
+        .build();
+    assert_eq!(plan_error(data), refused());
+}
+
 #[tokio::test]
 async fn a_typed_integer_field_is_the_data_verbs_bytes_for_every_index_set() {
     same_field_bytes::<_, EqualityTerm, _>(7u32, Equality).await;
@@ -1219,6 +1246,21 @@ fn every_target_declares_the_indexes_its_terms_answer() {
         <(OreTerm<u32>, StackCipherText, EqualityTerm) as EncryptFrom<u32>>::indexes(),
         [IndexSpec::Ore, IndexSpec::Equality]
     );
+    assert_eq!(
+        <(
+            EqualityTerm,
+            OreTerm<u32>,
+            StackCipherText,
+            OpeTerm<u32>,
+            EqualityTerm,
+        ) as EncryptFrom<u32>>::indexes(),
+        [
+            IndexSpec::Equality,
+            IndexSpec::Ore,
+            IndexSpec::Ope,
+            IndexSpec::Equality
+        ]
+    );
 }
 
 #[test]
@@ -1230,6 +1272,24 @@ fn a_tuple_is_decryptable_when_one_element_is() {
     assert!(<(EqualityTerm, OreTerm<u32>, StackCipherText) as Decryptable>::DECRYPTABLE);
     assert!(
         !<(EqualityTerm, OreTerm<u32>, OpeTerm<u32>, EqualityTerm) as Decryptable>::DECRYPTABLE
+    );
+    assert!(
+        <(
+            EqualityTerm,
+            OreTerm<u32>,
+            OpeTerm<u32>,
+            EqualityTerm,
+            StackCipherText
+        ) as Decryptable>::DECRYPTABLE
+    );
+    assert!(
+        !<(
+            EqualityTerm,
+            OreTerm<u32>,
+            OpeTerm<u32>,
+            EqualityTerm,
+            OreTerm<u32>
+        ) as Decryptable>::DECRYPTABLE
     );
 }
 
@@ -1247,6 +1307,17 @@ async fn a_tuple_opens_through_its_ciphertext_wherever_it_sits() {
         keyset.encrypt_as(&7u32, context()).await.unwrap();
     let result: Result<u32, _> = cipher.decrypt_as(terms_alone, context()).await;
     assert!(matches!(result, Err(Error::NotOpened)), "{result:?}");
+
+    // Five elements, the ciphertext last.
+    let five: (
+        EqualityTerm,
+        OreTerm<u32>,
+        OpeTerm<u32>,
+        EqualityTerm,
+        StackCipherText,
+    ) = keyset.encrypt_as(&7u32, context()).await.unwrap();
+    let opened: u32 = cipher.decrypt_as(five, context()).await.unwrap();
+    assert_eq!(opened, 7);
 
     // As a field of a derived record, through `DecryptField`.
     let pair: (StackCipherText, EqualityTerm) = keyset.encrypt_as(&7u32, context()).await.unwrap();

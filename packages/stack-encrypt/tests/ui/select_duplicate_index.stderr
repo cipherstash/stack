@@ -1,0 +1,19 @@
+error[E0283]: type annotations needed
+ --> tests/ui/select_duplicate_index.rs:7:13
+  |
+7 |     let _ = Indexes::<u32>::select::<Equality, _>(&indexes);
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ -------- type must be known at this point
+  |             |
+  |             cannot infer type of the type parameter `P` declared on the method `select`
+  |
+  = note: multiple `impl`s satisfying `(stack_encrypt::Equality, stack_encrypt::Equality): Select<stack_encrypt::Equality, _>` found in the `stack_encrypt` crate:
+          - impl<A, B> Select<A, At<0>> for (A, B);
+          - impl<A, B> Select<B, At<1>> for (A, B);
+note: required by a bound in `select`
+ --> src/target/index.rs
+  |
+  |     fn select<I: Index<S>, P>(&self) -> &I
+  |        ------ required by a bound in this associated function
+  |     where
+  |         Self: Select<I, P>,
+  |               ^^^^^^^^^^^^ required by this bound in `Indexes::select`

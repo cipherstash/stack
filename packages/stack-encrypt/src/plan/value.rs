@@ -85,7 +85,7 @@ impl<S> ValueStart<S> {
     }
 
     /// Seal the value with `indexes` beside it: one index, or a tuple of
-    /// two to four. The output is an [`Encrypted<Terms>`]. The data spelling
+    /// two to five. The output is an [`Encrypted<Terms>`]. The data spelling
     /// of `encrypt_into::<Encrypted<Terms>>()`: both lower to
     /// [`indexed`].
     pub fn with<X: Indexes<S>>(self, indexes: X) -> ValuePlanBuilder<S, Indexed<X>> {
@@ -102,6 +102,11 @@ impl<S> ValueStart<S> {
     /// EqualityTerm)>()`, derives each element from the value under the one
     /// context, which is what a `plaintext = S` derive's record is. Lowers
     /// to `<T as EncryptFrom<S>>::encryption().under(context)`.
+    ///
+    /// A tuple target holding no ciphertext (terms only) builds, but `open`
+    /// on it fails with [`Error::NotOpened`](crate::Error::NotOpened); a
+    /// `Decryptable` bound that refuses it at build time will come with the
+    /// derive work (#1058).
     pub fn encrypt_into<T>(self) -> ValuePlanBuilder<S, Typed<T>>
     where
         T: EncryptFrom<S>,

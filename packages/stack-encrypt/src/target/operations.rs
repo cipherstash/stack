@@ -683,6 +683,12 @@ impl<K: 'static> KeysetCipher<'_, K> {
     /// [`Encryption`] is run with its source and context, a [`Decryption`]
     /// already holds both. Either is single-use; a saved plan builds a fresh
     /// one per call.
+    ///
+    /// A borrowed source is `&'s S`, tied to the description's own lifetime
+    /// `'s`, so a description fixed at one `'s` can only run over sources
+    /// that live that long. A boxed, reusable description must therefore
+    /// keep `'s` higher-ranked (as `plan::Lower` does, with a phantom
+    /// `PhantomData<&'s ()>` argument) or be created per call.
     pub fn run<'a, 's, S: 's, T: 'static, Ctx, M: SourceMode<'s, S>>(
         &'a self,
         encryption: Encryption<'s, S, T, K, Ctx, M>,

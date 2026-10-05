@@ -88,12 +88,13 @@ pub enum IndexSpec {
 }
 
 impl IndexSpec {
-    /// The output key this index's term rides under in a record.
+    /// The output key this index's term rides under in a record, and the
+    /// string a binding spells it as.
     ///
-    /// This is the kind alone. It is the whole wire form of every index but
-    /// a match index with non-default options, whose options it drops; to
-    /// write an index to a plan, use the serialiser (`IndexSpec::to_value`,
-    /// with the `dynamic` feature), which keeps them.
+    /// It is an output key, not a serialisation: it drops a match index's
+    /// options, so a data form must go through the serialiser
+    /// (`IndexSpec::to_value`, with the `dynamic` feature), which keeps
+    /// them, never through `key()`.
     pub fn key(&self) -> &'static str {
         match self {
             IndexSpec::Equality => "eq",
@@ -267,7 +268,7 @@ where
 /// [`Terms`](Self::Terms) is its term, a tuple's is the tuple of its terms.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a set of indexes over `{S}`",
-    label = "expected one index, or a tuple of two to four, each defined over `{S}`",
+    label = "expected one index, or a tuple of two to five, each defined over `{S}`",
     note = "`()` is not a set of indexes: a field with no index is `ciphertext()` alone"
 )]
 pub trait Indexes<S> {
@@ -421,6 +422,7 @@ mod tuples {
         (A 0, B 1) => (A, B),
         (A 0, B 1, C 2) => ((A, B), C),
         (A 0, B 1, C 2, D 3) => (((A, B), C), D),
+        (A 0, B 1, C 2, D 3, E 4) => ((((A, B), C), D), E),
     }
 }
 
@@ -491,7 +493,7 @@ where
 }
 
 /// The terms of a set of indexes, named from the terms' side: one term type,
-/// or a tuple of two to four, each naming the index that derives it. This is
+/// or a tuple of two to five, each naming the index that derives it. This is
 /// what lets [`Encrypted<Terms>`] be a target with no value in hand: its type
 /// says which indexes to run.
 ///
@@ -552,6 +554,7 @@ mod term_tuples {
         (A, B),
         (A, B, C),
         (A, B, C, D),
+        (A, B, C, D, E),
     }
 }
 
