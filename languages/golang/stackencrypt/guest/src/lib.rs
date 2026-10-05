@@ -57,7 +57,7 @@
 //!   [`status`] — everything that is pure logic over
 //!   `StackCipher<K>` / `KeysetCipher<K>` / bytes. Compiles and unit-tests
 //!   on the native host target (`cargo test` here, no wasm toolchain
-//!   needed) against `stack_kms::FakeDataKeySource`.
+//!   needed) against `stack_encrypt::registry::fake::FakeKeysetRegistry`.
 //! - [`abi`], [`host`] (wasm32 only) — this guest's export surface and its
 //!   token import. The conventions every guest shares — `se_alloc` /
 //!   `se_dealloc`, the buffer registry, the packed result encoding, the

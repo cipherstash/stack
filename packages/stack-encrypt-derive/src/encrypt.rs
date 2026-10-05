@@ -132,7 +132,7 @@ fn struct_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Tok
         quote!(#krate::target::EncryptFrom<#source>),
         quote! {
             type Context = #krate::target::DeclaredContext;
-            fn encryption<#lifetime, __K: 'static>() -> #krate::target::Encryption<#lifetime, #source, Self, __K, Self::Context> where #source: #lifetime {
+            fn encryption<#lifetime, __K: #krate::KeysetRegistry + 'static>() -> #krate::target::Encryption<#lifetime, #source, Self, __K, Self::Context> where #source: #lifetime {
                 match Self::plan::<__K>() {
                     ::core::result::Result::Ok(__plan) => __plan
                         .encryption(::core::option::Option::None)
@@ -257,7 +257,7 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
             quote!(#krate::target::EncryptFrom<#source>),
             quote! {
                 type Context = #context;
-                fn encryption<#lifetime, __K: 'static>() -> #krate::target::Encryption<#lifetime, #source, Self, __K, Self::Context> where #source: #lifetime {
+                fn encryption<#lifetime, __K: #krate::KeysetRegistry + 'static>() -> #krate::target::Encryption<#lifetime, #source, Self, __K, Self::Context> where #source: #lifetime {
                     match Self::plan::<#source>() {
                         ::core::result::Result::Ok(__plan) => #body,
                         ::core::result::Result::Err(__error) => #krate::target::Encryption::failed(__error),

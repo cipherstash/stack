@@ -1,6 +1,6 @@
 //! The guest's operations, written against `StackCipher<K>` / `KeysetCipher<K>` for any
-//! [`DataKeySource`] so they compile — and their tests run — on the native
-//! host target with `FakeDataKeySource`. The wasm32-only [`crate::abi`]
+//! [`KeysetRegistry`] so they compile — and their tests run — on the native
+//! host target with `FakeKeysetRegistry`. The wasm32-only [`crate::abi`]
 //! module wires them to the session table and the packed ABI; nothing in
 //! here knows about linear memory.
 //!
@@ -34,10 +34,10 @@
 use stack_encrypt::dynamic::{self, Scalar, Scope};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::IndexSpec;
+use stack_encrypt::KeysetRegistry;
 use stack_encrypt::{
     BoxedPassthrough, CipherText, Element, Encrypt, KeysetCipher, SealedValue, StackCipherText,
 };
-use stack_kms::DataKeySource;
 use vitaminc_aead_value::{transport as codec, FfiValue};
 use vitaminc_protected::Controlled;
 
@@ -82,7 +82,8 @@ pub async fn encrypt_value<K>(
     as_element: bool,
 ) -> Result<Vec<u8>, u32>
 where
-    K: DataKeySource + Sync,
+    K: KeysetRegistry + Sync,
+    K::Provider: Send + Sync,
 {
     let value = decode_value(value)?;
     let tree = if as_element {
@@ -118,7 +119,8 @@ pub async fn decrypt_value<K>(
     as_element: bool,
 ) -> Result<Vec<u8>, u32>
 where
-    K: DataKeySource + Sync,
+    K: KeysetRegistry + Sync,
+    K::Provider: Send + Sync,
 {
     let tree = decode_tree(ciphertext)?;
     // One `decrypt` per arm, not one `decipher` and two drives. The element
@@ -169,7 +171,8 @@ pub async fn term<K>(
     kind: u32,
 ) -> Result<Vec<u8>, u32>
 where
-    K: DataKeySource + Sync,
+    K: KeysetRegistry + Sync,
+    K::Provider: Send + Sync,
 {
     // The same proof every stack-encrypt leaf demands: an empty context is
     // `STATUS_ENCODING` here, before any derivation.
@@ -230,7 +233,8 @@ pub async fn encrypt_record<K>(
     plan: &[u8],
 ) -> Result<Vec<u8>, u32>
 where
-    K: DataKeySource + Sync,
+    K: KeysetRegistry + Sync,
+    K::Provider: Send + Sync,
 {
     let plan = dynamic::record::plan(decode_value(plan)?).map_err(|e| status_for_dynamic(&e))?;
     let tree = dynamic::record::encrypt(cipher, decode_value(source)?, &plan)
@@ -252,7 +256,8 @@ pub async fn decrypt_record<K>(
     plan: &[u8],
 ) -> Result<Vec<u8>, u32>
 where
-    K: DataKeySource + Sync + 'static,
+    K: KeysetRegistry + Sync + 'static,
+    K::Provider: Send + Sync,
 {
     let plan = dynamic::record::plan(decode_value(plan)?).map_err(|e| status_for_dynamic(&e))?;
     let value = dynamic::record::decrypt(scope, decode_tree(record)?, &plan)

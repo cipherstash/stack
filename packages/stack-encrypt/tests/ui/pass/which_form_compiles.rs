@@ -4,11 +4,11 @@
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{DecryptFrom, EncryptInto};
 use stack_encrypt::{nonempty, DecryptInto, EncryptFrom, KeysetCipher, NonEmpty, StackCipherText};
-use stack_kms::FakeDataKeySource;
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 
 /// Encrypting binds to a keyset; decrypting works through the same handle
 /// (constrained to that keyset) as well as through the `StackCipher`.
-type Cipher<'k> = KeysetCipher<'k, FakeDataKeySource>;
+type Cipher<'k> = KeysetCipher<'k, FakeKeysetRegistry>;
 
 /// A record whose fields have no context of their own: the caller's is
 /// the only one there is, so it must be given.

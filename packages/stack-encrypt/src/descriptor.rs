@@ -84,16 +84,21 @@ impl Descriptor {
     /// The separator between the parts of a list.
     pub const SEPARATOR: char = '/';
 
-    /// The longest descriptor ZeroKMS accepts, in bytes of the rendered
-    /// string: the protocol's [`MAX_DESCRIPTOR_LEN`](crate::kms::MAX_DESCRIPTOR_LEN).
-    /// ZeroKMS derives key material over a fixed block of that size holding
-    /// the descriptor, so a longer one cannot be bound. Every data-key
-    /// request checks its descriptors against this before anything is sent
+    /// The longest descriptor a backend accepts, in bytes of the rendered
+    /// string. Every data-key request checks its descriptors against this
+    /// before anything is sent
     /// ([`Error::DescriptorTooLong`](crate::Error::DescriptorTooLong)); a
     /// context is free to be long, but what it renders to must fit — and
     /// the base64 escape grows a part by a third, so an escaped part fits
     /// less than a plain one.
-    pub const MAX_LEN: usize = stack_kms::MAX_DESCRIPTOR_LEN;
+    ///
+    /// The value is ZeroKMS's: it derives key material over a fixed block of
+    /// this size holding the descriptor, so a longer one cannot be bound.
+    /// It is spelled here rather than imported because `Descriptor` is
+    /// backend-neutral and must render the same on a deployment with no
+    /// ZeroKMS in its dependency graph. `zerokms_limit_is_the_rendered_one`
+    /// pins the two equal wherever both are present.
+    pub const MAX_LEN: usize = 512;
 
     /// Render `context` — any [`IntoContext`] type — from its parts.
     ///
@@ -951,6 +956,16 @@ mod tests {
                 assert_eq!(i == j, a == b, "{a} vs {b}");
             }
         }
+    }
+
+    /// `MAX_LEN` is spelled here rather than imported, so that a
+    /// backend-neutral build carries no ZeroKMS crate. This pins it equal to
+    /// the protocol constant wherever ZeroKMS *is* in the graph — a protocol
+    /// bump that changed the limit would fail here rather than at a request.
+    #[cfg(feature = "zerokms")]
+    #[test]
+    fn zerokms_limit_is_the_rendered_one() {
+        assert_eq!(Descriptor::MAX_LEN, stack_kms::MAX_DESCRIPTOR_LEN);
     }
 }
 

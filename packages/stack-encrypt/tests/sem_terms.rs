@@ -4,10 +4,9 @@
 use std::cmp::Ordering;
 
 use stack_encrypt::nonempty;
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 use stack_encrypt::sem::{DefaultMatch, MatchConfig, MatchOptions, MatchTerms, Tokenizer};
-use stack_encrypt::{Error, StackCipher};
-use stack_kms::{FakeDataKeySource, IdentifiedBy};
-use uuid::Uuid;
+use stack_encrypt::{Error, StackCipher, StackCipherBuilder};
 
 /// Type-level config with the v1 `Standard` (word) tokenizer.
 struct WordMatch;
@@ -39,22 +38,19 @@ bad_config!(NonPowerOfTwoM, m: 100);
 bad_config!(TooSmallM, m: 16);
 bad_config!(ZeroNgram, tokenizer: Tokenizer::Ngram { length: 0 });
 
-async fn generator() -> StackCipher<FakeDataKeySource> {
-    StackCipher::builder()
-        .kms(FakeDataKeySource::new())
+async fn generator() -> StackCipher<FakeKeysetRegistry> {
+    StackCipherBuilder::new()
+        .registry(FakeKeysetRegistry::new())
         .init()
         .await
         .expect("build cipher")
 }
 
-async fn generator_for(keyset: Uuid) -> StackCipher<FakeDataKeySource> {
+async fn generator_for(keyset: &str) -> StackCipher<FakeKeysetRegistry> {
     let cipher = generator().await;
     // Warm the cache so the caller's `keyset(..)` is a lookup; the cipher's
     // own default stays the client's, which is not ours to choose.
-    let _ = cipher
-        .keyset(IdentifiedBy::Uuid(keyset))
-        .await
-        .expect("select keyset");
+    let _ = cipher.keyset(keyset).await.expect("select keyset");
     cipher
 }
 
@@ -105,16 +101,10 @@ async fn equality_terms_differ_by_value() {
 
 #[tokio::test]
 async fn equality_terms_bind_the_index_key() {
-    let cipher_a = generator_for(Uuid::from_u128(1)).await;
-    let cipher_b = generator_for(Uuid::from_u128(2)).await;
-    let gen_a = cipher_a
-        .keyset(IdentifiedBy::Uuid(Uuid::from_u128(1)))
-        .await
-        .expect("keyset 1");
-    let gen_b = cipher_b
-        .keyset(IdentifiedBy::Uuid(Uuid::from_u128(2)))
-        .await
-        .expect("keyset 2");
+    let cipher_a = generator_for("tenant-a").await;
+    let cipher_b = generator_for("tenant-b").await;
+    let gen_a = cipher_a.keyset("tenant-a").await.expect("tenant-a");
+    let gen_b = cipher_b.keyset("tenant-b").await.expect("tenant-b");
     let a = gen_a
         .equality_term("alice", nonempty!("users/email"))
         .await

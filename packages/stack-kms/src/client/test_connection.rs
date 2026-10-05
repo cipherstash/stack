@@ -4,11 +4,30 @@
 //! key material ZeroKMS would return).
 //!
 //! Shared by `client.rs`'s own tests and by `provider.rs`, which drives the
-//! key-provider implementation over the same stub.
+//! key-provider implementation over the same stub — and, behind the
+//! `test-support` feature, by `stack-encrypt`, whose
+//! `impl KeysetRegistry for Arc<StackKms>` cannot be tested from this crate
+//! (the trait is not ours) and cannot be tested without a connection.
+
+// Test scaffolding, compiled into the library only behind `test-support`. The
+// crate's production lints are relaxed here for the same reason they are
+// relaxed under `cfg(test)`: a fixture that cannot build its own stub has
+// nothing useful to return, and a panic is the right answer to a test that
+// asked for an endpoint it never stubbed.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+// `client` is a private module, so these `pub` items are only reachable
+// through the `test-support` re-export in `lib.rs`. With the feature off and
+// `cfg(test)` on — `wasm:no-http-test` runs the tests that way — nothing
+// re-exports them and `unreachable_pub` is right to say so; they are
+// crate-internal in that configuration, and `pub` is harmless.
+#![cfg_attr(not(feature = "test-support"), allow(unreachable_pub))]
 
 use async_mutex::Mutex;
 use uuid::uuid;
-use zerokms_protocol::{GeneratedKey, ViturKeyMaterial, ViturRequest, ViturRequestError};
+use zerokms_protocol::{
+    GeneratedKey, Keyset, LoadKeysetResponse, RetrievedKey, ViturKeyMaterial, ViturRequest,
+    ViturRequestError,
+};
 
 use recipher::keyset::{EncryptionKeySet, ProxyKeySet};
 
@@ -19,7 +38,7 @@ use crate::key::{ClientKey, V1KeySet};
 /// A fresh, random [`ClientKey`]. Data and index keys are derived from it,
 /// so a test that compares derived material must reuse one value (reach it
 /// through `StackKms::client_key`) rather than call this twice.
-pub(crate) fn random_client_key() -> ClientKey {
+pub fn random_client_key() -> ClientKey {
     let domain_key = EncryptionKeySet::generate().unwrap();
     let authority_key = EncryptionKeySet::generate().unwrap();
     let keyset = ProxyKeySet::generate(&authority_key, &domain_key);
@@ -31,7 +50,7 @@ pub(crate) fn random_client_key() -> ClientKey {
 }
 
 /// A low-level [`Client`] over a stub connection the callback configures.
-pub(crate) fn build_client(
+pub fn build_client(
     callback: impl FnOnce(TestConnectionBuilder) -> TestConnectionBuilder,
 ) -> Client<TestConnection> {
     let builder = callback(TestConnectionBuilder::new());
@@ -45,11 +64,31 @@ pub(crate) fn build_client(
 
 /// 528 bytes is the size of the key material returned by ZeroKMS for the
 /// recipher proxy re-encryption scheme.
-pub(crate) fn key_material() -> ViturKeyMaterial {
+pub fn key_material() -> ViturKeyMaterial {
     ViturKeyMaterial::from(vec![7u8; 528])
 }
 
-pub(crate) fn generated_key(tag: Vec<u8>) -> GeneratedKey {
+/// The keyset id [`load_keyset_response`] resolves to.
+pub const TEST_KEYSET_ID: uuid::Uuid = uuid!("11111111-1111-1111-1111-111111111111");
+
+/// The `load_keyset` response `ZeroKmsKeyset::new` consumes: the keyset it
+/// resolves to, plus the partial key material its index key derives from.
+pub fn load_keyset_response() -> LoadKeysetResponse {
+    LoadKeysetResponse {
+        partial_index_key: RetrievedKey {
+            key_material: key_material(),
+        },
+        keyset: Keyset {
+            id: TEST_KEYSET_ID,
+            name: "default".to_string(),
+            description: String::new(),
+            is_disabled: false,
+            is_default: true,
+        },
+    }
+}
+
+pub fn generated_key(tag: Vec<u8>) -> GeneratedKey {
     GeneratedKey {
         key_material: key_material(),
         tag,
@@ -60,13 +99,13 @@ pub(crate) fn generated_key(tag: Vec<u8>) -> GeneratedKey {
 type EffectHandlers = Vec<(String, Box<dyn FnOnce(&str) + Send>)>;
 type RequestHandlers = Vec<(String, Result<String, ViturRequestError>)>;
 
-pub(crate) struct TestConnectionBuilder {
+pub struct TestConnectionBuilder {
     handlers: RequestHandlers,
     effects: EffectHandlers,
 }
 
 impl TestConnectionBuilder {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             handlers: vec![],
             effects: vec![],
@@ -76,7 +115,7 @@ impl TestConnectionBuilder {
     /// Add a matcher for a particular request, returning a success message.
     ///
     /// The matcher is only run once.
-    pub(crate) fn add_success_response<R: ViturRequest>(mut self, response: R::Response) -> Self {
+    pub fn add_success_response<R: ViturRequest>(mut self, response: R::Response) -> Self {
         self.handlers.push((
             R::ENDPOINT.to_string(),
             Ok(serde_json::to_string(&response)
@@ -88,7 +127,7 @@ impl TestConnectionBuilder {
     /// Add a matcher for a particular request, returning a [`ViturRequestError`].
     ///
     /// The matcher is only run once.
-    pub(crate) fn add_failed_response<R: ViturRequest>(mut self, error: ViturRequestError) -> Self {
+    pub fn add_failed_response<R: ViturRequest>(mut self, error: ViturRequestError) -> Self {
         self.handlers.push((R::ENDPOINT.to_string(), Err(error)));
         self
     }
@@ -96,7 +135,7 @@ impl TestConnectionBuilder {
     /// Add a matcher for a particular request, running an effect on the body of the request.
     ///
     /// This matcher is only run once.
-    pub(crate) fn add_effect<R: ViturRequest, H: FnOnce(R) + Send + 'static>(
+    pub fn add_effect<R: ViturRequest, H: FnOnce(R) + Send + 'static>(
         mut self,
         handler: H,
     ) -> Self {
@@ -114,7 +153,7 @@ impl TestConnectionBuilder {
         self
     }
 
-    pub(crate) fn build(self) -> TestConnection {
+    pub fn build(self) -> TestConnection {
         TestConnection {
             handlers: Mutex::new(self.handlers),
             effects: Mutex::new(self.effects),
@@ -128,7 +167,7 @@ impl Default for TestConnectionBuilder {
     }
 }
 
-pub(crate) struct TestConnection {
+pub struct TestConnection {
     handlers: Mutex<RequestHandlers>,
     effects: Mutex<EffectHandlers>,
 }

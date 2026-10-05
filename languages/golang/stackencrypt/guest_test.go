@@ -599,8 +599,9 @@ func rawInstance(t *testing.T) *Client {
 }
 
 // A structurally valid stack-encrypt leaf (the frozen layout: version,
-// keyset id, IV, tag length, tag, ciphertext) with no real key behind it.
-var fixtureLeaf = mustHex("016b65797365742d666978747572653136303132333435363738396162636465660300aabbccdeadbeef")
+// keyset id, key id length, key id, ciphertext) with no real key behind it.
+// The same bytes the Rust side pins in `cipher.rs`, so the two cannot drift.
+var fixtureLeaf = mustHex("016b65797365742d6669787475726531360300aabbccdeadbeef")
 
 func mustHex(s string) []byte {
 	b, err := hex.DecodeString(s)

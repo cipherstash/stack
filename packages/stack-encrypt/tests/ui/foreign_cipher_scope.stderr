@@ -1,3 +1,65 @@
+error[E0277]: the trait bound `K: KeysetRegistry` is not satisfied
+ --> tests/ui/foreign_cipher_scope.rs:9:29
+  |
+9 | struct AnyKeyset<'a, K>(&'a StackCipher<K>, Uuid);
+  |                             ^^^^^^^^^^^^^^ the trait `KeysetRegistry` is not implemented for `K`
+  |
+note: required by a bound in `StackCipher`
+ --> src/cipher.rs
+  |
+  | pub struct StackCipher<R: KeysetRegistry> {
+  |                           ^^^^^^^^^^^^^^ required by this bound in `StackCipher`
+help: consider restricting type parameter `K` with trait `KeysetRegistry`
+  |
+9 | struct AnyKeyset<'a, K: stack_encrypt::KeysetRegistry>(&'a StackCipher<K>, Uuid);
+  |                       +++++++++++++++++++++++++++++++
+
+error[E0277]: the trait bound `K: KeysetRegistry` is not satisfied
+  --> tests/ui/foreign_cipher_scope.rs:12:5
+   |
+12 |     fn cipher(&self) -> &'a StackCipher<K> {
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `KeysetRegistry` is not implemented for `K`
+   |
+note: required by a bound in `StackCipher`
+  --> src/cipher.rs
+   |
+   | pub struct StackCipher<R: KeysetRegistry> {
+   |                           ^^^^^^^^^^^^^^ required by this bound in `StackCipher`
+help: consider restricting type parameter `K` with trait `KeysetRegistry`
+   |
+11 | impl<'a, K: stack_encrypt::KeysetRegistry> CipherScope<'a, K> for AnyKeyset<'a, K> {
+   |           +++++++++++++++++++++++++++++++
+
+error[E0053]: method `keyset` has an incompatible type for trait
+  --> tests/ui/foreign_cipher_scope.rs:16:25
+   |
+16 |     fn keyset(&self) -> Option<Uuid> {
+   |                         ^^^^^^^^^^^^ expected `KeysetId`, found `Uuid`
+   |
+   = note: expected signature `fn(&AnyKeyset<'a, K>) -> Option<KeysetId>`
+              found signature `fn(&AnyKeyset<'a, K>) -> Option<Uuid>`
+help: change the output type to match the trait
+   |
+16 -     fn keyset(&self) -> Option<Uuid> {
+16 +     fn keyset(&self) -> Option<KeysetId> {
+   |
+
+error[E0277]: the trait bound `K: KeysetRegistry` is not satisfied
+  --> tests/ui/foreign_cipher_scope.rs:11:13
+   |
+11 | impl<'a, K> CipherScope<'a, K> for AnyKeyset<'a, K> {
+   |             ^^^^^^^^^^^^^^^^^^ the trait `KeysetRegistry` is not implemented for `K`
+   |
+note: required by a bound in `CipherScope`
+  --> src/target/pending.rs
+   |
+   | pub trait CipherScope<'a, K: KeysetRegistry>: sealed::Sealed {
+   |                              ^^^^^^^^^^^^^^ required by this bound in `CipherScope`
+help: consider restricting type parameter `K` with trait `KeysetRegistry`
+   |
+11 | impl<'a, K: stack_encrypt::KeysetRegistry> CipherScope<'a, K> for AnyKeyset<'a, K> {
+   |           +++++++++++++++++++++++++++++++
+
 error[E0277]: the trait bound `AnyKeyset<'a, K>: target::pending::sealed::Sealed` is not satisfied
   --> tests/ui/foreign_cipher_scope.rs:11:36
    |
@@ -13,16 +75,32 @@ help: the trait `target::pending::sealed::Sealed` is not implemented for `AnyKey
 help: the following other types implement trait `target::pending::sealed::Sealed`
   --> src/target/pending.rs
    |
-   |     impl<K> Sealed for &crate::StackCipher<K> {}
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&StackCipher<K>`
-   |     impl<K> Sealed for &crate::KeysetCipher<'_, K> {}
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&KeysetCipher<'_, K>`
+   |     impl<K: KeysetRegistry> Sealed for &crate::StackCipher<K> {}
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&StackCipher<K>`
+   |     impl<K: KeysetRegistry> Sealed for &crate::KeysetCipher<'_, K> {}
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `&KeysetCipher<'_, K>`
 note: required by a bound in `CipherScope`
   --> src/target/pending.rs
    |
-   | pub trait CipherScope<'a, K>: sealed::Sealed {
-   |                               ^^^^^^^^^^^^^^ required by this bound in `CipherScope`
+   | pub trait CipherScope<'a, K: KeysetRegistry>: sealed::Sealed {
+   |                                               ^^^^^^^^^^^^^^ required by this bound in `CipherScope`
    = note: `CipherScope` is a "sealed trait", because to implement it you also need to implement `stack_encrypt::target::pending::sealed::Sealed`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
    = help: the following types implement the trait:
              &stack_encrypt::StackCipher<K>
              &stack_encrypt::KeysetCipher<'_, K>
+
+error[E0277]: the trait bound `K: KeysetRegistry` is not satisfied
+  --> tests/ui/foreign_cipher_scope.rs:12:29
+   |
+12 |     fn cipher(&self) -> &'a StackCipher<K> {
+   |                             ^^^^^^^^^^^^^^ the trait `KeysetRegistry` is not implemented for `K`
+   |
+note: required by a bound in `StackCipher`
+  --> src/cipher.rs
+   |
+   | pub struct StackCipher<R: KeysetRegistry> {
+   |                           ^^^^^^^^^^^^^^ required by this bound in `StackCipher`
+help: consider restricting type parameter `K` with trait `KeysetRegistry`
+   |
+11 | impl<'a, K: stack_encrypt::KeysetRegistry> CipherScope<'a, K> for AnyKeyset<'a, K> {
+   |           +++++++++++++++++++++++++++++++

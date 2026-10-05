@@ -29,7 +29,7 @@
 
 use stack_encrypt::dynamic::Scope;
 use stack_encrypt::{KeysetCipher, StackCipher};
-use stack_kms::{IdentifiedBy, IndexKeySource};
+use stack_encrypt::{KeysetRef, KeysetRegistry};
 use uuid::Uuid;
 use vitaminc_aead_value::FfiValue;
 use vitaminc_protected::Controlled;
@@ -129,13 +129,13 @@ impl KeysetSelector {
         cipher: &'c StackCipher<K>,
     ) -> Result<KeysetCipher<'c, K>, u32>
     where
-        K: IndexKeySource,
+        K: KeysetRegistry,
     {
-        let by: IdentifiedBy = match self {
+        let by: KeysetRef = match self {
             KeysetSelector::Default => return Ok(cipher.default_keyset()),
             KeysetSelector::Any => return Err(STATUS_ENCODING),
-            KeysetSelector::Name(name) => IdentifiedBy::Name(name.clone()),
-            KeysetSelector::Id(id) => IdentifiedBy::Uuid(*id),
+            KeysetSelector::Name(name) => KeysetRef::Name(name.to_string()),
+            KeysetSelector::Id(id) => KeysetRef::Id((*id).into()),
         };
         cipher.keyset(by).await.map_err(|e| status_for_error(&e))
     }
@@ -150,7 +150,7 @@ pub async fn scope_for<'c, K>(
     selector: &KeysetSelector,
 ) -> Result<Scope<'c, K>, u32>
 where
-    K: IndexKeySource,
+    K: KeysetRegistry,
 {
     match selector {
         KeysetSelector::Any => Ok(Scope::Client(cipher)),

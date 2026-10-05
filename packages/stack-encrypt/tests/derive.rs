@@ -6,7 +6,7 @@
 
 mod common;
 
-use std::sync::atomic::Ordering as AtomicOrdering;
+use stack_encrypt::KeysetRegistry;
 
 use cllw_ore::CllwOreEncrypt;
 use common::{counting_cipher, recording_cipher, stack_cipher};
@@ -242,7 +242,8 @@ where
     EqualityTerm: EncryptFrom<S>,
 {
     type Context = <EqualityTerm as EncryptFrom<S>>::Context;
-    fn encryption<'s, K: 'static>() -> stack_encrypt::Encryption<'s, S, Self, K, Self::Context>
+    fn encryption<'s, K: KeysetRegistry + 'static>(
+    ) -> stack_encrypt::Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
@@ -299,7 +300,7 @@ impl Decryptable for Lying {
 }
 
 impl<P, Ctx> DecryptField<P, Ctx> for Lying {
-    fn decryption_field<K: 'static>(
+    fn decryption_field<K: KeysetRegistry + 'static>(
         self,
         _context: Ctx,
     ) -> Option<stack_encrypt::Decryption<P, K>> {
@@ -426,19 +427,21 @@ async fn a_ciphertext_only_record_accepts_an_aead_only_context_like_the_leaf_doe
         .unwrap();
     assert_eq!(opened, name);
 
-    // Bound to the context like any other leaf.
+    // Bound to the context like any other leaf. The fake provider is
+    // `Bound`, as ZeroKMS is, so the wrong context is refused at the
+    // backend — before the AEAD ever runs.
     let record: SealedName = name
         .encrypt_into_with_context(&keyset, tenant())
         .await
         .unwrap();
     let other = NonEmpty::new(Tenant("other".into())).unwrap();
     let result: Result<String, _> = record.decrypt_into(&cipher, other).await;
-    assert!(matches!(result, Err(Error::Aead)), "{result:?}");
+    assert!(matches!(result, Err(Error::Provider(_))), "{result:?}");
 }
 
 #[tokio::test]
 async fn a_failed_field_fails_the_derived_record_before_any_io() {
-    let (cipher, generates, _) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let keyset = cipher.default_keyset();
 
     // Text that yields no match tokens fails that leaf during the
@@ -449,7 +452,7 @@ async fn a_failed_field_fails_the_derived_record_before_any_io() {
         .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await;
     assert!(matches!(result, Err(Error::Term(_))));
-    assert_eq!(generates.load(AtomicOrdering::SeqCst), 0);
+    assert_eq!(provider.call_counts().0, 0);
 }
 
 // --- Structs: each field from one field of the plaintext, under its own context
@@ -488,7 +491,7 @@ fn user() -> User {
 
 #[tokio::test]
 async fn a_struct_is_one_batched_call_and_rebuilds_its_plaintext() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let keyset = cipher.default_keyset();
     let generator = stack_cipher().await;
     let generator = generator.default_keyset();
@@ -497,7 +500,7 @@ async fn a_struct_is_one_batched_call_and_rebuilds_its_plaintext() {
     // caller: the context-free forms are the whole call, both ways.
     let row: EncryptedUser = user().encrypt_into(&keyset).await.unwrap();
     assert_eq!(
-        generates.load(AtomicOrdering::SeqCst),
+        provider.call_counts().0,
         1,
         "a two-ciphertext struct must be ONE generate_keys call"
     );
@@ -526,7 +529,7 @@ async fn a_struct_is_one_batched_call_and_rebuilds_its_plaintext() {
     let recovered = User::decrypt_from(row, &cipher).await.unwrap();
     assert_eq!(recovered, user());
     assert_eq!(
-        retrieves.load(AtomicOrdering::SeqCst),
+        provider.call_counts().1,
         1,
         "opening a two-ciphertext struct must be ONE retrieve_keys call"
     );
@@ -534,7 +537,7 @@ async fn a_struct_is_one_batched_call_and_rebuilds_its_plaintext() {
 
 #[tokio::test]
 async fn a_column_of_structs_is_still_one_call_each_way() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let keyset = cipher.default_keyset();
 
     let users: Vec<User> = (0..4)
@@ -546,16 +549,16 @@ async fn a_column_of_structs_is_still_one_call_each_way() {
 
     let rows: Vec<EncryptedUser> = users.encrypt_into(&keyset).await.unwrap();
     assert_eq!(rows.len(), 4);
-    assert_eq!(generates.load(AtomicOrdering::SeqCst), 1);
+    assert_eq!(provider.call_counts().0, 1);
 
     let recovered = Vec::<User>::decrypt_from(rows, &cipher).await.unwrap();
     assert_eq!(recovered, users);
-    assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 1);
+    assert_eq!(provider.call_counts().1, 1);
 }
 
 #[tokio::test]
 async fn a_struct_extends_its_contexts_with_the_callers() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let keyset = cipher.default_keyset();
     let generator = stack_cipher().await;
     let generator = generator.default_keyset();
@@ -567,7 +570,7 @@ async fn a_struct_extends_its_contexts_with_the_callers() {
         .encrypt_into_with_context(&keyset, 7u64)
         .await
         .unwrap();
-    assert_eq!(generates.load(AtomicOrdering::SeqCst), 1);
+    assert_eq!(provider.call_counts().0, 1);
     let age_hm: EqualityTerm = 42u32
         .encrypt_into_with_context(&generator, nonempty!("user").with("age").with(7u64))
         .await
@@ -584,23 +587,28 @@ async fn a_struct_extends_its_contexts_with_the_callers() {
         .await
         .unwrap();
     assert_eq!(recovered, user());
-    assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 1);
+    assert_eq!(provider.call_counts().1, 1);
 
     let row: EncryptedUser = user()
         .encrypt_into_with_context(&keyset, 7u64)
         .await
         .unwrap();
-    // The fake key source ignores descriptors, so the AEAD is what refuses
-    // a wrong context here. ZeroKMS refuses the key retrieval itself first
-    // (`Error::Kms`) — `examples/encrypted_record.rs` shows that live.
+    // The fake provider binds the descriptor, as ZeroKMS does, so a wrong
+    // context is refused at the key retrieval rather than by the AEAD
+    // afterwards — `examples/encrypted_record.rs` shows the same live.
     let other_row = User::decrypt_from_with_context(row, &cipher, 8u64).await;
-    assert!(matches!(other_row, Err(Error::Aead)));
+    assert!(
+        matches!(other_row, Err(Error::Provider(_))),
+        "{other_row:?}"
+    );
     let row: EncryptedUser = user()
         .encrypt_into_with_context(&keyset, 7u64)
         .await
         .unwrap();
+    // Opening with no context at all is a different descriptor again, so
+    // the backend refuses it for the same reason.
     let no_row = User::decrypt_from(row, &cipher).await;
-    assert!(matches!(no_row, Err(Error::Aead)));
+    assert!(matches!(no_row, Err(Error::Provider(_))), "{no_row:?}");
 
     // Any context does: a string, a pair, an `Option`.
     let row: EncryptedUser = user()
@@ -620,15 +628,17 @@ async fn a_struct_field_opened_under_the_wrong_context_fails() {
 
     let row: EncryptedUser = user().encrypt_into(&keyset).await.unwrap();
     // The literal contexts are baked into the impl, so a transplanted field
-    // is caught exactly as for a leaf: by the AAD against the fake key
-    // source, by ZeroKMS's descriptor check (`Error::Kms`) before that in
-    // production.
+    // is caught exactly as for a leaf: by the backend's descriptor check,
+    // the fake binding descriptors as ZeroKMS does.
     let transplanted: Result<u32, _> = row
         .age
         .c
         .decrypt_into(&cipher, nonempty!("user").with("height"))
         .await;
-    assert!(matches!(transplanted, Err(Error::Aead)));
+    assert!(
+        matches!(transplanted, Err(Error::Provider(_))),
+        "{transplanted:?}"
+    );
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -650,7 +660,7 @@ struct EncryptedAccount {
 
 #[tokio::test]
 async fn a_struct_nests_in_a_struct_as_an_ordinary_field() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let keyset = cipher.default_keyset();
     let generator = stack_cipher().await;
     let generator = generator.default_keyset();
@@ -660,7 +670,7 @@ async fn a_struct_nests_in_a_struct_as_an_ordinary_field() {
         plan: "pro".to_string(),
     };
     let row: EncryptedAccount = account.encrypt_into(&keyset).await.unwrap();
-    assert_eq!(generates.load(AtomicOrdering::SeqCst), 1);
+    assert_eq!(provider.call_counts().0, 1);
 
     // The inner struct's fields are under their own contexts, extended by
     // the outer field's pair.
@@ -677,7 +687,7 @@ async fn a_struct_nests_in_a_struct_as_an_ordinary_field() {
 
     let recovered = Account::decrypt_from(row, &cipher).await.unwrap();
     assert_eq!(recovered, account);
-    assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 1);
+    assert_eq!(provider.call_counts().1, 1);
 
     // The outer's plan is under the inferred `"accounts/plan"`. Decrypting
     // the row consumed it, so mint a fresh one to open the field alone.

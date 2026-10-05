@@ -152,8 +152,8 @@ enum Tree {
 fn leaf() -> SealedValue {
     static LEAF: OnceLock<SealedValue> = OnceLock::new();
     LEAF.get_or_init(|| {
-        SealedValue::from_parts(Uuid::nil(), [0; 16], vec![0; 48], vec![1; 32])
-            .expect("a fixed tag fits the length field")
+        SealedValue::from_parts(Uuid::nil().into(), vec![0; 64], vec![1; 32])
+            .expect("a fixed key id fits the length field")
     })
     .clone()
 }

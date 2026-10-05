@@ -1,4 +1,4 @@
-//! Native tests of the guest's operations over `FakeDataKeySource` — the
+//! Native tests of the guest's operations over `FakeKeysetRegistry` — the
 //! same functions the wasm ABI drives, minus linear memory. What they pin:
 //!
 //! * value trees round-trip through the FFI codec + the guest ops
@@ -12,24 +12,18 @@
 //! * hostile/malformed inputs and wrong-AAD decrypts map to the documented
 //!   statuses.
 
-use std::borrow::Cow;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 use std::future::IntoFuture;
 
 use stack_encrypt::dynamic::Scope;
+use stack_encrypt::registry::fake::{FakeKeysetRegistry, FakeProvider};
 use stack_encrypt::sem::DefaultMatch;
-use stack_encrypt::{nonempty, CipherText, Encrypt, SealedValue, StackCipher};
+use stack_encrypt::{nonempty, CipherText, Encrypt, SealedValue, StackCipher, StackCipherBuilder};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
-use stack_encrypt_guest::status::{STATUS_AUTH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET};
-use stack_kms::{
-    DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IndexKeySource,
-    RetrieveKeyPayload,
+use stack_encrypt_guest::status::{
+    STATUS_AUTH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET, STATUS_KMS_OTHER,
 };
-use uuid::Uuid;
 use vitaminc_aead_value::{transport as codec, FfiValue};
 use vitaminc_protected::{Controlled, Protected};
-use zerokms_protocol::{IdentifiedBy, UnverifiedContext};
 
 /// `futures::executor::block_on` over anything awaitable: the term API
 /// returns a `Pending`, which is `IntoFuture` rather than `Future`.
@@ -41,53 +35,21 @@ fn block_on<F: IntoFuture>(f: F) -> F::Output {
 // Harness
 // =============================================================================
 
-/// `FakeDataKeySource` with call counters, so the tests can assert the
-/// batching contract ("one `generate_keys` per invocation") instead of
-/// trusting it.
-#[derive(Default)]
-struct Counting {
-    inner: FakeDataKeySource,
-    generate_calls: AtomicUsize,
-    retrieve_calls: AtomicUsize,
+/// A cipher over the shared fake registry. Its provider counts the batched
+/// calls it serves, so the tests can assert the batching contract ("one
+/// `generate_keys` per invocation") instead of trusting it.
+fn cipher() -> StackCipher<FakeKeysetRegistry> {
+    block_on(
+        StackCipherBuilder::new()
+            .registry(FakeKeysetRegistry::new())
+            .init(),
+    )
+    .expect("build cipher")
 }
 
-impl DataKeySource for Counting {
-    async fn generate_keys(
-        &self,
-        payloads: Vec<GenerateKeyPayload<'_>>,
-        keyset_id: Option<Uuid>,
-        unverified_context: Option<Cow<'_, UnverifiedContext>>,
-    ) -> Result<Vec<DataKeyWithTag>, stack_kms::Error> {
-        self.generate_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner
-            .generate_keys(payloads, keyset_id, unverified_context)
-            .await
-    }
-
-    async fn retrieve_keys(
-        &self,
-        payloads: Vec<RetrieveKeyPayload<'_>>,
-        keyset_id: Option<Uuid>,
-        unverified_context: Option<&UnverifiedContext>,
-    ) -> Result<Vec<DataKey>, stack_kms::Error> {
-        self.retrieve_calls.fetch_add(1, Ordering::SeqCst);
-        self.inner
-            .retrieve_keys(payloads, keyset_id, unverified_context)
-            .await
-    }
-}
-
-impl IndexKeySource for Counting {
-    async fn load_index_key(
-        &self,
-        keyset_id: Option<IdentifiedBy>,
-    ) -> Result<(Uuid, stack_kms::IndexKey), stack_kms::Error> {
-        self.inner.load_index_key(keyset_id).await
-    }
-}
-
-fn cipher() -> StackCipher<Counting> {
-    block_on(StackCipher::builder().kms(Counting::default()).init()).expect("build cipher")
+/// The provider serving a cipher's default keyset: the call counter.
+fn provider(cipher: &StackCipher<FakeKeysetRegistry>) -> FakeProvider {
+    cipher.registry().default_keyset().1
 }
 
 fn encode(value: FfiValue) -> Vec<u8> {
@@ -233,8 +195,8 @@ fn value_round_trips_through_the_guest_ops() {
         matches!(&entries[2].1, FfiValue::Passthrough(inner) if matches!(**inner, FfiValue::Int64(7)))
     );
 
-    assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 1);
-    assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(provider(&cipher).call_counts().0, 1);
+    assert_eq!(provider(&cipher).call_counts().1, 1);
 }
 
 #[test]
@@ -307,9 +269,10 @@ fn wrong_aad_and_malformed_inputs_map_to_statuses() {
     ))
     .expect("encrypt");
 
-    // Wrong AAD: authentication, not encoding. (The fake key source ignores
-    // descriptors; against ZeroKMS the retrieve is refused first, as
-    // `STATUS_KMS_FORBIDDEN` — see `status.rs`.)
+    // Wrong AAD: the fake provider binds the descriptor, as ZeroKMS does,
+    // so the retrieve is refused before the AEAD runs. The guest downcasts
+    // a `stack_kms::Error` to classify it precisely; the fake's error is not
+    // one, so it reports the unclassified backend failure.
     assert_eq!(
         block_on(ops::decrypt_value(
             Scope::Client(&cipher),
@@ -317,7 +280,7 @@ fn wrong_aad_and_malformed_inputs_map_to_statuses() {
             b"other",
             false
         )),
-        Err(STATUS_AUTH)
+        Err(STATUS_KMS_OTHER)
     );
     // Garbage transport bytes on either path: encoding.
     assert_eq!(
@@ -397,7 +360,7 @@ fn an_empty_aad_round_trips_on_the_value_paths() {
                 b"ctx",
                 as_element
             )),
-            Err(STATUS_AUTH),
+            Err(STATUS_KMS_OTHER),
             "element: {as_element}"
         );
     }
@@ -428,7 +391,7 @@ fn an_empty_aad_round_trips_on_the_value_paths() {
             b"ctx",
             false
         )),
-        Err(STATUS_AUTH)
+        Err(STATUS_KMS_OTHER)
     );
 }
 
@@ -544,8 +507,8 @@ fn guest_terms_match_the_native_sem_derivations() {
     assert_eq!(ore_s.len(), 5 * 8);
 
     // No ZeroKMS traffic for any of it.
-    assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 0);
-    assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(provider(&cipher).call_counts().0, 0);
+    assert_eq!(provider(&cipher).call_counts().1, 0);
 }
 
 #[test]
@@ -627,7 +590,7 @@ fn a_record_batch_encrypts_in_one_call_and_round_trips() {
     ))
     .expect("encrypt records");
     // Three rows, two ciphertext fields each: still exactly one call.
-    assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(provider(&cipher).call_counts().0, 1);
 
     let pt = block_on(ops::decrypt_record(
         Scope::Client(&cipher),
@@ -635,7 +598,7 @@ fn a_record_batch_encrypts_in_one_call_and_round_trips() {
         &plan(),
     ))
     .expect("decrypt records");
-    assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(provider(&cipher).call_counts().1, 1);
 
     let FfiValue::Array(rows) = decode(&pt) else {
         panic!("expected an array of rows back");
@@ -923,7 +886,7 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
             &record,
             &plan_with(s("users/age"))
         )),
-        Err(STATUS_AUTH),
+        Err(STATUS_KMS_OTHER),
         "the flat context is not the one it was sealed under"
     );
 }
@@ -958,7 +921,7 @@ fn a_structured_plan_context_is_validated_at_parse() {
         );
     }
     assert_eq!(
-        cipher.kms().generate_calls.load(Ordering::SeqCst),
+        provider(&cipher).call_counts().0,
         0,
         "nothing seals under a context that is not one"
     );
@@ -1058,7 +1021,7 @@ fn record_shape_violations_are_encoding_errors() {
     }
 
     // No data keys were minted for any rejected call.
-    assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(provider(&cipher).call_counts().0, 0);
 }
 
 /// An empty plan context is refused at plan-parse time, before anything is
@@ -1089,7 +1052,7 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
         Err(STATUS_ENCODING)
     );
     assert_eq!(
-        cipher.kms().generate_calls.load(Ordering::SeqCst),
+        provider(&cipher).call_counts().0,
         0,
         "a context that could never be decrypted under must not seal"
     );
@@ -1133,11 +1096,17 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
 // Keysets: the scope a call selects
 // =============================================================================
 
+/// The provider serving a named keyset. Counters are per keyset now, so a
+/// test that crosses keysets must ask each of them.
+fn provider_named(cipher: &StackCipher<FakeKeysetRegistry>, name: &str) -> FakeProvider {
+    cipher.registry().keyset(name).expect("registered keyset").1
+}
+
 fn keyset_named<'c>(
-    cipher: &'c StackCipher<Counting>,
+    cipher: &'c StackCipher<FakeKeysetRegistry>,
     name: &str,
-) -> stack_encrypt::KeysetCipher<'c, Counting> {
-    block_on(cipher.keyset(IdentifiedBy::Name(name.to_string().into()))).expect("select keyset")
+) -> stack_encrypt::KeysetCipher<'c, FakeKeysetRegistry> {
+    block_on(cipher.keyset(name)).expect("select keyset")
 }
 
 /// A value sealed under a tenant's keyset opens through that keyset, through
@@ -1166,7 +1135,7 @@ fn a_value_opens_under_its_own_keyset_or_any_but_not_another() {
     ))
     .expect("any opens");
     assert_eq!(text(&decode(&pt)), "x");
-    let retrieves = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
+    let retrieves = provider(&cipher).call_counts().1;
 
     assert_eq!(
         block_on(ops::decrypt_value(
@@ -1179,7 +1148,7 @@ fn a_value_opens_under_its_own_keyset_or_any_but_not_another() {
         "another tenant's keyset must refuse the leaf"
     );
     assert_eq!(
-        cipher.kms().retrieve_calls.load(Ordering::SeqCst),
+        provider(&cipher).call_counts().1,
         retrieves,
         "the refusal happens before any key is retrieved"
     );
@@ -1225,12 +1194,19 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
         out
     };
 
-    let before = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
+    let (acme_p, globex_p) = (
+        provider_named(&cipher, "acme"),
+        provider_named(&cipher, "globex"),
+    );
+    let before = (acme_p.call_counts().1, globex_p.call_counts().1);
     let pt = block_on(ops::decrypt_record(Scope::Client(&cipher), &batch, &plan()))
         .expect("any opens the mixed batch");
     assert_eq!(
-        cipher.kms().retrieve_calls.load(Ordering::SeqCst) - before,
-        2,
+        (
+            acme_p.call_counts().1 - before.0,
+            globex_p.call_counts().1 - before.1
+        ),
+        (1, 1),
         "one retrieve per keyset"
     );
     let FfiValue::Array(rows) = decode(&pt) else {
@@ -1238,12 +1214,12 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
     };
     assert_eq!(rows.len(), 2);
 
-    let before = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
+    let before = provider(&cipher).call_counts().1;
     assert_eq!(
         block_on(ops::decrypt_record(Scope::Keyset(acme), &batch, &plan())),
         Err(STATUS_FOREIGN_KEYSET)
     );
-    assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), before);
+    assert_eq!(provider(&cipher).call_counts().1, before);
 }
 
 /// Terms derive under the selected keyset's index key: the same probe
@@ -1427,7 +1403,7 @@ fn record_validation_refuses_what_encrypt_record_refuses() {
         ),
         Ok(())
     );
-    assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(provider(&cipher).call_counts().0, 0);
 }
 
 #[test]
@@ -1511,5 +1487,5 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
             "{label} must be refused by the op too"
         );
     }
-    assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(provider(&cipher).call_counts().1, 0);
 }

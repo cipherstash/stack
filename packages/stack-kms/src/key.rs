@@ -231,20 +231,6 @@ impl IndexKey {
     }
 }
 
-/// Test-support only: mint an [`IndexKey`] from raw bytes, bypassing the
-/// keyset-root derivation. Kept off the public API so production callers can
-/// only obtain an index key through
-/// [`from_key_material`](IndexKey::from_key_material) (or a
-/// [`IndexKeySource`](crate::IndexKeySource)) — an index key that never went
-/// through `load_keyset` would silently generate index terms that match
-/// nothing written by other services.
-#[cfg(feature = "test-support")]
-impl From<Key> for IndexKey {
-    fn from(key: Key) -> Self {
-        Self(key)
-    }
-}
-
 #[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
 pub struct V1KeySet(pub(crate) KeySet);
 

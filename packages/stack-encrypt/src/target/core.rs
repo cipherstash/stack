@@ -1,6 +1,7 @@
 //! Canonical execution shared by the cipher-directed and declaration APIs.
 use super::{CipherScope, Pending, Request, Responses};
 use crate::cipher::{bind_keys, PendingStackCipherText, StackDecipher};
+use crate::registry::KeysetRegistry;
 use crate::{Descriptor, Error, KeysetCipher, StackCipher, StackCipherText};
 use vitaminc_aead::{CipherText, Decrypt, Encrypt, IntoAad, IntoContext};
 use vitaminc_protected::NonEmpty;
@@ -10,7 +11,7 @@ use vitaminc_protected::NonEmpty;
 /// `S` is what the operation is handed, by value: the PRF and ORE schemes
 /// consume their input, so a term that needs the plaintext takes it, and one
 /// that only reads it (a match term) is handed a reference as its `S`.
-pub(crate) trait Term<S, K, Ctx>: Sized {
+pub(crate) trait Term<S, K: KeysetRegistry, Ctx>: Sized {
     fn encrypt_from<'a>(
         source: S,
         cipher: &'a KeysetCipher<'_, K>,
@@ -24,7 +25,7 @@ pub(crate) trait Term<S, K, Ctx>: Sized {
 /// `Encrypt` consumes it: a caller holding only a borrow clones before it
 /// gets here (see [`ConsumeSource`](super::ConsumeSource)), and one holding
 /// the value hands it over without a copy.
-pub(crate) fn encrypt_native<'a, 'c, S: Encrypt, K, T: IntoContext<'c>>(
+pub(crate) fn encrypt_native<'a, 'c, S: Encrypt, K: KeysetRegistry, T: IntoContext<'c>>(
     source: S,
     cipher: &'a KeysetCipher<'_, K>,
     context: NonEmpty<T>,
@@ -40,7 +41,13 @@ pub(crate) fn encrypt_native<'a, 'c, S: Encrypt, K, T: IntoContext<'c>>(
         Err(_) => Pending::ready(cipher, Err(Error::Aead)),
     }
 }
-pub(crate) fn open_native<'a, 'c, P: Decrypt<'static> + 'static, K, T: IntoContext<'c>>(
+pub(crate) fn open_native<
+    'a,
+    'c,
+    P: Decrypt<'static> + 'static,
+    K: KeysetRegistry,
+    T: IntoContext<'c>,
+>(
     tree: StackCipherText,
     cipher: &'a StackCipher<K>,
     context: NonEmpty<T>,
@@ -58,7 +65,7 @@ pub(crate) fn open_native<'a, 'c, P: Decrypt<'static> + 'static, K, T: IntoConte
         P::decrypt_with_aad(decipher, aad).map_err(Error::from)
     })
 }
-pub(crate) fn seal_pending<'a, K>(
+pub(crate) fn seal_pending<'a, K: KeysetRegistry>(
     cipher: &'a KeysetCipher<'_, K>,
     tree: PendingStackCipherText,
     descriptor: Descriptor,
@@ -79,7 +86,7 @@ pub(crate) fn seal_pending<'a, K>(
     })
 }
 
-pub(crate) fn decipher_pending<'a, K>(
+pub(crate) fn decipher_pending<'a, K: KeysetRegistry>(
     scope: impl CipherScope<'a, K>,
     ciphertext: StackCipherText,
     descriptor: Descriptor,
@@ -127,8 +134,7 @@ fn collect_retrieve_requests(
         | CipherText::EmptySequence(leaf)
         | CipherText::EmptyMap(leaf) => {
             out.push(Request::retrieve_under(
-                *leaf.iv(),
-                leaf.tag().to_vec(),
+                leaf.key_id().to_vec(),
                 descriptor.clone(),
                 leaf.keyset_id(),
             ));

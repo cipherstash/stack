@@ -4,12 +4,12 @@ mod common;
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::transcode::{MapReader, Reader, SequenceReader, Transcode, Visitor};
 use stack_encrypt::target::{self, CallerContext, ExpectedContext};
+use stack_encrypt::KeysetRegistry;
 use stack_encrypt::{
     nonempty, Cipher, CipherText, ContextPiece, DecryptField, DecryptInto, Decryptable, Decryption,
     Encrypt, EncryptFrom, Encryption, Error, IntoAad, IntoContext, MaybeEmpty, NonEmpty,
     SealedValue, StackCipherText,
 };
-use std::sync::atomic::Ordering;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Identifier {
@@ -52,7 +52,7 @@ impl Transcode for StoredLeaf {
 }
 impl<S: Encrypt + Clone> EncryptFrom<S> for StoredLeaf {
     type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    fn encryption<'s, K: KeysetRegistry + 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
@@ -61,7 +61,7 @@ impl<S: Encrypt + Clone> EncryptFrom<S> for StoredLeaf {
 }
 impl<P: stack_encrypt::Decrypt<'static> + 'static> DecryptInto<P> for StoredLeaf {
     type Context = CallerContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
+    fn decryption<K: KeysetRegistry + 'static>(self, context: Self::Context) -> Decryption<P, K> {
         match SealedValue::from_bytes(&self.0) {
             Ok(leaf) => target::open(CipherText::Single(leaf), context),
             Err(error) => Decryption::failed(Error::Other(Box::new(error))),
@@ -76,7 +76,7 @@ where
     Self: DecryptInto<P>,
     Ctx: Into<<Self as DecryptInto<P>>::Context>,
 {
-    fn decryption_field<K: 'static>(self, ctx: Ctx) -> Option<Decryption<P, K>> {
+    fn decryption_field<K: KeysetRegistry + 'static>(self, ctx: Ctx) -> Option<Decryption<P, K>> {
         Some(self.decryption(ctx.into()))
     }
 }
@@ -102,7 +102,7 @@ fn other_column() -> NonEmpty<Identifier> {
 
 #[tokio::test]
 async fn stored_identifier_supplies_every_operations_context() {
-    let (cipher, generates, _) = common::counting_cipher().await;
+    let (cipher, provider) = common::counting_cipher().await;
     let keyset = cipher.default_keyset();
     let email = "alice@example.com".to_owned();
     let record: TextEq = keyset
@@ -116,7 +116,7 @@ async fn stored_identifier_supplies_every_operations_context() {
     );
     assert_eq!(record.v, 3, "a defaulted field is filled, not derived");
     assert_eq!(
-        generates.load(Ordering::SeqCst),
+        provider.call_counts().0,
         1,
         "one ciphertext leaf means one data key, in one batch"
     );
@@ -173,14 +173,14 @@ async fn canonical_ciphertext_opens_through_the_record() {
 
 #[tokio::test]
 async fn expected_identifier_is_checked_before_any_key_is_retrieved() {
-    let (cipher, _, retrieves) = common::counting_cipher().await;
+    let (cipher, provider) = common::counting_cipher().await;
     let keyset = cipher.default_keyset();
     let email = "alice@example.com".to_owned();
     let record: TextEq = keyset
         .encrypt_as(&email, Identifier::email())
         .await
         .unwrap();
-    let before = retrieves.load(Ordering::SeqCst);
+    let before = provider.call_counts().1;
     let result = cipher
         .decrypt_as::<String, _>(record, other_column().into())
         .await;
@@ -189,7 +189,7 @@ async fn expected_identifier_is_checked_before_any_key_is_retrieved() {
         "a stored identifier that differs from the expected one is a mismatch, got {result:?}"
     );
     assert_eq!(
-        retrieves.load(Ordering::SeqCst),
+        provider.call_counts().1,
         before,
         "the mismatch is refused before ZeroKMS is asked for a key"
     );
@@ -197,7 +197,7 @@ async fn expected_identifier_is_checked_before_any_key_is_retrieved() {
 
 #[tokio::test]
 async fn empty_stored_identifier_is_refused_before_any_key_is_retrieved() {
-    let (cipher, _, retrieves) = common::counting_cipher().await;
+    let (cipher, provider) = common::counting_cipher().await;
     let keyset = cipher.default_keyset();
     let email = "alice@example.com".to_owned();
     let mut record: TextEq = keyset
@@ -205,7 +205,7 @@ async fn empty_stored_identifier_is_refused_before_any_key_is_retrieved() {
         .await
         .unwrap();
     record.i.column.clear();
-    let before = retrieves.load(Ordering::SeqCst);
+    let before = provider.call_counts().1;
     let result = cipher
         .decrypt_as::<String, _>(record, Default::default())
         .await;
@@ -214,7 +214,7 @@ async fn empty_stored_identifier_is_refused_before_any_key_is_retrieved() {
         "a stored identifier is data, not a proof: an empty one fails validation"
     );
     assert_eq!(
-        retrieves.load(Ordering::SeqCst),
+        provider.call_counts().1,
         before,
         "validation runs before ZeroKMS is asked for a key"
     );
@@ -285,7 +285,7 @@ async fn scalar_destination_refuses_a_sequence() {
 struct FixedLeaf(StoredLeaf);
 impl<S: Encrypt + Clone> EncryptFrom<S> for FixedLeaf {
     type Context = ();
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    fn encryption<'s, K: KeysetRegistry + 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
@@ -300,7 +300,7 @@ impl<S: Encrypt + Clone> EncryptFrom<S> for FixedLeaf {
 }
 impl<P: stack_encrypt::Decrypt<'static> + 'static> DecryptInto<P> for FixedLeaf {
     type Context = ();
-    fn decryption<K: 'static>(self, (): ()) -> Decryption<P, K> {
+    fn decryption<K: KeysetRegistry + 'static>(self, (): ()) -> Decryption<P, K> {
         self.0.decryption(nonempty!("fixed/leaf").into())
     }
 }
@@ -464,7 +464,7 @@ fn native_readers_report_the_number_of_remaining_entries() {
 #[tokio::test]
 async fn native_readers_preserve_map_keys_and_authenticated_markers() {
     use std::collections::HashMap;
-    let (cipher, generates, retrieves) = common::counting_cipher().await;
+    let (cipher, provider) = common::counting_cipher().await;
     let keyset = cipher.default_keyset();
     let value: HashMap<String, Vec<Option<String>>> = HashMap::from([
         ("entries".into(), vec![Some("secret".into()), None]),
@@ -484,15 +484,11 @@ async fn native_readers_preserve_map_keys_and_authenticated_markers() {
         "a tree read into a destination and back opens as the original value"
     );
     assert_eq!(
-        generates.load(Ordering::SeqCst),
+        provider.call_counts().0,
         1,
         "the whole document sealed under one data key"
     );
-    assert_eq!(
-        retrieves.load(Ordering::SeqCst),
-        1,
-        "and opened with one retrieval"
-    );
+    assert_eq!(provider.call_counts().1, 1, "and opened with one retrieval");
     // Transcoding keeps the authentication: changing a cryptographic map key fails.
     let tree = keyset.encrypt(value, nonempty!("document")).await.unwrap();
     let Stored::Object(mut entries) = tree.read(TreeVisitor).unwrap() else {

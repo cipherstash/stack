@@ -39,6 +39,40 @@ mark. Here it is safe, and a bump would have bought nothing:
 So the version byte is spent once, when there is a reader to protect. The next
 layout change — after the first release that stores leaves — must bump it.
 
+### Amendment, 2026-09-24: the same reasoning, applied a second time
+
+CIP-4140 changed the layout again, and again left `FORMAT_VERSION` at `0x01`.
+The ZeroKMS-shaped `iv` (16 bytes) and `tag` (`u16` length + bytes) became one
+opaque `key_id` (`u16` length + bytes):
+
+```text
+version(0x01) ‖ keyset_id:16 ‖ key_id_len:u16 ‖ key_id ‖ ciphertext
+```
+
+with the leaf AAD `PAE("stack-encrypt/leaf", version, keyset_id, derived_aad,
+key_id)`.
+
+The reason for the field is ADR-0007: a `KeyProvider`'s `KeyId` is **opaque**.
+A ZeroKMS key id happens to be an `(iv, tag)` pair, but an AWS or Vault one is
+not, and the envelope must not know. Splitting the provider's own id into
+ZeroKMS's two parts would have been generic-looking code that silently
+corrupted leaves on every other backend.
+
+The three reasons above hold unchanged, and the first is still the load-bearing
+one: the crate is unpublished and nothing it produces is stored anywhere. The
+second is if anything stronger here — `key_id` is bound into the leaf AAD in
+the position `tag` used to hold, so an old-layout leaf fails authentication
+rather than parsing its `iv` as a length prefix.
+
+The keyset id stays in the envelope rather than moving inside `key_id`, for a
+reason that only appears once the backend is a variable: `decrypt` must know
+**which backend to ask** before it can parse a blob that only that backend
+defines. Routing metadata cannot live inside the thing it routes.
+
+This is the second and last spend. The rule above is unchanged — the next
+layout change, after the first release that stores leaves, must bump the
+version byte.
+
 ## 2. A keyset name is a lookup with a bounded freshness window, not an identity
 
 A keyset's **id** is its identity: globally unique, carried in every leaf, and

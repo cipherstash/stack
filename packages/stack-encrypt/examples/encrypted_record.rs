@@ -192,7 +192,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "opening under another id: {}",
         match wrong_id {
-            Err(Error::Kms(e)) => format!("refused by ZeroKMS ({e})"),
+            Err(Error::Provider(e)) => format!("refused by ZeroKMS ({e})"),
             Err(Error::Aead) => "refused (AEAD)".to_owned(),
             _ => "unexpected".to_owned(),
         }

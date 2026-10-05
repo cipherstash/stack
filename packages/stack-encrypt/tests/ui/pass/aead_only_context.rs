@@ -6,7 +6,7 @@
 //! context cannot declare.
 use stack_encrypt::target::{AeadContext, DecryptFrom, EncryptInto};
 use stack_encrypt::{ContextPiece, DecryptInto, EncryptFrom, IntoContext, KeysetCipher, MaybeEmpty, NonEmpty, StackCipherText};
-use stack_kms::FakeDataKeySource;
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 
 /// Declared through `AeadContext` below: it can seal, but the record
 /// derives no term under it.
@@ -43,12 +43,12 @@ fn tenant() -> NonEmpty<Tenant> {
     NonEmpty::new(Tenant("acme".into())).unwrap()
 }
 
-async fn canonical(cipher: &KeysetCipher<'_, FakeDataKeySource>, value: &String) {
+async fn canonical(cipher: &KeysetCipher<'_, FakeKeysetRegistry>, value: &String) {
     let leaf: StackCipherText = value.encrypt_into_with_context(cipher, tenant()).await.unwrap();
     let _: String = leaf.decrypt_into(cipher, tenant()).await.unwrap();
 }
 
-async fn derived(cipher: &KeysetCipher<'_, FakeDataKeySource>, value: &String) {
+async fn derived(cipher: &KeysetCipher<'_, FakeKeysetRegistry>, value: &String) {
     let record: Sealed = value.encrypt_into_with_context(cipher, tenant()).await.unwrap();
     let _: String = record.decrypt_into(cipher, tenant()).await.unwrap();
     let record: Shadowed = value.encrypt_into_with_context(cipher, tenant()).await.unwrap();

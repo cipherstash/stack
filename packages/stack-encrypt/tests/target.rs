@@ -4,18 +4,20 @@
 //! surface only, and — the point of the design — proof that however large the
 //! assembly, settling it is one batched ZeroKMS call per request kind.
 
+use stack_encrypt::KeysetRegistry;
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OreTerm};
 use stack_encrypt::target::{
     ciphertext, equality, CallerContext, DeclaredContext, DecryptFrom, DecryptInto, Decryption,
     EncryptFrom, EncryptInto, Encryption, Pending, Request,
 };
-use stack_encrypt::{nonempty, EmptyError, Error, NonEmpty, StackCipher, StackCipherText};
-use stack_kms::{FakeDataKeySource, IdentifiedBy, IndexKeySource};
-use uuid::Uuid;
+use stack_encrypt::{
+    nonempty, EmptyError, Error, NonEmpty, StackCipher, StackCipherBuilder, StackCipherText,
+};
 
 mod common;
 use common::{counting_cipher, stack_cipher};
@@ -24,7 +26,7 @@ use common::{counting_cipher, stack_cipher};
 /// test's own [`stack_cipher`]: the fake index key is deterministic per
 /// keyset, so two separately built ciphers stand in for the write path and a
 /// query path in another process.
-async fn generator() -> StackCipher<FakeDataKeySource> {
+async fn generator() -> StackCipher<FakeKeysetRegistry> {
     stack_cipher().await
 }
 
@@ -105,7 +107,7 @@ async fn term_derivation_makes_no_kms_calls() {
     // That is this backend's property, not the term API's contract: a
     // backend that derives terms at the server (ZeroKMS v2) settles the same
     // `Pending` through a request.
-    let (cipher, generates, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let cipher = cipher.default_keyset();
 
     let _term: EqualityTerm = "alice"
@@ -117,8 +119,8 @@ async fn term_derivation_makes_no_kms_calls() {
         .await
         .unwrap();
 
-    assert_eq!(generates.load(AtomicOrdering::SeqCst), 0);
-    assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 0);
+    assert_eq!(provider.call_counts().0, 0);
+    assert_eq!(provider.call_counts().1, 0);
 }
 
 #[tokio::test]
@@ -263,7 +265,7 @@ async fn ope_leaf_compares_with_plain_byte_order() {
 
 #[tokio::test]
 async fn a_column_encrypts_in_one_batched_call() {
-    let (cipher, generates, _) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let cipher = cipher.default_keyset();
 
     let ages: Vec<u32> = vec![29, 34, 41, 34, 57];
@@ -274,7 +276,7 @@ async fn a_column_encrypts_in_one_batched_call() {
 
     assert_eq!(sealed.len(), 5);
     assert_eq!(
-        generates.load(AtomicOrdering::SeqCst),
+        provider.call_counts().0,
         1,
         "five records must share ONE generate_keys call"
     );
@@ -282,7 +284,7 @@ async fn a_column_encrypts_in_one_batched_call() {
 
 #[tokio::test]
 async fn a_column_decrypts_in_one_batched_call() {
-    let (cipher, _, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let keyset = cipher.default_keyset();
 
     let ages: Vec<u32> = vec![29, 34, 41];
@@ -298,7 +300,7 @@ async fn a_column_decrypts_in_one_batched_call() {
 
     assert_eq!(roundtrip, ages);
     assert_eq!(
-        retrieves.load(AtomicOrdering::SeqCst),
+        provider.call_counts().1,
         1,
         "three rows must share ONE retrieve_keys call"
     );
@@ -344,7 +346,7 @@ struct EncryptedAge {
 
 impl EncryptFrom<u32> for EncryptedAge {
     type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, u32, Self, K, Self::Context>
+    fn encryption<'s, K: KeysetRegistry + 'static>() -> Encryption<'s, u32, Self, K, Self::Context>
     where
         u32: 's,
     {
@@ -360,7 +362,7 @@ impl EncryptFrom<u32> for EncryptedAge {
 }
 impl DecryptInto<u32> for EncryptedAge {
     type Context = CallerContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<u32, K> {
+    fn decryption<K: KeysetRegistry + 'static>(self, context: Self::Context) -> Decryption<u32, K> {
         stack_encrypt::target::open(self.c, context)
     }
 }
@@ -405,7 +407,7 @@ async fn composite_record_encrypts_every_field_from_one_source() {
 
 #[tokio::test]
 async fn a_composite_record_is_one_batched_call() {
-    let (cipher, generates, _) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let cipher = cipher.default_keyset();
 
     let _record: EncryptedAge = 42u32
@@ -413,7 +415,7 @@ async fn a_composite_record_is_one_batched_call() {
         .await
         .unwrap();
     assert_eq!(
-        generates.load(AtomicOrdering::SeqCst),
+        provider.call_counts().0,
         1,
         "ciphertext + two terms must settle in ONE generate_keys call"
     );
@@ -425,7 +427,7 @@ async fn a_composite_record_is_one_batched_call() {
         .await
         .unwrap();
     assert_eq!(
-        generates.load(AtomicOrdering::SeqCst),
+        provider.call_counts().0,
         2,
         "a column of composite records must add ONE more call, not one per row"
     );
@@ -457,7 +459,7 @@ where
     EqualityTerm: EncryptFrom<S>,
 {
     type Context = <EqualityTerm as EncryptFrom<S>>::Context;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    fn encryption<'s, K: KeysetRegistry + 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
@@ -491,31 +493,26 @@ async fn init_pins_the_cipher_to_the_keyset_it_resolved() {
     // key derives its terms: `init` resolves both together, so they cannot
     // diverge. (Sealing under one keyset while deriving terms under another
     // would make every query silently match nothing.)
-    let cipher = StackCipher::builder()
-        .kms(FakeDataKeySource::new())
+    let cipher = StackCipherBuilder::new()
+        .registry(FakeKeysetRegistry::new())
         .init()
         .await
         .expect("build cipher");
 
-    let (expected, _) = FakeDataKeySource::new()
-        .load_index_key(None)
-        .await
-        .expect("load index key");
+    let (expected, _) = FakeKeysetRegistry::new().default_keyset();
     assert_eq!(cipher.default_keyset().keyset_id(), expected);
 }
 
 #[tokio::test]
 async fn an_explicit_keyset_is_honoured() {
-    let keyset = Uuid::from_u128(42);
-    let cipher = StackCipher::builder()
-        .kms(FakeDataKeySource::new())
+    let registry = FakeKeysetRegistry::new();
+    let (keyset, _) = registry.keyset("tenant").expect("registered keyset");
+    let cipher = StackCipherBuilder::new()
+        .registry(registry)
         .init()
         .await
         .expect("build cipher");
-    let explicit = cipher
-        .keyset(IdentifiedBy::Uuid(keyset))
-        .await
-        .expect("select keyset");
+    let explicit = cipher.keyset("tenant").await.expect("select keyset");
     assert_eq!(explicit.keyset_id(), keyset);
 
     // Selecting one does not move the cipher's default: that is the client's,
@@ -582,7 +579,7 @@ async fn wrapped_and_extended_contexts_bind_like_plain_ones() {
 
     // Extended with a row id: opens under the same pair, and only there.
     // (Against the fake key source the AEAD refuses; ZeroKMS refuses the
-    // key retrieval under the other descriptor first, as `Error::Kms`.)
+    // key retrieval under the other descriptor first, as `Error::Provider`.)
     let sealed: StackCipherText = "secret"
         .to_string()
         .encrypt_into_with_context(&keyset, nonempty!("users/email").with(42u64))
@@ -591,14 +588,21 @@ async fn wrapped_and_extended_contexts_bind_like_plain_ones() {
     let wrong_row: Result<String, _> = sealed
         .decrypt_into(&cipher, nonempty!("users/email").with(43u64))
         .await;
-    assert!(matches!(wrong_row, Err(Error::Aead)));
+    // The provider binds the descriptor, as ZeroKMS does, so the wrong
+    // context is refused at the key retrieval rather than by the AEAD.
+    assert!(
+        matches!(wrong_row, Err(Error::Provider(_))),
+        "{wrong_row:?}"
+    );
     let sealed: StackCipherText = "secret"
         .to_string()
         .encrypt_into_with_context(&keyset, nonempty!("users/email").with(42u64))
         .await
         .unwrap();
+    // Dropping the extension is a different descriptor again, so the
+    // provider refuses the retrieve before the AEAD is reached.
     let no_row: Result<String, _> = sealed.decrypt_into(&cipher, nonempty!("users/email")).await;
-    assert!(matches!(no_row, Err(Error::Aead)));
+    assert!(matches!(no_row, Err(Error::Provider(_))), "{no_row:?}");
 
     // The pair encodes as the bare tuple would: a term under the extended
     // context equals one under the plain pair, so a query site need not
@@ -680,7 +684,7 @@ async fn containers_pass_the_context_through_to_their_leaves() {
 struct Refused(Arc<AtomicUsize>);
 impl DecryptInto<u32> for Refused {
     type Context = CallerContext;
-    fn decryption<K: 'static>(self, _: Self::Context) -> Decryption<u32, K> {
+    fn decryption<K: KeysetRegistry + 'static>(self, _: Self::Context) -> Decryption<u32, K> {
         self.0.fetch_add(1, AtomicOrdering::SeqCst);
         Decryption::failed(Error::NotOpened)
     }
@@ -688,7 +692,7 @@ impl DecryptInto<u32> for Refused {
 
 #[tokio::test]
 async fn a_column_stops_declaring_at_the_first_refused_row() {
-    let (cipher, _, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let declared = Arc::new(AtomicUsize::new(0));
     let column: Vec<Refused> = (0..1_000).map(|_| Refused(Arc::clone(&declared))).collect();
 
@@ -700,7 +704,7 @@ async fn a_column_stops_declaring_at_the_first_refused_row() {
         .await;
     assert!(matches!(result, Err(Error::NotOpened)), "{result:?}");
     assert_eq!(declared.load(AtomicOrdering::SeqCst), 1);
-    assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 0);
+    assert_eq!(provider.call_counts().1, 0);
 }
 
 #[tokio::test]
@@ -708,7 +712,7 @@ async fn a_failed_field_fails_the_record_before_any_kms_call() {
     // One failed field must not cause the record's other fields to mint
     // data keys that are then thrown away. A match term over text that
     // yields no tokens fails during the synchronous build, before any I/O.
-    let (cipher, generates, _) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let cipher = cipher.default_keyset();
     let b = "b".to_string();
 
@@ -732,7 +736,7 @@ async fn a_failed_field_fails_the_record_before_any_kms_call() {
     assert!(matches!(column, Err(Error::NotOpened)));
 
     assert_eq!(
-        generates.load(AtomicOrdering::SeqCst),
+        provider.call_counts().0,
         0,
         "a failed sibling must drop the batch, not dispatch it"
     );
@@ -746,7 +750,7 @@ async fn a_failed_field_fails_the_record_before_any_kms_call() {
 /// refused the pair.)
 #[tokio::test]
 async fn pendings_from_two_ciphers_over_the_same_keyset_merge() {
-    let (cipher_a, generates, _) = counting_cipher().await;
+    let (cipher_a, provider) = counting_cipher().await;
     let cipher_a = cipher_a.default_keyset();
     let cipher_b = counting_cipher().await.0;
     let cipher_b = cipher_b.default_keyset();
@@ -786,7 +790,7 @@ async fn pendings_from_two_ciphers_over_the_same_keyset_merge() {
     );
 
     assert_eq!(
-        generates.load(AtomicOrdering::SeqCst),
+        provider.call_counts().0,
         2,
         "each merged assembly settles as exactly one generate_keys call"
     );
@@ -796,16 +800,10 @@ async fn pendings_from_two_ciphers_over_the_same_keyset_merge() {
 /// merge, whichever ciphers they came from, and with no I/O.
 #[tokio::test]
 async fn pendings_from_two_ciphers_over_different_keysets_refuse_to_merge() {
-    let (cipher_a, generates, _) = counting_cipher().await;
-    let acme = cipher_a
-        .keyset(IdentifiedBy::Name("acme".to_string().into()))
-        .await
-        .unwrap();
+    let (cipher_a, provider) = counting_cipher().await;
+    let acme = cipher_a.keyset("acme").await.unwrap();
     let cipher_b = counting_cipher().await.0;
-    let globex = cipher_b
-        .keyset(IdentifiedBy::Name("globex".to_string().into()))
-        .await
-        .unwrap();
+    let globex = cipher_b.keyset("globex").await.unwrap();
     let v = "v".to_string();
     let w = "w".to_string();
 
@@ -823,7 +821,7 @@ async fn pendings_from_two_ciphers_over_different_keysets_refuse_to_merge() {
     );
 
     assert_eq!(
-        generates.load(AtomicOrdering::SeqCst),
+        provider.call_counts().0,
         0,
         "a mismatched merge must be refused before any key is minted"
     );
@@ -903,7 +901,7 @@ async fn pending_futures_are_send() {
 
 #[tokio::test]
 async fn cipher_directed_encrypt_and_decrypt_are_one_batched_call_each() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let keyset = cipher.default_keyset();
 
     let names: Vec<String> = ["ada", "grace", "edsger", "barbara"]
@@ -912,7 +910,7 @@ async fn cipher_directed_encrypt_and_decrypt_are_one_batched_call_each() {
         .collect();
     let ct = keyset.encrypt(names.clone(), "users/name").await.unwrap();
     assert_eq!(
-        generates.load(AtomicOrdering::SeqCst),
+        provider.call_counts().0,
         1,
         "cipher.encrypt of a four-leaf value must be ONE generate_keys call"
     );
@@ -920,7 +918,7 @@ async fn cipher_directed_encrypt_and_decrypt_are_one_batched_call_each() {
     let roundtrip: Vec<String> = cipher.decrypt(ct, "users/name").await.unwrap();
     assert_eq!(roundtrip, names);
     assert_eq!(
-        retrieves.load(AtomicOrdering::SeqCst),
+        provider.call_counts().1,
         1,
         "cipher.decrypt of a four-leaf value must be ONE retrieve_keys call"
     );
@@ -960,9 +958,9 @@ async fn cipher_directed_decrypt_rejects_a_transplanted_ciphertext() {
         .unwrap();
     let result: Result<String, Error> = cipher.decrypt(ct, "users/name").await;
     assert!(
-        matches!(result, Err(Error::Aead)),
+        matches!(result, Err(Error::Provider(_))),
         "a target-sealed leaf must not open under another context via the cipher API \
-         (the fake key source ignores descriptors; ZeroKMS would refuse the retrieve)"
+         (the provider binds the descriptor, as ZeroKMS does, and refuses the retrieve)"
     );
 }
 
@@ -979,7 +977,8 @@ struct OwnedEmail {
 
 impl EncryptFrom<String> for OwnedEmail {
     type Context = DeclaredContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
+    fn encryption<'s, K: KeysetRegistry + 'static>(
+    ) -> Encryption<'s, String, Self, K, Self::Context>
     where
         String: 's,
     {
@@ -1042,7 +1041,8 @@ struct ShadowedEmail {
 
 impl EncryptFrom<String> for ShadowedEmail {
     type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
+    fn encryption<'s, K: KeysetRegistry + 'static>(
+    ) -> Encryption<'s, String, Self, K, Self::Context>
     where
         String: 's,
     {
@@ -1091,7 +1091,8 @@ struct TenantEmail {
 
 impl EncryptFrom<String> for TenantEmail {
     type Context = NonEmpty<u64>;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
+    fn encryption<'s, K: KeysetRegistry + 'static>(
+    ) -> Encryption<'s, String, Self, K, Self::Context>
     where
         String: 's,
     {

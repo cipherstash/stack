@@ -71,7 +71,31 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
         stack_encrypt::Error::Aead => STATUS_AUTH,
         stack_encrypt::Error::Term(_) => STATUS_TERM,
         stack_encrypt::Error::ForeignKeyset { .. } => STATUS_FOREIGN_KEYSET,
-        stack_encrypt::Error::Kms(kms) => status_for_kms(kms),
+        // The provider's error is boxed by `stack-encrypt`, which is
+        // backend-neutral and cannot name it. This guest is not: its
+        // provider is `ZeroKmsKeyset`, whose error is `stack_kms::Error`, so
+        // it downcasts and classifies exactly as it did when the type was
+        // concrete. Anything else — a different provider, a test double — is
+        // a backend failure this guest cannot read, and says so rather than
+        // guessing.
+        stack_encrypt::Error::Provider(error) => error
+            .downcast_ref::<stack_kms::Error>()
+            .map_or(STATUS_KMS_OTHER, status_for_kms),
+        // The registry could not answer at all, and the keyset it was asked
+        // for may or may not exist. Boxed for the same reason as `Provider`,
+        // and read the same way: this guest's registry is `Arc<StackKms>`,
+        // whose error is `stack_kms::Error`. It matters more here than there
+        // — resolving the default keyset is what `se_cipher_init` does, so
+        // this arm is how a host learns its token was refused or its
+        // endpoint was unreachable before it has a cipher at all.
+        stack_encrypt::Error::Registry(error) => error
+            .downcast_ref::<stack_kms::Error>()
+            .map_or(STATUS_KMS_OTHER, status_for_kms),
+        // The registry *answered*, and its answer was that no keyset goes by
+        // that name or id. That is a not-found, and it is the same verdict a
+        // host used to get when ZeroKMS's 404 surfaced as a raw request
+        // failure — the registry now reads the 404 and says what it means.
+        stack_encrypt::Error::UnknownKeyset { .. } => STATUS_KMS_NOT_FOUND,
         // A context that renders past ZeroKMS's descriptor limit is the
         // caller's input, refused before any request is sent.
         stack_encrypt::Error::DescriptorTooLong { .. } => STATUS_ENCODING,
@@ -216,6 +240,15 @@ mod tests {
         ViturRequestError::new(kind, "stubbed", std::io::Error::other("boom"))
     }
 
+    /// A ZeroKMS failure as it reaches the guest: boxed by `stack-encrypt`,
+    /// which is backend-neutral and cannot name it. Going through the box
+    /// here is the point — it is the downcast that the classification
+    /// depends on, so a test that built the variant directly would not
+    /// exercise it.
+    fn provider_error(error: stack_kms::Error) -> stack_encrypt::Error {
+        stack_encrypt::Error::Provider(Box::new(error))
+    }
+
     #[test]
     fn aead_and_composition_errors_map_to_the_vitaminc_codes() {
         assert_eq!(status_for_error(&stack_encrypt::Error::Aead), STATUS_AUTH);
@@ -240,7 +273,7 @@ mod tests {
             (ViturRequestErrorKind::ParseResponse, STATUS_KMS_OTHER),
         ];
         for (i, (kind, expected)) in cases.into_iter().enumerate() {
-            let err = stack_encrypt::Error::Kms(stack_kms::Error::RetrieveKey(
+            let err = provider_error(stack_kms::Error::RetrieveKey(
                 RetrieveKeyError::RequestFailed(vitur(kind)),
             ));
             assert_eq!(status_for_error(&err), expected, "case {i}");
@@ -249,7 +282,7 @@ mod tests {
 
     #[test]
     fn a_missing_data_key_is_not_found() {
-        let err = stack_encrypt::Error::Kms(stack_kms::Error::RetrieveKey(
+        let err = provider_error(stack_kms::Error::RetrieveKey(
             RetrieveKeyError::FailedRetrieval("no key".into()),
         ));
         assert_eq!(status_for_error(&err), STATUS_KMS_NOT_FOUND);
@@ -276,7 +309,7 @@ mod tests {
             "expected InvalidToken, got: {err:?}"
         );
 
-        let status = status_for_error(&stack_encrypt::Error::Kms(stack_kms::Error::Auth(err)));
+        let status = status_for_error(&provider_error(stack_kms::Error::Auth(err)));
         assert_eq!(
             status, STATUS_KMS_TRANSPORT,
             "a config fault must not tell the host to refresh and retry"
@@ -290,7 +323,7 @@ mod tests {
             "host token_get failed with status 7".to_string(),
         ));
         assert_eq!(
-            status_for_error(&stack_encrypt::Error::Kms(stack_kms::Error::Auth(err))),
+            status_for_error(&provider_error(stack_kms::Error::Auth(err))),
             STATUS_KMS_TRANSPORT
         );
     }
@@ -299,7 +332,7 @@ mod tests {
     fn a_refused_credential_is_still_unauthorized() {
         let err = stack_auth::AuthError::TokenExpired(stack_auth::TokenExpired);
         assert_eq!(
-            status_for_error(&stack_encrypt::Error::Kms(stack_kms::Error::Auth(err))),
+            status_for_error(&provider_error(stack_kms::Error::Auth(err))),
             STATUS_KMS_UNAUTHORIZED
         );
     }
@@ -324,7 +357,10 @@ mod tests {
 
     #[test]
     fn a_foreign_keyset_is_its_own_status_and_scope_bugs_are_internal() {
-        let (a, b) = (uuid::Uuid::from_u128(1), uuid::Uuid::from_u128(2));
+        let (a, b) = (
+            stack_encrypt::KeysetId::new(uuid::Uuid::from_u128(1)),
+            stack_encrypt::KeysetId::new(uuid::Uuid::from_u128(2)),
+        );
         assert_eq!(
             status_for_error(&stack_encrypt::Error::ForeignKeyset {
                 expected: a,

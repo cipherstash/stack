@@ -25,10 +25,12 @@ http = ["dep:reqwest", "dep:lazy_static", "stack-auth/http"]
 # Disable for consumers that only ever source the key in-memory or from the
 # environment. Never compiled on wasm32 regardless.
 profile = ["dep:stack-profile"]
-# Exposes `FakeDataKeySource`, a deterministic in-memory `DataKeySource` for
-# downstream crates (e.g. `stack-encrypt`) to unit-test encrypt/decrypt without
-# ZeroKMS credentials or network access.
-test-support = []
+# Exposes `test_connection`: the in-memory `ZeroKMSConnection` this crate's own
+# tests stub responses on, plus the client key and load-keyset fixtures they
+# need. For downstream crates that must drive a `StackKms` without a network —
+# `stack-encrypt`, which owns `impl KeysetRegistry for Arc<StackKms>` and so
+# cannot test it from here.
+test-support = ["dep:async-mutex"]
 # Enables HTTP/2 in the reqwest client. ZeroKMS endpoints negotiate h2 via
 # ALPN; without it reqwest is HTTP/1.1-only and opens a connection per
 # concurrent request (`max_concurrent_reqs`), which can exhaust client-side
@@ -43,6 +45,10 @@ recipher = { workspace = true }
 # default.
 stack-auth = { workspace = true }
 zerokms-protocol = { workspace = true }
+# `test_connection`'s stub only, behind `test-support`. Also a dev-dependency,
+# non-optional, so the crate's own `cfg(test)` build has it whatever the
+# feature set — `wasm:no-http-test` runs the tests with every feature off.
+async-mutex = { version = "1.4.0", optional = true }
 
 vitaminc = { workspace = true, features = ["protected", "random"] }
 # The key-provider traits `ZeroKmsKeyset` implements (`KeyProvider`,

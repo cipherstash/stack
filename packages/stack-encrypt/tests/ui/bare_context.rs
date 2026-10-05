@@ -8,7 +8,7 @@
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{DecryptFrom, EncryptInto};
 use stack_encrypt::{DecryptInto, EncryptFrom, KeysetCipher, StackCipher, StackCipherText};
-use stack_kms::FakeDataKeySource;
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 
 struct User {
     email: String,
@@ -27,7 +27,7 @@ struct EncryptedAge {
     hm: EqualityTerm,
 }
 
-async fn encrypt(cipher: &KeysetCipher<'_, FakeDataKeySource>, user: User) {
+async fn encrypt(cipher: &KeysetCipher<'_, FakeKeysetRegistry>, user: User) {
     let _term: EqualityTerm = "alice"
         .encrypt_into_with_context(cipher, "users/email")
         .await
@@ -43,7 +43,7 @@ async fn encrypt(cipher: &KeysetCipher<'_, FakeDataKeySource>, user: User) {
 }
 
 async fn decrypt(
-    cipher: &StackCipher<FakeDataKeySource>,
+    cipher: &StackCipher<FakeKeysetRegistry>,
     row: EncryptedUser,
     sealed: StackCipherText,
 ) {

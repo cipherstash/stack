@@ -37,14 +37,14 @@
 //!
 // `StackCipher::new()` builds a ZeroKMS client from the environment, so it
 // only exists with `http`. Without it the entry point is
-// `StackCipher::builder().kms(..)` over an explicit data-key source — the
+// `StackCipherBuilder::new().registry(..)` over an explicit keyset registry — the
 // shape the WASI/wazero guest builds against; see "Testing without ZeroKMS"
 // below for the same call over the in-memory stub.
 #![cfg_attr(
     feature = "http",
     doc = r#"```no_run
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-use stack_encrypt::StackCipher;
+use stack_encrypt::{StackCipher, StackCipherBuilder};
 
 // Credentials: `npx stash auth login` on a developer machine, or
 // CS_CLIENT_ID / CS_CLIENT_KEY + CS_CLIENT_ACCESS_KEY / CS_WORKSPACE_CRN in CI.
@@ -63,7 +63,7 @@ assert_eq!(plaintext, "secret message");
 #![cfg_attr(
     not(feature = "http"),
     doc = "Without the `http` feature a cipher is built over an explicit\
- data-key source — `StackCipher::builder().kms(..).init()` — rather than from\
+ keyset registry — `StackCipherBuilder::new().registry(..).init()` — rather than from\
  the environment. Enable `http` for `StackCipher::new()`, which discovers\
  ZeroKMS credentials itself."
 )]
@@ -85,7 +85,7 @@ assert_eq!(plaintext, "secret message");
 //! id) so it cannot be replayed elsewhere:
 //!
 //! ```no_run
-//! # async fn example<K: stack_encrypt::kms::DataKeySource>(cipher: stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
+//! # async fn example<K: stack_encrypt::KeysetRegistry>(cipher: stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
 //! # let keyset = cipher.default_keyset();
 //! let ct = keyset.encrypt("4111 1111 1111 1111", "users/42/card").await?;
 //! let card: String = cipher.decrypt(ct, "users/42/card").await?; // ok
@@ -94,7 +94,7 @@ assert_eq!(plaintext, "secret message");
 //! ```
 //!
 // Credentials only exist on the `http` path: without it there is no client
-// to authenticate, only the `DataKeySource` the caller supplies.
+// to authenticate, only the registry the caller supplies.
 #![cfg_attr(
     feature = "http",
     doc = r#"# Credentials
@@ -123,14 +123,14 @@ third-party OIDC JWT (Clerk, Supabase, Auth0) into a CipherStash token, so
 the deployment holds no long-lived CipherStash credential of its own. What
 `AutoStrategy` detects is only the two above — access key, then profile — so
 any other strategy is named explicitly, and that is what
-[`kms`](StackCipherBuilder::kms) is for: build the
+[`registry`](StackCipherBuilder::registry) is for: build the
 [`StackKms`](crate::kms::StackKms) over the strategy you want and hand it to
-the builder.
+the builder as the keyset registry.
 
 ```no_run
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 use stack_auth::{AuthError, AuthStrategyFn, SecretToken, ServiceToken};
-use stack_encrypt::StackCipher;
+use stack_encrypt::{StackCipher, StackCipherBuilder};
 use stack_encrypt::kms::{EnvKeyProvider, StackKmsBuilder};
 
 // Any `AuthStrategy` goes in this slot — `AccessKeyStrategy`,
@@ -153,7 +153,10 @@ let kms = StackKmsBuilder::new(strategy)
     .build()
     .await?;
 
-let cipher = StackCipher::builder().kms(kms).init().await?;
+let cipher = StackCipherBuilder::new()
+    .registry(std::sync::Arc::new(kms))
+    .init()
+    .await?;
 # Ok(())
 # }
 ```
@@ -161,7 +164,7 @@ let cipher = StackCipher::builder().kms(kms).init().await?;
 The built-in strategies are constructed from a workspace CRN
 (`stack_auth::Crn`) rather than read from the environment —
 `OidcFederationStrategy::new(crn, provider)` — and otherwise reach the
-builder through the same `kms` seam.
+builder through the same `registry` seam.
 
 `examples/zerokms_auth.rs` runs this end to end against a live ZeroKMS,
 alongside the default path and the errors each half fails with. The
@@ -174,7 +177,7 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //!
 //! # Testing without ZeroKMS
 //!
-//! `stack_encrypt::kms::FakeDataKeySource` is an in-memory stub that needs no
+//! `stack_encrypt::registry::fake::FakeKeysetRegistry` is an in-memory stub that needs no
 //! credentials or network: it hands out a fresh random data key per request and
 //! remembers it in memory, so a `generate` followed by the matching `retrieve`
 //! round-trips within one process (the key material itself differs run to run,
@@ -183,16 +186,15 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! those are the service's, and tests of them belong against a real ZeroKMS.
 //! It lives behind this crate's `test-support` feature, so add
 //! `stack-encrypt = { version = "..", features = ["test-support"] }` to your
-//! `[dev-dependencies]`. stack-kms is re-exported as [`kms`], so
-//! there is no separate stack-kms dependency to keep in step:
+//! `[dev-dependencies]`:
 //!
 //! ```
-//! use stack_encrypt::StackCipher;
-//! use stack_encrypt::kms::FakeDataKeySource;
+//! use stack_encrypt::{StackCipher, StackCipherBuilder};
+//! use stack_encrypt::registry::fake::FakeKeysetRegistry;
 //!
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-//! let cipher = StackCipher::builder()
-//!     .kms(FakeDataKeySource::new())
+//! let cipher = StackCipherBuilder::new()
+//!     .registry(FakeKeysetRegistry::new())
 //!     .init()
 //!     .await?;
 //! let keyset = cipher.default_keyset();
@@ -228,13 +230,15 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! be moved under a different key, and "absent" / "empty" are themselves
 //! sealed markers rather than inferable from structure. A tampered or
 //! re-homed ciphertext fails with [`Error::Aead`]; a failed or denied key
-//! retrieval surfaces as [`Error::Kms`]. A ciphertext opened under the
-//! *wrong context* is refused by ZeroKMS first: every data key is bound to
+//! retrieval surfaces as [`Error::Provider`], carrying the backend's own
+//! error. A ciphertext opened under the *wrong context* is refused by the
+//! backend first, wherever the backend is
+//! [`Bound`](registry::BindingSupport::Bound): every data key is bound to
 //! its context's [`Descriptor`], so the retrieve is denied
-//! ([`Error::Kms`], a forbidden request) before the AEAD runs — as
+//! ([`Error::Provider`]) before the AEAD runs — as
 //! `examples/encrypted_record.rs` shows against a live ZeroKMS. Only a key
-//! source that ignores descriptors (`FakeDataKeySource`, in tests) lets a
-//! wrong context reach the AEAD, where it is [`Error::Aead`].
+//! provider that ignores descriptors lets a wrong context reach the AEAD,
+//! where it is [`Error::Aead`].
 //!
 //! For one-row reads of a batch-encrypted collection, decrypt as
 //! [`Element<T>`](Element) under the same AAD used for the whole collection:
@@ -276,8 +280,11 @@ pub mod descriptor;
 pub mod dynamic;
 pub mod keyset;
 pub mod plan;
+pub mod registry;
 pub mod sem;
 pub mod target;
+
+pub use registry::{KeysetId, KeysetRef, KeysetRegistry, Resolved};
 
 pub use cipher::{
     BoxedPassthrough, Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue,
@@ -286,11 +293,14 @@ pub use cipher::{
 pub use descriptor::{Describe, Description, Descriptor, Label, LabelError};
 pub use keyset::KeysetCipher;
 pub use plan::{all, Plan, PlanError};
-// stack-kms is a public dependency: `StackCipher` is generic over its
-// `DataKeySource`, and `StackCipherBuilder::kms` takes its `StackKms`. It is
-// versioned on its own (release-plz.toml), so a caller reaches it through
-// here and always gets the version this crate was built against, never a
-// second copy whose types do not fit `StackCipher`'s bounds.
+// With the `zerokms` feature, stack-kms is a public dependency:
+// `Arc<StackKms>` is a `KeysetRegistry`, and `StackCipher::new()` builds a
+// cipher over one. It is versioned on its own (release-plz.toml), so a
+// caller reaches it through here and always gets the version this crate was
+// built against, never a second copy whose `StackKms` is not the registry.
+// Without the feature no ZeroKMS crate is in the graph, so there is nothing
+// to re-export.
+#[cfg(feature = "zerokms")]
 pub use stack_kms as kms;
 pub use target::{
     CallerContext, CipherScope, DecryptField, DecryptFrom, DecryptInto, Decryptable, Decryption,

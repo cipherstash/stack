@@ -61,6 +61,7 @@ mod kind;
 pub mod record;
 mod term;
 
+use crate::registry::KeysetRegistry;
 use std::fmt;
 
 pub use context::{borrowed, context};
@@ -99,7 +100,7 @@ use crate::{KeysetCipher, StackCipher};
 /// has, and a binding dispatches on them (the Go guest does, per selector).
 /// A third would be a new cipher type, which is a larger change than adding
 /// a variant here.
-pub enum Scope<'c, K> {
+pub enum Scope<'c, K: KeysetRegistry> {
     /// Leaves from any keyset the client holds: one batched retrieval per
     /// keyset the leaves were sealed under.
     Client(&'c StackCipher<K>),
@@ -109,7 +110,7 @@ pub enum Scope<'c, K> {
 
 // By hand rather than derived, so `K: Debug` is not demanded: neither cipher
 // demands it of its own `Debug`, and a data-key source rarely offers one.
-impl<K> fmt::Debug for Scope<'_, K> {
+impl<K: KeysetRegistry> fmt::Debug for Scope<'_, K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Scope::Client(cipher) => f.debug_tuple("Client").field(cipher).finish(),

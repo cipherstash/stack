@@ -17,7 +17,7 @@
 //!   copy them out and immediately `se_dealloc` (which zeroizes).
 //! - **One instance is one client.** [`se_cipher_init`] runs once per
 //!   instance: it builds the
-//!   `StackCipher<StackKms<HostTokenStrategy, WasiHostConnection>>` (one
+//!   `StackCipher<Arc<StackKms<HostTokenStrategy, WasiHostConnection>>>` (one
 //!   `load-keyset` round trip through the host transport for the default
 //!   keyset) and returns that keyset's id. There is no cipher handle: the
 //!   keysets a client uses are selected per call through the options object
@@ -67,7 +67,7 @@ use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use futures::executor::block_on;
-use stack_encrypt::{KeysetCipher, StackCipher};
+use stack_encrypt::{KeysetCipher, StackCipher, StackCipherBuilder};
 use stack_guest_abi::abi::{err_status, input, ok_buffer, take_plaintext, wipe_input};
 use stack_guest_abi::buffers;
 use stack_kms::{ClientOpts, StackKms};
@@ -83,7 +83,7 @@ use stack_encrypt::dynamic::Scope;
 
 /// The instance's cipher: `stack-encrypt` over the host-transport ZeroKMS
 /// client with host-supplied tokens.
-type GuestCipher = StackCipher<StackKms<HostTokenStrategy, WasiHostConnection>>;
+type GuestCipher = StackCipher<std::sync::Arc<StackKms<HostTokenStrategy, WasiHostConnection>>>;
 
 thread_local! {
     // Wasm is single-threaded, so a thread-local `RefCell` is a plain owner
@@ -116,7 +116,9 @@ fn with_cipher<R>(f: impl FnOnce(&GuestCipher) -> Result<R, u32>) -> Result<R, u
 /// consulted.
 fn with_keyset<R>(
     opts: &[u8],
-    f: impl FnOnce(&KeysetCipher<'_, StackKms<HostTokenStrategy, WasiHostConnection>>) -> Result<R, u32>,
+    f: impl FnOnce(
+        &KeysetCipher<'_, std::sync::Arc<StackKms<HostTokenStrategy, WasiHostConnection>>>,
+    ) -> Result<R, u32>,
 ) -> Result<R, u32> {
     let options = parse_options(decode(opts)?, Side::Mint)?;
     with_cipher(|cipher| {
@@ -129,7 +131,9 @@ fn with_keyset<R>(
 /// client for `{"any"}`, one keyset's cipher otherwise.
 fn with_scope<R>(
     opts: &[u8],
-    f: impl FnOnce(Scope<'_, StackKms<HostTokenStrategy, WasiHostConnection>>) -> Result<R, u32>,
+    f: impl FnOnce(
+        Scope<'_, std::sync::Arc<StackKms<HostTokenStrategy, WasiHostConnection>>>,
+    ) -> Result<R, u32>,
 ) -> Result<R, u32> {
     let options = parse_options(decode(opts)?, Side::Open)?;
     with_cipher(|cipher| {
@@ -203,12 +207,17 @@ fn cipher_init(decoded: FfiValue) -> Result<Vec<u8>, u32> {
     )
     .map_err(|_| STATUS_KMS_TRANSPORT)?;
 
-    let mut builder = StackCipher::builder().kms(kms);
+    let mut builder = StackCipherBuilder::new().registry(std::sync::Arc::new(kms));
     if let Some(size) = config.keyset_cache_size {
         builder = builder.keyset_cache_size(size);
     }
     let cipher = block_on(builder.init()).map_err(|e| crate::status::status_for_error(&e))?;
-    let default = cipher.default_keyset().keyset_id().as_bytes().to_vec();
+    let default = cipher
+        .default_keyset()
+        .keyset_id()
+        .as_uuid()
+        .as_bytes()
+        .to_vec();
     CIPHER.with(|c| *c.borrow_mut() = Some(cipher));
     Ok(default)
 }
@@ -259,7 +268,7 @@ pub unsafe extern "C" fn se_keyset(sel_ptr: *const u8, sel_len: u32) -> u64 {
         }
         with_cipher(|cipher| {
             let keyset = block_on(selector.resolve(cipher))?;
-            Ok(keyset.keyset_id().as_bytes().to_vec())
+            Ok(keyset.keyset_id().as_uuid().as_bytes().to_vec())
         })
     }))
     .unwrap_or(Err(STATUS_INTERNAL))
