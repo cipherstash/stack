@@ -143,6 +143,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the target `T`'s own `EncryptFrom`, under `<context>/<identity>`, and
   answers the queries `T` declares. A field is a target or data verbs, never
   both (`PlanError::TargetWithVerbs`).
+  `Plan::value::<S>().encrypt_into::<T>()` builds for a target of any
+  context (`plan::ValueLayout`); running it through `.using(..)` or
+  `ValuePlan::encryption` asks that a `CallerContext` converts into the
+  target's context (`plan::ValueShape`).
 - `EncryptFrom::indexes()`: the indexes a target's terms answer, as data
   (empty by default; terms, `Encrypted<Terms>` and tuples name theirs).
 - A tuple of two to five targets is a target (`EncryptFrom`, `Decryptable`,

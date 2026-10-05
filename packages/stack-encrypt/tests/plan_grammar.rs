@@ -21,7 +21,8 @@ use stack_encrypt::target::{
     EncryptFrom, Encrypted, Encryption, IndexSpec, Indexes, TermSet,
 };
 use stack_encrypt::{
-    nonempty, Decrypt, Encrypt, Equality, Error, Label, Match, Ope, Ore, Plan, StackCipherText,
+    nonempty, Decrypt, Encrypt, Equality, Error, Label, Match, NonEmpty, Ope, Ore, Plan,
+    StackCipherText,
 };
 
 fn plan_error<T: Debug>(result: Result<T, Error>) -> PlanError {
@@ -1370,6 +1371,43 @@ async fn a_one_value_plan_without_a_context_names_the_value_in_its_errors() {
         plan_error(refused),
         PlanError::DuplicateIndex {
             at: "a".into(),
+            index: "eq"
+        }
+    );
+}
+
+/// A target whose context is neither a `CallerContext` nor converted from
+/// one: a `NonEmpty<u64>`, as a `context_type = NonEmpty<u64>` record has.
+/// It declares its one index as many times as it is told to.
+struct Tenanted<const N: usize>(#[allow(dead_code)] EqualityTerm);
+impl<const N: usize> EncryptFrom<String> for Tenanted<N> {
+    type Context = NonEmpty<u64>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context> {
+        <EqualityTerm as EncryptFrom<String>>::encryption()
+            .accepting::<NonEmpty<u64>>()
+            .map(Tenanted)
+    }
+    fn indexes() -> Vec<IndexSpec> {
+        vec![IndexSpec::Equality; N]
+    }
+}
+
+#[test]
+fn a_one_value_plan_builds_over_a_target_of_any_context() {
+    // Building asks only for the target's indexes, never for a
+    // `CallerContext` it could not take.
+    let built = Plan::value::<String>()
+        .encrypt_into::<Tenanted<1>>()
+        .build();
+    assert!(built.is_ok(), "{:?}", built.err());
+    // And those indexes are checked.
+    let refused = Plan::value::<String>()
+        .encrypt_into::<Tenanted<2>>()
+        .build();
+    assert_eq!(
+        plan_error(refused),
+        PlanError::DuplicateIndex {
+            at: "the value".into(),
             index: "eq"
         }
     );

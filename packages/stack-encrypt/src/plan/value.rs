@@ -159,20 +159,33 @@ mod sealed {
     impl<T> Sealed for super::Typed<T> {}
 }
 
-/// How a one-value plan lays its value out: [`Indexed`] or [`Typed`].
-/// Sealed.
-pub trait ValueShape<S>: sealed::Sealed + Clone {
+/// What a one-value plan's layout says before it runs: what one run
+/// produces, and the indexes it declares. Enough to build the plan
+/// ([`ValuePlanBuilder::build`]), which checks those indexes; running it
+/// under a [`Label`] asks for [`ValueShape`]. Sealed.
+///
+/// A [`Typed`] layout is one for every target, whatever context the target
+/// takes; it is a [`ValueShape`] only when a [`CallerContext`] converts
+/// into that context. A target whose context is, say, a `NonEmpty<u64>`
+/// builds.
+pub trait ValueLayout<S>: sealed::Sealed + Clone {
     /// What one run produces.
     type Output: 'static;
     /// The indexes the value is searchable by, as data.
     fn specs(&self) -> Vec<IndexSpec>;
+}
+
+/// How a one-value plan lays its value out under a [`Label`]: [`Indexed`]
+/// or [`Typed`]. What [`ValuePlan::encryption`], `cipher.encrypt(..).using`
+/// and a query through the plan ask. Sealed.
+pub trait ValueShape<S>: ValueLayout<S> {
     /// The description of one value, run under its whole context.
     fn lower<'s, K: 'static>(&self) -> Encryption<'s, S, Self::Output, K, CallerContext>
     where
         S: 's;
 }
 
-impl<S, X> ValueShape<S> for Indexed<X>
+impl<S, X> ValueLayout<S> for Indexed<X>
 where
     S: crate::Encrypt + Clone,
     X: Indexes<S> + Clone,
@@ -181,6 +194,13 @@ where
     fn specs(&self) -> Vec<IndexSpec> {
         self.0.specs()
     }
+}
+
+impl<S, X> ValueShape<S> for Indexed<X>
+where
+    S: crate::Encrypt + Clone,
+    X: Indexes<S> + Clone,
+{
     fn lower<'s, K: 'static>(&self) -> Encryption<'s, S, Self::Output, K, CallerContext>
     where
         S: 's,
@@ -189,15 +209,21 @@ where
     }
 }
 
-impl<S, T> ValueShape<S> for Typed<T>
+impl<S, T> ValueLayout<S> for Typed<T>
 where
     T: EncryptFrom<S>,
-    CallerContext: Into<T::Context>,
 {
     type Output = T;
     fn specs(&self) -> Vec<IndexSpec> {
         T::indexes()
     }
+}
+
+impl<S, T> ValueShape<S> for Typed<T>
+where
+    T: EncryptFrom<S>,
+    CallerContext: Into<T::Context>,
+{
     fn lower<'s, K: 'static>(&self) -> Encryption<'s, S, T, K, CallerContext>
     where
         S: 's,
@@ -222,7 +248,7 @@ impl<S, X: fmt::Debug> fmt::Debug for ValuePlanBuilder<S, X> {
     }
 }
 
-impl<S, X: ValueShape<S>> ValuePlanBuilder<S, X> {
+impl<S, X: ValueLayout<S>> ValuePlanBuilder<S, X> {
     /// Validate the plan: at most one context, a plain label, and no index
     /// named twice. A plan with no context builds; each call names one.
     ///
