@@ -63,12 +63,19 @@ macro_rules! tuple_of_targets {
             }
         }
 
+        /// As a field, a tuple holding no recoverable ciphertext is
+        /// `None`, as a term is: the search for the field that opens the
+        /// record moves on to the ciphertext beside it, rather than
+        /// stopping at a tuple that cannot open.
         impl<P: 'static, Ctx, $first, $($rest),+> DecryptField<P, Ctx> for ($first, $($rest),+)
         where
             Self: DecryptInto<P> + Decryptable,
             Ctx: Into<<Self as DecryptInto<P>>::Context>,
         {
             fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
+                if !<Self as Decryptable>::DECRYPTABLE {
+                    return None;
+                }
                 Some(self.decryption(context.into()))
             }
         }

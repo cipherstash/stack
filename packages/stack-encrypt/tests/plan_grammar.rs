@@ -1327,6 +1327,39 @@ async fn a_tuple_opens_through_its_ciphertext_wherever_it_sits() {
     let _ = <(StackCipherText, EqualityTerm) as DecryptInto<u32>>::decryption::<FakeDataKeySource>;
 }
 
+/// A record whose terms-only tuple comes before its ciphertext.
+#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[stash(plaintext = u32)]
+struct TermsFirst {
+    terms: (EqualityTerm, OreTerm<u32>),
+    c: StackCipherText,
+}
+
+/// A tuple of terms alone is no field to open a record through: it yields
+/// to the ciphertext beside it, nested in a tuple or in a derived record,
+/// rather than stopping the search with `NotOpened`.
+#[tokio::test]
+async fn a_terms_only_tuple_yields_to_the_ciphertext_beside_it() {
+    let cipher = stack_cipher().await;
+    let keyset = cipher.default_keyset();
+    let context = || CallerContext::from(nonempty!("t"));
+
+    let terms_alone: (EqualityTerm, OreTerm<u32>) =
+        keyset.encrypt_as(&7u32, context()).await.unwrap();
+    let opening: Option<Decryption<u32, FakeDataKeySource>> =
+        terms_alone.decryption_field(context());
+    assert!(opening.is_none(), "a tuple of terms alone opens nothing");
+
+    let nested: ((EqualityTerm, OreTerm<u32>), StackCipherText) =
+        keyset.encrypt_as(&7u32, context()).await.unwrap();
+    let opened: u32 = cipher.decrypt_as(nested, context()).await.unwrap();
+    assert_eq!(opened, 7);
+
+    let record: TermsFirst = keyset.encrypt_as(&7u32, context()).await.unwrap();
+    let opened: u32 = cipher.decrypt_as(record, context()).await.unwrap();
+    assert_eq!(opened, 7);
+}
+
 #[test]
 fn a_plan_says_where_its_context_comes_from() {
     let records_plan = records_plan::<FakeDataKeySource>();
