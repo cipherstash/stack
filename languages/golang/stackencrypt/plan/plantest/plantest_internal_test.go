@@ -207,6 +207,17 @@ func TestChangesAreSortedByWhatTheyCost(t *testing.T) {
 			section: "OTHER CHANGES",
 			says:    []string{"column medicare_number: its target is Custom, was EQL, under the same context."},
 		},
+		"target kind and context changed": {
+			before:  plan.ForMessage(nil, "individuals", base),
+			after:   plan.ForMessage(nil, "individuals", plan.FirstOf(plan.When(plan.Field("medicare_number"), plan.Encrypt(plan.Custom("elsewhere/v1", se.Equality)))).OrElse(base)),
+			section: "CONTEXT CHANGES",
+			also:    []string{"OTHER CHANGES"},
+			says: []string{
+				`column medicare_number: its context is "elsewhere/v1", was "individuals/medicare_number".`,
+				"column medicare_number: its target is Custom, was EQL.",
+			},
+			never: []string{"under the same context"},
+		},
 		"custom context changed": {
 			before:  plan.ForMessage(nil, "individuals", plan.FirstOf(plan.When(plan.Field("medicare_number"), plan.Encrypt(plan.Custom("gov/v1")))).OrElse(base)),
 			after:   plan.ForMessage(nil, "individuals", plan.FirstOf(plan.When(plan.Field("medicare_number"), plan.Encrypt(plan.Custom("gov/v2")))).OrElse(base)),

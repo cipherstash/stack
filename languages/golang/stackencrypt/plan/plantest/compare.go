@@ -197,7 +197,12 @@ func (c *changes) stored(o, n column) {
 			token(n.name), termList(n.terms), termList(o.terms)))
 	}
 	if o.kind != n.kind {
-		c.other = append(c.other, fmt.Sprintf("column %s: its target is %s, was %s, under the same context.", token(n.name), n.kind, o.kind))
+		// A changed context is reported on its own, under CONTEXT CHANGES.
+		where := ", under the same context"
+		if o.context != n.context {
+			where = ""
+		}
+		c.other = append(c.other, fmt.Sprintf("column %s: its target is %s, was %s%s.", token(n.name), n.kind, o.kind, where))
 	}
 	if !slices.Equal(o.facts, n.facts) {
 		c.other = append(c.other, fmt.Sprintf("column %s: its facts are [%s], were [%s].", token(n.name), factList(n.facts), factList(o.facts)))
