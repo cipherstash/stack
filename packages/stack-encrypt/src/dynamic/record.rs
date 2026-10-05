@@ -116,7 +116,8 @@ impl Output {
 /// (checked per value), so the engine verifies what a binding hands it
 /// rather than trusting the binding's tagging. A field with no declared type
 /// is dispatched on each value's own type, as every field was before types
-/// existed; that keeps the plans existing bindings send valid.
+/// existed; that keeps the plans existing bindings send valid, and is
+/// transitional (see [`plan`]).
 #[derive(Clone, Debug)]
 pub struct FieldPlan {
     name: String,
@@ -296,7 +297,16 @@ impl Plan {
 /// …; see [`ValueKind::name`]): vitaminc's vocabulary, not one of this
 /// crate's. Declared, it is checked against the field's outputs here
 /// ([`admits`]) and against every value sealed into or opened
-/// from the field; absent, each value is dispatched on its own type.
+/// from the field.
+///
+/// **An indexed field without `"type"` is dispatched on each value's own
+/// tag**, so for that field the engine trusts the binding to tag every value
+/// the same way: a `34` sent once as a `Float64` and once as an `Int64` under
+/// one `"ore"` field is accepted both times and stores two different terms.
+/// This is transitional. It keeps the plans the Go binding sends today, which
+/// carry no `"type"`, valid until that binding fills `"type"` from its struct
+/// types; then `"type"` becomes required on every field with a term output
+/// (#1082).
 ///
 /// `<context>` is defined once, in [`super::context`](super::context()): a
 /// string, bytes, an integer, or a list of those, with what each spells in

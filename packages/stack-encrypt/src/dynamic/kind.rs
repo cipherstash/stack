@@ -25,12 +25,16 @@
 //!   plan is built), and refuses a value of any other kind (when it runs),
 //!   so the term bytes are the declared kind's and no binding is trusted to
 //!   have tagged the value right;
-//! - **query** reads the query value *as* the field's kind ([`read`]): `34`
-//!   against a `uint64` field is the `u64` term, whatever number type the
-//!   host handed over;
+//! - **query** is meant to read the query value *as* the field's kind
+//!   ([`read`]): `34` against a `uint64` field is the `u64` term, whatever
+//!   number type the host handed over. The engine does not do this for the
+//!   caller yet; see [`read`];
 //! - **decrypt** refuses an opened value of any other kind, so a host with no
 //!   types of its own can rely on the declaration for what it gets back (an
 //!   integer, not a float; bytes, not a string).
+//!
+//! A field with no `"type"` is dispatched on each value's own tag. That is
+//! transitional; see [`record::plan`](super::record::plan()).
 use vitaminc_aead_value::{FfiValue, ValueKind};
 
 use super::Error;
@@ -75,6 +79,15 @@ pub fn admits(kind: ValueKind, index: &IndexSpec) -> bool {
 /// This is for a query: what a host hands over to search with. A value
 /// being sealed is not converted; it must already be of the field's kind,
 /// and is refused otherwise.
+///
+/// **The engine does not call this.** [`term`](super::term()) takes a
+/// [`Scalar`](super::Scalar) and an [`IndexSpec`] and never sees the field's
+/// declared kind, so a binding deriving a query term for a typed field must
+/// call `read` first, with [`FieldPlan::field_type`](super::FieldPlan::field_type).
+/// One that skips it hands `Float64(34.0)` to a `uint64` field, derives a
+/// float term where the stored one is the `u64` term, and matches nothing,
+/// with no error. Wiring this into the plan's query path
+/// (`query(v).using(&plan)`) is tracked in #1057.
 ///
 /// ```
 /// use stack_encrypt::dynamic::{read, FfiValue, ValueKind};

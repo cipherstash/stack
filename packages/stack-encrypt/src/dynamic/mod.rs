@@ -46,7 +46,9 @@
 //! the type it was sealed as. They are not this crate's: a declared type is
 //! vitaminc's [`ValueKind`], re-exported here, whose names vitaminc freezes
 //! beside its tag table. This crate adds only what a kind means to an index
-//! ([`admits`]) and to a query value ([`read`]).
+//! ([`admits`]) and to a query value ([`read`]). A field without `"type"` is
+//! dispatched on each value's own tag; that is transitional, and
+//! [`record::plan`] says until when.
 //!
 //! For the same reason the enums that spell them — [`Output`],
 //! [`IndexSpec`] and [`ValueKind`] — are *not* `#[non_exhaustive]`, against this workspace's

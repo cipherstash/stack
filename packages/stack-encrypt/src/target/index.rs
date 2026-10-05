@@ -288,13 +288,13 @@ pub trait Indexes<S> {
     /// query asks one index for one term and needs no ciphertext; its
     /// [`operation`](Index::operation) is that term alone.
     ///
-    /// `At` is where `I` sits and is inferred; leave it `_`. Asking for an
-    /// index the set does not hold does not compile, and neither does asking
-    /// for one the set holds twice, since its place is then ambiguous.
+    /// `P` is where `I` sits (the position [`Select`] names) and is inferred;
+    /// leave it `_`. Asking for an index the set does not hold does not
+    /// compile, and neither does asking for one the set holds twice, since
+    /// its place is then ambiguous.
     ///
-    /// In code generic over `X: Indexes<S>`, as the plan builder is, this is
-    /// `indexes.select::<Ore, _>()`. A concrete tuple is a set of indexes
-    /// over many plaintexts, so there the plaintext is named:
+    /// A concrete tuple is a set of indexes over many plaintexts, so there
+    /// the plaintext is named:
     ///
     /// ```
     /// use stack_encrypt::target::{Equality, Index, IndexSpec, Indexes, Ore};
@@ -303,9 +303,25 @@ pub trait Indexes<S> {
     /// let ore = Indexes::<u32>::select::<Ore, _>(&indexes);
     /// assert_eq!(Index::<u32>::spec(ore), IndexSpec::Ore);
     /// ```
-    fn select<I: Index<S>, At>(&self) -> &I
+    ///
+    /// In code generic over the set, the position is a type parameter too,
+    /// and the set must be bounded by [`Select`] for it: `X: Indexes<S>`
+    /// alone does not let the call compile.
+    ///
+    /// ```
+    /// use stack_encrypt::target::{Equality, Index, IndexSpec, Indexes, Ore, Select};
+    ///
+    /// fn ore_spec<X, P>(indexes: &X) -> IndexSpec
+    /// where
+    ///     X: Indexes<u32> + Select<Ore, P>,
+    /// {
+    ///     Index::<u32>::spec(indexes.select::<Ore, P>())
+    /// }
+    /// assert_eq!(ore_spec(&(Equality, Ore)), IndexSpec::Ore);
+    /// ```
+    fn select<I: Index<S>, P>(&self) -> &I
     where
-        Self: Select<I, At>,
+        Self: Select<I, P>,
     {
         Select::get(self)
     }
