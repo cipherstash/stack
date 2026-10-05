@@ -225,12 +225,13 @@ describeLivePg('v3 baseline migration bundle against live Postgres', () => {
   /**
    * Put the database on an older bundle through the edge that bakes it,
    * then walk `upgradeDirs` in one transaction, as the runner applies a
-   * whole plan, and assert it ends on the pinned release.
+   * whole plan, and assert it ends on `endVersion`.
    */
   async function walkFrom(
     startDir: string,
     startVersion: string,
     upgradeDirs: readonly string[],
+    endVersion: string,
   ): Promise<void> {
     await uninstallEqlV3(sql)
     await sql.begin((tx) => applyEdge(tx, startDir))
@@ -248,7 +249,7 @@ describeLivePg('v3 baseline migration bundle against live Postgres', () => {
       }
     })
 
-    expect(await eqlVersion(sql)).toBe('3.1.0')
+    expect(await eqlVersion(sql)).toBe(endVersion)
     await expectPostchecksHold(
       sql,
       descriptorOps(CIPHERSTASH_V3_BASELINE_MIGRATION_NAME),
@@ -259,19 +260,27 @@ describeLivePg('v3 baseline migration bundle against live Postgres', () => {
     // 1.1.x baselines baked the same eql-3.0.4 bytes as the 3.0.4 edge
     // (both pin `63104a81…`). The path is pinned offline in
     // stale-vendored-space.test.ts; this runs its SQL.
-    await walkFrom(CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME, '3.0.4', [
-      CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
-      CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
-      CIPHERSTASH_V3_310_UPGRADE_MIGRATION_NAME,
-    ])
+    await walkFrom(
+      CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME,
+      '3.0.4',
+      [
+        CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
+        CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
+        CIPHERSTASH_V3_310_UPGRADE_MIGRATION_NAME,
+      ],
+      '3.1.0',
+    )
   }, 600_000)
 
   it('migrate: a 1.2.x database (eql-3.0.6) walks only the 3.1.0 edge', async () => {
     // 1.2.x baselines baked the same eql-3.0.6 bytes as the 3.0.6 edge
     // (both pin `9b6dab78…`).
-    await walkFrom(CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME, '3.0.6', [
-      CIPHERSTASH_V3_310_UPGRADE_MIGRATION_NAME,
-    ])
+    await walkFrom(
+      CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
+      '3.0.6',
+      [CIPHERSTASH_V3_310_UPGRADE_MIGRATION_NAME],
+      '3.1.0',
+    )
   }, 480_000)
 
   it('executes no v2-style search configuration (no add_search_config)', () => {

@@ -32,6 +32,8 @@ import {
   releaseManifest,
 } from '../../src/migration/eql-bundle-v3'
 
+const EDGE_RELEASE = '3.1.0'
+
 const UPGRADE_LABEL = `Upgrade EQL v3 bundle to eql-${releaseManifest.eqlVersion}`
 
 export default class M extends Migration {
@@ -45,6 +47,15 @@ export default class M extends Migration {
   }
 
   override get operations() {
+    // In the getter, not at module scope: only an emit reads `operations`.
+    // Without it, an emit against any other installed release bakes that
+    // release's SQL under this edge's 3.1.0 id.
+    if (releaseManifest.eqlVersion !== EDGE_RELEASE) {
+      throw new Error(
+        `This edge bakes eql-${EDGE_RELEASE}, but the installed @cipherstash/eql is ` +
+          `${releaseManifest.eqlVersion}. Published edges are never re-emitted; see DEVELOPING.md.`,
+      )
+    }
     return [
       rawSql({
         id: 'cipherstash.upgrade-eql-v3-bundle-3.1.0',

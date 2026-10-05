@@ -206,14 +206,21 @@ function rewindShippedBaseline(args: {
   readonly metadata: MigrationMetadata
   readonly ops: readonly SqlMigrationOp[]
 } {
-  // The shipped baseline bakes eql-3.1.0, so its release string is what
-  // rewinds to the older one.
-  const rewind = (text: string): string =>
-    text.replaceAll('3.1.0', args.release)
   const shipped = asSqlOps(
     descriptorPackage(CIPHERSTASH_V3_BASELINE_MIGRATION_NAME).ops,
   )
   const [install, ...carriers] = shipped
+  // Read off the artefact, not written here: a literal goes stale at the
+  // next EQL bump, `replaceAll` then matches nothing, and the fixtures fail
+  // on a `migrationHash` mismatch that does not name the cause.
+  const shippedRelease = install?.label.match(/eql-(\d+\.\d+\.\d+)/)?.[1]
+  if (shippedRelease === undefined) {
+    throw new Error(
+      'shipped baseline install op no longer names its eql release in its label',
+    )
+  }
+  const rewind = (text: string): string =>
+    text.replaceAll(shippedRelease, args.release)
   const bundleSql = asSqlOps(descriptorPackage(args.bundleDirName).ops)[0]
     ?.execute[0]?.sql
   if (!install || bundleSql === undefined) {
@@ -931,6 +938,28 @@ describe('stale vendored migrations/cipherstash/ (generated against 1.2.x)', () 
       'cipherstash.upgrade-eql-v3-bundle-3.1.0',
     ])
     expect(ops[0]?.execute[0]?.sql).toContain("SELECT '3.1.0';")
+  })
+
+  it('…and identically for a 1.2.x consumer who DID follow the instruction', async () => {
+    await vendorStale12Space(migrationsDir)
+    await rm(spaceMigrationDirectory(migrationsDir, CIPHERSTASH_SPACE_ID), {
+      recursive: true,
+      force: true,
+    })
+    await runSeedPhase(migrationsDir)
+
+    const outcome = requireOk(
+      await applyPath(migrationsDir, {
+        hash: headRef.hash,
+        invariants: [...INVARIANTS_1_2],
+      }),
+    )
+    expect(outcome.walkedMigrationDirs).toEqual([
+      CIPHERSTASH_V3_310_UPGRADE_MIGRATION_NAME,
+    ])
+    expect(outcome.providedInvariants).toEqual([
+      CIPHERSTASH_V3_INVARIANTS.upgradeBundle310,
+    ])
   })
 
   it('a fresh database under `migrate` converges on 3.1.0, installing the bundle twice', async () => {
