@@ -697,6 +697,7 @@ See [`policy/policy.go`](2026-10-04-plan-builder/policy/policy.go), [`cmd/genpla
 | A field added to a struct from another package that has an unexported field | CI |
 | A field added to, removed from or retyped in the tagged struct | the compiler |
 | A tag that does not parse, or a field that no policy rule decides | `go generate` |
+| A generated file and a library from versions that do not agree | the compiler |
 | A change to a tag or to a policy, with no `go generate` run | CI |
 
 CI runs `go generate ./...` and fails when a generated file differs from the committed file.
@@ -711,11 +712,11 @@ A program reaches it through `stackencrypt.Encrypt`, or through a generated vari
 A plan does not change after it is built, and any number of goroutines can use it at the same time.
 
 No function that a program calls has a name that starts with `Must`.
-No function panics for a mistake in a plan that a program wrote.
+No function in the binding panics for a plan, in generated code or in any other code.
 
 ### Support for generated code
 
-The package `stackencrypt/stashrt` holds what only generated code calls:
+The package `stackencrypt/gensupport` holds what only generated code calls:
 
 - `Plan` declares the fields and their indexes as data.
   `EncryptIndex` and `Index` take one index and then any number more, so an empty index set does not compile.
@@ -725,9 +726,13 @@ The package `stackencrypt/stashrt` holds what only generated code calls:
 - `Values` holds plaintext values by field name, and `Get[V]` reads one as the Go type `V`.
 - `Record` holds the outputs of each field by name.
 
-`New` panics for a plan that the engine refuses.
-The generator writes only plans that the engine accepts.
-So that panic needs a generated file and a library from two different versions.
+No function in this package panics.
+`New` only stores what it is given.
+The engine checks a plan when an operation first sends it to the guest, and that operation returns the error.
+
+A generated file and the library must be from versions that agree.
+Each generated file names a constant, such as `gensupport.GeneratedVersion1`, that only such a library declares.
+So a file from another version does not compile.
 
 ### The policy package
 

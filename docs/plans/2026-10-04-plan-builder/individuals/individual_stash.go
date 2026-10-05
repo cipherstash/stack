@@ -8,8 +8,11 @@ import (
 	"context"
 
 	"github.com/cipherstash/stack/languages/golang/stackencrypt"
-	"github.com/cipherstash/stack/languages/golang/stackencrypt/stashrt"
+	"github.com/cipherstash/stack/languages/golang/stackencrypt/gensupport"
 )
+
+// Stops compiling when the library does not accept this version of generated file.
+const _ = gensupport.GeneratedVersion1
 
 type EncryptedIndividual struct {
 	ID         int64
@@ -41,17 +44,17 @@ type individualShape struct {
 	Nickname   string
 }
 
-var individualSpec = stashrt.NewPlan("individuals").
+var individualSpec = gensupport.NewPlan("individuals").
 	Encrypt("name").
 	EncryptIndex("email", stackencrypt.Equality, stackencrypt.Match()).
 	EncryptIndex("medicare_number", stackencrypt.Equality)
 
-var individualPlan = stashrt.New(stashrt.Generated[Individual, EncryptedIndividual]{
+var individualPlan = gensupport.New(gensupport.Generated[Individual, EncryptedIndividual]{
 	Plan: individualSpec,
-	Source: func(v Individual) stashrt.Values {
-		return stashrt.Values{"name": v.Name, "email": v.Email, "medicare_number": v.MedicareNo}
+	Source: func(v Individual) gensupport.Values {
+		return gensupport.Values{"name": v.Name, "email": v.Email, "medicare_number": v.MedicareNo}
 	},
-	Seal: func(v Individual, rec stashrt.Record) EncryptedIndividual {
+	Seal: func(v Individual, rec gensupport.Record) EncryptedIndividual {
 		email, medicare := rec["email"], rec["medicare_number"]
 		return EncryptedIndividual{
 			ID:         v.ID,
@@ -61,23 +64,23 @@ var individualPlan = stashrt.New(stashrt.Generated[Individual, EncryptedIndividu
 			Nickname:   v.Nickname,
 		}
 	},
-	Open: func(e EncryptedIndividual) stashrt.Record {
-		return stashrt.Record{
+	Open: func(e EncryptedIndividual) gensupport.Record {
+		return gensupport.Record{
 			"name":            {Ciphertext: e.Name},
 			"email":           {Ciphertext: e.Email.Ciphertext, Equality: e.Email.Equality, Match: e.Email.Match},
 			"medicare_number": {Ciphertext: e.MedicareNo.Ciphertext, Equality: e.MedicareNo.Equality},
 		}
 	},
-	Value: func(e EncryptedIndividual, vals stashrt.Values) (Individual, error) {
+	Value: func(e EncryptedIndividual, vals gensupport.Values) (Individual, error) {
 		v := Individual{ID: e.ID, Nickname: e.Nickname}
 		var err error
-		if v.Name, err = stashrt.Get[string](vals, "name"); err != nil {
+		if v.Name, err = gensupport.Get[string](vals, "name"); err != nil {
 			return Individual{}, err
 		}
-		if v.Email, err = stashrt.Get[string](vals, "email"); err != nil {
+		if v.Email, err = gensupport.Get[string](vals, "email"); err != nil {
 			return Individual{}, err
 		}
-		if v.MedicareNo, err = stashrt.Get[string](vals, "medicare_number"); err != nil {
+		if v.MedicareNo, err = gensupport.Get[string](vals, "medicare_number"); err != nil {
 			return Individual{}, err
 		}
 		return v, nil
@@ -97,13 +100,13 @@ var IndividualFields = struct {
 	Email      IndividualEmailField
 	MedicareNo IndividualMedicareNoField
 }{
-	Name:       IndividualNameField{stashrt.NewField[string](individualSpec, "name")},
-	Email:      IndividualEmailField{stashrt.NewField[string](individualSpec, "email")},
-	MedicareNo: IndividualMedicareNoField{stashrt.NewField[string](individualSpec, "medicare_number")},
+	Name:       IndividualNameField{gensupport.NewField[string](individualSpec, "name")},
+	Email:      IndividualEmailField{gensupport.NewField[string](individualSpec, "email")},
+	MedicareNo: IndividualMedicareNoField{gensupport.NewField[string](individualSpec, "medicare_number")},
 }
 
 type IndividualNameField struct {
-	plan stashrt.Field[string]
+	plan gensupport.Field[string]
 }
 
 func (f IndividualNameField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string, opts ...stackencrypt.Option) (stackencrypt.Ciphertext, error) {
@@ -112,7 +115,7 @@ func (f IndividualNameField) Encrypt(ctx context.Context, c *stackencrypt.Cipher
 }
 
 type IndividualEmailField struct {
-	plan stashrt.Field[string]
+	plan gensupport.Field[string]
 }
 
 func (f IndividualEmailField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string, opts ...stackencrypt.Option) (EncryptedIndividualEmail, error) {
@@ -132,7 +135,7 @@ func (f IndividualEmailField) Match(ctx context.Context, c *stackencrypt.Cipher,
 }
 
 type IndividualMedicareNoField struct {
-	plan stashrt.Field[string]
+	plan gensupport.Field[string]
 }
 
 func (f IndividualMedicareNoField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string, opts ...stackencrypt.Option) (EncryptedIndividualMedicareNo, error) {
