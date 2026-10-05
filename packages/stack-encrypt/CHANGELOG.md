@@ -28,6 +28,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dynamic::term` take an `IndexSpec` (the last two by reference), and
   `Output` is no longer `Copy`. A plan's wire form is unchanged: a bare
   `"match"` still means the default options.
+- **`stack-encrypt-derive`: a field-level `#[stash(context = "..")]` is
+  removed on every derive form** (0.2.0 accepted it). On a `plaintext = T`
+  record, remove it: all outputs of the record share the caller's context. On
+  a field of a `struct = ..` derive, write `#[stash(identity = "..")]`, which
+  keys the field under `("<context>", "<identity>")` (`users/nickname`), not
+  under the bare literal (`nickname`). Either way the field moves to a
+  different context from the one 0.2.0 used: data written by 0.2.0 does not
+  decrypt under it (ZeroKMS refuses the key, `Error::Kms`) and its equality,
+  match and order terms do not match new query terms, so re-encrypt that
+  data. Before the literal went, a non-plain literal such as
+  `"readings/unit"` was already refused, for the same reason.
+- **`stack-encrypt-derive`: `#[stash(nested)]` is removed** (0.2.0 accepted
+  it). Remove it: a record-typed field of a `struct = ..` derive is an
+  ordinary field, keyed under `("<context>", "<field>")`, and its inner
+  fields sit under that (`("user/age", "accounts/user")` where `nested` gave
+  `user/age`). That is a different context from the one 0.2.0 used: data
+  written by 0.2.0 does not decrypt under it and its terms do not match, so
+  re-encrypt that data.
+- **`stack-encrypt-derive`: a plaintext field of a `struct = ..` derive has
+  one output.** 0.2.0 accepted several fields `from` one plaintext field
+  (`email: StackCipherText` beside `#[stash(from = email)] email_hm:
+  EqualityTerm`). Write one field of type `Encrypted<Terms>` instead
+  (`email: Encrypted<EqualityTerm>`). Its ciphertext and terms are derived
+  under the same context as before (an equality term is the same bytes), so
+  stored data still opens and its terms still match; what changes is the
+  record's shape, one field where it held two.
 
 ### Added
 
@@ -77,6 +103,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A passthrough field's name may be any text: it is under no label, so
   `FieldPlan::label` is `None` for one.
 - `IntoLabel` for `&String`, and `KeysetChoice` from a `&String`.
+- `target::TermSet`: a term type, or a tuple of two to four, names the
+  indexes that derive it (`MatchTerms<O>` names `Match<O>`, options
+  included).
+- `Encrypted<Terms>` is a target: it implements `EncryptFrom<S>`
+  (described as `indexed(Terms::INDEXES)`), `Decryptable` and
+  `DecryptField`, so a derived record can hold a ciphertext and its terms
+  in one field.
+- `stack-encrypt-derive`: `#[stash(identity = "..")]` on a field of a
+  `struct = ..` derive keys it under that segment in place of the plaintext
+  field's name, the plan builder's `.identity(segment)`.
 
 ## [0.2.0] - 2026-10-04
 
