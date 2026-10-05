@@ -327,27 +327,61 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                          `context` is already handed the caller's",
                     ));
                 }
+                if let Some(identity) = &attrs.identity {
+                    return Err(syn::Error::new(
+                        identity.span(),
+                        "`identity` names the segment a field of a `struct = ..` derive is keyed \
+                         under, after the record's `context`; a `plaintext` record's fields are \
+                         all derived from the whole value and have no segment of their own",
+                    ));
+                }
+            }
+            // A field of a `struct` derive sits under the record's context,
+            // as a plan's field sits under the plan's: what it may change is
+            // the segment it is keyed under, never the context above it.
+            if let (Some(prefix), Some(context)) = (prefix, &attrs.context) {
+                return Err(syn::Error::new(
+                    context.span(),
+                    format!(
+                        "a field of a `struct = ..` derive takes no `context = \"..\"`: it is \
+                         derived under the record's context, `(\"{}\", \"<field>\")`. To key it \
+                         under a segment other than the plaintext field's name, write \
+                         `#[stash(identity = \"..\")]`; a field sealed outside the record's \
+                         context is not supported",
+                        prefix.value()
+                    ),
+                ));
             }
             // A literal context becomes a `nonempty!(..)`, which refuses an
             // empty one at compile time anyway; say so here, at the
             // attribute, with the alternative that applies.
             if let Some(context) = &attrs.context {
                 if context.value().is_empty() {
-                    let message = if prefix.is_some() {
-                        "an empty `context` is rejected when a value is encrypted: name the \
-                         field (e.g. \"email\"), or drop the attribute to use the inferred \
-                         pair `(\"<context>\", \"<field>\")`"
-                    } else {
+                    return Err(syn::Error::new(
+                        context.span(),
                         "an empty `context` is rejected when a value is encrypted: name the \
                          field (e.g. \"users/email\"), or drop the attribute to hand the field \
-                         the caller's context"
-                    };
-                    return Err(syn::Error::new(context.span(), message));
+                         the caller's context",
+                    ));
+                }
+            }
+            // An identity is one label segment, as the plan builder's is:
+            // non-empty, and plain so the descriptor names the field.
+            if let Some(identity) = &attrs.identity {
+                if !crate::attrs::is_plain_segment(&identity.value()) {
+                    return Err(syn::Error::new(
+                        identity.span(),
+                        "an `identity` is the one label segment the field is keyed under, so it \
+                         must be plain: not empty, no `/`, `(`, `)`, control or invisible \
+                         character, and not beginning with `b64:`, a digit or `-` (e.g. \
+                         `identity = \"email\"`)",
+                    ));
                 }
             }
             if attrs.context_field
                 && (attrs.default.is_some()
                     || attrs.context.is_some()
+                    || attrs.identity.is_some()
                     || attrs.from.is_some()
                     || attrs.decrypt
                     || attrs.nested)
@@ -363,6 +397,7 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                 match attrs.default {
                     Some(default) => {
                         if attrs.context.is_some()
+                            || attrs.identity.is_some()
                             || attrs.from.is_some()
                             || attrs.decrypt
                             || attrs.nested
@@ -370,7 +405,7 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                             return Err(syn::Error::new_spanned(
                                 &field.ty,
                                 "a `default` field is not derived from the source, so `context`, \
-                             `from`, `decrypt` and `nested` do not apply to it",
+                             `identity`, `from`, `decrypt` and `nested` do not apply to it",
                             ));
                         }
                         Kind::Default(default)
@@ -382,8 +417,12 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                                 // The field's type carries its own contexts; it
                                 // is handed the caller's (`FieldContext::Caller`).
                                 None
-                            } else if let Some(lit) = attrs.context {
-                                Some(OwnContext::Literal(lit))
+                            } else if let Some(identity) = attrs.identity {
+                                // Checked plain above.
+                                Some(OwnContext::Prefixed {
+                                    prefix: prefix.clone(),
+                                    field: identity,
+                                })
                             } else {
                                 // The inferred second segment must render
                                 // verbatim, or the descriptor would not name
@@ -400,7 +439,7 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                                                  from: its index `{0}` begins with a digit, \
                                                  which a descriptor reserves, so `(\"{1}\", \
                                                  \"{0}\")` would render escaped; give the \
-                                                 field `#[stash(context = \"..\")]`",
+                                                 field `#[stash(identity = \"..\")]`",
                                                 index.index,
                                                 prefix.value()
                                             ),
@@ -413,7 +452,7 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                                         format!(
                                             "the field name `{field}` is not a plain descriptor \
                                              segment, so `(\"{}\", \"{field}\")` would render \
-                                             escaped; give the field `#[stash(context = \"..\")]`",
+                                             escaped; give the field `#[stash(identity = \"..\")]`",
                                             prefix.value()
                                         ),
                                     ));
@@ -819,17 +858,107 @@ mod tests {
         assert!(err
             .to_string()
             .contains("hand the field the caller's context"));
+    }
+
+    #[test]
+    fn a_struct_field_takes_an_identity_not_a_context() {
+        // Even an empty one: the attribute itself is the mistake.
+        for context in ["nickname", "users/nickname", ""] {
+            let err = parse(parse_quote! {
+                #[stash(struct = User, context = "users")]
+                struct Rec {
+                    #[stash(context = #context)]
+                    name: StackCipherText,
+                }
+            })
+            .unwrap_err();
+            let message = err.to_string();
+            assert!(message.contains("takes no `context"), "{message}");
+            assert!(message.contains("identity = \"..\""), "{message}");
+            assert!(message.contains("(\"users\", \"<field>\")"), "{message}");
+        }
+    }
+
+    #[test]
+    fn an_identity_is_one_plain_segment_of_a_struct_field() {
+        for identity in ["", "users/name", "0name", "b64:x"] {
+            let err = parse(parse_quote! {
+                #[stash(struct = User, context = "users")]
+                struct Rec {
+                    #[stash(identity = #identity)]
+                    name: StackCipherText,
+                }
+            })
+            .unwrap_err();
+            assert!(
+                err.to_string().contains("must be plain"),
+                "{identity:?}: {err}"
+            );
+        }
+
+        let err = parse(parse_quote! {
+            #[stash(plaintext = String)]
+            struct Rec {
+                #[stash(identity = "name")]
+                c: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("have no segment"), "{err}");
 
         let err = parse(parse_quote! {
             #[stash(struct = User, context = "users")]
             struct Rec {
-                #[stash(context = "")]
-                email: StackCipherText,
+                #[stash(identity = "a", identity = "b")]
+                name: StackCipherText,
             }
         })
         .unwrap_err();
-        assert!(err.to_string().contains("empty `context`"));
-        assert!(err.to_string().contains("use the inferred"));
+        assert!(
+            err.to_string().contains("`identity` is given twice"),
+            "{err}"
+        );
+
+        let err = parse(parse_quote! {
+            #[stash(struct = User, context = "users")]
+            struct Rec {
+                name: StackCipherText,
+                #[stash(default, identity = "v")]
+                v: u8,
+            }
+        })
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("`default` field is not derived"),
+            "{err}"
+        );
+
+        let err = parse(parse_quote! {
+            #[stash(struct = User, context = "users")]
+            struct Rec {
+                #[stash(context_field, identity = "v")]
+                tenant: String,
+                c: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("`context_field` is metadata"),
+            "{err}"
+        );
+
+        let err = parse(parse_quote! {
+            #[stash(struct = Account, context = "accounts")]
+            struct Rec {
+                #[stash(nested, identity = "member")]
+                user: EncryptedUser,
+            }
+        })
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("`identity` does not apply"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -864,7 +993,7 @@ mod tests {
                 age: EncryptedAge,
                 #[stash(from = email_address)]
                 email: StackCipherText,
-                #[stash(context = "legacy/name")]
+                #[stash(identity = "full_name")]
                 name: StackCipherText,
                 #[stash(nested)]
                 address: EncryptedAddress,
@@ -888,10 +1017,9 @@ mod tests {
         // `from` overrides the field; the context follows the plaintext field.
         assert!(matches!(email.from(), Some(Member::Named(m)) if m == "email_address"));
         assert_eq!(own(email), "(user_profiles, email_address)");
-        // `context` is taken verbatim; like the inferred ones, the caller's
-        // context extends it.
+        // `identity` replaces the segment, never the prefix above it.
         assert!(matches!(name.from(), Some(Member::Named(m)) if m == "name"));
-        assert_eq!(own(name), "legacy/name");
+        assert_eq!(own(name), "(user_profiles, full_name)");
         // `nested`: no inferred context — the field is handed the caller's.
         assert!(matches!(address.from(), Some(Member::Named(m)) if m == "address"));
         assert!(matches!(address.field_context(), FieldContext::Caller));
@@ -915,14 +1043,14 @@ mod tests {
         let record = parse(parse_quote! {
             #[stash(struct = Reading, context = "readings")]
             struct EncryptedReading(
-                #[stash(context = "reading_value")] EncryptedAge,
-                #[stash(context = "reading_unit")] StackCipherText,
+                #[stash(identity = "value")] EncryptedAge,
+                #[stash(identity = "unit")] StackCipherText,
             );
         })
         .unwrap();
         assert!(matches!(record.fields[1].from(), Some(Member::Unnamed(i)) if i.index == 1));
-        assert_eq!(own(&record.fields[0]), "reading_value");
-        assert_eq!(own(&record.fields[1]), "reading_unit");
+        assert_eq!(own(&record.fields[0]), "(readings, value)");
+        assert_eq!(own(&record.fields[1]), "(readings, unit)");
     }
 
     #[test]

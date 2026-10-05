@@ -209,11 +209,17 @@ impl ContainerAttrs {
 #[derive(Default)]
 pub(crate) struct FieldAttrs {
     pub(crate) context_field: bool,
-    /// `#[stash(context = "...")]`: derive this field under exactly this
-    /// context instead of the one a `struct` derive would infer, or the one
-    /// the caller passes for the record. Extended by a caller's context like
-    /// any other.
+    /// `#[stash(context = "...")]`: with a `plaintext` record, derive this
+    /// field under exactly this context instead of the one the caller passes
+    /// for the record. Extended by a caller's context like any other. Refused
+    /// on a field of a `struct` derive, whose fields sit under the record's
+    /// context (`identity` names the segment instead).
     pub(crate) context: Option<LitStr>,
+    /// `#[stash(identity = "...")]`: with `struct = ..`, the label segment
+    /// this field is keyed under, in place of the plaintext field's name:
+    /// the field is derived under `("<context>", "<identity>")`. The plan
+    /// builder's `.identity(segment)`.
+    pub(crate) identity: Option<LitStr>,
     /// `#[stash(from = field)]` / `#[stash(from = 0)]`: with `struct = ..`,
     /// derive this field from a plaintext field whose name differs from its
     /// own.
@@ -255,6 +261,15 @@ impl FieldAttrs {
                     parsed.context = Some(meta.value()?.parse()?);
                     return Ok(());
                 }
+                if meta.path.is_ident("identity") {
+                    if parsed.identity.is_some() {
+                        return Err(meta.error(
+                            "`identity` is given twice; a field is keyed under one segment",
+                        ));
+                    }
+                    parsed.identity = Some(meta.value()?.parse()?);
+                    return Ok(());
+                }
                 if meta.path.is_ident("from") {
                     if parsed.from.is_some() {
                         return Err(meta.error(
@@ -291,7 +306,8 @@ impl FieldAttrs {
                 }
                 Err(meta.error(
                     "unsupported field attribute; expected `context_field`, `context = \"...\"`, \
-                     `from = field`, `default`, `default = expr`, `decrypt` or `nested`",
+                     `identity = \"...\"`, `from = field`, `default`, `default = expr`, `decrypt` \
+                     or `nested`",
                 ))
             })?;
         }
@@ -302,6 +318,13 @@ impl FieldAttrs {
                     context.span(),
                     "`nested` hands this field the caller's context because its type carries its \
                      own, so `context` does not apply: give one or the other",
+                ));
+            }
+            if let Some(identity) = &parsed.identity {
+                return Err(syn::Error::new(
+                    identity.span(),
+                    "`nested` hands this field the caller's context because its type carries its \
+                     own, so `identity` does not apply: give one or the other",
                 ));
             }
         }

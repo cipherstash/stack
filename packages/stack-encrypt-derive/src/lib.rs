@@ -36,8 +36,8 @@
 //! `IntoAad` alone, as the ciphertext leaf itself does.
 //! `struct = User, context = "users"` selects plaintext fields
 //! and binds each under the pair `("users", "<field>")`, which renders
-//! `users/<field>` as its ZeroKMS descriptor. A `context = ".."` literal on a
-//! field is one text part, exactly as written. The storage envelope itself adds no
+//! `users/<field>` as its ZeroKMS descriptor; `identity = ".."` on a field keys
+//! it under `users/<identity>` instead. The storage envelope itself adds no
 //! cryptographic map-entry context. Vitamin C still binds keys inside plaintext
 //! maps and preserves authenticated absence and empty-container markers.
 //!

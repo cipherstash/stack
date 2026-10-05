@@ -706,26 +706,27 @@ async fn a_struct_nests_in_a_struct_via_nested() {
 
 /// A tuple-struct plaintext is reached by index — inferred for a tuple
 /// struct, `from = 0` when the encrypted struct has named fields. An index
-/// is no name for a context (it begins with a digit, which a descriptor
-/// reserves), so each field under `struct = ..` names its own with
-/// `context = ".."`; the derive refuses one that does not (`tests/ui`).
+/// is no name for a label segment (it begins with a digit, which a
+/// descriptor reserves), so each field under `struct = ..` names its segment
+/// with `identity = ".."`, keyed under `("reading", "<identity>")`; the
+/// derive refuses one that does not (`tests/ui`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Reading(u32, String);
 
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(struct = Reading, context = "reading")]
 struct EncryptedReading(
-    #[stash(context = "reading_value")] EncryptedAge,
-    #[stash(context = "reading_unit")] StackCipherText,
+    #[stash(identity = "value")] EncryptedAge,
+    #[stash(identity = "unit")] StackCipherText,
 );
 
-/// The same with named fields: `from` by index, and the context given.
+/// The same with named fields: `from` by index, and the segment given.
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(struct = Reading, context = "reading")]
 struct NamedReading {
-    #[stash(from = 0, context = "reading_value")]
+    #[stash(from = 0, identity = "value")]
     value: EncryptedAge,
-    #[stash(from = 1, context = "readings/unit")]
+    #[stash(from = 1, identity = "unit")]
     unit: StackCipherText,
 }
 
@@ -740,7 +741,7 @@ async fn a_tuple_plaintext_is_reached_and_rebuilt_by_index() {
     let row: EncryptedReading = reading.encrypt_into(&keyset).await.unwrap();
 
     let hm: EqualityTerm = 21u32
-        .encrypt_into_with_context(&generator, nonempty!("reading_value"))
+        .encrypt_into_with_context(&generator, nonempty!("reading").with("value"))
         .await
         .unwrap();
     assert_eq!(row.0.hm, hm);
@@ -749,10 +750,10 @@ async fn a_tuple_plaintext_is_reached_and_rebuilt_by_index() {
     assert_eq!(recovered, reading);
 
     let named: NamedReading = reading.encrypt_into(&keyset).await.unwrap();
-    assert_eq!(named.value.hm, hm, "from = 0 with the same context literal");
+    assert_eq!(named.value.hm, hm, "from = 0 with the same identity");
     let unit: String = named
         .unit
-        .decrypt_into(&cipher, nonempty!("readings/unit"))
+        .decrypt_into(&cipher, nonempty!("reading").with("unit"))
         .await
         .unwrap();
     assert_eq!(unit, "celsius");

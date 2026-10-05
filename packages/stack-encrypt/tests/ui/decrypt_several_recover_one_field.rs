@@ -8,7 +8,7 @@ struct User {
 #[stash(struct = User, context = "users")]
 struct Rec {
     email: StackCipherText,
-    #[stash(from = email, context = "users/email/copy")]
+    #[stash(from = email)]
     email_copy: StackCipherText,
 }
 

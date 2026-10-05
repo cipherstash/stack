@@ -1,0 +1,5 @@
+error: a field of a `struct = ..` derive takes no `context = ".."`: it is derived under the record's context, `("users", "<field>")`. To key it under a segment other than the plaintext field's name, write `#[stash(identity = "..")]`; a field sealed outside the record's context is not supported
+  --> tests/ui/struct_field_context.rs:14:23
+   |
+14 |     #[stash(context = "nickname")]
+   |                       ^^^^^^^^^^

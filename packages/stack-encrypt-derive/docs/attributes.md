@@ -29,7 +29,8 @@ literal.
 | Attribute | Effect |
 |---|---|
 | `context_field` | Store the caller’s typed context here and recover it on decryption. Exactly one per record; excludes the other field attributes and literal contexts. |
-| `context = "..."` | Derive this field under exactly this context, extended by the one the caller passes for the record like any other. A query-side term built under the same literal — extended the same way — matches it. Must not be empty. |
+| `context = "..."` | With a `plaintext` record only: derive this field under exactly this context, extended by the one the caller passes for the record like any other. A query-side term built under the same literal — extended the same way — matches it. Must not be empty. Refused on a field of a `struct` derive, which sits under the record's context: use `identity`. |
+| `identity = "..."` | With `struct` only: key this field under the segment `identity` instead of the plaintext field's name, so it is derived under `("<context>", "<identity>")`. One plain segment. The plan builder's `.identity(segment)`. |
 | `from = field` / `from = 0` | With `struct` only: derive this field from `plaintext.field` (or `plaintext.0` for a tuple struct) when its name differs from its plaintext field's. |
 | `default` / `default = expr` | Not derived: filled with `Default::default()` or `expr`. Never encrypted, never authenticated. |
 | `decrypt` | Decryption opens this field (`DecryptInto` only). Needed only when the field types cannot decide it — see below. |
@@ -104,14 +105,15 @@ segments (no `/`, `(`, `)`, control or invisible character; not beginning
 with `b64:`, a digit or `-`), or the descriptor would render escaped and the
 ZeroKMS log would not name the column: the derive refuses a prefix such as
 `"public/users"` (write `"users"`), and a tuple field — whose index begins
-with a digit — must carry its own `context = ".."`. So `#[stash(from = email_address)] email: ..` is derived under
+with a digit — must name its segment with `identity = ".."`. So `#[stash(from = email_address)] email: ..` is derived under
 `("users", "email_address")`: both parts name the stored field, not the
 encrypted struct. Nothing is pluralised or otherwise guessed. The pair is
 what `nonempty!("users").with("age")` spells at a call site, and what a
-two-segment `Label` spells. A `context = ".."` literal on a field is **one**
-text part, taken exactly as written, and replaces the inferred pair: the
-literal `"users/age"` is not the pair, and renders escaped (`b64:…`) in the
-descriptor because a `/` inside one part must never read as a separator.
+two-segment `Label` spells. `#[stash(identity = "nickname")] name: ..`
+replaces the second part only: the field is derived under
+`("users", "nickname")`. A field of a `struct` derive cannot be given a
+context of its own (`context = ".."` on it is refused): it always sits under
+the record's.
 `nested` on a field infers none — the field is handed the caller's context
 as it is, which a nested `struct` derive (carrying its own contexts) composes
 with them and a leaf accepts only as a `NonEmpty<T>`.
@@ -137,14 +139,14 @@ stored data stops decrypting — `Error::Kms` against ZeroKMS, which refuses
 the key retrieval under the changed descriptor before the AEAD runs, and
 `Error::Aead` under a key source that ignores descriptors, such as the fake
 one in tests — silently at the call site, with no compile-time signal.
-Before such a rename, keep the old plaintext field name in `from` on the
-field it reaches (`#[stash(from = old_name)] new_name: ..`), which keeps the
-inferred pair. A `context = ".."` literal cannot preserve it: a literal is one
-part, and an inferred context is two.
+Before such a rename, pin the old name as the field's segment with
+`#[stash(identity = "old_name")]`, which keeps the pair
+`("<context>", "old_name")` while the plaintext field moves.
 
 A `struct` derive has no field derived from the whole plaintext, and a
-`plaintext` record has none derived from a field of it: `from` and `nested`
-exist only with `struct`, and the two container attributes are exclusive.
+`plaintext` record has none derived from a field of it: `from`, `identity`
+and `nested` exist only with `struct`, a field `context` only with
+`plaintext`, and the two container attributes are exclusive.
 
 ## Which field decryption opens
 
