@@ -517,3 +517,140 @@ mod given_a_decryption_held_in_a_variable {
         assert_eq!(opened, "secret");
     }
 }
+
+mod given_encrypted_terms_as_a_target {
+    use super::*;
+    use stack_encrypt::target::TermSet;
+
+    /// A configuration other than the default, so a target that derived its
+    /// match terms under the default one would show.
+    struct Words;
+    impl MatchConfig for Words {
+        fn options() -> MatchOptions {
+            MatchOptions {
+                tokenizer: Tokenizer::Standard,
+                downcase: false,
+                k: 4,
+                m: 512,
+            }
+        }
+    }
+
+    /// The typed spelling, `Encrypted<Terms>` as a target, beside the data
+    /// spelling, `indexed(indexes)`: the same terms, and each ciphertext
+    /// opens through the other's reader.
+    async fn same_bytes<S, Terms, X>(value: S, indexes: X)
+    where
+        S: stack_encrypt::Encrypt
+            + for<'a> stack_encrypt::Decrypt<'a>
+            + Clone
+            + PartialEq
+            + std::fmt::Debug
+            + 'static,
+        Terms: TermSet<S> + PartialEq + std::fmt::Debug,
+        X: Indexes<S, Terms = Terms>,
+    {
+        let cipher = stack_cipher().await;
+        let keyset = cipher.default_keyset();
+
+        let typed: Encrypted<Terms> = keyset.encrypt_as(&value, caller()).await.expect("typed");
+        let data = keyset
+            .run(indexed::<S, _, Borrowed, _>(indexes), &value, caller())
+            .await
+            .expect("data");
+        assert_eq!(
+            typed.terms, data.terms,
+            "the typed and data spellings agree"
+        );
+
+        let opened: S = Encrypted {
+            ciphertext: typed.ciphertext,
+            terms: (),
+        }
+        .decrypt_into(&cipher, aead())
+        .await
+        .expect("the typed ciphertext opens");
+        assert_eq!(opened, value);
+        let opened: S = data
+            .decrypt_into(&cipher, aead())
+            .await
+            .expect("data opens");
+        assert_eq!(opened, value);
+    }
+
+    #[tokio::test]
+    async fn every_term_alone_lowers_to_its_index() {
+        same_bytes::<u32, EqualityTerm, _>(7, Equality).await;
+        same_bytes::<String, MatchTerms, _>("hello world".into(), Match::default()).await;
+        same_bytes::<String, MatchTerms<Words>, _>("Hello World".into(), Match::<Words>::new())
+            .await;
+        same_bytes::<u32, OreTerm<u32>, _>(7, Ore).await;
+        same_bytes::<u32, OpeTerm<u32>, _>(7, Ope).await;
+    }
+
+    #[tokio::test]
+    async fn a_tuple_of_terms_lowers_to_the_tuple_of_their_indexes_in_order() {
+        same_bytes::<u32, (EqualityTerm, OreTerm<u32>), _>(7, (Equality, Ore)).await;
+        same_bytes::<u32, (OreTerm<u32>, EqualityTerm), _>(7, (Ore, Equality)).await;
+        same_bytes::<u32, (OpeTerm<u32>, OreTerm<u32>, EqualityTerm), _>(7, (Ope, Ore, Equality))
+            .await;
+        same_bytes::<
+            String,
+            (
+                MatchTerms<Words>,
+                OpeTerm<String>,
+                OreTerm<String>,
+                EqualityTerm,
+            ),
+            _,
+        >(
+            "Hello World".into(),
+            (Match::<Words>::new(), Ope, Ore, Equality),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn the_typed_spelling_is_the_hand_composition() {
+        let cipher = stack_cipher().await;
+        let keyset = cipher.default_keyset();
+        let email = "bob@example.com".to_string();
+
+        let typed: Encrypted<(EqualityTerm, MatchTerms)> =
+            keyset.encrypt_as(&email, caller()).await.expect("typed");
+        let hand = ciphertext::<String, _, Borrowed>()
+            .accepting::<CallerContext>()
+            .zip(equality::<String, _, Borrowed>())
+            .zip(matching::<String, _, Borrowed, DefaultMatch>());
+        let ((hand_c, hand_eq), hand_match) =
+            keyset.run(hand, &email, caller()).await.expect("hand");
+        assert_eq!(typed.terms, (hand_eq, hand_match));
+        let opened: String = keyset.decrypt_as(hand_c, aead()).await.expect("hand opens");
+        assert_eq!(opened, email);
+        let opened: String = typed
+            .decrypt_into(&cipher, aead())
+            .await
+            .expect("typed opens");
+        assert_eq!(opened, email);
+    }
+
+    #[test]
+    fn the_terms_name_their_indexes() {
+        assert_eq!(
+            Indexes::<String>::specs(
+                &<(
+                    MatchTerms<Words>,
+                    OpeTerm<String>,
+                    OreTerm<String>,
+                    EqualityTerm
+                ) as TermSet<String>>::INDEXES
+            ),
+            [
+                IndexSpec::Match(Words::options()),
+                IndexSpec::Ope,
+                IndexSpec::Ore,
+                IndexSpec::Equality
+            ]
+        );
+    }
+}

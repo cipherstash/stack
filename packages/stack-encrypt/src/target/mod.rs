@@ -97,7 +97,8 @@ pub mod transcode;
 pub(crate) use self::core::{decipher_pending, seal_pending};
 pub use context::{AeadContext, CallerContext, DeclaredContext, ExpectedContext, Extends};
 pub use index::{
-    indexed, At, Encrypted, Equality, Index, IndexSpec, Indexes, Match, Ope, Ore, Select, Whole,
+    indexed, At, Encrypted, Equality, Index, IndexSpec, Indexes, Match, Ope, Ore, Select, TermSet,
+    Whole,
 };
 pub(crate) use operations::inspect;
 pub use operations::{

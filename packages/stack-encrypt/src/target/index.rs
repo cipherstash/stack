@@ -56,7 +56,7 @@ use std::marker::PhantomData;
 use super::context::{AeadContext, CallerContext};
 use super::operations::{ciphertext, equality, matching, ope, open, ore};
 use super::source::{ConsumeSource, ShareSource};
-use super::{DecryptInto, Decryption, Encryption};
+use super::{DecryptField, DecryptInto, Decryptable, Decryption, EncryptFrom, Encryption};
 use crate::sem::{
     DefaultMatch, EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreTerm,
 };
@@ -451,6 +451,104 @@ impl<P: crate::Decrypt<'static> + 'static, Terms> DecryptInto<P> for Encrypted<T
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
         open(self.ciphertext, context)
+    }
+}
+
+/// `Encrypted<Terms>` is a target, so a record field, a typed verb or a
+/// caller names a ciphertext with its terms by type alone:
+/// `email: Encrypted<(EqualityTerm, MatchTerms)>`. The terms name their
+/// indexes ([`TermSet`]), and the description is [`indexed`] over them, so
+/// the bytes are the data spelling's and the hand composition's.
+impl<S, Terms> EncryptFrom<S> for Encrypted<Terms>
+where
+    S: crate::Encrypt + Clone,
+    Terms: TermSet<S>,
+{
+    type Context = CallerContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    where
+        S: 's,
+    {
+        indexed(Terms::INDEXES)
+    }
+}
+
+/// The ciphertext is what a record opens; the terms are one-way.
+impl<Terms> Decryptable for Encrypted<Terms> {
+    const DECRYPTABLE: bool = true;
+}
+impl<P: 'static, Ctx, Terms> DecryptField<P, Ctx> for Encrypted<Terms>
+where
+    Self: DecryptInto<P>,
+    Ctx: Into<<Self as DecryptInto<P>>::Context>,
+{
+    fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
+        Some(self.decryption(context.into()))
+    }
+}
+
+/// The terms of a set of indexes, named from the terms' side: one term type,
+/// or a tuple of two to four, each naming the index that derives it. This is
+/// what lets [`Encrypted<Terms>`] be a target with no value in hand: its type
+/// says which indexes to run.
+///
+/// [`INDEXES`](Self::INDEXES) is the set of indexes whose terms are `Self`,
+/// in the same order, so `<(EqualityTerm, OreTerm<u32>)>::INDEXES` is
+/// `(Equality, Ore)`.
+///
+/// A match term names its configuration in its type (`MatchTerms<O>`), so
+/// the index it names is `Match<O>`, the configuration included.
+pub trait TermSet<S>: Sized + 'static {
+    /// The indexes that derive these terms.
+    type Indexes: Indexes<S, Terms = Self>;
+    /// Those indexes, as a value.
+    const INDEXES: Self::Indexes;
+}
+impl<S: vitaminc_prf::PrfValue> TermSet<S> for EqualityTerm {
+    type Indexes = Equality;
+    const INDEXES: Equality = Equality;
+}
+impl<S: AsRef<str>, O: MatchConfig + 'static> TermSet<S> for MatchTerms<O> {
+    type Indexes = Match<O>;
+    const INDEXES: Match<O> = Match::new();
+}
+impl<S> TermSet<S> for OreTerm<S>
+where
+    S: cllw_ore::CllwOreEncrypt + Send + 'static,
+    S::Output: Send + 'static,
+{
+    type Indexes = Ore;
+    const INDEXES: Ore = Ore;
+}
+impl<S> TermSet<S> for OpeTerm<S>
+where
+    S: cllw_ore::CllwOpeEncrypt + Send + 'static,
+    S::Output: Send + 'static,
+{
+    type Indexes = Ope;
+    const INDEXES: Ope = Ope;
+}
+
+/// A tuple of terms names the tuple of their indexes. Each element must be
+/// one term (its set is one index), as a tuple of indexes holds indexes.
+macro_rules! tuple_of_terms {
+    ($(($($name:ident),+),)+) => {$(
+        impl<S, $($name),+> TermSet<S> for ($($name,)+)
+        where
+            $($name: TermSet<S>, $name::Indexes: Index<S, Term = $name>,)+
+        {
+            type Indexes = ($($name::Indexes,)+);
+            const INDEXES: Self::Indexes = ($($name::INDEXES,)+);
+        }
+    )+};
+}
+#[allow(non_snake_case)]
+mod term_tuples {
+    use super::*;
+    tuple_of_terms! {
+        (A, B),
+        (A, B, C),
+        (A, B, C, D),
     }
 }
 

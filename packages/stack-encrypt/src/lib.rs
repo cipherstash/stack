@@ -295,7 +295,7 @@ pub use stack_kms as kms;
 pub use target::{
     CallerContext, CipherScope, DecryptField, DecryptFrom, DecryptInto, Decryptable, Decryption,
     EncryptFrom, EncryptInto, Encrypted, Encryption, Equality, Index, IndexSpec, Indexes, Match,
-    Ope, Ore, Pending, PendingFuture, Request, Responses,
+    Ope, Ore, Pending, PendingFuture, Request, Responses, TermSet,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they
