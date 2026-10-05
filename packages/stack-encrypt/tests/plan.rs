@@ -1658,6 +1658,44 @@ async fn a_keyset_choice_names_what_it_holds() {
     );
 }
 
+/// A context or keyset name held in a `String` is passed by reference, as
+/// a config value would be.
+#[tokio::test]
+async fn a_borrowed_string_names_a_context_and_a_keyset() {
+    let cipher = stack_cipher().await;
+    let tenant = cipher
+        .keyset(IdentifiedBy::Name("tenant".to_string().into()))
+        .await
+        .unwrap();
+    let context = String::from("users/age");
+    let tenant_name = String::from("tenant");
+
+    let age_plan = Plan::context(&context)
+        .with::<u32, _>(Equality)
+        .build()
+        .unwrap();
+    assert_eq!(age_plan.label().to_string(), "users/age");
+    let sealed = cipher
+        .encrypt(&34u32)
+        .context(&context)
+        .keyset(&tenant_name)
+        .await
+        .unwrap();
+    assert_eq!(leaf_keyset(&sealed), tenant.keyset_id());
+    let back: u32 = cipher
+        .open(sealed)
+        .using(&age_plan)
+        .keyset(&tenant_name)
+        .await
+        .unwrap();
+    assert_eq!(back, 34);
+    let not_plain = String::from("users//age");
+    assert!(matches!(
+        plan_error(Plan::context(&not_plain).with::<u32, _>(Equality).build()),
+        PlanError::ContextLabel(_)
+    ));
+}
+
 #[tokio::test]
 async fn every_chain_honours_its_named_keyset() {
     let cipher = stack_cipher().await;

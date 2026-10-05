@@ -84,6 +84,11 @@ impl<K> From<String> for KeysetChoice<'_, K> {
         KeysetChoice::Named(IdentifiedBy::Name(name.into()))
     }
 }
+impl<K> From<&String> for KeysetChoice<'_, K> {
+    fn from(name: &String) -> Self {
+        Self::from(name.as_str())
+    }
+}
 
 /// What every chain carries besides its value: the cipher, the keyset it
 /// names, and the caller's extension of the plan's contexts.

@@ -44,6 +44,13 @@ impl IntoLabel for String {
         Label::parse(&self)
     }
 }
+/// A context held in a `String` (a config value, say), borrowed:
+/// `Plan::context(&name)`.
+impl IntoLabel for &String {
+    fn into_label(self) -> Result<Label, LabelError> {
+        Label::parse(self)
+    }
+}
 
 /// What a field of a fields plan does with its value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
