@@ -713,6 +713,28 @@ async fn a_struct_nests_in_a_struct_as_an_ordinary_field() {
         .await
         .unwrap();
     assert_eq!(plan, "pro");
+
+    // The whole record opens under the same id: the decrypt side hands the
+    // inner record the outer field's pair extended by the id, as the
+    // encrypt side did.
+    let row: EncryptedAccount = account
+        .encrypt_into_with_context(&keyset, 9u64)
+        .await
+        .unwrap();
+    let recovered = Account::decrypt_from_with_context(row, &cipher, 9u64)
+        .await
+        .unwrap();
+    assert_eq!(recovered, account);
+
+    // And not under another. The fake key source ignores descriptors, so the
+    // AEAD refuses; ZeroKMS would refuse the key retrieval first
+    // (`Error::Kms`).
+    let row: EncryptedAccount = account
+        .encrypt_into_with_context(&keyset, 9u64)
+        .await
+        .unwrap();
+    let other = Account::decrypt_from_with_context(row, &cipher, 8u64).await;
+    assert!(matches!(other, Err(Error::Aead)), "{other:?}");
 }
 
 /// A tuple-struct plaintext is reached by index — inferred for a tuple
