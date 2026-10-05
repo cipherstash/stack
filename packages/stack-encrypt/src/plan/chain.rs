@@ -35,7 +35,9 @@ impl<K: DataKeySource + IndexKeySource + 'static> PlanKms for K {}
 /// [`StackCipher::keyset`] would load it).
 ///
 /// A chain that names no keyset encrypts under the client's default keyset,
-/// and opens leaves from any keyset the client may use.
+/// and opens leaves from any keyset the client may use. Inside [`all`], a
+/// chain that names none encrypts under the keyset the batch's other chains
+/// name (or the default), and still opens leaves from any keyset.
 pub enum KeysetChoice<'a, K> {
     /// A keyset already selected.
     Handle(KeysetCipher<'a, K>),
@@ -118,7 +120,7 @@ mod sealed {
 /// keyset lookup included.
 pub trait Operation<'a, K: 'static>: sealed::Sealed + Sized {
     /// What the chain produces.
-    type Output: 'static;
+    type Output: MaybeSend + 'static;
     /// The cipher the chain was started on.
     fn cipher(&self) -> &'a StackCipher<K>;
     /// The keyset the chain names, if any, taken out of it.
@@ -132,8 +134,8 @@ pub trait Operation<'a, K: 'static>: sealed::Sealed + Sized {
     /// The first refusal, as [`prepare`](Self::prepare) would report it.
     fn check(&self) -> Result<(), Error>;
     /// Lower the chain and build its [`Pending`] under `keyset`, with no
-    /// I/O. `scoped` says whether `keyset` was named: an opening is then
-    /// confined to it, and otherwise opens leaves from any keyset.
+    /// I/O. `scoped` says whether this chain named `keyset`: an opening is
+    /// then confined to it, and otherwise opens leaves from any keyset.
     fn prepare<'p>(
         self,
         keyset: &'p KeysetCipher<'a, K>,
@@ -391,6 +393,7 @@ impl<'a, S, X, K: 'static> Operation<'a, K> for EncryptIndexed<'a, S, X, K>
 where
     S: crate::Encrypt + Clone,
     X: Indexes<S> + Clone,
+    X::Terms: MaybeSend,
 {
     type Output = crate::Encrypted<X::Terms>;
     fn cipher(&self) -> &'a StackCipher<K> {
@@ -504,7 +507,10 @@ pub struct EncryptUsing<'a, S: ?Sized, P, K> {
     plan: &'a P,
 }
 
-impl<'a, S: ?Sized, P: Runs<S, K>, K: 'static> Operation<'a, K> for EncryptUsing<'a, S, P, K> {
+impl<'a, S: ?Sized, P: Runs<S, K>, K: 'static> Operation<'a, K> for EncryptUsing<'a, S, P, K>
+where
+    P::Output: MaybeSend,
+{
     type Output = P::Output;
     fn cipher(&self) -> &'a StackCipher<K> {
         self.common.cipher
@@ -610,7 +616,10 @@ pub struct QueryIndex<'a, F, I, K> {
     label: Result<Label, PlanError>,
 }
 
-impl<'a, F: 'static, I: Index<F>, K: 'static> Operation<'a, K> for QueryIndex<'a, F, I, K> {
+impl<'a, F: 'static, I: Index<F>, K: 'static> Operation<'a, K> for QueryIndex<'a, F, I, K>
+where
+    I::Term: MaybeSend,
+{
     type Output = I::Term;
     fn cipher(&self) -> &'a StackCipher<K> {
         self.common.cipher
@@ -667,7 +676,10 @@ pub struct OpenUsing<'a, R, P, K> {
     plan: &'a P,
 }
 
-impl<'a, R, P: Opens<R, K>, K: 'static> Operation<'a, K> for OpenUsing<'a, R, P, K> {
+impl<'a, R, P: Opens<R, K>, K: 'static> Operation<'a, K> for OpenUsing<'a, R, P, K>
+where
+    P::Output: MaybeSend,
+{
     type Output = P::Output;
     fn cipher(&self) -> &'a StackCipher<K> {
         self.common.cipher
@@ -764,11 +776,17 @@ impl<K, T> std::fmt::Debug for All<'_, K, T> {
 /// Every chain is prepared under one keyset (the one they name, which must
 /// be the same for all, or the client's default) and their [`Pending`]s
 /// are zipped, so however many there are, awaiting makes one `generate`
-/// call and one `retrieve` call per keyset at most. Chains naming different
-/// keysets are [`Error::KeysetMismatch`], before any key request. Every
-/// chain is checked ([`Operation::check`]) before any keyset is loaded, so
-/// one chain whose plan does not hold up fails the batch with no request at
-/// all.
+/// call and one `retrieve` call per keyset at most. A chain that names no
+/// keyset encrypts and queries under that batch keyset. An opening that
+/// names none still opens leaves from any keyset, as it does alone: the
+/// batch settles those openings beside it, in one more `retrieve` call per
+/// keyset they read.
+///
+/// Every chain is checked ([`Operation::check`]) before any keyset is
+/// loaded, so one chain whose plan does not hold up fails the batch with no
+/// request at all. Chains started on different ciphers are
+/// [`PlanError::MixedCiphers`], and chains naming different keysets are
+/// [`Error::KeysetMismatch`], both before any key request.
 ///
 /// ```
 /// # async fn example() -> Result<(), stack_encrypt::Error> {
@@ -799,14 +817,43 @@ pub fn all<'a, K: 'static, T: Batch<'a, K>>(operations: T) -> All<'a, K, T> {
 /// A tuple of two to four chains [`all`] can settle together. Sealed.
 pub trait Batch<'a, K: 'static>: sealed::Sealed {}
 
+/// One chain's pending, routed to the group it settles in: the batch,
+/// under the batch keyset, or, for an opening that named no keyset and has
+/// not failed, the openings that read from any keyset. The other group
+/// holds an empty place for it, so a failure always lands in the batch and
+/// stops it before any I/O.
+fn route<'p, T, K>(
+    cipher: &'p StackCipher<K>,
+    pending: Pending<'p, T, K>,
+) -> (Pending<'p, Option<T>, K>, Pending<'p, Option<T>, K>)
+where
+    T: MaybeSend + 'p,
+{
+    if pending.opens_any_keyset() {
+        (Pending::ready(cipher, Ok(None)), pending.map(Some))
+    } else {
+        (pending.map(Some), Pending::ready(cipher, Ok(None)))
+    }
+}
+
+/// A chain's output, from whichever group it was routed to.
+fn placed<T>(batch: Option<T>, any: Option<T>) -> Result<T, Error> {
+    batch.or(any).ok_or(Error::ResponseShape)
+}
+
+/// `all` over a tuple: each entry is the chain's type, its value, whether
+/// it named a keyset, and its places in the batch and in the openings
+/// group; the patterns undo the nested `zip` of each group.
 macro_rules! all_of {
-    ($(($first:ident $(, $rest:ident)+) => $nested:pat,)+) => {$(
+    ($((
+        $first:ident $fop:ident $fnamed:ident $fbatch:ident $fany:ident
+        $(, $rest:ident $rop:ident $rnamed:ident $rbatch:ident $rany:ident)+
+    ) => ($batch:pat, $any:pat),)+) => {$(
         impl<$first, $($rest),+> sealed::Sealed for ($first, $($rest),+) {}
         impl<'a, K: 'static, $first: Operation<'a, K>, $($rest: Operation<'a, K>),+> Batch<'a, K>
             for ($first, $($rest),+)
         {
         }
-        #[allow(non_snake_case)]
         impl<'a, K: PlanKms, $first, $($rest),+> IntoFuture for All<'a, K, ($first, $($rest),+)>
         where
             $first: Operation<'a, K> + MaybeSend + 'a,
@@ -815,26 +862,48 @@ macro_rules! all_of {
             type Output = Result<($first::Output, $($rest::Output),+), Error>;
             type IntoFuture = PendingFuture<'a, ($first::Output, $($rest::Output),+)>;
             fn into_future(self) -> Self::IntoFuture {
-                let (mut $first, $(mut $rest),+) = self.operations;
+                let (mut $fop, $(mut $rop),+) = self.operations;
                 Box::pin(async move {
-                    $first.check()?;
-                    $($rest.check()?;)+
-                    let cipher = $first.cipher();
-                    let choices = vec![$first.take_keyset(), $($rest.take_keyset()),+];
-                    let (keyset, scoped) = resolve(cipher, choices).await?;
-                    $first
-                        .prepare(&keyset, scoped)
-                        $(.zip($rest.prepare(&keyset, scoped)))+
-                        .map(|$nested| ($first, $($rest),+))
+                    $fop.check()?;
+                    $($rop.check()?;)+
+                    let cipher = $fop.cipher();
+                    if $(!std::ptr::eq($rop.cipher(), cipher))||+ {
+                        return Err(PlanError::MixedCiphers.into());
+                    }
+                    let ($fnamed, $($rnamed),+) = ($fop.take_keyset(), $($rop.take_keyset()),+);
+                    let named = ($fnamed.is_some(), $($rnamed.is_some()),+);
+                    let (keyset, _) = resolve(cipher, vec![$fnamed, $($rnamed),+]).await?;
+                    let ($fnamed, $($rnamed),+) = named;
+                    let ($fbatch, $fany) = route(cipher, $fop.prepare(&keyset, $fnamed));
+                    $(let ($rbatch, $rany) = route(cipher, $rop.prepare(&keyset, $rnamed));)+
+                    let ($fbatch, $($rbatch),+) = $fbatch
+                        $(.zip($rbatch))+
+                        .map(|$batch| ($fbatch, $($rbatch),+))
                         .settle()
-                        .await
+                        .await?;
+                    let ($fany, $($rany),+) = $fany
+                        $(.zip($rany))+
+                        .map(|$any| ($fany, $($rany),+))
+                        .settle()
+                        .await?;
+                    Ok((placed($fbatch, $fany)?, $(placed($rbatch, $rany)?),+))
                 })
             }
         }
     )+};
 }
 all_of! {
-    (A, B) => (A, B),
-    (A, B, C) => ((A, B), C),
-    (A, B, C, D) => (((A, B), C), D),
+    (A a a_named a_batch a_any, B b b_named b_batch b_any)
+        => ((a_batch, b_batch), (a_any, b_any)),
+    (A a a_named a_batch a_any, B b b_named b_batch b_any, C c c_named c_batch c_any)
+        => (((a_batch, b_batch), c_batch), ((a_any, b_any), c_any)),
+    (
+        A a a_named a_batch a_any,
+        B b b_named b_batch b_any,
+        C c c_named c_batch c_any,
+        D d d_named d_batch d_any
+    ) => (
+        (((a_batch, b_batch), c_batch), d_batch),
+        (((a_any, b_any), c_any), d_any)
+    ),
 }

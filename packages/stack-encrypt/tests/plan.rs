@@ -1138,6 +1138,160 @@ async fn all_runs_under_one_named_keyset_and_refuses_two() {
     );
 }
 
+/// A batch settles through one client and resolves every keyset it names
+/// there, so chains started on two ciphers are refused, before any keyset
+/// is loaded or key requested on either.
+#[tokio::test]
+async fn all_refuses_chains_from_two_ciphers() {
+    let (one, one_loads) = loads_counting_cipher().await;
+    let (two, two_loads) = loads_counting_cipher().await;
+    let doc = String::from("doc");
+
+    for refused in [
+        stack_encrypt::all((
+            one.encrypt(&doc).context("docs"),
+            two.encrypt(&doc).context("docs").keyset("tenant"),
+        ))
+        .await,
+        stack_encrypt::all((
+            one.encrypt(&doc).context("docs").keyset("tenant"),
+            two.encrypt(&doc).context("docs"),
+        ))
+        .await,
+    ] {
+        assert_eq!(plan_error(refused), PlanError::MixedCiphers);
+    }
+    let refused = stack_encrypt::all((
+        one.encrypt(&doc).context("docs"),
+        one.encrypt(&doc).context("docs"),
+        two.encrypt(&doc).context("docs"),
+    ))
+    .await;
+    assert_eq!(plan_error(refused), PlanError::MixedCiphers, "any position");
+    assert_eq!(one_loads.load(Ordering::SeqCst), 0);
+    assert_eq!(two_loads.load(Ordering::SeqCst), 0);
+
+    let (a, b, c, d) = stack_encrypt::all((
+        one.encrypt(&doc).context("docs"),
+        one.encrypt(&doc).context("docs"),
+        one.encrypt(&doc).context("docs"),
+        one.encrypt(&doc).context("docs").keyset("tenant"),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(leaf_keyset(&a), leaf_keyset(&d), "one cipher is one batch");
+    assert_eq!(leaf_keyset(&b), leaf_keyset(&c));
+    assert_eq!(
+        one_loads.load(Ordering::SeqCst),
+        1,
+        "the named keyset, once"
+    );
+}
+
+/// An opening that names no keyset reads a leaf from any keyset inside a
+/// batch, as it does alone: it is not confined to the keyset the batch's
+/// other chains mint under.
+#[tokio::test]
+async fn all_lets_an_unnamed_opening_read_any_keyset() {
+    let (cipher, generates, retrieves) = counting_cipher().await;
+    let tenant = cipher
+        .keyset(IdentifiedBy::Name("tenant".to_string().into()))
+        .await
+        .unwrap();
+    let default = cipher.default_keyset().keyset_id();
+    let docs_plan = Plan::context("docs")
+        .with::<String, _>(Equality)
+        .build()
+        .unwrap();
+    let doc = String::from("doc");
+    let tenant_row = || async {
+        cipher
+            .encrypt(&doc)
+            .using(&docs_plan)
+            .keyset("tenant")
+            .await
+            .unwrap()
+    };
+    let (first, second, third) = (tenant_row().await, tenant_row().await, tenant_row().await);
+    let default_row = cipher.encrypt(&doc).using(&docs_plan).await.unwrap();
+    generates.store(0, Ordering::SeqCst);
+
+    let (written, opened) = stack_encrypt::all((
+        cipher.encrypt(&doc).context("docs"),
+        cipher.open(first).using(&docs_plan),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(leaf_keyset(&written), default, "minted under the default");
+    assert_eq!(opened, "doc", "a tenant row opens beside a default write");
+    assert_eq!(generates.load(Ordering::SeqCst), 1);
+    assert_eq!(retrieves.load(Ordering::SeqCst), 1);
+
+    let (written, opened, also) = stack_encrypt::all((
+        cipher.encrypt(&doc).context("docs").keyset("tenant"),
+        cipher.open(default_row).using(&docs_plan),
+        cipher.open(second).using(&docs_plan),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(leaf_keyset(&written), tenant.keyset_id());
+    assert_eq!(opened, "doc", "a default row opens beside a tenant write");
+    assert_eq!(also, "doc");
+    assert_eq!(
+        retrieves.load(Ordering::SeqCst),
+        3,
+        "the unnamed openings: one retrieve per keyset they read"
+    );
+
+    // A named opening is confined to the keyset it names, and an unnamed
+    // write beside it mints there too.
+    let (written, opened) = stack_encrypt::all((
+        cipher.encrypt(&doc).context("docs"),
+        cipher.open(third).using(&docs_plan).keyset(&tenant),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(leaf_keyset(&written), tenant.keyset_id());
+    assert_eq!(opened, "doc");
+    let other_default = cipher.encrypt(&doc).using(&docs_plan).await.unwrap();
+    let refused = stack_encrypt::all((
+        cipher.encrypt(&doc).context("docs"),
+        cipher.open(other_default).using(&docs_plan).keyset(&tenant),
+    ))
+    .await;
+    assert!(
+        matches!(refused, Err(Error::ForeignKeyset { .. })),
+        "{refused:?}"
+    );
+}
+
+/// One chain whose plan does not hold up fails the whole batch before any
+/// key is requested, however valid its siblings are.
+#[tokio::test]
+async fn all_refuses_a_bad_chain_beside_a_good_one_before_any_request() {
+    let (cipher, generates, retrieves) = counting_cipher().await;
+    let users_plan: Plan<User, _> = users_plan();
+    let row = cipher.encrypt(&user()).using(&users_plan).await.unwrap();
+    generates.store(0, Ordering::SeqCst);
+    let document = String::from("doc");
+    let result = stack_encrypt::all((
+        cipher.encrypt(&document).context("docs"),
+        cipher.open(row).using(&users_plan),
+        cipher
+            .encrypt(&user())
+            .context("users")
+            .fields()
+            .encrypt::<String>("email"),
+    ))
+    .await;
+    assert!(matches!(
+        plan_error(result),
+        PlanError::NotInPlan { field } if field == "age"
+    ));
+    assert_eq!(generates.load(Ordering::SeqCst), 0);
+    assert_eq!(retrieves.load(Ordering::SeqCst), 0);
+}
+
 #[tokio::test]
 async fn keyset_selects_the_minting_keyset_and_scopes_an_opening() {
     let cipher = stack_cipher().await;

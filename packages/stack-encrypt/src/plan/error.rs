@@ -89,6 +89,12 @@ pub enum PlanError {
         /// The field asked for.
         field: String,
     },
+    /// The chains given to one [`all`](crate::all) were started on
+    /// different ciphers. A batch settles through one client and resolves
+    /// every keyset it names there, so a chain from another cipher would
+    /// run under a keyset its own cipher never chose.
+    #[error("the chains in one batch were started on different ciphers")]
+    MixedCiphers,
     /// A query asked a field for an index the field never declared, so it
     /// would have matched nothing.
     #[error("field {field:?} declares no {index} index")]
