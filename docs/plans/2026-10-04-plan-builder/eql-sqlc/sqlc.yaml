@@ -1,0 +1,23 @@
+version: "2"
+sql:
+  - engine: postgresql
+    schema:
+      - eql-domains.sql
+      - schema.sql
+    queries: query.sql
+    gen:
+      go:
+        package: eqldb
+        out: ../internal/eqldb
+        emit_db_tags: true
+        overrides:
+          - db_type: "public.eql_v3_text_search"
+            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt/eqlv3, type: TextSearch }
+          - db_type: "public.eql_v3_integer_ord"
+            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt/eqlv3, type: IntegerOrd }
+          - db_type: "public.eql_v3_json_search"
+            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt/eqlv3, type: JSONSearch }
+          - db_type: "eql_v3.query_text_search"
+            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt/eqlv3, type: QueryTextSearch }
+          - db_type: "eql_v3.query_integer_ord"
+            go_type: { import: github.com/cipherstash/stack/languages/golang/stackencrypt/eqlv3, type: QueryIntegerOrd }
