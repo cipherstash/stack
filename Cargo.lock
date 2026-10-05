@@ -3281,6 +3281,7 @@ dependencies = [
  "serde",
  "serde_json",
  "stack-auth",
+ "stack-encrypt",
  "stack-encrypt-derive",
  "stack-kms",
  "thiserror 1.0.69",
@@ -3291,8 +3292,10 @@ dependencies = [
  "vitaminc-aead-value",
  "vitaminc-encrypt",
  "vitaminc-hmac",
+ "vitaminc-kms",
  "vitaminc-prf",
  "vitaminc-protected 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "vitaminc-protected 0.5.1 (git+https://github.com/cipherstash/vitaminc?rev=b3bc6eb)",
  "zeroize",
  "zerokms-protocol",
 ]
@@ -4177,6 +4180,7 @@ dependencies = [
  "thiserror 2.0.18",
  "vitaminc-async-traits",
  "vitaminc-protected 0.5.1 (git+https://github.com/cipherstash/vitaminc?rev=b3bc6eb)",
+ "vitaminc-random 0.5.1 (git+https://github.com/cipherstash/vitaminc?rev=b3bc6eb)",
  "vitaminc-traits 0.5.1 (git+https://github.com/cipherstash/vitaminc?rev=b3bc6eb)",
  "zeroize",
 ]

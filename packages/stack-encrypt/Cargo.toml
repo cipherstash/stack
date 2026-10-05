@@ -41,10 +41,10 @@ vitaminc-protected = { workspace = true }
 # The key-provider traits a `KeysetRegistry`'s provider implements. Pinned to
 # the same git rev as `stack-kms`'s copy: a differently-sourced dependency is
 # a different type at compile time, so the two must resolve to one package.
-vitaminc-kms = { git = "https://github.com/cipherstash/vitaminc", rev = "9cb1965", default-features = false }
+vitaminc-kms = { git = "https://github.com/cipherstash/vitaminc", rev = "b3bc6eb", default-features = false }
 # The `Protected` those traits name. Same rev, same reason — see the comment
 # on the identical pair in `stack-kms/Cargo.toml`.
-vitaminc-protected-kms = { package = "vitaminc-protected", git = "https://github.com/cipherstash/vitaminc", rev = "9cb1965" }
+vitaminc-protected-kms = { package = "vitaminc-protected", git = "https://github.com/cipherstash/vitaminc", rev = "b3bc6eb" }
 serde = { workspace = true }
 # `Descriptor`: the base64 rendering of a non-textual context for ZeroKMS.
 base64ct = { version = "1.7", features = ["alloc"] }

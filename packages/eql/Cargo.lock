@@ -4227,14 +4227,15 @@ dependencies = [
  "cllw-ore 0.5.0",
  "serde",
  "stack-encrypt-derive",
- "stack-kms",
  "thiserror 1.0.69",
  "uuid",
  "vitaminc-aead 0.5.1",
  "vitaminc-encrypt 0.5.1",
  "vitaminc-hmac",
+ "vitaminc-kms",
  "vitaminc-prf",
  "vitaminc-protected 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "vitaminc-protected 0.5.1 (git+https://github.com/cipherstash/vitaminc?rev=b3bc6eb)",
  "zeroize",
 ]
 
@@ -4251,6 +4252,7 @@ dependencies = [
 name = "stack-kms"
 version = "0.1.0"
 dependencies = [
+ "async-mutex",
  "base16ct",
  "base64ct",
  "blake3",
@@ -4264,7 +4266,6 @@ dependencies = [
  "serdect",
  "sha2 0.10.9",
  "stack-auth 0.43.0",
- "stack-profile 0.43.0",
  "thiserror 1.0.69",
  "tracing",
  "url",
