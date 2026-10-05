@@ -68,6 +68,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Option<Label>`) beside the extension, and `Runs::check` /
   `Opens::check` take it too. The field verbs take a `FieldRef` (a name or
   a picker) in place of `&str`; a name still works as before.
+- **`stack-encrypt-derive`: every field type of a `struct = ..` record
+  implements `DecryptField<F, CallerContext>`** for the plaintext field `F`
+  it is derived from, even when the record derives `EncryptFrom` alone: the
+  record's plan seals and opens each field. 0.2.0 asked only
+  `EncryptFrom<F>`. Every target in this crate and every record deriving
+  `DecryptInto` qualifies; a borrowed plaintext field (`&'static str`) does
+  not, since nothing opens into a `&str`: derive from an owned field.
+- **`stack-encrypt-derive`: a record that declares one index twice compiles
+  and fails when encrypted**, with `Error::Plan(PlanError::DuplicateIndex)`
+  before any key request: two outputs of one index on a `plaintext` record
+  (two `EqualityTerm`s), or a field type that declares one twice. 0.2.0 wrote
+  the same term twice.
 
 ### Added
 
@@ -160,6 +172,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plain segment (`"0"`, `"2fa_secret"`) be sealed and queried.
 - `PlanError::IndexOptions`: a query asked for an index the field declares
   with other match options.
+- **`stack-encrypt-derive`: `#[derive(EncryptFrom)]` emits the record's
+  plan**, `Record::plan()`, and its `encryption()` runs it: a `struct = ..`
+  record a fields plan of `encrypt_into` fields, a `plaintext = T` record
+  `Plan::value::<T>().encrypt_into::<(A, B, ..)>()` over its outputs. The
+  bytes are the same as before. `DecryptInto` is unchanged.
+- `Plan::value::<S>().context_field::<C>()` (`plan::ContextFieldStart`,
+  `plan::Stored`): a one-value plan whose output is `(C, T)`, the call's
+  context carried out beside the target, run through
+  `ValuePlan::encryption_with_context` and
+  `ValuePlan::decryption_with_context` (checked against an
+  `ExpectedContext` before any key request). A `Typed` plan gains
+  `encryption_with_context::<K, C>()`, run under a context of any type the
+  target accepts.
+- `target::JoinContext` (sealed): the context a tuple of targets takes,
+  the one every element accepts. A tuple of ciphertexts takes an
+  `AeadContext`; a ciphertext beside a term takes a `CallerContext`.
 
 ## [0.2.0] - 2026-10-04
 
