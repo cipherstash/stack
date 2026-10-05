@@ -148,7 +148,8 @@ struct PlanInner<S: 'static, K: 'static> {
 struct Built<S: 'static, K: 'static> {
     plan: FieldPlan,
     lower: Lower<S, K>,
-    open: Option<Opener<K>>,
+    probe: Probe<S>,
+    open: Option<Reader<K>>,
 }
 
 /// A field's description, produced afresh for each run: a description is
@@ -160,9 +161,41 @@ type Lower<S, K> = Arc<
         + Sync,
 >;
 /// A field's opening, from the stored value and the context it was sealed
-/// under: `None` for an index-only field, whose terms are one-way.
+/// under.
 type Opener<K> =
     Arc<dyn Fn(&str, Slot, AeadContext) -> Result<Decryption<Slot, K>, PlanError> + Send + Sync>;
+/// Whether a value produces a field at the plan's type: what the field's
+/// lowering will find in it, asked before any keyset is loaded.
+type Probe<S> = Arc<dyn Fn(&S) -> Result<(), Error> + Send + Sync>;
+/// Whether a stored value is one a field's opening reads, or the type it
+/// expects: the opening's own type check, asked before any keyset is
+/// loaded.
+type Holds = fn(&Slot) -> Result<(), &'static str>;
+
+/// How a field comes back from a stored record. An index-only field has
+/// none: its terms are one-way.
+struct Reader<K> {
+    holds: Holds,
+    open: Opener<K>,
+}
+
+impl<K> Clone for Reader<K> {
+    fn clone(&self) -> Self {
+        Self {
+            holds: self.holds,
+            open: Arc::clone(&self.open),
+        }
+    }
+}
+
+/// A stored value read as exactly a `T`.
+fn holds<T: 'static>(slot: &Slot) -> Result<(), &'static str> {
+    if slot.is::<T>() {
+        Ok(())
+    } else {
+        Err(type_name::<T>())
+    }
+}
 
 impl<S: 'static, K: 'static> Clone for Plan<S, K> {
     fn clone(&self) -> Self {
@@ -263,13 +296,26 @@ impl<S, X: Indexes<S>> ValuePlanBuilder<S, X> {
     /// [`PlanError::ContextLabel`] or [`PlanError::DuplicateIndex`], in
     /// [`Error::Plan`].
     pub fn build(self) -> Result<ValuePlan<S, X>, Error> {
-        let context = self.context.map_err(PlanError::ContextLabel)?;
-        check_indexes(&context.to_string(), &self.indexes.specs())?;
+        let context = self.checked_context()?;
         Ok(ValuePlan {
             context,
             indexes: self.indexes,
             plaintext: PhantomData,
         })
+    }
+
+    /// The context, once the plan has passed [`build`](Self::build)'s
+    /// checks.
+    fn checked_context(&self) -> Result<Label, Error> {
+        let context = self.context.clone().map_err(PlanError::ContextLabel)?;
+        check_indexes(&context.to_string(), &self.indexes.specs())?;
+        Ok(context)
+    }
+
+    /// Validate the plan as [`build`](Self::build) does, without building
+    /// it: what a chain asks before it loads a keyset.
+    pub(super) fn check(&self) -> Result<(), Error> {
+        self.checked_context().map(drop)
     }
 }
 
@@ -351,7 +397,8 @@ struct Declared<S: 'static, K: 'static> {
     type_id: TypeId,
     type_name: &'static str,
     lower: Lower<S, K>,
-    open: Option<Opener<K>>,
+    probe: Probe<S>,
+    open: Option<Reader<K>>,
 }
 
 impl<S: 'static, K: 'static> fmt::Debug for FieldsBuilder<S, K> {
@@ -419,8 +466,13 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
         kind: FieldKind,
         indexes: Vec<IndexSpec>,
         lower: Lower<S, K>,
-        open: Option<Opener<K>>,
-    ) -> Self {
+        open: Option<Reader<K>>,
+    ) -> Self
+    where
+        S: Field<F>,
+    {
+        let field: Arc<str> = Arc::from(name);
+        let probe: Probe<S> = Arc::new(move |source: &S| pick::<S, F>(source, &field).map(drop));
         self.fields.push(Declared {
             name: Arc::from(name),
             identity: None,
@@ -429,6 +481,7 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
             type_id: TypeId::of::<F>(),
             type_name: type_name::<F>(),
             lower,
+            probe,
             open,
         });
         self
@@ -453,9 +506,12 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
                     .project_by(move |source: &S| pick::<S, F>(source, &field))
                     .map(Slot::new)
             }),
-            Some(Arc::new(|field, slot, context| {
-                Ok(open_sealed::<F, K>(stored(field, slot)?, context))
-            })),
+            Some(Reader {
+                holds: holds::<StackCipherText>,
+                open: Arc::new(|field, slot, context| {
+                    Ok(open_sealed::<F, K>(stored(field, slot)?, context))
+                }),
+            }),
         )
     }
 
@@ -497,13 +553,19 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
             }),
             // A stored row may hold the whole `Encrypted<Terms>`, or only
             // its ciphertext: the terms are not needed to decrypt.
-            Some(Arc::new(|field, slot, context| {
-                let ciphertext = match slot.downcast::<Encrypted<X::Terms>>() {
-                    Ok(encrypted) => encrypted.ciphertext,
-                    Err(slot) => stored::<StackCipherText>(field, slot)?,
-                };
-                Ok(open_sealed::<F, K>(ciphertext, context))
-            })),
+            Some(Reader {
+                holds: |slot| match slot.is::<Encrypted<X::Terms>>() {
+                    true => Ok(()),
+                    false => holds::<StackCipherText>(slot),
+                },
+                open: Arc::new(|field, slot, context| {
+                    let ciphertext = match slot.downcast::<Encrypted<X::Terms>>() {
+                        Ok(encrypted) => encrypted.ciphertext,
+                        Err(slot) => stored::<StackCipherText>(field, slot)?,
+                    };
+                    Ok(open_sealed::<F, K>(ciphertext, context))
+                }),
+            }),
         )
     }
 
@@ -572,9 +634,12 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
                     .project_by(move |source: &S| pick::<S, F>(source, &field))
                     .map(Slot::new)
             }),
-            Some(Arc::new(|field, slot, _| {
-                Ok(Decryption::ready(Slot::new(stored::<F>(field, slot)?)))
-            })),
+            Some(Reader {
+                holds: holds::<F>,
+                open: Arc::new(|field, slot, _| {
+                    Ok(Decryption::ready(Slot::new(stored::<F>(field, slot)?)))
+                }),
+            }),
         )
     }
 
@@ -619,7 +684,23 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     where
         S: Fields,
     {
-        let context = self.context.map_err(PlanError::ContextLabel)?;
+        self.freeze()
+    }
+
+    /// Validate the plan as [`build`](Self::build) does, without freezing
+    /// it: what a chain asks before it loads a keyset.
+    pub(super) fn check(&self) -> Result<(), Error>
+    where
+        S: Fields,
+    {
+        self.freeze().map(drop)
+    }
+
+    fn freeze(&self) -> Result<Plan<S, K>, Error>
+    where
+        S: Fields,
+    {
+        let context = self.context.clone().map_err(PlanError::ContextLabel)?;
         if self.identity_without_field {
             return Err(PlanError::IdentityWithoutField.into());
         }
@@ -646,6 +727,7 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
                     type_name: field.type_name,
                 },
                 lower: Arc::clone(&field.lower),
+                probe: Arc::clone(&field.probe),
                 open: field.open.clone(),
             });
         }
@@ -813,6 +895,49 @@ impl<S: 'static, K: 'static> Plan<S, K> {
         record.map(FieldValues::from_slots)
     }
 
+    /// A value against the plan, as running it checks it: the value's
+    /// fields are the plan's, and each is of the type the plan declares.
+    fn check_value(&self, source: &S) -> Result<(), Error>
+    where
+        S: Fields,
+    {
+        check_value(source, &self.inner.names)?;
+        self.inner
+            .fields
+            .iter()
+            .try_for_each(|field| (field.probe)(source))
+    }
+
+    /// A stored record against the plan, as opening it checks it: every
+    /// field of the record is one the plan names, and every field the plan
+    /// can return is in it, of a type its opening reads.
+    fn check_record(&self, record: &FieldValues) -> Result<(), PlanError> {
+        if let Some(extra) = record
+            .names()
+            .find(|name| !self.inner.names.iter().any(|p| &**p == *name))
+        {
+            return Err(PlanError::NotInPlan {
+                field: extra.to_owned(),
+            });
+        }
+        for field in &self.inner.fields {
+            let Some(reader) = &field.open else {
+                continue;
+            };
+            let name = field.plan.name();
+            let Some(slot) = record.slot(name) else {
+                return Err(PlanError::NotInValue {
+                    field: name.to_owned(),
+                });
+            };
+            (reader.holds)(slot).map_err(|expected| PlanError::FieldType {
+                field: name.to_owned(),
+                expected,
+            })?;
+        }
+        Ok(())
+    }
+
     /// The opening of a stored record: each sealed field opened under the
     /// context it was sealed under (its label, extended by `context`),
     /// passthrough fields carried back, index-only fields left out. Every
@@ -823,21 +948,13 @@ impl<S: 'static, K: 'static> Plan<S, K> {
         mut row: FieldValues,
         context: DeclaredContext,
     ) -> Decryption<FieldValues, K> {
-        if let Some(extra) = row
-            .names()
-            .find(|name| !self.inner.names.iter().any(|p| &**p == *name))
-        {
-            return Decryption::failed(
-                PlanError::NotInPlan {
-                    field: extra.to_owned(),
-                }
-                .into(),
-            );
+        if let Err(error) = self.check_record(&row) {
+            return Decryption::failed(error.into());
         }
         let mut record = Decryption::ready(Vec::new());
         for field in &self.inner.fields {
             let slot = row.take_slot(field.plan.name());
-            let Some(open) = &field.open else {
+            let Some(Reader { open, .. }) = &field.open else {
                 continue;
             };
             let opening = match slot {
@@ -884,6 +1001,18 @@ pub trait Runs<Src: ?Sized, K> {
         source: &Src,
         context: DeclaredContext,
     ) -> Pending<'p, Self::Output, K>;
+
+    /// Whether `source` is one the plan can run over: the refusals
+    /// [`pending`](Self::pending) would raise about the value, asked before
+    /// a chain loads a keyset. A plan with nothing to check about a value
+    /// keeps this default.
+    ///
+    /// # Errors
+    ///
+    /// The [`Error::Plan`] that running the plan over `source` would raise.
+    fn check(&self, _source: &Src) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 /// A plan that can open a stored `R`, producing `Output`: what
@@ -893,6 +1022,18 @@ pub trait Opens<R, K> {
     type Output: 'static;
     /// The opening of `row` under `context`.
     fn decryption(&self, row: R, context: DeclaredContext) -> Decryption<Self::Output, K>;
+
+    /// Whether `row` is one the plan can open: the refusals
+    /// [`decryption`](Self::decryption) would raise about the record,
+    /// asked before a chain loads a keyset. A plan with nothing to check
+    /// about a record keeps this default.
+    ///
+    /// # Errors
+    ///
+    /// The [`Error::Plan`] that opening `row` would raise.
+    fn check(&self, _row: &R) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 impl<S: Fields + 'static, K: 'static> Runs<S, K> for Plan<S, K> {
@@ -904,6 +1045,10 @@ impl<S: Fields + 'static, K: 'static> Runs<S, K> for Plan<S, K> {
         context: DeclaredContext,
     ) -> Pending<'p, FieldValues, K> {
         keyset.run(self.encryption(), source, context)
+    }
+
+    fn check(&self, source: &S) -> Result<(), Error> {
+        self.check_value(source)
     }
 }
 
@@ -944,6 +1089,11 @@ macro_rules! runs_over_collections {
                         .collect(),
                 )
             }
+            fn check(&self, source: &[$item]) -> Result<(), Error> {
+                source
+                    .iter()
+                    .try_for_each(|item| Runs::<$item, K>::check(self, item))
+            }
         }
         impl<$($generics)*> Runs<Vec<$item>, K> for $plan where $($bounds)* {
             type Output = Vec<<Self as Runs<$item, K>>::Output>;
@@ -954,6 +1104,9 @@ macro_rules! runs_over_collections {
                 context: DeclaredContext,
             ) -> Pending<'p, Self::Output, K> {
                 Runs::<[$item], K>::pending(self, keyset, source.as_slice(), context)
+            }
+            fn check(&self, source: &Vec<$item>) -> Result<(), Error> {
+                Runs::<[$item], K>::check(self, source.as_slice())
             }
         }
     )+};
@@ -968,6 +1121,9 @@ impl<S: 'static, K: 'static> Opens<FieldValues, K> for Plan<S, K> {
     fn decryption(&self, row: FieldValues, context: DeclaredContext) -> Decryption<FieldValues, K> {
         Plan::decryption(self, row, context)
     }
+    fn check(&self, row: &FieldValues) -> Result<(), Error> {
+        Ok(self.check_record(row)?)
+    }
 }
 
 impl<S: 'static, K: 'static> Opens<Vec<FieldValues>, K> for Plan<S, K> {
@@ -981,6 +1137,9 @@ impl<S: 'static, K: 'static> Opens<Vec<FieldValues>, K> for Plan<S, K> {
             rows.into_iter()
                 .map(|row| Plan::decryption(self, row, context.clone())),
         )
+    }
+    fn check(&self, rows: &Vec<FieldValues>) -> Result<(), Error> {
+        rows.iter().try_for_each(|row| Ok(self.check_record(row)?))
     }
 }
 

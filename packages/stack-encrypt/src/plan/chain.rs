@@ -108,9 +108,14 @@ mod sealed {
 /// One finished chain: something `.await` settles, and [`all`] batches.
 ///
 /// Sealed: the chains in this module are the operations. What the trait
-/// shows is the shape the design promises: a chain yields a [`Pending`]
-/// synchronously ([`prepare`](Self::prepare)), with every term derived and
-/// every key request queued, and only awaiting it reaches ZeroKMS.
+/// shows is the shape the design promises: a chain is checked with no I/O
+/// ([`check`](Self::check)), then yields a [`Pending`] synchronously
+/// ([`prepare`](Self::prepare)), with every term derived and every key
+/// request queued, and only awaiting it reaches ZeroKMS.
+///
+/// Awaiting a chain checks it before it loads a keyset it names, so a plan
+/// that does not hold up is refused before any request to ZeroKMS, the
+/// keyset lookup included.
 pub trait Operation<'a, K: 'static>: sealed::Sealed + Sized {
     /// What the chain produces.
     type Output: 'static;
@@ -118,6 +123,14 @@ pub trait Operation<'a, K: 'static>: sealed::Sealed + Sized {
     fn cipher(&self) -> &'a StackCipher<K>;
     /// The keyset the chain names, if any, taken out of it.
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>>;
+    /// The chain's plan, and the value or record it runs over, checked
+    /// with no I/O and no keyset: the [`Error::Plan`] refusals
+    /// [`prepare`](Self::prepare) would raise.
+    ///
+    /// # Errors
+    ///
+    /// The first refusal, as [`prepare`](Self::prepare) would report it.
+    fn check(&self) -> Result<(), Error>;
     /// Lower the chain and build its [`Pending`] under `keyset`, with no
     /// I/O. `scoped` says whether `keyset` was named: an opening is then
     /// confined to it, and otherwise opens leaves from any keyset.
@@ -167,6 +180,7 @@ where
     O: Operation<'a, K> + MaybeSend + 'a,
 {
     Box::pin(async move {
+        operation.check()?;
         let choice = operation.take_keyset();
         let (keyset, scoped) = resolve(operation.cipher(), vec![choice]).await?;
         operation.prepare(&keyset, scoped).settle().await
@@ -345,6 +359,12 @@ where
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
     }
+    fn check(&self) -> Result<(), Error> {
+        match &self.context {
+            Ok(_) => Ok(()),
+            Err(error) => Err(PlanError::ContextLabel(*error).into()),
+        }
+    }
     fn prepare<'p>(self, keyset: &'p KeysetCipher<'a, K>, _: bool) -> Pending<'p, Self::Output, K>
     where
         'a: 'p,
@@ -378,6 +398,9 @@ where
     }
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
+    }
+    fn check(&self) -> Result<(), Error> {
+        self.plan.check()
     }
     fn prepare<'p>(self, keyset: &'p KeysetCipher<'a, K>, _: bool) -> Pending<'p, Self::Output, K>
     where
@@ -460,6 +483,9 @@ impl<'a, S: Fields + 'static, K: 'static> Operation<'a, K> for EncryptFields<'a,
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
     }
+    fn check(&self) -> Result<(), Error> {
+        self.plan.check()
+    }
     fn prepare<'p>(self, keyset: &'p KeysetCipher<'a, K>, _: bool) -> Pending<'p, Self::Output, K>
     where
         'a: 'p,
@@ -485,6 +511,9 @@ impl<'a, S: ?Sized, P: Runs<S, K>, K: 'static> Operation<'a, K> for EncryptUsing
     }
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
+    }
+    fn check(&self) -> Result<(), Error> {
+        self.plan.check(self.source)
     }
     fn prepare<'p>(self, keyset: &'p KeysetCipher<'a, K>, _: bool) -> Pending<'p, Self::Output, K>
     where
@@ -589,6 +618,12 @@ impl<'a, F: 'static, I: Index<F>, K: 'static> Operation<'a, K> for QueryIndex<'a
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
     }
+    fn check(&self) -> Result<(), Error> {
+        match &self.label {
+            Ok(_) => Ok(()),
+            Err(error) => Err(error.clone().into()),
+        }
+    }
     fn prepare<'p>(self, keyset: &'p KeysetCipher<'a, K>, _: bool) -> Pending<'p, Self::Output, K>
     where
         'a: 'p,
@@ -639,6 +674,9 @@ impl<'a, R, P: Opens<R, K>, K: 'static> Operation<'a, K> for OpenUsing<'a, R, P,
     }
     fn take_keyset(&mut self) -> Option<KeysetChoice<'a, K>> {
         self.common.keyset.take()
+    }
+    fn check(&self) -> Result<(), Error> {
+        self.plan.check(&self.row)
     }
     fn prepare<'p>(
         self,
@@ -727,7 +765,10 @@ impl<K, T> std::fmt::Debug for All<'_, K, T> {
 /// be the same for all, or the client's default) and their [`Pending`]s
 /// are zipped, so however many there are, awaiting makes one `generate`
 /// call and one `retrieve` call per keyset at most. Chains naming different
-/// keysets are [`Error::KeysetMismatch`], before any request.
+/// keysets are [`Error::KeysetMismatch`], before any key request. Every
+/// chain is checked ([`Operation::check`]) before any keyset is loaded, so
+/// one chain whose plan does not hold up fails the batch with no request at
+/// all.
 ///
 /// ```
 /// # async fn example() -> Result<(), stack_encrypt::Error> {
@@ -776,6 +817,8 @@ macro_rules! all_of {
             fn into_future(self) -> Self::IntoFuture {
                 let (mut $first, $(mut $rest),+) = self.operations;
                 Box::pin(async move {
+                    $first.check()?;
+                    $($rest.check()?;)+
                     let cipher = $first.cipher();
                     let choices = vec![$first.take_keyset(), $($rest.take_keyset()),+];
                     let (keyset, scoped) = resolve(cipher, choices).await?;

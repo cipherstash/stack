@@ -133,6 +133,11 @@ impl Slot {
             .map_err(|value| Self { value, type_name })
     }
 
+    /// Whether the value is a `T`.
+    pub(crate) fn is<T: Any>(&self) -> bool {
+        self.value.is::<T>()
+    }
+
     pub(crate) fn type_name(&self) -> &'static str {
         self.type_name
     }
@@ -225,6 +230,13 @@ impl FieldValues {
     pub(crate) fn take_slot(&mut self, name: &str) -> Option<Slot> {
         let at = self.slots.iter().position(|(have, _)| &**have == name)?;
         Some(self.slots.remove(at).1)
+    }
+
+    pub(crate) fn slot(&self, name: &str) -> Option<&Slot> {
+        self.slots
+            .iter()
+            .find(|(have, _)| &**have == name)
+            .map(|(_, slot)| slot)
     }
 
     /// Remove the field `name`, whatever it holds; whether there was one.

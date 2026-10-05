@@ -6,7 +6,7 @@ mod common;
 
 use std::sync::atomic::Ordering;
 
-use common::{counting_cipher, recording_cipher, stack_cipher};
+use common::{counting_cipher, loads_counting_cipher, recording_cipher, stack_cipher};
 use stack_encrypt::kms::{FakeDataKeySource, IdentifiedBy};
 use stack_encrypt::plan::{
     Field, FieldKind, FieldSchema, FieldValues, Fields, Operation, PlanError,
@@ -664,6 +664,135 @@ async fn a_value_that_does_not_match_the_plan_is_refused_without_a_key_request()
         }
     );
     assert_eq!(generates.load(Ordering::SeqCst), 0, "no key requested");
+}
+
+/// A chain naming a keyset is checked before the keyset is loaded: a plan
+/// that does not hold up asks ZeroKMS nothing, the keyset lookup included,
+/// and its own refusal is what comes back.
+#[tokio::test]
+async fn a_refused_chain_never_loads_the_keyset_it_names() {
+    let (cipher, loads) = loads_counting_cipher().await;
+    let users_plan: Plan<User, _> = users_plan();
+    let age_plan = users_plan.field("age").unwrap();
+    let doc = String::from("doc");
+    let loose_plan: Plan<Loose, _> = Plan::context("users")
+        .fields()
+        .encrypt::<String>("email")
+        .encrypt::<String>("age")
+        .build()
+        .unwrap();
+    let loose = |names: Vec<&'static str>| Loose {
+        names,
+        email: "bob@example.com".into(),
+        age: 34,
+    };
+    let row = || async { cipher.encrypt(&user()).using(&users_plan).await.unwrap() };
+    let mut rogue = row().await;
+    rogue.insert("rogue", 1u8);
+    let mut retyped = row().await;
+    retyped.insert("id", "wrong".to_string());
+    assert_eq!(
+        loads.load(Ordering::SeqCst),
+        0,
+        "the default keyset is in hand"
+    );
+
+    assert!(matches!(
+        plan_error(
+            cipher
+                .encrypt(&doc)
+                .context("docs//x")
+                .keyset("tenant")
+                .await
+        ),
+        PlanError::ContextLabel(_)
+    ));
+    assert!(matches!(
+        plan_error(
+            cipher
+                .encrypt(&34u32)
+                .context("users/age")
+                .with((Equality, Equality))
+                .keyset("tenant")
+                .await
+        ),
+        PlanError::DuplicateIndex { .. }
+    ));
+    assert!(matches!(
+        plan_error(
+            cipher
+                .encrypt(&user())
+                .context("users")
+                .fields()
+                .encrypt::<String>("email")
+                .encrypt::<String>("email")
+                .keyset("tenant")
+                .await
+        ),
+        PlanError::DuplicateField { .. }
+    ));
+    assert!(matches!(
+        plan_error(
+            cipher
+                .encrypt(&loose(vec!["email", "age", "rogue"]))
+                .using(&loose_plan)
+                .keyset("tenant")
+                .await
+        ),
+        PlanError::NotInPlan { field } if field == "rogue"
+    ));
+    assert!(matches!(
+        plan_error(
+            cipher
+                .encrypt(&vec![loose(vec!["email", "age"])])
+                .using(&loose_plan)
+                .keyset("tenant")
+                .await
+        ),
+        PlanError::FieldType { field, .. } if field == "age"
+    ));
+    assert!(matches!(
+        plan_error(
+            cipher
+                .query(&34u32)
+                .using(&age_plan)
+                .index(Ope)
+                .keyset("tenant")
+                .await
+        ),
+        PlanError::IndexNotDeclared { .. }
+    ));
+    assert!(matches!(
+        plan_error(cipher.open(rogue).using(&users_plan).keyset("tenant").await),
+        PlanError::NotInPlan { field } if field == "rogue"
+    ));
+    assert!(matches!(
+        plan_error(
+            cipher
+                .open(vec![retyped])
+                .using(&users_plan)
+                .keyset("tenant")
+                .await
+        ),
+        PlanError::FieldType { field, expected: "u64" } if field == "id"
+    ));
+    assert_eq!(loads.load(Ordering::SeqCst), 0, "no keyset was loaded");
+
+    let refused = stack_encrypt::all((
+        cipher.encrypt(&doc).context("docs").keyset("tenant"),
+        cipher.encrypt(&doc).context("docs//x"),
+    ))
+    .await;
+    assert!(matches!(plan_error(refused), PlanError::ContextLabel(_)));
+    assert_eq!(loads.load(Ordering::SeqCst), 0, "nor in a batch");
+
+    assert!(cipher
+        .encrypt(&doc)
+        .context("docs")
+        .keyset("tenant")
+        .await
+        .is_ok());
+    assert_eq!(loads.load(Ordering::SeqCst), 1, "a valid chain loads it");
 }
 
 #[tokio::test]
