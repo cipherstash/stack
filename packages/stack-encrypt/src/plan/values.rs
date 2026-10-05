@@ -203,13 +203,19 @@ impl FieldValues {
     /// [`PlanError::FieldType`] if it is not a `T`, in which case the field
     /// stays in the record.
     pub fn take<T: Any>(&mut self, name: &str) -> Result<T, Error> {
-        let slot = self.take_slot(name).ok_or_else(|| PlanError::NotInValue {
-            field: name.to_owned(),
-        })?;
-        slot.downcast::<T>().map_err(|slot| {
-            self.slots.push((Arc::from(name), slot));
-            PlanError::FieldType {
+        let at = self
+            .slots
+            .iter()
+            .position(|(have, _)| &**have == name)
+            .ok_or_else(|| PlanError::NotInValue {
                 field: name.to_owned(),
+            })?;
+        let (name, slot) = self.slots.remove(at);
+        slot.downcast::<T>().map_err(|slot| {
+            // Back where it was: the record keeps its order.
+            self.slots.insert(at, (Arc::clone(&name), slot));
+            PlanError::FieldType {
+                field: name.to_string(),
                 expected: type_name::<T>(),
             }
             .into()
@@ -300,6 +306,14 @@ mod tests {
             Err(Error::Plan(PlanError::FieldType { field, .. })) if field == "age"
         ));
         assert!(values.contains("age"), "a wrong-type take leaves the field");
+        values.insert("email", String::from("e"));
+        assert!(values.take::<String>("age").is_err());
+        assert_eq!(
+            values.names().collect::<Vec<_>>(),
+            ["age", "email"],
+            "a wrong-type take leaves the field where it was"
+        );
+        assert!(values.remove("email"));
         assert_eq!(values.take::<u32>("age").unwrap(), 34);
         assert!(!values.contains("age"), "a take removes the field");
         values.insert("age", 34u32);
