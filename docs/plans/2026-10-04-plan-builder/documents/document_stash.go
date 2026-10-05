@@ -79,11 +79,3 @@ func Encrypt(ctx context.Context, cipher *encrypt.Cipher, documents []Document) 
 func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedDocument) ([]Document, error) {
 	return codec.Decrypt(ctx, d, encrypted)
 }
-
-func EncryptInto(dst *[]EncryptedDocument, documents []Document) encrypt.Operation {
-	return codec.EncryptInto(dst, documents)
-}
-
-func DecryptInto(dst *[]Document, encrypted []EncryptedDocument) encrypt.Operation {
-	return codec.DecryptInto(dst, encrypted)
-}

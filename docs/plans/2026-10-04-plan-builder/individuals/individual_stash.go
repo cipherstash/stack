@@ -103,14 +103,6 @@ func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedIndi
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
-func EncryptInto(dst *[]EncryptedIndividual, individuals []*pb.Individual) encrypt.Operation {
-	return codec.EncryptInto(dst, individuals)
-}
-
-func DecryptInto(dst *[]*pb.Individual, encrypted []EncryptedIndividual) encrypt.Operation {
-	return codec.DecryptInto(dst, encrypted)
-}
-
 var Fields = struct {
 	Name       NameField
 	Email      EmailField

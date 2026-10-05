@@ -89,14 +89,6 @@ func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedAcco
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
-func EncryptInto(dst *[]EncryptedAccount, accounts []Account) encrypt.Operation {
-	return codec.EncryptInto(dst, accounts)
-}
-
-func DecryptInto(dst *[]Account, encrypted []EncryptedAccount) encrypt.Operation {
-	return codec.DecryptInto(dst, encrypted)
-}
-
 var Fields = struct {
 	Email EmailField
 }{

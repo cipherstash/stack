@@ -594,6 +594,11 @@ An `opaque` struct has no tags on its fields.
 Nothing inside it can be read or searched on its own.
 A value with no struct around it is a struct with one field.
 
+An `opaque` struct is the one way to seal a whole value.
+It goes to the engine with a declaration, as every other struct does.
+So a sealed value always has a declared context, and `Extend` appends to it.
+No call seals a value under a context that the caller passes, or under none.
+
 ### Columns
 
 A field maps to its columns in one of two layouts.
@@ -669,8 +674,6 @@ For `-type User`, the file `user_stash.go` holds:
 - **`Fields`.**
   It has one entry for each sealed field.
   An entry encrypts one value of that field, and it has a query method only for what the field declares.
-- **`EncryptInto` and `DecryptInto`.**
-  They describe the same work for a batch, and name the variable that gets the result.
 - **Print methods on `EncryptedUser`.**
   `String` and `LogValue` print the passthrough fields and hide the sealed ones.
 - **The declaration.**
@@ -689,9 +692,6 @@ See [`users/model.go`](2026-10-04-plan-builder/users/model.go) and [`users/user_
 | `users.Fields.Email.Encrypt(ctx, c, v string)` | the field's generated type, for an update of one column |
 | `users.Fields.Email.Query(ctx, c, v string)` | an EQL query value, for a field with `encrypt_into` |
 | `users.Fields.Email.Equality`, `.Match`, `.Ore`, `.Ope` | one term, for a field with `index=` |
-| `users.EncryptInto(dst *[]EncryptedUser, vs []User)` | a `encrypt.Operation`, for a batch |
-| `users.DecryptInto(dst *[]User, es []EncryptedUser)` | a `encrypt.Operation`, for a batch |
-| `encrypt.Batch(ctx, c, ops ...Operation)` | nothing; it writes each result to its `dst` |
 
 Every call also returns an `error`.
 `Encrypt` and `Decrypt` take a slice, and send one ZeroKMS request for all of it.
@@ -701,19 +701,7 @@ For one value, pass a slice with one element.
 A field entry's `Encrypt` and its query methods take one value.
 A term derives with no request, so there is nothing to batch.
 
-`Batch` runs operations on any number of types in one ZeroKMS request.
-It writes each result to the variable that the operation names.
-The compiler checks that the variable has the result's type.
-
-```go
-var encryptedUsers []users.EncryptedUser
-var encryptedContacts []contacts.EncryptedContact
-
-err := encrypt.Batch(ctx, cipher,
-	users.EncryptInto(&encryptedUsers, people),
-	contacts.EncryptInto(&encryptedContacts, list),
-)
-```
+Each call sends one request, so two types take two calls and two requests.
 
 `*Client` and `*Cipher` both implement `Decrypter`.
 A `*Client` decrypts each value under the keyset that sealed it.
@@ -728,6 +716,7 @@ cipher := client.Keyset(encrypt.KeysetName("tenant-42")).Extend("tenant-42")
 ```
 
 `Extend` returns a cipher that extends the context of every field, in every call through it.
+It appends to the context that the tags declare, and it never replaces that context.
 No call takes a keyset or a context.
 So the write, the query and the read cannot use different ones.
 
@@ -965,6 +954,9 @@ It sends nothing for a field that is left out.
 
 So every field the engine is told of has a value, and every value has a field.
 The generated file still names every field, so a reviewer reads the whole declaration.
+
+Every call to the guest carries a declaration.
+The guest's exports that take a value and no declaration have no caller in Go.
 
 Generated code assembles an EQL value from the engine's ciphertext and terms.
 Two fixtures that both test suites read guard the bytes:
@@ -1223,6 +1215,15 @@ Then:
 
 ## Open questions
 
+- **One request for several types.**
+  One call covers one type today, because the guest takes one declaration in a call.
+  One request for several types needs the engine to run several plans under one key request.
+  It also needs a guest export that takes several declarations, each with its values.
+  The Go call for it is designed after that work.
+- **The history in this plan.**
+  "Why the first draft was dropped" and the rejected names under "Decisions" are history.
+  The design principles keep history out of a design document, so those parts move to ADR-0007.
+  Dan Draper owns that move.
 - **Query building in Go.**
   The SDK gives the values for a search, and the program writes the SQL.
   A design for building that SQL is separate work.

@@ -41,6 +41,12 @@ When two principles disagree, the document gives the order to apply them in.
   Its users write struct tags and call generated functions, and they never see a plan.
 - An SDK in a typed language finds most mistakes before the program runs.
   An SDK in a dynamic language ships rules for the language's type checkers and linters.
+- The Go SDK has no cipher-directed path.
+  A whole value is sealed through a declaration, so it always has a declared context.
+  A caller's context appends to the declared one.
+  ADR-0003 keeps the cipher-directed path open for Rust, and that does not change.
+- One request for several types needs work in the engine and in the guest first.
+  Until then, one call covers one type.
 - Each language SDK is its own design.
   The principles say what must match between them: the bytes, the words for engine behaviour, and fail-closed behaviour.
 - Three questions are open, and the principles document lists them.

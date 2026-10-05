@@ -11,8 +11,9 @@ derivation of searchable index terms from the same values. Covers
 Encryption driven by the value's shape: the value's `Encrypt` implementation
 walks the cipher and the caller decides the context, which may be absent.
 Nothing declares an index and no output type is involved. One of the two
-preferred entry points for a native Rust caller, and the one path every
-binding has natively.
+preferred entry points for a native Rust caller. A language SDK may leave it
+out: the Go SDK seals a whole value through a plan, so that every sealed
+value has a declared context.
 _Avoid_: raw path, low-level path
 
 **Target-directed**:

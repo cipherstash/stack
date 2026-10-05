@@ -58,14 +58,9 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	// Two types in one ZeroKMS request.
+	// One call for each type, and one ZeroKMS request for each call.
 	list := []crm.Contact{{ID: 9, Email: "dan@example.com", PhoneNumber: "+61 400 000 000"}}
-	var encryptedUsers []users.EncryptedUser
-	var encryptedContacts []contacts.EncryptedContact
-	err = encrypt.Batch(ctx, cipher,
-		users.EncryptInto(&encryptedUsers, newHires),
-		contacts.EncryptInto(&encryptedContacts, list),
-	)
+	encryptedContacts, err := contacts.Encrypt(ctx, cipher, list)
 	if err != nil {
 		return err
 	}
@@ -79,7 +74,7 @@ func run(ctx context.Context) error {
 	}
 
 	// Print ids and counts only. Every other value here is plaintext.
-	fmt.Println("bob:", ids(bobs), "batched:", len(encryptedUsers), len(encryptedContacts))
+	fmt.Println("bob:", ids(bobs), "contacts:", len(encryptedContacts))
 	return nil
 }
 

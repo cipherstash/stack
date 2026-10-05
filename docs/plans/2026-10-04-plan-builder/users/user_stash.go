@@ -89,16 +89,6 @@ func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedUser
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
-// EncryptInto and DecryptInto describe the same work for encrypt.Batch,
-// which runs it and writes the result to dst.
-func EncryptInto(dst *[]EncryptedUser, users []User) encrypt.Operation {
-	return codec.EncryptInto(dst, users)
-}
-
-func DecryptInto(dst *[]User, encrypted []EncryptedUser) encrypt.Operation {
-	return codec.DecryptInto(dst, encrypted)
-}
-
 var Fields = struct {
 	Email EmailField
 	Name  NameField
