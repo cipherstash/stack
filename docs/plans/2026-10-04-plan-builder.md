@@ -229,9 +229,19 @@ let (record, q) = stack_encrypt::all((
     cipher.query("bob@example.com").using(&email_plan).equality(),
 )).await?;
 
-// Typed, from the derive, which emits the same plan.
-let record: EncryptedUser = cipher.encrypt(&user).using(EncryptedUser::plan()).await?;
+// Typed, from the derive, which emits the same plan. `plan()` returns a
+// `Result` and is generic over the key source, so it is borrowed after `?`.
+let record: EncryptedUser = cipher.encrypt(&user).using(&EncryptedUser::plan()?).await?;
 ```
+
+The one-value start has a context-field form too: `Plan::value::<S>().context_field::<C>()`
+carries the call's context (a `NonEmpty<C>`) out beside the output, which is
+`(C, T)`. `encryption_with_context` and `decryption_with_context(record,
+ExpectedContext<C>)` run it, and the stored context is checked against the
+`ExpectedContext` before any key request. A tuple of targets takes the context
+every element accepts (`JoinContext`): the shared one when all agree, an
+`AeadContext` for ciphertexts alone, and a `CallerContext` for a ciphertext
+beside a term.
 
 `keyset(..)` may also sit on the cipher as it does today
 (`cipher.keyset("tenant-42").encrypt(..)`); both forms coexist because a
@@ -264,6 +274,15 @@ A plan takes its context from exactly one of three sources:
    context of every other field. It is stored as a passthrough field, so the
    record can be opened, and on open it is checked against the context each
    field was sealed under.
+
+A one-value plan also has a typed call-context path,
+`encryption_with_context::<K, C>()`, which runs the plan under the caller's
+context exactly as given: a `NonEmpty` of any context type, an integer or an
+AEAD-only context, not only a `Label`. This is how a derived `plaintext = T`
+record receives its caller's context. Parsing it into a label would change its
+bytes (`nonempty!("users/email")` is one escaped part, `Label::parse("users/email")`
+is two segments), so a two-part caller context stays one escaped part. A plan
+built with its own context refuses this path (`TwoContextSources`), without I/O.
 
 Two sources is an error. `.extend(parts)` is the only way to add to the
 context, and it extends whichever source the plan has. A plan given two
@@ -408,7 +427,7 @@ Items 1 to 4 shipped in #1068 and #1069; #1071 built the chain on them.
 ### Consolidation
 
 - **The derive emits the plan, after the derive is narrowed and the plan
-  widened.** The derive and a data plan are two authors of one grammar over
+  widened (done in #1076).** The derive and a data plan are two authors of one grammar over
   one executor; the derive is not kept on the combinators.
   `#[derive(EncryptFrom)]` generates `EncryptedUser::plan()` as a plan chain
   in the picker form, and `EncryptFrom::encryption()` returns the plan's
@@ -435,6 +454,20 @@ Items 1 to 4 shipped in #1068 and #1069; #1071 built the chain on them.
   typed verb `encrypt_into` in both positions, with `.with(indexes)` as its
   sugar; `Encrypted<Terms>: EncryptFrom<S>` with its byte-identity test; and
   the picker.
+
+  What #1076 settled, beyond the list above:
+  - A `struct` record's `DecryptInto` opens each field through its own
+    `DecryptField` under `<context>/<identity>` (extended by the caller's
+    context), which is what the plan's opener does for a typed field, rather
+    than through `Plan::decryption`. A decrypt-only derive has field types with
+    no `EncryptFrom`, and a plan cannot be built without it. For the same
+    reason a `plaintext = T` record's `DecryptInto` calls the tuple's
+    `DecryptInto` directly.
+  - Two outputs of a `plaintext = T` record that declare the same index are
+    refused when run (`PlanError::DuplicateIndex`, before any key request), not
+    at compile time: the derive sees type names, not the indexes they declare.
+  - No derive attribute maps to `passthrough` (a `default` field is filled with
+    a default, not carried from the source), so the derive emits none.
 - **`dynamic::record` becomes a lowering, not an executor.** It parses the
   data plan and drives the builder, with `dynamic::term`'s dispatch from a
   runtime scalar to a typed index as the one step that stays dynamic. Its own
@@ -689,15 +722,15 @@ Done:
 3. **The builder** (#1071): the one-value chain, the fields chain, `Plan`,
    `using`, `query`, `open`, `all`.
 
-Next, as stacked drafts on #1071:
+Next, as stacked drafts on #1071 (4, 5 and 6 are open drafts):
 
-4. **Narrow the derive**: the four removals in "Consolidation". The byte
-   changes are isolated in this PR and listed.
-5. **Widen the plan**: the two starts, the three context sources,
-   `encrypt_into` in both positions, `Encrypted<Terms>: EncryptFrom<S>`, the
-   picker, and the match and JSON options on the wire.
-6. **The derive emits the plan** (#1058), with byte identity proven on the
-   narrowed grammar.
+4. **Narrow the derive** (#1073, open draft): the four removals in
+   "Consolidation". The byte changes are isolated in this PR and listed.
+5. **Widen the plan** (#1074, open draft): the two starts, the three context
+   sources, `encrypt_into` in both positions, `Encrypted<Terms>: EncryptFrom<S>`,
+   the picker, and the match and JSON options on the wire.
+6. **The derive emits the plan** (#1058, PR #1076, open draft), with byte
+   identity proven on the narrowed grammar.
 
 Then:
 

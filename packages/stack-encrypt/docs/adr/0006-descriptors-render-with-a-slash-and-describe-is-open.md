@@ -62,7 +62,8 @@ Option 3. In detail:
 - A column is the pair. The derive's `struct = .., context = "<prefix>"`
   form binds a field under `("<prefix>", "<field>")`. A `context = ".."`
   literal on a field is one text part, exactly as written, and renders
-  escaped if it contains `/`. The derive still knows no tables (ADR-0003); a
+  escaped if it contains `/`. (Amended 2026-10-04: the field-level literal was
+  removed in #1073; see the note at the end.) The derive still knows no tables (ADR-0003); a
   consumer whose prefix is a table gets EQL's shape from it.
 - **`Describe` is an open trait** for a value whose parts are a descriptor
   of its own, the identity data is keyed under. An implementor returns a
@@ -108,3 +109,13 @@ Option 3. In detail:
   one width, still render alike (documented coarseness, unchanged). The
   rendering is one-to-one over part *trees* up to that coarseness, not over
   every encoding.
+
+## Amended 2026-10-04
+
+Field-level literal `#[stash(context = "..")]` and `#[stash(nested)]` were
+removed from the derive in #1073. A field is sealed under
+`<context>/<identity>`, where `#[stash(identity = "..")]` pins the identity
+part and otherwise the field name is used; a nested record is an ordinary typed
+field sealed under `<context>/<field>`, its inner layout being its own type's
+business. The struct-level `context = "<prefix>"` form and the rest of this
+decision are unchanged.
