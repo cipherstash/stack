@@ -17,14 +17,17 @@ The module path is `example.com/app`.
 | [`users/extend.go`](users/extend.go) | A context extension on the write, the query and the read |
 | [`sqlc/`](sqlc/) | The schema, the queries and the overrides that generate [`internal/userdb/`](internal/userdb/) |
 | [`contacts/contacts.go`](contacts/contacts.go) | A plan for [`crm.Contact`](crm/contact.go), a type in another package, with its generated file [`contactstash_stash.go`](contacts/contactstash_stash.go) |
-| [`individuals/individuals.go`](individuals/individuals.go) | A plan from the policy package, which the program checks at run time |
+| [`policy/policy.go`](policy/policy.go) | A policy that decides what to encrypt from each field's data categories |
+| [`cmd/genplans/main.go`](cmd/genplans/main.go) | The generate program that runs the policy |
+| [`individuals/`](individuals/) | A type with no tags, and [`individual_stash.go`](individuals/individual_stash.go), the file the policy gives |
+| [`individualstore/store.go`](individualstore/store.go) | A store that uses the generated type |
 | [`blocklist/blocklist.go`](blocklist/blocklist.go) | One value with no record around it, as a struct with one field, with its generated file [`blocked_stash.go`](blocklist/blocked_stash.go) |
 | [`documents/documents.go`](documents/documents.go) | One value sealed as one tree, decrypted with the client |
 | [`eql-sqlc/`](eql-sqlc/) | sqlc with EQL v3 domain columns, which generates [`internal/eqldb/`](internal/eqldb/) |
 
 ## Generate the encrypted type
 
-`stashgen` does not exist yet, so the three `_stash.go` files are written by hand as the files it will write.
+`stashgen` does not exist yet, so the four `_stash.go` files are written by hand as the files it will write.
 
 ## Generate the sqlc packages
 

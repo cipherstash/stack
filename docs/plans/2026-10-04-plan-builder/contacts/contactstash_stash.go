@@ -7,6 +7,7 @@ import (
 
 	"example.com/app/crm"
 	"github.com/cipherstash/stack/languages/golang/stackencrypt"
+	"github.com/cipherstash/stack/languages/golang/stackencrypt/stashrt"
 )
 
 type EncryptedContact struct {
@@ -38,35 +39,36 @@ type contactShape struct {
 
 // crm.Contact is not this package's type, so it cannot have a StashPlan
 // method. Call the plan's methods.
-var ContactPlan = stackencrypt.MustGenerate(stackencrypt.Generated[crm.Contact, EncryptedContact]{
-	Plan: stackencrypt.NewPlan("contacts").
-		EncryptIndex("email", stackencrypt.Equality, stackencrypt.Match()).
-		EncryptIndex("phone_number", stackencrypt.Equality).
-		MustBuild(),
-	Source: func(v crm.Contact) stackencrypt.Values {
-		return stackencrypt.Values{"email": v.Email, "phone_number": v.PhoneNumber}
+var contactSpec = stashrt.NewPlan("contacts").
+	EncryptIndex("email", stackencrypt.Equality, stackencrypt.Match()).
+	EncryptIndex("phone_number", stackencrypt.Equality)
+
+var ContactPlan = stashrt.New(stashrt.Generated[crm.Contact, EncryptedContact]{
+	Plan: contactSpec,
+	Source: func(v crm.Contact) stashrt.Values {
+		return stashrt.Values{"email": v.Email, "phone_number": v.PhoneNumber}
 	},
-	Seal: func(v crm.Contact, rec stackencrypt.EncryptedRecord) EncryptedContact {
-		email, phone := rec.MustField("email"), rec.MustField("phone_number")
+	Seal: func(v crm.Contact, rec stashrt.Record) EncryptedContact {
+		email, phone := rec["email"], rec["phone_number"]
 		return EncryptedContact{
 			ID:          v.ID,
 			Email:       EncryptedContactEmail{Ciphertext: email.Ciphertext, Equality: email.Equality, Match: email.Match},
 			PhoneNumber: EncryptedContactPhoneNumber{Ciphertext: phone.Ciphertext, Equality: phone.Equality},
 		}
 	},
-	Open: func(e EncryptedContact) stackencrypt.EncryptedRecord {
-		return stackencrypt.RecordOf(map[string]stackencrypt.EncryptedField{
+	Open: func(e EncryptedContact) stashrt.Record {
+		return stashrt.Record{
 			"email":        {Ciphertext: e.Email.Ciphertext, Equality: e.Email.Equality, Match: e.Email.Match},
 			"phone_number": {Ciphertext: e.PhoneNumber.Ciphertext, Equality: e.PhoneNumber.Equality},
-		})
+		}
 	},
-	Value: func(e EncryptedContact, vals stackencrypt.Values) (crm.Contact, error) {
+	Value: func(e EncryptedContact, vals stashrt.Values) (crm.Contact, error) {
 		v := crm.Contact{ID: e.ID}
 		var err error
-		if v.Email, err = stackencrypt.Get[string](vals, "email"); err != nil {
+		if v.Email, err = stashrt.Get[string](vals, "email"); err != nil {
 			return crm.Contact{}, err
 		}
-		if v.PhoneNumber, err = stackencrypt.Get[string](vals, "phone_number"); err != nil {
+		if v.PhoneNumber, err = stashrt.Get[string](vals, "phone_number"); err != nil {
 			return crm.Contact{}, err
 		}
 		return v, nil
@@ -77,12 +79,12 @@ var ContactFields = struct {
 	Email       ContactEmailField
 	PhoneNumber ContactPhoneNumberField
 }{
-	Email:       ContactEmailField{stackencrypt.MustField[string](ContactPlan.Plan(), "email")},
-	PhoneNumber: ContactPhoneNumberField{stackencrypt.MustField[string](ContactPlan.Plan(), "phone_number")},
+	Email:       ContactEmailField{stashrt.NewField[string](contactSpec, "email")},
+	PhoneNumber: ContactPhoneNumberField{stashrt.NewField[string](contactSpec, "phone_number")},
 }
 
 type ContactEmailField struct {
-	plan *stackencrypt.ValuePlan[string]
+	plan stashrt.Field[string]
 }
 
 func (f ContactEmailField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string, opts ...stackencrypt.Option) (EncryptedContactEmail, error) {
@@ -102,7 +104,7 @@ func (f ContactEmailField) Match(ctx context.Context, c *stackencrypt.Cipher, v 
 }
 
 type ContactPhoneNumberField struct {
-	plan *stackencrypt.ValuePlan[string]
+	plan stashrt.Field[string]
 }
 
 func (f ContactPhoneNumberField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string, opts ...stackencrypt.Option) (EncryptedContactPhoneNumber, error) {

@@ -6,6 +6,7 @@ import (
 	"context"
 
 	"github.com/cipherstash/stack/languages/golang/stackencrypt"
+	"github.com/cipherstash/stack/languages/golang/stackencrypt/stashrt"
 )
 
 type EncryptedBlocked struct {
@@ -25,24 +26,25 @@ type blockedShape struct {
 	Email string
 }
 
-var blockedPlan = stackencrypt.MustGenerate(stackencrypt.Generated[Blocked, EncryptedBlocked]{
-	Plan: stackencrypt.NewPlan("blocked_emails").
-		EncryptIndex("email", stackencrypt.Equality).
-		MustBuild(),
-	Source: func(v Blocked) stackencrypt.Values {
-		return stackencrypt.Values{"email": v.Email}
+var blockedSpec = stashrt.NewPlan("blocked_emails").
+	EncryptIndex("email", stackencrypt.Equality)
+
+var blockedPlan = stashrt.New(stashrt.Generated[Blocked, EncryptedBlocked]{
+	Plan: blockedSpec,
+	Source: func(v Blocked) stashrt.Values {
+		return stashrt.Values{"email": v.Email}
 	},
-	Seal: func(v Blocked, rec stackencrypt.EncryptedRecord) EncryptedBlocked {
-		email := rec.MustField("email")
+	Seal: func(v Blocked, rec stashrt.Record) EncryptedBlocked {
+		email := rec["email"]
 		return EncryptedBlocked{Email: EncryptedBlockedEmail{Ciphertext: email.Ciphertext, Equality: email.Equality}}
 	},
-	Open: func(e EncryptedBlocked) stackencrypt.EncryptedRecord {
-		return stackencrypt.RecordOf(map[string]stackencrypt.EncryptedField{
+	Open: func(e EncryptedBlocked) stashrt.Record {
+		return stashrt.Record{
 			"email": {Ciphertext: e.Email.Ciphertext, Equality: e.Email.Equality},
-		})
+		}
 	},
-	Value: func(e EncryptedBlocked, vals stackencrypt.Values) (Blocked, error) {
-		email, err := stackencrypt.Get[string](vals, "email")
+	Value: func(e EncryptedBlocked, vals stashrt.Values) (Blocked, error) {
+		email, err := stashrt.Get[string](vals, "email")
 		if err != nil {
 			return Blocked{}, err
 		}
@@ -59,11 +61,11 @@ func (EncryptedBlocked) StashPlan() *stackencrypt.RowPlan[Blocked, EncryptedBloc
 var BlockedFields = struct {
 	Email BlockedEmailField
 }{
-	Email: BlockedEmailField{stackencrypt.MustField[string](blockedPlan.Plan(), "email")},
+	Email: BlockedEmailField{stashrt.NewField[string](blockedSpec, "email")},
 }
 
 type BlockedEmailField struct {
-	plan *stackencrypt.ValuePlan[string]
+	plan stashrt.Field[string]
 }
 
 func (f BlockedEmailField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string, opts ...stackencrypt.Option) (EncryptedBlockedEmail, error) {

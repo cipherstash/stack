@@ -570,6 +570,7 @@ It takes these flags:
 
 `stashgen` loads the package with `golang.org/x/tools/go/packages` and reads types, not text.
 It runs none of the package's code.
+It ignores its own output file when it loads the package, so a stale file does not stop it.
 The same input always gives the same file: fields keep their declared order, and the file carries no version and no time.
 
 #### What stashgen writes
@@ -581,7 +582,7 @@ For `-type User`, the file `user_stash.go` holds:
   A field with one output has that output's type, such as `Ciphertext`.
   A field with more outputs has its own struct, such as `EncryptedUserEmail`, with one field for each output.
 - **The plan.**
-  The file builds it with the builder at package init, and converts values with plain assignments.
+  The file declares it as data, and converts values with plain assignments.
   Generated code uses no reflection.
 - **A `StashPlan` method on `User` and on `EncryptedUser`.**
   The method gives each type the `Planned` interface.
@@ -654,6 +655,37 @@ It writes `EncryptedContact`, `ContactFields` and an exported `ContactPlan`, a `
 The file converts `crm.Contact` to a copy of its fields, so a change to `crm.Contact` stops the build.
 See [`contacts/contacts.go`](2026-10-04-plan-builder/contacts/contacts.go).
 
+#### Plans from a policy
+
+A policy decides a plan from the data categories that a schema gives each field.
+The policy is Go code, so a program must run it.
+That program is a generate program that you own, and `go generate` runs it:
+
+```go
+//go:generate go run -tags stashgen ../cmd/genplans
+
+func main() {
+	err := stashgen.Generate(policy.Source, policy.Individuals, stashgen.Output("individual_stash.go"))
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+`stashgen.Generate` is the generator as a library, at `languages/golang/stashgen`.
+It runs the policy over the facts and writes the same file that the tags give.
+The application never runs the policy.
+
+- A field that no rule decides stops `go generate`, with the field's name and its annotations.
+- A change to the policy changes the generated file, so a reviewer reads what the change encrypts.
+- A field that the policy stores as plaintext is a plain field of the generated type.
+
+The generate program imports the package that holds the type.
+So that package must build when the generated file is stale.
+The generated file carries the build constraint `!stashgen`, and the generate program runs with `-tags stashgen`.
+Code that uses the generated names goes in another package.
+See [`policy/policy.go`](2026-10-04-plan-builder/policy/policy.go), [`cmd/genplans/main.go`](2026-10-04-plan-builder/cmd/genplans/main.go) and [`individualstore/store.go`](2026-10-04-plan-builder/individualstore/store.go).
+
 #### When the compiler finds a mistake
 
 | Mistake | Found by |
@@ -664,55 +696,44 @@ See [`contacts/contacts.go`](2026-10-04-plan-builder/contacts/contacts.go).
 | A change to a storage struct, or to a type in another package | the compiler |
 | A field added to a struct from another package that has an unexported field | CI |
 | A field added to, removed from or retyped in the tagged struct | the compiler |
-| A change to a tag only, with no `go generate` run | CI |
+| A tag that does not parse, or a field that no policy rule decides | `go generate` |
+| A change to a tag or to a policy, with no `go generate` run | CI |
 
 CI runs `go generate ./...` and fails when a generated file differs from the committed file.
 The compiler does not make those two checks.
 
 ### Plan types
 
-- `Plan` is the untyped data form that the guest receives.
-  The builder makes one.
-- `RowPlan[T, R]` encrypts a `T` into an `R` and decrypts an `R` into a `T`.
-  Only generated code makes one.
-- `ValuePlan[V]` is the plan for one field, with the field's Go type `V`.
-  `Field[V]` takes one from a `Plan`.
-- `RecordPlan[T]` is a `Plan` that `Bind[T]` binds to a struct type at run time.
-  Only the policy package needs it.
-
+`RowPlan[T, R]` is the one plan type in `stackencrypt`.
+It encrypts a `T` into an `R` and decrypts an `R` into a `T`.
+Only generated code makes one.
+A program reaches it through `stackencrypt.Encrypt`, or through a generated variable such as `UserRows`.
 A plan does not change after it is built, and any number of goroutines can use it at the same time.
 
-### The builder
-
-`NewPlan` makes a `Plan`, and generated code and the policy package call it:
-
-```go
-plan, err := stackencrypt.NewPlan("contacts").
-	EncryptIndex("email", stackencrypt.Equality, stackencrypt.Match()).
-	EncryptIndex("phone_number", stackencrypt.Equality).
-	Build()
-```
-
-`EncryptIndex` and `Index` take one index and then any number more, so an empty index set does not compile.
-Each method returns a new builder and does not change the builder it is called on.
-`Build` checks the whole-plan rules and returns an error, and `MustBuild` panics.
+No function that a program calls has a name that starts with `Must`.
+No function panics for a mistake in a plan that a program wrote.
 
 ### Support for generated code
 
-Generated code calls four things that other code does not need:
+The package `stackencrypt/stashrt` holds what only generated code calls:
 
-- `Generated[T, E]` holds the plan and four conversion functions, and `MustGenerate` makes a `RowPlan[T, E]` from it.
+- `Plan` declares the fields and their indexes as data.
+  `EncryptIndex` and `Index` take one index and then any number more, so an empty index set does not compile.
+- `Generated[T, E]` holds the plan and four conversion functions, and `New` makes a `RowPlan[T, E]` from it.
 - `Rows` makes a `RowPlan[T, R]` for a storage struct from a generated plan and two conversions.
+- `Field[V]` is the plan for one field, and a generated field entry holds one.
 - `Values` holds plaintext values by field name, and `Get[V]` reads one as the Go type `V`.
-- `RecordOf` and `EncryptedRecord.MustField` build and read an `EncryptedRecord`.
+- `Record` holds the outputs of each field by name.
+
+`New` panics for a plan that the engine refuses.
+The generator writes only plans that the engine accepts.
+So that panic needs a generated file and a library from two different versions.
 
 ### The policy package
 
-`plan.PlanFor` makes a `Plan` from facts and a policy at run time, and `plan.EQL` takes `stackencrypt.Index` values.
-`Bind[T]` binds that plan to a struct type, and `RecordPlan[T].Encrypt` returns an `EncryptedRecord`.
-This is the one path that the program checks at run time, because the policy decides the plan when the program starts.
-`Bind` and `EncryptedRecord.Field` return an error for a field that does not match.
-See [`individuals/individuals.go`](2026-10-04-plan-builder/individuals/individuals.go).
+`plan.Policy`, `plan.When`, `plan.FirstOf` and `plan.ForMessage` keep their form.
+`plan.EQL` takes `stackencrypt.Index` values.
+`stashgen.Generate` runs the policy, as "Plans from a policy" describes.
 
 ### Indexes
 
@@ -729,7 +750,6 @@ See [`individuals/individuals.go`](2026-10-04-plan-builder/individuals/individua
 | `Decrypt(ctx, d Decrypter, e E, opts ...Option)` | `T` |
 | `DecryptAll(ctx, d Decrypter, es []E, opts ...Option)` | `[]T` |
 | `RowPlan[T, R]`: the same four, as methods | `R` in place of `E` |
-| `RecordPlan[T]`: the same four, as methods | `EncryptedRecord` in place of `E` |
 | A generated field entry, such as `UserFields.Email`: `Encrypt` | the field's generated type |
 | A generated field entry: `Equality`, `Match`, `Ore`, `Ope` | `EqualityTerm`, `MatchTerm`, `OreTerm`, `OpeTerm` |
 | A generated field entry: `Contains`, `EqualAt` | `JSONQuery` |
@@ -760,22 +780,16 @@ See [`users/extend.go`](2026-10-04-plan-builder/users/extend.go).
 `Ciphertext`, each term type and `JSONDocument` also implement `sql.Scanner`.
 So a field of a generated type, or of a storage struct, goes straight to `ExecContext` and to `Scan`.
 
-`EncryptedRecord` is the output of the policy path.
-`EncryptedRecord.Field(name)` returns the named field's `EncryptedField`.
-For a name that the plan does not have, it returns `ErrUnknownField` and never a zero value.
-
 ### Errors
 
-`Build`, `Bind`, `Field` and every operation return a `*PlanError`.
-A `*PlanError` names the field and wraps one rule:
+The generator and the compiler find a mistake in a plan, so no operation returns an error for one.
+An operation returns an error for a key, for the network, or for stored data:
 
-- `ErrUnknownField`: the plan has no field with that name.
-- `ErrMissingField`: a plan field is not in the value.
-- `ErrUnplannedField`: the value has a field that the plan does not name.
-- `ErrIndexNotDeclared`: the field does not declare that index.
-- `ErrIndexType`: the index does not apply to the field's type.
+- `ErrForeignKeyset`: a `*Cipher` got a leaf that another keyset sealed.
+- A ciphertext that does not decrypt under the plan's context.
+- A decrypted value that is not the field's Go type.
 
-Use `errors.As` and `errors.Is` to read it.
+Use `errors.Is` and `errors.As` to read it.
 No error holds a plaintext value.
 
 ### Databases and ORMs
@@ -798,11 +812,13 @@ The binding has never been released, so these are removed, not deprecated:
 - `Cipher.Decrypt` and `Client.Decrypt`: `DecryptValue[T]` replaces them.
 - `EncryptElement` and `DecryptElement`.
 - `EncryptRecord`, `EncryptRecords`, `DecryptRecord` and `DecryptRecords`, on `Cipher` and on `Client`.
+- `EncryptedRecord` and `EncryptedField`: a generated type replaces them.
 - `Cipher.Term`: the query methods of a generated field entry replace it.
 - `RecordOption` and `WithPlan`.
 - `TermKind`: `Index` replaces it.
-- `FieldPlan`, `NewPlan(fields ...FieldPlan)` and `Plan.Validate`: the builder and `Bind[T]` replace them.
-- `PlanFromTags`, and every other function that reads `stash` tags at run time: `stashgen` replaces them.
+- `Plan`, `FieldPlan`, `NewPlan` and `Plan.Validate`: the generator replaces them.
+- `PlanFromTags`, and every other function that reads `stash` tags at run time: the generator replaces them.
+- `plan.PlanFor` and `plan.MustPlanFor`: `stashgen.Generate` replaces them.
 - The rule that a zero `Plan` means the struct's tags.
 - `Sealed`, `SealedNone`, `SealedEmptyMap` and `SealedEmptySeq` as storage types: `Ciphertext` replaces them.
 

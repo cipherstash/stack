@@ -7,6 +7,7 @@ import (
 
 	"example.com/app/internal/userdb"
 	"github.com/cipherstash/stack/languages/golang/stackencrypt"
+	"github.com/cipherstash/stack/languages/golang/stackencrypt/stashrt"
 )
 
 type EncryptedUser struct {
@@ -42,47 +43,48 @@ type userShape struct {
 	Internal string
 }
 
-var userPlan = stackencrypt.MustGenerate(stackencrypt.Generated[User, EncryptedUser]{
-	Plan: stackencrypt.NewPlan("users").
-		EncryptIndex("email", stackencrypt.Equality, stackencrypt.Match()).
-		EncryptIndex("age", stackencrypt.Equality, stackencrypt.Ore).
-		Index("attrs", stackencrypt.JSON()).
-		Encrypt("notes").
-		MustBuild(),
-	Source: func(v User) stackencrypt.Values {
-		return stackencrypt.Values{"email": v.Email, "age": v.Age, "attrs": v.Attrs, "notes": v.Notes}
+var userSpec = stashrt.NewPlan("users").
+	EncryptIndex("email", stackencrypt.Equality, stackencrypt.Match()).
+	EncryptIndex("age", stackencrypt.Equality, stackencrypt.Ore).
+	Index("attrs", stackencrypt.JSON()).
+	Encrypt("notes")
+
+var userPlan = stashrt.New(stashrt.Generated[User, EncryptedUser]{
+	Plan: userSpec,
+	Source: func(v User) stashrt.Values {
+		return stashrt.Values{"email": v.Email, "age": v.Age, "attrs": v.Attrs, "notes": v.Notes}
 	},
-	Seal: func(v User, rec stackencrypt.EncryptedRecord) EncryptedUser {
-		email, age := rec.MustField("email"), rec.MustField("age")
+	Seal: func(v User, rec stashrt.Record) EncryptedUser {
+		email, age := rec["email"], rec["age"]
 		return EncryptedUser{
 			ID:    v.ID,
 			Email: EncryptedUserEmail{Ciphertext: email.Ciphertext, Equality: email.Equality, Match: email.Match},
 			Age:   EncryptedUserAge{Ciphertext: age.Ciphertext, Equality: age.Equality, Ore: age.Ore},
-			Attrs: rec.MustField("attrs").JSON,
-			Notes: rec.MustField("notes").Ciphertext,
+			Attrs: rec["attrs"].JSON,
+			Notes: rec["notes"].Ciphertext,
 		}
 	},
-	Open: func(e EncryptedUser) stackencrypt.EncryptedRecord {
-		return stackencrypt.RecordOf(map[string]stackencrypt.EncryptedField{
+	Open: func(e EncryptedUser) stashrt.Record {
+		return stashrt.Record{
 			"email": {Ciphertext: e.Email.Ciphertext, Equality: e.Email.Equality, Match: e.Email.Match},
 			"age":   {Ciphertext: e.Age.Ciphertext, Equality: e.Age.Equality, Ore: e.Age.Ore},
 			"attrs": {JSON: e.Attrs},
 			"notes": {Ciphertext: e.Notes},
-		})
+		}
 	},
-	Value: func(e EncryptedUser, vals stackencrypt.Values) (User, error) {
+	Value: func(e EncryptedUser, vals stashrt.Values) (User, error) {
 		v := User{ID: e.ID}
 		var err error
-		if v.Email, err = stackencrypt.Get[string](vals, "email"); err != nil {
+		if v.Email, err = stashrt.Get[string](vals, "email"); err != nil {
 			return User{}, err
 		}
-		if v.Age, err = stackencrypt.Get[uint32](vals, "age"); err != nil {
+		if v.Age, err = stashrt.Get[uint32](vals, "age"); err != nil {
 			return User{}, err
 		}
-		if v.Attrs, err = stackencrypt.Get[map[string]any](vals, "attrs"); err != nil {
+		if v.Attrs, err = stashrt.Get[map[string]any](vals, "attrs"); err != nil {
 			return User{}, err
 		}
-		if v.Notes, err = stackencrypt.Get[string](vals, "notes"); err != nil {
+		if v.Notes, err = stashrt.Get[string](vals, "notes"); err != nil {
 			return User{}, err
 		}
 		return v, nil
@@ -99,14 +101,14 @@ var UserFields = struct {
 	Attrs UserAttrsField
 	Notes UserNotesField
 }{
-	Email: UserEmailField{stackencrypt.MustField[string](userPlan.Plan(), "email")},
-	Age:   UserAgeField{stackencrypt.MustField[uint32](userPlan.Plan(), "age")},
-	Attrs: UserAttrsField{stackencrypt.MustField[map[string]any](userPlan.Plan(), "attrs")},
-	Notes: UserNotesField{stackencrypt.MustField[string](userPlan.Plan(), "notes")},
+	Email: UserEmailField{stashrt.NewField[string](userSpec, "email")},
+	Age:   UserAgeField{stashrt.NewField[uint32](userSpec, "age")},
+	Attrs: UserAttrsField{stashrt.NewField[map[string]any](userSpec, "attrs")},
+	Notes: UserNotesField{stashrt.NewField[string](userSpec, "notes")},
 }
 
 type UserEmailField struct {
-	plan *stackencrypt.ValuePlan[string]
+	plan stashrt.Field[string]
 }
 
 func (f UserEmailField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string, opts ...stackencrypt.Option) (EncryptedUserEmail, error) {
@@ -126,7 +128,7 @@ func (f UserEmailField) Match(ctx context.Context, c *stackencrypt.Cipher, v str
 }
 
 type UserAgeField struct {
-	plan *stackencrypt.ValuePlan[uint32]
+	plan stashrt.Field[uint32]
 }
 
 func (f UserAgeField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v uint32, opts ...stackencrypt.Option) (EncryptedUserAge, error) {
@@ -146,7 +148,7 @@ func (f UserAgeField) Ore(ctx context.Context, c *stackencrypt.Cipher, v uint32,
 }
 
 type UserAttrsField struct {
-	plan *stackencrypt.ValuePlan[map[string]any]
+	plan stashrt.Field[map[string]any]
 }
 
 func (f UserAttrsField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v map[string]any, opts ...stackencrypt.Option) (stackencrypt.JSONDocument, error) {
@@ -167,7 +169,7 @@ func (f UserAttrsField) EqualAt(ctx context.Context, c *stackencrypt.Cipher, pat
 }
 
 type UserNotesField struct {
-	plan *stackencrypt.ValuePlan[string]
+	plan stashrt.Field[string]
 }
 
 func (f UserNotesField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v string, opts ...stackencrypt.Option) (stackencrypt.Ciphertext, error) {
@@ -214,12 +216,12 @@ func (s userRowShape) encrypted() EncryptedUser {
 	}
 }
 
-var UserRows = stackencrypt.Rows(userPlan,
+var UserRows = stashrt.Rows(userPlan,
 	func(e EncryptedUser) UserRow { return UserRow(userRowShapeOf(e)) },
 	func(r UserRow) EncryptedUser { return userRowShape(r).encrypted() },
 )
 
-var SQLCUsers = stackencrypt.Rows(userPlan,
+var SQLCUsers = stashrt.Rows(userPlan,
 	func(e EncryptedUser) userdb.User { return userdb.User(userRowShapeOf(e)) },
 	func(r userdb.User) EncryptedUser { return userRowShape(r).encrypted() },
 )
