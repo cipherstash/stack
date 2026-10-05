@@ -10,7 +10,12 @@
 **Status:** planned; decisions settled 2026-10-04. Supersedes the same-day
 draft of this file ("option B targets": `Target[O]`, `EncryptAs`,
 `EncryptAll`, `Prepare` / `Run`), which was dropped before any code was
-written. The reasons are in "Why the first draft was dropped".
+written. The reasons are in "Why the first draft was dropped". Amended
+the same day, after the first three implementation PRs (#1068, #1069 and
+the builder itself, #1071), with a second round of decisions: decrypt is
+spelled `open`, the two starts and the three context sources, the typed
+verb and the picker, the derive narrowed before it emits the plan, and EQL
+types assembled per language with no registry.
 **Date:** 2026-10-04
 **Issue:** #1046
 **Builds on:** #1050 (one context per column; `Label`, `Describe`), #971 (EQL v3
@@ -19,8 +24,8 @@ written. The reasons are in "Why the first draft was dropped".
 the calls this plan shapes
 **Records:** ADR-0007 (bindings enter through a plan, never a second
 executor); glossary changes in `packages/stack-encrypt/CONTEXT.md` (Plan,
-Index, Term, Field-by-field record, Passthrough, Identity, Query, and the two
-directions)
+Index, Term, Field-by-field record, Passthrough, Identity, Query, Open,
+Context field, Target, and the two directions)
 
 ## Goal
 
@@ -78,8 +83,15 @@ split was the problem, not the function names:
 - **Passthrough**: a field carried in the output as it is, unsealed and
   unauthenticated. Already the Cipher's contract for a passthrough leaf.
 - **Plan**: the saved tail of a chain, of any shape: a one-value plan
-  (`Plan::context("users/age").with(..)`) or a fields plan
-  (`Plan::context("users").fields()..`). Reusable; validated at `build()`.
+  (`Plan::value::<u32>().context("users/age").with(..)`) or a fields plan
+  (`Plan::fields().context("users")..`, also spelled
+  `Plan::context("users").fields()..`). Reusable; validated at `build()`.
+- **Record**: what a fields plan produces and reads back, a value sealed
+  field by field. The glossary's word; this document does not call it a
+  "row", which is a database's word for where a record is stored.
+- **Open**: decrypting through a plan, `cipher.open(record).using(&plan)`.
+- **Target**: a type that decides a field's layout, named with
+  `encrypt_into::<T>`. Rust-only; Go's counterpart is generated code.
 
 ## Decisions (settled with Dan, 2026-10-04)
 
@@ -95,14 +107,16 @@ split was the problem, not the function names:
    `columns` was rejected as database-centric; the SDKs are not only for
    databases. `fields` is the derive docs' own phrase ("field by field") and
    covers structs, maps, JSON objects and protobuf messages.
-4. **A plan is the chain without the value.** `Plan::context(..)` starts the
-   saved form; `build()` validates whole-plan rules; `.using(&plan)` runs it.
+4. **A plan is the chain without the value.** `Plan::value::<S>()` or
+   `Plan::fields()` starts the saved form (`Plan::context(..)` is a shorter
+   spelling of the same); `build()` validates whole-plan rules;
+   `.using(&plan)` runs it.
    `for` was wanted and is a keyword in Rust and Go; `using` was chosen.
 5. **Three field verbs plus passthrough.** `encrypt(name)` seals with no
    index; `encrypt_index(name, indexes)` seals with a non-empty index set (one
    index or a tuple); `index(name, indexes)` derives the indexes alone, with
    no ciphertext, so the field is written and searched but comes back from
-   `decrypt` only if an index's own output is reversible; `passthrough(name)`
+   `open` only if an index's own output is reversible; `passthrough(name)`
    carries the field unsealed, mirroring the lower-level API's word.
    `plaintext` was rejected for the same reason. JSON is an `index` field:
    the SteVec has no canonical `c` beside it, its entries carry the node
@@ -156,43 +170,47 @@ split was the problem, not the function names:
 ## The Rust API
 
 ```rust
-use stack_encrypt::{Plan, Equality, Match, Ore};
+use stack_encrypt::{Plan, Encrypted, Equality, Match, Ore};
 
 // One value, one tree, one context. Today's call, by name.
 let ct = cipher.encrypt(&doc).context("documents/v2/body").await?;
 
 // One value, indexed. Typed end to end: the tuple types the output.
-let out = cipher.encrypt(34u32).context("users/age").with((Equality, Ore)).await?;
+let out = cipher.encrypt(&34u32).context("users/age").with((Equality, Ore)).await?;
 let (eq, ore): (EqualityTerm, OreTerm<u32>) = out.terms;
 
-// A value sealed field by field, each field under users/<field>.
-let row = cipher.encrypt(&user).context("users").fields()
-    .encrypt_index("email", (Equality, Match::default()))   // ciphertext with indexes beside it
-    .encrypt_index("age",   (Equality, Ore))
-    .index("attrs", Json::default())                         // indexes alone: the searchable document is the stored form
-    .encrypt("notes")                                        // ciphertext alone
-    .passthrough("id")
+// A value sealed field by field, each field under users/<field>. Rust cannot
+// learn a field's type from its name, so a verb given a bare name names it.
+let record = cipher.encrypt(&user).context("users").fields()
+    .encrypt_index::<String>("email", (Equality, Match::default()))  // ciphertext with indexes beside it
+    .encrypt_index::<u32>("age", (Equality, Ore))
+    .index::<Value>("attrs", Json::default())                        // indexes alone: the searchable document is the stored form
+    .encrypt::<String>("notes")                                      // ciphertext alone
+    .passthrough::<u64>("id")
     .keyset("tenant-42")
     .await?;
 
 // The same chain without the value: a plan, built once, validated at build().
-let users_plan = Plan::context("users").fields()
-    .encrypt_index("email", (Equality, Match::default()))
-    .encrypt_index("age",   (Equality, Ore))
-    .encrypt("notes")
-    .passthrough("id")
+// Plan::context("users").fields() is the same start, and the common spelling.
+let users_plan = Plan::fields().context("users")
+    .encrypt_index::<String>("email", (Equality, Match::default()))
+    .encrypt_index::<u32>("age", (Equality, Ore))
+    .encrypt::<String>("notes")
+    .passthrough::<u64>("id")
     .build()?;
 
-let age_plan = Plan::context("users/age").with((Equality, Ore));      // a one-value plan
+// A one-value plan carries its plaintext type, and needs build() too.
+let age_plan = Plan::value::<u32>().context("users/age").with((Equality, Ore)).build()?;
 
-let row   = cipher.encrypt(&user).using(&users_plan).keyset("tenant-42").await?;
-let rows  = cipher.encrypt(&users).using(&users_plan).await?;        // users: &[User]; one key request
-let user  = cipher.decrypt(row).using(&users_plan).await?;
-let age   = cipher.encrypt(34u32).using(&age_plan).await?;
+let record  = cipher.encrypt(&user).using(&users_plan).keyset("tenant-42").await?;
+let records = cipher.encrypt(&users).using(&users_plan).await?;     // users: &[User]; one key request
+let user    = cipher.open(record).using(&users_plan).await?;
+let age     = cipher.encrypt(&34u32).using(&age_plan).await?;
+let back: u32 = cipher.open(age).using(&age_plan).await?;           // the plan's S
 
 // Per-call context extension: the caller's parts extend every field's context,
 // as the derive's DeclaredContext does today.
-let row   = cipher.encrypt(&user).using(&users_plan).extend(tenant_id).await?;
+let record  = cipher.encrypt(&user).using(&users_plan).extend(tenant_id).await?;
 
 // Queries take the plan the data was written with, so the context cannot drift,
 // and asking for an index the field never declared is an error.
@@ -206,19 +224,81 @@ let q = cipher.query(JsonPath::root().field("role")).using(&attrs_plan).await?; 
 let q = cipher.query(JsonPath::root().field("role").value("admin")).using(&attrs_plan).await?; // equality at a path
 
 // Several operations, one ZeroKMS request.
-let (row, q) = stack_encrypt::all((
+let (record, q) = stack_encrypt::all((
     cipher.encrypt(&user).using(&users_plan),
     cipher.query("bob@example.com").using(&email_plan).equality(),
 )).await?;
 
-// Typed, from the derive, which emits the same builder.
-let row: EncryptedUser = cipher.encrypt(&user).using(EncryptedUser::plan()).await?;
+// Typed, from the derive, which emits the same plan.
+let record: EncryptedUser = cipher.encrypt(&user).using(EncryptedUser::plan()).await?;
 ```
 
 `keyset(..)` may also sit on the cipher as it does today
 (`cipher.keyset("tenant-42").encrypt(..)`); both forms coexist because a
 `KeysetCipher` already exists. The chain form is there so a saved call site
 does not have to hold two cipher handles.
+
+**Decrypt through a plan is `open`.** `StackCipher::decrypt(ct, aad)` is the
+cipher-directed decrypt, with callers across the repo, and Rust has no
+overloading, so a one-argument `decrypt` would break them all; `open` is
+already the engine's word for reading leaves (`target::open`, `Opening`).
+
+### Two starts
+
+`Plan::value::<S>()` starts a one-value plan over plaintext `S`;
+`Plan::fields()` starts a fields plan. `.context(c)` is optional on either.
+`Plan::context(c).fields()` and `Plan::context(c).with(..)` keep working as
+the common spellings. Both forms end in `.build()?`, so validation has one
+place. A one-value plan is a `ValuePlan<S, X>`: it keeps `S`, so opening
+through it yields `S`, and it keeps its index types, so a query selects its
+index by type and an undeclared index does not compile.
+
+### Where the context comes from
+
+A plan takes its context from exactly one of three sources:
+
+1. **Build time**: `.context(c)` on the plan.
+2. **The chain at run time**: `cipher.encrypt(&v).context(c).using(&plan)`,
+   for a plan built with no context of its own.
+3. **A field of the value**: `.context_field(name)`. That field's value is the
+   context of every other field. It is stored as a passthrough field, so the
+   record can be opened, and on open it is checked against the context each
+   field was sealed under.
+
+Two sources is an error. `.extend(parts)` is the only way to add to the
+context, and it extends whichever source the plan has. `build()` refuses a
+fields plan whose label would be empty.
+
+### The typed verb and the picker
+
+`encrypt_into::<T>` names a **target**: a type whose own `EncryptFrom` impl
+decides the field's layout and the queries it answers. It has two positions:
+
+```rust
+// Field form: the field's layout is TextEq's.
+Plan::fields().context("users").encrypt_into::<TextEq>("email")
+
+// One-value form: each tuple element is an EncryptFrom<S>.
+Plan::value::<String>().encrypt_into::<(Ciphertext, Hmac256)>()
+```
+
+A field is either data verbs (`encrypt`, `encrypt_index`, `index`,
+`passthrough`) or one target, never both. `.with(indexes)` is sugar for
+`encrypt_into::<Encrypted<Terms>>`. The typed verb is Rust-only: it names a
+Rust type, so it has no data form.
+
+A verb's field argument is either a name or a **picker**, a name with an
+accessor:
+
+```rust
+.encrypt_index::<String>("email", (Equality, Match::default()))          // by name, through Field<String>
+.encrypt_index(("email", |u: &User| &u.email), (Equality, Match::default())) // picker: the type is inferred
+```
+
+A bare name is looked up through the value's `Field<F>` impl, which is what a
+dynamic value (`FfiValue`) provides. The picker reads the field directly and
+needs no turbofish. The derive emits the picker form; bindings use names. The
+picker is Rust-only.
 
 ### What `passthrough` means
 
@@ -234,30 +314,46 @@ this on the method.
 
 | Builder | Engine | Note |
 |---|---|---|
-| `Plan::context("users")` | the `NonEmpty<impl IntoContext>` handed to `under` | with `fields()`, each field gets `Label::new([table, field])` |
-| `with(idx)` / `encrypt_index(name, idx)` | `ciphertext::<S>().accepting::<CallerContext>().zip(equality()).zip(matching::<O>())…` then `map` into `Encrypted<Terms>` | each `Index<S>` returns its `term_operation` constructor; the tuple folds with `zip` |
+| `Plan::value::<S>()`, `Plan::fields()`, `.context(c)` | the `NonEmpty<impl IntoContext>` handed to `under` | with `fields()`, each field gets `Label::new([context, identity])` |
+| `with(idx)` / `encrypt_index(name, idx)` | `indexed::<S>(idx)`: `ciphertext().accepting::<CallerContext>().zip(..)…` then `map` into `Encrypted<Terms>` | each `Index<S>` returns its term operation; the tuple folds with `zip` |
+| `encrypt_into::<T>(name)`, and the one-value form | `<T as EncryptFrom<F>>::encryption().under(label)` | the target's own description; no builder work |
+| `with(idx)` as `encrypt_into::<Encrypted<Terms>>` | `Encrypted<Terms>: EncryptFrom<S>`, whose `encryption()` is `indexed()` | both spellings lower to the same `indexed()`; a standing byte-identity test covers every index combination |
 | `encrypt(name)` | `ciphertext::<S>()` alone | `under` accepts it: `AeadContext: From<CallerContext>` |
 | `index(name, idx)` | the index operations alone, zipped, no `ciphertext()` | `Json` is one such operation; it mints one document key and seals every entry under it, a **new core operation** (one generate request, a fulfilment that seals N entries with selector-derived nonces) |
-| `passthrough(name)` | **new** `passthrough::<S>()` | build is `Pending::ready(cipher, Ok(source.clone()))`, ignores the context |
-| `fields()` | `project(select)` per field, `.under(label)`, `zip` across fields, `map` into the record | `project` is the derive's `struct = ..` mode; for the FFI `select` picks by name from an `FfiValue` object |
-| `build()` | boxes the finished `Encryption<S, Out, K, DeclaredContext>` inside a reusable recipe | whole-plan rules checked here: names once, labels plain, no shared label, passthrough not indexed |
-| `using(&plan)` | **new** `KeysetCipher::run(&plan, &source, ctx)` | execute-by-value; `encrypt_as` does this for a type through `T::encryption()`, and the closure is private today |
+| `passthrough(name)` | `passthrough::<S>()` (#1069) | build is `Pending::ready(cipher, Ok(source))`, ignores the context |
+| `context_field(name)` | `passthrough()` for that field; its value is the context every other field runs `under` | on open, the field's value is the `ExpectedContext` each field is opened under, so a record whose context field was changed in storage does not open |
+| `fields()`, a field by name | `project_by` (crate-internal) through the value's `Field<F>`, `.under(label)`, `zip` across fields, `map` into the record | the path a dynamic value (`FfiValue`) takes |
+| `fields()`, a field by picker `(name, accessor)` | `project(accessor)` | the derive's `struct = ..` mode today; borrowed-only |
+| `build()` | a reusable recipe that produces a fresh `Encryption` per run | whole-plan rules checked here: names once, labels plain, no shared identity, passthrough not indexed, one context source, no empty label |
+| `using(&plan)` | `KeysetCipher::run(encryption, source, ctx)` (#1068) of `Plan::encryption()` | execute-by-value; `encrypt_as` does this for a type through `T::encryption()` |
 | `extend(parts)` | the runtime `DeclaredContext` value, `DeclaredContext::extend(own)` | not a combinator; it is the `ctx` argument |
 | `keyset(..)` | the `KeysetCipher` passed to build; `Pending::scoped_to` | |
 | `.await` | `IntoFuture for Pending` | exists |
 | `all((a, b))` | `Pending::zip` / `Pending::all` | exists |
-| `encrypt(&slice).using(&plan)` | `Pending::collect` over one build per row | what `Vec<T>: EncryptFrom` does |
+| `encrypt(&slice).using(&plan)` | `Pending::collect` over one build per record | what `Vec<T>: EncryptFrom` does |
 | `query(v).using(&field_plan).equality()` | `equality().under(label)` alone | the field plan with `ciphertext()` dropped and one index selected |
-| `decrypt(row).using(&plan)` | `open::<P>(tree, ctx)` per field, `Decryption::zip` / `all`, `map`, run by `decrypt_as` | the stored side is read by name via `DecryptField` already |
-| a field whose target is an EQL domain | `<TextEq as EncryptFrom<String>>::encryption()` as that field's description | no builder work; `transcode` is the domain's |
+| `open(record).using(&plan)` | `open::<P>(tree, ctx)` per field, `Decryption::zip` / `all`, `map`, run by `run_decryption` (#1069) | the stored side is read by name via `DecryptField` already |
+
+**Source modes.** #1068 gave every `Encryption` a source mode: `Borrowed`
+(the default) hands an operation `&S`, `Owned` hands it `S` by value, so a
+value that is deliberately not `Clone`, such as `FfiValue`, can run a single
+operation without a copy. Only an owned `zip` needs `S: Clone`. `project` is
+borrowed-only: it reads a field out of a borrowed struct. Every chain borrows
+today, and each field is cloned once where its operation consumes it, as the
+derive does. An owned fields plan over an `FfiValue` object needs a combinator
+that moves each field out of the value without cloning the rest; that belongs
+with the lowering (#1059).
 
 ### Additions
 
+Items 1 to 4 shipped in #1068 and #1069; #1071 built the chain on them.
+
 1. **`passthrough::<S>()`**, a constructor beside `ciphertext()` and the term
    operations.
-2. **Execute-by-value**: a public way to run an `Encryption` and a
-   `Decryption` held in a variable. The builder's `Plan` is a recipe that
-   produces a fresh description per call, since a description is single-use.
+2. **Execute-by-value**: `KeysetCipher::run(encryption, source, ctx)` and
+   `run_decryption`, which run an `Encryption` or a `Decryption` held in a
+   variable. The builder's `Plan` is a recipe that produces a fresh
+   description per call, since a description is single-use.
 3. **`Index<S>` and `Indexes<S>`**, with `indexed::<S>(idx)` in the engine
    doing the `ciphertext().accepting().zip(..).map(..)` dance once, so a field
    is one line at the combinator level too and the builder's lowering is
@@ -268,18 +364,50 @@ this on the method.
    mode, `Compat` or `Standard`, case filters) on the struct, producing a
    searchable document; the MAC `prefix` of today's `JsonIndexer` is replaced
    by the field's context. One new core operation seals N entries under one
-   data key with selector-derived nonces. EQL's `eql_v3_json` domain is the
-   `EncryptFrom` that wraps the document into `{v, k, i, h, sv}`, the way
-   `TextEq` wraps an equality term. Decrypt of an extracted entry (`->`)
-   grafts the document header onto it.
+   data key with selector-derived nonces. EQL's JSON type is the `EncryptFrom`
+   that wraps the document into its EQL form, the way `TextEq` wraps an
+   equality term. Decrypt of an extracted entry (`->`) grafts the document
+   header onto it.
+6. **`Encrypted<Terms>: EncryptFrom<S>`**, whose `encryption()` is
+   `indexed()`, so `.with(indexes)` and `encrypt_into::<Encrypted<Terms>>`
+   are one lowering.
+7. **A wire form for match and JSON index options.** Today a `Match` index
+   lowers to the data key `"match"` with its options dropped, and reading it
+   back yields the default options: a saved non-default match field would
+   derive different Bloom positions on the query side and match nothing,
+   with no error (raised in the #1069 review). The data plan carries the
+   options, or refuses a non-default index it cannot carry.
 
 ### Consolidation
 
-- **The derive emits the builder.** `#[derive(EncryptFrom)]` generates
-  `EncryptedUser::plan()` as a builder chain, and `EncryptFrom::encryption()`
-  returns the plan's description. The derive stops knowing combinator names;
-  `accepting`, `zip` and nested-pair `map` bookkeeping happen once, in the
-  builder, instead of per generated impl.
+- **The derive emits the plan, after the derive is narrowed and the plan
+  widened.** The derive and a data plan are two authors of one grammar over
+  one executor; the derive is not kept on the combinators.
+  `#[derive(EncryptFrom)]` generates `EncryptedUser::plan()` as a plan chain
+  in the picker form, and `EncryptFrom::encryption()` returns the plan's
+  description. The derive stops knowing combinator names; `accepting`, `zip`
+  and nested-pair `map` bookkeeping happen once, in the builder, instead of
+  per generated impl. Today the derive can say four things a plan cannot, and
+  each is removed from the derive rather than added to the plan (bytes change
+  for a few tests; the crate is unpublished):
+  1. Field-level literal `#[stash(context = "..")]` -> replaced by
+     `#[stash(identity = "..")]` (label becomes `<context>/<identity>`);
+     "seal one field outside the record context" goes.
+  2. Non-plain literal contexts such as `"readings/unit"`.
+  3. `#[stash(nested)]` (a nested record is an ordinary field sealed under
+     `<context>/<field>`, its inner layout being its own type's business via
+     `encrypt_into`).
+  4. A second `#[stash(from = field)]` output per source field in `struct`
+     derives (use one field of type `Encrypted<(EqualityTerm, MatchTerms)>`
+     instead). `plaintext = T` records keep producing many outputs from the
+     whole value: that is the one-value plan.
+
+  Kept, and added to the plan so the derive can emit it (Rust; the typed parts
+  have no data form): the two starts `Plan::value::<S>()` and
+  `Plan::fields()`; the three context sources and the one-source rule; the
+  typed verb `encrypt_into` in both positions, with `.with(indexes)` as its
+  sugar; `Encrypted<Terms>: EncryptFrom<S>` with its byte-identity test; and
+  the picker.
 - **`dynamic::record` becomes a lowering, not an executor.** It parses the
   data plan and drives the builder, with `dynamic::term`'s dispatch from a
   runtime scalar to a typed index as the one step that stays dynamic. Its own
@@ -314,6 +442,9 @@ crosses the FFI and what a saved plan in Go holds; the Rust side never loses
 the type.
 
 ## The Go mirror
+
+> #1070 replaces this chain with a generator, `stashgen`, that writes each
+> type's encrypted type and plan as data; this section is the first sketch.
 
 Go mirrors the chain with one difference: no `await`, so the finalizer is an
 explicit `Run(ctx)`. One verb, `Encrypt`, for a tree and for a plan alike.
@@ -358,8 +489,8 @@ q,    err := cipher.Query("bob@example.com").Using(emailPlan).Equality().Run(ctx
 - `Encrypt` takes a `Context` where today it takes `aad []byte`; raw bytes
   stay possible as `NewContext(bytes)`, the same bytes part Rust accepts.
 - The output types are what the binding has: `EncryptedRecord` and
-  `EncryptedField`. A typed `Plan[T]` through a generic struct, giving
-  `Encrypt(ctx, T)` and `Decrypt(..) (T, error)`, is an open question below.
+  `EncryptedField`. A typed `Plan[T]` is superseded by #1070's generated
+  types.
 - Removed: `Encrypt(…, aad []byte)`, `EncryptElement`, `DecryptElement`,
   `EncryptRecord(s)`, `DecryptRecord(s)`, `Term`, `RecordOption`, `WithPlan`,
   `PlanFromTags` (replaced by `PlanOf[T]`) and the "zero Plan means the
@@ -435,13 +566,16 @@ uses the guest.
    tagged value against the declaration rather than trusting the shell. The TS
    schema builder already does this (`types.IntegerOrd()`). The type is
    load-bearing three times: `encrypt` uses it to admit indexes and derive the
-   right term bytes, `query` to read the probe value (`query(34)` against a
-   `u64` field is a `u64` term), and `decrypt` to know what to hand back in a
+   right term bytes, `query` to read the query value (`query(34)` against a
+   `u64` field is a `u64` term), and `open` to know what to hand back in a
    host with no type to infer from (an Integer, not a Float; bytes, not a
    String). The vocabulary is vitaminc's frozen tag table plus the composite
    kinds, not new names. A wire-format addition, so it goes in the first
    engine PR. This is the one gap in the plan approach itself that the
-   language check found.
+   language check found. #1069 added the type to the grammar as an optional
+   key, so a field with none is still dispatched on each value's own tag;
+   that is transitional, until Go fills the type (#1046) and the key becomes
+   required on indexed fields.
 2. **The guest's synchronous transport import, on the edge path only.**
    `transport_send` is synchronous from the guest's point of view and the ABI
    relies on it ("`block_on` never parks"). A wazero host function may block a
@@ -453,53 +587,100 @@ uses the guest.
    the guest exports the two halves, the host performs the ZeroKMS round trip
    in its own idiom, and the guest does no I/O. **A guest-ABI requirement to
    settle before the edge binding is built**, and not before.
+3. **What the derive could say that a plan could not.** The plan was meant to
+   have three authors over one grammar, but the derive's attribute grammar had
+   grown past the plan's: a field sealed under a literal context outside the
+   record's, a literal context that was not a plain label (`"readings/unit"`),
+   a `nested` field handed the caller's context, and several outputs from one
+   source field. Emitting a plan from that grammar would either drop those
+   forms or widen the data grammar with Rust-shaped features no binding needs.
+   **Resolved by meeting in the middle.** The derive loses the four forms (see
+   "Consolidation"; `identity` replaces the literal field context), and the
+   plan gains what the derive genuinely needs: the two starts, the three
+   context sources, the typed verb and the picker. The typed parts stay
+   Rust-only and have no data form, so the wire grammar does not grow. Only
+   then does the derive emit the plan, with byte identity proven on the
+   narrowed grammar.
 
 Encrypting inside the database (a Postgres extension, PL/pgSQL) is outside the
 model rather than a strain: it puts key material in the database.
 
-## EQL v3 domains as field targets
+## EQL v4 types as field targets
 
-Depends on #971 (EQL v3 `TextEq` / `TextEqQuery` in `eql-bindings`, and
-`Identifier` as a two-segment `Label`). A field's target may be any
-`EncryptFrom` type, so an EQL domain plugs into a plan with no builder work:
+Naming: **EQL v4** is the EQL form of a stack-encrypt payload. **EQL v3** is
+the existing SQL bundle and its `eql_v3_*` domains, which this section does
+not change. Depends on #971 (`TextEq` / `TextEqQuery` through stack-encrypt
+in `eql-bindings`, and `Identifier` as a two-segment `Label`).
 
-```rust
-let users_plan = Plan::context("users").fields()
-    .encrypt_into::<TextEq>("email")          // the domain's own EncryptFrom; renders {"v":3,"i":{"t":"users","c":"email"},…}
-    .encrypt_into::<Json>("attrs")            // eql_v3_json wraps the Json index's document into {v, k, i, h, sv}
-    .encrypt_index("age", (Equality, Ore))
-    .build()?;
-```
+**The engine never returns an EQL type.** It returns standard outputs:
+ciphertexts, terms and passthrough values. Each language's typed layer
+assembles EQL types from them:
 
-A domain is a target wrapping an index's output for EQL's wire format; the
-index itself stays in stack-encrypt. The JSON domain is the clearest case: the
-`Json` index produces the searchable document, and `eql_v3_json` is the
-`EncryptFrom` that frames it.
+- **Rust**, through the EQL type's own `EncryptFrom` impl, named with the
+  typed verb. A field target may be any `EncryptFrom` type, so an EQL type
+  plugs into a plan with no builder work:
 
-In Go the domain types are emitted by `eql-codegen` into
-`stackencrypt/eqlv3`, inside the one Go module and the one WASI guest, every
-domain, with constructors only for domains that have a Rust derive
-(`ENCRYPTION_DOMAINS`). The guest resolves a domain name through an explicit
-lookup in `eql-bindings`, never by inferring from a payload's keys. The record
-output map (`{"c","eq","match","ore","ope"}`) is removed once domains are
-field targets. Module size is measured in that PR and reported, not hidden.
+  ```rust
+  let users_plan = Plan::context("users").fields()
+      .encrypt_into::<TextEq>("email")     // TextEq's own EncryptFrom decides the layout
+      .encrypt_into::<Json>("attrs")       // EQL's JSON type frames the Json index's document
+      .encrypt_index::<u32>("age", (Equality, Ore))
+      .build()?;
+  ```
+
+- **Go**, through code the generator in #1070 writes. The generated code asks
+  the guest for the standard outputs of the field's indexes and assembles the
+  EQL type in Go.
+
+So there is **no registry** of EQL types, **no target name in the data
+grammar**, and no `Target<S>` trait. The WASI guest stays EQL-free: it runs
+data plans and returns standard outputs, exactly as for any other field. A
+shape mismatch (the outputs do not fit the EQL type) is a run-time error in
+Go, and codegen makes it unreachable in practice.
+
+An EQL type is still a target that wraps an index's output; the index itself
+stays in stack-encrypt. The JSON type is the clearest case: the `Json` index
+produces the searchable document, and EQL's JSON type frames it.
+
+**The cost: the EQL byte encoding lives twice**, in `eql-bindings` (Rust) and
+in a Go EQL package. A standing cross-language fixture guards it: encode in
+Rust, decode and re-encode in Go, and compare the bytes.
+
+Match and JSON index options need a wire form first (Additions, item 7): the
+Go side derives its terms from a data plan, and a dropped option there is a
+query that matches nothing.
 
 ## Sequencing
 
-1. **Engine additions in stack-encrypt**: `passthrough()`, execute-by-value,
-   `Index<S>` / `Indexes<S>` / `indexed()`, `Encrypted<Terms>`, and a type
-   per field in the plan grammar (see "Where the design strains"). One PR;
-   stack-encrypt 0.3.0. The combinators' public surface does not shrink.
-2. **The builder**, lowering to the engine, with the one-value chain, the
-   fields chain, `Plan`, `using`, `query`, `decrypt`, `all`. Same or next PR.
-3. **The derive emits the builder**; `tests/ui` snapshots and the label
-   fixture prove the same bytes before and after.
-4. **`dynamic::record` becomes a lowering.** The guest is rebuilt; Go's
-   `plantest.Golden` snapshots must not change, which is the proof.
-5. **The Go mirror** (#1046 proper): the chain above, removals, docs,
-   examples, live tests. #1025 merges first so snapshots regenerate once.
-6. **EQL domains as field targets**, after #971 merges.
-7. The audit-context PR, then the lock-context PR, on the finished shape.
+Done:
+
+1. **Source modes** (#1068): a non-`Clone` plaintext runs one operation;
+   `KeysetCipher::run`.
+2. **Engine pieces** (#1069): `passthrough()`, `run_decryption`, `Index<S>` /
+   `Indexes<S>` / `indexed()`, `Encrypted<Terms>`, and a type per field in
+   the plan grammar.
+3. **The builder** (#1071): the one-value chain, the fields chain, `Plan`,
+   `using`, `query`, `open`, `all`.
+
+Next, as stacked drafts on #1071:
+
+4. **Narrow the derive**: the four removals in "Consolidation". The byte
+   changes are isolated in this PR and listed.
+5. **Widen the plan**: the two starts, the three context sources,
+   `encrypt_into` in both positions, `Encrypted<Terms>: EncryptFrom<S>`, the
+   picker, and the match and JSON options on the wire.
+6. **The derive emits the plan** (#1058), with byte identity proven on the
+   narrowed grammar.
+
+Then:
+
+7. **`dynamic::record` becomes a lowering** (#1059). The guest is rebuilt;
+   Go's `plantest.Golden` snapshots must not change, which is the proof.
+8. **The Go binding** (#1046), against the design in #1070. #1025 merges
+   first so snapshots regenerate once.
+9. **The EQL typed verb** (#1062), Rust-only; Go assembles EQL types through
+   the generator.
+10. The audit-context PR, then the lock-context PR, on the finished shape.
 
 ## Non-goals
 
@@ -510,14 +691,9 @@ field targets. Module size is measured in that PR and reported, not hidden.
 
 ## Open questions
 
-- **A typed Go plan, `Plan[T]`**, through a generic struct, so `Decrypt`
-  returns `T` rather than filling an `out any`. Fits the chain; deferred until
-  the untyped form lands.
-- **The decrypt side of the one-value chain**: `decrypt(ct).using(&age_plan)`
-  returns the plaintext type the plan was built for; whether a hand-built plan
-  carries `S` or the caller names it is settled in the builder PR.
 - **Converging the TypeScript schema builder onto the plan grammar**, so
   `@cipherstash/stack` stops being a second engine beside stack-encrypt.
   Out of scope here; recorded so a TS binding does not grow an executor.
-- **`eqlv3` as a package or a separate `go.mod`**: a package as read; correct
-  if a separate module was meant.
+- **The Go EQL package (`eqlv3` in the first draft) as a package or a
+  separate `go.mod`**: a package as read; correct if a separate module was
+  meant.
