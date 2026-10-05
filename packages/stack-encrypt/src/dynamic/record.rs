@@ -50,10 +50,10 @@
 //! plaintext and have it reported as a successful decrypt.
 
 use stack_kms::DataKeySource;
-use vitaminc_aead_value::FfiValue;
+use vitaminc_aead_value::{FfiValue, ValueKind};
 use vitaminc_protected::Protected;
 
-use super::{borrowed, term, utf8, Error, FieldType, Scalar, Scope};
+use super::{admits, borrowed, term, utf8, Error, Scalar, Scope};
 use crate::target::{IndexSpec, Pending};
 use crate::{
     BoxedPassthrough, CipherText, ContextPiece, Encrypt, KeysetCipher, NonEmpty, StackCipherText,
@@ -110,19 +110,19 @@ impl Output {
 /// One field of a record plan: what to call it, what context to bind it
 /// under, what to produce for it, and, optionally, what type its values are.
 ///
-/// A field with a declared [`FieldType`] admits only the indexes that type
-/// is defined for (checked when the plan is built), seals only values of
-/// that type and opens only to one (checked per value), so the engine
-/// verifies what a binding hands it rather than trusting the binding's
-/// tagging. A field with no declared type is dispatched on each value's own
-/// type, as every field was before types existed; that keeps the plans
-/// existing bindings send valid.
+/// A field with a declared type (a [`ValueKind`]) admits only the indexes
+/// that kind is defined for ([`admits`], checked when the
+/// plan is built), seals only values of that kind and opens only to one
+/// (checked per value), so the engine verifies what a binding hands it
+/// rather than trusting the binding's tagging. A field with no declared type
+/// is dispatched on each value's own type, as every field was before types
+/// existed; that keeps the plans existing bindings send valid.
 #[derive(Clone, Debug)]
 pub struct FieldPlan {
     name: String,
     context: NonEmpty<ContextPiece<'static>>,
     outputs: Vec<Output>,
-    field_type: Option<FieldType>,
+    field_type: Option<ValueKind>,
 }
 
 impl FieldPlan {
@@ -169,13 +169,13 @@ impl FieldPlan {
     ///
     /// # Errors
     ///
-    /// [`Error::Plan`] if the field asks for an index the type is not
-    /// defined for ([`FieldType::admits`]): match on an integer, equality on
-    /// a float, any index on a composite.
-    pub fn with_type(mut self, field_type: FieldType) -> Result<Self, Error> {
+    /// [`Error::Plan`] if the field asks for an index the kind is not
+    /// defined for ([`admits`]): match on an integer,
+    /// equality on a float, any index on a composite.
+    pub fn with_type(mut self, field_type: ValueKind) -> Result<Self, Error> {
         for output in &self.outputs {
-            if let Output::Term(kind) = output {
-                if !field_type.admits(kind) {
+            if let Output::Term(index) = output {
+                if !admits(field_type, index) {
                     return Err(Error::Plan);
                 }
             }
@@ -202,7 +202,7 @@ impl FieldPlan {
     /// The declared type of the field's values, if the plan declares one.
     /// A host with no types of its own reads this to know what a decrypted
     /// value is.
-    pub fn field_type(&self) -> Option<FieldType> {
+    pub fn field_type(&self) -> Option<ValueKind> {
         self.field_type
     }
 
@@ -292,10 +292,11 @@ impl Plan {
 ///
 /// [`MatchOptions::default`]: crate::sem::MatchOptions::default
 ///
-/// `"type"` is optional, and names a [`FieldType`] (`"int64"`, `"string"`,
-/// …; see [`FieldType::name`]). Declared, it is checked against the field's
-/// outputs here and against every value sealed into or opened from the
-/// field; absent, each value is dispatched on its own type.
+/// `"type"` is optional, and names a [`ValueKind`] (`"int64"`, `"string"`,
+/// …; see [`ValueKind::name`]): vitaminc's vocabulary, not one of this
+/// crate's. Declared, it is checked against the field's outputs here
+/// ([`admits`]) and against every value sealed into or opened
+/// from the field; absent, each value is dispatched on its own type.
 ///
 /// `<context>` is defined once, in [`super::context`](super::context()): a
 /// string, bytes, an integer, or a list of those, with what each spells in
@@ -346,7 +347,7 @@ impl Plan {
 /// `"context"` or `"outputs"`, an output list that is not a list of
 /// outputs (`"c"` or an index in its wire form, above), is empty, or names
 /// an output key twice, a `"type"` that is not
-/// a string naming a [`FieldType`], or a type that does not admit one of
+/// a string naming a [`ValueKind`], or a type that does not admit one of
 /// the field's index outputs. [`Error::Context`] for a `"context"` that is
 /// present but is not a context, or renders empty.
 ///
@@ -365,7 +366,7 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
         };
         let mut context: Option<NonEmpty<ContextPiece<'static>>> = None;
         let mut outputs: Option<Vec<Output>> = None;
-        let mut field_type: Option<FieldType> = None;
+        let mut field_type: Option<ValueKind> = None;
         for (key, value) in spec {
             match key.as_str() {
                 "context" if context.is_none() => context = Some(super::context(value)?),
@@ -384,7 +385,7 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
                         return Err(Error::Plan);
                     };
                     let name = utf8(s).ok_or(Error::Plan)?;
-                    field_type = Some(FieldType::parse(name).ok_or(Error::Plan)?);
+                    field_type = Some(name.parse().map_err(|_| Error::Plan)?);
                 }
                 // An unknown key, or one of the three given twice.
                 _ => return Err(Error::Plan),
@@ -2337,7 +2338,7 @@ mod tests {
             let types: Vec<_> = parsed.fields().iter().map(FieldPlan::field_type).collect();
             assert_eq!(
                 types,
-                [Some(FieldType::UInt64), Some(FieldType::String), None]
+                [Some(ValueKind::UInt64), Some(ValueKind::String), None]
             );
         }
 
@@ -2397,11 +2398,11 @@ mod tests {
             assert_eq!(field.field_type(), None, "untyped until declared");
             let typed = field
                 .clone()
-                .with_type(FieldType::UInt32)
+                .with_type(ValueKind::UInt32)
                 .expect("equality admits a u32");
-            assert_eq!(typed.field_type(), Some(FieldType::UInt32));
+            assert_eq!(typed.field_type(), Some(ValueKind::UInt32));
             assert!(matches!(
-                field.with_type(FieldType::Float32),
+                field.with_type(ValueKind::Float32),
                 Err(Error::Plan)
             ));
             let sealed_only = FieldPlan::new(
@@ -2410,9 +2411,9 @@ mod tests {
                 vec![Output::Ciphertext],
             )
             .expect("field")
-            .with_type(FieldType::Object)
+            .with_type(ValueKind::Object)
             .expect("a composite with no index is a plain sealed field");
-            assert_eq!(sealed_only.field_type(), Some(FieldType::Object));
+            assert_eq!(sealed_only.field_type(), Some(ValueKind::Object));
         }
 
         /// The engine verifies the tag rather than trusting the binding: a
@@ -2538,7 +2539,8 @@ mod tests {
             let stored = term_bytes(&node(&mut age, "eq"));
 
             let declared = field.field_type().expect("typed");
-            let value = declared.read(FfiValue::Float64(34.0)).expect("an exact 34");
+            let value =
+                crate::dynamic::read(declared, FfiValue::Float64(34.0)).expect("an exact 34");
             let scalar = Scalar::of(&value, &IndexSpec::Equality).expect("scalar");
             let probe = term(
                 &keyset,

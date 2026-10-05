@@ -46,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Decryption` held in a variable.
 - A dynamic plan's match index can carry options, as
   `{"match": {"tokenizer", "downcase", "k", "m"}}`.
+- A dynamic plan field may declare its type, as `"type": "<kind>"`. The
+  vocabulary is vitaminc's `ValueKind` (re-exported as
+  `dynamic::ValueKind`), not a new enum, so this crate now needs vitaminc
+  0.5.1. A declared type refuses an index it is not defined for
+  (`dynamic::admits`) and a value of another kind, on encrypt and on
+  decrypt. `dynamic::read` reads a query value as a kind;
+  `FieldPlan::with_type` and `field_type` set and read the declaration.
 
 ## [0.2.0] - 2026-10-04
 

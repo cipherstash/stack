@@ -41,25 +41,28 @@
 //! them. Their long-term home is beside vitaminc's frozen tag table, which
 //! already owns this class of constant.
 //!
-//! A plan field's `"type"` names ([`FieldType`]: `"int64"`, `"string"`, …)
-//! are wire format in the same way: a binding spells them, and a stored row
-//! opens only under the type it was sealed as.
+//! A plan field's `"type"` names (`"int64"`, `"string"`, …) are wire format
+//! in the same way: a binding spells them, and a stored row opens only under
+//! the type it was sealed as. They are not this crate's: a declared type is
+//! vitaminc's [`ValueKind`], re-exported here, whose names vitaminc freezes
+//! beside its tag table. This crate adds only what a kind means to an index
+//! ([`admits`]) and to a query value ([`read`]).
 //!
 //! For the same reason the enums that spell them — [`Output`],
-//! [`IndexSpec`] and [`FieldType`] — are *not* `#[non_exhaustive]`, against this workspace's
+//! [`IndexSpec`] and [`ValueKind`] — are *not* `#[non_exhaustive]`, against this workspace's
 //! usual rule for public enums: a new output is a wire-format addition every
 //! binding has to be taught, and an exhaustive match is how the compiler
 //! tells a binding author that. [`Scope`] is exhaustive for a different
 //! reason, given on the type.
 mod context;
-mod field_type;
+mod kind;
 pub mod record;
 mod term;
 
 use std::fmt;
 
 pub use context::{borrowed, context};
-pub use field_type::FieldType;
+pub use kind::{admits, read};
 pub use record::{FieldPlan, Output, Plan};
 pub use term::{term, Scalar};
 /// vitaminc's language-neutral value tree — the runtime value every binding
@@ -67,6 +70,10 @@ pub use term::{term, Scalar};
 /// which stays the binding's: this crate takes and returns values, never
 /// encoded bytes.
 pub use vitaminc_aead_value::FfiValue;
+/// vitaminc's value kinds: the type a plan field declares in its `"type"`
+/// key. Its names are frozen wire format; see [`admits`] and [`read`] for
+/// what a kind means to this engine.
+pub use vitaminc_aead_value::ValueKind;
 
 use crate::target::IndexSpec;
 use crate::{KeysetCipher, StackCipher};
@@ -161,7 +168,7 @@ pub enum Error {
     /// not carry or carries twice, or a passthrough or a repeated map key
     /// under a field the plan seals, or a value of another type than its
     /// field declares. Also a query value that cannot be read as its field's
-    /// type ([`FieldType::read`]).
+    /// type ([`read`]).
     #[error("record source does not fit the plan")]
     Source,
 
