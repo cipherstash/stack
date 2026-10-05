@@ -108,9 +108,9 @@ impl<S> ValueStart<S> {
     /// to `<T as EncryptFrom<S>>::encryption().under(context)`.
     ///
     /// A tuple target holding no ciphertext (terms only) builds, but `open`
-    /// on it fails with [`Error::NotOpened`](crate::Error::NotOpened); a
-    /// `Decryptable` bound that refuses it at build time will come with the
-    /// derive work (#1058).
+    /// on it fails with [`Error::NotOpened`](crate::Error::NotOpened): a
+    /// target of terms alone is a query-only plan, as a record deriving
+    /// `EncryptFrom` alone is.
     pub fn encrypt_into<T>(self) -> ValuePlanBuilder<S, Typed<T>>
     where
         T: EncryptFrom<S>,
@@ -143,6 +143,16 @@ impl<S> ValueStart<S> {
     /// A context field is the plan's one context source, so a build-time
     /// [`context`](Self::context) beside it is
     /// [`PlanError::TwoContextSources`] at `build()`.
+    ///
+    /// Unlike a fields plan's context field, the context here is a `C`, not
+    /// a [`Label`], so the plan does not run through the chain:
+    /// `cipher.encrypt(..).using`, `cipher.open(..).using` and
+    /// `cipher.query(..).using` do not take it (it is neither
+    /// [`Runs`](super::Runs) nor [`Opens`](super::Opens)), and it has no
+    /// query path. Run it as the derive does, with its two descriptions:
+    /// `keyset.run(plan.encryption_with_context(), &value, context)` and
+    /// `keyset.run_decryption(plan.decryption_with_context(record,
+    /// expected))`.
     pub fn context_field<C>(self) -> ContextFieldStart<S, C> {
         ContextFieldStart {
             sources: self.sources,
@@ -183,7 +193,10 @@ impl<S, C> ContextFieldStart<S, C> {
 }
 
 /// A one-value plan's layout when its context is carried out beside its
-/// target `T` ([`ValueStart::context_field`]): its output is `(C, T)`.
+/// target `T` ([`ValueStart::context_field`]): its output is `(C, T)`. Run
+/// through [`ValuePlan::encryption_with_context`] and
+/// [`ValuePlan::decryption_with_context`] only; see
+/// [`context_field`](ValueStart::context_field).
 pub struct Stored<C, T>(PhantomData<fn() -> (C, T)>);
 
 impl<C, T> Clone for Stored<C, T> {

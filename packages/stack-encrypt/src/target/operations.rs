@@ -564,19 +564,6 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
             Opening::Open(open) => Decryption::open(Box::new(move |cipher| open(cipher).map(f))),
         }
     }
-    /// [`map`](Self::map) for a conversion that can fail, such as a plan
-    /// reading its opened fields back into a struct.
-    pub fn try_map<U: 'static, F>(self, f: F) -> Decryption<U, K>
-    where
-        F: FnOnce(T) -> Result<U, Error> + MaybeSend + 'static,
-    {
-        match self.inner {
-            Opening::Failed(error) => Decryption::failed(error),
-            Opening::Open(open) => {
-                Decryption::open(Box::new(move |cipher| open(cipher).try_map(f)))
-            }
-        }
-    }
     /// Open both, retrieving their keys in one batch. A failed side fails
     /// the pair, the left one first, without executing the other.
     pub fn zip<U: 'static>(self, other: Decryption<U, K>) -> Decryption<(T, U), K> {

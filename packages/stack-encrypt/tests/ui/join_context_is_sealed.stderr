@@ -1,0 +1,38 @@
+error[E0277]: the trait bound `AeadContext: target::tuples::sealed::Sealed<MyContext>` is not satisfied
+ --> tests/ui/join_context_is_sealed.rs:8:33
+  |
+8 | impl JoinContext<MyContext> for AeadContext {
+  |                                 ^^^^^^^^^^^ the trait `target::tuples::sealed::Sealed<MyContext>` is not implemented for `AeadContext`
+  |
+help: the following other types implement trait `target::tuples::sealed::Sealed<Other>`
+ --> src/target/tuples.rs
+  |
+  |           impl sealed::Sealed<$right> for $left {}
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |           |
+  |           `AeadContext` implements `target::tuples::sealed::Sealed<CallerContext>`
+  |           `AeadContext` implements `target::tuples::sealed::Sealed<DeclaredContext>`
+...
+  | / join_to_caller! {
+  | |     AeadContext, CallerContext;
+  | |     CallerContext, AeadContext;
+  | |     AeadContext, DeclaredContext;
+... |
+  | |     DeclaredContext, CallerContext;
+  | | }
+  | |_- in this macro invocation
+note: required by a bound in `JoinContext`
+ --> src/target/tuples.rs
+  |
+  | pub trait JoinContext<Other>: sealed::Sealed<Other> {
+  |                               ^^^^^^^^^^^^^^^^^^^^^ required by this bound in `JoinContext`
+  = note: `JoinContext` is a "sealed trait", because to implement it you also need to implement `stack_encrypt::target::tuples::sealed::Sealed`, which is not accessible; this is usually done to force you to use one of the provided types that already implement it
+  = help: the following types implement the trait:
+            stack_encrypt::target::AeadContext
+            stack_encrypt::target::AeadContext
+            stack_encrypt::CallerContext
+            stack_encrypt::CallerContext
+            stack_encrypt::target::DeclaredContext
+            stack_encrypt::target::DeclaredContext
+            C
+  = note: this error originates in the macro `join_to_caller` (in Nightly builds, run with -Z macro-backtrace for more info)

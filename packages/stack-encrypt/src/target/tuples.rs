@@ -25,15 +25,33 @@ use stack_kms::MaybeSend;
 /// context is the AEAD half. A tuple of ciphertexts therefore takes an
 /// [`AeadContext`], and accepts every context a lone ciphertext accepts:
 /// what a `plaintext = T` record declared `context_type = AeadContext` is.
-pub trait JoinContext<Other> {
+///
+/// `Output` is a context every element's own context is made from (`Into`
+/// each of them): the tuple's impl asks that, so a join can only ever widen
+/// what an element is handed, never drop part of it.
+///
+/// Sealed: the pairs are those above, and a context paired with itself.
+/// Targets whose contexts differ otherwise do not form a tuple (nor a
+/// `plaintext = T` record, whose outputs are one), so a target of your own
+/// that sits beside a ciphertext or a term declares one of this crate's
+/// contexts, usually [`CallerContext`], and takes what it needs from it.
+/// Sealing keeps the joins this crate's to extend: a pair implemented
+/// outside it would conflict with any join added here later, which would
+/// make adding one a breaking change.
+pub trait JoinContext<Other>: sealed::Sealed<Other> {
     /// The context both are handed.
     type Output: Clone + MaybeSend + 'static;
 }
+mod sealed {
+    pub trait Sealed<Other> {}
+}
+impl<C: Clone + MaybeSend + 'static> sealed::Sealed<C> for C {}
 impl<C: Clone + MaybeSend + 'static> JoinContext<C> for C {
     type Output = C;
 }
 macro_rules! join_to_caller {
     ($($left:ty, $right:ty;)+) => {$(
+        impl sealed::Sealed<$right> for $left {}
         impl JoinContext<$right> for $left {
             type Output = CallerContext;
         }

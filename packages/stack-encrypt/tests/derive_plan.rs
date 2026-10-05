@@ -555,38 +555,6 @@ fn every_derived_plan_builds() {
     );
 }
 
-// --- `Decryption::try_map` -----------------------------------------------------
-
-#[tokio::test]
-async fn try_map_converts_or_fails_an_opening() {
-    let cipher = stack_cipher().await;
-    let keyset = cipher.default_keyset();
-    let context = || AeadContext::from(nonempty!("n"));
-    let sealed: StackCipherText = keyset.encrypt_as(&5u32, context()).await.unwrap();
-    let opening = stack_encrypt::target::open::<u32, _>(sealed, context());
-    let doubled = keyset
-        .run_decryption(opening.try_map(|n| Ok(n * 2)))
-        .await
-        .unwrap();
-    assert_eq!(doubled, 10);
-
-    let sealed: StackCipherText = keyset.encrypt_as(&5u32, context()).await.unwrap();
-    let opening = stack_encrypt::target::open::<u32, _>(sealed, context());
-    let refused = keyset
-        .run_decryption(opening.try_map(|_| Err::<u32, _>(Error::NotOpened)))
-        .await;
-    assert!(matches!(refused, Err(Error::NotOpened)));
-
-    // A failed opening stays failed with its own error, and `f` never runs.
-    let failed = stack_encrypt::target::Decryption::<u32, FakeDataKeySource>::failed(Error::Plan(
-        PlanError::NoContext,
-    ));
-    let refused = keyset
-        .run_decryption(failed.try_map(|_| -> Result<u32, Error> { panic!("not run") }))
-        .await;
-    assert!(matches!(refused, Err(Error::Plan(PlanError::NoContext))));
-}
-
 #[test]
 fn a_context_field_plan_debugs_its_stored_context_and_target() {
     let start = Plan::value::<String>().context_field::<String>();
