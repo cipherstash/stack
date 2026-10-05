@@ -11,7 +11,7 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 use cllw_ore::CllwOreEncrypt;
 use common::{counting_cipher, stack_cipher};
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
-use stack_encrypt::target::{AeadContext, DecryptFrom, EncryptInto};
+use stack_encrypt::target::{AeadContext, DecryptFrom, EncryptInto, Encrypted};
 use stack_encrypt::{
     nonempty, ContextPiece, DecryptField, DecryptInto, Decryptable, EncryptFrom, Error,
     IntoContext, MaybeEmpty, NonEmpty, StackCipherText,
@@ -472,11 +472,9 @@ struct User {
 struct EncryptedUser {
     /// A record inside a struct: recursion, not a second mechanism.
     age: EncryptedAge,
-    email: StackCipherText,
-    /// A second field from the same plaintext field — a term alongside the
-    /// ciphertext, not opened on decrypt.
-    #[stash(from = email)]
-    email_eq: EqualityTerm,
+    /// A ciphertext with its search terms beside it is one field: one
+    /// output per plaintext field. Decryption opens its ciphertext.
+    email: Encrypted<(EqualityTerm, MatchTerms)>,
     /// Not derived: filled in, never encrypted.
     #[stash(default = 3)]
     version: u8,
@@ -518,7 +516,12 @@ async fn a_struct_is_one_batched_call_and_rebuilds_its_plaintext() {
         .encrypt_into_with_context(&generator, nonempty!("user").with("email"))
         .await
         .unwrap();
-    assert_eq!(row.email_eq, email_hm);
+    let email_match: MatchTerms = user()
+        .email
+        .encrypt_into_with_context(&generator, nonempty!("user").with("email"))
+        .await
+        .unwrap();
+    assert_eq!(row.email.terms, (email_hm, email_match));
 
     // Decryption rebuilds the plaintext field by field: one batched call.
     let recovered = User::decrypt_from(row, &cipher).await.unwrap();

@@ -1,0 +1,11 @@
+error: `email` and `email_hm` are both derived from the plaintext field `email`: a plaintext field has one output. For a ciphertext with search terms beside it, make it one field of type `Encrypted<Terms>`, e.g. `email: Encrypted<(EqualityTerm, MatchTerms)>`
+  --> tests/ui/struct_duplicate_from.rs:15:20
+   |
+15 |     #[stash(from = email)]
+   |                    ^^^^^
+
+error: `email` and `email_hm` are both derived from the plaintext field `email`: a plaintext field has one output. For a ciphertext with search terms beside it, make it one field of type `Encrypted<Terms>`, e.g. `email: Encrypted<(EqualityTerm, MatchTerms)>`
+  --> tests/ui/struct_duplicate_from.rs:23:20
+   |
+23 |     #[stash(from = email)]
+   |                    ^^^^^

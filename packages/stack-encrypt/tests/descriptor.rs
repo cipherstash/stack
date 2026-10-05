@@ -10,7 +10,7 @@ mod common;
 
 use common::recording_cipher;
 use stack_encrypt::sem::EqualityTerm;
-use stack_encrypt::target::{DecryptFrom, EncryptInto};
+use stack_encrypt::target::{DecryptFrom, EncryptInto, Encrypted};
 use stack_encrypt::{
     nonempty, DecryptInto, Describe, Descriptor, EncryptFrom, Error, Label, NonEmpty,
     StackCipherText,
@@ -32,9 +32,7 @@ struct User {
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(struct = User, context = "users")]
 struct EncryptedUser {
-    email: StackCipherText,
-    #[stash(from = email)]
-    email_hm: EqualityTerm,
+    email: Encrypted<EqualityTerm>,
     #[stash(identity = "nickname")]
     name: StackCipherText,
     age: EncryptedAge,

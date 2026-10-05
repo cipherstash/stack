@@ -2,7 +2,6 @@
 use crate::shape::{trait_impl, zip, Field, Record};
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens};
-use std::collections::HashSet;
 use syn::spanned::Spanned;
 use syn::{parse_quote, DeriveInput, Ident, LitStr, Member, Path, PathArguments, Result, Type};
 
@@ -292,20 +291,9 @@ impl<'a> Mode<'a> {
             opened.len(),
             "every field of a `struct` derive has a `from`, and no other field does"
         );
-
-        let mut seen: HashSet<&Member> = HashSet::with_capacity(opened.len());
-        for field in &opened {
-            let from = field
-                .from()
-                .unwrap_or_else(|| unreachable!("counted above"));
-            if !seen.insert(from) {
-                let name = quote!(#from);
-                return Err(syn::Error::new(
-                    from.span(),
-                    format!("two `decrypt` fields would recover the same plaintext field `{name}`"),
-                ));
-            }
-        }
+        // Two `decrypt` fields cannot recover one plaintext field: a
+        // `struct` derive has one field per plaintext field
+        // (`Record::parse`).
         Ok(Mode::ByField(opened))
     }
 }

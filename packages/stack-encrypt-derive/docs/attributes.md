@@ -31,7 +31,7 @@ literal.
 | `context_field` | Store the caller’s typed context here and recover it on decryption. Exactly one per record; excludes the other field attributes and literal contexts. |
 | `context = "..."` | With a `plaintext` record only: derive this field under exactly this context, extended by the one the caller passes for the record like any other. A query-side term built under the same literal — extended the same way — matches it. One plain segment (`"email"`, not `"users/email"`), as a plan's context segments are. Refused on a field of a `struct` derive, which sits under the record's context: use `identity`. |
 | `identity = "..."` | With `struct` only: key this field under the segment `identity` instead of the plaintext field's name, so it is derived under `("<context>", "<identity>")`. One plain segment. The plan builder's `.identity(segment)`. |
-| `from = field` / `from = 0` | With `struct` only: derive this field from `plaintext.field` (or `plaintext.0` for a tuple struct) when its name differs from its plaintext field's. |
+| `from = field` / `from = 0` | With `struct` only: derive this field from `plaintext.field` (or `plaintext.0` for a tuple struct) when its name differs from its plaintext field's. A plaintext field has one output: two fields `from` one plaintext field are refused (a ciphertext with its terms is one `Encrypted<Terms>` field). |
 | `default` / `default = expr` | Not derived: filled with `Default::default()` or `expr`. Never encrypted, never authenticated. |
 | `decrypt` | Decryption opens this field (`DecryptInto` only). Needed only when the field types cannot decide it — see below. |
 
@@ -112,7 +112,11 @@ two-segment `Label` spells. `#[stash(identity = "nickname")] name: ..`
 replaces the second part only: the field is derived under
 `("users", "nickname")`. A field of a `struct` derive cannot be given a
 context of its own (`context = ".."` on it is refused): it always sits under
-the record's. A field whose type is itself a record (a `struct` derive, say)
+the record's. Each plaintext field has exactly one output, and each output
+its own segment: a ciphertext with search terms beside it is one field of
+type `Encrypted<Terms>` (`email: Encrypted<(EqualityTerm, MatchTerms)>`),
+not a ciphertext field plus term fields `from` the same plaintext field. A
+field whose type is itself a record (a `struct` derive, say)
 is an ordinary field: it is handed its pair, and the inner record's own
 fields sit under it, their contexts extended by it.
 
@@ -150,8 +154,8 @@ A `struct` derive has no field derived from the whole plaintext, and a
 
 `DecryptInto` does not need to be told: every field type says whether it is a
 ciphertext or a one-way index term (`Decryptable`), and the derive requires
-exactly one ciphertext — among all derived fields for a record, or among the
-fields derived from each plaintext field for a `struct` derive. Too few or
+exactly one ciphertext — among all derived fields for a record, or in the
+one field derived from each plaintext field for a `struct` derive. Too few or
 too many is a compile error at the record's definition (at its first use, if
 the record is generic). A derived record is itself `Decryptable` if any of
 its fields is, so records nest in structs without ceremony; a type of your own

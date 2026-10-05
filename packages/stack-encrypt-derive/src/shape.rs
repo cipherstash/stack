@@ -230,6 +230,9 @@ impl Record {
             return Err(syn::Error::new_spanned(&input.ident, "`context_field` supplies the complete context; literal field contexts do not apply"));
         }
         let by_field = attrs.by_field.is_some();
+        if by_field {
+            one_output_per_plaintext_field(&fields)?;
+        }
         let plaintexts = match attrs.by_field {
             Some(plaintext) => vec![plaintext],
             None => attrs.plaintexts,
@@ -272,6 +275,67 @@ impl Record {
         }
         Ok(record)
     }
+}
+
+/// A `struct` derive's fields, as a plan's: each plaintext field has one
+/// output, and each output one segment. A second output from one plaintext
+/// field (a term beside its ciphertext) is one field of type
+/// `Encrypted<Terms>` instead; two fields keyed under one segment would
+/// share their data's identity.
+fn one_output_per_plaintext_field(fields: &[Field]) -> Result<()> {
+    let derived: Vec<&Field> = fields.iter().filter(|f| f.is_derived()).collect();
+    for (at, field) in derived.iter().enumerate() {
+        let name = |f: &Field| f.member.to_token_stream().to_string();
+        for earlier in &derived[..at] {
+            if let (Some(from), Some(earlier_from)) = (field.from(), earlier.from()) {
+                if from == earlier_from {
+                    return Err(syn::Error::new(
+                        from.span(),
+                        format!(
+                            "`{}` and `{}` are both derived from the plaintext field `{}`: a \
+                             plaintext field has one output. For a ciphertext with search terms \
+                             beside it, make it one field of type `Encrypted<Terms>`, e.g. \
+                             `{}: Encrypted<(EqualityTerm, MatchTerms)>`",
+                            name(earlier),
+                            name(field),
+                            from.to_token_stream(),
+                            name(earlier),
+                        ),
+                    ));
+                }
+            }
+            if let (
+                Kind::Derived {
+                    context: Some(OwnContext::Prefixed { field: segment, .. }),
+                    ..
+                },
+                Kind::Derived {
+                    context:
+                        Some(OwnContext::Prefixed {
+                            field: earlier_segment,
+                            ..
+                        }),
+                    ..
+                },
+            ) = (&field.kind, &earlier.kind)
+            {
+                if segment.value() == earlier_segment.value() {
+                    return Err(syn::Error::new(
+                        field.member.span(),
+                        format!(
+                            "`{}` and `{}` are both keyed under the segment `{}`, so their data \
+                             would share one identity: give one of them another \
+                             `identity = \"..\"`",
+                            name(earlier),
+                            name(field),
+                            segment.value(),
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn trait_impl(
@@ -1059,6 +1123,75 @@ mod tests {
         })
         .unwrap();
         assert_eq!(own(&record.fields[0]), "email");
+    }
+
+    #[test]
+    fn a_plaintext_field_has_one_output() {
+        for input in [
+            // The field named `email` reaches `email`, and so does the term.
+            parse_quote! {
+                #[stash(struct = User, context = "users")]
+                struct Rec {
+                    email: StackCipherText,
+                    #[stash(from = email)]
+                    email_hm: EqualityTerm,
+                }
+            },
+            parse_quote! {
+                #[stash(struct = User, context = "users")]
+                struct Rec {
+                    #[stash(from = email, identity = "a")]
+                    a: StackCipherText,
+                    #[stash(from = email, identity = "b")]
+                    b: EqualityTerm,
+                }
+            },
+            parse_quote! {
+                #[stash(struct = Reading, context = "readings")]
+                struct Rec {
+                    #[stash(from = 0, identity = "value")]
+                    value: StackCipherText,
+                    #[stash(from = 0, identity = "value_hm")]
+                    value_hm: EqualityTerm,
+                }
+            },
+        ] {
+            let message = parse(input).unwrap_err().to_string();
+            assert!(message.contains("has one output"), "{message}");
+            assert!(message.contains("Encrypted<Terms>"), "{message}");
+        }
+
+        // One output per plaintext field, with `from` as a rename, is fine;
+        // so is a `default` field beside it.
+        let record = parse(parse_quote! {
+            #[stash(struct = User, context = "users")]
+            struct Rec {
+                #[stash(from = email)]
+                address: Encrypted<(EqualityTerm, MatchTerms)>,
+                name: StackCipherText,
+                #[stash(default)]
+                version: u8,
+            }
+        })
+        .unwrap();
+        assert_eq!(own(&record.fields[0]), "(users, email)");
+        assert_eq!(own(&record.fields[1]), "(users, name)");
+    }
+
+    #[test]
+    fn two_fields_are_never_keyed_under_one_segment() {
+        let err = parse(parse_quote! {
+            #[stash(struct = User, context = "users")]
+            struct Rec {
+                email: StackCipherText,
+                #[stash(identity = "email")]
+                name: StackCipherText,
+            }
+        })
+        .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("`email` and `name`"), "{message}");
+        assert!(message.contains("segment `email`"), "{message}");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-error: two `decrypt` fields would recover the same plaintext field `a`
+error: `a` and `b` are both derived from the plaintext field `a`: a plaintext field has one output. For a ciphertext with search terms beside it, make it one field of type `Encrypted<Terms>`, e.g. `a: Encrypted<(EqualityTerm, MatchTerms)>`
   --> tests/ui/decrypt_duplicate_from.rs:12:29
    |
 12 |     #[stash(decrypt, from = a)]
