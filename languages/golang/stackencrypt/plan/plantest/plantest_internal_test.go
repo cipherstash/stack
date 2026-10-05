@@ -249,6 +249,27 @@ func TestChangesAreSortedByWhatTheyCost(t *testing.T) {
 			section: "TARGET CHANGES",
 			says:    []string{"column medicare_number is now stored in column medicare_num, under the same context"},
 		},
+		"database column renamed, then the field renamed": {
+			before: plan.ForMessage(nil, "individuals", plan.FirstOf(
+				plan.When(plan.Field("medicare_number"), gov, plan.Column("medicare_num"), plan.Identity("medicare_id")),
+			).OrElse(base)),
+			after:   plan.ForMessage(nil, "individuals", base),
+			src:     individualV2(),
+			section: "CONTEXT CHANGES",
+			also:    []string{"OTHER CHANGES"},
+			says: []string{
+				`column medicare_num: no field writes its context "individuals/medicare_id" any more.`,
+				`with plan.Column("medicare_num"), plan.Identity("medicare_id") keeps it.`,
+			},
+		},
+		"field newly decided Plaintext": {
+			before: plan.ForMessage(nil, "individuals", base),
+			after: plan.ForMessage(nil, "individuals", plan.FirstOf(
+				plan.When(plan.Field("id"), plan.Plaintext()),
+			).OrElse(base)),
+			section: "OTHER CHANGES",
+			says:    []string{"new plaintext field id."},
+		},
 		"field newly classified": {
 			before:  plan.ForMessage(nil, "individuals", base),
 			after:   plan.ForMessage(nil, "individuals", plan.FirstOf(plan.When(plan.Field("id"), plan.Encrypt(plan.EQL(se.Ore)))).OrElse(base)),
