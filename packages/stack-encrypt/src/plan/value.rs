@@ -42,13 +42,13 @@ impl Plan<(), ()> {
     ///     .build()?;
     /// let email = String::from("bob@example.com");
     /// let (c, eq) = cipher.encrypt(&email).context("users/email").using(&email_plan).await?;
-    /// let probe = cipher
+    /// let query_value = cipher
     ///     .query("bob@example.com")
     ///     .context("users/email")
     ///     .using(&email_plan)
     ///     .equality()
     ///     .await?;
-    /// assert_eq!(probe, eq);
+    /// assert_eq!(query_value, eq);
     /// let back = cipher.open((c, eq)).context("users/email").using(&email_plan).await?;
     /// assert_eq!(back, email);
     /// # Ok(())

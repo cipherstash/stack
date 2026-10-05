@@ -917,12 +917,12 @@ impl<K, T> std::fmt::Debug for All<'_, K, T> {
 /// let email_plan = Plan::context("users/email").with(Equality).build()?;
 ///
 /// let email = String::from("bob@example.com");
-/// let (written, probe) = stack_encrypt::all((
+/// let (written, query_value) = stack_encrypt::all((
 ///     cipher.encrypt(&email).using(&email_plan),
 ///     cipher.query("bob@example.com").using(&email_plan).equality(),
 /// ))
 /// .await?;
-/// assert_eq!(written.terms, probe);
+/// assert_eq!(written.terms, query_value);
 /// # Ok(())
 /// # }
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();

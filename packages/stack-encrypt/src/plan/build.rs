@@ -258,13 +258,13 @@ pub(crate) fn check_declared(
 ///
 /// // A query and a read name the same context.
 /// let email_plan = users_plan.field("email")?;
-/// let probe = cipher
+/// let query_value = cipher
 ///     .query("bob@example.com")
 ///     .context("tenants/acme/users")
 ///     .using(&email_plan)
 ///     .equality()
 ///     .await?;
-/// # let _ = probe;
+/// # let _ = query_value;
 /// let back = cipher.open(record).context("tenants/acme/users").using(&users_plan).await?;
 /// assert_eq!(back.get::<String>("email").map(String::as_str), Some("bob@example.com"));
 ///
@@ -929,8 +929,8 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     /// let email: Encrypted<(EqualityTerm, MatchTerms)> = record.take("email")?;
     ///
     /// // The target declares an equality index, so the field answers it.
-    /// let probe = cipher.query("bob@example.com").using(&users_plan.field("email")?).equality().await?;
-    /// assert_eq!(probe, email.terms.0);
+    /// let query_value = cipher.query("bob@example.com").using(&users_plan.field("email")?).equality().await?;
+    /// assert_eq!(query_value, email.terms.0);
     /// # Ok(())
     /// # }
     /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();

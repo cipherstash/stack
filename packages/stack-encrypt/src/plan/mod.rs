@@ -170,8 +170,8 @@
 //!
 //! // Query: derived under the label the write used, so it matches.
 //! let email_plan = users_plan.field("email")?;
-//! let probe = cipher.query("bob@example.com").using(&email_plan).equality().await?;
-//! assert_eq!(probe, stored.terms.0);
+//! let query_value = cipher.query("bob@example.com").using(&email_plan).equality().await?;
+//! assert_eq!(query_value, stored.terms.0);
 //!
 //! // Read: every field that can come back.
 //! let back = cipher.open(record).using(&users_plan).await?;

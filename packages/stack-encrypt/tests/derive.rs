@@ -971,22 +971,25 @@ mod the_plan_writes_what_the_derive_writes {
     }
 
     #[derive(Clone)]
-    struct Row {
+    struct TenantRecord {
         tenant: String,
         email: String,
     }
 
-    fn row() -> Row {
-        Row {
+    fn tenant_record() -> TenantRecord {
+        TenantRecord {
             tenant: "tenants/acme".into(),
             email: "bob@example.com".into(),
         }
     }
 
-    fn rows_plan<K: 'static>() -> Plan<Row, K> {
+    fn records_plan<K: 'static>() -> Plan<TenantRecord, K> {
         Plan::fields()
-            .context_field(pick("tenant", |r: &Row| &r.tenant))
-            .encrypt_into::<(StackCipherText, EqualityTerm), _>(pick("email", |r: &Row| &r.email))
+            .context_field(pick("tenant", |r: &TenantRecord| &r.tenant))
+            .encrypt_into::<(StackCipherText, EqualityTerm), _>(pick(
+                "email",
+                |r: &TenantRecord| &r.email,
+            ))
             .build()
             .unwrap()
     }
@@ -999,10 +1002,17 @@ mod the_plan_writes_what_the_derive_writes {
     async fn a_context_field_writes_the_derives_context_field_bytes() {
         let (cipher, sent) = recording_cipher().await;
         let keyset = cipher.default_keyset();
-        let rows_plan = rows_plan();
+        let records_plan = records_plan();
 
-        let mut planned = cipher.encrypt(&row()).using(&rows_plan).await.unwrap();
-        let derived: ScopedEmail = keyset.encrypt_as(&row().email, scope()).await.unwrap();
+        let mut planned = cipher
+            .encrypt(&tenant_record())
+            .using(&records_plan)
+            .await
+            .unwrap();
+        let derived: ScopedEmail = keyset
+            .encrypt_as(&tenant_record().email, scope())
+            .await
+            .unwrap();
         assert_eq!(
             sent.lock().unwrap().generated(),
             ["tenants/acme/email", "tenants/acme/email"],
@@ -1024,35 +1034,42 @@ mod the_plan_writes_what_the_derive_writes {
             )
             .await
             .unwrap();
-        assert_eq!(opened, row().email);
+        assert_eq!(opened, tenant_record().email);
         planned.insert("email", (derived.c, derived.hm));
         let back = cipher
             .open(planned)
             .context("tenants/acme")
-            .using(&rows_plan)
+            .using(&records_plan)
             .await
             .unwrap();
-        assert_eq!(back.get::<String>("email"), Some(&row().email));
+        assert_eq!(back.get::<String>("email"), Some(&tenant_record().email));
     }
 
     #[tokio::test]
     async fn both_refuse_a_mismatched_expected_context_before_any_key_request() {
         let (cipher, _, retrieves) = counting_cipher().await;
         let keyset = cipher.default_keyset();
-        let rows_plan = rows_plan();
+        let records_plan = records_plan();
 
-        let planned = cipher.encrypt(&row()).using(&rows_plan).await.unwrap();
+        let planned = cipher
+            .encrypt(&tenant_record())
+            .using(&records_plan)
+            .await
+            .unwrap();
         let refused = cipher
             .open(planned)
             .context("tenants/globex")
-            .using(&rows_plan)
+            .using(&records_plan)
             .await;
         assert!(
             matches!(refused, Err(Error::ContextMismatch { .. })),
             "{refused:?}"
         );
 
-        let derived: ScopedEmail = keyset.encrypt_as(&row().email, scope()).await.unwrap();
+        let derived: ScopedEmail = keyset
+            .encrypt_as(&tenant_record().email, scope())
+            .await
+            .unwrap();
         let other: ExpectedContext<Label> =
             NonEmpty::from(Label::parse("tenants/globex/email").unwrap()).into();
         let refused: Result<String, _> = cipher.decrypt_as(derived, other).await;
