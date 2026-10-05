@@ -34,6 +34,7 @@ pub struct CountingSource {
     inner: FakeDataKeySource,
     generate_calls: Arc<AtomicUsize>,
     retrieve_calls: Arc<AtomicUsize>,
+    load_calls: Arc<AtomicUsize>,
 }
 
 impl CountingSource {
@@ -42,7 +43,14 @@ impl CountingSource {
             inner: FakeDataKeySource::new(),
             generate_calls: Arc::new(AtomicUsize::new(0)),
             retrieve_calls: Arc::new(AtomicUsize::new(0)),
+            load_calls: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// The counter of keyset lookups (`load_index_key` calls): what loading
+    /// a keyset by id or name asks ZeroKMS.
+    pub fn loads(&self) -> Arc<AtomicUsize> {
+        self.load_calls.clone()
     }
 
     pub fn counters(&self) -> (Arc<AtomicUsize>, Arc<AtomicUsize>) {
@@ -81,8 +89,23 @@ impl IndexKeySource for CountingSource {
         &self,
         keyset_id: Option<IdentifiedBy>,
     ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
+        self.load_calls.fetch_add(1, AtomicOrdering::SeqCst);
         self.inner.load_index_key(keyset_id).await
     }
+}
+
+/// A cipher over [`CountingSource`], with its counter of keyset lookups,
+/// zeroed once the cipher has loaded its default keyset.
+pub async fn loads_counting_cipher() -> (StackCipher<CountingSource>, Arc<AtomicUsize>) {
+    let source = CountingSource::new();
+    let loads = source.loads();
+    let cipher = StackCipher::builder()
+        .kms(source)
+        .init()
+        .await
+        .expect("build cipher");
+    loads.store(0, AtomicOrdering::SeqCst);
+    (cipher, loads)
 }
 
 /// A cipher over [`CountingSource`], with its `(generate, retrieve)` call

@@ -193,13 +193,19 @@ let row: EncryptedUser = user.encrypt_into(&cipher).await?;   // one batch, no c
 its context (`"<context>/<plaintext field>"`); the prefix is the required
 container `context`, named explicitly — never inferred from the Rust type's
 name, which two types can share and a refactor can change. `#[stash(from = ..)]`
-and `#[stash(context = "..")]` on a field are the overrides, and
-`#[stash(nested)]` marks a field whose type is itself a `struct` derive carrying its own
-contexts (it is handed `()`). The context is the AAD of every stored
-ciphertext in the column, so renaming a plaintext *field* is still a data
-migration: pin the old literal with `context = ".."` first.
+reads a field from a differently named plaintext field, and
+`#[stash(identity = "..")]` pins the label segment, so the field is keyed under
+`<context>/<identity>`. A field's context is always its record's context plus
+its identity: no field escapes it. No field takes a literal context of its own,
+on any derive: every output of a `plaintext = T` record shares the caller's.
+A field whose type is itself a record is an ordinary field: it is sealed under
+`<context>/<field>`, and its own contexts are extended by that pair. A struct
+derive takes one output per plaintext field; to store several terms from one
+field, type that field `Encrypted<Terms>`. The context is the AAD of every
+stored ciphertext in the column, so renaming a plaintext *field* is still a
+data migration: pin the old name first with `identity = ".."`.
 
-Leaf, record and field-by-field struct are the same trait, and a column of any of them is `Vec<T>`'s structural impl over the same trait — `ages.encrypt_into_with_context(&cipher, ctx)` for a `Vec<u32>` is one batched call, and `users.encrypt_into(&cipher)` for a `Vec<User>` likewise. Recursion does the rest. Earlier sketches of this design had a separate input-side derive for rows — that was a second mechanism the naming was hiding. (The field-by-field form shipped as `row = ..` and was renamed `struct = ..` on 2026-09-04: "row" pushed database vocabulary into a general-purpose library. `plaintext = T` derives every field from the whole value whatever `T` is — the derive sees a name, not a definition — and `from` / `nested` exist only with `struct`.)
+Leaf, record and field-by-field struct are the same trait, and a column of any of them is `Vec<T>`'s structural impl over the same trait — `ages.encrypt_into_with_context(&cipher, ctx)` for a `Vec<u32>` is one batched call, and `users.encrypt_into(&cipher)` for a `Vec<User>` likewise. Recursion does the rest. Earlier sketches of this design had a separate input-side derive for rows — that was a second mechanism the naming was hiding. (The field-by-field form shipped as `row = ..` and was renamed `struct = ..` on 2026-09-04: "row" pushed database vocabulary into a general-purpose library. `plaintext = T` derives every field from the whole value whatever `T` is — the derive sees a name, not a definition — and `from` / `identity` exist only with `struct`.)
 
 ### Relationship to `Encrypt`
 
@@ -252,7 +258,7 @@ vitaminc already has the generic notion, twice — `Aad<'a>` (aead) and `PrfCont
 
 Context is threaded **per value**, as an argument. It is not baked into the cipher.
 
-Whether the *caller* owes one is decided by the target type, at compile time. `Ctx` is a parameter of `EncryptFrom` so that each impl can bound it: a leaf is implemented for `NonEmpty<T>` alone, because it has nothing else to authenticate under and `()` is the empty context it must never derive under; a derived record is implemented twice — for `()`, deriving each field under the context it carries itself (a `context = ".."` literal, or the one a `struct = ..` derive infers), and for `NonEmpty<T>`, deriving each field under that context *extended* with the caller's (`("users/age", id)`), or under the caller's as it is for a field with none. No record accepts a context and then discards it. `encrypt_into(&cipher)` passes `()` and therefore compiles only for outputs whose every leaf has a context of its own; everything else takes `encrypt_into_with_context`, and such an output takes that too when the caller has something to add, a record id say, so a field is bound to its record as well as its name. This is vitaminc's `encrypt` / `encrypt_with_aad` split, with the choice made by the type rather than at every call site.
+Whether the *caller* owes one is decided by the target type, at compile time. `Ctx` is a parameter of `EncryptFrom` so that each impl can bound it: a leaf is implemented for `NonEmpty<T>` alone, because it has nothing else to authenticate under and `()` is the empty context it must never derive under; a derived record is implemented twice — for `()`, deriving each field under the context it carries itself (the one a `struct = ..` derive infers, `<context>/<identity>`), and for `NonEmpty<T>`, deriving each field under that context *extended* with the caller's (`("users/age", id)`), or under the caller's as it is for a field with none (every field of a `plaintext = T` record). No record accepts a context and then discards it. `encrypt_into(&cipher)` passes `()` and therefore compiles only for outputs whose every leaf has a context of its own; everything else takes `encrypt_into_with_context`, and such an output takes that too when the caller has something to add, a record id say, so a field is bound to its record as well as its name. This is vitaminc's `encrypt` / `encrypt_with_aad` split, with the choice made by the type rather than at every call site.
 
 A scoped cipher (`cipher.for_column("users", "age")`) was considered and rejected: it makes encrypting one record — several fields, several identifiers — into several scoped ciphers, which fights batching for no gain. With context as an argument, a record is one shared `&cipher`, many contexts, one flush.
 

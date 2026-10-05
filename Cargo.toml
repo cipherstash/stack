@@ -120,12 +120,13 @@ web-time = "1.1"
 zeroize = { version = "1.8.1", features = ["derive"] }
 # This is needed because lock_api 0.4.6 was breaking things and the branch forces the use of 0.4.12
 temp-env = { git = "https://github.com/cipherstash/temp-env", branch = "main" }
-vitaminc = { version = "0.5.0", features = ["random", "protected", "encrypt"] }
-vitaminc-aead = "0.5.0"
+vitaminc = { version = "0.5.1", features = ["random", "protected", "encrypt"] }
+vitaminc-aead = "0.5.1"
 # The dynamic value model (`FfiValue`) and its FFI transport codec, shared by
 # every language binding. Optional in stack-encrypt (the `dynamic` feature).
-vitaminc-aead-value = "0.5.0"
-vitaminc-encrypt = "0.5.0"
-vitaminc-hmac = "0.5.0"
-vitaminc-prf = "0.5.0"
-vitaminc-protected = "0.5.0"
+# 0.5.1 adds `ValueKind`, the field-type vocabulary a dynamic plan declares.
+vitaminc-aead-value = "0.5.1"
+vitaminc-encrypt = "0.5.1"
+vitaminc-hmac = "0.5.1"
+vitaminc-prf = "0.5.1"
+vitaminc-protected = "0.5.1"

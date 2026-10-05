@@ -1,0 +1,5 @@
+error: `nested` is no longer accepted (0.2.0 accepted it): a field whose type is a record is an ordinary field, derived under `("<context>", "<field>")` like any other, and its own fields sit under that. Omit `nested`. That is a different context from the one `nested` gave the inner fields: data written with `nested` does not decrypt without it and its terms do not match, so re-encrypt that data
+  --> tests/ui/nested_removed.rs:23:13
+   |
+23 |     #[stash(nested)]
+   |             ^^^^^^

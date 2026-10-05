@@ -2,12 +2,12 @@ error[E0308]: mismatched types
   --> tests/ui/divergent_context_in_target.rs:30:18
    |
 30 |             .zip(equality())
-   |              --- ^^^^^^^^^^ expected `Encryption<'_, _, _, _, DeclaredContext>`, found `Encryption<'_, _, EqualityTerm, _, ...>`
+   |              --- ^^^^^^^^^^ expected `Encryption<'_, _, _, _, ..., _>`, found `Encryption<'_, _, ..., _, ..., _>`
    |              |
    |              arguments to this method are incorrect
    |
-   = note: expected struct `Encryption<'_, _, _, _, DeclaredContext>`
-              found struct `Encryption<'_, _, EqualityTerm, _, CallerContext>`
+   = note: expected struct `Encryption<'_, _, _, _, DeclaredContext, _>`
+              found struct `Encryption<'_, _, EqualityTerm, _, CallerContext, _>`
 note: method defined here
   --> src/target/operations.rs
    |

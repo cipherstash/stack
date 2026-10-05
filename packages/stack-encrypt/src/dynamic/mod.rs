@@ -41,27 +41,43 @@
 //! them. Their long-term home is beside vitaminc's frozen tag table, which
 //! already owns this class of constant.
 //!
-//! For the same reason the enums that spell them — [`Output`] and
-//! [`TermKind`] — are *not* `#[non_exhaustive]`, against this workspace's
+//! A plan field's `"type"` names (`"int64"`, `"string"`, …) are wire format
+//! in the same way: a binding spells them, and a stored row opens only under
+//! the type it was sealed as. They are not this crate's: a declared type is
+//! vitaminc's [`ValueKind`], re-exported here, whose names vitaminc freezes
+//! beside its tag table. This crate adds only what a kind means to an index
+//! ([`admits`]) and to a query value ([`read`]). A field without `"type"` is
+//! dispatched on each value's own tag; that is transitional, and
+//! [`record::plan`] says until when.
+//!
+//! For the same reason the enums that spell them — [`Output`],
+//! [`IndexSpec`] and [`ValueKind`] — are *not* `#[non_exhaustive]`, against this workspace's
 //! usual rule for public enums: a new output is a wire-format addition every
 //! binding has to be taught, and an exhaustive match is how the compiler
 //! tells a binding author that. [`Scope`] is exhaustive for a different
 //! reason, given on the type.
 mod context;
+mod kind;
 pub mod record;
 mod term;
 
 use std::fmt;
 
 pub use context::{borrowed, context};
+pub use kind::{admits, read};
 pub use record::{FieldPlan, Output, Plan};
-pub use term::{term, Scalar, TermKind};
+pub use term::{term, Scalar};
 /// vitaminc's language-neutral value tree — the runtime value every binding
 /// funnels through. Its transport codec is `vitaminc_aead_value::transport`,
 /// which stays the binding's: this crate takes and returns values, never
 /// encoded bytes.
 pub use vitaminc_aead_value::FfiValue;
+/// vitaminc's value kinds: the type a plan field declares in its `"type"`
+/// key. Its names are frozen wire format; see [`admits`] and [`read`] for
+/// what a kind means to this engine.
+pub use vitaminc_aead_value::ValueKind;
 
+use crate::target::IndexSpec;
 use crate::{KeysetCipher, StackCipher};
 
 /// Which cipher an opening operation decrypts through: the client, or one
@@ -113,7 +129,10 @@ fn utf8(s: &vitaminc_aead_value::Utf8String) -> Option<&str> {
 /// The split that matters to a caller is malformed input versus something
 /// else: every variant but [`Cipher`](Error::Cipher) and
 /// [`Internal`](Error::Internal) is a statement about the value or the
-/// request, decided before any key is minted or retrieved. `Cipher` is the
+/// request, decided before any key is minted or retrieved — save one: a
+/// typed field's opened value is checked against its declared type once it
+/// is open (the type tag is inside the AEAD envelope), and a mismatch is
+/// still [`Record`](Error::Record), a statement about the stored data. `Cipher` is the
 /// operation failing; `Internal` is this module's own bug. A binding maps
 /// them to its own status codes on those lines, and must not report
 /// `Internal` as the caller's fault.
@@ -132,23 +151,26 @@ pub enum Error {
     /// container, null or passthrough (which have no term semantics at all),
     /// or a scalar outside the kind's domain — equality over a float or a
     /// boolean, match over anything but text. See
-    /// [`TermKind::supports`].
+    /// [`IndexSpec::supports`].
     #[error("no {kind} term is defined for this value")]
     Term {
-        /// The kind that was asked for.
-        kind: TermKind,
+        /// The index that was asked for.
+        kind: IndexSpec,
     },
 
     /// A record plan is malformed: not an object of field specs, empty,
-    /// missing or duplicating an output, or carrying a key that is not
-    /// `"context"` or `"outputs"`.
+    /// missing or duplicating an output, carrying a key that is not
+    /// `"context"`, `"outputs"` or `"type"`, naming a type that is not one,
+    /// or asking for an index its declared type is not defined for.
     #[error("record plan is malformed")]
     Plan,
 
     /// A record source does not fit its plan: not an object (or an array of
     /// them), a field the plan does not name, a plan field the source does
     /// not carry or carries twice, or a passthrough or a repeated map key
-    /// under a field the plan seals.
+    /// under a field the plan seals, or a value of another type than its
+    /// field declares. Also a query value that cannot be read as its field's
+    /// type ([`read`]).
     #[error("record source does not fit the plan")]
     Source,
 
@@ -156,7 +178,8 @@ pub enum Error {
     /// them), a ciphertext-bearing field that is absent or given twice, or
     /// has no `"c"` node or two of them, a repeated map key under `"c"`, or
     /// a passthrough under `"c"` — which would hand back unauthenticated
-    /// bytes as if they had been opened.
+    /// bytes as if they had been opened — or a typed field that opens to a
+    /// value of another type than it declares.
     #[error("stored record does not fit the plan")]
     Record,
 

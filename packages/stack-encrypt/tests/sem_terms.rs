@@ -4,7 +4,7 @@
 use std::cmp::Ordering;
 
 use stack_encrypt::nonempty;
-use stack_encrypt::sem::{DefaultMatch, MatchConfig, MatchOptions, MatchTerm, Tokenizer};
+use stack_encrypt::sem::{DefaultMatch, MatchConfig, MatchOptions, MatchTerms, Tokenizer};
 use stack_encrypt::{Error, StackCipher};
 use stack_kms::{FakeDataKeySource, IdentifiedBy};
 use uuid::Uuid;
@@ -152,7 +152,7 @@ async fn match_query_terms_are_contained_in_stored_terms() {
 #[test]
 fn match_containment_needs_every_query_position() {
     let term = |positions: &[u16]| {
-        MatchTerm::<DefaultMatch>::from_positions(positions.to_vec())
+        MatchTerms::<DefaultMatch>::from_positions(positions.to_vec())
             .expect("positions inside the default filter")
     };
     let stored = term(&[3, 17, 200]);

@@ -1,5 +1,0 @@
-error[E0080]: evaluation panicked: several fields of `Rec` are derived from the plaintext field `email` and decryptable: mark the one decryption opens `#[stash(decrypt)]`
- --> tests/ui/decrypt_several_recover_one_field.rs:7:10
-  |
-7 | #[derive(DecryptInto)]
-  |          ^^^^^^^^^^^ evaluation of `_` failed here

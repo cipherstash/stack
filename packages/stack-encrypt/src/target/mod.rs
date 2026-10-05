@@ -60,6 +60,13 @@
 //! New cryptographic operations belong in core; output adapters cannot install an
 //! execution callback. The separate cipher-directed API remains public.
 //!
+//! Those schemes consume the plaintext. A description is handed it by
+//! reference by default, and an operation clones it before consuming it, so a
+//! declaration's plaintext is `Clone`. A plaintext that must not be copied
+//! runs in [`Owned`] mode through [`KeysetCipher::run`](crate::KeysetCipher::run):
+//! a single operation takes the value with no copy, and only
+//! [`Encryption::zip`] asks for `Clone`. See [`SourceMode`].
+//!
 //! # Collections and authentication
 //!
 //! `Vec<Target>` describes independently encrypted rows under the same context.
@@ -80,17 +87,27 @@
 //! `EncryptTarget` and `DecryptTarget` are no longer extension points.
 mod context;
 pub(crate) mod core;
+mod index;
 mod operations;
 mod pending;
 mod request;
+mod source;
 pub mod transcode;
+mod tuples;
 
 pub(crate) use self::core::{decipher_pending, seal_pending};
 pub use context::{AeadContext, CallerContext, DeclaredContext, ExpectedContext, Extends};
+pub use index::{
+    indexed, At, Encrypted, Equality, Index, IndexSpec, Indexes, Match, Ope, Ore, Select, TermSet,
+    Whole,
+};
+pub(crate) use operations::inspect;
 pub use operations::{
-    ciphertext, equality, matching, ope, open, ore, DecryptField, DecryptFrom, DecryptInto,
-    Decryptable, Decryption, EncryptFrom, EncryptInto, Encryption,
+    ciphertext, equality, matching, ope, open, ore, passthrough, DecryptField, DecryptFrom,
+    DecryptInto, Decryptable, Decryption, EncryptFrom, EncryptInto, Encryption,
 };
 pub use pending::{CipherScope, Pending, PendingFuture};
 pub use request::{Request, Responses};
+pub use source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
 pub use stack_encrypt_derive::{DecryptInto, EncryptFrom};
+pub use tuples::JoinContext;

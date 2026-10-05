@@ -6,9 +6,13 @@ use vitaminc_aead::{CipherText, Decrypt, Encrypt, IntoAad, IntoContext};
 use vitaminc_protected::NonEmpty;
 
 /// Internal term operation. It is deliberately inaccessible to target authors.
+///
+/// `S` is what the operation is handed, by value: the PRF and ORE schemes
+/// consume their input, so a term that needs the plaintext takes it, and one
+/// that only reads it (a match term) is handed a reference as its `S`.
 pub(crate) trait Term<S, K, Ctx>: Sized {
     fn encrypt_from<'a>(
-        source: &S,
+        source: S,
         cipher: &'a KeysetCipher<'_, K>,
         context: Ctx,
     ) -> Pending<'a, Self, K>
@@ -16,8 +20,12 @@ pub(crate) trait Term<S, K, Ctx>: Sized {
         Self: 'a;
 }
 
-pub(crate) fn encrypt_native<'a, 'c, S: Encrypt + Clone, K, T: IntoContext<'c>>(
-    source: &S,
+/// Seal `source` into the native tree. It is consumed, as Vitamin C's
+/// `Encrypt` consumes it: a caller holding only a borrow clones before it
+/// gets here (see [`ConsumeSource`](super::ConsumeSource)), and one holding
+/// the value hands it over without a copy.
+pub(crate) fn encrypt_native<'a, 'c, S: Encrypt, K, T: IntoContext<'c>>(
+    source: S,
     cipher: &'a KeysetCipher<'_, K>,
     context: NonEmpty<T>,
 ) -> Pending<'a, StackCipherText, K> {
@@ -27,7 +35,7 @@ pub(crate) fn encrypt_native<'a, 'c, S: Encrypt + Clone, K, T: IntoContext<'c>>(
         return Pending::failed(cipher, error);
     }
     let aad = context.into_aad().into_owned();
-    match source.clone().encrypt_with_aad(cipher, aad) {
+    match source.encrypt_with_aad(cipher, aad) {
         Ok(tree) => seal_pending(cipher, tree, descriptor),
         Err(_) => Pending::ready(cipher, Err(Error::Aead)),
     }

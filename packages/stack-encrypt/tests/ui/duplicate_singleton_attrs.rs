@@ -13,9 +13,10 @@ struct DupFrom {
 }
 
 #[derive(EncryptFrom)]
-struct DupContext {
-    #[stash(context = "users/email", context = "users/name")]
-    c: StackCipherText,
+#[stash(struct = User, context = "users")]
+struct DupIdentity {
+    #[stash(identity = "email", identity = "name")]
+    expected: StackCipherText,
 }
 
 #[derive(EncryptFrom)]

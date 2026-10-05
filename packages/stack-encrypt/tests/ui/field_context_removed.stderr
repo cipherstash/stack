@@ -1,0 +1,17 @@
+error: a field-level `context = ".."` is no longer accepted (0.2.0 accepted it). All outputs of a `plaintext = T` record share the caller's context, so remove it there; every field of a `struct = ..` derive sits under the record's context, so key it under another segment with `identity = ".."`. Either replacement is a different context from the old literal: data written with the literal does not decrypt under it and its terms do not match, so re-encrypt that data. Writing one value under two contexts (a dual write) is a fields plan that picks the same source twice, not a derive
+  --> tests/ui/field_context_removed.rs:16:13
+   |
+16 |     #[stash(context = "nickname")]
+   |             ^^^^^^^
+
+error: a field-level `context = ".."` is no longer accepted (0.2.0 accepted it). All outputs of a `plaintext = T` record share the caller's context, so remove it there; every field of a `struct = ..` derive sits under the record's context, so key it under another segment with `identity = ".."`. Either replacement is a different context from the old literal: data written with the literal does not decrypt under it and its terms do not match, so re-encrypt that data. Writing one value under two contexts (a dual write) is a fields plan that picks the same source twice, not a derive
+  --> tests/ui/field_context_removed.rs:24:13
+   |
+24 |     #[stash(context = "shadow")]
+   |             ^^^^^^^
+
+error: a field-level `context = ".."` is no longer accepted (0.2.0 accepted it). All outputs of a `plaintext = T` record share the caller's context, so remove it there; every field of a `struct = ..` derive sits under the record's context, so key it under another segment with `identity = ".."`. Either replacement is a different context from the old literal: data written with the literal does not decrypt under it and its terms do not match, so re-encrypt that data. Writing one value under two contexts (a dual write) is a fields plan that picks the same source twice, not a derive
+  --> tests/ui/field_context_removed.rs:30:13
+   |
+30 |     #[stash(context = "legacy_age")]
+   |             ^^^^^^^

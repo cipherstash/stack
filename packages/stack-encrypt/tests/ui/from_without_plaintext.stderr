@@ -1,11 +1,11 @@
 error: `from = ..` reaches into a field of the plaintext, which is what `#[stash(struct = ..)]` does: a `plaintext` record derives every field from the whole value
   --> tests/ui/from_without_plaintext.rs:13:20
    |
-13 |     #[stash(from = age, context = "users/age")]
+13 |     #[stash(from = age)]
    |                    ^^^
 
 error: `from = ..` reaches into a field of the plaintext, which is what `#[stash(struct = ..)]` does: a `plaintext` record derives every field from the whole value
   --> tests/ui/from_without_plaintext.rs:19:20
    |
-19 |     #[stash(from = age, context = "users/age")]
+19 |     #[stash(from = age)]
    |                    ^^^

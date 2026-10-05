@@ -50,43 +50,56 @@
 //! plaintext and have it reported as a successful decrypt.
 
 use stack_kms::DataKeySource;
-use vitaminc_aead_value::FfiValue;
+use vitaminc_aead_value::{FfiValue, ValueKind};
 use vitaminc_protected::Protected;
 
-use super::{borrowed, term, utf8, Error, Scalar, Scope, TermKind};
-use crate::target::Pending;
+use super::{admits, borrowed, term, utf8, Error, Scalar, Scope};
+use crate::target::{IndexSpec, Pending};
 use crate::{
     BoxedPassthrough, CipherText, ContextPiece, Encrypt, KeysetCipher, NonEmpty, StackCipherText,
 };
 
 /// What a plan field asks for.
 ///
-/// The strings are wire format twice over: they are how a binding spells an
+/// The keys are wire format twice over: they are how a binding spells an
 /// output, *and* the keys of the per-field output map in the stored result.
 /// That is why this enum is exhaustive — see the [module docs](super#stability).
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Output {
     /// `"c"` — the field's [`StackCipherText`].
     Ciphertext,
-    /// An index term: `"eq"`, `"match"`, `"ore"` or `"ope"`.
-    Term(TermKind),
+    /// An index term, keyed `"eq"`, `"match"`, `"ore"` or `"ope"`: the
+    /// index, with its options, that derives it.
+    Term(IndexSpec),
 }
 
 impl Output {
-    /// The output a key names, or `None` for a key that is not one.
+    /// The output a bare key names, or `None` for a key that is not one. A
+    /// `"match"` key names the match index under default options; a plan
+    /// spells other options in the object form [`from_value`](Self::from_value)
+    /// reads.
     pub fn parse(s: &str) -> Option<Self> {
-        Some(match s {
-            "c" => Output::Ciphertext,
-            "eq" => Output::Term(TermKind::Equality),
-            "match" => Output::Term(TermKind::Match),
-            "ore" => Output::Term(TermKind::Ore),
-            "ope" => Output::Term(TermKind::Ope),
-            _ => return None,
-        })
+        match s {
+            "c" => Some(Output::Ciphertext),
+            _ => IndexSpec::parse(s).map(Output::Term),
+        }
+    }
+
+    /// Read one entry of a plan's `"outputs"` list: `"c"`, or an index in
+    /// its wire form ([`IndexSpec::from_value`]; see [`plan`]).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Plan`] for anything else.
+    pub fn from_value(value: &FfiValue) -> Result<Self, Error> {
+        match value {
+            FfiValue::String(s) if utf8(s) == Some("c") => Ok(Output::Ciphertext),
+            _ => IndexSpec::from_value(value).map(Output::Term),
+        }
     }
 
     /// The map key this output rides under.
-    pub fn key(self) -> &'static str {
+    pub fn key(&self) -> &'static str {
         match self {
             Output::Ciphertext => "c",
             Output::Term(kind) => kind.key(),
@@ -95,12 +108,22 @@ impl Output {
 }
 
 /// One field of a record plan: what to call it, what context to bind it
-/// under, and what to produce for it.
+/// under, what to produce for it, and, optionally, what type its values are.
+///
+/// A field with a declared type (a [`ValueKind`]) admits only the indexes
+/// that kind is defined for ([`admits`], checked when the
+/// plan is built), seals only values of that kind and opens only to one
+/// (checked per value), so the engine verifies what a binding hands it
+/// rather than trusting the binding's tagging. A field with no declared type
+/// is dispatched on each value's own type, as every field was before types
+/// existed; that keeps the plans existing bindings send valid, and is
+/// transitional (see [`plan`]).
 #[derive(Clone, Debug)]
 pub struct FieldPlan {
     name: String,
     context: NonEmpty<ContextPiece<'static>>,
     outputs: Vec<Output>,
+    field_type: Option<ValueKind>,
 }
 
 impl FieldPlan {
@@ -115,7 +138,10 @@ impl FieldPlan {
     ///
     /// # Errors
     ///
-    /// [`Error::Plan`] if `outputs` is empty or names an output twice.
+    /// [`Error::Plan`] if `outputs` is empty or names an output twice. Two
+    /// outputs with the same [key](Output::key) are the same output — two
+    /// match indexes under different options would both ride under
+    /// `"match"` — so they are refused too.
     pub fn new(
         name: impl Into<String>,
         context: NonEmpty<ContextPiece<'static>>,
@@ -125,7 +151,10 @@ impl FieldPlan {
             return Err(Error::Plan);
         }
         for (at, output) in outputs.iter().enumerate() {
-            if outputs[..at].contains(output) {
+            if outputs[..at]
+                .iter()
+                .any(|prior| prior.key() == output.key())
+            {
                 return Err(Error::Plan);
             }
         }
@@ -133,7 +162,27 @@ impl FieldPlan {
             name: name.into(),
             context,
             outputs,
+            field_type: None,
         })
+    }
+
+    /// Declare the type of this field's values.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Plan`] if the field asks for an index the kind is not
+    /// defined for ([`admits`]): match on an integer,
+    /// equality on a float, any index on a composite.
+    pub fn with_type(mut self, field_type: ValueKind) -> Result<Self, Error> {
+        for output in &self.outputs {
+            if let Output::Term(index) = output {
+                if !admits(field_type, index) {
+                    return Err(Error::Plan);
+                }
+            }
+        }
+        self.field_type = Some(field_type);
+        Ok(self)
     }
 
     /// The field's name — its key in the source and in the result.
@@ -149,6 +198,13 @@ impl FieldPlan {
     /// What the field produces.
     pub fn outputs(&self) -> &[Output] {
         &self.outputs
+    }
+
+    /// The declared type of the field's values, if the plan declares one.
+    /// A host with no types of its own reads this to know what a decrypted
+    /// value is.
+    pub fn field_type(&self) -> Option<ValueKind> {
+        self.field_type
     }
 
     /// Whether the field has a ciphertext to seal and open.
@@ -212,8 +268,45 @@ impl Plan {
 /// The plan is an [`FfiValue::Object`]:
 ///
 /// ```text
-/// { <field>: { "context": <context>, "outputs": [ "c" | "eq" | "match" | "ore" | "ope", ... ] }, ... }
+/// { <field>: { "context": <context>, "outputs": [ "c" | <index>, ... ], "type": <type> }, ... }
 /// ```
+///
+/// `<index>` is an index in its wire form, which is its key — `"eq"`,
+/// `"match"`, `"ore"` or `"ope"` — save for a match index with options other
+/// than the defaults, which is a one-entry object mapping `"match"` to them:
+///
+/// ```text
+/// { "match": { "tokenizer": "standard" | { "ngram": <length> },
+///              "downcase": <bool>, "k": <int>, "m": <int> } }
+/// ```
+///
+/// A bare `"match"` is the default options ([`MatchOptions::default`]:
+/// 3-grams, downcased, `k = 3`, `m = 256`), so a plan written before options
+/// had a wire form means what it always meant. In the object form each
+/// option is optional and defaults the same way; an unknown or repeated
+/// option, or a set the match scheme refuses (`k` outside `3..=16`, `m` not
+/// a power of two in `32..=65536`, a zero n-gram length), is refused. The
+/// other three indexes have no options and no object form. A field names
+/// each output key at most once, so it carries at most one match index.
+/// [`IndexSpec::to_value`] writes this form and [`IndexSpec::from_value`]
+/// reads it.
+///
+/// [`MatchOptions::default`]: crate::sem::MatchOptions::default
+///
+/// `"type"` is optional, and names a [`ValueKind`] (`"int64"`, `"string"`,
+/// …; see [`ValueKind::name`]): vitaminc's vocabulary, not one of this
+/// crate's. Declared, it is checked against the field's outputs here
+/// ([`admits`]) and against every value sealed into or opened
+/// from the field.
+///
+/// **An indexed field without `"type"` is dispatched on each value's own
+/// tag**, so for that field the engine trusts the binding to tag every value
+/// the same way: a `34` sent once as a `Float64` and once as an `Int64` under
+/// one `"ore"` field is accepted both times and stores two different terms.
+/// This is transitional. It keeps the plans the Go binding sends today, which
+/// carry no `"type"`, valid until that binding fills `"type"` from its struct
+/// types; then `"type"` becomes required on every field with a term output
+/// (#1082).
 ///
 /// `<context>` is defined once, in [`super::context`](super::context()): a
 /// string, bytes, an integer, or a list of those, with what each spells in
@@ -222,7 +315,8 @@ impl Plan {
 /// # Examples
 ///
 /// ```
-/// use stack_encrypt::dynamic::{record, FfiValue, Output, TermKind};
+/// use stack_encrypt::dynamic::{record, FfiValue, Output};
+/// use stack_encrypt::target::IndexSpec;
 ///
 /// // As a binding would decode it from its caller: seal `age` under the
 /// // pair ("users", "age") and index it for equality.
@@ -250,7 +344,7 @@ impl Plan {
 /// assert_eq!(plan.fields()[0].name(), "age");
 /// assert_eq!(
 ///     plan.fields()[0].outputs(),
-///     [Output::Ciphertext, Output::Term(TermKind::Equality)]
+///     [Output::Ciphertext, Output::Term(IndexSpec::Equality)]
 /// );
 /// # Ok::<(), stack_encrypt::dynamic::Error>(())
 /// ```
@@ -259,9 +353,12 @@ impl Plan {
 ///
 /// [`Error::Plan`] for a plan that is not an object of field specs, an
 /// empty plan, a field named twice, a spec with a key other than
-/// `"context"` and `"outputs"` or with either given twice or missing, or
-/// an output list that is not a list of known output names, is empty, or
-/// names an output twice. [`Error::Context`] for a `"context"` that is
+/// `"context"`, `"outputs"` and `"type"` or with one given twice, missing
+/// `"context"` or `"outputs"`, an output list that is not a list of
+/// outputs (`"c"` or an index in its wire form, above), is empty, or names
+/// an output key twice, a `"type"` that is not
+/// a string naming a [`ValueKind`], or a type that does not admit one of
+/// the field's index outputs. [`Error::Context`] for a `"context"` that is
 /// present but is not a context, or renders empty.
 ///
 /// The transport codec refuses duplicate object keys before a binding's
@@ -279,6 +376,7 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
         };
         let mut context: Option<NonEmpty<ContextPiece<'static>>> = None;
         let mut outputs: Option<Vec<Output>> = None;
+        let mut field_type: Option<ValueKind> = None;
         for (key, value) in spec {
             match key.as_str() {
                 "context" if context.is_none() => context = Some(super::context(value)?),
@@ -286,25 +384,32 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
                     let FfiValue::Array(items) = value else {
                         return Err(Error::Plan);
                     };
-                    let mut parsed = Vec::with_capacity(items.len());
-                    for item in &items {
-                        let FfiValue::String(s) = item else {
-                            return Err(Error::Plan);
-                        };
-                        let key = utf8(s).ok_or(Error::Plan)?;
-                        parsed.push(Output::parse(key).ok_or(Error::Plan)?);
-                    }
+                    let parsed = items
+                        .iter()
+                        .map(Output::from_value)
+                        .collect::<Result<Vec<_>, _>>()?;
                     outputs = Some(parsed);
                 }
-                // An unknown key, or one of the two given twice.
+                "type" if field_type.is_none() => {
+                    let FfiValue::String(s) = &value else {
+                        return Err(Error::Plan);
+                    };
+                    let name = utf8(s).ok_or(Error::Plan)?;
+                    field_type = Some(name.parse().map_err(|_| Error::Plan)?);
+                }
+                // An unknown key, or one of the three given twice.
                 _ => return Err(Error::Plan),
             }
         }
-        fields.push(FieldPlan::new(
+        let field = FieldPlan::new(
             name,
             context.ok_or(Error::Plan)?,
             outputs.ok_or(Error::Plan)?,
-        )?);
+        )?;
+        fields.push(match field_type {
+            Some(field_type) => field.with_type(field_type)?,
+            None => field,
+        });
     }
     // The whole-plan rules — non-empty, no name twice — are `Plan::new`'s,
     // so a parsed plan and a hand-built one are refused alike.
@@ -467,11 +572,14 @@ where
     K: DataKeySource + Sync + 'static,
 {
     let Rows { rows, batched } = record_leaves(record, plan)?;
-    let contexts = plan
+    let opened = plan
         .fields
         .iter()
         .filter(|field| field.has_ciphertext())
-        .map(FieldPlan::view)
+        .collect::<Vec<_>>();
+    let contexts = opened
+        .iter()
+        .map(|field| field.view())
         .collect::<Result<Vec<_>, Error>>()?;
 
     // Per row, per ciphertext-bearing plan field (in plan order, as
@@ -507,7 +615,17 @@ where
         .map(|row_names| {
             let entries = row_names
                 .into_iter()
-                .map(|name| Ok((name, values.next()?)))
+                .zip(&opened)
+                .map(|(name, field)| {
+                    let value = values.next()?;
+                    // The tag is authenticated, so a mismatch is not
+                    // tampering: the row was sealed as another type than
+                    // the plan now declares.
+                    match field.field_type {
+                        Some(declared) if !declared.holds(&value) => Err(Error::Record),
+                        _ => Ok((name, value)),
+                    }
+                })
                 .collect::<Result<Vec<_>, Error>>()?;
             Ok(FfiValue::Object(entries))
         })
@@ -538,6 +656,9 @@ pub fn check_source(source: FfiValue, plan: &Plan) -> Result<(), Error> {
 
 /// Check a stored record against a plan without opening it — everything
 /// [`decrypt`] checks before it consults the cipher. See [`check_source`].
+///
+/// A typed field's declared type is not among them: the type is the sealed
+/// leaf's tag, inside the AEAD envelope, so only [`decrypt`] can check it.
 ///
 /// # Errors
 ///
@@ -784,18 +905,24 @@ fn source_rows(source: FfiValue, plan: &Plan) -> Result<Rows<Vec<FfiValue>>, Err
     })
 }
 
-/// A source value against its plan field: every term output needs a scalar
-/// the scheme defines the term for ([`TermKind::supports`]), and a
-/// ciphertext output refuses a passthrough, or a repeated map key, anywhere
-/// in the value ([`check_tree`]).
+/// A source value against its plan field: a typed field needs a value of
+/// its type, every term output needs a scalar the scheme defines the term
+/// for ([`IndexSpec::supports`]), and a ciphertext output refuses a
+/// passthrough, or a repeated map key, anywhere in the value
+/// ([`check_tree`]).
 fn check_field(value: &FfiValue, field: &FieldPlan) -> Result<(), Error> {
+    if let Some(declared) = field.field_type {
+        if !declared.holds(value) {
+            return Err(Error::Source);
+        }
+    }
     for output in &field.outputs {
         match output {
             Output::Ciphertext => check_tree(value)?,
             Output::Term(kind) => {
-                let scalar = Scalar::of(value, *kind)?;
+                let scalar = Scalar::of(value, kind)?;
                 if !kind.supports(&scalar) {
-                    return Err(Error::Term { kind: *kind });
+                    return Err(Error::Term { kind: kind.clone() });
                 }
             }
         }
@@ -872,7 +999,7 @@ where
             .outputs
             .iter()
             .find_map(|o| match o {
-                Output::Term(kind) => Some(*kind),
+                Output::Term(kind) => Some(kind),
                 Output::Ciphertext => None,
             })
             .map(|kind| Scalar::of(&value, kind))
@@ -887,7 +1014,7 @@ where
             let scalar = scalar.clone().ok_or(Error::Internal)?;
             outputs.push((
                 output.key(),
-                Slot::Term(term(cipher, scalar, *kind, context.clone()).await?),
+                Slot::Term(term(cipher, scalar, kind, context.clone()).await?),
             ));
         }
 
@@ -1177,8 +1304,8 @@ mod tests {
                 plan.fields()[0].outputs(),
                 [
                     Output::Ciphertext,
-                    Output::Term(TermKind::Equality),
-                    Output::Term(TermKind::Ore)
+                    Output::Term(IndexSpec::Equality),
+                    Output::Term(IndexSpec::Ore)
                 ],
                 "outputs keep their spelled order"
             );
@@ -1189,7 +1316,9 @@ mod tests {
             );
             assert_eq!(
                 plan.fields()[2].outputs(),
-                [Output::Term(TermKind::Match)],
+                [Output::Term(IndexSpec::Match(
+                    crate::sem::MatchOptions::default()
+                ))],
                 "a field can be indexed and never sealed"
             );
             assert!(
@@ -1330,7 +1459,7 @@ mod tests {
                     FieldPlan::new(
                         "age",
                         ctx.clone(),
-                        vec![Output::Term(TermKind::Ore), Output::Term(TermKind::Ore)]
+                        vec![Output::Term(IndexSpec::Ore), Output::Term(IndexSpec::Ore)]
                     ),
                     Err(Error::Plan)
                 ),
@@ -1340,6 +1469,101 @@ mod tests {
                 FieldPlan::new("age", ctx, vec![Output::Ciphertext]).is_ok(),
                 "one output is a plan"
             );
+        }
+
+        /// A match index with non-default options is spelled in a plan as
+        /// an object, parses to the index carrying them, and still rides
+        /// under the `"match"` key; the bare key stays the defaults.
+        #[test]
+        fn a_match_index_with_options_parses_from_its_object_form() {
+            let wide = obj(vec![(
+                "match",
+                obj(vec![
+                    ("tokenizer", s("standard")),
+                    ("downcase", FfiValue::Bool(false)),
+                    ("k", FfiValue::UInt32(6)),
+                    ("m", FfiValue::UInt32(1024)),
+                ]),
+            )]);
+            let plan = plan(obj(vec![(
+                "nick",
+                obj(vec![
+                    ("context", s("users/nick")),
+                    ("outputs", FfiValue::Array(vec![s("c"), wide])),
+                ]),
+            )]))
+            .expect("parses");
+            let options = crate::sem::MatchOptions {
+                tokenizer: crate::sem::Tokenizer::Standard,
+                downcase: false,
+                k: 6,
+                m: 1024,
+            };
+            assert_eq!(
+                plan.fields()[0].outputs(),
+                [Output::Ciphertext, Output::Term(IndexSpec::Match(options))]
+            );
+            assert_eq!(plan.fields()[0].outputs()[1].key(), "match");
+        }
+
+        /// Two match indexes in one field would both ride under `"match"`,
+        /// so a field names an output key once whatever the options.
+        #[test]
+        fn a_field_refuses_two_match_indexes_under_different_options() {
+            let wide = obj(vec![("match", obj(vec![("k", FfiValue::UInt32(6))]))]);
+            let parsed = plan(obj(vec![(
+                "nick",
+                obj(vec![
+                    ("context", s("users/nick")),
+                    ("outputs", FfiValue::Array(vec![s("match"), wide])),
+                ]),
+            )]));
+            assert!(
+                matches!(parsed, Err(Error::Plan)),
+                "two match outputs are one key twice"
+            );
+            let ctx = context(s("users/nick")).expect("context");
+            let by_hand = FieldPlan::new(
+                "nick",
+                ctx,
+                vec![
+                    Output::Term(IndexSpec::Match(crate::sem::MatchOptions::default())),
+                    Output::Term(IndexSpec::Match(crate::sem::MatchOptions {
+                        k: 6,
+                        ..crate::sem::MatchOptions::default()
+                    })),
+                ],
+            );
+            assert!(matches!(by_hand, Err(Error::Plan)), "and by hand alike");
+        }
+
+        /// An output list entry is `"c"` or an index in its wire form, and
+        /// nothing else; a malformed match object is a plan error.
+        #[test]
+        fn an_output_that_is_not_one_is_refused() {
+            for (label, output) in [
+                ("an unknown key", s("cc")),
+                ("a number", FfiValue::UInt32(1)),
+                (
+                    "an object for the ciphertext",
+                    obj(vec![("c", obj(vec![]))]),
+                ),
+                (
+                    "match options out of bounds",
+                    obj(vec![("match", obj(vec![("k", FfiValue::UInt32(2))]))]),
+                ),
+            ] {
+                let parsed = plan(obj(vec![(
+                    "nick",
+                    obj(vec![
+                        ("context", s("users/nick")),
+                        ("outputs", FfiValue::Array(vec![output])),
+                    ]),
+                )]));
+                assert!(matches!(parsed, Err(Error::Plan)), "{label}");
+            }
+            assert_eq!(Output::parse("c"), Some(Output::Ciphertext));
+            assert_eq!(Output::parse("cc"), None);
         }
 
         /// The whole-plan rules hold for a plan built by hand, not only for
@@ -1459,7 +1683,7 @@ mod tests {
                         matches!(
                             e,
                             Error::Term {
-                                kind: TermKind::Match
+                                kind: IndexSpec::Match(_)
                             }
                         )
                     },
@@ -1475,7 +1699,7 @@ mod tests {
                         matches!(
                             e,
                             Error::Term {
-                                kind: TermKind::Match
+                                kind: IndexSpec::Match(_)
                             }
                         )
                     },
@@ -1515,7 +1739,7 @@ mod tests {
                 matches!(
                     err,
                     Some(Error::Term {
-                        kind: TermKind::Match
+                        kind: IndexSpec::Match(_)
                     })
                 ),
                 "encrypt refuses a value with no such term: {err:?}"
@@ -1539,7 +1763,7 @@ mod tests {
                 matches!(
                     err,
                     Some(Error::Term {
-                        kind: TermKind::Equality
+                        kind: IndexSpec::Equality
                     })
                 ),
                 "no PRF encoding exists for a float: {err:?}"
@@ -1631,7 +1855,7 @@ mod tests {
             let eq = term(
                 &keyset,
                 Scalar::U32(34),
-                TermKind::Equality,
+                &IndexSpec::Equality,
                 age_ctx.clone(),
             )
             .await
@@ -1641,7 +1865,7 @@ mod tests {
                 eq,
                 "the equality term is the standalone derivation under the plan context"
             );
-            let ore = term(&keyset, Scalar::U32(34), TermKind::Ore, age_ctx)
+            let ore = term(&keyset, Scalar::U32(34), &IndexSpec::Ore, age_ctx)
                 .await
                 .expect("standalone ore term");
             assert_eq!(
@@ -1649,15 +1873,63 @@ mod tests {
                 ore,
                 "the ore term is the standalone derivation under the plan context"
             );
-            let scalar = Scalar::of(&s("al smith"), TermKind::Match).expect("text");
-            let matched = term(&keyset, scalar, TermKind::Match, nick_ctx)
-                .await
-                .expect("standalone match term");
+            let scalar = Scalar::of(
+                &s("al smith"),
+                &IndexSpec::Match(crate::sem::MatchOptions::default()),
+            )
+            .expect("text");
+            let matched = term(
+                &keyset,
+                scalar,
+                &IndexSpec::Match(crate::sem::MatchOptions::default()),
+                nick_ctx,
+            )
+            .await
+            .expect("standalone match term");
             assert_eq!(
                 term_bytes(&node(&mut nick, "match")),
                 matched,
                 "the match term is the standalone derivation under the plan context"
             );
+        }
+
+        /// A plan's match options reach the term: the stored `"match"`
+        /// term is the derivation under those options, not the defaults.
+        #[tokio::test]
+        async fn a_match_term_derives_under_the_plan_options() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let options = crate::sem::MatchOptions {
+                k: 6,
+                m: 1024,
+                ..crate::sem::MatchOptions::default()
+            };
+            let plan = plan(obj(vec![(
+                "nick",
+                obj(vec![
+                    ("context", s("users/nick")),
+                    (
+                        "outputs",
+                        FfiValue::Array(vec![IndexSpec::Match(options.clone()).to_value()]),
+                    ),
+                ]),
+            )]))
+            .expect("parses");
+            let ctx = plan.fields()[0].context().clone();
+            let row = obj(vec![("nick", s("al smith"))]);
+            let mut fields = map(encrypt(&keyset, row, &plan).await.expect("encrypt"));
+            let mut nick = map(node(&mut fields, "nick"));
+            let stored = term_bytes(&node(&mut nick, "match"));
+
+            let kind = IndexSpec::Match(options);
+            let scalar = Scalar::of(&s("al smith"), &kind).expect("text");
+            let expected = term(&keyset, scalar.clone(), &kind, ctx.clone())
+                .await
+                .expect("standalone");
+            assert_eq!(stored, expected, "the term is the plan options' derivation");
+            let default = IndexSpec::Match(crate::sem::MatchOptions::default());
+            let under_default = term(&keyset, scalar, &default, ctx).await.expect("default");
+            assert_ne!(stored, under_default, "and not the defaults'");
         }
 
         #[tokio::test]
@@ -2044,5 +2316,365 @@ mod tests {
             nonempty!("users/age").into_aad().as_bytes(),
             "a bare plan string is the typed literal"
         );
+    }
+
+    mod given_a_typed_field {
+        use super::*;
+
+        fn typed(context: &str, outputs: &[&str], ty: &str) -> FfiValue {
+            obj(vec![
+                ("context", s(context)),
+                ("outputs", strings(outputs)),
+                ("type", s(ty)),
+            ])
+        }
+
+        fn age_plan(ty: &str) -> Plan {
+            plan(obj(vec![(
+                "age",
+                typed("users/age", &["c", "eq", "ore"], ty),
+            )]))
+            .expect("a typed plan parses")
+        }
+
+        #[test]
+        fn the_plan_parses_the_type_and_an_untyped_field_has_none() {
+            let parsed = plan(obj(vec![
+                ("age", typed("users/age", &["c", "ore"], "uint64")),
+                ("bio", typed("users/bio", &["c", "match"], "string")),
+                ("notes", spec(s("users/notes"), &["c"])),
+            ]))
+            .expect("parses");
+            let types: Vec<_> = parsed.fields().iter().map(FieldPlan::field_type).collect();
+            assert_eq!(
+                types,
+                [Some(ValueKind::UInt64), Some(ValueKind::String), None]
+            );
+        }
+
+        /// The parser applies `"type"` after it has read every key, so a
+        /// spec that declares its type before its outputs is checked the
+        /// same way: admitted when the type admits the indexes, refused
+        /// when it does not.
+        #[test]
+        fn the_plan_reads_a_type_given_before_the_outputs() {
+            let early = |ty: &str| {
+                obj(vec![
+                    ("type", s(ty)),
+                    ("outputs", strings(&["c", "eq"])),
+                    ("context", s("users/age")),
+                ])
+            };
+            let parsed = plan(obj(vec![("age", early("uint64"))])).expect("parses");
+            assert_eq!(parsed.fields()[0].field_type(), Some(ValueKind::UInt64));
+            assert_eq!(
+                parsed.fields()[0].outputs(),
+                [Output::Ciphertext, Output::Term(IndexSpec::Equality)]
+            );
+            let refused = plan(obj(vec![("age", early("float64"))]));
+            assert!(
+                matches!(refused, Err(Error::Plan)),
+                "equality on a float is refused whatever the key order: {refused:?}"
+            );
+        }
+
+        #[test]
+        fn the_plan_refuses_an_unresolvable_type_or_one_that_does_not_admit_an_index() {
+            let refused: [(&str, FfiValue); 8] = [
+                ("an unknown type", typed("users/x", &["c"], "u64")),
+                (
+                    "a type in the wrong case",
+                    typed("users/x", &["c"], "UInt64"),
+                ),
+                (
+                    "a type that is not a string",
+                    obj(vec![
+                        ("context", s("users/x")),
+                        ("outputs", strings(&["c"])),
+                        ("type", FfiValue::UInt32(6)),
+                    ]),
+                ),
+                (
+                    "a type given twice",
+                    obj(vec![
+                        ("context", s("users/x")),
+                        ("outputs", strings(&["c"])),
+                        ("type", s("string")),
+                        ("type", s("string")),
+                    ]),
+                ),
+                (
+                    "match on an integer",
+                    typed("users/x", &["c", "match"], "int64"),
+                ),
+                (
+                    "equality on a float",
+                    typed("users/x", &["c", "eq"], "float64"),
+                ),
+                ("equality on a bool", typed("users/x", &["eq"], "bool")),
+                (
+                    "order on a composite",
+                    typed("users/x", &["c", "ore"], "object"),
+                ),
+            ];
+            for (label, field) in refused {
+                let result = plan(obj(vec![("x", field)]));
+                assert!(matches!(result, Err(Error::Plan)), "{label}: {result:?}");
+            }
+        }
+
+        #[test]
+        fn a_hand_built_field_takes_a_type_its_indexes_admit_and_refuses_one_they_do_not() {
+            let field = FieldPlan::new(
+                "age",
+                context(s("users/age")).expect("context"),
+                vec![Output::Ciphertext, Output::Term(IndexSpec::Equality)],
+            )
+            .expect("field");
+            assert_eq!(field.field_type(), None, "untyped until declared");
+            let typed = field
+                .clone()
+                .with_type(ValueKind::UInt32)
+                .expect("equality admits a u32");
+            assert_eq!(typed.field_type(), Some(ValueKind::UInt32));
+            assert!(matches!(
+                field.with_type(ValueKind::Float32),
+                Err(Error::Plan)
+            ));
+            let sealed_only = FieldPlan::new(
+                "doc",
+                context(s("users/doc")).expect("context"),
+                vec![Output::Ciphertext],
+            )
+            .expect("field")
+            .with_type(ValueKind::Object)
+            .expect("a composite with no index is a plain sealed field");
+            assert_eq!(sealed_only.field_type(), Some(ValueKind::Object));
+        }
+
+        /// The engine verifies the tag rather than trusting the binding: a
+        /// `u32` is not a `uint64`, however small. Refused before any key
+        /// is minted, by `check_source` alike.
+        #[tokio::test]
+        async fn encrypt_refuses_a_value_of_another_type_with_no_key_request() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = age_plan("uint64");
+            let check = check_source(obj(vec![("age", FfiValue::UInt32(34))]), &plan);
+            assert!(
+                matches!(check, Err(Error::Source)),
+                "check_source refuses it too"
+            );
+            for (label, value) in [
+                ("a u32 for a uint64 field", FfiValue::UInt32(34)),
+                ("a float for a uint64 field", FfiValue::Float64(34.0)),
+                ("null for a uint64 field", FfiValue::Null),
+            ] {
+                let result = encrypt(&keyset, obj(vec![("age", value)]), &plan).await;
+                assert!(matches!(result, Err(Error::Source)), "{label}: {result:?}");
+            }
+            assert_eq!(generates(&cipher), 0, "refused before any key request");
+        }
+
+        #[tokio::test]
+        async fn a_value_of_the_type_round_trips_and_its_terms_are_the_typed_terms() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = age_plan("uint64");
+            let sealed = encrypt(&keyset, obj(vec![("age", FfiValue::UInt64(34))]), &plan)
+                .await
+                .expect("seal");
+            let mut row = map(sealed);
+            let mut age = map(node(&mut row, "age"));
+            let eq = term_bytes(&node(&mut age, "eq"));
+            let typed = keyset
+                .equality_term(34u64, nonempty!("users/age"))
+                .await
+                .expect("typed");
+            assert_eq!(eq, typed.into_bytes().to_vec(), "the u64 term");
+
+            let sealed = encrypt(&keyset, obj(vec![("age", FfiValue::UInt64(34))]), &plan)
+                .await
+                .expect("seal");
+            let opened = decrypt(Scope::Client(&cipher), sealed, &plan)
+                .await
+                .expect("open");
+            let fields = object(opened);
+            assert!(matches!(&fields[..], [(name, FfiValue::UInt64(34))] if name == "age"));
+        }
+
+        /// A row sealed as one type and read under a plan declaring another
+        /// is refused, not handed back as the wrong type. The tag is inside
+        /// the AEAD envelope, so this is a plan disagreeing with its data,
+        /// never tampering, and it is caught once the leaf is open.
+        #[tokio::test]
+        async fn decrypt_refuses_a_value_that_opens_to_another_type() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let untyped = plan(obj(vec![("age", spec(s("users/age"), &["c"]))])).expect("plan");
+            let sealed = encrypt(&keyset, obj(vec![("age", FfiValue::UInt32(34))]), &untyped)
+                .await
+                .expect("seal");
+            let as_uint64 =
+                plan(obj(vec![("age", typed("users/age", &["c"], "uint64"))])).expect("plan");
+            let result = decrypt(Scope::Client(&cipher), sealed, &as_uint64).await;
+            assert!(matches!(result, Err(Error::Record)), "{:?}", result.err());
+
+            let sealed = encrypt(&keyset, obj(vec![("age", FfiValue::UInt32(34))]), &untyped)
+                .await
+                .expect("seal");
+            let as_uint32 =
+                plan(obj(vec![("age", typed("users/age", &["c"], "uint32"))])).expect("plan");
+            let opened = decrypt(Scope::Client(&cipher), sealed, &as_uint32)
+                .await
+                .expect("the declared type opens");
+            assert_eq!(u32_of(&object(opened)[0].1), 34);
+        }
+
+        /// In a batch, each opened value is checked against its own field,
+        /// not the first field's.
+        #[tokio::test]
+        async fn decrypt_checks_each_field_against_its_own_type() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = plan(obj(vec![
+                ("age", typed("users/age", &["c"], "uint32")),
+                ("name", typed("users/name", &["c"], "string")),
+            ]))
+            .expect("plan");
+            let rows = FfiValue::Array(vec![
+                obj(vec![("age", FfiValue::UInt32(1)), ("name", s("a"))]),
+                obj(vec![("age", FfiValue::UInt32(2)), ("name", s("b"))]),
+            ]);
+            let sealed = encrypt(&keyset, rows, &plan).await.expect("seal");
+            let opened = array(
+                decrypt(Scope::Client(&cipher), sealed, &plan)
+                    .await
+                    .expect("open"),
+            );
+            assert_eq!(opened.len(), 2);
+            let second = object(opened.into_iter().nth(1).expect("row"));
+            assert_eq!(keys(&second), ["age", "name"]);
+            assert_eq!(u32_of(&second[0].1), 2);
+            assert_eq!(text_of(&second[1].1), "b");
+        }
+
+        /// The query side: a host's `34` (a float, from JavaScript) read as
+        /// the field's type derives the term the field stores.
+        #[tokio::test]
+        async fn a_query_value_read_as_the_field_type_finds_the_stored_term() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = age_plan("uint64");
+            let field = &plan.fields()[0];
+            let sealed = encrypt(&keyset, obj(vec![("age", FfiValue::UInt64(34))]), &plan)
+                .await
+                .expect("seal");
+            let mut row = map(sealed);
+            let mut age = map(node(&mut row, "age"));
+            let stored = term_bytes(&node(&mut age, "eq"));
+
+            let declared = field.field_type().expect("typed");
+            let value =
+                crate::dynamic::read(declared, FfiValue::Float64(34.0)).expect("an exact 34");
+            let scalar = Scalar::of(&value, &IndexSpec::Equality).expect("scalar");
+            let query = term(
+                &keyset,
+                scalar,
+                &IndexSpec::Equality,
+                field.view().expect("view"),
+            )
+            .await
+            .expect("query term");
+            assert_eq!(query, stored);
+        }
+
+        /// An index-only field has no ciphertext, so it is not among the
+        /// opened values. The typed field after it is checked against its
+        /// own type, not against the index-only field's.
+        #[tokio::test]
+        async fn decrypt_skips_an_index_only_field_when_it_checks_types() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = plan(obj(vec![
+                ("age", typed("users/age", &["eq"], "uint64")),
+                ("name", typed("users/name", &["c"], "string")),
+            ]))
+            .expect("plan");
+            let sealed = encrypt(
+                &keyset,
+                obj(vec![("age", FfiValue::UInt64(34)), ("name", s("bob"))]),
+                &plan,
+            )
+            .await
+            .expect("seal");
+            let opened = object(
+                decrypt(Scope::Client(&cipher), sealed, &plan)
+                    .await
+                    .expect("name is checked as a string, not as a uint64"),
+            );
+            assert_eq!(keys(&opened), ["name"]);
+            assert_eq!(text_of(&opened[0].1), "bob");
+        }
+
+        /// A typed composite field opens as its declared kind, with its
+        /// entries, including when it is empty: an empty `[]` that opened
+        /// as `{}` would fail every read of an `"array"` field.
+        #[tokio::test]
+        async fn a_typed_composite_field_round_trips_even_when_empty() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            for (ty, value, len) in [
+                ("object", obj(vec![("home", s("a@x"))]), 1),
+                ("object", FfiValue::Object(vec![]), 0),
+                (
+                    "array",
+                    FfiValue::Array(vec![s("a"), FfiValue::UInt32(1)]),
+                    2,
+                ),
+                ("array", FfiValue::Array(vec![]), 0),
+            ] {
+                let plan = plan(obj(vec![("doc", typed("users/doc", &["c"], ty))])).expect("plan");
+                let sealed = encrypt(&keyset, obj(vec![("doc", value)]), &plan)
+                    .await
+                    .expect("seal");
+                let opened = decrypt(Scope::Client(&cipher), sealed, &plan)
+                    .await
+                    .expect("a composite opens as its declared kind");
+                let (_, doc) = object(opened).into_iter().next().expect("doc");
+                match (ty, doc) {
+                    ("object", FfiValue::Object(entries)) => assert_eq!(entries.len(), len),
+                    ("array", FfiValue::Array(items)) => assert_eq!(items.len(), len),
+                    (ty, _) => panic!("a {ty} field opened as another kind"),
+                }
+            }
+        }
+
+        /// `check_record` does not open anything, so it cannot see a
+        /// typed field's type: the tag is inside the AEAD envelope. A record
+        /// sealed as another type passes it, and only `decrypt` refuses it.
+        #[tokio::test]
+        async fn check_record_accepts_a_record_sealed_as_another_type() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let untyped = plan(obj(vec![("age", spec(s("users/age"), &["c"]))])).expect("plan");
+            let as_uint64 =
+                plan(obj(vec![("age", typed("users/age", &["c"], "uint64"))])).expect("plan");
+
+            let sealed = encrypt(&keyset, obj(vec![("age", FfiValue::UInt32(34))]), &untyped)
+                .await
+                .expect("seal");
+            check_record(sealed, &as_uint64).expect("the type is not visible without opening");
+
+            let sealed = encrypt(&keyset, obj(vec![("age", FfiValue::UInt32(34))]), &untyped)
+                .await
+                .expect("seal");
+            let result = decrypt(Scope::Client(&cipher), sealed, &as_uint64).await;
+            assert!(
+                matches!(result, Err(Error::Record)),
+                "decrypt is where the type is checked: {:?}",
+                result.err()
+            );
+        }
     }
 }

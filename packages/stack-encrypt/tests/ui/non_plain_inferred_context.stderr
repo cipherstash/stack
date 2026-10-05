@@ -4,7 +4,7 @@ error: a container `context` is the first segment of every field's ZeroKMS descr
 10 | #[stash(struct = User, context = "public/users")]
    |                                  ^^^^^^^^^^^^^^
 
-error: a tuple field has no name to infer a context from: its index `0` begins with a digit, which a descriptor reserves, so `("readings", "0")` would render escaped; give the field `#[stash(context = "..")]`
+error: a tuple field has no name to infer a context from: its index `0` begins with a digit, which a descriptor reserves, so `("readings", "0")` would render escaped; give the field `#[stash(identity = "..")]`
   --> tests/ui/non_plain_inferred_context.rs:18:10
    |
 18 | #[derive(EncryptFrom)]

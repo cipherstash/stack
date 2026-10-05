@@ -8,13 +8,6 @@ struct Twice {
     c: StackCipherText,
 }
 #[derive(EncryptFrom)]
-struct Literal {
-    #[stash(context_field)]
-    i: String,
-    #[stash(context = "other")]
-    c: StackCipherText,
-}
-#[derive(EncryptFrom)]
 struct Defaulted {
     #[stash(context_field, default)]
     i: String,

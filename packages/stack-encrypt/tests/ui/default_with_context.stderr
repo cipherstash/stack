@@ -1,5 +1,0 @@
-error: a `default` field is not derived from the source, so `context`, `from`, `decrypt` and `nested` do not apply to it
- --> tests/ui/default_with_context.rs:7:8
-  |
-7 |     v: u8,
-  |        ^^

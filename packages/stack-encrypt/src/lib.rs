@@ -275,6 +275,7 @@ pub mod descriptor;
 #[cfg(feature = "dynamic")]
 pub mod dynamic;
 pub mod keyset;
+pub mod plan;
 pub mod sem;
 pub mod target;
 
@@ -284,6 +285,7 @@ pub use cipher::{
 };
 pub use descriptor::{Describe, Description, Descriptor, Label, LabelError};
 pub use keyset::KeysetCipher;
+pub use plan::{all, Plan, PlanError};
 // stack-kms is a public dependency: `StackCipher` is generic over its
 // `DataKeySource`, and `StackCipherBuilder::kms` takes its `StackKms`. It is
 // versioned on its own (release-plz.toml), so a caller reaches it through
@@ -292,7 +294,8 @@ pub use keyset::KeysetCipher;
 pub use stack_kms as kms;
 pub use target::{
     CallerContext, CipherScope, DecryptField, DecryptFrom, DecryptInto, Decryptable, Decryption,
-    EncryptFrom, EncryptInto, Encryption, Pending, PendingFuture, Request, Responses,
+    EncryptFrom, EncryptInto, Encrypted, Encryption, Equality, Index, IndexSpec, Indexes, Match,
+    Ope, Ore, Pending, PendingFuture, Request, Responses, TermSet,
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they

@@ -1,0 +1,12 @@
+error[E0277]: the trait bound `u32: AsRef<str>` is not satisfied
+ --> tests/ui/match_in_a_tuple_on_integer.rs:7:13
+  |
+7 |     let _ = indexed::<u32, FakeDataKeySource, Borrowed, _>((Equality, Match::default()));
+  |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `AsRef<str>` is not implemented for `u32`
+  |
+help: the trait `stack_encrypt::Index<S>` is implemented for `stack_encrypt::Match<O>`
+ --> src/target/index.rs
+  |
+  | impl<S: AsRef<str>, O: MatchConfig + 'static> Index<S> for Match<O> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: required for `stack_encrypt::Match` to implement `stack_encrypt::Index<u32>`

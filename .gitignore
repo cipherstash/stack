@@ -75,6 +75,8 @@ node_modules
 
 # ffi
 target
+# A source module named `target`, not a build directory: keep it tracked.
+!packages/stack-encrypt/src/target/
 index.node
 **/node_modules
 **/.DS_Store

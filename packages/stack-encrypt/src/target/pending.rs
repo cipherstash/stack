@@ -265,6 +265,14 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
         }
     }
 
+    /// Whether this pending opens leaves from any keyset: it was built
+    /// through the [`StackCipher`] (no scope) and has not failed. Such a
+    /// pending cannot be merged with a scoped one without being confined to
+    /// that scope, so a batch settles it on its own.
+    pub(crate) fn opens_any_keyset(&self) -> bool {
+        self.keyset.is_none() && self.failed.is_none()
+    }
+
     /// Merge two pendings into one resolving to the pair. Their requests
     /// concatenate — awaiting the result is still one batched call per
     /// request kind.

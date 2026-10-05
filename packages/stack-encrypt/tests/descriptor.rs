@@ -10,7 +10,7 @@ mod common;
 
 use common::recording_cipher;
 use stack_encrypt::sem::EqualityTerm;
-use stack_encrypt::target::{DecryptFrom, EncryptInto};
+use stack_encrypt::target::{DecryptFrom, EncryptInto, Encrypted};
 use stack_encrypt::{
     nonempty, DecryptInto, Describe, Descriptor, EncryptFrom, Error, Label, NonEmpty,
     StackCipherText,
@@ -32,10 +32,8 @@ struct User {
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(struct = User, context = "users")]
 struct EncryptedUser {
-    email: StackCipherText,
-    #[stash(from = email)]
-    email_hm: EqualityTerm,
-    #[stash(context = "nickname")]
+    email: Encrypted<EqualityTerm>,
+    #[stash(identity = "nickname")]
     name: StackCipherText,
     age: EncryptedAge,
 }
@@ -104,14 +102,20 @@ async fn a_struct_sends_one_descriptor_per_field_context() -> Result<(), Error> 
     let back = User::decrypt_from(row, &cipher).await?;
     assert_eq!(back, user());
 
-    // The inferred pair `users/email`, the field's own literal `nickname`,
-    // and the inner record under the pair `users/age`; the term derives no
-    // key. One call each way.
+    // The inferred pair `users/email`, the pair `users/nickname` the
+    // field's `identity` keys it under, and the inner record under the pair
+    // `users/age`; the term derives no key. One call each way.
     let sent = sent.lock().expect("lock").clone();
     assert_eq!(sent.generate.len(), 1, "one generate_keys call");
     assert_eq!(sent.retrieve.len(), 1, "one retrieve_keys call");
-    assert_eq!(sent.generated(), ["users/email", "nickname", "users/age"]);
-    assert_eq!(sent.retrieved(), ["users/email", "nickname", "users/age"]);
+    assert_eq!(
+        sent.generated(),
+        ["users/email", "users/nickname", "users/age"]
+    );
+    assert_eq!(
+        sent.retrieved(),
+        ["users/email", "users/nickname", "users/age"]
+    );
     Ok(())
 }
 
@@ -128,7 +132,7 @@ async fn a_callers_context_extends_every_fields_descriptor() -> Result<(), Error
     // same value the leaf AAD and the term context are built from.
     let expected: Vec<String> = [
         Descriptor::of(nonempty!("users").with("email").with(7u64)),
-        Descriptor::of(nonempty!("nickname").with(7u64)),
+        Descriptor::of(nonempty!("users").with("nickname").with(7u64)),
         Descriptor::of(nonempty!("users").with("age").with(7u64)),
     ]
     .iter()
@@ -136,7 +140,11 @@ async fn a_callers_context_extends_every_fields_descriptor() -> Result<(), Error
     .collect();
     assert_eq!(
         expected,
-        ["(users/email)/7u64", "nickname/7u64", "(users/age)/7u64"],
+        [
+            "(users/email)/7u64",
+            "(users/nickname)/7u64",
+            "(users/age)/7u64"
+        ],
         "a composite context renders readably"
     );
     let sent = sent.lock().expect("lock").clone();

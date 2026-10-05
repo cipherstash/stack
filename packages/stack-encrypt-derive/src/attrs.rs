@@ -159,7 +159,7 @@ impl ContainerAttrs {
                     context.span(),
                     "a container `context` is the prefix of the per-field contexts and applies \
                      only with `struct = ..`; a `plaintext` record's fields take the caller's \
-                     context, or a `context = \"..\"` of their own",
+                     context",
                 ));
             }
             _ => {}
@@ -209,11 +209,11 @@ impl ContainerAttrs {
 #[derive(Default)]
 pub(crate) struct FieldAttrs {
     pub(crate) context_field: bool,
-    /// `#[stash(context = "...")]`: derive this field under exactly this
-    /// context instead of the one a `struct` derive would infer, or the one
-    /// the caller passes for the record. Extended by a caller's context like
-    /// any other.
-    pub(crate) context: Option<LitStr>,
+    /// `#[stash(identity = "...")]`: with `struct = ..`, the label segment
+    /// this field is keyed under, in place of the plaintext field's name:
+    /// the field is derived under `("<context>", "<identity>")`. The plan
+    /// builder's `.identity(segment)`.
+    pub(crate) identity: Option<LitStr>,
     /// `#[stash(from = field)]` / `#[stash(from = 0)]`: with `struct = ..`,
     /// derive this field from a plaintext field whose name differs from its
     /// own.
@@ -223,11 +223,6 @@ pub(crate) struct FieldAttrs {
     pub(crate) default: Option<Option<Expr>>,
     /// `#[stash(decrypt)]`: decryption opens this field.
     pub(crate) decrypt: bool,
-    /// `#[stash(nested)]`: with `struct = ..`, do not infer a context for
-    /// this field — hand it the caller's as it is, because its type (a
-    /// nested `struct` derive) carries its own contexts and composes them
-    /// with it.
-    pub(crate) nested: bool,
 }
 
 impl FieldAttrs {
@@ -243,16 +238,35 @@ impl FieldAttrs {
                     parsed.context_field = true;
                     return Ok(());
                 }
+                // Removed rather than unknown, so the message can say what
+                // to write instead. A plan has exactly one context source,
+                // and every field sits under it: a field sealed under a
+                // literal of its own has no plan form.
                 if meta.path.is_ident("context") {
-                    // Each of these is singular by meaning, so a repeat is a
-                    // mistake: rejected rather than silently overwritten. A
-                    // silently-winning second `from` would be the worst of
-                    // them — it crosses fields, which is exactly the failure
-                    // the derive exists to prevent.
-                    if parsed.context.is_some() {
-                        return Err(meta.error("`context` is given twice; a field has one context"));
+                    return Err(meta.error(
+                        "a field-level `context = \"..\"` is no longer accepted (0.2.0 accepted \
+                         it). All outputs of a `plaintext = T` record share the caller's context, \
+                         so remove it there; every field of a `struct = ..` derive sits under the \
+                         record's context, so key it under another segment with \
+                         `identity = \"..\"`. Either replacement is a different context from the \
+                         old literal: data written with the literal does not decrypt under it and \
+                         its terms do not match, so re-encrypt that data. Writing one value under \
+                         two contexts (a dual write) is a fields plan that picks the same source \
+                         twice, not a derive",
+                    ));
+                }
+                // Each of these is singular by meaning, so a repeat is a
+                // mistake: rejected rather than silently overwritten. A
+                // silently-winning second `from` would be the worst of them —
+                // it crosses fields, which is exactly the failure the derive
+                // exists to prevent.
+                if meta.path.is_ident("identity") {
+                    if parsed.identity.is_some() {
+                        return Err(meta.error(
+                            "`identity` is given twice; a field is keyed under one segment",
+                        ));
                     }
-                    parsed.context = Some(meta.value()?.parse()?);
+                    parsed.identity = Some(meta.value()?.parse()?);
                     return Ok(());
                 }
                 if meta.path.is_ident("from") {
@@ -282,28 +296,24 @@ impl FieldAttrs {
                     parsed.decrypt = true;
                     return Ok(());
                 }
+                // Removed rather than unknown, so the message can say what
+                // to write instead.
                 if meta.path.is_ident("nested") {
-                    if parsed.nested {
-                        return Err(meta.error("`nested` is given twice"));
-                    }
-                    parsed.nested = true;
-                    return Ok(());
+                    return Err(meta.error(
+                        "`nested` is no longer accepted (0.2.0 accepted it): a field whose type \
+                         is a record is an ordinary field, derived under \
+                         `(\"<context>\", \"<field>\")` like any other, and its own fields sit \
+                         under that. Omit `nested`. That is a different context from the one \
+                         `nested` gave the inner fields: data written with `nested` does not \
+                         decrypt without it and its terms do not match, so re-encrypt that data",
+                    ));
                 }
                 Err(meta.error(
-                    "unsupported field attribute; expected `context_field`, `context = \"...\"`, \
-                     `from = field`, `default`, `default = expr`, `decrypt` or `nested`",
+                    "unsupported field attribute; expected `context_field`, \
+                     `identity = \"...\"`, `from = field`, `default`, `default = expr` or \
+                     `decrypt`",
                 ))
             })?;
-        }
-
-        if parsed.nested {
-            if let Some(context) = &parsed.context {
-                return Err(syn::Error::new(
-                    context.span(),
-                    "`nested` hands this field the caller's context because its type carries its \
-                     own, so `context` does not apply: give one or the other",
-                ));
-            }
         }
 
         Ok(parsed)

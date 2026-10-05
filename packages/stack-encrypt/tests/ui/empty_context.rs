@@ -7,15 +7,8 @@ struct User {
 #[derive(EncryptFrom)]
 #[stash(struct = User, context = "users")]
 struct EncryptedUser {
-    #[stash(context = "")]
+    #[stash(identity = "")]
     email: StackCipherText,
-}
-
-#[derive(EncryptFrom)]
-#[stash(plaintext = u32)]
-struct Pinned {
-    #[stash(context = "")]
-    c: StackCipherText,
 }
 
 fn main() {}

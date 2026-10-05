@@ -16,14 +16,8 @@ error: `context_field` supplies the complete context, so the record's `Context` 
 13 | #[stash(plaintext = String, context_type = stack_encrypt::target::AeadContext)]
    |                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-error: `context_type` names what the caller passes to a record whose fields take the caller's context; every field here carries a `context = ".."` of its own, so the record takes `DeclaredContext` and a caller's context extends them
-  --> tests/ui/context_type_conflicts.rs:21:44
-   |
-21 | #[stash(plaintext = String, context_type = stack_encrypt::target::AeadContext)]
-   |                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
 error: `context_type` is given twice; a record has one associated context
-  --> tests/ui/context_type_conflicts.rs:28:60
+  --> tests/ui/context_type_conflicts.rs:21:60
    |
-28 | #[stash(context_type = stack_encrypt::target::AeadContext, context_type = stack_encrypt::target::AeadContext)]
+21 | #[stash(context_type = stack_encrypt::target::AeadContext, context_type = stack_encrypt::target::AeadContext)]
    |                                                            ^^^^^^^^^^^^

@@ -22,7 +22,9 @@
 use std::borrow::Cow;
 
 use stack_encrypt::nonempty;
-use stack_encrypt::sem::{DefaultMatch, EqualityTerm, MatchTerm, OpeTerm, OreTerm, TermBytesError};
+use stack_encrypt::sem::{
+    DefaultMatch, EqualityTerm, MatchTerms, OpeTerm, OreTerm, TermBytesError,
+};
 use stack_encrypt::target::EncryptInto;
 use stack_encrypt::{CipherText, Error, LeafBytesError, SealedValue, StackCipher};
 use stack_kms::{
@@ -379,12 +381,12 @@ async fn match_term_bytes_are_pinned() {
         "040005000a000d000e001e002700350038003d0055005e005f0064006f007d007f009c00ad00bc00bd00ca00d000e000e500ef00"
     );
     assert_eq!(
-        MatchTerm::<DefaultMatch>::from_bytes(&bytes).expect("decode match term"),
+        MatchTerms::<DefaultMatch>::from_bytes(&bytes).expect("decode match term"),
         term
     );
     // The std conversion is the same decoder.
     assert_eq!(
-        MatchTerm::<DefaultMatch>::try_from(bytes.as_slice()).expect("TryFrom decode"),
+        MatchTerms::<DefaultMatch>::try_from(bytes.as_slice()).expect("TryFrom decode"),
         term
     );
 }
@@ -393,10 +395,10 @@ async fn match_term_bytes_are_pinned() {
 /// else.
 #[test]
 fn match_term_debug_is_its_positions() {
-    let term = MatchTerm::<DefaultMatch>::from_positions(vec![17, 3]).expect("in range");
+    let term = MatchTerms::<DefaultMatch>::from_positions(vec![17, 3]).expect("in range");
     assert_eq!(
         format!("{term:?}"),
-        "MatchTerm { positions: [3, 17] }",
+        "MatchTerms { positions: [3, 17] }",
         "Debug should show only the sorted positions"
     );
 }
@@ -404,8 +406,8 @@ fn match_term_debug_is_its_positions() {
 #[test]
 fn match_term_from_bytes_rejects_odd_length() {
     assert_eq!(
-        MatchTerm::<DefaultMatch>::from_bytes(&[0x21]),
-        Err(TermBytesError::OddMatchTermLength(1))
+        MatchTerms::<DefaultMatch>::from_bytes(&[0x21]),
+        Err(TermBytesError::OddMatchTermsLength(1))
     );
 }
 
@@ -416,14 +418,14 @@ fn match_term_from_bytes_rejects_positions_outside_the_filter() {
     // and the 0xffff a wrong-endian decoder produces, are both rejected —
     // they would otherwise decode cleanly and then silently never match.
     assert_eq!(
-        MatchTerm::<DefaultMatch>::from_bytes(&[0x00, 0x01]),
+        MatchTerms::<DefaultMatch>::from_bytes(&[0x00, 0x01]),
         Err(TermBytesError::MatchPositionOutOfRange {
             position: 256,
             filter_size: 256,
         })
     );
     assert_eq!(
-        MatchTerm::<DefaultMatch>::from_bytes(&[0xff, 0xff]),
+        MatchTerms::<DefaultMatch>::from_bytes(&[0xff, 0xff]),
         Err(TermBytesError::MatchPositionOutOfRange {
             position: 0xffff,
             filter_size: 256,
@@ -432,20 +434,20 @@ fn match_term_from_bytes_rejects_positions_outside_the_filter() {
     // Byte-swapping a genuine term is exactly that failure: position 0x21
     // becomes 0x2100.
     assert!(matches!(
-        MatchTerm::<DefaultMatch>::from_bytes(&[0x00, 0x21]),
+        MatchTerms::<DefaultMatch>::from_bytes(&[0x00, 0x21]),
         Err(TermBytesError::MatchPositionOutOfRange { .. })
     ));
 
     // In-range positions round-trip, through both constructors.
     let positions = vec![0u16, 1, 255];
-    let term = MatchTerm::<DefaultMatch>::from_positions(positions.clone()).expect("in range");
+    let term = MatchTerms::<DefaultMatch>::from_positions(positions.clone()).expect("in range");
     assert_eq!(term.positions(), positions.as_slice());
     assert_eq!(
-        MatchTerm::<DefaultMatch>::from_bytes(&term.to_bytes()).expect("decode"),
+        MatchTerms::<DefaultMatch>::from_bytes(&term.to_bytes()).expect("decode"),
         term
     );
     assert_eq!(
-        MatchTerm::<DefaultMatch>::from_positions(vec![256]),
+        MatchTerms::<DefaultMatch>::from_positions(vec![256]),
         Err(TermBytesError::MatchPositionOutOfRange {
             position: 256,
             filter_size: 256,

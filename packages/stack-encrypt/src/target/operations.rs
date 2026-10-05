@@ -11,6 +11,7 @@
 //! by name, with [`Encryption::under`] or [`Encryption::extend`].
 use super::context::{AeadContext, CallerContext, DeclaredContext, Extends};
 use super::core::{encrypt_native, open_native, Term};
+use super::source::{Borrowed, ConsumeSource, ShareSource, SourceMode};
 use super::{CipherScope, Pending};
 use crate::{Error, IntoContext, KeysetCipher, NonEmpty, StackCipher, StackCipherText};
 use stack_kms::MaybeSend;
@@ -38,6 +39,19 @@ pub trait EncryptFrom<S>: Sized + 'static {
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's;
+    /// The indexes this target's terms answer queries by, as data, under
+    /// the context the target is run under: what a plan field typed with
+    /// this target ([`encrypt_into`](crate::plan::FieldsBuilder::encrypt_into))
+    /// lets a query ask for. A query for any other index is refused rather
+    /// than derived, since it would match nothing.
+    ///
+    /// The default is none, which is right for a ciphertext and for a record
+    /// whose fields sit under contexts of their own; a term, an
+    /// [`Encrypted<Terms>`](super::Encrypted) and a tuple of targets name
+    /// theirs.
+    fn indexes() -> Vec<super::IndexSpec> {
+        vec![]
+    }
 }
 /// Declaration of how a stored target recovers `P`.
 ///
@@ -53,12 +67,27 @@ pub trait DecryptInto<P>: Sized {
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K>;
 }
 
+// What the description is handed is `M::Source`: `&'s S` in the default
+// `Borrowed` mode, `S` itself in `Owned` mode (see `SourceMode`).
 #[cfg(not(target_arch = "wasm32"))]
-type Build<'s, S, T, K, Ctx> =
-    Box<dyn for<'a, 'k> FnOnce(&S, &'a KeysetCipher<'k, K>, Ctx) -> Pending<'a, T, K> + Send + 's>;
+type Build<'s, S, T, K, Ctx, M> = Box<
+    dyn for<'a, 'k> FnOnce(
+            <M as SourceMode<'s, S>>::Source,
+            &'a KeysetCipher<'k, K>,
+            Ctx,
+        ) -> Pending<'a, T, K>
+        + Send
+        + 's,
+>;
 #[cfg(target_arch = "wasm32")]
-type Build<'s, S, T, K, Ctx> =
-    Box<dyn for<'a, 'k> FnOnce(&S, &'a KeysetCipher<'k, K>, Ctx) -> Pending<'a, T, K> + 's>;
+type Build<'s, S, T, K, Ctx, M> = Box<
+    dyn for<'a, 'k> FnOnce(
+            <M as SourceMode<'s, S>>::Source,
+            &'a KeysetCipher<'k, K>,
+            Ctx,
+        ) -> Pending<'a, T, K>
+        + 's,
+>;
 #[cfg(not(target_arch = "wasm32"))]
 type Open<T, K> = Box<dyn for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K> + Send>;
 #[cfg(target_arch = "wasm32")]
@@ -89,9 +118,16 @@ type Open<T, K> = Box<dyn for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K
 ///   only ways to change the context a subtree runs under, and only `under`
 ///   discharges the requirement into a [`DeclaredContext`], which is what
 ///   `()` may satisfy.
+///
+/// `M` is how the description is handed its plaintext ([`SourceMode`]):
+/// by reference in the default [`Borrowed`] mode, which every
+/// [`EncryptFrom`] declaration runs in, or by value in
+/// [`Owned`](super::Owned) mode, run with [`KeysetCipher::run`]. In owned mode
+/// a single operation consumes the plaintext without copying it, so `S` need
+/// not be `Clone`; [`zip`](Self::zip) is the one place that asks for it.
 #[must_use = "an encryption description does nothing until a keyset cipher executes it"]
-pub struct Encryption<'s, S, T, K, Ctx> {
-    build: Build<'s, S, T, K, Ctx>,
+pub struct Encryption<'s, S: 's, T, K, Ctx, M: SourceMode<'s, S> = Borrowed> {
+    build: Build<'s, S, T, K, Ctx, M>,
 }
 /// A composable description of how `T` is recovered from a stored target.
 ///
@@ -109,7 +145,7 @@ enum Opening<T, K> {
     Failed(Error),
     Open(Open<T, K>),
 }
-impl<S, T, K, Ctx> fmt::Debug for Encryption<'_, S, T, K, Ctx> {
+impl<'s, S: 's, T, K, Ctx, M: SourceMode<'s, S>> fmt::Debug for Encryption<'s, S, T, K, Ctx, M> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Encryption").finish_non_exhaustive()
     }
@@ -124,7 +160,9 @@ impl<T, K> fmt::Debug for Decryption<T, K> {
     }
 }
 
-impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
+impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
+    Encryption<'s, S, T, K, Ctx, M>
+{
     /// A description whose output is already known — metadata a record
     /// carries, or a declaration rejected before any key request.
     pub fn ready(result: Result<T, Error>) -> Self
@@ -144,7 +182,7 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     }
     /// Build the destination from the completed output. `f` sees ciphertext
     /// and terms, never the plaintext.
-    pub fn map<U: 'static, F>(self, f: F) -> Encryption<'s, S, U, K, Ctx>
+    pub fn map<U: 'static, F>(self, f: F) -> Encryption<'s, S, U, K, Ctx, M>
     where
         F: FnOnce(T) -> U + MaybeSend + 'static,
     {
@@ -154,7 +192,7 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     }
     /// [`map`](Self::map) for a conversion that can fail, such as reading
     /// native output into a destination that does not accept every shape.
-    pub fn try_map<U: 'static, F>(self, f: F) -> Encryption<'s, S, U, K, Ctx>
+    pub fn try_map<U: 'static, F>(self, f: F) -> Encryption<'s, S, U, K, Ctx, M>
     where
         F: FnOnce(T) -> Result<U, Error> + MaybeSend + 'static,
     {
@@ -165,7 +203,9 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// Drive the destination's [`Visitor`](super::transcode::Visitor) from
     /// this operation's native output, moving leaves and markers across
     /// without an intermediate tree.
-    pub fn transcode<U: super::transcode::Transcode + 'static>(self) -> Encryption<'s, S, U, K, Ctx>
+    pub fn transcode<U: super::transcode::Transcode + 'static>(
+        self,
+    ) -> Encryption<'s, S, U, K, Ctx, M>
     where
         T: super::transcode::Reader,
     {
@@ -180,16 +220,26 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// [`extend`](Self::extend) before it got here — that is how a record
     /// composes fields with different contexts — and `zip` cannot tell that
     /// from a target's two halves (ADR-0004, decision 1).
+    ///
+    /// Both sides also receive the same plaintext. In the default
+    /// [`Borrowed`] mode that is the same reference, and costs nothing. In
+    /// [`Owned`](super::Owned) mode this side gets a clone and `other` takes
+    /// ownership, so a chain of `n` operations makes `n - 1` copies rather
+    /// than `n`, and only here does an owned plaintext need to be `Clone`.
+    /// In Owned mode, a match term next to an operation that consumes the
+    /// value still needs `S: Clone`.
     pub fn zip<U: 'static>(
         self,
-        other: Encryption<'s, S, U, K, Ctx>,
-    ) -> Encryption<'s, S, (T, U), K, Ctx>
+        other: Encryption<'s, S, U, K, Ctx, M>,
+    ) -> Encryption<'s, S, (T, U), K, Ctx, M>
     where
         Ctx: Clone,
+        M: ShareSource<'s, S>,
     {
         Encryption {
             build: Box::new(move |source, cipher, cx| {
-                (self.build)(source, cipher, cx.clone()).zip((other.build)(source, cipher, cx))
+                let (mine, theirs) = M::share(source);
+                (self.build)(mine, cipher, cx.clone()).zip((other.build)(theirs, cipher, cx))
             }),
         }
     }
@@ -203,7 +253,7 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// record storing its own context declares `NonEmpty<T>` while its
     /// operations want a `CallerContext` — and this adapts the one to the
     /// other once, at the root.
-    pub fn accepting<C2>(self) -> Encryption<'s, S, T, K, C2>
+    pub fn accepting<C2>(self) -> Encryption<'s, S, T, K, C2, M>
     where
         C2: Into<Ctx> + 's,
     {
@@ -212,7 +262,7 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// Need a different context, derived from the one supplied by `derive`
     /// at the root of this subtree. The one place a context changes on its
     /// way down; every public way of doing so is a closure handed here.
-    fn needing<C2, F>(self, derive: F) -> Encryption<'s, S, T, K, C2>
+    fn needing<C2, F>(self, derive: F) -> Encryption<'s, S, T, K, C2, M>
     where
         C2: 's,
         F: FnOnce(C2) -> Ctx + MaybeSend + 's,
@@ -233,7 +283,7 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     pub fn under(
         self,
         own: NonEmpty<impl IntoContext<'static> + MaybeSend + 's>,
-    ) -> Encryption<'s, S, T, K, DeclaredContext>
+    ) -> Encryption<'s, S, T, K, DeclaredContext, M>
     where
         Ctx: From<CallerContext>,
     {
@@ -251,13 +301,16 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     pub fn extend<C>(
         self,
         own: NonEmpty<impl IntoContext<'static> + MaybeSend + 's>,
-    ) -> Encryption<'s, S, T, K, C>
+    ) -> Encryption<'s, S, T, K, C, M>
     where
         C: Extends + 's,
         Ctx: From<C>,
     {
         self.needing(move |cx: C| cx.extend(own).into())
     }
+}
+
+impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// Lift a description of a field to a description of the struct that
     /// holds it, which is how a `struct = T` derive composes its fields.
     ///
@@ -265,6 +318,10 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// nothing, so it cannot reach a cipher, and what it returns is encrypted
     /// under `S`'s own Vitamin C contract. It is a place to pick a field, not
     /// to re-encode one.
+    ///
+    /// A field is picked out of a borrowed struct, so this is a
+    /// [`Borrowed`]-mode combinator: a field whose operations consume it is
+    /// cloned, as it always was, and the struct itself never is.
     pub fn project<P: 's>(
         self,
         select: for<'borrow> fn(&'borrow P) -> &'borrow S,
@@ -273,10 +330,66 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
             build: Box::new(move |source, cipher, cx| (self.build)(select(source), cipher, cx)),
         }
     }
+    /// [`under`](Encryption::under) for a context read out of the source
+    /// itself, as a plan whose context is a field of the value does: `own`
+    /// reads the label from the borrowed source, or fails, in which case the
+    /// description yields that error without I/O.
+    ///
+    /// Crate-internal: the plan builder is its one caller.
+    pub(crate) fn under_by<G>(self, own: G) -> Encryption<'s, S, T, K, DeclaredContext>
+    where
+        Ctx: From<CallerContext>,
+        G: for<'b> FnOnce(&'b S) -> Result<crate::Label, Error> + MaybeSend + 's,
+    {
+        Encryption {
+            build: Box::new(
+                move |source, cipher, cx: DeclaredContext| match own(source) {
+                    Ok(label) => {
+                        (self.build)(source, cipher, cx.under(NonEmpty::from(label)).into())
+                    }
+                    Err(error) => Pending::failed(cipher, error),
+                },
+            ),
+        }
+    }
+    /// [`project`](Self::project) for a field picked by name at run time, as
+    /// a plan's `fields()` does: `select` may capture the name, and may fail
+    /// (the value has no such field, or not of this type), in which case the
+    /// description yields that error without I/O.
+    ///
+    /// Crate-internal: the plan builder is its one caller, and what `select`
+    /// captures is a field name. The public combinator stays the
+    /// capture-free `project`.
+    pub(crate) fn project_by<P: 's, G>(self, select: G) -> Encryption<'s, P, T, K, Ctx>
+    where
+        G: for<'b> FnOnce(&'b P) -> Result<&'b S, Error> + MaybeSend + 's,
+    {
+        Encryption {
+            build: Box::new(move |source, cipher, cx| match select(source) {
+                Ok(field) => (self.build)(field, cipher, cx),
+                Err(error) => Pending::failed(cipher, error),
+            }),
+        }
+    }
 }
 
-impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's + Clone + MaybeSend + 'static>
-    Encryption<'s, S, T, K, Ctx>
+/// A description that only checks the borrowed source, yielding `()` or the
+/// error without I/O. Zipped beside a record's fields, a failed check fails
+/// the whole record before any key is requested. Crate-internal: the plan
+/// builder uses it to refuse a value whose fields the plan does not match.
+pub(crate) fn inspect<'s, S: 's, K: 'static, Ctx: 's, C>(check: C) -> Encryption<'s, S, (), K, Ctx>
+where
+    C: FnOnce(&S) -> Result<(), Error> + MaybeSend + 's,
+{
+    Encryption {
+        build: Box::new(move |source, cipher, _| Pending::ready(cipher, check(source))),
+    }
+}
+
+impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's + Clone + MaybeSend + 'static, M>
+    Encryption<'s, S, T, K, Ctx, M>
+where
+    M: SourceMode<'s, S>,
 {
     /// Build the output from the completed operations *and* the context they
     /// ran under.
@@ -284,7 +397,7 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's + Clone + MaybeSend + 'static>
     /// For a record that stores its own context in a field
     /// (`#[stash(context_field)]`): the context is supplied when the
     /// description runs, so the field it populates is filled there too.
-    pub fn map_with_context<U: 'static, F>(self, f: F) -> Encryption<'s, S, U, K, Ctx>
+    pub fn map_with_context<U: 'static, F>(self, f: F) -> Encryption<'s, S, U, K, Ctx, M>
     where
         F: FnOnce(T, Ctx) -> U + MaybeSend + 'static,
     {
@@ -306,34 +419,88 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's + Clone + MaybeSend + 'static>
 /// `AeadContext` where a term needs a [`CallerContext`]. Beside a term,
 /// [`accepting`](Encryption::accepting) lets it take the term's context —
 /// the AEAD half of the same value — so the two zip under one context.
-pub fn ciphertext<'s, S: crate::Encrypt + Clone + 's, K: 'static>(
-) -> Encryption<'s, S, StackCipherText, K, AeadContext> {
+///
+/// `Encrypt` consumes the plaintext. In [`Owned`](super::Owned) mode it is
+/// handed over, so `S` need not be `Clone`; in the default [`Borrowed`] mode
+/// it is cloned once, which is what `M: ConsumeSource<'s, S>` asks.
+pub fn ciphertext<'s, S: crate::Encrypt + 's, K: 'static, M: ConsumeSource<'s, S>>(
+) -> Encryption<'s, S, StackCipherText, K, AeadContext, M> {
     Encryption {
         build: Box::new(
             move |source, cipher, cx: AeadContext| match cx.validated() {
-                Ok(ctx) => encrypt_native(source, cipher, ctx),
+                Ok(ctx) => encrypt_native(M::take(source), cipher, ctx),
                 Err(e) => Pending::failed(cipher, e),
             },
         ),
     }
 }
+/// Carry the plaintext through unchanged: the output is the source itself,
+/// and the context the description is handed is ignored.
+///
+/// This is a field that is present in a record's output so the record is
+/// whole, and is **not encrypted and not authenticated**: nothing binds it
+/// to the ciphertexts beside it, so whoever can write the stored record can
+/// change it undetected. A field that must stay readable but be
+/// tamper-evident is not a passthrough: seal it, with an equality index
+/// beside it for lookup ([`indexed`](super::indexed) with
+/// [`Equality`](super::Equality)).
+///
+/// In [`Owned`](super::Owned) mode the value is moved through; in the
+/// default [`Borrowed`] mode it is cloned once, which is what
+/// `M: ConsumeSource<'s, S>` asks. `Ctx` is whatever the surrounding tree
+/// hands its fields, so a passthrough zips beside any of them.
+pub fn passthrough<'s, S, K, M, Ctx>() -> Encryption<'s, S, S, K, Ctx, M>
+where
+    S: MaybeSend + 'static,
+    K: 'static,
+    M: ConsumeSource<'s, S>,
+    Ctx: 's,
+{
+    Encryption {
+        build: Box::new(move |source, cipher, _| Pending::ready(cipher, Ok(M::take(source)))),
+    }
+}
 /// A term operation: `$function` produces `$output` from any `S` satisfying
 /// the bounds, under the [`CallerContext`] the tree hands it.
+///
+/// `consume` terms (equality, ORE, OPE) take the plaintext by value, as their
+/// scheme does, so they ask the same `M: ConsumeSource<'s, S>` as
+/// [`ciphertext`]. A `view` term (match) only reads it, so it works in any
+/// mode and never clones.
 macro_rules! term_operation {
     (
         $(#[$doc:meta])*
-        $function:ident, $output:ty, [$($generics:tt)*], [$($bounds:tt)*]
+        $function:ident, $output:ty, consume, [$($generics:tt)*], [$($bounds:tt)*]
     ) => {
         $(#[$doc])*
-        pub fn $function<'s, S, K: 'static, $($generics)*>(
-        ) -> Encryption<'s, S, $output, K, CallerContext>
+        pub fn $function<'s, S, K: 'static, M: ConsumeSource<'s, S>, $($generics)*>(
+        ) -> Encryption<'s, S, $output, K, CallerContext, M>
         where
             S: 's,
             $($bounds)*
         {
             Encryption {
                 build: Box::new(move |source, cipher, cx: CallerContext| match cx.validated() {
-                    Ok(ctx) => <$output as Term<S, K, _>>::encrypt_from(source, cipher, ctx),
+                    Ok(ctx) => <$output as Term<S, K, _>>::encrypt_from(M::take(source), cipher, ctx),
+                    Err(e) => Pending::failed(cipher, e),
+                }),
+            }
+        }
+    };
+    (
+        $(#[$doc:meta])*
+        $function:ident, $output:ty, view, [$($generics:tt)*], [$($bounds:tt)*]
+    ) => {
+        $(#[$doc])*
+        pub fn $function<'s, S, K: 'static, M: SourceMode<'s, S>, $($generics)*>(
+        ) -> Encryption<'s, S, $output, K, CallerContext, M>
+        where
+            S: 's,
+            $($bounds)*
+        {
+            Encryption {
+                build: Box::new(move |source, cipher, cx: CallerContext| match cx.validated() {
+                    Ok(ctx) => <$output as Term<&S, K, _>>::encrypt_from(M::view(&source), cipher, ctx),
                     Err(e) => Pending::failed(cipher, e),
                 }),
             }
@@ -343,25 +510,25 @@ macro_rules! term_operation {
 term_operation!(
     /// The equality term of `S` under the context the tree hands it. Requires
     /// only `S`'s PRF contract, not recoverable encryption.
-    equality, crate::sem::EqualityTerm, [], [S: vitaminc_prf::PrfValue + Clone]
+    equality, crate::sem::EqualityTerm, consume, [], [S: vitaminc_prf::PrfValue]
 );
 term_operation!(
     /// The match term of any text `S` under the context the tree hands it,
     /// tokenised and hashed as `O` declares.
-    matching, crate::sem::MatchTerm<O>, [O: crate::sem::MatchConfig + 'static], [S: AsRef<str>]
+    matching, crate::sem::MatchTerms<O>, view, [O: crate::sem::MatchConfig + 'static], [S: AsRef<str>]
 );
 term_operation!(
     /// The order-revealing term of `S` under the context the tree hands it.
     /// The bounds are the leaf's own: they say which `S` the CLLW ORE scheme
     /// can order.
-    ore, crate::sem::OreTerm<S>, [],
-    [S: cllw_ore::CllwOreEncrypt + Clone + Send + 'static, S::Output: Send + 'static]
+    ore, crate::sem::OreTerm<S>, consume, [],
+    [S: cllw_ore::CllwOreEncrypt + Send + 'static, S::Output: Send + 'static]
 );
 term_operation!(
     /// The order-preserving term of `S` under the context the tree hands it,
     /// with the same bounds as [`ore`].
-    ope, crate::sem::OpeTerm<S>, [],
-    [S: cllw_ore::CllwOpeEncrypt + Clone + Send + 'static, S::Output: Send + 'static]
+    ope, crate::sem::OpeTerm<S>, consume, [],
+    [S: cllw_ore::CllwOpeEncrypt + Send + 'static, S::Output: Send + 'static]
 );
 
 impl<T: 'static, K: 'static> Decryption<T, K> {
@@ -475,6 +642,90 @@ impl<K: 'static> KeysetCipher<'_, K> {
     {
         (T::encryption().build)(source, self, context)
     }
+    /// Run a description held in a variable over `source`, under `context`.
+    ///
+    /// `source` is what the description's mode hands its operations: `&S`
+    /// for a [`Borrowed`]-mode description (the default, and what
+    /// [`encrypt_as`](Self::encrypt_as) runs for a type), or `S` itself for
+    /// an [`Owned`](super::Owned)-mode one. Owned mode is how a plaintext
+    /// that is not `Clone` reaches an operation: a single operation consumes
+    /// it without a copy.
+    ///
+    /// ```
+    /// # async fn example() -> Result<(), stack_encrypt::Error> {
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::target::{self, AeadContext, Owned};
+    /// use stack_encrypt::{nonempty, StackCipher, StackCipherText};
+    /// use vitaminc_protected::Protected;
+    ///
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let keyset = cipher.default_keyset();
+    /// // `Protected<String>` is deliberately not `Clone`: it is moved in, and
+    /// // the one copy is wiped once it is sealed.
+    /// let card = Protected::new(String::from("4111 1111 1111 1111"));
+    /// let sealed: StackCipherText = keyset
+    ///     .run(
+    ///         target::ciphertext::<_, _, Owned>(),
+    ///         card,
+    ///         AeadContext::from(nonempty!("cards/number")),
+    ///     )
+    ///     .await?;
+    /// # let _ = sealed;
+    /// # Ok(())
+    /// # }
+    /// # tokio_test_block_on(example()).unwrap();
+    /// # fn tokio_test_block_on<F: std::future::Future>(f: F) -> F::Output {
+    /// #     tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(f)
+    /// # }
+    /// ```
+    ///
+    /// The opening side is [`run_decryption`](Self::run_decryption): an
+    /// [`Encryption`] is run with its source and context, a [`Decryption`]
+    /// already holds both. Either is single-use; a saved plan builds a fresh
+    /// one per call.
+    ///
+    /// A borrowed source is `&'s S`, tied to the description's own lifetime
+    /// `'s`, so a description fixed at one `'s` can only run over sources
+    /// that live that long. A boxed, reusable description must therefore
+    /// keep `'s` higher-ranked (as `plan::Lower` does, with a phantom
+    /// `PhantomData<&'s ()>` argument) or be created per call.
+    pub fn run<'a, 's, S: 's, T: 'static, Ctx, M: SourceMode<'s, S>>(
+        &'a self,
+        encryption: Encryption<'s, S, T, K, Ctx, M>,
+        source: M::Source,
+        context: Ctx,
+    ) -> Pending<'a, T, K> {
+        (encryption.build)(source, self, context)
+    }
+    /// Run a [`Decryption`] held in a variable under this keyset: the
+    /// counterpart of [`run`](Self::run), and what
+    /// [`decrypt_as`](Self::decrypt_as) does with a type's declaration. A
+    /// leaf sealed under another keyset is refused
+    /// ([`Error::ForeignKeyset`]) before any key is retrieved.
+    ///
+    /// ```
+    /// # async fn example() -> Result<(), stack_encrypt::Error> {
+    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::target::{self, AeadContext, Decryption};
+    /// use stack_encrypt::{nonempty, StackCipher, StackCipherText};
+    ///
+    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let keyset = cipher.default_keyset();
+    /// let context = || AeadContext::from(nonempty!("users/email"));
+    /// let sealed: StackCipherText = keyset.encrypt_as(&"bob@example.com".to_string(), context()).await?;
+    ///
+    /// let opening: Decryption<String, _> = target::open(sealed, context());
+    /// assert_eq!(keyset.run_decryption(opening).await?, "bob@example.com");
+    /// # Ok(())
+    /// # }
+    /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+    /// ```
+    pub fn run_decryption<'a, P: 'static>(
+        &'a self,
+        decryption: Decryption<P, K>,
+    ) -> Pending<'a, P, K> {
+        decryption.open_in(self)
+    }
     /// Recover `P` from `source`, as its declaration describes. A leaf sealed
     /// under another keyset is refused ([`Error::ForeignKeyset`]) before any
     /// key is retrieved.
@@ -490,6 +741,15 @@ impl<K: 'static> KeysetCipher<'_, K> {
     }
 }
 impl<K: 'static> StackCipher<K> {
+    /// Run a [`Decryption`] held in a variable through the client: leaves
+    /// from any of its keysets open here. See
+    /// [`KeysetCipher::run_decryption`], which refuses a foreign one.
+    pub fn run_decryption<'a, P: 'static>(
+        &'a self,
+        decryption: Decryption<P, K>,
+    ) -> Pending<'a, P, K> {
+        decryption.open_in(self)
+    }
     /// Recover `P` from `source`, as its declaration describes. Leaves from
     /// any of the client's keysets open here.
     pub fn decrypt_as<'a, P: 'static, T>(
@@ -586,6 +846,12 @@ pub trait DecryptFrom: Sized + 'static {
 }
 impl<T: 'static> DecryptFrom for T {}
 
+// The leaf declarations below keep `Clone` on purpose. An `EncryptFrom`
+// declaration runs in the `Borrowed` mode (`encrypt_as` hands it `&S`), and an
+// operation that consumes a borrowed plaintext must clone it: the bound is
+// `Borrowed: ConsumeSource<'s, S>`, spelled out. The constructors themselves
+// (`ciphertext`, `equality`, `ore`, `ope`) ask only for the scheme's own
+// capability, and run a non-`Clone` plaintext in `Owned` mode.
 impl<S: crate::Encrypt + Clone> EncryptFrom<S> for StackCipherText {
     type Context = AeadContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
@@ -609,9 +875,12 @@ impl<S: vitaminc_prf::PrfValue + Clone> EncryptFrom<S> for crate::sem::EqualityT
     {
         equality()
     }
+    fn indexes() -> Vec<super::IndexSpec> {
+        vec![super::IndexSpec::Equality]
+    }
 }
 impl<S: AsRef<str>, O: crate::sem::MatchConfig + 'static> EncryptFrom<S>
-    for crate::sem::MatchTerm<O>
+    for crate::sem::MatchTerms<O>
 {
     type Context = CallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
@@ -619,6 +888,9 @@ impl<S: AsRef<str>, O: crate::sem::MatchConfig + 'static> EncryptFrom<S>
         S: 's,
     {
         matching()
+    }
+    fn indexes() -> Vec<super::IndexSpec> {
+        vec![super::IndexSpec::Match(O::options())]
     }
 }
 impl<S> EncryptFrom<S> for crate::sem::OreTerm<S>
@@ -633,6 +905,9 @@ where
     {
         ore()
     }
+    fn indexes() -> Vec<super::IndexSpec> {
+        vec![super::IndexSpec::Ore]
+    }
 }
 impl<S> EncryptFrom<S> for crate::sem::OpeTerm<S>
 where
@@ -645,6 +920,9 @@ where
         S: 's,
     {
         ope()
+    }
+    fn indexes() -> Vec<super::IndexSpec> {
+        vec![super::IndexSpec::Ope]
     }
 }
 
