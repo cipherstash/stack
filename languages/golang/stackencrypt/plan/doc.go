@@ -67,6 +67,16 @@
 // A [Custom] target supplies its context itself; [Column] names only its
 // record key, and [Identity] is refused.
 //
+// Nothing on the write path notices a context that changed: a rename with
+// no pin simply writes new rows under a new context. Check them in with a
+// golden test ([github.com/cipherstash/stack/languages/golang/stackencrypt/plan/plantest.Golden]),
+// which snapshots what the policy stores each field as and fails, naming
+// the pin, when a context changes:
+//
+//	func TestIndividualsPolicy(t *testing.T) {
+//	    plantest.Golden(t, source, Individuals)
+//	}
+//
 // # Failing closed
 //
 // A field with annotations that no rule decides is an error when the plan
