@@ -18,9 +18,9 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     } else {
         match Auto::classify(&record) {
             Auto::Whole(fields) => vec![(None, fields)],
-            Auto::ByField(groups) => groups
+            Auto::ByField(fields) => fields
                 .into_iter()
-                .map(|g| (Some(g.from), g.fields))
+                .map(|(from, field)| (Some(from), vec![field]))
                 .collect(),
         }
     };
@@ -181,15 +181,11 @@ enum Auto<'a> {
     /// No derived field has a `from`: one of them is the whole plaintext's
     /// ciphertext.
     Whole(Vec<&'a Field>),
-    /// Every derived field has a `from`: each plaintext field is recovered by
-    /// one of the fields derived from it.
-    ByField(Vec<Group<'a>>),
-}
-
-/// The fields derived from one field of the plaintext.
-struct Group<'a> {
-    from: &'a Member,
-    fields: Vec<&'a Field>,
+    /// Every derived field has a `from`, and each plaintext field is
+    /// recovered by the one field derived from it: `Record::parse` refuses a
+    /// second (`one_output_per_plaintext_field`), so there is no choice to
+    /// make and nothing to group.
+    ByField(Vec<(&'a Member, &'a Field)>),
 }
 
 impl<'a> Auto<'a> {
@@ -199,20 +195,12 @@ impl<'a> Auto<'a> {
             return Auto::Whole(candidates);
         }
 
-        let mut groups: Vec<Group<'a>> = Vec::new();
-        for field in candidates {
-            let from = field
-                .from()
-                .unwrap_or_else(|| unreachable!("every field of a `struct` derive has a `from`"));
-            match groups.iter_mut().find(|g| g.from == from) {
-                Some(group) => group.fields.push(field),
-                None => groups.push(Group {
-                    from,
-                    fields: vec![field],
-                }),
-            }
-        }
-        Auto::ByField(groups)
+        Auto::ByField(
+            candidates
+                .into_iter()
+                .filter_map(|field| Some((field.from()?, field)))
+                .collect(),
+        )
     }
 }
 
@@ -223,40 +211,41 @@ fn check(krate: &Path, name: &Ident, from: Option<&Member>, fields: &[&Field]) -
         // reported there, not at the derive.
         quote_spanned!(ty.span()=> + (<#ty as #krate::target::Decryptable>::DECRYPTABLE as usize))
     });
-    let (none, several) = match from {
-        None => (
-            format!(
-                "`{name}` has no decryptable field: every derived field is a one-way index \
-                 term, so there is nothing for DecryptInto to open"
-            ),
-            format!(
-                "`{name}` has several decryptable fields: mark the one decryption opens \
-                 `#[stash(decrypt)]`"
-            ),
-        ),
-        Some(from) => {
-            let from = from.to_token_stream();
-            (
-                format!(
-                    "no field of `{name}` can recover the plaintext field `{from}`: every field \
-                     derived from it is a one-way index term"
+    // A plaintext field has one output in a `struct` derive, so only the
+    // whole-value shape can hold several candidates.
+    let several = match from {
+        None => {
+            let several = LitStr::new(
+                &format!(
+                    "`{name}` has several decryptable fields: mark the one decryption opens \
+                     `#[stash(decrypt)]`"
                 ),
-                format!(
-                    "several fields of `{name}` are derived from the plaintext field `{from}` and \
-                     decryptable: mark the one decryption opens `#[stash(decrypt)]`"
-                ),
-            )
+                Span::call_site(),
+            );
+            quote!(::core::assert!(__decryptable <= 1, #several);)
         }
+        Some(_) => TokenStream::new(),
+    };
+    let none = match from {
+        None => format!(
+            "`{name}` has no decryptable field: every derived field is a one-way index term, so \
+             there is nothing for DecryptInto to open"
+        ),
+        Some(from) => format!(
+            "no field of `{name}` can recover the plaintext field `{}`: the field derived from \
+             it is a one-way index term. To store its ciphertext with the term, make it \
+             `Encrypted<Terms>`",
+            from.to_token_stream()
+        ),
     };
     let none = LitStr::new(&none, Span::call_site());
-    let several = LitStr::new(&several, Span::call_site());
     // A `let`, not a nested `const` item: an item could not see the
     // record's generics from inside an inline `const`.
     quote! {
         {
             let __decryptable: usize = 0 #(#terms)*;
             ::core::assert!(__decryptable >= 1, #none);
-            ::core::assert!(__decryptable <= 1, #several);
+            #several
         }
     }
 }

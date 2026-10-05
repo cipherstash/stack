@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: no field of `Opened` can recover the plaintext field `email`: the field derived from it is a one-way index term. To store its ciphertext with the term, make it `Encrypted<Terms>`
+  --> tests/ui/decrypt_struct_field_not_recoverable.rs:12:10
+   |
+12 | #[derive(DecryptInto)]
+   |          ^^^^^^^^^^^ evaluation of `_` failed here
