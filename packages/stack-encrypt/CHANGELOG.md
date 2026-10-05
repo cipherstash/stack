@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keys the field under `("<context>", "<identity>")` (`users/nickname`), not
   under the bare literal (`nickname`). Either way the field moves to a
   different context from the one 0.2.0 used: data written by 0.2.0 does not
-  decrypt under it (ZeroKMS refuses the key, `Error::Kms`) and its equality,
+  decrypt under it (ZeroKMS refuses the key, `Error::Provider`) and its equality,
   match and order terms do not match new query terms, so re-encrypt that
   data. Before the literal went, a non-plain literal such as
   `"readings/unit"` was already refused, for the same reason.
@@ -80,6 +80,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before any key request: two outputs of one index on a `plaintext` record
   (two `EqualityTerm`s), or a field type that declares one twice. 0.2.0 wrote
   the same term twice.
+
+- **New sealed leaves are format 2, which 0.2.0 cannot read.** The leaf
+  layout carries the key provider's opaque key id in place of ZeroKMS's IV
+  and tag: `0x02 ‖ keyset_id ‖ key_id_len (u16 LE) ‖ key_id ‖ ciphertext`,
+  with the leaf AAD binding version 2 and the whole key id.
+  `SealedValue::FORMAT_VERSION` is `2`. Leaves 0.1.0 and 0.2.0 wrote
+  (format 1) still decrypt, through ZeroKMS: see Added. Upgrade every reader
+  before any writer, because a 0.2.0 reader refuses a format-2 leaf with
+  `LeafBytesError::UnknownVersion(2)`.
+- **Keysets resolve through a `KeysetRegistry`.** `StackCipher<R:
+  KeysetRegistry>` replaces `StackCipher<K: DataKeySource>`: a keyset
+  resolves to one `vitaminc-kms` key provider, so the cipher runs on ZeroKMS
+  or on another data key source without naming either. On ZeroKMS the
+  registry is `Arc<StackKms>`. `StackCipherBuilder::kms` is now `registry`,
+  and `StackCipher::builder()` is `StackCipherBuilder::new()`.
+- `SealedValue`'s parts are `(KeysetId, key_id, ciphertext)`: `from_parts`
+  and `into_parts` take and return them, and `iv()` and `tag()` are
+  `key_id()`. `LeafBytesError::TagTooLong` is `KeyIdTooLong` for a format-2
+  key id (`TagTooLong` remains for a format-1 tag).
+- `KeysetId`, a newtype over `Uuid`, replaces `Uuid` wherever a keyset id
+  appears (`SealedValue::keyset_id`, `KeysetCipher::keyset_id`,
+  `Error::KeysetMismatch`, `Error::ForeignKeyset`). `KeysetRef { Default,
+  Id, Name }` replaces stack-kms's `IdentifiedBy` in this crate's API; a
+  `Uuid`, a `KeysetId` or a name converts into it.
+- `Error::Kms(stack_kms::Error)` is gone. A key provider's failure is
+  `Error::Provider` and a registry's is `Error::Registry`, each boxed; on
+  ZeroKMS, downcast to `stack_kms::Error`. A keyset the registry does not
+  have is `Error::UnknownKeyset`.
+- **Every `K` that names a cipher is now a `KeysetRegistry`.**
+  `EncryptFrom::encryption`, `DecryptInto::decryption`,
+  `DecryptField::decryption_field` and every function that returns an
+  `Encryption`, a `Decryption` or a `Pending` bound their `K` by it, so a
+  hand-written impl adds `K: KeysetRegistry`. Derived impls do it for you.
+  `plan::PlanKms` is now a `KeysetRegistry` whose provider is `Send + Sync`.
+- `stack_encrypt::kms` (the stack-kms re-export) and `impl KeysetRegistry
+  for Arc<StackKms>` need the new `zerokms` feature. It is on by default,
+  and `http` turns it on. With it off, no ZeroKMS crate is in the graph.
+- `test-support` now provides `registry::fake::FakeKeysetRegistry` (many
+  keysets, each with its own key material and index key) in place of
+  stack-kms's `FakeDataKeySource`, which is deleted. The fake provider is
+  `Bound`, so a wrong context fails at the key retrieval
+  (`Error::Provider`), as on ZeroKMS, and not at the AEAD.
+- `Plan::context`, `Plan::fields` and `Plan::value` are associated
+  functions of `Plan<(), NoRegistry>` (was `Plan<(), ()>`). The calls do not
+  change.
+- Requires stack-kms 0.2.0.
 
 ### Added
 
@@ -188,6 +234,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `target::JoinContext` (sealed): the context a tuple of targets takes,
   the one every element accepts. A tuple of ciphertexts takes an
   `AeadContext`; a ciphertext beside a term takes a `CallerContext`.
+
+- **Format-1 leaves, which 0.1.0 and 0.2.0 wrote, still decrypt.**
+  `SealedValue::from_bytes` reads the format-1 layout
+  (`0x01 ‖ keyset_id ‖ iv ‖ tag_len ‖ tag ‖ ciphertext`) and forms the key
+  id `iv ‖ tag`, which is what the ZeroKMS provider uses. The leaf opens
+  under the format-1 AAD and writes back in the format-1 layout, so the
+  stored bytes do not change. `SealedValue::FORMAT_VERSION_V1`,
+  `SealedValue::format_version` and `SealedValue::from_v1_parts` (for
+  parts stored from 0.2.0's `into_parts`) are new.
+- `KeysetRegistry::READS_V1_LEAVES` and `Error::V1LeafNeedsZeroKms`: only
+  ZeroKMS wrote format-1 leaves, so a registry that is not ZeroKMS refuses
+  one before it asks for a key. `Arc<StackKms>` reads them.
+- `registry`: `KeysetRegistry`, `Resolved`, `KeysetId`, `KeysetRef`,
+  `NoRegistry`, and the `vitaminc-kms` provider types an implementor names.
+- `StackCipher::registry`, and `FakeKeysetRegistry::resolves` (a counter of
+  keyset lookups) for tests.
 
 ## [0.2.0] - 2026-10-04
 
