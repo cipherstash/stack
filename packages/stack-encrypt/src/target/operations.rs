@@ -39,6 +39,19 @@ pub trait EncryptFrom<S>: Sized + 'static {
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's;
+    /// The indexes this target's terms answer queries by, as data, under
+    /// the context the target is run under: what a plan field typed with
+    /// this target ([`encrypt_into`](crate::plan::FieldsBuilder::encrypt_into))
+    /// lets a query ask for. A query for any other index is refused rather
+    /// than derived, since it would match nothing.
+    ///
+    /// The default is none, which is right for a ciphertext and for a record
+    /// whose fields sit under contexts of their own; a term, an
+    /// [`Encrypted<Terms>`](super::Encrypted) and a tuple of targets name
+    /// theirs.
+    fn indexes() -> Vec<super::IndexSpec> {
+        vec![]
+    }
 }
 /// Declaration of how a stored target recovers `P`.
 ///
@@ -325,6 +338,28 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// Crate-internal: the plan builder is its one caller, and what `select`
     /// captures is a field name. The public combinator stays the
     /// capture-free `project`.
+    /// [`under`](Encryption::under) for a context read out of the source
+    /// itself, as a plan whose context is a field of the value does: `own`
+    /// reads the label from the borrowed source, or fails, in which case the
+    /// description yields that error without I/O.
+    ///
+    /// Crate-internal: the plan builder is its one caller.
+    pub(crate) fn under_by<G>(self, own: G) -> Encryption<'s, S, T, K, DeclaredContext>
+    where
+        Ctx: From<CallerContext>,
+        G: for<'b> FnOnce(&'b S) -> Result<crate::Label, Error> + MaybeSend + 's,
+    {
+        Encryption {
+            build: Box::new(
+                move |source, cipher, cx: DeclaredContext| match own(source) {
+                    Ok(label) => {
+                        (self.build)(source, cipher, cx.under(NonEmpty::from(label)).into())
+                    }
+                    Err(error) => Pending::failed(cipher, error),
+                },
+            ),
+        }
+    }
     pub(crate) fn project_by<P: 's, G>(self, select: G) -> Encryption<'s, P, T, K, Ctx>
     where
         G: for<'b> FnOnce(&'b P) -> Result<&'b S, Error> + MaybeSend + 's,
@@ -834,6 +869,9 @@ impl<S: vitaminc_prf::PrfValue + Clone> EncryptFrom<S> for crate::sem::EqualityT
     {
         equality()
     }
+    fn indexes() -> Vec<super::IndexSpec> {
+        vec![super::IndexSpec::Equality]
+    }
 }
 impl<S: AsRef<str>, O: crate::sem::MatchConfig + 'static> EncryptFrom<S>
     for crate::sem::MatchTerms<O>
@@ -844,6 +882,9 @@ impl<S: AsRef<str>, O: crate::sem::MatchConfig + 'static> EncryptFrom<S>
         S: 's,
     {
         matching()
+    }
+    fn indexes() -> Vec<super::IndexSpec> {
+        vec![super::IndexSpec::Match(O::options())]
     }
 }
 impl<S> EncryptFrom<S> for crate::sem::OreTerm<S>
@@ -858,6 +899,9 @@ where
     {
         ore()
     }
+    fn indexes() -> Vec<super::IndexSpec> {
+        vec![super::IndexSpec::Ore]
+    }
 }
 impl<S> EncryptFrom<S> for crate::sem::OpeTerm<S>
 where
@@ -870,6 +914,9 @@ where
         S: 's,
     {
         ope()
+    }
+    fn indexes() -> Vec<super::IndexSpec> {
+        vec![super::IndexSpec::Ope]
     }
 }
 

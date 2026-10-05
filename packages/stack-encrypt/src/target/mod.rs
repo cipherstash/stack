@@ -93,6 +93,7 @@ mod pending;
 mod request;
 mod source;
 pub mod transcode;
+mod tuples;
 
 pub(crate) use self::core::{decipher_pending, seal_pending};
 pub use context::{AeadContext, CallerContext, DeclaredContext, ExpectedContext, Extends};

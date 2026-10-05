@@ -471,6 +471,9 @@ where
     {
         indexed(Terms::INDEXES)
     }
+    fn indexes() -> Vec<IndexSpec> {
+        Terms::INDEXES.specs()
+    }
 }
 
 /// The ciphertext is what a record opens; the terms are one-way.
