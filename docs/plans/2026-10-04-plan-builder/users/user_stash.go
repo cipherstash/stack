@@ -5,18 +5,16 @@ package users
 import (
 	"context"
 
+	"example.com/app/internal/userdb"
 	"github.com/cipherstash/stack/languages/golang/stackencrypt"
 )
 
-// EncryptedUser is a User as stored. It has one field for each field of User
-// that the plan stores, and each field holds only the outputs the plan
-// declares for it.
 type EncryptedUser struct {
-	ID    int64                     `stash:"id"`
-	Email EncryptedUserEmail        `stash:"email"`
-	Age   EncryptedUserAge          `stash:"age"`
-	Attrs stackencrypt.JSONDocument `stash:"attrs,json"`
-	Notes stackencrypt.Ciphertext   `stash:"notes"`
+	ID    int64
+	Email EncryptedUserEmail
+	Age   EncryptedUserAge
+	Attrs stackencrypt.JSONDocument
+	Notes stackencrypt.Ciphertext
 }
 
 type EncryptedUserEmail struct {
@@ -31,24 +29,80 @@ type EncryptedUserAge struct {
 	Ore        stackencrypt.OreTerm
 }
 
-var userPlan = stackencrypt.MustRowPlan[EncryptedUser](stackencrypt.MustBind[User](stackencrypt.MustPlanOf[User]()))
+// Stops compiling when User gains, loses, reorders or retypes a field.
+var _ = userShape(User{})
+
+type userShape struct {
+	_        struct{}
+	ID       int64
+	Email    string
+	Age      uint32
+	Attrs    map[string]any
+	Notes    string
+	Internal string
+}
+
+var userPlan = stackencrypt.MustGenerate(stackencrypt.Generated[User, EncryptedUser]{
+	Plan: stackencrypt.NewPlan("users").
+		EncryptIndex("email", stackencrypt.Equality, stackencrypt.Match()).
+		EncryptIndex("age", stackencrypt.Equality, stackencrypt.Ore).
+		Index("attrs", stackencrypt.JSON()).
+		Encrypt("notes").
+		MustBuild(),
+	Source: func(v User) stackencrypt.Values {
+		return stackencrypt.Values{"email": v.Email, "age": v.Age, "attrs": v.Attrs, "notes": v.Notes}
+	},
+	Seal: func(v User, rec stackencrypt.EncryptedRecord) EncryptedUser {
+		email, age := rec.MustField("email"), rec.MustField("age")
+		return EncryptedUser{
+			ID:    v.ID,
+			Email: EncryptedUserEmail{Ciphertext: email.Ciphertext, Equality: email.Equality, Match: email.Match},
+			Age:   EncryptedUserAge{Ciphertext: age.Ciphertext, Equality: age.Equality, Ore: age.Ore},
+			Attrs: rec.MustField("attrs").JSON,
+			Notes: rec.MustField("notes").Ciphertext,
+		}
+	},
+	Open: func(e EncryptedUser) stackencrypt.EncryptedRecord {
+		return stackencrypt.RecordOf(map[string]stackencrypt.EncryptedField{
+			"email": {Ciphertext: e.Email.Ciphertext, Equality: e.Email.Equality, Match: e.Email.Match},
+			"age":   {Ciphertext: e.Age.Ciphertext, Equality: e.Age.Equality, Ore: e.Age.Ore},
+			"attrs": {JSON: e.Attrs},
+			"notes": {Ciphertext: e.Notes},
+		})
+	},
+	Value: func(e EncryptedUser, vals stackencrypt.Values) (User, error) {
+		v := User{ID: e.ID}
+		var err error
+		if v.Email, err = stackencrypt.Get[string](vals, "email"); err != nil {
+			return User{}, err
+		}
+		if v.Age, err = stackencrypt.Get[uint32](vals, "age"); err != nil {
+			return User{}, err
+		}
+		if v.Attrs, err = stackencrypt.Get[map[string]any](vals, "attrs"); err != nil {
+			return User{}, err
+		}
+		if v.Notes, err = stackencrypt.Get[string](vals, "notes"); err != nil {
+			return User{}, err
+		}
+		return v, nil
+	},
+})
 
 func (User) StashPlan() *stackencrypt.RowPlan[User, EncryptedUser] { return userPlan }
 
 func (EncryptedUser) StashPlan() *stackencrypt.RowPlan[User, EncryptedUser] { return userPlan }
 
-// UserFields has one entry for each sealed field of User. An entry has a query
-// method only for an index the field declares.
 var UserFields = struct {
 	Email UserEmailField
 	Age   UserAgeField
 	Attrs UserAttrsField
 	Notes UserNotesField
 }{
-	Email: UserEmailField{stackencrypt.MustField[string](userPlan.Record(), "email")},
-	Age:   UserAgeField{stackencrypt.MustField[uint32](userPlan.Record(), "age")},
-	Attrs: UserAttrsField{stackencrypt.MustField[map[string]any](userPlan.Record(), "attrs")},
-	Notes: UserNotesField{stackencrypt.MustField[string](userPlan.Record(), "notes")},
+	Email: UserEmailField{stackencrypt.MustField[string](userPlan.Plan(), "email")},
+	Age:   UserAgeField{stackencrypt.MustField[uint32](userPlan.Plan(), "age")},
+	Attrs: UserAttrsField{stackencrypt.MustField[map[string]any](userPlan.Plan(), "attrs")},
+	Notes: UserNotesField{stackencrypt.MustField[string](userPlan.Plan(), "notes")},
 }
 
 type UserEmailField struct {
@@ -120,3 +174,52 @@ func (f UserNotesField) Encrypt(ctx context.Context, c *stackencrypt.Cipher, v s
 	out, err := f.plan.Encrypt(ctx, c, v, opts...)
 	return out.Ciphertext, err
 }
+
+// A row struct converts to and from its shape only while the two have the same
+// fields, with the same types, in the same order. A change to the row struct
+// stops this file compiling.
+type userRowShape struct {
+	ID         int64
+	Email      stackencrypt.Ciphertext
+	EmailEq    stackencrypt.EqualityTerm
+	EmailMatch stackencrypt.MatchTerm
+	Age        stackencrypt.Ciphertext
+	AgeEq      stackencrypt.EqualityTerm
+	AgeOre     stackencrypt.OreTerm
+	Attrs      stackencrypt.JSONDocument
+	Notes      stackencrypt.Ciphertext
+}
+
+func userRowShapeOf(e EncryptedUser) userRowShape {
+	return userRowShape{
+		ID:         e.ID,
+		Email:      e.Email.Ciphertext,
+		EmailEq:    e.Email.Equality,
+		EmailMatch: e.Email.Match,
+		Age:        e.Age.Ciphertext,
+		AgeEq:      e.Age.Equality,
+		AgeOre:     e.Age.Ore,
+		Attrs:      e.Attrs,
+		Notes:      e.Notes,
+	}
+}
+
+func (s userRowShape) encrypted() EncryptedUser {
+	return EncryptedUser{
+		ID:    s.ID,
+		Email: EncryptedUserEmail{Ciphertext: s.Email, Equality: s.EmailEq, Match: s.EmailMatch},
+		Age:   EncryptedUserAge{Ciphertext: s.Age, Equality: s.AgeEq, Ore: s.AgeOre},
+		Attrs: s.Attrs,
+		Notes: s.Notes,
+	}
+}
+
+var UserRows = stackencrypt.Rows(userPlan,
+	func(e EncryptedUser) UserRow { return UserRow(userRowShapeOf(e)) },
+	func(r UserRow) EncryptedUser { return userRowShape(r).encrypted() },
+)
+
+var SQLCUsers = stackencrypt.Rows(userPlan,
+	func(e EncryptedUser) userdb.User { return userdb.User(userRowShapeOf(e)) },
+	func(r userdb.User) EncryptedUser { return userRowShape(r).encrypted() },
+)

@@ -55,7 +55,7 @@ var individuals = plan.ForMessage(&Individual{}, plan.Table("individuals"),
 // omitted fields, so Bind accepts Individual.
 var (
 	individualsPlan = stackencrypt.MustBind[Individual](plan.MustPlanFor(source, individuals))
-	medicarePlan    = stackencrypt.MustField[string](individualsPlan, "medicare_number")
+	medicarePlan    = stackencrypt.MustField[string](individualsPlan.Plan(), "medicare_number")
 )
 
 func Create(ctx context.Context, db *sql.DB, cipher *stackencrypt.Cipher, person Individual) error {

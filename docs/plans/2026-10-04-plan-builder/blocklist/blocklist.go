@@ -1,5 +1,5 @@
-// Package blocklist keeps blocked email addresses. Each address is one value
-// with no record around it, so it uses a value plan.
+// Package blocklist keeps blocked email addresses. A value with no record
+// around it is a struct with one field.
 package blocklist
 
 import (
@@ -9,7 +9,12 @@ import (
 	"github.com/cipherstash/stack/languages/golang/stackencrypt"
 )
 
-var blockedPlan = stackencrypt.MustValuePlan[string]("blocked_emails/email", stackencrypt.Equality)
+//go:generate go tool stashgen -type Blocked
+
+type Blocked struct {
+	_     struct{} `stash:"context=blocked_emails"`
+	Email string   `stash:"email,encrypt,index=equality"`
+}
 
 type List struct {
 	db     *sql.DB
@@ -21,18 +26,18 @@ func New(db *sql.DB, cipher *stackencrypt.Cipher) *List {
 }
 
 func (l *List) Block(ctx context.Context, email string) error {
-	field, err := blockedPlan.Encrypt(ctx, l.cipher, email)
+	enc, err := stackencrypt.Encrypt(ctx, l.cipher, Blocked{Email: email})
 	if err != nil {
 		return err
 	}
 	_, err = l.db.ExecContext(ctx,
 		`INSERT INTO blocked_emails (email, email_eq) VALUES ($1, $2) ON CONFLICT (email_eq) DO NOTHING`,
-		field.Ciphertext, field.Equality)
+		enc.Email.Ciphertext, enc.Email.Equality)
 	return err
 }
 
 func (l *List) Blocked(ctx context.Context, email string) (bool, error) {
-	term, err := blockedPlan.Equality(ctx, l.cipher, email)
+	term, err := BlockedFields.Email.Equality(ctx, l.cipher, email)
 	if err != nil {
 		return false, err
 	}
@@ -51,16 +56,24 @@ func (l *List) All(ctx context.Context) ([]string, error) {
 	}
 	defer rs.Close()
 
-	var fields []stackencrypt.EncryptedField
+	var encrypted []EncryptedBlocked
 	for rs.Next() {
-		var sealed stackencrypt.Ciphertext
-		if err := rs.Scan(&sealed); err != nil {
+		var e EncryptedBlocked
+		if err := rs.Scan(&e.Email.Ciphertext); err != nil {
 			return nil, err
 		}
-		fields = append(fields, stackencrypt.EncryptedField{Ciphertext: sealed})
+		encrypted = append(encrypted, e)
 	}
 	if err := rs.Err(); err != nil {
 		return nil, err
 	}
-	return blockedPlan.DecryptAll(ctx, l.cipher, fields)
+	blocked, err := stackencrypt.DecryptAll(ctx, l.cipher, encrypted)
+	if err != nil {
+		return nil, err
+	}
+	emails := make([]string, len(blocked))
+	for i, b := range blocked {
+		emails[i] = b.Email
+	}
+	return emails, nil
 }

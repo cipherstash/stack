@@ -12,12 +12,6 @@ import (
 
 var ErrNotFound = errors.New("users: not found")
 
-// The sqlc overrides put the same stash tags on userdb.User, so this plan
-// checks sqlc's generated struct at startup. A column added without an override
-// has no stash tag, and the program panics here instead of storing it as
-// plaintext.
-var sqlcRowPlan = stackencrypt.MustRowPlan[userdb.User](userPlan.Record())
-
 // SQLCStore keeps users in Postgres through the queries sqlc generates.
 type SQLCStore struct {
 	db      *sql.DB
@@ -34,7 +28,7 @@ func (s *SQLCStore) cipher(tenant string) *stackencrypt.Cipher {
 }
 
 func (s *SQLCStore) Create(ctx context.Context, tenant string, user User) error {
-	row, err := sqlcRowPlan.Encrypt(ctx, s.cipher(tenant), user)
+	row, err := SQLCUsers.Encrypt(ctx, s.cipher(tenant), user)
 	if err != nil {
 		return fmt.Errorf("encrypt user %d: %w", user.ID, err)
 	}
@@ -47,7 +41,7 @@ func (s *SQLCStore) Create(ctx context.Context, tenant string, user User) error 
 // Import encrypts every user in one ZeroKMS request, then inserts them in one
 // transaction.
 func (s *SQLCStore) Import(ctx context.Context, tenant string, people []User) error {
-	rows, err := sqlcRowPlan.EncryptAll(ctx, s.cipher(tenant), people)
+	rows, err := SQLCUsers.EncryptAll(ctx, s.cipher(tenant), people)
 	if err != nil {
 		return fmt.Errorf("encrypt %d users: %w", len(people), err)
 	}
@@ -75,7 +69,7 @@ func (s *SQLCStore) Get(ctx context.Context, tenant string, id int64) (User, err
 	if err != nil {
 		return User{}, err
 	}
-	return sqlcRowPlan.Decrypt(ctx, s.cipher(tenant), row)
+	return SQLCUsers.Decrypt(ctx, s.cipher(tenant), row)
 }
 
 func (s *SQLCStore) FindByEmail(ctx context.Context, tenant, email string) ([]User, error) {
@@ -88,7 +82,7 @@ func (s *SQLCStore) FindByEmail(ctx context.Context, tenant, email string) ([]Us
 	if err != nil {
 		return nil, err
 	}
-	return sqlcRowPlan.DecryptAll(ctx, cipher, rows)
+	return SQLCUsers.DecryptAll(ctx, cipher, rows)
 }
 
 func (s *SQLCStore) List(ctx context.Context, tenant string) ([]User, error) {
@@ -96,7 +90,7 @@ func (s *SQLCStore) List(ctx context.Context, tenant string) ([]User, error) {
 	if err != nil {
 		return nil, err
 	}
-	return sqlcRowPlan.DecryptAll(ctx, s.cipher(tenant), rows)
+	return SQLCUsers.DecryptAll(ctx, s.cipher(tenant), rows)
 }
 
 // ChangeEmail rewrites one field. The email field owns three columns, and all

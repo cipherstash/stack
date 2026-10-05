@@ -1,6 +1,6 @@
 package users
 
-//go:generate go tool stashgen -type User
+//go:generate go tool stashgen -type User -row UserRows=UserRow -row SQLCUsers=userdb.User
 
 // User's tags are the plan; stashgen writes user_stash.go from them. An
 // exported field with no stash tag is refused, never stored unencrypted.
