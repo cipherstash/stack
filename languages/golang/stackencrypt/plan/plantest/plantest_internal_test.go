@@ -5,8 +5,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -606,6 +608,51 @@ func TestParseRejects(t *testing.T) {
 	// reason.
 	if _, err := parse([]byte(header + "\ntable individuals\n" + col)); err != nil {
 		t.Errorf("the complete snapshot does not parse: %v", err)
+	}
+}
+
+// A snapshot that is there but cannot be read is reported as that, not as
+// a missing one: running -update would hide the cause.
+func TestUnreadableSnapshotIsNotMissing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "TestPolicy.golden")
+	if err := os.Mkdir(path, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	m := plan.ForMessage(nil, "individuals", base)
+	for _, update := range []bool{false, true} {
+		_, err := check(path, individualV1(), m, update, "RERUN")
+		mustContain(t, err, "plantest: ", path)
+		if strings.Contains(err.Error(), "no snapshot") || strings.Contains(err.Error(), "RERUN") {
+			t.Errorf("update=%v: an unreadable snapshot is reported as missing:\n%s", update, err)
+		}
+	}
+}
+
+// -update fails when it cannot write the snapshot, rather than reporting
+// one written.
+func TestUpdateFailsWhenItCannotWrite(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a directory the test cannot write to")
+	}
+	m := plan.ForMessage(nil, "individuals", base)
+	locked := t.TempDir()
+	if err := os.Chmod(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	for name, path := range map[string]string{
+		"its directory cannot be made": filepath.Join(locked, "testdata", "TestPolicy.golden"),
+		"the file cannot be written":   filepath.Join(locked, "TestPolicy.golden"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			logs, err := check(path, individualV1(), m, true, "RERUN")
+			if !errors.Is(err, fs.ErrPermission) {
+				t.Fatalf("err = %v (logs %q), want a permission error", err, logs)
+			}
+			if logs != "" {
+				t.Errorf("logs = %q, want nothing claimed written", logs)
+			}
+		})
 	}
 }
 
