@@ -53,6 +53,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`dynamic::admits`) and a value of another kind, on encrypt and on
   decrypt. `dynamic::read` reads a query value as a kind;
   `FieldPlan::with_type` and `field_type` set and read the declaration.
+- The `plan` module, the chained plan builder: `cipher.encrypt(&value)`,
+  `cipher.query(&value)` and `cipher.open(record)`, each finished by
+  `.await`, with `.keyset(..)` and `.extend(..)` on every chain. A value is
+  sealed under a context as one tree (`.context(c)`), with indexes beside
+  it (`.with(indexes)`), or field by field (`.fields()` then `encrypt`,
+  `encrypt_index`, `index`, `passthrough` and `identity`). Every chain lowers
+  to the combinators in `target` and produces the same bytes they do.
+- Saved plans: `Plan::context(c).fields()...build()` (a fields plan,
+  `Plan<S, K>`) and `Plan::context(c).with(indexes).build()` (a one-value
+  plan, `ValuePlan<S, X>`), run with `.using(&plan)` over a value, a slice
+  or a `Vec`, queried through `Plan::field(name)` (a `FieldPlan`) or the
+  `ValuePlan` itself, and opened with `cipher.open(record).using(&plan)`.
+  `FieldValues` is a fields plan's record; `Fields`, `Field` and
+  `FieldSchema` describe a value's fields; `FieldKind` says what a field
+  does.
+- `all((..))`: two to four chains settled in one ZeroKMS request per
+  request kind, under one keyset. Chains from different ciphers are
+  refused; an opening that names no keyset still reads any keyset.
+- `PlanError`, carried in the new `Error::Plan`: every way a plan, or the
+  value, record or query it runs with, is refused. A chain is checked
+  (`Operation::check`) before it loads a keyset it names.
+- A passthrough field's name may be any text: it is under no label, so
+  `FieldPlan::label` is `None` for one.
+- `IntoLabel` for `&String`, and `KeysetChoice` from a `&String`.
 
 ## [0.2.0] - 2026-10-04
 
