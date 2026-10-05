@@ -2,14 +2,14 @@ use eql_bindings::{
     v3::text::{TextEq, TextEqQuery},
     Identifier,
 };
-use stack_encrypt::StackCipher;
-use stack_kms::FakeDataKeySource;
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
+use stack_encrypt::StackCipherBuilder;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Local example only: these keys are held in memory, not in ZeroKMS.
-    let cipher = StackCipher::builder()
-        .kms(FakeDataKeySource::new())
+    let cipher = StackCipherBuilder::new()
+        .registry(FakeKeysetRegistry::new())
         .init()
         .await?;
     let keyset = cipher.default_keyset();

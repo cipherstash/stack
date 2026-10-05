@@ -585,7 +585,7 @@ dependencies = [
  "ore-rs",
  "percent-encoding",
  "rand 0.8.6",
- "recipher 0.2.3",
+ "recipher",
  "reqwest",
  "rmp-serde",
  "rust-stemmers",
@@ -596,8 +596,8 @@ dependencies = [
  "serde_json",
  "serdect",
  "sha2 0.10.9",
- "stack-auth 0.42.2",
- "stack-profile 0.42.2",
+ "stack-auth",
+ "stack-profile",
  "static_assertions",
  "thiserror 1.0.69",
  "tokio",
@@ -1238,7 +1238,6 @@ dependencies = [
  "serde",
  "serde_json",
  "stack-encrypt",
- "stack-kms",
  "tokio",
  "uuid",
 ]
@@ -3204,27 +3203,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "recipher"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e14e156e2d485b51cc67c19241e7d81ad524bda9fd4f77791b698ab10c8e26e9"
-dependencies = [
- "aes",
- "cmac",
- "getrandom 0.2.16",
- "hex",
- "hex-literal",
- "opaque-debug",
- "rand 0.8.6",
- "rand_chacha 0.3.1",
- "serde",
- "serde_cbor",
- "sha2 0.10.9",
- "thiserror 1.0.69",
- "zeroize",
-]
-
-[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4180,7 +4158,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "stack-profile 0.42.2",
+ "stack-profile",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -4188,32 +4166,6 @@ dependencies = [
  "uuid",
  "vitaminc 0.2.0-pre",
  "vitaminc-protected 0.2.0-pre",
- "web-time",
- "zeroize",
- "zerokms-protocol",
-]
-
-[[package]]
-name = "stack-auth"
-version = "0.43.0"
-dependencies = [
- "aquamarine",
- "base64",
- "cts-common 0.43.0",
- "jsonwebtoken",
- "miette",
- "open",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "stack-profile 0.43.0",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
- "url",
- "uuid",
- "vitaminc 0.5.1",
- "vitaminc-protected 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "web-time",
  "zeroize",
  "zerokms-protocol",
@@ -4249,52 +4201,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "stack-kms"
-version = "0.1.0"
-dependencies = [
- "async-mutex",
- "base16ct",
- "base64ct",
- "blake3",
- "futures",
- "miette",
- "opaque-debug",
- "recipher 0.3.1",
- "serde",
- "serde_cbor",
- "serde_json",
- "serdect",
- "sha2 0.10.9",
- "stack-auth 0.43.0",
- "thiserror 1.0.69",
- "tracing",
- "url",
- "uuid",
- "vitaminc 0.5.1",
- "vitaminc-kms",
- "vitaminc-protected 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "vitaminc-protected 0.5.1 (git+https://github.com/cipherstash/vitaminc?rev=b3bc6eb)",
- "zeroize",
- "zerokms-protocol",
-]
-
-[[package]]
 name = "stack-profile"
 version = "0.42.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90ce7ca95d8e688a35e86e0682293a2085d9b1f26e7ca5b489009c6ee0c6967a"
-dependencies = [
- "dirs",
- "gethostname",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "uuid",
-]
-
-[[package]]
-name = "stack-profile"
-version = "0.43.0"
 dependencies = [
  "dirs",
  "gethostname",
@@ -5143,6 +5053,7 @@ dependencies = [
  "thiserror 2.0.20",
  "vitaminc-async-traits",
  "vitaminc-protected 0.5.1 (git+https://github.com/cipherstash/vitaminc?rev=b3bc6eb)",
+ "vitaminc-random 0.5.1 (git+https://github.com/cipherstash/vitaminc?rev=b3bc6eb)",
  "vitaminc-traits 0.5.1 (git+https://github.com/cipherstash/vitaminc?rev=b3bc6eb)",
  "zeroize",
 ]

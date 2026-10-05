@@ -27,10 +27,10 @@
 //! consumer names it with an `Identifier`, and the two interoperate.
 //!
 //! This complete example runs locally without credentials. It uses real
-//! encryption with `stack_kms::FakeDataKeySource`, whose keys exist only for
-//! this process. Add `stack-encrypt`, `stack-kms` (with `default-features = false`
-//! and `features = ["test-support"]`), and `tokio` (with `features = ["rt", "macros"]`)
-//! to your example's dependencies.
+//! encryption with `stack_encrypt::registry::fake::FakeKeysetRegistry`, whose
+//! keys exist only for this process. Add `stack-encrypt` (with
+//! `default-features = false` and `features = ["test-support"]`) and `tokio`
+//! (with `features = ["rt", "macros"]`) to your example's dependencies.
 //!
 //! The code below is executed by `cargo test -p eql-encryption-tests --test
 //! text_eq_example`. It is excluded from this crate's doctests so its optional
@@ -169,7 +169,8 @@ impl Reader for Ciphertext {
 
 impl<S: Encrypt + Clone> EncryptFrom<S> for Ciphertext {
     type Context = AeadContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    fn encryption<'s, K: stack_encrypt::KeysetRegistry + 'static>(
+    ) -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
@@ -190,7 +191,10 @@ impl Visitor for NativeCiphertextVisitor {
 }
 impl<P: Decrypt<'static> + 'static> DecryptInto<P> for Ciphertext {
     type Context = AeadContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
+    fn decryption<K: stack_encrypt::KeysetRegistry + 'static>(
+        self,
+        context: Self::Context,
+    ) -> Decryption<P, K> {
         match self.read(NativeCiphertextVisitor) {
             Ok(native) => target::open(native, context),
             Err(error) => Decryption::failed(error),
@@ -205,7 +209,10 @@ where
     Self: DecryptInto<P>,
     Ctx: Into<<Self as DecryptInto<P>>::Context>,
 {
-    fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
+    fn decryption_field<K: stack_encrypt::KeysetRegistry + 'static>(
+        self,
+        context: Ctx,
+    ) -> Option<Decryption<P, K>> {
         Some(self.decryption(context.into()))
     }
 }
@@ -227,7 +234,8 @@ impl Transcode for Hmac256 {
 }
 impl<S: PrfValue + Clone> EncryptFrom<S> for Hmac256 {
     type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    fn encryption<'s, K: stack_encrypt::KeysetRegistry + 'static>(
+    ) -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
@@ -238,7 +246,10 @@ impl Decryptable for Hmac256 {
     const DECRYPTABLE: bool = false;
 }
 impl<P, Ctx> DecryptField<P, Ctx> for Hmac256 {
-    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
+    fn decryption_field<K: stack_encrypt::KeysetRegistry + 'static>(
+        self,
+        _: Ctx,
+    ) -> Option<Decryption<P, K>> {
         None
     }
 }

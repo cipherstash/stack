@@ -126,7 +126,7 @@ async fn independent_queries_match_native_terms_without_requesting_data_keys() {
             .unwrap();
         assert_ne!(query.hm, probe.hm, "no added normalization or case folding");
     }
-    let calls = calls.lock().unwrap();
+    let calls = calls.calls();
     assert!(calls.generate.is_empty());
     assert!(calls.retrieve.is_empty());
 }
@@ -155,7 +155,7 @@ async fn identifier_components_are_nonempty_and_keep_their_boundaries() {
         }
         outputs.push(stored.hm);
     }
-    let calls = calls.lock().unwrap();
+    let calls = calls.calls();
     let descriptors: std::collections::HashSet<_> = calls.generate.iter().flatten().collect();
     assert_eq!(
         descriptors.len(),
@@ -220,7 +220,7 @@ async fn context_and_encoding_failures_are_rejected_before_retrieving_keys() {
             .await
             .is_err());
     }
-    assert!(calls.lock().unwrap().retrieve.is_empty());
+    assert!(calls.calls().retrieve.is_empty());
     let mut moved = stored;
     moved.i = wrong.into_inner();
     assert!(
@@ -230,7 +230,7 @@ async fn context_and_encoding_failures_are_rejected_before_retrieving_keys() {
             .is_err(),
         "a different nonempty stored identifier fails authentication"
     );
-    assert_eq!(calls.lock().unwrap().retrieve.len(), 1);
+    assert_eq!(calls.calls().retrieve.len(), 1);
 }
 
 #[tokio::test]
@@ -258,7 +258,7 @@ async fn one_changed_byte_in_a_valid_body_fails_authentication() {
         .await
         .is_err());
     assert_eq!(
-        calls.lock().unwrap().retrieve.len(),
+        calls.calls().retrieve.len(),
         1,
         "the tampered body was decoded and parsed; the failure is authentication"
     );
@@ -279,7 +279,7 @@ async fn a_column_batches_generation_and_retrieval_under_the_same_descriptors() 
     let records: Vec<TextEq> = serde_json::from_str(&json).unwrap();
     let opened: Vec<String> = cipher.decrypt_as(records, column().into()).await.unwrap();
     assert_eq!(opened, values);
-    let calls = calls.lock().unwrap();
+    let calls = calls.calls();
     assert_eq!(calls.generate.len(), 1);
     assert_eq!(calls.retrieve.len(), 1);
     assert_eq!(calls.generate[0].len(), 3);
