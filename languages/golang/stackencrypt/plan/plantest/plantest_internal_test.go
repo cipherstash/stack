@@ -470,7 +470,12 @@ func TestSnapshotRoundTrips(t *testing.T) {
 		if i%2 == 1 {
 			kind = kindCustom
 		}
-		s.columns = append(s.columns, column{name: v + string(rune('a'+i)), context: v, kind: kind, terms: []string{"eq", "ore"}, facts: []fact{{v, v}, {"k", v}}})
+		// A plan never builds an empty context, and parse refuses one.
+		context := v
+		if context == "" {
+			context = "t/empty"
+		}
+		s.columns = append(s.columns, column{name: v + string(rune('a'+i)), context: context, kind: kind, terms: []string{"eq", "ore"}, facts: []fact{{v, v}, {"k", v}}})
 		s.plaintext = append(s.plaintext, plain{field: v + string(rune('a'+i)), facts: []fact{{v, "x"}}})
 	}
 	s.columns = append(s.columns, column{name: "bare", context: "t/bare", kind: kindEQL})
@@ -545,6 +550,41 @@ func TestTextOnlyAndUnreadableSnapshots(t *testing.T) {
 	}
 	_, err = check(path, individualV1(), m, false, "RERUN")
 	mustContain(t, err, "does not parse", `unexpected "garbage line"`, "+++ the policy now")
+}
+
+// parse refuses what render never writes, so a damaged snapshot falls back
+// to the plain diff rather than a summary built on a misreading.
+func TestParseRejects(t *testing.T) {
+	const col = "\ncolumn email\n  context individuals/email\n  target EQL\n  terms eq\n"
+	for name, tc := range map[string]struct{ text, says string }{
+		"empty file":         {"", "no table line"},
+		"header only":        {header, "no table line"},
+		"no table line":      {header + col, "no table line"},
+		"second table line":  {header + "\ntable individuals\ntable people\n" + col, `unexpected "table people"`},
+		"unterminated quote": {header + "\ntable \"individuals\n", "bad quoted value"},
+		"unknown target":     {header + "\ntable individuals\n" + strings.Replace(col, "target EQL", "target Mystery", 1), `unexpected "  target Mystery"`},
+		"unknown line":       {header + "\ntable individuals\n" + col + "garbage line\n", `unexpected "garbage line"`},
+		"column without a target": {
+			header + "\ntable individuals\n" + strings.Replace(col, "  target EQL\n", "", 1),
+			`column "email" has no context or target line`,
+		},
+		"column without a context": {
+			header + "\ntable individuals\n" + strings.Replace(col, "  context individuals/email\n", "", 1),
+			`column "email" has no context or target line`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := parse([]byte(tc.text))
+			if err == nil || !strings.Contains(err.Error(), tc.says) {
+				t.Errorf("parse error = %v, want one saying %q", err, tc.says)
+			}
+		})
+	}
+	// The complete column parses, so each case above fails for its own
+	// reason.
+	if _, err := parse([]byte(header + "\ntable individuals\n" + col)); err != nil {
+		t.Errorf("the complete snapshot does not parse: %v", err)
+	}
 }
 
 // A policy that does not build fails the test with the build's error.

@@ -269,6 +269,14 @@ func parse(data []byte) (snapshot, error) {
 	if !table {
 		return snapshot{}, errors.New("no table line")
 	}
+	// compare reads a column's context and target kind: one without them
+	// would read as a Custom-free, contextless column, and a table rename
+	// as harmless.
+	for _, c := range s.columns {
+		if c.kind == "" || c.context == "" {
+			return snapshot{}, fmt.Errorf("column %q has no context or target line", c.name)
+		}
+	}
 	for i := range s.columns {
 		sortFacts(s.columns[i].facts)
 	}
