@@ -507,6 +507,7 @@ The Go SDK is what a Go program uses: struct tags, a generator, and the code the
 The binding is the WASI interface between that code and the Rust engine.
 The SDK follows [the language SDK design principles](../sdk-design-principles.md).
 Its package is `encrypt`, at `languages/golang/encrypt`.
+The package for credentials and the developer profile is `auth`, at `languages/golang/auth`.
 
 A struct's `stash` tags declare how each field is encrypted.
 A generator, `stashgen`, writes the encrypted type and its functions from the tags.
@@ -964,7 +965,7 @@ The SDK gives the values for a search, and the program writes the SQL that uses 
 
 The existing Go package has never been released, so these are removed, not deprecated:
 
-- The package name `stackencrypt`: the package is `encrypt`.
+- The package names `stackencrypt` and `stackauth`: the packages are `encrypt` and `auth`.
 - `Cipher.Encrypt`, `Cipher.Decrypt` and `Client.Decrypt`: an `opaque` struct replaces them.
 - `EncryptElement` and `DecryptElement`.
 - `EncryptRecord`, `EncryptRecords`, `DecryptRecord` and `DecryptRecords`, on `Cipher` and on `Client`.
