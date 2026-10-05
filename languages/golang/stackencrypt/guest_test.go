@@ -598,10 +598,16 @@ func rawInstance(t *testing.T) *Client {
 	return c
 }
 
-// A structurally valid stack-encrypt leaf (the frozen layout: version,
-// keyset id, key id length, key id, ciphertext) with no real key behind it.
-// The same bytes the Rust side pins in `cipher.rs`, so the two cannot drift.
-var fixtureLeaf = mustHex("016b65797365742d6669787475726531360300aabbccdeadbeef")
+// A structurally valid stack-encrypt leaf (the frozen format-2 layout:
+// version, keyset id, key id length, key id, ciphertext) with no real key
+// behind it. The same bytes the Rust side pins in `tests/frozen_bytes.rs`, so
+// the two cannot drift.
+var fixtureLeaf = mustHex("026b65797365742d6669787475726531360300aabbccdeadbeef")
+
+// A real format-1 leaf, as stack-encrypt 0.2 wrote it (version, keyset id,
+// IV, tag length, tag, ciphertext): the fixture `tests/format_v1.rs` decrypts
+// on the Rust side. The guest still parses format 1.
+var fixtureLeafV1 = mustHex("015e7f000000004000800000000000000101010101010101010101010101010101100076312d666978747572652d7461672d310153767116f8f0c7450ebd6cf71a4afd93d9d7d037b51a48c3ab9d68480cf3ba4dc5d6a986ccbafb60d629baf402")
 
 func mustHex(s string) []byte {
 	b, err := hex.DecodeString(s)
@@ -671,8 +677,12 @@ func TestGuestAcceptsEveryEncodingThisPackageBuilds(t *testing.T) {
 		"Decrypt bound":      func() error { _, err := byID.Decrypt(ctx, ct, nil); return err },
 		"Decrypt any":        func() error { _, err := c.Decrypt(ctx, ct, []byte("aad")); return err },
 		"DecryptElement any": func() error { _, err := c.DecryptElement(ctx, Sealed(fixtureLeaf), nil); return err },
-		"Term equality":      func() error { _, err := def.Term(ctx, uint32(34), MustContext("users/age"), Equality); return err },
-		"Term match":         func() error { _, err := named.Term(ctx, "alice", MustContext("users/email"), Match); return err },
+		"DecryptElement any, format 1": func() error {
+			_, err := c.DecryptElement(ctx, Sealed(fixtureLeafV1), nil)
+			return err
+		},
+		"Term equality": func() error { _, err := def.Term(ctx, uint32(34), MustContext("users/age"), Equality); return err },
+		"Term match":    func() error { _, err := named.Term(ctx, "alice", MustContext("users/email"), Match); return err },
 		"Term ore extended": func() error {
 			c, _ := MustContext("users/age").With(uint64(7))
 			_, err := byID.Term(ctx, 1.5, c, Ore)

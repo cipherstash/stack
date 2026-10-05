@@ -36,6 +36,10 @@ where
     type Provider = ZeroKmsKeyset<C, Conn>;
     type Error = stack_kms::Error;
 
+    /// Format-1 leaves are ZeroKMS leaves: their key id, `iv ‖ tag`, is the
+    /// one `ZeroKmsKeyset` mints and splits.
+    const READS_V1_LEAVES: bool = true;
+
     /// One `load_keyset` round trip, which resolves the keyset *and* returns
     /// its index key — so loading the index key eagerly costs nothing extra
     /// here, and a keyset that cannot serve one fails now rather than at the

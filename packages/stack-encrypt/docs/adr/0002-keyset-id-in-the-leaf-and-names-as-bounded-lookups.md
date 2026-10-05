@@ -73,6 +73,79 @@ This is the second and last spend. The rule above is unchanged — the next
 layout change, after the first release that stores leaves, must bump the
 version byte.
 
+### Amendment, 2026-10-06: the key-id layout is format 2, and format 1 is still read
+
+The amendment above was written in cipherstash-suite, when nothing was
+published. That changed before the key-id layout landed: stack-encrypt 0.1.0
+and 0.2.0 shipped to crates.io on 2026-10-04 with the format-1 layout below,
+and a deployment on 0.2 stores leaves in it. The reason the amendment gave for
+keeping `0x01` — nothing is stored — is no longer true. So the rule applies,
+and the key-id layout bumps the version byte.
+
+**Format 2** is the key-id layout, and every new leaf is written in it:
+
+```text
+version(0x02) ‖ keyset_id:16 ‖ key_id_len:u16 LE ‖ key_id ‖ ciphertext
+AAD = PAE("stack-encrypt/leaf", [0x02], keyset_id, derived_aad, key_id)
+```
+
+**Format 1** is what 0.1 and 0.2 wrote. It is still read, never written:
+
+```text
+version(0x01) ‖ keyset_id:16 ‖ iv:16 ‖ tag_len:u16 LE ‖ tag ‖ ciphertext
+AAD = PAE("stack-encrypt/leaf", [0x01], keyset_id, derived_aad, tag)
+```
+
+The format-1 AAD is the derivation 0.2 computed, byte for byte. It binds the
+tag and not the IV. A wrong IV still fails, because it names another data key
+and the AEAD refuses the result.
+
+How a format-1 leaf is read:
+
+- `SealedValue::from_bytes` parses the format-1 layout and forms the opaque
+  key id `iv ‖ tag`. That is exactly the key id a ZeroKMS provider
+  (`stack_kms::ZeroKmsKeyset`) mints and splits: a 16-byte IV, then the tag.
+  So the ZeroKMS provider retrieves the key with the same IV, tag and
+  descriptor that 0.2 sent, and nothing in `stack-kms` changes.
+- The leaf remembers its format. It opens under the format-1 AAD, and
+  `to_bytes` writes it back in the format-1 layout, so the stored bytes
+  round-trip unchanged. `SealedValue::from_v1_parts` rebuilds one from the
+  `(keyset_id, iv, tag, ciphertext)` parts that 0.2's `into_parts` returned.
+  The serde form carries the format too.
+- Any other version byte is `LeafBytesError::UnknownVersion`.
+
+**A format-1 leaf on a registry that is not ZeroKMS fails closed.** Only
+ZeroKMS ever wrote format 1. Another backend would read `iv ‖ tag` as a key id
+of its own: an AWS or Vault provider would send those bytes to its service, and
+a fake might hand back some key. The AEAD would still refuse the result, but
+the request should not be made, and the failure should say what is wrong. So
+`KeysetRegistry` has a defaulted constant, `READS_V1_LEAVES = false`. Only
+`impl KeysetRegistry for Arc<StackKms>` sets it to `true`. When a batch holds a
+format-1 leaf and the registry does not read them, the dispatch refuses the
+whole batch with `Error::V1LeafNeedsZeroKms { keyset_id }` before it resolves a
+keyset or asks for a key.
+
+We put the signal on the registry, not on the provider, because the provider
+traits are `vitaminc-kms`'s and know nothing of this crate's leaf formats. A
+registry also answers for every keyset it resolves, and a format-1 leaf can
+only come from a ZeroKMS keyset. We considered two other choices and rejected
+them. Hand any registry the `iv ‖ tag` key id: this works for ZeroKMS, but on
+any other backend it fails late, with a backend error or an AEAD error that
+reads like tampering. Guess ZeroKMS from the provider's constants
+(`ClientAndServer`, `PerValue`, `Bound`): another backend can declare the same
+values.
+
+The tests that hold this are in `tests/format_v1.rs`. Two leaves there are real
+format-1 ciphertext: stack-encrypt at cipherstash/stack `327b4dbce` (the 0.2.0
+line) sealed them under a fixed data key. The new code decrypts them, and the
+same file shows a format-1 leaf reaching ZeroKMS as its IV and tag. The file
+also shows that index terms derive exactly as 0.2 derived them under the same
+index key. `src/cipher.rs` pins both AAD derivations and both layouts.
+
+The version byte is now spent for real. The next layout change must bump it to
+`0x03`, and it must keep reading formats 1 and 2 for as long as stored data
+can hold them.
+
 ## 2. A keyset name is a lookup with a bounded freshness window, not an identity
 
 A keyset's **id** is its identity: globally unique, carried in every leaf, and

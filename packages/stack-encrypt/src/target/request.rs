@@ -40,6 +40,12 @@ pub(super) enum RequestKind {
         key_id: Vec<u8>,
         descriptor: Descriptor,
         keyset_id: KeysetId,
+        /// Whether the leaf is format 1 ([`SealedValue::FORMAT_VERSION_V1`]):
+        /// its key id is ZeroKMS's `iv ‖ tag`, so only a registry that reads
+        /// format-1 leaves may be asked for it.
+        ///
+        /// [`SealedValue::FORMAT_VERSION_V1`]: crate::SealedValue::FORMAT_VERSION_V1
+        v1_leaf: bool,
     },
 }
 
@@ -102,6 +108,19 @@ impl Request {
             key_id,
             descriptor,
             keyset_id,
+            v1_leaf: false,
+        })
+    }
+
+    /// The retrieve request for `leaf`'s data key, under an already rendered
+    /// descriptor. Carries the leaf's format, so that the dispatch can
+    /// refuse a format-1 leaf to a registry that does not read them.
+    pub(crate) fn retrieve_leaf(leaf: &crate::SealedValue, descriptor: Descriptor) -> Self {
+        Self(RequestKind::RetrieveDataKey {
+            key_id: leaf.key_id().to_vec(),
+            descriptor,
+            keyset_id: leaf.keyset_id(),
+            v1_leaf: leaf.format_version() == crate::SealedValue::FORMAT_VERSION_V1,
         })
     }
 
@@ -320,7 +339,12 @@ mod tests {
                 key_id,
                 descriptor,
                 keyset_id,
+                v1_leaf,
             } => {
+                assert!(
+                    !v1_leaf,
+                    "a request built from parts is not a format-1 leaf"
+                );
                 assert_eq!(keyset_id, ks());
                 assert_eq!(key_id, vec![7, 8, 9]);
                 assert_eq!(descriptor, d());

@@ -460,6 +460,7 @@ struct Retrieve {
     key_id: Vec<u8>,
     descriptor: Descriptor,
     keyset_id: KeysetId,
+    v1_leaf: bool,
 }
 
 /// Issue the batched ZeroKMS calls for `requests`: at most one
@@ -481,10 +482,12 @@ async fn dispatch<K: KeysetRegistry>(
                 key_id,
                 descriptor,
                 keyset_id,
+                v1_leaf,
             } => retrieves.push(Retrieve {
                 key_id,
                 descriptor,
                 keyset_id,
+                v1_leaf,
             }),
         }
     }
@@ -499,6 +502,18 @@ async fn dispatch<K: KeysetRegistry>(
         .iter()
         .chain(retrieves.iter().map(|retrieve| &retrieve.descriptor))
         .try_for_each(Descriptor::check)?;
+
+    // A format-1 leaf's key id is ZeroKMS's `iv ‖ tag`, and only ZeroKMS ever
+    // sealed one. Another backend would read those bytes as its own key id,
+    // so the leaf is refused here, before any keyset is resolved or any key
+    // is asked for, unless the registry says it reads format-1 leaves.
+    if !K::READS_V1_LEAVES {
+        if let Some(retrieve) = retrieves.iter().find(|retrieve| retrieve.v1_leaf) {
+            return Err(Error::V1LeafNeedsZeroKms {
+                keyset_id: retrieve.keyset_id,
+            });
+        }
+    }
 
     let generated = if generates.is_empty() {
         Vec::new()

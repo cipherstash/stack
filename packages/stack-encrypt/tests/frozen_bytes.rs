@@ -1,10 +1,10 @@
 //! Byte-level pins for the frozen encodings stack-encrypt commits to across
 //! languages:
 //!
-//! * the [`SealedValue`] leaf layout
-//!   (`version ‖ keyset_id ‖ iv ‖ tag_len ‖ tag ‖ local_ciphertext`) — the
-//!   storage
-//!   format a database column holds, and
+//! * the [`SealedValue`] leaf layout — format 2,
+//!   `version ‖ keyset_id ‖ key_id_len ‖ key_id ‖ local_ciphertext`, the
+//!   storage format a database column holds (format 1, which 0.2 wrote, is
+//!   pinned in `tests/format_v1.rs` against real 0.2 ciphertext), and
 //! * the index-term encodings (equality: raw 32 bytes; match: LE `u16`
 //!   positions; ORE/OPE: raw CLLW ciphertext bytes).
 //!
@@ -68,13 +68,14 @@ fn fixture_leaf() -> SealedValue {
 fn sealed_value_layout_is_pinned() {
     let bytes = fixture_leaf().to_bytes();
 
-    // version(01) ‖ keyset_id(16 raw UUID bytes: ASCII "keyset-fixture16") ‖
+    // version(02) ‖ keyset_id(16 raw UUID bytes: ASCII "keyset-fixture16") ‖
     // key_id_len(0300 — 3, u16 LE) ‖ key_id(aabbcc) ‖
     // local_ciphertext(deadbeef)
     assert_eq!(
         hex(&bytes),
-        "016b65797365742d6669787475726531360300aabbccdeadbeef"
+        "026b65797365742d6669787475726531360300aabbccdeadbeef"
     );
+    assert_eq!(SealedValue::FORMAT_VERSION, 2);
 }
 
 #[test]
@@ -96,10 +97,19 @@ fn sealed_value_from_bytes_inverts_to_bytes() {
 #[test]
 fn sealed_value_rejects_unknown_version() {
     let mut bytes = fixture_leaf().to_bytes();
-    bytes[0] = 2;
+    for version in [0, 3, 0xff] {
+        bytes[0] = version;
+        assert!(matches!(
+            SealedValue::from_bytes(&bytes),
+            Err(LeafBytesError::UnknownVersion(v)) if v == version
+        ));
+    }
+    // Version 1 is known, and reads the format-1 layout. These format-2
+    // bytes are too short for it.
+    bytes[0] = 1;
     assert!(matches!(
         SealedValue::from_bytes(&bytes),
-        Err(LeafBytesError::UnknownVersion(2))
+        Err(LeafBytesError::Truncated)
     ));
 }
 

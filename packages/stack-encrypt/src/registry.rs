@@ -156,6 +156,22 @@ pub trait KeysetRegistry {
 
     type Error: std::error::Error + Send + Sync + 'static;
 
+    /// Whether this registry's providers read format-1 leaves
+    /// ([`SealedValue::FORMAT_VERSION_V1`](crate::SealedValue::FORMAT_VERSION_V1)),
+    /// the layout stack-encrypt 0.1 and 0.2 wrote.
+    ///
+    /// A format-1 leaf carries ZeroKMS's IV and key tag, and the reader
+    /// hands its provider the key id `iv ‖ tag`: the encoding a ZeroKMS
+    /// provider mints and parses, and no other backend's. So only the
+    /// ZeroKMS registry (`Arc<StackKms>`) sets this. With the default,
+    /// `false`, a format-1 leaf fails closed with
+    /// [`Error::V1LeafNeedsZeroKms`](crate::Error::V1LeafNeedsZeroKms)
+    /// before any key is requested.
+    ///
+    /// Set it only for a registry whose providers parse a key id exactly as
+    /// `stack_kms::ZeroKmsKeyset` does: a 16-byte IV, then the tag.
+    const READS_V1_LEAVES: bool = false;
+
     /// Resolve `keyset`, or report that this deployment has no such keyset.
     ///
     /// The three outcomes are deliberately distinct, because the name cache

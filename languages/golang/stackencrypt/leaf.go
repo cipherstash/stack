@@ -8,8 +8,9 @@ import (
 )
 
 // Sealed is one encrypted leaf: the frozen stack-encrypt storage encoding
-// (version, keyset id, IV, ZeroKMS tag, ciphertext), exactly what a
-// database column holds. It is a distinct type from vcvalue.Sealed on
+// (version, keyset id, key id, ciphertext), exactly what a database column
+// holds. New leaves are format 2. A format-1 leaf (version, keyset id, IV,
+// ZeroKMS tag, ciphertext), written by stack-encrypt 0.2, still decrypts. It is a distinct type from vcvalue.Sealed on
 // purpose: a stack-encrypt leaf is not decryptable by vitaminc-encrypt and
 // must never scan or marshal where one belongs.
 type Sealed []byte

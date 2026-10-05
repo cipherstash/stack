@@ -133,11 +133,7 @@ fn collect_retrieve_requests(
         | CipherText::None(leaf)
         | CipherText::EmptySequence(leaf)
         | CipherText::EmptyMap(leaf) => {
-            out.push(Request::retrieve_under(
-                leaf.key_id().to_vec(),
-                descriptor.clone(),
-                leaf.keyset_id(),
-            ));
+            out.push(Request::retrieve_leaf(leaf, descriptor.clone()));
         }
         CipherText::Sequence(items) => {
             for item in items {
