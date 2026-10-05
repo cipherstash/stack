@@ -10,9 +10,10 @@ import { readWorkflow } from './lib/workflows.mjs'
  *
  * `publish = false` in a crate's manifest stops `release-plz release` from
  * uploading it, but not `release-plz update` from bumping its version and
- * writing its changelog. So the two published crates, `stack-auth` and
- * `stack-profile`, share one `version_group`, and every other member carries
- * `release = false`. A member added to the workspace without a line here would
+ * writing its changelog. So the published crates are each in a named
+ * `version_group` (`stack-auth` with `stack-profile`, `stack-kms` alone, and
+ * `stack-encrypt` with `stack-encrypt-derive`), and every other member
+ * carries `release = false`. A member added to the workspace without a line here would
  * be versioned on the next release-plz run.
  *
  * Each of those members also carries `publish = false`. The workspace table
@@ -28,7 +29,15 @@ import { readWorkflow } from './lib/workflows.mjs'
 
 const WORKFLOW = '.github/workflows/release-plz.yml'
 const CONFIG = 'release-plz.toml'
-const PUBLISHED = ['stack-auth', 'stack-profile']
+// Each published crate, and the version group it releases in.
+const GROUPS = {
+  'stack-auth': 'stack-auth',
+  'stack-profile': 'stack-auth',
+  'stack-kms': 'stack-kms',
+  'stack-encrypt': 'stack-encrypt',
+  'stack-encrypt-derive': 'stack-encrypt',
+}
+const PUBLISHED = Object.keys(GROUPS).sort()
 
 /** The root workspace's members, as `{ path, name, publish }`. */
 function rootMembers() {
@@ -39,6 +48,7 @@ function rootMembers() {
     return {
       path,
       name: /^name\s*=\s*"([^"]+)"/m.exec(crate)?.[1],
+      version: /^version\s*=\s*"([^"]+)"/m.exec(crate)?.[1],
       publish: !/^publish\s*=\s*false$/m.test(crate),
     }
   })
@@ -78,7 +88,7 @@ describe('root release-plz.toml', () => {
     )
   })
 
-  it('releases exactly the crates that may publish, in one version group', () => {
+  it('releases exactly the crates that may publish, each in its version group', () => {
     const publishable = members
       .filter((member) => member.publish)
       .map((member) => member.name)
@@ -91,11 +101,9 @@ describe('root release-plz.toml', () => {
       .sort()
     expect(released).toEqual(PUBLISHED)
 
-    const groups = new Set(
-      PUBLISHED.map((name) => packages.get(name)?.versionGroup),
-    )
-    expect([...groups]).toHaveLength(1)
-    expect([...groups][0]).toBeTruthy()
+    for (const name of PUBLISHED) {
+      expect(packages.get(name)?.versionGroup, name).toBe(GROUPS[name])
+    }
   })
 
   it('opts every unpublished member out of publishing here too', () => {
@@ -107,6 +115,40 @@ describe('root release-plz.toml', () => {
     for (const name of PUBLISHED) {
       expect(packages.get(name)?.publish, name).toBe(true)
     }
+  })
+
+  it('gives the crates of one version group one version', () => {
+    // Bumps here are hand-written pull requests and `semver_check` is off, so
+    // nothing else stops a stack-encrypt bump that leaves stack-encrypt-derive
+    // behind from building and releasing.
+    const versions = new Map()
+    for (const { name, version } of members) {
+      const group = GROUPS[name]
+      if (!group) continue
+      expect(version, name).toBeTruthy()
+      versions.set(group, [
+        ...(versions.get(group) ?? []),
+        `${name}@${version}`,
+      ])
+    }
+    for (const [group, crates] of versions) {
+      const distinct = new Set(crates.map((crate) => crate.split('@')[1]))
+      expect(
+        distinct.size,
+        `version group ${group}: ${crates.join(', ')}`,
+      ).toBe(1)
+    }
+  })
+
+  it('pre-flights every published crate before importing the signing key', () => {
+    // The loop decides whether the GPG key is imported. A published crate
+    // missing from it reads as "already on crates.io", so its release would
+    // go out with an unsigned commit and tag, and nothing would say so.
+    const steps = readWorkflow(WORKFLOW)?.jobs?.['release-crates']?.steps ?? []
+    const preflight = steps.find((step) => step?.id === 'preflight')
+    const loop = /for crate in ([^;]+); do/.exec(preflight?.run ?? '')?.[1]
+    expect(loop, 'the preflight loop').toBeTruthy()
+    expect(loop.trim().split(/\s+/).sort()).toEqual(PUBLISHED)
   })
 
   it('points the changelog at a file that exists', () => {

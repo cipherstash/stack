@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 
 	"github.com/cipherstash/stack/languages/golang/stackencrypt"
 )
@@ -77,9 +76,6 @@ func (m Message) Decide(f Fact) (Decision, bool) { return m.policy.Decide(f) }
 func (m Message) Build(facts []Fact) (stackencrypt.Plan, error) {
 	if m.table == "" {
 		return stackencrypt.Plan{}, fmt.Errorf("plan: %s: a message needs a Table", messageName(m, facts))
-	}
-	if strings.Contains(string(m.table), "/") {
-		return stackencrypt.Plan{}, fmt.Errorf("plan: %s: table %q contains '/', which would make its column identities ambiguous", messageName(m, facts), m.table)
 	}
 	var fields []stackencrypt.FieldPlan
 	var errs []error
@@ -167,20 +163,16 @@ func (m Message) field(f Fact) (stackencrypt.FieldPlan, string, bool, error) {
 	} else if d.identity != "" {
 		identity = d.identity
 	}
-	// A '/' in an EQL column would make an identity-shaped context
-	// ambiguous ("a/b" under "t" reads as "a" under "t/b" would), and the
-	// column is the identity until the day it is renamed. A Custom
-	// target's column is only the record key.
-	if !custom {
-		for _, name := range []string{column, identity} {
-			if strings.Contains(name, "/") {
-				return none(fmt.Errorf("%w: column %q contains '/', which would make its identity ambiguous", ErrInvalid, name))
-			}
-		}
-	}
-	context := d.target.Context(Identifier{Table: string(m.table), Column: identity})
-	if context == "" {
-		return none(fmt.Errorf("%w: target %v gives an empty context", ErrInvalid, d.target))
+	// An EQL target's context is Identifier.Label(), which refuses a table
+	// or column that would not render as itself — a '/' among them, since it
+	// would read as two names. A Custom target's column is only the record
+	// key, so it may contain anything.
+	context, err := d.target.Context(Identifier{Table: string(m.table), Column: identity})
+	if err != nil {
+		// Both errors stay reachable: ErrInvalid for the policy's caller, and
+		// the target's own (a *stackencrypt.LabelError, say) for one that
+		// wants to know which name was wrong.
+		return none(fmt.Errorf("%w: target %v: %w", ErrInvalid, d.target, err))
 	}
 	return stackencrypt.FieldPlan{
 		Field:   f.goField(),

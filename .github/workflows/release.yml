@@ -545,8 +545,9 @@ jobs:
 
       # REQUIRED BY `version:` BELOW, and nothing in this file says so without
       # this comment — which is why there is also a test. `pnpm run version` is
-      # `changeset version && node scripts/sync-lockstep-versions.mjs`, and that
-      # script ends in `execFileSync('mise', ['run',
+      # `changeset version && node scripts/sync-skill-pins.mjs && node
+      # scripts/sync-lockstep-versions.mjs`, and that last script ends in
+      # `execFileSync('mise', ['run',
       # 'release:prepare_bindings_assets', …])`, which reaches
       # `packages/eql/tasks/build.sh` and two `cargo run -p eql-codegen` calls.
       # mise is NOT preinstalled on GitHub's ubuntu images, so without this step

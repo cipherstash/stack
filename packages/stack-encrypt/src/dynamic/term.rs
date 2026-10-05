@@ -148,7 +148,7 @@ impl Scalar {
 /// ```
 /// use stack_encrypt::dynamic::{context, term, FfiValue, Scalar, TermKind};
 /// use stack_encrypt::StackCipher;
-/// use stack_kms::FakeDataKeySource;
+/// use stack_encrypt::kms::FakeDataKeySource;
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 /// let cipher = StackCipher::builder()
@@ -157,7 +157,10 @@ impl Scalar {
 ///     .await?;
 /// let keyset = cipher.default_keyset();
 ///
-/// let ctx = context(FfiValue::String("users/age".into()))?;
+/// let ctx = context(FfiValue::Array(vec![
+///     FfiValue::String("users".into()),
+///     FfiValue::String("age".into()),
+/// ]))?;
 /// let probe = term(&keyset, Scalar::U32(34), TermKind::Equality, ctx.clone()).await?;
 /// let typed = keyset.equality_term(34u32, ctx).await?;
 /// assert_eq!(probe, typed.into_bytes().to_vec());

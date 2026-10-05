@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-09-13
+revised: 2026-10-04
 extends: ADR-0003
 ---
 
@@ -90,7 +91,7 @@ A record gives its fields different contexts once each, visibly, instead of
 threading six arguments:
 
 ```rust
-age.under(nonempty!("users/age")).zip(email.under(nonempty!("users/email")))
+age.under(nonempty!("users").with("age")).zip(email.under(nonempty!("users").with("email")))
 ```
 
 `under` gives a subtree a context of its own, which a caller's context
@@ -101,8 +102,15 @@ extended by the caller's, which stays required. `under` is available wherever
 a `CallerContext` can become what the subtree needs, and `extend` wherever
 the caller's context — a `CallerContext`, or an `AeadContext` for a record
 that only seals — can; so a subtree may itself be a record whose own contexts
-a caller's extends. An own context is a `NonEmpty<&'static str>`, so an empty
-one is refused at compile time rather than at the first encryption.
+a caller's extends. An own context is any `NonEmpty<impl IntoContext>`: a
+`nonempty!` literal, the pair `nonempty!("users").with("age")` a `struct`
+derive infers for a field, or a `Label`. Each is nonempty by construction —
+a literal at compile time, the others when they are built — so an empty one
+is refused before the first encryption. (Revised 2026-10-04: this was
+`NonEmpty<&'static str>`, and the examples spelled a column as the joined
+literal `"users/age"`. A column is the pair now, which renders the ZeroKMS
+descriptor `users/age`; the joined literal is one part and renders escaped.
+See ADR-0006.)
 
 Two further combinators change nothing about *which* context reaches a
 subtree, only its type at the root. `accepting` converts the context a record
@@ -119,7 +127,7 @@ not when it is built.
 
 - `ciphertext()` is `Encryption<.., AeadContext>` and `equality()` is
   `Encryption<.., CallerContext>` — each needs a real context
-- `.under(nonempty!("users/age"))` yields `Encryption<.., DeclaredContext>` —
+- `.under(nonempty!("users").with("age"))` yields `Encryption<.., DeclaredContext>` —
   now runnable under `()` or a caller's context
 - zipping a bare leaf with own-context fields is a type error, which is correct
 

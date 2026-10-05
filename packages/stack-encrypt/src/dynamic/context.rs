@@ -21,8 +21,9 @@ use crate::{ContextPiece, NonEmpty};
 ///
 /// So a `#[derive(EncryptFrom)]` row sealed with
 /// `encrypt_into_with_context(row, 7u64)`, which binds each field under
-/// `("users/age", 7u64)` — a `NonEmpty<(&str, u64)>` — and a binding that
-/// spells the same context as `["users/age", 7u64]` agree byte for byte on
+/// `(("users", "age"), 7u64)` — the inferred pair, extended — and a binding
+/// that spells the same context as `[["users", "age"], 7u64]` agree byte for
+/// byte on
 /// the AAD (the ciphertext binding and the ZeroKMS descriptor rendered from
 /// its parts) *and* on the PRF context (the index terms' domain separation).
 /// Nothing is re-derived here: the tree is handed to vitaminc's own impls.
@@ -44,8 +45,9 @@ use crate::{ContextPiece, NonEmpty};
 ///
 /// # Which Rust contexts a list spells
 ///
-/// * `["users/age", 7u64]` is `nonempty!("users/age").with(7u64)`: a
-///   two-element list is the pair.
+/// * `["users", "age"]` is `nonempty!("users").with("age")`: a two-element
+///   list is the pair. That is how a table and a column are spelled: two
+///   parts, rendered `users/age` in the descriptor, never a joined string.
 /// * `NonEmpty::with` nests to the **left**: `nonempty!("a").with(7u64)
 ///   .with("eu")` is `(("a", 7u64), "eu")`, spelled `[["a", 7u64], "eu"]`.
 ///   A flat three-element list is a different context (a three-part PAE)
@@ -72,10 +74,13 @@ use crate::{ContextPiece, NonEmpty};
 /// use stack_encrypt::{nonempty, IntoAad};
 ///
 /// let parsed = context(FfiValue::Array(vec![
-///     FfiValue::String("users/age".into()),
+///     FfiValue::Array(vec![
+///         FfiValue::String("users".into()),
+///         FfiValue::String("age".into()),
+///     ]),
 ///     FfiValue::UInt64(7),
 /// ]))?;
-/// let typed = nonempty!("users/age").with(7u64);
+/// let typed = nonempty!("users").with("age").with(7u64);
 /// assert_eq!(
 ///     parsed.into_inner().into_aad().as_bytes(),
 ///     typed.into_aad().as_bytes()
@@ -241,17 +246,30 @@ mod tests {
 
     #[test]
     fn a_list_renders_the_descriptor_the_tuple_does() {
-        let parsed = context(FfiValue::Array(vec![s("users/age"), FfiValue::UInt64(7)]))
-            .expect("extended context");
+        let parsed = context(FfiValue::Array(vec![s("users"), s("age")])).expect("a pair");
         assert_eq!(
             Descriptor::of(parsed.into_inner()).as_str(),
-            "users/age|7u64",
-            "the list renders its parts joined by `|`"
+            "users/age",
+            "the list renders its parts joined by `/`"
         );
         assert_eq!(
-            Descriptor::of(nonempty!("users/age").with(7u64)).as_str(),
-            "users/age|7u64",
+            Descriptor::of(nonempty!("users").with("age")).as_str(),
+            "users/age",
             "the tuple renders the same descriptor"
+        );
+        let parsed = context(FfiValue::Array(vec![
+            FfiValue::Array(vec![s("users"), s("age")]),
+            FfiValue::UInt64(7),
+        ]))
+        .expect("an extended pair");
+        assert_eq!(
+            Descriptor::of(parsed.into_inner()).as_str(),
+            "(users/age)/7u64"
+        );
+        assert_eq!(
+            Descriptor::of(nonempty!("users").with("age").with(7u64)).as_str(),
+            "(users/age)/7u64",
+            "`with` nests to the left, as the list does"
         );
     }
 

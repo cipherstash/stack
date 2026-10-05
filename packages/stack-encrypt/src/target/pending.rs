@@ -22,7 +22,7 @@ use super::request::{tally, Request, RequestKind, Responses};
 use crate::{Descriptor, Error, KeysetCipher, StackCipher};
 
 /// The boxed fulfilment: consumes this pending's slice of the responses and
-/// produces the output. The `Send` split mirrors [`stack_kms::MaybeSend`] —
+/// produces the output. The `Send` split mirrors [`kms::MaybeSend`](crate::kms::MaybeSend) —
 /// the underlying ZeroKMS futures are not `Send` on wasm32.
 #[cfg(not(target_arch = "wasm32"))]
 type FulfilBox<'a, T> = Box<dyn FnOnce(&mut Responses) -> Result<T, Error> + Send + 'a>;
@@ -1083,8 +1083,8 @@ mod tests {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let requests = vec![
-            Request::generate_under(Descriptor::of("users/email")),
-            Request::generate_under(Descriptor::of("users/name")),
+            Request::generate_under(Descriptor::of(("users", "email"))),
+            Request::generate_under(Descriptor::of(("users", "name"))),
         ];
         let pairs: Vec<(Iv, Vec<u8>)> = Pending::request(&keyset, requests, |responses| {
             (0..2)
@@ -1104,7 +1104,7 @@ mod tests {
 
         let requests: Vec<Request> = pairs
             .iter()
-            .zip(["users/name", "users/email"])
+            .zip([("users", "name"), ("users", "email")])
             .map(|((iv, tag), descriptor)| {
                 Request::retrieve_under(
                     *iv,

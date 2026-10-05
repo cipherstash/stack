@@ -85,7 +85,7 @@ assert_eq!(plaintext, "secret message");
 //! id) so it cannot be replayed elsewhere:
 //!
 //! ```no_run
-//! # async fn example<K: stack_kms::DataKeySource>(cipher: stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
+//! # async fn example<K: stack_encrypt::kms::DataKeySource>(cipher: stack_encrypt::StackCipher<K>) -> Result<(), stack_encrypt::Error> {
 //! # let keyset = cipher.default_keyset();
 //! let ct = keyset.encrypt("4111 1111 1111 1111", "users/42/card").await?;
 //! let card: String = cipher.decrypt(ct, "users/42/card").await?; // ok
@@ -124,14 +124,14 @@ the deployment holds no long-lived CipherStash credential of its own. What
 `AutoStrategy` detects is only the two above — access key, then profile — so
 any other strategy is named explicitly, and that is what
 [`kms`](StackCipherBuilder::kms) is for: build the
-[`StackKms`](stack_kms::StackKms) over the strategy you want and hand it to
+[`StackKms`](crate::kms::StackKms) over the strategy you want and hand it to
 the builder.
 
 ```no_run
 # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 use stack_auth::{AuthError, AuthStrategyFn, SecretToken, ServiceToken};
 use stack_encrypt::StackCipher;
-use stack_kms::{EnvKeyProvider, StackKmsBuilder};
+use stack_encrypt::kms::{EnvKeyProvider, StackKmsBuilder};
 
 // Any `AuthStrategy` goes in this slot — `AccessKeyStrategy`,
 // `OidcFederationStrategy`, `DeviceSessionStrategy`, or, as here,
@@ -174,20 +174,21 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //!
 //! # Testing without ZeroKMS
 //!
-//! `stack_kms::FakeDataKeySource` is an in-memory stub that needs no
+//! `stack_encrypt::kms::FakeDataKeySource` is an in-memory stub that needs no
 //! credentials or network: it hands out a fresh random data key per request and
 //! remembers it in memory, so a `generate` followed by the matching `retrieve`
 //! round-trips within one process (the key material itself differs run to run,
 //! and nothing survives the process). It models none of ZeroKMS's
 //! authorization behaviour (context, identity claims, decryption policies) —
 //! those are the service's, and tests of them belong against a real ZeroKMS.
-//! It lives behind stack-kms's `test-support` feature, so add
-//! `stack-kms = { version = "..", features = ["test-support"] }` to your
-//! `[dev-dependencies]`:
+//! It lives behind this crate's `test-support` feature, so add
+//! `stack-encrypt = { version = "..", features = ["test-support"] }` to your
+//! `[dev-dependencies]`. stack-kms is re-exported as [`kms`], so
+//! there is no separate stack-kms dependency to keep in step:
 //!
 //! ```
 //! use stack_encrypt::StackCipher;
-//! use stack_kms::FakeDataKeySource;
+//! use stack_encrypt::kms::FakeDataKeySource;
 //!
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 //! let cipher = StackCipher::builder()
@@ -281,8 +282,14 @@ pub use cipher::{
     BoxedPassthrough, Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue,
     StackCipher, StackCipherBuilder, StackCipherText, StackDecipher,
 };
-pub use descriptor::Descriptor;
+pub use descriptor::{Describe, Description, Descriptor, Label, LabelError};
 pub use keyset::KeysetCipher;
+// stack-kms is a public dependency: `StackCipher` is generic over its
+// `DataKeySource`, and `StackCipherBuilder::kms` takes its `StackKms`. It is
+// versioned on its own (release-plz.toml), so a caller reaches it through
+// here and always gets the version this crate was built against, never a
+// second copy whose types do not fit `StackCipher`'s bounds.
+pub use stack_kms as kms;
 pub use target::{
     CallerContext, CipherScope, DecryptField, DecryptFrom, DecryptInto, Decryptable, Decryption,
     EncryptFrom, EncryptInto, Encryption, Pending, PendingFuture, Request, Responses,

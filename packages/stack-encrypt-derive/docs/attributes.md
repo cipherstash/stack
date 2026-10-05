@@ -96,21 +96,30 @@ but each listed type only once).
 
 A `struct = ..` derive needs no attribute on its fields. With
 `#[stash(struct = User, context = "users")]`, a field `age` is derived from
-`user.age` under the context `"users/age"`; a field `email` from `user.email`
-under `"users/email"`; a tuple struct's `.0` under `"users/0"`. The first
-half is the container's `context` and the second the *plaintext* field's
-name, so `#[stash(from = email_address)] email: ..` is derived under
-`"users/email_address"`: both halves name the stored field, not the
-encrypted struct. Nothing is pluralised or otherwise guessed. `context =
-".."` on a field is taken verbatim and replaces the inferred one; `nested`
-on a field infers none — the field is handed the caller's context as it is,
-which a nested `struct` derive (carrying its own contexts) composes with
-them and a leaf accepts only as a `NonEmpty<T>`.
+`user.age` under the **pair** `("users", "age")` — two context parts, which
+render the ZeroKMS descriptor `users/age`; a field `email` from `user.email`
+under `("users", "email")`. The first part is the container's `context` and
+the second the *plaintext* field's name. Both must be plain descriptor
+segments (no `/`, `(`, `)`, control or invisible character; not beginning
+with `b64:`, a digit or `-`), or the descriptor would render escaped and the
+ZeroKMS log would not name the column: the derive refuses a prefix such as
+`"public/users"` (write `"users"`), and a tuple field — whose index begins
+with a digit — must carry its own `context = ".."`. So `#[stash(from = email_address)] email: ..` is derived under
+`("users", "email_address")`: both parts name the stored field, not the
+encrypted struct. Nothing is pluralised or otherwise guessed. The pair is
+what `nonempty!("users").with("age")` spells at a call site, and what a
+two-segment `Label` spells. A `context = ".."` literal on a field is **one**
+text part, taken exactly as written, and replaces the inferred pair: the
+literal `"users/age"` is not the pair, and renders escaped (`b64:…`) in the
+descriptor because a `/` inside one part must never read as a separator.
+`nested` on a field infers none — the field is handed the caller's context
+as it is, which a nested `struct` derive (carrying its own contexts) composes
+with them and a leaf accepts only as a `NonEmpty<T>`.
 
 A context passed by the caller extends every field's: under
 `user.encrypt_into_with_context(&keyset, 7u64)` the `age` field is derived
-under `("users/age", 7u64)`, and a query site probes it under
-`nonempty!("users/age").with(7u64)`. This is how a field is bound to its
+under `(("users", "age"), 7u64)`, and a query site probes it under
+`nonempty!("users").with("age").with(7u64)`. This is how a field is bound to its
 record as well as its name — a record id, say — without the type having to
 know the id. Decryption takes the same extension. The extension may be borrowed at the call site: its Vitamin C encodings are
 owned by the declaration before execution.
@@ -128,8 +137,10 @@ stored data stops decrypting — `Error::Kms` against ZeroKMS, which refuses
 the key retrieval under the changed descriptor before the AEAD runs, and
 `Error::Aead` under a key source that ignores descriptors, such as the fake
 one in tests — silently at the call site, with no compile-time signal.
-Before such a rename, pin the old value with `context = ".."` on the fields
-it reaches.
+Before such a rename, keep the old plaintext field name in `from` on the
+field it reaches (`#[stash(from = old_name)] new_name: ..`), which keeps the
+inferred pair. A `context = ".."` literal cannot preserve it: a literal is one
+part, and an inferred context is two.
 
 A `struct` derive has no field derived from the whole plaintext, and a
 `plaintext` record has none derived from a field of it: `from` and `nested`

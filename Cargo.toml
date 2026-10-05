@@ -33,7 +33,8 @@ exclude = [
 
 [workspace.package]
 # Used by the node binding crates, which take `version.workspace`. The
-# published crates (stack-auth, stack-profile) carry their own version.
+# published crates (stack-auth, stack-profile, stack-kms, stack-encrypt,
+# stack-encrypt-derive) carry their own version.
 version = "0.35.0"
 edition = "2021"
 authors = [
@@ -62,8 +63,8 @@ lto = true   # same as "fat"
 incremental = true
 
 [workspace.dependencies]
-# The two published crates of this workspace. Members take them with
-# `workspace = true`.
+# stack-auth and stack-profile, two of this workspace's published crates.
+# Members take them with `workspace = true`.
 # `default-features = false`: a member can add features to a workspace dep
 # but cannot subtract them, and `stack-kms` / `stack-encrypt` need stack-auth
 # without `http`. Consumers that want the default transport re-enable it with

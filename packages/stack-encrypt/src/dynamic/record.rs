@@ -224,12 +224,18 @@ impl Plan {
 /// ```
 /// use stack_encrypt::dynamic::{record, FfiValue, Output, TermKind};
 ///
-/// // As a binding would decode it from its caller: seal `age` under
-/// // "users/age" and index it for equality.
+/// // As a binding would decode it from its caller: seal `age` under the
+/// // pair ("users", "age") and index it for equality.
 /// let plan = record::plan(FfiValue::Object(vec![(
 ///     "age".to_string(),
 ///     FfiValue::Object(vec![
-///         ("context".to_string(), FfiValue::String("users/age".into())),
+///         (
+///             "context".to_string(),
+///             FfiValue::Array(vec![
+///                 FfiValue::String("users".into()),
+///                 FfiValue::String("age".into()),
+///             ]),
+///         ),
 ///         (
 ///             "outputs".to_string(),
 ///             FfiValue::Array(vec![
@@ -322,7 +328,7 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
 /// ```
 /// use stack_encrypt::dynamic::{record, FfiValue, Scope};
 /// use stack_encrypt::StackCipher;
-/// use stack_kms::FakeDataKeySource;
+/// use stack_encrypt::kms::FakeDataKeySource;
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
 /// let cipher = StackCipher::builder()
@@ -331,11 +337,17 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
 ///     .await?;
 /// let keyset = cipher.default_keyset();
 ///
-/// // Seal `age` under "users/age" with an equality term beside it.
+/// // Seal `age` under the pair ("users", "age") with an equality term beside it.
 /// let plan = record::plan(FfiValue::Object(vec![(
 ///     "age".to_string(),
 ///     FfiValue::Object(vec![
-///         ("context".to_string(), FfiValue::String("users/age".into())),
+///         (
+///             "context".to_string(),
+///             FfiValue::Array(vec![
+///                 FfiValue::String("users".into()),
+///                 FfiValue::String("age".into()),
+///             ]),
+///         ),
 ///         (
 ///             "outputs".to_string(),
 ///             FfiValue::Array(vec![

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"reflect"
 )
 
 // Context is the encryption context a record field or a term probe binds:
@@ -14,16 +15,22 @@ import (
 //
 // A Context is a part or a list of parts. A part is a string, a byte slice
 // or an integer (int32, int64, uint32, uint64; Go's int is sent as int64).
-// [NewContext] makes a one-part context — the bare part, the shape a Rust
-// `#[derive(EncryptFrom)]` field is sealed under when the caller supplies no
-// context of its own. [Context.With] extends it as Rust's NonEmpty::with
-// does: the result is the two-element list [previous, part], nesting to the
-// left, so NewContext("users/age").With(uint64(7)) is the context a row
-// sealed with encrypt_into_with_context(row, 7u64) binds for that field.
+// [NewContext] makes a one-part context — the bare part, what a Rust
+// `#[stash(context = "..")]` literal binds. [Context.With] extends it as
+// Rust's NonEmpty::with does: the result is the two-element list
+// [previous, part], nesting to the left. So NewContext("users").With("age")
+// is the pair a Rust `struct = .., context = "users"` derive binds its `age`
+// field under — and what ParseLabel("users/age") binds — rendering the ZeroKMS
+// descriptor users/age; extended With(uint64(7)) it is what a row sealed
+// with encrypt_into_with_context(row, 7u64) binds for that field.
 // A one-element list is not the bare part, and this type cannot spell one.
 //
 // A Context owns its parts: a byte-slice part is copied in, so a caller's
 // buffer reused once the Context is built does not change it.
+//
+// Compare two Contexts with [Context.Equal]. Do not use == and do not use a
+// Context as a map key: a list context holds a slice, and Go panics when it
+// compares those.
 type Context struct {
 	node any
 }
@@ -107,4 +114,33 @@ func checkPart(part any) error {
 	default:
 		return fmt.Errorf("stackencrypt: %T is not a context part (string, []byte or integer)", part)
 	}
+}
+
+// Equal reports whether c and other are the same context: the same parts,
+// in the same order, with the same types, so a probe built from one matches
+// terms written under the other. This is the supported comparison; == on
+// two Contexts panics when either holds a list.
+func (c Context) Equal(other Context) bool { return reflect.DeepEqual(c.node, other.node) }
+
+// isZero reports whether c is the zero Context, which binds nothing: what a
+// plan field without a context, or a zero Label, carries.
+func (c Context) isZero() bool { return c.node == nil }
+
+// flatContext is the context a [Label] binds: one segment is the bare part,
+// as NewContext makes it; two or more are a flat list of the segments. The
+// segments are plain by construction, so no part check is needed, and a
+// list is never built from one part (a one-element list is a different
+// context from the bare part, and this type cannot spell one).
+func flatContext(segments []string) Context {
+	switch len(segments) {
+	case 0:
+		return Context{}
+	case 1:
+		return Context{node: segments[0]}
+	}
+	parts := make([]any, len(segments))
+	for i, s := range segments {
+		parts[i] = s
+	}
+	return Context{node: parts}
 }

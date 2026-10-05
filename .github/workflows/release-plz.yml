@@ -2,8 +2,9 @@ name: "Release crates (crates.io)"
 
 # Publishes two crates.io release lines via release-plz (crates.io Trusted
 # Publishing over OIDC — no CARGO_REGISTRY_TOKEN): `eql-bindings` from
-# packages/eql (`release`), and `stack-auth` + `stack-profile` from the root
-# workspace (`release-crates`, described above its own jobs at the end).
+# packages/eql (`release`), and the stack-* crates from the root workspace
+# (`release-crates`, described above its own jobs at the end). `release` runs
+# after `release-crates`: see the comment on its `needs:`.
 # Everything from here to `permissions:` is about the EQL line.
 #
 # THE FILENAME CANNOT CHANGE: crates.io binds the publisher to it.
@@ -85,8 +86,23 @@ jobs:
 
   release:
     name: "Release"
-    needs: [eql-armed]
-    if: needs.eql-armed.outputs.armed == 'true'
+    # AFTER `release-crates`, not beside it. eql-bindings' `stack-encrypt`
+    # feature names a stack-encrypt VERSION, and `cargo publish` resolves it
+    # from crates.io, so on a push that releases both, publishing in parallel
+    # races this job's resolution against the other job's upload. Ordered,
+    # the stack-* crates land first and this job's verify finds them.
+    # `!cancelled()`, not the implicit `success()`: `release-crates` is
+    # skipped on every push that moves no stack-* crate, and a skipped
+    # dependency would otherwise skip this job too. Not `always()` either:
+    # that would start this job after somebody cancelled the run, and a
+    # crates.io upload cannot be undone, only yanked (see the same rule on
+    # the publishing jobs in release.yml). A FAILURE of `release-crates`
+    # still stops this one, since the crates it needed did not publish.
+    needs: [eql-armed, release-crates]
+    if: >-
+      !cancelled()
+      && needs.eql-armed.outputs.armed == 'true'
+      && (needs.release-crates.result == 'success' || needs.release-crates.result == 'skipped')
     # GitHub-hosted, matching this repo's other publishing jobs.
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -181,9 +197,10 @@ jobs:
   # FROZEN_PUBLISHERS (an npm map), so the switch keys on the
   # `@cipherstash/auth` entry, which that PR deleted when crates.io and npm
   # trusted publishing moved here together. crates.io needs a Trusted
-  # Publishing entry for both crates naming cipherstash/stack + release-plz.yml.
+  # Publishing entry for every published crate naming cipherstash/stack +
+  # release-plz.yml.
   #
-  # Publish-only: nothing here opens a release PR, so a version bump of the two
+  # Publish-only: nothing here opens a release PR, so a version bump of these
   # crates is a hand-made pull request. `release-plz update` cannot version
   # this workspace yet: it walks back to the commit that matches crates.io
   # 0.42.3, and the imported history has no root Cargo.toml there. A
@@ -209,13 +226,13 @@ jobs:
         run: node scripts/eql-pipeline-armed.mjs crates
 
   release-crates:
-    name: "Release stack-auth and stack-profile"
+    name: "Release the stack-* crates"
     needs: [crates-armed]
     if: needs.crates-armed.outputs.armed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: write # the stack-auth-v<V> / stack-profile-v<V> tags and releases
+      contents: write # the <crate>-v<V> tags and releases
       pull-requests: write # release-plz links PRs in release notes
       id-token: write # crates.io Trusted Publishing
     steps:
@@ -223,15 +240,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Is either crate version unpublished?
-        # The EQL preflight's crates.io question, per crate of the version
-        # group. It decides whether the GPG import runs; an API failure reads
+      - name: Is any crate version unpublished?
+        # The EQL preflight's crates.io question, per published crate. It decides whether the GPG import runs; an API failure reads
         # as "unpublished", which fails towards importing the key.
         id: preflight
         run: |
           set -euo pipefail
           publish_needed=false
-          for crate in stack-auth stack-profile; do
+          for crate in stack-auth stack-profile stack-kms stack-encrypt stack-encrypt-derive; do
             version="$(grep -m1 '^version = ' "packages/${crate}/Cargo.toml" | cut -d'"' -f2)"
             # crates.io 403s curl's default User-Agent.
             published="$(curl -fsSL --retry 3 -H "User-Agent: cipherstash-stack-release (https://github.com/cipherstash/stack)" "https://crates.io/api/v1/crates/${crate}/versions" | jq -r '.versions[].num' | grep -Fx "$version" || true)"

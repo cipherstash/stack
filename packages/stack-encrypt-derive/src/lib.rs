@@ -6,7 +6,7 @@
 //! ```
 //! use stack_encrypt::{EncryptFrom, DecryptInto, StackCipher, StackCipherText, nonempty};
 //! use stack_encrypt::sem::EqualityTerm;
-//! use stack_kms::FakeDataKeySource;
+//! use stack_encrypt::kms::FakeDataKeySource;
 //!
 //! #[derive(EncryptFrom, DecryptInto)]
 //! #[stash(plaintext = String)]
@@ -35,7 +35,9 @@
 //! `context_type = AeadContext` and accept a context type that implements
 //! `IntoAad` alone, as the ciphertext leaf itself does.
 //! `struct = User, context = "users"` selects plaintext fields
-//! and binds them under `"users/<field>"`. The storage envelope itself adds no
+//! and binds each under the pair `("users", "<field>")`, which renders
+//! `users/<field>` as its ZeroKMS descriptor. A `context = ".."` literal on a
+//! field is one text part, exactly as written. The storage envelope itself adds no
 //! cryptographic map-entry context. Vitamin C still binds keys inside plaintext
 //! maps and preserves authenticated absence and empty-container markers.
 //!
@@ -63,7 +65,7 @@
 //!     CipherText, Decryptable, Encrypt, EncryptFrom, Encryption, Error, SealedValue, StackCipher,
 //!     nonempty,
 //! };
-//! use stack_kms::FakeDataKeySource;
+//! use stack_encrypt::kms::FakeDataKeySource;
 //!
 //! /// A column that stores one sealed leaf as bytes.
 //! struct LeafBytes(Vec<u8>);

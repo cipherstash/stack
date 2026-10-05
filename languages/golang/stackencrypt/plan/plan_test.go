@@ -43,10 +43,10 @@ func TestPolicyBuildsThePlan(t *testing.T) {
 	// Columns are the schema's spelling of the Go field: what the Rust
 	// derive binds and the database names.
 	want := []se.FieldPlan{
-		{Field: "Email", Name: "email", Context: "individuals/email", Terms: []se.TermKind{se.Equality, se.Match}},
-		{Field: "Name", Name: "name", Context: "individuals/name"},
+		{Field: "Email", Name: "email", Context: label(t, "individuals/email").Context(), Terms: []se.TermKind{se.Equality, se.Match}},
+		{Field: "Name", Name: "name", Context: label(t, "individuals/name").Context()},
 		// The per-message rule wins over the base's government_id rule.
-		{Field: "MedicareNo", Name: "medicare_number", Context: "individuals/medicare_number", Terms: []se.TermKind{se.Equality, se.Ore}},
+		{Field: "MedicareNo", Name: "medicare_number", Context: label(t, "individuals/medicare_number").Context(), Terms: []se.TermKind{se.Equality, se.Ore}},
 	}
 	if got := p.Fields(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("fields =\n%+v\nwant\n%+v", got, want)
@@ -146,7 +146,7 @@ func TestUnclassifiedFieldsAreLeftOutUnlessNamed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []se.FieldPlan{{Field: "Notes", Name: "notes", Context: "individuals/notes"}}
+	want := []se.FieldPlan{{Field: "Notes", Name: "notes", Context: label(t, "individuals/notes").Context()}}
 	if got := p.Fields(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("fields = %+v, want %+v", got, want)
 	}
@@ -174,8 +174,9 @@ func TestColumnPinSurvivesRenames(t *testing.T) {
 		t.Fatal(err)
 	}
 	f1, f2 := p1.Fields()[0], p2.Fields()[0]
-	if f1.Context != "individuals/medicare_number" || f2.Context != f1.Context {
-		t.Fatalf("contexts %q, %q: want both individuals/medicare_number", f1.Context, f2.Context)
+	want := label(t, "individuals/medicare_number").Context()
+	if !f1.Context.Equal(want) || !f2.Context.Equal(f1.Context) {
+		t.Fatalf("contexts %v, %v: want both individuals/medicare_number", f1.Context, f2.Context)
 	}
 	if f2.Name != "medicare_number" || f2.Field != "MedicareNo" {
 		t.Fatalf("pinned field = %+v", f2)
@@ -185,8 +186,8 @@ func TestColumnPinSurvivesRenames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := unpinned.Fields()[0].Context; got != "individuals/medicare_no" {
-		t.Fatalf("unpinned context = %q", got)
+	if got := unpinned.Fields()[0].Context; !got.Equal(label(t, "individuals/medicare_no").Context()) {
+		t.Fatalf("unpinned context = %v", got)
 	}
 }
 
@@ -214,7 +215,7 @@ func TestIdentityKeepsTheContextThroughAColumnRename(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 			continue
 		}
-		want := []se.FieldPlan{{Field: "MedicareNo", Name: tc.key, Context: tc.context, Terms: []se.TermKind{se.Equality}}}
+		want := []se.FieldPlan{{Field: "MedicareNo", Name: tc.key, Context: label(t, tc.context).Context(), Terms: []se.TermKind{se.Equality}}}
 		if got := p.Fields(); !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: fields = %+v, want %+v", name, got, want)
 		}
@@ -236,9 +237,9 @@ func TestContextsByTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []se.FieldPlan{
-		{Field: "Email", Name: "email", Context: "users/email", Terms: []se.TermKind{se.Equality}},
+		{Field: "Email", Name: "email", Context: label(t, "users/email").Context(), Terms: []se.TermKind{se.Equality}},
 		// A custom target's context is its own; the pin names the record key only.
-		{Field: "Blob", Name: "blob_v1", Context: "tenant-blobs/v1", Terms: []se.TermKind{se.Ope}},
+		{Field: "Blob", Name: "blob_v1", Context: se.MustContext("tenant-blobs/v1"), Terms: []se.TermKind{se.Ope}},
 	}
 	if got := p.Fields(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("fields =\n%+v\nwant\n%+v", got, want)
@@ -276,7 +277,13 @@ func TestBuildRefusesMalformedDecisions(t *testing.T) {
 		"identity on plain":  {"t", plan.When(plan.Field("a"), plan.Plaintext(), plan.Identity("c")), plan.ErrInvalid, "Plaintext"},
 		"identity on custom": {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.Custom("ctx")), plan.Identity("c")), plan.ErrInvalid, "context is fixed"},
 		"slash in identity":  {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL()), plan.Column("c"), plan.Identity("x/y")), plan.ErrInvalid, "contains '/'"},
-		"slash, renamed":     {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL()), plan.Column("x/y"), plan.Identity("c")), plan.ErrInvalid, "contains '/'"},
+		// Identifier.Label() refuses more than '/': every reason a segment is
+		// not plain, named as the table or the column identity it came from.
+		"digit in table":     {"2024_events", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL())), plan.ErrInvalid, `table "2024_events"`},
+		"digit in column":    {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL()), plan.Column("2fa_secret")), plan.ErrInvalid, `column identity "2fa_secret"`},
+		"b64 in column":      {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL()), plan.Column("b64:x")), plan.ErrInvalid, "another descriptor form"},
+		"paren in column":    {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL()), plan.Column("a(b")), plan.ErrInvalid, "reserves"},
+		"invisible in table": {"users\u200b", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL())), plan.ErrInvalid, "invisible"},
 		"zero decision":      {"t", plan.When(plan.Field("a"), plan.Decision{}), plan.ErrInvalid, "zero Decision"},
 		"empty context":      {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.Custom(""))), plan.ErrInvalid, "empty context"},
 		"nil policy":         {"t", nil, plan.ErrUnmatched, ""},
@@ -473,4 +480,58 @@ func TestWhenRefusesANilMatcher(t *testing.T) {
 		}
 	}()
 	plan.When(nil, plan.Plaintext())
+}
+
+// label is se.ParseLabel for a label the test knows to be valid.
+func label(t testing.TB, s string) se.Label {
+	t.Helper()
+	l, err := se.ParseLabel(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return l
+}
+
+// With the identity pinned, the storage column is only the record key, as a
+// Custom target's is: a '/' in it names a database column, not a context, so
+// it is accepted and the context stays the pinned identity's label.
+func TestASlashInARenamedStorageColumnIsOnlyARecordKey(t *testing.T) {
+	facts := []plan.Fact{{Field: "blob", GoField: "Blob", Annotations: []plan.Annotation{{Key: "k", Values: []string{"v"}}}}}
+	p, err := plan.ForMessage(nil, "t", plan.When(plan.Field("blob"), plan.Encrypt(plan.EQL()), plan.Column("blob/v1"), plan.Identity("blob"))).Build(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := p.Fields()[0]
+	if f.Name != "blob/v1" || !f.Context.Equal(label(t, "t/blob").Context()) {
+		t.Fatalf("field = %+v, want record key blob/v1 under t/blob", f)
+	}
+}
+
+// The label error survives the wrapping, so a caller can learn which half
+// of the identifier was wrong rather than only that the decision is invalid.
+func TestABadIdentifierKeepsItsLabelError(t *testing.T) {
+	facts := []plan.Fact{{Field: "a", Annotations: []plan.Annotation{{Key: "k", Values: []string{"v"}}}}}
+	_, err := plan.ForMessage(nil, "a/b", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL()))).Build(facts)
+	var le *se.LabelError
+	if !errors.Is(err, plan.ErrInvalid) || !errors.As(err, &le) || le.Index != 0 {
+		t.Fatalf("err = %v; want ErrInvalid wrapping a LabelError for segment 0", err)
+	}
+	if !strings.Contains(err.Error(), `table "a/b"`) {
+		t.Errorf("err = %v; want the table named", err)
+	}
+}
+
+// Only an EQL target's context is built from the table, so a message whose
+// every encrypted field has a Custom target builds with a table name that
+// would not be a plain segment. Recorded, not endorsed: the table is unused
+// by such a field's context.
+func TestACustomOnlyMessageTakesAnyTableName(t *testing.T) {
+	facts := []plan.Fact{{Field: "a", Annotations: []plan.Annotation{{Key: "k", Values: []string{"v"}}}}}
+	p, err := plan.ForMessage(nil, "a/b", plan.When(plan.Field("a"), plan.Encrypt(plan.Custom("ctx")))).Build(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Fields()[0].Context; !got.Equal(se.MustContext("ctx")) {
+		t.Errorf("context = %v, want the custom part", got)
+	}
 }
