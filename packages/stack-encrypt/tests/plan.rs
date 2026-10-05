@@ -742,6 +742,28 @@ async fn every_build_error_is_its_own() {
     assert_eq!(
         build(
             fields()
+                .encrypt_index::<String>("email", Equality)
+                .encrypt::<String>("email")
+        ),
+        PlanError::DuplicateField {
+            field: "email".into()
+        },
+        "an indexed field named again without passthrough is a field named twice"
+    );
+    assert_eq!(
+        build(
+            fields()
+                .passthrough::<String>("email")
+                .passthrough::<String>("email")
+        ),
+        PlanError::DuplicateField {
+            field: "email".into()
+        },
+        "passthrough twice, with no index, is a field named twice"
+    );
+    assert_eq!(
+        build(
+            fields()
                 .encrypt::<String>("notes")
                 .encrypt::<String>("notes")
         ),
@@ -1257,6 +1279,75 @@ async fn a_keyset_choice_names_what_it_holds() {
         format!("{named:?}"),
         r#"Named(Name(Name { inner: "tenant" }))"#
     );
+}
+
+#[tokio::test]
+async fn every_chain_honours_its_named_keyset() {
+    let cipher = stack_cipher().await;
+    let tenant = cipher
+        .keyset(IdentifiedBy::Name("tenant".to_string().into()))
+        .await
+        .unwrap();
+    let id = tenant.keyset_id();
+    assert_ne!(id, cipher.default_keyset().keyset_id());
+    let user = user();
+
+    let indexed = cipher
+        .encrypt(&34u32)
+        .context("users/age")
+        .with(Equality)
+        .keyset("tenant")
+        .await
+        .unwrap();
+    assert_eq!(leaf_keyset(&indexed.ciphertext), id);
+
+    let mut fields = cipher
+        .encrypt(&user)
+        .context("users")
+        .fields()
+        .encrypt::<String>("email")
+        .encrypt::<u32>("age")
+        .encrypt::<String>("notes")
+        .passthrough::<u64>("id")
+        .keyset("tenant")
+        .await
+        .unwrap();
+    assert_eq!(
+        leaf_keyset(&fields.take::<StackCipherText>("notes").unwrap()),
+        id
+    );
+
+    let users_plan: Plan<User, _> = users_plan();
+    let mut row = cipher
+        .encrypt(&user)
+        .using(&users_plan)
+        .keyset("tenant")
+        .await
+        .unwrap();
+    assert_eq!(
+        leaf_keyset(&row.take::<StackCipherText>("notes").unwrap()),
+        id
+    );
+
+    // A term is keyed by the keyset's index key: a query under the tenant
+    // matches the tenant's term, not the default keyset's.
+    let email: Encrypted<EmailTerms> = row.take("email").unwrap();
+    let email_plan = users_plan.field("email").unwrap();
+    let under_tenant = cipher
+        .query("bob@example.com")
+        .using(&email_plan)
+        .equality()
+        .keyset("tenant")
+        .await
+        .unwrap();
+    let under_default = cipher
+        .query("bob@example.com")
+        .using(&email_plan)
+        .equality()
+        .await
+        .unwrap();
+    assert_eq!(under_tenant, email.terms.0);
+    assert_ne!(under_default, email.terms.0);
 }
 
 // `StackCipher` must stay nameable in this binary's imports.
