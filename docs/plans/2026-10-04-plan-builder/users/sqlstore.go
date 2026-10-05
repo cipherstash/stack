@@ -16,7 +16,7 @@ const (
 )
 
 // SQLStore keeps users in Postgres through database/sql. Each tenant has its
-// own keyset; every tenant shares the plans.
+// own keyset; every tenant shares the plan.
 type SQLStore struct {
 	db     *sql.DB
 	client *stackencrypt.Client
@@ -31,18 +31,18 @@ func (s *SQLStore) cipher(tenant string) *stackencrypt.Cipher {
 }
 
 func (s *SQLStore) Create(ctx context.Context, tenant string, user User) error {
-	row, err := userRowPlan.Encrypt(ctx, s.cipher(tenant), user)
+	enc, err := stackencrypt.Encrypt(ctx, s.cipher(tenant), user)
 	if err != nil {
 		return fmt.Errorf("encrypt user %d: %w", user.ID, err)
 	}
-	_, err = s.db.ExecContext(ctx, insertUser, args(row)...)
+	_, err = s.db.ExecContext(ctx, insertUser, args(enc)...)
 	return err
 }
 
 // Import encrypts every user in one ZeroKMS request, then inserts them in one
 // transaction.
 func (s *SQLStore) Import(ctx context.Context, tenant string, people []User) error {
-	rows, err := userRowPlan.EncryptAll(ctx, s.cipher(tenant), people)
+	encrypted, err := stackencrypt.EncryptAll(ctx, s.cipher(tenant), people)
 	if err != nil {
 		return fmt.Errorf("encrypt %d users: %w", len(people), err)
 	}
@@ -59,9 +59,9 @@ func (s *SQLStore) Import(ctx context.Context, tenant string, people []User) err
 	}
 	defer stmt.Close()
 
-	for _, row := range rows {
-		if _, err := stmt.ExecContext(ctx, args(row)...); err != nil {
-			return fmt.Errorf("insert user %d: %w", row.ID, err)
+	for _, enc := range encrypted {
+		if _, err := stmt.ExecContext(ctx, args(enc)...); err != nil {
+			return fmt.Errorf("insert user %d: %w", enc.ID, err)
 		}
 	}
 	return tx.Commit()
@@ -69,66 +69,68 @@ func (s *SQLStore) Import(ctx context.Context, tenant string, people []User) err
 
 func (s *SQLStore) FindByEmail(ctx context.Context, tenant, email string) ([]User, error) {
 	cipher := s.cipher(tenant)
-	term, err := emailPlan.Equality(ctx, cipher, email)
+	term, err := UserFields.Email.Equality(ctx, cipher, email)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.query(ctx, selectUser+` WHERE email_eq = $1`, term)
+	encrypted, err := s.query(ctx, selectUser+` WHERE email_eq = $1`, term)
 	if err != nil {
 		return nil, err
 	}
-	return userRowPlan.DecryptAll(ctx, cipher, rows)
+	return stackencrypt.DecryptAll(ctx, cipher, encrypted)
 }
 
 // OldestFirst returns users aged minAge or over, oldest first. ORE terms
 // compare in Go; a range scan inside the database needs EQL's ORE operators.
 func (s *SQLStore) OldestFirst(ctx context.Context, tenant string, minAge uint32) ([]User, error) {
 	cipher := s.cipher(tenant)
-	floor, err := agePlan.Ore(ctx, cipher, minAge)
+	floor, err := UserFields.Age.Ore(ctx, cipher, minAge)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.query(ctx, selectUser)
+	encrypted, err := s.query(ctx, selectUser)
 	if err != nil {
 		return nil, err
 	}
-	rows = slices.DeleteFunc(rows, func(r UserRow) bool { return r.AgeOre.Compare(floor) < 0 })
-	slices.SortFunc(rows, func(a, b UserRow) int { return b.AgeOre.Compare(a.AgeOre) })
-	return userRowPlan.DecryptAll(ctx, cipher, rows)
+	encrypted = slices.DeleteFunc(encrypted, func(e EncryptedUser) bool { return e.Age.Ore.Compare(floor) < 0 })
+	slices.SortFunc(encrypted, func(a, b EncryptedUser) int { return b.Age.Ore.Compare(a.Age.Ore) })
+	return stackencrypt.DecryptAll(ctx, cipher, encrypted)
 }
 
 func (s *SQLStore) WithRole(ctx context.Context, tenant, role string) ([]User, error) {
 	cipher := s.cipher(tenant)
-	contains, err := attrsPlan.Contains(ctx, cipher, map[string]any{"role": role})
+	contains, err := UserFields.Attrs.Contains(ctx, cipher, map[string]any{"role": role})
 	if err != nil {
 		return nil, err
 	}
 	// Illustrative: the containment predicate is EQL's.
-	rows, err := s.query(ctx, selectUser+` WHERE attrs @> $1`, contains)
+	encrypted, err := s.query(ctx, selectUser+` WHERE attrs @> $1`, contains)
 	if err != nil {
 		return nil, err
 	}
-	return userRowPlan.DecryptAll(ctx, cipher, rows)
+	return stackencrypt.DecryptAll(ctx, cipher, encrypted)
 }
 
-func (s *SQLStore) query(ctx context.Context, q string, params ...any) ([]UserRow, error) {
+func (s *SQLStore) query(ctx context.Context, q string, params ...any) ([]EncryptedUser, error) {
 	rs, err := s.db.QueryContext(ctx, q, params...)
 	if err != nil {
 		return nil, err
 	}
 	defer rs.Close()
 
-	var found []UserRow
+	var found []EncryptedUser
 	for rs.Next() {
-		var r UserRow
-		if err := rs.Scan(&r.ID, &r.Email, &r.EmailEq, &r.EmailMatch, &r.Age, &r.AgeEq, &r.AgeOre, &r.Attrs, &r.Notes); err != nil {
+		var e EncryptedUser
+		if err := rs.Scan(&e.ID, &e.Email.Ciphertext, &e.Email.Equality, &e.Email.Match,
+			&e.Age.Ciphertext, &e.Age.Equality, &e.Age.Ore, &e.Attrs, &e.Notes); err != nil {
 			return nil, err
 		}
-		found = append(found, r)
+		found = append(found, e)
 	}
 	return found, rs.Err()
 }
 
-func args(r UserRow) []any {
-	return []any{r.ID, r.Email, r.EmailEq, r.EmailMatch, r.Age, r.AgeEq, r.AgeOre, r.Attrs, r.Notes}
+func args(e EncryptedUser) []any {
+	return []any{e.ID, e.Email.Ciphertext, e.Email.Equality, e.Email.Match,
+		e.Age.Ciphertext, e.Age.Equality, e.Age.Ore, e.Attrs, e.Notes}
 }

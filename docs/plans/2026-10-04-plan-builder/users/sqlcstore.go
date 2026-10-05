@@ -16,7 +16,7 @@ var ErrNotFound = errors.New("users: not found")
 // checks sqlc's generated struct at startup. A column added without an override
 // has no stash tag, and the program panics here instead of storing it as
 // plaintext.
-var sqlcRowPlan = stackencrypt.MustRowPlan[userdb.User](usersPlan)
+var sqlcRowPlan = stackencrypt.MustRowPlan[userdb.User](userPlan.Record())
 
 // SQLCStore keeps users in Postgres through the queries sqlc generates.
 type SQLCStore struct {
@@ -80,7 +80,7 @@ func (s *SQLCStore) Get(ctx context.Context, tenant string, id int64) (User, err
 
 func (s *SQLCStore) FindByEmail(ctx context.Context, tenant, email string) ([]User, error) {
 	cipher := s.cipher(tenant)
-	term, err := emailPlan.Equality(ctx, cipher, email)
+	term, err := UserFields.Email.Equality(ctx, cipher, email)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +103,7 @@ func (s *SQLCStore) List(ctx context.Context, tenant string) ([]User, error) {
 // three change together: a stale email_eq would let FindByEmail match the old
 // address.
 func (s *SQLCStore) ChangeEmail(ctx context.Context, tenant string, id int64, email string) error {
-	field, err := emailPlan.Encrypt(ctx, s.cipher(tenant), email)
+	field, err := UserFields.Email.Encrypt(ctx, s.cipher(tenant), email)
 	if err != nil {
 		return err
 	}

@@ -7,6 +7,25 @@ import (
 	"gorm.io/gorm"
 )
 
+// UserRow is the GORM model: one field for each column. GORM's default naming
+// maps EmailEq to email_eq. It is written by hand, so the row plan checks it
+// against the plan at package init.
+type UserRow struct {
+	ID         int64                     `stash:"id"`
+	Email      stackencrypt.Ciphertext   `stash:"email"`
+	EmailEq    stackencrypt.EqualityTerm `stash:"email,equality"`
+	EmailMatch stackencrypt.MatchTerm    `stash:"email,match"`
+	Age        stackencrypt.Ciphertext   `stash:"age"`
+	AgeEq      stackencrypt.EqualityTerm `stash:"age,equality"`
+	AgeOre     stackencrypt.OreTerm      `stash:"age,ore"`
+	Attrs      stackencrypt.JSONDocument `stash:"attrs,json"`
+	Notes      stackencrypt.Ciphertext   `stash:"notes"`
+}
+
+func (UserRow) TableName() string { return "users" }
+
+var gormRowPlan = stackencrypt.MustRowPlan[UserRow](userPlan.Record())
+
 // GormStore encrypts before GORM sees a value. driver.Valuer gets no
 // context.Context and runs one field at a time, so it cannot batch a ZeroKMS
 // request or stop when the request is cancelled. An AfterFind hook works too,
@@ -22,7 +41,7 @@ func NewGormStore(db *gorm.DB, client *stackencrypt.Client) *GormStore {
 
 func (s *GormStore) Create(ctx context.Context, tenant string, people ...User) error {
 	cipher := s.client.Keyset(stackencrypt.KeysetName(tenant))
-	rows, err := userRowPlan.EncryptAll(ctx, cipher, people)
+	rows, err := gormRowPlan.EncryptAll(ctx, cipher, people)
 	if err != nil {
 		return err
 	}
@@ -31,7 +50,7 @@ func (s *GormStore) Create(ctx context.Context, tenant string, people ...User) e
 
 func (s *GormStore) FindByEmail(ctx context.Context, tenant, email string) ([]User, error) {
 	cipher := s.client.Keyset(stackencrypt.KeysetName(tenant))
-	term, err := emailPlan.Equality(ctx, cipher, email)
+	term, err := UserFields.Email.Equality(ctx, cipher, email)
 	if err != nil {
 		return nil, err
 	}
@@ -39,5 +58,5 @@ func (s *GormStore) FindByEmail(ctx context.Context, tenant, email string) ([]Us
 	if err := s.db.WithContext(ctx).Where("email_eq = ?", term).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	return userRowPlan.DecryptAll(ctx, cipher, rows)
+	return gormRowPlan.DecryptAll(ctx, cipher, rows)
 }

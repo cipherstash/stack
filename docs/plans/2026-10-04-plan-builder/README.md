@@ -9,10 +9,11 @@ The module path is `example.com/app`.
 | File | What it shows |
 |---|---|
 | [`main.go`](main.go) | A client, one keyset for each tenant, and calls into every package below |
-| [`users/model.go`](users/model.go) | A plan in struct tags, a storage struct, and the plans held in package-level variables |
-| [`users/sqlstore.go`](users/sqlstore.go) | `database/sql`: insert, batch insert in a transaction, equality search, ORE ordering and JSON containment |
-| [`users/gormstore.go`](users/gormstore.go) | GORM, with the storage struct as the model |
-| [`users/sqlcstore.go`](users/sqlcstore.go) | sqlc, including an update of one field and its terms |
+| [`users/model.go`](users/model.go) | A plan in struct tags, and the `go:generate` line that runs `stashgen` |
+| [`users/user_stash.go`](users/user_stash.go) | The file that `stashgen` writes: the encrypted type, the plan, and the typed fields |
+| [`users/sqlstore.go`](users/sqlstore.go) | `database/sql` with the generated type: insert, batch insert in a transaction, equality search, ORE ordering and JSON containment |
+| [`users/gormstore.go`](users/gormstore.go) | GORM, with a hand-written model that a row plan checks at package init |
+| [`users/sqlcstore.go`](users/sqlcstore.go) | sqlc, with the sqlc model in a row plan, and an update of one field and its terms |
 | [`users/extend.go`](users/extend.go) | A context extension on the write, the query and the read |
 | [`sqlc/`](sqlc/) | The schema, the queries and the overrides that generate [`internal/userdb/`](internal/userdb/) |
 | [`contacts/contacts.go`](contacts/contacts.go) | A plan built by hand for a type with no tags |
@@ -20,6 +21,10 @@ The module path is `example.com/app`.
 | [`blocklist/blocklist.go`](blocklist/blocklist.go) | A value plan for a value with no record around it |
 | [`documents/documents.go`](documents/documents.go) | One value sealed as one tree, decrypted with the client |
 | [`eql-sqlc/`](eql-sqlc/) | sqlc with EQL v3 domain columns, which generates [`internal/eqldb/`](internal/eqldb/) |
+
+## Generate the encrypted type
+
+`stashgen` does not exist yet, so [`users/user_stash.go`](users/user_stash.go) is written by hand as the file it will write.
 
 ## Generate the sqlc packages
 
