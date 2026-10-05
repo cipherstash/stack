@@ -1,5 +1,0 @@
-error: a literal `context` is one label segment, so it must be plain: no `/`, `(`, `)`, control or invisible character, and not beginning with `b64:`, a digit or `-`; otherwise it would render escaped. Name the field with one plain segment (e.g. `context = "email"`)
- --> tests/ui/non_plain_literal_context.rs:9:23
-  |
-9 |     #[stash(context = "users/email")]
-  |                       ^^^^^^^^^^^^^

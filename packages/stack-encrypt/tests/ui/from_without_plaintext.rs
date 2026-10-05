@@ -10,13 +10,13 @@ struct User {
 #[derive(EncryptFrom)]
 #[stash(plaintext = User)]
 struct Row {
-    #[stash(from = age, context = "users/age")]
+    #[stash(from = age)]
     age: StackCipherText,
 }
 
 #[derive(EncryptFrom)]
 struct Unnamed {
-    #[stash(from = age, context = "users/age")]
+    #[stash(from = age)]
     age: StackCipherText,
 }
 

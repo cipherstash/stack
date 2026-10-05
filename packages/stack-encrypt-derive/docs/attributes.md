@@ -28,12 +28,18 @@ literal.
 
 | Attribute | Effect |
 |---|---|
-| `context_field` | Store the caller’s typed context here and recover it on decryption. Exactly one per record; excludes the other field attributes and literal contexts. |
-| `context = "..."` | With a `plaintext` record only: derive this field under exactly this context, extended by the one the caller passes for the record like any other. A query-side term built under the same literal — extended the same way — matches it. One plain segment (`"email"`, not `"users/email"`), as a plan's context segments are. Refused on a field of a `struct` derive, which sits under the record's context: use `identity`. |
+| `context_field` | Store the caller’s typed context here and recover it on decryption. Exactly one per record; excludes the other field attributes. |
 | `identity = "..."` | With `struct` only: key this field under the segment `identity` instead of the plaintext field's name, so it is derived under `("<context>", "<identity>")`. One plain segment. The plan builder's `.identity(segment)`. |
 | `from = field` / `from = 0` | With `struct` only: derive this field from `plaintext.field` (or `plaintext.0` for a tuple struct) when its name differs from its plaintext field's. A plaintext field has one output: two fields `from` one plaintext field are refused (a ciphertext with its terms is one `Encrypted<Terms>` field). |
 | `default` / `default = expr` | Not derived: filled with `Default::default()` or `expr`. Never encrypted, never authenticated. |
 | `decrypt` | Decryption opens this field (`DecryptInto` only). Needed only when the field types cannot decide it — see below. |
+
+A field takes no `context = ".."` of its own, on any derive: it is a compile
+error. A plan has exactly one context source, and every output sits under it.
+All outputs of a `plaintext = T` record share the caller's context; every
+field of a `struct` derive sits under the record's (`identity` keys it under
+another segment of it). Writing one value under two different contexts, a
+dual write, is a fields plan that picks the same source twice, not a derive.
 
 Each derive emits one declaration per plaintext, with an associated `Context`.
 A record with `#[stash(context_field)]` on a field of type `T` requires
@@ -41,12 +47,11 @@ A record with `#[stash(context_field)]` on a field of type `T` requires
 takes `ExpectedContext<T>`. Its default checks only that the stored value is nonempty and then opens the record under whatever context it stores — so a ciphertext moved together with its stored context opens as if it belonged where it now sits. `NonEmpty<T>.into()` names the destination the caller believes it is opening; a stored context that differs is refused with `Error::ContextMismatch` before any key is retrieved. Either way the stored context is data the record arrived with, not something the cipher has authenticated.
 `T` supplies the Vitamin C context encodings and implements `Clone`,
 `MaybeEmpty`, and `PartialEq`. This metadata is not a separate encrypted field.
-It cannot be combined with literal context attributes.
 
-Otherwise, a record whose fields all carry their own contexts (including a
-`struct` derive) uses `DeclaredContext`. `().into()` or its default selects the
+Otherwise, a `struct` derive, whose fields all carry their own contexts, uses
+`DeclaredContext`. `().into()` or its default selects the
 declared contexts unchanged; a nonempty caller context extends each base context.
-A record with fields that need a caller context uses `CallerContext`, constructed
+A `plaintext` record, whose fields all take the caller's context, uses `CallerContext`, constructed
 from a `NonEmpty<T>` or a supported integer. Both encodings and the descriptor's
 structured identity are preserved when borrowing context data is converted into
 an owned declaration. No context is inferred from a Rust type's name.
@@ -75,11 +80,9 @@ let record: SealedName = name.encrypt_into_with_context(&keyset, NonEmpty::new(t
 The derive cannot pick this for you: it sees the field types' names, not
 what they declare. The type you name must convert into every field's own
 `Context` (`AeadContext` does not convert into `CallerContext`, so a term
-field beside it is a compile error at the record, which is the point), and a
-field with a `context = ".."` of its own is derived under that literal
-extended by the caller's context through the type's `extend` — `AeadContext`
-and `CallerContext` both have one. A record with a `context_field`, or a
-`struct` derive, settles its context itself and refuses the attribute.
+field beside it is a compile error at the record, which is the point). A
+record with a `context_field`, or a `struct` derive, settles its context
+itself and refuses the attribute.
 
 A declaration is executed by `keyset.encrypt_as(&value, context)` and
 `cipher.decrypt_as(record, context)`, or through the blanket `EncryptInto` and
@@ -110,9 +113,8 @@ encrypted struct. Nothing is pluralised or otherwise guessed. The pair is
 what `nonempty!("users").with("age")` spells at a call site, and what a
 two-segment `Label` spells. `#[stash(identity = "nickname")] name: ..`
 replaces the second part only: the field is derived under
-`("users", "nickname")`. A field of a `struct` derive cannot be given a
-context of its own (`context = ".."` on it is refused): it always sits under
-the record's. Each plaintext field has exactly one output, and each output
+`("users", "nickname")`. A field cannot be given a context of its own
+(`context = ".."` on it is refused): it always sits under the record's. Each plaintext field has exactly one output, and each output
 its own segment: a ciphertext with search terms beside it is one field of
 type `Encrypted<Terms>` (`email: Encrypted<(EqualityTerm, MatchTerms)>`),
 not a ciphertext field plus term fields `from` the same plaintext field. A

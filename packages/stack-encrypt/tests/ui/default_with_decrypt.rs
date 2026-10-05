@@ -3,7 +3,7 @@ use stack_encrypt::{EncryptFrom, StackCipherText};
 #[derive(EncryptFrom)]
 struct Rec {
     c: StackCipherText,
-    #[stash(default, context = "x")]
+    #[stash(default, decrypt)]
     v: u8,
 }
 

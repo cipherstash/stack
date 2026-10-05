@@ -172,15 +172,15 @@ async fn a_generic_plaintext_record_accepts_what_its_leaves_accept() {
     assert_eq!(score, 7);
 }
 
-/// Two ciphertexts in one record: the type system cannot pick, so
-/// `#[stash(decrypt)]` does. Only marked fields are considered, and the
+/// Two ciphertexts in one record, both under the caller's context (every
+/// output of a `plaintext` record shares it): the type system cannot pick,
+/// so `#[stash(decrypt)]` does. Only marked fields are considered, and the
 /// others need not be `Decryptable` at all.
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(plaintext = u32)]
 struct Doubled {
     #[stash(decrypt)]
     c: StackCipherText,
-    #[stash(context = "shadow")]
     shadow: StackCipherText,
 }
 
@@ -207,16 +207,15 @@ async fn decrypt_marks_the_field_when_the_types_cannot_choose() {
         .await
         .unwrap();
     assert_eq!(opened, 9);
-    // The unmarked ciphertext is still a ciphertext, just not the record's —
-    // and its literal context is extended by the caller's like any other:
-    // sealed under `("shadow", "doubled")`.
+    // The unmarked ciphertext is still a ciphertext, just not the record's:
+    // a second, independent seal of the same value under the same context.
     let doubled: Doubled = 9u32
         .encrypt_into_with_context(&keyset, nonempty!("doubled"))
         .await
         .unwrap();
     let shadow: u32 = doubled
         .shadow
-        .decrypt_into(&cipher, nonempty!("shadow").with(nonempty!("doubled")))
+        .decrypt_into(&cipher, nonempty!("doubled"))
         .await
         .unwrap();
     assert_eq!(shadow, 9);
@@ -773,25 +772,27 @@ async fn a_tuple_plaintext_is_reached_and_rebuilt_by_index() {
 
 // --- A field handed a context converts it into what its type declares -------
 
-/// A record with a context of its own wrapping a struct record that carries
-/// its own: the literal gives the whole subtree its context, and the inner
-/// record's own contexts are extended by it — `("user/age", "wrapped")`.
-/// The derive is told nothing about the inner record's context type.
+/// A `plaintext` record wrapping a struct record that carries contexts of
+/// its own: the caller's context reaches the inner record as it is, and
+/// extends its contexts — `("user/age", "wrapped")`. The derive is told
+/// nothing about the inner record's context type.
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(plaintext = User)]
 struct WrappedUser {
-    #[stash(context = "wrapped")]
     user: EncryptedUser,
 }
 
 #[tokio::test]
-async fn a_field_with_its_own_context_may_be_a_record_with_declared_contexts() {
+async fn a_plaintext_record_field_may_be_a_record_with_declared_contexts() {
     let cipher = stack_cipher().await;
     let keyset = cipher.default_keyset();
     let generator = stack_cipher().await;
     let generator = generator.default_keyset();
 
-    let row: WrappedUser = user().encrypt_into(&keyset).await.unwrap();
+    let row: WrappedUser = user()
+        .encrypt_into_with_context(&keyset, nonempty!("wrapped"))
+        .await
+        .unwrap();
     let age_hm: EqualityTerm = 42u32
         .encrypt_into_with_context(
             &generator,
@@ -801,64 +802,8 @@ async fn a_field_with_its_own_context_may_be_a_record_with_declared_contexts() {
         .unwrap();
     assert_eq!(row.user.age.hm, age_hm);
 
-    let recovered = User::decrypt_from(row, &cipher).await.unwrap();
+    let recovered = User::decrypt_from_with_context(row, &cipher, nonempty!("wrapped"))
+        .await
+        .unwrap();
     assert_eq!(recovered, user());
-}
-
-/// A record whose one field pins a literal context: needs nothing from the
-/// caller, and a caller's context extends the literal.
-#[derive(EncryptFrom, DecryptInto)]
-#[stash(plaintext = u32)]
-struct PinnedAge {
-    #[stash(context = "legacy_age")]
-    c: StackCipherText,
-}
-
-/// A record mixing a leaf with a context of its own and a bare record whose
-/// fields declare theirs: the caller's context is required, since the bare
-/// field needs it; the leaf's literal is extended by it; and the record is
-/// handed it as it is and composes it with its own.
-#[derive(EncryptFrom, DecryptInto)]
-#[stash(plaintext = u32)]
-struct AuditedAge {
-    #[stash(context = "audit", decrypt)]
-    audit: StackCipherText,
-    age: PinnedAge,
-}
-
-#[tokio::test]
-async fn a_bare_record_field_takes_the_callers_context_beside_a_leaf_with_its_own() {
-    let cipher = stack_cipher().await;
-    let keyset = cipher.default_keyset();
-
-    let row: AuditedAge = 42u32
-        .encrypt_into_with_context(&keyset, nonempty!("tenant"))
-        .await
-        .unwrap();
-    // The leaf: its own literal, extended by the caller's.
-    let audit: u32 = row
-        .audit
-        .decrypt_into(&cipher, nonempty!("audit").with(nonempty!("tenant")))
-        .await
-        .unwrap();
-    assert_eq!(audit, 42);
-    // The record: handed the caller's as it is, which extends its own.
-    let age: u32 = row
-        .age
-        .c
-        .decrypt_into(&cipher, nonempty!("legacy_age").with(nonempty!("tenant")))
-        .await
-        .unwrap();
-    assert_eq!(age, 42);
-
-    // And the record as a whole opens under the caller's context.
-    let row: AuditedAge = 42u32
-        .encrypt_into_with_context(&keyset, nonempty!("tenant"))
-        .await
-        .unwrap();
-    let opened: u32 = row
-        .decrypt_into(&cipher, nonempty!("tenant"))
-        .await
-        .unwrap();
-    assert_eq!(opened, 42);
 }

@@ -11,11 +11,4 @@ struct EncryptedUser {
     email: StackCipherText,
 }
 
-#[derive(EncryptFrom)]
-#[stash(plaintext = u32)]
-struct Pinned {
-    #[stash(context = "")]
-    c: StackCipherText,
-}
-
 fn main() {}

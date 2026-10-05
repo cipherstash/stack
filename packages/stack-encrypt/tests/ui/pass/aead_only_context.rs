@@ -29,15 +29,13 @@ struct Sealed {
     c: StackCipherText,
 }
 
-/// A field with a context of its own beside one that takes the caller's:
-/// the literal is extended by the AEAD-only context, as it would be by a
-/// `CallerContext`.
+/// Two ciphertexts under the one AEAD-only context the caller passes, with
+/// `decrypt` choosing the one the record opens.
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(plaintext = String, context_type = AeadContext)]
 struct Shadowed {
     #[stash(decrypt)]
     c: StackCipherText,
-    #[stash(context = "legacy_name")]
     shadow: StackCipherText,
 }
 

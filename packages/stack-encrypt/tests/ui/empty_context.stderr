@@ -3,9 +3,3 @@ error: an `identity` is the one label segment the field is keyed under, so it mu
    |
 10 |     #[stash(identity = "")]
    |                        ^^
-
-error: an empty `context` is rejected when a value is encrypted: name the field (e.g. "email"), or drop the attribute to hand the field the caller's context
-  --> tests/ui/empty_context.rs:17:23
-   |
-17 |     #[stash(context = "")]
-   |                       ^^

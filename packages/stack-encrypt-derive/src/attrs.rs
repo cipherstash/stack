@@ -209,12 +209,6 @@ impl ContainerAttrs {
 #[derive(Default)]
 pub(crate) struct FieldAttrs {
     pub(crate) context_field: bool,
-    /// `#[stash(context = "...")]`: with a `plaintext` record, derive this
-    /// field under exactly this context instead of the one the caller passes
-    /// for the record. Extended by a caller's context like any other. Refused
-    /// on a field of a `struct` derive, whose fields sit under the record's
-    /// context (`identity` names the segment instead).
-    pub(crate) context: Option<LitStr>,
     /// `#[stash(identity = "...")]`: with `struct = ..`, the label segment
     /// this field is keyed under, in place of the plaintext field's name:
     /// the field is derived under `("<context>", "<identity>")`. The plan
@@ -244,18 +238,25 @@ impl FieldAttrs {
                     parsed.context_field = true;
                     return Ok(());
                 }
+                // Removed rather than unknown, so the message can say what
+                // to write instead. A plan has exactly one context source,
+                // and every field sits under it: a field sealed under a
+                // literal of its own has no plan form.
                 if meta.path.is_ident("context") {
-                    // Each of these is singular by meaning, so a repeat is a
-                    // mistake: rejected rather than silently overwritten. A
-                    // silently-winning second `from` would be the worst of
-                    // them — it crosses fields, which is exactly the failure
-                    // the derive exists to prevent.
-                    if parsed.context.is_some() {
-                        return Err(meta.error("`context` is given twice; a field has one context"));
-                    }
-                    parsed.context = Some(meta.value()?.parse()?);
-                    return Ok(());
+                    return Err(meta.error(
+                        "a field-level `context = \"..\"` is no longer accepted: all outputs of a \
+                         `plaintext = T` record share the caller's context, and every field of a \
+                         `struct = ..` derive sits under the record's context (key it under \
+                         another segment with `identity = \"..\"`). Writing one value under two \
+                         contexts (a dual write) is a fields plan that picks the same source \
+                         twice, not a derive",
+                    ));
                 }
+                // Each of these is singular by meaning, so a repeat is a
+                // mistake: rejected rather than silently overwritten. A
+                // silently-winning second `from` would be the worst of them —
+                // it crosses fields, which is exactly the failure the derive
+                // exists to prevent.
                 if meta.path.is_ident("identity") {
                     if parsed.identity.is_some() {
                         return Err(meta.error(
@@ -302,7 +303,7 @@ impl FieldAttrs {
                     ));
                 }
                 Err(meta.error(
-                    "unsupported field attribute; expected `context_field`, `context = \"...\"`, \
+                    "unsupported field attribute; expected `context_field`, \
                      `identity = \"...\"`, `from = field`, `default`, `default = expr` or \
                      `decrypt`",
                 ))

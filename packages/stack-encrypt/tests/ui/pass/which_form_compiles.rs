@@ -1,4 +1,4 @@
-//! The three record shapes and the call forms each accepts. Every line here
+//! The two record shapes and the call forms each accepts. Every line here
 //! must compile; `tests/ui/leaf_without_context.rs` and
 //! `tests/ui/bare_context.rs` pin the lines that must not.
 use stack_encrypt::sem::EqualityTerm;
@@ -9,25 +9,6 @@ use stack_kms::FakeDataKeySource;
 /// Encrypting binds to a keyset; decrypting works through the same handle
 /// (constrained to that keyset) as well as through the `StackCipher`.
 type Cipher<'k> = KeysetCipher<'k, FakeDataKeySource>;
-
-/// A record whose one field pins a literal context: needs nothing from the
-/// caller, and takes a context that then *extends* the literal.
-#[derive(EncryptFrom, DecryptInto)]
-#[stash(plaintext = u32)]
-struct Pinned {
-    #[stash(context = "legacy_age")]
-    c: StackCipherText,
-}
-
-async fn pinned(cipher: &Cipher<'_>, tenant_id: u64) -> Result<(), stack_encrypt::Error> {
-    // Sealed under "legacy_age".
-    let p: Pinned = 42u32.encrypt_into(cipher).await?;
-    let _: u32 = p.decrypt_into(cipher, ()).await?;
-    // Sealed under ("legacy_age", tenant_id).
-    let p: Pinned = 42u32.encrypt_into_with_context(cipher, tenant_id).await?;
-    let _: u32 = p.decrypt_into(cipher, NonEmpty::from(tenant_id)).await?;
-    Ok(())
-}
 
 /// A record whose fields have no context of their own: the caller's is
 /// the only one there is, so it must be given.
@@ -81,7 +62,6 @@ async fn user(cipher: &Cipher<'_>, user: User, id: u64) -> Result<(), stack_encr
 }
 
 fn main() {
-    let _ = pinned;
     let _ = foo;
     let _ = user;
 }

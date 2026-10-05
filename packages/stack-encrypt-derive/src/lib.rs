@@ -30,10 +30,11 @@
 //! # }).unwrap();
 //! ```
 //!
-//! For a record without a context field, fields use the caller's context or a
-//! declared literal. A record made only of ciphertexts can declare
-//! `context_type = AeadContext` and accept a context type that implements
-//! `IntoAad` alone, as the ciphertext leaf itself does.
+//! For a `plaintext` record without a context field, every field uses the
+//! caller's context: a field takes no literal context of its own. A record
+//! made only of ciphertexts can declare `context_type = AeadContext` and
+//! accept a context type that implements `IntoAad` alone, as the ciphertext
+//! leaf itself does.
 //! `struct = User, context = "users"` selects plaintext fields
 //! and binds each under the pair `("users", "<field>")`, which renders
 //! `users/<field>` as its ZeroKMS descriptor; `identity = ".."` on a field keys

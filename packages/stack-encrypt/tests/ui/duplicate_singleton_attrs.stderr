@@ -4,26 +4,26 @@ error: `from` is given twice; a field is derived from one plaintext field
 11 |     #[stash(from = expected, from = other)]
    |                              ^^^^
 
-error: `context` is given twice; a field has one context
-  --> tests/ui/duplicate_singleton_attrs.rs:17:38
+error: `identity` is given twice; a field is keyed under one segment
+  --> tests/ui/duplicate_singleton_attrs.rs:18:33
    |
-17 |     #[stash(context = "users/email", context = "users/name")]
-   |                                      ^^^^^^^
+18 |     #[stash(identity = "email", identity = "name")]
+   |                                 ^^^^^^^^
 
 error: `default` is given twice
-  --> tests/ui/duplicate_singleton_attrs.rs:24:22
+  --> tests/ui/duplicate_singleton_attrs.rs:25:22
    |
-24 |     #[stash(default, default = 3)]
+25 |     #[stash(default, default = 3)]
    |                      ^^^^^^^
 
 error: `decrypt` is given twice
-  --> tests/ui/duplicate_singleton_attrs.rs:30:22
+  --> tests/ui/duplicate_singleton_attrs.rs:31:22
    |
-30 |     #[stash(decrypt, decrypt)]
+31 |     #[stash(decrypt, decrypt)]
    |                      ^^^^^^^
 
 error: `crate` is given twice
-  --> tests/ui/duplicate_singleton_attrs.rs:35:34
+  --> tests/ui/duplicate_singleton_attrs.rs:36:34
    |
-35 | #[stash(crate = "stack_encrypt", crate = "stack_encrypt")]
+36 | #[stash(crate = "stack_encrypt", crate = "stack_encrypt")]
    |                                  ^^^^^

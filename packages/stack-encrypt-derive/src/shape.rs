@@ -63,9 +63,9 @@ pub(crate) struct Field {
 pub(crate) enum Kind {
     /// Derived from the source through the field type's own `EncryptFrom`.
     Derived {
-        /// This field's own context, if it has one: a `#[stash(context =
-        /// "...")]` literal, or the `(prefix, field)` pair a `struct` derive
-        /// infers. A context the caller passes extends it either way.
+        /// This field's own context: the `(prefix, field)` pair a `struct`
+        /// derive infers, extended by a context the caller passes. `None` for
+        /// every field of a `plaintext` record, which takes the caller's.
         context: Option<OwnContext>,
         /// With `struct = ..`: the plaintext field this one is derived
         /// from — its own name, or the `#[stash(from = field)]` override.
@@ -94,15 +94,14 @@ impl Field {
     /// How this derived field gets its context — the one classification both
     /// derives project their where clauses and bodies from.
     ///
-    /// A field with a context of its own — a literal, or the one a `struct`
-    /// derive infers — is derived under it as it is when the caller passes
+    /// Every field of a `struct` derive has a context of its own, the one the
+    /// derive infers: it is derived under it as it is when the caller passes
     /// `()`, and under it *extended* with the caller's (`(("users", "age"), id)`)
-    /// when the caller passes a `NonEmpty<_>`. A field with none is handed
-    /// the caller's context as it is, and its type decides what that means:
-    /// a record field composes it with its own contexts; a leaf accepts it
-    /// only as a `NonEmpty<_>`, so under the record's `()` impl such a leaf
-    /// is a compile error, at the field, and the fix is a `context = ".."` on
-    /// it. Every field of a `struct` derive has a context of its own.
+    /// when the caller passes a `NonEmpty<_>`. Every field of a `plaintext`
+    /// record has none and is handed the caller's context as it is (a
+    /// one-value plan has one context source), and its type decides what
+    /// that means: a record field composes it with its own contexts; a leaf
+    /// accepts it only as a `NonEmpty<_>`.
     ///
     /// Only called for derived fields: a `default` field is not derived from
     /// the source and is never handed a context at all.
@@ -120,8 +119,6 @@ impl Field {
 /// A derived field's own context.
 #[cfg_attr(test, derive(Debug))]
 pub(crate) enum OwnContext {
-    /// `#[stash(context = "...")]`: one text part, exactly as written.
-    Literal(LitStr),
     /// What a `struct` derive infers: the pair (container `context` prefix,
     /// plaintext field name), two parts, so it renders `prefix/field` without
     /// the field name having to be joined into, or kept out of, a string. The
@@ -133,7 +130,6 @@ impl OwnContext {
     /// The `NonEmpty` the derive hands `under` / `extend`.
     fn expr(&self, krate: &Path) -> TokenStream {
         match self {
-            Self::Literal(lit) => quote!(#krate::nonempty!(#lit)),
             Self::Prefixed { prefix, field } => {
                 quote!(#krate::nonempty!(#prefix).with(#field))
             }
@@ -144,9 +140,9 @@ impl OwnContext {
 /// Where a derived field's context comes from. See [`Field::field_context`].
 #[cfg_attr(test, derive(Debug))]
 pub(crate) enum FieldContext<'a> {
-    /// A context of the field's own — `#[stash(context = "...")]`, or the
-    /// `(prefix, field)` pair a `struct` derive infers: as it is under `()`,
-    /// extended with the caller's context under `NonEmpty<_>`.
+    /// A context of the field's own, the `(prefix, field)` pair a `struct`
+    /// derive infers: as it is under `()`, extended with the caller's
+    /// context under `NonEmpty<_>`.
     Own(&'a OwnContext),
     /// No context of its own: handed the caller's as it is — `()`, or the
     /// record's associated context.
@@ -216,19 +212,6 @@ impl Record {
                 "`context_field` supplies the complete context; a literal prefix does not apply",
             ));
         }
-        if fields.iter().any(|f| matches!(f.kind, Kind::Context))
-            && fields.iter().any(|f| {
-                matches!(
-                    f.kind,
-                    Kind::Derived {
-                        context: Some(_),
-                        ..
-                    }
-                )
-            })
-        {
-            return Err(syn::Error::new_spanned(&input.ident, "`context_field` supplies the complete context; literal field contexts do not apply"));
-        }
         let by_field = attrs.by_field.is_some();
         if by_field {
             one_output_per_plaintext_field(&fields)?;
@@ -253,23 +236,15 @@ impl Record {
             fields,
         };
         // `ContainerAttrs::parse` has refused `context_type` beside `struct`;
-        // the other two shapes that settle the context themselves are
-        // checked here, where the fields are known.
+        // the other shape that settles the context itself is checked here,
+        // where the fields are known. (A `plaintext` record's derived fields
+        // all take the caller's context, so no third shape remains.)
         if let Some(context_type) = &record.context_type {
             if record.context_field().is_some() {
                 return Err(syn::Error::new_spanned(
                     context_type,
                     "`context_field` supplies the complete context, so the record's `Context` is \
                      `NonEmpty<T>` of that field's type; `context_type` does not apply",
-                ));
-            }
-            if record.declared_contexts() {
-                return Err(syn::Error::new_spanned(
-                    context_type,
-                    "`context_type` names what the caller passes to a record whose fields take \
-                     the caller's context; every field here carries a `context = \"..\"` of its \
-                     own, so the record takes `DeclaredContext` and a caller's context extends \
-                     them",
                 ));
             }
         }
@@ -388,48 +363,6 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                     ));
                 }
             }
-            // A field of a `struct` derive sits under the record's context,
-            // as a plan's field sits under the plan's: what it may change is
-            // the segment it is keyed under, never the context above it.
-            if let (Some(prefix), Some(context)) = (prefix, &attrs.context) {
-                return Err(syn::Error::new(
-                    context.span(),
-                    format!(
-                        "a field of a `struct = ..` derive takes no `context = \"..\"`: it is \
-                         derived under the record's context, `(\"{}\", \"<field>\")`. To key it \
-                         under a segment other than the plaintext field's name, write \
-                         `#[stash(identity = \"..\")]`; a field sealed outside the record's \
-                         context is not supported",
-                        prefix.value()
-                    ),
-                ));
-            }
-            // A literal context becomes a `nonempty!(..)`, which refuses an
-            // empty one at compile time anyway; say so here, at the
-            // attribute, with the alternative that applies.
-            if let Some(context) = &attrs.context {
-                if context.value().is_empty() {
-                    return Err(syn::Error::new(
-                        context.span(),
-                        "an empty `context` is rejected when a value is encrypted: name the \
-                         field (e.g. \"email\"), or drop the attribute to hand the field the \
-                         caller's context",
-                    ));
-                }
-                // A literal is one text part. A plan's context is a label
-                // of plain segments, so a literal the plan can say is a
-                // plain segment: `"users/email"` would be one escaped part
-                // here and two segments there, two different contexts.
-                if !crate::attrs::is_plain_segment(&context.value()) {
-                    return Err(syn::Error::new(
-                        context.span(),
-                        "a literal `context` is one label segment, so it must be plain: no `/`, \
-                         `(`, `)`, control or invisible character, and not beginning with \
-                         `b64:`, a digit or `-`; otherwise it would render escaped. Name the \
-                         field with one plain segment (e.g. `context = \"email\"`)",
-                    ));
-                }
-            }
             // An identity is one label segment, as the plan builder's is:
             // non-empty, and plain so the descriptor names the field.
             if let Some(identity) = &attrs.identity {
@@ -445,7 +378,6 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
             }
             if attrs.context_field
                 && (attrs.default.is_some()
-                    || attrs.context.is_some()
                     || attrs.identity.is_some()
                     || attrs.from.is_some()
                     || attrs.decrypt)
@@ -460,15 +392,11 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
             } else {
                 match attrs.default {
                     Some(default) => {
-                        if attrs.context.is_some()
-                            || attrs.identity.is_some()
-                            || attrs.from.is_some()
-                            || attrs.decrypt
-                        {
+                        if attrs.identity.is_some() || attrs.from.is_some() || attrs.decrypt {
                             return Err(syn::Error::new_spanned(
                                 &field.ty,
-                                "a `default` field is not derived from the source, so `context`, \
-                             `identity`, `from` and `decrypt` do not apply to it",
+                                "a `default` field is not derived from the source, so `identity`, \
+                                 `from` and `decrypt` do not apply to it",
                             ));
                         }
                         Kind::Default(default)
@@ -526,8 +454,10 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                                 from: Some(from),
                             }
                         }
+                        // Every output of a `plaintext` record takes the
+                        // caller's context: a one-value plan has one source.
                         None => Kind::Derived {
-                            context: attrs.context.map(OwnContext::Literal),
+                            context: None,
                             from: None,
                         },
                     },
@@ -573,17 +503,14 @@ impl Record {
         }
     }
     /// The context a field is handed on the decrypt side: the caller's as it
-    /// is, or — for a field with a context of its own — what `context_expr`
-    /// builds from the caller's: a `CallerContext` from a
-    /// `DeclaredContext`'s `under`, or the caller's own type from its
-    /// `extend`.
+    /// is, or — for a field with a context of its own, which only a `struct`
+    /// derive has — the `CallerContext` that `context_expr` builds from the
+    /// record's `DeclaredContext` with `under`.
     pub(crate) fn field_context_type(&self, field: &Field) -> Type {
         let krate = &self.krate;
         match field.field_context() {
-            FieldContext::Own(_) if self.declared_contexts() => {
-                parse_quote!(#krate::target::CallerContext)
-            }
-            FieldContext::Own(_) | FieldContext::Caller => self.context_type(false),
+            FieldContext::Own(_) => parse_quote!(#krate::target::CallerContext),
+            FieldContext::Caller => self.context_type(false),
         }
     }
     /// The context type the record's declaration tree carries on the
@@ -602,26 +529,13 @@ impl Record {
         }
     }
 
-    /// What `under` / `extend` hand a field with a context of its own: a
-    /// `CallerContext` where the record makes the caller's optional
-    /// (`under`), the threaded context itself where it does not (`extend`).
-    fn own_context_extended_by(&self) -> Type {
-        let krate = &self.krate;
-        if self.declared_contexts() {
-            parse_quote!(#krate::target::CallerContext)
-        } else {
-            self.threaded_context()
-        }
-    }
-
     /// How the threaded context reaches this field's declaration, as the
     /// call appended to it on the encrypt side (ADR-0004).
     ///
     /// The context reaches operations by being threaded, so a field names
     /// itself once rather than computing a context to hand over. A field
-    /// with a context of its own gives its subtree that literal — `under`
-    /// when the record can make the caller's context optional, `extend`
-    /// when some other field is a bare leaf and it cannot. A field with none
+    /// with a context of its own (a `struct` derive's) gives its subtree that
+    /// context with `under`, which makes the caller's optional. A field with none
     /// is handed the threaded context as it is, converted into whatever its
     /// type declares it needs: the AEAD half for a ciphertext, unchanged for
     /// a term, composed with its own contexts by a record field, and — for
@@ -637,12 +551,7 @@ impl Record {
         match field.field_context() {
             FieldContext::Own(own) => {
                 let own = respan(own.expr(krate), span);
-                if self.declared_contexts() {
-                    quote_spanned!(span=> .under(#own))
-                } else {
-                    let threaded = respan(self.threaded_context().into_token_stream(), span);
-                    quote_spanned!(span=> .extend::<#threaded>(#own))
-                }
+                quote_spanned!(span=> .under(#own))
             }
             FieldContext::Caller => {
                 let threaded = respan(self.threaded_context().into_token_stream(), span);
@@ -662,10 +571,7 @@ impl Record {
         let ty = &field.ty;
         let context = quote!(<#ty as #krate::target::EncryptFrom<#source>>::Context);
         let threading = match field.field_context() {
-            FieldContext::Own(_) => {
-                let extended = self.own_context_extended_by();
-                parse_quote!(#context: From<#extended>)
-            }
+            FieldContext::Own(_) => parse_quote!(#context: From<#krate::target::CallerContext>),
             FieldContext::Caller => {
                 let threaded = self.threaded_context();
                 parse_quote!(#threaded: Into<#context>)
@@ -685,13 +591,8 @@ impl Record {
         match field.field_context() {
             FieldContext::Caller => quote!(::core::clone::Clone::clone(&__context)),
             FieldContext::Own(own) => {
-                let method = if self.declared_contexts() {
-                    quote!(under)
-                } else {
-                    quote!(extend)
-                };
                 let own = own.expr(krate);
-                quote!(::core::clone::Clone::clone(&__context).#method(#own))
+                quote!(::core::clone::Clone::clone(&__context).under(#own))
             }
         }
     }
@@ -739,7 +640,6 @@ mod tests {
     /// The field's own context, for assertions.
     fn own(field: &Field) -> String {
         match field.field_context() {
-            FieldContext::Own(OwnContext::Literal(lit)) => lit.value(),
             FieldContext::Own(OwnContext::Prefixed { prefix, field }) => {
                 format!("({}, {})", prefix.value(), field.value())
             }
@@ -783,7 +683,7 @@ mod tests {
             parse_quote! {
                 #[stash(plaintext = User)]
                 struct Row {
-                    #[stash(from = age, context = "age")]
+                    #[stash(from = age)]
                     age: EncryptedAge,
                 }
             },
@@ -802,7 +702,7 @@ mod tests {
         let err = parse(parse_quote! {
             struct Rec {
                 c: StackCipherText,
-                #[stash(default, context = "x")]
+                #[stash(default, decrypt)]
                 v: u8,
             }
         })
@@ -847,24 +747,26 @@ mod tests {
         assert!(err.to_string().contains("`from` is given twice"));
 
         let err = parse(parse_quote! {
+            #[stash(struct = User, context = "users")]
             struct Rec {
-                #[stash(context = "email", context = "name")]
+                #[stash(identity = "email", identity = "name")]
                 c: StackCipherText,
             }
         })
         .unwrap_err();
-        assert!(err.to_string().contains("`context` is given twice"));
+        assert!(err.to_string().contains("`identity` is given twice"));
 
         // Also across two `#[stash(..)]` attributes on the same field.
         let err = parse(parse_quote! {
+            #[stash(struct = User, context = "users")]
             struct Rec {
-                #[stash(context = "email")]
-                #[stash(context = "name")]
+                #[stash(identity = "email")]
+                #[stash(identity = "name")]
                 c: StackCipherText,
             }
         })
         .unwrap_err();
-        assert!(err.to_string().contains("`context` is given twice"));
+        assert!(err.to_string().contains("`identity` is given twice"));
 
         let err = parse(parse_quote! {
             struct Rec {
@@ -905,36 +807,53 @@ mod tests {
     }
 
     #[test]
-    fn a_literal_empty_context_is_rejected_with_the_alternative_that_applies() {
-        let err = parse(parse_quote! {
-            struct Rec {
-                #[stash(context = "")]
-                c: StackCipherText,
-            }
-        })
-        .unwrap_err();
-        assert!(err.to_string().contains("empty `context`"));
-        assert!(err
-            .to_string()
-            .contains("hand the field the caller's context"));
-    }
-
-    #[test]
-    fn a_struct_field_takes_an_identity_not_a_context() {
-        // Even an empty one: the attribute itself is the mistake.
+    fn a_field_context_is_refused_on_every_derive_form() {
+        // A one-value plan has one context source, the caller's, and a
+        // fields plan's fields all sit under the plan's: a field sealed under
+        // a literal of its own has no plan form, whatever the literal, so the
+        // attribute itself is the mistake. Even an empty or non-plain one.
         for context in ["nickname", "users/nickname", ""] {
-            let err = parse(parse_quote! {
-                #[stash(struct = User, context = "users")]
-                struct Rec {
-                    #[stash(context = #context)]
-                    name: StackCipherText,
-                }
-            })
-            .unwrap_err();
-            let message = err.to_string();
-            assert!(message.contains("takes no `context"), "{message}");
-            assert!(message.contains("identity = \"..\""), "{message}");
-            assert!(message.contains("(\"users\", \"<field>\")"), "{message}");
+            let inputs: [DeriveInput; 3] = [
+                parse_quote! {
+                    #[stash(struct = User, context = "users")]
+                    struct Rec {
+                        #[stash(context = #context)]
+                        name: StackCipherText,
+                    }
+                },
+                parse_quote! {
+                    #[stash(plaintext = String)]
+                    struct Rec {
+                        c: StackCipherText,
+                        #[stash(context = #context)]
+                        shadow: StackCipherText,
+                    }
+                },
+                parse_quote! {
+                    struct Rec {
+                        #[stash(decrypt, context = #context)]
+                        c: StackCipherText,
+                    }
+                },
+            ];
+            for input in inputs {
+                let message = parse(input).unwrap_err().to_string();
+                assert!(
+                    message.contains("field-level `context = \"..\"` is no longer accepted"),
+                    "{message}"
+                );
+                assert!(
+                    message.contains(
+                        "all outputs of a `plaintext = T` record share the caller's context"
+                    ),
+                    "{message}"
+                );
+                assert!(message.contains("identity = \"..\""), "{message}");
+                assert!(
+                    message.contains("a fields plan that picks the same source twice"),
+                    "{message}"
+                );
+            }
         }
     }
 
@@ -1096,33 +1015,6 @@ mod tests {
         assert!(matches!(record.fields[1].from(), Some(Member::Unnamed(i)) if i.index == 1));
         assert_eq!(own(&record.fields[0]), "(readings, value)");
         assert_eq!(own(&record.fields[1]), "(readings, unit)");
-    }
-
-    #[test]
-    fn a_field_literal_context_is_one_plain_segment() {
-        for context in ["users/email", "(email)", "0email", "b64:x", "-email"] {
-            let err = parse(parse_quote! {
-                #[stash(plaintext = String)]
-                struct Rec {
-                    #[stash(context = #context)]
-                    c: StackCipherText,
-                }
-            })
-            .unwrap_err();
-            assert!(
-                err.to_string().contains("one label segment"),
-                "{context:?}: {err}"
-            );
-        }
-        let record = parse(parse_quote! {
-            #[stash(plaintext = String)]
-            struct Rec {
-                #[stash(context = "email")]
-                c: StackCipherText,
-            }
-        })
-        .unwrap();
-        assert_eq!(own(&record.fields[0]), "email");
     }
 
     #[test]
@@ -1323,7 +1215,6 @@ mod tests {
             #[stash(plaintext = String, context_type = AeadContext)]
             struct Rec {
                 c: StackCipherText,
-                #[stash(context = "legacy_name")]
                 shadow: StackCipherText,
             }
         })
@@ -1331,8 +1222,7 @@ mod tests {
         let ty = |ty: &Type| quote!(#ty).to_string();
         assert_eq!(ty(&record.context_type(false)), "AeadContext");
         assert_eq!(ty(&record.context_type(true)), "AeadContext");
-        // Both fields are handed the caller's type: the literal one through
-        // its `under`, which returns the same type.
+        // Both fields are handed the caller's type as it is.
         assert_eq!(
             ty(&record.field_context_type(&record.fields[0])),
             "AeadContext"
@@ -1385,20 +1275,6 @@ mod tests {
         );
 
         let err = parse(parse_quote! {
-            #[stash(context_type = AeadContext)]
-            struct Rec {
-                #[stash(context = "name")]
-                c: StackCipherText,
-            }
-        })
-        .unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("every field here carries a `context"),
-            "{err}"
-        );
-
-        let err = parse(parse_quote! {
             #[stash(context_type = AeadContext, context_type = AeadContext)]
             struct Rec {
                 c: StackCipherText,
@@ -1416,7 +1292,7 @@ mod tests {
         let record = parse(parse_quote! {
             #[stash(plaintext = u32, plaintext = u64)]
             struct Rec {
-                #[stash(context = "age", decrypt)]
+                #[stash(decrypt)]
                 c: StackCipherText,
                 hm: EqualityTerm,
                 #[stash(default = SchemaVersion::V3)]
@@ -1429,13 +1305,13 @@ mod tests {
         assert_eq!(record.fields.len(), 3);
         // Nothing is derived from a field of the plaintext.
         assert!(record.fields.iter().all(|f| f.from().is_none()));
-        assert_eq!(own(&record.fields[0]), "age");
+        // Every derived field takes the caller's context: a one-value plan
+        // has one source.
         assert!(record.fields[0].decrypt);
         assert!(record.fields[1].is_derived());
-        assert!(matches!(
-            record.fields[1].field_context(),
-            FieldContext::Caller
-        ));
+        for field in &record.fields[..2] {
+            assert!(matches!(field.field_context(), FieldContext::Caller));
+        }
         assert!(!record.fields[2].is_derived());
     }
 }

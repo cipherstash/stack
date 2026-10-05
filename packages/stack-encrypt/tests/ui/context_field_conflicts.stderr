@@ -4,14 +4,8 @@ error: a record has exactly one `context_field`
 3 | struct Twice {
   |        ^^^^^
 
-error: `context_field` supplies the complete context; literal field contexts do not apply
-  --> tests/ui/context_field_conflicts.rs:11:8
-   |
-11 | struct Literal {
-   |        ^^^^^^^
-
 error: `context_field` is metadata and cannot also be derived or defaulted
-  --> tests/ui/context_field_conflicts.rs:20:8
+  --> tests/ui/context_field_conflicts.rs:13:8
    |
-20 |     i: String,
+13 |     i: String,
    |        ^^^^^^
