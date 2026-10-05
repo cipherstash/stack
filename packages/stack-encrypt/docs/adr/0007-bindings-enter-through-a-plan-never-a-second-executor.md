@@ -11,6 +11,11 @@ extends: ADR-0003, ADR-0004
 > (after its grammar is narrowed to the plan's), how EQL types are assembled
 > (per language, from standard outputs), and the consequence that the EQL
 > encoding lives twice.
+>
+> **Amended 2026-10-06**, by #1070. The decision is unchanged. Amended: the
+> words binding and language SDK, what crosses the binding from Go, the proof
+> of the lowering, where the generator gets the engine's rules, and what the
+> guest takes in one call.
 
 Stack Encrypt has one execution engine: the `Encryption` and `Decryption`
 descriptions in `target/` and the batched `Pending` they produce. ADR-0003
@@ -111,3 +116,50 @@ Option 3.
 
 The design history, the names rejected on the way and the sequencing are in
 `docs/plans/2026-10-04-plan-builder.md`.
+
+## Amended 2026-10-06 (#1070)
+
+G1 to G8 and Go-1 to Go-13 name the principles in
+`docs/sdk-design-principles.md`, general and Go.
+
+ADR-0008 fixes two words this ADR used as one. A **binding** is the WASI or
+FFI interface between the engine and a language: the guest's exports and the
+data that crosses them. A **language SDK** is what users of that language work
+with. The decision above is about the binding: a plan is the one thing that
+crosses it. The Go SDK is struct tags, a generator and generated code, and its
+users never see a plan (Go-7). Each "binding" above that names Go reads as the
+Go SDK's generated code.
+
+**A field crosses the binding only when its value does.** The first Go design
+sent the full declaration and skipped passthrough values, which contradicted
+decision 9 of the plan: every plan field is present in the value. Generated Go
+code now sends a declaration and a value for each sealed and each indexed
+field, and nothing for a passthrough or omitted field. The data grammar does
+not change. The generated file still names every field, so a reviewer reads
+the whole declaration (G1, Go-10).
+
+**The record fixture is the proof of the lowering.** Sequencing rested on Go's
+`plantest.Golden` snapshots not changing, and the Go SDK removes the package
+that writes them. The proof is now a fixture both test suites read: the Rust
+chain and the lowering each open the records that the other encrypted, and
+both derive the same bytes for each term. The same fixture later holds
+generated Go code to the Rust chain (G7: a claim is run before it is written).
+
+**The generator asks the engine, and holds no copy of its rules.** `stashgen`
+refuses an index that does not fit a Go type and an EQL type the engine cannot
+produce. A second copy of those rules in Go would be the "lives twice" cost
+this ADR accepts only for an encoder. `stashgen` runs the guest the SDK embeds
+to check each declaration at `go generate`, so the rules have one source (G1)
+and the check runs at the earliest stage Go allows (G3, Go-1).
+
+**The guest takes one plan in one call.** `se_encrypt_record` takes one plan,
+and the engine runs one plan under one key request. So one Go call covers one
+type, and one request for several types is later work: the engine runs several
+plans under one key request, then a guest export takes several plans with
+their values. G5 allows an SDK to put several types in one request; it does
+not require it before the engine can.
+
+**The guest's value exports have no caller in Go.** The Go SDK seals a whole
+value through a declaration (ADR-0008), so `se_encrypt`, `se_decrypt` and the
+element exports have no Go caller. They stay while another host of the guest
+may need them; they are not a Go path.

@@ -315,3 +315,32 @@ What it does **not** fix: a term and a ciphertext written through two separate
 top-level calls still have no relation to each other, because neither knows the
 other exists. Decision 5 narrows this to callers who deliberately bypass the
 target layer on the write side.
+
+## Amended 2026-10-06 (#1070)
+
+G1 to G8 and Go-1 to Go-13 name the principles in
+`docs/sdk-design-principles.md`, general and Go.
+
+Two decisions change shape in the Go SDK and keep their substance.
+
+**Decision 5** keeps standalone term derivation as the query path and directs
+a stored term to a target, by convention and documentation, because the term
+methods cannot tell a probe from a stored term. In Go the rule is structural.
+The Go SDK has no `Cipher.Term`. A stored term exists only in generated code,
+beside its ciphertext, under the one context the declaration gives the field.
+A probe comes from a field entry's query method, which exists only for an
+index the field declares. The compiler refuses a query the field does not
+declare (G4: one declaration serves the write, the query and the read; Go-2:
+the caller reaches every output through a field).
+
+**Decision 6** puts the plan-versus-value check at the FFI boundary, as plan
+validation, with the field named and before any key is requested. In Go that
+check moves earlier. `stashgen` checks the Go type against the declaration at
+`go generate`, by running the guest the SDK embeds, so a field type the engine
+cannot seal or an index that does not fit stops the generator. The engine's
+own check at the boundary stays as the backstop (G3: the earliest stage the
+language allows; Go-1). The dynamic-to-static dispatch itself is unchanged.
+
+Decisions 1 to 4, 7 and 8 do not change. Decision 2's `extend` is what
+`Cipher.Extend` does from Go: a caller's context appends to the declared one,
+and never replaces it.
