@@ -637,6 +637,10 @@ In the `Text` family, the three `Ord` suffixes carry equality too.
 Each type has a query type, with `Query` after its name: `TextEqQuery`.
 The value of `encrypt_into` is the Go type name.
 
+An EQL value has the EQL v3 envelope: its version field is `3`, and Postgres stores it in an `eql_v3` domain.
+The ciphertext inside it is a Stack Encrypt ciphertext, which starts with `stack-encrypt:1:`.
+"EQL v4" in this plan is the name of that form, and not a new envelope.
+
 The engine produces one EQL type today: `TextEq`.
 The other types wait for work in the engine:
 
@@ -847,6 +851,7 @@ The compiler then finds a removed field and a field with a new type, and CI find
 The generator loads the package with `golang.org/x/tools/go/packages` and reads types, not text.
 It runs none of the package's code.
 It ignores its own output file when it loads the package, so a stale file does not stop it.
+It checks each declaration with the engine: it runs the guest that the SDK embeds, and it holds no copy of the engine's rules.
 The same input always gives the same file: fields keep their declared order, and the file carries no version and no time.
 
 `stashgen` stops with an error, and writes no file, for each of these:
@@ -953,12 +958,20 @@ No function in the SDK or in generated code panics for a declaration, and none h
 ### What crosses the binding
 
 The engine does all encryption, decryption and term derivation.
-Generated code sends the engine the full declaration: every field, including each passthrough field and each field left out.
-It sends the value of each sealed field.
-It does not send the value of a passthrough field, and it copies that value to the generated type itself.
+A field crosses the binding only when its value does.
+Generated code sends the engine a declaration and a value for each sealed field and each indexed field.
+It sends nothing for a passthrough field, and it copies that value to the generated type itself.
+It sends nothing for a field that is left out.
+
+So every field the engine is told of has a value, and every value has a field.
+The generated file still names every field, so a reviewer reads the whole declaration.
 
 Generated code assembles an EQL value from the engine's ciphertext and terms.
-A cross-language fixture guards those bytes: encode in Rust, decode and encode again in Go, and compare.
+Two fixtures that both test suites read guard the bytes:
+
+- **The EQL fixture:** encode in Rust, decode and encode again in Go, and compare.
+- **The record fixture:** the Rust chain and generated Go code each open the records that the other encrypted.
+  Both derive the same bytes for each term.
 
 The package `encrypt/gensupport` holds what only generated code calls.
 No function in it panics.
@@ -1192,10 +1205,11 @@ Next, as stacked drafts on #1071 (4, 5 and 6 are open drafts):
 
 Then:
 
-7. **`dynamic::record` becomes a lowering** (#1059). The guest is rebuilt;
-   Go's `plantest.Golden` snapshots must not change, which is the proof.
-8. **The Go binding** (#1046), against the design in #1070. #1025 merges
-   first so snapshots regenerate once.
+7. **`dynamic::record` becomes a lowering** (#1059). The guest is rebuilt.
+   The record fixture is the proof: the Rust chain and the lowering each
+   open the records that the other encrypted, and both derive the same
+   bytes for each term.
+8. **The Go SDK** (#1046), against the design in #1070.
 9. **The EQL typed verb** (#1062), Rust-only; Go assembles EQL types through
    the generator.
 10. The audit-context PR, then the lock-context PR, on the finished shape.
@@ -1219,9 +1233,6 @@ Then:
   This design covers one version of a declaration.
   Reading data that an older declaration wrote needs its own design.
   A policy has `Identity` for a column with a new name, and tags have no word for it yet.
-- **How the generator gets the engine's rules.**
-  The generator must refuse what the engine refuses, from one source of rules.
-  Whether it calls the engine or reads rules the engine publishes is not decided.
 - **Converging the TypeScript schema builder onto the plan grammar**, so
   `@cipherstash/stack` stops being a second engine beside stack-encrypt.
   Out of scope here; recorded so a TS binding does not grow an executor.

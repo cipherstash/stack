@@ -5,7 +5,7 @@ date: 2026-10-05
 
 # Language SDKs follow one set of design principles
 
-Every language SDK for Stack Encrypt follows [the language SDK design principles](../sdk-design-principles.md).
+Every language SDK for Stack Encrypt follows [the language SDK design principles](../../../../docs/sdk-design-principles.md).
 That document holds the principles.
 This ADR records the decision to adopt them, and why.
 
@@ -25,7 +25,7 @@ There was no written answer, so each language SDK would have argued them from th
 
 ## Decision
 
-We adopt the principles in [`docs/sdk-design-principles.md`](../sdk-design-principles.md).
+We adopt the principles in [`docs/sdk-design-principles.md`](../../../../docs/sdk-design-principles.md).
 Eight apply to every language SDK, and thirteen apply to the Go SDK.
 
 The document also fixes two terms.
@@ -43,6 +43,6 @@ When two principles disagree, the document gives the order to apply them in.
   An SDK in a dynamic language ships rules for the language's type checkers and linters.
 - Each language SDK is its own design.
   The principles say what must match between them: the bytes, the words for engine behaviour, and fail-closed behaviour.
-- Four questions are open, and the principles document lists them.
+- Three questions are open, and the principles document lists them.
 
-ADR-0007 in `packages/stack-encrypt/docs/adr/` is the ground for the first principle: an SDK enters the engine through a declaration, and never through a second executor.
+ADR-0007 is the ground for the first principle: an SDK enters the engine through a declaration, and never through a second executor.

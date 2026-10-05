@@ -25,6 +25,24 @@ binding reaches indexes and field-by-field encryption only through a plan
 lowered from data, which runs the same engine.
 _Avoid_: typed path, high-level path
 
+**Binding**:
+The FFI or WASI interface between the engine and a target language: the
+guest's exports and the data that crosses them. A user of that language does
+not call it.
+_Avoid_: SDK, mirror, name binding (that is a keyset name's)
+
+**Language SDK**:
+What users of a target language work with day to day. In Go: struct tags, the
+generator, and the code the generator writes. It reaches the engine only
+through the binding.
+_Avoid_: binding, wrapper, mirror
+
+**Declaration**:
+The statement of how each field is encrypted: its context and its indexes.
+It is what a user of a language SDK writes; in Go, struct tags or a policy.
+A saved declaration is a plan.
+_Avoid_: schema, config, mapping
+
 **Operation description**:
 The target's declaration of the ciphertext and term operations, source selections,
 and context requirements needed to produce it.

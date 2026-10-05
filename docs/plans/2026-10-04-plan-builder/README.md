@@ -39,6 +39,8 @@ The `users` example uses `TextEq`, which is the one EQL type the engine produces
 | A generated file from another version does not compile | Run. A file that names an unknown version constant fails `go build`. |
 | The files `stashgen` writes | Not run. `stashgen` does not exist, and the five `_stash.go` files are written by hand. |
 | The SDK can be built with these signatures | Not run. |
+| The record fixture and the EQL fixture | Not run. Neither fixture exists. |
+| `stashgen` checks a declaration with the embedded guest | Not run. |
 | The code works with a database, GORM or pgx | Not run. Nothing here has connected to a database. |
 | The EQL types, and how generated code assembles them | Not run. `eql-codegen` does not write Go yet, and the examples use a stub of `eql.TextEq`. |
 | The steps in "Use the SDK" | Not run. Nobody has followed them. |

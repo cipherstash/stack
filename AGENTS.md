@@ -768,7 +768,7 @@ Read [`docs/sdk-design-principles.md`](docs/sdk-design-principles.md) before you
 architect, design or build a language SDK, or change the Go module's public
 surface. It holds eight principles for every language SDK and thirteen for the
 Go SDK, and the order to apply them in when two disagree.
-`docs/adr/0002-language-sdk-design-principles.md` records why.
+`packages/stack-encrypt/docs/adr/0008-language-sdk-design-principles.md` records why.
 
 Two terms from it are used across this repository:
 

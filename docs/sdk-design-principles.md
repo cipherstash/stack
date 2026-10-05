@@ -3,7 +3,7 @@
 These principles apply when you architect, design or build a language SDK for Stack Encrypt.
 The first part applies to every language.
 The second part applies to the Go SDK.
-[ADR-0002](adr/0002-language-sdk-design-principles.md) records the decision to adopt them.
+[ADR-0008](../packages/stack-encrypt/docs/adr/0008-language-sdk-design-principles.md) records the decision to adopt them.
 
 ## Terms
 
@@ -30,8 +30,10 @@ All encryption, decryption and term derivation happens in the engine.
 An SDK declares what to do and sends that across the binding as data.
 An SDK does not have its own loop over fields, its own batching, or its own sealing.
 
-- An SDK sends the full declaration, with every field in it.
-- An SDK can skip the value of a field when the engine computes nothing from it and the host's types guarantee the value is present.
+- A field crosses the binding only when its value does: an SDK sends a field's declaration with the field's value.
+- An SDK can keep a field on its own side when the engine computes nothing from it.
+  It then sends no declaration and no value for that field.
+- An SDK tool that checks a declaration asks the engine, and holds no copy of the engine's rules.
 - An SDK can assemble a wire format in the host language only when a cross-language test compares the bytes.
 
 ### 2. A language SDK takes its host language's shape
@@ -76,6 +78,7 @@ One call from the user makes one request to the key service, however many values
 The natural way to call an SDK is the efficient way.
 
 - An SDK does not offer a single-value form beside the batch form.
+  The one exception is a call on one field, for an update of one column or for a search value.
 - An SDK can put operations on different types in one request.
 
 ### 6. A second way in has to earn its place
@@ -210,7 +213,6 @@ The generator does not guess a plural.
 
 ## Not yet decided
 
-- How SDK tools get the engine's rules.
 - Query building in Go.
 - The design of the `go vet` check.
 - A change to a declaration over time.
