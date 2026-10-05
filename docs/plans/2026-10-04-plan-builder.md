@@ -863,15 +863,56 @@ The same input always gives the same file: fields keep their declared order, and
 
 ### Declarations from a policy
 
-A policy decides what to encrypt from the data categories that a schema gives each field.
-The policy is Go code, so a program must run it.
-That program is a generate program that you own, and `go generate` runs it:
+Some types cannot carry tags, and their schema already says what each field is.
+A protobuf message is such a type: `protoc-gen-go` writes the struct, and a field option holds the field's data categories.
+For those types, rules decide how each field is encrypted, and `stashgen` writes the same generated file from the rules.
+
+Tags are the way to declare a type that you write.
+A policy is for a type that a schema generates.
 
 ```go
-//go:generate go run -tags stashgen ../cmd/genplans
+var category = policy.Key("classification.data_categories")
+
+var Base = policy.FirstOf(
+	policy.When(category.Under("user.government_id"), policy.EncryptInto("TextEq")),
+	policy.When(category.Under("user.contact.email"), policy.EncryptIndex(encrypt.Equality, encrypt.Match())),
+	policy.When(category.Under("user"), policy.Encrypt()),
+)
+
+var Individuals = policy.ForMessage(&pb.Individual{}, policy.Context("individuals"),
+	policy.FirstOf(
+		policy.When(policy.Field("id"), policy.Passthrough()),
+		policy.When(policy.Field("nickname"), policy.Passthrough()),
+	).OrElse(Base),
+)
+```
+
+The package is `encrypt/policy`.
+A rule has a matcher and a decision, and the first rule that matches a field decides it.
+The decisions are the tag verbs: `Encrypt`, `EncryptIndex`, `Index`, `EncryptInto`, `Passthrough` and `Omit`.
+`Fail` refuses a field, with a reason.
+
+Every field of the message needs a decision.
+A field that no rule decides stops the generator, with the field's name and its annotations.
+That is true for a field with no annotation too.
+`Otherwise` decides every field that no earlier rule matched.
+A policy has an `Otherwise` rule only when its author writes one.
+
+`Name` sets the field's name, which is the column name.
+`Identity` keeps the field's context when its column gets a new name.
+Data that was written before the change then still decrypts.
+
+A source gives the facts about each field: its name, its Go name, its kind and its annotations.
+The package `encrypt/policy/protosource` reads them from a protobuf descriptor and its field options.
+
+A program that you own runs the rules, and `go generate` runs that program:
+
+```go
+//go:generate go run ../cmd/genencrypt
 
 func main() {
-	err := stashgen.Generate(policy.Source, policy.Individuals, stashgen.Output("individual_stash.go"))
+	err := stashgen.Generate(protosource.New(), rules.Individuals,
+		stashgen.Output("../individuals/individual_stash.go"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -879,18 +920,13 @@ func main() {
 ```
 
 `stashgen.Generate` is the generator as a library, at `languages/golang/stashgen`.
-It runs the policy over the facts and writes the same file that the tags give.
-The application never runs the policy.
+The application never runs the rules.
+A change to the rules changes the generated file, so a reviewer reads what the change encrypts.
 
-- A field that no rule decides stops `go generate`, with the field's name and its annotations.
-- A change to the policy changes the generated file, so a reviewer reads what the change encrypts.
-- A field that the policy stores as plaintext is a passthrough field of the generated type.
-
-The generate program imports the package that holds the type.
-So that package must build when the generated file is stale.
-The generated file carries the build constraint `!stashgen`, and the generate program runs with `-tags stashgen`.
-Code that uses the generated names goes in another package.
-See [`policy/policy.go`](2026-10-04-plan-builder/policy/policy.go), [`cmd/genplans/main.go`](2026-10-04-plan-builder/cmd/genplans/main.go) and [`individualstore/store.go`](2026-10-04-plan-builder/individualstore/store.go).
+The generated file goes in a package of your own, and not in the package of the generated type.
+So the generate program does not import a file that it wrote.
+The generated functions take and return pointers to the message: `Encrypt` takes a `[]*pb.Individual`.
+See [`rules/rules.go`](2026-10-04-plan-builder/rules/rules.go), [`cmd/genencrypt/main.go`](2026-10-04-plan-builder/cmd/genencrypt/main.go) and [`individuals/store.go`](2026-10-04-plan-builder/individuals/store.go).
 
 ### When a mistake is found
 
@@ -975,7 +1011,8 @@ The existing Go package has never been released, so these are removed, not depre
 - `TermKind`: `Index` replaces it, for generated code.
 - `Plan`, `FieldPlan`, `NewPlan` and `Plan.Validate`: the generator replaces them.
 - `PlanFromTags`, and every other function that reads `stash` tags at run time.
-- `plan.PlanFor` and `plan.MustPlanFor`: `stashgen.Generate` replaces them.
+- The package `plan`: the package is `encrypt/policy`, and `stashgen.Generate` replaces `PlanFor` and `MustPlanFor`.
+- `plan.Plaintext`, `plan.Column`, `plan.Table`, `plan.EQL` and `plan.Custom`: `Passthrough`, `Name`, `Context` and the tag verbs replace them.
 - `Context`, `NewContext`, `Label`, `NewLabel` and `ParseLabel`: the `context=` tag replaces them.
 - The rule that a zero `Plan` means the struct's tags.
 - `Sealed`, `SealedNone`, `SealedEmptyMap` and `SealedEmptySeq` as storage types: `Ciphertext` replaces them.
@@ -1181,11 +1218,10 @@ Then:
 - **A change to a declaration over time.**
   This design covers one version of a declaration.
   Reading data that an older declaration wrote needs its own design.
+  A policy has `Identity` for a column with a new name, and tags have no word for it yet.
 - **How the generator gets the engine's rules.**
   The generator must refuse what the engine refuses, from one source of rules.
   Whether it calls the engine or reads rules the engine publishes is not decided.
-- **The policy package.**
-  Its approach is under review, so "Declarations from a policy" can change.
 - **Converging the TypeScript schema builder onto the plan grammar**, so
   `@cipherstash/stack` stops being a second engine beside stack-encrypt.
   Out of scope here; recorded so a TS binding does not grow an executor.

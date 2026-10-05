@@ -43,7 +43,6 @@ When two principles disagree, the document gives the order to apply them in.
   An SDK in a dynamic language ships rules for the language's type checkers and linters.
 - Each language SDK is its own design.
   The principles say what must match between them: the bytes, the words for engine behaviour, and fail-closed behaviour.
-- Five questions are open, and the principles document lists them.
-  The largest is the approach of the Go policy package.
+- Four questions are open, and the principles document lists them.
 
 ADR-0007 in `packages/stack-encrypt/docs/adr/` is the ground for the first principle: an SDK enters the engine through a declaration, and never through a second executor.

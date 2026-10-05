@@ -18,10 +18,10 @@ The module path is `example.com/app`.
 | [`accounts/account.go`](accounts/account.go) | An embedded `gorm.Model`, another library's tags, an unexported field and `-redact` |
 | [`contacts/contacts.go`](contacts/contacts.go) | [`crm.Contact`](crm/contact.go), a type in another package, in separate columns, with a model |
 | [`documents/documents.go`](documents/documents.go) | An `opaque` struct, sealed as one value |
-| [`policy/policy.go`](policy/policy.go) | A policy that decides what to encrypt from each field's data categories |
-| [`cmd/genplans/main.go`](cmd/genplans/main.go) | The generate program that runs the policy |
-| [`individuals/`](individuals/) | A type with no tags, and the file the policy gives |
-| [`individualstore/store.go`](individualstore/store.go) | A store that uses that generated type |
+| [`proto/`](proto/) | A protobuf message whose fields carry data categories, which generates [`internal/pb/`](internal/pb/) |
+| [`rules/rules.go`](rules/rules.go) | Rules that decide what to encrypt from each field's data categories |
+| [`cmd/genencrypt/main.go`](cmd/genencrypt/main.go) | The generate program that runs the rules |
+| [`individuals/`](individuals/) | The file the rules give for the protobuf message, and a store that uses it |
 
 The `users` example uses `TextEq`, which is the one EQL type the engine produces today.
 
@@ -30,7 +30,9 @@ The `users` example uses `TextEq`, which is the one EQL type the engine produces
 | Claim | Status |
 |---|---|
 | Every Go file type-checks | Run. `go vet ./...` passes against a stub of the SDK. The stub is not in this repository, and it has signatures only. |
-| The generate program builds when a generated file is stale | Run. `go build -tags stashgen ./cmd/genplans` passes after a field is added to `Individual`. |
+| The policy example compiles against real protobuf code | Run. buf v1.50.0 and `protoc-gen-go` wrote `internal/pb/`, and `go vet` passes. |
+| A field added to the protobuf message does not stop the build | Run. It builds, as the plan says: CI finds that change. |
+| The protobuf source reads the field options, and the rules run | Not run. Neither the source nor the generator exists. |
 | A change to a tagged struct, a model or a type in another package stops the build | Run. Each change fails `go build` with "cannot convert". |
 | sqlc's row struct converts to the generated type | Run. The conversions in `users/sqlcstore.go` compile against real sqlc output. |
 | A struct from another package with an unexported field cannot convert | Run, with `sync.Once`. |
@@ -40,6 +42,11 @@ The `users` example uses `TextEq`, which is the one EQL type the engine produces
 | The code works with a database, GORM or pgx | Not run. Nothing here has connected to a database. |
 | The EQL types, and how generated code assembles them | Not run. `eql-codegen` does not write Go yet, and the examples use a stub of `eql.TextEq`. |
 | The steps in "Use the SDK" | Not run. Nobody has followed them. |
+
+## Generate the protobuf package
+
+The protobuf package was generated with buf v1.50.0 and `protoc-gen-go`.
+Run `buf generate` in `proto/` to generate it again.
 
 ## Generate the sqlc package
 

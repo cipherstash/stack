@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package classification;
+
+import "google/protobuf/descriptor.proto";
+
+option go_package = "example.com/app/internal/pb";
+
+extend google.protobuf.FieldOptions {
+  // The Fideslang data categories of a field.
+  repeated string data_categories = 50001;
+}

@@ -210,7 +210,6 @@ The generator does not guess a plural.
 
 ## Not yet decided
 
-- The policy package's approach.
 - How SDK tools get the engine's rules.
 - Query building in Go.
 - The design of the `go vet` check.
