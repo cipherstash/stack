@@ -12,8 +12,9 @@
  *
  * It then applies the shipped edges' OWN baked SQL, independent of the
  * installed `@cipherstash/eql`: the genesis edge alone on an empty schema
- * (the `db init` path), and a 1.1.x database (eql-3.0.4) walking the 3.0.5
- * and 3.0.6 upgrade edges (the `migrate` path).
+ * (the `db init` path), a 1.1.x database (eql-3.0.4) walking the 3.0.5,
+ * 3.0.6 and 3.1.0 upgrade edges, and a 1.2.x database (eql-3.0.6) walking
+ * the 3.1.0 edge (the `migrate` path).
  */
 
 import 'dotenv/config'
@@ -25,6 +26,7 @@ import {
   CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
+  CIPHERSTASH_V3_310_UPGRADE_MIGRATION_NAME,
   CIPHERSTASH_V3_BASELINE_MIGRATION_NAME,
   CIPHERSTASH_V3_INVARIANTS,
 } from '../../src/extension-metadata/constants-v3'
@@ -220,22 +222,22 @@ describeLivePg('v3 baseline migration bundle against live Postgres', () => {
     )
   }, 240_000)
 
-  it('migrate: a 1.1.x database (eql-3.0.4) walks the 3.0.5 then 3.0.6 edges, installing the bundle twice', async () => {
-    // 1.1.x baselines baked the same eql-3.0.4 bytes as the 3.0.4 edge
-    // (both pin `63104a81…`). The path is pinned offline in
-    // stale-vendored-space.test.ts; this runs its SQL.
+  /**
+   * Put the database on an older bundle through the edge that bakes it,
+   * then walk `upgradeDirs` in one transaction, as the runner applies a
+   * whole plan, and assert it ends on the pinned release.
+   */
+  async function walkFrom(
+    startDir: string,
+    startVersion: string,
+    upgradeDirs: readonly string[],
+  ): Promise<void> {
     await uninstallEqlV3(sql)
-    await sql.begin((tx) =>
-      applyEdge(tx, CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME),
-    )
-    expect(await eqlVersion(sql)).toBe('3.0.4')
+    await sql.begin((tx) => applyEdge(tx, startDir))
+    expect(await eqlVersion(sql)).toBe(startVersion)
 
-    // One transaction, as the runner applies a whole plan.
     await sql.begin(async (tx) => {
-      for (const dirName of [
-        CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
-        CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
-      ]) {
+      for (const dirName of upgradeDirs) {
         for (const op of descriptorOps(dirName)) {
           expect(
             await postchecksAllHold(tx, op),
@@ -246,11 +248,30 @@ describeLivePg('v3 baseline migration bundle against live Postgres', () => {
       }
     })
 
-    expect(await eqlVersion(sql)).toBe('3.0.6')
+    expect(await eqlVersion(sql)).toBe('3.1.0')
     await expectPostchecksHold(
       sql,
       descriptorOps(CIPHERSTASH_V3_BASELINE_MIGRATION_NAME),
     )
+  }
+
+  it('migrate: a 1.1.x database (eql-3.0.4) walks the 3.0.5, 3.0.6 then 3.1.0 edges, installing the bundle three times', async () => {
+    // 1.1.x baselines baked the same eql-3.0.4 bytes as the 3.0.4 edge
+    // (both pin `63104a81…`). The path is pinned offline in
+    // stale-vendored-space.test.ts; this runs its SQL.
+    await walkFrom(CIPHERSTASH_V3_304_UPGRADE_MIGRATION_NAME, '3.0.4', [
+      CIPHERSTASH_V3_305_UPGRADE_MIGRATION_NAME,
+      CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME,
+      CIPHERSTASH_V3_310_UPGRADE_MIGRATION_NAME,
+    ])
+  }, 600_000)
+
+  it('migrate: a 1.2.x database (eql-3.0.6) walks only the 3.1.0 edge', async () => {
+    // 1.2.x baselines baked the same eql-3.0.6 bytes as the 3.0.6 edge
+    // (both pin `9b6dab78…`).
+    await walkFrom(CIPHERSTASH_V3_306_UPGRADE_MIGRATION_NAME, '3.0.6', [
+      CIPHERSTASH_V3_310_UPGRADE_MIGRATION_NAME,
+    ])
   }, 480_000)
 
   it('executes no v2-style search configuration (no add_search_config)', () => {

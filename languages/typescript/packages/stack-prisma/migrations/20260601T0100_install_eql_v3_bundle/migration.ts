@@ -26,7 +26,7 @@
  * copy. An EQL version bump ships as a NEW upgrade migration directory
  * (see `20260720T0000_upgrade_eql_v3_3_0_2`), never as an edit here.
  *
- * THREE authorized re-emits have happened, all recorded here in full:
+ * FOUR authorized re-emits have happened, all recorded here in full:
  *
  *   1. Pre-GA, on the 1.0 release branch: the install op was reclassified
  *      `data` → `additive`, the baked bundle was bumped to eql-3.0.4, and
@@ -58,6 +58,18 @@
  *      not a correctness problem. The 3.0.5 edge is kept because the
  *      frozen-history guard treats committed edges as published, and a
  *      database built from main may already have walked it.
+ *   4. For eql-3.1.0: the baked bundle moved to eql-3.1.0 and a fifth
+ *      carrier op was added for its invariant. Unlike (3), this rewrites a
+ *      PUBLISHED baseline: 1.2.0 and 1.2.1 (2 October 2026) ship the (3)
+ *      bytes, `2fdc7caf…`. Re-argued on the numbers (2) asked for:
+ *      stack-prisma had 481 npm downloads in the 30 days to 3 October 2026
+ *      (384 in the last week, 305 on the 1.2.0 release day), against the
+ *      ~253/month at which (2) was judged small and knowable. The team
+ *      chose the re-emit on those numbers. 3.1.0 is a Rust-only minor
+ *      release whose SQL changes only the version stamp, so a second
+ *      genesis edge would again add a permanent ~2.6 MB bundle copy for no
+ *      change in behaviour. A 1.2.x database walks the 3.1.0 self-edge
+ *      only; a 1.0.0 / 1.1.x one walks 3.0.5, 3.0.6 and 3.1.0.
  *
  * Every re-emit changed the `migrationHash` and the baked
  * `installSqlSha256`. Consumers must delete `migrations/cipherstash/` and
@@ -163,7 +175,7 @@ export default class M extends Migration {
         ],
       }),
       // Invariant carrier: the install op above already ships the pinned
-      // release's bundle (eql-3.0.6 — `readVerifiedInstallSql()` is digest-
+      // release's bundle (eql-3.1.0 — `readVerifiedInstallSql()` is digest-
       // verified against the installed manifest), so a fresh database that
       // walks this genesis edge IS at the pinned release — a superset of
       // every earlier v3 surface, so the 3.0.2 invariant is honestly
@@ -229,13 +241,30 @@ export default class M extends Migration {
           },
         ],
       }),
-      // The pinned release IS 3.0.6; same terms as the 3.0.5 carrier.
+      // Same terms as the 3.0.5 carrier (the bundle above is >= 3.0.6).
       rawSql({
         id: 'cipherstash.install-provides-eql-v3-3-0-6',
         label:
           'EQL 3.0.6 invariant — provided by the install bundle above (no additional SQL)',
         operationClass: 'additive',
         invariantId: CIPHERSTASH_V3_INVARIANTS.upgradeBundle306,
+        target: { id: 'postgres' },
+        precheck: [],
+        execute: [],
+        postcheck: [
+          {
+            description: `verify eql_v3.version() reports ${releaseManifest.eqlVersion}`,
+            sql: `SELECT eql_v3.version() = '${releaseManifest.eqlVersion}'`,
+          },
+        ],
+      }),
+      // The pinned release IS 3.1.0; same terms as the 3.0.5 carrier.
+      rawSql({
+        id: 'cipherstash.install-provides-eql-v3-3-1-0',
+        label:
+          'EQL 3.1.0 invariant — provided by the install bundle above (no additional SQL)',
+        operationClass: 'additive',
+        invariantId: CIPHERSTASH_V3_INVARIANTS.upgradeBundle310,
         target: { id: 'postgres' },
         precheck: [],
         execute: [],
