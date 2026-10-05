@@ -1,5 +1,5 @@
 //! Emit ciphertext inspection and core-owned opening descriptions.
-use crate::shape::{trait_impl, zip, Field, Record};
+use crate::shape::{outputs, trait_impl, zip, Field, Record};
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens};
 use syn::spanned::Spanned;
@@ -56,6 +56,21 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
             } else {
                 plaintext.clone()
             };
+            // A `plaintext` record's outputs, opened as the plan's one-value
+            // target opens them: the tuple's own `DecryptInto`, under the
+            // caller's context, opening its one decryptable element. One
+            // output is opened as itself, through `DecryptField`.
+            let whole_tuple = from.is_none() && !explicit && fields.len() > 1;
+            let (tuple, _, values) = outputs(fields, |field| {
+                let member = &field.member;
+                quote!(self.#member)
+            });
+            if whole_tuple {
+                let ctx = record.field_context_type(fields[0]);
+                let predicates = &mut generics.make_where_clause().predicates;
+                predicates.push(parse_quote!(#tuple: #krate::target::DecryptInto<#output>));
+                predicates.push(parse_quote!(#ctx: Into<<#tuple as #krate::target::DecryptInto<#output>>::Context>));
+            }
             if from.is_none() {
                 for field in fields {
                     let ty = &field.ty;
@@ -70,7 +85,9 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                     }
                 }
             }
-            let operation = if explicit {
+            let operation = if whole_tuple {
+                quote!(<#tuple as #krate::target::DecryptInto<#output>>::decryption::<__K>(#values, ::core::convert::Into::into(__context)))
+            } else if explicit {
                 let field = fields[0];
                 let ty = &field.ty;
                 let member = &field.member;

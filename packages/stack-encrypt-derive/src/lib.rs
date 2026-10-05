@@ -46,6 +46,33 @@
 //! key requests. Terms alone need only their respective PRF or ordering trait.
 //! Query-only targets derive `EncryptFrom` alone.
 //!
+//! # The record's plan
+//!
+//! `#[derive(EncryptFrom)]` emits the record's plan, `Record::plan()`, and
+//! its `EncryptFrom::encryption()` runs that plan and maps the outputs into
+//! the struct; the derive names plan verbs and nothing beneath them, so a
+//! derived record and the same chain written by hand cannot drift apart
+//! (see `stack_encrypt::plan`, "The derive emits a plan", for a worked
+//! example):
+//!
+//! - a `struct = User, context = "users"` record emits
+//!   `Plan::context("users").fields()` with
+//!   `.encrypt_into::<FieldType, _>(pick("field", |u: &User| &u.field))` per
+//!   derived field, and `.identity("..")` where one is pinned;
+//! - a `plaintext = T` record emits
+//!   `Plan::value::<T>().encrypt_into::<(A, B, ..)>()` over the derived
+//!   fields' types, with no context of its own (every output shares the
+//!   caller's), plus `.context_field::<C>()` when a field stores the context.
+//!   Its `EncryptFrom::indexes()` is the outputs' indexes, so a derived
+//!   record used as a plan field answers the queries its terms support.
+//!
+//! The derive refuses at compile time every input whose plan would not
+//! build. `DecryptInto` opens a `plaintext = T` record's outputs as the
+//! plan's one-value target does (the tuple's own `DecryptInto`), or the
+//! output `#[stash(decrypt)]` names; a `struct` record opens each field
+//! through its own `DecryptField` under `<context>/<identity>`, which is what
+//! the plan's opening of a typed field does.
+//!
 //! # A field in your own storage format
 //!
 //! A record's fields need not be the core types. A field type that stores

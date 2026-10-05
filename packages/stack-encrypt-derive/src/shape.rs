@@ -1,7 +1,7 @@
 //! Classification of the derive input into the record it describes.
 
-use proc_macro2::{Group, Span, TokenStream, TokenTree};
-use quote::{quote, quote_spanned, ToTokens};
+use proc_macro2::{Span, TokenStream};
+use quote::{quote, ToTokens};
 use syn::spanned::Spanned;
 use syn::{
     parse_quote, Data, DeriveInput, Expr, Fields, Generics, Ident, Lifetime, LitStr, Member, Path,
@@ -9,27 +9,6 @@ use syn::{
 };
 
 use crate::attrs::{ContainerAttrs, FieldAttrs};
-
-/// `tokens`, every one of them at `span`. An interpolated tree keeps the
-/// spans it was built with, so a bound the derive states about a field is
-/// reported at that field only if the *types* in it are spanned there too —
-/// `quote_spanned!` alone re-spans nothing it interpolates.
-fn respan(tokens: TokenStream, span: Span) -> TokenStream {
-    tokens
-        .into_iter()
-        .map(|tree| match tree {
-            TokenTree::Group(group) => {
-                let mut group = Group::new(group.delimiter(), respan(group.stream(), span));
-                group.set_span(span);
-                TokenTree::Group(group)
-            }
-            mut leaf => {
-                leaf.set_span(span);
-                leaf
-            }
-        })
-        .collect()
-}
 
 /// A generated lifetime must not shadow one the record declares. Append
 /// underscores until the name is free, preserving the user's parameters.
@@ -520,40 +499,11 @@ impl Record {
         }
     }
 
-    /// How the threaded context reaches this field's declaration, as the
-    /// call appended to it on the encrypt side (ADR-0004).
-    ///
-    /// The context reaches operations by being threaded, so a field names
-    /// itself once rather than computing a context to hand over. A field
-    /// with a context of its own (a `struct` derive's) gives its subtree that
-    /// context with `under`, which makes the caller's optional. A field with none
-    /// is handed the threaded context as it is, converted into whatever its
-    /// type declares it needs: the AEAD half for a ciphertext, unchanged for
-    /// a term, composed with its own contexts by a record field, and — for
-    /// a leaf reached through a record that may run under `()` — refused,
-    /// at the field.
-    ///
-    /// Spanned at the field type: an interpolated token stream keeps the
-    /// spans it was built with, so what the field's type refuses is
-    /// reported there rather than at the derive.
-    pub(crate) fn field_threading(&self, field: &Field) -> TokenStream {
-        let krate = &self.krate;
-        let span = field.ty.span();
-        match field.field_context() {
-            FieldContext::Own(own) => {
-                let own = respan(own.expr(krate), span);
-                quote_spanned!(span=> .under(#own))
-            }
-            FieldContext::Caller => {
-                let threaded = respan(self.threaded_context().into_token_stream(), span);
-                quote_spanned!(span=> .accepting::<#threaded>())
-            }
-        }
-    }
-
-    /// What [`field_threading`](Self::field_threading) asks of a field's
-    /// type, as the impl's where-clause: that it is a target of `source`,
-    /// and that the context handed down converts into the one it declares.
+    /// What a `plaintext` record asks of a field's type, as the impl's
+    /// where-clause: that it is a target of `source`, and that the context
+    /// the record takes converts into the one it declares. Stated per field,
+    /// beside what the plan asks of the tuple of them, so what a field's
+    /// type refuses is reported at that field.
     /// Only for a field whose source the derive can name — a `from` field's
     /// obligation is checked in the body, against a plaintext field's type
     /// the derive cannot name.
@@ -595,10 +545,60 @@ impl Record {
         }
     }
 }
+/// The outputs of a `plaintext` record's derived `fields`, as the plan's
+/// one-value target sees them: the tuple of their types (the type itself
+/// for one field), the pattern binding each to its local, and the tuple of
+/// `value(field)`s. A tuple of targets is a target for up to four elements,
+/// so a longer record nests: `(A, B, C, (D, E, ..))`.
+pub(crate) fn outputs(
+    fields: &[&Field],
+    value: impl Fn(&Field) -> TokenStream + Copy,
+) -> (TokenStream, TokenStream, TokenStream) {
+    match fields {
+        [field] => {
+            let ty = &field.ty;
+            let local = &field.local;
+            (quote!(#ty), quote!(#local), value(field))
+        }
+        _ => {
+            let (flat, rest) = if fields.len() <= 4 {
+                (fields, None)
+            } else {
+                (&fields[..3], Some(outputs(&fields[3..], value)))
+            };
+            let mut types: Vec<TokenStream> = flat
+                .iter()
+                .map(|field| {
+                    let ty = &field.ty;
+                    quote!(#ty)
+                })
+                .collect();
+            let mut patterns: Vec<TokenStream> = flat
+                .iter()
+                .map(|field| {
+                    let local = &field.local;
+                    quote!(#local)
+                })
+                .collect();
+            let mut values: Vec<TokenStream> = flat.iter().map(|field| value(field)).collect();
+            if let Some((ty, pattern, value)) = rest {
+                types.push(ty);
+                patterns.push(pattern);
+                values.push(value);
+            }
+            (
+                quote!((#(#types),*)),
+                quote!((#(#patterns),*)),
+                quote!((#(#values),*)),
+            )
+        }
+    }
+}
+
 /// The chain zipping `operations` into one description, and the nested
 /// tuple pattern that binds each operation's output to its local in the
 /// closure that maps the chain's output.
-pub(crate) fn zip_chain(operations: Vec<(TokenStream, Ident)>) -> (TokenStream, TokenStream) {
+fn zip_chain(operations: Vec<(TokenStream, Ident)>) -> (TokenStream, TokenStream) {
     let mut chain = TokenStream::new();
     let mut pattern = TokenStream::new();
     for (index, (operation, local)) in operations.into_iter().enumerate() {

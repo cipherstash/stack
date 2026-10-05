@@ -193,6 +193,72 @@
 //! [`all`] settles several chains in one ZeroKMS request, and a saved plan
 //! over a slice or a `Vec` settles every record in one, both ways.
 //!
+//! # The derive emits a plan
+//!
+//! `#[derive(EncryptFrom)]` is a second author of the same grammar, not a
+//! second executor. It emits `Record::plan()`, a chain built from the
+//! record's attributes, and the record's `EncryptFrom::encryption()` is that
+//! plan's description, mapped into the struct:
+//!
+//! - `#[stash(struct = User, context = "users")]` emits
+//!   `Plan::context("users").fields()` with one
+//!   `encrypt_into::<FieldType, _>(pick("name", |u: &User| &u.name))` per
+//!   field (and `.identity(..)` where one is pinned). The field's own type
+//!   decides its layout.
+//! - `#[stash(plaintext = T)]` emits
+//!   `Plan::value::<T>().encrypt_into::<(A, B, ..)>()`, the tuple of the
+//!   derived fields' types, with no context of its own: every output shares
+//!   the context the caller hands over
+//!   ([`ValuePlan::encryption_with_context`]). With a
+//!   `#[stash(context_field)]` it is
+//!   `Plan::value::<T>().context_field::<C>().encrypt_into::<(A, B, ..)>()`,
+//!   which carries that context out beside the outputs
+//!   ([`ValueStart::context_field`]).
+//!
+//! So the derive's record and the hand-written chain are the same plan:
+//!
+//! ```
+//! # async fn example() -> Result<(), stack_encrypt::Error> {
+//! use stack_encrypt::kms::FakeDataKeySource;
+//! use stack_encrypt::plan::pick;
+//! use stack_encrypt::sem::EqualityTerm;
+//! use stack_encrypt::{Encrypted, EncryptFrom, Plan, StackCipher, StackCipherText};
+//!
+//! struct User {
+//!     email: String,
+//!     nickname: String,
+//! }
+//!
+//! #[derive(EncryptFrom)]
+//! #[stash(struct = User, context = "users")]
+//! struct EncryptedUser {
+//!     email: Encrypted<EqualityTerm>,
+//!     #[stash(identity = "handle")]
+//!     nickname: StackCipherText,
+//! }
+//!
+//! let derived = EncryptedUser::plan::<FakeDataKeySource>()?;
+//! let by_hand: Plan<User, FakeDataKeySource> = Plan::context("users")
+//!     .fields()
+//!     .encrypt_into::<Encrypted<EqualityTerm>, _>(pick("email", |u: &User| &u.email))
+//!     .encrypt_into::<StackCipherText, _>(pick("nickname", |u: &User| &u.nickname))
+//!     .identity("handle")
+//!     .build()?;
+//! // The same fields, labels, layouts and indexes.
+//! assert_eq!(format!("{derived:?}"), format!("{by_hand:?}"));
+//! assert_eq!(derived.field("nickname")?.label().map(ToString::to_string).as_deref(), Some("users/handle"));
+//!
+//! // And the record's equality term is the one a query through the plan derives.
+//! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! let user = User { email: "bob@example.com".into(), nickname: "bob".into() };
+//! let record: EncryptedUser = cipher.default_keyset().encrypt_as(&user, ().into()).await?;
+//! let query_value = cipher.query("bob@example.com").using(&by_hand.field("email")?).equality().await?;
+//! assert_eq!(record.email.terms, query_value);
+//! # Ok(())
+//! # }
+//! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
+//! ```
+//!
 //! # How a chain lowers
 //!
 //! The builder adds no cryptographic operation and no executor; every call
