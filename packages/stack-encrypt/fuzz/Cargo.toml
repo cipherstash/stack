@@ -16,8 +16,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-# Structure-aware inputs for `check_record`: the mirror types derive
-# `Arbitrary`, so the fuzzer mutates trees and plans, not bytes.
+# Structure-aware inputs for `check_record` and `plan_build`: the mirror
+# types derive `Arbitrary`, so the fuzzer mutates trees and plans, not bytes.
 arbitrary = { version = "1", features = ["derive"] }
 # The fixed leaf the record harness fills its sealed nodes with.
 uuid = "1.8"
@@ -47,6 +47,13 @@ bench = false
 [[bin]]
 name = "check_record"
 path = "fuzz_targets/check_record.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "plan_build"
+path = "fuzz_targets/plan_build.rs"
 test = false
 doc = false
 bench = false
