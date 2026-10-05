@@ -988,3 +988,62 @@ mod tests {
         }
     }
 }
+
+/// The typed side's lowering meets the wire form: an `Index`'s `spec()` is
+/// what a saved plan writes, so its options must survive the trip.
+#[cfg(test)]
+mod wire_form {
+    use super::*;
+    use crate::sem::{MatchConfig, Tokenizer};
+    use crate::target::{Equality, Index, Match, Ope, Ore};
+
+    /// Whole words, case kept: not the default configuration.
+    struct Words;
+    impl MatchConfig for Words {
+        fn options() -> MatchOptions {
+            MatchOptions {
+                tokenizer: Tokenizer::Standard,
+                downcase: false,
+                k: 4,
+                m: 512,
+            }
+        }
+    }
+
+    #[test]
+    fn every_typed_index_round_trips_through_the_wire_form() {
+        let specs = [
+            Index::<String>::spec(&Equality),
+            Index::<String>::spec(&Match::default()),
+            Index::<String>::spec(&Match::<Words>::new()),
+            Index::<String>::spec(&Ore),
+            Index::<String>::spec(&Ope),
+        ];
+        for spec in specs {
+            assert_eq!(
+                IndexSpec::from_value(&spec.to_value()).expect("reads back"),
+                spec,
+                "{spec:?} survives the data form"
+            );
+        }
+    }
+
+    #[test]
+    fn a_default_match_index_is_the_bare_match_key() {
+        let spec = Index::<String>::spec(&Match::default());
+        assert!(matches!(
+            spec.to_value(),
+            FfiValue::String(key) if super::utf8(&key) == Some("match")
+        ));
+    }
+
+    #[test]
+    fn a_match_index_with_other_options_keeps_them_never_rewritten() {
+        let spec = Index::<String>::spec(&Match::<Words>::new());
+        assert_eq!(spec, IndexSpec::Match(Words::options()));
+        assert!(
+            matches!(spec.to_value(), FfiValue::Object(_)),
+            "non-default options are written, not dropped"
+        );
+    }
+}
