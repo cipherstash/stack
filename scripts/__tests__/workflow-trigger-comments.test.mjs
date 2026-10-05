@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import yaml from 'js-yaml'
 import { describe, expect, it } from 'vitest'
-import { filterCovers } from './lib/paths-filter.mjs'
+import { filterCovers, negationRemovesAll } from './lib/paths-filter.mjs'
 import { REPO_ROOT } from './lib/repo-root.mjs'
 import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
 
@@ -127,7 +127,7 @@ function pullRequestReach(wf) {
   const paths = on.pull_request?.paths
   if (!Array.isArray(paths) || paths.length === 0) return 'unfiltered'
   const reached = BINDING_INPUTS.some((input) =>
-    filterCovers(paths, input, overlaps),
+    filterCovers(paths, input, overlaps, negationRemovesAll),
   )
   return reached ? 'filtered' : false
 }

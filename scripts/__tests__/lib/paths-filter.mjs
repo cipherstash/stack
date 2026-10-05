@@ -18,14 +18,29 @@ export function negationSubtracts(negated, input) {
   )
 }
 
+// Fails open, for callers asking whether an input can still start a workflow:
+// a file-type negation such as `!**.md` must not read as removing every input.
+export function negationRemovesAll(negated, input) {
+  const a = globPrefix(negated)
+  const b = globPrefix(input)
+  const rest = negated.slice(a.length).replace(/^\//, '')
+  return rest === '**' && (a === '' || a === b || b.startsWith(`${a}/`))
+}
+
 // GitHub evaluates `paths:` in order and the last matching pattern wins, so a
 // scan for one positive entry would read ['**', '!X'] as covering X.
-// `covers` is each caller's own test for a positive entry.
-export function filterCovers(paths, input, covers) {
+// `covers` and `subtracts` are each caller's own tests for a positive and a
+// negated entry.
+export function filterCovers(
+  paths,
+  input,
+  covers,
+  subtracts = negationSubtracts,
+) {
   let selected = false
   for (const entry of paths) {
     if (entry.startsWith('!')) {
-      if (negationSubtracts(entry.slice(1), input)) selected = false
+      if (subtracts(entry.slice(1), input)) selected = false
     } else if (entry === '**' || covers(entry, input)) {
       selected = true
     }

@@ -324,9 +324,9 @@ function compilesFfiRust(relPath) {
  * `on:` parses as the boolean `true` under YAML 1.1 (the "Norway problem"),
  * hence `wf.on ?? wf[true]`. An event with no `paths:` is UNFILTERED and is
  * skipped rather than failed — it already runs on every diff, so it cannot miss
- * one. `tests.yml` is that case, and it is why this check finding two workflows
- * rather than three is correct. `tests-rust.yml` is the half-case: `push` is
- * `branches: [main]` with no filter, so only its `pull_request` list is here.
+ * one. `tests.yml` and `tests-rust.yml` are both half-cases: `push` is
+ * `branches: [main]` with no filter, so only their `pull_request` lists are
+ * here. `tests.yml`'s is `'**'` with one negation, which `filterCovers` reads.
  */
 function filteredEvents(relPath) {
   const wf = readWorkflow(relPath)
@@ -489,10 +489,8 @@ describe('the FFI cache keys and the filters that trigger them agree', () => {
       })
 
       it('finds the path-filtered ones, which are the ones that can miss a diff', () => {
-        // `tests.yml` reaches both builds on every diff and declares no
-        // `paths:` at all, so it is correctly absent here. If THIS list
-        // empties, every per-event check below stops existing rather than
-        // failing.
+        // If THIS list empties, every per-event check below stops existing
+        // rather than failing.
         expect(
           filtered.length,
           `No workflow that reaches the ${key.id} build declares a \`paths:\` filter, so there is nothing to compare the cache key against. Either every such workflow became unfiltered (then this half of the guard is obsolete), or \`filteredEvents\` stopped reading the trigger block.`,
