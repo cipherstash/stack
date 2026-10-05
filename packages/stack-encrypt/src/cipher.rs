@@ -219,8 +219,10 @@ pub enum Error {
     #[error("a field declared decryptable was not opened by its DecryptField implementation")]
     NotOpened,
     /// A [plan](crate::plan) was refused: it did not validate when it was
-    /// built, or the value, row or query it was run with does not match it.
-    /// Always raised before any key is requested.
+    /// built, or the value, record or query it was run with does not match
+    /// it. A refusal at build or when a plan runs is raised before any key
+    /// is requested; [`FieldValues::take`](crate::plan::FieldValues::take)
+    /// also returns one for a record already in hand.
     #[error(transparent)]
     Plan(#[from] crate::plan::PlanError),
 }

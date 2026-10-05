@@ -433,7 +433,7 @@ async fn a_one_value_plan_writes_queries_by_type_and_reads_back() {
     assert_eq!(age, 34);
     let age: u32 = cipher.open(hand.ciphertext).using(&age_plan).await.unwrap();
     assert_eq!(age, 34, "a bare ciphertext opens too");
-    assert_eq!(age_plan.label().to_string(), "users/age");
+    assert_eq!(age_plan.label().unwrap().to_string(), "users/age");
     assert_eq!(age_plan.indexes(), &(Equality, Ore));
 }
 
@@ -1214,8 +1214,9 @@ async fn every_build_error_is_its_own() {
 #[tokio::test]
 async fn match_options_must_agree_for_a_query_to_be_declared() {
     #![allow(clippy::needless_update)]
+    use stack_encrypt::sem::MatchConfig;
     struct Shingles;
-    impl stack_encrypt::sem::MatchConfig for Shingles {
+    impl MatchConfig for Shingles {
         fn options() -> stack_encrypt::sem::MatchOptions {
             stack_encrypt::sem::MatchOptions {
                 downcase: false,
@@ -1226,19 +1227,27 @@ async fn match_options_must_agree_for_a_query_to_be_declared() {
     let cipher = stack_cipher().await;
     let users_plan: Plan<User, FakeDataKeySource> = users_plan();
     let email_plan = users_plan.field("email").unwrap();
+    let refused = plan_error(
+        cipher
+            .query("bob")
+            .using(&email_plan)
+            .index(Match::<Shingles>::new())
+            .await,
+    );
     assert_eq!(
-        plan_error(
-            cipher
-                .query("bob")
-                .using(&email_plan)
-                .index(Match::<Shingles>::new())
-                .await
-        ),
-        PlanError::IndexNotDeclared {
+        refused,
+        PlanError::IndexOptions {
             field: "email".into(),
-            index: "match"
+            declared: IndexSpec::Match(stack_encrypt::sem::MatchOptions::default()),
+            asked: IndexSpec::Match(Shingles::options()),
         }
     );
+    let message = refused.to_string();
+    assert!(
+        message.starts_with(r#"field "email" declares a match index with other options"#),
+        "the message points at the options, not a missing index: {message}"
+    );
+    assert!(message.contains("downcase: false"), "{message}");
 }
 
 #[tokio::test]
@@ -1620,11 +1629,15 @@ async fn a_plan_lowers_to_an_encryption_and_a_decryption_held_by_value() {
     let users_plan: Plan<User, _> = users_plan();
     let keyset = cipher.default_keyset();
     let row = keyset
-        .run(users_plan.encryption(), &user(), DeclaredContext::default())
+        .run(
+            users_plan.encryption(None),
+            &user(),
+            DeclaredContext::default(),
+        )
         .await
         .unwrap();
     let back = keyset
-        .run_decryption(users_plan.decryption(row, DeclaredContext::default()))
+        .run_decryption(users_plan.decryption(row, None, DeclaredContext::default()))
         .await
         .unwrap();
     assert_eq!(back.get::<u64>("id"), Some(&42));
@@ -1642,14 +1655,14 @@ async fn a_plan_lowers_to_an_encryption_and_a_decryption_held_by_value() {
         .unwrap();
     let row = keyset
         .run(
-            dynamic_plan.encryption(),
+            dynamic_plan.encryption(None),
             &dynamic,
             DeclaredContext::default(),
         )
         .await
         .unwrap();
     let back = keyset
-        .run_decryption(dynamic_plan.decryption(row, DeclaredContext::default()))
+        .run_decryption(dynamic_plan.decryption(row, None, DeclaredContext::default()))
         .await
         .unwrap();
     assert_eq!(back.get::<u32>("age"), Some(&7));
@@ -1658,8 +1671,8 @@ async fn a_plan_lowers_to_an_encryption_and_a_decryption_held_by_value() {
 #[test]
 fn a_plan_is_data_its_fields_say_what_they_declare() {
     let users_plan: Plan<User, FakeDataKeySource> = users_plan();
-    assert_eq!(users_plan.label().to_string(), "users");
-    let fields: Vec<_> = users_plan.fields().collect();
+    assert_eq!(users_plan.label().unwrap().to_string(), "users");
+    let fields: Vec<_> = users_plan.field_plans().collect();
     assert_eq!(fields.len(), 4);
     assert_eq!(fields[0].name(), "email");
     assert_eq!(fields[0].label().unwrap().to_string(), "users/email");
@@ -1704,17 +1717,17 @@ fn a_plan_is_data_its_fields_say_what_they_declare() {
         .encrypt::<u32>("age");
     assert_eq!(
         format!("{builder:?}"),
-        r#"FieldsBuilder { context: Ok(Label(["users"])), fields: [("age", Encrypt, [])] }"#
+        r#"FieldsBuilder { context: [Ok(Label(["users"]))], fields: [("age", Encrypt, [])] }"#
     );
     let value_plan = Plan::context("a").with::<u32, _>(Equality);
     assert_eq!(
         format!("{value_plan:?}"),
-        r#"ValuePlanBuilder { context: Ok(Label(["a"])), indexes: Equality }"#
+        r#"ValuePlanBuilder { context: [Ok(Label(["a"]))], shape: Indexed(Equality) }"#
     );
     let built = value_plan.build().unwrap();
     assert_eq!(
         format!("{:?}", built.clone()),
-        r#"ValuePlan { context: "a", indexes: Equality }"#
+        r#"ValuePlan { context: Some("a"), shape: Indexed(Equality) }"#
     );
     assert_eq!(
         format!("{:?}", Plan::context("x")),
@@ -1781,7 +1794,10 @@ async fn a_borrowed_string_names_a_context_and_a_keyset() {
         .with::<u32, _>(Equality)
         .build()
         .unwrap();
-    assert_eq!(age_plan.label().to_string(), "users/age");
+    assert_eq!(
+        age_plan.label().map(ToString::to_string).as_deref(),
+        Some("users/age")
+    );
     let sealed = cipher
         .encrypt(&34u32)
         .context(&context)

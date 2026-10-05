@@ -45,11 +45,18 @@
 //!   set beside it (one index or a tuple; `()` does not compile);
 //! - `index(name, indexes)`: the indexes alone, no ciphertext, so the field
 //!   is searchable but does not come back from decrypt;
-//! - `passthrough(name)`: carried as it is, **unsealed and unauthenticated**.
+//! - `passthrough(name)`: carried as it is, **unsealed and unauthenticated**;
+//! - `encrypt_into::<T, _>(name)`: laid out by the **target** type `T`,
+//!   whose own `EncryptFrom` decides what is sealed, which terms sit beside
+//!   it and which queries it answers. A field is either the data verbs above
+//!   or one target, never both.
 //!
-//! The value is taken apart through [`Fields`] and [`Field<F>`]. Rust cannot
-//! learn a field's type from its name, so a field verb names it where the
-//! value has fields of several types. The output is a [`FieldValues`].
+//! A verb names its field by name, read through the value's [`Fields`] and
+//! [`Field<F>`] (Rust cannot learn a field's type from its name, so a field
+//! verb names it where the value has fields of several types), or by a
+//! **picker**, a name with an accessor ([`pick`]`("email", |u: &User|
+//! &u.email)`), which reads the field directly and needs neither impl nor
+//! turbofish. The output is a [`FieldValues`].
 //!
 //! ```
 //! # use stack_encrypt::plan::{Field, Fields};
@@ -76,7 +83,7 @@
 //! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 //! let user = User { email: "bob@example.com".into(), age: 34, notes: "hi".into(), id: 42 };
 //!
-//! let mut row = cipher
+//! let mut record = cipher
 //!     .encrypt(&user)
 //!     .context("users")
 //!     .fields()
@@ -86,8 +93,8 @@
 //!     .passthrough::<u64>("id")
 //!     .await?;
 //!
-//! let email: Encrypted<(EqualityTerm, MatchTerms)> = row.take("email")?;
-//! assert_eq!(row.take::<u64>("id")?, 42);
+//! let email: Encrypted<(EqualityTerm, MatchTerms)> = record.take("email")?;
+//! assert_eq!(record.take::<u64>("id")?, 42);
 //! # let _ = email;
 //! # Ok(())
 //! # }
@@ -102,13 +109,23 @@
 //!
 //! # A saved plan, a query and a read
 //!
-//! [`Plan::context`] starts the same chain without a value, and
+//! A plan is the same chain without a value. It starts one of two ways,
+//! [`Plan::fields`] or [`Plan::value`], each with an optional `.context(c)`;
+//! [`Plan::context`]`(c).fields()` and `Plan::context(c).with(..)` are the
+//! common spellings. Its context comes from exactly one place: the plan
+//! (`.context(c)`), the call that runs it
+//! (`cipher.encrypt(&v).context(c).using(&plan)`, for a plan built without
+//! one), or a field of the value
+//! ([`context_field`](FieldsBuilder::context_field)); see [`Plan`].
+//!
+//!
 //! [`build`](FieldsBuilder::build) validates the whole plan once: a field
 //! named twice, a label that is not plain, two fields under one identity,
-//! passthrough on an indexed field, an index named twice, and (where the
-//! type declares a [`schema`](Fields::schema)) a field the type lacks, one
-//! it leaves unnamed or one at the wrong type are all refused there. A plan
-//! is data: `Clone`, `Debug`, reusable.
+//! passthrough on an indexed field, a field both a target and data verbs,
+//! a context given twice, an index named twice, and (where the type
+//! declares a [`schema`](Fields::schema)) a field the type lacks, one it
+//! leaves unnamed or one at the wrong type are all refused there. A plan is
+//! data: `Clone`, `Debug`, reusable.
 //!
 //! The same plan then writes ([`using`](EncryptBuilder::using)), queries
 //! ([`query`](crate::StackCipher::query)) and reads
@@ -148,8 +165,8 @@
 //!     .build()?;
 //!
 //! // Write.
-//! let row = cipher.encrypt(&user).using(&users_plan).await?;
-//! let stored: &Encrypted<(EqualityTerm, MatchTerms)> = row.get("email").unwrap();
+//! let record = cipher.encrypt(&user).using(&users_plan).await?;
+//! let stored: &Encrypted<(EqualityTerm, MatchTerms)> = record.get("email").unwrap();
 //!
 //! // Query: derived under the label the write used, so it matches.
 //! let email_plan = users_plan.field("email")?;
@@ -157,7 +174,7 @@
 //! assert_eq!(probe, stored.terms.0);
 //!
 //! // Read: every field that can come back.
-//! let back = cipher.open(row).using(&users_plan).await?;
+//! let back = cipher.open(record).using(&users_plan).await?;
 //! assert_eq!(back.get::<String>("notes").map(String::as_str), Some("hi"));
 //! assert_eq!(back.get::<u32>("age"), Some(&34));
 //! # Ok(())
@@ -168,13 +185,13 @@
 //! A query against an index the field never declared is
 //! [`PlanError::IndexNotDeclared`], and one whose plaintext is not the
 //! field's type is [`PlanError::FieldType`]: never a term that quietly
-//! matches nothing. A one-value plan ([`ValuePlan`], from
-//! `Plan::context(..).with(..)`) selects its query index by type instead, so
-//! there an undeclared index does not compile; it also carries its plaintext
-//! type, so opening through it yields that type.
+//! matches nothing. A one-value plan given its indexes ([`ValuePlan`], from
+//! `.with(..)`) selects its query index by type instead, so there an
+//! undeclared index does not compile; it also carries its plaintext type,
+//! so opening through it yields that type.
 //!
 //! [`all`] settles several chains in one ZeroKMS request, and a saved plan
-//! over a slice or a `Vec` settles every row in one.
+//! over a slice or a `Vec` settles every record in one, both ways.
 //!
 //! # How a chain lowers
 //!
@@ -186,14 +203,16 @@
 //! |---|---|
 //! | `context(c)` alone | [`ciphertext`](crate::target::ciphertext)`().under(c)` |
 //! | `with(x)`, `encrypt_index(name, x)` | [`indexed`](crate::target::indexed)`(x).under(label)` |
+//! | `encrypt_into::<T, _>(name)`, `encrypt_into::<T>()` | `<T as EncryptFrom<F>>::encryption().under(label)`; `Encrypted<Terms>`'s is `indexed(..)` |
 //! | `encrypt(name)` | `ciphertext().under(label)` |
 //! | `index(name, x)` | [`Indexes::operations`](crate::Indexes::operations)`().under(label)` |
 //! | `passthrough(name)` | [`passthrough`](crate::target::passthrough)`()` |
-//! | `fields()` | each field picked out of the value by name, `zip`ped |
+//! | `context_field(name)` | `passthrough()`, and its value is the context every other field runs under |
+//! | `fields()` | each field picked out of the value (by name, or by a picker's accessor as `project` does), `zip`ped |
 //! | `extend(parts)` | the [`DeclaredContext`](crate::target::DeclaredContext) the description runs under |
 //! | `using(&plan)` | [`KeysetCipher::run`](crate::KeysetCipher::run) of [`Plan::encryption`] |
 //! | `query(v).using(..).equality()` | the selected index's operation alone, `.under(label)` |
-//! | `open(row).using(&plan)` | [`open`](crate::target::open) per field, run by `run_decryption` |
+//! | `open(record).using(&plan)` | [`open`](crate::target::open) per field, run by `run_decryption` |
 //! | `.await`, [`all`] | `Pending::zip`, then one settle |
 //!
 //! The cipher-directed and target-directed entry points on
@@ -204,16 +223,17 @@
 mod build;
 mod chain;
 mod error;
+mod field_ref;
+mod value;
 mod values;
 
-pub use build::{
-    FieldKind, FieldPlan, FieldsBuilder, IntoLabel, Opens, Plan, PlanContext, Runs, ValuePlan,
-    ValuePlanBuilder,
-};
+pub use build::{FieldKind, FieldPlan, FieldsBuilder, IntoLabel, Opens, Plan, PlanContext, Runs};
 pub use chain::{
     all, All, Batch, EncryptBuilder, EncryptFields, EncryptIndexed, EncryptUsing,
     EncryptWithContext, KeysetChoice, OpenBuilder, OpenUsing, Operation, PlanKms, QueryBuilder,
     QueryIndex, QueryUsing,
 };
 pub use error::PlanError;
+pub use field_ref::{pick, FieldRef};
+pub use value::{Indexed, Typed, ValuePlan, ValuePlanBuilder, ValueShape, ValueStart};
 pub use values::{Field, FieldSchema, FieldValues, Fields};

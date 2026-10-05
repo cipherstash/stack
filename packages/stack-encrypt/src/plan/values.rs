@@ -138,6 +138,11 @@ impl Slot {
         self.value.is::<T>()
     }
 
+    /// The value as a `&T`, if it is one.
+    pub(crate) fn downcast_ref<T: Any>(&self) -> Option<&T> {
+        self.value.downcast_ref::<T>()
+    }
+
     pub(crate) fn type_name(&self) -> &'static str {
         self.type_name
     }
@@ -276,7 +281,7 @@ impl fmt::Debug for FieldValues {
 }
 
 /// A record is itself a value a plan can take apart: a binding that builds
-/// rows at run time, or a test, hands one to a fields plan directly. Every
+/// records at run time, or a test, hands one to a fields plan directly. Every
 /// field is read at whatever type the plan names, and refused at any other.
 impl Fields for FieldValues {
     fn field_names(&self) -> Vec<&str> {

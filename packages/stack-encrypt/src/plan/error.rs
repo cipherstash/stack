@@ -1,11 +1,15 @@
 //! Why a plan was refused.
+use crate::target::IndexSpec;
 use crate::LabelError;
 
 /// Why a plan was refused: when it was built, or when it was run against a
 /// value, a stored record or a query that does not match it.
 ///
-/// Every one of these is raised before any key is requested: a plan that
-/// does not hold up never reaches ZeroKMS. Carried in [`Error::Plan`].
+/// Every refusal of a plan, at build or when it runs, is raised before any
+/// key is requested: a plan that does not hold up never reaches ZeroKMS.
+/// [`FieldValues::take`](super::FieldValues::take) reuses two of these
+/// ([`NotInValue`](Self::NotInValue), [`FieldType`](Self::FieldType)) for a
+/// record already in hand. Carried in [`Error::Plan`].
 ///
 /// [`Error::Plan`]: crate::Error::Plan
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -14,10 +18,11 @@ pub enum PlanError {
     /// The plan's context is not a plain label.
     #[error("the plan's context is not a plain label: {0}")]
     ContextLabel(#[source] LabelError),
-    /// A sealed or indexed field's name, or the identity it is keyed
-    /// under, is not a plain label segment. A passthrough field is under no
-    /// label, so its name is never refused for this.
-    #[error("field {field:?} is not a plain label segment: {source}")]
+    /// A sealed or indexed field is keyed under an identity (its name,
+    /// unless one is pinned) that is not a plain label segment. A
+    /// passthrough field is under no label, so its name is never refused
+    /// for this.
+    #[error("field {field:?} is not keyed under a plain label segment: {source}")]
     FieldLabel {
         /// The field.
         field: String,
@@ -102,9 +107,49 @@ pub enum PlanError {
     /// would have matched nothing.
     #[error("field {field:?} declares no {index} index")]
     IndexNotDeclared {
-        /// The field.
+        /// The field, or the context of a one-value plan.
         field: String,
         /// The index asked for, as its key.
         index: &'static str,
+    },
+    /// A query asked a field for an index the field declares with other
+    /// options (a match index under another tokenizer or filter size), so
+    /// its terms would never have matched.
+    #[error(
+        "field {field:?} declares a {} index with other options: declared {declared:?}, asked {asked:?}",
+        declared.key()
+    )]
+    IndexOptions {
+        /// The field, or the context of a one-value plan.
+        field: String,
+        /// The index as the field declares it.
+        declared: IndexSpec,
+        /// The index as the query asked for it.
+        asked: IndexSpec,
+    },
+    /// The plan's context was given twice. A plan takes its context from
+    /// exactly one place: the plan, the call that runs it, or a context
+    /// field.
+    #[error("the plan's context is given twice: by {first} and by {second}")]
+    TwoContextSources {
+        /// Who gave it first: `"the plan"`, `"the call"` or
+        /// `"a context field"`.
+        first: &'static str,
+        /// Who gave it again.
+        second: &'static str,
+    },
+    /// The plan was run with no context: it was built without one and has
+    /// no context field, and the call named none.
+    #[error(
+        "the plan has no context: build it with one, name one in the call, or use a context field"
+    )]
+    NoContext,
+    /// A field was declared both as a typed target (`encrypt_into`) and with
+    /// a data verb. A field is one or the other: the target's type decides
+    /// its layout and its queries.
+    #[error("field {field:?} is declared both as a typed target and with data verbs")]
+    TargetWithVerbs {
+        /// The field.
+        field: String,
     },
 }

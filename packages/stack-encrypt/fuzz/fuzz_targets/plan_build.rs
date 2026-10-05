@@ -9,18 +9,24 @@
 //! alphabet, so duplicates, shared identities and reserved forms collide
 //! often, or as free text.
 //!
-//! Three invariants. Building and rendering never panic, whatever the
-//! names. A plan that builds gives every sealed or indexed field a
-//! well-formed label: `<context>/<identity>`, which renders and parses back
-//! to itself. And a passthrough field is under no label, so a plan of
-//! passthrough fields with distinct names under a plain context builds,
-//! whatever text the names are.
+//! The plan may be built with its context, or without one (the call names
+//! it), and a field may be declared as the plan's context field, so a
+//! context can also be given twice.
+//!
+//! Four invariants. Building and rendering never panic, whatever the
+//! names. A plan built with its context gives every sealed or indexed field
+//! a well-formed label: `<context>/<identity>`, which renders and parses
+//! back to itself; a plan without one gives none, and keys each such field
+//! under a plain identity segment. A passthrough or context field is under
+//! no label, so a plan of passthrough fields with distinct names, under a
+//! plain context or none, builds whatever text the names are. And a plan
+//! whose context is given twice is refused with `TwoContextSources`.
 
 use std::collections::HashSet;
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-use stack_encrypt::plan::{FieldKind, FieldValues};
+use stack_encrypt::plan::{FieldKind, FieldValues, PlanError};
 use stack_encrypt::{Equality, Error, Label, Plan};
 
 /// A name: one of a few that collide or sit on a rule's edge, or free text.
@@ -58,6 +64,7 @@ enum Verb {
     EncryptIndex,
     Index,
     Passthrough,
+    ContextField,
 }
 
 #[derive(Arbitrary, Debug)]
@@ -69,12 +76,16 @@ struct Declared {
 
 #[derive(Arbitrary, Debug)]
 struct Input {
-    context: Name,
+    /// `None`: a plan built without a context.
+    context: Option<Name>,
     fields: Vec<Declared>,
 }
 
 fuzz_target!(|input: Input| {
-    let mut builder = Plan::context(input.context.as_str()).fields::<FieldValues, ()>();
+    let mut builder = match &input.context {
+        Some(context) => Plan::context(context.as_str()).fields::<FieldValues, ()>(),
+        None => Plan::fields::<FieldValues, ()>(),
+    };
     for field in &input.fields {
         let name = field.name.as_str();
         builder = match field.verb {
@@ -82,6 +93,7 @@ fuzz_target!(|input: Input| {
             Verb::EncryptIndex => builder.encrypt_index::<String>(name, Equality),
             Verb::Index => builder.index::<String>(name, Equality),
             Verb::Passthrough => builder.passthrough::<String>(name),
+            Verb::ContextField => builder.context_field::<String>(name),
         };
         if let Some(identity) = &field.identity {
             builder = builder.identity(identity.as_str());
@@ -89,30 +101,57 @@ fuzz_target!(|input: Input| {
     }
     let _ = format!("{builder:?}");
 
-    let context = Label::parse(input.context.as_str());
+    let context = input.context.as_ref().map(|c| Label::parse(c.as_str()));
+    let context_fields = input
+        .fields
+        .iter()
+        .filter(|f| f.verb == Verb::ContextField)
+        .count();
+    let sources = usize::from(context.is_some()) + context_fields;
     let names: HashSet<&str> = input.fields.iter().map(|f| f.name.as_str()).collect();
-    let passthrough_only = context.is_ok()
+    let passthrough_only = !matches!(context, Some(Err(_)))
         && names.len() == input.fields.len()
         && input.fields.iter().all(|f| f.verb == Verb::Passthrough);
 
     match builder.build() {
         Ok(plan) => {
-            let context = context.expect("a plan that builds has a plain context");
-            assert_eq!(plan.label(), &context);
-            assert_eq!(Label::parse(&context.to_string()).as_ref(), Ok(&context));
-            assert_eq!(plan.fields().len(), input.fields.len());
-            for (built, declared) in plan.fields().zip(&input.fields) {
+            assert!(sources <= 1, "a context given {sources} times built");
+            let context = context.map(|c| c.expect("a plan that builds has a plain context"));
+            assert_eq!(plan.label(), context.as_ref());
+            if let Some(context) = &context {
+                assert_eq!(Label::parse(&context.to_string()).as_ref(), Ok(context));
+            }
+            assert_eq!(
+                plan.context_field().is_some(),
+                context_fields == 1,
+                "the plan names its context field"
+            );
+            assert_eq!(plan.field_plans().len(), input.fields.len());
+            for (built, declared) in plan.field_plans().zip(&input.fields) {
                 assert_eq!(built.name(), declared.name.as_str());
-                match built.label() {
-                    None => assert_eq!(built.kind(), FieldKind::Passthrough),
-                    Some(label) => {
-                        assert_ne!(built.kind(), FieldKind::Passthrough);
+                let identity = declared
+                    .identity
+                    .as_ref()
+                    .unwrap_or(&declared.name)
+                    .as_str();
+                assert_eq!(built.identity(), identity);
+                let keys_nothing =
+                    matches!(built.kind(), FieldKind::Passthrough | FieldKind::ContextField);
+                match (built.label(), &context) {
+                    (None, Some(_)) => assert!(keys_nothing),
+                    (None, None) => {
+                        if !keys_nothing {
+                            assert_eq!(
+                                Label::parse(identity).map(|l| l.segments().count()),
+                                Ok(1),
+                                "a sealed field is keyed under one plain segment"
+                            );
+                        }
+                    }
+                    (Some(_), None) => panic!("a plan without a context labelled a field"),
+                    (Some(label), Some(context)) => {
+                        assert!(!keys_nothing);
                         assert_eq!(Label::parse(&label.to_string()).as_ref(), Ok(label));
-                        let identity = declared
-                            .identity
-                            .as_ref()
-                            .unwrap_or(&declared.name)
-                            .as_str();
                         let mut expected: Vec<&str> = context.segments().collect();
                         expected.push(identity);
                         assert!(label.segments().eq(expected));
@@ -127,6 +166,12 @@ fuzz_target!(|input: Input| {
                 !passthrough_only,
                 "passthrough names are under no label, yet refused: {error}"
             );
+            if sources > 1 && !matches!(context, Some(Err(_))) {
+                assert!(
+                    matches!(error, PlanError::TwoContextSources { .. }),
+                    "a context given twice is refused as that, got {error}"
+                );
+            }
             let _ = error.to_string();
         }
         Err(other) => panic!("a plan is refused only with a plan error, got {other:?}"),

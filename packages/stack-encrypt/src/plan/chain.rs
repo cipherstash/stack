@@ -1,5 +1,5 @@
 //! The chain on the cipher: `cipher.encrypt(&value)`, `cipher.query(&value)`
-//! and `cipher.open(row)`, each finished by `.await`, and [`all`] for
+//! and `cipher.open(record)`, each finished by `.await`, and [`all`] for
 //! several at once.
 use std::future::IntoFuture;
 use std::marker::PhantomData;
@@ -7,12 +7,13 @@ use std::marker::PhantomData;
 use stack_kms::{DataKeySource, IdentifiedBy, IndexKeySource, MaybeSend};
 use uuid::Uuid;
 
-use super::build::{FieldPlan, FieldsBuilder, IntoLabel, Opens, PlanContext, Runs, ValuePlan};
-use super::values::{Field, Fields};
+use super::build::{FieldPlan, FieldsBuilder, IntoLabel, Opens, PlanContext, Runs};
+use super::field_ref::FieldRef;
+use super::value::{Indexed, Typed, ValuePlan, ValueShape};
 use super::PlanError;
 use crate::target::{
-    ciphertext, Borrowed, DeclaredContext, Equality, Index, Indexes, Owned, Pending, PendingFuture,
-    Select,
+    ciphertext, Borrowed, CallerContext, DeclaredContext, DecryptField, Decryptable, EncryptFrom,
+    Equality, Index, Indexes, Owned, Pending, PendingFuture, Select,
 };
 use crate::{Error, KeysetCipher, Label, LabelError, NonEmpty, StackCipher, StackCipherText};
 
@@ -91,11 +92,13 @@ impl<K> From<&String> for KeysetChoice<'_, K> {
 }
 
 /// What every chain carries besides its value: the cipher, the keyset it
-/// names, and the caller's extension of the plan's contexts.
+/// names, the context it names for a plan built without one, and the
+/// caller's extension of the plan's contexts.
 struct Common<'a, K> {
     cipher: &'a StackCipher<K>,
     keyset: Option<KeysetChoice<'a, K>>,
-    context: DeclaredContext,
+    context: Option<Result<Label, LabelError>>,
+    extend: DeclaredContext,
 }
 
 impl<'a, K> Common<'a, K> {
@@ -103,8 +106,27 @@ impl<'a, K> Common<'a, K> {
         Self {
             cipher,
             keyset: None,
-            context: DeclaredContext::default(),
+            context: None,
+            extend: DeclaredContext::default(),
         }
+    }
+
+    /// The context the call named, parsed, left in place: what a chain's
+    /// [`check`](Operation::check) reads.
+    fn peek_context(&self) -> Result<Option<&Label>, PlanError> {
+        match &self.context {
+            None => Ok(None),
+            Some(Ok(label)) => Ok(Some(label)),
+            Some(Err(error)) => Err(PlanError::ContextLabel(*error)),
+        }
+    }
+
+    /// The context the call named, parsed.
+    fn call_context(&mut self) -> Result<Option<Label>, PlanError> {
+        self.context
+            .take()
+            .transpose()
+            .map_err(PlanError::ContextLabel)
     }
 }
 
@@ -211,7 +233,7 @@ macro_rules! chain_options {
             /// context does. The same parts must be given to read it back.
             /// A second call replaces the first.
             pub fn extend(mut self, parts: impl Into<DeclaredContext>) -> Self {
-                self.common.context = parts.into();
+                self.common.extend = parts.into();
                 self
             }
         }
@@ -272,15 +294,15 @@ impl<K: 'static> StackCipher<K> {
         }
     }
 
-    /// Start a chain that decrypts `row`, a record a plan wrote. Name the
+    /// Start a chain that decrypts `record`, a record a plan wrote. Name the
     /// plan with [`using`](OpenBuilder::using), then `.await`.
     ///
     /// Named `open` rather than `decrypt`: [`StackCipher::decrypt`] is the
     /// cipher-directed decrypt and keeps its two-argument form.
-    pub fn open<'a, R>(&'a self, row: R) -> OpenBuilder<'a, R, K> {
+    pub fn open<'a, R>(&'a self, record: R) -> OpenBuilder<'a, R, K> {
         OpenBuilder {
             common: Common::new(self),
-            row,
+            record,
         }
     }
 }
@@ -306,7 +328,10 @@ impl<'a, S: ?Sized, K: 'static> EncryptBuilder<'a, S, K> {
 
     /// Encrypt as the saved `plan` declares: a fields plan ([`Plan`](super::Plan)) or a
     /// one-value plan ([`ValuePlan`]), over one value, a slice or a `Vec` of
-    /// them. A collection settles every key request in one batch.
+    /// them. A collection settles every key request in one batch. The plan
+    /// must have a context of its own (built with one, or a context field);
+    /// one without is given its context by
+    /// [`context(..).using(..)`](EncryptWithContext::using).
     pub fn using<P: Runs<S, K>>(self, plan: &'a P) -> EncryptUsing<'a, S, P, K> {
         EncryptUsing {
             common: self.common,
@@ -326,6 +351,20 @@ pub struct EncryptWithContext<'a, S: ?Sized, K> {
 }
 
 impl<'a, S: ?Sized, K: 'static> EncryptWithContext<'a, S, K> {
+    /// Encrypt as the saved `plan` declares, under this context: for a plan
+    /// built without a context of its own, this call names it. A plan that
+    /// has one (built with it, or from a context field) is refused with
+    /// [`PlanError::TwoContextSources`] when awaited, before any key is
+    /// requested.
+    pub fn using<P: Runs<S, K>>(mut self, plan: &'a P) -> EncryptUsing<'a, S, P, K> {
+        self.common.context = Some(self.context);
+        EncryptUsing {
+            common: self.common,
+            source: self.source,
+            plan,
+        }
+    }
+
     /// Seal the value with `indexes` beside it: one index or a tuple of
     /// two to four, each defined over the value's type. The output is an
     /// [`Encrypted<Terms>`](crate::Encrypted), terms read by destructuring.
@@ -380,7 +419,7 @@ where
             Ok(label) => keyset.run(
                 ciphertext::<S, K, Borrowed>().under(NonEmpty::from(label)),
                 self.source,
-                self.common.context,
+                self.common.extend,
             ),
             Err(error) => Pending::failed(keyset, PlanError::ContextLabel(error).into()),
         }
@@ -391,7 +430,7 @@ where
 pub struct EncryptIndexed<'a, S, X, K> {
     common: Common<'a, K>,
     source: &'a S,
-    plan: super::build::ValuePlanBuilder<S, X>,
+    plan: super::value::ValuePlanBuilder<S, Indexed<X>>,
 }
 
 impl<'a, S, X, K: 'static> Operation<'a, K> for EncryptIndexed<'a, S, X, K>
@@ -415,7 +454,7 @@ where
         'a: 'p,
     {
         match self.plan.build() {
-            Ok(plan) => plan.pending(keyset, self.source, self.common.context),
+            Ok(plan) => plan.pending(keyset, self.source, None, self.common.extend),
             Err(error) => Pending::failed(keyset, error),
         }
     }
@@ -432,48 +471,54 @@ pub struct EncryptFields<'a, S: 'static, K: 'static> {
 
 impl<'a, S: 'static, K: 'static> EncryptFields<'a, S, K> {
     /// [`FieldsBuilder::encrypt`].
-    pub fn encrypt<F>(mut self, name: &str) -> Self
+    pub fn encrypt<F>(mut self, field: impl FieldRef<S, F>) -> Self
     where
-        S: Field<F>,
         F: crate::Encrypt + crate::Decrypt<'static> + Clone + Send + 'static,
     {
-        self.plan = self.plan.encrypt::<F>(name);
+        self.plan = self.plan.encrypt::<F>(field);
         self
     }
     /// [`FieldsBuilder::encrypt_index`].
     pub fn encrypt_index<F>(
         mut self,
-        name: &str,
+        field: impl FieldRef<S, F>,
         indexes: impl Indexes<F, Terms: Send> + Clone + Send + Sync + 'static,
     ) -> Self
     where
-        S: Field<F>,
         F: crate::Encrypt + crate::Decrypt<'static> + Clone + Send + 'static,
     {
-        self.plan = self.plan.encrypt_index::<F>(name, indexes);
+        self.plan = self.plan.encrypt_index::<F>(field, indexes);
         self
     }
     /// [`FieldsBuilder::index`].
     pub fn index<F>(
         mut self,
-        name: &str,
+        field: impl FieldRef<S, F>,
         indexes: impl Indexes<F, Terms: Send> + Clone + Send + Sync + 'static,
     ) -> Self
     where
-        S: Field<F>,
         F: Clone + Send + 'static,
     {
-        self.plan = self.plan.index::<F>(name, indexes);
+        self.plan = self.plan.index::<F>(field, indexes);
         self
     }
     /// [`FieldsBuilder::passthrough`]: carried **unsealed and
     /// unauthenticated**.
-    pub fn passthrough<F>(mut self, name: &str) -> Self
+    pub fn passthrough<F>(mut self, field: impl FieldRef<S, F>) -> Self
     where
-        S: Field<F>,
         F: Clone + Send + 'static,
     {
-        self.plan = self.plan.passthrough::<F>(name);
+        self.plan = self.plan.passthrough::<F>(field);
+        self
+    }
+    /// [`FieldsBuilder::encrypt_into`].
+    pub fn encrypt_into<T, F>(mut self, field: impl FieldRef<S, F>) -> Self
+    where
+        F: Send + 'static,
+        T: EncryptFrom<F> + Decryptable + DecryptField<F, CallerContext> + Send,
+        CallerContext: Into<T::Context>,
+    {
+        self.plan = self.plan.encrypt_into::<T, F>(field);
         self
     }
     /// [`FieldsBuilder::identity`].
@@ -483,7 +528,7 @@ impl<'a, S: 'static, K: 'static> EncryptFields<'a, S, K> {
     }
 }
 
-impl<'a, S: Fields + 'static, K: 'static> Operation<'a, K> for EncryptFields<'a, S, K> {
+impl<'a, S: 'static, K: 'static> Operation<'a, K> for EncryptFields<'a, S, K> {
     type Output = super::FieldValues;
     fn cipher(&self) -> &'a StackCipher<K> {
         self.common.cipher
@@ -492,14 +537,14 @@ impl<'a, S: Fields + 'static, K: 'static> Operation<'a, K> for EncryptFields<'a,
         self.common.keyset.take()
     }
     fn check(&self) -> Result<(), Error> {
-        self.plan.check()
+        self.plan.check(self.source)
     }
     fn prepare<'p>(self, keyset: &'p KeysetCipher<'a, K>, _: bool) -> Pending<'p, Self::Output, K>
     where
         'a: 'p,
     {
         match self.plan.build() {
-            Ok(plan) => plan.pending(keyset, self.source, self.common.context),
+            Ok(plan) => plan.pending(keyset, self.source, None, self.common.extend),
             Err(error) => Pending::failed(keyset, error),
         }
     }
@@ -524,13 +569,22 @@ where
         self.common.keyset.take()
     }
     fn check(&self) -> Result<(), Error> {
-        self.plan.check(self.source)
+        self.plan.check(self.source, self.common.peek_context()?)
     }
-    fn prepare<'p>(self, keyset: &'p KeysetCipher<'a, K>, _: bool) -> Pending<'p, Self::Output, K>
+    fn prepare<'p>(
+        mut self,
+        keyset: &'p KeysetCipher<'a, K>,
+        _: bool,
+    ) -> Pending<'p, Self::Output, K>
     where
         'a: 'p,
     {
-        self.plan.pending(keyset, self.source, self.common.context)
+        match self.common.call_context() {
+            Ok(context) => self
+                .plan
+                .pending(keyset, self.source, context, self.common.extend),
+            Err(error) => Pending::failed(keyset, error.into()),
+        }
     }
 }
 
@@ -541,6 +595,15 @@ pub struct QueryBuilder<'a, F, K> {
 }
 
 impl<'a, F, K: 'static> QueryBuilder<'a, F, K> {
+    /// Name the context the term is derived under, for a plan built
+    /// without one: the context the write's call named, or for a plan with
+    /// a context field, the value that field held. A plan built with its
+    /// context refuses this ([`PlanError::TwoContextSources`]).
+    pub fn context(mut self, context: impl IntoLabel) -> Self {
+        self.common.context = Some(context.into_label());
+        self
+    }
+
     /// Query through `plan`: a field of a fields plan
     /// ([`Plan::field`](super::Plan::field)), or a one-value plan ([`ValuePlan`]). The term is
     /// derived under exactly the label the write used.
@@ -574,8 +637,11 @@ impl<'a, F: 'static, K: 'static> QueryUsing<'a, F, FieldPlan, K> {
     /// plaintext must be the field's type; otherwise awaiting is
     /// [`PlanError::IndexNotDeclared`] or [`PlanError::FieldType`], never a
     /// term that matches nothing.
-    pub fn index<I: Index<F>>(self, index: I) -> QueryIndex<'a, F, I, K> {
-        let label = self.plan.query_label::<F>(&index.spec());
+    pub fn index<I: Index<F>>(mut self, index: I) -> QueryIndex<'a, F, I, K> {
+        let label = self
+            .common
+            .call_context()
+            .and_then(|call| self.plan.query_label::<F>(&index.spec(), call));
         QueryIndex {
             common: self.common,
             value: self.value,
@@ -585,7 +651,7 @@ impl<'a, F: 'static, K: 'static> QueryUsing<'a, F, FieldPlan, K> {
     }
 }
 
-impl<'a, F: 'static, X: Indexes<F>, K: 'static> QueryUsing<'a, F, ValuePlan<F, X>, K> {
+impl<'a, F: 'static, X: Indexes<F>, K: 'static> QueryUsing<'a, F, ValuePlan<F, Indexed<X>>, K> {
     /// The equality term, selected from the plan's indexes by type: a plan
     /// with no `Equality` index does not compile here.
     pub fn equality<At>(self) -> QueryIndex<'a, F, Equality, K>
@@ -598,17 +664,50 @@ impl<'a, F: 'static, X: Indexes<F>, K: 'static> QueryUsing<'a, F, ValuePlan<F, X
 
     /// The term of the plan's index of type `I`, selected by type
     /// ([`Indexes::select`]); `At` is inferred: `.index::<Ore, _>()`.
-    pub fn index<I, At>(self) -> QueryIndex<'a, F, I, K>
+    pub fn index<I, At>(mut self) -> QueryIndex<'a, F, I, K>
     where
         I: Index<F> + Clone,
         X: Select<I, At>,
     {
         let index = self.plan.indexes().select::<I, At>().clone();
+        let label = self
+            .common
+            .call_context()
+            .and_then(|call| self.plan.resolve(call));
         QueryIndex {
             common: self.common,
             value: self.value,
             index,
-            label: Ok(self.plan.label().clone()),
+            label,
+        }
+    }
+}
+
+impl<'a, F: 'static, T, K: 'static> QueryUsing<'a, F, ValuePlan<F, Typed<T>>, K>
+where
+    Typed<T>: ValueShape<F>,
+{
+    /// The equality term: sugar for `index(Equality)`.
+    pub fn equality(self) -> QueryIndex<'a, F, Equality, K>
+    where
+        Equality: Index<F>,
+    {
+        self.index(Equality)
+    }
+
+    /// The term of `index`. The target must declare it
+    /// ([`EncryptFrom::indexes`]); otherwise awaiting is
+    /// [`PlanError::IndexNotDeclared`], never a term that matches nothing.
+    pub fn index<I: Index<F>>(mut self, index: I) -> QueryIndex<'a, F, I, K> {
+        let label = self
+            .common
+            .call_context()
+            .and_then(|call| self.plan.query_label(&index.spec(), call));
+        QueryIndex {
+            common: self.common,
+            value: self.value,
+            index,
+            label,
         }
     }
 }
@@ -648,7 +747,7 @@ where
                     .operation::<K, Owned>()
                     .under(NonEmpty::from(label)),
                 self.value,
-                self.common.context,
+                self.common.extend,
             ),
             Err(error) => Pending::failed(keyset, error.into()),
         }
@@ -658,17 +757,28 @@ where
 /// A chain decrypting a stored record, before its plan is named.
 pub struct OpenBuilder<'a, R, K> {
     common: Common<'a, K>,
-    row: R,
+    record: R,
 }
 
 impl<'a, R, K: 'static> OpenBuilder<'a, R, K> {
+    /// Name the context: for a plan built without one, the context the
+    /// write's call named; for a plan with a context field, the context the
+    /// caller expects the record to hold, so a record whose field says
+    /// otherwise is [`Error::ContextMismatch`] before any key is requested.
+    /// A plan built with its context refuses this
+    /// ([`PlanError::TwoContextSources`]).
+    pub fn context(mut self, context: impl IntoLabel) -> Self {
+        self.common.context = Some(context.into_label());
+        self
+    }
+
     /// Decrypt as `plan` declares: the fields that can come back (sealed
     /// and passthrough fields, not index-only ones) for a fields plan, the
     /// plaintext for a one-value plan.
     pub fn using<P: Opens<R, K>>(self, plan: &'a P) -> OpenUsing<'a, R, P, K> {
         OpenUsing {
             common: self.common,
-            row: self.row,
+            record: self.record,
             plan,
         }
     }
@@ -677,7 +787,7 @@ impl<'a, R, K: 'static> OpenBuilder<'a, R, K> {
 /// A chain decrypting a stored record through a plan, ready to await.
 pub struct OpenUsing<'a, R, P, K> {
     common: Common<'a, K>,
-    row: R,
+    record: R,
     plan: &'a P,
 }
 
@@ -693,17 +803,22 @@ where
         self.common.keyset.take()
     }
     fn check(&self) -> Result<(), Error> {
-        self.plan.check(&self.row)
+        self.plan.check(&self.record, self.common.peek_context()?)
     }
     fn prepare<'p>(
-        self,
+        mut self,
         keyset: &'p KeysetCipher<'a, K>,
         scoped: bool,
     ) -> Pending<'p, Self::Output, K>
     where
         'a: 'p,
     {
-        let opening = self.plan.decryption(self.row, self.common.context);
+        let opening = match self.common.call_context() {
+            Ok(context) => self
+                .plan
+                .decryption(self.record, context, self.common.extend),
+            Err(error) => crate::target::Decryption::failed(error.into()),
+        };
         if scoped {
             keyset.run_decryption(opening)
         } else {

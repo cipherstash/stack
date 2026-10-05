@@ -14,11 +14,11 @@ error[E0277]: the trait bound `stack_encrypt::Ore: Select<stack_encrypt::Equalit
             `(A, B, C, D)` implements `Select<B, At<1>>`
             `(A, B, C, D)` implements `Select<C, At<2>>`
             `(A, B, C, D)` implements `Select<D, At<3>>`
-note: required by a bound in `QueryUsing::<'a, F, ValuePlan<F, X>, K>::equality`
+note: required by a bound in `QueryUsing::<'a, F, ValuePlan<F, Indexed<X>>, K>::equality`
  --> src/plan/chain.rs
   |
   |     pub fn equality<At>(self) -> QueryIndex<'a, F, Equality, K>
   |            -------- required by a bound in this associated function
 ...
   |         X: Select<Equality, At>,
-  |            ^^^^^^^^^^^^^^^^^^^^ required by this bound in `QueryUsing::<'a, F, ValuePlan<F, X>, K>::equality`
+  |            ^^^^^^^^^^^^^^^^^^^^ required by this bound in `QueryUsing::<'a, F, ValuePlan<F, Indexed<X>>, K>::equality`

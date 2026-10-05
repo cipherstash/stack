@@ -9,7 +9,7 @@ mod common;
 use std::sync::atomic::Ordering as AtomicOrdering;
 
 use cllw_ore::CllwOreEncrypt;
-use common::{counting_cipher, stack_cipher};
+use common::{counting_cipher, recording_cipher, stack_cipher};
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
 use stack_encrypt::target::{AeadContext, DecryptFrom, EncryptInto, Encrypted};
 use stack_encrypt::{
@@ -828,4 +828,238 @@ async fn a_plaintext_record_field_may_be_a_record_with_declared_contexts() {
         .await
         .unwrap();
     assert_eq!(recovered, user());
+}
+
+// --- The plan writes what the derive writes ------------------------------------
+//
+// A plan field typed with a derived record (`encrypt_into`) composes that
+// record exactly as the derive composes a record-typed field: the record's
+// own contexts extended by the field's `<context>/<field>` pair. The derive
+// will emit these plans; until it does, these tests hold the two together.
+
+mod the_plan_writes_what_the_derive_writes {
+    use super::*;
+    use stack_encrypt::plan::{pick, FieldValues};
+    use stack_encrypt::target::ExpectedContext;
+    use stack_encrypt::{Label, Plan};
+
+    fn account() -> Account {
+        Account {
+            user: user(),
+            plan: "pro".to_string(),
+        }
+    }
+
+    fn accounts_plan<K: 'static>() -> Plan<Account, K> {
+        Plan::context("accounts")
+            .fields()
+            .encrypt_into::<EncryptedUser, _>(pick("user", |a: &Account| &a.user))
+            .encrypt(pick("plan", |a: &Account| &a.plan))
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_record_typed_field_is_the_derives_nested_struct() {
+        let (cipher, sent) = recording_cipher().await;
+        let keyset = cipher.default_keyset();
+        let accounts_plan = accounts_plan();
+
+        let mut planned = cipher
+            .encrypt(&account())
+            .using(&accounts_plan)
+            .await
+            .unwrap();
+        let plan_sent = sent.lock().unwrap().generated();
+        sent.lock().unwrap().generate.clear();
+        let derived: EncryptedAccount = account().encrypt_into(&keyset).await.unwrap();
+        assert_eq!(
+            plan_sent,
+            sent.lock().unwrap().generated(),
+            "every data key under the same descriptor"
+        );
+
+        let planned_user: EncryptedUser = planned.take("user").unwrap();
+        assert_eq!(planned_user.age.hm, derived.user.age.hm);
+        assert_eq!(planned_user.age.ob, derived.user.age.ob);
+        assert_eq!(planned_user.email.terms, derived.user.email.terms);
+        let planned_plan: StackCipherText = planned.take("plan").unwrap();
+
+        // Each record opens through the other spelling.
+        let recovered = Account::decrypt_from(
+            EncryptedAccount {
+                user: planned_user,
+                plan: planned_plan,
+            },
+            &cipher,
+        )
+        .await
+        .unwrap();
+        assert_eq!(recovered, account());
+        let mut stored = FieldValues::new();
+        stored
+            .insert("user", derived.user)
+            .insert("plan", derived.plan);
+        let back = cipher.open(stored).using(&accounts_plan).await.unwrap();
+        assert_eq!(back.get::<User>("user"), Some(&user()));
+        assert_eq!(back.get::<String>("plan").map(String::as_str), Some("pro"));
+    }
+
+    #[tokio::test]
+    async fn an_extension_reaches_a_record_typed_field_as_the_derives() {
+        let cipher = stack_cipher().await;
+        let keyset = cipher.default_keyset();
+        let accounts_plan = accounts_plan();
+        let mut planned = cipher
+            .encrypt(&account())
+            .using(&accounts_plan)
+            .extend(9u64)
+            .await
+            .unwrap();
+        let derived: EncryptedAccount = account()
+            .encrypt_into_with_context(&keyset, 9u64)
+            .await
+            .unwrap();
+        let planned_user: EncryptedUser = planned.take("user").unwrap();
+        assert_eq!(planned_user.age.hm, derived.user.age.hm);
+    }
+
+    #[tokio::test]
+    async fn a_struct_of_targets_is_the_derives_struct() {
+        let (cipher, sent) = recording_cipher().await;
+        let keyset = cipher.default_keyset();
+        let users_plan: Plan<User, _> = Plan::context("user")
+            .fields()
+            .encrypt_into::<EncryptedAge, _>(pick("age", |u: &User| &u.age))
+            .encrypt_into::<Encrypted<(EqualityTerm, MatchTerms)>, _>(pick("email", |u: &User| {
+                &u.email
+            }))
+            .build()
+            .unwrap();
+        let mut planned = cipher.encrypt(&user()).using(&users_plan).await.unwrap();
+        let plan_sent = sent.lock().unwrap().generated();
+        sent.lock().unwrap().generate.clear();
+        let derived: EncryptedUser = user().encrypt_into(&keyset).await.unwrap();
+        assert_eq!(plan_sent, sent.lock().unwrap().generated());
+        let age: EncryptedAge = planned.take("age").unwrap();
+        let email: Encrypted<(EqualityTerm, MatchTerms)> = planned.take("email").unwrap();
+        assert_eq!(age.hm, derived.age.hm);
+        assert_eq!(age.ob, derived.age.ob);
+        assert_eq!(email.terms, derived.email.terms);
+        let recovered = User::decrypt_from(
+            EncryptedUser {
+                age,
+                email,
+                version: 3,
+            },
+            &cipher,
+        )
+        .await
+        .unwrap();
+        assert_eq!(recovered, user());
+    }
+
+    /// The derive's `context_field`: the record stores the context it was
+    /// sealed under, and opening checks it against the caller's.
+    #[derive(EncryptFrom, DecryptInto)]
+    #[stash(plaintext = String)]
+    struct ScopedEmail {
+        #[stash(context_field)]
+        scope: Label,
+        c: StackCipherText,
+        hm: EqualityTerm,
+    }
+
+    #[derive(Clone)]
+    struct Row {
+        tenant: String,
+        email: String,
+    }
+
+    fn row() -> Row {
+        Row {
+            tenant: "tenants/acme".into(),
+            email: "bob@example.com".into(),
+        }
+    }
+
+    fn rows_plan<K: 'static>() -> Plan<Row, K> {
+        Plan::fields()
+            .context_field(pick("tenant", |r: &Row| &r.tenant))
+            .encrypt_into::<(StackCipherText, EqualityTerm), _>(pick("email", |r: &Row| &r.email))
+            .build()
+            .unwrap()
+    }
+
+    fn scope() -> NonEmpty<Label> {
+        NonEmpty::from(Label::parse("tenants/acme/email").unwrap())
+    }
+
+    #[tokio::test]
+    async fn a_context_field_writes_the_derives_context_field_bytes() {
+        let (cipher, sent) = recording_cipher().await;
+        let keyset = cipher.default_keyset();
+        let rows_plan = rows_plan();
+
+        let mut planned = cipher.encrypt(&row()).using(&rows_plan).await.unwrap();
+        let derived: ScopedEmail = keyset.encrypt_as(&row().email, scope()).await.unwrap();
+        assert_eq!(
+            sent.lock().unwrap().generated(),
+            ["tenants/acme/email", "tenants/acme/email"],
+            "the field is sealed under the context the derive is handed"
+        );
+        let (c, hm): (StackCipherText, EqualityTerm) = planned.take("email").unwrap();
+        assert_eq!(hm, derived.hm);
+
+        // The derive's reader opens the plan's ciphertext, and the plan's
+        // reader the derive's.
+        let opened: String = cipher
+            .decrypt_as(
+                ScopedEmail {
+                    scope: scope().into_inner(),
+                    c,
+                    hm,
+                },
+                scope().into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(opened, row().email);
+        planned.insert("email", (derived.c, derived.hm));
+        let back = cipher
+            .open(planned)
+            .context("tenants/acme")
+            .using(&rows_plan)
+            .await
+            .unwrap();
+        assert_eq!(back.get::<String>("email"), Some(&row().email));
+    }
+
+    #[tokio::test]
+    async fn both_refuse_a_mismatched_expected_context_before_any_key_request() {
+        let (cipher, _, retrieves) = counting_cipher().await;
+        let keyset = cipher.default_keyset();
+        let rows_plan = rows_plan();
+
+        let planned = cipher.encrypt(&row()).using(&rows_plan).await.unwrap();
+        let refused = cipher
+            .open(planned)
+            .context("tenants/globex")
+            .using(&rows_plan)
+            .await;
+        assert!(
+            matches!(refused, Err(Error::ContextMismatch { .. })),
+            "{refused:?}"
+        );
+
+        let derived: ScopedEmail = keyset.encrypt_as(&row().email, scope()).await.unwrap();
+        let other: ExpectedContext<Label> =
+            NonEmpty::from(Label::parse("tenants/globex/email").unwrap()).into();
+        let refused: Result<String, _> = cipher.decrypt_as(derived, other).await;
+        assert!(
+            matches!(refused, Err(Error::ContextMismatch { .. })),
+            "{refused:?}"
+        );
+        assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 0);
+    }
 }
