@@ -108,14 +108,14 @@ func Decrypt(ctx context.Context, d stackencrypt.Decrypter, encrypted []Encrypte
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
-// Encryption and Decryption describe the same work without running it, for
-// stackencrypt.Batch2 and Batch3.
-func Encryption(users []User) stackencrypt.Operation[[]EncryptedUser] {
-	return codec.Encryption(users)
+// EncryptInto and DecryptInto describe the same work for stackencrypt.Batch,
+// which runs it and writes the result to dst.
+func EncryptInto(dst *[]EncryptedUser, users []User) stackencrypt.Operation {
+	return codec.EncryptInto(dst, users)
 }
 
-func Decryption(encrypted []EncryptedUser) stackencrypt.Operation[[]User] {
-	return codec.Decryption(encrypted)
+func DecryptInto(dst *[]User, encrypted []EncryptedUser) stackencrypt.Operation {
+	return codec.DecryptInto(dst, encrypted)
 }
 
 var Fields = struct {

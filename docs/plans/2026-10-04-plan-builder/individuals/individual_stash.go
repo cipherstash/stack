@@ -115,12 +115,12 @@ func Decrypt(ctx context.Context, d stackencrypt.Decrypter, encrypted []Encrypte
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
-func Encryption(individuals []Individual) stackencrypt.Operation[[]EncryptedIndividual] {
-	return codec.Encryption(individuals)
+func EncryptInto(dst *[]EncryptedIndividual, individuals []Individual) stackencrypt.Operation {
+	return codec.EncryptInto(dst, individuals)
 }
 
-func Decryption(encrypted []EncryptedIndividual) stackencrypt.Operation[[]Individual] {
-	return codec.Decryption(encrypted)
+func DecryptInto(dst *[]Individual, encrypted []EncryptedIndividual) stackencrypt.Operation {
+	return codec.DecryptInto(dst, encrypted)
 }
 
 var Fields = struct {

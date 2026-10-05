@@ -89,12 +89,12 @@ func Decrypt(ctx context.Context, d stackencrypt.Decrypter, encrypted []Encrypte
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
-func Encryption(accounts []Account) stackencrypt.Operation[[]EncryptedAccount] {
-	return codec.Encryption(accounts)
+func EncryptInto(dst *[]EncryptedAccount, accounts []Account) stackencrypt.Operation {
+	return codec.EncryptInto(dst, accounts)
 }
 
-func Decryption(encrypted []EncryptedAccount) stackencrypt.Operation[[]Account] {
-	return codec.Decryption(encrypted)
+func DecryptInto(dst *[]Account, encrypted []EncryptedAccount) stackencrypt.Operation {
+	return codec.DecryptInto(dst, encrypted)
 }
 
 var Fields = struct {

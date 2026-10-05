@@ -100,12 +100,12 @@ func Decrypt(ctx context.Context, d stackencrypt.Decrypter, encrypted []Encrypte
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
-func Encryption(contacts []crm.Contact) stackencrypt.Operation[[]EncryptedContact] {
-	return codec.Encryption(contacts)
+func EncryptInto(dst *[]EncryptedContact, contacts []crm.Contact) stackencrypt.Operation {
+	return codec.EncryptInto(dst, contacts)
 }
 
-func Decryption(encrypted []EncryptedContact) stackencrypt.Operation[[]crm.Contact] {
-	return codec.Decryption(encrypted)
+func DecryptInto(dst *[]crm.Contact, encrypted []EncryptedContact) stackencrypt.Operation {
+	return codec.DecryptInto(dst, encrypted)
 }
 
 var Fields = struct {

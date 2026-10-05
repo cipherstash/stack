@@ -75,8 +75,12 @@ func run(ctx context.Context) error {
 
 	// Two types in one ZeroKMS request.
 	list := []crm.Contact{{ID: 9, Email: "dan@example.com", PhoneNumber: "+61 400 000 000"}}
-	encryptedUsers, encryptedContacts, err := stackencrypt.Batch2(ctx, cipher,
-		users.Encryption(newHires), contacts.Encryption(list))
+	var encryptedUsers []users.EncryptedUser
+	var encryptedContacts []contacts.EncryptedContact
+	err = stackencrypt.Batch(ctx, cipher,
+		users.EncryptInto(&encryptedUsers, newHires),
+		contacts.EncryptInto(&encryptedContacts, list),
+	)
 	if err != nil {
 		return err
 	}

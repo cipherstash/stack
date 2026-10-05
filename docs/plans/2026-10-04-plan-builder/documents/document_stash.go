@@ -80,10 +80,10 @@ func Decrypt(ctx context.Context, d stackencrypt.Decrypter, encrypted []Encrypte
 	return codec.Decrypt(ctx, d, encrypted)
 }
 
-func Encryption(documents []Document) stackencrypt.Operation[[]EncryptedDocument] {
-	return codec.Encryption(documents)
+func EncryptInto(dst *[]EncryptedDocument, documents []Document) stackencrypt.Operation {
+	return codec.EncryptInto(dst, documents)
 }
 
-func Decryption(encrypted []EncryptedDocument) stackencrypt.Operation[[]Document] {
-	return codec.Decryption(encrypted)
+func DecryptInto(dst *[]Document, encrypted []EncryptedDocument) stackencrypt.Operation {
+	return codec.DecryptInto(dst, encrypted)
 }

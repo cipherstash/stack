@@ -620,8 +620,8 @@ For `-type User`, the file `user_stash.go` holds:
 - **`Fields`.**
   It has one entry for each sealed field.
   An entry encrypts one value of that field, and it has a query method only for what the field declares.
-- **`Encryption` and `Decryption`.**
-  They describe the same work without running it, for a batch.
+- **`EncryptInto` and `DecryptInto`.**
+  They describe the same work for a batch, and name the variable that gets the result.
 - **Print methods on `EncryptedUser`.**
   `String` and `LogValue` print the passthrough fields and hide the sealed ones.
 - **The declaration.**
@@ -641,8 +641,9 @@ See [`users/model.go`](2026-10-04-plan-builder/users/model.go) and [`users/user_
 | `users.Fields.Email.Query(ctx, c, v string)` | an EQL query value, for a field with `encrypt_into` |
 | `users.Fields.Email.Equality`, `.Match`, `.Ore`, `.Ope` | one term, for a field with `index=` |
 | `users.Fields.Attrs.Contains(ctx, c, v)` | a JSON containment query |
-| `users.Encryption(vs []User)`, `users.Decryption(es []EncryptedUser)` | a `stackencrypt.Operation`, for a batch |
-| `stackencrypt.Batch2(ctx, c, a, b)`, `Batch3` | the result of each operation |
+| `users.EncryptInto(dst *[]EncryptedUser, vs []User)` | a `stackencrypt.Operation`, for a batch |
+| `users.DecryptInto(dst *[]User, es []EncryptedUser)` | a `stackencrypt.Operation`, for a batch |
+| `stackencrypt.Batch(ctx, c, ops ...Operation)` | nothing; it writes each result to its `dst` |
 
 Every call also returns an `error`.
 `Encrypt` and `Decrypt` take a slice, and send one ZeroKMS request for all of it.
@@ -652,12 +653,18 @@ For one value, pass a slice with one element.
 A field entry's `Encrypt` and its query methods take one value.
 A term derives with no request, so there is nothing to batch.
 
-`Batch2` and `Batch3` run operations on two or three types in one ZeroKMS request.
-Each returns one typed result for each operation.
+`Batch` runs operations on any number of types in one ZeroKMS request.
+It writes each result to the variable that the operation names.
+The compiler checks that the variable has the result's type.
 
 ```go
-encryptedUsers, encryptedContacts, err := stackencrypt.Batch2(ctx, cipher,
-	users.Encryption(people), contacts.Encryption(list))
+var encryptedUsers []users.EncryptedUser
+var encryptedContacts []contacts.EncryptedContact
+
+err := stackencrypt.Batch(ctx, cipher,
+	users.EncryptInto(&encryptedUsers, people),
+	contacts.EncryptInto(&encryptedContacts, list),
+)
 ```
 
 `*Client` and `*Cipher` both implement `Decrypter`.
