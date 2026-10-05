@@ -63,19 +63,28 @@ pub(crate) struct Field {
 pub(crate) enum Kind {
     /// Derived from the source through the field type's own `EncryptFrom`.
     Derived {
-        /// This field's own context: the `(prefix, field)` pair a `struct`
-        /// derive infers, extended by a context the caller passes. `None` for
-        /// every field of a `plaintext` record, which takes the caller's.
-        context: Option<OwnContext>,
-        /// With `struct = ..`: the plaintext field this one is derived
-        /// from — its own name, or the `#[stash(from = field)]` override.
-        /// `None` for a `plaintext` record, whose fields are all derived
-        /// from the whole value.
-        from: Option<Member>,
+        /// With `struct = ..`: the plaintext field this one is derived from
+        /// and the context it is keyed under, which come together. `None`
+        /// for every field of a `plaintext` record: it is derived from the
+        /// whole value, under the caller's context.
+        by_field: Option<ByField>,
     },
     /// Not derived: `Default::default()` or the given expression.
     Default(Option<Expr>),
     Context,
+}
+
+/// What a field of a `struct = ..` derive has and a field of a `plaintext`
+/// record does not: a plaintext field to be derived from, and a context of
+/// its own.
+#[cfg_attr(test, derive(Debug))]
+pub(crate) struct ByField {
+    /// The plaintext field this one is derived from — its own name, or the
+    /// `#[stash(from = field)]` override.
+    pub(crate) from: Member,
+    /// The `(prefix, segment)` pair it is derived under, extended by a
+    /// context the caller passes.
+    pub(crate) context: OwnContext,
 }
 
 impl Field {
@@ -86,7 +95,7 @@ impl Field {
     /// The `from` member, if this is a derived field with one.
     pub(crate) fn from(&self) -> Option<&Member> {
         match &self.kind {
-            Kind::Derived { from, .. } => from.as_ref(),
+            Kind::Derived { by_field } => by_field.as_ref().map(|by_field| &by_field.from),
             Kind::Default(_) | Kind::Context => None,
         }
     }
@@ -108,32 +117,30 @@ impl Field {
     pub(crate) fn field_context(&self) -> FieldContext<'_> {
         match &self.kind {
             Kind::Derived {
-                context: Some(lit), ..
-            } => FieldContext::Own(lit),
-            Kind::Derived { context: None, .. } => FieldContext::Caller,
+                by_field: Some(by_field),
+            } => FieldContext::Own(&by_field.context),
+            Kind::Derived { by_field: None } => FieldContext::Caller,
             Kind::Default(_) | Kind::Context => unreachable!("a `default` field has no context"),
         }
     }
 }
 
-/// A derived field's own context.
+/// A derived field's own context, which only a `struct` derive's fields
+/// have: the pair (container `context` prefix, segment), two parts, so it
+/// renders `prefix/field` without the field name having to be joined into,
+/// or kept out of, a string. The segment is the plaintext field's name or
+/// the field's `identity`. The derive knows no tables (ADR-0003); a consumer
+/// whose prefix is a table gets EQL's `(table, column)` shape from it.
 #[cfg_attr(test, derive(Debug))]
-pub(crate) enum OwnContext {
-    /// What a `struct` derive infers: the pair (container `context` prefix,
-    /// plaintext field name), two parts, so it renders `prefix/field` without
-    /// the field name having to be joined into, or kept out of, a string. The
-    /// derive knows no tables (ADR-0003); a consumer whose prefix is a table
-    /// gets EQL's `(table, column)` shape from it.
-    Prefixed { prefix: LitStr, field: LitStr },
+pub(crate) struct OwnContext {
+    pub(crate) prefix: LitStr,
+    pub(crate) field: LitStr,
 }
 impl OwnContext {
-    /// The `NonEmpty` the derive hands `under` / `extend`.
+    /// The `NonEmpty` the derive hands `under`.
     fn expr(&self, krate: &Path) -> TokenStream {
-        match self {
-            Self::Prefixed { prefix, field } => {
-                quote!(#krate::nonempty!(#prefix).with(#field))
-            }
-        }
+        let Self { prefix, field } = self;
+        quote!(#krate::nonempty!(#prefix).with(#field))
     }
 }
 
@@ -279,21 +286,10 @@ fn one_output_per_plaintext_field(fields: &[Field]) -> Result<()> {
                     ));
                 }
             }
-            if let (
-                Kind::Derived {
-                    context: Some(OwnContext::Prefixed { field: segment, .. }),
-                    ..
-                },
-                Kind::Derived {
-                    context:
-                        Some(OwnContext::Prefixed {
-                            field: earlier_segment,
-                            ..
-                        }),
-                    ..
-                },
-            ) = (&field.kind, &earlier.kind)
+            if let (FieldContext::Own(own), FieldContext::Own(earlier_own)) =
+                (field.field_context(), earlier.field_context())
             {
+                let (segment, earlier_segment) = (&own.field, &earlier_own.field);
                 if segment.value() == earlier_segment.value() {
                     return Err(syn::Error::new(
                         field.member.span(),
@@ -406,10 +402,10 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                             let from = attrs.from.unwrap_or_else(|| member.clone());
                             let context = if let Some(identity) = attrs.identity {
                                 // Checked plain above.
-                                Some(OwnContext::Prefixed {
+                                OwnContext {
                                     prefix: prefix.clone(),
                                     field: identity,
-                                })
+                                }
                             } else {
                                 // The inferred second segment must render
                                 // verbatim, or the descriptor would not name
@@ -444,22 +440,18 @@ fn collect(fields: &Fields, prefix: Option<&LitStr>) -> Result<Vec<Field>> {
                                         ),
                                     ));
                                 }
-                                Some(OwnContext::Prefixed {
+                                OwnContext {
                                     prefix: prefix.clone(),
                                     field: LitStr::new(&field, member.span()),
-                                })
+                                }
                             };
                             Kind::Derived {
-                                context,
-                                from: Some(from),
+                                by_field: Some(ByField { from, context }),
                             }
                         }
                         // Every output of a `plaintext` record takes the
                         // caller's context: a one-value plan has one source.
-                        None => Kind::Derived {
-                            context: None,
-                            from: None,
-                        },
+                        None => Kind::Derived { by_field: None },
                     },
                 }
             };
@@ -478,12 +470,11 @@ impl Record {
     pub(crate) fn context_field(&self) -> Option<&Field> {
         self.fields.iter().find(|f| matches!(f.kind, Kind::Context))
     }
+    /// Whether the record takes `DeclaredContext`: exactly when it is a
+    /// `struct` derive, whose fields all carry a context of their own. A
+    /// `plaintext` record's fields have none.
     pub(crate) fn declared_contexts(&self) -> bool {
         self.by_field
-            || self
-                .derived()
-                .iter()
-                .all(|f| matches!(f.field_context(), FieldContext::Own(_)))
     }
     pub(crate) fn context_type(&self, decrypt: bool) -> Type {
         let krate = &self.krate;
@@ -640,7 +631,7 @@ mod tests {
     /// The field's own context, for assertions.
     fn own(field: &Field) -> String {
         match field.field_context() {
-            FieldContext::Own(OwnContext::Prefixed { prefix, field }) => {
+            FieldContext::Own(OwnContext { prefix, field }) => {
                 format!("({}, {})", prefix.value(), field.value())
             }
             other => panic!("expected a context of the field's own, got {other:?}"),
