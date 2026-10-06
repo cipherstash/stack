@@ -80,19 +80,18 @@ describe('_build-auth-artifacts.yml', () => {
     for (const build of builds) expect(check).toBeGreaterThan(build)
   })
 
-  it('builds the musl binding inside Alpine, from an image pinned by digest', () => {
+  it('builds the musl binding inside Alpine, from the pinned Dockerfile', () => {
     // Built on the Ubuntu runner, the musl binary linked glibc and failed to
-    // load on musl. Alpine is a musl system, so its compiler links musl.
+    // load on musl. Alpine is a musl system, so its compiler links musl. The
+    // image's pins, and that this is its one home, are musl-build-image.test.mjs's.
     const steps = binaries?.steps ?? []
     const musl = steps.filter((step) =>
       String(step?.if ?? '').includes("== 'linux-x64-musl'"),
     )
     const run = musl.map((step) => String(step?.run ?? '')).join('\n')
-    const env = Object.assign({}, ...musl.map((step) => step?.env ?? {}))
-    expect(env.ALPINE_NODE_IMAGE).toMatch(/-alpine@sha256:[0-9a-f]{64}$/)
-    // The pinned image is the one that runs, not a mutable tag.
-    expect(run).toMatch(/docker run[\s\S]*"\$ALPINE_NODE_IMAGE"/)
-    expect(run).not.toMatch(/\bnode:\d+-alpine(?!@)/)
+    expect(run).toMatch(
+      /docker build --pull -t "\$MUSL_BUILD_IMAGE" \.github\/docker\/musl-build\n[\s\S]*docker run[\s\S]*"\$MUSL_BUILD_IMAGE"/,
+    )
     expect(run).toContain('RUSTFLAGS="-C target-feature=-crt-static"')
     // The container loads the binary it built, on musl.
     expect(run).toMatch(
@@ -162,12 +161,11 @@ describe('_build-auth-artifacts.yml', () => {
     )
     expect(alpine).toBeDefined()
     expect(String(alpine.run)).toContain('linux-x64-musl')
-    expect(String(alpine.run)).toMatch(/docker run[\s\S]*"\$ALPINE_NODE_IMAGE"/)
-    // The same image as the build, so the load test matches the build.
-    const build = (binaries?.steps ?? []).find(
-      (step) => step?.env?.ALPINE_NODE_IMAGE,
+    // On the image the build image starts from, read from the Dockerfile.
+    expect(String(alpine.run)).toContain(
+      "ALPINE_NODE_IMAGE=$(sed -n 's/^FROM //p'",
     )
-    expect(alpine.env?.ALPINE_NODE_IMAGE).toBe(build?.env?.ALPINE_NODE_IMAGE)
+    expect(String(alpine.run)).toMatch(/docker run[\s\S]*"\$ALPINE_NODE_IMAGE"/)
   })
 
   it('packs the wrapper with pnpm, which rewrites its workspace peers', () => {

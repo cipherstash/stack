@@ -625,6 +625,7 @@ const MANIFEST_BY_ECOSYSTEM: Record<string, string> = {
   uv: 'pyproject.toml',
   mix: 'mix.exs',
   pub: 'pubspec.yaml',
+  docker: 'Dockerfile',
   // github-actions is special-cased: Dependabot requires `directory: /` and
   // discovers .github/workflows itself.
   'github-actions': '.github/workflows',

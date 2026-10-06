@@ -235,20 +235,20 @@ jobs:
           PLATFORM: ${{ matrix.cfg.platform }}
           BUILD_SCRIPT: ${{ matrix.cfg.script }}
           BUILD_LOG: ${{ matrix.cfg.log }}
-          ALPINE_NODE_IMAGE: node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
+          MUSL_BUILD_IMAGE: cipherstash/musl-build:local
         run: |
           set -euo pipefail
           rust_version=$(rustc --version | cut -d' ' -f2)
           pnpm_spec=$(node -p "require('./package.json').packageManager")
+          docker build --pull -t "$MUSL_BUILD_IMAGE" .github/docker/musl-build
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/build" -w /build \
             -e CARGO_BUILD_TARGET -e PLATFORM -e BUILD_SCRIPT -e BUILD_LOG \
             -e RUST_VERSION="$rust_version" -e PNPM_SPEC="$pnpm_spec" \
             -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
             -e RUSTFLAGS="-C target-feature=-crt-static" \
-            "$ALPINE_NODE_IMAGE" sh -euc '
+            "$MUSL_BUILD_IMAGE" sh -euc '
               trap "chown -R \"\$HOST_UID:\$HOST_GID\" /build" EXIT
-              apk add --no-cache build-base cmake perl linux-headers git curl rustup
               rustup-init -y --profile minimal --default-toolchain "$RUST_VERSION" --target "$CARGO_BUILD_TARGET"
               . "$HOME/.cargo/env"
               corepack enable
