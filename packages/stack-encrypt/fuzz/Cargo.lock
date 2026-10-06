@@ -2093,6 +2093,7 @@ version = "0.43.0"
 dependencies = [
  "dirs",
  "gethostname",
+ "miette",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

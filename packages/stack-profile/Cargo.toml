@@ -10,6 +10,9 @@ homepage.workspace = true
 
 [dependencies]
 dirs = "4.0.0"
+# The `Diagnostic` derive on `ProfileError`, and the supertrait of
+# `ErrorPayload`, which the four crates whose errors reach a binding share.
+miette = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

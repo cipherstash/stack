@@ -63,11 +63,13 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 mod device_identity;
+pub mod diagnostic;
 mod error;
 mod profile_store;
 
 pub use device_identity::DeviceIdentity;
-pub use error::ProfileError;
+pub use diagnostic::ErrorPayload;
+pub use error::{ProfileError, ERROR_CODES};
 pub use profile_store::{FileLockGuard, ProfileStore};
 
 /// A type that can be stored in a profile directory.
