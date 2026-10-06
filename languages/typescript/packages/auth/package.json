@@ -111,6 +111,6 @@
   "devDependencies": {
     "@napi-rs/cli": "^2",
     "typescript": "^5",
-    "vitest": "^3"
+    "vitest": "catalog:repo"
   }
 }
