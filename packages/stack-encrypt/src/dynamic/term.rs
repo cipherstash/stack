@@ -21,10 +21,7 @@ use zeroize::Zeroizing;
 
 use super::{utf8, Error, Value};
 use crate::sem::{CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch, MatchOptions, Tokenizer};
-use crate::target::{
-    chosen, equality, ope as ope_op, ore as ore_op, CallerContext, ConsumeSource, Encryption,
-    Index, IndexSpec, Pending,
-};
+use crate::target::{chosen, CallerContext, ConsumeSource, Encryption, Index, IndexSpec, Pending};
 use crate::{IntoPrfContext, KeysetCipher, NonEmpty};
 
 /// The runtime half of [`IndexSpec`]: the domain table, and the index's wire
@@ -306,11 +303,11 @@ where
 /// positions, the raw CLLW bytes of an ORE or OPE term (see
 /// [`sem`](crate::sem)'s byte encodings).
 ///
-/// The term type of every [`Index`] an [`IndexSpec`] implements: a term
-/// derived through the dynamic path has no Rust term type to be, since the
-/// index was named as data, so it is its bytes. Those bytes are exactly the
-/// typed term's (`EqualityTerm::into_bytes`, `OreTerm::to_bytes`, …),
-/// which is what makes a Rust-written term and a binding's probe compare.
+/// The term type of [`IndexSpec`]'s [`Index`] impl: a term derived through
+/// the dynamic path has no Rust term type to be, since the index was named
+/// as data, so it is its bytes. Those bytes are exactly the typed term's
+/// (`EqualityTerm::into_bytes`, `OreTerm::to_bytes`, …), which is what
+/// makes a Rust-written term and a binding's probe compare.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TermBytes(Vec<u8>);
 
@@ -508,7 +505,9 @@ fn lifted(error: Error) -> crate::Error {
 /// `operation` is `scalar_term`'s dispatch — the one step of the dynamic
 /// path that stays dynamic — wrapped as a description, so a field lowered
 /// from data runs through the same `indexed()` and `zip` every other field
-/// does, and its term is a [`TermBytes`].
+/// does, and its term is a [`TermBytes`]. A Rust chain over `Value` fields
+/// names its indexes this way too (`(IndexSpec::Equality, IndexSpec::Ore)`),
+/// and is then the same declaration as a data plan's.
 ///
 /// A value the scheme defines no such term for (a container, a float under
 /// equality) fails the description when it runs; a plan lowered from data
@@ -539,62 +538,6 @@ impl Index<Value> for IndexSpec {
     }
 }
 
-/// An [`IndexSpec`] is an [`Index`] of a `u32`: the typed index of the same
-/// name — [`equality`], [`ore`](crate::target::ore), [`ope`](crate::target::ope) —
-/// with its term as [`TermBytes`]. This is how a plan lowered from data runs
-/// a field it knows to be a `u32` through exactly the operations the typed
-/// chain's `encrypt_index::<u32>` runs. Match is not defined over an
-/// integer, and fails the description when it runs; a plan refuses it when
-/// it is built ([`admits`](super::admits)).
-impl Index<u32> for IndexSpec {
-    type Term = TermBytes;
-    fn spec(&self) -> IndexSpec {
-        self.clone()
-    }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, u32>>(
-        &self,
-    ) -> Encryption<'s, u32, TermBytes, K, CallerContext, M> {
-        match self {
-            IndexSpec::Equality => equality::<u32, K, M>().map(equality_bytes),
-            IndexSpec::Ore => ore_op::<u32, K, M>().map(|term| TermBytes(term.to_bytes())),
-            IndexSpec::Ope => ope_op::<u32, K, M>().map(|term| TermBytes(term.to_bytes())),
-            IndexSpec::Match(_) => Encryption::failed(lifted(Error::Term { kind: self.clone() })),
-        }
-    }
-}
-
-/// An [`IndexSpec`] is an [`Index`] of a `String`: the typed index of the
-/// same name, with its term as [`TermBytes`]; see the `u32` impl. A match
-/// index derives under the options the spec carries, which under the
-/// defaults are `Match::default()`'s bytes.
-impl Index<String> for IndexSpec {
-    type Term = TermBytes;
-    fn spec(&self) -> IndexSpec {
-        self.clone()
-    }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, String>>(
-        &self,
-    ) -> Encryption<'s, String, TermBytes, K, CallerContext, M> {
-        match self {
-            IndexSpec::Equality => equality::<String, K, M>().map(equality_bytes),
-            IndexSpec::Ore => ore_op::<String, K, M>().map(|term| TermBytes(term.to_bytes())),
-            IndexSpec::Ope => ope_op::<String, K, M>().map(|term| TermBytes(term.to_bytes())),
-            IndexSpec::Match(options) => {
-                let options = options.clone();
-                chosen(move |source: M::Source, cipher, cx: CallerContext| {
-                    let context = match cx.validated() {
-                        Ok(context) => context,
-                        Err(error) => return Pending::failed(cipher, error),
-                    };
-                    cipher
-                        .match_terms_under::<DefaultMatch>(M::view(&source), context, options)
-                        .map(|terms| TermBytes(terms.to_bytes()))
-                })
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -613,7 +556,7 @@ mod tests {
     /// A `TermBytes` reads as the typed term's bytes, through every
     /// accessor: `as_bytes`, `as_ref` and `into_bytes` give the same
     /// 32 PRF bytes an `EqualityTerm` holds, for a term derived through
-    /// `IndexSpec`'s `Index<u32>` and through the dynamic dispatch alike.
+    /// `IndexSpec`'s `Index<Value>`.
     #[tokio::test]
     async fn term_bytes_read_as_the_typed_terms_bytes() {
         let cipher = cipher().await;
@@ -626,20 +569,6 @@ mod tests {
             .to_vec();
         assert_eq!(typed.len(), 32);
 
-        let through_u32: TermBytes = keyset
-            .run(
-                Index::<u32>::operation::<FakeDataKeySource, crate::target::Owned>(
-                    &IndexSpec::Equality,
-                ),
-                34u32,
-                CallerContext::from(nonempty!("users/age")),
-            )
-            .await
-            .expect("the u32 index derives");
-        assert_eq!(through_u32.as_bytes(), typed.as_slice());
-        assert_eq!(through_u32.as_ref(), typed.as_slice());
-        assert_eq!(through_u32.clone().into_bytes(), typed);
-
         let through_value: TermBytes = keyset
             .run(
                 Index::<Value>::operation::<FakeDataKeySource, crate::target::Owned>(
@@ -650,8 +579,9 @@ mod tests {
             )
             .await
             .expect("the dynamic index derives");
-        assert_eq!(through_value, through_u32, "one dispatch table, one term");
         assert_eq!(through_value.as_bytes(), typed.as_slice());
+        assert_eq!(through_value.as_ref(), typed.as_slice());
+        assert_eq!(through_value.into_bytes(), typed);
     }
 
     /// A match index under the default options: what a plan's bare

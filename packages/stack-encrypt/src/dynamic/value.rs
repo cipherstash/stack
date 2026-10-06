@@ -6,9 +6,9 @@ use vitaminc_aead::{Cipher, Decipher, Decrypt, Encrypt, IntoAad};
 use vitaminc_aead_value::FfiValue;
 use vitaminc_protected::{Controlled, Protected};
 
-/// A runtime value as the plaintext of a plan field: what a field lowered
-/// from data holds when its declared type names no Rust leaf type, or when
-/// it declares none.
+/// A runtime value as the plaintext of a plan field: what every field
+/// lowered from data holds, whatever its declared type, and what a Rust
+/// chain's field holds when its rows must open from a binding.
 ///
 /// The engine hands a borrowed field to every operation that consumes it
 /// and clones it on the way in, as it does a `String` field of a derived
@@ -21,9 +21,11 @@ use vitaminc_protected::{Controlled, Protected};
 /// each once per operation that consumes it, as the derive's does.
 ///
 /// It seals and opens as the [`FfiValue`] it wraps, in vitaminc's
-/// self-describing tagged leaf encoding; [`dynamic::record`](super::record)
-/// says when a field is this type and when it is a bare Rust leaf instead.
-/// Its `Debug` names the type and nothing else: the value is plaintext.
+/// self-describing tagged leaf encoding — a different leaf from a bare
+/// `u32`'s or `String`'s, and one the other reader cannot tell apart by
+/// inspection; [`dynamic::record`](super::record) says what follows from
+/// that. Its `Debug` names the type and nothing else: the value is
+/// plaintext.
 pub struct Value(FfiValue);
 
 impl Value {

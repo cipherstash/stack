@@ -15,7 +15,7 @@
 //!
 //! What stays dynamic is one step: a field whose type is known only when its
 //! value arrives dispatches to the typed term operation then, through
-//! [`IndexSpec`]'s [`Index`] impls (`scalar_term` in the `term` module is the
+//! [`IndexSpec`]'s [`Index`](crate::target::Index) impl (`scalar_term` in the `term` module is the
 //! one table).
 //!
 //! # What a field's `"context"` must be
@@ -33,20 +33,36 @@
 //! an integer, bytes, a one-element list) is refused as a plan a fields plan
 //! cannot express.
 //!
-//! # What a field's `"type"` decides
+//! # What a field's `"type"` decides, and what it does not
 //!
-//! The declared type is the data form of the Rust chain's `::<F>`. A field
-//! typed `uint32` or `string` lowers to a `u32` or `String` field — read out
-//! of the value as that type, sealed and indexed through exactly the
-//! operations `encrypt_index::<u32>` runs — so a `uint32` field of a Go
-//! record and a `u32` field of a Rust record interchange, ciphertext and
-//! terms alike. Every other kind, and a field with no `"type"`, is a
-//! [`Value`]: it seals in vitaminc's self-describing tagged leaf encoding
-//! (`[tag] ++ payload`), which only a dynamic reader opens, and its terms
-//! dispatch on each value's own variant. The kinds with no bare Rust leaf
-//! type (`uint64`, `int32`, `bool`, the floats, …) have no other encoding to
-//! take; a field with no type has no type to name, which is transitional
-//! (#1082).
+//! Every field lowered from data is a [`Value`]: its plaintext type is the
+//! runtime value itself, and it seals in vitaminc's self-describing tagged
+//! leaf encoding (`[tag] ++ payload`) whatever its declared `"type"`. The
+//! type decides which indexes the field admits ([`admits`]), which values it
+//! seals and which it opens to (checked by kind, both ways), and nothing
+//! about the bytes: declaring a type on a field written without one changes
+//! no leaf, so a binding that starts sending `"type"` (#1082) re-encrypts
+//! nothing. A field's terms dispatch on each value's own variant to the
+//! typed term operation, so they are the bytes a Rust `u32` or `String`
+//! field derives under the same label.
+//!
+//! The ciphertext is where a data plan and a Rust chain over bare types part:
+//! a Rust `u32` field seals four bare bytes and a `String` field its bare
+//! UTF-8, a `Value` seals the tagged leaf, and the two encodings cannot be
+//! told apart by inspection — a bare string that begins with U+000A is a
+//! valid tagged string, and a tagged string is a valid bare one with a line
+//! feed in front — so neither reader can refuse the other's leaf and a
+//! mis-declared one may read as changed plaintext rather than fail. The
+//! lowering therefore never chooses an encoding from the type. A Rust record
+//! whose rows a binding must open declares its fields as [`Value`]
+//! (`encrypt_index(pick("age", |u: &User| &u.age), (IndexSpec::Equality,
+//! IndexSpec::Ore))` over a `Value` field is the same declaration as the
+//! data plan's, and the two interchange, leaves included — see
+//! `tests/record_lowering.rs`); a Rust `u32` field shares a data field's
+//! terms and nothing else. Closing that gap — one leaf encoding both authors
+//! read, or the encoding bound into the leaf's context so the wrong reader
+//! fails closed — is a change to the Rust chain's bytes, and so a decision
+//! recorded against #1082, not something the lowering can take on its own.
 //!
 //! # The stored record is wire format
 //!
@@ -66,11 +82,10 @@
 //! that a round-trip invariant rather than data loss.
 
 use vitaminc_aead_value::{FfiValue, ValueKind};
-use vitaminc_protected::Controlled;
 
 use super::{admits, utf8, Error, Scalar, Scope, TermBytes, Value};
 use crate::plan::{FieldValues, FieldsBuilder, Opens, Runs};
-use crate::target::{CallerContext, DeclaredContext, Decryption, Encrypted, Index, IndexSpec};
+use crate::target::{CallerContext, DeclaredContext, Decryption, Encrypted, IndexSpec};
 use crate::{
     BoxedPassthrough, CipherText, ContextPiece, KeysetCipher, Label, NonEmpty, Pending,
     StackCipherText,
@@ -138,27 +153,6 @@ enum Verb {
     EncryptIndex,
     Index,
     Passthrough,
-}
-
-/// The Rust plaintext type a field lowers to, from its declared kind.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Leaf {
-    /// `"uint32"`: a `u32`, as a Rust chain's `encrypt_index::<u32>` field.
-    U32,
-    /// `"string"`: a `String`.
-    Text,
-    /// Any other kind, or none: a [`Value`], the tagged leaf encoding.
-    Value,
-}
-
-impl Leaf {
-    fn of(kind: Option<ValueKind>) -> Self {
-        match kind {
-            Some(ValueKind::UInt32) => Leaf::U32,
-            Some(ValueKind::String) => Leaf::Text,
-            _ => Leaf::Value,
-        }
-    }
 }
 
 /// One field of a record plan: what to call it, what label to seal it
@@ -311,10 +305,6 @@ impl FieldPlan {
         }
     }
 
-    fn leaf(&self) -> Leaf {
-        Leaf::of(self.field_type)
-    }
-
     /// The indexes the field declares, in output order.
     fn indexes(&self) -> Vec<IndexSpec> {
         self.outputs
@@ -342,7 +332,6 @@ impl FieldPlan {
         FieldShape {
             name: self.name.clone(),
             verb: self.verb(),
-            leaf: self.leaf(),
             keys: self.indexes().iter().map(IndexSpec::key).collect(),
             kind: self.field_type,
         }
@@ -461,17 +450,13 @@ impl Plan {
     /// The fields plan this declaration lowers to, for a cipher over `K`.
     ///
     /// Built afresh per call: a built plan is bound to its key source type,
-    /// and a declaration is not. Every field is declared by name, read out of
-    /// the [`FieldValues`] the source is converted into, at the Rust type its
-    /// kind lowers to.
+    /// and a declaration is not. Every field is declared by name, as a
+    /// [`Value`], read out of the [`FieldValues`] the source is converted
+    /// into.
     fn lower<K: 'static>(&self) -> Result<crate::Plan<FieldValues, K>, crate::Error> {
         let mut builder = crate::Plan::context(self.context.clone()).fields::<FieldValues, K>();
         for field in &self.fields {
-            builder = match field.leaf() {
-                Leaf::U32 => declare::<u32, K>(builder, field),
-                Leaf::Text => declare::<String, K>(builder, field),
-                Leaf::Value => declare::<Value, K>(builder, field),
-            };
+            builder = declare(builder, field);
             if field.identity() != field.name {
                 builder = builder.identity(field.identity());
             }
@@ -495,21 +480,18 @@ impl Plan {
     }
 }
 
-/// One field's verb, at the type its kind lowers to.
-fn declare<F, K: 'static>(
+/// One field's verb, over a [`Value`]; its indexes are the [`IndexSpec`]s
+/// the plan named, each an [`Index`] of a `Value`.
+fn declare<K: 'static>(
     builder: FieldsBuilder<FieldValues, K>,
     field: &FieldPlan,
-) -> FieldsBuilder<FieldValues, K>
-where
-    F: crate::Encrypt + crate::Decrypt<'static> + Clone + Send + 'static,
-    IndexSpec: Index<F, Term = TermBytes>,
-{
+) -> FieldsBuilder<FieldValues, K> {
     let name = field.name.as_str();
     match field.verb() {
-        Verb::Encrypt => builder.encrypt::<F>(name),
-        Verb::EncryptIndex => builder.encrypt_index::<F>(name, field.indexes()),
-        Verb::Index => builder.index::<F>(name, field.indexes()),
-        Verb::Passthrough => builder.passthrough::<F>(name),
+        Verb::Encrypt => builder.encrypt::<Value>(name),
+        Verb::EncryptIndex => builder.encrypt_index::<Value>(name, field.indexes()),
+        Verb::Index => builder.index::<Value>(name, field.indexes()),
+        Verb::Passthrough => builder.passthrough::<Value>(name),
     }
 }
 
@@ -1043,7 +1025,7 @@ fn source_row(mut row: Vec<(String, FfiValue)>, plan: &Plan) -> Result<FieldValu
     for field in &plan.fields {
         let (_, value) = take(&mut row, &field.name).ok_or(Error::Source)?;
         check_field(&value, field)?;
-        insert_leaf(&mut values, &field.name, field.leaf(), value, Error::Source)?;
+        let _ = values.insert(&field.name, Value::new(value));
     }
     Ok(values)
 }
@@ -1074,30 +1056,6 @@ fn check_field(value: &FfiValue, field: &FieldPlan) -> Result<(), Error> {
     Ok(())
 }
 
-/// Put `value` in the record at the type `leaf` names. A value of another
-/// kind than the leaf's — checked before this is reached on both paths — is
-/// `misfit`.
-fn insert_leaf(
-    values: &mut FieldValues,
-    name: &str,
-    leaf: Leaf,
-    value: FfiValue,
-    misfit: Error,
-) -> Result<(), Error> {
-    let _ = match (leaf, value) {
-        (Leaf::U32, FfiValue::UInt32(v)) => values.insert(name, v),
-        (Leaf::Text, FfiValue::String(s)) => {
-            // Valid UTF-8 by `Utf8String`'s invariant; the bytes move, they
-            // are not copied.
-            let text = String::from_utf8(s.into_inner().risky_unwrap()).map_err(|_| misfit)?;
-            values.insert(name, text)
-        }
-        (Leaf::Value, value) => values.insert(name, Value::new(value)),
-        (Leaf::U32 | Leaf::Text, _) => return Err(misfit),
-    };
-    Ok(())
-}
-
 // =============================================================================
 // Output adapters: the engine's record as the stored shape, and back
 // =============================================================================
@@ -1107,7 +1065,6 @@ fn insert_leaf(
 struct FieldShape {
     name: String,
     verb: Verb,
-    leaf: Leaf,
     keys: Vec<&'static str>,
     kind: Option<ValueKind>,
 }
@@ -1141,7 +1098,7 @@ fn shape_record(
             }
             Verb::Index => keyed_terms(values.take(&field.name)?, &field.keys)?,
             Verb::Passthrough => {
-                let value = take_leaf(&mut values, &field.name, field.leaf)?;
+                let value = take_leaf(&mut values, &field.name)?;
                 vec![(
                     "passthrough".to_string(),
                     CipherText::Passthrough(Box::new(value) as BoxedPassthrough),
@@ -1170,14 +1127,9 @@ fn keyed_terms(
         .collect())
 }
 
-/// The field `name` out of the record, as a value: the leaf type back to
-/// the variant it came from.
-fn take_leaf(values: &mut FieldValues, name: &str, leaf: Leaf) -> Result<FfiValue, crate::Error> {
-    Ok(match leaf {
-        Leaf::U32 => FfiValue::UInt32(values.take(name)?),
-        Leaf::Text => FfiValue::String(values.take::<String>(name)?.into()),
-        Leaf::Value => values.take::<Value>(name)?.into_inner(),
-    })
+/// The field `name` out of the record, as the value it holds.
+fn take_leaf(values: &mut FieldValues, name: &str) -> Result<FfiValue, crate::Error> {
+    Ok(values.take::<Value>(name)?.into_inner())
 }
 
 /// The record the plan opened, as a value: the fields that come back, in
@@ -1187,7 +1139,7 @@ fn take_leaf(values: &mut FieldValues, name: &str, leaf: Leaf) -> Result<FfiValu
 fn open_record(mut values: FieldValues, shape: &[FieldShape]) -> Result<FfiValue, crate::Error> {
     let mut fields = Vec::with_capacity(shape.len());
     for field in shape.iter().filter(|field| field.verb != Verb::Index) {
-        let value = take_leaf(&mut values, &field.name, field.leaf)?;
+        let value = take_leaf(&mut values, &field.name)?;
         if let Some(kind) = field.kind {
             if !kind.holds(&value) {
                 return Err(crate::PlanError::FieldType {
@@ -1246,7 +1198,7 @@ fn record_row(mut row: Vec<(String, StackCipherText)>, plan: &Plan) -> Result<Fi
                 if field.field_type.is_some_and(|kind| !kind.holds(&value)) {
                     return Err(Error::Record);
                 }
-                insert_leaf(&mut values, &field.name, field.leaf(), value, Error::Record)?;
+                let _ = values.insert(&field.name, Value::new(value));
             }
             Verb::Encrypt | Verb::EncryptIndex | Verb::Index => {
                 let (_, ciphertext) = take(&mut outputs, "c").ok_or(Error::Record)?;
@@ -1269,13 +1221,13 @@ mod tests {
         IdentifiedBy, IndexKey, IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
     };
     use uuid::Uuid;
-    use vitaminc_protected::Protected;
+    use vitaminc_protected::{Controlled, Protected};
 
     use crate::dynamic::{context, term};
     use crate::plan::pick;
-    use crate::sem::{EqualityTerm, MatchTerms, OreTerm};
+    use crate::sem::EqualityTerm;
     use crate::target::{AeadContext, DecryptInto, EncryptFrom};
-    use crate::{nonempty, Equality, Match, Ore, PlanError, StackCipher};
+    use crate::{nonempty, Equality, PlanError, StackCipher};
 
     /// `FakeDataKeySource` with call counters, so the batching contract —
     /// one key request per invocation, none for a refused call — is
@@ -2442,34 +2394,39 @@ mod tests {
         }
 
         /// The lowering is the plan builder: the record a data plan seals is
-        /// the record the typed chain seals under the same declaration, field
-        /// for field — the same terms, and ciphertexts each side opens.
+        /// the record the chain seals under the same declaration over the
+        /// same plaintext type, a [`Value`] per field — the same terms, and
+        /// ciphertexts each side opens.
         #[tokio::test]
-        async fn seals_what_the_typed_chain_seals_under_the_same_declaration() {
+        async fn seals_what_the_chain_seals_under_the_same_declaration() {
             struct User {
-                age: u32,
-                email: String,
-                nick: String,
+                age: Value,
+                email: Value,
+                nick: Value,
                 id: u64,
             }
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let user = User {
-                age: 34,
-                email: "a@x".into(),
-                nick: "al smith".into(),
+                age: Value::new(FfiValue::UInt32(34)),
+                email: Value::new(s("a@x")),
+                nick: Value::new(s("al smith")),
                 id: 7,
             };
-            let mut typed = cipher
+            let default_match = IndexSpec::Match(crate::sem::MatchOptions::default());
+            let mut chain = cipher
                 .encrypt(&user)
                 .context("users")
                 .fields()
-                .encrypt_index(pick("age", |u: &User| &u.age), (Equality, Ore))
+                .encrypt_index(
+                    pick("age", |u: &User| &u.age),
+                    (IndexSpec::Equality, IndexSpec::Ore),
+                )
                 .encrypt(pick("email", |u: &User| &u.email))
-                .index(pick("nick", |u: &User| &u.nick), Match::default())
+                .index(pick("nick", |u: &User| &u.nick), default_match)
                 .passthrough(pick("id", |u: &User| &u.id))
                 .await
-                .expect("the typed chain");
+                .expect("the chain");
             let plan = plan(obj(vec![
                 (
                     "age",
@@ -2482,45 +2439,36 @@ mod tests {
             .expect("plan");
             let mut fields = map(seal(&keyset, row(34), &plan).await);
 
-            let age: Encrypted<(EqualityTerm, OreTerm<u32>)> = typed.take("age").expect("age");
+            let age: Encrypted<(TermBytes, TermBytes)> = chain.take("age").expect("age");
             let mut lowered_age = map(node(&mut fields, "age"));
             assert_eq!(
                 term_bytes(&node(&mut lowered_age, "eq")),
-                age.terms.0.to_bytes(),
+                age.terms.0.as_bytes(),
                 "the same equality term"
             );
             assert_eq!(
                 term_bytes(&node(&mut lowered_age, "ore")),
-                age.terms.1.to_bytes(),
+                age.terms.1.as_bytes(),
                 "the same ore term"
             );
-            let nick: MatchTerms = typed.take("nick").expect("nick");
+            let nick: TermBytes = chain.take("nick").expect("nick");
             let mut lowered_nick = map(node(&mut fields, "nick"));
             assert_eq!(
                 term_bytes(&node(&mut lowered_nick, "match")),
-                nick.to_bytes(),
+                nick.as_bytes(),
                 "the same match terms"
             );
 
             // Each side's ciphertext opens through the other.
-            let typed_opened: u32 = cipher
+            let chain_opened: FfiValue = cipher
                 .decrypt(
                     node(&mut lowered_age, "c"),
                     Label::parse("users/age").expect("label"),
                 )
                 .await
-                .expect("the typed reader opens the lowering's u32");
-            assert_eq!(typed_opened, 34);
-            let email: StackCipherText = typed.take("email").expect("email");
-            let mut lowered_email = map(node(&mut fields, "email"));
-            let typed_email: String = cipher
-                .decrypt(
-                    node(&mut lowered_email, "c"),
-                    Label::parse("users/email").expect("label"),
-                )
-                .await
-                .expect("the typed reader opens the lowering's string");
-            assert_eq!(typed_email, "a@x");
+                .expect("the chain's reader opens the lowering's leaf");
+            assert_eq!(u32_of(&chain_opened), 34);
+            let email: StackCipherText = chain.take("email").expect("email");
             let stored = CipherText::Map(vec![
                 (
                     "age".to_string(),
@@ -2543,7 +2491,7 @@ mod tests {
             assert_eq!(
                 u32_of(&opened[0].1),
                 34,
-                "the lowering opens the typed chain's u32"
+                "the lowering opens the chain's leaf"
             );
             assert_eq!(text_of(&opened[1].1), "a@x", "and its string");
             assert_eq!(u64_of(&opened[2].1), 7);
@@ -2622,11 +2570,11 @@ mod tests {
                 flat.to_bytes(),
                 "the extension domain-separates from the flat label"
             );
-            let opened: u32 = cipher
+            let opened: FfiValue = cipher
                 .decrypt(node(&mut age, "c"), native)
                 .await
                 .expect("the leaf opens under the extended context");
-            assert_eq!(opened, 34);
+            assert_eq!(u32_of(&opened), 34);
         }
 
         /// Several parts nest to the left, one at a time, as a binding
@@ -3444,10 +3392,12 @@ mod tests {
         }
     }
 
-    /// The leaf encoding decision, pinned (ADR-0007): a field typed as a
-    /// kind with a Rust leaf type seals as that type seals, so a data plan
-    /// and a derive interchange; a field with no type seals the tagged
-    /// `FfiValue` encoding, which only a dynamic reader opens.
+    /// The leaf encoding, pinned: every field lowered from data seals the
+    /// tagged `Value` leaf whatever its `"type"`, so a type declared later
+    /// changes no bytes; a Rust field of a bare type shares a data field's
+    /// terms and not its leaf, and the two leaves cannot be told apart by
+    /// inspection, which is why the lowering never picks an encoding from
+    /// the type.
     mod given_the_leaf_encoding {
         use super::*;
 
@@ -3458,11 +3408,106 @@ mod tests {
             hm: EqualityTerm,
         }
 
-        /// A derived `plaintext = u32` record and a `uint32` data-plan field
-        /// under the same label: the same term, and each opens the other's
-        /// ciphertext.
+        /// A `uint32` field and a `string` field seal the tagged leaf, as an
+        /// untyped field does: the leaf opens as a value, and a bare `u32`
+        /// reader refuses the five bytes it finds.
         #[tokio::test]
-        async fn a_typed_field_and_the_derive_interchange() {
+        async fn every_field_seals_the_tagged_leaf_whatever_its_type() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let age_label = Label::parse("users/age").expect("label");
+            for ty in [None, Some("uint32")] {
+                let field = match ty {
+                    Some(ty) => typed(label("age"), &["c"], ty),
+                    None => spec(label("age"), &["c"]),
+                };
+                let plan = plan(obj(vec![("age", field)])).expect("plan");
+                let mut fields =
+                    map(seal(&keyset, obj(vec![("age", FfiValue::UInt32(34))]), &plan).await);
+                let mut age = map(node(&mut fields, "age"));
+                let as_value: FfiValue = cipher
+                    .decrypt(node(&mut age, "c"), age_label.clone())
+                    .await
+                    .expect("the tagged leaf opens as a value");
+                assert_eq!(u32_of(&as_value), 34, "type {ty:?}");
+                let mut fields =
+                    map(seal(&keyset, obj(vec![("age", FfiValue::UInt32(34))]), &plan).await);
+                let mut age = map(node(&mut fields, "age"));
+                let as_u32: Result<u32, _> =
+                    cipher.decrypt(node(&mut age, "c"), age_label.clone()).await;
+                assert!(
+                    matches!(as_u32, Err(crate::Error::Aead)),
+                    "five tagged bytes are not a bare u32, type {ty:?}: {as_u32:?}"
+                );
+            }
+            let plan = plan(obj(vec![(
+                "email",
+                typed(label("email"), &["c"], "string"),
+            )]))
+            .expect("plan");
+            let mut fields = map(seal(&keyset, obj(vec![("email", s("a@x"))]), &plan).await);
+            let mut email = map(node(&mut fields, "email"));
+            let as_value: FfiValue = cipher
+                .decrypt(
+                    node(&mut email, "c"),
+                    Label::parse("users/email").expect("label"),
+                )
+                .await
+                .expect("a tagged string leaf");
+            assert_eq!(text_of(&as_value), "a@x");
+        }
+
+        /// Declaring a type on a field written without one, or dropping it,
+        /// changes no bytes: the row opens to the value it held, exactly, in
+        /// both directions. #1082 needs no re-encryption.
+        #[tokio::test]
+        async fn declaring_a_type_later_changes_no_bytes() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let untyped = plan(obj(vec![
+                ("age", spec(label("age"), &["c"])),
+                ("email", spec(label("email"), &["c"])),
+            ]))
+            .expect("plan");
+            let typed_plan = plan(obj(vec![
+                ("age", typed(label("age"), &["c"], "uint32")),
+                ("email", typed(label("email"), &["c"], "string")),
+            ]))
+            .expect("plan");
+            let source = || obj(vec![("age", FfiValue::UInt32(34)), ("email", s("alice"))]);
+
+            let sealed_untyped = seal(&keyset, source(), &untyped).await;
+            let opened = object(open(&cipher, sealed_untyped, &typed_plan).await);
+            assert_eq!(
+                u32_of(&opened[0].1),
+                34,
+                "an untyped row opens under a uint32 field"
+            );
+            assert_eq!(
+                text_of(&opened[1].1),
+                "alice",
+                "an untyped row opens under a string field, with no leading byte"
+            );
+
+            let sealed_typed = seal(&keyset, source(), &typed_plan).await;
+            let opened = object(open(&cipher, sealed_typed, &untyped).await);
+            assert_eq!(
+                u32_of(&opened[0].1),
+                34,
+                "a typed row opens under an untyped field"
+            );
+            assert_eq!(text_of(&opened[1].1), "alice");
+        }
+
+        /// A derived `plaintext = u32` record and a `uint32` data-plan field
+        /// under one label derive the same term. Their leaves are different
+        /// encodings, and neither reader opens the other's: the derive's bare
+        /// four bytes carry no tag for the lowering, the lowering's five
+        /// tagged bytes are not a `u32`. A Rust record that must interchange
+        /// leaves with a data plan declares `Value` fields instead
+        /// (`seals_what_the_chain_seals_under_the_same_declaration`).
+        #[tokio::test]
+        async fn the_derive_and_a_data_plan_share_terms_not_leaves() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let label_ = Label::parse("users/age").expect("label");
@@ -3485,96 +3530,50 @@ mod tests {
                 "the same equality term"
             );
 
-            // The derive opens the lowering's leaf as a bare u32.
-            let opened: u32 = keyset
+            let as_u32: Result<u32, _> = keyset
                 .decrypt_as(
                     node(&mut age, "c"),
                     AeadContext::from(NonEmpty::from(label_.clone())),
                 )
-                .await
-                .expect("a bare u32 leaf");
-            assert_eq!(opened, 34);
-
-            // The lowering opens the derive's leaf as a uint32 field.
+                .await;
+            assert!(
+                matches!(as_u32, Err(crate::Error::Aead)),
+                "the derive does not open the lowering's leaf: {as_u32:?}"
+            );
             let stored = CipherText::Map(vec![(
                 "age".to_string(),
                 CipherText::Map(vec![("c".to_string(), derived.c)]),
             )]);
-            let opened = object(open(&cipher, stored, &plan).await);
-            assert_eq!(u32_of(&opened[0].1), 34);
-        }
-
-        /// A field with no type seals the self-describing tagged encoding:
-        /// it reads back as what it was, and a bare `u32` reader does not
-        /// open it. The two encodings are different leaves, by declaration.
-        #[tokio::test]
-        async fn an_untyped_field_seals_the_tagged_encoding() {
-            let cipher = cipher().await;
-            let keyset = cipher.default_keyset();
-            let label_ = Label::parse("users/age").expect("label");
-            let untyped = plan(obj(vec![("age", spec(label("age"), &["c"]))])).expect("plan");
-            let mut fields =
-                map(seal(&keyset, obj(vec![("age", FfiValue::UInt32(34))]), &untyped).await);
-            let mut age = map(node(&mut fields, "age"));
-            let as_value: FfiValue = cipher
-                .decrypt(node(&mut age, "c"), label_.clone())
-                .await
-                .expect("the tagged leaf opens as a value");
-            assert_eq!(u32_of(&as_value), 34);
-            let mut fields =
-                map(seal(&keyset, obj(vec![("age", FfiValue::UInt32(34))]), &untyped).await);
-            let mut age = map(node(&mut fields, "age"));
-            let as_u32: Result<u32, _> = cipher.decrypt(node(&mut age, "c"), label_).await;
-            assert!(
-                as_u32.is_err(),
-                "five tagged bytes are not a bare u32: {as_u32:?}"
-            );
-
-            // And the typed leaf is not the tagged one.
-            let typed_plan =
-                plan(obj(vec![("age", typed(label("age"), &["c"], "uint32"))])).expect("plan");
-            let mut fields = map(seal(
-                &keyset,
-                obj(vec![("age", FfiValue::UInt32(34))]),
-                &typed_plan,
-            )
-            .await);
-            let mut age = map(node(&mut fields, "age"));
-            let as_value: Result<FfiValue, _> = cipher
-                .decrypt(
-                    node(&mut age, "c"),
-                    Label::parse("users/age").expect("label"),
-                )
+            let result = decrypt(Scope::Client(&cipher), stored, &plan)
+                .expect("the shape fits")
                 .await;
             assert!(
-                as_value.is_err(),
-                "four bare bytes carry no tag for a value reader"
+                matches!(result, Err(crate::Error::Aead)),
+                "the lowering does not open the derive's leaf: {:?}",
+                result.err()
             );
         }
 
-        /// A `string` field is a `String` leaf, as the derive's.
+        /// The two encodings cannot be told apart by inspection: a bare
+        /// `String` reader accepts a tagged string leaf, reading the tag as
+        /// a line feed. Pinned so that it is known, never relied on: the
+        /// lowering reads only its own encoding, and a Rust record that
+        /// shares rows with a binding declares `Value` fields.
         #[tokio::test]
-        async fn a_string_field_is_a_string_leaf() {
+        async fn a_bare_string_reader_cannot_tell_a_tagged_leaf_apart() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let plan = plan(obj(vec![(
-                "email",
-                typed(label("email"), &["c", "eq"], "string"),
-            )]))
-            .expect("plan");
-            let mut fields = map(seal(&keyset, obj(vec![("email", s("a@x"))]), &plan).await);
+            let plan = plan(obj(vec![("email", spec(label("email"), &["c"]))])).expect("plan");
+            let mut fields = map(seal(&keyset, obj(vec![("email", s("alice"))]), &plan).await);
             let mut email = map(node(&mut fields, "email"));
-            let label_ = Label::parse("users/email").expect("label");
-            let opened: String = cipher
-                .decrypt(node(&mut email, "c"), label_.clone())
+            let bare: String = cipher
+                .decrypt(
+                    node(&mut email, "c"),
+                    Label::parse("users/email").expect("label"),
+                )
                 .await
-                .expect("a bare string leaf");
-            assert_eq!(opened, "a@x");
-            let typed = keyset
-                .equality_term("a@x".to_string(), NonEmpty::from(label_))
-                .await
-                .expect("typed");
-            assert_eq!(term_bytes(&node(&mut email, "eq")), typed.to_bytes());
+                .expect("valid UTF-8 either way");
+            assert_eq!(bare, "\nalice", "the string tag, U+000A, read as text");
         }
     }
 }

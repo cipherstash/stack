@@ -1,16 +1,20 @@
 # Record fixture: `record_lowering.json`
 
-One declaration, two authors, one engine. The typed Rust chain
-(`cipher.encrypt(&user).context("users").fields()…`) and the data-plan
-lowering (`stack_encrypt::dynamic::record`, what a language binding
-calls) each sealed the same plaintext under the same declaration. The
-fixture holds both records, with their term bytes, sealed under a
-deterministic key source so they open in any process built from the same
-seed. `tests/record_lowering.rs` opens each record with the other author
-and checks that both derive the terms it holds. That cross-opening is the
-proof that `dynamic::record` is a lowering into the plan builder and not a
-second executor (ADR-0007, amended 2026-10-06). A Go test reads the same
-file later, once the Go SDK's generated code is the third author.
+One declaration, two authors, one engine. A Rust chain
+(`cipher.encrypt(&user).context("users").fields()…`, over fields of type
+`stack_encrypt::dynamic::Value`, the plaintext type a binding's values have)
+and the data-plan lowering (`stack_encrypt::dynamic::record`, what a
+language binding calls) each sealed the same plaintext under the same
+declaration. The fixture holds both records, with their term bytes, sealed
+under a deterministic key source so they open in any process built from the
+same seed. `tests/record_lowering.rs` opens each record with the other
+author and checks that both derive the terms it holds. That cross-opening
+is the proof that `dynamic::record` is a lowering into the plan builder and
+not a second executor (ADR-0007, amended 2026-10-06). A Go test reads the
+same file later, once the Go SDK's generated code is the third author. A
+chain over bare `u32` or `String` fields derives the same terms but a
+different leaf encoding, which the other reader cannot open or tell apart;
+`dynamic::record`'s docs say why the lowering does not bridge that.
 
 Regenerate with `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p
 stack-encrypt --all-features --test record_lowering`. Only the sealed bytes
@@ -47,8 +51,9 @@ the file by hand.
 - **`plan`.** The declaration in the data grammar `dynamic::record::plan`
   parses: per field its label (a list of plain segments), its outputs (`"c"`,
   `"passthrough"`, or an index key `"eq"`, `"match"`, `"ore"`, `"ope"`) and its
-  `"type"` (a vitaminc `ValueKind` name). The typed chain writes the same
-  declaration as `Plan::context("users").fields()` with one verb per field.
+  `"type"` (a vitaminc `ValueKind` name). The Rust chain writes the same
+  declaration as `Plan::context("users").fields()` with one verb per field,
+  its indexes named as `IndexSpec`s over `Value` fields.
 - **`plaintext`.** The value both authors sealed, each field as JSON at the
   kind `plan` declares for it.
 - **`records`.** Each record in the stored shape, field by field, output by

@@ -49,14 +49,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   builder refuses them (`PlanError::SharedIdentity`). A record a Go program
   wrote with a `label=` tag is unaffected; one written with a `context=`
   tag is not readable through a plan.
-- **A data plan field typed `uint32` or `string` seals as a bare `u32` or
-  `String` leaf** — the encoding a Rust `u32` or `String` field seals, run
-  through the same operations — so a derived record and a data plan
-  interchange ciphertexts and terms under one declaration. Every other kind,
-  and a field with no `"type"`, seals the tagged `FfiValue` encoding, as
-  before. A `uint32` or `string` field written by the previous release is
-  therefore not readable under a plan that now declares that type; written
-  without a type, it reads as before.
+- **Every data plan field seals the tagged `FfiValue` leaf, whatever its
+  `"type"`**, as every field did before; the type admits indexes and checks
+  kinds and changes no bytes, so a row written without a type opens under a
+  plan that declares one, and a binding that starts sending `"type"`
+  re-encrypts nothing. A Rust `u32` or `String` field under the same label
+  derives the same terms as the data field but a different leaf, and the
+  two leaves cannot be told apart by inspection (a bare string that begins
+  with U+000A is a valid tagged string), so the lowering does not choose an
+  encoding from the type and a Rust record whose rows a binding must open
+  declares `dynamic::Value` fields, which are the same declaration as a data
+  plan's. One leaf encoding for both authors, or the encoding bound into
+  the leaf's context so the wrong reader fails closed, is a change to the
+  Rust chain's bytes and is left to #1082.
 - `dynamic::Output` gains `Passthrough` (the wire key `"passthrough"`). The
   enum is exhaustive on purpose, so a match over it must name the variant.
 - `target::DeclaredContext` holds several extension parts: `with(part)`
@@ -138,17 +143,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dynamic::Value`: an `FfiValue` as a plan field's plaintext, `Clone` by
   deep copy into fresh `Protected` payloads, so the borrowed engine can
   consume it. `dynamic::TermBytes`: a term as its frozen bytes.
-- `IndexSpec` implements `Index<Value>`, `Index<u32>` and `Index<String>`,
-  each with `TermBytes` as its term, so an index named as data runs through
-  `indexed()` like an index named as a type. `Vec<I>` implements
+- `IndexSpec` implements `Index<Value>`, with `TermBytes` as its term, so
+  an index named as data runs through `indexed()` like an index named as a
+  type, from a data plan or from a Rust chain over `Value` fields. `Vec<I>`
+  implements
   `Indexes<S>` for any `I: Index<S>`: an index set sized at run time, whose
   terms are a `Vec`; an empty one is refused when it runs
   (`PlanError::EmptyIndexes`).
-- `tests/fixtures/record_lowering.json`: records the typed chain and the
-  data-plan lowering each sealed under one declaration, with their term
-  bytes, under a deterministic key source; `tests/record_lowering.rs` opens
-  each with the other. The fixture is the proof that the two are one engine
-  (ADR-0007), and a Go test can read it later.
+- `tests/fixtures/record_lowering.json`: records a Rust chain over `Value`
+  fields and the data-plan lowering each sealed under one declaration, with
+  their term bytes, under a deterministic key source;
+  `tests/record_lowering.rs` opens each with the other. The fixture is the
+  proof that the two are one engine (ADR-0007), and a Go test can read it
+  later.
 - A dynamic plan field may declare its type, as `"type": "<kind>"`. The
   vocabulary is vitaminc's `ValueKind` (re-exported as
   `dynamic::ValueKind`), not a new enum, so this crate now needs vitaminc

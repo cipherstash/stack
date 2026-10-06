@@ -26,9 +26,9 @@
 //!   is the same bytes (ADR-0007). The one step that stays dynamic is
 //!   dispatching a value whose type is known only at run time to the typed
 //!   term operation, which [`IndexSpec`]'s `Index` impls do.
-//! * [`Value`] — an [`FfiValue`] as a plan field's plaintext, where its
-//!   declared type names no Rust leaf type; [`TermBytes`] — the term such a
-//!   field derives, as its frozen bytes.
+//! * [`Value`] — an [`FfiValue`] as a plan field's plaintext, the type of
+//!   every field lowered from data; [`TermBytes`] — the term such a field
+//!   derives, as its frozen bytes.
 //! * [`Scope`] — which cipher an opening operation decrypts through.
 //!
 //! # What is not here
@@ -54,10 +54,10 @@
 //! the type it was sealed as. They are not this crate's: a declared type is
 //! vitaminc's [`ValueKind`], re-exported here, whose names vitaminc freezes
 //! beside its tag table. This crate adds only what a kind means to an index
-//! ([`admits`]) and to a query value ([`read`]), and which Rust leaf type a
-//! field lowers to ([`record`]). A field without `"type"` is dispatched on
-//! each value's own tag; that is transitional, and [`record::plan`] says
-//! until when.
+//! ([`admits`]) and to a query value ([`read`]); it decides nothing about
+//! the bytes ([`record`]). A field without `"type"` is dispatched on each
+//! value's own tag; that is transitional, and [`record::plan`] says until
+//! when.
 //!
 //! For the same reason the enums that spell them — [`Output`],
 //! [`IndexSpec`] and [`ValueKind`] — are *not* `#[non_exhaustive]`, against this workspace's

@@ -1,9 +1,13 @@
 //! The record fixture is the proof of the lowering (ADR-0007, amended
-//! 2026-10-06): the typed Rust chain and the data-plan lowering each open
-//! the records the other sealed, and both derive the same bytes for each
-//! term. `tests/fixtures/record_lowering.json` holds one record from each
-//! author, sealed under a deterministic key source so the bytes open in any
-//! process, and its README gives the schema a Go test reads later.
+//! 2026-10-06): a Rust chain and the data-plan lowering each open the
+//! records the other sealed, and both derive the same bytes for each term.
+//! The chain's fields are `dynamic::Value`s, the plaintext type a binding's
+//! values have, so the two authors write one declaration over one type; a
+//! chain over bare `u32`/`String` fields shares the terms and not the leaves
+//! (see `dynamic::record`). `tests/fixtures/record_lowering.json` holds one
+//! record from each author, sealed under a deterministic key source so the
+//! bytes open in any process, and its README gives the schema a Go test
+//! reads later.
 //!
 //! Regenerate the fixture with `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test
 //! --test record_lowering --all-features`; every other run reads it.
@@ -17,41 +21,45 @@ use std::path::PathBuf;
 use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
-use stack_encrypt::dynamic::{FfiValue, Scope};
+use stack_encrypt::dynamic::{FfiValue, Scope, TermBytes, Value};
 use stack_encrypt::plan::{pick, FieldValues};
-use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
-use stack_encrypt::target::Encrypted;
-use stack_encrypt::{
-    CipherText, Equality, Match, Ore, Plan, SealedValue, StackCipher, StackCipherText,
-};
+use stack_encrypt::sem::MatchOptions;
+use stack_encrypt::target::{Encrypted, IndexSpec};
+use stack_encrypt::{CipherText, Plan, SealedValue, StackCipher, StackCipherText};
 use vitaminc_protected::Controlled;
 
 const SEED: [u8; 32] = *b"stack-encrypt record fixture v1 ";
 
 struct User {
-    age: u32,
-    email: String,
-    notes: String,
+    age: Value,
+    email: Value,
+    notes: Value,
     id: u32,
 }
 
 fn user() -> User {
     User {
-        age: 34,
-        email: "bob@example.com".into(),
-        notes: "likes cats".into(),
+        age: Value::new(FfiValue::UInt32(34)),
+        email: Value::new(FfiValue::String("bob@example.com".into())),
+        notes: Value::new(FfiValue::String("likes cats".into())),
         id: 42,
     }
 }
 
-/// The one declaration, as the typed chain writes it.
+/// The one declaration, as the Rust chain writes it over `Value` fields.
 fn typed_plan() -> Plan<User, DeterministicSource> {
     Plan::context("users")
         .fields()
-        .encrypt_index(pick("age", |u: &User| &u.age), (Equality, Ore))
+        .encrypt_index(
+            pick("age", |u: &User| &u.age),
+            (IndexSpec::Equality, IndexSpec::Ore),
+        )
         .encrypt_index(
             pick("email", |u: &User| &u.email),
-            (Equality, Match::default()),
+            (
+                IndexSpec::Equality,
+                IndexSpec::Match(MatchOptions::default()),
+            ),
         )
         .encrypt(pick("notes", |u: &User| &u.notes))
         .passthrough(pick("id", |u: &User| &u.id))
@@ -70,8 +78,7 @@ fn data_plan_json() -> Json {
 }
 
 fn plaintext_json() -> Json {
-    let u = user();
-    json!({ "age": u.age, "email": u.email, "notes": u.notes, "id": u.id })
+    json!({ "age": 34, "email": "bob@example.com", "notes": "likes cats", "id": 42 })
 }
 
 // ---- JSON <-> FfiValue, for the subset the fixture uses --------------------
@@ -221,8 +228,8 @@ fn record_of_json(record: &Json) -> StackCipherText {
 /// The typed chain's record, shaped as the stored tree, by hand: what a Go
 /// program assembles from the engine's standard outputs.
 fn record_of_typed(mut values: FieldValues) -> StackCipherText {
-    let age: Encrypted<(EqualityTerm, OreTerm<u32>)> = values.take("age").expect("age");
-    let email: Encrypted<(EqualityTerm, MatchTerms)> = values.take("email").expect("email");
+    let age: Encrypted<(TermBytes, TermBytes)> = values.take("age").expect("age");
+    let email: Encrypted<(TermBytes, TermBytes)> = values.take("email").expect("email");
     let notes: StackCipherText = values.take("notes").expect("notes");
     let id: u32 = values.take("id").expect("id");
     let term = |bytes: Vec<u8>| -> StackCipherText {
@@ -236,16 +243,16 @@ fn record_of_typed(mut values: FieldValues) -> StackCipherText {
             "age".into(),
             CipherText::Map(vec![
                 ("c".into(), age.ciphertext),
-                ("eq".into(), term(age.terms.0.to_bytes())),
-                ("ore".into(), term(age.terms.1.to_bytes())),
+                ("eq".into(), term(age.terms.0.into_bytes())),
+                ("ore".into(), term(age.terms.1.into_bytes())),
             ]),
         ),
         (
             "email".into(),
             CipherText::Map(vec![
                 ("c".into(), email.ciphertext),
-                ("eq".into(), term(email.terms.0.to_bytes())),
-                ("match".into(), term(email.terms.1.to_bytes())),
+                ("eq".into(), term(email.terms.0.into_bytes())),
+                ("match".into(), term(email.terms.1.into_bytes())),
             ]),
         ),
         ("notes".into(), CipherText::Map(vec![("c".into(), notes)])),
@@ -344,10 +351,13 @@ async fn open_typed(cipher: &StackCipher<DeterministicSource>, tree: StackCipher
         .using(&typed_plan())
         .await
         .expect("the typed chain opens it");
+    let mut value =
+        |name: &str| json_of_opened(opened.take::<Value>(name).expect(name).into_inner());
+    let (age, email, notes) = (value("age"), value("email"), value("notes"));
     json!({
-        "age": opened.take::<u32>("age").expect("age"),
-        "email": opened.take::<String>("email").expect("email"),
-        "notes": opened.take::<String>("notes").expect("notes"),
+        "age": age,
+        "email": email,
+        "notes": notes,
         "id": opened.take::<u32>("id").expect("id"),
     })
 }

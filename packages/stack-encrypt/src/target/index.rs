@@ -375,7 +375,7 @@ macro_rules! single_index {
         }
     )+};
 }
-single_index!([] Equality, [O] Match<O>, [] Ore, [] Ope);
+single_index!([] Equality, [O] Match<O>, [] Ore, [] Ope, [] IndexSpec);
 
 /// A tuple of indexes: each index's operation, zipped left to right, and the
 /// nested pairs `zip` builds flattened back into one tuple of terms.
