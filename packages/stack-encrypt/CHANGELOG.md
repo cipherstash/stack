@@ -34,7 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A data plan field with a term output must declare its `"type"`.** A
   plan whose indexed field (`"eq"`, `"match"`, `"ore"`, `"ope"`) has no
-  `"type"` is refused when it is built (`Error::Plan`), by `record::plan`,
+  `"type"` is refused when it is built (`Error::UntypedIndex`, naming the
+  field), by `record::plan`,
   `record::plan_with` and `Plan::new` / `Plan::new_with` alike: the field's
   terms derive from the one declared kind, with every value checked against
   it, never from whatever tag each value arrived with. The type stays
@@ -43,7 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fills `"type"` on every field from the Go type, and `record.Plan.Validate`
   refuses an indexed `Untyped` field naming it, so generated code is
   unaffected; a plan written by hand without types must add them. Declaring
-  a type changes no stored byte, so no row is re-encrypted.
+  a type changes no stored byte, so a row stored as the declared kind opens
+  as before. A row stored as another kind fails to open with
+  `PlanError::FieldType`, and fails any batch that holds it; its terms do
+  not match a query of the declared kind either. Re-encrypt such rows as
+  the declared kind.
 
 - **A target description carries a source mode.** `Encryption` gains a
   last type parameter, `M: SourceMode = Borrowed`, saying how it is handed
@@ -88,8 +93,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Every data plan field seals the tagged `FfiValue` leaf, whatever its
   `"type"`**, as every field did before; the type admits indexes and checks
   kinds and changes no bytes, so a row written without a type opens under a
-  plan that declares one, and a binding that starts sending `"type"`
-  re-encrypts nothing. A Rust `u32` or `String` field under the same label
+  plan that declares the kind it was sealed as, and a binding that starts
+  sending `"type"` re-encrypts nothing stored as that kind. A Rust `u32` or `String` field under the same label
   derives the same terms as the data field but a different leaf, and the
   two leaves cannot be told apart by inspection (a bare string that begins
   with U+000A is a valid tagged string), so the lowering does not choose an
