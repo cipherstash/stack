@@ -175,6 +175,9 @@ func newInstance(ctx context.Context, wasm []byte, hostDir string, policy guest.
 			return fail(fmt.Errorf("auth: guest is missing export %s", name))
 		}
 	}
+	// Optional: a guest built before se_last_error reports the status
+	// alone, and its failures stay the bare sentinels. See guest.Diagnostic.
+	inst.exports.LastError = guest.LastErrorExport(module)
 	return inst, nil
 }
 

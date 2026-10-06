@@ -468,9 +468,9 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, context string, p
 }
 
 // locateTermFailure names the row, field and index behind an ErrTerm from a
-// record call. The guest reports a status and nothing else, so the host asks
-// the engine again, one term at a time, which costs no key request: a term
-// derives locally. The engine defines no match term for text that yields no
+// record call. The guest's error says what was wrong with the term but not
+// which value or field it came from, so the host asks the engine again, one
+// term at a time, which costs no key request: a term derives locally. The engine defines no match term for text that yields no
 // token (empty, separator-only, or shorter than the n-gram), because an
 // empty term would match every row; a program hands such a field a value or
 // drops the match index. p is the plan without this cipher's extension,

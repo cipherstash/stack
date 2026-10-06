@@ -3,9 +3,10 @@ package guest
 import "errors"
 
 // Failure kinds a guest surfaces across the boundary. A guest reports a
-// status code and nothing else (see StatusError), so these are the whole
-// vocabulary: they separate a tampered ciphertext from a bad token from a
-// malformed input, and reveal nothing about plaintext or key material. The
+// status code (see StatusError), and these are what the codes decode to:
+// they separate a tampered ciphertext from a bad token from a malformed
+// input, and reveal nothing about plaintext or key material. The detail
+// behind a status is a Diagnostic, which unwraps to one of these. The
 // public packages expose them under their own names; the values are these.
 var (
 	// ErrAuthentication is an AEAD open failure: a tampered ciphertext, a

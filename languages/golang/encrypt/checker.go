@@ -40,8 +40,9 @@ func (k *Checker) Close() error { return k.c.Close() }
 
 // Check refuses a plan the engine would refuse: an index its field's type
 // does not admit, a context that is not a label, two fields under one
-// identity. The error is [ErrEncoding]; which rule failed is the engine's to
-// know, so a caller that wants the field named checks one field at a time.
+// identity. The error is [ErrEncoding]. A refusal from the engine is a
+// [*Diagnostic] that names the field with [Diagnostic.Field] and the rule
+// with [Diagnostic.Reason].
 func (k *Checker) Check(ctx context.Context, plan *record.Plan) error {
 	if err := plan.Validate(); err != nil {
 		return fmt.Errorf("%w: %v", ErrEncoding, err)

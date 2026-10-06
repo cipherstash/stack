@@ -427,9 +427,16 @@ func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([
 		err = fmt.Errorf("%w (growth refused under RequireLockedMemory): %w", guest.MemoryLockError(g.Reason), err)
 	}
 	// The guest reports a failed token_get as a transport failure and no
-	// more; the token source said why.
+	// more; the token source said why. When the source's error is a
+	// Diagnostic it goes first, so errors.As finds the cause rather than the
+	// guest's "token_get failed"; errors.Is still matches both.
 	if err != nil && c.transport != nil && c.transport.tokenErr != nil {
-		err = fmt.Errorf("%w (token source: %w)", err, c.transport.tokenErr)
+		var cause *guest.Diagnostic
+		if errors.As(c.transport.tokenErr, &cause) {
+			err = fmt.Errorf("token source: %w (%w)", c.transport.tokenErr, err)
+		} else {
+			err = fmt.Errorf("%w (token source: %w)", err, c.transport.tokenErr)
+		}
 	}
 	if err != nil {
 		return nil, err

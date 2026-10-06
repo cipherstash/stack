@@ -146,7 +146,9 @@
 // network, or for stored data: [ErrForeignKeyset] when a *Cipher is given a
 // record another keyset sealed, [ErrAuthentication] or [ErrForbidden] for a
 // ciphertext that does not open under its field's context, [ErrEncoding] for
-// a stored value that does not fit its declaration. Read them with errors.Is.
+// a stored value that does not fit its declaration. Read the kind with
+// errors.Is, and the detail behind a failure the engine reports (its code,
+// help, structured fields and causes) with errors.As into a [*Diagnostic].
 // No error, warning or log line holds a plaintext value; a generated type
 // hides its sealed fields when a program prints it.
 //

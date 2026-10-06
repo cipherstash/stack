@@ -2,10 +2,11 @@ package encrypt
 
 import "github.com/cipherstash/stack/languages/golang/internal/guest"
 
-// Failure kinds surfaced across the boundary. The guest reports a status
-// code and nothing else, so these are the whole vocabulary: they separate a
-// tampered ciphertext from a bad token from a malformed input, and reveal
-// nothing about plaintext or key material.
+// Failure kinds surfaced across the boundary: the guest reports a status
+// code, and these are what the codes decode to. They separate a tampered
+// ciphertext from a bad token from a malformed input, and reveal nothing
+// about plaintext or key material. Check one with errors.Is; the detail
+// behind it is a [Diagnostic].
 //
 // They are the sentinels every guest package shares (one status table for
 // every guest, decoded once), exposed here under this package's names: an
@@ -64,3 +65,40 @@ var (
 	// (ulimit -l, a systemd LimitMEMLOCK=, or a pod's securityContext).
 	ErrMemoryLock = guest.ErrMemoryLock
 )
+
+// Diagnostic is the full error behind a failure the guest reports, beside
+// the kind: every such failure is a *Diagnostic wrapping one of the
+// sentinels above, so errors.Is matches the kind and errors.As reads the
+// rest:
+//
+//	var d *encrypt.Diagnostic
+//	if errors.As(err, &d) {
+//		log.Printf("%s: %s (%s)", d.Code, d.Message, d.Help)
+//	}
+//
+// Its fields are Code ("stack_encrypt::foreign_keyset",
+// "stack_kms::keyset_not_found", ...; stable), Message (what Error
+// returns), Help, URL, Severity, Fields (the structured fields, by name)
+// and Causes (the errors behind it, outermost first). Accessors read the
+// fields a caller branches on: ExpectedKeyset and FoundKeyset on an
+// [ErrForeignKeyset] (each a [KeysetID]'s bytes), and Field and Reason on a
+// refused plan, record or value.
+//
+// What one may carry is fixed: keyset ids and names, field names, counts,
+// index kinds, ZeroKMS request kinds and HTTP statuses. Never plaintext,
+// key material, tokens, ciphertext or term bytes, or the values of an
+// encryption context.
+//
+// Errors the client raises itself carry none: a closed client ([ErrState]),
+// a guest that did not return, [ErrMemoryLock], and an argument refused
+// before it reached the guest. A guest built before the detail existed
+// returns the bare sentinel too.
+//
+// It is the same type as auth.Diagnostic, by identity.
+type Diagnostic = guest.Diagnostic
+
+// Cause is one error in a [Diagnostic]'s cause chain: a Code and a Message.
+// A cause from a library outside the stack crates has no Code, and its
+// Message is a description the guest vouches for, never that library's own
+// text.
+type Cause = guest.Cause

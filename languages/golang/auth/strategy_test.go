@@ -250,6 +250,7 @@ func TestUsageLimitIsPreservedAcrossGuest(t *testing.T) {
 	if !errors.Is(err, ErrUsageLimit) {
 		t.Fatalf("Token error = %v, want %v", err, ErrUsageLimit)
 	}
+	wantCode(t, err, "stack_auth::usage_limit_exceeded")
 }
 
 func TestDeviceRefreshReportsInvalidClient(t *testing.T) {
@@ -278,6 +279,7 @@ func TestDeviceRefreshReportsInvalidClient(t *testing.T) {
 	if !errors.Is(err, ErrInvalidClient) {
 		t.Fatalf("Token error = %v, want %v", err, ErrInvalidClient)
 	}
+	wantCode(t, err, "stack_auth::invalid_client")
 }
 
 // Match stack-auth's AutoStrategy order: an access key wins over a stored
@@ -452,13 +454,20 @@ func TestAutoUsesEnvironmentPresenceAndProfileExistence(t *testing.T) {
 		t.Fatalf("set but empty access key: error = %v, want %v", err, ErrConfig)
 	}
 	// A key that does not parse is a configuration error like the empty one,
-	// the class Rust's AutoStrategy reports, not a malformed-input error.
-	t.Setenv("CS_CLIENT_ACCESS_KEY", "not-a-key")
+	// the class Rust's AutoStrategy reports, not a malformed-input error. It
+	// is the one guest call that receives an access key and fails before
+	// any request, and its error never quotes the key.
+	const keyMarker = "leak-marker-access-key"
+	t.Setenv("CS_CLIENT_ACCESS_KEY", keyMarker)
 	if _, err := profile.Auto(context.Background()); !errors.Is(err, ErrConfig) {
 		t.Fatalf("malformed access key: error = %v, want %v", err, ErrConfig)
+	} else if d := wantDiagnostic(t, err, "stack_auth::invalid_access_key"); strings.Contains(fmt.Sprintf("%v %+v", err, *d), keyMarker) {
+		t.Fatalf("the access key is in the Diagnostic: %v %+v", err, *d)
 	}
 	if _, err := profile.AccessKey(context.Background(), "invalid", "CSAKtestKeyId.testKeySecret"); !errors.Is(err, ErrConfig) {
 		t.Fatalf("malformed CRN for access key: error = %v, want %v", err, ErrConfig)
+	} else {
+		wantCode(t, err, "stack_auth::invalid_crn")
 	}
 	provider := OIDCProviderFunc(func(context.Context) (string, error) { return "", nil })
 	if _, err := profile.OIDC(context.Background(), "invalid", provider); !errors.Is(err, ErrConfig) {
@@ -587,6 +596,7 @@ func TestDeviceRefreshReportsInvalidGrant(t *testing.T) {
 	if !errors.Is(err, ErrInvalidGrant) {
 		t.Fatalf("Token error = %v, want ErrInvalidGrant", err)
 	}
+	wantCode(t, err, "stack_auth::invalid_grant")
 }
 
 // The edge in front of production CTS answers a request whose User-Agent is
@@ -639,8 +649,8 @@ func isStackAuthGoAgent(ua string) bool {
 	return ok && version != "" && !strings.ContainsAny(version, " ()")
 }
 
-// Only a status code crosses the guest ABI, so a refused exchange must still
-// say which HTTP status refused it, and never carry the response body.
+// A refused exchange says which HTTP status refused it, and never carries
+// the response body: not in the message, and not in the Diagnostic.
 func TestAuthTransportErrorNamesTheHTTPStatusNotTheBody(t *testing.T) {
 	guestOrSkip(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -663,13 +673,20 @@ func TestAuthTransportErrorNamesTheHTTPStatusNotTheBody(t *testing.T) {
 	if !errors.Is(err, ErrTransport) {
 		t.Fatalf("Token error = %v, want ErrTransport", err)
 	}
-	if want := "cipherstash: auth transport failed: HTTP 403"; err.Error() != want {
+	if want := "Server error: 403: HTTP 403"; err.Error() != want {
 		t.Fatalf("Token error = %q, want %q", err, want)
+	}
+	var d *Diagnostic
+	if !errors.As(err, &d) || d.Code != "stack_auth::server_error" {
+		t.Fatalf("Token error = %#v, want a stack_auth::server_error Diagnostic", err)
+	}
+	if shown := fmt.Sprintf("%+v", *d); strings.Contains(shown, "nginx") || strings.Contains(shown, "testKeySecret") {
+		t.Fatalf("the response body is in the Diagnostic: %s", shown)
 	}
 }
 
-// A transport failure with no HTTP response at all stays the bare sentinel:
-// there is no status to name.
+// A transport failure with no HTTP response at all names no status: there
+// is none to name. It is the guest's request error, over ErrTransport.
 func TestAuthTransportErrorWithoutAResponseNamesNoStatus(t *testing.T) {
 	guestOrSkip(t)
 	server := httptest.NewServer(http.NotFoundHandler())
@@ -687,7 +704,37 @@ func TestAuthTransportErrorWithoutAResponseNamesNoStatus(t *testing.T) {
 	defer strategy.Close()
 	_, err = strategy.Token(context.Background())
 	if !errors.Is(err, ErrTransport) || strings.Contains(err.Error(), "HTTP") {
-		t.Fatalf("Token error = %v, want a bare ErrTransport", err)
+		t.Fatalf("Token error = %v, want ErrTransport naming no status", err)
+	}
+	wantCode(t, err, "stack_auth::request_error")
+}
+
+// The host's transport error stays out of the Diagnostic: a RoundTripper's
+// or a proxy's text can carry a URL's query string or proxy credentials.
+func TestAuthTransportErrorTextIsNotInTheDiagnostic(t *testing.T) {
+	guestOrSkip(t)
+	ctx := context.Background()
+	const marker = "leak-marker-transport"
+	rt := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New(`Post "https://cts.invalid/token?secret=` + marker + `": proxyconnect tcp: refused`)
+	})
+	profile, err := Open(ctx, t.TempDir(), WithRoundTripper(rt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profile.Close()
+	strategy, err := profile.AccessKey(ctx, testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL("https://cts.invalid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strategy.Close()
+	_, err = strategy.Token(ctx)
+	var d *Diagnostic
+	if !errors.Is(err, ErrTransport) || !errors.As(err, &d) {
+		t.Fatalf("Token error = %#v, want a Diagnostic over ErrTransport", err)
+	}
+	if shown := fmt.Sprintf("%v %+v", err, *d); strings.Contains(shown, marker) {
+		t.Fatalf("the host's transport error is in the Diagnostic: %s", shown)
 	}
 }
 

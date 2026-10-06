@@ -101,9 +101,20 @@ func StatusError(status uint32) error {
 	case StatusContextMismatch:
 		return ErrContextMismatch
 	default:
-		return fmt.Errorf("%w (unrecognized guest status %d)", ErrInternal, status)
+		return unrecognizedStatus(status)
 	}
 }
+
+// unrecognizedStatus is a status this host does not know: an internal
+// failure whose text keeps the number, the sign of a guest newer than its
+// host.
+type unrecognizedStatus uint32
+
+func (s unrecognizedStatus) Error() string {
+	return fmt.Sprintf("%v (unrecognized guest status %d)", ErrInternal, uint32(s))
+}
+
+func (unrecognizedStatus) Unwrap() error { return ErrInternal }
 
 // PackedResult decodes a guest export's packed u64: a non-zero high half is
 // an output pointer with the length in the low half; a zero high half

@@ -106,11 +106,29 @@ func TestLiveForeignKeysetIsRefusedBeforeRetrieval(t *testing.T) {
 		t.Fatal(err)
 	}
 	encrypt.ResetSends(c)
-	if _, err := testusers.DecryptDocument(ctx, c.DefaultKeyset(), encrypted); !errors.Is(err, encrypt.ErrForeignKeyset) {
+	_, err = testusers.DecryptDocument(ctx, c.DefaultKeyset(), encrypted)
+	if !errors.Is(err, encrypt.ErrForeignKeyset) {
 		t.Fatalf("default cipher opened another keyset's row: %v", err)
 	}
 	if n := encrypt.Sends(c); n != 0 {
 		t.Errorf("a foreign row cost %d ZeroKMS calls before refusal", n)
+	}
+	// The refusal names both keysets: the default the cipher is bound to,
+	// and the one the row was sealed under.
+	d := encrypt.WantDiagnostic(t, err, "stack_encrypt::foreign_keyset")
+	wantExpected, err := c.DefaultKeyset().KeysetID(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFound, err := c.Keyset(encrypt.KeysetName(other)).KeysetID(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := d.ExpectedKeyset(); !ok || got != wantExpected {
+		t.Errorf("ExpectedKeyset() = %x, %v; want %s", got, ok, wantExpected)
+	}
+	if got, ok := d.FoundKeyset(); !ok || got != wantFound {
+		t.Errorf("FoundKeyset() = %x, %v; want %s", got, ok, wantFound)
 	}
 	if docs, err := testusers.DecryptDocument(ctx, c, encrypted); err != nil || docs[0].Title != "tenant b" {
 		t.Fatalf("client decrypt of the other keyset: %v %+v", err, docs)
