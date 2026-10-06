@@ -5,9 +5,6 @@
 the Go package embeds this directory and reports `ErrGuestNotBuilt` from
 `NewClient` when the module is absent, and its tests skip.
 
-`stack_encrypt_guest_deterministic.wasm` is the same crate built with the
-`deterministic-kms` feature by `mise run wasm:guest:build:deterministic`: a
-TEST build whose keys derive from a seed, so the tests open the Rust record
-fixture and run round trips with no ZeroKMS. The package never embeds it as
-the guest a program runs; only the tests load it, and they skip when it is
-absent.
+The deterministic-kms TEST build of the same crate lives in `../testdata/`
+(`mise run wasm:guest:build:deterministic`), not here: this directory is what
+`//go:embed wasm` ships in every binary, and `go build` ignores `testdata`.

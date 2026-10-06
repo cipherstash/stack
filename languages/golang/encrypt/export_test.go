@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
@@ -63,9 +64,11 @@ func GuestMemory(t *testing.T, c *Client) []byte {
 	return append([]byte(nil), view...)
 }
 
-// deterministicGuestPath is the deterministic-kms test build, beside the
-// real guest; `mise run wasm:guest:build:deterministic` writes it.
-const deterministicGuestPath = "wasm/stack_encrypt_guest_deterministic.wasm"
+// deterministicGuestPath is the deterministic-kms test build, which `mise
+// run wasm:guest:build:deterministic` writes under testdata: a directory
+// `go build` and the package's `//go:embed wasm` ignore, so the test build
+// is read from disk here and embedded in no binary.
+const deterministicGuestPath = "testdata/stack_encrypt_guest_deterministic.wasm"
 
 // ErrDeterministicGuestNotBuilt says the test build is absent.
 var ErrDeterministicGuestNotBuilt = errors.New("encrypt: deterministic guest not built; run `mise run wasm:guest:build:deterministic`")
@@ -75,7 +78,7 @@ var ErrDeterministicGuestNotBuilt = errors.New("encrypt: deterministic guest not
 // it opens what the Rust record fixture sealed under the same seed and
 // needs no ZeroKMS. ErrDeterministicGuestNotBuilt when the build is absent.
 func NewDeterministicClient(ctx context.Context, seed [32]byte) (*Client, error) {
-	wasm, err := guestFS.ReadFile(deterministicGuestPath)
+	wasm, err := os.ReadFile(deterministicGuestPath)
 	if err != nil {
 		return nil, ErrDeterministicGuestNotBuilt
 	}

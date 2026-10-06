@@ -112,3 +112,7 @@ languages/golang/encrypt/wasm/*.wasm
 languages/golang/auth/wasm/*.wasm
 languages/golang/encrypt/wasm/*.sha256
 languages/golang/auth/wasm/*.sha256
+# The deterministic-kms TEST build of the stack-encrypt guest, from `mise run
+# wasm:guest:build:deterministic`; under testdata so no binary embeds it.
+languages/golang/encrypt/testdata/*.wasm
+languages/golang/encrypt/testdata/*.sha256

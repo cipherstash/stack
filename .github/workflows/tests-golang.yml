@@ -148,11 +148,11 @@ jobs:
       - name: stack-encrypt guest release build and import-surface gate
         run: mise run wasm:guest:build
 
-      # The deterministic-kms TEST build beside it: the Go tests open the
-      # record fixture Rust sealed through it, and run round trips with no
-      # ZeroKMS. The Go package never embeds it; its tests skip when it is
-      # absent, so a build that forgets this step would pass with less
-      # coverage, which is why the job builds it unconditionally.
+      # The deterministic-kms TEST build, under encrypt/testdata where no
+      # build or embed sees it: the Go tests open the record fixture Rust
+      # sealed through it, and run round trips with no ZeroKMS. The tests
+      # skip when it is absent, so a build that forgets this step would pass
+      # with less coverage, which is why the job builds it unconditionally.
       - name: stack-encrypt guest deterministic test build
         run: mise run wasm:guest:build:deterministic
 
@@ -167,7 +167,7 @@ jobs:
       # same bytes rather than a stale or rebuilt guest.
       - name: Record the guests' checksums
         run: |
-          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/wasm/stack_encrypt_guest_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/testdata/stack_encrypt_guest_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
             (cd languages/golang && openssl dgst -sha256 "$guest" | awk '{print $NF}' > "$guest.sha256" && echo "$guest sha256 $(cat "$guest.sha256")")
           done
 
@@ -178,8 +178,8 @@ jobs:
           path: |
             languages/golang/encrypt/wasm/stack_encrypt_guest.wasm
             languages/golang/encrypt/wasm/stack_encrypt_guest.wasm.sha256
-            languages/golang/encrypt/wasm/stack_encrypt_guest_deterministic.wasm
-            languages/golang/encrypt/wasm/stack_encrypt_guest_deterministic.wasm.sha256
+            languages/golang/encrypt/testdata/stack_encrypt_guest_deterministic.wasm
+            languages/golang/encrypt/testdata/stack_encrypt_guest_deterministic.wasm.sha256
             languages/golang/auth/wasm/stack_auth_guest.wasm
             languages/golang/auth/wasm/stack_auth_guest.wasm.sha256
           if-no-files-found: error
@@ -283,7 +283,7 @@ jobs:
       - name: The guests are the ones Linux built and checked
         run: |
           cd languages/golang
-          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/wasm/stack_encrypt_guest_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/testdata/stack_encrypt_guest_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
             want=$(cat "$guest.sha256")
             got=$(openssl dgst -sha256 "$guest" | awk '{print $NF}')
             if [ "$want" != "$got" ]; then
@@ -349,7 +349,7 @@ jobs:
       - name: The guests are the ones the wasi-check job built and checked
         run: |
           cd languages/golang
-          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/wasm/stack_encrypt_guest_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/testdata/stack_encrypt_guest_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
             want=$(cat "$guest.sha256")
             got=$(openssl dgst -sha256 "$guest" | awk '{print $NF}')
             if [ "$want" != "$got" ]; then
