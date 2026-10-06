@@ -15,9 +15,8 @@ The [Go example index](../README.md) lists every example and what was checked.
 
 - **Purpose:** Understand how `Base` decides fields from protobuf annotations.
 - **Related:** [The plan's policy declarations](../../2026-10-04-plan-builder.md#declarations-from-a-policy), [the protobuf source walkthrough](../proto/README.md)
-- **Needs:** Understand the `data_categories` field option.
 
-A protobuf field can carry [data categories](https://ethyca.github.io/fideslang/taxonomy/data_categories/) from [Fideslang](https://ethyca.github.io/fideslang/), such as the category `user.contact.email`.
+A protobuf field can name [data categories](https://ethyca.github.io/fideslang/taxonomy/data_categories/) from [Fideslang](https://ethyca.github.io/fideslang/), such as the category `user.contact.email`.
 `policy.Key` names the field option by its full name, `classification.data_categories`.
 `policy.FirstOf` evaluates each `policy.When` in order, and the first match decides.
 
@@ -49,7 +48,6 @@ The policy API also defines `Index`, `Omit`, and `Fail` decisions.
 
 - **Purpose:** See how `Individuals` handles fields before it falls back to `Base`.
 - **Related:** [The generated individuals walkthrough](../individuals/README.md), [the protobuf source walkthrough](../proto/README.md)
-- **Needs:** Understand the shared rules.
 
 `policy.ForMessage` binds the rules to `pb.Individual` and the `individuals` encryption context.
 `policy.Field` handles uncategorised fields and overrides a categorised field.
@@ -78,7 +76,6 @@ CI runs `go generate ./...` and fails when a generated file differs from the com
 
 - **Purpose:** Keep policy evaluation out of the application runtime.
 - **Related:** [The generation command walkthrough](../cmd/genencrypt/README.md), [the plan's policy declarations](../../2026-10-04-plan-builder.md#declarations-from-a-policy)
-- **Needs:** Understand the complete `Individuals` policy.
 
 The `go:generate` line runs `cmd/genencrypt`.
 
@@ -99,26 +96,3 @@ import (
 ```
 
 The application uses the generated functions and never runs these rules.
-
-## What was checked
-
-- **Every Go file type-checks:**
-  Run.
-  `go vet ./...` passes against a stub of the SDK.
-  The stub is not in this repository, and it has signatures only.
-- **The policy example compiles against real protobuf code:**
-  Run.
-  buf v1.50.0 and `protoc-gen-go` wrote `internal/pb/`, and `go vet` passes.
-- **A field added to the protobuf message does not stop the build:**
-  Run.
-  It builds, as the plan says: CI finds that change.
-- **The protobuf source reads the field options, and the rules run:**
-  Not run.
-  Neither the source nor the generator exists.
-- **The files `stashgen` writes:**
-  Not run.
-  `stashgen` does not exist, and the five `_stash.go` files are written by hand.
-- **The SDK can be built with these signatures:**
-  Not run.
-- **`stashgen` checks a declaration with the embedded guest:**
-  Not run.

@@ -14,7 +14,6 @@ The [Go example index](../../README.md) lists every example and what was checked
 
 - **Purpose:** Follow the three inputs to the planned library generator.
 - **Related:** [The plan's policy declarations](../../../2026-10-04-plan-builder.md#declarations-from-a-policy), [the rules walkthrough](../../rules/README.md), [the individuals walkthrough](../../individuals/README.md)
-- **Needs:** Read the `rules.Individuals` policy first.
 
 `protosource.New()` supplies protobuf descriptors and field options.
 `rules.Individuals` supplies the field decisions.
@@ -40,29 +39,8 @@ The `stashgen`, `protosource`, and policy packages do not exist yet.
 
 - **Purpose:** See how reviewers inspect policy changes without running rules in the application.
 - **Related:** [The generated individuals walkthrough](../../individuals/README.md), [the rules walkthrough](../../rules/README.md)
-- **Needs:** Understand the generator inputs.
 
 The [`rules` package](../../rules/README.md) runs this command through `go generate`.
 The application calls the resulting `individuals.Encrypt` and `individuals.Decrypt` functions.
 A rule change changes `individual_stash.go`, which gives a reviewer a concrete generated diff.
 The application never runs the rules.
-
-## What was checked
-
-- **Every Go file type-checks:**
-  Run.
-  `go vet ./...` passes against a stub of the SDK.
-  The stub is not in this repository, and it has signatures only.
-- **The policy example compiles against real protobuf code:**
-  Run.
-  buf v1.50.0 and `protoc-gen-go` wrote `internal/pb/`, and `go vet` passes.
-- **The protobuf source reads the field options, and the rules run:**
-  Not run.
-  Neither the source nor the generator exists.
-- **The files `stashgen` writes:**
-  Not run.
-  `stashgen` does not exist, and the five `_stash.go` files are written by hand.
-- **The SDK can be built with these signatures:**
-  Not run.
-- **`stashgen` checks a declaration with the embedded guest:**
-  Not run.

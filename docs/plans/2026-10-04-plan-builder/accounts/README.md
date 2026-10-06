@@ -19,7 +19,6 @@ It shows what `stashgen` is planned to write.
 
 - **Purpose:** Understand how one tag covers an embedded struct from another package.
 - **Related:** [The plan's embedded struct design](../../2026-10-04-plan-builder.md#embedded-structs-unexported-fields-and-other-tags), [the plan's printing design](../../2026-10-04-plan-builder.md#printing)
-- **Needs:** Nothing
 
 The `stash:",passthrough"` tag stores every `gorm.Model` field as a passthrough field.
 `Email` becomes one Encrypt Query Language (EQL) column with the `TextEq` type.
@@ -64,7 +63,6 @@ The `token` field uses `stash:"-"`, so it is an omitted field and produces no wa
 
 - **Purpose:** Follow copied tags and fields that are not stored into the generated file.
 - **Related:** [The plan's generated file design](../../2026-10-04-plan-builder.md#what-stashgen-writes), [the plan's embedded struct design](../../2026-10-04-plan-builder.md#embedded-structs-unexported-fields-and-other-tags)
-- **Needs:** Understand the account tags.
 
 The generated comment names `cache`, and `EncryptedAccount` embeds the same `gorm.Model`.
 The encrypted `Email` field retains its GORM and JSON tags.
@@ -105,7 +103,6 @@ var codec = gensupport.New(gensupport.Generated[Account, EncryptedAccount]{
 
 - **Purpose:** See what the `-redact` flag adds to `Account`.
 - **Related:** [The plan's printing design](../../2026-10-04-plan-builder.md#printing)
-- **Needs:** Understand that the tagged struct contains plaintext values.
 
 `-redact` asks `stashgen` to add `String` and `LogValue` methods to `Account`.
 These methods show `gorm.Model` and hide `Email`.
@@ -127,7 +124,6 @@ func (a Account) LogValue() slog.Value {
 
 - **Purpose:** Follow a slice through encryption and into GORM.
 - **Related:** [The plan's database design](../../2026-10-04-plan-builder.md#databases)
-- **Needs:** Understand `EncryptedAccount`.
 
 `EncryptedAccount.TableName` maps the encrypted type to the `accounts` table.
 `Create` encrypts the whole slice before GORM receives it.
@@ -145,32 +141,3 @@ func Create(ctx context.Context, db *gorm.DB, cipher *encrypt.Cipher, accounts [
 	return db.WithContext(ctx).Create(&encrypted).Error
 }
 ```
-
-## What was checked
-
-- **Every Go file type-checks:**
-  Run.
-  `go vet ./...` passes against a stub of the SDK.
-  The stub is not in this repository, and it has signatures only.
-- **A change to a tagged struct, a model or a type in another package stops the build:**
-  Run.
-  Each change fails `go build` with "cannot convert".
-- **A generated file from another version does not compile:**
-  Run.
-  A file that names an unknown version constant fails `go build`.
-- **The files `stashgen` writes:**
-  Not run.
-  `stashgen` does not exist, and the five `_stash.go` files are written by hand.
-- **The SDK can be built with these signatures:**
-  Not run.
-- **The guest returns an EQL value for a field with `encrypt_into`:**
-  Not run.
-  The target form and the dispatch do not exist.
-- **`stashgen` checks a declaration with the embedded guest:**
-  Not run.
-- **The code works with a database, GORM or pgx:**
-  Not run.
-  Nothing here has connected to a database.
-- **The EQL types, and the value the guest returns for them:**
-  Not run.
-  `eql-codegen` does not write Go yet, and the examples use a stub of `eql.TextEq`.

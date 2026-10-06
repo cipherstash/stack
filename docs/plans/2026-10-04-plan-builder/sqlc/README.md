@@ -18,7 +18,6 @@ The [Go example index](../README.md) lists every example and what was checked.
 
 - **Purpose:** Understand the schema files that sqlc reads.
 - **Related:** [The plan's database design](../../2026-10-04-plan-builder.md#databases), [the generated `userdb` package](../internal/userdb/README.md)
-- **Needs:** Nothing
 
 `eql-domains.sql` gives sqlc small domain declarations because sqlc cannot parse the EQL installation bundle.
 The domain spelling must match `schema.sql` and the matching override.
@@ -52,7 +51,6 @@ Read the index's [three rules for sqlc with EQL columns](../README.md#use-sqlc-w
 
 - **Purpose:** Follow the sqlc inputs and type overrides into the generated package.
 - **Related:** [The plan's model design](../../2026-10-04-plan-builder.md#models), [the generated `userdb` package](../internal/userdb/README.md)
-- **Needs:** Read the EQL domain and table files first.
 
 `sqlc.yaml` reads the domain file before the table schema.
 It writes package `userdb` into `../internal/userdb`.
@@ -82,7 +80,6 @@ Run `sqlc generate` in this directory to generate the package again with sqlc v1
 
 - **Purpose:** See how the SQL produces typed create, read, list, and search methods.
 - **Related:** [The users sqlc store](../users/README.md), [the generated query methods](../internal/userdb/README.md)
-- **Needs:** Understand the domain overrides.
 
 `query.sql` defines four methods through sqlc's query annotations.
 The email search casts its parameter directly to `eql_v3.query_text_eq`.
@@ -100,15 +97,3 @@ SELECT * FROM users WHERE email = sqlc.arg(email)::eql_v3.query_text_eq;
 ```
 
 The direct cast lets the override generate an `eql.TextEqQuery` parameter.
-
-## What was checked
-
-- **sqlc's row struct converts to the generated type:**
-  Run.
-  The conversions in `users/sqlcstore.go` compile against real sqlc output.
-- **The code works with a database, GORM or pgx:**
-  Not run.
-  Nothing here has connected to a database.
-- **The EQL types, and the value the guest returns for them:**
-  Not run.
-  `eql-codegen` does not write Go yet, and the examples use a stub of `eql.TextEq`.

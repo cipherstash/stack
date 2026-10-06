@@ -20,7 +20,6 @@ It shows what `stashgen` is planned to write.
 
 - **Purpose:** Connect the tagged struct to its generator command and runtime cipher.
 - **Related:** [The plan's struct tags](../../2026-10-04-plan-builder.md#struct-tags), [the root example program](../main.go)
-- **Needs:** Nothing
 
 The `go:generate` line asks `stashgen` to read `User`.
 The encryption context is `users`, and every exported field has a `stash` tag.
@@ -72,7 +71,6 @@ func run(ctx context.Context) error {
 
 - **Purpose:** Understand the main parts that `stashgen` is planned to write.
 - **Related:** [The plan's generated file design](../../2026-10-04-plan-builder.md#what-stashgen-writes), [the plan's call design](../../2026-10-04-plan-builder.md#calls)
-- **Needs:** Understand the tagged struct.
 
 `EncryptedUser` keeps `ID` and replaces `Email` and `Name` with `eql.TextEq`.
 Its `String` and `LogValue` methods hide the encrypted fields when code prints the encrypted type.
@@ -177,7 +175,6 @@ var Fields = struct {
 
 - **Purpose:** Follow encrypted values through a transaction and an EQL equality query.
 - **Related:** [The plan's database design](../../2026-10-04-plan-builder.md#databases), [the sqlc schema walkthrough](../sqlc/README.md)
-- **Needs:** Understand `EncryptedUser` and `Fields.Email.Query`.
 
 `SQLStore.Import` encrypts the whole input slice before it starts inserting rows.
 It passes each `EncryptedUser` field directly to `ExecContext`.
@@ -235,7 +232,6 @@ func (s *SQLStore) FindByEmail(ctx context.Context, cipher *encrypt.Cipher, emai
 
 - **Purpose:** See why encryption happens before GORM maps the encrypted type.
 - **Related:** [The plan's database design](../../2026-10-04-plan-builder.md#databases), [the plan's call design](../../2026-10-04-plan-builder.md#calls)
-- **Needs:** Understand the generated `Encrypt` function.
 
 `EncryptedUser.TableName` sends GORM to `users` instead of `encrypted_users`.
 A `driver.Valuer` hook cannot batch because it receives one field and no `context.Context`.
@@ -274,7 +270,6 @@ func (s *GormStore) Create(ctx context.Context, cipher *encrypt.Cipher, people .
 
 - **Purpose:** Connect generated sqlc shapes and field-level updates to the encrypted type.
 - **Related:** [The generated `userdb` walkthrough](../internal/userdb/README.md), [the sqlc inputs](../sqlc/README.md)
-- **Needs:** Understand `EncryptedUser` and `Fields.Email.Encrypt`.
 
 `userdb.User` and `userdb.CreateUserParams` have the same fields as `EncryptedUser`.
 Go therefore converts these structs directly, and a change to either shape stops the build.
@@ -325,38 +320,3 @@ func (s *SQLCStore) ChangeEmail(ctx context.Context, cipher *encrypt.Cipher, id 
 	return err
 }
 ```
-
-## What was checked
-
-- **Every Go file type-checks:**
-  Run.
-  `go vet ./...` passes against a stub of the SDK.
-  The stub is not in this repository, and it has signatures only.
-- **A change to a tagged struct, a model or a type in another package stops the build:**
-  Run.
-  Each change fails `go build` with "cannot convert".
-- **sqlc's row struct converts to the generated type:**
-  Run.
-  The conversions in `users/sqlcstore.go` compile against real sqlc output.
-- **A generated file from another version does not compile:**
-  Run.
-  A file that names an unknown version constant fails `go build`.
-- **The files `stashgen` writes:**
-  Not run.
-  `stashgen` does not exist, and the five `_stash.go` files are written by hand.
-- **The SDK can be built with these signatures:**
-  Not run.
-- **The guest returns an EQL value for a field with `encrypt_into`:**
-  Not run.
-  The target form and the dispatch do not exist.
-- **`stashgen` checks a declaration with the embedded guest:**
-  Not run.
-- **The code works with a database, GORM or pgx:**
-  Not run.
-  Nothing here has connected to a database.
-- **The EQL types, and the value the guest returns for them:**
-  Not run.
-  `eql-codegen` does not write Go yet, and the examples use a stub of `eql.TextEq`.
-- **The steps in "Use the SDK":**
-  Not run.
-  Nobody has followed them.

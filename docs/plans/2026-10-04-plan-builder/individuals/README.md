@@ -19,7 +19,6 @@ It shows what `stashgen.Generate` is planned to write.
 
 - **Purpose:** Connect policy decisions to the encrypted type and declaration.
 - **Related:** [The rules walkthrough](../rules/README.md), [the plan's policy declarations](../../2026-10-04-plan-builder.md#declarations-from-a-policy)
-- **Needs:** Understand `rules.Individuals`.
 
 `Id` and `Nickname` are passthrough fields.
 `Name` has one ciphertext, while `Email` has a ciphertext and two search terms.
@@ -66,7 +65,6 @@ var declaration = gensupport.Declare("individuals").
 
 - **Purpose:** Understand why protobuf messages do not use the usual shape check.
 - **Related:** [The generated protobuf walkthrough](../internal/pb/README.md), [the plan's design for types in another package](../../2026-10-04-plan-builder.md#types-in-another-package)
-- **Needs:** Know that `pb.Individual` contains unexported protobuf fields.
 
 The codec takes `*pb.Individual` values.
 It reads each field through a generated getter because direct struct conversion cannot include unexported fields.
@@ -102,7 +100,6 @@ CI runs `go generate ./...` and fails when a generated file differs from the com
 
 - **Purpose:** Follow protobuf pointers and the Medicare field through the generated API.
 - **Related:** [The plan's call design](../../2026-10-04-plan-builder.md#calls), [the generation command walkthrough](../cmd/genencrypt/README.md)
-- **Needs:** Understand the codec's pointer type.
 
 `Encrypt` accepts a slice of `*pb.Individual` pointers.
 `Decrypt` returns the same pointer form.
@@ -156,7 +153,6 @@ func (f MedicareNoField) Query(ctx context.Context, c *encrypt.Cipher, v string)
 
 - **Purpose:** Map each storage layout to its database columns and query.
 - **Related:** [The plan's database design](../../2026-10-04-plan-builder.md#databases)
-- **Needs:** Understand the mixed encrypted type.
 
 `Create` passes the passthrough fields, ciphertexts, search terms, and EQL value to their columns.
 
@@ -191,40 +187,3 @@ func IDByMedicare(ctx context.Context, db *sql.DB, cipher *encrypt.Cipher, medic
 	return id, err
 }
 ```
-
-## What was checked
-
-- **Every Go file type-checks:**
-  Run.
-  `go vet ./...` passes against a stub of the SDK.
-  The stub is not in this repository, and it has signatures only.
-- **The policy example compiles against real protobuf code:**
-  Run.
-  buf v1.50.0 and `protoc-gen-go` wrote `internal/pb/`, and `go vet` passes.
-- **A field added to the protobuf message does not stop the build:**
-  Run.
-  It builds, as the plan says: CI finds that change.
-- **A struct from another package with an unexported field cannot convert:**
-  Run, with `sync.Once`.
-- **A generated file from another version does not compile:**
-  Run.
-  A file that names an unknown version constant fails `go build`.
-- **The protobuf source reads the field options, and the rules run:**
-  Not run.
-  Neither the source nor the generator exists.
-- **The files `stashgen` writes:**
-  Not run.
-  `stashgen` does not exist, and the five `_stash.go` files are written by hand.
-- **The SDK can be built with these signatures:**
-  Not run.
-- **The guest returns an EQL value for a field with `encrypt_into`:**
-  Not run.
-  The target form and the dispatch do not exist.
-- **`stashgen` checks a declaration with the embedded guest:**
-  Not run.
-- **The code works with a database, GORM or pgx:**
-  Not run.
-  Nothing here has connected to a database.
-- **The EQL types, and the value the guest returns for them:**
-  Not run.
-  `eql-codegen` does not write Go yet, and the examples use a stub of `eql.TextEq`.

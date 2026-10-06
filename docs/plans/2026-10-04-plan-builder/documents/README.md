@@ -18,7 +18,6 @@ It shows what `stashgen` is planned to write.
 
 - **Purpose:** Understand why the document fields have no individual tags.
 - **Related:** [The plan's struct tags](../../2026-10-04-plan-builder.md#struct-tags), [the plan's column layouts](../../2026-10-04-plan-builder.md#columns)
-- **Needs:** Nothing
 
 The `opaque` option is part of the encryption context tag.
 It tells the planned generator to encrypt the complete `Document` as one value.
@@ -43,7 +42,6 @@ Nothing inside the document can be read or searched independently through this l
 
 - **Purpose:** Follow the opaque tag into the encrypted type and declaration.
 - **Related:** [The plan's generated file design](../../2026-10-04-plan-builder.md#what-stashgen-writes)
-- **Needs:** Understand the opaque tagged struct.
 
 `EncryptedDocument` has one `Sealed` ciphertext field.
 
@@ -84,7 +82,6 @@ var codec = gensupport.New(gensupport.Generated[Document, EncryptedDocument]{
 
 - **Purpose:** See why `Save` uses a cipher and `Load` uses the client.
 - **Related:** [The plan's call design](../../2026-10-04-plan-builder.md#calls), [the root example program](../main.go)
-- **Needs:** Understand `EncryptedDocument.Sealed`.
 
 `Save` encrypts one document by passing a one-element slice.
 It stores `encrypted[0].Sealed` in the `body` column.
@@ -124,26 +121,3 @@ func Load(ctx context.Context, db *sql.DB, client *encrypt.Client, id int64) (Do
 	return docs[0], nil
 }
 ```
-
-## What was checked
-
-- **Every Go file type-checks:**
-  Run.
-  `go vet ./...` passes against a stub of the SDK.
-  The stub is not in this repository, and it has signatures only.
-- **A change to a tagged struct, a model or a type in another package stops the build:**
-  Run.
-  Each change fails `go build` with "cannot convert".
-- **A generated file from another version does not compile:**
-  Run.
-  A file that names an unknown version constant fails `go build`.
-- **The files `stashgen` writes:**
-  Not run.
-  `stashgen` does not exist, and the five `_stash.go` files are written by hand.
-- **The SDK can be built with these signatures:**
-  Not run.
-- **`stashgen` checks a declaration with the embedded guest:**
-  Not run.
-- **The code works with a database, GORM or pgx:**
-  Not run.
-  Nothing here has connected to a database.

@@ -16,7 +16,6 @@ The [Go example index](../../README.md) lists every example and what was checked
 
 - **Purpose:** Identify the generator, its version, and the command that generates the package again.
 - **Related:** [The sqlc inputs](../../sqlc/README.md)
-- **Needs:** Nothing
 
 sqlc v1.31.1 generated `db.go`, `models.go`, and `query.sql.go`.
 Run `sqlc generate` in [`sqlc/`](../../sqlc/) to generate them again.
@@ -36,7 +35,6 @@ package userdb
 
 - **Purpose:** See why direct Go conversions connect sqlc to the encrypted type.
 - **Related:** [The plan's model design](../../../2026-10-04-plan-builder.md#models), [the users sqlc store](../../users/README.md)
-- **Needs:** Know that an encrypted type has one field for each stored field.
 
 sqlc's row struct `userdb.User` has the same fields as `users.EncryptedUser`.
 
@@ -71,7 +69,6 @@ A field change stops either conversion from compiling until both shapes agree.
 
 - **Purpose:** Connect generated identifiers to the handwritten users store.
 - **Related:** [The users sqlc store](../../users/README.md), [the sqlc queries](../../sqlc/query.sql)
-- **Needs:** Understand the matching struct shapes.
 
 `userdb.New` creates `Queries`, and `WithTx` binds the methods to a transaction.
 The users store calls `CreateUser`, `GetUser`, and `FindUsersByEmail`.
@@ -95,21 +92,3 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 ```
 
 The examples do not use the generated `ListUsers` method.
-
-## What was checked
-
-- **Every Go file type-checks:**
-  Run.
-  `go vet ./...` passes against a stub of the SDK.
-  The stub is not in this repository, and it has signatures only.
-- **sqlc's row struct converts to the generated type:**
-  Run.
-  The conversions in `users/sqlcstore.go` compile against real sqlc output.
-- **The SDK can be built with these signatures:**
-  Not run.
-- **The code works with a database, GORM or pgx:**
-  Not run.
-  Nothing here has connected to a database.
-- **The EQL types, and the value the guest returns for them:**
-  Not run.
-  `eql-codegen` does not write Go yet, and the examples use a stub of `eql.TextEq`.

@@ -17,7 +17,6 @@ The [Go example index](../README.md) lists every example and what was checked.
 
 - **Purpose:** Understand why `crm.Contact` stays free of encryption tags.
 - **Related:** [The plan's design for types in another package](../../2026-10-04-plan-builder.md#types-in-another-package), [the contacts walkthrough](../contacts/README.md)
-- **Needs:** Nothing
 
 `crm.Contact` contains only the fields supplied by the stand-in package.
 
@@ -54,7 +53,6 @@ type contactStash struct {
 
 - **Purpose:** See how a change to `crm.Contact` stops the contacts package from building.
 - **Related:** [The contacts walkthrough](../contacts/README.md), [the plan's design for types in another package](../../2026-10-04-plan-builder.md#types-in-another-package)
-- **Needs:** Understand the fields of `crm.Contact`.
 
 The generated file converts `crm.Contact` to `contactShape` at compile time.
 The conversion fails when `crm.Contact` gains, loses, reorders, or retypes a field.
@@ -72,13 +70,3 @@ type contactShape struct {
 	Internal    string
 }
 ```
-
-## What was checked
-
-- **Every Go file type-checks:**
-  Run.
-  `go vet ./...` passes against a stub of the SDK.
-  The stub is not in this repository, and it has signatures only.
-- **A change to a tagged struct, a model or a type in another package stops the build:**
-  Run.
-  Each change fails `go build` with "cannot convert".

@@ -1,7 +1,7 @@
 # Annotate protobuf fields for encryption rules
 
 This example defines a protobuf field option and applies it to an `Individual` message.
-The option carries [data categories](https://ethyca.github.io/fideslang/taxonomy/data_categories/) from [Fideslang](https://ethyca.github.io/fideslang/), a published taxonomy of personal data.
+The option holds [data categories](https://ethyca.github.io/fideslang/taxonomy/data_categories/) from [Fideslang](https://ethyca.github.io/fideslang/), a published taxonomy of personal data.
 `buf generate` works for these protobuf files.
 
 The Golang SDK for CipherStash Stack is planned and does not exist yet.
@@ -16,9 +16,8 @@ The [Go example index](../README.md) lists every example and what was checked.
 
 ## Define the data category option
 
-- **Purpose:** See how protobuf fields carry facts for encryption rules.
+- **Purpose:** See how a field option labels protobuf fields for encryption rules.
 - **Related:** [The plan's policy declarations](../../2026-10-04-plan-builder.md#declarations-from-a-policy), [the rules walkthrough](../rules/README.md)
-- **Needs:** Nothing
 
 `classification.proto` extends `google.protobuf.FieldOptions` with `data_categories`.
 Each value names one Fideslang data category, such as `user.contact.email`.
@@ -40,9 +39,8 @@ extend google.protobuf.FieldOptions {
 
 - **Purpose:** Follow each protobuf field into the policy rules.
 - **Related:** [The rules walkthrough](../rules/README.md), [the generated individuals walkthrough](../individuals/README.md)
-- **Needs:** Understand the `data_categories` option.
 
-`name`, `email`, and `medicare_no` each carry a category.
+`name`, `email`, and `medicare_no` each have a category.
 `id` and `nickname` have no category, so message-specific rules must decide them.
 
 [`individual.proto`, lines 9 to 15](individual.proto#L9-L15)
@@ -61,7 +59,6 @@ message Individual {
 
 - **Purpose:** Understand where buf writes the generated Go files.
 - **Related:** [The generated protobuf walkthrough](../internal/pb/README.md)
-- **Needs:** Install buf and `protoc-gen-go`.
 
 `buf.gen.yaml` writes source-relative Go files into `../internal/pb`.
 
@@ -79,15 +76,3 @@ Run `buf generate` in this directory to generate the package again.
 The committed files came from buf v1.50.0 and `protoc-gen-go` v1.26.0.
 Adding a field to `Individual` does not stop the build.
 CI runs `go generate ./...` and fails when a generated file differs from the committed file.
-
-## What was checked
-
-- **The policy example compiles against real protobuf code:**
-  Run.
-  buf v1.50.0 and `protoc-gen-go` wrote `internal/pb/`, and `go vet` passes.
-- **A field added to the protobuf message does not stop the build:**
-  Run.
-  It builds, as the plan says: CI finds that change.
-- **The protobuf source reads the field options, and the rules run:**
-  Not run.
-  Neither the source nor the generator exists.

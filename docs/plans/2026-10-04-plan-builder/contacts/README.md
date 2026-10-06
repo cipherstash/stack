@@ -21,7 +21,6 @@ It shows what `stashgen` is planned to write.
 
 - **Purpose:** Connect a tag declaration in your own package to `crm.Contact`.
 - **Related:** [The `crm.Contact` type in another package](../crm/README.md), [the plan's design for types in another package](../../2026-10-04-plan-builder.md#types-in-another-package)
-- **Needs:** Understand that the program does not own `crm.Contact`.
 
 The `-for crm.Contact` flag makes `contactStash` declare tags for a type in another package.
 The generator is planned to match fields by name and type.
@@ -72,7 +71,6 @@ type contactShape struct {
 
 - **Purpose:** See how each encrypted field holds a ciphertext and its declared search terms.
 - **Related:** [The plan's column layouts](../../2026-10-04-plan-builder.md#columns), [the plan's generated file design](../../2026-10-04-plan-builder.md#what-stashgen-writes)
-- **Needs:** Understand the `contactStash` tags.
 
 `EncryptedContact` nests one encrypted type for each encrypted field.
 
@@ -127,7 +125,6 @@ It cannot add methods to `crm.Contact` because Go requires methods to belong to 
 
 - **Purpose:** Flatten nested encrypted outputs into one field for each database column.
 - **Related:** [The plan's model design](../../2026-10-04-plan-builder.md#models)
-- **Needs:** Understand the separate encrypted outputs.
 
 `-model Rows=ContactRow` asks for `EncryptRows` and `DecryptRows`.
 `ContactRow` is a model with one tagged field for each column.
@@ -183,7 +180,6 @@ func DecryptRows(ctx context.Context, d encrypt.Decrypter, rows []ContactRow) ([
 
 - **Purpose:** Compare direct column writes with a model-based GORM write.
 - **Related:** [The plan's database design](../../2026-10-04-plan-builder.md#databases)
-- **Needs:** Understand both encrypted layouts.
 
 `Create` passes each nested output to `database/sql`.
 
@@ -222,7 +218,6 @@ func CreateWithGORM(ctx context.Context, db *gorm.DB, cipher *encrypt.Cipher, li
 
 - **Purpose:** Derive and use the equality search term for a separate column.
 - **Related:** [The plan's call design](../../2026-10-04-plan-builder.md#calls), [the plan's terminology](../../2026-10-04-plan-builder.md#terminology)
-- **Needs:** Understand the `phone_number_eq` column.
 
 `Fields.PhoneNumber.Equality` derives an `encrypt.EqualityTerm` search term.
 The query compares that search term with the `phone_number_eq` column.
@@ -240,26 +235,3 @@ func IDByPhone(ctx context.Context, db *sql.DB, cipher *encrypt.Cipher, phone st
 	return id, err
 }
 ```
-
-## What was checked
-
-- **Every Go file type-checks:**
-  Run.
-  `go vet ./...` passes against a stub of the SDK.
-  The stub is not in this repository, and it has signatures only.
-- **A change to a tagged struct, a model or a type in another package stops the build:**
-  Run.
-  Each change fails `go build` with "cannot convert".
-- **A generated file from another version does not compile:**
-  Run.
-  A file that names an unknown version constant fails `go build`.
-- **The files `stashgen` writes:**
-  Not run.
-  `stashgen` does not exist, and the five `_stash.go` files are written by hand.
-- **The SDK can be built with these signatures:**
-  Not run.
-- **`stashgen` checks a declaration with the embedded guest:**
-  Not run.
-- **The code works with a database, GORM or pgx:**
-  Not run.
-  Nothing here has connected to a database.

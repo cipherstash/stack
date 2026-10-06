@@ -16,7 +16,6 @@ The [Go example index](../../README.md) lists every example and what was checked
 
 - **Purpose:** Identify the generators, versions, and the command that generates the package again.
 - **Related:** [The protobuf source walkthrough](../../proto/README.md)
-- **Needs:** Install buf and `protoc-gen-go`.
 
 buf v1.50.0 ran `protoc-gen-go` v1.26.0 to write these files.
 The generated header reports the `protoc` version as unknown.
@@ -42,7 +41,6 @@ package pb
 
 - **Purpose:** Identify the generated values that the individuals example reads.
 - **Related:** [The generated individuals walkthrough](../../individuals/README.md), [the plan's design for types in another package](../../../2026-10-04-plan-builder.md#types-in-another-package)
-- **Needs:** Understand the `Individual` message fields.
 
 `pb.Individual` includes three unexported protobuf fields before its exported data fields.
 
@@ -89,7 +87,6 @@ The examples do not use protobuf internals such as `file_individual_proto_rawDes
 
 - **Purpose:** Connect the protobuf option to the planned policy source.
 - **Related:** [The rules walkthrough](../../rules/README.md), [the plan's policy declarations](../../../2026-10-04-plan-builder.md#declarations-from-a-policy)
-- **Needs:** Understand the `data_categories` option.
 
 `classification.pb.go` exports `E_DataCategories` for the repeated field option.
 
@@ -106,21 +103,3 @@ var (
 ```
 
 The planned `protosource` package reads this option through protobuf descriptors.
-
-## What was checked
-
-- **Every Go file type-checks:**
-  Run.
-  `go vet ./...` passes against a stub of the SDK.
-  The stub is not in this repository, and it has signatures only.
-- **The policy example compiles against real protobuf code:**
-  Run.
-  buf v1.50.0 and `protoc-gen-go` wrote `internal/pb/`, and `go vet` passes.
-- **A field added to the protobuf message does not stop the build:**
-  Run.
-  It builds, as the plan says: CI finds that change.
-- **A struct from another package with an unexported field cannot convert:**
-  Run, with `sync.Once`.
-- **The protobuf source reads the field options, and the rules run:**
-  Not run.
-  Neither the source nor the generator exists.
