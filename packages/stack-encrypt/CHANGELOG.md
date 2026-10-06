@@ -32,6 +32,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **A data plan field with a term output must declare its `"type"`.** A
+  plan whose indexed field (`"eq"`, `"match"`, `"ore"`, `"ope"`) has no
+  `"type"` is refused when it is built (`Error::Plan`), by `record::plan`,
+  `record::plan_with` and `Plan::new` / `Plan::new_with` alike: the field's
+  terms derive from the one declared kind, with every value checked against
+  it, never from whatever tag each value arrived with. The type stays
+  optional on a field whose only output is `"c"` or `"passthrough"`, and on
+  a target field, whose kind is the EQL type's own. The Go SDK already
+  fills `"type"` on every field from the Go type, and `record.Plan.Validate`
+  refuses an indexed `Untyped` field naming it, so generated code is
+  unaffected; a plan written by hand without types must add them. Declaring
+  a type changes no stored byte, so no row is re-encrypted.
+
 - **A target description carries a source mode.** `Encryption` gains a
   last type parameter, `M: SourceMode = Borrowed`, saying how it is handed
   its plaintext. Code that names `Encryption<'s, S, T, K, Ctx>` still

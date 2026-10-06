@@ -163,6 +163,7 @@ fn plan_under(ctx: impl Fn(&str) -> FfiValue) -> Vec<u8> {
             obj(vec![
                 ("context", ctx("age")),
                 ("outputs", FfiValue::Array(vec![s("c"), s("eq"), s("ore")])),
+                ("type", s("uint32")),
             ]),
         ),
         (
@@ -170,6 +171,7 @@ fn plan_under(ctx: impl Fn(&str) -> FfiValue) -> Vec<u8> {
             obj(vec![
                 ("context", ctx("name")),
                 ("outputs", FfiValue::Array(vec![s("c"), s("match")])),
+                ("type", s("string")),
             ]),
         ),
     ]))
@@ -1295,6 +1297,17 @@ fn plan_check_answers_without_a_cipher() {
         ]),
     )]));
     assert_eq!(ops::plan_check(&bad_index), Err(STATUS_ENCODING));
+
+    // an indexed field with no declared type: every term derives from one
+    // declared kind, so the plan is refused before any value arrives.
+    let untyped_index = encode(obj(vec![(
+        "age",
+        obj(vec![
+            ("context", label("age")),
+            ("outputs", FfiValue::Array(vec![s("c"), s("eq")])),
+        ]),
+    )]));
+    assert_eq!(ops::plan_check(&untyped_index), Err(STATUS_ENCODING));
 
     // a one-segment context is not a label a fields plan can seal under.
     let one_segment = encode(obj(vec![(

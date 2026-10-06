@@ -92,10 +92,15 @@
 //! type decides which indexes the field admits ([`admits`]), which values it
 //! seals and which it opens to (checked by kind, both ways), and nothing
 //! about the bytes: declaring a type on a field written without one changes
-//! no leaf, so a binding that starts sending `"type"` (#1082) re-encrypts
-//! nothing. A field's terms dispatch on each value's own variant to the
-//! typed term operation, so they are the bytes a Rust `u32` or `String`
-//! field derives under the same label.
+//! no leaf. A field with any index declares its type, and a plan whose
+//! indexed field has none is refused when it is built: the term then derives
+//! from the one declared kind, every value checked against it, never from
+//! whatever tag each value arrived with (`34` sent once as a float and once
+//! as an integer would otherwise store two terms under one field). A field
+//! that only seals, or only carries its value through, may leave the type
+//! out. A field's terms dispatch on the value's variant — the declared kind,
+//! once checked — to the typed term operation, so they are the bytes a Rust
+//! `u32` or `String` field derives under the same label.
 //!
 //! The ciphertext is where a data plan and a Rust chain over bare types part:
 //! a Rust `u32` field seals four bare bytes and a `String` field its bare
@@ -690,6 +695,12 @@ impl Plan {
             if field.extension != extension {
                 return Err(Error::Plan);
             }
+            // An indexed field declares its type: every value's term derives
+            // from the one declared kind, never from whatever tag each value
+            // arrived with. A target field's kind is the type's own.
+            if !field.is_target() && !field.indexes().is_empty() && field.field_type.is_none() {
+                return Err(Error::Plan);
+            }
             // A target field is keyed under its identity like a sealed one;
             // the builder checks that rule for the fields it lowers, so the
             // target fields are checked against every field here.
@@ -884,21 +895,19 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
 ///
 /// [`MatchOptions::default`]: crate::sem::MatchOptions::default
 ///
-/// `"type"` is optional, and names a [`ValueKind`] (`"int64"`, `"string"`,
-/// …; see [`ValueKind::name`]): vitaminc's vocabulary, not one of this
-/// crate's. Declared, it is checked against the field's outputs here
-/// ([`admits`]) and against every value sealed into or opened
-/// from the field, and it decides the field's leaf encoding (see the
-/// [module docs](self#what-a-fields-type-decides)).
-///
-/// **An indexed field without `"type"` is dispatched on each value's own
-/// tag**, so for that field the engine trusts the binding to tag every value
-/// the same way: a `34` sent once as a `Float64` and once as an `Int64` under
-/// one `"ore"` field is accepted both times and stores two different terms.
-/// This is transitional. It keeps the plans the Go binding sends today, which
-/// carry no `"type"`, valid until that binding fills `"type"` from its struct
-/// types; then `"type"` becomes required on every field with a term output
-/// (#1082).
+/// `"type"` names a [`ValueKind`] (`"int64"`, `"string"`, …; see
+/// [`ValueKind::name`]): vitaminc's vocabulary, not one of this crate's. It
+/// is **required on every field with a term output** (`"eq"`, `"match"`,
+/// `"ore"`, `"ope"`): the field's terms derive from that one kind, and every
+/// value is checked against it on the way in and on the way out, so a
+/// binding is never trusted to have tagged each value alike (a `34` sent once
+/// as a `Float64` and once as an `Int64` would store two terms under one
+/// field). A field with term outputs and no `"type"` is refused when the plan
+/// is built. It is optional on a field whose only output is `"c"` or
+/// `"passthrough"`, and on a target field, whose kind is the EQL type's own.
+/// Declared, it is checked against the field's outputs here ([`admits`]) and
+/// decides nothing about the bytes (see the
+/// [module docs](self#what-a-fields-type-decides-and-what-it-does-not)).
 ///
 /// `<context>` is read by [`super::context`](super::context()) and must be
 /// the field's label, optionally extended; the
@@ -929,6 +938,7 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
 ///                 FfiValue::String("eq".into()),
 ///             ]),
 ///         ),
+///         ("type".to_string(), FfiValue::String("uint32".into())),
 ///     ]),
 /// )]), &NoTargets)?;
 ///
@@ -952,7 +962,8 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
 /// is empty, names an output key twice or names `"passthrough"` beside
 /// another output, a `"target"` that is not a non-empty string, a `"type"`
 /// that is not a string naming a [`ValueKind`], a type that does not admit
-/// one of the field's index outputs, a context that is not a label of at
+/// one of the field's index outputs, a field with a term output and no
+/// `"type"`, a context that is not a label of at
 /// least two segments (optionally extended), fields under different
 /// contexts or extensions, or a plan the builder refuses ([`Plan::new`]);
 /// with `"context_field"`, a value that is not a string, given twice,
@@ -1095,6 +1106,7 @@ pub fn plan_with(
 ///                 FfiValue::String("eq".into()),
 ///             ]),
 ///         ),
+///         ("type".to_string(), FfiValue::String("uint32".into())),
 ///     ]),
 /// )]))?;
 ///
@@ -1997,9 +2009,9 @@ mod tests {
     /// `nick` indexed for match only, never sealed; `id` carried through.
     fn plan_value() -> FfiValue {
         obj(vec![
-            ("age", spec(label("age"), &["c", "eq", "ore"])),
+            ("age", typed(label("age"), &["c", "eq", "ore"], "uint32")),
             ("email", spec(label("email"), &["c"])),
-            ("nick", spec(label("nick"), &["match"])),
+            ("nick", typed(label("nick"), &["match"], "string")),
             ("id", spec(label("id"), &["passthrough"])),
         ])
     }
@@ -2457,8 +2469,8 @@ mod tests {
         #[test]
         fn refuses_two_fields_keyed_under_one_identity() {
             let parsed = plan(obj(vec![
-                ("mail", spec(label("email"), &["c", "eq"])),
-                ("mail2", spec(label("email"), &["c", "eq"])),
+                ("mail", typed(label("email"), &["c", "eq"], "string")),
+                ("mail2", typed(label("email"), &["c", "eq"], "string")),
             ]));
             assert!(matches!(parsed, Err(Error::Plan)), "{parsed:?}");
             // Two passthrough fields key nothing, so they may share a label.
@@ -2542,6 +2554,7 @@ mod tests {
                 obj(vec![
                     ("context", label("nick")),
                     ("outputs", FfiValue::Array(vec![s("c"), wide])),
+                    ("type", s("string")),
                 ]),
             )]))
             .expect("parses");
@@ -2659,6 +2672,75 @@ mod tests {
         }
     }
 
+    /// An indexed field declares its type. A plan whose indexed field has
+    /// none is refused when it is built, for every index kind, with no key
+    /// request; a field that only seals or only carries its value through
+    /// still builds without one, seals and opens.
+    #[tokio::test]
+    async fn an_indexed_field_without_a_type_is_refused_at_build() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let wide = IndexSpec::Match(crate::sem::MatchOptions {
+            k: 6,
+            ..crate::sem::MatchOptions::default()
+        })
+        .to_value();
+        for (what, outputs) in [
+            ("equality", vec![s("c"), s("eq")]),
+            ("match", vec![s("c"), s("match")]),
+            ("match with options", vec![s("c"), wide]),
+            ("ore", vec![s("c"), s("ore")]),
+            ("ope", vec![s("c"), s("ope")]),
+            ("an index alone", vec![s("eq")]),
+            ("several indexes", vec![s("c"), s("eq"), s("ore"), s("ope")]),
+        ] {
+            let refused = plan(obj(vec![(
+                "age",
+                obj(vec![
+                    ("context", label("age")),
+                    ("outputs", FfiValue::Array(outputs)),
+                ]),
+            )]));
+            assert!(
+                matches!(refused, Err(Error::Plan)),
+                "{what} with no type: {refused:?}"
+            );
+        }
+        // By hand alike: the rule is the plan's, not the parser's.
+        let field = FieldPlan::new(
+            "age",
+            context(label("age")).expect("context"),
+            vec![Output::Ciphertext, Output::Term(IndexSpec::Equality)],
+        )
+        .expect("a field plan");
+        assert!(
+            matches!(Plan::new(vec![field.clone()]), Err(Error::Plan)),
+            "an indexed field plan with no type does not make a plan"
+        );
+        let typed_field = field.with_type(ValueKind::UInt32).expect("admits equality");
+        assert!(Plan::new(vec![typed_field]).is_ok());
+
+        let untyped = plan(obj(vec![
+            ("notes", spec(label("notes"), &["c"])),
+            ("id", spec(label("id"), &["passthrough"])),
+        ]))
+        .expect("a sealed-only and a passthrough field need no type");
+        let sealed = seal(
+            &keyset,
+            obj(vec![("notes", s("hi")), ("id", FfiValue::UInt64(7))]),
+            &untyped,
+        )
+        .await;
+        let opened = object(open(&cipher, sealed, &untyped).await);
+        assert_eq!(text_of(&opened[0].1), "hi");
+        assert_eq!(u64_of(&opened[1].1), 7);
+        assert_eq!(
+            generates(&cipher),
+            1,
+            "one key request, for the one sealed field"
+        );
+    }
+
     mod given_a_source_that_does_not_fit_the_plan {
         use super::*;
 
@@ -2743,36 +2825,22 @@ mod tests {
                     |e| matches!(e, Error::Source),
                 ),
                 (
-                    "a container under an indexed field",
+                    "a container under an indexed field, which declares a scalar kind",
                     {
                         let mut entries = object(row(1));
                         entries[2].1 = FfiValue::Array(vec![s("al")]);
                         FfiValue::Object(entries)
                     },
-                    |e| {
-                        matches!(
-                            e,
-                            Error::Term {
-                                kind: IndexSpec::Match(_)
-                            }
-                        )
-                    },
+                    |e| matches!(e, Error::Source),
                 ),
                 (
-                    "a scalar the scheme has no such term for",
+                    "a scalar of another kind under an indexed field",
                     {
                         let mut entries = object(row(1));
                         entries[2].1 = FfiValue::UInt32(3);
                         FfiValue::Object(entries)
                     },
-                    |e| {
-                        matches!(
-                            e,
-                            Error::Term {
-                                kind: IndexSpec::Match(_)
-                            }
-                        )
-                    },
+                    |e| matches!(e, Error::Source),
                 ),
             ];
             for (label_, source, expected) in cases {
@@ -2803,13 +2871,8 @@ mod tests {
             entries[2].1 = FfiValue::UInt32(3);
             let err = encrypt(&keyset, FfiValue::Object(entries), &plan).err();
             assert!(
-                matches!(
-                    err,
-                    Some(Error::Term {
-                        kind: IndexSpec::Match(_)
-                    })
-                ),
-                "encrypt refuses a value with no such term: {err:?}"
+                matches!(err, Some(Error::Source)),
+                "encrypt refuses a value of another kind than the indexed field declares: {err:?}"
             );
             assert_eq!(
                 generates(&cipher),
@@ -2818,22 +2881,33 @@ mod tests {
             );
         }
 
+        /// A float cannot reach an equality index through a plan: a field
+        /// declared `float64` is refused when the plan is built, and a field
+        /// declared an integer refuses the float value as the wrong kind,
+        /// before any key request. There is no untyped indexed field for a
+        /// float to slip through.
         #[tokio::test]
-        async fn a_float_asked_for_equality_is_refused_as_that_kind() {
+        async fn a_float_asked_for_equality_is_refused_at_build_or_as_the_wrong_kind() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let plan =
-                plan(obj(vec![("score", spec(label("score"), &["c", "eq"]))])).expect("plan");
-            let source = obj(vec![("score", FfiValue::Float64(1.5))]);
-            let err = encrypt(&keyset, source, &plan).err();
+            let as_float = plan(obj(vec![(
+                "score",
+                typed(label("score"), &["c", "eq"], "float64"),
+            )]));
             assert!(
-                matches!(
-                    err,
-                    Some(Error::Term {
-                        kind: IndexSpec::Equality
-                    })
-                ),
-                "no PRF encoding exists for a float: {err:?}"
+                matches!(as_float, Err(Error::Plan)),
+                "no PRF encoding exists for a float: {as_float:?}"
+            );
+            let as_u32 = plan(obj(vec![(
+                "score",
+                typed(label("score"), &["c", "eq"], "uint32"),
+            )]))
+            .expect("plan");
+            let source = obj(vec![("score", FfiValue::Float64(1.5))]);
+            let err = encrypt(&keyset, source, &as_u32).err();
+            assert!(
+                matches!(err, Some(Error::Source)),
+                "a float is not the declared kind: {err:?}"
             );
             assert_eq!(generates(&cipher), 0, "refused before any key request");
         }
@@ -2912,8 +2986,11 @@ mod tests {
         async fn terms_ride_in_index_order_after_the_ciphertext() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
-            let plan =
-                plan(obj(vec![("age", spec(label("age"), &["ore", "c", "eq"]))])).expect("plan");
+            let plan = plan(obj(vec![(
+                "age",
+                typed(label("age"), &["ore", "c", "eq"], "uint32"),
+            )]))
+            .expect("plan");
             let sealed = seal(&keyset, obj(vec![("age", FfiValue::UInt32(1))]), &plan).await;
             let mut fields = map(sealed);
             let age = map(node(&mut fields, "age"));
@@ -3019,6 +3096,7 @@ mod tests {
                         "outputs",
                         FfiValue::Array(vec![IndexSpec::Match(options.clone()).to_value()]),
                     ),
+                    ("type", s("string")),
                 ]),
             )]))
             .expect("parses");
@@ -3303,7 +3381,7 @@ mod tests {
             let parts = [FfiValue::UInt64(7), s("eu")];
             let plan = plan(obj(vec![(
                 "age",
-                spec(extended("age", &parts), &["c", "eq"]),
+                typed(extended("age", &parts), &["c", "eq"], "uint32"),
             )]))
             .expect("plan");
             assert_eq!(plan.extension().len(), 2);
@@ -4882,7 +4960,7 @@ mod tests {
         /// `age` sealed and indexed by the lowered plan, `email` a target.
         fn mixed_plan_value() -> FfiValue {
             obj(vec![
-                ("age", spec(label("age"), &["c", "eq"])),
+                ("age", typed(label("age"), &["c", "eq"], "uint32")),
                 ("email", target_spec(label("email"), TEXT_EQ)),
             ])
         }

@@ -166,10 +166,39 @@ enum SpecEntry {
     Context(Ctx),
     Outputs(Vec<Name>),
     Target(Name),
+    /// A `"type"`: required on an indexed field, so a plan with terms parses
+    /// only when one of these names a kind that admits them.
+    Type(Kind),
     ContextWrongShape(u32),
     OutputsWrongShape(u32),
     TargetWrongShape(u32),
     Unknown(Ctx),
+}
+
+/// A `"type"` value: a few kinds, and a name that is not one.
+#[derive(Arbitrary, Debug, Clone, Copy)]
+enum Kind {
+    UInt32,
+    Int64,
+    String,
+    Bytes,
+    Float64,
+    Object,
+    NotAKind,
+}
+
+impl Kind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Kind::UInt32 => "uint32",
+            Kind::Int64 => "int64",
+            Kind::String => "string",
+            Kind::Bytes => "bytes",
+            Kind::Float64 => "float64",
+            Kind::Object => "object",
+            Kind::NotAKind => "integer",
+        }
+    }
 }
 
 impl SpecEntry {
@@ -189,6 +218,7 @@ impl SpecEntry {
                 "target".to_string(),
                 FfiValue::String(name.as_str().into()),
             ),
+            SpecEntry::Type(kind) => ("type".to_string(), FfiValue::String(kind.as_str().into())),
             SpecEntry::ContextWrongShape(v) => ("context".to_string(), FfiValue::UInt32(v)),
             SpecEntry::OutputsWrongShape(v) => ("outputs".to_string(), FfiValue::UInt32(v)),
             SpecEntry::TargetWrongShape(v) => ("target".to_string(), FfiValue::UInt32(v)),
