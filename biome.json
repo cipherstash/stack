@@ -10,6 +10,7 @@
       "!languages/typescript/packages/protect-ffi/lib",
       "!languages/typescript/packages/protect-ffi/target",
       "!languages/typescript/packages/protect-ffi/src/eql-v3-types",
+      "!packages/stack-encrypt/tests/fixtures/record_lowering.json",
       "!packages/eql/crates/eql-bindings/bindings",
       "!packages/eql/crates/eql-bindings/schema",
       "!packages/eql/packages/eql/src/generated",

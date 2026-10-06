@@ -262,7 +262,7 @@
 //! # A binding lowers data into the same builder
 //!
 //! A language binding has no types to name, so it declares a record as
-//! data. With the `dynamic` feature, [`dynamic::record`](crate::dynamic::record)
+//! data. With the `dynamic` feature, the `dynamic::record` module
 //! reads that declaration and lowers it into this builder — one context,
 //! `encrypt` / `encrypt_index` / `index` / `passthrough` per field — and
 //! runs the result through [`KeysetCipher::run`](crate::KeysetCipher::run)
