@@ -2113,7 +2113,7 @@ mod tests {
         let empty = FieldValues::new();
         assert!(
             matches!(
-                shape_record(empty, &shape),
+                shape_record(empty, Vec::new(), &shape),
                 Err(crate::Error::ResponseShape)
             ),
             "a missing slot on the encrypt side"
@@ -2122,7 +2122,7 @@ mod tests {
         let _ = wrong.insert("age", 34u32);
         assert!(
             matches!(
-                shape_record(wrong, &shape),
+                shape_record(wrong, Vec::new(), &shape),
                 Err(crate::Error::ResponseShape)
             ),
             "a mistyped slot on the encrypt side"
@@ -2130,12 +2130,15 @@ mod tests {
         let mut wrong = FieldValues::new();
         let _ = wrong.insert("age", 34u32);
         assert!(
-            matches!(open_record(wrong, &shape), Err(crate::Error::ResponseShape)),
+            matches!(
+                open_record(wrong, Vec::new(), &shape),
+                Err(crate::Error::ResponseShape)
+            ),
             "a mistyped slot on the decrypt side"
         );
         assert!(
             matches!(
-                open_record(FieldValues::new(), &shape),
+                open_record(FieldValues::new(), Vec::new(), &shape),
                 Err(crate::Error::ResponseShape)
             ),
             "a missing slot on the decrypt side"
