@@ -73,8 +73,9 @@ The first part of a tag is the field's name, which is the column name in a datab
 | `` _ struct{} `stash:"context=documents,opaque"` `` | seal the struct as one value |
 
 The index names are `equality`, `match`, `ore`, `ope` and `json`.
-A `match` index needs text with at least one token: the engine derives no match term for an empty or separator-only string, or one shorter than the n-gram, because an empty term would match every row.
-`Encrypt` then returns an error naming the row, the field and the index; give the field a value, or drop the index.
+A `match` index needs text with at least one token: the engine derives no match term for an empty string, separator-only text, or text shorter than the n-gram length (3 characters), because an empty term would match every row.
+`Encrypt` then fails for the whole batch, with an error naming the row, the field and the index.
+So an optional or short value does not belong under `match`: give the field `equality` alone, or make the value required.
 An index takes its options in parentheses after its name, separated by commas: `index=equality;match(k=3)`.
 These words are the same as the Rust API's words for the same behaviour.
 

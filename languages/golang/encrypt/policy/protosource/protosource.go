@@ -8,7 +8,6 @@ package protosource
 
 import (
 	"fmt"
-	"strings"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -82,27 +81,42 @@ func scalar(fd protoreflect.FieldDescriptor, v protoreflect.Value) string {
 	return v.String()
 }
 
-// GoName is the Go field name protoc-gen-go gives a proto field: the first
-// letter capitalised, and an underscore before a lower-case letter dropped
-// with that letter capitalised. medicare_no becomes MedicareNo; foo_1bar
-// keeps its underscore, as protoc-gen-go does.
+// GoName is the Go field name protoc-gen-go gives a proto field: its
+// GoCamelCase, word for word. A word starts at an underscore or a capital;
+// a digit is a word of its own, so the letter after it starts a new word
+// (foo_1bar is Foo_1Bar, sha256sum is Sha256Sum); an underscore before a
+// lower-case letter is dropped and the letter capitalised; a leading
+// underscore becomes X (_x is XX); a dot becomes an underscore.
 func GoName(protoName string) string {
-	var b strings.Builder
-	upper := true
+	var b []byte
 	for i := 0; i < len(protoName); i++ {
 		c := protoName[i]
 		switch {
-		case c == '_' && i+1 < len(protoName) && protoName[i+1] >= 'a' && protoName[i+1] <= 'z':
-			upper = true
+		case c == '.' && i+1 < len(protoName) && isASCIILower(protoName[i+1]):
+			// Skip over '.' in ".{{lowercase}}".
 		case c == '.':
-			b.WriteByte('_')
-		case upper && c >= 'a' && c <= 'z':
-			b.WriteByte(c - 'a' + 'A')
-			upper = false
+			b = append(b, '_')
+		case c == '_' && (i == 0 || protoName[i-1] == '.'):
+			// An initial '_' (or one after '.') becomes 'X', so the name
+			// starts with a capital.
+			b = append(b, 'X')
+		case c == '_' && i+1 < len(protoName) && isASCIILower(protoName[i+1]):
+			// Skip over '_' in "_{{lowercase}}".
+		case c >= '0' && c <= '9':
+			b = append(b, c)
 		default:
-			b.WriteByte(c)
-			upper = false
+			// A letter starts a word, capitalised; the lower-case run after
+			// it is the rest of the word.
+			if isASCIILower(c) {
+				c -= 'a' - 'A'
+			}
+			b = append(b, c)
+			for ; i+1 < len(protoName) && isASCIILower(protoName[i+1]); i++ {
+				b = append(b, protoName[i+1])
+			}
 		}
 	}
-	return b.String()
+	return string(b)
 }
+
+func isASCIILower(c byte) bool { return 'a' <= c && c <= 'z' }

@@ -272,6 +272,132 @@ mod fake {
 #[cfg(feature = "test-support")]
 pub use fake::FakeDataKeySource;
 
+/// The deterministic test source: every key derives from a seed and the
+/// descriptor, so a record sealed in one process opens in another built from
+/// the same seed. `stack-encrypt`'s record fixture
+/// (`tests/fixtures/record_lowering.json`) is sealed under it, and the Go
+/// guest's `deterministic-kms` test build runs over it, so both read one
+/// definition and cannot drift apart.
+#[cfg(feature = "test-support")]
+mod deterministic {
+    use std::borrow::Cow;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use sha2::{Digest, Sha256};
+    use uuid::Uuid;
+    use zerokms_protocol::{IdentifiedBy, UnverifiedContext};
+
+    use super::fake::FakeDataKeySource;
+    use super::{DataKeySource, IndexKeySource};
+    use crate::errors::{Error, RetrieveKeyError};
+    use crate::key::{DataKey, DataKeyWithTag, IndexKey};
+    use crate::payload::{GenerateKeyPayload, RetrieveKeyPayload};
+
+    /// A [`DataKeySource`] whose keys are a function of a seed and the
+    /// descriptor, for fixtures that hold real sealed bytes.
+    ///
+    /// Every data key is `SHA-256(seed ‖ "key" ‖ 0 ‖ descriptor ‖ 0 ‖ iv)`,
+    /// its tag `SHA-256(seed ‖ "tag" ‖ 0 ‖ descriptor ‖ 0 ‖ iv)`, and the IV
+    /// `SHA-256(seed ‖ "iv" ‖ 0 ‖ descriptor ‖ 0 ‖ counter)[..16]`, where
+    /// `descriptor` is the context the leaf is sealed under as ZeroKMS
+    /// renders it. `retrieve_keys` re-derives the key and the tag from what
+    /// the leaf stores and refuses a tag that is not this descriptor's, so a
+    /// leaf opened under another field's label is refused as ZeroKMS would
+    /// refuse it. The index key is [`FakeDataKeySource`]'s, deterministic per
+    /// keyset, so terms are the terms every other test derives.
+    ///
+    /// A test double, not a cipher: the derivation is SHA-256 over
+    /// concatenated parts and models nothing of ZeroKMS beyond determinism.
+    pub struct DeterministicSource {
+        seed: [u8; 32],
+        counter: AtomicU64,
+        index: FakeDataKeySource,
+    }
+
+    impl DeterministicSource {
+        /// A source over `seed`.
+        pub fn new(seed: [u8; 32]) -> Self {
+            Self {
+                seed,
+                counter: AtomicU64::new(0),
+                index: FakeDataKeySource::new(),
+            }
+        }
+
+        fn derive(&self, what: &str, descriptor: &str, salt: &[u8]) -> [u8; 32] {
+            let mut hasher = Sha256::new();
+            hasher.update(self.seed);
+            hasher.update(what.as_bytes());
+            hasher.update([0u8]);
+            hasher.update(descriptor.as_bytes());
+            hasher.update([0u8]);
+            hasher.update(salt);
+            hasher.finalize().into()
+        }
+    }
+
+    impl DataKeySource for DeterministicSource {
+        async fn generate_keys(
+            &self,
+            payloads: Vec<GenerateKeyPayload<'_>>,
+            _keyset_id: Option<Uuid>,
+            _unverified_context: Option<Cow<'_, UnverifiedContext>>,
+        ) -> Result<Vec<DataKeyWithTag>, Error> {
+            Ok(payloads
+                .into_iter()
+                .map(|payload| {
+                    let n = self.counter.fetch_add(1, Ordering::SeqCst);
+                    let iv_bytes = self.derive("iv", payload.descriptor, &n.to_le_bytes());
+                    let mut iv = crate::Iv::default();
+                    let width = iv.len();
+                    iv.copy_from_slice(&iv_bytes[..width]);
+                    let key = self.derive("key", payload.descriptor, &iv);
+                    let tag = self.derive("tag", payload.descriptor, &iv);
+                    DataKeyWithTag {
+                        key: DataKey { iv, key },
+                        tag: tag.to_vec(),
+                        decryption_policy: payload.decryption_policy,
+                    }
+                })
+                .collect())
+        }
+
+        async fn retrieve_keys(
+            &self,
+            payloads: Vec<RetrieveKeyPayload<'_>>,
+            _keyset_id: Option<Uuid>,
+            _unverified_context: Option<&UnverifiedContext>,
+        ) -> Result<Vec<DataKey>, Error> {
+            payloads
+                .iter()
+                .map(|payload| {
+                    let iv: crate::Iv = *payload.iv.as_ref();
+                    let tag = self.derive("tag", payload.descriptor, &iv);
+                    if tag[..] != *payload.tag {
+                        return Err(Error::RetrieveKey(RetrieveKeyError::FailedRetrieval(
+                            "the tag is not this descriptor's".to_string(),
+                        )));
+                    }
+                    let key = self.derive("key", payload.descriptor, &iv);
+                    Ok(DataKey { iv, key })
+                })
+                .collect()
+        }
+    }
+
+    impl IndexKeySource for DeterministicSource {
+        async fn load_index_key(
+            &self,
+            keyset_id: Option<IdentifiedBy>,
+        ) -> Result<(Uuid, IndexKey), Error> {
+            self.index.load_index_key(keyset_id).await
+        }
+    }
+}
+
+#[cfg(feature = "test-support")]
+pub use deterministic::DeterministicSource;
+
 #[cfg(all(test, feature = "test-support"))]
 mod tests {
     use super::*;

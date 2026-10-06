@@ -30,7 +30,7 @@ crate-type = ["cdylib", "rlib"]
 # network. The Go tests load it to open the fixture's records and to run
 # hermetic round trips; `mise run wasm:guest:build:deterministic` builds it
 # beside the real guest. Never the embedded guest.
-deterministic-kms = ["stack-kms/test-support", "dep:sha2"]
+deterministic-kms = ["stack-kms/test-support"]
 
 [dependencies]
 # The stack crates with default features off: no reqwest, no native TLS —
@@ -56,8 +56,6 @@ vitaminc-aead-value = "0.5.1"
 vitaminc-protected = "0.5.1"
 
 futures = { version = "0.3", default-features = false, features = ["executor"] }
-# Only the deterministic-kms test build derives keys itself.
-sha2 = { version = "0.10", optional = true }
 serde = "1"
 serde_json = "1"
 uuid = "1"

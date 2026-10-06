@@ -143,6 +143,13 @@ and `Equality`, `Match`, `Ore` or `Ope` (the term types). A field with
 An `opaque` struct is one `Sealed` field. Every stored type implements
 `driver.Valuer` and `sql.Scanner`.
 
+A `match` index needs text with at least one token. The engine derives no
+match term for an empty string, separator-only text, or text shorter than the
+n-gram length (3 characters), because an empty term would match every row.
+`Encrypt` then fails for the whole batch with `ErrTerm`, naming the row, the
+field and the index. So an optional or short value does not belong under
+`match`: give such a field `equality` alone, or make the value required.
+
 Terms are byte-equal to the ones the Rust crate derives, so a term from
 `users.Fields.Email.Equality` compares against a stored term written from any
 language. `EqualityTerm.Equal` compares in constant time; `OreTerm.Compare`

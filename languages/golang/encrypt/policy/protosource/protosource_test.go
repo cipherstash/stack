@@ -4,6 +4,11 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protodesc"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/types/descriptorpb"
+
 	"github.com/cipherstash/stack/languages/golang/encrypt/policy"
 	"github.com/cipherstash/stack/languages/golang/encrypt/policy/protosource/internal/testpb"
 )
@@ -62,10 +67,52 @@ func TestNotAMessage(t *testing.T) {
 }
 
 func TestGoName(t *testing.T) {
-	cases := map[string]string{"id": "Id", "medicare_no": "MedicareNo", "foo_1bar": "Foo_1bar", "Already": "Already", "a_b_c": "ABC", "x__y": "X_Y"}
+	// protoc-gen-go's GoCamelCase, including the cases a reviewer found the
+	// first version wrong on: a digit ends a word, a leading underscore is X.
+	cases := map[string]string{
+		"id": "Id", "medicare_no": "MedicareNo", "foo_1bar": "Foo_1Bar", "sha256sum": "Sha256Sum", "_x": "XX",
+		"Already": "Already", "a_b_c": "ABC", "x__y": "X_Y", "a.b": "AB", "a.B": "A_B", "x_Y": "X_Y", "ab1": "Ab1",
+	}
 	for in, want := range cases {
 		if got := GoName(in); got != want {
 			t.Errorf("GoName(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// scalar spells an enum option by its value name: a dynamic enum field
+// stands in for a generated one, since testpb declares no enum.
+func TestScalarSpellsAnEnumByName(t *testing.T) {
+	file, err := protodesc.NewFile(&descriptorpb.FileDescriptorProto{
+		Name:    proto.String("enum_test.proto"),
+		Package: proto.String("enumtest"),
+		Syntax:  proto.String("proto3"),
+		EnumType: []*descriptorpb.EnumDescriptorProto{{
+			Name: proto.String("Level"),
+			Value: []*descriptorpb.EnumValueDescriptorProto{
+				{Name: proto.String("LEVEL_UNSPECIFIED"), Number: proto.Int32(0)},
+				{Name: proto.String("LEVEL_HIGH"), Number: proto.Int32(2)},
+			},
+		}},
+		MessageType: []*descriptorpb.DescriptorProto{{
+			Name: proto.String("Holder"),
+			Field: []*descriptorpb.FieldDescriptorProto{{
+				Name: proto.String("level"), Number: proto.Int32(1),
+				Type:     descriptorpb.FieldDescriptorProto_TYPE_ENUM.Enum(),
+				TypeName: proto.String(".enumtest.Level"),
+				JsonName: proto.String("level"),
+			}},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fd := file.Messages().Get(0).Fields().Get(0)
+	if got := scalar(fd, protoreflect.ValueOfEnum(2)); got != "LEVEL_HIGH" {
+		t.Fatalf("scalar(enum 2) = %q, want LEVEL_HIGH", got)
+	}
+	// A number with no name falls back to the number.
+	if got := scalar(fd, protoreflect.ValueOfEnum(7)); got != "7" {
+		t.Fatalf("scalar(enum 7) = %q", got)
 	}
 }
