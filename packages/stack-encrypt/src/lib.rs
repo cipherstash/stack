@@ -175,6 +175,19 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 "#
 )]
 //!
+//! # Other key providers
+//!
+//! ZeroKMS is one backend. AWS KMS, Azure Key Vault, Cloud KMS and Vault
+//! Transit reach a cipher as `vitaminc-kms` key providers: depend on
+//! `vitaminc-kms` with the vendor's feature, wrap the vendor's data key
+//! source in [`registry::FixedIndexKeySource`] with the persisted `KeyId` of
+//! the keyset's index key, and put each keyset in a
+//! [`registry::StaticKeysetRegistry`]. That `vitaminc-kms` must be the same
+//! copy this crate depends on (the same git source and `rev` until it is on
+//! crates.io), or its providers implement a different `KeyProvider` trait.
+//! `examples/aws-kms-demo` at the repository root runs this end to end on
+//! AWS KMS, and its README says how the index `KeyId` is provisioned.
+//!
 //! # Testing without ZeroKMS
 //!
 //! `stack_encrypt::registry::fake::FakeKeysetRegistry` is an in-memory stub that needs no

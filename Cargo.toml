@@ -29,6 +29,10 @@ exclude = [
   # `wasm:auth-guest:build`.
   "languages/golang/stackencrypt/guest",
   "languages/golang/stackauth/guest",
+  # The AWS KMS demo: detached so the AWS SDK, and the
+  # `serde_json/preserve_order` it turns on, stay out of this workspace's
+  # `--all-features` builds. See examples/aws-kms-demo/README.md.
+  "examples/aws-kms-demo",
 ]
 
 [workspace.package]

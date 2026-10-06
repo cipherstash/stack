@@ -250,6 +250,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NoRegistry`, and the `vitaminc-kms` provider types an implementor names.
 - `StackCipher::registry`, and `FakeKeysetRegistry::resolves` (a counter of
   keyset lookups) for tests.
+- **`registry::StaticKeysetRegistry`: keysets on AWS KMS, Azure Key Vault,
+  Cloud KMS or Vault Transit.** A fixed table of keysets, each an id, an
+  optional name and a key provider. The first keyset is the default; a
+  keyset resolves by id, or by name if it has one, and anything else is
+  `Error::UnknownKeyset`. It does not read format-1 leaves. Build each
+  provider as `registry::FixedIndexKeySource` (now re-exported) over a
+  `vitaminc-kms` data key source and the persisted `KeyId` of the keyset's
+  index key. `StaticKeyset`, `SharedProvider` and `StaticRegistryError` come
+  with it. `examples/aws-kms-demo` runs it on AWS KMS.
 
 ## [0.2.0] - 2026-10-04
 

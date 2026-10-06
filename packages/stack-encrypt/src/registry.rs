@@ -3,7 +3,8 @@
 //!
 //! A [`KeysetRegistry`] is the deployment's map. ZeroKMS's implementation
 //! asks the service and gets a keyset back; a vendor deployment's reads a
-//! static table of backend keys it was configured with. Either way the
+//! static table of backend keys it was configured with
+//! ([`StaticKeysetRegistry`]). Either way the
 //! answer is one [`vitaminc_kms::provider::KeyProvider`] bound to one
 //! backend key, which is the only shape `vitaminc-kms` offers — selection
 //! is this crate's business, not that crate's. See cipherstash/vitaminc
@@ -25,7 +26,8 @@ use vitaminc_kms::provider::MaybeSend;
 /// differently-sourced `vitaminc-kms` is a different `KeyProvider` trait at
 /// compile time, and an impl written against it would not satisfy this one.
 pub use vitaminc_kms::provider::{
-    Binding, BindingSupport, IndexKeyProvider, KeyProvider, MaybeSend as ProviderMaybeSend,
+    Binding, BindingSupport, FixedIndexKeySource, IndexKeyProvider, KeyProvider,
+    MaybeSend as ProviderMaybeSend,
 };
 pub use vitaminc_kms::{
     GeneratedDataKey, IndexKeyMaterial, KeyId, KeyIsolation, KeyReconstruction,
@@ -35,8 +37,11 @@ pub use vitaminc_protected_kms::Protected as ProviderProtected;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake;
+mod static_keysets;
 #[cfg(feature = "zerokms")]
 mod zerokms;
+
+pub use static_keysets::{SharedProvider, StaticKeyset, StaticKeysetRegistry, StaticRegistryError};
 
 /// A keyset's identity: globally unique, carried in every sealed leaf, and
 /// never re-checked once resolved.
