@@ -902,6 +902,51 @@ mod tests {
         );
     }
 
+    /// The cache is keyed on the JWT's bytes, not its claims: a JWT that
+    /// copies a cached user's header and payload under another signature is
+    /// exchanged (and refused here), never served that user's token. The
+    /// client cannot verify a signature, so a cache keyed on `iss`/`sub`
+    /// would hand this forgery the victim's CTS token without CTS ever
+    /// seeing it.
+    #[tokio::test]
+    async fn a_jwt_with_the_same_claims_but_other_bytes_is_not_served_the_cached_token() {
+        let server = start_mock_server().await;
+        let victim = jwt_for_principal(WS, "user-1");
+        let (signed, signature) = victim.rsplit_once('.').expect("a JWT");
+        let forged = format!("{signed}.{}", signature.chars().rev().collect::<String>());
+        assert_ne!(forged, victim, "the forgery differs in its signature");
+        assert_eq!(
+            forged.rsplit_once('.').map(|(claims, _)| claims),
+            Some(signed),
+            "and only there"
+        );
+        accept_exchange(&server, &victim, "CS|victim");
+        let (current, _, provider) = switchable_provider();
+        let strategy = strategy_on(&server, provider).build().expect("builder");
+
+        act_as(&current, &victim);
+        assert_eq!(
+            subject(&(&strategy).get_token().await.expect("the victim federates")),
+            "CS|victim"
+        );
+
+        refuse_exchanges(&server);
+        act_as(&current, &forged);
+        let err = (&strategy)
+            .get_token()
+            .await
+            .expect_err("the forgery must be exchanged, never served the victim's token");
+        assert!(
+            matches!(err, AuthError::Server(_)),
+            "the forgery's call should have reached the (refusing) exchange, got {err:?}"
+        );
+        assert_eq!(
+            strategy.cached_jwts(),
+            1,
+            "the refused forgery took no slot"
+        );
+    }
+
     /// Two users through one strategy, interleaved: each receives the token
     /// federated from their own JWT, the provider is asked on every call, and
     /// once both have a token neither is exchanged again.
