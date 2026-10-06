@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package individuals;
+
+import "classification.proto";
+
+option go_package = "example.com/app/internal/pb";
+
+message Individual {
+  int64 id = 1;
+  string name = 2 [(classification.data_categories) = "user.name"];
+  string email = 3 [(classification.data_categories) = "user.contact.email"];
+  string medicare_no = 4 [(classification.data_categories) = "user.government_id"];
+  string nickname = 5;
+}

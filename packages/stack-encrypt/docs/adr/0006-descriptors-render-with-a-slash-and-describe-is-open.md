@@ -62,7 +62,8 @@ Option 3. In detail:
 - A column is the pair. The derive's `struct = .., context = "<prefix>"`
   form binds a field under `("<prefix>", "<field>")`. A `context = ".."`
   literal on a field is one text part, exactly as written, and renders
-  escaped if it contains `/`. The derive still knows no tables (ADR-0003); a
+  escaped if it contains `/`. (Amended 2026-10-04: the field-level literal was
+  removed in #1073; see the note at the end.) The derive still knows no tables (ADR-0003); a
   consumer whose prefix is a table gets EQL's shape from it.
 - **`Describe` is an open trait** for a value whose parts are a descriptor
   of its own, the identity data is keyed under. An implementor returns a
@@ -108,3 +109,37 @@ Option 3. In detail:
   one width, still render alike (documented coarseness, unchanged). The
   rendering is one-to-one over part *trees* up to that coarseness, not over
   every encoding.
+
+## Amended 2026-10-04
+
+Field-level literal `#[stash(context = "..")]` and `#[stash(nested)]` were
+removed from the derive in #1073. A field is sealed under
+`<context>/<identity>`, where `#[stash(identity = "..")]` pins the identity
+part and otherwise the field name is used; a nested record is an ordinary typed
+field sealed under `<context>/<field>`, its inner layout being its own type's
+business. The struct-level `context = "<prefix>"` form and the rest of this
+decision are unchanged.
+
+## Amended 2026-10-06 (#1070)
+
+A later ADR changed this decision: ADR-0008, the language SDK principles,
+and the Go SDK design it governs. This amendment records what changed.
+G1 to G8 and Go-1 to Go-13 name the principles in
+`docs/sdk-design-principles.md`, general and Go.
+
+The `Label` decision said the Go binding has the same type and the same
+segment rule, held together by one fixture both test suites read. The Go SDK
+has no `Label`, `Context`, `NewContext` or `ParseLabel`. A field's two
+segments are the value of the struct's `context=` tag and the field's name
+(Go-7: the user never sees the plan, and no call takes a context, G4).
+
+The segment rule has one implementation. `stashgen` checks a declaration by
+running the guest the SDK embeds (ADR-0007, amended), so a `/` or an escaped
+character in a `context=` value is refused at `go generate` by the engine's
+own `Label` parser (G1, Go-1). The Go half of the fixture is retired with the
+Go `Label`; the Rust half stays, and the record fixture in ADR-0007 covers the
+bytes Go and Rust must agree on.
+
+The derive's `struct = .., context = "<prefix>"` form and the Go tag bind the
+same pair, so a row the derive writes opens through the Go SDK and the
+reverse. That is the interoperability this ADR was for.

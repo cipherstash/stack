@@ -762,6 +762,22 @@ replacement such as `Some(Default::default())` for `Some(())`. Document the
 reason and match the specific replacement so a reachable, behavior-changing
 mutation in the same function stays covered.
 
+## Designing a language SDK
+
+Read [`docs/sdk-design-principles.md`](docs/sdk-design-principles.md) before you
+architect, design or build a language SDK, or change the Go module's public
+surface. It holds eight principles for every language SDK and thirteen for the
+Go SDK, and the order to apply them in when two disagree.
+`packages/stack-encrypt/docs/adr/0008-language-sdk-design-principles.md` records why.
+
+Two terms from it are used across this repository:
+
+- A **binding** is the FFI or WASI interface between the Rust engine and a
+  target language.
+- A **language SDK** is what users of the target language work with day to day.
+
+Do not call the user-facing library a binding.
+
 ## Agent Skills — these ship to customers
 
 `skills/*/SKILL.md` are **published artifacts, not internal notes.** Treat a wrong
@@ -961,6 +977,7 @@ pnpm changeset:publish
 - `languages/typescript/packages/cli/AGENTS.md` for CLI-specific guidance
 - `e2e/README.md` for the cross-package E2E suite
 - `skills/*/SKILL.md` for per-integration agent guides
+- `docs/sdk-design-principles.md` for the language SDK design principles
 - User-facing docs (concepts, reference, how-to) live on the docs site:
   - https://cipherstash.com/docs
   - https://cipherstash.com/docs/stack/quickstart

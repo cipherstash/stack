@@ -248,3 +248,24 @@ crypto guest. A binary that encrypts now carries both guests. Neither
 sandbox changes. The crypto guest still has no environment and no
 filesystem, and the credential guest still has one mount. With no profile
 directory, `stackauth.OpenWithoutProfile` gives it none.
+
+## Amendment (2026-10-06, #1070): the module at `languages/golang`, the packages `encrypt` and `auth`
+
+A later ADR changed this decision: ADR-0008, the language SDK principles,
+and the Go SDK design it governs. This amendment records what changed.
+G1 to G8 and Go-1 to Go-13 name the principles in
+`docs/sdk-design-principles.md`, general and Go.
+
+Decision 4 named the module `bindings/go` and the packages `stackencrypt` and
+`stackauth`. The module is at `languages/golang`, beside the other language
+SDKs, and the packages are `encrypt` and `auth`.
+
+The reason is Go-13: a name says what the thing is for, and no name repeats
+its package. Go code reads a package name at every use. `encrypt.Cipher` and
+`auth.ProfileStore` say what they are; `stackencrypt.Cipher` repeats the
+module's name on every line. ADR-0008 names the user-facing code the Go SDK,
+not the Go binding, so the directory is not `bindings`.
+
+Everything else in decision 4 holds: one module, one internal package both
+import, `auth` does not import `encrypt`, and `ClientKey` is one type under
+both names. The 2026-09-27 amendment holds too: `encrypt` imports `auth`.

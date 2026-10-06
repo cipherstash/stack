@@ -1,0 +1,16 @@
+version: "2"
+sql:
+  - engine: postgresql
+    schema:
+      - eql-domains.sql
+      - schema.sql
+    queries: query.sql
+    gen:
+      go:
+        package: userdb
+        out: ../internal/userdb
+        overrides:
+          - db_type: "public.eql_v3_text_eq"
+            go_type: { import: github.com/cipherstash/stack/languages/golang/encrypt/eql, type: TextEq }
+          - db_type: "eql_v3.query_text_eq"
+            go_type: { import: github.com/cipherstash/stack/languages/golang/encrypt/eql, type: TextEqQuery }
