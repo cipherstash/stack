@@ -6,6 +6,8 @@ The module path is `example.com/app`.
 
 ## What each file shows
 
+Each directory has a `README.md` that walks through its code.
+
 | File | What it shows |
 |---|---|
 | [`main.go`](main.go) | A client, one cipher for each tenant, and a batch of two types in one request |
