@@ -698,6 +698,7 @@ mod tests {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         }
     }
 
@@ -1522,6 +1523,7 @@ mod stress_tests {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         }
     }
 
@@ -2103,6 +2105,7 @@ mod expiry_crossing_regression {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         }
     }
 
@@ -2590,6 +2593,7 @@ mod regression_cip_3159 {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         }
     }
 

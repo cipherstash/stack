@@ -161,7 +161,7 @@ yourself.
 |---|---|---|
 | `AutoStrategy` (the default when `config.authStrategy` is unset) | Most apps | `CS_CLIENT_ACCESS_KEY` **and** `CS_WORKSPACE_CRN` env vars, else the dev profile (`~/.cipherstash/auth.json`), else fails `NOT_AUTHENTICATED` |
 | `AccessKeyStrategy` | Services, CI, backfill jobs | Explicit workspace CRN + access key |
-| `OidcFederationStrategy` | Per-user (identity-bound) encryption | Your IdP's JWT, re-fetched via a callback on every federation |
+| `OidcFederationStrategy` | Per-user (identity-bound) encryption | Your IdP's JWT, fetched via a callback on every operation — one CTS token cached per distinct JWT (see Client lifetime) |
 | `DeviceSessionStrategy` | CLI-adjacent tooling | The device-code session `stash auth login` created |
 
 `auto`'s access-key arm needs **both** variables, and the two
@@ -187,9 +187,9 @@ const client = await Encryption({
 ```
 
 For end users, `OidcFederationStrategy.create(workspaceCrn, getJwt)` — the
-`getJwt` callback is invoked on *every* federation (initial and every
-re-federation after the CTS token expires) and must return the **current**
-IdP JWT, not a captured stale one. On the WASM/edge path,
+`getJwt` callback is invoked on *every* `getToken()` (every operation) and
+must return the IdP JWT of the user behind the **current request**, not a
+captured stale one; see "Client lifetime" below. On the WASM/edge path,
 `createWithStore(workspaceCrn, getJwt, loadToken, saveToken)` persists the
 federated token (e.g. in an HTTP-only cookie) so it survives across
 requests.
@@ -288,17 +288,25 @@ and is shown exactly once. Give each environment its own minted set; see
 
 ## Client lifetime (user-scoped strategies)
 
-An `OidcFederationStrategy` instance holds **one cached CTS token**:
-`getToken()` federates once, then returns the cached token until it expires
-— `getJwt` is *not* consulted again while the cache is warm. That makes the
-strategy, and any client built on it, **scoped to a single user by design**.
-Share that client across requests and every caller rides whichever user's
-token is currently cached — initially the first user's, then whoever's JWT
-the next re-federation picks up. With lock context that means operating (and
-being audit-logged) under the wrong user's identity. That is a cross-tenant
-data hazard, not a performance nuance: construct **one `Encryption()` client
-per request/user**. `AccessKeyStrategy` and `auto` authenticate a service,
-not a user, and are safe to share for the process lifetime.
+`OidcFederationStrategy` calls `getJwt` on **every** `getToken()` and keeps
+one CTS token **per distinct IdP JWT** (a bounded, least-recently-used
+cache; a JWT is exchanged only while it has no unexpired token). So one
+long-lived `Encryption()` client can serve many users, *provided* `getJwt`
+returns the JWT of the user behind the current request — read it from the
+request context; never capture one at startup. A stored token
+(`createWithStore`, cookies) is likewise served only to the JWT that
+produced it. Keep `getJwt` cheap: it runs per operation, and IdP SDKs cache
+their session, so calling them per request is fine. The cost is one
+exchange each time the IdP rotates a user's JWT.
+
+**On `@cipherstash/auth` releases before the fix for cipherstash/stack#1045**,
+a strategy held *one* token and consulted `getJwt` only when it expired.
+Sharing a client there makes every caller ride whichever user's token is
+cached — under lock context, operating (and being audit-logged) as the wrong
+user, a cross-tenant data hazard. On those versions construct **one
+`Encryption()` client per request/user**. `AccessKeyStrategy` and `auto`
+authenticate a service, not a user, and are safe to share for the process
+lifetime either way.
 
 ## Lock context
 

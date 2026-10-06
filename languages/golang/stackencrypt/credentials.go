@@ -224,9 +224,12 @@ func (autoCredentials) resolve(ctx context.Context, opts resolveOptions) (*resol
 // OIDCFederation is [Credentials] whose token is minted by federation: CTS
 // exchanges a token from the application's own identity provider (Clerk,
 // Auth0, Okta, a cloud workload identity) for a CipherStash one in the
-// workspace crn names. provider is asked for a fresh IdP token only when a
-// CipherStash token has to be minted; stackauth.OAuth2TokenSource adapts a
-// golang.org/x/oauth2 source. The client key is resolved as
+// workspace crn names. provider is asked on every token fetch for the IdP
+// token of the user the call is for, and each distinct IdP token is
+// exchanged once while its CipherStash token lasts, so one client serves
+// many users without one user ever riding another's token;
+// stackauth.OAuth2TokenSource adapts a golang.org/x/oauth2 source. The
+// client key is resolved as
 // [AutoCredentials] resolves it: CS_CLIENT_ID and CS_CLIENT_KEY, else the
 // developer profile.
 //

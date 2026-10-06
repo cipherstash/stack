@@ -255,6 +255,11 @@ pub mod store {
 /// Only one refresh runs at a time, regardless of how many callers request a
 /// token concurrently.
 ///
+/// [`OidcFederationStrategy`] runs one such engine **per provider JWT**: its
+/// provider is asked for the caller's JWT on every call, and the engine for
+/// that JWT is the one that refreshes, so users sharing a client never share a
+/// token. See its docs.
+///
 /// ## Flow diagram
 ///
 /// ```mermaid

@@ -1,6 +1,7 @@
 //! The credential guest's only network route: the host's HTTP transport.
-//! A provider callback supplies the current OIDC token only when the Rust
-//! federation strategy actually needs to exchange it.
+//! A provider callback supplies the caller's current OIDC token on every
+//! token fetch; the Rust federation strategy exchanges each distinct token
+//! once and caches the result per token.
 
 use std::io;
 

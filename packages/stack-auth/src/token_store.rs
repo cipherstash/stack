@@ -290,6 +290,7 @@ mod tests {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         }
     }
 

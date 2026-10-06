@@ -697,7 +697,7 @@ import { encryptedSupabase } from "@cipherstash/stack-supabase"
 
 const strategy = OidcFederationStrategy.create(
   process.env.CS_WORKSPACE_CRN!,
-  () => getUserJwt(), // re-invoked on every (re-)federation
+  () => getUserJwt(), // the current request's user — see stash-auth, "Client lifetime"
 )
 if (strategy.failure) throw new Error(strategy.failure.error.message)
 

@@ -31,7 +31,7 @@ export function csTokenCookieName(workspaceId) {
  * @property {Request} request                              Incoming request (reads the token cookie)
  * @property {Headers} responseHeaders                      Outgoing headers (the refreshed cookie is appended here)
  * @property {string} workspaceCrn                          `crn:<region>:<workspace-id>`
- * @property {() => string | Promise<string>} getJwt        Mints the current third-party OIDC JWT (Clerk, …)
+ * @property {() => string | Promise<string>} getJwt        The OIDC JWT of this request's user (Clerk, …); asked on every call
  * @property {string} [baseUrl]                             Pin federation to a CTS host / mock (overrides region discovery)
  * @property {string} [cookieName]                          Override the cookie name (defaults to `cs_token_<workspaceId>`, derived from `workspaceCrn`)
  * @property {boolean} [secure=true]                        Cookie `Secure` flag — set `false` only for localhost HTTP dev

@@ -275,7 +275,8 @@ them is the standard mistake. Identity-bound encryption needs both:
 
 1. **Authenticate as the user** — build an `OidcFederationStrategy` (or
    `AccessKeyStrategy` for service-to-service) and pass it as
-   `config.authStrategy`. The client then acts as that user for its lifetime.
+   `config.authStrategy`. The client then acts, on each operation, as the
+   user whose JWT `getJwt` returns (stash-auth skill, "Client lifetime").
    **Available on this entry**, and shown below.
 2. **Bind the data key to a claim** — chain `.withLockContext({ identityClaim })`
    on the operation. *This* is what binds key retrieval to the user's claim.
@@ -311,7 +312,7 @@ import { Encryption, OidcFederationStrategy } from '@cipherstash/stack/wasm-inli
 // `authStrategy` is the easy mistake, and it fails opaquely later.
 const strategy = OidcFederationStrategy.create(
   workspaceCrn,                   // 'crn:<region>:<workspace-id>'
-  () => getUserJwt(req),          // called on every re-federation — Clerk, Supabase Auth, …
+  () => getUserJwt(req),          // the current request's user; runs on every operation
 )
 if (strategy.failure) throw new Error(strategy.failure.error.message)
 

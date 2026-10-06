@@ -25,7 +25,7 @@ export interface CsFederateOptions {
   responseHeaders: Headers;
   /** Workspace CRN, `crn:<region>:<workspace-id>`. */
   workspaceCrn: string;
-  /** Mints the current third-party OIDC JWT (re-invoked on every re-federation). */
+  /** The third-party OIDC JWT of the user this request is for (asked on every call). */
   getJwt: () => string | Promise<string>;
   /** Pin federation to a specific CTS host / mock, overriding region discovery. */
   baseUrl?: string;

@@ -139,9 +139,10 @@ export declare class AccessKeyStrategy {
 }
 
 /**
- * Supplies the *current* third-party OIDC JWT to federate. Called on every
- * federation — initial auth and every re-federation after expiry — so it
- * should return a live token each time (e.g. `() => clerk.session.getToken()`).
+ * Supplies the third-party OIDC JWT of the user the current request is for.
+ * Called on every `getToken()`; one CTS token is cached per distinct JWT, so
+ * return a live token each time (e.g. `() => clerk.session.getToken()`), never
+ * one captured at startup.
  */
 export type OidcProvider = () => string | Promise<string>;
 

@@ -114,9 +114,14 @@ export declare class OidcFederationStrategy {
    * the CRN and used for service discovery; the workspace ID is used to
    * verify every federated token belongs to the right workspace.
    *
-   * `getJwt` is called on every federation — initial auth and every
-   * re-federation after the CTS token expires — and must return
-   * `Promise<string>` resolving to the *current* third-party OIDC JWT.
+   * `getJwt` is called on every `getToken()` and must return
+   * `Promise<string>` resolving to the third-party OIDC JWT of the user the
+   * current request is for. The strategy keeps one CTS token per distinct
+   * JWT (a bounded, least-recently-used cache) and exchanges a JWT only
+   * while it has no unexpired token, so one strategy serves many users and
+   * no caller is ever handed another user's token. Keep the callback cheap:
+   * identity-provider SDKs cache their session, so calling them per request
+   * is fine.
    *
    * `baseUrl`, when supplied, pins this strategy to a specific CTS host —
    * e.g. a self-hosted CTS or a local mock auth server. It takes precedence
@@ -132,7 +137,9 @@ export declare class OidcFederationStrategy {
    * token through `loadToken` (`() => Promise<string | null | undefined>`)
    * and `saveToken` (`(json: string) => Promise<void>`) — e.g. an HTTP-only
    * cookie — so a federated token survives across requests without
-   * re-federating.
+   * re-federating. A stored token is served only to the JWT it was
+   * federated from: a cookie left over from another user's sign-in is a
+   * cache miss, not that user's token.
    *
    * `baseUrl` behaves as in `create` — an explicit,
    * strategy-scoped CTS host that overrides `CS_CTS_HOST` and service

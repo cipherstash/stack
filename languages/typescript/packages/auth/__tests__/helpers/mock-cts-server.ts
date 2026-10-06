@@ -157,6 +157,25 @@ export class MockCtsServer {
     })
   }
 
+  /**
+   * Like {@link mockAuthorizeEndpoint}, but the federated token's `sub` names
+   * the `oidcToken` it was exchanged from (`CS|<oidcToken>`), so a test with
+   * several callers can tell whose CTS token the strategy handed back.
+   */
+  mockAuthorizeEndpointNamingTheJwt(expiry = 3600): void {
+    this.#on('POST', '/api/authorise', (body) => {
+      const exp = Math.floor(Date.now() / 1000) + expiry
+      const { oidcToken } = JSON.parse(body) as { oidcToken: string }
+      return {
+        status: 200,
+        json: {
+          accessToken: mintJwt({ exp, sub: `CS|${oidcToken}` }),
+          expiry: exp,
+        },
+      }
+    })
+  }
+
   mockAuthorizeEndpointError(): void {
     this.#on('POST', '/api/authorise', () => ({
       status: 500,

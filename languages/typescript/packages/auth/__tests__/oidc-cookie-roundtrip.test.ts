@@ -89,8 +89,9 @@ describe('OidcFederationStrategy + cookieStore round-trip', () => {
     await first.getToken()
     const cookie = cookiePair(firstHeaders.get('set-cookie')!)
 
-    // Second request carries the cookie. Federation would fail (500) and
-    // getJwt would throw — proving the token came from the cookie.
+    // Second request carries the cookie, from the same signed-in user (same
+    // JWT). Federation would fail (500) — proving the token came from the
+    // cookie. getJwt is still asked: it is what says whose token to look for.
     server.clearMocks()
     server.mockAuthorizeEndpointError()
     const secondStore = cookieStore({
@@ -99,7 +100,7 @@ describe('OidcFederationStrategy + cookieStore round-trip', () => {
     })
     const second = mustCreateWithStore(
       WORKSPACE_CRN,
-      () => Promise.reject(new Error('getJwt must not be called')),
+      () => Promise.resolve('header.payload.signature'),
       secondStore.load,
       secondStore.save,
     )
@@ -109,6 +110,42 @@ describe('OidcFederationStrategy + cookieStore round-trip', () => {
       expect.unreachable(`getToken failed: ${r.failure.type}`)
     }
     expect(r.data.workspaceId).toBe(WORKSPACE_ID)
+  })
+
+  it('does not reuse a cookie minted for another sign-in', async () => {
+    // Same browser, different user: the cookie still holds the token federated
+    // from the previous user's JWT. It must be a cache miss (here, a refused
+    // exchange), never that user's token.
+    server.mockAuthorizeEndpoint()
+    const firstHeaders = new Headers()
+    const firstStore = cookieStore({
+      request: requestWith(),
+      responseHeaders: firstHeaders,
+    })
+    const first = mustCreateWithStore(
+      WORKSPACE_CRN,
+      () => Promise.resolve('previous-user.jwt.sig'),
+      firstStore.load,
+      firstStore.save,
+    )
+    await first.getToken()
+    const cookie = cookiePair(firstHeaders.get('set-cookie')!)
+
+    server.clearMocks()
+    server.mockAuthorizeEndpointError()
+    const secondStore = cookieStore({
+      request: requestWith(cookie),
+      responseHeaders: new Headers(),
+    })
+    const second = mustCreateWithStore(
+      WORKSPACE_CRN,
+      () => Promise.resolve('next-user.jwt.sig'),
+      secondStore.load,
+      secondStore.save,
+    )
+
+    const r = await second.getToken()
+    expect(r.failure?.type).toBe('SERVER_ERROR')
   })
 
   it('re-federates when the cookie holds an expired token', async () => {

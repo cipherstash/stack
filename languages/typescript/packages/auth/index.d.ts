@@ -114,8 +114,10 @@ export declare class DeviceSessionStrategy {
 export declare class OidcFederationStrategy {
   /**
    * Create an `OidcFederationStrategy` for the given workspace CRN. `getJwt` is
-   * called on every federation and must resolve to the current third-party OIDC
-   * JWT. `baseUrl` pins the strategy to a specific CTS host.
+   * called on every `getToken()` and must resolve to the third-party OIDC JWT of
+   * the user the current request is for; one CTS token is cached per distinct
+   * JWT, so one strategy serves many users. `baseUrl` pins the strategy to a
+   * specific CTS host.
    */
   static create(
     workspaceCrn: string,
@@ -124,7 +126,8 @@ export declare class OidcFederationStrategy {
   ): Result<OidcFederationStrategy, AuthFailure>;
   /**
    * Like `create` but persists the federated CTS token through `loadToken` /
-   * `saveToken` (e.g. an HTTP-only cookie) so it survives across requests.
+   * `saveToken` (e.g. an HTTP-only cookie) so it survives across requests. A
+   * stored token is served only to the JWT it was federated from.
    */
   static createWithStore(
     workspaceCrn: string,

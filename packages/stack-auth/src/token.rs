@@ -44,6 +44,17 @@ pub struct Token {
     pub(crate) client_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) device_instance_id: Option<String>,
+    /// Set only on a token minted by OIDC federation: the lowercase hex
+    /// SHA-256 of the provider JWT it was exchanged from.
+    ///
+    /// [`OidcFederationStrategy`](crate::OidcFederationStrategy) serves a
+    /// token from a [`TokenStore`](crate::TokenStore) only to the JWT that
+    /// produced it, so one store can be shared across users without ever
+    /// handing one user's token to another. Absent on every other token
+    /// (access key, device session), and on tokens stored before this field
+    /// existed, which the strategy therefore treats as a cache miss.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) federated_from: Option<String>,
 }
 
 impl Token {
@@ -140,6 +151,19 @@ impl Token {
         self.device_instance_id.as_deref()
     }
 
+    /// For a token minted by OIDC federation, the lowercase hex SHA-256 of the
+    /// provider JWT it was exchanged from; `None` for every other token.
+    ///
+    /// [`OidcFederationStrategy`](crate::OidcFederationStrategy) stamps this
+    /// on the tokens it federates and serves a token from a
+    /// [`TokenStore`](crate::TokenStore) only to the JWT whose digest it
+    /// carries, so one store can be shared across users without ever handing
+    /// one user's token to another. A store implementation can read it to key
+    /// its own storage per user.
+    pub fn federated_from(&self) -> Option<&str> {
+        self.federated_from.as_deref()
+    }
+
     /// Set the device instance ID on this token.
     pub(crate) fn set_device_instance_id(&mut self, id: impl Into<String>) {
         self.device_instance_id = Some(id.into());
@@ -212,6 +236,7 @@ impl Token {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         }
         .decode_claims()
         .map(|_| ())
@@ -317,6 +342,7 @@ impl Token {
             // refresh response. Until then, callers (e.g. DeviceSessionRefresher) must
             // re-attach it manually after refresh.
             device_instance_id: None,
+            federated_from: None,
         })
     }
 }
@@ -370,6 +396,7 @@ mod tests {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         }
     }
 
@@ -397,6 +424,7 @@ mod tests {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         }
     }
 

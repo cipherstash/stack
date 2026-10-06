@@ -80,8 +80,10 @@ func (s *ProfileStore) AccessKey(ctx context.Context, crn, key string, opts ...S
 	}{"access_key", crn, key, o.baseURL}, false)
 }
 
-// OIDC constructs stack-auth's federation strategy. provider is called for
-// a fresh IdP JWT only when the strategy needs to mint a CTS token.
+// OIDC constructs stack-auth's federation strategy. provider is called on
+// every Token call for the IdP JWT of the user that call is for; the
+// strategy keeps one CTS token per distinct JWT and mints a new one only
+// for a JWT that has no unexpired token.
 func (s *ProfileStore) OIDC(ctx context.Context, crn string, provider OIDCProvider, opts ...StrategyOption) (*Strategy, error) {
 	if crn == "" || provider == nil {
 		return nil, ErrAuthConfig

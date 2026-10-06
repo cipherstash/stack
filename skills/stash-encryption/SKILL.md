@@ -728,8 +728,8 @@ import { encryptedTable, types } from "@cipherstash/stack/v3"
 
 const users = encryptedTable("users", { email: types.TextSearch("email") })
 
-// `getJwt` is re-invoked on every (re-)federation and must return the
-// *current* third-party OIDC JWT.
+// `getJwt` runs on every operation and must return the OIDC JWT of the user
+// behind the current request (stash-auth skill, "Client lifetime").
 const strategy = OidcFederationStrategy.create(
   process.env.CS_WORKSPACE_CRN!,
   () => getUserJwt(),

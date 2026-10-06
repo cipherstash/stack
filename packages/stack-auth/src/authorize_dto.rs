@@ -1,11 +1,11 @@
 //! Shared DTO for the CTS `POST /api/authorise` endpoint.
 //!
 //! Both [`AccessKeyRefresher`](crate::access_key_refresher::AccessKeyRefresher)
-//! and [`OidcRefresher`](crate::oidc_refresher::OidcRefresher) exchange a
+//! and [`OidcFederation`](crate::oidc_refresher::OidcFederation) exchange a
 //! credential for a CTS
 //! service token at the same endpoint; the success response is identical, so
 //! the wire contract lives here in one place. The request bodies differ
-//! (different credential fields) and stay private to each refresher.
+//! (different credential fields) and stay private to each exchange.
 
 use crate::{SecretToken, Token};
 
@@ -41,6 +41,7 @@ impl From<AuthoriseResponse> for Token {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         }
     }
 }

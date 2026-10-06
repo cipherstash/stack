@@ -370,10 +370,12 @@ impl OidcFederationStrategy {
     /// the CRN and used for service discovery; the workspace ID is used to
     /// verify every federated token belongs to the right workspace.
     ///
-    /// `getJwt` is called on every federation — initial auth and every
-    /// re-federation after expiry — and must return `Promise<string>`
-    /// resolving to the *current* third-party OIDC JWT (e.g. by calling
-    /// `clerk.session.getToken()`).
+    /// `getJwt` is called on every `getToken()` and must return
+    /// `Promise<string>` resolving to the third-party OIDC JWT of the user the
+    /// current request is for (e.g. by calling `clerk.session.getToken()`).
+    /// The strategy keeps one CTS token per distinct JWT and exchanges a JWT
+    /// only while it has no unexpired token, so no caller is ever handed
+    /// another user's token.
     ///
     /// `baseUrl`, when supplied, pins this strategy to a specific CTS host —
     /// e.g. a self-hosted CTS or a local mock auth server. It overrides region
@@ -402,7 +404,8 @@ impl OidcFederationStrategy {
     /// token through `loadToken` / `saveToken` — see
     /// [`AccessKeyStrategy::create_with_store`] for the callback contract. Use
     /// this to back the strategy with an HTTP-only cookie so a federated token
-    /// survives across Edge Function invocations without re-federating.
+    /// survives across Edge Function invocations without re-federating. A
+    /// stored token is served only to the JWT it was federated from.
     ///
     /// `baseUrl` behaves as in `create` — an explicit,
     /// strategy-scoped CTS host that overrides region service discovery.

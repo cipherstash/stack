@@ -16,8 +16,13 @@ import (
 	"github.com/tetratelabs/wazero/api"
 )
 
-// OIDCProvider supplies the current identity-provider JWT. The Rust
-// federation strategy asks only when its cached CTS token needs renewal.
+// OIDCProvider supplies the identity-provider JWT of the user a call is
+// for. The Rust federation strategy asks on every Strategy.Token call: the
+// JWT is how it tells one user from another, and it keeps one CTS token per
+// distinct JWT, exchanging a JWT only when it has no unexpired CTS token.
+// So a server that serves many users through one client must return the
+// JWT of the user behind ctx, not a value captured once, and should keep
+// the call cheap, as identity-provider SDKs that cache their session are.
 //
 // Token runs inside the guest call that needs it, while the ProfileStore
 // that owns the strategy is locked. It must not call back into that
