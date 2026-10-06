@@ -37,6 +37,10 @@ type Field struct {
 	Indexes []Index
 	// EQLType is the EQL type an EncryptInto field seals into.
 	EQLType string
+	// Identity is the field's part of its context when it differs from Name:
+	// a column that was renamed keeps the identity it was first written
+	// under. "" means Name. Only a policy sets it.
+	Identity string
 }
 
 // Verb is what happens to a field.

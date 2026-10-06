@@ -124,3 +124,6 @@ func (*RecordsCodec[P, R]) Decrypt(context.Context, encrypt.Decrypter, []R) ([]P
 // notices; the real New calls them once for each type.
 func NoticeUntagged(typeName string, fields []string) {}
 func NoticePrintsPlaintext(typeName string)           {}
+
+// Identity gives a field a context part other than its name.
+func (d Declaration) Identity(name, identity string) Declaration { return d }

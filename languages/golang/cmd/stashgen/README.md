@@ -138,6 +138,37 @@ The error names the type and the field, and never a value.
 - an embedded struct from another package with no tag;
 - a struct whose every field is left out.
 
+## Declarations from a policy
+
+A type that a schema generates, such as a protobuf message, cannot carry tags.
+For such a type, rules decide how each field is encrypted from what the schema says about it, and `stashgen.Generate` writes the same file from the rules.
+The rules live in `github.com/cipherstash/stack/languages/golang/encrypt/policy`; `encrypt/policy/protosource` reads a protobuf message's fields and their options.
+
+```go
+var category = policy.Key("classification.data_categories")
+
+var Individuals = policy.ForMessage(&pb.Individual{}, policy.Context("individuals"),
+	policy.FirstOf(
+		policy.When(policy.Field("id"), policy.Passthrough()),
+		policy.When(category.Under("user.government_id"), policy.EncryptInto("TextEq")),
+		policy.When(category.Under("user.contact.email"), policy.EncryptIndex(policy.Equality, policy.Match())),
+		policy.When(category.Under("user"), policy.Encrypt()),
+	),
+)
+
+//go:generate go run ../cmd/genencrypt
+func main() {
+	err := stashgen.Generate(protosource.New(), rules.Individuals,
+		stashgen.Output("../individuals/individual_stash.go"))
+	...
+}
+```
+
+The first rule that matches a field decides it.
+Every field needs a decision: a field no rule decides stops the generator with the field's name and its annotations.
+`Name` sets the column name, and `Identity` keeps the field's context when its column is renamed.
+The generated file goes in a package of your own, and the functions take and return pointers to the message.
+
 ## Printing
 
 A generated type hides its sealed fields when a program prints or logs it.
@@ -149,4 +180,4 @@ No warning, error or log line holds a plaintext value.
 
 The generator is built and tested against a static stand-in for the engine.
 `stashgen.GuestEngine`, which runs the WASI guest the SDK embeds, is not wired yet, so the command stops with `ErrEngineUnavailable` until it is.
-The library, `github.com/cipherstash/stack/languages/golang/stashgen`, takes any `Engine`.
+The library, `github.com/cipherstash/stack/languages/golang/stashgen`, takes any `Engine`; `stashgen.Generate` takes one with `WithEngine`.

@@ -191,7 +191,7 @@ func (w *writer) declaration(f *genFile) {
 	w.p("var %s = gensupport.Declare(%q).", f.declVar, f.decl.Context)
 	for i, fld := range f.decl.Fields {
 		end := "."
-		if i == len(f.decl.Fields)-1 {
+		if i == len(f.decl.Fields)-1 && fld.Identity == "" {
 			end = ""
 		}
 		switch fld.Verb {
@@ -213,6 +213,13 @@ func (w *writer) declaration(f *genFile) {
 				args[n] = indexExpr(idx)
 			}
 			w.p("\t%s(%q, %s)%s", call, fld.Name, strings.Join(args, ", "), end)
+		}
+		if fld.Identity != "" {
+			end = "."
+			if i == len(f.decl.Fields)-1 {
+				end = ""
+			}
+			w.p("\tIdentity(%q, %q)%s", fld.Name, fld.Identity, end)
 		}
 	}
 }

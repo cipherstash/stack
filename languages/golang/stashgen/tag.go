@@ -29,6 +29,8 @@ type tag struct {
 	Verb    Verb
 	Indexes []Index
 	EQLType string
+	// Identity is set by a policy only; no tag spells it.
+	Identity string
 }
 
 // errNoTag reports a field with no stash tag at all.

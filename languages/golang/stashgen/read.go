@@ -123,13 +123,24 @@ type reader struct {
 	eql     []EQLType
 	file    *genFile
 	imports *importSet
+	// The package the file is written into, when it is not pkg: the policy
+	// path writes into a package of the user's own.
+	outPkgName string
+	outPkgPath string
 }
 
 func (r *reader) qualifier(p *types.Package) string {
-	if p == nil || p.Path() == r.pkg.PkgPath {
+	if p == nil || p.Path() == r.outPath() {
 		return ""
 	}
 	return r.imports.add(p.Path(), p.Name())
+}
+
+func (r *reader) outPath() string {
+	if r.outPkgPath != "" {
+		return r.outPkgPath
+	}
+	return r.pkg.PkgPath
 }
 
 func (r *reader) typeExpr(t types.Type) string {
@@ -140,30 +151,50 @@ func pathQualifier(p *types.Package) string { return p.Path() }
 
 func pathType(t types.Type) string { return types.TypeString(t, pathQualifier) }
 
-// readStruct reads the tagged struct and, with -for, the type it declares
-// for, and builds the file.
+// read reads the tagged struct and, with -for, the type it declares for, and
+// builds the file.
 func (r *reader) read() (*genFile, error) {
 	pkg, req := r.pkg, r.req
 	tagNamed, tagStruct, err := lookupStruct(pkg, req.Type)
 	if err != nil {
 		return nil, err
 	}
-	f := &genFile{pkgName: pkg.Name, imports: r.imports}
+	valueNamed, valueStruct := tagNamed, tagStruct
+	typeName := req.Type
+	if req.For != "" {
+		valueNamed, valueStruct, err = lookupQualified(pkg, req.For)
+		if err != nil {
+			return nil, err
+		}
+		typeName = req.For
+	}
+	collected, err := r.collectFields(tagNamed, tagStruct, req.Type, true)
+	if err != nil {
+		return nil, err
+	}
+	if collected.context == "" {
+		return nil, fieldErr(req.Type, "", "no `_ struct{}` field with `stash:\"context=...\"` declares the context")
+	}
+	if req.For != "" {
+		if err := r.matchFor(collected, valueNamed, valueStruct); err != nil {
+			return nil, err
+		}
+	}
+	return r.build(collected, typeName, valueNamed, valueStruct, req.For != "", tagNamed)
+}
+
+// build makes the file for a collected declaration. foreign says the value
+// type is in another package; tagged is the struct that carried the tags,
+// which -redact writes print methods on.
+func (r *reader) build(collected *collected, typeName string, valueNamed *types.Named, valueStruct *types.Struct, foreign bool, tagged *types.Named) (*genFile, error) {
+	pkg, req := r.pkg, r.req
+	f := &genFile{pkgName: r.pkgName(), imports: r.imports, typeName: typeName}
 	r.file = f
 	f.imports.add("context", "context")
 	f.imports.add("log/slog", "slog")
 	f.imports.add(encryptPath, "encrypt")
 	f.imports.add(gensupportPath, "gensupport")
 
-	valueNamed, valueStruct := tagNamed, tagStruct
-	f.typeName = req.Type
-	if req.For != "" {
-		valueNamed, valueStruct, err = lookupQualified(pkg, req.For)
-		if err != nil {
-			return nil, err
-		}
-		f.typeName = req.For
-	}
 	baseName := valueNamed.Obj().Name()
 	f.typeExpr = r.typeExpr(valueNamed)
 	f.zeroExpr = f.typeExpr + "{}"
@@ -178,51 +209,40 @@ func (r *reader) read() (*genFile, error) {
 	} else {
 		f.encryptFn, f.decryptFn, f.fieldsVar = "Encrypt", "Decrypt", "Fields"
 		f.declVar, f.codecVar = "declaration", "codec"
-		f.paramName = pkg.Name
+		f.paramName = f.pkgName
+	}
+	if f.paramName == "encrypt" || f.paramName == "eql" || f.paramName == "gensupport" || f.paramName == "context" || f.paramName == "slog" || f.paramName == "ctx" || f.paramName == "cipher" {
+		f.paramName = "values"
 	}
 	if req.Redact {
-		if req.For != "" {
-			return nil, fmt.Errorf("stashgen: -redact cannot add print methods to %s, a type in another package", req.For)
+		if foreign || tagged == nil {
+			return nil, fmt.Errorf("stashgen: -redact cannot add print methods to %s, a type in another package", typeName)
 		}
 		f.redact = true
 		f.redactRecv = strings.ToLower(req.Type[:1])
 		for _, m := range []string{"String", "LogValue"} {
-			if hasMethod(types.NewPointer(tagNamed), m) {
+			if hasMethod(types.NewPointer(tagged), m) {
 				return nil, fmt.Errorf("stashgen: -redact: %s already has a %s method", req.Type, m)
 			}
 		}
 	}
 
-	// The context, and the fields.
-	collected, err := r.collectFields(tagNamed, tagStruct, req.Type, true)
-	if err != nil {
-		return nil, err
-	}
-	if collected.context == "" {
-		return nil, fieldErr(req.Type, "", "no `_ struct{}` field with `stash:\"context=...\"` declares the context")
-	}
-	f.decl = Declaration{Type: f.typeName, Context: collected.context, Opaque: collected.opaque}
+	f.decl = Declaration{Type: typeName, Context: collected.context, Opaque: collected.opaque}
 	f.unexported = collected.unexported
-
-	if req.For != "" {
-		if err := r.matchFor(collected, valueNamed, valueStruct); err != nil {
-			return nil, err
-		}
-	}
 
 	// The shape check. A type from another package with an unexported field
 	// cannot convert, so the file reads each field by name instead, and the
 	// functions take a pointer.
 	var conversionNotice string
 	switch {
-	case req.For == "":
+	case !foreign:
 		f.shapeFields = shapeOf(valueStruct, r.typeExpr)
 	case hasUnexported(valueStruct):
 		f.shapeName = ""
 		f.isPointer = true
 		f.typeExpr = "*" + f.typeExpr
 		f.zeroExpr = "nil"
-		conversionNotice = fmt.Sprintf("%s has unexported fields, so Go cannot convert it to a copy of its fields. This file reads each field by name: the compiler finds a removed or retyped field, and CI finds an added one.", f.typeName)
+		conversionNotice = fmt.Sprintf("%s has unexported fields, so Go cannot convert it to a copy of its fields. This file reads each field by name: the compiler finds a removed or retyped field, and CI finds an added one.", typeName)
 	default:
 		f.shapeFields = shapeOf(valueStruct, r.typeExpr)
 	}
@@ -231,7 +251,7 @@ func (r *reader) read() (*genFile, error) {
 		return nil, err
 	}
 	if len(f.fields) == 0 && len(f.opaque) == 0 {
-		return nil, fieldErr(req.Type, "", "stores no field: every field is omitted")
+		return nil, fieldErr(typeName, "", "stores no field: every field is omitted")
 	}
 
 	// Printing.
@@ -246,10 +266,10 @@ func (r *reader) read() (*genFile, error) {
 	}
 	if sealedCount > 0 && !f.redact && (!hasMethod(valueNamed, "String") || !hasMethod(valueNamed, "LogValue")) {
 		f.printsPlaintext = true
-		if req.For != "" {
-			f.notices = append(f.notices, fmt.Sprintf("%s prints its sealed fields in the clear, and stashgen cannot add print methods to a type from another package.", f.typeName))
+		if foreign {
+			f.notices = append(f.notices, fmt.Sprintf("%s prints its sealed fields in the clear, and stashgen cannot add print methods to a type from another package.", typeName))
 		} else {
-			f.notices = append(f.notices, fmt.Sprintf("%s prints its sealed fields in the clear: it has no String or LogValue method. Write them, or run stashgen with -redact.", f.typeName))
+			f.notices = append(f.notices, fmt.Sprintf("%s prints its sealed fields in the clear: it has no String or LogValue method. Write them, or run stashgen with -redact.", typeName))
 		}
 	}
 	if conversionNotice != "" {
@@ -259,8 +279,10 @@ func (r *reader) read() (*genFile, error) {
 		f.notices = append(f.notices, "Not encrypted and not stored: the unexported "+fieldList(f.unexported)+". Tag "+itOrEach(f.unexported)+" `stash:\"-\"` to confirm that.")
 	}
 
-	if err := r.checkDirectives(); err != nil {
-		return nil, err
+	if pkg != nil {
+		if err := r.checkDirectives(); err != nil {
+			return nil, err
+		}
 	}
 	for _, m := range req.Models {
 		if err := r.readModel(m); err != nil {
@@ -268,6 +290,14 @@ func (r *reader) read() (*genFile, error) {
 		}
 	}
 	return f, nil
+}
+
+// pkgName is the name of the package the file is written into.
+func (r *reader) pkgName() string {
+	if r.outPkgName != "" {
+		return r.outPkgName
+	}
+	return r.pkg.Name
 }
 
 // collectedField is one field of the tagged struct after its tag is read.
@@ -517,7 +547,7 @@ func (r *reader) buildFields(c *collected) error {
 			return fieldErr(typeName, cf.goName, "two fields write the name %q: %s and %s", name, prev, cf.goName)
 		}
 		seen[name] = cf.goName
-		field := Field{Name: name, GoName: cf.goName, GoType: r.goType(cf.typ), Verb: t.Verb, Indexes: t.Indexes, EQLType: t.EQLType}
+		field := Field{Name: name, GoName: cf.goName, GoType: r.goType(cf.typ), Verb: t.Verb, Indexes: t.Indexes, EQLType: t.EQLType, Identity: t.Identity}
 		if t.Omit {
 			field.Verb = VerbOmit
 		}
