@@ -64,6 +64,11 @@ test-support = ["stack-kms/test-support"]
 
 [dev-dependencies]
 serde_json = { workspace = true }
+# The deterministic key source the record fixture is sealed under
+# (`tests/common`): keys and tags derived from a seed, the descriptor and the
+# IV, so a committed record opens in another process. Same version stack-kms
+# uses for its fake.
+sha2 = "0.10.6"
 # `default-features = false` here too: dev-dependency features unify into the
 # `cargo test -p stack-encrypt --no-default-features` graph, so leaving the
 # default on would silently pull `stack-kms/http` -> `stack-auth/http` ->
