@@ -15,7 +15,7 @@ import {
 /** @typedef {{ load(): Promise<string | null | undefined>; save(json: string): Promise<void> }} TokenStore */
 /** @typedef {{ store?: TokenStore }} AccessKeyStrategyOptions */
 /** @typedef {() => string | Promise<string>} OidcProvider */
-/** @typedef {{ store?: TokenStore; baseUrl?: string }} OidcFederationStrategyOptions */
+/** @typedef {{ store?: TokenStore; baseUrl?: string; cacheCapacity?: number }} OidcFederationStrategyOptions */
 
 // Convert a thrown/rejected wasm error into a `Result` `failure`. The wasm
 // binding attaches the serialized `AuthError` as an `__authFailure` object on
@@ -142,6 +142,7 @@ export class OidcFederationStrategy {
       const jwt = () => Promise.resolve(getJwt());
       const store = options?.store;
       const baseUrl = options?.baseUrl;
+      const cacheCapacity = options?.cacheCapacity;
       if (store) {
         const load = () => Promise.resolve(store.load());
         const save = (/** @type {string} */ json) =>
@@ -154,13 +155,19 @@ export class OidcFederationStrategy {
               load,
               save,
               baseUrl,
+              cacheCapacity,
             ),
           ),
         };
       }
       return {
         data: new OidcFederationStrategy(
-          RawOidcFederationStrategy.create(workspaceCrn, jwt, baseUrl),
+          RawOidcFederationStrategy.create(
+            workspaceCrn,
+            jwt,
+            baseUrl,
+            cacheCapacity,
+          ),
         ),
       };
     } catch (err) {

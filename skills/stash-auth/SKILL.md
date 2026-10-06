@@ -317,6 +317,11 @@ served only to the JWT that produced it. That is defence in depth behind the
 rule above — it cannot repair a `getJwt` that names the wrong user. Keep
 `getJwt` cheap: IdP SDKs cache their session, so calling them per operation
 is fine. The cost is one exchange each time the IdP rotates a user's JWT.
+A strategy that does outlive requests (one per user) keeps tokens for up to
+`cacheCapacity` JWTs — `create(crn, getJwt, baseUrl?, cacheCapacity?)` on
+the native entry, `{ cacheCapacity }` in the `wasm-inline` options — 1024
+unless set; past that the least recently used user is exchanged again, and
+each eviction is logged at `debug`.
 On `@cipherstash/auth` releases before the fix for cipherstash/stack#1045 the
 strategy also held only one token for everyone, so the per-request rule was
 the only protection there.

@@ -120,13 +120,15 @@ export declare class OidcFederationStrategy {
    * outside the caller's async context (`AsyncLocalStorage`), so a callback
    * that reads the request from there (Clerk's `auth()`, Next.js `headers()`)
    * finds no request, or the one the strategy was created in. One CTS token is
-   * cached per distinct JWT. `baseUrl` pins the strategy to a specific CTS
-   * host.
+   * cached per distinct JWT, for up to `cacheCapacity` JWTs (1024 unless set;
+   * the least recently used is dropped and exchanged again on its next call;
+   * `0` caches nothing). `baseUrl` pins the strategy to a specific CTS host.
    */
   static create(
     workspaceCrn: string,
     getJwt: () => Promise<string> | string,
     baseUrl?: string | undefined | null,
+    cacheCapacity?: number | undefined | null,
   ): Result<OidcFederationStrategy, AuthFailure>;
   /**
    * Like `create` but persists the federated CTS token through `loadToken` /
@@ -139,6 +141,7 @@ export declare class OidcFederationStrategy {
     loadToken: () => Promise<string | null | undefined> | string | null | undefined,
     saveToken: (json: string) => Promise<void> | void,
     baseUrl?: string | undefined | null,
+    cacheCapacity?: number | undefined | null,
   ): Result<OidcFederationStrategy, AuthFailure>;
   /** Retrieve a valid CTS service token, federating or re-federating as needed. */
   getToken(): Promise<Result<TokenResult, AuthFailure>>;

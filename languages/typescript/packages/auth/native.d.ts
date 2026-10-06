@@ -135,8 +135,15 @@ export declare class OidcFederationStrategy {
    * over the `CS_CTS_HOST` environment variable and region service
    * discovery, and is scoped to this strategy alone (unlike `CS_CTS_HOST`,
    * which redirects every CTS client in the process).
+   *
+   * `cacheCapacity` is how many distinct JWTs the strategy keeps a CTS
+   * token for (1024 unless set); when full, the least recently used JWT's
+   * token is dropped and that user is exchanged again on their next call.
+   * Size it to the users a long-lived strategy serves within a CTS token's
+   * lifetime (about 15 minutes). `0` caches nothing. Each eviction is
+   * logged at `debug`.
    */
-  static create(workspaceCrn: string, getJwt: () => any, baseUrl?: string | undefined | null): OidcFederationStrategy
+  static create(workspaceCrn: string, getJwt: () => any, baseUrl?: string | undefined | null, cacheCapacity?: number | undefined | null): OidcFederationStrategy
   /**
    * Create an `OidcFederationStrategy` backed by external token-store callbacks.
    *
@@ -148,11 +155,11 @@ export declare class OidcFederationStrategy {
    * federated from: a cookie left over from another user's sign-in is a
    * cache miss, not that user's token.
    *
-   * `baseUrl` behaves as in `create` — an explicit,
+   * `baseUrl` and `cacheCapacity` behave as in `create` — an explicit,
    * strategy-scoped CTS host that overrides `CS_CTS_HOST` and service
-   * discovery.
+   * discovery, and the number of JWTs whose token is kept in memory.
    */
-  static createWithStore(workspaceCrn: string, getJwt: () => any, loadToken: () => any, saveToken: (arg: string) => any, baseUrl?: string | undefined | null): OidcFederationStrategy
+  static createWithStore(workspaceCrn: string, getJwt: () => any, loadToken: () => any, saveToken: (arg: string) => any, baseUrl?: string | undefined | null, cacheCapacity?: number | undefined | null): OidcFederationStrategy
   /** Retrieve a valid CTS service token, federating or re-federating as needed. */
   getToken(): Promise<TokenResult>
 }

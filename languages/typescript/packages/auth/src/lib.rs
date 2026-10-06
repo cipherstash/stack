@@ -357,18 +357,29 @@ impl OidcFederationStrategy {
     /// over the `CS_CTS_HOST` environment variable and region service
     /// discovery, and is scoped to this strategy alone (unlike `CS_CTS_HOST`,
     /// which redirects every CTS client in the process).
+    ///
+    /// `cacheCapacity` is how many distinct JWTs the strategy keeps a CTS
+    /// token for (1024 unless set); when full, the least recently used JWT's
+    /// token is dropped and that user is exchanged again on their next call.
+    /// Size it to the users a long-lived strategy serves within a CTS token's
+    /// lifetime (about 15 minutes). `0` caches nothing. Each eviction is
+    /// logged at `debug`.
     #[napi(factory)]
     pub fn create(
         workspace_crn: String,
         get_jwt: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
         base_url: Option<String>,
+        cache_capacity: Option<u32>,
     ) -> Result<Self> {
         let crn = parse_workspace_crn(&workspace_crn)?;
-        let inner = stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt })
-            .maybe_base_url(base_url)
-            .map_err(to_napi_error)?
-            .build()
-            .map_err(to_napi_error)?;
+        let mut builder =
+            stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt })
+                .maybe_base_url(base_url)
+                .map_err(to_napi_error)?;
+        if let Some(capacity) = cache_capacity {
+            builder = builder.cache_capacity(capacity as usize);
+        }
+        let inner = builder.build().map_err(to_napi_error)?;
         Ok(Self {
             inner: OidcFederationStrategyInner::NoStore(inner),
         })
@@ -384,9 +395,9 @@ impl OidcFederationStrategy {
     /// federated from: a cookie left over from another user's sign-in is a
     /// cache miss, not that user's token.
     ///
-    /// `baseUrl` behaves as in `create` — an explicit,
+    /// `baseUrl` and `cacheCapacity` behave as in `create` — an explicit,
     /// strategy-scoped CTS host that overrides `CS_CTS_HOST` and service
-    /// discovery.
+    /// discovery, and the number of JWTs whose token is kept in memory.
     #[napi(factory)]
     pub fn create_with_store(
         workspace_crn: String,
@@ -394,15 +405,21 @@ impl OidcFederationStrategy {
         load_token: ThreadsafeFunction<(), ErrorStrategy::Fatal>,
         save_token: ThreadsafeFunction<String, ErrorStrategy::Fatal>,
         base_url: Option<String>,
+        cache_capacity: Option<u32>,
     ) -> Result<Self> {
         let crn = parse_workspace_crn(&workspace_crn)?;
         let store = NapiTokenStore {
             load: load_token,
             save: save_token,
         };
-        let inner = stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt })
-            .maybe_base_url(base_url)
-            .map_err(to_napi_error)?
+        let mut builder =
+            stack_auth::OidcFederationStrategy::builder(crn, NapiOidcProvider { get_jwt })
+                .maybe_base_url(base_url)
+                .map_err(to_napi_error)?;
+        if let Some(capacity) = cache_capacity {
+            builder = builder.cache_capacity(capacity as usize);
+        }
+        let inner = builder
             .with_token_store(store)
             .build()
             .map_err(to_napi_error)?;

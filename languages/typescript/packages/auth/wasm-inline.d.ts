@@ -162,6 +162,14 @@ export interface OidcFederationStrategyOptions {
    * this is the only way to target a host other than the region-discovered one.
    */
   baseUrl?: string;
+  /**
+   * How many distinct JWTs the strategy keeps a CTS token for (1024 unless
+   * set). When full, the least recently used JWT's token is dropped and that
+   * user is exchanged again on their next call; `0` caches nothing. Size it to
+   * the users one strategy serves within a CTS token's lifetime (about 15
+   * minutes) — a per-request strategy never needs it.
+   */
+  cacheCapacity?: number;
 }
 
 /**

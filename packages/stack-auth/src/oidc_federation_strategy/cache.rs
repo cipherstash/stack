@@ -62,6 +62,10 @@ impl<T: Clone> JwtCache<T> {
                 .min_by_key(|(_, entry)| entry.last_used)
                 .map(|(digest, _)| *digest);
             if let Some(victim) = victim {
+                tracing::debug!(
+                    capacity = self.capacity,
+                    "JWT cache is full; dropping the least recently used JWT's token"
+                );
                 let _ = self.entries.remove(&victim);
             }
         }

@@ -449,7 +449,11 @@ impl<P, S> OidcFederationStrategyBuilder<P, S> {
     ///
     /// Size it to the number of users a client serves concurrently within a
     /// CTS token's lifetime (about 15 minutes); each entry holds that user's
-    /// JWT and CTS token. The language bindings build with the default.
+    /// JWT and CTS token. An eviction is logged at `debug`, so a cache that
+    /// is too small shows up in the logs as a stream of them. The language
+    /// bindings take it as an optional argument (`cacheCapacity` in
+    /// JavaScript, `WithCacheCapacity` in Go) and build with the default when
+    /// it is absent.
     pub fn cache_capacity(mut self, capacity: usize) -> Self {
         self.cache_capacity = capacity;
         self

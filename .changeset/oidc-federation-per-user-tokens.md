@@ -32,3 +32,10 @@ re-federated once.
 Because the cache is keyed on the whole JWT, an identity provider that rotates
 JWTs faster than the CTS token lifetime (about 15 minutes) re-federates on each
 rotation, where earlier releases reused the stored token.
+
+The cache holds 1024 JWTs unless told otherwise. `create` and `createWithStore`
+take an optional `cacheCapacity` after `baseUrl` (the `cacheCapacity` option on
+`@cipherstash/auth/wasm-inline`); when the cache is full the least recently
+used JWT's token is dropped, that user is exchanged again on their next call,
+and the eviction is logged at `debug`. `0` caches nothing. Existing calls are
+unchanged.

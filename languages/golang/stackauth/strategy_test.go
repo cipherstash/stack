@@ -186,6 +186,49 @@ func TestOIDCStrategyFederatesEachProviderTokenOnce(t *testing.T) {
 	}
 }
 
+// WithCacheCapacity reaches the Rust builder: with room for no JWT at all,
+// the same IdP token is exchanged on every Token call, where the default
+// (1024) serves the second call from the cache, as the test above shows.
+func TestOIDCStrategyCacheCapacityZeroExchangesEveryCall(t *testing.T) {
+	guestOrSkip(t)
+	var exchanges atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		exchanges.Add(1)
+		var body struct {
+			OIDCToken string `json:"oidcToken"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, testJWTFor(t, "https://cts.example", "CS|"+body.OIDCToken), time.Now().Add(time.Hour).Unix())
+	}))
+	defer server.Close()
+	profile, err := Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profile.Close()
+	strategy, err := profile.OIDC(context.Background(), testCRN, OIDCProviderFunc(func(context.Context) (string, error) {
+		return "idp-a", nil
+	}), WithAuthBaseURL(server.URL), WithCacheCapacity(0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strategy.Close()
+	for i := 0; i < 2; i++ {
+		token, err := strategy.Token(context.Background())
+		if err != nil {
+			t.Fatalf("Token #%d: %v", i, err)
+		}
+		if got := jwtSubject(t, token); got != "CS|idp-a" {
+			t.Errorf("Token #%d subject = %q, want CS|idp-a", i, got)
+		}
+	}
+	if exchanges.Load() != 2 {
+		t.Errorf("exchanges = %d, want 2 (nothing cached)", exchanges.Load())
+	}
+}
+
 func TestUsageLimitIsPreservedAcrossGuest(t *testing.T) {
 	guestOrSkip(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

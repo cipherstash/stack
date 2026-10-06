@@ -397,6 +397,61 @@ describe('OidcFederationStrategy (TypeScript / vitest)', () => {
     expect(calls).toBe(5)
   })
 
+  it('caches nothing with cacheCapacity 0, so the same JWT is exchanged on every call', async () => {
+    // The capacity argument reaches the Rust builder: with room for no JWT at
+    // all, the second call for a cached-looking JWT must hit the (now
+    // refusing) exchange rather than be served from memory. The default
+    // (1024) would serve it, as the tests above show.
+    server.mockAuthorizeEndpointNamingTheJwt()
+    const strategy = mustCreate(
+      WORKSPACE_CRN,
+      () => Promise.resolve('jwt-a'),
+      undefined,
+      0,
+    )
+
+    const first = await strategy.getToken()
+    if (first.failure) {
+      expect.unreachable(`first call failed: ${first.failure.type}`)
+    }
+    expect(first.data.subject).toBe('CS|jwt-a')
+
+    server.clearMocks()
+    server.mockAuthorizeEndpointError()
+    const second = await strategy.getToken()
+    expect(second.failure?.type).toBe('SERVER_ERROR')
+  })
+
+  it('threads cacheCapacity through createWithStore too', async () => {
+    server.mockAuthorizeEndpointNamingTheJwt()
+    const store = memStore()
+    const strategy = mustCreateWithStore(
+      WORKSPACE_CRN,
+      () => Promise.resolve('jwt-a'),
+      store.load,
+      store.save,
+      undefined,
+      0,
+    )
+
+    const first = await strategy.getToken()
+    if (first.failure) {
+      expect.unreachable(`first call failed: ${first.failure.type}`)
+    }
+    expect(first.data.subject).toBe('CS|jwt-a')
+    expect(store.saved()).not.toBeNull()
+
+    // Nothing is held in memory, but the store still answers for this JWT:
+    // the exchange is refused and the stored token is served instead.
+    server.clearMocks()
+    server.mockAuthorizeEndpointError()
+    const second = await strategy.getToken()
+    if (second.failure) {
+      expect.unreachable(`second call failed: ${second.failure.type}`)
+    }
+    expect(second.data.subject).toBe('CS|jwt-a')
+  })
+
   it("never serves the first user's token to a second user", async () => {
     // The bug, as a test. A federates; every exchange is then refused, so the
     // only token the strategy *could* hand out is A's. B's call must fail —

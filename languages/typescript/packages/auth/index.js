@@ -127,17 +127,29 @@ class DeviceSessionStrategy {
 
 const NativeOidcFederationStrategy = native.OidcFederationStrategy;
 class OidcFederationStrategy {
-  static create(workspaceCrn, getJwt, baseUrl) {
+  static create(workspaceCrn, getJwt, baseUrl, cacheCapacity) {
     // Wrap `getJwt` so the napi binding always sees a Promise-returning
     // function even if the caller passed a sync one — the native side coerces
     // the return to `Promise<string>`. Matches the wasm wrapper (wasm-inline.mjs).
     const jwt = () => Promise.resolve(getJwt());
     return wrapSync(() =>
-      NativeOidcFederationStrategy.create(workspaceCrn, jwt, baseUrl),
+      NativeOidcFederationStrategy.create(
+        workspaceCrn,
+        jwt,
+        baseUrl,
+        cacheCapacity,
+      ),
     )();
   }
 
-  static createWithStore(workspaceCrn, getJwt, loadToken, saveToken, baseUrl) {
+  static createWithStore(
+    workspaceCrn,
+    getJwt,
+    loadToken,
+    saveToken,
+    baseUrl,
+    cacheCapacity,
+  ) {
     // Same defensive wrap for all three callbacks, so sync implementations
     // (e.g. an in-memory store) work without the caller pre-wrapping them.
     const jwt = () => Promise.resolve(getJwt());
@@ -150,6 +162,7 @@ class OidcFederationStrategy {
         load,
         save,
         baseUrl,
+        cacheCapacity,
       ),
     )();
   }

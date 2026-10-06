@@ -383,17 +383,26 @@ impl OidcFederationStrategy {
     /// service discovery and is scoped to this strategy alone. In wasm there is
     /// no `CS_CTS_HOST` env fallback (the sandbox can't read env), so `baseUrl`
     /// is the only way to target a host other than the region-discovered one.
+    ///
+    /// `cacheCapacity` is how many distinct JWTs the strategy keeps a CTS
+    /// token for (1024 unless set); when full, the least recently used JWT's
+    /// token is dropped and that user is exchanged again on their next call.
+    /// `0` caches nothing.
     pub fn create(
         workspace_crn: String,
         get_jwt: js_sys::Function,
         base_url: Option<String>,
+        cache_capacity: Option<u32>,
     ) -> Result<OidcFederationStrategy, JsValue> {
         let crn = parse_workspace_crn(&workspace_crn)?;
-        let inner = stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
-            .maybe_base_url(base_url)
-            .map_err(to_js_error)?
-            .build()
-            .map_err(to_js_error)?;
+        let mut builder =
+            stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
+                .maybe_base_url(base_url)
+                .map_err(to_js_error)?;
+        if let Some(capacity) = cache_capacity {
+            builder = builder.cache_capacity(capacity as usize);
+        }
+        let inner = builder.build().map_err(to_js_error)?;
         Ok(OidcFederationStrategy {
             inner: OidcFederationStrategyInner::NoStore(inner),
         })
@@ -408,8 +417,9 @@ impl OidcFederationStrategy {
     /// survives across Edge Function invocations without re-federating. A
     /// stored token is served only to the JWT it was federated from.
     ///
-    /// `baseUrl` behaves as in `create` — an explicit,
-    /// strategy-scoped CTS host that overrides region service discovery.
+    /// `baseUrl` and `cacheCapacity` behave as in `create` — an explicit,
+    /// strategy-scoped CTS host that overrides region service discovery, and
+    /// the number of JWTs whose token is kept in memory.
     #[wasm_bindgen(js_name = createWithStore)]
     pub fn create_with_store(
         workspace_crn: String,
@@ -417,15 +427,21 @@ impl OidcFederationStrategy {
         load_token: js_sys::Function,
         save_token: js_sys::Function,
         base_url: Option<String>,
+        cache_capacity: Option<u32>,
     ) -> Result<OidcFederationStrategy, JsValue> {
         let crn = parse_workspace_crn(&workspace_crn)?;
         let store = JsTokenStore {
             load: load_token,
             save: save_token,
         };
-        let inner = stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
-            .maybe_base_url(base_url)
-            .map_err(to_js_error)?
+        let mut builder =
+            stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
+                .maybe_base_url(base_url)
+                .map_err(to_js_error)?;
+        if let Some(capacity) = cache_capacity {
+            builder = builder.cache_capacity(capacity as usize);
+        }
+        let inner = builder
             .with_token_store(store)
             .build()
             .map_err(to_js_error)?;
