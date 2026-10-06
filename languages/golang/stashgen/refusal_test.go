@@ -3,11 +3,13 @@ package stashgen_test
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/stashgen"
 	"github.com/cipherstash/stack/languages/golang/stashgen/enginetest"
 )
@@ -73,11 +75,13 @@ func TestRefusals(t *testing.T) {
 		{"a field type the engine cannot seal", user(ctx + "\tDone chan int `stash:\"done,encrypt\"`"), stashgen.Request{Type: "User"}, "Done", "seals only as part of an opaque struct"},
 		{"a composite sealed outside an opaque struct", user(ctx + "\tAt time.Time `stash:\"at,encrypt\"`"), stashgen.Request{Type: "User"}, "At", "a time.Time seals only as part of an opaque struct"},
 		{"a slice sealed outside an opaque struct", user(ctx + "\tTags []string `stash:\"tags,encrypt\"`"), stashgen.Request{Type: "User"}, "Tags", "seals only as part of an opaque struct"},
+		{"a map sealed outside an opaque struct", user(ctx + "\tCounts map[string]int64 `stash:\"counts,encrypt\"`"), stashgen.Request{Type: "User"}, "Counts", "seals only as part of an opaque struct"},
+		{"a slice of ints sealed outside an opaque struct", user(ctx + "\tNs []int64 `stash:\"ns,encrypt\"`"), stashgen.Request{Type: "User"}, "Ns", "seals only as part of an opaque struct"},
 		{"an opaque struct with a channel", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tDone chan int"), stashgen.Request{Type: "User"}, "Done", "is not a type JSON carries"},
 		{"an opaque struct with an interface", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tAny any"), stashgen.Request{Type: "User"}, "Any", "is not a type JSON carries"},
 		{"an opaque struct with a struct JSON would truncate", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tTx hidden") + "\ntype hidden struct {\n\tA int\n\tb int\n}\n", stashgen.Request{Type: "User"}, "Tx", "JSON would drop"},
 		{"an opaque struct with a map keyed by a struct", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tM map[hidden]int") + "\ntype hidden struct{ A int }\n", stashgen.Request{Type: "User"}, "M", "map key that is not a string or an integer"},
-		{"an EQL type the engine cannot produce yet", user(ctx + "\tEmail string `stash:\"email,encrypt_into=TextMatch\"`"), stashgen.Request{Type: "User"}, "Email", "cannot produce the EQL type TextMatch"},
+		{"an EQL type the engine cannot produce yet", user(ctx + "\tEmail string `stash:\"email,encrypt_into=TextMatch\"`"), stashgen.Request{Type: "User"}, "Email", "has no EQL type TextMatch"},
 		{"an index on a composite", user(ctx + "\tAttrs map[string]string `stash:\"attrs,encrypt,index=equality\"`"), stashgen.Request{Type: "User"}, "Attrs", "seals only as part of an opaque struct"},
 		{"the json index, not in the engine yet", user(ctx + "\tAttrs string `stash:\"attrs,index=json\"`"), stashgen.Request{Type: "User"}, "Attrs", "cannot derive the json index yet"},
 		{"an index option the engine cannot carry", user(ctx + "\tEmail string `stash:\"email,encrypt,index=match(k=3)\"`"), stashgen.Request{Type: "User"}, "Email", "cannot carry index options"},
@@ -204,5 +208,82 @@ func TestAStructWithPrintMethodsGetsNoNotice(t *testing.T) {
 	}
 	if strings.Contains(string(file.Content), "PrintsPlaintext") {
 		t.Fatal("PrintsPlaintext set for a type with String and LogValue")
+	}
+}
+
+// The refusals hold against the engine stashgen ships with, not only the
+// fake: the embedded guest, through GuestEngine. Skips only when the guest
+// is not built. The cases are the ones a reviewer found the two engines
+// disagreeing on, and the composites a reviewer sealed and could not open.
+func TestRefusalsHoldAgainstTheEmbeddedEngine(t *testing.T) {
+	engine, err := stashgen.GuestEngine(context.Background())
+	if errors.Is(err, encrypt.ErrGuestNotBuilt) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.(io.Closer).Close()
+	for _, c := range []struct{ name, field, line, want string }{
+		{"time.Time", "At", "\tAt time.Time `stash:\"at,encrypt\"`", "seals only as part of an opaque struct"},
+		{"a channel", "Done", "\tDone chan int `stash:\"done,encrypt\"`", "seals only as part of an opaque struct"},
+		{"equality on a map", "Attrs", "\tAttrs map[string]string `stash:\"attrs,encrypt,index=equality\"`", "seals only as part of an opaque struct"},
+		{"a sealed []string", "Tags", "\tTags []string `stash:\"tags,encrypt\"`", "seals only as part of an opaque struct"},
+		{"a sealed map[string]int64", "Counts", "\tCounts map[string]int64 `stash:\"counts,encrypt\"`", "seals only as part of an opaque struct"},
+		{"equality on a float", "Score", "\tScore float64 `stash:\"score,encrypt,index=equality\"`", "the engine refuses the declaration"},
+		{"equality on a bool", "Done", "\tDone bool `stash:\"done,encrypt,index=equality\"`", "the engine refuses the declaration"},
+		{"match on an integer", "Age", "\tAge int32 `stash:\"age,encrypt,index=match\"`", "the engine refuses the declaration"},
+		{"encrypt_into, no EQL type in this build", "Email", "\tEmail string `stash:\"email,encrypt_into=TextEq\"`", "EQL types are not available yet"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := writeModule(t, map[string]string{"model.go": user(ctx + c.line), "crm/contact.go": crmPackage})
+			_, err := stashgen.FromTags(context.Background(), engine, stashgen.Request{Dir: dir, Type: "User"})
+			var fe *stashgen.FieldError
+			if !errors.As(err, &fe) || fe.Field != c.field {
+				t.Fatalf("err = %v, want a *FieldError naming %s", err, c.field)
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want %q", err, c.want)
+			}
+		})
+	}
+	// What the fake refuses, the engine refuses: the same cases against both.
+	for _, c := range []struct{ name, line string }{
+		{"equality on a float", "\tScore float64 `stash:\"score,encrypt,index=equality\"`"},
+		{"a declaration the engine runs", "\tAge uint32 `stash:\"age,encrypt,index=equality;ore\"`\n\tName string `stash:\"name,encrypt,index=match\"`"},
+	} {
+		dir := writeModule(t, map[string]string{"model.go": user(ctx + c.line), "crm/contact.go": crmPackage})
+		_, real := stashgen.FromTags(context.Background(), engine, stashgen.Request{Dir: dir, Type: "User"})
+		_, fake := stashgen.FromTags(context.Background(), enginetest.Static{}, stashgen.Request{Dir: dir, Type: "User"})
+		if (real == nil) != (fake == nil) {
+			t.Errorf("%s: the engine says %v, the fake says %v", c.name, real, fake)
+		}
+	}
+}
+
+// The whole-declaration check: two fields that pass one at a time and fail
+// together, because a policy pinned both to one identity. The error is a
+// *FieldError with no field.
+func TestTheWholeDeclarationIsCheckedAgainstTheEmbeddedEngine(t *testing.T) {
+	engine, err := stashgen.GuestEngine(context.Background())
+	if errors.Is(err, encrypt.ErrGuestNotBuilt) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.(io.Closer).Close()
+	decl := stashgen.Declaration{Type: "Individual", Context: "individuals", Fields: []stashgen.Field{
+		{Name: "medicare_number", GoName: "MedicareNo", GoType: stashgen.GoType{Name: "string", Kind: stashgen.KindString, Basic: "string"}, Verb: stashgen.VerbEncrypt, Identity: "id"},
+		{Name: "legacy_number", GoName: "LegacyNo", GoType: stashgen.GoType{Name: "string", Kind: stashgen.KindString, Basic: "string"}, Verb: stashgen.VerbEncrypt, Identity: "id"},
+	}}
+	err = engine.Check(context.Background(), decl)
+	var fe *stashgen.FieldError
+	if !errors.As(err, &fe) || fe.Field != "" || !strings.Contains(err.Error(), "as a whole") {
+		t.Fatalf("err = %v, want the whole-declaration refusal naming no field", err)
+	}
+	decl.Fields[1].Identity = ""
+	if err := engine.Check(context.Background(), decl); err != nil {
+		t.Fatalf("distinct identities: %v", err)
 	}
 }

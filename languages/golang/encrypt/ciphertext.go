@@ -14,9 +14,12 @@ import (
 // own leaf on purpose: a stack-encrypt leaf is not decryptable by
 // vitaminc-encrypt and must never scan or marshal where one belongs.
 //
-// A field of any Go type seals to one leaf. A scalar seals as the typed leaf
-// a Rust record derives; a struct, slice or map seals as one self-describing
-// value, which only a dynamic reader opens.
+// A sealed field is one scalar — a string, a number, a bool or a []byte, or
+// a type defined over one — and seals as the typed leaf a Rust record
+// derives. A struct, slice or map seals only as part of an opaque struct,
+// which crosses as one JSON document and is one leaf; stashgen refuses it
+// anywhere else, because the engine would seal it as a tree of leaves and a
+// column holds one.
 type Ciphertext []byte
 
 // Value implements driver.Valuer, binding the leaf as a byte column.
