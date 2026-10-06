@@ -12,22 +12,80 @@
 //! drawn from a small name alphabet so field names, output keys and map
 //! keys collide often, with passthroughs and duplicate keys anywhere.
 //!
-//! Two invariants. Neither `plan` nor `check_record` may panic on any
+//! Two invariants. Neither `plan_with` nor `check_record` may panic on any
 //! input. And for a plan that parses, `check_record` accepts the tree
 //! exactly when the model does — the rules from the record docs, written
 //! independently of the walk: one map, or a sequence of maps; every
 //! ciphertext-bearing plan field present exactly once in every row; that
 //! field a map with exactly one `"c"`; and under that `"c"` no passthrough
-//! and no repeated map key at any depth.
+//! and no repeated map key at any depth. A target field (one naming an EQL
+//! type) is present exactly once with exactly one `"eql"` node, which is a
+//! passthrough carrying bytes.
+//!
+//! Plans parse under a fixed resolver holding one producible type, `TextEq`
+//! over strings, so the target checks in `Plan::new_with` and the `"eql"`
+//! node read in `record_row` run under fuzzing; every other target name is
+//! refused when the plan is built, as under `NoTargets`.
 
 use std::sync::OnceLock;
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
-use stack_encrypt::dynamic::record::{check_record, plan, Plan};
-use stack_encrypt::dynamic::FfiValue;
-use stack_encrypt::{SealedValue, StackCipherText};
+use stack_encrypt::dynamic::record::{check_record, plan_with, Plan};
+use stack_encrypt::dynamic::{
+    FfiValue, TargetDescriptor, TargetError, TargetResolver, ValueKind,
+};
+use stack_encrypt::{KeysetCipher, Label, Pending, SealedValue, StackCipher, StackCipherText};
 use uuid::Uuid;
+use vitaminc_protected::Protected;
+
+/// The resolver plans parse under: one producible type, `TextEq` over
+/// strings, and nothing that runs — `check_record` never reaches a cipher.
+struct Fixed;
+
+impl TargetResolver for Fixed {
+    fn targets(&self) -> Vec<TargetDescriptor> {
+        vec![TargetDescriptor::new(
+            "TextEq",
+            "text",
+            "Eq",
+            Some(ValueKind::String),
+            "public.eql_v3_text_eq",
+            vec!["eq".to_string()],
+            Some("TextEqQuery".to_string()),
+            Some("eql_v3.query_text_eq".to_string()),
+            true,
+            None,
+        )]
+    }
+    fn encrypt<'a, K: 'static>(
+        &self,
+        _: &str,
+        _: &'a KeysetCipher<'_, K>,
+        _: &Label,
+        _: FfiValue,
+    ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+        unreachable!("check_record runs no cipher")
+    }
+    fn decrypt<'a, K: 'static>(
+        &self,
+        _: &str,
+        _: &'a StackCipher<K>,
+        _: &Label,
+        _: &[u8],
+    ) -> Result<Pending<'a, FfiValue, K>, TargetError> {
+        unreachable!("check_record runs no cipher")
+    }
+    fn query<'a, K: 'static>(
+        &self,
+        _: &str,
+        _: &'a KeysetCipher<'_, K>,
+        _: &Label,
+        _: FfiValue,
+    ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+        unreachable!("check_record runs no cipher")
+    }
+}
 
 /// The name alphabet: the plan's field names, the tree's map keys and the
 /// output keys all draw from it, so `"c"` is at once an output key and a
@@ -41,6 +99,10 @@ enum Name {
     Match,
     Ore,
     Ope,
+    /// The stored key of a target field's value, and a plausible field name.
+    Eql,
+    /// The one target name the fixed resolver produces.
+    TextEq,
     Other,
 }
 
@@ -54,6 +116,8 @@ impl Name {
             Name::Match => "match",
             Name::Ore => "ore",
             Name::Ope => "ope",
+            Name::Eql => "eql",
+            Name::TextEq => "TextEq",
             Name::Other => "zz",
         }
     }
@@ -155,7 +219,9 @@ impl PlanSpec {
     }
 }
 
-/// A stored ciphertext tree, with every `CipherText` variant reachable.
+/// A stored ciphertext tree, with every `CipherText` variant reachable. A
+/// passthrough carries a null or bytes: a target field's `"eql"` node is a
+/// passthrough of bytes, and one of anything else is refused.
 #[derive(Arbitrary, Debug)]
 enum Tree {
     Single,
@@ -163,6 +229,7 @@ enum Tree {
     EmptySequence,
     EmptyMap,
     Passthrough,
+    PassthroughBytes,
     Sequence(Vec<Tree>),
     Map(Vec<(Name, Tree)>),
 }
@@ -186,6 +253,9 @@ impl Tree {
             Tree::EmptySequence => StackCipherText::EmptySequence(leaf()),
             Tree::EmptyMap => StackCipherText::EmptyMap(leaf()),
             Tree::Passthrough => StackCipherText::Passthrough(Box::new(FfiValue::Null)),
+            Tree::PassthroughBytes => StackCipherText::Passthrough(Box::new(FfiValue::Bytes(
+                Protected::new(b"{}".to_vec()),
+            ))),
             Tree::Sequence(items) => {
                 StackCipherText::Sequence(items.into_iter().map(Tree::into_ciphertext).collect())
             }
@@ -202,7 +272,7 @@ impl Tree {
     /// key given twice, at any depth.
     fn is_clean(&self) -> bool {
         match self {
-            Tree::Passthrough => false,
+            Tree::Passthrough | Tree::PassthroughBytes => false,
             Tree::Sequence(items) => items.iter().all(Tree::is_clean),
             Tree::Map(entries) => {
                 let unique = entries
@@ -235,11 +305,14 @@ fn model_accepts(tree: &Tree, plan: &Plan) -> bool {
     rows.iter().all(|row| {
         plan.fields()
             .iter()
-            .filter(|field| field.has_ciphertext())
+            .filter(|field| field.has_ciphertext() || field.target().is_some())
             .all(|field| {
-                // The field exactly once in the row, and `"c"` exactly once
-                // in its output map: a second copy is how a stale ciphertext
-                // would be smuggled in beside the current one.
+                // The field exactly once in the row, and its one node
+                // exactly once in its output map: a second copy is how a
+                // stale ciphertext would be smuggled in beside the current
+                // one. A sealed field's node is `"c"` and must be clean; a
+                // target field's is `"eql"` and must be a passthrough of
+                // bytes — the EQL value, whose ciphertext is inside it.
                 let mut named = row
                     .iter()
                     .filter(|(name, _)| name.as_str() == field.name())
@@ -247,14 +320,23 @@ fn model_accepts(tree: &Tree, plan: &Plan) -> bool {
                 let (Some(Tree::Map(outputs)), None) = (named.next(), named.next()) else {
                     return false;
                 };
-                let mut cs = outputs
+                let key = if field.target().is_some() {
+                    Name::Eql
+                } else {
+                    Name::C
+                };
+                let mut nodes = outputs
                     .iter()
-                    .filter(|(name, _)| *name == Name::C)
+                    .filter(|(name, _)| *name == key)
                     .map(|(_, node)| node);
-                let (Some(ct), None) = (cs.next(), cs.next()) else {
+                let (Some(node), None) = (nodes.next(), nodes.next()) else {
                     return false;
                 };
-                ct.is_clean()
+                if field.target().is_some() {
+                    matches!(node, Tree::PassthroughBytes)
+                } else {
+                    node.is_clean()
+                }
             })
     })
 }
@@ -276,7 +358,7 @@ fuzz_target!(|case: Case| {
     let Case { plan: spec, record } = case;
     // The plan parser is fuzzed for panics only: its rules are a separate
     // model, and a plan that does not parse has no record to check.
-    let Ok(plan) = plan(spec.into_value()) else {
+    let Ok(plan) = plan_with(spec.into_value(), &Fixed) else {
         if trace {
             eprintln!("verdict: plan refused");
         }
