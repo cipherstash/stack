@@ -5174,6 +5174,51 @@ mod tests {
             assert_eq!(generates(&cipher), 0, "nothing minted");
         }
 
+        /// The resolver opens a target value through the client, which opens
+        /// every keyset's values; `confine` is what holds it to the scope's
+        /// keyset. A plan of one target field, so no lowered leaf can cause
+        /// the refusal instead: this fails if `confine` stops calling
+        /// `scoped_to`, and one tenant's cipher opens another's column.
+        #[tokio::test]
+        async fn a_keyset_scope_refuses_a_target_value_from_another_keyset() {
+            let cipher = cipher().await;
+            let named = |n: &str| IdentifiedBy::Name(n.to_string().into());
+            let acme = cipher.keyset(named("acme")).await.expect("acme");
+            let globex = cipher.keyset(named("globex")).await.expect("globex");
+            let plan = plan_with(
+                obj(vec![("email", target_spec(label("email"), TEXT_EQ))]),
+                &FakeEql,
+            )
+            .unwrap();
+            let sealed = encrypt_with(&acme, obj(vec![("email", s("a@x"))]), &plan, &FakeEql)
+                .unwrap()
+                .await
+                .unwrap();
+            let result = decrypt_with(Scope::Keyset(globex), sealed, &plan, &FakeEql)
+                .expect("the record fits")
+                .await;
+            match result {
+                Err(crate::Error::ForeignKeyset { .. }) => {}
+                Err(other) => panic!("refused, but not as a foreign keyset: {other}"),
+                Ok(_) => panic!("globex opened acme's target value"),
+            }
+            assert_eq!(
+                retrieves(&cipher),
+                0,
+                "refused before any key was retrieved"
+            );
+            // acme's own scope, and the client, still open it.
+            let sealed = encrypt_with(&acme, obj(vec![("email", s("a@x"))]), &plan, &FakeEql)
+                .unwrap()
+                .await
+                .unwrap();
+            let opened = decrypt_with(Scope::Keyset(acme), sealed, &plan, &FakeEql)
+                .unwrap()
+                .await
+                .expect("its own keyset opens it");
+            assert_eq!(text_of(&object(opened)[0].1), "a@x");
+        }
+
         #[test]
         fn the_target_and_output_forms_are_exclusive() {
             let both = obj(vec![
