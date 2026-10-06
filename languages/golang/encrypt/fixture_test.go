@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -77,8 +78,11 @@ func TestGeneratedCodeOpensTheRustRecordFixture(t *testing.T) {
 		t.Fatalf("seed: %v (%d bytes)", err, len(seedBytes))
 	}
 	c, err := encrypt.NewDeterministicClient(context.Background(), [32]byte(seedBytes))
-	if err != nil {
+	if errors.Is(err, encrypt.ErrDeterministicGuestNotBuilt) || errors.Is(err, encrypt.ErrGuestNotBuilt) {
 		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 	defer c.Close()
 	ctx := context.Background()

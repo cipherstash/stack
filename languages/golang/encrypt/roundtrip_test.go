@@ -299,3 +299,48 @@ func TestAMatchIndexNeedsText(t *testing.T) {
 		t.Fatalf("zero values round trip: %v %+v", err, back)
 	}
 }
+
+// Per-call hygiene, on every pull request: once Encrypt has returned, the
+// plaintext it carried is nowhere in guest memory — every buffer staged for a
+// call is wiped before its result comes back — so between calls the guest
+// holds the keyset cache and nothing of the program's data.
+func TestPlaintextDoesNotRemainInGuestMemory(t *testing.T) {
+	c := deterministicClient(t)
+	cipher := c.DefaultKeyset()
+	const plaintext = "residency-probe-4111-b1c2d3e4f5"
+	const email = "residency-probe@example.com"
+	if _, err := testusers.Encrypt(t.Context(), cipher, []testusers.User{{ID: 1, Age: 34, Email: email, Notes: plaintext}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{plaintext, email} {
+		if n := bytes.Count(encrypt.GuestMemory(t, c), []byte(needle)); n != 0 {
+			t.Fatalf("%q found %d times in guest memory after Encrypt", needle, n)
+		}
+	}
+}
+
+// The same check after Decrypt, which is the call that puts plaintext back
+// into the guest. It fails today: exactly one copy of each opened string
+// stays in the guest's freed heap. The host's copy is wiped (the output
+// buffer goes through se_dealloc) and the FfiValue's Protected payloads are
+// wiped on drop; the copy that stays is made inside vitaminc-aead-value's
+// FfiValue decoder, which copies the decrypted leaf's bytes into a new
+// Protected (value.rs, the `tags::STRING` arm) and leaves the AEAD output
+// it copied from to drop unwiped. That is vitaminc's to fix; the skip
+// records it, and the test runs again once it is.
+func TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt(t *testing.T) {
+	t.Skip("known: one unwiped copy of each opened string remains after Decrypt; see the comment above (vitaminc-aead-value FfiValue decode)")
+	c := deterministicClient(t)
+	cipher := c.DefaultKeyset()
+	const plaintext = "residency-probe-4111-b1c2d3e4f5"
+	encrypted, err := testusers.Encrypt(t.Context(), cipher, []testusers.User{{ID: 1, Age: 34, Email: "probe@example.com", Notes: plaintext}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testusers.Decrypt(t.Context(), cipher, encrypted); err != nil {
+		t.Fatal(err)
+	}
+	if n := bytes.Count(encrypt.GuestMemory(t, c), []byte(plaintext)); n != 0 {
+		t.Fatalf("plaintext found %d times in guest memory after Decrypt", n)
+	}
+}

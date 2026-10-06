@@ -117,20 +117,25 @@ func TestLiveForeignKeysetIsRefusedBeforeRetrieval(t *testing.T) {
 	}
 }
 
-// Per-call hygiene on a real round trip: once Encrypt has returned, the
-// plaintext it was given is nowhere in guest memory — the staged input was
-// wiped by se_dealloc — so between calls the guest holds only the client
-// key and its keyset cache. The record is fully populated: a match index
-// over an empty string has no token and the engine refuses it (see
-// TestAMatchIndexNeedsText).
-func TestPlaintextDoesNotRemainInGuestMemoryAfterEncrypt(t *testing.T) {
+// The hermetic residency test (TestPlaintextDoesNotRemainInGuestMemory)
+// runs on every pull request; this is the same check across a real ZeroKMS
+// request, where the guest also stages the service's responses — wrapped
+// data keys — and must wipe those too.
+func TestPlaintextDoesNotRemainInGuestMemoryAfterLiveRoundTrip(t *testing.T) {
 	c := encrypt.LiveClient(t)
+	cipher := c.DefaultKeyset()
 	const plaintext = "residency-probe-4111-b1c2d3e4f5"
 	probe := testusers.User{ID: 1, Age: 34, Email: "probe@example.com", Notes: plaintext}
-	if _, err := testusers.Encrypt(t.Context(), c.DefaultKeyset(), []testusers.User{probe}); err != nil {
+	encrypted, err := testusers.Encrypt(t.Context(), cipher, []testusers.User{probe})
+	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
 	}
 	if n := bytes.Count(encrypt.GuestMemory(t, c), []byte(plaintext)); n != 0 {
-		t.Fatalf("plaintext found %d times in guest memory after Encrypt returned", n)
+		t.Fatalf("plaintext found %d times in guest memory after Encrypt", n)
+	}
+	// After Decrypt one copy remains; see the hermetic
+	// TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt for the cause.
+	if _, err := testusers.Decrypt(t.Context(), cipher, encrypted); err != nil {
+		t.Fatalf("Decrypt: %v", err)
 	}
 }
