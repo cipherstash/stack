@@ -58,14 +58,60 @@
 //!   sealed under the original.
 
 use stack_auth::AuthError;
+use stack_encrypt::ErrorPayload;
+use stack_guest_abi::last_error;
 use stack_kms::{GenerateKeyError, LoadKeysetError, RetrieveKeyError};
-use zerokms_protocol::ViturRequestErrorKind;
+use zerokms_protocol::{ViturRequestError, ViturRequestErrorKind};
 
 pub use stack_guest_abi::status::{
     STATUS_AUTH, STATUS_CONTEXT_MISMATCH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET, STATUS_INTERNAL,
     STATUS_KMS_CONFLICT, STATUS_KMS_FORBIDDEN, STATUS_KMS_NOT_FOUND, STATUS_KMS_OTHER,
     STATUS_KMS_TRANSPORT, STATUS_KMS_UNAUTHORIZED, STATUS_STATE, STATUS_TERM,
 };
+
+/// Record a sealing/opening error as the last error
+/// ([`last_error`]) and return its status: what every export's
+/// `map_err` calls, so the status a host acts on and the error it can ask
+/// for come from the one site.
+pub fn fail_error(error: &stack_encrypt::Error) -> u32 {
+    record(error);
+    status_for_error(error)
+}
+
+/// [`fail_error`] for a dynamic-path error.
+pub fn fail_dynamic(error: &stack_encrypt::dynamic::Error) -> u32 {
+    record(error);
+    status_for_dynamic(error)
+}
+
+/// Record an error with its structured fields and this guest's describer.
+fn record<E: ErrorPayload>(error: &E) {
+    last_error::record_with(error, error.payload(), &describe);
+}
+
+/// What this guest vouches for in a cause from another library: a ZeroKMS
+/// request error by its kind and static message (its response stays behind
+/// its own source), stack-kms's response classifications by their
+/// deliberately bodiless messages, and what [`last_error::describe_std`]
+/// knows. Anything else is reported only as a cause from another library.
+pub fn describe(cause: &(dyn std::error::Error + 'static)) -> Option<String> {
+    if let Some(error) = cause.downcast_ref::<ViturRequestError>() {
+        return Some(format!("ZeroKMS request failed ({error})"));
+    }
+    if let Some(error) = cause.downcast_ref::<stack_kms::FailureResponse>() {
+        return Some(format!("ZeroKMS responded with status {}", error.status));
+    }
+    if cause
+        .downcast_ref::<stack_kms::BaseUrlUnresolved>()
+        .is_some()
+        || cause
+            .downcast_ref::<stack_kms::UnexpectedContentType>()
+            .is_some()
+    {
+        return Some(cause.to_string());
+    }
+    last_error::describe_std(cause)
+}
 
 /// Map a sealing/opening error onto the ABI status word.
 ///

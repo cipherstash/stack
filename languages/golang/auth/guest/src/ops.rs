@@ -12,10 +12,11 @@
 //!
 //! # Errors
 //!
-//! Every function reports a [`crate::status`] code, never a message. A
-//! directory, id or filename that is not UTF-8, or an empty directory, is
-//! [`STATUS_ENCODING`]; everything else is `stack-profile`'s verdict
-//! ([`status_for_profile`]).
+//! Every function reports a [`crate::status`] code, and records the error
+//! behind it for `se_last_error`. A directory, id or filename that is not
+//! UTF-8, or an empty directory, is
+//! [`STATUS_ENCODING`](crate::status::STATUS_ENCODING); everything else is
+//! `stack-profile`'s verdict ([`fail_profile`]).
 //!
 //! # Copies
 //!
@@ -33,7 +34,9 @@ use stack_profile::{DeviceIdentity, ProfileStore};
 use vitaminc_aead_value::{transport as codec, FfiValue};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::status::{status_for_profile, STATUS_ENCODING, STATUS_INTERNAL};
+use stack_guest_abi::last_error::{internal, malformed};
+
+use crate::status::fail_profile;
 
 /// The file `secretkey.json`, as `stack-auth`'s device client writes it
 /// and `stack-kms`'s `SecretKey` reads it: the ZeroKMS client id and the
@@ -64,13 +67,13 @@ const AUTH_FILENAME: &str = "auth.json";
 pub fn store(dir: &[u8]) -> Result<ProfileStore, u32> {
     let dir = text(dir)?;
     if dir.is_empty() {
-        return Err(STATUS_ENCODING);
+        return Err(malformed("the store directory is empty"));
     }
     Ok(ProfileStore::new(dir))
 }
 
 fn text(bytes: &[u8]) -> Result<&str, u32> {
-    std::str::from_utf8(bytes).map_err(|_| STATUS_ENCODING)
+    std::str::from_utf8(bytes).map_err(|_| malformed("an input is not UTF-8"))
 }
 
 fn string(value: impl Into<String>) -> FfiValue {
@@ -83,7 +86,7 @@ fn optional(value: Option<&str>) -> FfiValue {
 
 fn encode(value: FfiValue) -> Result<Vec<u8>, u32> {
     let mut out = Vec::new();
-    codec::encode_value(value, &mut out).map_err(|_| STATUS_INTERNAL)?;
+    codec::encode_value(value, &mut out).map_err(|_| internal("an output did not encode"))?;
     Ok(out)
 }
 
@@ -92,7 +95,7 @@ pub fn current_workspace(dir: &[u8]) -> Result<Vec<u8>, u32> {
     store(dir)?
         .current_workspace()
         .map(String::into_bytes)
-        .map_err(|e| status_for_profile(&e))
+        .map_err(|e| fail_profile(&e))
 }
 
 /// Set the current workspace. The workspace must already have a directory;
@@ -101,7 +104,7 @@ pub fn set_current_workspace(dir: &[u8], id: &[u8]) -> Result<Vec<u8>, u32> {
     store(dir)?
         .set_current_workspace(text(id)?)
         .map(|()| Vec::new())
-        .map_err(|e| status_for_profile(&e))
+        .map_err(|e| fail_profile(&e))
 }
 
 /// Remove the current workspace selection. Empty output; nothing to remove
@@ -110,7 +113,7 @@ pub fn clear_current_workspace(dir: &[u8]) -> Result<Vec<u8>, u32> {
     store(dir)?
         .clear_current_workspace()
         .map(|()| Vec::new())
-        .map_err(|e| status_for_profile(&e))
+        .map_err(|e| fail_profile(&e))
 }
 
 /// The workspace ids with profile data on disk, sorted, as a codec array
@@ -118,7 +121,7 @@ pub fn clear_current_workspace(dir: &[u8]) -> Result<Vec<u8>, u32> {
 pub fn list_workspaces(dir: &[u8]) -> Result<Vec<u8>, u32> {
     let ids = store(dir)?
         .list_workspaces()
-        .map_err(|e| status_for_profile(&e))?;
+        .map_err(|e| fail_profile(&e))?;
     encode(FfiValue::Array(ids.into_iter().map(string).collect()))
 }
 
@@ -129,7 +132,7 @@ pub fn list_workspaces(dir: &[u8]) -> Result<Vec<u8>, u32> {
 pub fn workspace_dir(dir: &[u8], id: &[u8]) -> Result<Vec<u8>, u32> {
     let scoped = store(dir)?
         .workspace_store(text(id)?)
-        .map_err(|e| status_for_profile(&e))?;
+        .map_err(|e| fail_profile(&e))?;
     path_bytes(scoped.dir())
 }
 
@@ -139,7 +142,7 @@ pub fn workspace_dir(dir: &[u8], id: &[u8]) -> Result<Vec<u8>, u32> {
 pub fn lock_path(dir: &[u8], filename: &[u8]) -> Result<Vec<u8>, u32> {
     let path = store(dir)?
         .lock_path(text(filename)?)
-        .map_err(|e| status_for_profile(&e))?;
+        .map_err(|e| fail_profile(&e))?;
     path_bytes(&path)
 }
 
@@ -148,7 +151,7 @@ fn path_bytes(path: &std::path::Path) -> Result<Vec<u8>, u32> {
     // this module's bug, not the caller's.
     path.to_str()
         .map(|s| s.as_bytes().to_vec())
-        .ok_or(STATUS_INTERNAL)
+        .ok_or_else(|| internal("a store path is not UTF-8"))
 }
 
 /// `secretkey.json` in this store, as a codec object `{client_id,
@@ -157,7 +160,7 @@ fn path_bytes(path: &std::path::Path) -> Result<Vec<u8>, u32> {
 pub fn secret_key(dir: &[u8]) -> Result<Vec<u8>, u32> {
     let mut file: SecretKeyFile = store(dir)?
         .load(SECRET_KEY_FILENAME)
-        .map_err(|e| status_for_profile(&e))?;
+        .map_err(|e| fail_profile(&e))?;
     // Moved out rather than copied: `SecretKeyFile` wipes on drop, so its
     // fields cannot be moved out of it directly.
     let client_id = std::mem::take(&mut file.client_id);
@@ -180,7 +183,7 @@ pub fn secret_key(dir: &[u8]) -> Result<Vec<u8>, u32> {
 pub fn token(dir: &[u8]) -> Result<Vec<u8>, u32> {
     let token: Token = store(dir)?
         .load(AUTH_FILENAME)
-        .map_err(|e| status_for_profile(&e))?;
+        .map_err(|e| fail_profile(&e))?;
     encode(FfiValue::Object(vec![
         (
             "access_token".to_string(),
@@ -210,7 +213,7 @@ pub fn has_token(dir: &[u8]) -> Result<Vec<u8>, u32> {
 /// `device.json` in this store, read-only, as a codec object
 /// `{device_instance_id, device_name}`. Creating one is the CLI's.
 pub fn device_identity(dir: &[u8]) -> Result<Vec<u8>, u32> {
-    let identity = DeviceIdentity::load(&store(dir)?).map_err(|e| status_for_profile(&e))?;
+    let identity = DeviceIdentity::load(&store(dir)?).map_err(|e| fail_profile(&e))?;
     encode(FfiValue::Object(vec![
         (
             "device_instance_id".to_string(),

@@ -38,6 +38,7 @@
 use stack_encrypt::dynamic::{self, Scalar, Scope};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::IndexSpec;
+use stack_encrypt::ErrorPayload;
 use stack_encrypt::{
     BoxedPassthrough, CipherText, KeysetCipher, Label, SealedValue, StackCipherText,
 };
@@ -45,7 +46,9 @@ use stack_kms::DataKeySource;
 use vitaminc_aead_value::{transport as codec, FfiValue};
 use vitaminc_protected::Controlled;
 
-use crate::status::{status_for_dynamic, status_for_error, STATUS_ENCODING, STATUS_INTERNAL};
+use stack_guest_abi::last_error;
+
+use crate::status::{fail_dynamic, fail_error, STATUS_ENCODING, STATUS_INTERNAL};
 use crate::targets::resolver;
 
 /// Term kinds for `se_term`, part of the guest/host contract (the Go host
@@ -94,11 +97,11 @@ where
 {
     // The same proof every stack-encrypt leaf demands: an empty context is
     // `STATUS_ENCODING` here, before any derivation.
-    let context = dynamic::context(decode_value(context)?).map_err(|e| status_for_dynamic(&e))?;
+    let context = dynamic::context(decode_value(context)?).map_err(|e| fail_dynamic(&e))?;
     let (scalar, kind) = parse_term(decode_value(value)?, kind)?;
     dynamic::term(cipher, scalar, &kind, context)
         .await
-        .map_err(|e| status_for_dynamic(&e))
+        .map_err(|e| fail_dynamic(&e))
 }
 
 /// The static half of a term: the kind is one of the ABI's table, the value
@@ -116,11 +119,15 @@ fn parse_term(value: FfiValue, kind: u32) -> Result<(Scalar, IndexSpec), u32> {
         TERM_MATCH => IndexSpec::Match(MatchOptions::default()),
         TERM_ORE => IndexSpec::Ore,
         TERM_OPE => IndexSpec::Ope,
-        _ => return Err(STATUS_ENCODING),
+        _ => {
+            return Err(last_error::malformed(
+                "the term kind is not one of the four",
+            ))
+        }
     };
-    let scalar = Scalar::of(&value, &kind).map_err(|e| status_for_dynamic(&e))?;
+    let scalar = Scalar::of(&value, &kind).map_err(|e| fail_dynamic(&e))?;
     if !kind.supports(&scalar) {
-        return Err(STATUS_ENCODING);
+        return Err(fail_dynamic(&dynamic::Error::Term { field: None, kind }));
     }
     Ok((scalar, kind))
 }
@@ -158,9 +165,9 @@ where
 {
     let plan = parse_plan(plan)?;
     let tree = dynamic::record::encrypt_with(cipher, decode_value(source)?, &plan, &resolver())
-        .map_err(|e| status_for_dynamic(&e))?
+        .map_err(|e| fail_dynamic(&e))?
         .await
-        .map_err(|e| status_for_error(&e))?;
+        .map_err(|e| fail_error(&e))?;
     encode_tree(tree)
 }
 
@@ -193,9 +200,9 @@ where
     let plan = parse_plan(plan)?;
     let value =
         dynamic::record::decrypt_with(scope, decode_tree(record)?, &plan, expected, &resolver())
-            .map_err(|e| status_for_dynamic(&e))?
+            .map_err(|e| fail_dynamic(&e))?
             .await
-            .map_err(|e| status_for_error(&e))?;
+            .map_err(|e| fail_error(&e))?;
     encode_value(value)
 }
 
@@ -216,18 +223,19 @@ where
     K: DataKeySource + Sync + 'static,
 {
     let plan = parse_plan(plan)?;
-    let field = std::str::from_utf8(field).map_err(|_| STATUS_ENCODING)?;
+    let field = std::str::from_utf8(field)
+        .map_err(|_| last_error::malformed("the field name is not UTF-8"))?;
     dynamic::record::query(cipher, &plan, field, decode_value(value)?, &resolver())
-        .map_err(|e| status_for_dynamic(&e))?
+        .map_err(|e| fail_dynamic(&e))?
         .await
-        .map_err(|e| status_for_error(&e))
+        .map_err(|e| fail_error(&e))
 }
 
 /// A codec-encoded plan, parsed against this build's resolver: a target
 /// name this build cannot run is refused here, the same way at every
 /// export that takes a plan.
 fn parse_plan(plan: &[u8]) -> Result<dynamic::record::Plan, u32> {
-    dynamic::record::plan_with(decode_value(plan)?, &resolver()).map_err(|e| status_for_dynamic(&e))
+    dynamic::record::plan_with(decode_value(plan)?, &resolver()).map_err(|e| fail_dynamic(&e))
 }
 
 // =============================================================================
@@ -305,7 +313,7 @@ pub mod validate {
     pub fn term(value: &[u8], context: &[u8], kind: u32) -> Result<(), u32> {
         dynamic::context(decode_value(context)?)
             .map(drop)
-            .map_err(|e| status_for_dynamic(&e))?;
+            .map_err(|e| fail_dynamic(&e))?;
         parse_term(decode_value(value)?, kind).map(drop)
     }
 
@@ -315,8 +323,7 @@ pub mod validate {
     /// against its field's outputs).
     pub fn record(source: &[u8], plan: &[u8]) -> Result<(), u32> {
         let plan = parse_plan(plan)?;
-        dynamic::record::check_source(decode_value(source)?, &plan)
-            .map_err(|e| status_for_dynamic(&e))
+        dynamic::record::check_source(decode_value(source)?, &plan).map_err(|e| fail_dynamic(&e))
     }
 
     /// A target query's inputs, as [`query`] takes them: the plan parses
@@ -324,15 +331,28 @@ pub mod validate {
     /// and the value is of the field's declared kind.
     pub fn query(value: &[u8], plan: &[u8], field: &[u8]) -> Result<(), u32> {
         let plan = parse_plan(plan)?;
-        let field = std::str::from_utf8(field).map_err(|_| STATUS_ENCODING)?;
+        let field = std::str::from_utf8(field)
+            .map_err(|_| last_error::malformed("the field name is not UTF-8"))?;
+        let refuse = |reason| {
+            fail_dynamic(&dynamic::Error::Plan {
+                field: Some(field.to_owned()),
+                reason,
+            })
+        };
         let field = plan
             .fields()
             .iter()
-            .find(|candidate| candidate.name() == field && candidate.target().is_some())
-            .ok_or(STATUS_ENCODING)?;
+            .find(|candidate| candidate.name() == field)
+            .ok_or_else(|| refuse(dynamic::Reason::NoSuchField))?;
+        if field.target().is_none() {
+            return Err(refuse(dynamic::Reason::NotATarget));
+        }
         let value = decode_value(value)?;
         if field.field_type().is_some_and(|kind| !kind.holds(&value)) {
-            return Err(STATUS_ENCODING);
+            return Err(fail_dynamic(&dynamic::Error::Source {
+                field: Some(field.name().to_owned()),
+                reason: dynamic::Reason::FieldType,
+            }));
         }
         Ok(())
     }
@@ -345,7 +365,7 @@ pub mod validate {
     pub fn record_tree(record: &[u8], plan: &[u8], expected: Option<&Label>) -> Result<(), u32> {
         let plan = parse_plan(plan)?;
         dynamic::record::check_record(decode_tree(record)?, &plan, expected)
-            .map_err(|e| status_for_dynamic(&e))
+            .map_err(|e| fail_dynamic(&e))
     }
 }
 
@@ -354,7 +374,8 @@ pub mod validate {
 // =============================================================================
 
 fn decode_value(bytes: &[u8]) -> Result<FfiValue, u32> {
-    codec::decode_value(&mut codec::Reader::new(bytes)).map_err(|_| STATUS_ENCODING)
+    codec::decode_value(&mut codec::Reader::new(bytes))
+        .map_err(|_| last_error::malformed("an input is not a value in the transport codec"))
 }
 
 /// Encode a value tree into a buffer sized **before** the first byte is
@@ -374,12 +395,17 @@ fn encode_value(value: FfiValue) -> Result<Vec<u8>, u32> {
 }
 
 fn decode_tree(bytes: &[u8]) -> Result<StackCipherText, u32> {
-    let tree: BytesTree = codec::decode_ciphertext_boxed(&mut codec::Reader::new(bytes))
-        .map_err(|_| STATUS_ENCODING)?;
+    let tree: BytesTree =
+        codec::decode_ciphertext_boxed(&mut codec::Reader::new(bytes)).map_err(|_| {
+            last_error::malformed("the record is not a ciphertext tree in the transport codec")
+        })?;
     // Structural only — a decoded leaf proves nothing until its AEAD opens
     // (see the `SealedValue` docs).
     map_leaves(tree, &mut |l: Vec<u8>| {
-        SealedValue::from_bytes(&l).map_err(|_| STATUS_ENCODING)
+        SealedValue::from_bytes(&l).map_err(|e| {
+            last_error::record(&e, e.payload());
+            STATUS_ENCODING
+        })
     })
 }
 
