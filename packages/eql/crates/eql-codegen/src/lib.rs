@@ -12,6 +12,7 @@ pub mod consts;
 pub mod context;
 pub mod dump;
 pub mod generate;
+pub mod go_eql;
 pub mod operator_surface;
 pub mod ordering;
 pub mod targets;

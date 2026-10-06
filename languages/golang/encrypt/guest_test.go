@@ -715,9 +715,24 @@ func TestPlanCheckAnswersWithoutACipher(t *testing.T) {
 			t.Errorf("plan %d: %v, want ErrEncoding", i, err)
 		}
 	}
+	// The test binary links encrypt/eql (through the generated test types),
+	// so the embedded guest is the build with the EQL types: it lists the
+	// catalog and runs a plan that names TextEq. The build without them is
+	// asked the same questions in eql_test.go.
 	targets, err := k.Targets(ctx)
-	if err != nil || len(targets) != 0 {
-		t.Fatalf("Targets = %v, %v; want none in this build", targets, err)
+	if err != nil || len(targets) == 0 {
+		t.Fatalf("Targets = %v, %v; want the catalog in the eql build", targets, err)
+	}
+	found := false
+	for _, target := range targets {
+		found = found || target.Name == "TextEq"
+	}
+	if !found {
+		t.Fatalf("TextEq is not among the targets: %v", targets)
+	}
+	textEq := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "email", Kind: record.String, Target: "TextEq"}}}
+	if err := k.Check(ctx, textEq); err != nil {
+		t.Fatalf("a TextEq field: %v", err)
 	}
 }
 

@@ -69,7 +69,7 @@ func TestDeclarationRefusals(t *testing.T) {
 		"opaque with another field": DeclareOpaque("u").Encrypt("a", String),
 		"identity of no field":      Declare("u").Encrypt("a", String).Identity("b", "x"),
 		"seals nothing":             Declare("u").Passthrough("id"),
-		"EQL not available":         Declare("u").EncryptInto("email", String, "TextEq"),
+		"EQL type unnamed":          Declare("u").EncryptInto("email", String, ""),
 		"json index":                Declare("u").EncryptIndex("a", String, encrypt.JSON()),
 		"name not a label":          Declare("u").Encrypt("1a", String),
 	}
@@ -78,8 +78,15 @@ func TestDeclarationRefusals(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	if _, err := Declare("u").EncryptInto("email", String, "TextEq").plan(); err == nil || !strings.Contains(err.Error(), "EQL types are not available yet") {
+	// encrypt_into lowers to the plan's target form: the EQL type's name,
+	// no outputs. Whether the engine holds the type is the engine's answer,
+	// at the first call.
+	p, err := Declare("u").EncryptInto("email", String, "TextEq").plan()
+	if err != nil {
 		t.Fatalf("encrypt_into: %v", err)
+	}
+	if f := p.Field("email"); f == nil || f.Target != "TextEq" || len(f.Outputs) != 0 || f.Kind != record.String {
+		t.Fatalf("encrypt_into lowered to %+v", p.Fields)
 	}
 }
 

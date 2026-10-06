@@ -86,16 +86,25 @@ pub fn target_gap(family: &DomainFamily, domain: &Domain) -> Option<&'static str
     })
 }
 
-/// One row of the generated table, computed from the catalog.
-struct Row {
-    name: String,
-    family: &'static str,
-    suffix: String,
-    plaintext: Option<&'static str>,
-    sql_domain: String,
-    indexes: Vec<&'static str>,
-    query: Option<(String, String)>,
-    reason: Option<&'static str>,
+/// One row of the generated table, computed from the catalog: what both
+/// the Rust `TARGETS` table and the Go `encrypt/eql` package
+/// ([`crate::go_eql`]) are rendered from, so the two cannot disagree.
+pub(crate) struct Row {
+    pub(crate) name: String,
+    pub(crate) family: &'static str,
+    pub(crate) suffix: String,
+    pub(crate) plaintext: Option<&'static str>,
+    pub(crate) sql_domain: String,
+    pub(crate) indexes: Vec<&'static str>,
+    /// The query twin's struct identifier and SQL domain, if the type
+    /// answers a query.
+    pub(crate) query: Option<(String, String)>,
+    pub(crate) reason: Option<&'static str>,
+}
+
+/// Every row, in catalog order: one per stored domain.
+pub(crate) fn rows() -> Vec<Row> {
+    stored_payload_domains().map(|(f, d)| row(f, d)).collect()
 }
 
 /// The PascalCase of a bare domain name — `TextOrdOre` is family `text`,
@@ -166,7 +175,7 @@ fn option_str(value: Option<&str>) -> TokenStream {
 
 /// Render the generated `crates/eql-bindings/src/v3/targets.rs`.
 pub fn render_targets_rs() -> String {
-    let rows: Vec<Row> = stored_payload_domains().map(|(f, d)| row(f, d)).collect();
+    let rows = rows();
 
     let entries: TokenStream = rows
         .iter()

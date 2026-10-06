@@ -75,6 +75,38 @@ func TestExtensionNestsToTheLeftAndIdentityReplacesTheName(t *testing.T) {
 	}
 }
 
+func TestTargetFieldWiresItsTypeInsteadOfOutputs(t *testing.T) {
+	p := &Plan{Context: []string{"users"}, Fields: []Field{
+		{Name: "email", Kind: String, Target: "TextEq"},
+		{Name: "notes", Kind: String, Outputs: []Output{Ciphertext}},
+	}}
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !p.Fields[0].IsTarget() || !p.Fields[0].HasCiphertext() || p.Fields[1].IsTarget() {
+		t.Fatal("a target field is one, and is opened; a sealed field is not a target")
+	}
+	want := vcvalue.Object{
+		{Key: "email", Value: vcvalue.Object{
+			{Key: "context", Value: []any{"users", "email"}},
+			{Key: "target", Value: "TextEq"},
+			{Key: "type", Value: "string"},
+		}},
+		{Key: "notes", Value: vcvalue.Object{
+			{Key: "context", Value: []any{"users", "notes"}},
+			{Key: "outputs", Value: []any{"c"}},
+			{Key: "type", Value: "string"},
+		}},
+	}
+	if wire := p.Wire(); !reflect.DeepEqual(wire, want) {
+		t.Fatalf("Wire = %#v", wire)
+	}
+	both := &Plan{Context: []string{"users"}, Fields: []Field{{Name: "email", Target: "TextEq", Outputs: []Output{Ciphertext}}}}
+	if err := both.Validate(); err == nil {
+		t.Fatal("a field with a target and outputs was accepted")
+	}
+}
+
 func TestValidateRefusals(t *testing.T) {
 	one := func(f Field) *Plan { return &Plan{Context: []string{"users"}, Fields: []Field{f}} }
 	cases := map[string]*Plan{

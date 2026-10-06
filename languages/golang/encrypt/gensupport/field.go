@@ -65,13 +65,21 @@ func (f Field[T]) Encrypt(ctx context.Context, c *encrypt.Cipher, v T) (Output, 
 	return outputOf(sealed[0][f.name]), nil
 }
 
-// Query derives the EQL query value for one value of an encrypt_into field.
-// No EQL type is available in this build of the engine, so it fails.
-func (f Field[T]) Query(context.Context, *encrypt.Cipher, T) (Output, error) {
+// Query derives the EQL query value for one value of an encrypt_into field:
+// the operand that matches stored values of the field, in Output.EQL. The
+// engine runs the EQL type's own query plan, with no data key.
+func (f Field[T]) Query(ctx context.Context, c *encrypt.Cipher, v T) (Output, error) {
 	if f.err != nil {
 		return Output{}, f.err
 	}
-	return Output{}, fmt.Errorf("gensupport: %s: EQL types are not available yet", f.name)
+	if c == nil {
+		return Output{}, fmt.Errorf("gensupport: %s: Query needs a cipher", f.name)
+	}
+	out, err := c.Query(ctx, f.plan, f.name, v)
+	if err != nil {
+		return Output{}, err
+	}
+	return Output{EQL: out}, nil
 }
 
 // Equality derives the field's equality term for one value.

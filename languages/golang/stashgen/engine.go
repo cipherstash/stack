@@ -104,7 +104,7 @@ func (e *guestEngine) Check(ctx context.Context, d Declaration) error {
 			field := d.field(f.Name)
 			return &FieldError{Type: d.Type, Field: field.GoName, Reason: fmt.Sprintf(
 				"the engine refuses the declaration: %s over a %s value under %q (%v)",
-				describeOutputs(f.Outputs), kindWord(f.Kind), plan.Descriptor(f), err)}
+				describeField(f), kindWord(f.Kind), plan.Descriptor(f), err)}
 		}
 	}
 	if err := e.checker.Check(ctx, plan); err != nil {
@@ -138,10 +138,30 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 		rf := record.Field{Name: f.Name, Identity: f.Identity, Kind: wireKind(f.GoType)}
 		switch f.Verb {
 		case VerbEncryptInto:
-			// The reader refused anything the engine does not produce; a
-			// producible type reaches the engine's check in the next build,
-			// which lowers it. Until then no type is producible.
-			return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("the engine cannot seal into the EQL type %s in this build", f.EQLType)}
+			if len(eqlTypes) == 0 {
+				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: "EQL types are not available yet; the engine produces none in this build"}
+			}
+			var eqlType *EQLType
+			for i := range eqlTypes {
+				if eqlTypes[i].Name == f.EQLType {
+					eqlType = &eqlTypes[i]
+				}
+			}
+			if eqlType == nil {
+				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("the engine cannot produce the EQL type %s yet: no EQL type has that name", f.EQLType)}
+			}
+			if !eqlType.Producible {
+				// The engine's own reason, from se_targets: the generator
+				// holds no copy of why a type waits.
+				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("the engine cannot produce the EQL type %s yet: %s", f.EQLType, eqlType.Reason)}
+			}
+			// The engine checks the kind too (se_plan_check refuses a
+			// "type" other than the EQL type's plaintext); saying it here
+			// names the two kinds.
+			if eqlType.Plaintext != KindOther && eqlType.Plaintext != f.GoType.Kind {
+				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals a %s, and %s is %s", f.EQLType, eqlType.Plaintext, f.GoType, f.GoType.Kind)}
+			}
+			rf.Target = f.EQLType
 		case VerbEncrypt, VerbEncryptIndex:
 			rf.Outputs = append(rf.Outputs, record.Ciphertext)
 		}
@@ -224,6 +244,17 @@ func kindWord(k record.Kind) string {
 		return "composite"
 	}
 	return string(k)
+}
+
+// describeField names what the engine was asked for a field: the EQL type
+// it names, or its outputs. For an EQL type the engine refuses, the refusal
+// is the engine's (an unknown or unproducible type, a kind other than its
+// plaintext, an extended context); the name is what a reader needs.
+func describeField(f record.Field) string {
+	if f.IsTarget() {
+		return "the EQL type " + f.Target
+	}
+	return describeOutputs(f.Outputs)
 }
 
 func describeOutputs(outputs []record.Output) string {

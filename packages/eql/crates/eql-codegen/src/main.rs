@@ -69,6 +69,23 @@ fn main() -> ExitCode {
         }
     }
 
+    // `go-eql`: regenerate the committed Go package encrypt/eql in the Go
+    // module (languages/golang) from the catalog: one Go type per EQL type,
+    // the query types, and the Types table. Wired into `mise run
+    // types:generate` beside `bindings`; `types:check` diffs the file.
+    if args.len() == 2 && args[1] == "go-eql" {
+        match eql_codegen::go_eql::generate_go_eql(&out_root()) {
+            Ok(path) => {
+                println!("generated {}", path.display());
+                return ExitCode::SUCCESS;
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
     // `order`: print the install order of the whole src/v3 SQL surface, one
     // repo-relative path per line, dependency before dependent. Consumed by
     // tasks/build.sh (`> src/deps-ordered-v3.txt`), which concatenates the files
@@ -139,5 +156,6 @@ fn main() -> ExitCode {
     eprintln!("       eql-codegen list-schemas (print owned schemas, public first)");
     eprintln!("       eql-codegen dump-catalog (print catalog surface as JSON)");
     eprintln!("       eql-codegen bindings   (regenerate eql-bindings Rust payload types)");
+    eprintln!("       eql-codegen go-eql     (regenerate the Go package encrypt/eql)");
     ExitCode::from(2)
 }

@@ -254,8 +254,9 @@ echo "size with EQL types:    $(wc -c < ../eql/wasm/stack_encrypt_guest_eql.wasm
 """
 
 # The deterministic-kms TEST build with the EQL types: what the hermetic Go
-# tests of a TextEq field load (encrypt/eql's tests), as the one above is
-# what the other hermetic tests load. Same gate as the deterministic build.
+# tests of a TextEq field load, as the one above is what the other hermetic
+# tests load. Same gate, and the same rule: nothing test-only in an embed, so
+# it lands under encrypt/testdata beside the other test build.
 [tasks."wasm:guest:build:eql:deterministic"]
 description = "Build the deterministic-kms TEST build of the stack-encrypt WASI guest with the EQL types (features eql,deterministic-kms), for the hermetic Go tests of EQL fields"
 shell = "bash -c"
@@ -272,9 +273,8 @@ python3 "$root/scripts/check-wasm-imports.py" "$module" \\
   --deny-prefix wasi_snapshot_preview1:sock_ \\
   --deny-prefix wasi_snapshot_preview1:fd_prestat \\
   --require wasi_snapshot_preview1:random_get
-mkdir -p ../eql/wasm
-cp "$module" ../eql/wasm/stack_encrypt_guest_eql_deterministic.wasm
-echo "test build at languages/golang/encrypt/eql/wasm/stack_encrypt_guest_eql_deterministic.wasm"
+cp "$module" ../testdata/stack_encrypt_guest_eql_deterministic.wasm
+echo "test build at languages/golang/encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm"
 """
 
 [tasks."wasm:guest:test"]

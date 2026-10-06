@@ -148,9 +148,13 @@ It ignores its own output file when it loads the package, so a stale file does n
 The same input always gives the same file: fields keep their declared order, and the file carries no version and no time.
 
 `stashgen` checks each declaration with the engine, and holds no copy of the engine's rules: it runs the WASI guest the SDK embeds and asks it, one field at a time, so the error names the field.
-It asks the engine for the EQL types it holds: each name, its plaintext type, its indexes and its query form.
-This build of the engine produces no EQL type, so `encrypt_into` is refused with "EQL types are not available yet"; the next release adds `TextEq` and `encrypt/eql`.
+It asks the engine for the EQL types it holds: each name, its plaintext type, its indexes, its query form, and whether the engine produces it today.
+The command links the build of the engine that holds the EQL types (`encrypt/eql`), so it can answer for every type; a generated file imports `encrypt/eql` only when it names one.
+The engine produces `TextEq` today; `encrypt_into` with any other type is refused with the type's name.
 Separate columns work today for four indexes: `equality`, `match`, `ore` and `ope`.
+
+A field with `encrypt_into` is stored under its table and column, which is what an EQL value records in its `i`.
+A cipher extended with a tenant part (`cipher.Extend(...)`) has no column for the extended label, so it refuses a struct with an `encrypt_into` field; use `index=` columns for a tenant-extended struct until that rule is settled.
 
 ## When stashgen stops
 
@@ -225,5 +229,5 @@ A protobuf message with a `oneof` cannot be generated from a policy: protoc-gen-
 
 ## Status
 
-The command runs the WASI guest the SDK embeds, so it needs the guest built: `mise run wasm:guest:build`.
+The command runs the WASI guest the SDK embeds, so it needs the guests built: `mise run wasm:guest:build wasm:guest:build:eql`.
 The library, `github.com/cipherstash/stack/languages/golang/stashgen`, takes any `Engine`; `stashgen.Generate` takes one with `WithEngine`, and `stashgen/enginetest` has a static one for tests.

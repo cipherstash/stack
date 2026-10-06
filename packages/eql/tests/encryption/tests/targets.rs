@@ -526,3 +526,54 @@ mod the_table {
         assert_eq!(all.as_array().unwrap().len(), targets::targets().len());
     }
 }
+
+mod the_cross_language_fixture {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// `fixtures/text_eq_query.json`: the `TextEqQuery` for one plaintext
+    /// under the key source every test in the repository derives terms
+    /// under (`FakeDataKeySource`'s index key, keyset nil), as the Rust
+    /// dispatch produces it. The Go SDK's hermetic test seals the same
+    /// plaintext through generated code over the deterministic guest build
+    /// — whose index key is the same — and asserts its `Fields.Email.Query`
+    /// bytes equal these, which is the cross-language half of the proof
+    /// that a Go `encrypt_into=TextEq` field runs this plan and no other.
+    /// Regenerate with `EQL_UPDATE_FIXTURES=1`; the bytes must not change
+    /// otherwise.
+    fn fixture_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/text_eq_query.json")
+    }
+
+    const PLAINTEXT: &str = "bob@example.com";
+
+    #[tokio::test]
+    async fn the_text_eq_query_fixture_is_what_the_dispatch_derives() {
+        let (cipher, calls) = common::cipher().await;
+        let keyset = cipher.default_keyset();
+        let query = targets::query("TextEq", &keyset, &email(), text(PLAINTEXT))
+            .unwrap()
+            .await
+            .unwrap();
+        assert!(calls.lock().unwrap().generate.is_empty(), "a query mints nothing");
+        let fixture = serde_json::json!({
+            "_comment": "The TextEqQuery eql-bindings derives for the plaintext under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit.",
+            "table": "users",
+            "column": "email",
+            "plaintext": PLAINTEXT,
+            "query": String::from_utf8(query.clone()).unwrap(),
+        });
+        let rendered = serde_json::to_string_pretty(&fixture).unwrap() + "\n";
+        if std::env::var_os("EQL_UPDATE_FIXTURES").is_some() {
+            std::fs::write(fixture_path(), &rendered).unwrap();
+        }
+        let committed = std::fs::read_to_string(fixture_path())
+            .expect("fixtures/text_eq_query.json is committed; EQL_UPDATE_FIXTURES=1 writes it");
+        assert_eq!(
+            committed, rendered,
+            "the committed fixture is what the dispatch derives today"
+        );
+        let typed: TextEqQuery = keyset.encrypt_as(&PLAINTEXT.to_owned(), column()).await.unwrap();
+        assert_eq!(query, serde_json::to_vec(&typed).unwrap(), "and what the typed path derives");
+    }
+}

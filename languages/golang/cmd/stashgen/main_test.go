@@ -118,9 +118,10 @@ func TestRunFlags(t *testing.T) {
 	}
 }
 
-// The real engine: the embedded guest, which produces no EQL type in this
-// build, so a struct with encrypt_into is refused and nothing is written.
-// Skips when the guest is not built.
+// The real engine: the embedded guest, which the command links with the EQL
+// types, so a struct with encrypt_into=TextEq generates, and a type the
+// engine cannot produce yet is refused with nothing written. Skips when the
+// guest is not built.
 func TestRunAsksTheEmbeddedEngine(t *testing.T) {
 	checker, err := encrypt.NewChecker(context.Background())
 	if err != nil {
@@ -129,16 +130,32 @@ func TestRunAsksTheEmbeddedEngine(t *testing.T) {
 	_ = checker.Close()
 	dir := writeModule(t, map[string]string{"model.go": userSource})
 	var stdout, stderr bytes.Buffer
+	if code := run([]string{"-type", "User"}, dir, &stdout, &stderr, stashgen.GuestEngine); code != 0 {
+		t.Fatalf("exit %d, want 0\n%s", code, stderr.String())
+	}
+	written, err := os.ReadFile(filepath.Join(dir, "user_stash.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(written), "eql.TextEq") || !strings.Contains(string(written), `EncryptInto("email", gensupport.String, "TextEq")`) {
+		t.Fatalf("the generated file does not name the EQL type:\n%s", written)
+	}
+	// A type the engine cannot produce yet: refused by name, nothing written.
+	unproducible := strings.Replace(userSource, "encrypt_into=TextEq", "encrypt_into=TextMatch", 1)
+	dir = writeModule(t, map[string]string{"model.go": unproducible})
+	stderr.Reset()
 	if code := run([]string{"-type", "User"}, dir, &stdout, &stderr, stashgen.GuestEngine); code != 1 {
 		t.Fatalf("exit %d, want 1\n%s", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "EQL types are not available yet") {
+	// Refused by the generator with the engine's reason, before the engine
+	// is asked: se_targets lists the type as not producible.
+	if !strings.Contains(stderr.String(), "cannot produce the EQL type TextMatch yet") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(dir, "user_stash.go")); !os.IsNotExist(err) {
 		t.Fatal("a file was written after the engine refused")
 	}
-	// Separate columns are what the engine runs today.
+	// Separate columns, as before.
 	columns := strings.Replace(userSource, "encrypt_into=TextEq", "encrypt,index=equality;match", 1)
 	dir = writeModule(t, map[string]string{"model.go": columns})
 	stderr.Reset()

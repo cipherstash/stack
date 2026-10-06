@@ -67,6 +67,12 @@ const (
 	Passthrough Output = "passthrough"
 )
 
+// EQLKey is the stored key a target field's EQL value rides under: not an
+// output a plan asks for (the field names a Target instead), but the key of
+// its one node in a sealed record, fixed by stack-encrypt's
+// dynamic::record::EQL_KEY.
+const EQLKey = "eql"
+
 // IsTerm reports whether the output is an index term.
 func (o Output) IsTerm() bool { return o != Ciphertext && o != "" }
 
@@ -80,8 +86,31 @@ type Field struct {
 	Identity string
 	// Kind is the declared type, or Untyped.
 	Kind Kind
-	// Outputs are the field's outputs: Ciphertext and/or terms, at least one.
+	// Outputs are the field's outputs: Ciphertext and/or terms, at least one
+	// — unless the field names a Target, which has none of its own.
 	Outputs []Output
+	// Target is the EQL type the field seals into (encrypt_into), such as
+	// TextEq, or "". A field has outputs or a target, never both: the EQL
+	// type's own plan decides what is sealed and which terms sit beside it,
+	// and the engine returns the finished value under EQLKey.
+	Target string
+}
+
+// IsTarget reports whether the field names an EQL type.
+func (f Field) IsTarget() bool { return f.Target != "" }
+
+// HasCiphertext reports whether the field's stored node is opened on
+// decrypt: a ciphertext output, or an EQL value.
+func (f Field) HasCiphertext() bool {
+	if f.IsTarget() {
+		return true
+	}
+	for _, o := range f.Outputs {
+		if o == Ciphertext {
+			return true
+		}
+	}
+	return false
 }
 
 // Plan is a declaration as the engine reads it: one context, any extension,
@@ -220,6 +249,12 @@ func (p *Plan) Validate() error {
 		if !f.Kind.Known() {
 			return fmt.Errorf("record: field %q: unknown kind %q", f.Name, f.Kind)
 		}
+		if f.IsTarget() {
+			if len(f.Outputs) != 0 {
+				return fmt.Errorf("record: field %q names the EQL type %s and outputs; a field has one or the other", f.Name, f.Target)
+			}
+			continue
+		}
 		if len(f.Outputs) == 0 {
 			return fmt.Errorf("record: field %q has no output", f.Name)
 		}
@@ -266,9 +301,9 @@ func (p *Plan) Field(name string) *Field {
 }
 
 // Wire renders the plan as the guest parses it: per field, its context
-// (the label, extended), its outputs and its type; with a context field,
-// the plan-level "context_field" key and that field's own entry, a
-// passthrough of type string. Validate first.
+// (the label, extended), its outputs or its target, and its type; with a
+// context field, the plan-level "context_field" key and that field's own
+// entry, a passthrough of type string. Validate first.
 func (p *Plan) Wire() vcvalue.Object {
 	out := make(vcvalue.Object, 0, len(p.Fields)+2)
 	if p.ContextField != "" {
@@ -282,13 +317,15 @@ func (p *Plan) Wire() vcvalue.Object {
 		)
 	}
 	for _, f := range p.Fields {
-		outputs := make([]any, len(f.Outputs))
-		for i, o := range f.Outputs {
-			outputs[i] = string(o)
-		}
-		spec := vcvalue.Object{
-			{Key: "context", Value: p.FieldContext(f)},
-			{Key: "outputs", Value: outputs},
+		spec := vcvalue.Object{{Key: "context", Value: p.FieldContext(f)}}
+		if f.IsTarget() {
+			spec = append(spec, vcvalue.Field{Key: "target", Value: f.Target})
+		} else {
+			outputs := make([]any, len(f.Outputs))
+			for i, o := range f.Outputs {
+				outputs[i] = string(o)
+			}
+			spec = append(spec, vcvalue.Field{Key: "outputs", Value: outputs})
 		}
 		if f.Kind != Untyped {
 			spec = append(spec, vcvalue.Field{Key: "type", Value: string(f.Kind)})
@@ -345,10 +382,13 @@ type Source = map[string]any
 // Outputs is what the engine produced for one sealed field, or what it
 // stored for the context field.
 type Outputs struct {
-	// Ciphertext is the frozen leaf bytes, or nil for an index-only field.
+	// Ciphertext is the frozen leaf bytes, or nil for an index-only field
+	// or a target field.
 	Ciphertext []byte
 	// Terms are the index terms by output, each its frozen bytes.
 	Terms map[Output][]byte
+	// EQL is the EQL value's JSON bytes for a field that names a Target.
+	EQL []byte
 	// Context is the context field's value as the record stores it, in the
 	// clear, and nothing for any other field.
 	Context string

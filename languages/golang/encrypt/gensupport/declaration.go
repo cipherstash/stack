@@ -129,7 +129,9 @@ func (d Declaration) Index(name string, kind Kind, indexes ...encrypt.Index) Dec
 	return d.add(field{name: name, kind: kind, verb: verbIndex, indexes: indexes})
 }
 
-// EncryptInto seals the field into one EQL value of the named type.
+// EncryptInto seals the field into one EQL value of the named type, such as
+// TextEq: the type's own plan decides what is sealed and which terms sit
+// beside it, and the stored field holds the value as it is.
 func (d Declaration) EncryptInto(name string, kind Kind, eqlType string) Declaration {
 	return d.add(field{name: name, kind: kind, verb: verbEncryptInto, eqlType: eqlType})
 }
@@ -181,6 +183,10 @@ func (d Declaration) add(f field) Declaration {
 		d.err = fmt.Errorf("gensupport: field %q: an indexed field names at least one index", f.name)
 		return d
 	}
+	if f.verb == verbEncryptInto && f.eqlType == "" {
+		d.err = fmt.Errorf("gensupport: field %q: EncryptInto names an EQL type", f.name)
+		return d
+	}
 	// Clip, so the append copies and never writes into an array that an
 	// earlier Declaration shares.
 	d.fields = append(slices.Clip(d.fields), f)
@@ -219,9 +225,11 @@ func (d Declaration) plan() (*record.Plan, error) {
 		rf := record.Field{Name: f.name, Identity: f.identity, Kind: record.Kind(f.kind)}
 		switch f.verb {
 		case verbEncryptInto:
-			// The next build of the engine lists its EQL types through
-			// se_targets; until then no declaration can seal into one.
-			return nil, fmt.Errorf("gensupport: field %q: EQL types are not available yet", f.name)
+			// The EQL type's own plan decides the outputs; the engine
+			// returns the finished value. Whether the engine holds the type
+			// is the engine's to say, at the first call (stashgen asked it
+			// when the file was written).
+			rf.Target = f.eqlType
 		case verbEncrypt:
 			rf.Outputs = []record.Output{record.Ciphertext}
 		case verbEncryptIndex:
