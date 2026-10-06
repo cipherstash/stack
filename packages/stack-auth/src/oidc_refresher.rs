@@ -22,8 +22,12 @@ use crate::{AuthError, SecretToken, Token};
 /// re-federates only when that JWT has no cached, unexpired CTS token, so the
 /// call is cheap on the hot path as long as the implementation is: provider
 /// SDKs (`clerk.session.getToken()`, `supabase.auth.getSession()`) cache their
-/// session locally and are fine to call per request. Implementations typically
-/// wrap such an SDK call, an FFI callback, or a test double.
+/// session locally and are fine to call per request. Return the same JWT for
+/// a user until the identity provider rotates it: the cache is keyed on the
+/// whole JWT, so a provider that mints a new JWT on every call (or bypasses
+/// its SDK's session cache) makes the strategy exchange on every call, and
+/// each new JWT takes a cache slot from another user. Implementations
+/// typically wrap such an SDK call, an FFI callback, or a test double.
 ///
 /// On native targets the trait carries `Send + Sync` bounds so the provider
 /// can be driven from `tokio::spawn` background work. On wasm32 the bounds

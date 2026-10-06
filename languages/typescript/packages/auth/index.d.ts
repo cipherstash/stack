@@ -122,7 +122,10 @@ export declare class OidcFederationStrategy {
    * finds no request, or the one the strategy was created in. One CTS token is
    * cached per distinct JWT, for up to `cacheCapacity` JWTs (1024 unless set;
    * the least recently used is dropped and exchanged again on its next call;
-   * `0` caches nothing). `baseUrl` pins the strategy to a specific CTS host.
+   * `0` caches nothing). Return the same JWT for a user until the identity
+   * provider rotates it: a `getJwt` that mints a new JWT on every call
+   * exchanges on every call, and each new JWT takes a slot from another user.
+   * `baseUrl` pins the strategy to a specific CTS host.
    */
   static create(
     workspaceCrn: string,

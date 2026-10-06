@@ -144,7 +144,10 @@ export declare class AccessKeyStrategy {
  * Build the strategy per request and capture the request in this closure
  * (e.g. `() => getClerkSessionToken(req)`): return a live token each time,
  * never one captured at startup, and never one read from a request context
- * the callback may not run inside.
+ * the callback may not run inside. Return the same JWT for a user until the
+ * identity provider rotates it: a callback that mints a new JWT on every call
+ * exchanges on every call, and each new JWT takes a cache slot from another
+ * user.
  */
 export type OidcProvider = () => string | Promise<string>;
 

@@ -128,7 +128,11 @@ export declare class OidcFederationStrategy {
    * back another user's token for the JWT it was given; that is defence in
    * depth, not a licence to share one strategy across requests. Keep the
    * callback cheap: identity-provider SDKs cache their session, so calling
-   * them per operation is fine.
+   * them per operation is fine. Return the same JWT for a user until the
+   * identity provider rotates it: the cache is keyed on the whole JWT, so
+   * a callback that mints a new JWT on every call makes the strategy
+   * exchange on every call, and each new JWT takes a cache slot from
+   * another user.
    *
    * `baseUrl`, when supplied, pins this strategy to a specific CTS host —
    * e.g. a self-hosted CTS or a local mock auth server. It takes precedence

@@ -376,7 +376,10 @@ impl OidcFederationStrategy {
     /// request in the closure (e.g. `() => getClerkSessionToken(req)`), as the
     /// edge examples do. The strategy keeps one CTS token per distinct JWT and
     /// exchanges a JWT only while it has no unexpired token, so it never hands
-    /// back another user's token for the JWT it was given.
+    /// back another user's token for the JWT it was given. Return the same
+    /// JWT for a user until the identity provider rotates it: a callback that
+    /// mints a new JWT on every call exchanges on every call, and each new JWT
+    /// takes a cache slot from another user.
     ///
     /// `baseUrl`, when supplied, pins this strategy to a specific CTS host —
     /// e.g. a self-hosted CTS or a local mock auth server. It overrides region
