@@ -1,8 +1,8 @@
 # Encrypt and store users with generated helpers
 
-This directory shows the planned path from a tagged struct to three database stores.
+This example shows the planned path from a tagged struct to three database stores: `database/sql`, GORM and [sqlc](https://github.com/sqlc-dev/sqlc).
 Each encrypted field uses one Encrypt Query Language (EQL) column.
-The Go software development kit (SDK) is planned and does not exist yet, so this code does not build in this repository.
+The Golang SDK for CipherStash Stack is planned and does not exist yet, so this code does not build in this repository.
 The [Go example index](../README.md) lists every example and what was checked.
 
 `user_stash.go` is written by hand.

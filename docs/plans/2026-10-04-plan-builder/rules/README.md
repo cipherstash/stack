@@ -1,8 +1,8 @@
 # Decide protobuf encryption from data categories
 
-This directory defines planned policy rules for `pb.Individual` fields.
+This example defines planned policy rules for `pb.Individual` fields.
 The first matching rule chooses each field's storage layout.
-The Go software development kit (SDK) is planned and does not exist yet, so this code does not build in this repository.
+The Golang SDK for CipherStash Stack is planned and does not exist yet, so this code does not build in this repository.
 The [Go example index](../README.md) lists every example and what was checked.
 
 ## What you will learn
@@ -17,6 +17,7 @@ The [Go example index](../README.md) lists every example and what was checked.
 - **Related:** [The plan's policy declarations](../../2026-10-04-plan-builder.md#declarations-from-a-policy), [the protobuf source walkthrough](../proto/README.md)
 - **Needs:** Understand the `data_categories` field option.
 
+A protobuf field can carry [data categories](https://ethyca.github.io/fideslang/taxonomy/data_categories/) from [Fideslang](https://ethyca.github.io/fideslang/), such as the category `user.contact.email`.
 `policy.Key` names the field option by its full name, `classification.data_categories`.
 `policy.FirstOf` evaluates each `policy.When` in order, and the first match decides.
 
@@ -71,7 +72,7 @@ var Individuals = policy.ForMessage(&pb.Individual{}, policy.Context("individual
 `OrElse(Base)` applies the shared rules when no message-specific rule matches.
 A field with no matching rule stops the planned generator.
 Adding a field to `Individual` does not stop the build.
-Continuous integration (CI) runs `go generate ./...` and fails when a generated file differs from the committed file.
+CI runs `go generate ./...` and fails when a generated file differs from the committed file.
 
 ## Run rules during generation
 

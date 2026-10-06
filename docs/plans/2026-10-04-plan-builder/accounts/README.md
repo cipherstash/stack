@@ -1,8 +1,8 @@
 # Preserve GORM fields and redact an account
 
-This directory shows an embedded GORM model, copied tags, and generated print methods.
+This example shows an embedded GORM model, copied tags, and generated print methods.
 It also distinguishes an unexported field from an omitted field.
-The Go software development kit (SDK) is planned and does not exist yet, so this code does not build in this repository.
+The Golang SDK for CipherStash Stack is planned and does not exist yet, so this code does not build in this repository.
 The [Go example index](../README.md) lists every example and what was checked.
 
 `account_stash.go` is written by hand.

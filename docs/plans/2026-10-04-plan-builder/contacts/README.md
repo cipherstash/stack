@@ -1,9 +1,9 @@
 # Encrypt a contact type from another package into separate columns
 
-This directory declares encryption for `crm.Contact`, a type from another package.
+This example declares encryption for `crm.Contact`, a type from another package.
 It stores ciphertexts and search terms in separate columns, with a model for GORM.
 An output is a ciphertext or one search term.
-The Go software development kit (SDK) is planned and does not exist yet, so this code does not build in this repository.
+The Golang SDK for CipherStash Stack is planned and does not exist yet, so this code does not build in this repository.
 The [Go example index](../README.md) lists every example and what was checked.
 
 `contactstash_stash.go` is written by hand.

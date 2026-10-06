@@ -1,10 +1,10 @@
 # Annotate protobuf fields for encryption rules
 
-This directory defines a protobuf field option and applies it to an `Individual` message.
-The option carries Fideslang data categories that the planned rules read during generation.
+This example defines a protobuf field option and applies it to an `Individual` message.
+The option carries [data categories](https://ethyca.github.io/fideslang/taxonomy/data_categories/) from [Fideslang](https://ethyca.github.io/fideslang/), a published taxonomy of personal data.
 `buf generate` works for these protobuf files.
 
-The Go software development kit (SDK) is planned and does not exist yet.
+The Golang SDK for CipherStash Stack is planned and does not exist yet.
 The rules that read the field options belong to the planned SDK.
 The [Go example index](../README.md) lists every example and what was checked.
 
@@ -21,8 +21,7 @@ The [Go example index](../README.md) lists every example and what was checked.
 - **Needs:** Nothing
 
 `classification.proto` extends `google.protobuf.FieldOptions` with `data_categories`.
-Its values use Fideslang data categories.
-Fideslang is a published taxonomy of personal data categories, such as `user.contact.email`.
+Each value names one Fideslang data category, such as `user.contact.email`.
 
 [`classification.proto`, lines 5 to 12](classification.proto#L5-L12)
 
@@ -79,7 +78,7 @@ plugins:
 Run `buf generate` in this directory to generate the package again.
 The committed files came from buf v1.50.0 and `protoc-gen-go` v1.26.0.
 Adding a field to `Individual` does not stop the build.
-Continuous integration (CI) runs `go generate ./...` and fails when a generated file differs from the committed file.
+CI runs `go generate ./...` and fails when a generated file differs from the committed file.
 
 ## What was checked
 

@@ -1,8 +1,8 @@
 # Store a protobuf message with mixed encrypted layouts
 
-This directory shows the generated file planned from the `Individual` policy rules.
+This example shows the generated file planned from the `Individual` policy rules.
 One message combines passthrough fields, separate columns, and one Encrypt Query Language (EQL) column.
-The Go software development kit (SDK) is planned and does not exist yet, so this code does not build in this repository.
+The Golang SDK for CipherStash Stack is planned and does not exist yet, so this code does not build in this repository.
 The [Go example index](../README.md) lists every example and what was checked.
 
 `individual_stash.go` is written by hand.
@@ -90,7 +90,7 @@ var codec = gensupport.New(gensupport.Generated[*pb.Individual, EncryptedIndivid
 
 The compiler finds a removed or retyped field through these named reads.
 Adding a field to `Individual` does not stop the build.
-Continuous integration (CI) runs `go generate ./...` and fails when a generated file differs from the committed file.
+CI runs `go generate ./...` and fails when a generated file differs from the committed file.
 
 > **Take care**
 >

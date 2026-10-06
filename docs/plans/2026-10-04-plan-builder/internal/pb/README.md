@@ -1,9 +1,9 @@
 # Use generated protobuf messages and field options
 
-This directory contains real `protoc-gen-go` output for the `Individual` message and its field option.
+This example contains real `protoc-gen-go` output for the `Individual` message and its field option.
 The rules use `pb.Individual`, while the individuals code uses its getters and exported fields.
 The planned `protosource` package reads the descriptors and `E_DataCategories`.
-The Go software development kit (SDK) is planned and does not exist yet, so those examples do not build in this repository.
+The Golang SDK for CipherStash Stack is planned and does not exist yet, so those examples do not build in this repository.
 The [Go example index](../../README.md) lists every example and what was checked.
 
 ## What you will learn
@@ -24,7 +24,7 @@ Run `buf generate` in [`proto/`](../../proto/) to generate the files again.
 A person must not edit them.
 
 Adding a field to `Individual` does not stop the build.
-Continuous integration (CI) runs `go generate ./...` and fails when a generated file differs from the committed file.
+CI runs `go generate ./...` and fails when a generated file differs from the committed file.
 
 [`individual.pb.go`, lines 1 to 7](individual.pb.go#L1-L7)
 

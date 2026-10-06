@@ -1,8 +1,8 @@
 # Stand in for a type in another package
 
-This directory stands in for a package that the program does not own.
+This example stands in for a package that the program does not own.
 Its `crm.Contact` type has no `stash` tags because another package controls its source.
-`crm` imports no Go software development kit (SDK) code.
+`crm` imports no code from the Golang SDK for CipherStash Stack.
 
 The SDK is planned and does not exist yet.
 The [`contacts` package](../contacts/README.md) uses SDK code, so that package does not build in this repository.

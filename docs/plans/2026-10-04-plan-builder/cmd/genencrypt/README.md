@@ -1,8 +1,8 @@
 # Generate encryption code from protobuf rules
 
-This directory contains the command that is planned to turn protobuf rules into a generated file.
+This example contains the command that is planned to turn protobuf rules into a generated file.
 It connects the protobuf source, `rules.Individuals`, and the requested output path.
-The Go software development kit (SDK) is planned and does not exist yet, so this code does not build in this repository.
+The Golang SDK for CipherStash Stack is planned and does not exist yet, so this code does not build in this repository.
 The [Go example index](../../README.md) lists every example and what was checked.
 
 ## What you will learn

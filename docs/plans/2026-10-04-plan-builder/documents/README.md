@@ -1,8 +1,8 @@
 # Encrypt a document as one opaque value
 
-This directory encrypts each `Document` as one ciphertext column.
+This example encrypts each `Document` as one ciphertext column.
 Its fields have no tags because the opaque layout does not expose or index them separately.
-The Go software development kit (SDK) is planned and does not exist yet, so this code does not build in this repository.
+The Golang SDK for CipherStash Stack is planned and does not exist yet, so this code does not build in this repository.
 The [Go example index](../README.md) lists every example and what was checked.
 
 `document_stash.go` is written by hand.

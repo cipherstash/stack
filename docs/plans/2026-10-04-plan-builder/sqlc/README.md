@@ -1,10 +1,10 @@
 # Generate sqlc code for Encrypt Query Language columns
 
-This directory configures sqlc for a `users` table with two Encrypt Query Language (EQL) columns.
+This example configures [sqlc](https://github.com/sqlc-dev/sqlc) for a `users` table with two Encrypt Query Language (EQL) columns.
 It also defines the queries that generate the `userdb` package.
 `sqlc generate` ran for these SQL and YAML files.
 
-The Go software development kit (SDK) is planned and does not exist yet.
+The Golang SDK for CipherStash Stack is planned and does not exist yet.
 The generated package names the planned `encrypt/eql` package, so it does not build in this repository.
 The [Go example index](../README.md) lists every example and what was checked.
 

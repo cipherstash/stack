@@ -1,9 +1,9 @@
 # Use the generated sqlc package with the encrypted type
 
-This directory contains sqlc's generated database package for the `users` example.
+This example is the database package that [sqlc](https://github.com/sqlc-dev/sqlc) generates for the [`users` example](../../users/README.md).
 Its structs match `users.EncryptedUser`, so the store uses Go conversions instead of field copies.
 The generated fields use planned Encrypt Query Language (EQL) types.
-The Go software development kit (SDK) is planned and does not exist yet, so this code does not build in this repository.
+The Golang SDK for CipherStash Stack is planned and does not exist yet, so this code does not build in this repository.
 The [Go example index](../../README.md) lists every example and what was checked.
 
 ## What you will learn
