@@ -19,7 +19,7 @@ import (
 
 	"github.com/cipherstash/stack/languages/golang/auth"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/sys"
 )
@@ -145,7 +145,7 @@ func TestImportSurfaceIsWASIPlusTransport(t *testing.T) {
 	if !reflect.DeepEqual(transportImports, want) {
 		t.Fatalf("transport imports = %v, want %v", transportImports, want)
 	}
-	for name := range map[string]bool{"se_alloc": true, "se_dealloc": true, "se_cipher_init": true, "se_shutdown": true, "se_keyset": true, "se_encrypt": true, "se_decrypt": true, "se_encrypt_element": true, "se_decrypt_element": true, "se_term": true, "se_encrypt_record": true, "se_decrypt_record": true} {
+	for name := range map[string]bool{"se_alloc": true, "se_dealloc": true, "se_cipher_init": true, "se_shutdown": true, "se_keyset": true, "se_term": true, "se_encrypt_record": true, "se_decrypt_record": true, "se_plan_check": true, "se_targets": true} {
 		if _, ok := compiled.ExportedFunctions()[name]; !ok {
 			t.Errorf("guest does not export %s", name)
 		}
@@ -348,42 +348,6 @@ func TestOutOfRangeStatusIsTransport(t *testing.T) {
 				t.Fatalf("NewClient: %v, want ErrTransport", err)
 			}
 		})
-	}
-}
-
-// A bare empty part is an empty context, which the guest refuses at the
-// boundary — so the constructor refuses it first, rather than handing back
-// a Context that fails every call it is used in. A list is empty only when
-// every part is, so With may still carry one.
-func TestEmptyContextIsRefusedAtTheRoot(t *testing.T) {
-	for name, part := range map[string]any{"string": "", "bytes": []byte{}} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := NewContext(part); err == nil {
-				t.Fatal("NewContext accepted an empty part")
-			}
-			func() {
-				defer func() {
-					if recover() == nil {
-						t.Error("MustContext did not panic on an empty part")
-					}
-				}()
-				_ = MustContext(part)
-			}()
-		})
-	}
-	// The rule is the tree's: an empty part beside a non-empty one is a
-	// context the guest takes, so With must not inherit the root's check.
-	mixed, err := MustContext("users/age").With("")
-	if err != nil {
-		t.Fatalf("With(empty): %v", err)
-	}
-	guestOrSkip(t)
-	ctx := context.Background()
-	// No cipher on a raw instance, so a context the guest accepts reaches
-	// the state check — ErrState here means the context itself passed,
-	// where a refused one is ErrEncoding before it.
-	if _, err := rawInstance(t).DefaultKeyset().Term(ctx, uint32(34), mixed, Equality); !errors.Is(err, ErrState) {
-		t.Fatalf("Term under [non-empty, empty]: %v, want ErrState (the context accepted)", err)
 	}
 }
 
@@ -610,25 +574,47 @@ func mustHex(s string) []byte {
 	return b
 }
 
-type recordRow struct {
-	Age   uint32 `stash:"label=users/age,index=eq;ore"`
-	Email string `stash:"label=users/email,index=eq;match"`
+// usersPlan is the declaration the record tests send: what a generated
+// users package lowers its tags to.
+func usersPlan() *record.Plan {
+	return &record.Plan{Context: []string{"users"}, Fields: []record.Field{
+		{Name: "age", Kind: record.UInt32, Outputs: []record.Output{record.Ciphertext, record.Equality, record.Ore}},
+		{Name: "email", Kind: record.String, Outputs: []record.Output{record.Ciphertext, record.Equality, record.Match}},
+	}}
 }
 
-// A record decrypted under a plan that names a field it does not carry is
+func usersRow(age uint32, email string) record.Source {
+	return record.Source{"age": age, "email": email}
+}
+
+// fixtureRecord is a stored record of usersPlan with no real key behind it.
+func fixtureRecord() record.Sealed {
+	return record.Sealed{
+		"age":   {Ciphertext: fixtureLeaf, Terms: map[record.Output][]byte{record.Equality: {1}, record.Ore: {2}}},
+		"email": {Ciphertext: fixtureLeaf},
+	}
+}
+
+// A record opened under a plan that seals a field it does not carry is
 // refused on the host, with the field named, before the guest is asked.
 func TestMismatchedPlanIsRefusedBeforeTheGuest(t *testing.T) {
 	ctx := context.Background()
 	c := rawInstance(t)
-	record := EncryptedRecord{"Age": {Ciphertext: Sealed(fixtureLeaf)}}
-	plan, err := NewPlan(FieldPlan{Field: "Email", Name: "email", Context: label(t, "users/email").Context()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out []struct{ Email string }
-	err = c.DecryptRecords(ctx, []EncryptedRecord{record}, &out, WithPlan(plan))
-	if err == nil || errors.Is(err, ErrState) || !strings.Contains(err.Error(), `no ciphertext for field "email"`) {
+	partial := record.Sealed{"age": {Ciphertext: fixtureLeaf}}
+	_, err := c.DefaultKeyset().Open(ctx, usersPlan(), []record.Sealed{partial})
+	if !errors.Is(err, errNoCiphertext) || errors.Is(err, ErrState) || !strings.Contains(err.Error(), `field "email"`) {
 		t.Fatalf("mismatched plan: %v, want the host's refusal naming the field", err)
+	}
+	// A source row missing a field, or carrying one the plan does not name,
+	// is refused the same way.
+	for name, row := range map[string]record.Source{
+		"missing": {"age": uint32(1)},
+		"extra":   {"age": uint32(1), "email": "a@b.c", "stray": "x"},
+	} {
+		_, err := c.DefaultKeyset().Seal(ctx, usersPlan(), []record.Source{row})
+		if !errors.Is(err, ErrEncoding) || errors.Is(err, ErrState) {
+			t.Errorf("%s row: %v, want ErrEncoding before the guest", name, err)
+		}
 	}
 }
 
@@ -641,59 +627,32 @@ func TestGuestAcceptsEveryEncodingThisPackageBuilds(t *testing.T) {
 	def := c.DefaultKeyset()
 	named := c.Keyset(KeysetName("acme"))
 	byID := c.Keyset(KeysetID{9})
-	ct := map[string]any{"name": Sealed(fixtureLeaf), "note": vcvalue.Plain{V: "clear"}}
-	record := EncryptedRecord{
-		"Age":   {Ciphertext: Sealed(fixtureLeaf), Equality: EqualityTerm{1}, Ore: OreTerm{2}},
-		"Email": {Ciphertext: Sealed(fixtureLeaf)},
-	}
-	rows := []recordRow{{Age: 1, Email: "a@b.c"}}
-	var out []recordRow
-	var one recordRow
-	type untaggedRow struct {
-		Age   uint32
-		Email string
-	}
-	plan, err := NewPlan(
-		FieldPlan{Field: "Age", Context: label(t, "users/age").Context(), Terms: []TermKind{Equality, Ore}},
-		FieldPlan{Field: "Email", Context: label(t, "users/email").Context(), Terms: []TermKind{Equality, Match}},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var planned []untaggedRow
+	tenant := def.Extend(uint64(7), "eu", []byte{1})
+	rows := []record.Source{usersRow(1, "a@b.c"), usersRow(2, "b@c.d")}
+	records := []record.Sealed{fixtureRecord(), fixtureRecord()}
 	calls := map[string]func() error{
-		"KeysetID by name":   func() error { _, err := named.KeysetID(ctx); return err },
-		"KeysetID by id":     func() error { _, err := byID.KeysetID(ctx); return err },
-		"KeysetID default":   func() error { _, err := def.KeysetID(ctx); return err },
-		"Encrypt":            func() error { _, err := def.Encrypt(ctx, map[string]any{"a": 1}, []byte("aad")); return err },
-		"EncryptElement":     func() error { _, err := named.EncryptElement(ctx, "row", nil); return err },
-		"Decrypt bound":      func() error { _, err := byID.Decrypt(ctx, ct, nil); return err },
-		"Decrypt any":        func() error { _, err := c.Decrypt(ctx, ct, []byte("aad")); return err },
-		"DecryptElement any": func() error { _, err := c.DecryptElement(ctx, Sealed(fixtureLeaf), nil); return err },
-		"Term equality":      func() error { _, err := def.Term(ctx, uint32(34), MustContext("users/age"), Equality); return err },
-		"Term match":         func() error { _, err := named.Term(ctx, "alice", MustContext("users/email"), Match); return err },
-		"Term ore extended": func() error {
-			c, _ := MustContext("users/age").With(uint64(7))
-			_, err := byID.Term(ctx, 1.5, c, Ore)
+		"KeysetID by name": func() error { _, err := named.KeysetID(ctx); return err },
+		"KeysetID by id":   func() error { _, err := byID.KeysetID(ctx); return err },
+		"KeysetID default": func() error { _, err := def.KeysetID(ctx); return err },
+		"Seal default":     func() error { _, err := def.Seal(ctx, usersPlan(), rows); return err },
+		"Seal named":       func() error { _, err := named.Seal(ctx, usersPlan(), rows[:1]); return err },
+		"Seal extended":    func() error { _, err := tenant.Seal(ctx, usersPlan(), rows); return err },
+		"Open bound":       func() error { _, err := byID.Open(ctx, usersPlan(), records); return err },
+		"Open extended":    func() error { _, err := tenant.Open(ctx, usersPlan(), records); return err },
+		"Open any":         func() error { _, err := c.Open(ctx, usersPlan(), records); return err },
+		"Derive equality":  func() error { _, err := def.Derive(ctx, usersPlan(), "age", record.Equality, uint32(34)); return err },
+		"Derive match":     func() error { _, err := named.Derive(ctx, usersPlan(), "email", record.Match, "alice"); return err },
+		"Derive ore ext":   func() error { _, err := tenant.Derive(ctx, usersPlan(), "age", record.Ore, uint32(1)); return err },
+		"Derive ope": func() error {
+			p := usersPlan()
+			p.Fields[0].Outputs = append(p.Fields[0].Outputs, record.Ope)
+			_, err := byID.Derive(ctx, p, "age", record.Ope, uint32(1))
 			return err
 		},
-		"Term ope bytes": func() error { _, err := def.Term(ctx, []byte{1}, MustContext("k"), Ope); return err },
-		"Term ext option": func() error {
-			_, err := byID.Term(ctx, 1.5, MustContext("users/age"), Ore, ExtendContext(uint64(7), "eu"))
+		"Seal untyped": func() error {
+			p := &record.Plan{Context: []string{"documents", "v2"}, Fields: []record.Field{{Name: "value", Outputs: []record.Output{record.Ciphertext}}}}
+			_, err := def.Seal(ctx, p, []record.Source{{"value": map[string]any{"title": "x", "tags": []string{"a"}}}})
 			return err
-		},
-		"EncryptRecords":       func() error { _, err := def.EncryptRecords(ctx, rows); return err },
-		"EncryptRecords ext":   func() error { _, err := named.EncryptRecords(ctx, &rows, ExtendContext(uint64(7), "eu")); return err },
-		"EncryptRecord":        func() error { _, err := byID.EncryptRecord(ctx, rows[0]); return err },
-		"DecryptRecords bound": func() error { return def.DecryptRecords(ctx, []EncryptedRecord{record}, &out) },
-		"DecryptRecords any":   func() error { return c.DecryptRecords(ctx, []EncryptedRecord{record, record}, &out) },
-		"DecryptRecord any":    func() error { return c.DecryptRecord(ctx, record, &one, ExtendContext("x")) },
-		"EncryptRecords plan": func() error {
-			_, err := def.EncryptRecords(ctx, []untaggedRow{{Age: 1, Email: "a@b.c"}}, WithPlan(plan))
-			return err
-		},
-		"DecryptRecords plan": func() error {
-			return c.DecryptRecords(ctx, []EncryptedRecord{record}, &planned, WithPlan(plan), ExtendContext(uint64(7)))
 		},
 	}
 	for name, call := range calls {
@@ -709,124 +668,56 @@ func TestGuestRefusesMalformedInputsBeforeState(t *testing.T) {
 	ctx := context.Background()
 	c := rawInstance(t)
 	def := c.DefaultKeyset()
-	type badRow struct {
-		Age float64 `stash:"label=users/age,index=eq"`
-	}
+	plan := usersPlan()
+	floatAge := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.Float64, Outputs: []record.Output{record.Ciphertext, record.Equality}}}}
+	matchInt := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.UInt32, Outputs: []record.Output{record.Ciphertext, record.Match}}}}
 	calls := map[string]func() error{
-		"float under equality":    func() error { _, err := def.Term(ctx, 1.5, MustContext("k"), Equality); return err },
-		"integer under match":     func() error { _, err := def.Term(ctx, 1, MustContext("k"), Match); return err },
-		"container as term value": func() error { _, err := def.Term(ctx, []any{1}, MustContext("k"), Ore); return err },
-		// NewContext refuses this one now (see
-		// TestEmptyContextIsRefusedAtTheRoot); built by hand so the guest's
-		// own boundary check stays covered from this side too.
-		"empty context part": func() error {
-			_, err := def.Term(ctx, 1, Context{node: ""}, Equality)
+		"float under equality":    func() error { _, err := def.Derive(ctx, floatAge, "age", record.Equality, 1.5); return err },
+		"integer under match":     func() error { _, err := def.Derive(ctx, matchInt, "age", record.Match, uint32(1)); return err },
+		"container as term value": func() error { _, err := def.Derive(ctx, plan, "age", record.Equality, []any{1}); return err },
+		"a kind the type refuses": func() error { _, err := def.Seal(ctx, matchInt, []record.Source{usersRow(1, "x")}); return err },
+		"a value of another kind": func() error {
+			_, err := def.Seal(ctx, plan, []record.Source{{"age": "thirty", "email": "x"}})
 			return err
 		},
-		"unknown term kind":      func() error { _, err := def.Term(ctx, 1, MustContext("k"), TermKind(9)); return err },
-		"name with spaces":       func() error { _, err := c.Keyset(KeysetName("not a name")).KeysetID(ctx); return err },
-		"empty name":             func() error { _, err := c.Keyset(KeysetName("")).KeysetID(ctx); return err },
-		"any as a keyset":        func() error { _, err := c.Keyset(anyKeyset{}).KeysetID(ctx); return err },
-		"float under eq in plan": func() error { _, err := def.EncryptRecords(ctx, []badRow{{1.5}}); return err },
-		"malformed leaf": func() error {
-			_, err := c.Decrypt(ctx, Sealed{1, 2, 3}, nil)
+		"a non-leaf under c": func() error {
+			_, err := def.Open(ctx, plan, []record.Sealed{{"age": {Ciphertext: []byte{0xff}}, "email": {Ciphertext: fixtureLeaf}}})
 			return err
 		},
-		"record without c": func() error {
-			return c.DecryptRecord(ctx, EncryptedRecord{"Age": {Equality: EqualityTerm{1}}, "Email": {Ciphertext: Sealed(fixtureLeaf)}}, new(recordRow))
-		},
-		// ExtendContext checks nothing when it is built; Context.With
-		// refuses the part when a call applies it. A call that dropped
-		// that error would run under a context missing the extension:
-		// a probe that matches no rows, or rows no probe matches.
-		"bad ext part in a term": func() error {
-			_, err := def.Term(ctx, 1, MustContext("k"), Equality, ExtendContext(1.5))
-			return err
-		},
-		"bad ext part in a record write": func() error {
-			_, err := def.EncryptRecords(ctx, []recordRow{{Age: 1, Email: "a@b.c"}}, ExtendContext(1.5))
-			return err
-		},
-		"bad ext part in a record read": func() error {
-			record := EncryptedRecord{"Age": {Ciphertext: Sealed(fixtureLeaf)}, "Email": {Ciphertext: Sealed(fixtureLeaf)}}
-			return c.DecryptRecord(ctx, record, new(recordRow), ExtendContext(1.5))
-		},
+		"a term the field lacks":              func() error { _, err := def.Derive(ctx, plan, "age", record.Match, uint32(1)); return err },
+		"a field the plan lacks":              func() error { _, err := def.Derive(ctx, plan, "name", record.Equality, "x"); return err },
+		"an empty context segment":            func() error { p := usersPlan(); p.Context = []string{""}; _, err := def.Seal(ctx, p, nil); return err },
+		"an extension the codec cannot carry": func() error { _, err := def.Extend(1.5).Seal(ctx, plan, nil); return err },
+		"a nil keyset selector":               func() error { _, err := c.Keyset(nil).Seal(ctx, plan, nil); return err },
 	}
 	for name, call := range calls {
-		err := call()
-		if errors.Is(err, ErrState) {
-			t.Errorf("%s: reached the cipher (ErrState); must be refused at parse", name)
-		} else if err == nil {
-			t.Errorf("%s: accepted", name)
+		if err := call(); !errors.Is(err, ErrEncoding) {
+			t.Errorf("%s: %v, want ErrEncoding", name, err)
 		}
 	}
 }
 
-// NewPlan leaves two rules to the record call: every field under one table
-// (the label's leading segments), and no two fields under one label. The
-// guest's lowering refuses both at parse, before it looks for a cipher, as
-// the caller's input (ErrEncoding), on the write and on the read.
-func TestGuestRefusesAPlanNewPlanLeavesToTheCall(t *testing.T) {
+// se_plan_check answers with no cipher: a plan the engine runs passes, a
+// plan it refuses is ErrEncoding, never ErrState.
+func TestPlanCheckAnswersWithoutACipher(t *testing.T) {
 	ctx := context.Background()
 	c := rawInstance(t)
-	type row struct {
-		Age   uint32
-		Email string
+	k := &Checker{c: c}
+	if err := k.Check(ctx, usersPlan()); err != nil {
+		t.Fatalf("a good plan: %v", err)
 	}
-	record := EncryptedRecord{
-		"Age":   {Ciphertext: Sealed(fixtureLeaf)},
-		"Email": {Ciphertext: Sealed(fixtureLeaf)},
+	refused := []*record.Plan{
+		{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.UInt32, Outputs: []record.Output{record.Ciphertext, record.Match}}}},
+		{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.Float64, Outputs: []record.Output{record.Equality}}}},
 	}
-	for name, fields := range map[string][]FieldPlan{
-		"two tables": {
-			{Field: "Age", Context: label(t, "users/age").Context()},
-			{Field: "Email", Context: label(t, "accounts/email").Context()},
-		},
-		"one label twice": {
-			{Field: "Age", Context: label(t, "users/age").Context(), Terms: []TermKind{Equality}},
-			{Field: "Email", Context: label(t, "users/age").Context(), Terms: []TermKind{Equality}},
-		},
-	} {
-		p, err := NewPlan(fields...)
-		if err != nil {
-			t.Fatalf("%s: NewPlan refused it: %v", name, err)
-		}
-		_, err = c.DefaultKeyset().EncryptRecords(ctx, []row{{Age: 1, Email: "a@b.c"}}, WithPlan(p))
-		if !errors.Is(err, ErrEncoding) {
-			t.Errorf("%s: EncryptRecords err = %v, want ErrEncoding", name, err)
-		}
-		var out row
-		if err := c.DecryptRecord(ctx, record, &out, WithPlan(p)); !errors.Is(err, ErrEncoding) {
-			t.Errorf("%s: DecryptRecord err = %v, want ErrEncoding", name, err)
+	for i, p := range refused {
+		if err := k.Check(ctx, p); !errors.Is(err, ErrEncoding) {
+			t.Errorf("plan %d: %v, want ErrEncoding", i, err)
 		}
 	}
-}
-
-// A bad ExtendContext part fails the call for that reason, on the probe and
-// on both record directions. TestGuestRefusesMalformedInputsBeforeState
-// shows the call never reaches the cipher, but a call that ignored the
-// error and went on with an empty context would be refused too, by the
-// guest, for another reason; only the error's own words tell the two apart.
-func TestBadExtensionPartFailsTheCall(t *testing.T) {
-	ctx := context.Background()
-	c := rawInstance(t)
-	def := c.DefaultKeyset()
-	bad := ExtendContext(uint64(7), 1.5)
-	record := EncryptedRecord{"Age": {Ciphertext: Sealed(fixtureLeaf)}, "Email": {Ciphertext: Sealed(fixtureLeaf)}}
-	for name, call := range map[string]func() error{
-		"Term": func() error {
-			_, err := def.Term(ctx, 1, MustContext("k"), Equality, bad)
-			return err
-		},
-		"EncryptRecords": func() error {
-			_, err := def.EncryptRecords(ctx, []recordRow{{Age: 1, Email: "a@b.c"}}, bad)
-			return err
-		},
-		"DecryptRecord": func() error { return c.DecryptRecord(ctx, record, new(recordRow), bad) },
-	} {
-		if err := call(); err == nil || !strings.Contains(err.Error(), "float64 is not a context part") {
-			t.Errorf("%s with a float64 extension part: %v, want the part refused", name, err)
-		}
+	targets, err := k.Targets(ctx)
+	if err != nil || len(targets) != 0 {
+		t.Fatalf("Targets = %v, %v; want none in this build", targets, err)
 	}
 }
 
@@ -839,8 +730,8 @@ func TestClosedClientIsState(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatalf("second Close: %v", err)
 	}
-	if _, err := c.DefaultKeyset().Encrypt(ctx, "x", nil); !errors.Is(err, ErrState) {
-		t.Fatalf("Encrypt after Close: %v", err)
+	if _, err := c.DefaultKeyset().Seal(ctx, usersPlan(), []record.Source{usersRow(1, "x")}); !errors.Is(err, ErrState) {
+		t.Fatalf("Seal after Close: %v", err)
 	}
 }
 
@@ -865,8 +756,9 @@ func TestHostilePointerLengthPairsAreStatusesNotTraps(t *testing.T) {
 		for name, fn := range map[string]func() ([]uint64, error){
 			"se_cipher_init": func() ([]uint64, error) { return inst.cipherInit.Call(ctx, uint64(staged.Ptr), hostile) },
 			"se_keyset":      func() ([]uint64, error) { return inst.keyset.Call(ctx, uint64(staged.Ptr), hostile) },
-			"se_encrypt": func() ([]uint64, error) {
-				return inst.encrypt.Call(ctx, uint64(staged.Ptr), hostile, 0, 0, uint64(staged.Ptr), 4)
+			"se_plan_check":  func() ([]uint64, error) { return inst.planCheck.Call(ctx, uint64(staged.Ptr), hostile) },
+			"se_encrypt_record": func() ([]uint64, error) {
+				return inst.encryptRecord.Call(ctx, uint64(staged.Ptr), hostile, uint64(staged.Ptr), 4, uint64(staged.Ptr), 4)
 			},
 		} {
 			res, err := fn()
@@ -886,7 +778,7 @@ func TestHostilePointerLengthPairsAreStatusesNotTraps(t *testing.T) {
 		t.Fatalf("dealloc with a mismatched length trapped: %v", err)
 	}
 	// The instance still works.
-	if _, err := c.DefaultKeyset().Encrypt(ctx, "alive", nil); !errors.Is(err, ErrState) {
+	if _, err := c.DefaultKeyset().Seal(ctx, usersPlan(), []record.Source{usersRow(1, "alive")}); !errors.Is(err, ErrState) {
 		t.Fatalf("instance poisoned: %v", err)
 	}
 }

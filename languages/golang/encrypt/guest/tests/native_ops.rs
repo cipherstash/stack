@@ -205,239 +205,6 @@ fn row(age: u32, name: &str) -> FfiValue {
 // Values
 // =============================================================================
 
-#[test]
-fn value_round_trips_through_the_guest_ops() {
-    let cipher = cipher();
-    let value = obj(vec![
-        ("email", s("alice@example.com")),
-        ("age", FfiValue::UInt32(34)),
-        ("id", FfiValue::Passthrough(Box::new(FfiValue::Int64(7)))),
-    ]);
-
-    let ct = block_on(ops::encrypt_value(
-        &cipher.default_keyset(),
-        &encode(value),
-        b"users/42",
-        false,
-    ))
-    .expect("encrypt");
-    let pt = block_on(ops::decrypt_value(
-        Scope::Client(&cipher),
-        &ct,
-        b"users/42",
-        false,
-    ))
-    .expect("decrypt");
-
-    let FfiValue::Object(entries) = decode(&pt) else {
-        panic!("expected an object back");
-    };
-    assert_eq!(entries.len(), 3);
-    assert_eq!(text(&entries[0].1), "alice@example.com");
-    assert!(matches!(entries[1].1, FfiValue::UInt32(34)));
-    assert!(
-        matches!(&entries[2].1, FfiValue::Passthrough(inner) if matches!(**inner, FfiValue::Int64(7)))
-    );
-
-    assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 1);
-    assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), 1);
-}
-
-#[test]
-fn element_mode_round_trips() {
-    let cipher = cipher();
-    let ct = block_on(ops::encrypt_value(
-        &cipher.default_keyset(),
-        &encode(s("row-0")),
-        b"users",
-        true,
-    ))
-    .expect("encrypt element");
-    let pt = block_on(ops::decrypt_value(
-        Scope::Client(&cipher),
-        &ct,
-        b"users",
-        true,
-    ))
-    .expect("decrypt element");
-    assert_eq!(text(&decode(&pt)), "row-0");
-
-    // An element is not a plain value: opening it without the element
-    // derivation must fail authentication.
-    assert_eq!(
-        block_on(ops::decrypt_value(
-            Scope::Client(&cipher),
-            &ct,
-            b"users",
-            false
-        )),
-        Err(STATUS_AUTH)
-    );
-}
-
-#[test]
-fn guest_leaves_are_the_frozen_storage_encoding() {
-    // A leaf lifted out of the guest's codec framing is exactly the
-    // `SealedValue::from_bytes` storage format — a native cipher opens it.
-    let cipher = cipher();
-    let ct = block_on(ops::encrypt_value(
-        &cipher.default_keyset(),
-        &encode(s("durable")),
-        b"ctx",
-        false,
-    ))
-    .expect("encrypt");
-
-    let CipherText::Single(leaf_bytes) = decode_tree(&ct) else {
-        panic!("expected a single leaf");
-    };
-    let leaf = SealedValue::from_bytes(&leaf_bytes).expect("frozen leaf encoding");
-    // A guest leaf seals the *value model's* typed payload (`[tag] ++
-    // payload`, the vitaminc sealed-leaf format), so the native open goes
-    // through `FfiValue`'s own `Decrypt` — not a bare `String`. The host's
-    // AAD is bytes, and a byte context is not a text context (vitaminc 0.5
-    // types its leaves), so the native side opens under the byte slice.
-    let value: FfiValue = block_on(cipher.decrypt(CipherText::Single(leaf), b"ctx".as_slice()))
-        .expect("native decrypt of a guest leaf");
-    assert_eq!(text(&value), "durable");
-}
-
-#[test]
-fn wrong_aad_and_malformed_inputs_map_to_statuses() {
-    let cipher = cipher();
-    let ct = block_on(ops::encrypt_value(
-        &cipher.default_keyset(),
-        &encode(s("x")),
-        b"ctx",
-        false,
-    ))
-    .expect("encrypt");
-
-    // Wrong AAD: authentication, not encoding. (The fake key source ignores
-    // descriptors; against ZeroKMS the retrieve is refused first, as
-    // `STATUS_KMS_FORBIDDEN` — see `status.rs`.)
-    assert_eq!(
-        block_on(ops::decrypt_value(
-            Scope::Client(&cipher),
-            &ct,
-            b"other",
-            false
-        )),
-        Err(STATUS_AUTH)
-    );
-    // Garbage transport bytes on either path: encoding.
-    assert_eq!(
-        block_on(ops::encrypt_value(
-            &cipher.default_keyset(),
-            b"\xffgarbage",
-            b"ctx",
-            false
-        )),
-        Err(STATUS_ENCODING)
-    );
-    assert_eq!(
-        block_on(ops::decrypt_value(
-            Scope::Client(&cipher),
-            b"\xffgarbage",
-            b"ctx",
-            false
-        )),
-        Err(STATUS_ENCODING)
-    );
-    // A truncated leaf inside a well-formed tree: encoding (structural),
-    // never a parse of the wrong layout.
-    let CipherText::Single(leaf_bytes) = decode_tree(&ct) else {
-        panic!("expected a single leaf");
-    };
-    let mut out = Vec::new();
-    codec::encode_ciphertext::<Vec<u8>, FfiValue>(
-        &CipherText::Single(leaf_bytes[..10].to_vec()),
-        &mut out,
-    )
-    .expect("encode truncated");
-    assert_eq!(
-        block_on(ops::decrypt_value(
-            Scope::Client(&cipher),
-            &out,
-            b"ctx",
-            false
-        )),
-        Err(STATUS_ENCODING)
-    );
-}
-
-/// The value paths are the cipher-directed path, and take the AAD as
-/// `StackCipher::encrypt` does — any bytes, none included. An empty AAD
-/// seals under no context and opens under the same, and a null pointer with
-/// zero length is the same empty AAD (the ABI's `input` maps it so). Binding
-/// a value to a field is the record and term paths' job, where the context is
-/// a `NonEmpty`.
-#[test]
-fn an_empty_aad_round_trips_on_the_value_paths() {
-    let cipher = cipher();
-    let value = encode(s("x"));
-
-    for as_element in [false, true] {
-        let ct = block_on(ops::encrypt_value(
-            &cipher.default_keyset(),
-            &value,
-            b"",
-            as_element,
-        ))
-        .expect("encrypt under an empty aad");
-        let out = block_on(ops::decrypt_value(
-            Scope::Client(&cipher),
-            &ct,
-            b"",
-            as_element,
-        ))
-        .expect("decrypt under an empty aad");
-        assert_eq!(out, value, "element: {as_element}");
-
-        // Empty is a context like any other: not interchangeable with one
-        // that carries bytes.
-        assert_eq!(
-            block_on(ops::decrypt_value(
-                Scope::Client(&cipher),
-                &ct,
-                b"ctx",
-                as_element
-            )),
-            Err(STATUS_AUTH),
-            "element: {as_element}"
-        );
-    }
-
-    // Odd-looking but non-empty bytes are a context too, and bind.
-    let zeros = &[0u8; 8][..];
-    let ct = block_on(ops::encrypt_value(
-        &cipher.default_keyset(),
-        &value,
-        zeros,
-        false,
-    ))
-    .expect("encrypt");
-    let opened = decode(
-        &block_on(ops::decrypt_value(
-            Scope::Client(&cipher),
-            &ct,
-            zeros,
-            false,
-        ))
-        .expect("decrypt"),
-    );
-    assert_eq!(text(&opened), "x");
-    assert_eq!(
-        block_on(ops::decrypt_value(
-            Scope::Client(&cipher),
-            &ct,
-            b"ctx",
-            false
-        )),
-        Err(STATUS_AUTH)
-    );
-}
-
 // =============================================================================
 // Terms
 // =============================================================================
@@ -1153,51 +920,6 @@ fn keyset_named<'c>(
     block_on(cipher.keyset(IdentifiedBy::Name(name.to_string().into()))).expect("select keyset")
 }
 
-/// A value sealed under a tenant's keyset opens through that keyset, through
-/// `{"any"}`, and not through another tenant's — and the refusal costs no
-/// ZeroKMS call.
-#[test]
-fn a_value_opens_under_its_own_keyset_or_any_but_not_another() {
-    let cipher = cipher();
-    let acme = keyset_named(&cipher, "acme");
-    let globex = keyset_named(&cipher, "globex");
-    let ct = block_on(ops::encrypt_value(&acme, &encode(s("x")), b"ctx", false)).expect("encrypt");
-
-    let pt = block_on(ops::decrypt_value(
-        Scope::Keyset(acme.clone()),
-        &ct,
-        b"ctx",
-        false,
-    ))
-    .expect("own keyset opens");
-    assert_eq!(text(&decode(&pt)), "x");
-    let pt = block_on(ops::decrypt_value(
-        Scope::Client(&cipher),
-        &ct,
-        b"ctx",
-        false,
-    ))
-    .expect("any opens");
-    assert_eq!(text(&decode(&pt)), "x");
-    let retrieves = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
-
-    assert_eq!(
-        block_on(ops::decrypt_value(
-            Scope::Keyset(globex),
-            &ct,
-            b"ctx",
-            false
-        )),
-        Err(STATUS_FOREIGN_KEYSET),
-        "another tenant's keyset must refuse the leaf"
-    );
-    assert_eq!(
-        cipher.kms().retrieve_calls.load(Ordering::SeqCst),
-        retrieves,
-        "the refusal happens before any key is retrieved"
-    );
-}
-
 /// A record batch whose rows were sealed under different keysets opens
 /// through `{"any"}` in one call per keyset, and not through one keyset.
 #[test]
@@ -1525,4 +1247,55 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
         );
     }
     assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), 0);
+}
+
+// =============================================================================
+// The generator's questions
+// =============================================================================
+
+/// `plan_check` accepts what `encrypt_record` would run and refuses what it
+/// would refuse, with no cipher in hand: the Go generator asks this for every
+/// declaration it writes.
+#[test]
+fn plan_check_answers_without_a_cipher() {
+    assert_eq!(ops::plan_check(&plan()), Ok(()));
+    assert_eq!(ops::plan_check(&extended_plan()), Ok(()));
+
+    // match over an integer: a type that does not admit one of its indexes.
+    let bad_index = encode(obj(vec![(
+        "age",
+        obj(vec![
+            ("context", label("age")),
+            ("outputs", FfiValue::Array(vec![s("c"), s("match")])),
+            ("type", s("uint32")),
+        ]),
+    )]));
+    assert_eq!(ops::plan_check(&bad_index), Err(STATUS_ENCODING));
+
+    // a one-segment context is not a label a fields plan can seal under.
+    let one_segment = encode(obj(vec![(
+        "age",
+        obj(vec![
+            ("context", FfiValue::Array(vec![s("users")])),
+            ("outputs", FfiValue::Array(vec![s("c")])),
+        ]),
+    )]));
+    assert_eq!(ops::plan_check(&one_segment), Err(STATUS_ENCODING));
+
+    // not a plan at all.
+    assert_eq!(ops::plan_check(&encode(s("users"))), Err(STATUS_ENCODING));
+    assert_eq!(ops::plan_check(b"\xff\xff"), Err(STATUS_ENCODING));
+}
+
+/// `targets` is the fixed wire shape with no entries until the EQL target
+/// dispatch lands.
+#[test]
+fn targets_is_an_empty_list_for_now() {
+    let out = ops::targets().expect("targets encode");
+    let FfiValue::Object(entries) = decode(&out) else {
+        panic!("targets is an object");
+    };
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].0, "targets");
+    assert!(matches!(&entries[0].1, FfiValue::Array(items) if items.is_empty()));
 }

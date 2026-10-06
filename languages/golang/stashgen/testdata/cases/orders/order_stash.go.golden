@@ -60,9 +60,9 @@ type orderShape struct {
 
 var orderDeclaration = gensupport.Declare("orders").
 	Passthrough("id").
-	EncryptIndex("amount", encrypt.Equality, encrypt.Ore).
-	Encrypt("note").
-	EncryptIndex("customer", encrypt.Match(), encrypt.Ope)
+	EncryptIndex("amount", gensupport.Int64, encrypt.Equality, encrypt.Ore).
+	Encrypt("note", gensupport.String).
+	EncryptIndex("customer", gensupport.String, encrypt.Match(), encrypt.Ope)
 
 var orderCodec = gensupport.New(gensupport.Generated[Order, EncryptedOrder]{
 	TypeName:        "Order",

@@ -3,7 +3,7 @@
 The Go binding of the developer profile — the directory `stash auth login`
 writes — read through the `stack-profile` Rust crate running inside a WASI
 guest under [wazero], with `CGO_ENABLED=0`. It is the credential half of
-the Go SDK: it hands a [`encrypt`](../encrypt) client its client
+the Go SDK: it hands an [`encrypt`](../encrypt) client its client
 key and its bearer token without either package re-deriving the profile's
 layout, and without either importing the other.
 
@@ -16,7 +16,7 @@ cross-process refresh lock for device sessions.
 
 ## Use
 
-Most applications never call this package directly: a `encrypt`
+Most applications never call this package directly: an `encrypt`
 client built with `NewClient(ctx)` and no options resolves its credentials with
 `encrypt.AutoCredentials`, which reads the environment first and then
 the profile, through this package. Use it directly to take the profile
@@ -69,7 +69,7 @@ the strategy are the caller's: the client asks the strategy for a token on
 every request but never closes it, so both stay open until the client is
 closed (the deferred calls above run in that order).
 
-A encrypt client takes its token only from a strategy, never a raw
+An encrypt client takes its token only from a strategy, never a raw
 string: a raw token cannot be refreshed when it expires, and would bypass
 the cross-process lock a device-session refresh holds with the `stash` CLI
 (the IdP revokes a whole refresh-token chain when one is used twice).

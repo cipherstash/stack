@@ -116,9 +116,9 @@ It runs none of the package's code.
 It ignores its own output file when it loads the package, so a stale file does not stop it.
 The same input always gives the same file: fields keep their declared order, and the file carries no version and no time.
 
-`stashgen` checks each declaration with the engine, and holds no copy of the engine's rules.
+`stashgen` checks each declaration with the engine, and holds no copy of the engine's rules: it runs the WASI guest the SDK embeds and asks it, one field at a time, so the error names the field.
 It asks the engine for the EQL types it holds: each name, its plaintext type, its indexes and its query form.
-The engine produces one EQL type today, `TextEq`.
+This build of the engine produces no EQL type, so `encrypt_into` is refused with "EQL types are not available yet"; the next release adds `TextEq` and `encrypt/eql`.
 Separate columns work today for four indexes: `equality`, `match`, `ore` and `ope`.
 
 ## When stashgen stops
@@ -176,8 +176,13 @@ The struct you wrote is not protected: `stashgen` warns when it has sealed field
 `-redact` makes `stashgen` write those two methods on the struct.
 No warning, error or log line holds a plaintext value.
 
+## What crosses the binding
+
+Generated code sends the engine every sealed field with its value, under the declaration lowered to data: each field's label (`<context>/<name>`), its outputs and its wire type (`int64`, `string`, `bytes`, ...), which `stashgen` chose from the field's Go type.
+A passthrough field stays on the host: the engine does nothing to it a program could observe, and the FFI codec cannot carry every Go type a program stores beside a ciphertext.
+An `opaque` struct crosses as one JSON document and is one column; its fields are what JSON carries: scalars, `[]byte`, slices and maps of them.
+
 ## Status
 
-The generator is built and tested against a static stand-in for the engine.
-`stashgen.GuestEngine`, which runs the WASI guest the SDK embeds, is not wired yet, so the command stops with `ErrEngineUnavailable` until it is.
-The library, `github.com/cipherstash/stack/languages/golang/stashgen`, takes any `Engine`; `stashgen.Generate` takes one with `WithEngine`.
+The command runs the WASI guest the SDK embeds, so it needs the guest built: `mise run wasm:guest:build`.
+The library, `github.com/cipherstash/stack/languages/golang/stashgen`, takes any `Engine`; `stashgen.Generate` takes one with `WithEngine`, and `stashgen/enginetest` has a static one for tests.

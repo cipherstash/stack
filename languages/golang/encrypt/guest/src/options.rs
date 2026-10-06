@@ -55,9 +55,9 @@ pub enum KeysetSelector {
 /// there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Side {
-    /// `se_encrypt`, `se_encrypt_element`, `se_encrypt_record`, `se_term`.
+    /// `se_encrypt_record`, `se_term`.
     Mint,
-    /// `se_decrypt`, `se_decrypt_element`, `se_decrypt_record`.
+    /// `se_decrypt_record`.
     Open,
 }
 

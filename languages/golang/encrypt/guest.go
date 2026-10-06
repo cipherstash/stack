@@ -26,7 +26,7 @@ var guestFS embed.FS
 const guestPath = "wasm/stack_encrypt_guest.wasm"
 
 // ErrGuestNotBuilt is returned by NewClient when no guest module is
-// embedded and none was supplied with WithGuest.
+// embedded.
 var ErrGuestNotBuilt = errors.New("encrypt: guest module not built — run `mise run wasm:guest:build`")
 
 func embeddedGuest() ([]byte, error) {
@@ -61,10 +61,9 @@ type instance struct {
 
 	exports                      guest.Exports
 	cipherInit, shutdown, keyset api.Function
-	encrypt, encryptElement      api.Function
-	decrypt, decryptElement      api.Function
 	term                         api.Function
 	encryptRecord, decryptRecord api.Function
+	planCheck, targets           api.Function
 }
 
 // guestModuleConfig is the module configuration every guest instance runs
@@ -143,18 +142,16 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.Lo
 	}
 	inst := &instance{runtime: runtime, module: module, mem: mem}
 	exports := map[string]*api.Function{
-		"se_alloc":           &inst.exports.Alloc,
-		"se_dealloc":         &inst.exports.Dealloc,
-		"se_cipher_init":     &inst.cipherInit,
-		"se_shutdown":        &inst.shutdown,
-		"se_keyset":          &inst.keyset,
-		"se_encrypt":         &inst.encrypt,
-		"se_encrypt_element": &inst.encryptElement,
-		"se_decrypt":         &inst.decrypt,
-		"se_decrypt_element": &inst.decryptElement,
-		"se_term":            &inst.term,
-		"se_encrypt_record":  &inst.encryptRecord,
-		"se_decrypt_record":  &inst.decryptRecord,
+		"se_alloc":          &inst.exports.Alloc,
+		"se_dealloc":        &inst.exports.Dealloc,
+		"se_cipher_init":    &inst.cipherInit,
+		"se_shutdown":       &inst.shutdown,
+		"se_keyset":         &inst.keyset,
+		"se_term":           &inst.term,
+		"se_encrypt_record": &inst.encryptRecord,
+		"se_decrypt_record": &inst.decryptRecord,
+		"se_plan_check":     &inst.planCheck,
+		"se_targets":        &inst.targets,
 	}
 	for name, slot := range exports {
 		if *slot = module.ExportedFunction(name); *slot == nil {

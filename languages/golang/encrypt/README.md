@@ -1,441 +1,187 @@
-# stack-encrypt for Go
+# Stack Encrypt for Go
 
-Client-side encryption of values under per-value ZeroKMS data keys, and the
-derivation of searchable index terms from the same values, for Go. The
-`stack-encrypt` Rust crate is compiled to a WASI module and embedded in
-this package; Go calls it through wazero, a pure-Go WebAssembly runtime,
-so there is no cgo and no separate Go port of the cryptography.
+Searchable, field-level encryption for Go structs under per-value ZeroKMS
+data keys. You declare what to encrypt with struct tags; `stashgen` writes the
+encrypted type and the functions that encrypt, decrypt and search it; the
+`stack-encrypt` Rust engine runs unmodified inside a WASI module embedded in
+this package, through [wazero], with no cgo.
 
-The package reference is on [pkg.go.dev]; this README covers connecting,
-what happens to key material, and the errors.
+The package reference is on [pkg.go.dev]; the generator's reference is
+[`cmd/stashgen/README.md`](../cmd/stashgen/README.md).
 
+[wazero]: https://wazero.io
 [pkg.go.dev]: https://pkg.go.dev/github.com/cipherstash/stack/languages/golang/encrypt
 
-## Install
+## Use the SDK
 
-```sh
-go get github.com/cipherstash/stack/languages/golang/encrypt
-```
+1. Add the generator to your module. This needs Go 1.24 or later.
 
-Go 1.25 or later.
+   ```sh
+   go get -tool github.com/cipherstash/stack/languages/golang/cmd/stashgen
+   ```
+
+2. Put a `stash` tag on every exported field of the struct, and a `go:generate`
+   comment beside it.
+
+   ```go
+   //go:generate go tool stashgen -type User
+   type User struct {
+   	_     struct{} `stash:"context=users"`
+   	ID    int64    `stash:"id,passthrough"`
+   	Email string   `stash:"email,encrypt,index=equality;match"`
+   	Age   uint32   `stash:"age,encrypt,index=equality;ore"`
+   }
+   ```
+
+3. Run the generator. It writes `user_stash.go` beside the struct.
+
+   ```sh
+   go generate ./...
+   ```
+
+4. Commit the generated file.
+
+5. Call the generated functions where you write and read.
+
+   ```go
+   client, err := encrypt.NewClient(ctx)
+   defer client.Close()
+   cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
+
+   encrypted, err := users.Encrypt(ctx, cipher, people)  // one ZeroKMS request
+   people, err := users.Decrypt(ctx, cipher, encrypted)
+   term, err := users.Fields.Email.Equality(ctx, cipher, "bob@example.com")
+   ```
+
+6. Store the encrypted type. Each field is one or more byte columns, so
+   `database/sql`, pgx, sqlx and GORM take it as it is:
+   `e.Email.Ciphertext`, `e.Email.Equality`, `e.Email.Match`.
+
+7. Run the generator again after each change to the struct or to a tag. A
+   change to the fields of the struct stops the build until you do.
+
+8. In CI, run the generator and fail when a generated file changes.
+
+   ```sh
+   go generate ./... && git diff --exit-code
+   ```
+
+The rest of this file is the reference. [`example/`](example/) is the eight
+steps as a program.
 
 ## Connect
 
-A `Client` is one ZeroKMS client: its client key, its default keyset, and
-the keysets it has loaded since. Make one per process and share it; it is
-safe for concurrent use.
+A `Client` is one ZeroKMS client: its client key, its default keyset, and the
+keysets it has loaded since. Make one per process and share it; it is safe
+for concurrent use.
 
 ```go
-import (
-    "context"
-
-    "github.com/cipherstash/stack/languages/golang/encrypt"
-)
-
-func run(ctx context.Context) error {
-    client, err := encrypt.NewClient(ctx)
-    if err != nil {
-        return err // encrypt.ErrNoCredentials: nothing configured
-    }
-    defer client.Close()
-
-    // ...
-    return nil
+client, err := encrypt.NewClient(ctx)
+if err != nil {
+    return err // encrypt.ErrNoCredentials: nothing configured
 }
+defer client.Close()
 ```
 
-`ctx` is Go's standard `context.Context`, and it means what it always
-means: the deadline and cancellation for the work this call does.
-`NewClient` makes one ZeroKMS round trip, to load the client's default
-keyset, and `ctx` bounds that request. It has nothing to do with an
-*encryption* context, which is the value a field is sealed under; that is
-`encrypt.Context`. Every method that can reach ZeroKMS takes a
-`context.Context` first, for the same reason.
+`ctx` is Go's `context.Context`: the deadline and cancellation for the one
+ZeroKMS round trip `NewClient` makes. It has nothing to do with an
+*encryption* context, which is what a field is sealed under; that is the
+`context=` tag.
 
-Everything else is a functional option, and each has a default:
+Every other setting is a functional option with a default:
 
 ```go
 client, err := encrypt.NewClient(ctx,
     encrypt.WithCredentials(encrypt.OIDCFederation(crn, provider)),
     encrypt.WithTransport(rt),
-    encrypt.WithKeysetCacheSize(4096),
+    encrypt.WithKeysetCacheSize(64),
     encrypt.WithRequireLockedMemory(),
 )
 ```
 
-| Option | Default |
-|---|---|
-| `WithCredentials(c)` | `AutoCredentials()`: see below. |
-| `WithTransport(rt)` | `http.DefaultTransport`. Used for ZeroKMS, and for token requests when the credentials make them. |
-| `WithKeysetCacheSize(n)` | 1024 keysets beyond the default one. |
-| `WithRequireLockedMemory()` | Off: memory that cannot be locked is reported, not refused. See below. |
-| `WithGuest(wasm)` | The embedded guest module. |
-
-If an option is given twice, the later one wins.
-
 ### Credentials
 
-With no `WithCredentials`, `NewClient` finds its credentials the way the
-Rust client does, with `AutoCredentials`: the environment first, then the
-developer profile that `stash auth login` writes. On a developer machine, logging in is enough.
-In CI or a deployment, the environment supplies them. The first two rows
-are what a deployment with no profile needs; the rest override what would
-otherwise be resolved:
+`AutoCredentials`, the default, reads the environment first
+(`CS_CLIENT_ACCESS_KEY` and `CS_WORKSPACE_CRN` for the token, `CS_CLIENT_ID`
+and `CS_CLIENT_KEY` for the key), then the developer profile `stash auth login`
+writes, through the [`auth`](../auth) package. `NewCredentials` takes a client
+id, a client key and an `auth` strategy explicitly; `OIDCFederation` mints the
+token from an identity provider's. No credentials take a raw token. The client
+key is consumed by `NewClient` and wiped, whatever the outcome.
 
-| Variable | Role |
-|---|---|
-| `CS_CLIENT_ACCESS_KEY`, `CS_WORKSPACE_CRN` | An access key, exchanged for a token. Without it, the current workspace's stored session is used, and refreshed as it expires. |
-| `CS_CLIENT_ID`, `CS_CLIENT_KEY` | The client key, used when both are set. Without them, the current workspace's `secretkey.json` is used. |
-| `CS_ZEROKMS_HOST` (or `CS_VITUR_HOST`) | Pins the ZeroKMS endpoint. Otherwise it comes from the token. Read whatever the credentials. |
-| `CS_CTS_HOST` | Overrides the authentication endpoint. |
-| `CS_CONFIG_PATH` | The profile directory, instead of `~/.cipherstash`. |
+## The cipher
 
-A variable that is set but empty or unusable is an error, not a reason to
-look elsewhere. Nothing found is `ErrNoCredentials`, naming what to set;
-when the profile would have been consulted, it also says why the profile
-could not be opened, so an unreadable or mistyped `CS_CONFIG_PATH` is not
-reported as "not logged in".
-
-The ZeroKMS endpoint comes from the token's services claim; there is no
-option to pin it. `CS_ZEROKMS_HOST` (or the legacy `CS_VITUR_HOST`)
-overrides it whatever the credentials, `NewCredentials` included, as the
-Rust client reads them, so a value exported there for another tool is
-worth checking.
-
-Resolution happens host-side, in Go. The profile and the token strategies
-run in `auth`'s credential guest; the crypto guest that holds the
-keys is still given no environment and no filesystem. The credential guest
-lives as long as the client, and `Close` releases it.
-
-To supply the credentials yourself, pass `NewCredentials` with a client
-id, a client key and a `auth` strategy for the token:
+A `Cipher` is the client bound to one keyset, and to any extension of the
+context. Every generated function takes one.
 
 ```go
-store, err := auth.OpenWithoutProfile(ctx) // or auth.Resolve(ctx) for the profile
-if err != nil {
-    return err
-}
-defer store.Close()
-strategy, err := store.AccessKey(ctx, crn, accessKey) // or DeviceSession, OIDC, Auto
-if err != nil {
-    return err
-}
-defer strategy.Close()
-client, err := encrypt.NewClient(ctx,
-    encrypt.WithCredentials(encrypt.NewCredentials(clientID, clientKey, strategy)),
-)
-if err != nil {
-    return err
-}
-defer client.Close()
+cipher := client.Keyset(encrypt.KeysetName("tenant-42")).Extend("tenant-42")
 ```
 
-The strategy is asked for the bearer token on every request, and mints or
-refreshes it as it needs to. The store and the strategy stay yours: the
-client never closes them, so keep them open until `client.Close` has
-returned, as the deferred calls above do. A nil strategy is refused.
+`Extend` appends to the context that the tags declare, for every field, in
+every call through the cipher: the write, the query and the read. A row
+written through `Extend("tenant-42")` opens and matches only through a cipher
+with the same extension. No call takes a keyset or a context, so the three
+cannot use different ones.
 
-Tokens come only from `auth` strategies; there is no way to hand the
-client a raw bearer token. A raw token cannot be refreshed when it expires,
-and a source outside the strategies would bypass the cross-process lock a
-device-session refresh holds with the `stash` CLI.
+`Client.DefaultKeyset()` is the keyset a ZeroKMS administrator set for the
+client; `Client.Keyset(encrypt.KeysetName(..))` or `Client.Keyset(id)` any
+other, loaded on first use. `Cipher.KeysetID(ctx)` resolves it.
 
-To authenticate through your own identity provider, pass `OIDCFederation`
-with the workspace CRN and a provider of the IdP's tokens. The provider is
-asked on every token fetch for the IdP token of the user the call is for;
-CTS exchanges each distinct IdP token for a CipherStash one, which is cached
-for that token until it expires, so one client serves many users and none
-rides another's token. `auth.OAuth2TokenSource` adapts a
-`golang.org/x/oauth2` source. The client key is found as `AutoCredentials`
-finds it. `auth` strategy options follow the provider:
-`OIDCFederation(crn, provider, auth.WithAuthBaseURL(cts))` pins the CTS
-endpoint for these credentials, where `CS_CTS_HOST` would pin it for the
-whole process.
+## Reading
 
-`AutoCredentials`, `NewCredentials` and `OIDCFederation` are the only kinds
-of `Credentials`: the interface is sealed.
+`users.Decrypt` takes a `Decrypter`: the `*Cipher`, which refuses a row
+another keyset sealed with `ErrForeignKeyset` before any key is retrieved, or
+the `*Client`, which opens each row under the keyset that sealed it.
 
-`ClientKey` is an opaque type, not a string: it prints a redaction under
-every verb, so logged credentials never show the key. `NewClientKey` takes
-ownership of the slice it is given, and `NewClient` consumes the key —
-whatever the outcome, even options it refuses, the key is empty afterwards
-and that slice is zero. A key is for one client; build another for another
-client. What the SDK cannot reach is what the key was built *from*: a
-string read from the environment is Go's, immutable, and lives until
-collected. Where an environment variable is the source, treat the process
-environment as holding the key for the life of the process.
+## What is stored
 
-### Key material in memory
+A field with `encrypt` and `index=` is a struct with one field for each
+output: `Ciphertext` (`encrypt.Ciphertext`, the frozen stack-encrypt leaf),
+and `Equality`, `Match`, `Ore` or `Ope` (the term types). A field with
+`encrypt` alone has `Ciphertext` only. A passthrough field keeps its Go type.
+An `opaque` struct is one `Sealed` field. Every stored type implements
+`driver.Valuer` and `sql.Scanner`.
 
-The client key enters the instance once, in `NewClient`: it is marshalled
-into the config buffer, the `ClientKey` is wiped, the guest copies the key
-into its own memory, and the buffer is wiped. From then on the client key,
-every loaded index key and every data key in use live in
-the wasm instance's memory, and the package owns that memory rather than
-leaving it to the runtime's default. It is reserved once and never moves,
-so growth never copies a key to somewhere it is not wiped; it is locked in
-RAM (`mlock`, `VirtualLock`) so it is never written to swap; on Linux it is
-excluded from core dumps (`MADV_DONTDUMP`); and it is wiped before it is
-released, on every release path. None of that waits for `Close`. A process
-killed by SIGKILL, the OOM killer, a panic on another goroutine or `os.Exit`
-runs no deferred call, and the kernel zeroes its pages before anyone else
-sees them; the lock and the dump exclusion close the two places a copy
-could otherwise outlive the process.
-
-The lock is best effort. `RLIMIT_MEMLOCK` defaults to 64 KiB on many Linux
-hosts and the instance is larger, so the lock is often refused, and the
-client then runs with memory the kernel may swap out, which is all that is
-lost, and nothing on a host without swap. `client.MemoryLocked()` reports
-the outcome and `client.MemoryLockError()` names the limit to raise
-(`ulimit -l`, a systemd `LimitMEMLOCK=`, a pod `securityContext`) and the
-size the instance holds. For a deployment that would rather not start than
-run unlocked, pass `WithRequireLockedMemory()` and `NewClient` fails with
-`ErrMemoryLock`. That policy holds for the life of the client: memory the
-instance later grows into must lock too, or the call that needed it fails
-with `ErrMemoryLock`, so grant a limit with room to grow. A `Client` prints
-its memory state with `%v` and logs it as a `slog` group, so a startup log
-shows it.
-
-The report and the policy cover the credential guest too, which holds the
-token strategy and which the client key may have passed through.
-`AutoCredentials` and `OIDCFederation` open it under the client's policy.
-With `NewCredentials` it is the `auth` store you opened: under
-`WithRequireLockedMemory()`, `NewClient` fails with `ErrMemoryLock` if that
-store's memory is unlocked, but the store's own policy decides its later
-growth. Open it with `auth.RequireLockedMemory()` as well to keep it
-locked for the life of the client.
-
-Production checklist: assert `MemoryLocked()` at startup, or pass
-`WithRequireLockedMemory()`, and with `NewCredentials` open the store with
-`auth.RequireLockedMemory()`. Handling `SIGTERM` for a graceful shutdown is
-ordinary Go practice and worth doing for your own reasons; the SDK does not
-depend on it and installs no signal handler of its own.
-
-`Close` runs the guest's own shutdown, wiping every key in place before the
-instance is released, and takes no context because it does no I/O. A
-`Client` that becomes unreachable without `Close` is released by a runtime
-cleanup, which covers the forgot-to-close case in a running process and
-nothing at exit.
-
-## Plans from a policy
-
-A record plan says which fields to encrypt, under which context, with which
-index terms. `stash` tags or `NewPlan` spell it out by hand. The `plan`
-subpackage derives it from what the schema already says about each field
-(its facts, such as Fideslang `data_categories`), through a policy written
-in Go:
-
-```go
-import "github.com/cipherstash/stack/languages/golang/encrypt/plan"
-
-type Individual struct {
-    ID         int64
-    Email      string
-    MedicareNo string
-}
-
-// Facts come from a Source, such as the protobuf one planned in CIP-4088.
-// Any function returning facts is one.
-var source = plan.SourceFunc(func(msg any) ([]plan.Fact, error) {
-    return []plan.Fact{
-        {Field: "id", GoField: "ID"},
-        {Field: "email", GoField: "Email", Annotations: []plan.Annotation{
-            {Key: "fides.data_categories", Values: []string{"user.contact.email"}}}},
-        {Field: "medicare_no", GoField: "MedicareNo", Annotations: []plan.Annotation{
-            {Key: "fides.data_categories", Values: []string{"user.government_id"}}}},
-    }, nil
-})
-
-var category = plan.Key("fides.data_categories")
-
-var Base = plan.FirstOf(
-    plan.When(category.Under("user.government_id"), plan.Encrypt(plan.EQL(encrypt.Equality))),
-    plan.When(category.Under("user.contact.email"), plan.Encrypt(plan.EQL(encrypt.Equality, encrypt.Match))),
-    plan.When(category.Under("user"), plan.Encrypt(plan.EQL())),
-)
-
-var Individuals = plan.ForMessage(&Individual{}, plan.Table("individuals"),
-    plan.FirstOf(
-        plan.When(plan.Field("medicare_no"), plan.Encrypt(plan.EQL(encrypt.Equality)),
-            plan.Column("medicare_number")),
-    ).OrElse(Base),
-)
-
-// At startup: panics if a classified field is decided by no rule, or the
-// plan names a field the struct does not have.
-var individuals = plan.MustPlanFor(source, Individuals)
-
-records, err := cipher.EncryptRecords(ctx, rows, encrypt.WithPlan(individuals))
-```
-
-A policy fails closed: a field with facts that no rule decides is an error
-when the plan is built, naming the field and its facts. There is no default;
-write a catch-all, `Plaintext()` included, in the policy. Fields with no
-facts are left out and stored as they are. A message the policy encrypts
-nothing of has no plan: `PlanFor` reports `ErrNothingEncrypted`, and its
-records are stored without one.
-
-An EQL target's context is its column identity, `"<table>/<column>"`. The
-table is required per message, never derived from its name. A field is
-stored in the column named by its schema name (its `Fact.Field`, such as
-`medicare_no`: the spelling the Rust derive and the database column share)
-unless a rule names another with `plan.Column`, and that column is also its
-identity unless the rule pins one with `plan.Identity`. `plan.Field` matches on that same schema name.
-
-The identity is bound into every stored ciphertext, its data key and its
-index terms, so once data is written it must never change. A field never
-renamed in the database needs no `Identity`. After
-`ALTER TABLE individuals RENAME COLUMN medicare_number TO medicare_num`,
-new writes go to the new column under the old identity:
-
-```go
-plan.When(plan.Field("medicare_no"), plan.Encrypt(plan.EQL(encrypt.Equality)),
-    plan.Column("medicare_num"), plan.Identity("medicare_number"))
-```
-
-`plan.Custom` targets supply their own context: `plan.Column` names only
-their record key, and `plan.Identity` is refused. The plan a
-policy builds is a `Plan` like any other: the guest receives the same bytes
-as for the equivalent hand-built plan.
-
-### Catch a changed context with a golden test
-
-A field's context must never change after you write data under it.
-The library binds the context into every ciphertext and index term it writes for the field.
-If the context changes, the rows you already wrote stop decrypting, and their index terms stop matching queries.
-
-You get no error when a context changes.
-If you rename a proto field or a Go struct field, its context changes too.
-Your code then writes new rows under the new context.
-To keep the old context, pin the column with `plan.Column` in the field's rule.
-
-The `plan/plantest` package makes a changed context fail a test.
-It gives you a golden test.
-A golden test compares the plan with a file you commit, called the golden file.
-
-To add the test:
-
-1. Write a test that calls `plantest.Golden` with your source and your policy:
-
-   ```go
-   import "github.com/cipherstash/stack/languages/golang/encrypt/plan/plantest"
-
-   func TestIndividualsPolicy(t *testing.T) {
-       plantest.Golden(t, source, Individuals)
-   }
-   ```
-
-   The plantest package defines the `-update` flag.
-   If your test package defines its own `-update` flag, remove it, and read plantest's flag instead:
-
-   ```go
-   func update() bool {
-       f := flag.Lookup("update")
-       return f != nil && f.Value.String() == "true"
-   }
-   ```
-
-2. Run the test once with `-update`.
-   This writes the golden file to `testdata/TestIndividualsPolicy.golden`:
-
-   ```sh
-   go test -run '^TestIndividualsPolicy$' -update
-   ```
-
-3. Read the golden file, then commit it.
-
-The golden file names the message's table.
-It also lists each field the policy decides:
-
-- An encrypted field shows its column, context, target, index terms and facts.
-- A plaintext field shows its name and facts.
-
-This is the golden file for the `Individuals` policy above:
-
-```text
-# Written by plantest.Golden: what the policy stores each field it decides as.
-# Regenerate it with go test -update; do not edit it by hand.
-# A column's context is bound into every ciphertext and query term written under it, so once a row is written it must never change.
-
-table individuals
-
-column email
-  context ["individuals", "email"]
-  target EQL
-  terms eq match
-  fact fides.data_categories user.contact.email
-
-column medicare_number
-  context ["individuals", "medicare_number"]
-  target EQL
-  terms eq
-  fact fides.data_categories user.government_id
-```
-
-After that, each test run builds the plan the same way `MustPlanFor` does at startup.
-If the plan does not match the golden file, the test fails.
-The failure lists each change, with the most costly changes first:
-
-1. **Context changes.**
-   These lose data.
-   If a rename caused the change, the failure names the `plan.Column` or `plan.Identity` pin that keeps the old context.
-2. **Target changes.**
-   These need a migration.
-   For example, the index terms are different, or a plaintext field is now encrypted.
-3. **Other changes.**
-   These do not affect rows you already wrote.
-   For example, the policy decides a new field.
-
-The golden file lists encrypted fields by column, not by field name.
-If you rename a field and your policy pins its column, the file stays the same and the test passes.
-
-Change a context only before you write rows under it, or ship a migration with the change.
-If you made a change on purpose, run the test again with `-update`.
-Then read the diff of the golden file before you commit it.
+Terms are byte-equal to the ones the Rust crate derives, so a term from
+`users.Fields.Email.Equality` compares against a stored term written from any
+language. `EqualityTerm.Equal` compares in constant time; `OreTerm.Compare`
+and `OpeTerm.Compare` order as the plaintexts; `MatchTerm.Positions` decodes
+the token positions.
 
 ## Errors
 
-Errors are sentinel values, matched with `errors.Is`. The wasm guest
-reports a status code and nothing else, so the vocabulary is deliberately
-small and reveals nothing about plaintext or key material.
+The generator and the compiler find a mistake in a declaration, so no call
+returns an error for one. A call returns an error for a key, for the network,
+or for stored data; read them with `errors.Is`:
 
-| Error | Meaning |
-|---|---|
-| `ErrAuthentication` | A ciphertext failed to open: tampered, or presented under the wrong context or element derivation. |
-| `ErrForbidden` | ZeroKMS refused the request. Also the production form of a wrong-context open, because every data key is bound to its context. |
-| `ErrUnauthorized` | ZeroKMS rejected the bearer token: invalid, expired, or for another workspace. |
-| `ErrNotFound` | Unknown keyset name or id, or a missing data key. |
-| `ErrForeignKeyset` | A keyset-bound `Cipher` was given another keyset's ciphertext. Open it through the `Client`. |
-| `ErrEncoding` | Malformed input: a value, ciphertext, plan, context or config refused before any cryptography. |
-| `ErrTerm` | A term could not be derived, for example match text that yields no tokens. |
-| `ErrTransport` | ZeroKMS could not be reached, or the token strategy failed. The strategy's own error is wrapped in it, so `errors.Is` finds that too (a refused refresh is `auth.ErrInvalidGrant`). |
-| `ErrKMS` | Any other ZeroKMS failure. |
-| `ErrConflict` | ZeroKMS reported a resource conflict. |
-| `ErrState` | The client has been closed: by `Close`, by a call its context interrupted, or by a guest trap. |
-| `ErrMemoryLock` | The instance's memory could not be locked in RAM. Returned by `NewClient` under `WithRequireLockedMemory()`, and by a call whose growth could not be locked; otherwise reported by `MemoryLockError`. |
-| `ErrNoCredentials` | `NewClient` found no token strategy or no client key, in the environment or the profile. The message names what to set. |
-| `ErrCredentialsConsumed` | `NewCredentials` given to a second `NewClient`: the first consumed its key. Build new credentials, with a new key, for another client. |
-| `ErrInternal` | An unexpected failure inside the guest. |
+- `ErrForeignKeyset`: a `*Cipher` got a row another keyset sealed.
+- `ErrForbidden`, `ErrAuthentication`: a ciphertext that does not open under
+  its field's context (ZeroKMS refuses the key, or the AEAD fails).
+- `ErrEncoding`: a stored value or a call that does not fit the declaration.
+- `ErrUnauthorized`, `ErrNotFound`, `ErrTransport`, `ErrKMS`: ZeroKMS.
+- `ErrState`: a call on a closed client. `ErrMemoryLock`: see below.
 
-## How it works under the hood
+No error, warning or log line holds a plaintext value. A generated type hides
+its sealed fields when a program prints or logs it; the struct you wrote does
+not, and `stashgen -redact` writes `String` and `LogValue` for it.
 
-- **One implementation.** The `stack-encrypt` Rust crate is compiled to a
-  WASI module and embedded in the package. There is no separate Go port of
-  the cryptography, so ciphertexts and terms are byte-identical to the Rust
-  crate's and interchange with every other binding.
-- **Key material stays in the guest.** The client key crosses into wasm
-  memory once at `NewClient`. Data keys are retrieved from ZeroKMS into
-  guest memory and never surface in Go. That memory is the package's own:
-  reserved once so it never moves, locked and excluded from core dumps
-  where the platform allows, wiped before release. `Close` runs the guest's
-  own shutdown as well, so every key is wiped in place before the instance
-  is released.
-- **Two host imports.** The guest imports exactly one HTTP send, served by
-  your `http.RoundTripper`, and one bearer-token fetch, served by the
-  credentials' `auth` strategy. What crosses the boundary per ZeroKMS call is what would
-  cross TLS anyway. The guest sees no environment and no filesystem.
-- **Real randomness.** The guest draws IVs and nonces from the process
-  CSPRNG. wazero's default random source is deterministic, so the package
-  configures every instance with `crypto/rand` explicitly.
-- **Concurrency.** A wasm instance is single-threaded, so calls on one
-  `Client` are serialised internally. The `Client` is safe to share.
+## Key material
+
+Every key the guest holds lives in the guest's linear memory, which this
+package supplies: reserved once, locked in RAM and excluded from core dumps
+where the platform allows, and wiped before it is released. The lock is best
+effort (`RLIMIT_MEMLOCK` is 64 KiB on many Linux hosts); `Client.MemoryLocked`
+reports it, `Client.MemoryLockError` says why not, and
+`WithRequireLockedMemory` makes `NewClient` refuse to start unlocked. See the
+package documentation for the full account.
+
+## Building
+
+The package embeds `wasm/stack_encrypt_guest.wasm`, a build artefact of the
+Rust crate in [`guest/`](guest/). It is not committed: run
+`mise run wasm:guest:build` (and `mise run wasm:auth-guest:build` for the
+credential guest) before `go test`, and
+`mise run wasm:guest:build:deterministic` for the test build the hermetic
+round-trip and fixture tests use. Without the builds `NewClient` returns
+`ErrGuestNotBuilt` and the tests skip.

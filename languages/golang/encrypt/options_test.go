@@ -28,7 +28,7 @@ func TestClientOptionsSetTheirField(t *testing.T) {
 		withZeroKMSURL("https://second.example"),
 		WithKeysetCacheSize(4096),
 		WithTransport(rt),
-		WithGuest(wasm),
+		withGuest(wasm),
 		WithRequireLockedMemory(),
 	} {
 		opt(&got)

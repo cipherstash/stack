@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/stashgen"
 	"github.com/cipherstash/stack/languages/golang/stashgen/enginetest"
 )
@@ -117,17 +118,32 @@ func TestRunFlags(t *testing.T) {
 	}
 }
 
-func TestRunStopsWithoutAnEngine(t *testing.T) {
+// The real engine: the embedded guest, which produces no EQL type in this
+// build, so a struct with encrypt_into is refused and nothing is written.
+// Skips when the guest is not built.
+func TestRunAsksTheEmbeddedEngine(t *testing.T) {
+	checker, err := encrypt.NewChecker(context.Background())
+	if err != nil {
+		t.Skip(err)
+	}
+	_ = checker.Close()
 	dir := writeModule(t, map[string]string{"model.go": userSource})
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"-type", "User"}, dir, &stdout, &stderr, stashgen.GuestEngine); code != 1 {
-		t.Fatalf("exit %d, want 1", code)
+		t.Fatalf("exit %d, want 1\n%s", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), stashgen.ErrEngineUnavailable.Error()) {
+	if !strings.Contains(stderr.String(), "EQL types are not available yet") {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(dir, "user_stash.go")); !os.IsNotExist(err) {
-		t.Fatal("a file was written with no engine")
+		t.Fatal("a file was written after the engine refused")
+	}
+	// Separate columns are what the engine runs today.
+	columns := strings.Replace(userSource, "encrypt_into=TextEq", "encrypt,index=equality;match", 1)
+	dir = writeModule(t, map[string]string{"model.go": columns})
+	stderr.Reset()
+	if code := run([]string{"-type", "User"}, dir, &stdout, &stderr, stashgen.GuestEngine); code != 0 {
+		t.Fatalf("exit %d\n%s", code, stderr.String())
 	}
 }
 

@@ -225,10 +225,6 @@ const CI_EXEMPT_TASKS = new Map([
     'go:encrypt:example',
     'A walkthrough against real ZeroKMS for a developer who has run `stash auth login`. CI exercises the same client through the Go live tests in tests-golang.yml `live`.',
   ],
-  [
-    'go:encrypt:example:explicit',
-    'The same walkthrough, with credentials passed as flags after `--`. Nothing for CI to pass; the live tests cover explicit credentials (`liveClient`).',
-  ],
 ])
 
 describe('the scan sees every task mise sees', () => {

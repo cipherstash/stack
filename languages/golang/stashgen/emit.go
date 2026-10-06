@@ -174,6 +174,39 @@ func (w *writer) shape(f *genFile) {
 	w.p("}")
 }
 
+// kindExpr is the gensupport kind of a Go type: the wire type the field
+// seals as. The mapping is vcffi's: int8, int16 and int32 travel as int32,
+// int and int64 as int64, the unsigned ones likewise, []byte as bytes. A
+// composite is untyped and seals as one self-describing value.
+func kindExpr(t GoType) string {
+	switch t.Kind {
+	case KindString:
+		return "gensupport.String"
+	case KindBool:
+		return "gensupport.Bool"
+	case KindBytes:
+		return "gensupport.Bytes"
+	case KindInt:
+		switch t.Basic {
+		case "int8", "int16", "int32":
+			return "gensupport.Int32"
+		}
+		return "gensupport.Int64"
+	case KindUint:
+		switch t.Basic {
+		case "uint8", "uint16", "uint32", "byte":
+			return "gensupport.UInt32"
+		}
+		return "gensupport.UInt64"
+	case KindFloat:
+		if t.Basic == "float32" {
+			return "gensupport.Float32"
+		}
+		return "gensupport.Float64"
+	}
+	return "gensupport.Untyped"
+}
+
 func indexExpr(idx Index) string {
 	switch idx.Name {
 	case IndexMatch, IndexJSON:
@@ -200,9 +233,9 @@ func (w *writer) declaration(f *genFile) {
 		case VerbPassthrough:
 			w.p("\tPassthrough(%q)%s", fld.Name, end)
 		case VerbEncrypt:
-			w.p("\tEncrypt(%q)%s", fld.Name, end)
+			w.p("\tEncrypt(%q, %s)%s", fld.Name, kindExpr(fld.GoType), end)
 		case VerbEncryptInto:
-			w.p("\tEncryptInto(%q, %q)%s", fld.Name, fld.EQLType, end)
+			w.p("\tEncryptInto(%q, %s, %q)%s", fld.Name, kindExpr(fld.GoType), fld.EQLType, end)
 		case VerbEncryptIndex, VerbIndex:
 			call := "EncryptIndex"
 			if fld.Verb == VerbIndex {
@@ -212,7 +245,7 @@ func (w *writer) declaration(f *genFile) {
 			for n, idx := range fld.Indexes {
 				args[n] = indexExpr(idx)
 			}
-			w.p("\t%s(%q, %s)%s", call, fld.Name, strings.Join(args, ", "), end)
+			w.p("\t%s(%q, %s, %s)%s", call, fld.Name, kindExpr(fld.GoType), strings.Join(args, ", "), end)
 		}
 		if fld.Identity != "" {
 			end = "."

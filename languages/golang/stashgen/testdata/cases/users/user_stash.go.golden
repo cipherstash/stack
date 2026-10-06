@@ -44,8 +44,8 @@ type userShape struct {
 
 var declaration = gensupport.Declare("users").
 	Passthrough("id").
-	EncryptInto("email", "TextEq").
-	EncryptInto("name", "TextEq").
+	EncryptInto("email", gensupport.String, "TextEq").
+	EncryptInto("name", gensupport.String, "TextEq").
 	Omit("internal")
 
 var codec = gensupport.New(gensupport.Generated[User, EncryptedUser]{

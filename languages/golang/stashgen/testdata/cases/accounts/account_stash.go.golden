@@ -57,7 +57,7 @@ var declaration = gensupport.Declare("accounts").
 	Passthrough("created_at").
 	Passthrough("updated_at").
 	Passthrough("deleted_at").
-	EncryptInto("email", "TextEq").
+	EncryptInto("email", gensupport.String, "TextEq").
 	Omit("token")
 
 var codec = gensupport.New(gensupport.Generated[Account, EncryptedAccount]{

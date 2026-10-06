@@ -168,6 +168,9 @@ type GoType struct {
 	Name string
 	// Kind is the type's underlying kind.
 	Kind Kind
+	// Basic is the underlying basic type's name for a scalar kind — "uint8",
+	// "int", "string" — which decides the wire type the field seals as.
+	Basic string
 	// Elem is the element type of a slice, map or pointer, and nil otherwise.
 	Elem *GoType
 	// Fields are the fields of a struct kind, in declared order.

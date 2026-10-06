@@ -6,53 +6,89 @@ import (
 	"database/sql/driver"
 	"encoding/binary"
 	"fmt"
+
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
-// TermKind selects which index term a probe or a plan field derives. The
-// values are the guest's term-kind codes.
-type TermKind uint32
+// Index is one index on a field, as a generated declaration names it:
+// [Equality], [Ore], [Ope], [Match] or [JSON]. The words are the Rust API's
+// words for the same behaviour, and a declaration in any language spells
+// them the same way.
+type Index interface {
+	// Output is the index's wire key.
+	Output() record.Output
+	// String is the index's tag word.
+	String() string
+}
 
-const (
+type index record.Output
+
+func (i index) Output() record.Output { return record.Output(i) }
+
+func (i index) String() string {
+	switch record.Output(i) {
+	case record.Equality:
+		return "equality"
+	case record.Match:
+		return "match"
+	case record.Ore:
+		return "ore"
+	case record.Ope:
+		return "ope"
+	}
+	return string(i)
+}
+
+// The indexes that take no options.
+var (
 	// Equality is a PRF equality term: 32 bytes, compared with
 	// [EqualityTerm.Equal]. Defined for integers, strings and bytes.
-	Equality TermKind = 1
-	// Match is a full-text match term: the tokenized positions of a string,
-	// as little-endian uint16s. Strings only.
-	Match TermKind = 2
+	Equality Index = index(record.Equality)
 	// Ore is an order-revealing (CLLW ORE) term over any scalar.
-	Ore TermKind = 3
+	Ore Index = index(record.Ore)
 	// Ope is an order-preserving (CLLW OPE) term over any scalar.
-	Ope TermKind = 4
+	Ope Index = index(record.Ope)
 )
 
-// termKindNames is the one table of plan-tag spellings: TermKind.String,
-// parseTermKind and TermKind.valid all read it.
-var termKindNames = map[TermKind]string{
-	Equality: "eq",
-	Match:    "match",
-	Ore:      "ore",
-	Ope:      "ope",
+// MatchOption is an option of the match index. None is defined yet: the
+// engine's data plan carries the match index under its default options, and
+// a non-default option has no wire form (stack-encrypt plan builder,
+// Additions item 7).
+type MatchOption interface {
+	matchOption()
 }
 
-func (k TermKind) String() string {
-	if name, ok := termKindNames[k]; ok {
-		return name
-	}
-	return fmt.Sprintf("TermKind(%d)", uint32(k))
+// Match is a full-text match index: the tokenized positions of a string.
+// Strings only.
+func Match(options ...MatchOption) Index {
+	_ = options // none exist; the type is declared so a declaration reads as the tag does
+	return index(record.Match)
 }
 
-// valid reports whether k is a kind this package defines.
-func (k TermKind) valid() bool {
-	_, ok := termKindNames[k]
-	return ok
+// JSONOption is an option of the json index.
+type JSONOption interface {
+	jsonOption()
 }
 
-// parseTermKind maps a plan-tag spelling to its kind.
-func parseTermKind(s string) (TermKind, bool) {
-	for k, name := range termKindNames {
-		if name == s {
-			return k, true
-		}
+// JSON is the index over a JSON document. The engine does not derive it
+// yet: a declaration that names it is refused by stashgen, and at run time
+// by the engine.
+func JSON(options ...JSONOption) Index {
+	_ = options
+	return index("json")
+}
+
+// termKindCode is the guest's se_term code for an index.
+func termKindCode(o record.Output) (uint32, bool) {
+	switch o {
+	case record.Equality:
+		return 1, true
+	case record.Match:
+		return 2, true
+	case record.Ore:
+		return 3, true
+	case record.Ope:
+		return 4, true
 	}
 	return 0, false
 }
@@ -112,6 +148,11 @@ func (t OpeTerm) Compare(other OpeTerm) int { return bytes.Compare(t, other) }
 // Less reports whether t's plaintext orders before other's.
 func (t OpeTerm) Less(other OpeTerm) bool { return t.Compare(other) < 0 }
 
+// JSONTerm is the term of the json index. The engine does not derive it
+// yet; the type exists so a generated declaration that names [JSON] has a
+// Go type to fail into.
+type JSONTerm []byte
+
 // compareCLLW is cllw-ore's compare_lex: compare_slice over the common
 // prefix, then by length. For equal-length terms (integers) that is
 // compare_slice alone.
@@ -169,6 +210,9 @@ func (t OreTerm) Value() (driver.Value, error) { return []byte(t), nil }
 // Value implements driver.Valuer.
 func (t OpeTerm) Value() (driver.Value, error) { return []byte(t), nil }
 
+// Value implements driver.Valuer.
+func (t JSONTerm) Value() (driver.Value, error) { return []byte(t), nil }
+
 // Scan implements sql.Scanner.
 func (t *EqualityTerm) Scan(src any) error {
 	b, err := scanBytes("EqualityTerm", src)
@@ -193,6 +237,13 @@ func (t *OreTerm) Scan(src any) error {
 // Scan implements sql.Scanner.
 func (t *OpeTerm) Scan(src any) error {
 	b, err := scanBytes("OpeTerm", src)
+	*t = b
+	return err
+}
+
+// Scan implements sql.Scanner.
+func (t *JSONTerm) Scan(src any) error {
+	b, err := scanBytes("JSONTerm", src)
 	*t = b
 	return err
 }

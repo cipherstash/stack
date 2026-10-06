@@ -50,9 +50,9 @@ func (e EncryptedIndividual) LogValue() slog.Value {
 
 var declaration = gensupport.Declare("individuals").
 	Passthrough("id").
-	Encrypt("name").
-	EncryptIndex("email", encrypt.Equality, encrypt.Match()).
-	EncryptInto("medicare_number", "TextEq").
+	Encrypt("name", gensupport.String).
+	EncryptIndex("email", gensupport.String, encrypt.Equality, encrypt.Match()).
+	EncryptInto("medicare_number", gensupport.String, "TextEq").
 	Passthrough("nickname")
 
 var codec = gensupport.New(gensupport.Generated[*pb.Individual, EncryptedIndividual]{

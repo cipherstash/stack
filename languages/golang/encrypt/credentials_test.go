@@ -801,7 +801,7 @@ func TestRequireLockedMemoryRefusesUnlockedCredentials(t *testing.T) {
 			}
 			creds, resolved := forcedCreds(t)
 			// No crypto guest is needed: the refusal precedes it.
-			_, err := NewClient(context.Background(), WithCredentials(creds), withZeroKMSURL(stub.URL), WithGuest(wasiProbe), WithRequireLockedMemory())
+			_, err := NewClient(context.Background(), WithCredentials(creds), withZeroKMSURL(stub.URL), withGuest(wasiProbe), WithRequireLockedMemory())
 			if !errors.Is(err, ErrMemoryLock) || !strings.Contains(err.Error(), "credential guest") {
 				t.Fatalf("NewClient under WithRequireLockedMemory: %v, want ErrMemoryLock naming the credential guest", err)
 			}
@@ -852,7 +852,7 @@ func TestRequireLockedMemoryAcceptsLockedCredentials(t *testing.T) {
 		}
 		return r, nil
 	})
-	_, err := NewClient(context.Background(), WithCredentials(creds), withZeroKMSURL(stub.URL), WithGuest(wasiProbe), WithRequireLockedMemory())
+	_, err := NewClient(context.Background(), WithCredentials(creds), withZeroKMSURL(stub.URL), withGuest(wasiProbe), WithRequireLockedMemory())
 	if asked.Load() == 0 {
 		t.Fatal("the credentials' memory report was not asked")
 	}

@@ -38,7 +38,7 @@ type refundShape struct {
 
 var declaration = gensupport.Declare("refunds").
 	Passthrough("id").
-	EncryptInto("reason", "TextEq")
+	EncryptInto("reason", gensupport.String, "TextEq")
 
 var codec = gensupport.New(gensupport.Generated[Refund, EncryptedRefund]{
 	TypeName:    "Refund",

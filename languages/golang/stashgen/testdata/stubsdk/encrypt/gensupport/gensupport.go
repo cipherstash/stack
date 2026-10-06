@@ -18,7 +18,24 @@ type generatedVersion uint8
 const GeneratedVersion1 generatedVersion = 1
 
 // OpaqueField is the one field of an opaque declaration.
-const OpaqueField = "."
+const OpaqueField = "value"
+
+// Kind is a field's wire type.
+type Kind string
+
+// The kinds.
+const (
+	Untyped Kind = ""
+	Bool    Kind = "bool"
+	Int32   Kind = "int32"
+	Int64   Kind = "int64"
+	UInt32  Kind = "uint32"
+	UInt64  Kind = "uint64"
+	Float32 Kind = "float32"
+	Float64 Kind = "float64"
+	String  Kind = "string"
+	Bytes   Kind = "bytes"
+)
 
 // Redacted formats a value with its sealed fields hidden.
 func Redacted(typeName string, shown map[string]any, hidden ...string) string { return "" }
@@ -53,12 +70,13 @@ func Declare(context string) Declaration { return Declaration{} }
 // DeclareOpaque declares a struct sealed as one value.
 func DeclareOpaque(context string) Declaration { return Declaration{} }
 
-func (d Declaration) Passthrough(name string) Declaration                        { return d }
-func (d Declaration) Encrypt(name string) Declaration                            { return d }
-func (d Declaration) EncryptIndex(name string, idx ...encrypt.Index) Declaration { return d }
-func (d Declaration) Index(name string, idx ...encrypt.Index) Declaration        { return d }
-func (d Declaration) EncryptInto(name, eqlType string) Declaration               { return d }
-func (d Declaration) Omit(name string) Declaration                               { return d }
+func (d Declaration) Passthrough(name string) Declaration                                   { return d }
+func (d Declaration) Encrypt(name string, kind Kind) Declaration                            { return d }
+func (d Declaration) EncryptIndex(name string, kind Kind, idx ...encrypt.Index) Declaration { return d }
+func (d Declaration) Index(name string, kind Kind, idx ...encrypt.Index) Declaration        { return d }
+func (d Declaration) EncryptInto(name string, kind Kind, eqlType string) Declaration        { return d }
+func (d Declaration) Omit(name string) Declaration                                          { return d }
+func (d Declaration) Err() error                                                            { return nil }
 
 // Generated is what a generated file gives the library for one type.
 type Generated[P, E any] struct {

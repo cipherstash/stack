@@ -89,7 +89,7 @@ func TestRequireLockedMemoryRefusesAnUnlockableGuest(t *testing.T) {
 	limited := !probe.IsFallback()
 	_, err := NewClient(context.Background(),
 		WithCredentials(newTestCredentials("6a70bd18-99ac-4650-b104-37eec3a15b09", NewClientKey([]byte("00")), staticToken("t"))),
-		WithGuest(wasiProbe),
+		withGuest(wasiProbe),
 		WithRequireLockedMemory(),
 	)
 	if !errors.Is(err, ErrMemoryLock) {
@@ -159,7 +159,7 @@ func TestRequireLockedMemoryRefusesACallerStoreUnlocked(t *testing.T) {
 	key := NewClientKey([]byte("00"))
 	_, err = NewClient(ctx,
 		WithCredentials(NewCredentials("6a70bd18-99ac-4650-b104-37eec3a15b09", key, strategy)),
-		WithGuest(wasiProbe),
+		withGuest(wasiProbe),
 		withZeroKMSURL("https://zerokms.invalid"),
 		WithRequireLockedMemory(),
 	)

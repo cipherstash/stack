@@ -44,6 +44,12 @@
 //! would cross TLS anyway. The client key enters guest memory once at
 //! `se_cipher_init`; derived data keys and index keys never leave.
 //!
+//! The exports are the record path (`se_encrypt_record`, `se_decrypt_record`),
+//! per-field term derivation (`se_term`), keyset resolution (`se_keyset`),
+//! the generator's two questions (`se_plan_check`, `se_targets`) and the
+//! lifetime pair (`se_cipher_init`, `se_shutdown`). There is no whole-value
+//! export: the Go SDK seals every value under a declaration (ADR-0007).
+//!
 //! One instance is one client: `se_cipher_init` runs once per instance and
 //! the keysets that client uses are selected per call through the options
 //! object ([`options`]), loaded on first use. There is no cipher handle,
@@ -72,6 +78,8 @@
 //! out of a tree is exactly what a database column holds.
 
 pub mod config;
+#[cfg(feature = "deterministic-kms")]
+pub mod deterministic;
 pub mod headers;
 pub mod ops;
 pub mod options;

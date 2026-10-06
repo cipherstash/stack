@@ -63,9 +63,10 @@ func WithTransport(rt http.RoundTripper) ClientOption {
 	return func(o *clientOptions) { o.transport = rt }
 }
 
-// WithGuest overrides the embedded wasm module. Nil means the embedded one,
-// the default.
-func WithGuest(wasm []byte) ClientOption {
+// withGuest overrides the embedded wasm module, for the tests that drive a
+// probe module or the deterministic test build. The package embeds the one
+// build a program runs; a program cannot swap it.
+func withGuest(wasm []byte) ClientOption {
 	return func(o *clientOptions) { o.guest = wasm }
 }
 

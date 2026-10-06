@@ -55,10 +55,10 @@ type patientShape struct {
 }
 
 var declaration = gensupport.Declare("patients").
-	EncryptInto("name", "TextEq").
-	EncryptIndex("email", encrypt.Equality).
+	EncryptInto("name", gensupport.String, "TextEq").
+	EncryptIndex("email", gensupport.String, encrypt.Equality).
 	Passthrough("mrn").
-	Encrypt("chart")
+	Encrypt("chart", gensupport.Bytes)
 
 var codec = gensupport.New(gensupport.Generated[Patient, EncryptedPatient]{
 	TypeName:        "Patient",

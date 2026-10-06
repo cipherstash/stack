@@ -526,6 +526,9 @@ func (r *reader) buildFields(c *collected) error {
 				continue
 			}
 			g := genField{Field: Field{Name: cf.tag.Name, GoName: cf.goName, GoType: r.goType(cf.typ), Verb: VerbEncrypt}, typeExpr: r.typeExpr(cf.typ)}
+			if !readableInOpaque(g.GoType) {
+				return fieldErr(typeName, cf.goName, "the SDK cannot read a %s back out of an opaque struct yet; it reads scalars, []byte, slices of scalars and maps of scalars", g.typeExpr)
+			}
 			if prev, dup := seen[g.Name]; dup {
 				return fieldErr(typeName, cf.goName, "two fields write the name %q: %s and %s", g.Name, prev, cf.goName)
 			}
@@ -568,6 +571,9 @@ func (r *reader) buildFields(c *collected) error {
 				}
 			}
 			if eqlType == nil {
+				if len(r.eql) == 0 {
+					return fieldErr(typeName, cf.goName, "EQL types are not available yet; this build of the engine produces none")
+				}
 				return fieldErr(typeName, cf.goName, "the engine cannot produce the EQL type %s", field.EQLType)
 			}
 			f.imports.add(eqlPath, "eql")
@@ -628,6 +634,7 @@ func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Typ
 	defer delete(seen, t)
 	switch u := t.Underlying().(type) {
 	case *types.Basic:
+		g.Basic = u.Name()
 		switch {
 		case u.Info()&types.IsString != 0:
 			g.Kind = KindString
@@ -642,7 +649,7 @@ func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Typ
 		}
 	case *types.Slice:
 		if b, ok := u.Elem().Underlying().(*types.Basic); ok && b.Kind() == types.Byte {
-			g.Kind = KindBytes
+			g.Kind, g.Basic = KindBytes, "[]byte"
 		} else {
 			elem := classify(u.Elem(), typeExpr, seen)
 			g.Kind, g.Elem = KindSlice, &elem
@@ -765,4 +772,17 @@ func itOrEach(fields []string) string {
 		return "it"
 	}
 	return "each"
+}
+
+// readableInOpaque reports whether gensupport.Get reads the type back out of
+// an opened opaque value: a scalar, bytes, a slice of scalars, or a map from
+// strings to scalars. A nested struct is not, yet.
+func readableInOpaque(t GoType) bool {
+	switch t.Kind {
+	case KindString, KindBool, KindInt, KindUint, KindFloat, KindBytes:
+		return true
+	case KindSlice, KindMap:
+		return t.Elem != nil && t.Elem.Kind.Scalar()
+	}
+	return false
 }

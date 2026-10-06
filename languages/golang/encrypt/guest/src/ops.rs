@@ -19,6 +19,10 @@
 //! are attacker-reachable decode/decrypt paths, and the status codes leak
 //! only the failure class (see `status.rs`).
 //!
+//! There is no whole-value encrypt or decrypt here. Every value the Go SDK
+//! seals goes through a declaration (ADR-0007, amended): an opaque struct
+//! is a one-field record, so the record path is the one path.
+//!
 //! # What is here, and what is not
 //!
 //! The operations themselves live in [`stack_encrypt::dynamic`]: reading a
@@ -34,9 +38,7 @@
 use stack_encrypt::dynamic::{self, Scalar, Scope};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::IndexSpec;
-use stack_encrypt::{
-    BoxedPassthrough, CipherText, Element, Encrypt, KeysetCipher, SealedValue, StackCipherText,
-};
+use stack_encrypt::{BoxedPassthrough, CipherText, KeysetCipher, SealedValue, StackCipherText};
 use stack_kms::DataKeySource;
 use vitaminc_aead_value::{transport as codec, FfiValue};
 use vitaminc_protected::Controlled;
@@ -56,90 +58,6 @@ pub const TERM_OPE: u32 = 4;
 /// A ciphertext tree whose leaves are the frozen [`SealedValue`] byte
 /// encoding — the shape that crosses the FFI codec.
 type BytesTree = CipherText<Vec<u8>, BoxedPassthrough>;
-
-// =============================================================================
-// Whole-value encrypt / decrypt (the vitaminc guest's vc_encrypt shape)
-// =============================================================================
-
-/// Encrypt a codec-encoded [`FfiValue`] tree under `aad`, sealing every leaf
-/// against a fresh ZeroKMS data key (one batched request; see the module
-/// docs for how a batch is chunked). With `as_element`,
-/// seal it as a *sequence element* — interchangeable with rows written by
-/// encrypting a whole sequence under the same AAD.
-///
-/// This is the cipher-directed path, and it takes the AAD as `StackCipher`
-/// does: any bytes, including none. An empty `aad` seals under no context —
-/// the plain AEAD use `Aes256Cipher` allows, opened symmetrically by
-/// [`decrypt_value`] — and is the Go caller's choice to make. The record and
-/// term paths ([`encrypt_record`], [`decrypt_record`], [`term`]) are the
-/// ones that bind fields: each takes a [`NonEmpty`](stack_encrypt::NonEmpty) context, proven once at
-/// the boundary when the plan or the term's context is parsed, and refused
-/// as [`STATUS_ENCODING`] when empty.
-pub async fn encrypt_value<K>(
-    cipher: &KeysetCipher<'_, K>,
-    value: &[u8],
-    aad: &[u8],
-    as_element: bool,
-) -> Result<Vec<u8>, u32>
-where
-    K: DataKeySource + Sync,
-{
-    let value = decode_value(value)?;
-    let tree = if as_element {
-        Element(value).encrypt_with_aad(cipher, aad)
-    } else {
-        value.encrypt_with_aad(cipher, aad)
-    }
-    .map_err(|_| STATUS_INTERNAL)?;
-    let ct = tree
-        .seal(cipher, aad)
-        .await
-        .map_err(|e| status_for_error(&e))?;
-    encode_tree(ct)
-}
-
-/// Decrypt a codec-encoded ciphertext tree back into a codec-encoded
-/// [`FfiValue`] tree. The output buffer contains plaintext — the ABI
-/// layer's ownership rules govern its wiping.
-///
-/// One batched `retrieve_keys` per invocation, dispatched as one ZeroKMS
-/// call per 500 keyed leaves and, under [`Scope::Client`], per keyset the
-/// tree's leaves were sealed under — the same rule [`decrypt_record`]
-/// states. A tree small enough and single-keyset enough is the one request
-/// that suggests; nothing here promises it in general.
-///
-/// Symmetric with [`encrypt_value`]: the AAD is whatever the value was sealed
-/// under, empty included. The [`Scope`] says which keysets may be opened:
-/// any, or one, refusing the rest before any key is retrieved.
-pub async fn decrypt_value<K>(
-    scope: Scope<'_, K>,
-    ciphertext: &[u8],
-    aad: &[u8],
-    as_element: bool,
-) -> Result<Vec<u8>, u32>
-where
-    K: DataKeySource + Sync,
-{
-    let tree = decode_tree(ciphertext)?;
-    // One `decrypt` per arm, not one `decipher` and two drives. The element
-    // derivation is `Element<T>`'s to apply and naming the type is what asks
-    // for it; the scope decides whether a foreign leaf is refused before any
-    // key is retrieved. Only one arm runs, so the retrieve happens once.
-    let value: FfiValue = match (&scope, as_element) {
-        (Scope::Client(cipher), true) => cipher
-            .decrypt::<Element<FfiValue>, _>(tree, aad)
-            .await
-            .map(Element::into_inner),
-        (Scope::Client(cipher), false) => cipher.decrypt(tree, aad).await,
-        (Scope::Keyset(keyset), true) => keyset
-            .decrypt::<Element<FfiValue>, _>(tree, aad)
-            .await
-            .map(Element::into_inner),
-        (Scope::Keyset(keyset), false) => keyset.decrypt(tree, aad).await,
-    }
-    .map_err(|e| status_for_error(&e))?;
-    encode_value(value)
-}
 
 // =============================================================================
 // Terms
@@ -269,6 +187,35 @@ where
 }
 
 // =============================================================================
+// The generator's questions
+// =============================================================================
+
+/// Check a codec-encoded plan without a cipher: everything
+/// [`dynamic::record::plan`] refuses — a malformed object, an unknown output,
+/// a type that does not admit one of its indexes, a context that is not a
+/// label of two or more segments, two fields under one identity — is
+/// [`STATUS_ENCODING`]. The Go generator (`stashgen`) asks this for every
+/// declaration it writes, so it holds no copy of the engine's rules; it
+/// asks one field at a time to name the field that failed.
+pub fn plan_check(plan: &[u8]) -> Result<(), u32> {
+    dynamic::record::plan(decode_value(plan)?)
+        .map(drop)
+        .map_err(|e| status_for_dynamic(&e))
+}
+
+/// The EQL types this build of the engine produces, as a codec-encoded
+/// `{"targets": [...]}`. Empty until the EQL target dispatch lands: a
+/// generator reads an empty list as "no `encrypt_into` type is available
+/// yet" and refuses the tag. The shape is fixed here so the next build adds
+/// entries to the list rather than a second export.
+pub fn targets() -> Result<Vec<u8>, u32> {
+    encode_value(FfiValue::Object(vec![(
+        "targets".to_string(),
+        FfiValue::Array(Vec::new()),
+    )]))
+}
+
+// =============================================================================
 // Boundary validation
 // =============================================================================
 
@@ -281,17 +228,6 @@ where
 /// cheap next to the AEAD and buys a stable status precedence.
 pub mod validate {
     use super::*;
-
-    /// A codec-encoded value tree decodes.
-    pub fn value(bytes: &[u8]) -> Result<(), u32> {
-        decode_value(bytes).map(drop)
-    }
-
-    /// A codec-encoded ciphertext tree decodes and its leaves are
-    /// well-formed `SealedValue` encodings.
-    pub fn tree(bytes: &[u8]) -> Result<(), u32> {
-        decode_tree(bytes).map(drop)
-    }
 
     /// A term's inputs, as [`term`] takes them: the context decodes and is
     /// non-empty, the kind is one of [`TERM_EQUALITY`] .. [`TERM_OPE`], and

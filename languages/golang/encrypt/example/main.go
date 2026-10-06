@@ -1,217 +1,69 @@
-// Command example exercises the stack-encrypt Go binding against real
-// ZeroKMS, using the credentials `stash auth login` leaves in the developer
-// profile (or the CS_* environment variables, which win).
-//
-//	stash auth login
-//	mise run wasm:guest:build wasm:auth-guest:build   # both embedded guests
-//	go run ./encrypt/example                     # from bindings/go
-//
-// It walks the four things the binding does — seal a value, seal a record
-// with its index terms, probe those terms with a query, and open both again
-// — and prints what crossed the boundary at each step.
 package main
 
 import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
-	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
-// A record type. The `stash` tag is the Go stand-in for Rust's
-// `#[derive(EncryptFrom)]`: `label=` is the field's own encryption
-// context, `index=` the terms to derive beside the ciphertext.
-type user struct {
-	ID    int64  `stash:"-"`
-	Email string `stash:"label=users/email,index=eq;match"`
-	Age   uint32 `stash:"label=users/age,index=eq;ore"`
-}
-
 func main() {
-	if err := run(); err != nil {
+	if err := run(context.Background()); err != nil {
 		fmt.Fprintf(os.Stderr, "\nerror: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	ctx := context.Background()
-	// No options: credentials from AutoCredentials, which is the
+func run(ctx context.Context) error {
+	// No options: the credentials come from AutoCredentials, which is the
 	// environment first (CS_CLIENT_ACCESS_KEY + CS_WORKSPACE_CRN, CS_CLIENT_ID
-	// + CS_CLIENT_KEY), then the developer profile `stash auth login` writes,
-	// read through auth's credential guest. The token is a refreshing
-	// device session there, asked on every request, so a long run outlives
-	// one token. The ZeroKMS endpoint: CS_ZEROKMS_HOST if set, else the token's
-	// services claim.
+	// + CS_CLIENT_KEY), then the developer profile `stash auth login` writes.
 	client, err := encrypt.NewClient(ctx)
 	if err != nil {
 		return fmt.Errorf("connecting to ZeroKMS: %w", err)
 	}
-	// Close runs the guest's own wipe of the client key and every loaded
-	// index key, and releases the credential guest. The memory's protection
-	// does not wait on it (see the package docs); this is ordinary resource
-	// hygiene.
 	defer client.Close()
 	fmt.Printf("connected (%v)\n", client)
 
-	cipher := client.DefaultKeyset()
-	keysetID, err := cipher.KeysetID(ctx)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("default keyset %s\n\n", keysetID)
+	// One cipher for one tenant: the default keyset, and the tenant as a
+	// part of every field's context. Every call through it carries both.
+	cipher := client.DefaultKeyset().Extend("tenant-42")
 
-	if err := values(ctx, cipher); err != nil {
-		return err
-	}
-	records, err := recordsAndTerms(ctx, cipher)
-	if err != nil {
-		return err
-	}
-	return ordering(records)
-}
-
-// A whole value, sealed under an AAD of the caller's choosing. The shape of
-// the ciphertext mirrors the plaintext, and a field marked Plain rides
-// alongside it in the clear.
-func values(ctx context.Context, cipher *encrypt.Cipher) error {
-	section("a value")
-
-	aad := []byte("users/v1")
-	in := map[string]any{
-		"name": "alice",
-		"age":  uint32(34),
-		"note": vcvalue.Plain{V: "not secret"},
-	}
-	fmt.Printf("  plaintext   %v\n", in)
-
-	sealed, err := cipher.Encrypt(ctx, in, aad)
-	if err != nil {
-		return fmt.Errorf("encrypting a value: %w", err)
-	}
-	for name, node := range sealed.(map[string]any) {
-		if leaf, ok := node.(encrypt.Sealed); ok {
-			fmt.Printf("  %-11s %d bytes of ciphertext\n", name, len(leaf))
-		} else {
-			fmt.Printf("  %-11s %v (passthrough — in the clear, and unauthenticated)\n", name, node)
-		}
-	}
-
-	opened, err := cipher.Decrypt(ctx, sealed, aad)
-	if err != nil {
-		return fmt.Errorf("decrypting a value: %w", err)
-	}
-	fmt.Printf("  opened      %v\n", opened)
-
-	// The AAD is bound into the key as well as the ciphertext, so the wrong
-	// one does not open the value — it is refused, not silently wrong.
-	if _, err := cipher.Decrypt(ctx, sealed, []byte("some other context")); err == nil {
-		return fmt.Errorf("a value opened under an AAD it was not sealed under")
-	} else {
-		fmt.Printf("  wrong AAD   refused: %v\n", err)
-	}
-	return nil
-}
-
-// A record: every field sealed under its own context, with the index terms
-// its tag asked for, and all of it from one batched ZeroKMS request.
-func recordsAndTerms(ctx context.Context, cipher *encrypt.Cipher) ([]encrypt.EncryptedRecord, error) {
-	section("records, and the terms that index them")
-
-	users := []user{
+	people := []User{
 		{ID: 1, Email: "alice@example.com", Age: 34},
 		{ID: 2, Email: "bob@example.com", Age: 29},
-		{ID: 3, Email: "carol@example.com", Age: 41},
-	}
-	records, err := cipher.EncryptRecords(ctx, users)
-	if err != nil {
-		return nil, fmt.Errorf("encrypting records: %w", err)
-	}
-	fmt.Printf("  %d rows sealed in one batched key request\n", len(records))
-	for i, r := range records {
-		fmt.Printf("  row %d  Email: %d-byte ciphertext, eq %x…, match %d positions\n",
-			i, len(r["Email"].Ciphertext.(encrypt.Sealed)), r["Email"].Equality[:6], countPositions(r["Email"].Match))
-		fmt.Printf("         Age:   %d-byte ciphertext, eq %x…, ore %d bytes\n",
-			len(r["Age"].Ciphertext.(encrypt.Sealed)), r["Age"].Equality[:6], len(r["Age"].Ore))
 	}
 
-	// A query probe: the same derivation as the stored term, from the value
-	// being searched for. It never touches the ciphertext — matching is what
-	// the term is for.
-	fmt.Println()
-	emailCtx, err := encrypt.ParseLabel("users/email")
+	// One call, one ZeroKMS request for both rows.
+	encrypted, err := Encrypt(ctx, cipher, people)
 	if err != nil {
-		return nil, fmt.Errorf("the probe's label: %w", err)
+		return fmt.Errorf("encrypt: %w", err)
 	}
-	probe, err := cipher.Term(ctx, "bob@example.com", emailCtx.Context(), encrypt.Equality)
-	if err != nil {
-		return nil, fmt.Errorf("deriving a probe: %w", err)
-	}
-	for i, r := range records {
-		if probe.(encrypt.EqualityTerm).Equal(r["Email"].Equality) {
-			fmt.Printf("  probe for bob@example.com matches row %d\n", i)
-		}
+	for _, e := range encrypted {
+		// EncryptedUser prints its passthrough fields and hides the rest.
+		fmt.Printf("stored: %v (ciphertext %d bytes, equality %d bytes, match %d positions)\n",
+			e, len(e.Email.Ciphertext), len(e.Email.Equality), len(e.Email.Match)/2)
 	}
 
-	// A term is bound to its context. The same value under another field's
-	// context is a different term, which is what stops a match in one column
-	// from being a match in another.
-	nameCtx, err := encrypt.ParseLabel("users/name")
+	// A query term for one field compares against the stored terms.
+	term, err := Fields.Email.Equality(ctx, cipher, "bob@example.com")
 	if err != nil {
-		return nil, fmt.Errorf("the probe's label: %w", err)
+		return fmt.Errorf("query term: %w", err)
 	}
-	wrong, err := cipher.Term(ctx, "bob@example.com", nameCtx.Context(), encrypt.Equality)
+	for _, e := range encrypted {
+		fmt.Printf("id %d matches bob@example.com: %v\n", e.ID, term.Equal(e.Email.Equality))
+	}
+
+	// Decrypt through the cipher, which refuses another keyset's rows, or
+	// through the client, which opens each row under the keyset that sealed it.
+	back, err := Decrypt(ctx, client, encrypted)
 	if err != nil {
-		return nil, fmt.Errorf("deriving a probe: %w", err)
+		return fmt.Errorf("decrypt: %w", err)
 	}
-	fmt.Printf("  the same value under users/name matches nothing: %t\n",
-		!wrong.(encrypt.EqualityTerm).Equal(records[1]["Email"].Equality))
-
-	var back []user
-	if err := cipher.DecryptRecords(ctx, records, &back); err != nil {
-		return nil, fmt.Errorf("decrypting records: %w", err)
+	// Print ids only: everything else here is plaintext.
+	for _, u := range back {
+		fmt.Printf("decrypted id %d\n", u.ID)
 	}
-	fmt.Printf("\n  opened      %v\n", back)
-	fmt.Printf("  (ID is tagged `-`, so it never crossed the boundary and comes back zero)\n")
-	return records, nil
-}
-
-// ORE terms compare in the plaintext's order without revealing it: sorting
-// the rows by their Age term sorts them by age.
-func ordering(records []encrypt.EncryptedRecord) error {
-	section("order, without the values")
-
-	order := []int{0, 1, 2}
-	sort.Slice(order, func(i, j int) bool {
-		return records[order[i]]["Age"].Ore.Less(records[order[j]]["Age"].Ore)
-	})
-	fmt.Printf("  rows sorted by their Age ORE terms: %v\n", order)
-	fmt.Printf("  (ages were 34, 29, 41 — so ascending age is row 1, 0, 2)\n")
 	return nil
-}
-
-func countPositions(t encrypt.MatchTerm) int {
-	positions, err := t.Positions()
-	if err != nil {
-		return -1
-	}
-	return len(positions)
-}
-
-func section(title string) {
-	fmt.Printf("── %s %s\n", title, dashes(60-len(title)))
-}
-
-func dashes(n int) string {
-	if n < 0 {
-		n = 0
-	}
-	out := make([]byte, 0, n*3)
-	for range n {
-		out = append(out, "─"...)
-	}
-	return string(out)
 }

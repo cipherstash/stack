@@ -8,8 +8,10 @@ name: Tests (Go)
 #   wasi-check  the stack crates build for wasm32-wasip1 with no JS-host or
 #               native-HTTP dependencies, the no-http shape passes its tests
 #               and docs, both guests pass lint and tests and are built with
-#               their import surfaces checked, their sha256 is recorded, and
-#               `go:test` runs against them.
+#               their import surfaces checked (the stack-encrypt guest twice:
+#               the real build and the deterministic-kms test build), their
+#               sha256 is recorded, `go:test` runs against them, and
+#               `go generate` leaves the tree unchanged.
 #   go-lint     golangci-lint, Linux only.
 #   go-binding-cross
 #               the same Go tests on macOS and Windows, against the guests
@@ -146,6 +148,14 @@ jobs:
       - name: stack-encrypt guest release build and import-surface gate
         run: mise run wasm:guest:build
 
+      # The deterministic-kms TEST build beside it: the Go tests open the
+      # record fixture Rust sealed through it, and run round trips with no
+      # ZeroKMS. The Go package never embeds it; its tests skip when it is
+      # absent, so a build that forgets this step would pass with less
+      # coverage, which is why the job builds it unconditionally.
+      - name: stack-encrypt guest deterministic test build
+        run: mise run wasm:guest:build:deterministic
+
       - name: Credential guest lint and tests
         run: mise run wasm:auth-guest:test
 
@@ -157,7 +167,7 @@ jobs:
       # same bytes rather than a stale or rebuilt guest.
       - name: Record the guests' checksums
         run: |
-          for guest in encrypt/wasm/stack_encrypt_guest.wasm auth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/wasm/stack_encrypt_guest_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
             (cd languages/golang && openssl dgst -sha256 "$guest" | awk '{print $NF}' > "$guest.sha256" && echo "$guest sha256 $(cat "$guest.sha256")")
           done
 
@@ -168,6 +178,8 @@ jobs:
           path: |
             languages/golang/encrypt/wasm/stack_encrypt_guest.wasm
             languages/golang/encrypt/wasm/stack_encrypt_guest.wasm.sha256
+            languages/golang/encrypt/wasm/stack_encrypt_guest_deterministic.wasm
+            languages/golang/encrypt/wasm/stack_encrypt_guest_deterministic.wasm.sha256
             languages/golang/auth/wasm/stack_auth_guest.wasm
             languages/golang/auth/wasm/stack_auth_guest.wasm.sha256
           if-no-files-found: error
@@ -184,6 +196,17 @@ jobs:
           ulimit -l "$(ulimit -H -l)"
           echo "RLIMIT_MEMLOCK: $(ulimit -l) KiB"
           mise run go:test
+
+      # What is encrypted is fixed before the program ships: every generated
+      # file is committed, and this fails when `go generate` would change
+      # one. It runs the real stashgen against the guest just built, so it
+      # also proves the generator and the engine agree on the module's own
+      # examples.
+      - name: Generated code is committed
+        working-directory: languages/golang
+        run: |
+          CGO_ENABLED=0 go generate ./...
+          git diff --exit-code -- .
 
   # Linux only: macOS and Windows would report the same findings. Needs no
   # guests: the packages embed a directory and compile without them.
@@ -260,7 +283,7 @@ jobs:
       - name: The guests are the ones Linux built and checked
         run: |
           cd languages/golang
-          for guest in encrypt/wasm/stack_encrypt_guest.wasm auth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/wasm/stack_encrypt_guest_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
             want=$(cat "$guest.sha256")
             got=$(openssl dgst -sha256 "$guest" | awk '{print $NF}')
             if [ "$want" != "$got" ]; then
@@ -326,7 +349,7 @@ jobs:
       - name: The guests are the ones the wasi-check job built and checked
         run: |
           cd languages/golang
-          for guest in encrypt/wasm/stack_encrypt_guest.wasm auth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/wasm/stack_encrypt_guest_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
             want=$(cat "$guest.sha256")
             got=$(openssl dgst -sha256 "$guest" | awk '{print $NF}')
             if [ "$want" != "$got" ]; then

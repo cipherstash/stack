@@ -54,8 +54,8 @@ type contactShape struct {
 
 var declaration = gensupport.Declare("contacts").
 	Passthrough("id").
-	EncryptIndex("email", encrypt.Equality, encrypt.Match()).
-	EncryptIndex("phone_number", encrypt.Equality).
+	EncryptIndex("email", gensupport.String, encrypt.Equality, encrypt.Match()).
+	EncryptIndex("phone_number", gensupport.String, encrypt.Equality).
 	Omit("internal")
 
 var codec = gensupport.New(gensupport.Generated[crm.Contact, EncryptedContact]{

@@ -14,7 +14,9 @@ type Cipher struct{ _ struct{} }
 // Client decrypts under the keyset that sealed each value.
 type Client struct{ _ struct{} }
 
-// Decrypter is what Decrypt takes: a *Client or a *Cipher.
+// Decrypter is what Decrypt takes: a *Client or a *Cipher. The real
+// interface's method takes the module's internal record types; the stub's
+// is a placeholder, and the agreement test compares interfaces by presence.
 type Decrypter interface{ decrypter() }
 
 func (*Cipher) decrypter() {}
@@ -33,11 +35,15 @@ type (
 )
 
 // Index is one index on a field, as generated code names it in a declaration.
-type Index interface{ index() }
+type Index interface {
+	Output() string
+	String() string
+}
 
 type namedIndex string
 
-func (namedIndex) index() {}
+func (n namedIndex) Output() string { return string(n) }
+func (n namedIndex) String() string { return string(n) }
 
 // The indexes. Equality, Ore and Ope take no options; Match and JSON do.
 var (
@@ -68,10 +74,12 @@ func (*Client) Keyset(KeysetName) *Cipher { return nil }
 func (c *Cipher) Extend(string) *Cipher { return c }
 
 // NewClient opens a client.
-func NewClient(context.Context, ...Option) (*Client, error) { return nil, nil }
+func NewClient(context.Context, ...ClientOption) (*Client, error) { return nil, nil }
 
-// Option configures a client.
-type Option interface{ option() }
+// ClientOption configures a client.
+type ClientOption func(*clientOptions)
+
+type clientOptions struct{}
 
 // Close closes the client.
 func (*Client) Close() error { return nil }

@@ -181,8 +181,10 @@ func TestGenerateNeedsOutputAndAMessage(t *testing.T) {
 	if _, _, err := stashgen.MessageType(42); err == nil {
 		t.Fatal("an int accepted as a message")
 	}
+	// With no WithEngine the embedded guest answers; the output directory
+	// is no module, so the run stops there or, with no guest built, before.
 	err = stashgen.Generate(policy.SourceFunc(individualFacts), policy.ForMessage(&local{}, "c", base), stashgen.Output(filepath.Join(t.TempDir(), "x_stash.go")))
-	if err == nil || !strings.Contains(err.Error(), "not available in this build") {
-		t.Fatalf("without an engine: %v", err)
+	if err == nil {
+		t.Fatal("a message in no module generated")
 	}
 }

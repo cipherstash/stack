@@ -342,11 +342,12 @@ func (c *Client) Close() error {
 // StackCipher::keyset. No request is made here — Go has no await, so the
 // keyset is resolved by the guest on the cipher's first use (and cached),
 // which makes a Cipher cheap to make per call, per tenant or per request.
-// [Cipher.KeysetID] is the explicit resolution point. A nil selector is a
-// programming error and panics; the default keyset is [Client.DefaultKeyset].
+// [Cipher.KeysetID] is the explicit resolution point. A nil selector gives a
+// cipher whose every call fails with [ErrEncoding]; the default keyset is
+// [Client.DefaultKeyset].
 func (c *Client) Keyset(sel KeysetSelector) *Cipher {
 	if sel == nil {
-		panic("encrypt: Client.Keyset(nil); the default keyset is Client.DefaultKeyset")
+		return &Cipher{client: c, keyset: defaultKeyset{}, err: fmt.Errorf("%w: Client.Keyset(nil); the default keyset is Client.DefaultKeyset", ErrEncoding)}
 	}
 	return &Cipher{client: c, keyset: sel}
 }
@@ -379,33 +380,6 @@ func (c *Client) resolveKeyset(ctx context.Context, sel KeysetSelector) (KeysetI
 	}
 	copy(id[:], out)
 	return id, nil
-}
-
-// Decrypt opens a ciphertext produced by any keyset of this client: each
-// leaf is opened under the keyset it was sealed with, with batched key
-// retrievals per keyset (one per 500 leaves sealed under it). ct is the
-// shape Cipher.Encrypt returns; aad must be what the value was sealed
-// under.
-func (c *Client) Decrypt(ctx context.Context, ct any, aad []byte) (any, error) {
-	return c.decryptValue(ctx, anyKeyset{}, ct, aad, false)
-}
-
-// DecryptElement is Decrypt for a value sealed as a sequence element; see
-// Cipher.DecryptElement.
-func (c *Client) DecryptElement(ctx context.Context, ct any, aad []byte) (any, error) {
-	return c.decryptValue(ctx, anyKeyset{}, ct, aad, true)
-}
-
-// DecryptRecords opens records produced by Cipher.EncryptRecords under any
-// keyset of this client, into a slice; see Cipher.DecryptRecords.
-func (c *Client) DecryptRecords(ctx context.Context, records []EncryptedRecord, out any, opts ...RecordOption) error {
-	return c.decryptRecords(ctx, anyKeyset{}, records, out, opts)
-}
-
-// DecryptRecord opens one record under any keyset of this client; see
-// Cipher.DecryptRecord.
-func (c *Client) DecryptRecord(ctx context.Context, record EncryptedRecord, out any, opts ...RecordOption) error {
-	return c.decryptRecord(ctx, anyKeyset{}, record, out, opts)
 }
 
 // call runs f on the instance under the client's lock.
@@ -461,28 +435,4 @@ func (c *Client) call(ctx context.Context, f func(*instance) ([]byte, error)) ([
 		return nil, err
 	}
 	return out, nil
-}
-
-func (c *Client) decryptValue(ctx context.Context, sel KeysetSelector, ct any, aad []byte, element bool) (any, error) {
-	encoded, err := marshalCipherText(ct)
-	if err != nil {
-		return nil, err
-	}
-	opts, err := vcffi.Marshal(options(sel))
-	if err != nil {
-		return nil, err
-	}
-	out, err := c.call(ctx, func(inst *instance) ([]byte, error) {
-		fn := inst.decrypt
-		if element {
-			fn = inst.decryptElement
-		}
-		return inst.call(ctx, fn, buf(encoded), buf(aad), buf(opts))
-	})
-	if err != nil {
-		return nil, err
-	}
-	// The output is plaintext: decode, then wipe the transport copy.
-	defer wipe(out)
-	return vcffi.Unmarshal(out)
 }
