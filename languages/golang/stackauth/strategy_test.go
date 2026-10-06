@@ -111,6 +111,10 @@ func TestAccessKeyStrategyCachesAndPreservesRequest(t *testing.T) {
 // minted for their own IdP token, and a user whose token is cached is not
 // exchanged again. One cached token per strategy handed the second user the
 // first user's token (stack-auth CIP-4301).
+// callerKey carries the caller's identity in the ctx of a Token call, the
+// way a request-scoped provider finds its user.
+type callerKey struct{}
+
 func TestOIDCStrategyFederatesEachProviderTokenOnce(t *testing.T) {
 	guestOrSkip(t)
 	var exchanges atomic.Int32
@@ -140,18 +144,23 @@ func TestOIDCStrategyFederatesEachProviderTokenOnce(t *testing.T) {
 	}
 	defer profile.Close()
 	var providerCalls atomic.Int32
-	var current atomic.Value
-	strategy, err := profile.OIDC(context.Background(), testCRN, OIDCProviderFunc(func(context.Context) (string, error) {
+	// The provider learns who is calling only from the ctx of the Token
+	// call, as a provider reading the request's user does; a shared variable
+	// would pass even if the guest handed it some other context.
+	strategy, err := profile.OIDC(context.Background(), testCRN, OIDCProviderFunc(func(ctx context.Context) (string, error) {
 		providerCalls.Add(1)
-		return current.Load().(string), nil
+		idp, ok := ctx.Value(callerKey{}).(string)
+		if !ok {
+			return "", errors.New("provider did not receive the Token caller's context")
+		}
+		return idp, nil
 	}), WithAuthBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer strategy.Close()
 	tokenFor := func(idp string) string {
-		current.Store(idp)
-		token, err := strategy.Token(context.Background())
+		token, err := strategy.Token(context.WithValue(context.Background(), callerKey{}, idp))
 		if err != nil {
 			t.Fatalf("Token for %s: %v", idp, err)
 		}
