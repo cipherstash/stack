@@ -155,6 +155,20 @@ func TestRunAsksTheEmbeddedEngine(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "user_stash.go")); !os.IsNotExist(err) {
 		t.Fatal("a file was written after the engine refused")
 	}
+	// A context of two segments leaves an EQL field no column: refused by
+	// name, before the engine is asked, and nothing written.
+	deep := strings.Replace(userSource, "context=users", "context=app/users", 1)
+	dir = writeModule(t, map[string]string{"model.go": deep})
+	stderr.Reset()
+	if code := run([]string{"-type", "User"}, dir, &stdout, &stderr, stashgen.GuestEngine); code != 1 {
+		t.Fatalf("exit %d, want 1\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "User.Email") || !strings.Contains(stderr.String(), `"app/users" has 2 segments`) {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "user_stash.go")); !os.IsNotExist(err) {
+		t.Fatal("a file was written after the refusal")
+	}
 	// Separate columns, as before.
 	columns := strings.Replace(userSource, "encrypt_into=TextEq", "encrypt,index=equality;match", 1)
 	dir = writeModule(t, map[string]string{"model.go": columns})

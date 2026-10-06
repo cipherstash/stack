@@ -253,6 +253,16 @@ func (p *Plan) Validate() error {
 			if len(f.Outputs) != 0 {
 				return fmt.Errorf("record: field %q names the EQL type %s and outputs; a field has one or the other", f.Name, f.Target)
 			}
+			// An EQL value is stored under a table and a column: the
+			// context is the table, the identity the column. The engine
+			// refuses anything else when the plan is built; saying it here
+			// names the field before the guest is asked.
+			if len(p.Context) != 1 {
+				return fmt.Errorf("record: field %q names the EQL type %s, and an EQL column is a table and a column: the context %q has %d segments, not one", f.Name, f.Target, strings.Join(p.Context, "/"), len(p.Context))
+			}
+			if len(p.Extension) != 0 {
+				return fmt.Errorf("record: field %q names the EQL type %s, and an EQL column is a table and a column: an extended context has no column", f.Name, f.Target)
+			}
 			continue
 		}
 		if len(f.Outputs) == 0 {

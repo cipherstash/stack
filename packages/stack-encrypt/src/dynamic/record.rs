@@ -71,8 +71,12 @@
 //! that parses there has no target field.
 //!
 //! A target field's label must be a column, `<table>/<column>`, because
-//! that is what an EQL value stores in its `i`; an extended plan (a tenant
-//! part on every label) has no column for it and is refused with
+//! that is what an EQL value stores in its `i`: [`Plan::new_with`] refuses
+//! a target field whose label has any other number of segments
+//! ([`TargetError::Column`]) — [`FieldPlan::with_target`] itself takes any
+//! label of two or more segments, as every field constructor does; the
+//! column rule is the plan's — and an extended plan (a tenant part on every
+//! label) has no column for it and is refused with
 //! [`TargetError::Extended`] rather than silently dropping the extension.
 //! The field's `"type"`, when declared, must be the kind the EQL type is
 //! produced from ([`TargetError::Kind`]); undeclared, it is that kind, so
@@ -570,6 +574,19 @@ impl Plan {
                 return Err(TargetError::Extended {
                     name: field.name.clone(),
                     label: field.label.to_string(),
+                }
+                .into());
+            }
+            // An EQL value is stored under a table and a column, so the
+            // label is exactly two segments. Decided here, where the plan is
+            // built and se_plan_check reports it, not at the first value: a
+            // generator that asks the engine must be told before it writes
+            // the code. The resolver re-checks, since it is public API.
+            if field.label.segments().len() != 2 {
+                return Err(TargetError::Column {
+                    name: field.name.clone(),
+                    label: field.label.to_string(),
+                    reason: "an EQL column is a two-segment label: table and column".to_owned(),
                 }
                 .into());
             }
@@ -5099,12 +5116,12 @@ mod tests {
         }
 
         /// The constructor's one bound on the label is "at least two
-        /// segments": a column is table and column, and a longer label is
-        /// still a label — whether a resolver can store under it is the
-        /// resolver's to say, and the extension rule is `Plan::new_with`'s.
-        /// Pinned from both sides so the bound cannot drift to "exactly two"
-        /// or flip: one segment refused (it is no label), two accepted, and
-        /// three — the first length above the bound — accepted intact.
+        /// segments", the same as every field constructor's: a longer label
+        /// is still a label. The column rule — exactly two — is
+        /// `Plan::new_with`'s, where the plan is built (the test after this
+        /// one). Pinned from both sides so the constructor's bound cannot
+        /// drift to "exactly two" or flip: one segment refused (it is no
+        /// label), two accepted, and three accepted intact.
         #[test]
         fn with_target_takes_any_label_of_two_or_more_segments() {
             let ctx = |segments: &[&str]| context(strings(segments)).expect("a context value");
@@ -5124,6 +5141,37 @@ mod tests {
             assert_eq!(three.label().segments().count(), 3);
             assert_eq!(three.identity(), "email");
             assert_eq!(three.target(), Some(TEXT_EQ));
+        }
+
+        /// `context=app/users` with `email,encrypt_into=TextEq` in Go gives
+        /// the label `app/users/email`: no column for it. Refused when the
+        /// plan is built, so `se_plan_check` tells the generator before it
+        /// writes the code, and no value ever reaches the resolver.
+        #[tokio::test]
+        async fn a_target_label_that_is_not_table_and_column_is_refused_when_the_plan_is_built() {
+            let cipher = cipher().await;
+            let value = obj(vec![(
+                "email",
+                target_spec(strings(&["app", "users", "email"]), TEXT_EQ),
+            )]);
+            let error = target_error(plan_with(value, &FakeEql).unwrap_err());
+            assert!(
+                matches!(&error, TargetError::Column { name, label, .. } if name == "email" && label == "app/users/email"),
+                "{error}"
+            );
+            assert_eq!(
+                error.to_string(),
+                "email: the label app/users/email is not an EQL column: an EQL column is a \
+                 two-segment label: table and column"
+            );
+            // A sealed field under the same three-segment label is fine: the
+            // rule is the EQL column's, not the plan's.
+            let value = obj(vec![(
+                "email",
+                spec(strings(&["app", "users", "email"]), &["c"]),
+            )]);
+            assert!(plan_with(value, &FakeEql).is_ok());
+            assert_eq!(generates(&cipher), 0, "nothing minted");
         }
 
         #[test]

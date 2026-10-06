@@ -161,6 +161,14 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 			if eqlType.Plaintext != KindOther && eqlType.Plaintext != f.GoType.Kind {
 				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals a %s, and %s is %s", f.EQLType, eqlType.Plaintext, f.GoType, f.GoType.Kind)}
 			}
+			// An EQL value is stored under a table and a column: the struct's
+			// context is the table and the field's name the column, so a
+			// context of two or more segments leaves the field no column.
+			// The engine refuses it too (se_plan_check); naming it here
+			// names the field.
+			if len(segments) != 1 {
+				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s is stored under a table and a column, and the context %q has %d segments, not one", f.EQLType, d.Context, len(segments))}
+			}
 			rf.Target = f.EQLType
 		case VerbEncrypt, VerbEncryptIndex:
 			rf.Outputs = append(rf.Outputs, record.Ciphertext)
