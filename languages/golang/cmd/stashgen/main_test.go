@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt/eql"
 	"github.com/cipherstash/stack/languages/golang/stashgen"
 	"github.com/cipherstash/stack/languages/golang/stashgen/enginetest"
 )
@@ -155,6 +156,22 @@ func TestRunAsksTheEmbeddedEngine(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "user_stash.go")); !os.IsNotExist(err) {
 		t.Fatal("a file was written after the engine refused")
 	}
+	// A Go type the EQL type does not seal: TextEq takes a string. The
+	// generator refuses it from the engine's plaintext kind, before the
+	// engine is asked. Only this test links encrypt/eql, so only it reaches
+	// the kind check against the real target list.
+	mismatched := strings.Replace(userSource, "Email string   `stash:\"email,encrypt_into=TextEq\"`", "Age int64 `stash:\"age,encrypt_into=TextEq\"`", 1)
+	if mismatched == userSource {
+		t.Fatal("the fixture's Email line changed shape")
+	}
+	dir = writeModule(t, map[string]string{"model.go": mismatched})
+	stderr.Reset()
+	if code := run([]string{"-type", "User"}, dir, &stdout, &stderr, stashgen.GuestEngine); code != 1 {
+		t.Fatalf("exit %d, want 1\n%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "User.Age") || !strings.Contains(stderr.String(), "TextEq seals a string, and int64 is int") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
 	// A context of two segments leaves an EQL field no column: refused by
 	// name, before the engine is asked, and nothing written.
 	deep := strings.Replace(userSource, "context=users", "context=app/users", 1)
@@ -175,6 +192,33 @@ func TestRunAsksTheEmbeddedEngine(t *testing.T) {
 	stderr.Reset()
 	if code := run([]string{"-type", "User"}, dir, &stdout, &stderr, stashgen.GuestEngine); code != 0 {
 		t.Fatalf("exit %d\n%s", code, stderr.String())
+	}
+}
+
+// stashgen.EQLGoName and eql-codegen's go_name hold one rule (Json is JSON).
+// The generated encrypt/eql table records both names for every type, so a
+// type whose GoName the Go rule does not reproduce is a rule the two no
+// longer share. This test lives here because the command links encrypt/eql;
+// the stashgen package's own tests must not, or the embedded engine they
+// test changes build.
+func TestEQLGoNameAgreesWithTheGeneratedPackage(t *testing.T) {
+	if len(eql.Types) == 0 {
+		t.Fatal("the generated eql.Types table is empty")
+	}
+	renamed := 0
+	for _, typ := range eql.Types {
+		if got := stashgen.EQLGoName(typ.Name); got != typ.GoName {
+			t.Errorf("%s: EQLGoName = %s, generated GoName = %s", typ.Name, got, typ.GoName)
+		}
+		if typ.Name != typ.GoName {
+			renamed++
+		}
+	}
+	if renamed == 0 {
+		t.Fatal("the rule renamed nothing: the Json family is spelled JSON")
+	}
+	if stashgen.EQLGoName("Json") != "JSON" || stashgen.EQLGoName("TextEq") != "TextEq" || stashgen.EQLGoName("SteVecQuery") != "SteVecQuery" {
+		t.Fatal("the one rule: a Json prefix is JSON, every other name is itself")
 	}
 }
 

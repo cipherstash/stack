@@ -135,12 +135,14 @@ type modelField struct {
 	output *output
 }
 
-// eqlGoName is the Go type name in encrypt/eql of an EQL type the engine
+// EQLGoName is the Go type name in encrypt/eql of an EQL type the engine
 // names: the same name in every language, save the JSON family, whose Go
-// names start with JSON (Json -> JSON, JsonSearch -> JSONSearch), as Go
-// spells initialisms. The generated encrypt/eql package follows the same
-// rule (eql-codegen's go_eql renderer).
-func eqlGoName(name string) string {
+// names start with JSON (Json is JSON), as Go spells initialisms. The
+// generated encrypt/eql package follows the same rule (eql-codegen's go_eql
+// renderer), and its Types table records both names, which is what holds
+// the two in agreement (a test in cmd/stashgen reads it; this package's own
+// tests cannot link encrypt/eql without changing the engine they test).
+func EQLGoName(name string) string {
 	if strings.HasPrefix(name, "Json") {
 		return "JSON" + strings.TrimPrefix(name, "Json")
 	}
@@ -713,10 +715,10 @@ func (r *reader) buildFields(c *collected) error {
 				return fieldErr(typeName, cf.goName, "the engine cannot produce the EQL type %s yet: %s", field.EQLType, reason)
 			}
 			f.imports.add(eqlPath, "eql")
-			g.outputType = "eql." + eqlGoName(eqlType.Name)
-			g.outputs = []output{{name: "EQL", typeExpr: g.outputType, pathType: eqlPath + "." + eqlGoName(eqlType.Name)}}
+			g.outputType = "eql." + EQLGoName(eqlType.Name)
+			g.outputs = []output{{name: "EQL", typeExpr: g.outputType, pathType: eqlPath + "." + EQLGoName(eqlType.Name)}}
 			if eqlType.Query != "" {
-				g.queryType = "eql." + eqlGoName(eqlType.Query)
+				g.queryType = "eql." + EQLGoName(eqlType.Query)
 			}
 		default:
 			g.outputType = f.encName + cf.goName
