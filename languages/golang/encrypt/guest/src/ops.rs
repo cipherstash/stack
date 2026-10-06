@@ -46,6 +46,7 @@ use vitaminc_aead_value::{transport as codec, FfiValue};
 use vitaminc_protected::Controlled;
 
 use crate::status::{status_for_dynamic, status_for_error, STATUS_ENCODING, STATUS_INTERNAL};
+use crate::targets::resolver;
 
 /// Term kinds for `se_term`, part of the guest/host contract (the Go host
 /// mirrors these values).
@@ -155,8 +156,8 @@ pub async fn encrypt_record<K>(
 where
     K: DataKeySource + Sync + 'static,
 {
-    let plan = dynamic::record::plan(decode_value(plan)?).map_err(|e| status_for_dynamic(&e))?;
-    let tree = dynamic::record::encrypt(cipher, decode_value(source)?, &plan)
+    let plan = parse_plan(plan)?;
+    let tree = dynamic::record::encrypt_with(cipher, decode_value(source)?, &plan, &resolver())
         .map_err(|e| status_for_dynamic(&e))?
         .await
         .map_err(|e| status_for_error(&e))?;
@@ -189,12 +190,49 @@ pub async fn decrypt_record<K>(
 where
     K: DataKeySource + Sync + 'static,
 {
-    let plan = dynamic::record::plan(decode_value(plan)?).map_err(|e| status_for_dynamic(&e))?;
-    let value = dynamic::record::decrypt(scope, decode_tree(record)?, &plan, expected)
+    let plan = parse_plan(plan)?;
+    let value = dynamic::record::decrypt_with(
+        scope,
+        decode_tree(record)?,
+        &plan,
+        expected,
+        &resolver(),
+    )
         .map_err(|e| status_for_dynamic(&e))?
         .await
         .map_err(|e| status_for_error(&e))?;
     encode_value(value)
+}
+
+/// Derive the EQL query value of one target field: a codec-encoded
+/// plaintext, the codec-encoded plan and the field's name (UTF-8) in, the
+/// query value's JSON bytes out — the operand `eql_v3.query_<name>` takes.
+/// Runs the EQL type's own query plan through this build's resolver
+/// ([`crate::targets`]); a build without EQL types refuses the plan before
+/// this is reached. No data key is minted: under the local backend the
+/// equality term is one PRF derivation.
+pub async fn query<K>(
+    cipher: &KeysetCipher<'_, K>,
+    value: &[u8],
+    plan: &[u8],
+    field: &[u8],
+) -> Result<Vec<u8>, u32>
+where
+    K: DataKeySource + Sync + 'static,
+{
+    let plan = parse_plan(plan)?;
+    let field = std::str::from_utf8(field).map_err(|_| STATUS_ENCODING)?;
+    dynamic::record::query(cipher, &plan, field, decode_value(value)?, &resolver())
+        .map_err(|e| status_for_dynamic(&e))?
+        .await
+        .map_err(|e| status_for_error(&e))
+}
+
+/// A codec-encoded plan, parsed against this build's resolver: a target
+/// name this build cannot run is refused here, the same way at every
+/// export that takes a plan.
+fn parse_plan(plan: &[u8]) -> Result<dynamic::record::Plan, u32> {
+    dynamic::record::plan_with(decode_value(plan)?, &resolver()).map_err(|e| status_for_dynamic(&e))
 }
 
 // =============================================================================
@@ -209,16 +247,17 @@ where
 /// declaration it writes, so it holds no copy of the engine's rules; it
 /// asks one field at a time to name the field that failed.
 pub fn plan_check(plan: &[u8]) -> Result<(), u32> {
-    dynamic::record::plan(decode_value(plan)?)
-        .map(drop)
-        .map_err(|e| status_for_dynamic(&e))
+    parse_plan(plan).map(drop)
 }
 
-/// The EQL types this build of the engine produces, as a codec-encoded
-/// `{"targets": [...]}`. Empty until the EQL target dispatch lands: a
-/// generator reads an empty list as "no `encrypt_into` type is available
-/// yet" and refuses the tag. The shape is fixed here so the next build adds
-/// entries to the list rather than a second export.
+/// The EQL types this build of the engine knows, as a codec-encoded
+/// `{"targets": [...]}`: one entry per type in
+/// [`TargetDescriptor::to_value`](stack_encrypt::dynamic::TargetDescriptor::to_value)'s
+/// wire form, producible or not, with the reason when not. The build
+/// without EQL types lists none, which a generator reads as "no
+/// `encrypt_into` type is available" and refuses the tag; the `eql` build
+/// lists the catalog, and a generator writes `encrypt_into` only for an
+/// entry whose `producible` is true.
 ///
 /// **Each entry is wire format**, the serialisation of eql-bindings' target
 /// record, and the Go reader (`encrypt.parseTargets`) refuses an entry with
@@ -237,9 +276,16 @@ pub fn plan_check(plan: &[u8]) -> Result<(), u32> {
 /// | `producible`       | bool              | whether this build produces the type |
 /// | `reason`           | string or null    | why not, when `producible` is false |
 pub fn targets() -> Result<Vec<u8>, u32> {
+    use stack_encrypt::dynamic::TargetResolver as _;
     encode_value(FfiValue::Object(vec![(
         "targets".to_string(),
-        FfiValue::Array(Vec::new()),
+        FfiValue::Array(
+            resolver()
+                .targets()
+                .iter()
+                .map(|target| target.to_value())
+                .collect(),
+        ),
     )]))
 }
 
@@ -273,10 +319,27 @@ pub mod validate {
     /// output known), and the source fits it (shape, field set, each value
     /// against its field's outputs).
     pub fn record(source: &[u8], plan: &[u8]) -> Result<(), u32> {
-        let plan =
-            dynamic::record::plan(decode_value(plan)?).map_err(|e| status_for_dynamic(&e))?;
+        let plan = parse_plan(plan)?;
         dynamic::record::check_source(decode_value(source)?, &plan)
             .map_err(|e| status_for_dynamic(&e))
+    }
+
+    /// A target query's inputs, as [`query`] takes them: the plan parses
+    /// against this build's resolver, the field is one of its target fields,
+    /// and the value is of the field's declared kind.
+    pub fn query(value: &[u8], plan: &[u8], field: &[u8]) -> Result<(), u32> {
+        let plan = parse_plan(plan)?;
+        let field = std::str::from_utf8(field).map_err(|_| STATUS_ENCODING)?;
+        let field = plan
+            .fields()
+            .iter()
+            .find(|candidate| candidate.name() == field && candidate.target().is_some())
+            .ok_or(STATUS_ENCODING)?;
+        let value = decode_value(value)?;
+        if field.field_type().is_some_and(|kind| !kind.holds(&value)) {
+            return Err(STATUS_ENCODING);
+        }
+        Ok(())
     }
 
     /// A record tree against its plan, as [`decrypt_record`] takes them:
@@ -285,8 +348,7 @@ pub mod validate {
     /// and a stored context field is the `expected` one, when the host
     /// names one.
     pub fn record_tree(record: &[u8], plan: &[u8], expected: Option<&Label>) -> Result<(), u32> {
-        let plan =
-            dynamic::record::plan(decode_value(plan)?).map_err(|e| status_for_dynamic(&e))?;
+        let plan = parse_plan(plan)?;
         dynamic::record::check_record(decode_tree(record)?, &plan, expected)
             .map_err(|e| status_for_dynamic(&e))
     }
@@ -508,5 +570,213 @@ mod tests {
             codec::encode_ciphertext_boxed(tree, &mut out).expect("codec encode");
             assert_eq!(out.len(), expected, "tree {i}");
         }
+    }
+
+    // ---- the EQL target path, native, over FakeDataKeySource -----------------
+
+    fn encoded(value: FfiValue) -> Vec<u8> {
+        let mut out = Vec::new();
+        codec::encode_value(value, &mut out).expect("encode");
+        out
+    }
+
+    fn text(value: &str) -> FfiValue {
+        FfiValue::String(value.into())
+    }
+
+    fn object(entries: Vec<(&str, FfiValue)>) -> FfiValue {
+        FfiValue::Object(
+            entries
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+        )
+    }
+
+    /// `email` named as a `TextEq` target under users/email, beside a
+    /// sealed `notes`.
+    fn target_plan() -> Vec<u8> {
+        encoded(object(vec![
+            (
+                "email",
+                object(vec![
+                    (
+                        "context",
+                        FfiValue::Array(vec![text("users"), text("email")]),
+                    ),
+                    ("target", text("TextEq")),
+                    ("type", text("string")),
+                ]),
+            ),
+            (
+                "notes",
+                object(vec![
+                    (
+                        "context",
+                        FfiValue::Array(vec![text("users"), text("notes")]),
+                    ),
+                    ("outputs", FfiValue::Array(vec![text("c")])),
+                    ("type", text("string")),
+                ]),
+            ),
+        ]))
+    }
+
+    #[test]
+    fn targets_lists_what_this_build_holds_in_the_wire_shape() {
+        let out = targets().expect("encodes");
+        let FfiValue::Object(entries) = decode_value(&out).expect("decodes") else {
+            panic!("an object");
+        };
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "targets");
+        let FfiValue::Array(items) = &entries[0].1 else {
+            panic!("a list");
+        };
+        if !crate::targets::HOLDS_EQL {
+            assert!(items.is_empty(), "the build without EQL types lists none");
+            return;
+        }
+        let FfiValue::Object(text_eq) = items
+            .iter()
+            .find(|item| {
+                matches!(item, FfiValue::Object(fields) if fields.iter().any(|(k, v)| k == "name" && matches!(v, FfiValue::String(s) if s.risky_ref() == b"TextEq")))
+            })
+            .expect("TextEq is listed")
+        else {
+            panic!("an object")
+        };
+        let keys: Vec<&str> = text_eq.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "name",
+                "family",
+                "suffix",
+                "plaintext",
+                "sql_domain",
+                "indexes",
+                "query",
+                "query_sql_domain",
+                "producible",
+                "reason"
+            ]
+        );
+        assert!(matches!(text_eq[8].1, FfiValue::Bool(true)));
+    }
+
+    #[test]
+    fn a_plan_naming_a_target_is_accepted_exactly_by_the_eql_build() {
+        let plan = target_plan();
+        if crate::targets::HOLDS_EQL {
+            assert_eq!(plan_check(&plan), Ok(()), "the eql build runs TextEq");
+            // A type the engine cannot produce, and one that does not exist,
+            // are refused at plan_check.
+            for name in ["TextOrdOre", "Nope"] {
+                let refused = encoded(object(vec![(
+                    "email",
+                    object(vec![
+                        (
+                            "context",
+                            FfiValue::Array(vec![text("users"), text("email")]),
+                        ),
+                        ("target", text(name)),
+                    ]),
+                )]));
+                assert_eq!(plan_check(&refused), Err(STATUS_ENCODING), "{name}");
+            }
+        } else {
+            assert_eq!(
+                plan_check(&plan),
+                Err(STATUS_ENCODING),
+                "the build without EQL types refuses a target name"
+            );
+        }
+    }
+
+    #[cfg(feature = "eql")]
+    #[test]
+    fn a_text_eq_field_round_trips_and_queries_through_the_record_exports() {
+        use futures::executor::block_on;
+        use stack_encrypt::StackCipher;
+        use stack_kms::FakeDataKeySource;
+
+        let cipher = block_on(StackCipher::builder().kms(FakeDataKeySource::new()).init())
+            .expect("a cipher");
+        let keyset = cipher.default_keyset();
+        let plan = target_plan();
+        let source = encoded(object(vec![
+            ("email", text("alice@example.com")),
+            ("notes", text("likes cats")),
+        ]));
+        validate::record(&source, &plan).expect("the source fits");
+        let sealed = block_on(encrypt_record(&keyset, &source, &plan)).expect("seals");
+
+        // The stored tree carries the EQL JSON under "eql": the v3 envelope
+        // with the column as its i and a stack-encrypt ciphertext.
+        let tree = decode_tree(&sealed).expect("a tree");
+        let CipherText::Map(mut fields) = tree else {
+            panic!("a record")
+        };
+        let at = fields
+            .iter()
+            .position(|(k, _)| k == "email")
+            .expect("email");
+        let (_, CipherText::Map(outputs)) = fields.swap_remove(at) else {
+            panic!("outputs")
+        };
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].0, dynamic::record::EQL_KEY);
+        let CipherText::Passthrough(payload) = &outputs[0].1 else {
+            panic!("a passthrough")
+        };
+        let FfiValue::Bytes(bytes) = payload.downcast_ref::<FfiValue>().expect("a value") else {
+            panic!("bytes")
+        };
+        let eql: serde_json::Value = serde_json::from_slice(bytes.risky_ref()).expect("JSON");
+        assert_eq!(eql["v"], 3);
+        assert_eq!(eql["i"], serde_json::json!({"t": "users", "c": "email"}));
+        assert!(eql["c"].as_str().unwrap().starts_with("stack-encrypt:1:"));
+        assert_eq!(eql["hm"].as_str().unwrap().len(), 64);
+
+        // Opens back through the EQL type's own decryption.
+        validate::record_tree(&sealed, &plan).expect("the tree fits");
+        let opened =
+            block_on(decrypt_record(Scope::Client(&cipher), &sealed, &plan)).expect("opens");
+        let FfiValue::Object(values) = decode_value(&opened).expect("a value") else {
+            panic!("an object")
+        };
+        assert!(
+            matches!(&values[0].1, FfiValue::String(s) if s.risky_ref() == b"alice@example.com")
+        );
+        assert!(matches!(&values[1].1, FfiValue::String(s) if s.risky_ref() == b"likes cats"));
+
+        // The query value matches the stored term.
+        let probe = encoded(text("alice@example.com"));
+        validate::query(&probe, &plan, b"email").expect("a target field");
+        let query_bytes = block_on(query(&keyset, &probe, &plan, b"email")).expect("derives");
+        let probe_json: serde_json::Value = serde_json::from_slice(&query_bytes).expect("JSON");
+        assert_eq!(
+            probe_json["hm"], eql["hm"],
+            "the query matches the stored value"
+        );
+        assert!(
+            probe_json.get("c").is_none(),
+            "a query carries no ciphertext"
+        );
+        // A query on a sealed field, an unknown field, or a wrong kind is
+        // refused at validation.
+        assert_eq!(
+            validate::query(&probe, &plan, b"notes"),
+            Err(STATUS_ENCODING)
+        );
+        assert_eq!(
+            validate::query(&probe, &plan, b"nope"),
+            Err(STATUS_ENCODING)
+        );
+        assert_eq!(
+            validate::query(&encoded(FfiValue::UInt32(1)), &plan, b"email"),
+            Err(STATUS_ENCODING)
+        );
     }
 }

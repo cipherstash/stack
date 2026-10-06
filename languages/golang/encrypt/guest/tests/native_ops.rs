@@ -1311,17 +1311,49 @@ fn plan_check_answers_without_a_cipher() {
     assert_eq!(ops::plan_check(b"\xff\xff"), Err(STATUS_ENCODING));
 }
 
-/// `targets` is the fixed wire shape with no entries until the EQL target
-/// dispatch lands.
+/// `targets` is the fixed wire shape: `{"targets": [...]}`. The build
+/// without EQL types lists none, which the Go generator reads as "no
+/// `encrypt_into` type is available"; the `eql` build lists the catalog,
+/// `TextEq` producible and every other type with its reason.
 #[test]
-fn targets_is_an_empty_list_for_now() {
+fn targets_lists_what_the_build_holds() {
     let out = ops::targets().expect("targets encode");
     let FfiValue::Object(entries) = decode(&out) else {
         panic!("targets is an object");
     };
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].0, "targets");
-    assert!(matches!(&entries[0].1, FfiValue::Array(items) if items.is_empty()));
+    let FfiValue::Array(items) = &entries[0].1 else {
+        panic!("targets is a list");
+    };
+    if !stack_encrypt_guest::targets::HOLDS_EQL {
+        assert!(items.is_empty(), "the build without EQL types lists none");
+        return;
+    }
+    let name_of = |item: &FfiValue| match item {
+        FfiValue::Object(fields) => fields.iter().find_map(|(k, v)| match (k.as_str(), v) {
+            ("name", FfiValue::String(s)) => {
+                std::str::from_utf8(s.risky_ref()).ok().map(str::to_owned)
+            }
+            _ => None,
+        }),
+        _ => None,
+    };
+    let producible = |item: &FfiValue| match item {
+        FfiValue::Object(fields) => fields
+            .iter()
+            .any(|(k, v)| k == "producible" && matches!(v, FfiValue::Bool(true))),
+        _ => false,
+    };
+    let names: Vec<String> = items.iter().filter_map(name_of).collect();
+    assert_eq!(names.len(), items.len(), "every entry is named");
+    assert!(names.iter().any(|n| n == "TextEq"));
+    let producible: Vec<String> = items
+        .iter()
+        .filter(|i| producible(i))
+        .filter_map(name_of)
+        .collect();
+    assert_eq!(producible, ["TextEq"], "the engine produces TextEq only");
 }
 
 // =============================================================================

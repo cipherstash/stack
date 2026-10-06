@@ -214,6 +214,69 @@ cp "$module" ../testdata/stack_encrypt_guest_deterministic.wasm
 echo "test build at languages/golang/encrypt/testdata/stack_encrypt_guest_deterministic.wasm"
 """
 
+# The guest build that holds the EQL types (ADR-0007, amended 2026-10-06):
+# the same crate with the `eql` feature, which links eql-bindings and installs
+# its by-name dispatch as the engine's TargetResolver, so a plan field may
+# name `TextEq` and the guest returns the finished EQL value. The Go package
+# `encrypt/eql` embeds it and registers it on import; a program that names an
+# EQL type links this build, every other program links the one above. Same
+# import-surface gate as the real build: the EQL types add no host import.
+# Both builds ship until the size difference has been weighed (the plan asks
+# for the measurement first); the build logs both sizes.
+[tasks."wasm:guest:build:eql"]
+description = "Build the stack-encrypt WASI guest with the EQL types (feature eql; wasm32-wasip1, release), assert its host-import surface and report both builds' sizes"
+shell = "bash -c"
+run = """
+set -euo pipefail
+rustup target add wasm32-wasip1
+root=$(pwd)
+cd languages/golang/encrypt/guest
+cargo build --target wasm32-wasip1 --release --features eql
+module=target/wasm32-wasip1/release/stack_encrypt_guest.wasm
+python3 "$root/scripts/check-wasm-imports.py" "$module" \\
+  --allow-module wasi_snapshot_preview1 \\
+  --deny-prefix wasi_snapshot_preview1:path_ \\
+  --deny-prefix wasi_snapshot_preview1:sock_ \\
+  --deny-prefix wasi_snapshot_preview1:fd_prestat \\
+  --require wasi_snapshot_preview1:random_get \\
+  --require cipherstash_transport:transport_send \\
+  --require cipherstash_transport:token_get
+mkdir -p ../eql/wasm
+cp "$module" ../eql/wasm/stack_encrypt_guest_eql.wasm
+echo "embedded into languages/golang/encrypt/eql/wasm/stack_encrypt_guest_eql.wasm"
+# The measurement the plan asks for before the SDK settles on one build or
+# two: the build without EQL types beside this one, when it has been built.
+plain=../wasm/stack_encrypt_guest.wasm
+if [ -f "$plain" ]; then
+  echo "size without EQL types: $(wc -c < "$plain") bytes ($plain)"
+fi
+echo "size with EQL types:    $(wc -c < ../eql/wasm/stack_encrypt_guest_eql.wasm) bytes"
+"""
+
+# The deterministic-kms TEST build with the EQL types: what the hermetic Go
+# tests of a TextEq field load (encrypt/eql's tests), as the one above is
+# what the other hermetic tests load. Same gate as the deterministic build.
+[tasks."wasm:guest:build:eql:deterministic"]
+description = "Build the deterministic-kms TEST build of the stack-encrypt WASI guest with the EQL types (features eql,deterministic-kms), for the hermetic Go tests of EQL fields"
+shell = "bash -c"
+run = """
+set -euo pipefail
+rustup target add wasm32-wasip1
+root=$(pwd)
+cd languages/golang/encrypt/guest
+cargo build --target wasm32-wasip1 --release --features eql,deterministic-kms
+module=target/wasm32-wasip1/release/stack_encrypt_guest.wasm
+python3 "$root/scripts/check-wasm-imports.py" "$module" \\
+  --allow-module wasi_snapshot_preview1 \\
+  --deny-prefix wasi_snapshot_preview1:path_ \\
+  --deny-prefix wasi_snapshot_preview1:sock_ \\
+  --deny-prefix wasi_snapshot_preview1:fd_prestat \\
+  --require wasi_snapshot_preview1:random_get
+mkdir -p ../eql/wasm
+cp "$module" ../eql/wasm/stack_encrypt_guest_eql_deterministic.wasm
+echo "test build at languages/golang/encrypt/eql/wasm/stack_encrypt_guest_eql_deterministic.wasm"
+"""
+
 [tasks."wasm:guest:test"]
 description = "Lint and natively test the stack-encrypt WASI guest (ops/config/status modules run on the host target)"
 shell = "bash -c"
@@ -230,10 +293,16 @@ cd languages/golang/encrypt/guest
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo clippy --all-targets --features deterministic-kms -- -D warnings
+# The build with the EQL types, and the test build of it, lint and test too:
+# the resolver module and the target path exist only there.
+cargo clippy --all-targets --features eql -- -D warnings
+cargo clippy --all-targets --features eql,deterministic-kms -- -D warnings
 # The wasm32-only modules (abi, host) only compile for the target; lint
 # them there so a broken export surface can't hide behind native-only CI.
 cargo clippy --target wasm32-wasip1 -- -D warnings
 cargo clippy --target wasm32-wasip1 --features deterministic-kms -- -D warnings
+cargo clippy --target wasm32-wasip1 --features eql -- -D warnings
+cargo clippy --target wasm32-wasip1 --features eql,deterministic-kms -- -D warnings
 # Intra-doc links, on the target the crate is written for (the wasm32-only
 # modules are part of the crate docs). rustdoc only warns on a broken link
 # and exits 0, so without -D warnings a stale link ships silently.
@@ -241,6 +310,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --target wasm32-wasip1
 # nextest, as everywhere else; this crate is a detached workspace, so it
 # runs from here rather than a root `-p`. nextest is in mise.test.toml.
 mise x --env test -- cargo nextest run
+mise x --env test -- cargo nextest run --features eql
 """
 
 [tasks."wasm:auth-guest:build"]
