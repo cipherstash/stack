@@ -436,11 +436,15 @@ where
         target: name,
         source,
     })?;
-    let decryption = value.decryption::<K>(column.into()).map(S::into_value);
+    // `decrypt_as`, not `run_decryption`: this crate compiles against the
+    // crates.io stack-encrypt its manifest names (0.2.0), which has the
+    // typed call and not the by-value runner. Same plan, same pending.
+    let expected: ExpectedContext<Identifier> = column.into();
     Ok(match opener {
-        Opener::Client(cipher) => cipher.run_decryption(decryption),
-        Opener::Keyset(keyset) => keyset.run_decryption(decryption),
-    })
+        Opener::Client(cipher) => cipher.decrypt_as::<S, T>(value, expected),
+        Opener::Keyset(keyset) => keyset.decrypt_as::<S, T>(value, expected),
+    }
+    .map(S::into_value))
 }
 
 #[cfg(test)]
