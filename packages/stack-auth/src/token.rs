@@ -150,9 +150,13 @@ impl Token {
     /// [`OidcFederationStrategy`](crate::OidcFederationStrategy) stamps this
     /// on the tokens it federates and serves a token from a
     /// [`TokenStore`](crate::TokenStore) only to the JWT whose digest it
-    /// carries, so one store can be shared across users without ever handing
-    /// one user's token to another. A store implementation can read it to key
-    /// its own storage per user.
+    /// carries, so a store shared across users never hands one user's token
+    /// to another: a token stamped with another JWT's digest is a cache miss
+    /// and a fresh exchange. A store can read it to write one entry per user,
+    /// but [`load`](crate::TokenStore::load) receives no key, so a store
+    /// shared by several users can return at most one user's token on a read;
+    /// the rest are misses. Give each user their own store (a per-browser
+    /// cookie already is one) to cache more than the most recent of them.
     pub fn federated_from(&self) -> Option<&str> {
         self.federated_from.as_deref()
     }
