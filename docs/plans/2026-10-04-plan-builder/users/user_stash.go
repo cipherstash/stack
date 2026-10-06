@@ -44,8 +44,8 @@ type userShape struct {
 
 var declaration = gensupport.Declare("users").
 	Passthrough("id").
-	EncryptIndex("email", encrypt.Equality).
-	EncryptIndex("name", encrypt.Equality).
+	EncryptInto("email", "TextEq").
+	EncryptInto("name", "TextEq").
 	Omit("internal")
 
 var codec = gensupport.New(gensupport.Generated[User, EncryptedUser]{
@@ -53,21 +53,24 @@ var codec = gensupport.New(gensupport.Generated[User, EncryptedUser]{
 	Declaration:     declaration,
 	PrintsPlaintext: true,
 	Source: func(v User) gensupport.Values {
-		return gensupport.Values{"email": v.Email, "name": v.Name}
+		return gensupport.Values{"id": v.ID, "email": v.Email, "name": v.Name}
 	},
 	Seal: func(v User, rec gensupport.Record) EncryptedUser {
 		return EncryptedUser{
 			ID:    v.ID,
-			Email: eql.NewTextEq(rec["email"]),
-			Name:  eql.NewTextEq(rec["name"]),
+			Email: eql.TextEq(rec["email"].EQL),
+			Name:  eql.TextEq(rec["name"].EQL),
 		}
 	},
 	Open: func(e EncryptedUser) gensupport.Record {
-		return gensupport.Record{"email": e.Email.Outputs(), "name": e.Name.Outputs()}
+		return gensupport.Record{"id": {Value: e.ID}, "email": {EQL: e.Email}, "name": {EQL: e.Name}}
 	},
 	Value: func(e EncryptedUser, vals gensupport.Values) (User, error) {
-		v := User{ID: e.ID}
+		var v User
 		var err error
+		if v.ID, err = gensupport.Get[int64](vals, "id"); err != nil {
+			return User{}, err
+		}
 		if v.Email, err = gensupport.Get[string](vals, "email"); err != nil {
 			return User{}, err
 		}
@@ -103,12 +106,12 @@ type EmailField struct {
 
 func (f EmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.NewTextEq(out), err
+	return eql.TextEq(out.EQL), err
 }
 
 func (f EmailField) Query(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
 	out, err := f.field.Query(ctx, c, v)
-	return eql.NewTextEqQuery(out), err
+	return eql.TextEqQuery(out.EQL), err
 }
 
 type NameField struct {
@@ -117,10 +120,10 @@ type NameField struct {
 
 func (f NameField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.NewTextEq(out), err
+	return eql.TextEq(out.EQL), err
 }
 
 func (f NameField) Query(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
 	out, err := f.field.Query(ctx, c, v)
-	return eql.NewTextEqQuery(out), err
+	return eql.TextEqQuery(out.EQL), err
 }

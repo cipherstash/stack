@@ -251,6 +251,8 @@ directory, `stackauth.OpenWithoutProfile` gives it none.
 
 ## Amendment (2026-10-06, #1070): the module at `languages/golang`, the packages `encrypt` and `auth`
 
+A later ADR changed this decision: ADR-0008, the language SDK principles,
+and the Go SDK design it governs. This amendment records what changed.
 G1 to G8 and Go-1 to Go-13 name the principles in
 `docs/sdk-design-principles.md`, general and Go.
 

@@ -30,9 +30,8 @@ All encryption, decryption and term derivation happens in the engine.
 An SDK declares what to do and sends that across the binding as data.
 An SDK does not have its own loop over fields, its own batching, or its own sealing.
 
-- A field crosses the binding only when its value does: an SDK sends a field's declaration with the field's value.
-- An SDK can keep a field on its own side when the engine computes nothing from it.
-  It then sends no declaration and no value for that field.
+- An SDK sends the whole value and the whole declaration, and the engine returns the whole value.
+  Nothing is rebuilt from parts on either side.
 - An SDK tool that checks a declaration asks the engine, and holds no copy of the engine's rules.
 - An SDK can assemble a wire format in the host language only when a cross-language test compares the bytes.
 

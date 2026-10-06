@@ -52,7 +52,7 @@ var declaration = gensupport.Declare("individuals").
 	Passthrough("id").
 	Encrypt("name").
 	EncryptIndex("email", encrypt.Equality, encrypt.Match()).
-	EncryptIndex("medicare_number", encrypt.Equality).
+	EncryptInto("medicare_number", "TextEq").
 	Passthrough("nickname")
 
 var codec = gensupport.New(gensupport.Generated[*pb.Individual, EncryptedIndividual]{
@@ -60,7 +60,13 @@ var codec = gensupport.New(gensupport.Generated[*pb.Individual, EncryptedIndivid
 	Declaration:     declaration,
 	PrintsPlaintext: true,
 	Source: func(v *pb.Individual) gensupport.Values {
-		return gensupport.Values{"name": v.GetName(), "email": v.GetEmail(), "medicare_number": v.GetMedicareNo()}
+		return gensupport.Values{
+			"id":              v.GetId(),
+			"name":            v.GetName(),
+			"email":           v.GetEmail(),
+			"medicare_number": v.GetMedicareNo(),
+			"nickname":        v.GetNickname(),
+		}
 	},
 	Seal: func(v *pb.Individual, rec gensupport.Record) EncryptedIndividual {
 		email := rec["email"]
@@ -68,20 +74,28 @@ var codec = gensupport.New(gensupport.Generated[*pb.Individual, EncryptedIndivid
 			Id:         v.GetId(),
 			Name:       EncryptedIndividualName{Ciphertext: rec["name"].Ciphertext},
 			Email:      EncryptedIndividualEmail{Ciphertext: email.Ciphertext, Equality: email.Equality, Match: email.Match},
-			MedicareNo: eql.NewTextEq(rec["medicare_number"]),
+			MedicareNo: eql.TextEq(rec["medicare_number"].EQL),
 			Nickname:   v.GetNickname(),
 		}
 	},
 	Open: func(e EncryptedIndividual) gensupport.Record {
 		return gensupport.Record{
+			"id":              {Value: e.Id},
+			"nickname":        {Value: e.Nickname},
 			"name":            {Ciphertext: e.Name.Ciphertext},
 			"email":           {Ciphertext: e.Email.Ciphertext, Equality: e.Email.Equality, Match: e.Email.Match},
-			"medicare_number": e.MedicareNo.Outputs(),
+			"medicare_number": {EQL: e.MedicareNo},
 		}
 	},
 	Value: func(e EncryptedIndividual, vals gensupport.Values) (*pb.Individual, error) {
-		v := &pb.Individual{Id: e.Id, Nickname: e.Nickname}
+		v := &pb.Individual{}
 		var err error
+		if v.Id, err = gensupport.Get[int64](vals, "id"); err != nil {
+			return nil, err
+		}
+		if v.Nickname, err = gensupport.Get[string](vals, "nickname"); err != nil {
+			return nil, err
+		}
 		if v.Name, err = gensupport.Get[string](vals, "name"); err != nil {
 			return nil, err
 		}
@@ -148,10 +162,10 @@ type MedicareNoField struct {
 
 func (f MedicareNoField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.NewTextEq(out), err
+	return eql.TextEq(out.EQL), err
 }
 
 func (f MedicareNoField) Query(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
 	out, err := f.field.Query(ctx, c, v)
-	return eql.NewTextEqQuery(out), err
+	return eql.TextEqQuery(out.EQL), err
 }

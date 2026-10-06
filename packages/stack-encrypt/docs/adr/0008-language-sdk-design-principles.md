@@ -45,8 +45,10 @@ When two principles disagree, the document gives the order to apply them in.
   A whole value is sealed through a declaration, so it always has a declared context.
   A caller's context appends to the declared one.
   ADR-0003 keeps the cipher-directed path open for Rust, and that does not change.
-- One request for several types needs work in the engine and in the guest first.
-  Until then, one call covers one type.
+- One request for several types is deferred.
+  One call covers one type until the engine and the guest take several plans in one call.
+- The Go SDK has no EQL encoder.
+  The guest runs an EQL type's own plan and returns the finished value.
 - Each language SDK is its own design.
   The principles say what must match between them: the bytes, the words for engine behaviour, and fail-closed behaviour.
 - Three questions are open, and the principles document lists them.

@@ -617,8 +617,21 @@ A library that maps one struct field to one column needs a model for this layout
 ### EQL types
 
 An EQL type is the Go type of one EQL column.
+It holds the EQL value as the JSON bytes that Postgres stores.
 `eql-codegen` writes the package `encrypt/eql` from the EQL catalog.
 It is a package in the Go module, and not a module of its own.
+
+The guest builds every EQL value.
+For a field with `encrypt_into`, the declaration names the EQL type, and the guest runs that type's own Rust plan.
+It returns the finished value, and generated code stores it as it is.
+No Go code assembles an EQL value.
+
+The guest comes in two builds.
+`encrypt` embeds the build without the EQL types, and `encrypt/eql` embeds the build with them.
+A generated file that names an EQL type imports `encrypt/eql`, so a program with EQL types links the build that has them.
+When the program starts, `encrypt/eql` registers its build, and that registration cannot fail.
+
+The size of the build with the EQL types is measured before the SDK ships two builds or one.
 The same catalog gives the Rust and TypeScript types, so a type has one name in every language, such as `TextEq`.
 The JSON type is the exception: its Go name is `JSON`.
 
@@ -840,7 +853,9 @@ The compiler then finds a removed field and a field with a new type, and CI find
 The generator loads the package with `golang.org/x/tools/go/packages` and reads types, not text.
 It runs none of the package's code.
 It ignores its own output file when it loads the package, so a stale file does not stop it.
+
 It checks each declaration with the engine: it runs the guest that the SDK embeds, and it holds no copy of the engine's rules.
+It asks that guest for the EQL types it holds: each name, its plaintext type, its indexes and its query forms.
 The same input always gives the same file: fields keep their declared order, and the file carries no version and no time.
 
 `stashgen` stops with an error, and writes no file, for each of these:
@@ -947,23 +962,23 @@ No function in the SDK or in generated code panics for a declaration, and none h
 ### What crosses the binding
 
 The engine does all encryption, decryption and term derivation.
-A field crosses the binding only when its value does.
-Generated code sends the engine a declaration and a value for each sealed field and each indexed field.
-It sends nothing for a passthrough field, and it copies that value to the generated type itself.
-It sends nothing for a field that is left out.
 
+Generated code sends the engine the whole struct: every field with its value, passthrough fields included.
+The engine returns the whole struct the same way.
+Nothing is rebuilt from parts on either side.
+A field that is left out does not cross.
 So every field the engine is told of has a value, and every value has a field.
-The generated file still names every field, so a reviewer reads the whole declaration.
+
+The declaration crosses with the struct.
+It names each field's context and indexes, and the EQL type of a field with `encrypt_into`.
+The guest returns the finished EQL value for that field.
 
 Every call to the guest carries a declaration.
-The guest's exports that take a value and no declaration have no caller in Go.
+The guest's value exports, `se_encrypt` and `se_decrypt`, are removed.
 
-Generated code assembles an EQL value from the engine's ciphertext and terms.
-Two fixtures that both test suites read guard the bytes:
-
-- **The EQL fixture:** encode in Rust, decode and encode again in Go, and compare.
-- **The record fixture:** the Rust chain and generated Go code each open the records that the other encrypted.
-  Both derive the same bytes for each term.
+One fixture that both test suites read guards the bytes.
+The Rust chain and generated Go code each open the records that the other encrypted.
+Both derive the same bytes for each term.
 
 The package `encrypt/gensupport` holds what only generated code calls.
 No function in it panics.
@@ -1013,6 +1028,7 @@ The existing Go package has never been released, so these are removed, not depre
 - `EncryptedRecord` and `EncryptedField`: a generated type replaces them.
 - `Cipher.Term`: the query methods of a field entry replace it.
 - `RecordOption`, `WithPlan` and `ExtendContext`: `Cipher.Extend` replaces the last.
+- `WithGuest`: the import of `encrypt/eql` chooses the guest build.
 - `TermKind`: `Index` replaces it, for generated code.
 - `Plan`, `FieldPlan`, `NewPlan` and `Plan.Validate`: the generator replaces them.
 - `PlanFromTags`, and every other function that reads `stash` tags at run time.
@@ -1135,9 +1151,9 @@ the existing SQL bundle and its `eql_v3_*` domains, which this section does
 not change. Depends on #971 (`TextEq` / `TextEqQuery` through stack-encrypt
 in `eql-bindings`, and `Identifier` as a two-segment `Label`).
 
-**The engine never returns an EQL type.** It returns standard outputs:
-ciphertexts, terms and passthrough values. Each language's typed layer
-assembles EQL types from them:
+**The engine returns an EQL type only when a plan names it as a target.**
+Otherwise it returns standard outputs: ciphertexts, terms and passthrough
+values. Each language names the target its own way:
 
 - **Rust**, through the EQL type's own `EncryptFrom` impl, named with the
   typed verb. A field target may be any `EncryptFrom` type, so an EQL type
@@ -1151,23 +1167,25 @@ assembles EQL types from them:
       .build()?;
   ```
 
-- **Go**, through code the generator in #1070 writes. The generated code asks
-  the guest for the standard outputs of the field's indexes and assembles the
-  EQL type in Go.
+- **Go**, through the data plan. A field names the EQL type as its target,
+  the guest runs that type's own plan, and the generated code stores the
+  value the guest returns. (Decided 2026-10-05: the first version of this
+  section had Go assemble the EQL type from standard outputs.)
 
-So there is **no registry** of EQL types, **no target name in the data
-grammar**, and no `Target<S>` trait. The WASI guest stays EQL-free: it runs
-data plans and returns standard outputs, exactly as for any other field. A
-shape mismatch (the outputs do not fit the EQL type) is a run-time error in
-Go, and codegen makes it unreachable in practice.
+The data grammar has a **target** field form, exclusive with the output
+verbs, and no `Target<S>` trait. A dispatch that `eql-codegen` generates
+resolves the name in the guest build that holds the EQL types; the guest build
+without them refuses a target name. `stashgen` writes a target name only
+beside the import that supplies the dispatch, so that refusal is unreachable
+in practice.
 
 An EQL type is still a target that wraps an index's output; the index itself
 stays in stack-encrypt. The JSON type is the clearest case: the `Json` index
 produces the searchable document, and EQL's JSON type frames it.
 
-**The cost: the EQL byte encoding lives twice**, in `eql-bindings` (Rust) and
-in a Go EQL package. A standing cross-language fixture guards it: encode in
-Rust, decode and re-encode in Go, and compare the bytes.
+**The cost: a second guest build**, with the EQL types in it. Its size is
+measured before the SDK ships two builds or one. The EQL encoding lives once,
+in `eql-bindings`.
 
 Match and JSON index options need a wire form first (Additions, item 7): the
 Go side derives its terms from a data plan, and a dropped option there is a
@@ -1213,27 +1231,16 @@ Then:
 - Lock and audit context themselves; this plan only leaves them a place.
 - Named term accessors on `Encrypted<Terms>` (decision 7).
 
-## Open questions
+## Deferred
 
 - **One request for several types.**
-  One call covers one type today, because the guest takes one declaration in a call.
+  One call covers one type, because the guest takes one declaration in a call.
   One request for several types needs the engine to run several plans under one key request.
   It also needs a guest export that takes several declarations, each with its values.
   The Go call for it is designed after that work.
-- **The history in this plan.**
-  "Why the first draft was dropped" and the rejected names under "Decisions" are history.
-  The design principles keep history out of a design document, so those parts move to ADR-0007.
-  Dan Draper owns that move.
-- **Query building in Go.**
-  The SDK gives the values for a search, and the program writes the SQL.
-  A design for building that SQL is separate work.
-- **A `go vet` check.**
-  It reports a struct with sealed fields that a program prints, and an `Encrypt` call inside a loop.
-  Its design is separate work.
-- **A change to a declaration over time.**
-  This design covers one version of a declaration.
-  Reading data that an older declaration wrote needs its own design.
-  A policy has `Identity` for a column with a new name, and tags have no word for it yet.
+
+## Open questions
+
 - **Converging the TypeScript schema builder onto the plan grammar**, so
   `@cipherstash/stack` stops being a second engine beside stack-encrypt.
   Out of scope here; recorded so a TS binding does not grow an executor.

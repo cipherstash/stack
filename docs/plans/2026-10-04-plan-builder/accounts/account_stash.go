@@ -5,6 +5,7 @@ package accounts
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/encrypt/eql"
@@ -56,7 +57,7 @@ var declaration = gensupport.Declare("accounts").
 	Passthrough("created_at").
 	Passthrough("updated_at").
 	Passthrough("deleted_at").
-	EncryptIndex("email", encrypt.Equality).
+	EncryptInto("email", "TextEq").
 	Omit("token")
 
 var codec = gensupport.New(gensupport.Generated[Account, EncryptedAccount]{
@@ -64,20 +65,45 @@ var codec = gensupport.New(gensupport.Generated[Account, EncryptedAccount]{
 	Declaration: declaration,
 	Unexported:  []string{"cache"},
 	Source: func(v Account) gensupport.Values {
-		return gensupport.Values{"email": v.Email}
+		return gensupport.Values{
+			"id":         v.ID,
+			"created_at": v.CreatedAt,
+			"updated_at": v.UpdatedAt,
+			"deleted_at": v.DeletedAt,
+			"email":      v.Email,
+		}
 	},
 	Seal: func(v Account, rec gensupport.Record) EncryptedAccount {
-		return EncryptedAccount{Model: v.Model, Email: eql.NewTextEq(rec["email"])}
+		return EncryptedAccount{Model: v.Model, Email: eql.TextEq(rec["email"].EQL)}
 	},
 	Open: func(e EncryptedAccount) gensupport.Record {
-		return gensupport.Record{"email": e.Email.Outputs()}
+		return gensupport.Record{
+			"id":         {Value: e.ID},
+			"created_at": {Value: e.CreatedAt},
+			"updated_at": {Value: e.UpdatedAt},
+			"deleted_at": {Value: e.DeletedAt},
+			"email":      {EQL: e.Email},
+		}
 	},
 	Value: func(e EncryptedAccount, vals gensupport.Values) (Account, error) {
-		email, err := gensupport.Get[string](vals, "email")
-		if err != nil {
+		var v Account
+		var err error
+		if v.ID, err = gensupport.Get[uint](vals, "id"); err != nil {
 			return Account{}, err
 		}
-		return Account{Model: e.Model, Email: email}, nil
+		if v.CreatedAt, err = gensupport.Get[time.Time](vals, "created_at"); err != nil {
+			return Account{}, err
+		}
+		if v.UpdatedAt, err = gensupport.Get[time.Time](vals, "updated_at"); err != nil {
+			return Account{}, err
+		}
+		if v.DeletedAt, err = gensupport.Get[gorm.DeletedAt](vals, "deleted_at"); err != nil {
+			return Account{}, err
+		}
+		if v.Email, err = gensupport.Get[string](vals, "email"); err != nil {
+			return Account{}, err
+		}
+		return v, nil
 	},
 })
 
@@ -101,10 +127,10 @@ type EmailField struct {
 
 func (f EmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEq, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.NewTextEq(out), err
+	return eql.TextEq(out.EQL), err
 }
 
 func (f EmailField) Query(ctx context.Context, c *encrypt.Cipher, v string) (eql.TextEqQuery, error) {
 	out, err := f.field.Query(ctx, c, v)
-	return eql.NewTextEqQuery(out), err
+	return eql.TextEqQuery(out.EQL), err
 }

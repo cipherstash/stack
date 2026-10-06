@@ -12,10 +12,12 @@ extends: ADR-0003, ADR-0004
 > (per language, from standard outputs), and the consequence that the EQL
 > encoding lives twice.
 >
-> **Amended 2026-10-06**, by #1070. The decision is unchanged. Amended: the
-> words binding and language SDK, what crosses the binding from Go, the proof
-> of the lowering, where the generator gets the engine's rules, and what the
-> guest takes in one call.
+> **Amended 2026-10-06**, by #1070. One bullet of the decision changes: the
+> data grammar names an EQL type as a target, and the guest build that holds
+> the EQL types returns the finished value. Also amended: the words binding
+> and language SDK, what crosses the binding from Go, the proof of the
+> lowering, where the generator gets the engine's rules, what the guest takes
+> in one call, and the value exports.
 
 Stack Encrypt has one execution engine: the `Encryption` and `Decryption`
 descriptions in `target/` and the batched `Pending` they produce. ADR-0003
@@ -119,7 +121,9 @@ The design history, the names rejected on the way and the sequencing are in
 
 ## Amended 2026-10-06 (#1070)
 
-G1 to G8 and Go-1 to Go-13 name the principles in
+A later ADR changed parts of this decision: ADR-0008, the language SDK
+principles, and the Go SDK design it governs. This amendment records what
+changed. G1 to G8 and Go-1 to Go-13 name the principles in
 `docs/sdk-design-principles.md`, general and Go.
 
 ADR-0008 fixes two words this ADR used as one. A **binding** is the WASI or
@@ -130,13 +134,12 @@ crosses it. The Go SDK is struct tags, a generator and generated code, and its
 users never see a plan (Go-7). Each "binding" above that names Go reads as the
 Go SDK's generated code.
 
-**A field crosses the binding only when its value does.** The first Go design
-sent the full declaration and skipped passthrough values, which contradicted
-decision 9 of the plan: every plan field is present in the value. Generated Go
-code now sends a declaration and a value for each sealed and each indexed
-field, and nothing for a passthrough or omitted field. The data grammar does
-not change. The generated file still names every field, so a reviewer reads
-the whole declaration (G1, Go-10).
+**The whole struct crosses the binding, both ways.** Generated Go code sends
+every field with its value, passthrough fields included, and the engine
+returns the whole struct the same way. That is heavier on the wire than
+sending sealed fields alone. It needs no reconstitution on either side, so the
+code stays simpler. Decision 9 of the plan holds: every plan field is present
+in the value, and the data grammar does not change (G1, Go-10).
 
 **The record fixture is the proof of the lowering.** Sequencing rested on Go's
 `plantest.Golden` snapshots not changing, and the Go SDK removes the package
@@ -159,7 +162,18 @@ plans under one key request, then a guest export takes several plans with
 their values. G5 allows an SDK to put several types in one request; it does
 not require it before the engine can.
 
-**The guest's value exports have no caller in Go.** The Go SDK seals a whole
-value through a declaration (ADR-0008), so `se_encrypt`, `se_decrypt` and the
-element exports have no Go caller. They stay while another host of the guest
-may need them; they are not a Go path.
+**The guest's value exports are removed.** The Go SDK seals a whole value
+through a declaration (ADR-0008), so `se_encrypt` and `se_decrypt` have no
+caller. They are removed rather than kept for a host that does not exist.
+
+**The guest returns an EQL value when a plan names the type.** The decision
+above said no registry, no target name in the data grammar, and a guest that
+stays EQL-free. That is reversed. The data grammar gains a target field form,
+exclusive with the output verbs. A dispatch that `eql-codegen` generates
+resolves the name, in a guest build that holds the EQL types; the build
+without them refuses a target name. Go stores the value the guest returns and
+has no EQL encoder, so the "lives twice" consequence below no longer applies
+to Go (G1: one engine). The reasons recorded against this on 2026-10-04 were
+guest size and an EQL-free guest for programs that never store into EQL. Two
+guest builds answer the second, and the first is measured before the SDK ships
+one build or two (G7).
