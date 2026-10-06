@@ -116,19 +116,17 @@ export declare class OidcFederationStrategy {
    *
    * `getJwt` is called on every `getToken()` and must return
    * `Promise<string>` resolving to the third-party OIDC JWT of the user the
-   * current request is for. Build one strategy per request or per user and
-   * capture that request in the `getJwt` closure. The binding runs `getJwt`
-   * through a napi `ThreadsafeFunction`, outside the async context
-   * (`AsyncLocalStorage`) of the `getToken()` caller, so a callback that
-   * reads the request from there (Clerk's `auth()`, Next.js `headers()`)
-   * finds no request, or the request the strategy was created in, and
-   * every caller is then exchanged as that user. The strategy keeps one CTS
-   * token per distinct JWT (a bounded, least-recently-used cache) and
-   * exchanges a JWT only while it has no unexpired token, so it never hands
-   * back another user's token for the JWT it was given; that is defence in
-   * depth, not a licence to share one strategy across requests. Keep the
-   * callback cheap: identity-provider SDKs cache their session, so calling
-   * them per operation is fine. Return the same JWT for a user until the
+   * current request is for. The strategy keeps one CTS token per distinct
+   * JWT (a bounded, least-recently-used cache) and exchanges a JWT only
+   * while it has no unexpired token, so one long-lived strategy serves many
+   * users and no caller is ever handed another user's token. The `index.js`
+   * wrapper's `getToken()` calls `getJwt` in the caller's own async
+   * context (so it may read the request from `AsyncLocalStorage`, as
+   * Clerk's `auth()` and Next.js `headers()` do) and then calls
+   * `getTokenForJwt`; the threadsafe function here serves only the raw
+   * `getToken()`. Keep the callback cheap: identity-provider SDKs cache
+   * their session, so calling them per operation is fine. Return the same
+   * JWT for a user until the
    * identity provider rotates it: the cache is keyed on the whole JWT, so
    * a callback that mints a new JWT on every call makes the strategy
    * exchange on every call, and each new JWT takes a cache slot from

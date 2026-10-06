@@ -140,11 +140,10 @@ export declare class AccessKeyStrategy {
 
 /**
  * Supplies the third-party OIDC JWT of the user the current request is for.
- * Called on every `getToken()`; one CTS token is cached per distinct JWT.
- * Build the strategy per request and capture the request in this closure
- * (e.g. `() => getClerkSessionToken(req)`): return a live token each time,
- * never one captured at startup, and never one read from a request context
- * the callback may not run inside. Return the same JWT for a user until the
+ * Called on every `getToken()`, in the caller's async context; one CTS token
+ * is cached per distinct JWT, so one strategy serves many users. Return a live
+ * token each time (e.g. `() => getClerkSessionToken(req)`), never one captured
+ * at startup. Return the same JWT for a user until the
  * identity provider rotates it: a callback that mints a new JWT on every call
  * exchanges on every call, and each new JWT takes a cache slot from another
  * user.
@@ -170,7 +169,7 @@ export interface OidcFederationStrategyOptions {
    * set). When full, the least recently used JWT's token is dropped and that
    * user is exchanged again on their next call; `0` caches nothing. Size it to
    * the users one strategy serves within a CTS token's lifetime (about 15
-   * minutes) — a per-request strategy never needs it.
+   * minutes).
    */
   cacheCapacity?: number;
 }
@@ -197,9 +196,8 @@ export declare class OidcFederationStrategy {
    * every federated token belongs to the right workspace.
    *
    * `getJwt` is asked on every `getToken()` for the JWT of this request's
-   * user — see {@link OidcProvider}; build the strategy per request. Pass
-   * `options.store` to back the strategy with a persistent cache — see
-   * {@link TokenStore}.
+   * user — see {@link OidcProvider}. Pass `options.store` to back the
+   * strategy with a persistent cache — see {@link TokenStore}.
    */
   static create(
     workspaceCrn: string,

@@ -379,11 +379,12 @@ impl OidcFederationStrategy {
     ///
     /// `getJwt` is called on every `getToken()` and must return
     /// `Promise<string>` resolving to the third-party OIDC JWT of the user the
-    /// current request is for. Build the strategy per request and capture the
-    /// request in the closure (e.g. `() => getClerkSessionToken(req)`), as the
-    /// edge examples do. The strategy keeps one CTS token per distinct JWT and
-    /// exchanges a JWT only while it has no unexpired token, so it never hands
-    /// back another user's token for the JWT it was given. Return the same
+    /// current request is for (e.g. `() => getClerkSessionToken(req)`). The
+    /// strategy keeps one CTS token per distinct JWT and exchanges a JWT only
+    /// while it has no unexpired token, so one strategy serves many users and
+    /// no caller is ever handed another user's token. The `wasm-inline`
+    /// wrapper calls `getJwt` on the JavaScript side and uses `getTokenForJwt`;
+    /// the callback here serves only the raw `getToken()`. Return the same
     /// JWT for a user until the identity provider rotates it: a callback that
     /// mints a new JWT on every call exchanges on every call, and each new JWT
     /// takes a cache slot from another user.

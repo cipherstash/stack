@@ -4,21 +4,24 @@
 
 `OidcFederationStrategy` now keeps one CTS token per distinct provider JWT
 instead of one token for everyone. `getJwt` is called on every `getToken()`
-and must return the JWT of the user the current request is for; each JWT is
-exchanged once while its CTS token is valid, in a bounded least-recently-used
-cache. Previously the strategy cached the first user's token and handed it to
+and must return the JWT of the user the current request is for; a JWT is
+exchanged once and its CTS token reused while that token is valid *and* the
+JWT's entry is still in the bounded least-recently-used cache (eviction before
+expiry, or `cacheCapacity: 0`, means another exchange; see below). Previously
+the strategy cached the first user's token and handed it to
 every caller until it expired, so on a server serving many users through one
 client a value one user encrypted under a lock context could be bound to
 another user's identity (cipherstash/stack#1045).
 
-Keep building one strategy per request or per user in Node, and capture the
-request in the `getJwt` closure. The binding runs `getJwt` outside the async
-context (`AsyncLocalStorage`) of the `getToken()` caller, so a callback that
-reads the request from there (Clerk's `auth()`, Next.js `headers()`) finds no
-request, or the request the strategy was created in, and exchanges that user's
-JWT for everyone. The per-JWT cache means a strategy never hands back another
-user's token for the JWT it was given; it cannot repair a `getJwt` that names
-the wrong user.
+`getToken()` now calls `getJwt` in the caller's own async context and hands the
+JWT to a new `getTokenForJwt(jwt)` method, on both the Node and `wasm-inline`
+entries. Previously the Node binding ran `getJwt` through a napi threadsafe
+function, in the async context of `create()`, so a callback that read the
+request from `AsyncLocalStorage` (Clerk's `auth()`, Next.js `headers()`) saw
+no request from a module-level strategy, or the creating request from one
+created inside a request. One long-lived strategy now serves every user from
+such a callback. `getTokenForJwt` is also public, for a caller that already
+holds the user's JWT; it shares the strategy's cache with `getToken()`.
 
 A token persisted through `createWithStore` (for example a cookie) is now
 served only to the JWT it was federated from, so a store shared across users,

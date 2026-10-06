@@ -728,9 +728,11 @@ import { encryptedTable, types } from "@cipherstash/stack/v3"
 
 const users = encryptedTable("users", { email: types.TextSearch("email") })
 
-// Build the strategy and client per request, capturing the request in the
-// `getJwt` closure: it runs on every operation, but outside the caller's async
-// context, so it cannot find the request itself (stash-auth, "Client lifetime").
+// `getJwt` runs on every operation and must return the OIDC JWT of the user
+// behind the current request; one strategy serves every user. This native
+// client calls it from a background task, so a request read from
+// `AsyncLocalStorage` is not visible there yet: capture `req` in the closure,
+// or build the client per request (stash-auth, "Client lifetime"; stack#1065).
 const strategy = OidcFederationStrategy.create(
   process.env.CS_WORKSPACE_CRN!,
   () => getUserJwt(req),

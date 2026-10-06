@@ -117,8 +117,11 @@ How you authenticate to ZeroKMS depends on who's asking for keys:
 const client = await Encryption({ schemas: [users] });
 
 // OIDC federation — every ZeroKMS request authenticates as the end user.
-// Build this client per request: getJwt runs outside the caller's async
-// context, so capture the request in the closure rather than reading it there.
+// getUserJwt returns the JWT of the user behind the current request; one
+// strategy serves every user. (On this native entry the client calls getJwt
+// from a background task, so a request read from AsyncLocalStorage is not
+// visible there yet — pass it in, or build the client per request; see
+// cipherstash/stack#1065.)
 const client = await Encryption({
   schemas: [users],
   config: { authStrategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt(req)) },

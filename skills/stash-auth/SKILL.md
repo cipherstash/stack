@@ -161,7 +161,7 @@ yourself.
 |---|---|---|
 | `AutoStrategy` (the default when `config.authStrategy` is unset) | Most apps | `CS_CLIENT_ACCESS_KEY` **and** `CS_WORKSPACE_CRN` env vars, else the dev profile (`~/.cipherstash/auth.json`), else fails `NOT_AUTHENTICATED` |
 | `AccessKeyStrategy` | Services, CI, backfill jobs | Explicit workspace CRN + access key |
-| `OidcFederationStrategy` | Per-user (identity-bound) encryption | Your IdP's JWT, fetched via a callback on every operation — build one per request/user (see Client lifetime) |
+| `OidcFederationStrategy` | Per-user (identity-bound) encryption | Your IdP's JWT, fetched via a callback on every operation — one CTS token cached per distinct JWT (see Client lifetime) |
 | `DeviceSessionStrategy` | CLI-adjacent tooling | The device-code session `stash auth login` created |
 
 `auto`'s access-key arm needs **both** variables, and the two
@@ -188,10 +188,8 @@ const client = await Encryption({
 
 For end users, `OidcFederationStrategy.create(workspaceCrn, getJwt)` — the
 `getJwt` callback is invoked on *every* `getToken()` (every operation) and
-must return the IdP JWT of the user the request is for. Build the strategy
-per request and capture the request in the closure — `getJwt` does not run
-in the caller's async context, so it cannot find the request on its own; see
-"Client lifetime" below. On the WASM/edge path,
+must return the IdP JWT of the user behind the **current request**, not a
+captured stale one; see "Client lifetime" below. On the WASM/edge path,
 `createWithStore(workspaceCrn, getJwt, loadToken, saveToken)` persists the
 federated token (e.g. in an HTTP-only cookie) so it survives across
 requests.
@@ -290,44 +288,41 @@ and is shown exactly once. Give each environment its own minted set; see
 
 ## Client lifetime (user-scoped strategies)
 
-Construct **one `Encryption()` client (and `OidcFederationStrategy`) per
-request or per user, and capture the request in the `getJwt` closure**:
+`OidcFederationStrategy` calls `getJwt` on **every** `getToken()` and keeps
+one CTS token **per distinct IdP JWT** (a bounded, least-recently-used
+cache; a JWT is exchanged only while it has no unexpired token). So **one
+long-lived strategy serves many users**, *provided* `getJwt` returns the JWT
+of the user behind the current request — never one captured at startup.
+`getToken()` runs `getJwt` in the caller's own async context, so it may read
+the request from `AsyncLocalStorage` the way Clerk's `auth()` and Next.js
+`headers()` do, and a module-level strategy is fine. A stored token
+(`createWithStore`, cookies) is likewise served only to the JWT that
+produced it. Keep `getJwt` cheap: it runs per operation, and IdP SDKs cache
+their session, so calling them per request is fine. The cost is one exchange
+each time the IdP rotates a user's JWT. The cache holds `cacheCapacity` JWTs
+— `create(crn, getJwt, baseUrl?, cacheCapacity?)` on the native entry,
+`{ cacheCapacity }` in the `wasm-inline` options — 1024 unless set; past
+that the least recently used user is exchanged again, and each eviction is
+logged at `debug`.
 
-```typescript
-// Per request: `req` is captured, so `getJwt` needs no request context.
-const strategy = OidcFederationStrategy.create(workspaceCrn, () => getUserJwt(req))
-```
+**One caveat, for the `@cipherstash/stack` client on the native entry.** The
+client calls `strategy.getToken()` from a background task (a Neon channel in
+protect-ffi), so on that path the request's `AsyncLocalStorage` is not
+visible inside `getJwt` yet. Until the client carries a per-call snapshot
+(cipherstash/stack#1065), either capture the request in the closure
+(`() => getUserJwt(req)`) or build the `Encryption()` client per request
+there. This is about where the client calls the strategy, not about the
+strategy: `@cipherstash/auth` used directly, and the `wasm-inline` entry, are
+unaffected.
 
-Do not share one client across requests and have `getJwt` look the user up
-from a request context. On the Node-native entry the binding runs `getJwt`
-through a napi `ThreadsafeFunction`, outside the async context
-(`AsyncLocalStorage`) of the operation's caller, so a `getJwt` built on
-Clerk's `auth()` or Next.js `headers()` finds **no request** (a module-level
-client) or **the request the client was created in** (a client created on
-the first request and kept) — and then every caller is exchanged as that
-user. Under lock context that is operating, and being audit-logged, as the
-wrong user: a cross-tenant data hazard, not a performance nuance.
-
-What the strategy does guarantee: `getJwt` runs on **every** `getToken()`
-(every operation), and one CTS token is kept **per distinct IdP JWT** (a
-bounded, least-recently-used cache; a JWT is exchanged only while it has no
-unexpired token), so a strategy never hands back another user's token for
-the JWT it was given, and a stored token (`createWithStore`, cookies) is
-served only to the JWT that produced it. That is defence in depth behind the
-rule above — it cannot repair a `getJwt` that names the wrong user. Keep
-`getJwt` cheap: IdP SDKs cache their session, so calling them per operation
-is fine. The cost is one exchange each time the IdP rotates a user's JWT.
-A strategy that does outlive requests (one per user) keeps tokens for up to
-`cacheCapacity` JWTs — `create(crn, getJwt, baseUrl?, cacheCapacity?)` on
-the native entry, `{ cacheCapacity }` in the `wasm-inline` options — 1024
-unless set; past that the least recently used user is exchanged again, and
-each eviction is logged at `debug`.
-On `@cipherstash/auth` releases before the fix for cipherstash/stack#1045 the
-strategy also held only one token for everyone, so the per-request rule was
-the only protection there.
+On `@cipherstash/auth` releases before the fix for cipherstash/stack#1045 a
+strategy held *one* token and consulted `getJwt` only when it expired, so a
+shared client made every caller ride whichever user's token was cached —
+under lock context, operating (and being audit-logged) as the wrong user.
+On those versions construct **one `Encryption()` client per request/user**.
 
 `AccessKeyStrategy` and `auto` authenticate a service, not a user, and are
-safe to share for the process lifetime.
+safe to share for the process lifetime either way.
 
 ## Lock context
 
