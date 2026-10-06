@@ -77,11 +77,11 @@ func (t eqlTarget) String() string { return "EQL(" + termList(t.terms) + ")" }
 // Custom is a non-EQL target: the field binds context, whatever its
 // column, and derives the given terms. The context is the policy's to
 // choose and, like any context, must never change once data is written
-// under it. It is one arbitrary text part, exactly as written — what
-// [stackencrypt.NewContext] makes and a Rust `#[stash(context = "..")]`
-// literal binds — so a '/' in it is text, not a separator: "notes/v1" is
-// one part, rendered escaped in the ZeroKMS log, never the table/column
-// pair. A table and a column are an [EQL] target.
+// under it. It is a label of at least two plain segments, written as
+// [stackencrypt.ParseLabel] reads it ("notes/v1": the segments notes and
+// v1, rendered as written in the ZeroKMS log), since that is the one shape
+// of context a planned field binds; the message's table plays no part in
+// it. A table and a column are an [EQL] target.
 func Custom(context string, terms ...stackencrypt.TermKind) Target {
 	return customTarget{context: context, terms: slices.Clone(terms)}
 }
@@ -93,7 +93,14 @@ type customTarget struct {
 
 func (t customTarget) Terms() []stackencrypt.TermKind { return slices.Clone(t.terms) }
 func (t customTarget) Context(Identifier) (stackencrypt.Context, error) {
-	return stackencrypt.NewContext(t.context)
+	if t.context == "" {
+		return stackencrypt.Context{}, errors.New("an empty string is an empty context")
+	}
+	l, err := stackencrypt.ParseLabel(t.context)
+	if err != nil {
+		return stackencrypt.Context{}, fmt.Errorf("context %q is not a label: %w", t.context, err)
+	}
+	return l.Context(), nil
 }
 func (t customTarget) String() string {
 	return fmt.Sprintf("Custom(%q%s)", t.context, prefixed(termList(t.terms)))

@@ -121,9 +121,11 @@ func contextText(table string, kind string, d plan.Decision, fp stackencrypt.Fie
 		if !ok || err != nil {
 			return "", fmt.Errorf("plantest: column %q: cannot spell the context of target %v; a target that does not bind its column identity must be plan.Custom", fp.Name, target)
 		}
-		if want, err = stackencrypt.NewContext(text); err != nil {
+		var l stackencrypt.Label
+		if l, err = stackencrypt.ParseLabel(text); err != nil {
 			return "", fmt.Errorf("plantest: column %q: %w", fp.Name, err)
 		}
+		want = l.Context()
 	}
 	if !want.Equal(fp.Context) {
 		return "", fmt.Errorf("plantest: column %q: the plan binds a context other than %q", fp.Name, text)
@@ -134,14 +136,11 @@ func contextText(table string, kind string, d plan.Decision, fp stackencrypt.Fie
 // contextOf is the context a snapshot's column names, rebuilt from its
 // text and target kind: what [contextText] wrote.
 func contextOf(c column) (stackencrypt.Context, error) {
-	if c.kind == kindEQL {
-		label, err := stackencrypt.ParseLabel(c.context)
-		if err != nil {
-			return stackencrypt.Context{}, err
-		}
-		return label.Context(), nil
+	label, err := stackencrypt.ParseLabel(c.context)
+	if err != nil {
+		return stackencrypt.Context{}, err
 	}
-	return stackencrypt.NewContext(c.context)
+	return label.Context(), nil
 }
 
 // fact is one annotation value.

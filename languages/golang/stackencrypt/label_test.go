@@ -141,12 +141,13 @@ func label(t testing.TB, s string) Label {
 	return l
 }
 
-// A struct tag names a field's own context as a label or as one part,
-// never both, and a plan built by hand needs a non-zero Context.
-func TestTagsSpellALabelOrOneContextPart(t *testing.T) {
+// A struct tag names a field's label, and only a label: the one-part
+// context= form, which the guest's lowering cannot seal a field under, is
+// refused with the tag to use instead, and a plan built by hand needs a
+// non-zero Context.
+func TestTagsSpellALabel(t *testing.T) {
 	type tagged struct {
 		Email string `stash:"label=users/email"`
-		Notes string `stash:"context=notes/v1"`
 	}
 	p, err := PlanFromTags(reflect.TypeOf(tagged{}))
 	if err != nil {
@@ -156,9 +157,19 @@ func TestTagsSpellALabelOrOneContextPart(t *testing.T) {
 	if got := fields[0].Context.value(); !reflect.DeepEqual(got, []any{"users", "email"}) {
 		t.Errorf("label=users/email bound %#v", got)
 	}
-	// context= is one part: the '/' is text, as a Rust literal's is.
-	if got := fields[1].Context.value(); !reflect.DeepEqual(got, "notes/v1") {
-		t.Errorf("context=notes/v1 bound %#v, want the one part", got)
+	// context= is one part, and a planned field binds a label.
+	_, err = PlanFromTags(reflect.TypeOf(struct {
+		Notes string `stash:"context=notes/v1"`
+	}{}))
+	if err == nil || !strings.Contains(err.Error(), `context="notes/v1" names one text part`) || !strings.Contains(err.Error(), "use label=") {
+		t.Errorf("context=notes/v1: err = %v; want the one part refused and label= named", err)
+	}
+	// A one-segment label is one part too.
+	_, err = PlanFromTags(reflect.TypeOf(struct {
+		Notes string `stash:"label=notes"`
+	}{}))
+	if err == nil || !strings.Contains(err.Error(), "one part, not a label") {
+		t.Errorf("label=notes: err = %v; want the one segment refused", err)
 	}
 	for name, typ := range map[string]reflect.Type{
 		"both": reflect.TypeOf(struct {

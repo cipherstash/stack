@@ -16,14 +16,23 @@ import (
 // A Context is a part or a list of parts. A part is a string, a byte slice
 // or an integer (int32, int64, uint32, uint64; Go's int is sent as int64).
 // [NewContext] makes a one-part context — the bare part, what a Rust
-// `#[stash(context = "..")]` literal binds. [Context.With] extends it as
+// `nonempty!("..")` literal binds. [Context.With] extends it as
 // Rust's NonEmpty::with does: the result is the two-element list
 // [previous, part], nesting to the left. So NewContext("users").With("age")
 // is the pair a Rust `struct = .., context = "users"` derive binds its `age`
 // field under — and what ParseLabel("users/age") binds — rendering the ZeroKMS
 // descriptor users/age; extended With(uint64(7)) it is what a row sealed
-// with encrypt_into_with_context(row, 7u64) binds for that field.
+// with the chain's .extend(7u64) binds for that field.
 // A one-element list is not the bare part, and this type cannot spell one.
+//
+// Not every Context is a planned field's. A probe ([Cipher.Term]) takes any
+// Context, in whatever shape the data was sealed under. A field of a record
+// plan ([FieldPlan.Context]) binds a [Label] of at least two plain segments
+// and nothing else — the guest lowers a plan into one context per record
+// with one identity per field, and refuses any other shape — so [NewPlan]
+// and [PlanFromTags] refuse a one-part context, a one-segment label and an
+// extended context at construction. A record call extends every field's
+// label alike with [ExtendContext].
 //
 // A Context owns its parts: a byte-slice part is copied in, so a caller's
 // buffer reused once the Context is built does not change it.
@@ -35,7 +44,11 @@ type Context struct {
 	node any
 }
 
-// NewContext makes a one-part context. The part must not be empty: a bare
+// NewContext makes a one-part context, for a probe ([Cipher.Term]) against
+// data sealed under one part, or as the base [Context.With] extends. It is
+// not a planned field's context: a field binds a [Label] of two or more
+// segments ([ParseLabel]), and [NewPlan] refuses a one-part context with the
+// field named. The part must not be empty: a bare
 // empty string or empty byte slice is an empty context, and the guest
 // proves every context non-empty at the boundary, so such a Context could
 // only ever fail — every call, with ErrEncoding. Rust refuses the same
@@ -56,8 +69,7 @@ func NewContext(part any) (Context, error) {
 }
 
 // MustContext is [NewContext] for a part known to be valid; it panics
-// otherwise, an empty part included. For string literals in plans and
-// probes.
+// otherwise, an empty part included. For string literals in probes.
 func MustContext(part any) Context {
 	c, err := NewContext(part)
 	if err != nil {
@@ -90,6 +102,35 @@ func ownPart(part any) any {
 // value renders the context in the guest's grammar: a scalar or nested
 // lists of scalars, ready for the transport codec.
 func (c Context) value() any { return c.node }
+
+// fieldLabel is the context a planned field may bind, as the guest's
+// lowering reads it: a label of at least two plain segments and nothing
+// else, returned as that Label. A one-part context, an extended context and
+// a part that is not text are refused with a reason that says what is
+// accepted; a flat list of plain text parts is the label it spells,
+// whichever constructor built it.
+func (c Context) fieldLabel() (Label, error) {
+	parts, ok := c.node.([]any)
+	if !ok {
+		return Label{}, errors.New(`is one part, not a label; a planned field binds a label of at least two plain segments, ParseLabel("table/column").Context()`)
+	}
+	segments := make([]string, 0, len(parts))
+	for _, part := range parts {
+		s, ok := part.(string)
+		if !ok {
+			return Label{}, errors.New("is extended, or holds a part that is not text; a planned field binds a plain label, and a record call extends every field's label alike with ExtendContext")
+		}
+		segments = append(segments, s)
+	}
+	if len(segments) < 2 {
+		return Label{}, errors.New("has one segment; a planned field binds a label of at least two")
+	}
+	l, err := NewLabel(segments...)
+	if err != nil {
+		return Label{}, fmt.Errorf("is not a plain label: %w", err)
+	}
+	return l, nil
+}
 
 // checkRootNonEmpty refuses the bare parts that are themselves an empty
 // context. Integers never are, whatever their value.
