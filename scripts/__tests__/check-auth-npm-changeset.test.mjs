@@ -213,12 +213,10 @@ describe('check-auth-npm-changeset.mjs --shipped', () => {
   })
 
   it('keeps a manifest the base commit does not have', () => {
-    // The root commit predates the auth package.
-    const root = spawnSync('git', ['rev-list', '--max-parents=0', 'HEAD'], {
-      cwd: REPO_ROOT,
-      encoding: 'utf8',
-    }).stdout.split('\n')[0]
-    const result = shipped(root, [`${AUTH}/package.json`])
+    // The empty tree contains no files and exists in every clone, shallow
+    // ones included; CI's depth-1 checkout makes HEAD its own root commit.
+    const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+    const result = shipped(EMPTY_TREE, [`${AUTH}/package.json`])
     expect(result.status).toBe(0)
     expect(result.stdout.trim()).toBe(`${AUTH}/package.json`)
   })
