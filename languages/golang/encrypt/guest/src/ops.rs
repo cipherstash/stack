@@ -208,6 +208,23 @@ pub fn plan_check(plan: &[u8]) -> Result<(), u32> {
 /// generator reads an empty list as "no `encrypt_into` type is available
 /// yet" and refuses the tag. The shape is fixed here so the next build adds
 /// entries to the list rather than a second export.
+///
+/// **Each entry is wire format**, the serialisation of eql-bindings' target
+/// record, and the Go reader (`encrypt.parseTargets`) refuses an entry with
+/// any other key or a value of another type:
+///
+/// | key                | type              | meaning |
+/// |--------------------|-------------------|---------|
+/// | `name`             | string            | the Go type name and the `encrypt_into` value: `TextEq` |
+/// | `family`           | string            | `Text`, `Integer`, … |
+/// | `suffix`           | string            | `Eq`, `Ord`, `Match`, … or `""` |
+/// | `plaintext`        | string or null    | the vitaminc `ValueKind` name the type seals: `"string"` |
+/// | `sql_domain`       | string            | the Postgres domain of the stored value |
+/// | `indexes`          | list of string    | `eq`, `match`, `ore`, `ope`, `json` |
+/// | `query`            | string or null    | the Go type name of the query value: `TextEqQuery` |
+/// | `query_sql_domain` | string or null    | the Postgres domain of the query value |
+/// | `producible`       | bool              | whether this build produces the type |
+/// | `reason`           | string or null    | why not, when `producible` is false |
 pub fn targets() -> Result<Vec<u8>, u32> {
     encode_value(FfiValue::Object(vec![(
         "targets".to_string(),

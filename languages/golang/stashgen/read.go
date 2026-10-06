@@ -588,7 +588,14 @@ func (r *reader) buildFields(c *collected) error {
 				if len(r.eql) == 0 {
 					return fieldErr(typeName, cf.goName, "EQL types are not available yet; this build of the engine produces none")
 				}
-				return fieldErr(typeName, cf.goName, "the engine cannot produce the EQL type %s", field.EQLType)
+				return fieldErr(typeName, cf.goName, "the engine has no EQL type %s", field.EQLType)
+			}
+			if !eqlType.Producible {
+				reason := eqlType.Reason
+				if reason == "" {
+					reason = "not in this build of the engine"
+				}
+				return fieldErr(typeName, cf.goName, "the engine cannot produce the EQL type %s yet: %s", field.EQLType, reason)
 			}
 			f.imports.add(eqlPath, "eql")
 			g.outputType = "eql." + eqlType.Name

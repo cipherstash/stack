@@ -307,10 +307,30 @@ type Outputs struct {
 // Sealed is one record as stored: each sealed field's outputs by name.
 type Sealed = map[string]Outputs
 
-// Target is one EQL type the engine produces, as se_targets lists it.
+// Target is one EQL type as se_targets lists it. The entry's keys are wire
+// format, written by eql-bindings' serialiser and read by [ParseTargets]:
+// name, family, suffix, plaintext (a ValueKind name, or null), sql_domain,
+// indexes (eq | match | ore | ope | json), query (or null), query_sql_domain
+// (or null), producible and reason (or null).
 type Target struct {
-	Name  string
-	Kind  Kind
-	Terms []Output
+	// Name is the Go type name, and the value of encrypt_into: TextEq.
+	Name string
+	// Family and Suffix are the two halves of the name: Text, Eq.
+	Family string
+	Suffix string
+	// Plaintext is the kind the type seals, or Untyped when the entry says
+	// null.
+	Plaintext Kind
+	// SQLDomain is the Postgres domain of the stored value.
+	SQLDomain string
+	// Indexes are the terms the type carries.
+	Indexes []Output
+	// Query is the Go type name of the query value, or "" for none.
 	Query string
+	// QuerySQLDomain is the Postgres domain of the query value, or "".
+	QuerySQLDomain string
+	// Producible says whether this build of the engine produces the type;
+	// Reason says why not when it does not.
+	Producible bool
+	Reason     string
 }

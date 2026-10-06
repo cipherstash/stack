@@ -22,7 +22,7 @@ var _ stashgen.Engine = Static{}
 // EQLTypes returns TextEq, the one EQL type the engine produces today.
 func (Static) EQLTypes(context.Context) ([]stashgen.EQLType, error) {
 	return []stashgen.EQLType{
-		{Name: "TextEq", Plaintext: stashgen.KindString, Indexes: []stashgen.IndexName{stashgen.IndexEquality}, Query: "TextEqQuery"},
+		{Name: "TextEq", Plaintext: stashgen.KindString, Indexes: []stashgen.IndexName{stashgen.IndexEquality}, Query: "TextEqQuery", Producible: true},
 	}, nil
 }
 
@@ -64,14 +64,15 @@ func (e Static) Check(ctx context.Context, d stashgen.Declaration) error {
 	return nil
 }
 
-// indexApplies mirrors the Index<S> impls in stack-encrypt's target/index.rs:
-// Equality for every PRF value, Match for text, Ore and Ope for what cllw-ore
-// implements (text, bytes, bool, integers and floats). The JSON index is not
-// in the engine yet.
+// indexApplies mirrors dynamic::admits in stack-encrypt: equality over
+// integers, text and bytes (no floats, no booleans: they have no PRF
+// encoding), match over text alone, ORE and OPE over every scalar. The JSON
+// index is not in the engine yet.
 func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 	switch name {
 	case stashgen.IndexEquality:
-		if t.Kind.Scalar() {
+		switch t.Kind {
+		case stashgen.KindString, stashgen.KindBytes, stashgen.KindInt, stashgen.KindUint:
 			return nil
 		}
 	case stashgen.IndexMatch:

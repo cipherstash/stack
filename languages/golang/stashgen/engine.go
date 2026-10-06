@@ -37,6 +37,10 @@ type EQLType struct {
 	// Query is the Go type name of the type's query value, such as
 	// TextEqQuery, or "" for a type with no terms.
 	Query string
+	// Producible says whether this build of the engine produces the type;
+	// Reason says why not when it does not.
+	Producible bool
+	Reason     string
 }
 
 // GuestEngine is the engine the SDK embeds: the WASI guest in package
@@ -66,8 +70,8 @@ func (e *guestEngine) EQLTypes(ctx context.Context) ([]EQLType, error) {
 	}
 	out := make([]EQLType, 0, len(targets))
 	for _, t := range targets {
-		eqlType := EQLType{Name: t.Name, Plaintext: kindOfWire(t.Kind), Query: t.Query}
-		for _, term := range t.Terms {
+		eqlType := EQLType{Name: t.Name, Plaintext: kindOfWire(t.Plaintext), Query: t.Query, Producible: t.Producible, Reason: t.Reason}
+		for _, term := range t.Indexes {
 			if name, ok := indexOfOutput[term]; ok {
 				eqlType.Indexes = append(eqlType.Indexes, name)
 			}
@@ -131,10 +135,10 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 		rf := record.Field{Name: f.Name, Identity: f.Identity, Kind: wireKind(f.GoType)}
 		switch f.Verb {
 		case VerbEncryptInto:
-			if len(eqlTypes) == 0 {
-				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: "EQL types are not available yet; the engine produces none in this build"}
-			}
-			return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("the engine cannot produce the EQL type %s yet", f.EQLType)}
+			// The reader refused anything the engine does not produce; a
+			// producible type reaches the engine's check in the next build,
+			// which lowers it. Until then no type is producible.
+			return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("the engine cannot seal into the EQL type %s in this build", f.EQLType)}
 		case VerbEncrypt, VerbEncryptIndex:
 			rf.Outputs = append(rf.Outputs, record.Ciphertext)
 		}

@@ -69,44 +69,116 @@ func (k *Checker) Targets(ctx context.Context) ([]record.Target, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInternal, err)
 	}
+	return parseTargets(decoded)
+}
+
+// parseTargets reads se_targets's decoded value: {"targets": [entry, ...]},
+// each entry an object with exactly the keys record.Target documents. The
+// shape is a contract between eql-bindings' serialiser and this reader, so
+// an unknown key, a missing name, or a value of the wrong type is
+// ErrInternal: a decoder that kept a zero value would let stashgen decide an
+// encrypt_into on a type with no kind or no indexes.
+func parseTargets(decoded any) ([]record.Target, error) {
 	obj, ok := decoded.(vcvalue.Object)
 	if !ok || len(obj) != 1 || obj[0].Key != "targets" {
-		return nil, fmt.Errorf("%w: se_targets returned %T", ErrInternal, decoded)
+		return nil, fmt.Errorf("%w: se_targets returned %T, not {\"targets\": [...]}", ErrInternal, decoded)
 	}
 	items, ok := obj[0].Value.([]any)
 	if !ok {
 		return nil, fmt.Errorf("%w: se_targets returned %T for the list", ErrInternal, obj[0].Value)
 	}
 	targets := make([]record.Target, 0, len(items))
-	for _, item := range items {
+	for i, item := range items {
 		entry, ok := item.(vcvalue.Object)
 		if !ok {
-			return nil, fmt.Errorf("%w: a target came back as %T", ErrInternal, item)
+			return nil, fmt.Errorf("%w: target %d came back as %T", ErrInternal, i, item)
 		}
-		var t record.Target
-		for _, f := range entry {
-			switch f.Key {
-			case "name":
-				t.Name, _ = f.Value.(string)
-			case "kind":
-				kind, _ := f.Value.(string)
-				t.Kind = record.Kind(kind)
-			case "query":
-				t.Query, _ = f.Value.(string)
-			case "terms":
-				terms, _ := f.Value.([]any)
-				for _, term := range terms {
-					s, _ := term.(string)
-					t.Terms = append(t.Terms, record.Output(s))
-				}
-			}
-		}
-		if t.Name == "" {
-			return nil, fmt.Errorf("%w: a target has no name", ErrInternal)
+		t, err := parseTarget(entry)
+		if err != nil {
+			return nil, fmt.Errorf("%w: target %d: %v", ErrInternal, i, err)
 		}
 		targets = append(targets, t)
 	}
 	return targets, nil
+}
+
+func parseTarget(entry vcvalue.Object) (record.Target, error) {
+	var t record.Target
+	seen := map[string]bool{}
+	for _, f := range entry {
+		if seen[f.Key] {
+			return t, fmt.Errorf("key %q twice", f.Key)
+		}
+		seen[f.Key] = true
+		var err error
+		switch f.Key {
+		case "name":
+			t.Name, err = targetString(f)
+		case "family":
+			t.Family, err = targetString(f)
+		case "suffix":
+			t.Suffix, err = targetString(f)
+		case "plaintext":
+			var kind string
+			kind, err = targetOptionalString(f)
+			t.Plaintext = record.Kind(kind)
+		case "sql_domain":
+			t.SQLDomain, err = targetString(f)
+		case "indexes":
+			list, ok := f.Value.([]any)
+			if !ok {
+				return t, fmt.Errorf("indexes is %T, not a list", f.Value)
+			}
+			for _, item := range list {
+				s, ok := item.(string)
+				if !ok {
+					return t, fmt.Errorf("an index is %T, not a string", item)
+				}
+				t.Indexes = append(t.Indexes, record.Output(s))
+			}
+		case "query":
+			t.Query, err = targetOptionalString(f)
+		case "query_sql_domain":
+			t.QuerySQLDomain, err = targetOptionalString(f)
+		case "producible":
+			b, ok := f.Value.(bool)
+			if !ok {
+				return t, fmt.Errorf("producible is %T, not a bool", f.Value)
+			}
+			t.Producible = b
+		case "reason":
+			t.Reason, err = targetOptionalString(f)
+		default:
+			return t, fmt.Errorf("unknown key %q", f.Key)
+		}
+		if err != nil {
+			return t, err
+		}
+	}
+	if t.Name == "" {
+		return t, errors.New("no name")
+	}
+	for _, key := range []string{"indexes", "producible"} {
+		if !seen[key] {
+			return t, fmt.Errorf("no %s", key)
+		}
+	}
+	return t, nil
+}
+
+func targetString(f vcvalue.Field) (string, error) {
+	s, ok := f.Value.(string)
+	if !ok {
+		return "", fmt.Errorf("%s is %T, not a string", f.Key, f.Value)
+	}
+	return s, nil
+}
+
+func targetOptionalString(f vcvalue.Field) (string, error) {
+	if f.Value == nil {
+		return "", nil
+	}
+	return targetString(f)
 }
 
 // refusingTransport fails every request: the checker makes none.
