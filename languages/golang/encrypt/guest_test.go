@@ -597,6 +597,41 @@ func fixtureRecord() record.Sealed {
 
 // A record opened under a plan that seals a field it does not carry is
 // refused on the host, with the field named, before the guest is asked.
+// A record whose target field has no EQL value is refused by the host,
+// before the guest sees it: the errNoEQL branch, which a change could
+// otherwise drop and send a malformed record on.
+func TestTargetWithoutEQLIsRefusedBeforeTheGuest(t *testing.T) {
+	ctx := context.Background()
+	c := rawInstance(t)
+	plan := &record.Plan{
+		Context: []string{"users"},
+		Fields:  []record.Field{{Name: "email", Kind: record.String, Target: "TextEq"}},
+	}
+	for name, rec := range map[string]record.Sealed{
+		"no outputs": {"email": {}},
+		"a ciphertext where the EQL value should be": {"email": {Ciphertext: fixtureLeaf}},
+		"the field missing":                          {},
+	} {
+		_, err := c.DefaultKeyset().Open(ctx, plan, []record.Sealed{rec})
+		if !errors.Is(err, errNoEQL) || errors.Is(err, ErrState) || !strings.Contains(err.Error(), `field "email"`) {
+			t.Errorf("%s: Open = %v, want errNoEQL before the guest, naming the field", name, err)
+		}
+	}
+}
+
+// Query refuses a field the plan does not have, and a field that names no
+// EQL type, before the guest is asked.
+func TestQueryRejectsMissingAndNonTargetFieldsBeforeTheGuest(t *testing.T) {
+	ctx := context.Background()
+	c := rawInstance(t)
+	for _, field := range []string{"email", "missing"} {
+		_, err := c.DefaultKeyset().Query(ctx, usersPlan(), field, "a@b.c")
+		if !errors.Is(err, ErrEncoding) || errors.Is(err, ErrState) || !strings.Contains(err.Error(), field) {
+			t.Errorf("Query(%q) = %v, want ErrEncoding before the guest, naming the field", field, err)
+		}
+	}
+}
+
 func TestMismatchedPlanIsRefusedBeforeTheGuest(t *testing.T) {
 	ctx := context.Background()
 	c := rawInstance(t)

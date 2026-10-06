@@ -189,6 +189,82 @@ func TestTextEqQueryMatchesTheStoredValueAndTheRustFixture(t *testing.T) {
 	}
 }
 
+// A stored EQL value changed before it is opened: moved to another column,
+// or replaced with bytes that are not a TextEq. Neither opens, and the
+// second is refused as malformed input before any key is retrieved.
+func TestATamperedEQLValueDoesNotOpen(t *testing.T) {
+	c := deterministicEQLClient(t)
+	ctx := context.Background()
+	cipher := c.DefaultKeyset()
+
+	moved, err := testusers.EncryptContact(ctx, cipher, contacts[:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := moved[0].Email
+	moved[0].Email = eql.TextEq(bytes.Replace(original, []byte(`"c":"email"`), []byte(`"c":"notes"`), 1))
+	if bytes.Equal(moved[0].Email, original) {
+		t.Fatal("the stored identifier was not where the test expected it")
+	}
+	if _, err := testusers.DecryptContact(ctx, cipher, moved); err == nil {
+		t.Fatal("an EQL value moved to another column opened")
+	}
+
+	junk, err := testusers.EncryptContact(ctx, cipher, contacts[:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, value := range map[string]eql.TextEq{
+		"an empty object": eql.TextEq(`{}`),
+		"not JSON":        eql.TextEq(`not json`),
+		"a query value":   eql.TextEq(`{"v":3,"i":{"t":"users","c":"email"},"hm":"00"}`),
+	} {
+		junk[0].Email = value
+		if _, err := testusers.DecryptContact(ctx, cipher, junk); !errors.Is(err, encrypt.ErrEncoding) {
+			t.Errorf("%s: Decrypt = %v, want ErrEncoding", name, err)
+		}
+	}
+
+	// One flipped byte in the ciphertext inside the value: authenticated,
+	// so it does not open; the untouched value still does.
+	flipped, err := testusers.EncryptContact(ctx, cipher, contacts[:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(flipped[0].Email, &doc); err != nil {
+		t.Fatal(err)
+	}
+	var ct string
+	if err := json.Unmarshal(doc["c"], &ct); err != nil {
+		t.Fatal(err)
+	}
+	last := []byte(ct)
+	if last[len(last)-2] == 'A' {
+		last[len(last)-2] = 'B'
+	} else {
+		last[len(last)-2] = 'A'
+	}
+	doc["c"], _ = json.Marshal(string(last))
+	tampered, _ := json.Marshal(doc)
+	flipped[0].Email = eql.TextEq(tampered)
+	if _, err := testusers.DecryptContact(ctx, cipher, flipped); err == nil {
+		t.Fatal("a tampered ciphertext opened")
+	}
+	if _, err := testusers.DecryptContact(ctx, cipher, contactsSealed(t, ctx, cipher)); err != nil {
+		t.Fatalf("the untouched value no longer opens: %v", err)
+	}
+}
+
+func contactsSealed(t *testing.T, ctx context.Context, cipher *encrypt.Cipher) []testusers.EncryptedContact {
+	t.Helper()
+	sealed, err := testusers.EncryptContact(ctx, cipher, contacts[:1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sealed
+}
+
 func TestTextEqIsRefusedByTheBuildWithoutEQLTypes(t *testing.T) {
 	ctx := context.Background()
 	plain, err := encrypt.PlainGuest()
