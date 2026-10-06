@@ -732,6 +732,35 @@ func TestGuestRefusesMalformedInputsBeforeState(t *testing.T) {
 	}
 }
 
+// An indexed field with no declared kind is refused by the Checker, naming
+// the field: the engine derives every term from one declared kind, and the
+// generator never emits such a declaration, so only a plan built by hand
+// reaches this. A sealed-only untyped field passes.
+func TestCheckerRefusesAnIndexedUntypedField(t *testing.T) {
+	ctx := context.Background()
+	checker, err := NewChecker(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer checker.Close()
+	for name, outputs := range map[string][]record.Output{
+		"equality": {record.Ciphertext, record.Equality},
+		"match":    {record.Ciphertext, record.Match},
+		"ore":      {record.Ciphertext, record.Ore},
+		"ope":      {record.Ope},
+	} {
+		p := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.Untyped, Outputs: outputs}}}
+		err := checker.Check(ctx, p)
+		if !errors.Is(err, ErrEncoding) || !strings.Contains(err.Error(), `field "age"`) {
+			t.Errorf("%s: err = %v, want ErrEncoding naming the field", name, err)
+		}
+	}
+	sealed := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "notes", Kind: record.Untyped, Outputs: []record.Output{record.Ciphertext}}}}
+	if err := checker.Check(ctx, sealed); err != nil {
+		t.Errorf("a sealed-only untyped field: %v", err)
+	}
+}
+
 // se_plan_check answers with no cipher: a plan the engine runs passes, a
 // plan it refuses is ErrEncoding, never ErrState.
 func TestPlanCheckAnswersWithoutACipher(t *testing.T) {

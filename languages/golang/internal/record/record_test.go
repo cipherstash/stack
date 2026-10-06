@@ -139,11 +139,22 @@ func TestValidateRefusals(t *testing.T) {
 		"output twice":        one(Field{Name: "a", Outputs: []Output{Equality, Equality}}),
 		"bad extension part":  {Context: []string{"users"}, Extension: []any{1.5}, Fields: []Field{{Name: "a", Outputs: []Output{Ciphertext}}}},
 		"name is not a label": one(Field{Name: "b64:x", Outputs: []Output{Ciphertext}}),
+		"indexed and untyped": one(Field{Name: "a", Outputs: []Output{Ciphertext, Equality}}),
+		"index alone untyped": one(Field{Name: "a", Outputs: []Output{Ope}}),
 	}
 	for name, p := range cases {
 		if err := p.Validate(); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+	// A sealed-only field needs no kind; an indexed one is refused with the
+	// field and the term named.
+	if err := one(Field{Name: "notes", Outputs: []Output{Ciphertext}}).Validate(); err != nil {
+		t.Errorf("a sealed-only untyped field: %v", err)
+	}
+	err := one(Field{Name: "age", Outputs: []Output{Ciphertext, Ore}}).Validate()
+	if err == nil || !strings.Contains(err.Error(), `field "age"`) || !strings.Contains(err.Error(), "ore term") {
+		t.Errorf("an indexed untyped field: err = %v, want the field and the term named", err)
 	}
 }
 

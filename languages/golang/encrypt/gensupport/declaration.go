@@ -15,7 +15,8 @@ import (
 // which a Rust record opens when its field is a Value. Every sealed field has a
 // scalar kind: stashgen refuses a struct, slice or map outside an opaque
 // struct, and an opaque struct seals as Bytes (one JSON document). Untyped
-// names a field with no declared type and is not what generated code writes.
+// names a field with no declared type; generated code never writes it, and
+// the engine refuses a plan whose indexed field has no type.
 type Kind string
 
 // The kinds. int8, int16 and int32 are Int32; int and int64 are Int64;
