@@ -33,7 +33,7 @@ use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use stack_encrypt::dynamic::record::{check_record, plan_with, Plan};
 use stack_encrypt::dynamic::{
-    FfiValue, TargetDescriptor, TargetError, TargetResolver, ValueKind,
+    FfiValue, Output, TargetDescriptor, TargetError, TargetResolver, ValueKind,
 };
 use stack_encrypt::{KeysetCipher, Label, Pending, SealedValue, StackCipher, StackCipherText};
 use uuid::Uuid;
@@ -394,6 +394,23 @@ fuzz_target!(|case: Case| {
         }
         return;
     };
+    // One rule of the parsed plan is asserted here rather than left to the
+    // model: every field with a term output declares its type. The parser
+    // ends in `Plan::new_with`, which enforces it, so a plan that reaches
+    // this point with an untyped indexed field means a parse path was added
+    // that does not. A target field's kind is the type's own and it has no
+    // outputs of its own, so the rule reads as written over `outputs()`.
+    for field in plan.fields() {
+        let indexed = field
+            .outputs()
+            .iter()
+            .any(|output| matches!(output, Output::Term(_)));
+        assert!(
+            !indexed || field.target().is_some() || field.field_type().is_some(),
+            "a parsed plan has an indexed field with no type: {:?}",
+            field.name()
+        );
+    }
     let expected = model_accepts(&record, &plan);
     let actual = check_record(record.into_ciphertext(), &plan, None).is_ok();
     if trace {
