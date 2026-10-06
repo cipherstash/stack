@@ -1,0 +1,38 @@
+# `stack-encrypt` running end to end against AWS KMS, kept out of the root
+# cargo workspace on purpose.
+#
+# A standalone workspace, like the WASI guests under languages/golang and the
+# fuzz crates. CI builds the root workspace with `--all-features`, and no
+# feature gate can hide a feature from that, so an AWS feature on a workspace
+# member puts the AWS SDK in every workspace build. `aws-smithy-http-client`
+# turns on `serde_json/preserve_order`, which under feature unification
+# changes JSON map ordering for every other crate in the workspace. Detached,
+# this crate resolves its own graph, in its own Cargo.lock. The root
+# mise.toml's Rust pin applies here too.
+#
+# Run: docker compose -f examples/aws-kms-demo/docker-compose.yml up -d
+#      cd examples/aws-kms-demo && mise x -- cargo run
+[package]
+name = "aws-kms-demo"
+description = "stack-encrypt encrypting and decrypting with AWS KMS as the key provider"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+# `default-features = false`: the demo builds its cipher over its own
+# keyset registry, so it needs neither ZeroKMS nor the HTTP transport.
+stack-encrypt = { path = "../../packages/stack-encrypt", default-features = false }
+# `AwsDataKeySource`. The same git source and the same `rev` spelling as
+# stack-encrypt's own dependency, so the two resolve to one package: a
+# second copy would be a different `KeyProvider` trait, and its providers
+# would not satisfy stack-encrypt's `KeysetRegistry`. Move all of them
+# together.
+vitaminc-kms = { git = "https://github.com/cipherstash/vitaminc", rev = "b3bc6eb", default-features = false, features = ["aws"] }
+
+aws-config = "1.8.18"
+aws-sdk-kms = "1.109.0"
+tokio = { version = "1", features = ["macros", "rt"] }
+uuid = "1"

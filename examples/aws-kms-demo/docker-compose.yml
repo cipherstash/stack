@@ -1,0 +1,27 @@
+# LocalStack for the AWS KMS demo in this folder.
+#
+# LocalStack Community's `kms` service covers CreateKey, GenerateDataKey,
+# Decrypt and ListKeys. No Pro tier is necessary.
+#
+# Usage:
+#   docker compose -f examples/aws-kms-demo/docker-compose.yml up -d
+#   (cd examples/aws-kms-demo && mise x -- cargo run)
+#   docker compose -f examples/aws-kms-demo/docker-compose.yml down
+services:
+  localstack:
+    # Pinned to the last Community-only major. `:stable` and `:latest` now
+    # bundle LocalStack's "unified" image, which stops at startup unless it
+    # has a paid LOCALSTACK_AUTH_TOKEN, also for services that were free.
+    # `:4` still runs the plain Community image with no token.
+    image: localstack/localstack:4
+    ports:
+      # Loopback only: LocalStack accepts any credentials, so it must not
+      # be reachable from other hosts on the network.
+      - "127.0.0.1:4566:4566"
+    environment:
+      - SERVICES=kms
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
