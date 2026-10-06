@@ -32,6 +32,10 @@ fn caller() -> CallerContext {
 /// indexes' in order, its terms a `Vec` in the same order, byte for byte the
 /// tuple's; and an empty one is refused when it runs, before any key
 /// request, since a field declared indexed derives at least one term.
+/// `IndexSpec` implements `Index<u32>` only with the `dynamic` feature, so this
+/// test is gated on it; the no-default-features build has no `Vec` index set
+/// to exercise.
+#[cfg(feature = "dynamic")]
 #[tokio::test]
 async fn a_vec_of_indexes_is_an_index_set_in_order_and_never_empty() {
     let (cipher, generates, _) = counting_cipher().await;
