@@ -497,6 +497,10 @@ jobs:
     # generated automatically by OIDC trusted publishing, are only accepted
     # from github-hosted runners — self-hosted runners are rejected with E422.
     runs-on: ubuntu-latest
+    # Holds the GitHub App key that pushes the Version Packages PR. The
+    # environment allows `main` only, so no other branch's workflow can mint
+    # that token. Asserted by scripts/__tests__/release-app-token.test.mjs.
+    environment: release
     permissions:
       id-token: write # npm OIDC trusted publishing
       contents: write # changesets commits and pushes the Version Packages branch
@@ -618,6 +622,21 @@ jobs:
           AUTH_PUBLISHED: ${{ needs.publish-auth.outputs.published }}
         run: node scripts/wait-for-npm-versions.mjs
 
+      # GitHub starts no workflow run for a push made with GITHUB_TOKEN, so a
+      # Version Packages PR pushed with it carries no CI (#1020 merged that way,
+      # #1044). A push made with a GitHub App's token does start CI. The token is
+      # narrowed to this repository and the two permissions changesets needs,
+      # whatever the App itself holds; the post step revokes it.
+      - name: Mint the Version Packages token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_PLZ_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLZ_APP_PRIVATE_KEY }}
+          repositories: stack
+          permission-contents: write
+          permission-pull-requests: write
+
       - name: Publish to npm
         id: changesets
         uses: changesets/action@v1.9.0
@@ -638,7 +657,10 @@ jobs:
           # publishing (id-token: write above). If NPM_TOKEN is set,
           # changesets/action writes a token .npmrc that shadows OIDC and
           # every publish fails with E404 (see npm/cli#8976).
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          #
+          # The App token from the step above, not secrets.GITHUB_TOKEN, so the
+          # Version Packages PR it pushes runs CI.
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           # Embeds the CLI's PostHog project key at build time (see
           # languages/typescript/packages/cli/tsup.config.ts). A repo *variable*, not a secret: the
           # key is public and write-only (like a web SDK key). Unset until GA, so
