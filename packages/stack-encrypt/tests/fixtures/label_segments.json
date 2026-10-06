@@ -1,5 +1,5 @@
 {
-  "_comment": "One rule, two suites. A Label segment is plain exactly when the descriptor renders it verbatim. The Rust unit test in src/descriptor.rs and the Go test in languages/golang/stackencrypt/label_test.go both read this file, so the two implementations of the rule cannot drift apart silently.",
+  "_comment": "One rule, two suites. A Label segment is plain exactly when the descriptor renders it verbatim. The Rust unit test in src/descriptor.rs and the Go test in languages/golang/encrypt/label_test.go both read this file, so the two implementations of the rule cannot drift apart silently.",
   "plain": [
     "users",
     "email_address",

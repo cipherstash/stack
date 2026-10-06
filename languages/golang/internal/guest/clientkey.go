@@ -9,10 +9,10 @@ import "fmt"
 // pointer, hands its bytes only to this package tree, and is wiped once
 // consumed (see ADR-0005, decision 5).
 //
-// stackauth reads one out of the developer profile; stackencrypt takes it
+// auth reads one out of the developer profile; encrypt takes it
 // in its credentials and wipes it once the key is in guest memory. Both
 // expose this type as an alias, so a key read by one is the type the other
-// takes, without stackauth importing stackencrypt.
+// takes, without auth importing encrypt.
 //
 // The public packages alias the type, and an alias carries every exported
 // method with it — Go's internal rule stops the import, not the call. So

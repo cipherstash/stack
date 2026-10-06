@@ -95,7 +95,7 @@ func HostReserves(t *testing.T) bool {
 // lock cannot quietly go untested. Without it a refused lock is reported
 // and the assertion skipped: a developer laptop's default limit is not a
 // bug in these packages.
-const RequireLock = "STACKENCRYPT_TESTS_REQUIRE_LOCK"
+const RequireLock = "STACK_ENCRYPT_TESTS_REQUIRE_LOCK"
 
 // LockOrSkip continues if alloc's memory is locked, skips if the host
 // refused the lock (or has no reservation to lock), and fails the skip

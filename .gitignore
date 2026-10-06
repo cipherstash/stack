@@ -108,7 +108,7 @@ mutants.out/
 
 # The Go module's embedded WASI guests: build outputs of `mise run
 # wasm:guest:build` and `mise run wasm:auth-guest:build`.
-languages/golang/stackencrypt/wasm/*.wasm
-languages/golang/stackauth/wasm/*.wasm
-languages/golang/stackencrypt/wasm/*.sha256
-languages/golang/stackauth/wasm/*.sha256
+languages/golang/encrypt/wasm/*.wasm
+languages/golang/auth/wasm/*.wasm
+languages/golang/encrypt/wasm/*.sha256
+languages/golang/auth/wasm/*.sha256

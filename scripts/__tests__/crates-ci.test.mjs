@@ -222,11 +222,11 @@ const CI_EXEMPT_TASKS = new Map([
     'The fan-out over the two sweeps above, for local use. Both would write mutants.out in the same directory, so CI runs cargo-mutants once over both crates instead.',
   ],
   [
-    'go:stackencrypt:example',
+    'go:encrypt:example',
     'A walkthrough against real ZeroKMS for a developer who has run `stash auth login`. CI exercises the same client through the Go live tests in tests-golang.yml `live`.',
   ],
   [
-    'go:stackencrypt:example:explicit',
+    'go:encrypt:example:explicit',
     'The same walkthrough, with credentials passed as flags after `--`. Nothing for CI to pass; the live tests cover explicit credentials (`liveClient`).',
   ],
 ])

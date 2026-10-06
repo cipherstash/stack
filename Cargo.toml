@@ -27,8 +27,8 @@ exclude = [
   "packages/stack-encrypt/fuzz",
   # WASI guests for the Go module, built through `wasm:guest:build` and
   # `wasm:auth-guest:build`.
-  "languages/golang/stackencrypt/guest",
-  "languages/golang/stackauth/guest",
+  "languages/golang/encrypt/guest",
+  "languages/golang/auth/guest",
 ]
 
 [workspace.package]

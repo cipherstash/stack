@@ -39,9 +39,9 @@ import (
 // commonly refused, with nothing else lost: the pages can be swapped, and
 // on a host with no swap not even that. The refusal is recorded and
 // reported through LockError, which each public package surfaces on its
-// client (stackencrypt: Client.MemoryLocked and Client.MemoryLockError) so
+// client (encrypt: Client.MemoryLocked and Client.MemoryLockError) so
 // an operator can see it and raise the limit; Strict turns it into a
-// constructor failure (stackencrypt: WithRequireLockedMemory).
+// constructor failure (encrypt: WithRequireLockedMemory).
 
 // LockPolicy is what a refused lock means for an instance.
 type LockPolicy uint8

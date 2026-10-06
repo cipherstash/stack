@@ -15,7 +15,7 @@ set -euo pipefail
 dir=${1:?usage: go-binding-test.sh <module dir> [<guest path>...]}
 shift || true
 if [ $# -eq 0 ]; then
-  set -- stackencrypt/wasm/stack_encrypt_guest.wasm stackauth/wasm/stack_auth_guest.wasm
+  set -- encrypt/wasm/stack_encrypt_guest.wasm auth/wasm/stack_auth_guest.wasm
 fi
 
 cd "$dir"
@@ -38,7 +38,7 @@ go vet ./...
 # Keep the refresh-lock results explicit in CI logs on Linux, macOS, and
 # Windows. These tests exercise the platform lock implementation with two
 # independent guest instances sharing one auth.json.
-CGO_ENABLED=0 go test -v ./stackauth -run '^TestDeviceRefresh'
+CGO_ENABLED=0 go test -v ./auth -run '^TestDeviceRefresh'
 CGO_ENABLED=0 go test ./...
 
 # The transport codec's u32-bound guards are load-bearing where int is 32

@@ -74,8 +74,8 @@ const WORKSPACES = [
     'packages/stack-auth/fuzz',
     'packages/stack-kms/fuzz',
     'packages/stack-encrypt/fuzz',
-    'languages/golang/stackencrypt/guest',
-    'languages/golang/stackauth/guest',
+    'languages/golang/encrypt/guest',
+    'languages/golang/auth/guest',
   ].map((root) => ({ root, publishable: new Set(), expects: '.' })),
 ]
 

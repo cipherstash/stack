@@ -4,7 +4,7 @@
 // decodes to; and the opaque client key one package reads and the other
 // consumes.
 //
-// It sits under internal so that stackencrypt and stackauth expose what
+// It sits under internal so that encrypt and auth expose what
 // they need of it — the error sentinels, the ClientKey type — as their own
 // identifiers (aliases, not copies: an error from either package is the
 // same value, and a key read by one is the type the other takes) without

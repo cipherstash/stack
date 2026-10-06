@@ -31,7 +31,7 @@
 //! # The guest ABI the Go binding's WASI guests share
 //!
 //! The Go binding reaches Rust through WASI modules run by wazero: the
-//! crypto guest (`bindings/go/stackencrypt/guest`, `stack-encrypt` over a
+//! crypto guest (`bindings/go/encrypt/guest`, `stack-encrypt` over a
 //! host-provided transport) and, per ADR-0005, the credential guest
 //! (`stack-profile` and `stack-auth`). Everything a guest needs that is
 //! *not* about what it does — how the host gets bytes in and out, how a

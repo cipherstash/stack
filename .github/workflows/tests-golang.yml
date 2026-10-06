@@ -122,8 +122,8 @@ jobs:
         with:
           workspaces: |
             .
-            languages/golang/stackencrypt/guest
-            languages/golang/stackauth/guest
+            languages/golang/encrypt/guest
+            languages/golang/auth/guest
 
       # The HTTP-free core compiles for wasm32-wasip1 with no JS-host backend
       # and no native HTTP/TLS stack in its graph: the invariant the wazero
@@ -157,7 +157,7 @@ jobs:
       # same bytes rather than a stale or rebuilt guest.
       - name: Record the guests' checksums
         run: |
-          for guest in stackencrypt/wasm/stack_encrypt_guest.wasm stackauth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm auth/wasm/stack_auth_guest.wasm; do
             (cd languages/golang && openssl dgst -sha256 "$guest" | awk '{print $NF}' > "$guest.sha256" && echo "$guest sha256 $(cat "$guest.sha256")")
           done
 
@@ -166,20 +166,20 @@ jobs:
         with:
           name: wasm-guests
           path: |
-            languages/golang/stackencrypt/wasm/stack_encrypt_guest.wasm
-            languages/golang/stackencrypt/wasm/stack_encrypt_guest.wasm.sha256
-            languages/golang/stackauth/wasm/stack_auth_guest.wasm
-            languages/golang/stackauth/wasm/stack_auth_guest.wasm.sha256
+            languages/golang/encrypt/wasm/stack_encrypt_guest.wasm
+            languages/golang/encrypt/wasm/stack_encrypt_guest.wasm.sha256
+            languages/golang/auth/wasm/stack_auth_guest.wasm
+            languages/golang/auth/wasm/stack_auth_guest.wasm.sha256
           if-no-files-found: error
           retention-days: 1
 
       # Format, vet and hermetic tests on amd64 and 386. The guest's memory
       # lock is best effort, so its test skips where RLIMIT_MEMLOCK refuses
-      # it; CI raises the limit and sets STACKENCRYPT_TESTS_REQUIRE_LOCK so
+      # it; CI raises the limit and sets STACK_ENCRYPT_TESTS_REQUIRE_LOCK so
       # the skip is an error here.
       - name: Go binding
         env:
-          STACKENCRYPT_TESTS_REQUIRE_LOCK: "1"
+          STACK_ENCRYPT_TESTS_REQUIRE_LOCK: "1"
         run: |
           ulimit -l "$(ulimit -H -l)"
           echo "RLIMIT_MEMLOCK: $(ulimit -l) KiB"
@@ -260,7 +260,7 @@ jobs:
       - name: The guests are the ones Linux built and checked
         run: |
           cd languages/golang
-          for guest in stackencrypt/wasm/stack_encrypt_guest.wasm stackauth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm auth/wasm/stack_auth_guest.wasm; do
             want=$(cat "$guest.sha256")
             got=$(openssl dgst -sha256 "$guest" | awk '{print $NF}')
             if [ "$want" != "$got" ]; then
@@ -326,7 +326,7 @@ jobs:
       - name: The guests are the ones the wasi-check job built and checked
         run: |
           cd languages/golang
-          for guest in stackencrypt/wasm/stack_encrypt_guest.wasm stackauth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm auth/wasm/stack_auth_guest.wasm; do
             want=$(cat "$guest.sha256")
             got=$(openssl dgst -sha256 "$guest" | awk '{print $NF}')
             if [ "$want" != "$got" ]; then
@@ -340,7 +340,7 @@ jobs:
       # call `liveClient`, and not all of them are named `TestLive*`.
       - name: Go live tests
         working-directory: languages/golang
-        run: CGO_ENABLED=0 go test -v ./stackencrypt/...
+        run: CGO_ENABLED=0 go test -v ./encrypt/...
 
       - name: stack-encrypt examples
         run: |
