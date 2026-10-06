@@ -185,6 +185,19 @@ pub enum Error {
     #[error("record plan is malformed")]
     Plan,
 
+    /// A record plan field has a term output (`"eq"`, `"match"`, `"ore"`,
+    /// `"ope"`) and declares no `"type"`. The field's terms derive from the
+    /// one declared kind, never from whatever tag each value arrived with,
+    /// so the plan is refused when it is built, before any value arrives.
+    /// Its own variant rather than a cause of [`Plan`](Error::Plan) because
+    /// it names the field: it is the refusal a plan written before types
+    /// were required meets first, and the one a caller fixes field by field.
+    #[error("record plan field {field:?} has a term output and no declared type")]
+    UntypedIndex {
+        /// The field's name — its key in the plan.
+        field: String,
+    },
+
     /// A record source does not fit its plan: not an object (or an array of
     /// them), a field the plan does not name, a plan field the source does
     /// not carry or carries twice, or a passthrough or a repeated map key

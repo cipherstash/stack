@@ -699,7 +699,9 @@ impl Plan {
             // from the one declared kind, never from whatever tag each value
             // arrived with. A target field's kind is the type's own.
             if !field.is_target() && !field.indexes().is_empty() && field.field_type.is_none() {
-                return Err(Error::Plan);
+                return Err(Error::UntypedIndex {
+                    field: field.name.clone(),
+                });
             }
             // A target field is keyed under its identity like a sealed one;
             // the builder checks that rule for the fields it lowers, so the
@@ -2680,30 +2682,48 @@ mod tests {
     async fn an_indexed_field_without_a_type_is_refused_at_build() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let wide = IndexSpec::Match(crate::sem::MatchOptions {
-            k: 6,
-            ..crate::sem::MatchOptions::default()
-        })
-        .to_value();
-        for (what, outputs) in [
-            ("equality", vec![s("c"), s("eq")]),
-            ("match", vec![s("c"), s("match")]),
-            ("match with options", vec![s("c"), wide]),
-            ("ore", vec![s("c"), s("ore")]),
-            ("ope", vec![s("c"), s("ope")]),
-            ("an index alone", vec![s("eq")]),
-            ("several indexes", vec![s("c"), s("eq"), s("ore"), s("ope")]),
-        ] {
-            let refused = plan(obj(vec![(
-                "age",
-                obj(vec![
+        fn wide() -> FfiValue {
+            IndexSpec::Match(crate::sem::MatchOptions {
+                k: 6,
+                ..crate::sem::MatchOptions::default()
+            })
+            .to_value()
+        }
+        // Each case is refused for the missing type and nothing else: the
+        // refusal is the variant that names the field, and the same spec
+        // parses once a kind that admits its outputs is declared. (An
+        // `FfiValue` does not clone, so each case builds its outputs twice.)
+        type Outputs = fn() -> Vec<FfiValue>;
+        let cases: [(&str, Outputs, &str); 7] = [
+            ("equality", || vec![s("c"), s("eq")], "uint32"),
+            ("match", || vec![s("c"), s("match")], "string"),
+            ("match with options", || vec![s("c"), wide()], "string"),
+            ("ore", || vec![s("c"), s("ore")], "uint32"),
+            ("ope", || vec![s("c"), s("ope")], "uint32"),
+            ("an index alone", || vec![s("eq")], "uint32"),
+            (
+                "several indexes",
+                || vec![s("c"), s("eq"), s("ore"), s("ope")],
+                "uint32",
+            ),
+        ];
+        for (what, outputs, kind) in cases {
+            let parse = |ty: Option<&str>| {
+                let mut spec = vec![
                     ("context", label("age")),
-                    ("outputs", FfiValue::Array(outputs)),
-                ]),
-            )]));
+                    ("outputs", FfiValue::Array(outputs())),
+                ];
+                spec.extend(ty.map(|ty| ("type", s(ty))));
+                plan(obj(vec![("age", obj(spec))]))
+            };
+            let refused = parse(None);
             assert!(
-                matches!(refused, Err(Error::Plan)),
+                matches!(&refused, Err(Error::UntypedIndex { field }) if field == "age"),
                 "{what} with no type: {refused:?}"
+            );
+            assert!(
+                parse(Some(kind)).is_ok(),
+                "{what} typed {kind} is the same spec, accepted"
             );
         }
         // By hand alike: the rule is the plan's, not the parser's.
@@ -2714,7 +2734,7 @@ mod tests {
         )
         .expect("a field plan");
         assert!(
-            matches!(Plan::new(vec![field.clone()]), Err(Error::Plan)),
+            matches!(Plan::new(vec![field.clone()]), Err(Error::UntypedIndex { field }) if field == "age"),
             "an indexed field plan with no type does not make a plan"
         );
         let typed_field = field.with_type(ValueKind::UInt32).expect("admits equality");

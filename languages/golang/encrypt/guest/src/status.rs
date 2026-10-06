@@ -99,8 +99,8 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
 /// A dynamic-path error as a status code.
 ///
 /// The split the library draws is the one the ABI needs: `Context`, `Term`,
-/// `Plan`, `Source` and `Record` are each a statement about the caller's
-/// input, decided before any key is minted or retrieved, so they are
+/// `Plan`, `UntypedIndex`, `Source` and `Record` are each a statement about
+/// the caller's input, decided before any key is minted or retrieved, so they are
 /// [`STATUS_ENCODING`] — named one by one, because that verdict is the
 /// host's to act on and must be given deliberately. `Cipher` defers to
 /// [`status_for_error`]; `Internal` is the library's own invariant failing
@@ -116,9 +116,12 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
 pub fn status_for_dynamic(error: &stack_encrypt::dynamic::Error) -> u32 {
     use stack_encrypt::dynamic::Error;
     match error {
-        Error::Context | Error::Term { .. } | Error::Plan | Error::Source | Error::Record => {
-            STATUS_ENCODING
-        }
+        Error::Context
+        | Error::Term { .. }
+        | Error::Plan
+        | Error::UntypedIndex { .. }
+        | Error::Source
+        | Error::Record => STATUS_ENCODING,
         Error::Cipher(e) => status_for_error(e),
         // A target refusal is a statement about the plan, the label or the
         // value (an unknown or unproducible type, an extended plan, a value
@@ -442,6 +445,12 @@ mod tests {
                 },
             ),
             ("a bad plan", Error::Plan),
+            (
+                "an indexed field with no type",
+                Error::UntypedIndex {
+                    field: "age".to_string(),
+                },
+            ),
             ("a bad source", Error::Source),
             ("a bad record", Error::Record),
         ] {

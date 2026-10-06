@@ -20,6 +20,7 @@ import (
 	"github.com/cipherstash/stack/languages/golang/auth"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/sys"
 )
@@ -750,9 +751,24 @@ func TestCheckerRefusesAnIndexedUntypedField(t *testing.T) {
 		"ope":      {record.Ope},
 	} {
 		p := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.Untyped, Outputs: outputs}}}
+		// Through Check, the Go rule refuses first and names the field.
 		err := checker.Check(ctx, p)
 		if !errors.Is(err, ErrEncoding) || !strings.Contains(err.Error(), `field "age"`) {
 			t.Errorf("%s: err = %v, want ErrEncoding naming the field", name, err)
+		}
+		// Past it, the engine refuses the same plan (Error::UntypedIndex in
+		// stack-encrypt) and the guest reports it as the caller's input. The
+		// ABI carries a status word and no message, so the field's name is
+		// the Go rule's to give; this asserts the two rules agree.
+		encoded, err := vcffi.Marshal(p.Wire())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = checker.c.call(ctx, func(inst *instance) ([]byte, error) {
+			return inst.call(ctx, inst.planCheck, buf(encoded))
+		})
+		if !errors.Is(err, ErrEncoding) {
+			t.Errorf("%s past Validate: err = %v, want ErrEncoding from the engine", name, err)
 		}
 	}
 	sealed := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "notes", Kind: record.Untyped, Outputs: []record.Output{record.Ciphertext}}}}
