@@ -555,7 +555,10 @@ mod the_cross_language_fixture {
             .unwrap()
             .await
             .unwrap();
-        assert!(calls.lock().unwrap().generate.is_empty(), "a query mints nothing");
+        assert!(
+            calls.lock().unwrap().generate.is_empty(),
+            "a query mints nothing"
+        );
         let fixture = serde_json::json!({
             "_comment": "The TextEqQuery eql-bindings derives for the plaintext under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit.",
             "table": "users",
@@ -573,7 +576,14 @@ mod the_cross_language_fixture {
             committed, rendered,
             "the committed fixture is what the dispatch derives today"
         );
-        let typed: TextEqQuery = keyset.encrypt_as(&PLAINTEXT.to_owned(), column()).await.unwrap();
-        assert_eq!(query, serde_json::to_vec(&typed).unwrap(), "and what the typed path derives");
+        let typed: TextEqQuery = keyset
+            .encrypt_as(&PLAINTEXT.to_owned(), column())
+            .await
+            .unwrap();
+        assert_eq!(
+            query,
+            serde_json::to_vec(&typed).unwrap(),
+            "and what the typed path derives"
+        );
     }
 }

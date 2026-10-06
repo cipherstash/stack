@@ -100,7 +100,10 @@ fn methods(out: &mut String, go: &str, domain: &str) {
 pub fn render_go_eql() -> String {
     let rows = rows();
     let mut out = String::new();
-    let _ = writeln!(out, "{GO_GENERATED_MARKER}\n\npackage eql\n\nimport \"database/sql/driver\"\n");
+    let _ = writeln!(
+        out,
+        "{GO_GENERATED_MARKER}\n\npackage eql\n\nimport \"database/sql/driver\"\n"
+    );
     out.push_str(
         "// Types is every EQL type the catalog has, in catalog order: what the\n\
          // engine's se_targets export lists, as Go. Producible says whether the\n\
@@ -117,7 +120,11 @@ pub fn render_go_eql() -> String {
         let indexes = if row.indexes.is_empty() {
             "no index".to_owned()
         } else {
-            format!("the {} index{}", row.indexes.join(" and "), if row.indexes.len() > 1 { "es" } else { "" })
+            format!(
+                "the {} index{}",
+                row.indexes.join(" and "),
+                if row.indexes.len() > 1 { "es" } else { "" }
+            )
         };
         let status = match (row.reason, row.plaintext) {
             (None, Some(kind)) => format!("The engine produces it from a {kind}."),
@@ -173,11 +180,22 @@ mod tests {
         assert!(out.contains("\npackage eql\n"));
         for row in rows() {
             let go = go_name(&row.name);
-            assert_eq!(out.matches(&format!("\ntype {go} []byte\n")).count(), 1, "{go}");
-            assert!(out.contains(&format!("Name: {:?}, GoName: {go:?}", row.name)), "{go} in the table");
+            assert_eq!(
+                out.matches(&format!("\ntype {go} []byte\n")).count(),
+                1,
+                "{go}"
+            );
+            assert!(
+                out.contains(&format!("Name: {:?}, GoName: {go:?}", row.name)),
+                "{go} in the table"
+            );
             if let Some((query, _)) = &row.query {
                 let query_go = go_name(query);
-                assert_eq!(out.matches(&format!("\ntype {query_go} []byte\n")).count(), 1, "{query_go}");
+                assert_eq!(
+                    out.matches(&format!("\ntype {query_go} []byte\n")).count(),
+                    1,
+                    "{query_go}"
+                );
             }
         }
         // The one query type two rows share (text_ord and text_ord_ope
