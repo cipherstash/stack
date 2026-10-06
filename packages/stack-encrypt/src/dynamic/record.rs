@@ -3395,6 +3395,57 @@ mod tests {
             );
         }
 
+        /// Every index a typed field can declare stores the term a binding's
+        /// probe derives under the field's context: ORE and OPE over a
+        /// `uint32` and a `string`, and a match index under non-default
+        /// options over a `string`, through the output key each rides under.
+        #[tokio::test]
+        async fn a_typed_field_stores_the_term_the_dynamic_probe_derives() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let wide = IndexSpec::Match(crate::sem::MatchOptions {
+                k: 6,
+                m: 1024,
+                ..crate::sem::MatchOptions::default()
+            });
+            for (ty, kind) in [
+                ("uint32", IndexSpec::Equality),
+                ("uint32", IndexSpec::Ore),
+                ("uint32", IndexSpec::Ope),
+                ("string", IndexSpec::Equality),
+                ("string", IndexSpec::Ore),
+                ("string", IndexSpec::Ope),
+                (
+                    "string",
+                    IndexSpec::Match(crate::sem::MatchOptions::default()),
+                ),
+                ("string", wide),
+            ] {
+                let value = || match ty {
+                    "uint32" => FfiValue::UInt32(34),
+                    _ => s("al smith"),
+                };
+                let plan = plan(obj(vec![(
+                    "f",
+                    obj(vec![
+                        ("context", label("f")),
+                        ("outputs", FfiValue::Array(vec![s("c"), kind.to_value()])),
+                        ("type", s(ty)),
+                    ]),
+                )]))
+                .expect("plan");
+                let mut fields = map(seal(&keyset, obj(vec![("f", value())]), &plan).await);
+                let mut f = map(node(&mut fields, "f"));
+                let stored = term_bytes(&node(&mut f, kind.key()));
+                let scalar = Scalar::of(&value(), &kind).expect("scalar");
+                let probe = term(&keyset, scalar, &kind, plan.fields()[0].context().clone())
+                    .await
+                    .expect("probe");
+                assert_eq!(stored, probe, "{ty} {kind}");
+                assert!(!stored.is_empty(), "{ty} {kind}");
+            }
+        }
+
         /// A passthrough field with a declared type carries only values of
         /// that type, in and out.
         #[tokio::test]

@@ -553,6 +553,52 @@ mod tests {
             .expect("build cipher")
     }
 
+    /// A pair the scheme refuses fails the run of `IndexSpec`'s public
+    /// `Index<Value>` with the dynamic `Error::Term` inside the crate error,
+    /// and requests nothing: the record path refuses such a pair at its
+    /// boundary, a Rust caller running the index directly meets it here.
+    #[tokio::test]
+    async fn a_refused_pair_fails_the_index_when_it_runs() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let ctx = || CallerContext::from(nonempty!("users/age"));
+        for (what, value, kind) in [
+            (
+                "a float under equality",
+                FfiValue::Float64(1.5),
+                IndexSpec::Equality,
+            ),
+            (
+                "an integer under match",
+                FfiValue::UInt32(34),
+                default_match(),
+            ),
+            (
+                "a container under ore",
+                FfiValue::Array(vec![FfiValue::UInt32(1)]),
+                IndexSpec::Ore,
+            ),
+        ] {
+            let refused = keyset
+                .run(
+                    Index::<Value>::operation::<FakeDataKeySource, crate::target::Owned>(&kind),
+                    Value::new(value),
+                    ctx(),
+                )
+                .await;
+            match refused {
+                Err(crate::Error::Other(inner)) => assert!(
+                    matches!(
+                        inner.downcast_ref::<Error>(),
+                        Some(Error::Term { kind: refused_kind }) if *refused_kind == kind
+                    ),
+                    "{what}: the lifted error names the index: {inner:?}"
+                ),
+                other => panic!("{what}: expected the lifted Error::Term, got {other:?}"),
+            }
+        }
+    }
+
     /// A `TermBytes` reads as the typed term's bytes, through every
     /// accessor: `as_bytes`, `as_ref` and `into_bytes` give the same
     /// 32 PRF bytes an `EqualityTerm` holds, for a term derived through
