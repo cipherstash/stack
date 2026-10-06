@@ -18,7 +18,7 @@ The [Go example index](../../README.md) lists every example and what was checked
 `protosource.New()` supplies protobuf descriptors and field options.
 `rules.Individuals` supplies the field decisions.
 `stashgen.Output` selects the generated file in the `individuals` package.
-The output goes in your own `individuals` package, not `internal/pb`, which holds the generated type.
+The output goes in your own `individuals` package, not `internal/pb`, which contains the generated type.
 This separation stops the generate program from importing a file that it writes.
 
 [`main.go`, lines 12 to 18](main.go#L12-L18)

@@ -20,7 +20,7 @@ Each directory has a `README.md` that walks through its code.
 | [`accounts/account.go`](accounts/account.go) | An embedded `gorm.Model`, another library's tags, an unexported field and `-redact` |
 | [`contacts/contacts.go`](contacts/contacts.go) | [`crm.Contact`](crm/contact.go), a type in another package, in separate columns, with a model |
 | [`documents/documents.go`](documents/documents.go) | An `opaque` struct, sealed as one value |
-| [`proto/`](proto/) | A protobuf message whose fields carry data categories, which generates [`internal/pb/`](internal/pb/) |
+| [`proto/`](proto/) | A protobuf message whose fields have data categories, which generates [`internal/pb/`](internal/pb/) |
 | [`rules/rules.go`](rules/rules.go) | Rules that decide what to encrypt from each field's data categories |
 | [`cmd/genencrypt/main.go`](cmd/genencrypt/main.go) | The generate program that runs the rules |
 | [`individuals/`](individuals/) | The file the rules give for the protobuf message, and a store that uses it |

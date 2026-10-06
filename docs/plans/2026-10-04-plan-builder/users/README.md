@@ -11,7 +11,7 @@ It shows what `stashgen` is planned to write.
 ## What you will learn
 
 - Declare stored fields and create a tenant cipher.
-- Read what the generated file holds.
+- Read what the generated file contains.
 - Insert and search users with `database/sql`.
 - Batch encryption before GORM receives values.
 - Convert between sqlc structs and update one EQL column.
@@ -43,7 +43,7 @@ type User struct {
 ```
 
 The root program creates the client and derives one cipher for tenant `tenant-42`.
-The cipher holds the tenant's keyset and its extension to each encryption context.
+The cipher has the tenant's keyset and its extension to each encryption context.
 `Extend` adds the tenant segment to each field's declared encryption context.
 No call takes a keyset or an encryption context, so the write, query, and read cannot use different ones.
 
@@ -67,7 +67,7 @@ func run(ctx context.Context) error {
 	store := users.NewSQLStore(db)
 ```
 
-## Read what the generated file holds
+## Read what the generated file contains
 
 - **Purpose:** Understand the main parts that `stashgen` is planned to write.
 - **Related:** [The plan's generated file design](../../2026-10-04-plan-builder.md#what-stashgen-writes), [the plan's call design](../../2026-10-04-plan-builder.md#calls)
@@ -304,7 +304,7 @@ It converts each sqlc row back with `EncryptedUser(row)` before decryption.
 ```
 
 `ChangeEmail` encrypts one field and updates the single EQL column.
-That column holds the ciphertext and its search term together.
+That column stores the ciphertext and its search term together.
 
 [`sqlcstore.go`, lines 79 to 88](sqlcstore.go#L79-L88)
 

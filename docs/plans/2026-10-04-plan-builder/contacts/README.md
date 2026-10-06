@@ -69,7 +69,7 @@ type contactShape struct {
 
 ## Read the separate encrypted outputs
 
-- **Purpose:** See how each encrypted field holds a ciphertext and its declared search terms.
+- **Purpose:** See that each encrypted field contains a ciphertext and its declared search terms.
 - **Related:** [The plan's column layouts](../../2026-10-04-plan-builder.md#columns), [the plan's generated file design](../../2026-10-04-plan-builder.md#what-stashgen-writes)
 
 `EncryptedContact` nests one encrypted type for each encrypted field.

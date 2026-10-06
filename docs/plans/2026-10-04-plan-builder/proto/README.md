@@ -1,7 +1,7 @@
 # Annotate protobuf fields for encryption rules
 
 This example defines a protobuf field option and applies it to an `Individual` message.
-The option holds [data categories](https://ethyca.github.io/fideslang/taxonomy/data_categories/) from [Fideslang](https://ethyca.github.io/fideslang/), a published taxonomy of personal data.
+The option lists [data categories](https://ethyca.github.io/fideslang/taxonomy/data_categories/) from [Fideslang](https://ethyca.github.io/fideslang/), a published taxonomy of personal data.
 `buf generate` works for these protobuf files.
 
 The Golang SDK for CipherStash Stack is planned and does not exist yet.
