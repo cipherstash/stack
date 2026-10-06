@@ -882,22 +882,58 @@ mod tests {
         assert!(matches!(err, AuthError::UsageLimitExceeded(_)), "{err:?}");
     }
 
+    /// An unclassified failure names its status and never carries the
+    /// body: from the edge it is an HTML page, and it may echo the
+    /// credential. The auth server's own error description is kept.
     #[tokio::test]
-    async fn an_unclassified_failure_is_a_server_error_with_the_body() {
-        let transport: SharedTransport = Arc::new(Stub::replying(500, "boom"));
-        let refresher = AccessKeyRefresher::new(
-            SecretToken::new("CSAKid.secret"),
-            base_url(),
+    async fn an_unclassified_failure_is_a_server_error_without_the_body() {
+        const PAGE: &str = "<html><h1>403 Forbidden</h1>nginx CSAKmarker.secret</html>";
+        let refused = |body: &'static str| {
+            let transport: SharedTransport = Arc::new(Stub::replying(403, body));
+            AccessKeyRefresher::new(
+                SecretToken::new("CSAKmarker.secret"),
+                base_url(),
+                None,
+                transport,
+            )
+        };
+        let err = refused(PAGE).refresh(&()).await.unwrap_err();
+        assert!(matches!(err, AuthError::Server(_)), "{err:?}");
+        assert_eq!(err.to_string(), "Server error: 403");
+
+        let transport: SharedTransport = Arc::new(Stub::replying(403, PAGE));
+        let err = OidcFederation::new(workspace_id(), base_url(), transport)
+            .federate(&SecretToken::new("h.p.s"))
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "Server error: 403");
+
+        let described = r#"{"error":"forbidden","error_description":"client is disabled"}"#;
+        let err = refused(described).refresh(&()).await.unwrap_err();
+        assert_eq!(err.to_string(), "Server error: 403: client is disabled");
+    }
+
+    /// An error body that is not JSON says where it broke, not what it held.
+    #[tokio::test]
+    async fn an_unparseable_error_body_is_not_quoted() {
+        let transport: SharedTransport =
+            Arc::new(Stub::replying(400, r#"{"error": "marker-rt-echo"#));
+        let err = Token::refresh_with(
+            &transport,
+            &SecretToken::new("rt"),
+            &base_url(),
+            "cli",
             None,
-            transport,
+        )
+        .await
+        .unwrap_err();
+        let shown = err.to_string();
+        assert!(matches!(err, AuthError::Server(_)), "{err:?}");
+        assert!(
+            shown.starts_with("Server error: 400: unparseable error body"),
+            "{shown}"
         );
-        let err = refresher.refresh(&()).await.unwrap_err();
-        match err {
-            AuthError::Server(e) => {
-                assert!(e.to_string().contains("500") && e.to_string().contains("boom"))
-            }
-            other => panic!("{other:?}"),
-        }
+        assert!(!shown.contains("marker"), "{shown}");
     }
 
     #[tokio::test]

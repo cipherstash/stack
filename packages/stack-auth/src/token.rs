@@ -313,9 +313,7 @@ impl Token {
             }
 
             let err: RefreshErrorResponse = serde_json::from_str(&body).map_err(|e| {
-                AuthError::Server(crate::error::ServerError(format!(
-                    "{status}: unparseable error body: {e}"
-                )))
+                AuthError::Server(crate::error::ServerError::unparseable(status, &e))
             })?;
 
             return Err(match err.error.as_str() {

@@ -372,6 +372,12 @@ impl AuthErrorKind for UsageLimitExceeded {
 }
 
 /// An unexpected error was returned by the auth server.
+///
+/// The message the crate builds names the HTTP status and, where the auth
+/// server gave one, its `error_description`: never the response body. From
+/// the edge in front of the auth server a body is an HTML page, and any
+/// body may echo the credential the request carried (see
+/// [`ErrorPayload`] for the rule).
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Server error: {0}")]
 #[diagnostic(code(stack_auth::server_error))]
@@ -379,6 +385,38 @@ pub struct ServerError(pub String);
 impl AuthErrorKind for ServerError {
     fn error_code(&self) -> &'static str {
         codes::SERVER_ERROR
+    }
+}
+
+impl ServerError {
+    /// A refused exchange no classifier had anything more specific for: the
+    /// status, and the auth server's `error_description` when the body is
+    /// its JSON error.
+    pub(crate) fn refused(status: u16, body: &str) -> Self {
+        let description = serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("error_description")?
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .map(str::to_owned)
+            });
+        match description {
+            Some(description) => Self(format!("{status}: {description}")),
+            None => Self(status.to_string()),
+        }
+    }
+
+    /// An error body that is not the JSON the endpoint answers with: the
+    /// status, and where the JSON broke. serde_json's own message can quote
+    /// the body, so it is not used.
+    pub(crate) fn unparseable(status: u16, error: &serde_json::Error) -> Self {
+        Self(format!(
+            "{status}: unparseable error body ({})",
+            stack_profile::diagnostic::describe_json_error(error)
+        ))
     }
 }
 
