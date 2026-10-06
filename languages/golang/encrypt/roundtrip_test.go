@@ -256,3 +256,46 @@ func TestATamperedRecordDoesNotOpen(t *testing.T) {
 		t.Fatalf("a missing ciphertext: %v", err)
 	}
 }
+
+// A match index needs text that yields a token: the engine defines no match
+// term for an empty or separator-only string, because an empty term would
+// match every row, and the typed Rust path refuses it the same way. The Go
+// error names the row, the field and the index. Every other zero value
+// seals: a zero integer under ore and equality, an empty string with no
+// match index.
+func TestAMatchIndexNeedsText(t *testing.T) {
+	c := deterministicClient(t)
+	ctx := context.Background()
+	cipher := c.DefaultKeyset()
+	for name, u := range map[string]testusers.User{
+		"the zero value":    {},
+		"an empty email":    {ID: 1, Age: 34, Notes: "x"},
+		"a separator email": {ID: 1, Age: 34, Email: " \t", Notes: "x"},
+	} {
+		_, err := testusers.Encrypt(ctx, cipher, []testusers.User{{ID: 9, Age: 1, Email: "ok@example.com", Notes: "x"}, u})
+		if !errors.Is(err, encrypt.ErrTerm) {
+			t.Fatalf("%s: %v, want ErrTerm", name, err)
+		}
+		for _, want := range []string{`value 1`, `field "email"`, "no match term"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: error %q does not name %s", name, err, want)
+			}
+		}
+	}
+	// The field entry says the same for one value.
+	if _, err := testusers.Fields.Email.Encrypt(ctx, cipher, ""); !errors.Is(err, encrypt.ErrTerm) || !strings.Contains(err.Error(), `field "email"`) {
+		t.Fatalf("Fields.Email.Encrypt(\"\"): %v", err)
+	}
+	if _, err := testusers.Fields.Email.Match(ctx, cipher, ""); !errors.Is(err, encrypt.ErrTerm) {
+		t.Fatalf("Fields.Email.Match(\"\"): %v", err)
+	}
+	// Zero values the engine does seal.
+	encrypted, err := testusers.Encrypt(ctx, cipher, []testusers.User{{Email: "zero@example.com"}})
+	if err != nil {
+		t.Fatalf("a zero age and empty notes: %v", err)
+	}
+	back, err := testusers.Decrypt(ctx, cipher, encrypted)
+	if err != nil || back[0].Age != 0 || back[0].Notes != "" || back[0].ID != 0 {
+		t.Fatalf("zero values round trip: %v %+v", err, back)
+	}
+}

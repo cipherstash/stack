@@ -58,6 +58,9 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 	out, err := cph.client.call(ctx, func(inst *instance) ([]byte, error) {
 		return inst.call(ctx, inst.encryptRecord, buf(encodedSource), buf(encodedPlan), buf(opts))
 	})
+	if errors.Is(err, ErrTerm) {
+		return nil, cph.locateTermFailure(ctx, p, rows, err)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -313,4 +316,41 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, p *record.Plan, r
 		sources[i] = src
 	}
 	return sources, nil
+}
+
+// locateTermFailure names the row, field and index behind an ErrTerm from a
+// record call. The guest reports a status and nothing else, so the host asks
+// the engine again, one term at a time, which costs no key request: a term
+// derives locally. The engine defines no match term for text that yields no
+// token (empty, separator-only, or shorter than the n-gram), because an
+// empty term would match every row; a program hands such a field a value or
+// drops the match index.
+func (cph *Cipher) locateTermFailure(ctx context.Context, p *record.Plan, rows []record.Source, err error) error {
+	for i, row := range rows {
+		for _, f := range p.Fields {
+			for _, o := range f.Outputs {
+				if !o.IsTerm() {
+					continue
+				}
+				if _, derr := cph.Derive(ctx, p, f.Name, o, row[f.Name]); errors.Is(derr, ErrTerm) {
+					return fmt.Errorf("%w: value %d, field %q: the engine derives no %s term for this value (a match index needs text with at least one token; an empty or separator-only string has none)", err, i, f.Name, indexWord(o))
+				}
+			}
+		}
+	}
+	return err
+}
+
+func indexWord(o record.Output) string {
+	switch o {
+	case record.Equality:
+		return "equality"
+	case record.Match:
+		return "match"
+	case record.Ore:
+		return "ore"
+	case record.Ope:
+		return "ope"
+	}
+	return string(o)
 }
