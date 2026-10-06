@@ -67,7 +67,8 @@ func TestVersionConstantIsTyped(t *testing.T) {
 	// A generated file holds `const _ = gensupport.GeneratedVersion1`. The
 	// constant's type is unexported, so no other package can declare a value
 	// that satisfies the same reference.
-	var _ generatedVersion = GeneratedVersion1
+	accepts := func(generatedVersion) {}
+	accepts(GeneratedVersion1)
 	if GeneratedVersion1 != 1 {
 		t.Fatalf("GeneratedVersion1 = %d", GeneratedVersion1)
 	}

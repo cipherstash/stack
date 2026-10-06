@@ -213,6 +213,7 @@ func (r *reader) read() (*genFile, error) {
 	// The shape check. A type from another package with an unexported field
 	// cannot convert, so the file reads each field by name instead, and the
 	// functions take a pointer.
+	var conversionNotice string
 	switch {
 	case req.For == "":
 		f.shapeFields = shapeOf(valueStruct, r.typeExpr)
@@ -221,7 +222,7 @@ func (r *reader) read() (*genFile, error) {
 		f.isPointer = true
 		f.typeExpr = "*" + f.typeExpr
 		f.zeroExpr = "nil"
-		f.notices = append(f.notices, fmt.Sprintf("%s has unexported fields, so Go cannot convert it to a copy of its fields. This file reads each field by name: the compiler finds a removed or retyped field, and CI finds an added one.", f.typeName))
+		conversionNotice = fmt.Sprintf("%s has unexported fields, so Go cannot convert it to a copy of its fields. This file reads each field by name: the compiler finds a removed or retyped field, and CI finds an added one.", f.typeName)
 	default:
 		f.shapeFields = shapeOf(valueStruct, r.typeExpr)
 	}
@@ -250,6 +251,9 @@ func (r *reader) read() (*genFile, error) {
 		} else {
 			f.notices = append(f.notices, fmt.Sprintf("%s prints its sealed fields in the clear: it has no String or LogValue method. Write them, or run stashgen with -redact.", f.typeName))
 		}
+	}
+	if conversionNotice != "" {
+		f.notices = append(f.notices, conversionNotice)
 	}
 	if len(f.unexported) > 0 {
 		f.notices = append(f.notices, "Not encrypted and not stored: the unexported "+fieldList(f.unexported)+". Tag "+itOrEach(f.unexported)+" `stash:\"-\"` to confirm that.")

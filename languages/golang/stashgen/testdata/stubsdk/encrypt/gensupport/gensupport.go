@@ -119,3 +119,8 @@ func (*RecordsCodec[P, R]) Encrypt(context.Context, *encrypt.Cipher, []P) ([]R, 
 func (*RecordsCodec[P, R]) Decrypt(context.Context, encrypt.Decrypter, []R) ([]P, error) {
 	return nil, nil
 }
+
+// NoticeUntagged and NoticePrintsPlaintext are the running program's
+// notices; the real New calls them once for each type.
+func NoticeUntagged(typeName string, fields []string) {}
+func NoticePrintsPlaintext(typeName string)           {}

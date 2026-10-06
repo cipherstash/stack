@@ -1,11 +1,11 @@
-// Package fakeengine is a static stand-in for the Rust engine in the
+// Package enginetest is a static stand-in for the Rust engine in the
 // generator's tests. It knows what the engine produces today: the EQL type
 // TextEq, and the four indexes with the Go kinds each applies to.
 //
 // It is a test double, not a copy of the rules the SDK ships: the SDK's
 // generator asks the embedded guest. When the engine learns a type or an
 // index, update this file and the tests that read it.
-package fakeengine
+package enginetest
 
 import (
 	"context"
@@ -14,20 +14,20 @@ import (
 	"github.com/cipherstash/stack/languages/golang/stashgen"
 )
 
-// Engine is the static fake. The zero value is ready to use.
-type Engine struct{}
+// Static is the fake engine. The zero value is ready to use.
+type Static struct{}
 
-var _ stashgen.Engine = Engine{}
+var _ stashgen.Engine = Static{}
 
 // EQLTypes returns TextEq, the one EQL type the engine produces today.
-func (Engine) EQLTypes(context.Context) ([]stashgen.EQLType, error) {
+func (Static) EQLTypes(context.Context) ([]stashgen.EQLType, error) {
 	return []stashgen.EQLType{
 		{Name: "TextEq", Plaintext: stashgen.KindString, Indexes: []stashgen.IndexName{stashgen.IndexEquality}, Query: "TextEqQuery"},
 	}, nil
 }
 
 // Check applies the engine's rules as they stand today.
-func (e Engine) Check(ctx context.Context, d stashgen.Declaration) error {
+func (e Static) Check(ctx context.Context, d stashgen.Declaration) error {
 	eqlTypes, _ := e.EQLTypes(ctx)
 	for _, f := range d.Fields {
 		if f.Verb == stashgen.VerbOmit {

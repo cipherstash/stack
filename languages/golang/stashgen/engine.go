@@ -44,8 +44,8 @@ var ErrEngineUnavailable = errors.New("stashgen: the embedded engine is not avai
 // TODO(stack#1046 integration): run the WASI guest that package encrypt
 // embeds (the build with the EQL types), ask it for its EQL types and have
 // it check each declaration. Until then this returns [ErrEngineUnavailable],
-// and stashgen stops before it reads any package. The fake in
-// internal/fakeengine is the reference for what an Engine answers.
+// and stashgen stops before it reads any package. The static
+// engine in package enginetest is the reference for what an Engine answers.
 func GuestEngine(context.Context) (Engine, error) {
 	return nil, ErrEngineUnavailable
 }

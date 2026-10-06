@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/cipherstash/stack/languages/golang/stashgen"
-	"github.com/cipherstash/stack/languages/golang/stashgen/internal/fakeengine"
+	"github.com/cipherstash/stack/languages/golang/stashgen/enginetest"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden files from the generator's output")
@@ -29,21 +29,32 @@ var goldenCases = map[string]goldenCase{
 	"accounts":  {req: stashgen.Request{Type: "Account", Redact: true}, golden: "account_stash.go.golden"},
 	"contacts":  {req: stashgen.Request{Type: "contactStash", For: "crm.Contact", Models: []stashgen.ModelRequest{{Name: "Rows", Type: "ContactRow"}}}, golden: "contactstash_stash.go.golden"},
 	"documents": {req: stashgen.Request{Type: "Document"}, golden: "document_stash.go.golden"},
+	// Beyond the plan's examples: -name beside an unnamed struct in one
+	// package, separate columns on an integer, an embedded struct of the same
+	// package, and -for a type with unexported fields.
+	"orders":   {req: stashgen.Request{Type: "Order", Name: "Order"}, golden: "order_stash.go.golden"},
+	"refunds":  {dir: "", req: stashgen.Request{Type: "Refund"}, golden: "refund_stash.go.golden"},
+	"embedded": {req: stashgen.Request{Type: "Patient"}, golden: "patient_stash.go.golden"},
+	"foreign":  {req: stashgen.Request{Type: "individualStash", For: "pb.Individual"}, golden: "individualstash_stash.go.golden"},
 }
 
 func TestGolden(t *testing.T) {
 	for name, c := range goldenCases {
 		t.Run(name, func(t *testing.T) {
-			caseDir := filepath.Join("testdata", "cases", name)
+			module := name
+			if name == "refunds" {
+				module = "orders"
+			}
+			caseDir := filepath.Join("testdata", "cases", module)
 			req := c.req
 			req.Dir = filepath.Join(caseDir, c.dir)
-			file, err := stashgen.FromTags(context.Background(), fakeengine.Engine{}, req)
+			file, err := stashgen.FromTags(context.Background(), enginetest.Static{}, req)
 			if err != nil {
 				t.Fatalf("FromTags: %v", err)
 			}
 			goldenPath := filepath.Join(caseDir, c.dir, c.golden)
 			if *update {
-				if err := os.WriteFile(goldenPath, file.Content, 0o644); err != nil {
+				if err := os.WriteFile(goldenPath, file.Content, 0o600); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -82,11 +93,26 @@ func compileCase(t *testing.T, caseDir, pkgDir, fileName string, content []byte)
 	}
 	gomod = bytes.ReplaceAll(gomod, []byte("../../stubsdk"), []byte(filepath.Join(testdata, "stubsdk")))
 	gomod = bytes.ReplaceAll(gomod, []byte("../../stubgorm"), []byte(filepath.Join(testdata, "stubgorm")))
-	if err := os.WriteFile(filepath.Join(tmp, "go.mod"), gomod, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, "go.mod"), gomod, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmp, pkgDir, fileName), content, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmp, pkgDir, fileName), content, 0o600); err != nil {
 		t.Fatal(err)
+	}
+	// A module with two tagged structs builds only with both generated files.
+	goldens, _ := filepath.Glob(filepath.Join(caseDir, pkgDir, "*.golden"))
+	for _, g := range goldens {
+		name := strings.TrimSuffix(filepath.Base(g), ".golden")
+		if name == fileName {
+			continue
+		}
+		data, err := os.ReadFile(g)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tmp, pkgDir, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	cmd := exec.Command("go", "vet", "./...")
 	cmd.Dir = tmp
@@ -107,7 +133,7 @@ func copyTree(src, dst string) error {
 		}
 		target := filepath.Join(dst, rel)
 		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
+			return os.MkdirAll(target, 0o750)
 		}
 		if strings.HasSuffix(path, ".golden") {
 			return nil
@@ -116,7 +142,7 @@ func copyTree(src, dst string) error {
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(target, data, 0o644)
+		return os.WriteFile(target, data, 0o600)
 	})
 }
 
