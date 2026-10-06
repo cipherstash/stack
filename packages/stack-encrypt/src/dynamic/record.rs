@@ -5219,6 +5219,70 @@ mod tests {
             assert_eq!(text_of(&object(opened)[0].1), "a@x");
         }
 
+        /// The node under `"eql"` must be a passthrough: a ciphertext leaf
+        /// there is a record the plan did not produce, refused before any
+        /// key is retrieved. (The "misplaced" case in the test below puts
+        /// the leaf under `"c"`, where `take` of `"eql"` fails first; this
+        /// one reaches the node-shape refusal itself.)
+        #[tokio::test]
+        async fn a_non_passthrough_node_under_eql_is_refused() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = mixed_plan();
+            let mut row = seal_mixed(&keyset, &plan).await;
+            row.retain(|(k, _)| k != "email");
+            row.push((
+                "email".to_string(),
+                CipherText::Map(vec![(EQL_KEY.to_string(), forged(s("x")))]),
+            ));
+            assert!(matches!(
+                check_record(CipherText::Map(row), &plan),
+                Err(Error::Record)
+            ));
+            let mut row = seal_mixed(&keyset, &plan).await;
+            row.retain(|(k, _)| k != "email");
+            row.push((
+                "email".to_string(),
+                CipherText::Map(vec![(EQL_KEY.to_string(), forged(s("x")))]),
+            ));
+            let error = refused(decrypt_with(
+                Scope::Client(&cipher),
+                CipherText::Map(row),
+                &plan,
+                &FakeEql,
+            ));
+            assert!(matches!(error, Error::Record), "{error:?}");
+            assert_eq!(retrieves(&cipher), 0);
+        }
+
+        /// The adapters trust the resolver to answer one value per target
+        /// field; fewer is the engine's shape disagreeing with the plan's,
+        /// reported as `ResponseShape` (a binding's internal status), never
+        /// as a refusal the caller is told to fix.
+        #[test]
+        fn a_target_slot_the_resolver_did_not_answer_is_a_response_shape_error() {
+            let plan = plan_with(
+                obj(vec![("email", target_spec(label("email"), TEXT_EQ))]),
+                &FakeEql,
+            )
+            .unwrap();
+            let shape = plan.shape();
+            assert!(
+                matches!(
+                    shape_record(FieldValues::new(), Vec::new(), &shape),
+                    Err(crate::Error::ResponseShape)
+                ),
+                "a missing target value on the encrypt side"
+            );
+            assert!(
+                matches!(
+                    open_record(FieldValues::new(), Vec::new(), &shape),
+                    Err(crate::Error::ResponseShape)
+                ),
+                "a missing target value on the decrypt side"
+            );
+        }
+
         #[test]
         fn the_target_and_output_forms_are_exclusive() {
             let both = obj(vec![
