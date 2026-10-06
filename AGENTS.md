@@ -955,6 +955,48 @@ pnpm changeset:publish
    A skills-only change is **not** internal: `skills/` ships inside the
    `stash` tarball, so it needs a `stash` patch changeset.
 
+## Claude PR review
+
+`.github/workflows/claude-review.yml` runs Anthropic's `code-review` plugin,
+unmodified, as an advisory review. It never approves, blocks, or merges.
+`scripts/__tests__/claude-review-workflow.test.mjs` holds its shape.
+
+- **It is off unless the repository variable `CLAUDE_REVIEW_ENABLED` is
+  `'true'`.**
+- **When it runs:** a non-draft, non-bot pull request from a branch in this
+  repository, when it opens, reopens or leaves draft. Not on a push: to review
+  a later commit, add the `claude-review` label (remove and re-add it to run
+  again). Any other label starts a run whose job is skipped, in its own
+  concurrency group so it cannot cancel a review in progress. There is no
+  debounce sleep; `cancel-in-progress` already drops a superseded run.
+- **What it posts:** the plugin posts inline comments for the issues it
+  validates, and a summary comment only when it finds none.
+- **The plugin comes from a pinned checkout** of `anthropics/claude-code`
+  under `.review-plugins/`, because the action takes a marketplace only as an
+  unpinnable `.git` URL or a local path. Dependabot does not track that ref.
+  When bumping it, re-read `plugins/code-review/commands/code-review.md`:
+  `--allowedTools` must equal its `allowed-tools` frontmatter plus `Task`, and
+  the test pins that list.
+- **A command's frontmatter grants its own tools, unscoped.** The plugin's
+  `gh pr` and `gh issue` grants cannot be narrowed to the reviewed pull
+  request; the job token's `pull-requests: write` on this repository is the
+  limit.
+- **Agent instructions come from the base branch.** The action restores
+  `.claude/` and the root `CLAUDE.md`, but not the files `CLAUDE.md` imports or
+  nested `CLAUDE.md` files, and the plugin audits against every `CLAUDE.md`
+  beside a changed file. Two workflow steps take every `CLAUDE.md`,
+  `CLAUDE.local.md` and `AGENTS.md` at any depth from the base commit, deleting
+  copies the base lacks. Do not pass `--setting-sources`: it stops the plugin
+  and the restored instructions loading at all.
+- **Keep it in agent mode.** `track_progress: true` selects tag mode, which
+  grants `git commit`, a push wrapper and auto-accepted edits.
+- **Keep the job token.** `github_token` stops the action trading OIDC for the
+  Claude GitHub App token, whose write access `permissions:` cannot narrow. It
+  also means a pull request that edits the workflow runs its own edited copy,
+  so a workflow change is not proven by its own pull request's check.
+- **Never disallow a blanket `Bash`.** It overrides the scoped `Bash(gh …)`
+  allows and the review goes blind.
+
 ## Useful Links
 
 - `README.md` for quickstart and feature overview
