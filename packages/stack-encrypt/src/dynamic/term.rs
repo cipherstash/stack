@@ -610,6 +610,50 @@ mod tests {
             .expect("build cipher")
     }
 
+    /// A `TermBytes` reads as the typed term's bytes, through every
+    /// accessor: `as_bytes`, `as_ref` and `into_bytes` give the same
+    /// 32 PRF bytes an `EqualityTerm` holds, for a term derived through
+    /// `IndexSpec`'s `Index<u32>` and through the dynamic dispatch alike.
+    #[tokio::test]
+    async fn term_bytes_read_as_the_typed_terms_bytes() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let typed = keyset
+            .equality_term(34u32, nonempty!("users/age"))
+            .await
+            .expect("typed")
+            .into_bytes()
+            .to_vec();
+        assert_eq!(typed.len(), 32);
+
+        let through_u32: TermBytes = keyset
+            .run(
+                Index::<u32>::operation::<FakeDataKeySource, crate::target::Owned>(
+                    &IndexSpec::Equality,
+                ),
+                34u32,
+                CallerContext::from(nonempty!("users/age")),
+            )
+            .await
+            .expect("the u32 index derives");
+        assert_eq!(through_u32.as_bytes(), typed.as_slice());
+        assert_eq!(through_u32.as_ref(), typed.as_slice());
+        assert_eq!(through_u32.clone().into_bytes(), typed);
+
+        let through_value: TermBytes = keyset
+            .run(
+                Index::<Value>::operation::<FakeDataKeySource, crate::target::Owned>(
+                    &IndexSpec::Equality,
+                ),
+                Value::new(FfiValue::UInt32(34)),
+                CallerContext::from(nonempty!("users/age")),
+            )
+            .await
+            .expect("the dynamic index derives");
+        assert_eq!(through_value, through_u32, "one dispatch table, one term");
+        assert_eq!(through_value.as_bytes(), typed.as_slice());
+    }
+
     /// A match index under the default options: what a plan's bare
     /// `"match"` names.
     fn default_match() -> IndexSpec {

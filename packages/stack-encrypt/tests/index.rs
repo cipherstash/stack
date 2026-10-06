@@ -27,6 +27,81 @@ use vitaminc_protected::{Controlled, Protected};
 fn caller() -> CallerContext {
     CallerContext::from(nonempty!("users/email"))
 }
+
+/// A `Vec` of indexes is an index set sized at run time: its specs are the
+/// indexes' in order, its terms a `Vec` in the same order, byte for byte the
+/// tuple's; and an empty one is refused when it runs, before any key
+/// request, since a field declared indexed derives at least one term.
+#[tokio::test]
+async fn a_vec_of_indexes_is_an_index_set_in_order_and_never_empty() {
+    let (cipher, generates, _) = counting_cipher().await;
+    let keyset = cipher.default_keyset();
+
+    let list: Vec<IndexSpec> = vec![IndexSpec::Ore, IndexSpec::Equality];
+    assert_eq!(
+        Indexes::<u32>::specs(&list),
+        [IndexSpec::Ore, IndexSpec::Equality],
+        "the specs are the indexes', in the order given"
+    );
+    assert_eq!(
+        Indexes::<u32>::specs(&vec![IndexSpec::Equality]),
+        [IndexSpec::Equality]
+    );
+    assert_eq!(
+        Indexes::<u32>::specs(&vec![Equality, Equality]),
+        [IndexSpec::Equality, IndexSpec::Equality],
+        "a repeated index is reported twice; a plan refuses it, a set does not"
+    );
+
+    let terms: Vec<stack_encrypt::dynamic::TermBytes> = keyset
+        .run(
+            Indexes::<u32>::operations::<_, Borrowed>(&list),
+            &34u32,
+            caller(),
+        )
+        .await
+        .unwrap();
+    let (ore, eq): (OreTerm<u32>, EqualityTerm) = keyset
+        .run(
+            Indexes::<u32>::operations::<_, Borrowed>(&(Ore, Equality)),
+            &34u32,
+            caller(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(terms.len(), 2);
+    assert_eq!(
+        terms[0].as_bytes(),
+        ore.as_bytes(),
+        "the first term is the first index's"
+    );
+    assert_eq!(
+        terms[1].as_bytes(),
+        eq.as_bytes(),
+        "the second the second's"
+    );
+
+    let none: Vec<Equality> = Vec::new();
+    let refused: Result<Vec<EqualityTerm>, _> = keyset
+        .run(
+            Indexes::<u32>::operations::<_, Borrowed>(&none),
+            &34u32,
+            caller(),
+        )
+        .await;
+    assert!(
+        matches!(
+            refused,
+            Err(Error::Plan(stack_encrypt::PlanError::EmptyIndexes))
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(
+        generates.load(Ordering::SeqCst),
+        0,
+        "no key request either way"
+    );
+}
 fn aead() -> AeadContext {
     AeadContext::from(nonempty!("users/email"))
 }
