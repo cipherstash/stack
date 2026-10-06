@@ -33,6 +33,18 @@ pub(crate) const DEFAULT_CACHE_CAPACITY: usize = 1024;
 /// strategy helps encrypt under a lock context is bound to the identity in
 /// *that caller's* JWT, not to whichever user federated first.
 ///
+/// Whether the provider *can* name the caller is the host's affair, and it
+/// decides whether one strategy may be shared. In Rust the provider reads the
+/// caller from whatever carries it (a task-local, a request extension), and
+/// the Go binding passes the provider the `ctx` of the `Token` call, so one
+/// strategy serves every user there. The Node binding cannot: it runs
+/// `getJwt` through a napi `ThreadsafeFunction`, outside the async context
+/// (`AsyncLocalStorage`) of the `getToken()` caller, so a callback that reads
+/// the request from there finds no request, or the one the strategy was
+/// created in, and every caller is exchanged as that user. Node builds one
+/// strategy per request or per user and captures the request in the closure;
+/// the per-JWT cache is defence in depth there, not a licence to share.
+///
 /// The cache is keyed on the whole JWT, never on claims read from it (the
 /// client cannot verify a JWT, so a forged one naming another user's `sub`
 /// must not reach that user's token), and holds at most

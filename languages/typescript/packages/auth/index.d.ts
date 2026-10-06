@@ -115,9 +115,13 @@ export declare class OidcFederationStrategy {
   /**
    * Create an `OidcFederationStrategy` for the given workspace CRN. `getJwt` is
    * called on every `getToken()` and must resolve to the third-party OIDC JWT of
-   * the user the current request is for; one CTS token is cached per distinct
-   * JWT, so one strategy serves many users. `baseUrl` pins the strategy to a
-   * specific CTS host.
+   * the user the current request is for. Build one strategy per request or per
+   * user and capture the request in the closure: the binding runs `getJwt`
+   * outside the caller's async context (`AsyncLocalStorage`), so a callback
+   * that reads the request from there (Clerk's `auth()`, Next.js `headers()`)
+   * finds no request, or the one the strategy was created in. One CTS token is
+   * cached per distinct JWT. `baseUrl` pins the strategy to a specific CTS
+   * host.
    */
   static create(
     workspaceCrn: string,

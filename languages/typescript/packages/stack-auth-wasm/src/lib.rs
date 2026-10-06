@@ -372,10 +372,11 @@ impl OidcFederationStrategy {
     ///
     /// `getJwt` is called on every `getToken()` and must return
     /// `Promise<string>` resolving to the third-party OIDC JWT of the user the
-    /// current request is for (e.g. by calling `clerk.session.getToken()`).
-    /// The strategy keeps one CTS token per distinct JWT and exchanges a JWT
-    /// only while it has no unexpired token, so no caller is ever handed
-    /// another user's token.
+    /// current request is for. Build the strategy per request and capture the
+    /// request in the closure (e.g. `() => getClerkSessionToken(req)`), as the
+    /// edge examples do. The strategy keeps one CTS token per distinct JWT and
+    /// exchanges a JWT only while it has no unexpired token, so it never hands
+    /// back another user's token for the JWT it was given.
     ///
     /// `baseUrl`, when supplied, pins this strategy to a specific CTS host —
     /// e.g. a self-hosted CTS or a local mock auth server. It overrides region

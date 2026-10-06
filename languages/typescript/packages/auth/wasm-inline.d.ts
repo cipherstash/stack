@@ -140,9 +140,11 @@ export declare class AccessKeyStrategy {
 
 /**
  * Supplies the third-party OIDC JWT of the user the current request is for.
- * Called on every `getToken()`; one CTS token is cached per distinct JWT, so
- * return a live token each time (e.g. `() => clerk.session.getToken()`), never
- * one captured at startup.
+ * Called on every `getToken()`; one CTS token is cached per distinct JWT.
+ * Build the strategy per request and capture the request in this closure
+ * (e.g. `() => getClerkSessionToken(req)`): return a live token each time,
+ * never one captured at startup, and never one read from a request context
+ * the callback may not run inside.
  */
 export type OidcProvider = () => string | Promise<string>;
 
@@ -183,9 +185,10 @@ export declare class OidcFederationStrategy {
    * CRN and used for service discovery; the workspace ID is used to verify
    * every federated token belongs to the right workspace.
    *
-   * `getJwt` must return the current third-party OIDC JWT (it is re-invoked
-   * on every re-federation). Pass `options.store` to back the strategy with a
-   * persistent cache — see {@link TokenStore}.
+   * `getJwt` is asked on every `getToken()` for the JWT of this request's
+   * user — see {@link OidcProvider}; build the strategy per request. Pass
+   * `options.store` to back the strategy with a persistent cache — see
+   * {@link TokenStore}.
    */
   static create(
     workspaceCrn: string,

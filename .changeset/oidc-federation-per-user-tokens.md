@@ -11,6 +11,15 @@ every caller until it expired, so on a server serving many users through one
 client a value one user encrypted under a lock context could be bound to
 another user's identity (cipherstash/stack#1045).
 
+Keep building one strategy per request or per user in Node, and capture the
+request in the `getJwt` closure. The binding runs `getJwt` outside the async
+context (`AsyncLocalStorage`) of the `getToken()` caller, so a callback that
+reads the request from there (Clerk's `auth()`, Next.js `headers()`) finds no
+request, or the request the strategy was created in, and exchanges that user's
+JWT for everyone. The per-JWT cache means a strategy never hands back another
+user's token for the JWT it was given; it cannot repair a `getJwt` that names
+the wrong user.
+
 A token persisted through `createWithStore` (for example a cookie) is now
 served only to the JWT it was federated from, so a store shared across users,
 or a cookie left over from a previous sign-in, is a cache miss rather than

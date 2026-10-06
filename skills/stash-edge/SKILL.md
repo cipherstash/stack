@@ -275,9 +275,10 @@ them is the standard mistake. Identity-bound encryption needs both:
 
 1. **Authenticate as the user** — build an `OidcFederationStrategy` (or
    `AccessKeyStrategy` for service-to-service) and pass it as
-   `config.authStrategy`. The client then acts, on each operation, as the
-   user whose JWT `getJwt` returns (stash-auth skill, "Client lifetime").
-   **Available on this entry**, and shown below.
+   `config.authStrategy`. Build it per request, capturing the request in
+   `getJwt`; the client then acts as the user whose JWT `getJwt` returns
+   (stash-auth skill, "Client lifetime"). **Available on this entry**, and
+   shown below.
 2. **Bind the data key to a claim** — chain `.withLockContext({ identityClaim })`
    on the operation. *This* is what binds key retrieval to the user's claim.
    **Not available on this entry**

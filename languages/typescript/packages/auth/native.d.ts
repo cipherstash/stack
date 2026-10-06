@@ -116,12 +116,19 @@ export declare class OidcFederationStrategy {
    *
    * `getJwt` is called on every `getToken()` and must return
    * `Promise<string>` resolving to the third-party OIDC JWT of the user the
-   * current request is for. The strategy keeps one CTS token per distinct
-   * JWT (a bounded, least-recently-used cache) and exchanges a JWT only
-   * while it has no unexpired token, so one strategy serves many users and
-   * no caller is ever handed another user's token. Keep the callback cheap:
-   * identity-provider SDKs cache their session, so calling them per request
-   * is fine.
+   * current request is for. Build one strategy per request or per user and
+   * capture that request in the `getJwt` closure. The binding runs `getJwt`
+   * through a napi `ThreadsafeFunction`, outside the async context
+   * (`AsyncLocalStorage`) of the `getToken()` caller, so a callback that
+   * reads the request from there (Clerk's `auth()`, Next.js `headers()`)
+   * finds no request, or the request the strategy was created in, and
+   * every caller is then exchanged as that user. The strategy keeps one CTS
+   * token per distinct JWT (a bounded, least-recently-used cache) and
+   * exchanges a JWT only while it has no unexpired token, so it never hands
+   * back another user's token for the JWT it was given; that is defence in
+   * depth, not a licence to share one strategy across requests. Keep the
+   * callback cheap: identity-provider SDKs cache their session, so calling
+   * them per operation is fine.
    *
    * `baseUrl`, when supplied, pins this strategy to a specific CTS host —
    * e.g. a self-hosted CTS or a local mock auth server. It takes precedence

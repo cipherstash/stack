@@ -794,13 +794,13 @@ export function __resetStrategyDeprecationWarningForTests(): void {
  * ```typescript
  * import { Encryption, OidcFederationStrategy } from "@cipherstash/stack"
  *
- * // Authenticate every ZeroKMS request as the signed-in user. `getUserJwt` must
- * // return the JWT of the user behind the *current* request: it runs on every
- * // operation, and each user's JWT is exchanged for that user's own token.
- * // (On `@cipherstash/auth` releases before the fix for cipherstash/stack#1045,
- * // a strategy cached one token for everyone: build one client per user there.)
+ * // Authenticate every ZeroKMS request as the signed-in user. Build the client
+ * // per request (or per user) and capture the request in the `getJwt` closure:
+ * // the callback runs on every operation, but outside the caller's async
+ * // context (`AsyncLocalStorage`), so it cannot find the request on its own —
+ * // a module-level client would exchange one user's JWT for everyone.
  * // `create()` returns a `Result` — unwrap it before passing the strategy.
- * const federation = OidcFederationStrategy.create(workspaceCrn, () => getUserJwt())
+ * const federation = OidcFederationStrategy.create(workspaceCrn, () => getUserJwt(req))
  * if (federation.failure) throw new Error(federation.failure.error.message)
  *
  * const client = await Encryption({

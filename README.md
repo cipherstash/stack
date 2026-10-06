@@ -116,11 +116,12 @@ How you authenticate to ZeroKMS depends on who's asking for keys:
 // Access key (default) — reads CS_* env vars, no config needed
 const client = await Encryption({ schemas: [users] });
 
-// OIDC federation — every ZeroKMS request authenticates as the end user;
-// getUserJwt returns the JWT of the user behind the current request
+// OIDC federation — every ZeroKMS request authenticates as the end user.
+// Build this client per request: getJwt runs outside the caller's async
+// context, so capture the request in the closure rather than reading it there.
 const client = await Encryption({
   schemas: [users],
-  config: { authStrategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt()) },
+  config: { authStrategy: OidcFederationStrategy.create(workspaceCrn, () => getUserJwt(req)) },
 });
 ```
 
