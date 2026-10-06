@@ -533,6 +533,18 @@ mod tests {
         );
     }
 
+    /// A descriptor displays as its name alone, producible or not: what a
+    /// log line or an error names a type by, with no status attached.
+    #[test]
+    fn a_descriptor_displays_as_its_name() {
+        assert_eq!(text_eq().to_string(), "TextEq");
+        assert_eq!(format!("{}", text_ord_ore()), "TextOrdOre");
+        assert_eq!(
+            format!("targets: {}, {}", text_eq(), text_ord_ore()),
+            "targets: TextEq, TextOrdOre"
+        );
+    }
+
     #[test]
     fn no_targets_refuses_every_name_with_the_build_reason() {
         let error = NoTargets.resolve("TextEq").unwrap_err();
