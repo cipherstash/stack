@@ -28,6 +28,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dynamic::term` take an `IndexSpec` (the last two by reference), and
   `Output` is no longer `Copy`. A plan's wire form is unchanged: a bare
   `"match"` still means the default options.
+- **`dynamic::record` is a lowering into the plan builder, not a second
+  executor** (ADR-0007). `record::encrypt` and `record::decrypt` are no
+  longer `async`: each checks and converts its input with no cipher
+  (`Error::Source`, `Error::Term`, `Error::Record`, as before) and returns
+  the plan's `Pending`, whose failure is the crate's `Error`; a typed field
+  that opens to another kind is now `Error::Plan(PlanError::FieldType)` on
+  the await rather than `dynamic::Error::Record`. `dynamic::term` asks
+  `K: 'static`. The stored record shape (`"c"` and the term keys per field)
+  is unchanged, with one addition below.
+- **A data plan field's `"context"` must be the field's label** — a list of
+  at least two plain segments (`["users", "age"]`), optionally extended by
+  scalar parts nested to the left (`[["users", "age"], 7]`) — and every
+  field of one plan must share the label's prefix and the extension, which
+  become the plan's one context and its `.extend(..)`. A bare text part
+  (`"users/age"`), an integer, bytes or a one-segment label is refused
+  (`Error::Plan`): a fields plan cannot seal a field outside the record
+  context, and the derive lost that in the same release. Two sealed or
+  indexed fields under one label are refused for the same reason the
+  builder refuses them (`PlanError::SharedIdentity`). A record a Go program
+  wrote with a `label=` tag is unaffected; one written with a `context=`
+  tag is not readable through a plan.
+- **A data plan field typed `uint32` or `string` seals as a bare `u32` or
+  `String` leaf** — the encoding a Rust `u32` or `String` field seals, run
+  through the same operations — so a derived record and a data plan
+  interchange ciphertexts and terms under one declaration. Every other kind,
+  and a field with no `"type"`, seals the tagged `FfiValue` encoding, as
+  before. A `uint32` or `string` field written by the previous release is
+  therefore not readable under a plan that now declares that type; written
+  without a type, it reads as before.
+- `dynamic::Output` gains `Passthrough` (the wire key `"passthrough"`). The
+  enum is exhaustive on purpose, so a match over it must name the variant.
+- `target::DeclaredContext` holds several extension parts: `with(part)`
+  appends one, and `under` nests them to the left as `NonEmpty::with` does.
+  One part behaves exactly as before.
 - **`stack-encrypt-derive`: a field-level `#[stash(context = "..")]` is
   removed on every derive form** (0.2.0 accepted it). On a `plaintext = T`
   record, remove it: all outputs of the record share the caller's context. On
@@ -98,6 +132,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Decryption` held in a variable.
 - A dynamic plan's match index can carry options, as
   `{"match": {"tokenizer", "downcase", "k", "m"}}`.
+- A dynamic plan field may be carried through: `"outputs": ["passthrough"]`
+  stores the value as it is under the `"passthrough"` key, unsealed and
+  unauthenticated, and it comes back from `decrypt`.
+- `dynamic::Value`: an `FfiValue` as a plan field's plaintext, `Clone` by
+  deep copy into fresh `Protected` payloads, so the borrowed engine can
+  consume it. `dynamic::TermBytes`: a term as its frozen bytes.
+- `IndexSpec` implements `Index<Value>`, `Index<u32>` and `Index<String>`,
+  each with `TermBytes` as its term, so an index named as data runs through
+  `indexed()` like an index named as a type. `Vec<I>` implements
+  `Indexes<S>` for any `I: Index<S>`: an index set sized at run time, whose
+  terms are a `Vec`; an empty one is refused when it runs
+  (`PlanError::EmptyIndexes`).
+- `tests/fixtures/record_lowering.json`: records the typed chain and the
+  data-plan lowering each sealed under one declaration, with their term
+  bytes, under a deterministic key source; `tests/record_lowering.rs` opens
+  each with the other. The fixture is the proof that the two are one engine
+  (ADR-0007), and a Go test can read it later.
 - A dynamic plan field may declare its type, as `"type": "<kind>"`. The
   vocabulary is vitaminc's `ValueKind` (re-exported as
   `dynamic::ValueKind`), not a new enum, so this crate now needs vitaminc

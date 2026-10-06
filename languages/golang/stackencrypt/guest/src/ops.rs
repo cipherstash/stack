@@ -169,7 +169,7 @@ pub async fn term<K>(
     kind: u32,
 ) -> Result<Vec<u8>, u32>
 where
-    K: DataKeySource + Sync,
+    K: DataKeySource + Sync + 'static,
 {
     // The same proof every stack-encrypt leaf demands: an empty context is
     // `STATUS_ENCODING` here, before any derivation.
@@ -212,11 +212,14 @@ fn parse_term(value: FfiValue, kind: u32) -> Result<(Scalar, IndexSpec), u32> {
 ///
 /// Both arguments are codec-encoded: the plan is the object
 /// [`dynamic::record::plan`] parses, the source an object of
-/// `{ field: scalar }` (one record) or an array of them (a batch). The
+/// `{ field: value }` (one record) or an array of them (a batch). The
 /// result is a codec-encoded ciphertext tree — per record a map of
 /// `field → { output-key → node }`.
 ///
-/// All rows and fields seal in one batched `generate_keys`; that batch
+/// The plan is lowered into the engine's plan builder and run there
+/// (ADR-0007): [`dynamic::record::encrypt`] hands back the plan's `Pending`
+/// with every key request queued and nothing sent, and awaiting it here is
+/// the one batched `generate_keys` for all rows and fields. That batch
 /// reaches ZeroKMS as one request per
 /// [`ClientOpts::max_keys_per_req`](stack_kms::ClientOpts::with_max_keys_per_req)
 /// keyed leaves (500 by default, sent sequentially: the guest pins
@@ -230,22 +233,25 @@ pub async fn encrypt_record<K>(
     plan: &[u8],
 ) -> Result<Vec<u8>, u32>
 where
-    K: DataKeySource + Sync,
+    K: DataKeySource + Sync + 'static,
 {
     let plan = dynamic::record::plan(decode_value(plan)?).map_err(|e| status_for_dynamic(&e))?;
     let tree = dynamic::record::encrypt(cipher, decode_value(source)?, &plan)
+        .map_err(|e| status_for_dynamic(&e))?
         .await
-        .map_err(|e| status_for_dynamic(&e))?;
+        .map_err(|e| status_for_error(&e))?;
     encode_tree(tree)
 }
 
 /// Decrypt a record — or a batch — produced by [`encrypt_record`] under the
-/// same plan. Only the `"c"` outputs participate (terms are one-way).
+/// same plan. Only the `"c"` and `"passthrough"` outputs participate (terms
+/// are one-way).
 ///
-/// One batched `retrieve_keys` per invocation, dispatched as one ZeroKMS
-/// call per 500 keyed leaves and, under [`Scope::Client`], per keyset the
-/// leaves were sealed under. The output buffer contains plaintext — the ABI
-/// layer's ownership rules govern its wiping.
+/// The plan's opener runs in the engine; awaiting it here is the one
+/// batched `retrieve_keys` per invocation, dispatched as one ZeroKMS call
+/// per 500 keyed leaves and, under [`Scope::Client`], per keyset the leaves
+/// were sealed under. The output buffer contains plaintext — the ABI layer's
+/// ownership rules govern its wiping.
 pub async fn decrypt_record<K>(
     scope: Scope<'_, K>,
     record: &[u8],
@@ -256,8 +262,9 @@ where
 {
     let plan = dynamic::record::plan(decode_value(plan)?).map_err(|e| status_for_dynamic(&e))?;
     let value = dynamic::record::decrypt(scope, decode_tree(record)?, &plan)
+        .map_err(|e| status_for_dynamic(&e))?
         .await
-        .map_err(|e| status_for_dynamic(&e))?;
+        .map_err(|e| status_for_error(&e))?;
     encode_value(value)
 }
 

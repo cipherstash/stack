@@ -69,6 +69,12 @@ pub enum PlanError {
         /// The index named twice, as its key (`"eq"`, `"match"`, ...).
         index: &'static str,
     },
+    /// A field was declared indexed with an index set that holds no index.
+    /// A tuple of indexes cannot be empty, so this is only reachable through
+    /// an index set sized at run time (a `Vec`), as a plan lowered from data
+    /// builds.
+    #[error("an indexed field declares no index")]
+    EmptyIndexes,
     /// The value has a field the plan does not name.
     #[error("the value has a field {field:?} the plan does not name")]
     NotInPlan {

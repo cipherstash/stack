@@ -46,8 +46,17 @@ impl<'a> IntoContext<'a> for CallerContext {
     }
 }
 impl CallerContext {
-    pub(super) fn validated(self) -> Result<NonEmpty<Self>, Error> {
+    pub(crate) fn validated(self) -> Result<NonEmpty<Self>, Error> {
         nonempty(self)
+    }
+    /// A caller context from a context part as a binding spelled it, with
+    /// no emptiness proof: what a plan lowered from data extends a field's
+    /// context by. An empty part extends a nonempty context to a nonempty
+    /// one, so the proof it skips is the whole tree's, which
+    /// [`DeclaredContext::under`] re-establishes when it runs.
+    #[cfg(feature = "dynamic")]
+    pub(crate) fn from_piece(piece: ContextPiece<'static>) -> Self {
+        Self(piece)
     }
     /// The own context `own`, extended by this caller context: the field's
     /// own context is the prefix, this context the extension, exactly as a
@@ -139,8 +148,14 @@ impl Extends for AeadContext {
 /// value extends each of them, the way a caller's context extends a field's
 /// own. This is what a `struct = T` derive without a `context_field`
 /// declares.
+///
+/// An extension is one part or several, applied in order and nesting to the
+/// left, as [`NonEmpty::with`] nests: a field's `users/age` extended by `7`
+/// and then `"eu"` ([`with`](Self::with) twice) is `((users/age)/7u64)/eu`,
+/// the context a binding whose caller extends part by part spells. One
+/// `NonEmpty` holding both parts is a different context, `(users/age)/(7u64/eu)`.
 #[derive(Clone, Debug, Default)]
-pub struct DeclaredContext(Option<CallerContext>);
+pub struct DeclaredContext(Vec<CallerContext>);
 impl From<()> for DeclaredContext {
     fn from(_: ()) -> Self {
         Self::default()
@@ -148,23 +163,37 @@ impl From<()> for DeclaredContext {
 }
 impl From<CallerContext> for DeclaredContext {
     fn from(value: CallerContext) -> Self {
-        Self(Some(value))
+        Self(vec![value])
     }
 }
 impl<'a, T: IntoContext<'a>> From<NonEmpty<T>> for DeclaredContext {
     fn from(value: NonEmpty<T>) -> Self {
-        Self(Some(value.into()))
+        Self(vec![value.into()])
     }
 }
 impl DeclaredContext {
+    /// Extend by one more part, after any already given: the field's own
+    /// context, extended by every part so far, is extended by `part`.
+    pub fn with(mut self, part: impl Into<CallerContext>) -> Self {
+        self.0.push(part.into());
+        self
+    }
+
     /// The context one field is derived under: its own `own`, extended by
     /// the caller's context if one was given — `("users", "age")` as it is
-    /// under `()`, `(("users", "age"), id)` under a caller's `id`.
+    /// under `()`, `(("users", "age"), id)` under a caller's `id`, and
+    /// `((("users", "age"), id), region)` under `id` then `region`.
     pub fn under<'c, O: IntoContext<'c>>(self, own: NonEmpty<O>) -> CallerContext {
-        match self.0 {
-            Some(caller) => caller.extend(own),
-            None => own.into(),
-        }
+        let mut parts = self.0.into_iter();
+        let Some(first) = parts.next() else {
+            return own.into();
+        };
+        parts.fold(first.extend(own), |extended, part| {
+            // `extended` is a `CallerContext`, nonempty by construction, so
+            // extending it is `(extended, part)` at the piece level: the
+            // same tree `NonEmpty::with` builds.
+            CallerContext(ContextPiece::List(vec![extended.0, part.0]))
+        })
     }
 }
 

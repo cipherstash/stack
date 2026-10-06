@@ -60,9 +60,13 @@ impl Name {
 }
 
 /// A `"context"` value: the shapes `dynamic::context` accepts, plus one it
-/// refuses.
+/// refuses. A plan field's context must be a label (a list of at least two
+/// plain segments), optionally extended, so `Label` is what parses most
+/// often; the others exercise the parser's refusals.
 #[derive(Arbitrary, Debug)]
 enum Ctx {
+    Label(Name, Name),
+    Extended(Name, Name, u32),
     Text(Name),
     I64(i64),
     U32(u32),
@@ -72,8 +76,14 @@ enum Ctx {
 
 impl Ctx {
     fn into_value(self) -> FfiValue {
+        let text = |name: Name| FfiValue::String(name.as_str().into());
         match self {
-            Ctx::Text(name) => FfiValue::String(name.as_str().into()),
+            Ctx::Label(a, b) => FfiValue::Array(vec![text(a), text(b)]),
+            Ctx::Extended(a, b, part) => FfiValue::Array(vec![
+                FfiValue::Array(vec![text(a), text(b)]),
+                FfiValue::UInt32(part),
+            ]),
+            Ctx::Text(name) => text(name),
             Ctx::I64(v) => FfiValue::Int64(v),
             Ctx::U32(v) => FfiValue::UInt32(v),
             Ctx::List(items) => FfiValue::Array(items.into_iter().map(Ctx::into_value).collect()),
