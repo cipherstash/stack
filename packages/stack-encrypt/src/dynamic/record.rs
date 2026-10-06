@@ -1069,6 +1069,15 @@ struct FieldShape {
     kind: Option<ValueKind>,
 }
 
+/// A slot of the record the engine built from the plan, at the type the
+/// plan's verb produces. A missing or mistyped slot is the engine answering
+/// with a shape other than the one it was asked for — a bug here, never the
+/// caller's input — so it is [`ResponseShape`](crate::Error::ResponseShape),
+/// as a miscounted term list is, and not a plan refusal.
+fn slot<T: std::any::Any>(values: &mut FieldValues, name: &str) -> Result<T, crate::Error> {
+    values.take(name).map_err(|_| crate::Error::ResponseShape)
+}
+
 /// A term as the stored tree carries it: a passthrough byte node.
 fn term_node(term: TermBytes) -> StackCipherText {
     CipherText::Passthrough(Box::new(FfiValue::Bytes(vitaminc_protected::Protected::new(
@@ -1086,17 +1095,17 @@ fn shape_record(
     for field in shape {
         let outputs = match field.verb {
             Verb::Encrypt => {
-                let ciphertext: StackCipherText = values.take(&field.name)?;
+                let ciphertext: StackCipherText = slot(&mut values, &field.name)?;
                 vec![("c".to_string(), ciphertext)]
             }
             Verb::EncryptIndex => {
-                let sealed: Encrypted<Vec<TermBytes>> = values.take(&field.name)?;
+                let sealed: Encrypted<Vec<TermBytes>> = slot(&mut values, &field.name)?;
                 let mut outputs = Vec::with_capacity(1 + field.keys.len());
                 outputs.push(("c".to_string(), sealed.ciphertext));
                 outputs.extend(keyed_terms(sealed.terms, &field.keys)?);
                 outputs
             }
-            Verb::Index => keyed_terms(values.take(&field.name)?, &field.keys)?,
+            Verb::Index => keyed_terms(slot(&mut values, &field.name)?, &field.keys)?,
             Verb::Passthrough => {
                 let value = take_leaf(&mut values, &field.name)?;
                 vec![(
@@ -1129,7 +1138,7 @@ fn keyed_terms(
 
 /// The field `name` out of the record, as the value it holds.
 fn take_leaf(values: &mut FieldValues, name: &str) -> Result<FfiValue, crate::Error> {
-    Ok(values.take::<Value>(name)?.into_inner())
+    Ok(slot::<Value>(values, name)?.into_inner())
 }
 
 /// The record the plan opened, as a value: the fields that come back, in
@@ -1461,6 +1470,46 @@ mod tests {
     /// the error it must be refused with. `Error` is not `PartialEq`, so the
     /// expectation is a predicate.
     type Refused = (&'static str, FfiValue, fn(&Error) -> bool);
+
+    /// The adapters read the record the engine built from the plan. A slot
+    /// that is missing or of another type than the plan's verb produces is
+    /// the engine's shape disagreeing with the plan's — this module's bug —
+    /// and is reported as `ResponseShape`, which a binding maps to its
+    /// internal status, never as a plan refusal the caller is told to fix.
+    #[test]
+    fn a_slot_the_engine_did_not_produce_is_a_response_shape_error() {
+        let shape = the_plan().shape();
+        let empty = FieldValues::new();
+        assert!(
+            matches!(
+                shape_record(empty, &shape),
+                Err(crate::Error::ResponseShape)
+            ),
+            "a missing slot on the encrypt side"
+        );
+        let mut wrong = FieldValues::new();
+        let _ = wrong.insert("age", 34u32);
+        assert!(
+            matches!(
+                shape_record(wrong, &shape),
+                Err(crate::Error::ResponseShape)
+            ),
+            "a mistyped slot on the encrypt side"
+        );
+        let mut wrong = FieldValues::new();
+        let _ = wrong.insert("age", 34u32);
+        assert!(
+            matches!(open_record(wrong, &shape), Err(crate::Error::ResponseShape)),
+            "a mistyped slot on the decrypt side"
+        );
+        assert!(
+            matches!(
+                open_record(FieldValues::new(), &shape),
+                Err(crate::Error::ResponseShape)
+            ),
+            "a missing slot on the decrypt side"
+        );
+    }
 
     mod given_a_plan_value {
         use super::*;
