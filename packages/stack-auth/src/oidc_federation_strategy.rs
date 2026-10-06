@@ -353,11 +353,21 @@ impl<P, S: TokenStore> Drop for InFlight<'_, P, S> {
     }
 }
 
-impl<P: OidcProvider, S: TokenStore> AuthStrategy for &OidcFederationStrategy<P, S> {
-    async fn get_token(self) -> Result<ServiceToken, AuthError> {
-        // Ask who this call is for before anything else: the JWT is the key
-        // to the right cached token, and only its owner may receive it.
-        let jwt = self.provider.fetch().await?;
+impl<P, S: TokenStore> OidcFederationStrategy<P, S> {
+    /// The CTS token for `jwt`: the one cached for it, or a fresh exchange.
+    ///
+    /// This is [`get_token`](AuthStrategy::get_token) without the provider
+    /// call — the entry for a caller that already holds the user's JWT. The
+    /// language bindings use it so the JWT can be fetched on the caller's own
+    /// side of the boundary: a Node callback run through a napi
+    /// `ThreadsafeFunction` executes in the async context of the call that
+    /// created the strategy, not of the `getToken()` caller, so a `getJwt`
+    /// that reads the request from `AsyncLocalStorage` cannot run there; run
+    /// from the JavaScript wrapper and handed in here, it can. Both entries
+    /// share one cache: the same JWT reaches the same engine either way.
+    ///
+    /// The token is checked against the strategy's workspace like every other.
+    pub async fn get_token_for_jwt(&self, jwt: SecretToken) -> Result<ServiceToken, AuthError> {
         let engine = self.engine_for(jwt)?;
         let in_flight = InFlight {
             strategy: self,
@@ -376,6 +386,15 @@ impl<P: OidcProvider, S: TokenStore> AuthStrategy for &OidcFederationStrategy<P,
             }
         };
         token.verify_workspace(self.expected_workspace)
+    }
+}
+
+impl<P: OidcProvider, S: TokenStore> AuthStrategy for &OidcFederationStrategy<P, S> {
+    async fn get_token(self) -> Result<ServiceToken, AuthError> {
+        // Ask who this call is for before anything else: the JWT is the key
+        // to the right cached token, and only its owner may receive it.
+        let jwt = self.provider.fetch().await?;
+        self.get_token_for_jwt(jwt).await
     }
 }
 
@@ -1390,6 +1409,61 @@ mod tests {
         assert_eq!(cts.exchanges(), 1, "one exchange for both callers");
         assert_eq!(strategy.cached_jwts(), 1);
         assert_eq!(strategy.pending_jwts(), 0, "promoted into the cache");
+    }
+
+    /// `get_token_for_jwt` is `get_token` minus the provider call, and the two
+    /// share one cache: each JWT handed in gets its own token, and a JWT the
+    /// provider later names finds the engine the direct call created (and
+    /// vice versa), so neither entry exchanges a JWT the other has cached.
+    #[tokio::test]
+    async fn get_token_for_jwt_serves_each_jwt_and_shares_the_cache_with_get_token() {
+        let cts = CountingCts::new();
+        let (current, calls, provider) = switchable_provider();
+        let strategy = strategy_over(&cts, provider).build().expect("builder");
+
+        let a = strategy
+            .get_token_for_jwt(SecretToken::new("jwt-a"))
+            .await
+            .expect("A");
+        let b = strategy
+            .get_token_for_jwt(SecretToken::new("jwt-b"))
+            .await
+            .expect("B");
+        assert_eq!(subject(&a), "CS|jwt-a");
+        assert_eq!(subject(&b), "CS|jwt-b");
+        assert_eq!(cts.exchanges(), 2);
+        assert_eq!(strategy.cached_jwts(), 2);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "the provider is not consulted when the caller holds the JWT"
+        );
+
+        // The provider path finds the engines the direct calls created ...
+        act_as(&current, "jwt-a");
+        assert_eq!(
+            subject(&(&strategy).get_token().await.expect("A via provider")),
+            "CS|jwt-a"
+        );
+        assert_eq!(cts.exchanges(), 2, "served from the shared cache");
+
+        // ... and the direct path finds one the provider path created.
+        act_as(&current, "jwt-c");
+        assert_eq!(
+            subject(&(&strategy).get_token().await.expect("C via provider")),
+            "CS|jwt-c"
+        );
+        assert_eq!(
+            subject(
+                &strategy
+                    .get_token_for_jwt(SecretToken::new("jwt-c"))
+                    .await
+                    .expect("C directly")
+            ),
+            "CS|jwt-c"
+        );
+        assert_eq!(cts.exchanges(), 3, "C was exchanged once");
+        assert_eq!(strategy.cached_jwts(), 3);
     }
 
     /// A refused exchange leaves nothing in the cache: a caller presenting
