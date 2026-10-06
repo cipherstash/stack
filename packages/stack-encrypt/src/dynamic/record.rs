@@ -5098,6 +5098,34 @@ mod tests {
             );
         }
 
+        /// The constructor's one bound on the label is "at least two
+        /// segments": a column is table and column, and a longer label is
+        /// still a label — whether a resolver can store under it is the
+        /// resolver's to say, and the extension rule is `Plan::new_with`'s.
+        /// Pinned from both sides so the bound cannot drift to "exactly two"
+        /// or flip: one segment refused (it is no label), two accepted, and
+        /// three — the first length above the bound — accepted intact.
+        #[test]
+        fn with_target_takes_any_label_of_two_or_more_segments() {
+            let ctx = |segments: &[&str]| context(strings(segments)).expect("a context value");
+            assert!(
+                matches!(
+                    FieldPlan::with_target("email", ctx(&["users"]), TEXT_EQ),
+                    Err(Error::Plan)
+                ),
+                "one segment is not a label"
+            );
+            let two = FieldPlan::with_target("email", ctx(&["users", "email"]), TEXT_EQ)
+                .expect("two segments: table and column");
+            assert_eq!(two.label().to_string(), "users/email");
+            let three =
+                FieldPlan::with_target("email", ctx(&["tenant", "users", "email"]), TEXT_EQ)
+                    .expect("three segments are a label; the column rule is the resolver's");
+            assert_eq!(three.label().segments().count(), 3);
+            assert_eq!(three.identity(), "email");
+            assert_eq!(three.target(), Some(TEXT_EQ));
+        }
+
         #[test]
         fn the_target_and_output_forms_are_exclusive() {
             let both = obj(vec![
