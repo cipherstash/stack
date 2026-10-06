@@ -26,6 +26,10 @@
 //!   is the same bytes (ADR-0007). The one step that stays dynamic is
 //!   dispatching a value whose type is known only at run time to the typed
 //!   term operation, which [`IndexSpec`]'s `Index` impls do.
+//! * [`TargetResolver`] — the EQL types a build holds, installed by the host
+//!   that links them, so a plan field may name one as its target and the
+//!   lowering runs that type's own plan in the same request; [`NoTargets`]
+//!   is the build without them.
 //! * [`Value`] — an [`FfiValue`] as a plan field's plaintext, the type of
 //!   every field lowered from data; [`TermBytes`] — the term such a field
 //!   derives, as its frozen bytes.
@@ -68,6 +72,7 @@
 mod context;
 mod kind;
 pub mod record;
+mod target;
 mod term;
 mod value;
 
@@ -76,6 +81,7 @@ use std::fmt;
 pub use context::{borrowed, context};
 pub use kind::{admits, read};
 pub use record::{FieldPlan, Output, Plan};
+pub use target::{NoTargets, TargetDescriptor, TargetError, TargetResolver};
 pub use term::{term, Scalar, TermBytes};
 pub use value::Value;
 /// vitaminc's language-neutral value tree — the runtime value every binding
@@ -206,6 +212,15 @@ pub enum Error {
     /// Always a bug here, never a statement about the caller's data.
     #[error("internal invariant violated")]
     Internal,
+
+    /// A plan field names an EQL type as its target and the name, the
+    /// field's label or type, or the value does not fit: the build holds no
+    /// EQL types, no type has the name, the engine cannot produce it yet,
+    /// the plan is extended, or the value is of another kind. Decided when
+    /// the plan is built or the value is read, before any key is touched
+    /// — save [`TargetError::Other`], which is the resolver's own failure.
+    #[error(transparent)]
+    Target(#[from] TargetError),
 
     /// Sealing, opening or deriving failed.
     #[error(transparent)]

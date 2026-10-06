@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A data plan field may name an EQL type as its target.** Beside the
+  output form, `dynamic::record::plan_with` reads `{"context": [...],
+  "target": "TextEq", "type"?: ...}` — the two forms are exclusive — and
+  resolves the name through a `dynamic::TargetResolver` the host installs:
+  the EQL types a build holds (`targets()`, serializable as
+  `TargetDescriptor::to_value()` for a guest's `se_targets` export) and how
+  to run one. `encrypt_with` zips the type's own `Pending` into the record's,
+  so a record with target fields is still one ZeroKMS request, and stores
+  the EQL value's JSON bytes under the field's `"eql"` key
+  (`record::EQL_KEY`); `decrypt_with` opens it back through the resolver,
+  confined to the scope's keyset like every other leaf; `record::query`
+  derives a target field's query value. A name the resolver does not know
+  or cannot produce, a `"type"` other than the type's plaintext kind, and
+  an extended plan (an EQL value is stored under a table and a column, so
+  a tenant part has no column) are refused when the plan is built
+  (`Error::Target`, `TargetError`), so a guest's `se_plan_check` reports
+  them. `dynamic::NoTargets` is the resolver of a build without EQL types
+  and refuses every name; the bare `plan`, `encrypt` and `decrypt` run
+  under it. `FieldPlan::with_target`, `FieldPlan::target()`,
+  `Plan::new_with`.
+
 ### Breaking
 
 - **A target description carries a source mode.** `Encryption` gains a

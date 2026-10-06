@@ -92,14 +92,19 @@ impl Ctx {
     }
 }
 
-/// One entry of a field spec: the two keys the parser knows and one it
-/// does not, each with a value that may or may not be the right shape.
+/// One entry of a field spec: the three keys the parser knows and one it
+/// does not, each with a value that may or may not be the right shape. A
+/// `"target"` names an EQL type; `check_record` runs under `NoTargets`, the
+/// build without them, so every plan with one is refused when it is built
+/// — the parser's path to that refusal is what this exercises.
 #[derive(Arbitrary, Debug)]
 enum SpecEntry {
     Context(Ctx),
     Outputs(Vec<Name>),
+    Target(Name),
     ContextWrongShape(u32),
     OutputsWrongShape(u32),
+    TargetWrongShape(u32),
     Unknown(Ctx),
 }
 
@@ -116,8 +121,13 @@ impl SpecEntry {
                         .collect(),
                 ),
             ),
+            SpecEntry::Target(name) => (
+                "target".to_string(),
+                FfiValue::String(name.as_str().into()),
+            ),
             SpecEntry::ContextWrongShape(v) => ("context".to_string(), FfiValue::UInt32(v)),
             SpecEntry::OutputsWrongShape(v) => ("outputs".to_string(), FfiValue::UInt32(v)),
+            SpecEntry::TargetWrongShape(v) => ("target".to_string(), FfiValue::UInt32(v)),
             SpecEntry::Unknown(ctx) => ("bogus".to_string(), ctx.into_value()),
         }
     }
