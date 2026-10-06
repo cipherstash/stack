@@ -350,6 +350,13 @@ impl OidcFederationStrategyInner {
             Self::WithStore(s) => s.get_token().await,
         }
     }
+
+    async fn get_token_for_jwt(&self, jwt: SecretToken) -> Result<ServiceToken, AuthError> {
+        match self {
+            Self::NoStore(s) => s.get_token_for_jwt(jwt).await,
+            Self::WithStore(s) => s.get_token_for_jwt(jwt).await,
+        }
+    }
 }
 
 /// Federates a third-party OIDC JWT (Clerk, Supabase, …) into a CTS service
@@ -458,6 +465,19 @@ impl OidcFederationStrategy {
     pub async fn get_token(&self) -> Result<JsValue, JsValue> {
         self.inner
             .get_token()
+            .await
+            .map_err(to_js_error)
+            .and_then(token_result_from)
+    }
+
+    /// Retrieve a valid CTS service token for `jwt`, the caller's own provider
+    /// JWT: `getToken()` minus the `getJwt` call, sharing its cache. The
+    /// `wasm-inline` wrapper calls `getJwt` on the JavaScript side and uses
+    /// this, matching the Node entry.
+    #[wasm_bindgen(js_name = getTokenForJwt)]
+    pub async fn get_token_for_jwt(&self, jwt: String) -> Result<JsValue, JsValue> {
+        self.inner
+            .get_token_for_jwt(SecretToken::new(jwt))
             .await
             .map_err(to_js_error)
             .and_then(token_result_from)

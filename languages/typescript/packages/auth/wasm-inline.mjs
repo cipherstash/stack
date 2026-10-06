@@ -43,6 +43,15 @@ function toFailure(err) {
   return { failure };
 }
 
+// A `getJwt` failure as the binding would report one (`SERVER_ERROR`, same
+// message prefix), so callers cannot tell which side of the boundary the
+// callback failed on.
+function getJwtFailure(detail) {
+  const err = new Error(`getJwt ${detail}`);
+  err.__authFailure = { type: "SERVER_ERROR", message: err.message };
+  return toFailure(err);
+}
+
 // Mirror index.js's `wrapAsync`: a synchronous throw from the inner `getToken`
 // (e.g. calling it after `free()` — "null pointer passed to rust") becomes a
 // rejection, so a Promise-returning method never throws synchronously.
@@ -116,6 +125,8 @@ export class AccessKeyStrategy {
 
 export class OidcFederationStrategy {
   #inner;
+  /** @type {OidcProvider} */
+  #getJwt;
 
   // Federated strategy: the third-party JWT lives in request scope and the
   // cache is request-scoped, so federation must happen in scope. Consumers
@@ -123,9 +134,13 @@ export class OidcFederationStrategy {
   // `getToken()` from a detached context.
   requiresFederation = true;
 
-  /** @param {RawOidcFederationStrategy} inner */
-  constructor(inner) {
+  /**
+   * @param {RawOidcFederationStrategy} inner
+   * @param {OidcProvider} getJwt
+   */
+  constructor(inner, getJwt) {
     this.#inner = inner;
+    this.#getJwt = getJwt;
   }
 
   /**
@@ -157,6 +172,7 @@ export class OidcFederationStrategy {
               baseUrl,
               cacheCapacity,
             ),
+            getJwt,
           ),
         };
       }
@@ -168,6 +184,7 @@ export class OidcFederationStrategy {
             baseUrl,
             cacheCapacity,
           ),
+          getJwt,
         ),
       };
     } catch (err) {
@@ -175,9 +192,45 @@ export class OidcFederationStrategy {
     }
   }
 
-  /** @returns {Promise<import("./wasm-inline.d.ts").GetTokenResult>} */
-  getToken() {
-    return settleGetToken(this.#inner);
+  /**
+   * Calls `getJwt` here, in the caller's async context, and hands the JWT to
+   * the binding's `getTokenForJwt` — the same split as the Node entry
+   * (index.js), so a `getJwt` that reads the request from an async-context
+   * store works the same way on both. The binding's own `getToken()` would
+   * call `getJwt` from inside the wasm future instead.
+   *
+   * @returns {Promise<import("./wasm-inline.d.ts").GetTokenResult>}
+   */
+  async getToken() {
+    let jwt;
+    try {
+      jwt = await this.#getJwt();
+    } catch (err) {
+      return getJwtFailure(
+        `rejected: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (typeof jwt !== "string") {
+      return getJwtFailure("callback did not return a string");
+    }
+    return this.getTokenForJwt(jwt);
+  }
+
+  /**
+   * The CTS token for `jwt`, the caller's own provider JWT: `getToken()`
+   * minus the `getJwt` call, sharing its cache.
+   *
+   * @param {string} jwt
+   * @returns {Promise<import("./wasm-inline.d.ts").GetTokenResult>}
+   */
+  getTokenForJwt(jwt) {
+    try {
+      return this.#inner
+        .getTokenForJwt(jwt)
+        .then((data) => ({ data }), toFailure);
+    } catch (err) {
+      return Promise.reject(err);
+    }
   }
 
   free() {

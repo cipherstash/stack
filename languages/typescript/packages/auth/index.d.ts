@@ -146,8 +146,18 @@ export declare class OidcFederationStrategy {
     baseUrl?: string | undefined | null,
     cacheCapacity?: number | undefined | null,
   ): Result<OidcFederationStrategy, AuthFailure>;
-  /** Retrieve a valid CTS service token, federating or re-federating as needed. */
+  /**
+   * Retrieve a valid CTS service token, federating or re-federating as needed.
+   * Calls `getJwt` in this caller's async context (so it may read the current
+   * request from `AsyncLocalStorage`) and then {@link getTokenForJwt}.
+   */
   getToken(): Promise<Result<TokenResult, AuthFailure>>;
+  /**
+   * The CTS token for `jwt`, the caller's own provider JWT: `getToken()`
+   * minus the `getJwt` call, sharing its cache. For a caller that already
+   * holds the user's JWT.
+   */
+  getTokenForJwt(jwt: string): Promise<Result<TokenResult, AuthFailure>>;
 }
 
 /** The pending state of an in-progress OAuth 2.0 Device Authorization flow. */

@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MockCtsServer } from './helpers/mock-cts-server'
 
@@ -450,6 +451,44 @@ describe('OidcFederationStrategy (TypeScript / vitest)', () => {
       expect.unreachable(`second call failed: ${second.failure.type}`)
     }
     expect(second.data.subject).toBe('CS|jwt-a')
+  })
+
+  it("runs getJwt in the getToken() caller's async context, so one strategy serves every user", async () => {
+    // One strategy, created outside any request scope as a module-level one
+    // is. Each getToken() runs inside its own AsyncLocalStorage scope, the way
+    // Clerk's auth() and Next.js headers() find the current request, and
+    // getJwt reads the "user" from the store it can see.
+    server.mockAuthorizeEndpointNamingTheJwt()
+    const als = new AsyncLocalStorage<string>()
+    const strategy = mustCreate(WORKSPACE_CRN, () => {
+      const jwt = als.getStore()
+      return jwt === undefined
+        ? Promise.reject(new Error('no request in scope'))
+        : Promise.resolve(jwt)
+    })
+    const tokenAs = (jwt: string) => als.run(jwt, () => strategy.getToken())
+
+    const a = await tokenAs('jwt-a')
+    const b = await tokenAs('jwt-b')
+    if (a.failure || b.failure) {
+      expect.unreachable(
+        `getToken failed: ${a.failure?.error.message ?? b.failure?.error.message}`,
+      )
+    }
+    expect(a.data.subject).toBe('CS|jwt-a')
+    expect(b.data.subject).toBe('CS|jwt-b')
+
+    // The limitation the wrapper exists for: the native getToken() asks getJwt
+    // through a napi ThreadsafeFunction, which Node runs in the async context
+    // of create(), not of this call, so the same getJwt sees no store there.
+    const nativeGetToken = Object.getPrototypeOf(strategy).getToken as (
+      this: typeof strategy,
+    ) => ReturnType<typeof strategy.getToken>
+    const viaNative = await als.run('jwt-c', () =>
+      nativeGetToken.call(strategy),
+    )
+    expect(viaNative.failure?.type).toBe('SERVER_ERROR')
+    expect(viaNative.failure?.error.message).toContain('no request in scope')
   })
 
   it("never serves the first user's token to a second user", async () => {

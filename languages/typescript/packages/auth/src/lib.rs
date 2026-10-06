@@ -433,11 +433,35 @@ impl OidcFederationStrategy {
     }
 
     /// Retrieve a valid CTS service token, federating or re-federating as needed.
+    ///
+    /// Asks `getJwt` through the threadsafe function, which runs it in the
+    /// async context of the `create()` call rather than of this caller, so a
+    /// callback that reads the request from `AsyncLocalStorage` cannot see it
+    /// here. The `index.js` wrapper therefore calls `getJwt` itself and uses
+    /// `getTokenForJwt`; this entry stays for callers of the raw binding whose
+    /// `getJwt` needs no request context.
     #[napi]
     pub async fn get_token(&self) -> Result<TokenResult> {
         let token = match &self.inner {
             OidcFederationStrategyInner::NoStore(s) => s.get_token().await,
             OidcFederationStrategyInner::WithStore(s) => s.get_token().await,
+        }
+        .map_err(to_napi_error)?;
+        token_result_from(token)
+    }
+
+    /// Retrieve a valid CTS service token for `jwt`, the caller's own provider
+    /// JWT, federating it if no unexpired token is cached for it.
+    ///
+    /// `getToken()` minus the `getJwt` call: the wrapper fetches the JWT on the
+    /// JavaScript side, in the caller's async context, and hands it in here.
+    /// Both entries share the strategy's cache.
+    #[napi]
+    pub async fn get_token_for_jwt(&self, jwt: String) -> Result<TokenResult> {
+        let jwt = SecretToken::new(jwt);
+        let token = match &self.inner {
+            OidcFederationStrategyInner::NoStore(s) => s.get_token_for_jwt(jwt).await,
+            OidcFederationStrategyInner::WithStore(s) => s.get_token_for_jwt(jwt).await,
         }
         .map_err(to_napi_error)?;
         token_result_from(token)

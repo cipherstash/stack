@@ -206,8 +206,17 @@ export declare class OidcFederationStrategy {
     getJwt: OidcProvider,
     options?: OidcFederationStrategyOptions,
   ): Result<OidcFederationStrategy, AuthFailure>;
-  /** Retrieve a valid CTS service token, federating or re-federating as needed. */
+  /**
+   * Retrieve a valid CTS service token, federating or re-federating as needed.
+   * Calls `getJwt` in this caller's async context and then
+   * {@link getTokenForJwt}.
+   */
   getToken(): Promise<GetTokenResult>;
+  /**
+   * The CTS token for `jwt`, the caller's own provider JWT: `getToken()`
+   * minus the `getJwt` call, sharing its cache.
+   */
+  getTokenForJwt(jwt: string): Promise<GetTokenResult>;
   /** Release the underlying wasm resources. */
   free(): void;
 }

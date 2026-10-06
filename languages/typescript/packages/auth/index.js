@@ -93,6 +93,59 @@ for (const Strategy of [
 ]) {
   Strategy.prototype.getToken = wrapAsync(Strategy.prototype.getToken);
 }
+native.OidcFederationStrategy.prototype.getTokenForJwt = wrapAsync(
+  native.OidcFederationStrategy.prototype.getTokenForJwt,
+);
+
+/**
+ * A `Result` failure of the shape the native side would have produced for a
+ * `getJwt` that did not yield a string: same `type`, same message prefix, so
+ * callers cannot tell which side of the boundary the callback failed on.
+ */
+function getJwtFailure(detail) {
+  return toFailure(
+    new Error(
+      FAILURE_SENTINEL +
+        JSON.stringify({ type: "SERVER_ERROR", message: `getJwt ${detail}` }),
+    ),
+  );
+}
+
+/**
+ * Give an OIDC strategy instance a `getToken()` that runs `getJwt` HERE, in
+ * the caller's async context, and hands the JWT to the native
+ * `getTokenForJwt`.
+ *
+ * The native `getToken()` asks `getJwt` through a napi `ThreadsafeFunction`,
+ * which Node runs in the async context of the `create()` call rather than of
+ * the `getToken()` caller — so a `getJwt` that reads the request from
+ * `AsyncLocalStorage` (Clerk's `auth()`, Next.js `headers()`) sees no request,
+ * or the one the strategy was created in. Called from this method, `getJwt`
+ * runs where the caller's code runs. The native `getToken()` stays on the
+ * prototype for callers of the raw binding; this own property shadows it.
+ */
+function ownGetJwt(strategy, getJwt) {
+  Object.defineProperty(strategy, "getToken", {
+    value: async function getToken() {
+      let jwt;
+      try {
+        jwt = await getJwt();
+      } catch (err) {
+        return getJwtFailure(
+          `rejected: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      if (typeof jwt !== "string") {
+        return getJwtFailure("callback did not return a string");
+      }
+      return strategy.getTokenForJwt(jwt);
+    },
+    writable: true,
+    configurable: true,
+    enumerable: false,
+  });
+  return strategy;
+}
 
 // napi defines class static methods as non-writable (and this file is sloppy
 // mode), so the factories can't be Result-wrapped by patching the native
@@ -131,13 +184,18 @@ class OidcFederationStrategy {
     // Wrap `getJwt` so the napi binding always sees a Promise-returning
     // function even if the caller passed a sync one — the native side coerces
     // the return to `Promise<string>`. Matches the wasm wrapper (wasm-inline.mjs).
+    // The native side only uses it from the raw `getToken()`; the instance's
+    // own `getToken()` (see `ownGetJwt`) calls `getJwt` here instead.
     const jwt = () => Promise.resolve(getJwt());
     return wrapSync(() =>
-      NativeOidcFederationStrategy.create(
-        workspaceCrn,
-        jwt,
-        baseUrl,
-        cacheCapacity,
+      ownGetJwt(
+        NativeOidcFederationStrategy.create(
+          workspaceCrn,
+          jwt,
+          baseUrl,
+          cacheCapacity,
+        ),
+        getJwt,
       ),
     )();
   }
@@ -156,13 +214,16 @@ class OidcFederationStrategy {
     const load = () => Promise.resolve(loadToken());
     const save = (json) => Promise.resolve(saveToken(json));
     return wrapSync(() =>
-      NativeOidcFederationStrategy.createWithStore(
-        workspaceCrn,
-        jwt,
-        load,
-        save,
-        baseUrl,
-        cacheCapacity,
+      ownGetJwt(
+        NativeOidcFederationStrategy.createWithStore(
+          workspaceCrn,
+          jwt,
+          load,
+          save,
+          baseUrl,
+          cacheCapacity,
+        ),
+        getJwt,
       ),
     )();
   }

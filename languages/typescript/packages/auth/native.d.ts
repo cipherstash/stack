@@ -164,8 +164,26 @@ export declare class OidcFederationStrategy {
    * discovery, and the number of JWTs whose token is kept in memory.
    */
   static createWithStore(workspaceCrn: string, getJwt: () => any, loadToken: () => any, saveToken: (arg: string) => any, baseUrl?: string | undefined | null, cacheCapacity?: number | undefined | null): OidcFederationStrategy
-  /** Retrieve a valid CTS service token, federating or re-federating as needed. */
+  /**
+   * Retrieve a valid CTS service token, federating or re-federating as needed.
+   *
+   * Asks `getJwt` through the threadsafe function, which runs it in the
+   * async context of the `create()` call rather than of this caller, so a
+   * callback that reads the request from `AsyncLocalStorage` cannot see it
+   * here. The `index.js` wrapper therefore calls `getJwt` itself and uses
+   * `getTokenForJwt`; this entry stays for callers of the raw binding whose
+   * `getJwt` needs no request context.
+   */
   getToken(): Promise<TokenResult>
+  /**
+   * Retrieve a valid CTS service token for `jwt`, the caller's own provider
+   * JWT, federating it if no unexpired token is cached for it.
+   *
+   * `getToken()` minus the `getJwt` call: the wrapper fetches the JWT on the
+   * JavaScript side, in the caller's async context, and hands it in here.
+   * Both entries share the strategy's cache.
+   */
+  getTokenForJwt(jwt: string): Promise<TokenResult>
 }
 export declare class DeviceCodeResult {
   get userCode(): string
