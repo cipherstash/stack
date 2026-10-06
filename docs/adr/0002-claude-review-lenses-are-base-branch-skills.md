@@ -41,4 +41,4 @@ and push rights, was rejected for the same reason.
 - A lens that skips, crashes, stops early, or returns no summary fails its
   check. The `code-review` plugin stops early once Claude has commented on a
   pull request; if it counts the lens summaries as such, its check is red
-  after the first push until that is revisited.
+  on every run after the first until that is revisited.

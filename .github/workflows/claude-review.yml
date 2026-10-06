@@ -2,11 +2,15 @@ name: Claude PR Review
 
 on:
   pull_request:
+    # Not `synchronize`: a review per push paid for every intermediate commit.
+    # A pull request is reviewed when it opens or leaves draft; to review a
+    # later push, add the `claude-review` label (remove and re-add it to run
+    # again).
     types:
       - opened
-      - synchronize
       - ready_for_review
       - reopened
+      - labeled
     paths-ignore:
       - .changeset/**
       - "**/__snapshots__/**"
@@ -16,8 +20,11 @@ on:
 permissions:
   contents: read
 
+# Any other label also fires a `labeled` run. It skips the job, but it would
+# still join this group and cancel a review in progress, so it gets a group of
+# its own.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}${{ github.event.action == 'labeled' && github.event.label.name != 'claude-review' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -32,6 +39,8 @@ jobs:
       || github.event.pull_request.head.repo.full_name == github.repository)
       && github.event.pull_request.draft != true
       && github.event.pull_request.user.type != 'Bot'
+      && (github.event.action != 'labeled'
+      || github.event.label.name == 'claude-review')
     runs-on: blacksmith-2vcpu-ubuntu-2404-arm
     timeout-minutes: ${{ matrix.lens.timeout_minutes }}
     permissions:
@@ -52,21 +61,21 @@ jobs:
             source: repository
             skill: review-correctness
             max_turns: 25
-            timeout_minutes: 20
+            timeout_minutes: 15
             allowed_tools: Skill,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*)
             disallowed_tools: Edit,Write,NotebookEdit,Task,WebFetch,WebSearch,Read(./.git/**),Bash(gh pr comment:*)
           - name: security
             source: repository
             skill: review-security
             max_turns: 25
-            timeout_minutes: 20
+            timeout_minutes: 15
             allowed_tools: Skill,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*)
             disallowed_tools: Edit,Write,NotebookEdit,Task,WebFetch,WebSearch,Read(./.git/**),Bash(gh pr comment:*)
           - name: repo-rules
             source: repository
             skill: review-repo-rules
             max_turns: 25
-            timeout_minutes: 20
+            timeout_minutes: 15
             allowed_tools: Skill,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*)
             disallowed_tools: Edit,Write,NotebookEdit,Task,WebFetch,WebSearch,Read(./.git/**),Bash(gh pr comment:*)
           # The tools are the plugin command's `allowed-tools` frontmatter at
@@ -81,7 +90,7 @@ jobs:
             command: /code-review
             subagents: true
             max_turns: 60
-            timeout_minutes: 35
+            timeout_minutes: 30
             allowed_tools: Task,mcp__github_inline_comment__create_inline_comment,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh search:*)
             disallowed_tools: Edit,Write,NotebookEdit,WebFetch,WebSearch,Read(./.git/**),Bash(gh pr comment:*)
     env:
@@ -142,9 +151,6 @@ jobs:
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
-
-      - name: Debounce rapid updates
-        run: sleep 300
 
       - name: Checkout pull request
         uses: actions/checkout@v6

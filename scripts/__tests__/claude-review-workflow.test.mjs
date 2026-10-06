@@ -67,13 +67,13 @@ describe('Claude pull-request review', () => {
     expect(Object.keys(workflow.jobs)).toEqual(['review'])
   })
 
-  it('reviews every agreed pull-request lifecycle event', () => {
+  it('reviews on open and on request, not on every push', () => {
     expect(Object.keys(triggers)).toEqual(['pull_request'])
     expect(triggers.pull_request.types).toEqual([
       'opened',
-      'synchronize',
       'ready_for_review',
       'reopened',
+      'labeled',
     ])
     expect(triggers.pull_request['paths-ignore']).toEqual([
       '.changeset/**',
@@ -92,19 +92,26 @@ describe('Claude pull-request review', () => {
     expect(condition).toContain("github.event.pull_request.user.type != 'Bot'")
   })
 
+  it('runs on a labeled event only for the claude-review label', () => {
+    const condition = String(review.if).replace(/\s+/g, ' ')
+    expect(condition).toContain(
+      "(github.event.action != 'labeled' || github.event.label.name == 'claude-review')",
+    )
+  })
+
   it('uses a Blacksmith arm64 runner and cancels superseded reviews', () => {
     expect(review['runs-on']).toBe('blacksmith-2vcpu-ubuntu-2404-arm')
+    // An unrelated label gets a run-unique group, so it cannot cancel a review.
     expect(workflow.concurrency).toEqual({
-      group: `${gha('github.workflow')}-${gha('github.event.pull_request.number')}`,
+      group: `${gha('github.workflow')}-${gha('github.event.pull_request.number')}${gha("github.event.action == 'labeled' && github.event.label.name != 'claude-review' && format('-{0}', github.run_id) || ''")}`,
       'cancel-in-progress': true,
     })
   })
 
-  it('debounces rapid updates before checkout and Claude authentication', () => {
-    const debounce = stepNamed('Debounce rapid updates')
-    expect(debounce.run.trim()).toBe('sleep 300')
-    expect(steps.indexOf(debounce)).toBeLessThan(steps.indexOf(checkouts[0]))
-    expect(steps.indexOf(debounce)).toBeLessThan(steps.indexOf(claude))
+  it('spends no runner time waiting before the review', () => {
+    for (const step of steps) {
+      expect(String(step.run ?? '')).not.toMatch(/\bsleep\b/)
+    }
   })
 
   it('grants only the permissions needed to read, comment, and federate', () => {

@@ -654,11 +654,15 @@ Three rules to remember when editing CI or pnpm config:
 ## Claude PR review
 
 `.github/workflows/claude-review.yml` runs an advisory Claude review on every
-non-draft, non-bot pull request from a branch in this repository. It never
+non-draft, non-bot pull request from a branch in this repository when it opens,
+reopens or leaves draft. It does not run on a push: to review a later commit,
+add the `claude-review` label (remove and re-add it to run again). It never
 approves, blocks, or merges. It is one job, `review`, with a matrix of
 **lenses** — `correctness`, `security`, `repo-rules`, `code-review` — each its
 own check, its own inline comments (prefixed `[<lens>]`) and one summary
-comment it updates on every push. `scripts/__tests__/claude-review-workflow.test.mjs`
+comment it updates on each run. There is no debounce step: a sleep on the
+runner is billed per lens, and `cancel-in-progress` already drops a superseded
+run. `scripts/__tests__/claude-review-workflow.test.mjs`
 holds the shape; the decisions behind it are in
 `docs/adr/0002-claude-review-lenses-are-base-branch-skills.md`. Read both
 before changing the workflow, and know these facts about
@@ -692,7 +696,7 @@ before changing the workflow, and know these facts about
   proven by its own pull request's checks.** After merging, open a small test
   pull request with a planted bug and a planted rule violation and confirm
   every lens runs, finds its plant, and updates (not duplicates) its summary
-  on a second push.
+  when the `claude-review` label re-runs it.
 - **Claude is read-only.** Every lens disallows `Edit`, `Write`,
   `NotebookEdit`, `WebFetch`, `WebSearch` and `Read(./.git/**)` (the action
   writes its token into the remote URL). Allowed: the inline-comment tool,
@@ -723,7 +727,7 @@ before changing the workflow, and know these facts about
   repository — its licence is "All rights reserved". Its eligibility check
   stops it when Claude has already commented on the pull request. Whether it
   counts the lens summaries (posted by `github-actions[bot]`) is untested; if
-  it does, the `code-review` check goes red after the first push with
+  it does, the `code-review` check goes red on every run after the first with
   "stopped before reviewing the change". That, and whether to accept it, is
   the open question in #997.
 
