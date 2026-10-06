@@ -136,6 +136,44 @@ mod given_text_eq {
         );
     }
 
+    /// A keyset opener refuses a value another keyset sealed, before any key
+    /// is retrieved; the client opens it. If `Opener::Keyset` opened through
+    /// the client, one tenant's cipher would read another's column.
+    #[tokio::test]
+    async fn a_keyset_opener_refuses_a_value_from_another_keyset() {
+        use stack_kms::IdentifiedBy;
+        let (cipher, calls) = common::cipher().await;
+        let named = |n: &str| IdentifiedBy::Name(n.to_string().into());
+        let acme = cipher.keyset(named("acme")).await.unwrap();
+        let globex = cipher.keyset(named("globex")).await.unwrap();
+        let stored = targets::encrypt("TextEq", &acme, &email(), text("secret"))
+            .unwrap()
+            .await
+            .unwrap();
+        let result = targets::decrypt("TextEq", &globex, &email(), &stored)
+            .unwrap()
+            .await;
+        match result {
+            Err(stack_encrypt::Error::ForeignKeyset { .. }) => {}
+            Err(other) => panic!("refused, but not as a foreign keyset: {other}"),
+            Ok(_) => panic!("globex opened acme's value"),
+        }
+        assert!(
+            calls.lock().unwrap().retrieve.is_empty(),
+            "nothing was retrieved"
+        );
+        let own = targets::decrypt("TextEq", &acme, &email(), &stored)
+            .unwrap()
+            .await
+            .expect("its own keyset opens it");
+        assert_eq!(opened(own), "secret");
+        let through_client = targets::decrypt("TextEq", &cipher, &email(), &stored)
+            .unwrap()
+            .await
+            .expect("the client opens any of its keysets' values");
+        assert_eq!(opened(through_client), "secret");
+    }
+
     #[tokio::test]
     async fn query_bytes_are_the_typed_query_twin() {
         let (cipher, calls) = common::cipher().await;
