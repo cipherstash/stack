@@ -65,13 +65,17 @@ var codec = gensupport.New(gensupport.Generated[crm.Contact, EncryptedContact]{
 	Source: func(v crm.Contact) gensupport.Values {
 		return gensupport.Values{"id": v.ID, "email": v.Email, "phone_number": v.PhoneNumber}
 	},
-	Seal: func(v crm.Contact, rec gensupport.Record) EncryptedContact {
+	Seal: func(rec gensupport.Record) (EncryptedContact, error) {
+		id, err := gensupport.Passthrough[int64](rec, "id")
+		if err != nil {
+			return EncryptedContact{}, err
+		}
 		email, phone := rec["email"], rec["phone_number"]
 		return EncryptedContact{
-			ID:          v.ID,
+			ID:          id,
 			Email:       EncryptedContactEmail{Ciphertext: email.Ciphertext, Equality: email.Equality, Match: email.Match},
 			PhoneNumber: EncryptedContactPhoneNumber{Ciphertext: phone.Ciphertext, Equality: phone.Equality},
-		}
+		}, nil
 	},
 	Open: func(e EncryptedContact) gensupport.Record {
 		return gensupport.Record{

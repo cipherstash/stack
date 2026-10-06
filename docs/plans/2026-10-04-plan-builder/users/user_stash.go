@@ -55,12 +55,16 @@ var codec = gensupport.New(gensupport.Generated[User, EncryptedUser]{
 	Source: func(v User) gensupport.Values {
 		return gensupport.Values{"id": v.ID, "email": v.Email, "name": v.Name}
 	},
-	Seal: func(v User, rec gensupport.Record) EncryptedUser {
+	Seal: func(rec gensupport.Record) (EncryptedUser, error) {
+		id, err := gensupport.Passthrough[int64](rec, "id")
+		if err != nil {
+			return EncryptedUser{}, err
+		}
 		return EncryptedUser{
-			ID:    v.ID,
+			ID:    id,
 			Email: eql.TextEq(rec["email"].EQL),
 			Name:  eql.TextEq(rec["name"].EQL),
-		}
+		}, nil
 	},
 	Open: func(e EncryptedUser) gensupport.Record {
 		return gensupport.Record{"id": {Value: e.ID}, "email": {EQL: e.Email}, "name": {EQL: e.Name}}

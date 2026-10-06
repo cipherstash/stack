@@ -47,8 +47,8 @@ var codec = gensupport.New(gensupport.Generated[Document, EncryptedDocument]{
 	Source: func(v Document) gensupport.Values {
 		return gensupport.Values{gensupport.OpaqueField: map[string]any{"title": v.Title, "body": v.Body, "tags": v.Tags}}
 	},
-	Seal: func(v Document, rec gensupport.Record) EncryptedDocument {
-		return EncryptedDocument{Sealed: rec[gensupport.OpaqueField].Ciphertext}
+	Seal: func(rec gensupport.Record) (EncryptedDocument, error) {
+		return EncryptedDocument{Sealed: rec[gensupport.OpaqueField].Ciphertext}, nil
 	},
 	Open: func(e EncryptedDocument) gensupport.Record {
 		return gensupport.Record{gensupport.OpaqueField: {Ciphertext: e.Sealed}}

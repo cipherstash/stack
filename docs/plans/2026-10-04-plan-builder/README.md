@@ -43,7 +43,7 @@ The `users` example uses `TextEq`, which is the one EQL type the engine produces
 | The guest returns an EQL value for a field with `encrypt_into` | Not run. The target form and the dispatch do not exist. |
 | `stashgen` checks a declaration with the embedded guest | Not run. |
 | The code works with a database, GORM or pgx | Not run. Nothing here has connected to a database. |
-| The EQL types, and how generated code assembles them | Not run. `eql-codegen` does not write Go yet, and the examples use a stub of `eql.TextEq`. |
+| The EQL types, and the value the guest returns for them | Not run. `eql-codegen` does not write Go yet, and the examples use a stub of `eql.TextEq`. |
 | The steps in "Use the SDK" | Not run. Nobody has followed them. |
 
 ## Generate the protobuf package

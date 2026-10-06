@@ -68,15 +68,20 @@ var codec = gensupport.New(gensupport.Generated[*pb.Individual, EncryptedIndivid
 			"nickname":        v.GetNickname(),
 		}
 	},
-	Seal: func(v *pb.Individual, rec gensupport.Record) EncryptedIndividual {
-		email := rec["email"]
-		return EncryptedIndividual{
-			Id:         v.GetId(),
-			Name:       EncryptedIndividualName{Ciphertext: rec["name"].Ciphertext},
-			Email:      EncryptedIndividualEmail{Ciphertext: email.Ciphertext, Equality: email.Equality, Match: email.Match},
-			MedicareNo: eql.TextEq(rec["medicare_number"].EQL),
-			Nickname:   v.GetNickname(),
+	Seal: func(rec gensupport.Record) (EncryptedIndividual, error) {
+		var e EncryptedIndividual
+		var err error
+		if e.Id, err = gensupport.Passthrough[int64](rec, "id"); err != nil {
+			return EncryptedIndividual{}, err
 		}
+		if e.Nickname, err = gensupport.Passthrough[string](rec, "nickname"); err != nil {
+			return EncryptedIndividual{}, err
+		}
+		email := rec["email"]
+		e.Name = EncryptedIndividualName{Ciphertext: rec["name"].Ciphertext}
+		e.Email = EncryptedIndividualEmail{Ciphertext: email.Ciphertext, Equality: email.Equality, Match: email.Match}
+		e.MedicareNo = eql.TextEq(rec["medicare_number"].EQL)
+		return e, nil
 	},
 	Open: func(e EncryptedIndividual) gensupport.Record {
 		return gensupport.Record{

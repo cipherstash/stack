@@ -73,8 +73,23 @@ var codec = gensupport.New(gensupport.Generated[Account, EncryptedAccount]{
 			"email":      v.Email,
 		}
 	},
-	Seal: func(v Account, rec gensupport.Record) EncryptedAccount {
-		return EncryptedAccount{Model: v.Model, Email: eql.TextEq(rec["email"].EQL)}
+	Seal: func(rec gensupport.Record) (EncryptedAccount, error) {
+		var e EncryptedAccount
+		var err error
+		if e.ID, err = gensupport.Passthrough[uint](rec, "id"); err != nil {
+			return EncryptedAccount{}, err
+		}
+		if e.CreatedAt, err = gensupport.Passthrough[time.Time](rec, "created_at"); err != nil {
+			return EncryptedAccount{}, err
+		}
+		if e.UpdatedAt, err = gensupport.Passthrough[time.Time](rec, "updated_at"); err != nil {
+			return EncryptedAccount{}, err
+		}
+		if e.DeletedAt, err = gensupport.Passthrough[gorm.DeletedAt](rec, "deleted_at"); err != nil {
+			return EncryptedAccount{}, err
+		}
+		e.Email = eql.TextEq(rec["email"].EQL)
+		return e, nil
 	},
 	Open: func(e EncryptedAccount) gensupport.Record {
 		return gensupport.Record{
