@@ -1436,6 +1436,61 @@ mod tests {
         assert_eq!(cts.exchanges(), 1);
     }
 
+    tokio::task_local! {
+        /// The JWT of "the user behind the current request", carried by the
+        /// task so two concurrent callers can present different JWTs to one
+        /// provider — what `switchable_provider`'s single shared slot cannot.
+        static CALLER: String;
+    }
+
+    /// Two users whose first exchanges are in flight together each wait on
+    /// their own pending engine and receive their own token. The pending
+    /// tier is keyed on the JWT like the cache: a lookup that ignored the
+    /// digest would have B join A's exchange and receive A's token — the
+    /// #1045 bug during the first exchange, which the sequential multi-user
+    /// tests cannot see because `pending` is empty when each of their calls
+    /// starts.
+    #[tokio::test]
+    async fn concurrent_first_calls_for_two_jwts_do_not_share_an_engine() {
+        let (cts, gate) = CountingCts::gated();
+        let provider = OidcProviderFn::new(|| {
+            std::future::ready(Ok::<_, AuthError>(SecretToken::new(
+                CALLER.with(|jwt| jwt.clone()),
+            )))
+        });
+        let strategy = Arc::new(strategy_over(&cts, provider).build().expect("builder"));
+        let spawn_as = |jwt: &str| {
+            let strategy = Arc::clone(&strategy);
+            let call = async move { (&*strategy).get_token().await };
+            tokio::spawn(CALLER.scope(jwt.to_string(), call))
+        };
+
+        let a = spawn_as("jwt-a");
+        let b = spawn_as("jwt-b");
+        for _ in 0..1000 {
+            if strategy.pending_jwts() == 2 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(strategy.pending_jwts(), 2, "one pending engine per JWT");
+        assert_eq!(cts.exchanges(), 2, "both exchanges are in flight");
+        assert_eq!(strategy.cached_jwts(), 0);
+
+        gate.add_permits(2);
+        let a = a.await.expect("task").expect("A");
+        let b = b.await.expect("task").expect("B");
+        assert_eq!(subject(&a), "CS|jwt-a");
+        assert_eq!(
+            subject(&b),
+            "CS|jwt-b",
+            "B waited on its own engine, not on A's"
+        );
+        assert_eq!(cts.exchanges(), 2);
+        assert_eq!(strategy.cached_jwts(), 2, "both promoted");
+        assert_eq!(strategy.pending_jwts(), 0);
+    }
+
     /// A call dropped mid-exchange (a timeout, a `select!`, a client that
     /// went away) takes its pending entry with it, so cancelled first calls
     /// cannot accumulate JWTs in `pending`; the next call for that JWT
