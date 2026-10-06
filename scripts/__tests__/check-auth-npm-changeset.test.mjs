@@ -286,6 +286,12 @@ describe('require-auth-npm-changeset.yml', () => {
     }
   })
 
+  it('lists a moved file by its source path too', () => {
+    // With rename detection, moving a shipped file under __tests__/ reports
+    // only the unshipped destination and skips the changeset.
+    expect(check?.run).toMatch(/git diff --name-only --no-renames /)
+  })
+
   it('filters the diffed paths through --shipped before deciding', () => {
     // Without it every test or devDependency edit demands a release.
     expect(check?.run).toMatch(

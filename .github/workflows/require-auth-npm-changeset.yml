@@ -80,8 +80,10 @@ jobs:
             exit 0
           fi
 
+          # --no-renames: a shipped file moved under __tests__/ must still be
+          # reported by its deleted source path, or isShipped never sees it.
           if ! CHANGED="$(
-            git diff --name-only "${BASE_SHA}...HEAD" -- \
+            git diff --name-only --no-renames "${BASE_SHA}...HEAD" -- \
               packages/stack-auth/Cargo.toml \
               packages/stack-auth/src \
               languages/typescript/packages/auth \
