@@ -757,6 +757,7 @@ mod tests {
             "not-a-crn".to_string(),
             jwt_fn("h.p.s"),
             None,
+            None,
         ));
         assert_eq!(error_code_of(&err), "INVALID_CRN");
     }
@@ -772,13 +773,15 @@ mod tests {
             "crn:ap-southeast-2.aws:not-a-valid-workspace".to_string(),
             jwt_fn("h.p.s"),
             None,
+            None,
         ));
         assert_eq!(error_code_of(&err), "INVALID_CRN");
     }
 
     #[wasm_bindgen_test]
     fn oidc_federation_strategy_accepts_valid_inputs() {
-        let result = OidcFederationStrategy::create(VALID_CRN.to_string(), jwt_fn("h.p.s"), None);
+        let result =
+            OidcFederationStrategy::create(VALID_CRN.to_string(), jwt_fn("h.p.s"), None, None);
         assert!(result.is_ok());
     }
 
@@ -789,6 +792,7 @@ mod tests {
             VALID_CRN.to_string(),
             jwt_fn("h.p.s"),
             Some("https://cts.example.com".to_string()),
+            None,
         );
         assert!(result.is_ok());
     }
@@ -801,6 +805,7 @@ mod tests {
             VALID_CRN.to_string(),
             jwt_fn("h.p.s"),
             Some(String::new()),
+            None,
         );
         assert!(result.is_ok());
     }
@@ -812,8 +817,17 @@ mod tests {
             VALID_CRN.to_string(),
             jwt_fn("h.p.s"),
             Some("not a url".to_string()),
+            None,
         ));
         assert_eq!(error_code_of(&err), "INVALID_URL");
+    }
+
+    /// `cacheCapacity` is optional and `0` (cache nothing) is accepted.
+    #[wasm_bindgen_test]
+    fn oidc_federation_strategy_accepts_zero_cache_capacity() {
+        let result =
+            OidcFederationStrategy::create(VALID_CRN.to_string(), jwt_fn("h.p.s"), None, Some(0));
+        assert!(result.is_ok());
     }
 
     #[wasm_bindgen_test]
@@ -823,6 +837,7 @@ mod tests {
             jwt_fn("h.p.s"),
             empty_load_fn(),
             noop_save_fn(),
+            None,
             None,
         ));
         assert_eq!(error_code_of(&err), "INVALID_CRN");
@@ -835,6 +850,7 @@ mod tests {
             jwt_fn("h.p.s"),
             empty_load_fn(),
             noop_save_fn(),
+            None,
             None,
         );
         assert!(result.is_ok());
@@ -850,6 +866,7 @@ mod tests {
             empty_load_fn(),
             noop_save_fn(),
             Some("https://cts.example.com".to_string()),
+            None,
         );
         assert!(result.is_ok());
     }
@@ -864,6 +881,7 @@ mod tests {
             empty_load_fn(),
             noop_save_fn(),
             Some(String::new()),
+            None,
         );
         assert!(result.is_ok());
     }
@@ -877,6 +895,7 @@ mod tests {
             empty_load_fn(),
             noop_save_fn(),
             Some("not a url".to_string()),
+            None,
         ));
         assert_eq!(error_code_of(&err), "INVALID_URL");
     }
