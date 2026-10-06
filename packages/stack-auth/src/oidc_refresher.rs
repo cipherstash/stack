@@ -149,6 +149,8 @@ pub(crate) struct OidcFederation {
 }
 
 impl OidcFederation {
+    /// The exchange for `workspace_id` at `base_url` (already ending in `/`),
+    /// sent over `transport`.
     pub(crate) fn new(
         workspace_id: WorkspaceId,
         base_url: Url,

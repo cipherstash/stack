@@ -121,7 +121,8 @@ type RefreshEngine<S> = Arc<AutoRefresh<JwtRefresher, BoundStore<S>>>;
 /// where it cannot evict a user who holds a token. A caller presenting JWTs
 /// CTS refuses therefore churns nothing: each refused engine leaves
 /// `pending` with its failure, and `pending` itself is bounded by the number
-/// of exchanges in flight.
+/// of calls in flight — a call that is cancelled mid-exchange takes its
+/// entry with it (see [`InFlight`]).
 struct Engines<S> {
     cache: JwtCache<RefreshEngine<S>>,
     pending: HashMap<JwtDigest, RefreshEngine<S>>,
@@ -228,28 +229,26 @@ impl<P, S: TokenStore> OidcFederationStrategy<P, S> {
 
     /// Record how `engine`'s `get_token` went.
     ///
-    /// Success promotes a pending engine into the cache: it now holds a token
-    /// and may take a slot. Failure drops it from wherever it is — a pending
-    /// engine never earned a slot, and a cached one whose renewal left it
-    /// with no usable token has nothing left to hold one with — unless the
-    /// entry has since been replaced. A refusal of the account rather than
-    /// the credential is also remembered for every JWT.
+    /// Success puts the engine in the cache: it holds a token and may take a
+    /// slot. (Whether or not it was still pending — a sibling call for the
+    /// same JWT may have been cancelled and taken the pending entry with it.)
+    /// Failure drops it from wherever it is — a pending engine never earned
+    /// a slot, and a cached one whose renewal left it with no usable token
+    /// has nothing left to hold one with — unless the entry has since been
+    /// replaced. A refusal of the account rather than the credential is also
+    /// remembered for every JWT.
     fn settle(&self, engine: &RefreshEngine<S>, outcome: Result<(), &AuthError>) {
         let digest = engine.refresher().digest();
         let mut engines = self.engines.lock().unwrap_or_else(PoisonError::into_inner);
-        let was_pending = engines
+        if engines
             .pending
             .get(&digest)
-            .is_some_and(|pending| Arc::ptr_eq(pending, engine));
-        if was_pending {
+            .is_some_and(|pending| Arc::ptr_eq(pending, engine))
+        {
             let _ = engines.pending.remove(&digest);
         }
         match outcome {
-            Ok(()) => {
-                if was_pending {
-                    engines.cache.insert(digest, Arc::clone(engine));
-                }
-            }
+            Ok(()) => engines.cache.insert(digest, Arc::clone(engine)),
             Err(err) => {
                 engines
                     .cache
@@ -299,20 +298,68 @@ impl<P, S: TokenStore> OidcFederationStrategy<P, S> {
     }
 }
 
+/// One call's claim on an engine, from [`engine_for`](OidcFederationStrategy::engine_for)
+/// until it is [settled](Self::settle).
+///
+/// A `get_token` future can be dropped mid-exchange — a request timeout, a
+/// `select!`, a client that went away — and then nothing after the `.await`
+/// runs. Without this guard the engine would stay in `pending` for ever,
+/// holding the caller's JWT, and a rotated JWT is never presented again to
+/// promote or replace it. Dropping an unsettled guard removes the pending
+/// entry if it is still this engine.
+struct InFlight<'a, P, S: TokenStore> {
+    strategy: &'a OidcFederationStrategy<P, S>,
+    engine: RefreshEngine<S>,
+    settled: bool,
+}
+
+impl<P, S: TokenStore> InFlight<'_, P, S> {
+    fn settle(mut self, outcome: Result<(), &AuthError>) {
+        self.settled = true;
+        self.strategy.settle(&self.engine, outcome);
+    }
+}
+
+impl<P, S: TokenStore> Drop for InFlight<'_, P, S> {
+    fn drop(&mut self) {
+        if self.settled {
+            return;
+        }
+        let digest = self.engine.refresher().digest();
+        let mut engines = self
+            .strategy
+            .engines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if engines
+            .pending
+            .get(&digest)
+            .is_some_and(|pending| Arc::ptr_eq(pending, &self.engine))
+        {
+            let _ = engines.pending.remove(&digest);
+        }
+    }
+}
+
 impl<P: OidcProvider, S: TokenStore> AuthStrategy for &OidcFederationStrategy<P, S> {
     async fn get_token(self) -> Result<ServiceToken, AuthError> {
         // Ask who this call is for before anything else: the JWT is the key
         // to the right cached token, and only its owner may receive it.
         let jwt = self.provider.fetch().await?;
         let engine = self.engine_for(jwt)?;
+        let in_flight = InFlight {
+            strategy: self,
+            engine: Arc::clone(&engine),
+            settled: false,
+        };
         let token = match engine.get_token().await {
             Ok(token) => {
-                self.settle(&engine, Ok(()));
+                in_flight.settle(Ok(()));
                 token
             }
             Err(err) => {
                 let err = AuthError::from(err);
-                self.settle(&engine, Err(&err));
+                in_flight.settle(Err(&err));
                 return Err(err);
             }
         };
@@ -1375,6 +1422,94 @@ mod tests {
         assert_eq!(strategy.pending_jwts(), 0, "promoted");
         assert_eq!(strategy.cached_jwts(), 1);
         assert_eq!(cts.exchanges(), 1);
+    }
+
+    /// A call dropped mid-exchange (a timeout, a `select!`, a client that
+    /// went away) takes its pending entry with it, so cancelled first calls
+    /// cannot accumulate JWTs in `pending`; the next call for that JWT
+    /// starts afresh.
+    #[tokio::test]
+    async fn a_cancelled_first_call_leaves_nothing_pending() {
+        let (cts, gate) = CountingCts::gated();
+        let strategy = Arc::new(strategy_over(&cts, provider()).build().expect("builder"));
+
+        let in_flight = {
+            let strategy = Arc::clone(&strategy);
+            tokio::spawn(async move { (&*strategy).get_token().await })
+        };
+        for _ in 0..1000 {
+            if strategy.pending_jwts() == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(strategy.pending_jwts(), 1);
+
+        in_flight.abort();
+        assert!(in_flight.await.expect_err("aborted").is_cancelled());
+        assert_eq!(
+            strategy.pending_jwts(),
+            0,
+            "the cancelled call took its entry with it"
+        );
+        assert_eq!(strategy.cached_jwts(), 0);
+
+        // The abandoned exchange's permit is still owed; the fresh call takes it.
+        gate.add_permits(1);
+        let token = (&*strategy)
+            .get_token()
+            .await
+            .expect("a fresh call succeeds");
+        assert_eq!(subject(&token), "CS|header.payload.signature");
+        assert_eq!(
+            cts.exchanges(),
+            2,
+            "the cancelled exchange counted once, the fresh one once"
+        );
+        assert_eq!(strategy.cached_jwts(), 1);
+    }
+
+    /// A sibling that was still waiting on an engine whose pending entry a
+    /// cancelled call removed still gets its token cached: success promotes
+    /// regardless of who removed the entry.
+    #[tokio::test]
+    async fn a_survivor_of_a_cancelled_sibling_still_caches_its_token() {
+        let (cts, gate) = CountingCts::gated();
+        let strategy = Arc::new(strategy_over(&cts, provider()).build().expect("builder"));
+
+        let spawn = || {
+            let strategy = Arc::clone(&strategy);
+            tokio::spawn(async move { (&*strategy).get_token().await })
+        };
+        let first = spawn();
+        for _ in 0..1000 {
+            if strategy.pending_jwts() == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let second = spawn();
+        tokio::task::yield_now().await;
+
+        first.abort();
+        let _ = first.await;
+        assert_eq!(
+            strategy.pending_jwts(),
+            0,
+            "the cancelled call removed the entry"
+        );
+
+        gate.add_permits(1);
+        let token = second.await.expect("task").expect("the survivor completes");
+        assert_eq!(subject(&token), "CS|header.payload.signature");
+        assert_eq!(
+            strategy.cached_jwts(),
+            1,
+            "its token is cached all the same"
+        );
+        // The abandoned exchange died with the cancelled call; the survivor,
+        // next in line on the engine, made its own and took the permit.
+        assert_eq!(cts.exchanges(), 2);
     }
 
     /// The remembered account refusal is forgotten after its window, so the
