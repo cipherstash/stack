@@ -1260,6 +1260,10 @@ mod tests {
         /// When set, every exchange waits for a permit before answering, so a
         /// test can look at the strategy while an exchange is in flight.
         gate: Option<Arc<tokio::sync::Semaphore>>,
+        /// How many of the next successful answers carry a token that has
+        /// already expired, so the engine that receives one must renew on
+        /// its next call.
+        expired_answers: AtomicUsize,
     }
 
     impl CountingCts {
@@ -1268,6 +1272,7 @@ mod tests {
                 exchanges: AtomicUsize::new(0),
                 refusals: Mutex::new(Vec::new()),
                 gate: None,
+                expired_answers: AtomicUsize::new(0),
             }))
         }
 
@@ -1279,6 +1284,7 @@ mod tests {
                 exchanges: AtomicUsize::new(0),
                 refusals: Mutex::new(Vec::new()),
                 gate: Some(Arc::clone(&gate)),
+                expired_answers: AtomicUsize::new(0),
             }));
             (cts, gate)
         }
@@ -1294,6 +1300,13 @@ mod tests {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .push((status, body));
+        }
+
+        /// The next successful answer carries a token that has already
+        /// expired: `AutoRefresh` installs and returns it all the same, so
+        /// the engine is cached holding a token it must renew next time.
+        fn expire_next_answer(&self) {
+            let _ = self.0.expired_answers.fetch_add(1, Ordering::SeqCst);
         }
     }
 
@@ -1329,7 +1342,13 @@ mod tests {
                 .as_str()
                 .expect("exchange carries the JWT");
             let cts = jwt_for_principal(WS, &format!("CS|{jwt}"));
-            let answer = serde_json::json!({ "accessToken": cts, "expiry": now() + 3600 });
+            let expired = self
+                .0
+                .expired_answers
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .is_ok();
+            let expiry = if expired { now() - 1 } else { now() + 3600 };
+            let answer = serde_json::json!({ "accessToken": cts, "expiry": expiry });
             Ok(crate::HttpResponse::new(
                 200,
                 Vec::new(),
@@ -1672,5 +1691,83 @@ mod tests {
             "CS|jwt-b"
         );
         assert_eq!(cts.exchanges(), 2);
+    }
+
+    /// A cached engine whose renewal is refused holds no usable token, so it
+    /// gives up its slot; the next call for that JWT starts a new engine.
+    /// Every other failure in this module comes from a pending engine, whose
+    /// first exchange has not answered, so this is the one path on which
+    /// `settle` has a cache entry to remove.
+    #[tokio::test]
+    async fn a_cached_engine_whose_renewal_is_refused_leaves_the_cache() {
+        let cts = CountingCts::new();
+        cts.expire_next_answer();
+        let strategy = strategy_over(&cts, provider()).build().expect("builder");
+
+        let token = (&strategy)
+            .get_token()
+            .await
+            .expect("the first exchange answers, expired or not");
+        assert_eq!(subject(&token), "CS|header.payload.signature");
+        assert_eq!(
+            strategy.cached_jwts(),
+            1,
+            "an engine holding a token is cached"
+        );
+
+        cts.refuse_next(500, r#"{"error":"boom"}"#);
+        let err = (&strategy)
+            .get_token()
+            .await
+            .expect_err("renewal is refused");
+        assert!(matches!(err, AuthError::Server(_)), "{err:?}");
+        assert_eq!(
+            cts.exchanges(),
+            2,
+            "the expired token was renewed, not served"
+        );
+        assert_eq!(
+            strategy.cached_jwts(),
+            0,
+            "an engine left with no usable token gives up its slot"
+        );
+        assert_eq!(strategy.pending_jwts(), 0);
+
+        let token = (&strategy)
+            .get_token()
+            .await
+            .expect("the next call for that JWT starts a new engine");
+        assert_eq!(subject(&token), "CS|header.payload.signature");
+        assert_eq!(cts.exchanges(), 3);
+        assert_eq!(strategy.cached_jwts(), 1);
+    }
+
+    /// A renewal refused for the *account* is remembered for every JWT, as a
+    /// refused first exchange is: the next user's call within the window gets
+    /// the same answer without asking CTS.
+    #[tokio::test]
+    async fn an_account_refusal_on_renewal_is_remembered_for_other_jwts() {
+        let cts = CountingCts::new();
+        cts.expire_next_answer();
+        let (current, _, provider) = switchable_provider();
+        let strategy = strategy_over(&cts, provider).build().expect("builder");
+
+        act_as(&current, "jwt-a");
+        let _ = (&strategy).get_token().await.expect("A's first exchange");
+        cts.refuse_next(402, USAGE_LIMIT_BODY);
+        let err = (&strategy)
+            .get_token()
+            .await
+            .expect_err("A's renewal is refused for the account");
+        assert!(matches!(err, AuthError::UsageLimitExceeded(_)), "{err:?}");
+        assert_eq!(strategy.cached_jwts(), 0, "A's engine gave up its slot");
+
+        act_as(&current, "jwt-b");
+        let err = (&strategy)
+            .get_token()
+            .await
+            .expect_err("the refusal is the account's, so B gets it too");
+        assert!(matches!(err, AuthError::UsageLimitExceeded(_)), "{err:?}");
+        assert_eq!(cts.exchanges(), 2, "B did not re-ask CTS");
     }
 }
