@@ -49,12 +49,26 @@ stack-encrypt = { path = "../../../stack-encrypt", version = "0.2.0", optional =
 # `PrfContext`), and two vitaminc lines in one graph do not interoperate, so
 # the requirement is stack-encrypt's.
 vitaminc-prf = { version = "0.5.0", optional = true }
+# `FfiValue` / `ValueKind`: the runtime plaintext a plan field target takes
+# and the kind names a plan's `"type"` key spells (`encryption::targets`).
+# Named from vitaminc directly, like `PrfValue` above, so the feature needs
+# nothing from stack-encrypt's own `dynamic` feature; the same line
+# stack-encrypt and the Go guest build against.
+vitaminc-aead-value = { version = "0.5.1", optional = true }
+thiserror = { version = "2", optional = true }
 base64 = { version = "0.22", optional = true }
 hex = { version = "0.4", optional = true }
 
 [features]
 default = []
-stack-encrypt = ["dep:stack-encrypt", "dep:vitaminc-prf", "dep:base64", "dep:hex"]
+stack-encrypt = [
+  "dep:stack-encrypt",
+  "dep:vitaminc-prf",
+  "dep:vitaminc-aead-value",
+  "dep:thiserror",
+  "dep:base64",
+  "dep:hex",
+]
 
 [package.metadata.docs.rs]
 features = ["stack-encrypt"]

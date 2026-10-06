@@ -41,6 +41,11 @@
 //! builder with `StackCipher::new().await?`, using your configured CipherStash
 //! credentials. The encryption and decryption calls are identical.
 //!
+//! A binding that holds no Rust type to name reaches the same plans by the
+//! type's *name* through [`targets`]: the catalog-generated table of EQL
+//! types a data plan may name as a field target, and `encrypt` / `decrypt` /
+//! `query` dispatching on that name.
+//!
 //! Use the same table and column identifier for writes and queries. Passing
 //! `column.into()` on decryption also checks that the stored identifier matches
 //! the expected destination before retrieving keys. `Default::default()` instead
@@ -71,6 +76,8 @@
 //! fn require<T: stack_encrypt::EncryptFrom<String, Context = ()>>() {}
 //! require::<TextEq>();
 //! ```
+
+pub mod targets;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use stack_encrypt::sem::EqualityTerm;

@@ -14,6 +14,7 @@ pub mod dump;
 pub mod generate;
 pub mod operator_surface;
 pub mod ordering;
+pub mod targets;
 pub mod writer;
 
 /// The repository root, derived from this crate's manifest dir (the generator
