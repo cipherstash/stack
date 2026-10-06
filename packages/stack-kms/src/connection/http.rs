@@ -18,9 +18,14 @@ use zerokms_protocol::{ViturRequest, ViturRequestError};
 #[cfg(not(target_arch = "wasm32"))]
 const REQUEST_TIMEOUT_SECS: u64 = 10;
 
-#[derive(Debug, Error)]
-#[error("Failed to initialize HTTP connection: {0}")]
+/// The HTTP client could not be built. reqwest's message is not repeated
+/// (it is another library's text); it is this error's source.
+#[derive(Debug, Error, miette::Diagnostic)]
+#[error("Failed to initialize HTTP connection")]
+#[diagnostic(code(stack_kms::http_client_init))]
 pub struct ConnectionInitError(#[from] reqwest::Error);
+
+impl stack_auth::ErrorPayload for ConnectionInitError {}
 
 pub struct HttpConnectionOpts {
     base_url: Option<ZeroKmsEndpoint>,

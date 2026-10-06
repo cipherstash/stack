@@ -9,23 +9,30 @@ use stack_auth::{AuthStrategy, AuthStrategyBounds};
 use thiserror::Error;
 
 /// Error type for [`StackKmsBuilder`] operations.
+///
+/// The variants that carry another error from this crate or `stack-auth`
+/// are diagnostic-transparent: their code and help are that error's.
 #[derive(Debug, Error, miette::Diagnostic)]
 pub enum StackKmsBuilderError {
     /// Failed to initialize the underlying client.
     #[error("Failed to initialize client: {0}")]
+    #[diagnostic(transparent)]
     ClientInit(#[from] crate::errors::Error),
 
     /// Authentication strategy failed to initialize.
     #[error("Auth strategy error: {0}")]
+    #[diagnostic(transparent)]
     Auth(#[from] stack_auth::AuthError),
 
     /// Key provider failed to load a client key.
     #[error("Key provider error: {0}")]
+    #[diagnostic(transparent)]
     KeyProvider(#[from] KeyProviderError),
 
     /// A builder option was set to an invalid value (e.g. a zero concurrency
     /// or keys-per-request limit).
     #[error(transparent)]
+    #[diagnostic(transparent)]
     InvalidConfig(#[from] InvalidClientOpts),
 
     /// The ZeroKMS endpoint in the named environment variable is not usable.
@@ -33,11 +40,29 @@ pub enum StackKmsBuilderError {
     /// token's `services` claim would silently send key operations somewhere
     /// the operator did not configure.
     #[error("Invalid ZeroKMS endpoint in {env_var}: {source}")]
+    #[diagnostic(
+        code(stack_kms::invalid_endpoint),
+        help("Set {env_var} to an `http://` or `https://` URL with a host and no query, or unset it to use the endpoint the token names.")
+    )]
     InvalidEndpoint {
         env_var: &'static str,
         #[source]
+        #[diagnostic_source]
         source: InvalidEndpoint,
     },
+}
+
+impl stack_auth::ErrorPayload for StackKmsBuilderError {
+    fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
+        match self {
+            Self::ClientInit(error) => error.payload(),
+            Self::Auth(error) => error.payload(),
+            Self::KeyProvider(_) | Self::InvalidConfig(_) => serde_json::Map::new(),
+            Self::InvalidEndpoint { env_var, .. } => {
+                stack_auth::diagnostic::payload([("env_var", (*env_var).into())])
+            }
+        }
+    }
 }
 
 /// A builder for creating [`StackKms`] clients.

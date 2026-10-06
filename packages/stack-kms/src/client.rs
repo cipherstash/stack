@@ -25,9 +25,12 @@ pub const DEFAULT_CONCURRENT_REQS: usize = 5;
 
 /// Returned when a [`ClientOpts`] limit is set to a value the client can't
 /// operate with (currently: a zero `max_keys_per_req` or `max_concurrent_reqs`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, miette::Diagnostic)]
 #[error("Invalid client options: {0}")]
+#[diagnostic(code(stack_kms::invalid_client_opts))]
 pub struct InvalidClientOpts(&'static str);
+
+impl stack_auth::ErrorPayload for InvalidClientOpts {}
 
 /// Options for configuring certain behaviours of the [`Client`].
 ///

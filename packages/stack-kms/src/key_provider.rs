@@ -41,22 +41,36 @@ use crate::key::ClientKey;
 use crate::secret_key::decode_client_key_material;
 
 /// Errors that can occur when loading a [`ClientKey`] from a [`KeyProvider`].
-#[derive(Debug, Error)]
+///
+/// The strings are written by this crate and never hold key material: a
+/// decoding failure names the encoding, not the bytes it refused.
+#[derive(Debug, Error, miette::Diagnostic)]
 pub enum KeyProviderError {
     /// The provider has no key configured (e.g. env vars not set).
     ///
     /// [`FallbackKeyProvider`] uses this variant to decide whether to try the next provider.
     #[error("Client key not configured: {0}")]
+    #[diagnostic(
+        code(stack_kms::client_key_not_configured),
+        help("Set `CS_CLIENT_ID` and `CS_CLIENT_KEY`, or log in with `stash auth login`.")
+    )]
     NotConfigured(String),
 
     /// Key material was found but is invalid (e.g. bad hex encoding).
     #[error("Invalid client key: {0}")]
+    #[diagnostic(
+        code(stack_kms::invalid_client_key),
+        help("`CS_CLIENT_KEY` is a hex or base64 client key, and `CS_CLIENT_ID` the UUID of the client it belongs to.")
+    )]
     InvalidKey(String),
 
     /// An I/O or other runtime error prevented loading the key.
     #[error("Failed to load client key: {0}")]
+    #[diagnostic(code(stack_kms::client_key_load))]
     LoadError(String),
 }
+
+impl stack_auth::ErrorPayload for KeyProviderError {}
 
 /// A source of [`ClientKey`] credentials for ZeroKMS.
 ///
