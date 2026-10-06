@@ -405,234 +405,150 @@ impl crate::ErrorPayload for Error {
     }
 }
 
-/// What was wrong with a context, plan, source or stored record: the reason
-/// a dynamic input error carries beside the field it names.
-///
-/// One vocabulary for all four, since several reasons apply to more than
-/// one (a field given twice is a misfit in a source and in a stored
-/// record). [`as_str`](Self::as_str) is the `snake_case` name a binding
-/// reports in its payload's `reason` field; `Display` is the phrase the
-/// message uses. `#[non_exhaustive]`: a reason added later is not a break,
-/// and a binding that switches on one keeps a fallback.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[non_exhaustive]
-pub enum Reason {
-    /// A plan, field spec, source or stored record is not an object (a
-    /// map), or a list of them, where one is expected.
-    NotAnObject,
-    /// A context value is of a kind a context cannot hold: a boolean,
-    /// float, null, object or passthrough.
-    ContextKind,
-    /// A context string is not UTF-8.
-    ContextNotUtf8,
-    /// A context renders empty.
-    EmptyContext,
-    /// A field's context is not a label of at least two plain segments,
-    /// optionally extended by scalar parts.
-    ContextNotLabel,
-    /// The plan's fields sit under different contexts, or carry different
-    /// extensions.
-    MixedContexts,
-    /// The plan has no fields.
-    NoFields,
-    /// A field is named twice in the plan.
-    DuplicateField,
-    /// A field spec has a key other than `"context"`, `"outputs"`,
-    /// `"target"` and `"type"`.
-    UnknownKey,
-    /// A key is given twice: in a field spec, or in a map inside a source
-    /// value or a stored record.
-    RepeatedKey,
-    /// A field spec has no `"context"`.
-    MissingContext,
-    /// A field spec has neither `"outputs"` nor `"target"`.
-    MissingOutputs,
-    /// A field spec has both `"outputs"` and `"target"`, or a field is
-    /// declared both as a target and with data verbs.
-    OutputsWithTarget,
-    /// `"outputs"` is not a list.
-    OutputsNotList,
-    /// An output is not `"c"`, `"passthrough"` or an index in its wire
-    /// form, or a match index's options are not valid.
-    UnknownOutput,
-    /// A field's output list, or its index set, is empty.
-    NoOutputs,
-    /// A field names one output, or one index, twice.
-    DuplicateOutput,
-    /// A field names `"passthrough"` beside another output.
-    PassthroughWithOutputs,
-    /// `"target"` is not a non-empty string.
-    InvalidTarget,
-    /// `"type"` is not a string naming a value type.
-    UnknownType,
-    /// The field's declared type has no such index: match on an integer,
-    /// equality on a float, any index on a composite.
-    IndexNotAdmitted,
-    /// Two fields are keyed under one identity.
-    SharedIdentity,
-    /// The plan has no field of the name asked for.
-    NoSuchField,
-    /// The field asked for does not name an EQL type.
-    NotATarget,
-    /// The field a plan takes its context from (`"context_field"`) is not a
-    /// string passthrough, or the plan-level `"context_field"` key is not a
-    /// string.
-    ContextField,
-    /// The plan builder refused the plan for a reason none of the above
-    /// names.
-    Refused,
-    /// A field the plan names is not there.
-    FieldMissing,
-    /// A field is there twice.
-    FieldRepeated,
-    /// A field is there that the plan does not name.
-    UnknownField,
-    /// A value is not of the type its field declares.
-    FieldType,
-    /// A passthrough sits where a sealed value, or a ciphertext, must be.
-    Passthrough,
-    /// A stored field is not a map of outputs.
-    OutputsNotMap,
-    /// A stored sealed field has no `"c"` node.
-    NoCiphertextNode,
-    /// A stored passthrough field has no `"passthrough"` node.
-    NoPassthroughNode,
-    /// A stored target field has no `"eql"` node.
-    NoEqlNode,
-    /// A stored `"passthrough"` or `"eql"` node is not a passthrough
-    /// carrying a value of the kind it holds.
-    NotPassthrough,
+/// Declares [`Reason`] from one list: each variant with its `snake_case`
+/// name and the phrase its `Display` writes. One list, so a reason cannot be
+/// added without both, and [`Reason::ALL`] cannot miss one.
+macro_rules! reasons {
+    (
+        $(#[$meta:meta])*
+        pub enum $name:ident {
+            $(
+                $(#[$variant_meta:meta])*
+                $variant:ident => $snake:literal, $phrase:literal;
+            )*
+        }
+    ) => {
+        $(#[$meta])*
+        pub enum $name {
+            $(
+                $(#[$variant_meta])*
+                $variant,
+            )*
+        }
+
+        impl $name {
+            /// Every reason, in declaration order: what a binding's test
+            /// iterates.
+            pub const ALL: &'static [$name] = &[$(Self::$variant,)*];
+
+            /// Each reason's `snake_case` name and phrase, at its
+            /// discriminant: the variants and these entries come from one
+            /// list, in one order.
+            const WORDS: &'static [(&'static str, &'static str)] = &[$(($snake, $phrase),)*];
+        }
+    };
+}
+
+reasons! {
+    /// What was wrong with a context, plan, source or stored record: the reason
+    /// a dynamic input error carries beside the field it names.
+    ///
+    /// One vocabulary for all four, since several reasons apply to more than
+    /// one (a field given twice is a misfit in a source and in a stored
+    /// record). [`as_str`](Self::as_str) is the `snake_case` name a binding
+    /// reports in its payload's `reason` field; `Display` is the phrase the
+    /// message uses. `#[non_exhaustive]`: a reason added later is not a break,
+    /// and a binding that switches on one keeps a fallback.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[non_exhaustive]
+    pub enum Reason {
+        /// A plan, field spec, source or stored record is not an object (a
+        /// map), or a list of them, where one is expected.
+        NotAnObject => "not_an_object", "not an object where one is expected";
+        /// A context value is of a kind a context cannot hold: a boolean,
+        /// float, null, object or passthrough.
+        ContextKind => "context_kind", "a boolean, float, null, object or passthrough cannot be a context";
+        /// A context string is not UTF-8.
+        ContextNotUtf8 => "context_not_utf8", "a context string is not UTF-8";
+        /// A context renders empty.
+        EmptyContext => "empty_context", "the context renders empty";
+        /// A field's context is not a label of at least two plain segments,
+        /// optionally extended by scalar parts.
+        ContextNotLabel => "context_not_label", "the context is not a label of at least two plain segments, optionally extended";
+        /// The plan's fields sit under different contexts, or carry different
+        /// extensions.
+        MixedContexts => "mixed_contexts", "the fields sit under different contexts or extensions";
+        /// The plan has no fields.
+        NoFields => "no_fields", "the plan has no fields";
+        /// A field is named twice in the plan.
+        DuplicateField => "duplicate_field", "a field is named twice";
+        /// A field spec has a key other than `"context"`, `"outputs"`,
+        /// `"target"` and `"type"`.
+        UnknownKey => "unknown_key", r#"a key other than "context", "outputs", "target" and "type""#;
+        /// A key is given twice: in a field spec, or in a map inside a source
+        /// value or a stored record.
+        RepeatedKey => "repeated_key", "a key is given twice";
+        /// A field spec has no `"context"`.
+        MissingContext => "missing_context", r#"no "context""#;
+        /// A field spec has neither `"outputs"` nor `"target"`.
+        MissingOutputs => "missing_outputs", r#"neither "outputs" nor "target""#;
+        /// A field spec has both `"outputs"` and `"target"`, or a field is
+        /// declared both as a target and with data verbs.
+        OutputsWithTarget => "outputs_with_target", r#"both "outputs" and "target""#;
+        /// `"outputs"` is not a list.
+        OutputsNotList => "outputs_not_list", r#""outputs" is not a list"#;
+        /// An output is not `"c"`, `"passthrough"` or an index in its wire
+        /// form, or a match index's options are not valid.
+        UnknownOutput => "unknown_output", r#"an output is not "c", "passthrough" or a valid index"#;
+        /// A field's output list, or its index set, is empty.
+        NoOutputs => "no_outputs", "no outputs";
+        /// A field names one output, or one index, twice.
+        DuplicateOutput => "duplicate_output", "an output is named twice";
+        /// A field names `"passthrough"` beside another output.
+        PassthroughWithOutputs => "passthrough_with_outputs", r#""passthrough" beside another output"#;
+        /// `"target"` is not a non-empty string.
+        InvalidTarget => "invalid_target", r#""target" is not a non-empty string"#;
+        /// `"type"` is not a string naming a value type.
+        UnknownType => "unknown_type", r#""type" does not name a value type"#;
+        /// The field's declared type has no such index: match on an integer,
+        /// equality on a float, any index on a composite.
+        IndexNotAdmitted => "index_not_admitted", "the declared type has no such index";
+        /// Two fields are keyed under one identity.
+        SharedIdentity => "shared_identity", "two fields are keyed under one identity";
+        /// The plan has no field of the name asked for.
+        NoSuchField => "no_such_field", "the plan has no such field";
+        /// The field asked for does not name an EQL type.
+        NotATarget => "not_a_target", "the field does not name an EQL type";
+        /// The field a plan takes its context from (`"context_field"`) is not a
+        /// string passthrough, or the plan-level `"context_field"` key is not a
+        /// string.
+        ContextField => "context_field", r#"the context field is not a string passthrough, or "context_field" is not a string"#;
+        /// The plan builder refused the plan for a reason none of the above
+        /// names.
+        Refused => "refused", "the plan builder refused it";
+        /// A field the plan names is not there.
+        FieldMissing => "field_missing", "a field the plan names is missing";
+        /// A field is there twice.
+        FieldRepeated => "field_repeated", "a field is given twice";
+        /// A field is there that the plan does not name.
+        UnknownField => "unknown_field", "a field the plan does not name";
+        /// A value is not of the type its field declares.
+        FieldType => "field_type", "a value is not of the type its field declares";
+        /// A passthrough sits where a sealed value, or a ciphertext, must be.
+        Passthrough => "passthrough", "a passthrough where a sealed value must be";
+        /// A stored field is not a map of outputs.
+        OutputsNotMap => "outputs_not_map", "a stored field is not a map of outputs";
+        /// A stored sealed field has no `"c"` node.
+        NoCiphertextNode => "no_ciphertext_node", r#"no "c" node"#;
+        /// A stored passthrough field has no `"passthrough"` node.
+        NoPassthroughNode => "no_passthrough_node", r#"no "passthrough" node"#;
+        /// A stored target field has no `"eql"` node.
+        NoEqlNode => "no_eql_node", r#"no "eql" node"#;
+        /// A stored `"passthrough"` or `"eql"` node is not a passthrough
+        /// carrying a value of the kind it holds.
+        NotPassthrough => "not_passthrough", "a node does not carry a value of the kind it holds";
+    }
 }
 
 impl Reason {
     /// The reason's `snake_case` name, as a binding reports it.
     pub fn as_str(self) -> &'static str {
-        match self {
-            Self::NotAnObject => "not_an_object",
-            Self::ContextKind => "context_kind",
-            Self::ContextNotUtf8 => "context_not_utf8",
-            Self::EmptyContext => "empty_context",
-            Self::ContextNotLabel => "context_not_label",
-            Self::MixedContexts => "mixed_contexts",
-            Self::NoFields => "no_fields",
-            Self::DuplicateField => "duplicate_field",
-            Self::UnknownKey => "unknown_key",
-            Self::RepeatedKey => "repeated_key",
-            Self::MissingContext => "missing_context",
-            Self::MissingOutputs => "missing_outputs",
-            Self::OutputsWithTarget => "outputs_with_target",
-            Self::OutputsNotList => "outputs_not_list",
-            Self::UnknownOutput => "unknown_output",
-            Self::NoOutputs => "no_outputs",
-            Self::DuplicateOutput => "duplicate_output",
-            Self::PassthroughWithOutputs => "passthrough_with_outputs",
-            Self::InvalidTarget => "invalid_target",
-            Self::UnknownType => "unknown_type",
-            Self::IndexNotAdmitted => "index_not_admitted",
-            Self::SharedIdentity => "shared_identity",
-            Self::NoSuchField => "no_such_field",
-            Self::NotATarget => "not_a_target",
-            Self::ContextField => "context_field",
-            Self::Refused => "refused",
-            Self::FieldMissing => "field_missing",
-            Self::FieldRepeated => "field_repeated",
-            Self::UnknownField => "unknown_field",
-            Self::FieldType => "field_type",
-            Self::Passthrough => "passthrough",
-            Self::OutputsNotMap => "outputs_not_map",
-            Self::NoCiphertextNode => "no_ciphertext_node",
-            Self::NoPassthroughNode => "no_passthrough_node",
-            Self::NoEqlNode => "no_eql_node",
-            Self::NotPassthrough => "not_passthrough",
-        }
+        Self::WORDS[self as usize].0
     }
-
-    /// Every reason, in declaration order: what a binding's test iterates.
-    pub const ALL: &'static [Reason] = &[
-        Self::NotAnObject,
-        Self::ContextKind,
-        Self::ContextNotUtf8,
-        Self::EmptyContext,
-        Self::ContextNotLabel,
-        Self::MixedContexts,
-        Self::NoFields,
-        Self::DuplicateField,
-        Self::UnknownKey,
-        Self::RepeatedKey,
-        Self::MissingContext,
-        Self::MissingOutputs,
-        Self::OutputsWithTarget,
-        Self::OutputsNotList,
-        Self::UnknownOutput,
-        Self::NoOutputs,
-        Self::DuplicateOutput,
-        Self::PassthroughWithOutputs,
-        Self::InvalidTarget,
-        Self::UnknownType,
-        Self::IndexNotAdmitted,
-        Self::SharedIdentity,
-        Self::NoSuchField,
-        Self::NotATarget,
-        Self::ContextField,
-        Self::Refused,
-        Self::FieldMissing,
-        Self::FieldRepeated,
-        Self::UnknownField,
-        Self::FieldType,
-        Self::Passthrough,
-        Self::OutputsNotMap,
-        Self::NoCiphertextNode,
-        Self::NoPassthroughNode,
-        Self::NoEqlNode,
-        Self::NotPassthrough,
-    ];
 }
 
 impl fmt::Display for Reason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::NotAnObject => "not an object where one is expected",
-            Self::ContextKind => {
-                "a boolean, float, null, object or passthrough cannot be a context"
-            }
-            Self::ContextNotUtf8 => "a context string is not UTF-8",
-            Self::EmptyContext => "the context renders empty",
-            Self::ContextNotLabel => {
-                "the context is not a label of at least two plain segments, optionally extended"
-            }
-            Self::MixedContexts => "the fields sit under different contexts or extensions",
-            Self::NoFields => "the plan has no fields",
-            Self::DuplicateField => "a field is named twice",
-            Self::UnknownKey => r#"a key other than "context", "outputs", "target" and "type""#,
-            Self::RepeatedKey => "a key is given twice",
-            Self::MissingContext => r#"no "context""#,
-            Self::MissingOutputs => r#"neither "outputs" nor "target""#,
-            Self::OutputsWithTarget => r#"both "outputs" and "target""#,
-            Self::OutputsNotList => r#""outputs" is not a list"#,
-            Self::UnknownOutput => r#"an output is not "c", "passthrough" or a valid index"#,
-            Self::NoOutputs => "no outputs",
-            Self::DuplicateOutput => "an output is named twice",
-            Self::PassthroughWithOutputs => r#""passthrough" beside another output"#,
-            Self::InvalidTarget => r#""target" is not a non-empty string"#,
-            Self::UnknownType => r#""type" does not name a value type"#,
-            Self::IndexNotAdmitted => "the declared type has no such index",
-            Self::SharedIdentity => "two fields are keyed under one identity",
-            Self::NoSuchField => "the plan has no such field",
-            Self::NotATarget => "the field does not name an EQL type",
-            Self::ContextField => {
-                r#"the context field is not a string passthrough, or "context_field" is not a string"#
-            }
-            Self::Refused => "the plan builder refused it",
-            Self::FieldMissing => "a field the plan names is missing",
-            Self::FieldRepeated => "a field is given twice",
-            Self::UnknownField => "a field the plan does not name",
-            Self::FieldType => "a value is not of the type its field declares",
-            Self::Passthrough => "a passthrough where a sealed value must be",
-            Self::OutputsNotMap => "a stored field is not a map of outputs",
-            Self::NoCiphertextNode => r#"no "c" node"#,
-            Self::NoPassthroughNode => r#"no "passthrough" node"#,
-            Self::NoEqlNode => r#"no "eql" node"#,
-            Self::NotPassthrough => "a node does not carry a value of the kind it holds",
-        })
+        f.write_str(Self::WORDS[*self as usize].1)
     }
 }

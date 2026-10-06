@@ -341,4 +341,302 @@ mod tests {
         );
         assert_eq!(error.to_string(), "Unexpected error: kms");
     }
+
+    /// Every error type's structured fields, one variant per arm. A binding
+    /// hands these over as they are, so a field that goes missing or changes
+    /// name is a break for every caller that reads it.
+    fn every_payload() -> Vec<(Box<dyn crate::ErrorPayload>, serde_json::Value)> {
+        use serde_json::json;
+        let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let declared = IndexSpec::Match(MatchOptions::default());
+        let asked = IndexSpec::Match(MatchOptions {
+            downcase: false,
+            ..MatchOptions::default()
+        });
+        let payloads: Vec<(Box<dyn crate::ErrorPayload>, serde_json::Value)> = vec![
+            (
+                Box::new(Error::Kms(crate::kms::Error::GenerateKey(
+                    crate::kms::GenerateKeyError::InvalidNumberOfKeys {
+                        expected: 3,
+                        received: 2,
+                    },
+                ))),
+                json!({ "expected": 3, "received": 2 }),
+            ),
+            (
+                Box::new(Error::Term(TermError::Bytes(
+                    TermBytesError::WrongEqualityTermLength(31),
+                ))),
+                json!({ "len": 31 }),
+            ),
+            (
+                Box::new(Error::Plan(PlanError::NoSuchField {
+                    field: "age".into(),
+                })),
+                json!({ "field": "age" }),
+            ),
+            (
+                Box::new(Error::KeyCountMismatch {
+                    expected: 2,
+                    received: 1,
+                }),
+                json!({ "expected": 2, "received": 1 }),
+            ),
+            (
+                Box::new(Error::DescriptorTooLong { len: 513 }),
+                json!({ "len": 513, "limit": Descriptor::MAX_LEN }),
+            ),
+            (
+                Box::new(Error::ContextMismatch {
+                    stored: Descriptor::of(("users", "email")),
+                }),
+                json!({
+                    "stored_len": Descriptor::of(("users", "email")).len(),
+                    "stored_parts": 2,
+                }),
+            ),
+            (
+                Box::new(Error::KeysetMismatch { left: a, right: b }),
+                json!({ "left": a.to_string(), "right": b.to_string() }),
+            ),
+            (Box::new(Error::Aead), json!({})),
+            (
+                Box::new(LeafBytesError::UnknownVersion(9)),
+                json!({ "version": 9 }),
+            ),
+            (
+                Box::new(LeafBytesError::TagTooLong(70_000)),
+                json!({ "len": 70_000 }),
+            ),
+            (Box::new(LeafBytesError::Truncated), json!({})),
+            (
+                Box::new(TermError::Bytes(TermBytesError::OddMatchTermsLength(3))),
+                json!({ "len": 3 }),
+            ),
+            (Box::new(TermError::EmptyTermText), json!({})),
+            (
+                Box::new(TermBytesError::MalformedCllwCiphertext(5)),
+                json!({ "len": 5 }),
+            ),
+            (
+                Box::new(TermBytesError::MatchPositionOutOfRange {
+                    position: 900,
+                    filter_size: 256,
+                }),
+                json!({ "filter_size": 256 }),
+            ),
+            (Box::new(LabelError::Empty), json!({})),
+            (
+                Box::new(LabelError::EmptySegment { index: 1 }),
+                json!({ "segment": 1 }),
+            ),
+            (
+                Box::new(LabelError::Reserved {
+                    index: 0,
+                    found: '(',
+                }),
+                json!({ "segment": 0, "character": "(" }),
+            ),
+            (
+                Box::new(PlanError::ContextLabel(LabelError::Separator { index: 2 })),
+                json!({ "segment": 2 }),
+            ),
+            (
+                Box::new(PlanError::FieldLabel {
+                    field: "age".into(),
+                    source: LabelError::ReservedPrefix { index: 1 },
+                }),
+                json!({ "segment": 1, "field": "age" }),
+            ),
+            (
+                Box::new(PlanError::DuplicateField {
+                    field: "age".into(),
+                }),
+                json!({ "field": "age" }),
+            ),
+            (
+                Box::new(PlanError::SharedIdentity {
+                    identity: "age".into(),
+                    first: "age".into(),
+                    second: "years".into(),
+                }),
+                json!({ "identity": "age", "first": "age", "second": "years" }),
+            ),
+            (
+                Box::new(PlanError::DuplicateIndex {
+                    at: "age".into(),
+                    index: "eq",
+                }),
+                json!({ "field": "age", "index": "eq" }),
+            ),
+            (
+                Box::new(PlanError::FieldType {
+                    field: "age".into(),
+                    expected: "int64",
+                }),
+                json!({ "field": "age", "expected": "int64" }),
+            ),
+            (
+                Box::new(PlanError::IndexNotDeclared {
+                    field: "age".into(),
+                    index: "ore",
+                }),
+                json!({ "field": "age", "index": "ore" }),
+            ),
+            (
+                Box::new(PlanError::IndexOptions {
+                    field: "age".into(),
+                    declared: declared.clone(),
+                    asked: asked.clone(),
+                }),
+                json!({
+                    "field": "age",
+                    "index": "match",
+                    "declared": format!("{declared:?}"),
+                    "asked": format!("{asked:?}"),
+                }),
+            ),
+            (
+                Box::new(PlanError::TwoContextSources {
+                    first: "the plan",
+                    second: "the call",
+                }),
+                json!({ "first": "the plan", "second": "the call" }),
+            ),
+            (Box::new(PlanError::NoContext), json!({})),
+        ];
+        #[cfg(feature = "dynamic")]
+        let payloads = payloads.into_iter().chain(dynamic_payloads()).collect();
+        payloads
+    }
+
+    #[cfg(feature = "dynamic")]
+    fn dynamic_payloads() -> Vec<(Box<dyn crate::ErrorPayload>, serde_json::Value)> {
+        use crate::dynamic::{Error, Reason, TargetError, ValueKind};
+        use serde_json::json;
+        let name = || "email".to_string();
+        let target = || "TextEq".to_string();
+        vec![
+            (
+                Box::new(Error::Target(TargetError::Unknown { name: target() })),
+                json!({ "target": "TextEq" }),
+            ),
+            (
+                Box::new(Error::Cipher(crate::Error::KeyCountMismatch {
+                    expected: 2,
+                    received: 1,
+                })),
+                json!({ "expected": 2, "received": 1 }),
+            ),
+            (
+                Box::new(Error::Term {
+                    field: Some(name()),
+                    kind: IndexSpec::Equality,
+                }),
+                json!({ "index": "eq", "field": "email" }),
+            ),
+            (
+                Box::new(Error::bad_context(Reason::EmptyContext).in_field("email")),
+                json!({ "field": "email", "reason": "empty_context" }),
+            ),
+            (
+                Box::new(Error::bad_record(Reason::NoCiphertextNode)),
+                json!({ "reason": "no_ciphertext_node" }),
+            ),
+            (
+                Box::new(Error::UntypedIndex { field: name() }),
+                json!({ "field": "email" }),
+            ),
+            (Box::new(Error::Internal), json!({})),
+            (
+                Box::new(TargetError::NoTargets { name: target() }),
+                json!({ "target": "TextEq" }),
+            ),
+            (
+                Box::new(TargetError::Unproducible {
+                    name: target(),
+                    reason: "block ORE".into(),
+                }),
+                json!({ "target": "TextEq", "reason": "block ORE" }),
+            ),
+            (
+                Box::new(TargetError::Extended {
+                    name: name(),
+                    label: "users/email".into(),
+                }),
+                json!({ "field": "email", "label": "users/email" }),
+            ),
+            // Before the lowering names the field, there is none to give.
+            (
+                Box::new(TargetError::Extended {
+                    name: String::new(),
+                    label: "users/email".into(),
+                }),
+                json!({ "label": "users/email" }),
+            ),
+            (
+                Box::new(TargetError::Kind {
+                    name: name(),
+                    target: target(),
+                    expected: Some(ValueKind::String),
+                    declared: ValueKind::UInt64,
+                }),
+                json!({
+                    "field": "email",
+                    "target": "TextEq",
+                    "expected": "string",
+                    "declared": "uint64",
+                }),
+            ),
+            (
+                Box::new(TargetError::Column {
+                    name: name(),
+                    label: "app/users/email".into(),
+                    reason: "two segments".into(),
+                }),
+                json!({
+                    "field": "email",
+                    "label": "app/users/email",
+                    "reason": "two segments",
+                }),
+            ),
+            (
+                Box::new(TargetError::Plaintext {
+                    name: name(),
+                    target: target(),
+                    expected: Some(ValueKind::String),
+                    found: None,
+                }),
+                json!({
+                    "field": "email",
+                    "target": "TextEq",
+                    "expected": "string",
+                    "found": null,
+                }),
+            ),
+            (
+                Box::new(TargetError::Stored {
+                    name: name(),
+                    target: target(),
+                    reason: "not JSON".into(),
+                }),
+                json!({ "field": "email", "target": "TextEq", "reason": "not JSON" }),
+            ),
+            (
+                Box::new(TargetError::Other(Box::new(std::io::Error::other("boom")))),
+                json!({}),
+            ),
+        ]
+    }
+
+    #[test]
+    fn every_payload_carries_its_fields() {
+        for (error, expected) in every_payload() {
+            assert_eq!(
+                serde_json::Value::Object(error.payload()),
+                expected,
+                "{error:?}"
+            );
+        }
+    }
 }

@@ -943,7 +943,11 @@ mod tests {
             panic!("built a strategy with nothing to send through");
         };
         assert!(matches!(err, AuthError::Request(_)), "{err:?}");
-        assert!(err.to_string().contains("`.transport(..)`"), "{err}");
+        // The message stays fixed; what to do about it is the source's.
+        let source = std::error::Error::source(&err)
+            .map(ToString::to_string)
+            .unwrap_or_default();
+        assert!(source.contains("`.transport(..)`"), "{source:?}");
     }
 
     #[cfg(not(feature = "http"))]

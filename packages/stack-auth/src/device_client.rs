@@ -175,6 +175,25 @@ mod tests {
     use mocktail::prelude::*;
     use tempfile::TempDir;
 
+    /// ZeroKMS's status is the payload; its response body is in neither the
+    /// payload nor the message. A profile failure carries the profile's.
+    #[test]
+    fn a_server_error_carries_the_status_and_not_the_body() {
+        let error = DeviceClientError::Server {
+            status: 503,
+            body: "marker-body".into(),
+        };
+        let payload = error.payload();
+        assert_eq!(payload["status"], 503);
+        let shown = format!("{error} {payload:?}");
+        assert!(!shown.contains("marker-body"), "{shown}");
+
+        let error = DeviceClientError::Profile(stack_profile::ProfileError::NotFound {
+            path: "/profiles/auth.json".into(),
+        });
+        assert_eq!(error.payload()["path"], "/profiles/auth.json");
+    }
+
     fn make_test_jwt(zerokms_url: impl std::fmt::Display) -> String {
         use jsonwebtoken::{encode, EncodingKey, Header};
         use std::time::{SystemTime, UNIX_EPOCH};

@@ -6639,6 +6639,128 @@ mod tests {
             }
         }
 
+        /// Each refusal from the plan builder maps to the field it names and
+        /// the reason a binding reports: the lowering checks most of these
+        /// first, so not every one is reachable through [`plan`].
+        #[test]
+        fn every_plan_refusal_maps_to_its_field_and_reason() {
+            use crate::PlanError as P;
+            use Reason::*;
+            let field = || "age".to_string();
+            let some = |name: &str| Some(name.to_string());
+            let cases: Vec<(crate::Error, Option<String>, Reason)> = vec![
+                (crate::Error::Aead, None, Refused),
+                (
+                    P::ContextLabel(crate::LabelError::Empty).into(),
+                    None,
+                    ContextNotLabel,
+                ),
+                (
+                    P::FieldLabel {
+                        field: field(),
+                        source: crate::LabelError::Empty,
+                    }
+                    .into(),
+                    some("age"),
+                    ContextNotLabel,
+                ),
+                (
+                    P::DuplicateField { field: field() }.into(),
+                    some("age"),
+                    DuplicateField,
+                ),
+                (
+                    P::SharedIdentity {
+                        identity: "age".into(),
+                        first: "age".into(),
+                        second: "years".into(),
+                    }
+                    .into(),
+                    some("years"),
+                    SharedIdentity,
+                ),
+                (
+                    P::PassthroughIndexed { field: field() }.into(),
+                    some("age"),
+                    PassthroughWithOutputs,
+                ),
+                (
+                    P::DuplicateIndex {
+                        at: field(),
+                        index: "eq",
+                    }
+                    .into(),
+                    some("age"),
+                    DuplicateOutput,
+                ),
+                (P::EmptyIndexes.into(), None, NoOutputs),
+                (
+                    P::NotInPlan { field: field() }.into(),
+                    some("age"),
+                    UnknownField,
+                ),
+                (
+                    P::NotInValue { field: field() }.into(),
+                    some("age"),
+                    FieldMissing,
+                ),
+                (
+                    P::FieldType {
+                        field: field(),
+                        expected: "int64",
+                    }
+                    .into(),
+                    some("age"),
+                    FieldType,
+                ),
+                (
+                    P::NoSuchField { field: field() }.into(),
+                    some("age"),
+                    NoSuchField,
+                ),
+                (
+                    P::TargetWithVerbs { field: field() }.into(),
+                    some("age"),
+                    OutputsWithTarget,
+                ),
+                (
+                    P::IndexNotDeclared {
+                        field: field(),
+                        index: "ore",
+                    }
+                    .into(),
+                    some("age"),
+                    Refused,
+                ),
+                (
+                    P::IndexOptions {
+                        field: field(),
+                        declared: IndexSpec::Equality,
+                        asked: IndexSpec::Equality,
+                    }
+                    .into(),
+                    some("age"),
+                    Refused,
+                ),
+                (P::IdentityWithoutField.into(), None, Refused),
+                (P::MixedCiphers.into(), None, Refused),
+                (
+                    P::TwoContextSources {
+                        first: "the plan",
+                        second: "the call",
+                    }
+                    .into(),
+                    None,
+                    Refused,
+                ),
+                (P::NoContext.into(), None, Refused),
+            ];
+            for (error, field, reason) in cases {
+                let shown = format!("{error:?}");
+                assert_eq!(refusal(error), (field, reason), "{shown}");
+            }
+        }
+
         /// `in_field` names the field only where none is named yet.
         #[test]
         fn in_field_fills_only_an_unnamed_field() {

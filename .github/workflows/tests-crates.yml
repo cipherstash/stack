@@ -141,16 +141,20 @@ jobs:
       - name: Build the stack-encrypt examples
         run: cargo build --locked -p stack-encrypt --examples
 
-      # The crates release-plz publishes from 0.1.0. `--dry-run` packages and
-      # compiles each the way crates.io would (the three together, so
-      # stack-encrypt resolves the other two from cargo's temporary local
-      # registry), catching a publish-blocker on the PR instead of in
-      # release-crates on main: missing metadata, or a runtime path dependency
-      # with no `version`. No token. `--allow-dirty` tolerates files earlier
-      # steps leave in the tree. Once a version is on crates.io, cargo warns
-      # rather than fails on a dry run of it.
-      - name: Verify the stack-encrypt crates package cleanly for crates.io
-        run: cargo publish --locked --dry-run --allow-dirty -p stack-kms -p stack-encrypt-derive -p stack-encrypt
+      # The crates release-plz publishes. `--dry-run` packages and compiles
+      # each the way crates.io would (all five together, so each resolves the
+      # others from cargo's temporary local registry rather than from
+      # crates.io), catching a publish-blocker on the PR instead of in
+      # release-crates on main: missing metadata, a runtime path dependency
+      # with no `version`, or a crate that uses API its dependency's packaged
+      # source does not have yet. stack-profile and stack-auth are in the list
+      # because stack-kms and stack-encrypt depend on them: without them, cargo
+      # resolves the published versions, which lag the tree. No token.
+      # `--allow-dirty` tolerates files earlier steps leave in the tree. Once a
+      # version is on crates.io, cargo warns rather than fails on a dry run of
+      # it.
+      - name: Verify the stack-* crates package cleanly for crates.io
+        run: cargo publish --locked --dry-run --allow-dirty -p stack-profile -p stack-auth -p stack-kms -p stack-encrypt-derive -p stack-encrypt
 
   node-bindings:
     name: node bindings, napi typings, stack-auth-wasm

@@ -329,13 +329,13 @@ impl crate::ErrorPayload for TargetError {
                 ("reason", reason.as_str().into()),
             ]),
         };
-        // `name` is the target type for the first three, and the field for
+        // `name` is the target type for the first four, and the field for
         // the rest (the lowering fills it in): keep the two apart.
         match self {
-            Self::NoTargets { name } | Self::Unknown { name } | Self::NoQuery { name } => {
-                let _ = fields.insert("target".to_owned(), name.as_str().into());
-            }
-            Self::Unproducible { name, .. } => {
+            Self::NoTargets { name }
+            | Self::Unknown { name }
+            | Self::NoQuery { name }
+            | Self::Unproducible { name, .. } => {
                 let _ = fields.insert("target".to_owned(), name.as_str().into());
             }
             Self::Extended { name, .. }
