@@ -7,7 +7,7 @@
 //! silently stops matching. Breaking one of these tests means the derivation
 //! moved, and the `/v1` suffix in the domain labels has to move with it.
 //!
-//! Keyed by `FakeDataKeySource`'s deterministic index key, so the expected
+//! Keyed by `FakeKeysetRegistry`'s deterministic index key, so the expected
 //! bytes are stable without ZeroKMS.
 //!
 //! The pins moved once without the derivation moving: vitaminc 0.5 changed
@@ -18,13 +18,14 @@
 //! this crate's own moved.
 
 use stack_encrypt::nonempty;
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 use stack_encrypt::sem::{DefaultMatch, MatchConfig, MatchOptions};
 use stack_encrypt::StackCipher;
-use stack_kms::FakeDataKeySource;
+use stack_encrypt::StackCipherBuilder;
 
-async fn cipher() -> StackCipher<FakeDataKeySource> {
-    StackCipher::builder()
-        .kms(FakeDataKeySource::new())
+async fn cipher() -> StackCipher<FakeKeysetRegistry> {
+    StackCipherBuilder::new()
+        .registry(FakeKeysetRegistry::new())
         .init()
         .await
         .expect("build cipher")
@@ -45,7 +46,7 @@ async fn equality_term_bytes_are_pinned() {
 
     assert_eq!(
         hex(term.as_bytes()),
-        "c101ef066547cb33003c352dcd02a42bfe4a24e2d0609caca0189d9f1af8262a"
+        "4dc2ba6bbf77704d99bc7b762430cb801f1649f87cd39b95f08e208a3952d001"
     );
 }
 
@@ -63,8 +64,8 @@ async fn match_term_positions_are_pinned() {
     assert_eq!(
         term.positions(),
         [
-            4, 5, 10, 13, 14, 30, 39, 53, 56, 61, 85, 94, 95, 100, 111, 125, 127, 156, 173, 188,
-            189, 202, 208, 224, 229, 239
+            1, 36, 46, 55, 58, 66, 77, 102, 111, 138, 143, 144, 147, 153, 158, 159, 168, 169, 177,
+            183, 189, 198, 201, 209, 219, 224, 249
         ]
     );
 }
@@ -82,7 +83,7 @@ async fn ore_term_bytes_are_pinned() {
 
     assert_eq!(
         hex(term.as_ref()),
-        "1ae5f8558dc2d7dddd6c5b714e9d285586a1b8390d9140421e78906cba1bd651"
+        "4670ea1803ebb80320366cd5cc006e9eb235e85450c68096ec98874d407c8b5d"
     );
 }
 
@@ -100,7 +101,7 @@ async fn ope_term_bytes_are_pinned() {
 
     assert_eq!(
         hex(term.as_ref()),
-        "00837615a1ea2fdcbebf7efe34cf4d2ee432c7eeff84fbd72e1bf05efa2338033c"
+        "00f6bb865fbb63936656ce27932e3a2f061e6b21ba10a6fb12b91dcf74c2e290ba"
     );
 }
 
@@ -130,9 +131,9 @@ async fn match_term_positions_are_pinned_for_a_wide_filter() {
     assert_eq!(
         term.positions(),
         [
-            2287, 2398, 2404, 2829, 5150, 5181, 5293, 9255, 11964, 14175, 16080, 24350, 25354,
-            28362, 31748, 33647, 35845, 39141, 39480, 41998, 42621, 45365, 50303, 60896, 64668,
-            64957, 65365
+            480, 1847, 6056, 7056, 8125, 9417, 23729, 23967, 26521, 28563, 32721, 40550, 40740,
+            41217, 42095, 43422, 46249, 46894, 47814, 48015, 50234, 51021, 52443, 53497, 53570,
+            54199, 61322
         ],
         "positions for a 65536-bit filter are frozen: both bytes of each slice are in play"
     );

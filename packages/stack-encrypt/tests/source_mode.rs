@@ -17,12 +17,12 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 use stack_encrypt::sem::{EqualityTerm, MatchTerms};
 use stack_encrypt::target::{
     ciphertext, equality, matching, AeadContext, Borrowed, CallerContext, Encryption, Owned,
 };
 use stack_encrypt::{nonempty, Encrypt, NonEmpty, StackCipherText};
-use stack_kms::FakeDataKeySource;
 use vitaminc_aead::{Cipher, IntoAad};
 use vitaminc_prf::{IntoPrfContext, Prf, PrfValue, PrfVisitor};
 use vitaminc_protected::{Controlled, Protected};
@@ -235,7 +235,7 @@ async fn one_owned_operation_makes_no_copy() {
 
 /// A ciphertext beside an equality term, as a target composes them.
 fn sealed_and_indexed<'s, S, M>(
-) -> Encryption<'s, S, (StackCipherText, EqualityTerm), FakeDataKeySource, CallerContext, M>
+) -> Encryption<'s, S, (StackCipherText, EqualityTerm), FakeKeysetRegistry, CallerContext, M>
 where
     S: Encrypt + PrfValue + 's,
     M: stack_encrypt::target::ConsumeSource<'s, S> + stack_encrypt::target::ShareSource<'s, S>,

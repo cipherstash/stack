@@ -7,11 +7,9 @@
 
 mod common;
 
-use std::sync::atomic::Ordering as AtomicOrdering;
-
 use common::{counting_cipher, recording_cipher, stack_cipher};
-use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::plan::{pick, FieldValues};
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 use stack_encrypt::sem::{EqualityTerm, MatchTerms, OpeTerm, OreTerm};
 use stack_encrypt::target::{
     AeadContext, CallerContext, DeclaredContext, DecryptField, DecryptFrom, Decryptable,
@@ -38,7 +36,8 @@ struct LegacyEmail {
 
 impl EncryptFrom<String> for LegacyEmail {
     type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
+    fn encryption<'s, K: stack_encrypt::KeysetRegistry + 'static>(
+    ) -> Encryption<'s, String, Self, K, Self::Context>
     where
         String: 's,
     {
@@ -73,7 +72,7 @@ async fn a_plaintext_record_writes_what_the_old_chain_wrote() {
         let legacy: LegacyEmail = keyset.encrypt_as(&value, context.clone()).await.unwrap();
         assert_eq!(derived.hm, legacy.hm, "the same term");
         {
-            let sent = sent.lock().unwrap();
+            let sent = sent.calls();
             assert_eq!(sent.generate.len(), 2, "one request per record");
             let generated = sent.generated();
             assert_eq!(generated.len(), 2);
@@ -118,7 +117,7 @@ async fn a_derived_record_as_a_typed_field_answers_its_queries() {
         email: String,
     }
     let cipher = stack_cipher().await;
-    let users_plan: Plan<User, FakeDataKeySource> = Plan::context("users")
+    let users_plan: Plan<User, FakeKeysetRegistry> = Plan::context("users")
         .fields()
         .encrypt_into::<Email, _>(pick("email", |u: &User| &u.email))
         .build()
@@ -205,7 +204,7 @@ struct TwoEqualities {
 /// before any key is requested.
 #[tokio::test]
 async fn two_outputs_declaring_one_index_are_refused_before_any_request() {
-    let (cipher, generates, _) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let keyset = cipher.default_keyset();
     let result: Result<TwoEqualities, _> = "x"
         .to_string()
@@ -216,7 +215,7 @@ async fn two_outputs_declaring_one_index_are_refused_before_any_request() {
         "{:?}",
         result.err()
     );
-    assert_eq!(generates.load(AtomicOrdering::SeqCst), 0);
+    assert_eq!(provider.call_counts().0, 0);
 }
 
 // --- A record that stores its context -----------------------------------------
@@ -241,7 +240,8 @@ struct LegacyScoped {
 
 impl EncryptFrom<String> for LegacyScoped {
     type Context = NonEmpty<String>;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
+    fn encryption<'s, K: stack_encrypt::KeysetRegistry + 'static>(
+    ) -> Encryption<'s, String, Self, K, Self::Context>
     where
         String: 's,
     {
@@ -277,7 +277,7 @@ async fn a_context_field_record_writes_what_the_old_chain_wrote() {
     assert_eq!(derived.v, 3);
     assert_eq!(derived.hm, legacy.hm);
     {
-        let sent = sent.lock().unwrap();
+        let sent = sent.calls();
         let generated = sent.generated();
         assert_eq!(generated.len(), 2);
         assert_eq!(generated[0], generated[1]);
@@ -295,7 +295,7 @@ async fn a_context_field_record_writes_what_the_old_chain_wrote() {
 
 #[tokio::test]
 async fn a_context_field_plan_carries_and_checks_the_context() {
-    let (cipher, _, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let keyset = cipher.default_keyset();
     let value = "bob@example.com".to_string();
     let plan = Scoped::plan::<String>().unwrap();
@@ -318,7 +318,7 @@ async fn a_context_field_plan_carries_and_checks_the_context() {
         "{:?}",
         refused.err()
     );
-    assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 0);
+    assert_eq!(provider.call_counts().1, 0);
 
     // The expected one, and an unchecked one, open it.
     let record = seal().await.unwrap();
@@ -358,7 +358,7 @@ fn a_context_field_plan_has_one_context_source() {
 
 #[tokio::test]
 async fn a_one_value_plan_with_its_own_context_refuses_the_callers() {
-    let (cipher, generates, _) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let keyset = cipher.default_keyset();
     let plan = Plan::value::<String>()
         .context("users/email")
@@ -380,7 +380,7 @@ async fn a_one_value_plan_with_its_own_context_refuses_the_callers() {
         "{:?}",
         refused.err()
     );
-    assert_eq!(generates.load(AtomicOrdering::SeqCst), 0);
+    assert_eq!(provider.call_counts().0, 0);
 }
 
 // --- A record of ciphertexts alone takes an AEAD-only context -----------------
@@ -404,7 +404,7 @@ async fn a_tuple_of_ciphertexts_takes_an_aead_context() {
     let pair: (StackCipherText, StackCipherText) =
         keyset.encrypt_as(&value, context()).await.unwrap();
     assert_eq!(
-        sent.lock().unwrap().generated(),
+        sent.calls().generated(),
         ["names", "names", "names", "names"]
     );
     let opened: String = keyset.decrypt_as(record.shadow, context()).await.unwrap();
@@ -451,7 +451,8 @@ struct LegacyUser {
 
 impl EncryptFrom<User> for LegacyUser {
     type Context = DeclaredContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, User, Self, K, Self::Context>
+    fn encryption<'s, K: stack_encrypt::KeysetRegistry + 'static>(
+    ) -> Encryption<'s, User, Self, K, Self::Context>
     where
         User: 's,
     {
@@ -493,7 +494,7 @@ async fn a_struct_record_writes_what_the_old_chain_wrote() {
         assert_eq!(derived.email.terms, legacy.email.terms);
         assert_eq!(derived.age.ob, legacy.age.ob);
         {
-            let sent = sent.lock().unwrap();
+            let sent = sent.calls();
             assert_eq!(sent.generate.len(), 2, "one request per record");
             assert_eq!(
                 sent.generate[0], sent.generate[1],
@@ -515,7 +516,7 @@ async fn a_struct_record_writes_what_the_old_chain_wrote() {
 }
 
 /// `EncryptedUser`'s plan, written by hand.
-fn users_plan_by_hand<K: 'static>() -> Plan<User, K> {
+fn users_plan_by_hand<K: stack_encrypt::KeysetRegistry + 'static>() -> Plan<User, K> {
     Plan::context("users")
         .fields()
         .encrypt_into::<Encrypted<EqualityTerm>, _>(pick("email", |u: &User| &u.email))
@@ -528,8 +529,8 @@ fn users_plan_by_hand<K: 'static>() -> Plan<User, K> {
 
 #[test]
 fn a_struct_record_plan_is_the_hand_written_chain() {
-    let derived = EncryptedUser::plan::<FakeDataKeySource>().unwrap();
-    let by_hand: Plan<User, FakeDataKeySource> = users_plan_by_hand();
+    let derived = EncryptedUser::plan::<FakeKeysetRegistry>().unwrap();
+    let by_hand: Plan<User, FakeKeysetRegistry> = users_plan_by_hand();
     assert_eq!(format!("{derived:?}"), format!("{by_hand:?}"));
     let labels: Vec<_> = derived
         .field_plans()
@@ -558,7 +559,7 @@ struct TwoEqualitiesInAField {
 
 #[tokio::test]
 async fn a_field_declaring_one_index_twice_is_refused_before_any_request() {
-    let refused = TwoEqualitiesInAField::plan::<FakeDataKeySource>();
+    let refused = TwoEqualitiesInAField::plan::<FakeKeysetRegistry>();
     assert!(
         matches!(
             &refused,
@@ -567,7 +568,7 @@ async fn a_field_declaring_one_index_twice_is_refused_before_any_request() {
         "{:?}",
         refused.err()
     );
-    let (cipher, generates, _) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let keyset = cipher.default_keyset();
     let result = keyset
         .encrypt_as::<_, TwoEqualitiesInAField>(&user(), DeclaredContext::default())
@@ -577,7 +578,7 @@ async fn a_field_declaring_one_index_twice_is_refused_before_any_request() {
         "{:?}",
         result.err()
     );
-    assert_eq!(generates.load(AtomicOrdering::SeqCst), 0);
+    assert_eq!(provider.call_counts().0, 0);
 }
 
 /// Every plan the derive emits builds, except where an output's type
@@ -585,7 +586,7 @@ async fn a_field_declaring_one_index_twice_is_refused_before_any_request() {
 /// indexes they declare, and refused every other input at compile time.
 #[test]
 fn every_derived_plan_builds() {
-    assert!(EncryptedUser::plan::<FakeDataKeySource>().is_ok());
+    assert!(EncryptedUser::plan::<FakeKeysetRegistry>().is_ok());
     assert!(Email::plan::<String>().is_ok());
     assert!(Age::plan::<u32>().is_ok());
     assert!(Wide::plan::<u32>().is_ok());
@@ -596,7 +597,7 @@ fn every_derived_plan_builds() {
         "two outputs of one index"
     );
     assert!(
-        TwoEqualitiesInAField::plan::<FakeDataKeySource>().is_err(),
+        TwoEqualitiesInAField::plan::<FakeKeysetRegistry>().is_err(),
         "a field type of one index twice"
     );
 }
@@ -636,7 +637,7 @@ async fn a_struct_record_and_its_plan_written_by_hand_open_each_other() {
             .await
             .unwrap();
         {
-            let sent = sent.lock().unwrap();
+            let sent = sent.calls();
             assert_eq!(sent.generate.len(), 2, "one request per record");
             assert_eq!(sent.generate[0], sent.generate[1], "the same descriptors");
         }
@@ -733,7 +734,7 @@ async fn the_one_decryptable_output_opens_from_the_nested_tail() {
 
 #[tokio::test]
 async fn a_context_field_plan_refuses_an_empty_stored_context_before_any_request() {
-    let (cipher, _, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let keyset = cipher.default_keyset();
     let value = "bob@example.com".to_string();
     let plan = Scoped::plan::<String>().unwrap();
@@ -749,7 +750,7 @@ async fn a_context_field_plan_refuses_an_empty_stored_context_before_any_request
         )
         .await;
     assert!(refused.is_err(), "{:?}", refused.ok());
-    assert_eq!(retrieves.load(AtomicOrdering::SeqCst), 0);
+    assert_eq!(provider.call_counts().1, 0);
 }
 
 /// The derived `context_field` record's opener (written out by the derive)
@@ -795,7 +796,8 @@ struct Tenanted {
 struct TenantTag(EqualityTerm);
 impl EncryptFrom<String> for TenantTag {
     type Context = NonEmpty<u64>;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context> {
+    fn encryption<'s, K: stack_encrypt::KeysetRegistry + 'static>(
+    ) -> Encryption<'s, String, Self, K, Self::Context> {
         <EqualityTerm as EncryptFrom<String>>::encryption()
             .accepting::<NonEmpty<u64>>()
             .map(TenantTag)
@@ -808,7 +810,10 @@ impl Decryptable for TenantTag {
     const DECRYPTABLE: bool = false;
 }
 impl<P, Ctx> DecryptField<P, Ctx> for TenantTag {
-    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
+    fn decryption_field<K: stack_encrypt::KeysetRegistry + 'static>(
+        self,
+        _: Ctx,
+    ) -> Option<Decryption<P, K>> {
         None
     }
 }

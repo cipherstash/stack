@@ -1,7 +1,7 @@
 //! The chain shapes that must compile: a value with a context, indexed,
 //! field by field, a saved plan over a value and a collection, a query and
 //! an opening, and several chains batched.
-use stack_encrypt::kms::FakeDataKeySource;
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 use stack_encrypt::plan::{Field, Fields};
 use stack_encrypt::{Equality, Error, Match, Ore, Plan, StackCipher};
 
@@ -25,7 +25,7 @@ impl Field<u32> for Person {
     }
 }
 
-async fn chains(cipher: &StackCipher<FakeDataKeySource>, person: &Person) -> Result<(), Error> {
+async fn chains(cipher: &StackCipher<FakeKeysetRegistry>, person: &Person) -> Result<(), Error> {
     let doc = String::from("doc");
     let _ = cipher.encrypt(&doc).context("docs").await?;
     let _ = cipher.encrypt(&34u32).context("users/age").with((Equality, Ore)).await?;

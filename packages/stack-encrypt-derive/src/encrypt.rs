@@ -103,7 +103,7 @@ fn struct_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Tok
             /// field's type, not the indexes it declares, so this fails
             /// when the plan is built, not at compile time; every other
             /// input whose plan would not build does not compile.
-            pub fn plan<__K: 'static>() -> ::core::result::Result<#krate::Plan<#source, __K>, #krate::Error> {
+            pub fn plan<__K: #krate::KeysetRegistry + 'static>() -> ::core::result::Result<#krate::Plan<#source, __K>, #krate::Error> {
                 #krate::Plan::context(#prefix)
                     .fields::<#source, __K>()
                     #(#verbs)*
@@ -132,7 +132,7 @@ fn struct_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Tok
         quote!(#krate::target::EncryptFrom<#source>),
         quote! {
             type Context = #krate::target::DeclaredContext;
-            fn encryption<#lifetime, __K: 'static>() -> #krate::target::Encryption<#lifetime, #source, Self, __K, Self::Context> where #source: #lifetime {
+            fn encryption<#lifetime, __K: #krate::KeysetRegistry + 'static>() -> #krate::target::Encryption<#lifetime, #source, Self, __K, Self::Context> where #source: #lifetime {
                 match Self::plan::<__K>() {
                     ::core::result::Result::Ok(__plan) => __plan
                         .encryption(::core::option::Option::None)
@@ -257,7 +257,7 @@ fn value_derive(input: &DeriveInput, record: &Record, fields: &[&Field]) -> Toke
             quote!(#krate::target::EncryptFrom<#source>),
             quote! {
                 type Context = #context;
-                fn encryption<#lifetime, __K: 'static>() -> #krate::target::Encryption<#lifetime, #source, Self, __K, Self::Context> where #source: #lifetime {
+                fn encryption<#lifetime, __K: #krate::KeysetRegistry + 'static>() -> #krate::target::Encryption<#lifetime, #source, Self, __K, Self::Context> where #source: #lifetime {
                     match Self::plan::<#source>() {
                         ::core::result::Result::Ok(__plan) => #body,
                         ::core::result::Result::Err(__error) => #krate::target::Encryption::failed(__error),

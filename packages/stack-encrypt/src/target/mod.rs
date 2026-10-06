@@ -48,7 +48,7 @@
 //! impl<S> EncryptFrom<S> for StoredEquality
 //! where EqualityTerm: EncryptFrom<S, Context = CallerContext> {
 //!     type Context = CallerContext;
-//!     fn encryption<'s,K:'static>()->Encryption<'s,S,Self,K,Self::Context>
+//!     fn encryption<'s,K:stack_encrypt::KeysetRegistry+'static>()->Encryption<'s,S,Self,K,Self::Context>
 //!     where S:'s {
 //!         <EqualityTerm as EncryptFrom<S>>::encryption().map(|term| Self(term.into_bytes()))
 //!     }
@@ -107,7 +107,7 @@ pub use operations::{
     DecryptInto, Decryptable, Decryption, EncryptFrom, EncryptInto, Encryption,
 };
 pub use pending::{CipherScope, Pending, PendingFuture};
-pub use request::{Request, Responses};
+pub use request::{ProviderKey, Request, Responses};
 pub use source::{Borrowed, ConsumeSource, Owned, ShareSource, SourceMode};
 pub use stack_encrypt_derive::{DecryptInto, EncryptFrom};
 pub use tuples::JoinContext;

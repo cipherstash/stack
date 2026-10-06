@@ -4,7 +4,7 @@
 use stack_encrypt::sem::EqualityTerm;
 use stack_encrypt::target::{DecryptField, Decryptable, Decryption, Encryption, IndexSpec};
 use stack_encrypt::{DecryptInto, EncryptFrom, NonEmpty, StackCipher, StackCipherText};
-use stack_kms::FakeDataKeySource;
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(plaintext = String, context_type = NonEmpty<u64>)]
@@ -16,7 +16,7 @@ struct Sealed {
 struct Tag(#[allow(dead_code)] EqualityTerm);
 impl EncryptFrom<String> for Tag {
     type Context = NonEmpty<u64>;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context> {
+    fn encryption<'s, K: stack_encrypt::KeysetRegistry + 'static>() -> Encryption<'s, String, Self, K, Self::Context> {
         <EqualityTerm as EncryptFrom<String>>::encryption()
             .accepting::<NonEmpty<u64>>()
             .map(Tag)
@@ -29,7 +29,7 @@ impl Decryptable for Tag {
     const DECRYPTABLE: bool = false;
 }
 impl<P, Ctx> DecryptField<P, Ctx> for Tag {
-    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
+    fn decryption_field<K: stack_encrypt::KeysetRegistry + 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
         None
     }
 }
@@ -49,7 +49,7 @@ struct Pair {
     tag: Tag,
 }
 
-async fn round_trips(cipher: &StackCipher<FakeDataKeySource>) {
+async fn round_trips(cipher: &StackCipher<FakeKeysetRegistry>) {
     let keyset = cipher.default_keyset();
     let value = String::from("bob@example.com");
     let wrapped: Wrapped = keyset.encrypt_as(&value, NonEmpty::from(7u64)).await.unwrap();

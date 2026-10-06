@@ -21,7 +21,7 @@ struct Divergent {
 
 impl EncryptFrom<String> for Divergent {
     type Context = DeclaredContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
+    fn encryption<'s, K: stack_encrypt::KeysetRegistry + 'static>() -> Encryption<'s, String, Self, K, Self::Context>
     where
         String: 's,
     {

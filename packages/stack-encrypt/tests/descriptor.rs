@@ -1,7 +1,7 @@
 //! What reaches ZeroKMS: every data-key request carries the requesting
 //! context as its descriptor, on generate and on retrieve alike.
 //!
-//! The fake source ignores descriptors (see `FakeDataKeySource`'s docs), so
+//! The fake source ignores descriptors (see `FakeKeysetRegistry`'s docs), so
 //! these tests assert what is *sent*. The real service HMACs the descriptor
 //! into the key tag and refuses to re-derive under a different one — the
 //! examples exercise that against a live ZeroKMS.
@@ -15,6 +15,7 @@ use stack_encrypt::{
     nonempty, DecryptInto, Describe, Descriptor, EncryptFrom, Error, Label, NonEmpty,
     StackCipherText,
 };
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(EncryptFrom, DecryptInto)]
 #[stash(plaintext = u32)]
@@ -58,7 +59,7 @@ async fn a_leaf_sends_its_context_as_the_descriptor_both_ways() -> Result<(), Er
         .decrypt_into(&cipher, nonempty!("users").with("email"))
         .await?;
 
-    let sent = sent.lock().expect("lock").clone();
+    let sent = sent.calls();
     assert_eq!(sent.generated(), ["users/email"]);
     assert_eq!(sent.retrieved(), ["users/email"]);
     Ok(())
@@ -87,7 +88,7 @@ async fn a_label_is_sealed_under_the_descriptor_it_spells() -> Result<(), Error>
         .decrypt_into(&cipher, nonempty!("users").with("email").with(7u64))
         .await?;
 
-    let sent = sent.lock().expect("lock").clone();
+    let sent = sent.calls();
     assert_eq!(sent.generated(), ["users/email", "(users/email)/7u64"]);
     assert_eq!(sent.retrieved(), ["users/email", "(users/email)/7u64"]);
     Ok(())
@@ -105,7 +106,7 @@ async fn a_struct_sends_one_descriptor_per_field_context() -> Result<(), Error> 
     // The inferred pair `users/email`, the pair `users/nickname` the
     // field's `identity` keys it under, and the inner record under the pair
     // `users/age`; the term derives no key. One call each way.
-    let sent = sent.lock().expect("lock").clone();
+    let sent = sent.calls();
     assert_eq!(sent.generate.len(), 1, "one generate_keys call");
     assert_eq!(sent.retrieve.len(), 1, "one retrieve_keys call");
     assert_eq!(
@@ -147,7 +148,7 @@ async fn a_callers_context_extends_every_fields_descriptor() -> Result<(), Error
         ],
         "a composite context renders readably"
     );
-    let sent = sent.lock().expect("lock").clone();
+    let sent = sent.calls();
     assert_eq!(sent.generated(), expected);
     assert_eq!(sent.retrieved(), expected);
     Ok(())
@@ -167,7 +168,7 @@ async fn every_leaf_of_a_tree_shares_the_root_descriptor() -> Result<(), Error> 
 
     // Per-element AAD derivation is vitaminc's and stays inside the AEAD;
     // ZeroKMS sees the field, not the element.
-    let sent = sent.lock().expect("lock").clone();
+    let sent = sent.calls();
     assert_eq!(sent.generated(), ["users/age"; 3]);
     assert_eq!(sent.retrieved(), ["users/age"; 3]);
     Ok(())
@@ -184,7 +185,7 @@ async fn the_cipher_directed_path_renders_its_aad_the_same_way() -> Result<(), E
     let ct = keyset.encrypt(42u32, ()).await?;
     let _: u32 = cipher.decrypt(ct, ()).await?;
 
-    let sent = sent.lock().expect("lock").clone();
+    let sent = sent.calls();
     assert_eq!(sent.generated(), ["users/age", ""]);
     assert_eq!(sent.retrieved(), ["users/age", ""]);
     Ok(())
@@ -195,7 +196,6 @@ async fn the_cipher_directed_path_renders_its_aad_the_same_way() -> Result<(), E
 /// rendering, not ten thousand, on either path.
 #[tokio::test]
 async fn a_column_renders_an_over_long_context_once() -> Result<(), Error> {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
     /// A context that counts how often it is encoded. Over the limit once
@@ -248,7 +248,7 @@ async fn a_column_renders_an_over_long_context_once() -> Result<(), Error> {
         "one rendering on decrypt"
     );
 
-    let sent = sent.lock().expect("lock").clone();
+    let sent = sent.calls();
     assert_eq!(
         sent.generated(),
         ["users/age"; 3],
@@ -281,7 +281,7 @@ async fn a_column_with_nothing_to_bind_takes_any_context() -> Result<(), Error> 
     let opened: Vec<u32> = sealed.decrypt_into(&cipher, long).await?;
     assert!(opened.is_empty());
 
-    let sent = sent.lock().expect("lock").clone();
+    let sent = sent.calls();
     assert!(sent.generated().is_empty() && sent.retrieved().is_empty());
     Ok(())
 }
@@ -313,7 +313,7 @@ async fn an_over_long_context_is_refused_before_any_request_on_either_path() -> 
         "{opened:?}"
     );
 
-    let sent = sent.lock().expect("lock").clone();
+    let sent = sent.calls();
     assert_eq!(
         sent.generated(),
         ["users/age"],

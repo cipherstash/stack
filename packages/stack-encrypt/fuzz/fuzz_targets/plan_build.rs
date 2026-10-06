@@ -31,7 +31,7 @@ use std::collections::HashSet;
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use stack_encrypt::plan::{FieldKind, FieldValues, Opens, PlanError, Runs};
-use stack_encrypt::{Equality, Error, Label, Plan};
+use stack_encrypt::{Equality, Error, Label, NoRegistry, Plan};
 
 /// A name: one of a few that collide or sit on a rule's edge, or free text.
 #[derive(Arbitrary, Debug)]
@@ -87,8 +87,8 @@ struct Input {
 
 fuzz_target!(|input: Input| {
     let mut builder = match &input.context {
-        Some(context) => Plan::context(context.as_str()).fields::<FieldValues, ()>(),
-        None => Plan::fields::<FieldValues, ()>(),
+        Some(context) => Plan::context(context.as_str()).fields::<FieldValues, NoRegistry>(),
+        None => Plan::fields::<FieldValues, NoRegistry>(),
     };
     for field in &input.fields {
         let name = field.name.as_str();
@@ -182,13 +182,13 @@ fuzz_target!(|input: Input| {
                     }),
                     _ => None,
                 };
-                let run = Runs::<Vec<FieldValues>, ()>::check(&plan, &Vec::new(), call);
+                let run = Runs::<Vec<FieldValues>, NoRegistry>::check(&plan, &Vec::new(), call);
                 match (&expected, run) {
                     (None, Ok(())) => {}
                     (Some(expected), Err(Error::Plan(error))) => assert_eq!(&error, expected),
                     (expected, run) => panic!("an empty run checked {run:?}, not {expected:?}"),
                 }
-                let opened = Opens::<Vec<FieldValues>, ()>::check(&plan, &Vec::new(), call);
+                let opened = Opens::<Vec<FieldValues>, NoRegistry>::check(&plan, &Vec::new(), call);
                 match (&expected, opened) {
                     (_, Ok(())) if context_fields == 1 => {}
                     (None, Ok(())) => {}

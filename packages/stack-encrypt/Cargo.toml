@@ -1,7 +1,7 @@
 [package]
 name = "stack-encrypt"
 description = "Encrypt Rust values under per-value ZeroKMS data keys via the vitaminc cipher traits"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -17,12 +17,14 @@ license-file = "LICENSE"
 # `StackCipher::new()` fall back to the client key `stash auth login` writes
 # to the profile directory (`secretkey.json`) when CS_CLIENT_ID /
 # CS_CLIENT_KEY are not set — the same place `AutoStrategy` finds the token.
-stack-kms = { path = "../stack-kms", version = "0.1.0", default-features = false, features = ["profile"] }
+stack-kms = { path = "../stack-kms", version = "0.2.0", default-features = false, features = [
+    "profile",
+], optional = true }
 # `StackCipher::new()` builds a ZeroKMS client from the environment, so its
 # return type names the auto-detected auth strategy. Only needed with `http`.
 stack-auth = { workspace = true, optional = true }
 # `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`, re-exported from `target`.
-stack-encrypt-derive = { path = "../stack-encrypt-derive", version = "0.2.0" }
+stack-encrypt-derive = { path = "../stack-encrypt-derive", version = "0.3.0" }
 
 # The workspace vitaminc (0.5.1): one canonical context encoding shared by
 # the AEAD and PRF derivations (`IntoContext`, cipherstash/vitaminc#339),
@@ -36,6 +38,13 @@ vitaminc-encrypt = { workspace = true }
 vitaminc-hmac = { workspace = true }
 vitaminc-prf = { workspace = true }
 vitaminc-protected = { workspace = true }
+# The key-provider traits a `KeysetRegistry`'s provider implements. Pinned to
+# the same git rev as `stack-kms`'s copy: a differently-sourced dependency is
+# a different type at compile time, so the two must resolve to one package.
+vitaminc-kms = { git = "https://github.com/cipherstash/vitaminc", rev = "b3bc6eb", default-features = false }
+# The `Protected` those traits name. Same rev, same reason — see the comment
+# on the identical pair in `stack-kms/Cargo.toml`.
+vitaminc-protected-kms = { package = "vitaminc-protected", git = "https://github.com/cipherstash/vitaminc", rev = "b3bc6eb" }
 serde = { workspace = true }
 # `Descriptor`: the base64 rendering of a non-textual context for ZeroKMS.
 base64ct = { version = "1.7", features = ["alloc"] }
@@ -46,34 +55,66 @@ uuid = { workspace = true }
 zeroize = { workspace = true }
 
 [features]
-default = ["http"]
+default = ["http", "zerokms"]
+# `impl KeysetRegistry for Arc<StackKms>`: ZeroKMS as a source of keysets.
+# The trait itself is backend-neutral and always available; this is the one
+# backend whose implementation this crate carries, because the orphan rule
+# puts `impl KeyProvider for ZeroKmsKeyset` in `stack-kms` and this impl —
+# local trait, foreign type — here.
+#
+# Nothing outside this feature reaches for `stack-kms`, which is what the
+# backend-neutral claim means in dependency terms: with it off, no ZeroKMS
+# code is in the graph at all.
+#
+# It needs `stack-auth` for the bounds `StackKms` is generic over, but not
+# `stack-auth/http` — that is the `http` feature's job, and pulling a
+# transport in here would break the WASI gate.
+zerokms = ["dep:stack-kms", "dep:stack-auth"]
+# `stack_encrypt::registry::fake`: many keysets, no network. Downstream
+# crates (the WASI guest's native tests) build a cipher on it; it pulls in
+# vitaminc-kms's own `FakeKeyProvider`. A caller's dev-dependency on
+# stack-encrypt with this feature is enough: no direct stack-kms or
+# vitaminc-kms dependency has to agree with this crate's.
+test-support = ["vitaminc-kms/test-support"]
 # `StackCipher::new()` / `StackCipher::builder().init()` from the environment:
 # the default HTTP transport in stack-kms and the auto-detected auth strategy
-# in stack-auth. Off, a cipher is built over an explicit `DataKeySource`
-# (`StackCipher::builder().kms(..)`) and no HTTP client or TLS stack is in
-# the dependency graph — the shape the WASI/wazero guest builds against.
-http = ["dep:stack-auth", "stack-auth/http", "stack-kms/http"]
+# in stack-auth. Off, a cipher is built over an explicit registry
+# (`StackCipherBuilder::new().registry(..)`) and no HTTP client or TLS stack
+# is in the dependency graph — the shape the WASI/wazero guest builds against.
+#
+# Implies `zerokms`: the environment it builds from is a ZeroKMS one.
+http = ["zerokms", "stack-auth/http", "stack-kms/http"]
 # `stack_encrypt::dynamic`: encrypt and decrypt values whose types are known
 # only at runtime, as an FFI binding's are. Off by default — it is only of
 # use to a binding author, and it pulls `vitaminc-aead-value` in.
 dynamic = ["dep:vitaminc-aead-value"]
-# `stack_encrypt::kms::FakeDataKeySource`: the in-memory key source for tests
-# with no ZeroKMS, so a caller's dev-dependency on stack-encrypt is enough and
-# no direct stack-kms dependency has to agree with this crate's.
-test-support = ["stack-kms/test-support"]
 
 [dev-dependencies]
+# The crate under test, with its own `test-support` on: integration tests
+# link the library as a dependency, and `cargo test` does not turn a crate's
+# features on for its own test binaries.
+stack-encrypt = { path = ".", features = ["test-support"] }
 serde_json = { workspace = true }
-# `default-features = false` here too: dev-dependency features unify into the
+# For `examples/zerokms_auth.rs`, which names the ZeroKMS client directly, and
+# for `tests/registry_zerokms.rs`: `test-support` is the in-memory
+# `ZeroKMSConnection` that lets `impl KeysetRegistry for Arc<StackKms>` — which
+# the orphan rule puts in *this* crate — be tested without a network.
+# `default-features = false`: dev-dependency features unify into the
 # `cargo test -p stack-encrypt --no-default-features` graph, so leaving the
 # default on would silently pull `stack-kms/http` -> `stack-auth/http` ->
-# reqwest back into the "no HTTP" gate (`wasm:no-http-test`). The tests only
-# need `FakeDataKeySource` (`test-support`).
-stack-kms = { path = "../stack-kms", default-features = false, features = ["test-support"] }
+# reqwest back into the "no HTTP" gate (`wasm:no-http-test`).
+stack-kms = { path = "../stack-kms", default-features = false, features = [
+    "test-support",
+] }
 # To build the request errors ZeroKMS answers a keyset lookup with (a name it
 # does not know, a request that got no answer) in a test double. Already in
 # the no-HTTP graph through stack-kms; it has no features of its own.
 zerokms-protocol = { workspace = true }
+# `StaticTokenStrategy`, the auth double `tests/registry_zerokms.rs` builds its
+# `StackKms` over. `default-features = false` for the no-HTTP gate, as above.
+stack-auth = { workspace = true, default-features = false, features = [
+    "test-utils",
+] }
 tokio = { workspace = true, features = ["rt", "macros"] }
 # Compile-fail tests for the derive diagnostics (`tests/ui`).
 trybuild = "1"

@@ -49,7 +49,7 @@
 //! could replace a field's `"c"` subtree with a passthrough carrying forged
 //! plaintext and have it reported as a successful decrypt.
 
-use stack_kms::DataKeySource;
+use crate::registry::KeysetRegistry;
 use vitaminc_aead_value::{FfiValue, ValueKind};
 use vitaminc_protected::Protected;
 
@@ -432,12 +432,12 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
 ///
 /// ```
 /// use stack_encrypt::dynamic::{record, FfiValue, Scope};
-/// use stack_encrypt::StackCipher;
-/// use stack_encrypt::kms::FakeDataKeySource;
+/// use stack_encrypt::{StackCipher, StackCipherBuilder};
+/// use stack_encrypt::registry::fake::FakeKeysetRegistry;
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-/// let cipher = StackCipher::builder()
-///     .kms(FakeDataKeySource::new())
+/// let cipher = StackCipherBuilder::new()
+///     .registry(FakeKeysetRegistry::new())
 ///     .init()
 ///     .await?;
 /// let keyset = cipher.default_keyset();
@@ -497,7 +497,8 @@ pub async fn encrypt<K>(
     plan: &Plan,
 ) -> Result<StackCipherText, Error>
 where
-    K: DataKeySource + Sync,
+    K: KeysetRegistry + Sync,
+    K::Provider: Send + Sync,
 {
     let Rows { rows, batched } = source_rows(source, plan)?;
 
@@ -569,7 +570,8 @@ pub async fn decrypt<K>(
     plan: &Plan,
 ) -> Result<FfiValue, Error>
 where
-    K: DataKeySource + Sync + 'static,
+    K: KeysetRegistry + Sync + 'static,
+    K::Provider: Send + Sync,
 {
     let Rows { rows, batched } = record_leaves(record, plan)?;
     let opened = plan
@@ -978,7 +980,8 @@ async fn build_row<'c, K>(
     pendings: &mut Vec<Pending<'c, StackCipherText, K>>,
 ) -> Result<Vec<FieldSkeleton>, Error>
 where
-    K: DataKeySource + Sync,
+    K: KeysetRegistry + Sync,
+    K::Provider: Send + Sync,
 {
     // A row `source_rows` did not align is a bug here, not caller input.
     if row.len() != plan.fields.len() {
@@ -1070,78 +1073,37 @@ fn record_leaves(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::borrow::Cow;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use stack_kms::{
-        DataKey, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IdentifiedBy, IndexKey,
-        IndexKeySource, RetrieveKeyPayload, UnverifiedContext,
-    };
-    use uuid::Uuid;
     use vitaminc_protected::Controlled;
 
     use crate::dynamic::context;
-    use crate::{nonempty, StackCipher};
+    use crate::registry::fake::{FakeKeysetRegistry, FakeProvider};
+    use crate::{nonempty, StackCipher, StackCipherBuilder};
 
-    /// `FakeDataKeySource` with call counters, so the batching contract —
+    /// `FakeKeysetRegistry` with call counters, so the batching contract —
     /// one key request per invocation, none for a refused call — is
     /// asserted rather than trusted.
-    #[derive(Default)]
-    struct Counting {
-        inner: FakeDataKeySource,
-        generate_calls: AtomicUsize,
-        retrieve_calls: AtomicUsize,
-    }
-
-    impl DataKeySource for Counting {
-        async fn generate_keys(
-            &self,
-            payloads: Vec<GenerateKeyPayload<'_>>,
-            keyset_id: Option<Uuid>,
-            unverified_context: Option<Cow<'_, UnverifiedContext>>,
-        ) -> Result<Vec<DataKeyWithTag>, stack_kms::Error> {
-            let _ = self.generate_calls.fetch_add(1, Ordering::SeqCst);
-            self.inner
-                .generate_keys(payloads, keyset_id, unverified_context)
-                .await
-        }
-
-        async fn retrieve_keys(
-            &self,
-            payloads: Vec<RetrieveKeyPayload<'_>>,
-            keyset_id: Option<Uuid>,
-            unverified_context: Option<&UnverifiedContext>,
-        ) -> Result<Vec<DataKey>, stack_kms::Error> {
-            let _ = self.retrieve_calls.fetch_add(1, Ordering::SeqCst);
-            self.inner
-                .retrieve_keys(payloads, keyset_id, unverified_context)
-                .await
-        }
-    }
-
-    impl IndexKeySource for Counting {
-        async fn load_index_key(
-            &self,
-            keyset_id: Option<IdentifiedBy>,
-        ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
-            self.inner.load_index_key(keyset_id).await
-        }
-    }
-
-    async fn cipher() -> StackCipher<Counting> {
-        StackCipher::builder()
-            .kms(Counting::default())
+    async fn cipher() -> StackCipher<FakeKeysetRegistry> {
+        StackCipherBuilder::new()
+            .registry(FakeKeysetRegistry::new())
             .init()
             .await
             .expect("build cipher")
     }
 
-    fn generates(cipher: &StackCipher<Counting>) -> usize {
-        cipher.kms().generate_calls.load(Ordering::SeqCst)
+    /// The provider serving the cipher's default keyset: it counts the
+    /// batched calls it serves, which is what these tests assert rather than
+    /// trust.
+    fn provider(cipher: &StackCipher<FakeKeysetRegistry>) -> FakeProvider {
+        cipher.registry().default_keyset().1
     }
 
-    fn retrieves(cipher: &StackCipher<Counting>) -> usize {
-        cipher.kms().retrieve_calls.load(Ordering::SeqCst)
+    fn generates(cipher: &StackCipher<FakeKeysetRegistry>) -> usize {
+        provider(cipher).call_counts().0
+    }
+
+    fn retrieves(cipher: &StackCipher<FakeKeysetRegistry>) -> usize {
+        provider(cipher).call_counts().1
     }
 
     // ---- values, as a binding would decode them ----------------------------
@@ -2069,7 +2031,9 @@ mod tests {
     mod given_a_stored_record_that_does_not_fit_the_plan {
         use super::*;
 
-        async fn sealed(keyset: &KeysetCipher<'_, Counting>) -> Vec<(String, StackCipherText)> {
+        async fn sealed(
+            keyset: &KeysetCipher<'_, FakeKeysetRegistry>,
+        ) -> Vec<(String, StackCipherText)> {
             map(encrypt(keyset, row(34), &the_plan())
                 .await
                 .expect("encrypt"))
@@ -2240,15 +2204,11 @@ mod tests {
     mod given_a_keyset_scope {
         use super::*;
 
-        fn named(name: &str) -> IdentifiedBy {
-            IdentifiedBy::Name(name.to_string().into())
-        }
-
         #[tokio::test]
         async fn refuses_a_leaf_from_another_keyset_before_any_key_is_retrieved() {
             let cipher = cipher().await;
-            let acme = cipher.keyset(named("acme")).await.expect("acme");
-            let globex = cipher.keyset(named("globex")).await.expect("globex");
+            let acme = cipher.keyset("acme").await.expect("acme");
+            let globex = cipher.keyset("globex").await.expect("globex");
             let plan = the_plan();
 
             let sealed = encrypt(&acme, row(34), &plan).await.expect("encrypt");

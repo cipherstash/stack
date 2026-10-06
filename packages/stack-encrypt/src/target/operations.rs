@@ -13,9 +13,10 @@ use super::context::{AeadContext, CallerContext, DeclaredContext, Extends};
 use super::core::{encrypt_native, open_native, Term};
 use super::source::{Borrowed, ConsumeSource, ShareSource, SourceMode};
 use super::{CipherScope, Pending};
+use crate::registry::KeysetRegistry;
 use crate::{Error, IntoContext, KeysetCipher, NonEmpty, StackCipher, StackCipherText};
-use stack_kms::MaybeSend;
 use std::fmt;
+use vitaminc_kms::provider::MaybeSend;
 
 /// Declaration that an encrypted target is produced from `S`.
 ///
@@ -36,7 +37,7 @@ pub trait EncryptFrom<S>: Sized + 'static {
     /// The description the cipher executes for one value of `S`. The context
     /// is supplied when the description is run, not here, so every operation
     /// beneath it receives the same one (ADR-0004).
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    fn encryption<'s, K: KeysetRegistry + 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's;
     /// The indexes this target's terms answer queries by, as data, under
@@ -64,7 +65,7 @@ pub trait DecryptInto<P>: Sized {
     /// which may name the destination the caller believes it is opening.
     type Context;
     /// The description the cipher executes to recover `P`.
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K>;
+    fn decryption<K: KeysetRegistry + 'static>(self, context: Self::Context) -> Decryption<P, K>;
 }
 
 // What the description is handed is `M::Source`: `&'s S` in the default
@@ -126,7 +127,7 @@ type Open<T, K> = Box<dyn for<'a> FnOnce(&'a StackCipher<K>) -> Pending<'a, T, K
 /// a single operation consumes the plaintext without copying it, so `S` need
 /// not be `Clone`; [`zip`](Self::zip) is the one place that asks for it.
 #[must_use = "an encryption description does nothing until a keyset cipher executes it"]
-pub struct Encryption<'s, S: 's, T, K, Ctx, M: SourceMode<'s, S> = Borrowed> {
+pub struct Encryption<'s, S: 's, T, K: KeysetRegistry, Ctx, M: SourceMode<'s, S> = Borrowed> {
     build: Build<'s, S, T, K, Ctx, M>,
 }
 /// A composable description of how `T` is recovered from a stored target.
@@ -134,23 +135,25 @@ pub struct Encryption<'s, S: 's, T, K, Ctx, M: SourceMode<'s, S> = Borrowed> {
 /// Built from [`open`] and the combinators below; executed only by
 /// `decrypt_as`. Nothing runs, and no key is retrieved, until then.
 #[must_use = "a decryption description does nothing until a cipher executes it"]
-pub struct Decryption<T, K> {
+pub struct Decryption<T, K: KeysetRegistry> {
     inner: Opening<T, K>,
 }
 /// A declaration either failed while it was being built, or has an opening
 /// to execute. A failure is held as a value rather than a closure that
 /// yields it, so a combinator can see it without executing anything: that
 /// is what lets [`Decryption::all`] stop at the first failed item.
-enum Opening<T, K> {
+enum Opening<T, K: KeysetRegistry> {
     Failed(Error),
     Open(Open<T, K>),
 }
-impl<'s, S: 's, T, K, Ctx, M: SourceMode<'s, S>> fmt::Debug for Encryption<'s, S, T, K, Ctx, M> {
+impl<'s, S: 's, T, K: KeysetRegistry, Ctx, M: SourceMode<'s, S>> fmt::Debug
+    for Encryption<'s, S, T, K, Ctx, M>
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Encryption").finish_non_exhaustive()
     }
 }
-impl<T, K> fmt::Debug for Decryption<T, K> {
+impl<T, K: KeysetRegistry> fmt::Debug for Decryption<T, K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut debug = f.debug_struct("Decryption");
         if let Opening::Failed(error) = &self.inner {
@@ -160,7 +163,7 @@ impl<T, K> fmt::Debug for Decryption<T, K> {
     }
 }
 
-impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
+impl<'s, S: 's, T: 'static, K: KeysetRegistry + 'static, Ctx: 's, M: SourceMode<'s, S>>
     Encryption<'s, S, T, K, Ctx, M>
 {
     /// A description whose output is already known — metadata a record
@@ -310,7 +313,7 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>>
     }
 }
 
-impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
+impl<'s, S: 's, T: 'static, K: KeysetRegistry + 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     /// Lift a description of a field to a description of the struct that
     /// holds it, which is how a `struct = T` derive composes its fields.
     ///
@@ -377,7 +380,9 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
 /// error without I/O. Zipped beside a record's fields, a failed check fails
 /// the whole record before any key is requested. Crate-internal: the plan
 /// builder uses it to refuse a value whose fields the plan does not match.
-pub(crate) fn inspect<'s, S: 's, K: 'static, Ctx: 's, C>(check: C) -> Encryption<'s, S, (), K, Ctx>
+pub(crate) fn inspect<'s, S: 's, K: KeysetRegistry + 'static, Ctx: 's, C>(
+    check: C,
+) -> Encryption<'s, S, (), K, Ctx>
 where
     C: FnOnce(&S) -> Result<(), Error> + MaybeSend + 's,
 {
@@ -386,8 +391,14 @@ where
     }
 }
 
-impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's + Clone + MaybeSend + 'static, M>
-    Encryption<'s, S, T, K, Ctx, M>
+impl<
+        's,
+        S: 's,
+        T: 'static,
+        K: KeysetRegistry + 'static,
+        Ctx: 's + Clone + MaybeSend + 'static,
+        M,
+    > Encryption<'s, S, T, K, Ctx, M>
 where
     M: SourceMode<'s, S>,
 {
@@ -423,8 +434,12 @@ where
 /// `Encrypt` consumes the plaintext. In [`Owned`](super::Owned) mode it is
 /// handed over, so `S` need not be `Clone`; in the default [`Borrowed`] mode
 /// it is cloned once, which is what `M: ConsumeSource<'s, S>` asks.
-pub fn ciphertext<'s, S: crate::Encrypt + 's, K: 'static, M: ConsumeSource<'s, S>>(
-) -> Encryption<'s, S, StackCipherText, K, AeadContext, M> {
+pub fn ciphertext<
+    's,
+    S: crate::Encrypt + 's,
+    K: KeysetRegistry + 'static,
+    M: ConsumeSource<'s, S>,
+>() -> Encryption<'s, S, StackCipherText, K, AeadContext, M> {
     Encryption {
         build: Box::new(
             move |source, cipher, cx: AeadContext| match cx.validated() {
@@ -452,7 +467,7 @@ pub fn ciphertext<'s, S: crate::Encrypt + 's, K: 'static, M: ConsumeSource<'s, S
 pub fn passthrough<'s, S, K, M, Ctx>() -> Encryption<'s, S, S, K, Ctx, M>
 where
     S: MaybeSend + 'static,
-    K: 'static,
+    K: KeysetRegistry + 'static,
     M: ConsumeSource<'s, S>,
     Ctx: 's,
 {
@@ -473,7 +488,7 @@ macro_rules! term_operation {
         $function:ident, $output:ty, consume, [$($generics:tt)*], [$($bounds:tt)*]
     ) => {
         $(#[$doc])*
-        pub fn $function<'s, S, K: 'static, M: ConsumeSource<'s, S>, $($generics)*>(
+        pub fn $function<'s, S, K: KeysetRegistry + 'static, M: ConsumeSource<'s, S>, $($generics)*>(
         ) -> Encryption<'s, S, $output, K, CallerContext, M>
         where
             S: 's,
@@ -492,7 +507,7 @@ macro_rules! term_operation {
         $function:ident, $output:ty, view, [$($generics:tt)*], [$($bounds:tt)*]
     ) => {
         $(#[$doc])*
-        pub fn $function<'s, S, K: 'static, M: SourceMode<'s, S>, $($generics)*>(
+        pub fn $function<'s, S, K: KeysetRegistry + 'static, M: SourceMode<'s, S>, $($generics)*>(
         ) -> Encryption<'s, S, $output, K, CallerContext, M>
         where
             S: 's,
@@ -531,7 +546,7 @@ term_operation!(
     [S: cllw_ore::CllwOpeEncrypt + Send + 'static, S::Output: Send + 'static]
 );
 
-impl<T: 'static, K: 'static> Decryption<T, K> {
+impl<T: 'static, K: KeysetRegistry + 'static> Decryption<T, K> {
     /// Reject the opening: execution yields `error` without I/O, any
     /// description this is zipped into fails with it, and a collection
     /// ([`all`](Self::all)) stops at it. The derives use it when a stored
@@ -621,7 +636,7 @@ impl<T: 'static, K: 'static> Decryption<T, K> {
 }
 /// The canonical opening operation: retrieve the tree's keys and decode `P`
 /// through its own Vitamin C `Decrypt` implementation, under `context`.
-pub fn open<P: crate::Decrypt<'static> + 'static, K: 'static>(
+pub fn open<P: crate::Decrypt<'static> + 'static, K: KeysetRegistry + 'static>(
     tree: StackCipherText,
     context: impl Into<AeadContext>,
 ) -> Decryption<P, K> {
@@ -632,7 +647,7 @@ pub fn open<P: crate::Decrypt<'static> + 'static, K: 'static>(
     }))
 }
 
-impl<K: 'static> KeysetCipher<'_, K> {
+impl<K: KeysetRegistry + 'static> KeysetCipher<'_, K> {
     /// Encrypt `source` into `T` under this keyset, as `T`'s declaration
     /// describes. The returned [`Pending`] settles every key request the
     /// declaration made in one batch.
@@ -653,12 +668,13 @@ impl<K: 'static> KeysetCipher<'_, K> {
     ///
     /// ```
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
-    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::registry::fake::FakeKeysetRegistry;
+    /// use stack_encrypt::StackCipherBuilder;
     /// use stack_encrypt::target::{self, AeadContext, Owned};
     /// use stack_encrypt::{nonempty, StackCipher, StackCipherText};
     /// use vitaminc_protected::Protected;
     ///
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let cipher = StackCipherBuilder::new().registry(FakeKeysetRegistry::new()).init().await?;
     /// let keyset = cipher.default_keyset();
     /// // `Protected<String>` is deliberately not `Clone`: it is moved in, and
     /// // the one copy is wiped once it is sealed.
@@ -705,11 +721,12 @@ impl<K: 'static> KeysetCipher<'_, K> {
     ///
     /// ```
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
-    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::registry::fake::FakeKeysetRegistry;
+    /// use stack_encrypt::StackCipherBuilder;
     /// use stack_encrypt::target::{self, AeadContext, Decryption};
     /// use stack_encrypt::{nonempty, StackCipher, StackCipherText};
     ///
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let cipher = StackCipherBuilder::new().registry(FakeKeysetRegistry::new()).init().await?;
     /// let keyset = cipher.default_keyset();
     /// let context = || AeadContext::from(nonempty!("users/email"));
     /// let sealed: StackCipherText = keyset.encrypt_as(&"bob@example.com".to_string(), context()).await?;
@@ -740,7 +757,7 @@ impl<K: 'static> KeysetCipher<'_, K> {
         source.decryption(context).open_in(self)
     }
 }
-impl<K: 'static> StackCipher<K> {
+impl<K: KeysetRegistry + 'static> StackCipher<K> {
     /// Run a [`Decryption`] held in a variable through the client: leaves
     /// from any of its keysets open here. See
     /// [`KeysetCipher::run_decryption`], which refuses a foreign one.
@@ -770,7 +787,10 @@ impl<K: 'static> StackCipher<K> {
 pub trait EncryptInto: Sized {
     /// Encrypt into `T` with its default context — `()` for a declaration
     /// that carries its own contexts.
-    fn encrypt_into<'a, T, K: 'static>(&self, cipher: &'a KeysetCipher<'_, K>) -> Pending<'a, T, K>
+    fn encrypt_into<'a, T, K: KeysetRegistry + 'static>(
+        &self,
+        cipher: &'a KeysetCipher<'_, K>,
+    ) -> Pending<'a, T, K>
     where
         T: EncryptFrom<Self>,
         T::Context: Default,
@@ -779,7 +799,7 @@ pub trait EncryptInto: Sized {
     }
     /// Encrypt into `T` under `context`, accepting anything that converts
     /// into `T`'s context — a `nonempty!` literal, say.
-    fn encrypt_into_with_context<'a, T, K: 'static>(
+    fn encrypt_into_with_context<'a, T, K: KeysetRegistry + 'static>(
         &self,
         cipher: &'a KeysetCipher<'_, K>,
         context: impl Into<T::Context>,
@@ -791,7 +811,7 @@ pub trait EncryptInto: Sized {
     }
     /// [`encrypt_into_with_context`](Self::encrypt_into_with_context) named
     /// from the target's side: `Target::encrypt_from(&value, &keyset, ctx)`.
-    fn encrypt_from<'a, S, K: 'static>(
+    fn encrypt_from<'a, S, K: KeysetRegistry + 'static>(
         source: &S,
         cipher: &'a KeysetCipher<'_, K>,
         context: impl Into<<Self as EncryptFrom<S>>::Context>,
@@ -809,7 +829,7 @@ impl<T> EncryptInto for T {}
 pub trait DecryptFrom: Sized + 'static {
     /// Recover `P` through `cipher`, which may be a [`KeysetCipher`] (refusing
     /// foreign leaves) or a [`StackCipher`] (opening any).
-    fn decrypt_into<'a, P: 'static, K: 'static>(
+    fn decrypt_into<'a, P: 'static, K: KeysetRegistry + 'static>(
         self,
         cipher: impl CipherScope<'a, K>,
         context: impl Into<<Self as DecryptInto<P>>::Context>,
@@ -822,7 +842,7 @@ pub trait DecryptFrom: Sized + 'static {
     /// Recover `Self` from `source` with its default context — the plain
     /// "read the stored context and validate it" for a record that stores
     /// one.
-    fn decrypt_from<'a, S, K: 'static>(
+    fn decrypt_from<'a, S, K: KeysetRegistry + 'static>(
         source: S,
         cipher: impl CipherScope<'a, K>,
     ) -> Pending<'a, Self, K>
@@ -833,7 +853,7 @@ pub trait DecryptFrom: Sized + 'static {
         source.decrypt_into(cipher, S::Context::default())
     }
     /// Recover `Self` from `source` under `context`.
-    fn decrypt_from_with_context<'a, S, K: 'static>(
+    fn decrypt_from_with_context<'a, S, K: KeysetRegistry + 'static>(
         source: S,
         cipher: impl CipherScope<'a, K>,
         context: impl Into<S::Context>,
@@ -854,7 +874,7 @@ impl<T: 'static> DecryptFrom for T {}
 // capability, and run a non-`Clone` plaintext in `Owned` mode.
 impl<S: crate::Encrypt + Clone> EncryptFrom<S> for StackCipherText {
     type Context = AeadContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    fn encryption<'s, K: KeysetRegistry + 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
@@ -863,13 +883,13 @@ impl<S: crate::Encrypt + Clone> EncryptFrom<S> for StackCipherText {
 }
 impl<P: crate::Decrypt<'static> + 'static> DecryptInto<P> for StackCipherText {
     type Context = AeadContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
+    fn decryption<K: KeysetRegistry + 'static>(self, context: Self::Context) -> Decryption<P, K> {
         open(self, context)
     }
 }
 impl<S: vitaminc_prf::PrfValue + Clone> EncryptFrom<S> for crate::sem::EqualityTerm {
     type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    fn encryption<'s, K: KeysetRegistry + 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
@@ -883,7 +903,7 @@ impl<S: AsRef<str>, O: crate::sem::MatchConfig + 'static> EncryptFrom<S>
     for crate::sem::MatchTerms<O>
 {
     type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    fn encryption<'s, K: KeysetRegistry + 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
@@ -899,7 +919,7 @@ where
     S::Output: Send + 'static,
 {
     type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    fn encryption<'s, K: KeysetRegistry + 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
@@ -915,7 +935,7 @@ where
     S::Output: Send + 'static,
 {
     type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    fn encryption<'s, K: KeysetRegistry + 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
@@ -936,7 +956,8 @@ where
     T::Context: Clone + 'static + MaybeSend,
 {
     type Context = T::Context;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, Vec<S>, Self, K, Self::Context>
+    fn encryption<'s, K: KeysetRegistry + 'static>(
+    ) -> Encryption<'s, Vec<S>, Self, K, Self::Context>
     where
         S: 's,
     {
@@ -957,7 +978,8 @@ where
     T::Context: 'static + MaybeSend,
 {
     type Context = T::Context;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, Option<S>, Self, K, Self::Context>
+    fn encryption<'s, K: KeysetRegistry + 'static>(
+    ) -> Encryption<'s, Option<S>, Self, K, Self::Context>
     where
         S: 's,
     {
@@ -974,7 +996,10 @@ where
     T::Context: Clone + 'static,
 {
     type Context = T::Context;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Vec<P>, K> {
+    fn decryption<K: KeysetRegistry + 'static>(
+        self,
+        context: Self::Context,
+    ) -> Decryption<Vec<P>, K> {
         Decryption::all(
             self.into_iter()
                 .map(|item| item.decryption(context.clone())),
@@ -983,7 +1008,10 @@ where
 }
 impl<P: 'static + MaybeSend, T: DecryptInto<P> + 'static> DecryptInto<Option<P>> for Option<T> {
     type Context = T::Context;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<Option<P>, K> {
+    fn decryption<K: KeysetRegistry + 'static>(
+        self,
+        context: Self::Context,
+    ) -> Decryption<Option<P>, K> {
         Decryption::optional(self.map(|item| item.decryption(context)))
     }
 }
@@ -996,21 +1024,30 @@ impl<P: 'static + MaybeSend, T: DecryptInto<P> + 'static> DecryptInto<Option<P>>
 /// [`StackCipherText`] implements it alongside [`Decryptable`].
 pub trait DecryptField<P, Ctx>: Sized {
     /// The opening description, if this field holds recoverable ciphertext.
-    fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>>;
+    fn decryption_field<K: KeysetRegistry + 'static>(
+        self,
+        context: Ctx,
+    ) -> Option<Decryption<P, K>>;
 }
 impl<P: 'static, Ctx> DecryptField<P, Ctx> for StackCipherText
 where
     Self: DecryptInto<P>,
     Ctx: Into<<Self as DecryptInto<P>>::Context>,
 {
-    fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
+    fn decryption_field<K: KeysetRegistry + 'static>(
+        self,
+        context: Ctx,
+    ) -> Option<Decryption<P, K>> {
         Some(self.decryption(context.into()))
     }
 }
 impl<P: 'static, T: 'static + Decryptable + DecryptField<P, Ctx>, Ctx: Clone + 'static>
     DecryptField<Vec<P>, Ctx> for Vec<T>
 {
-    fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<Vec<P>, K>> {
+    fn decryption_field<K: KeysetRegistry + 'static>(
+        self,
+        context: Ctx,
+    ) -> Option<Decryption<Vec<P>, K>> {
         if !T::DECRYPTABLE {
             return None;
         }
@@ -1023,7 +1060,10 @@ impl<P: 'static, T: 'static + Decryptable + DecryptField<P, Ctx>, Ctx: Clone + '
 impl<P: 'static + MaybeSend, T: 'static + Decryptable + DecryptField<P, Ctx>, Ctx: 'static>
     DecryptField<Option<P>, Ctx> for Option<T>
 {
-    fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<Option<P>, K>> {
+    fn decryption_field<K: KeysetRegistry + 'static>(
+        self,
+        context: Ctx,
+    ) -> Option<Decryption<Option<P>, K>> {
         if !T::DECRYPTABLE {
             return None;
         }
@@ -1053,13 +1093,14 @@ impl<T: Decryptable> Decryptable for Option<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::fake::FakeKeysetRegistry;
+    use crate::StackCipherBuilder;
     use crate::{nonempty, sem::EqualityTerm};
-    use stack_kms::FakeDataKeySource;
 
     #[tokio::test]
     async fn an_optional_ciphertext_field_recovers_present_and_absent_values() {
-        let cipher = StackCipher::builder()
-            .kms(FakeDataKeySource::new())
+        let cipher = StackCipherBuilder::new()
+            .registry(FakeKeysetRegistry::new())
             .init()
             .await
             .unwrap();
@@ -1071,7 +1112,7 @@ mod tests {
                 Some(value) => Some(keyset.encrypt_as(value, context()).await.unwrap()),
                 None => None,
             };
-            let opening: Decryption<Option<String>, FakeDataKeySource> = sealed
+            let opening: Decryption<Option<String>, FakeKeysetRegistry> = sealed
                 .decryption_field(context())
                 .expect("an optional ciphertext is a recoverable field even when absent");
             assert_eq!(
@@ -1085,7 +1126,7 @@ mod tests {
     #[test]
     fn an_optional_term_is_never_a_recoverable_field() {
         for term in [Some(EqualityTerm::from_bytes([7; 32])), None] {
-            let opening: Option<Decryption<Option<String>, FakeDataKeySource>> =
+            let opening: Option<Decryption<Option<String>, FakeKeysetRegistry>> =
                 term.decryption_field(CallerContext::from(nonempty!("users/nickname")));
             assert!(opening.is_none(), "a term cannot recover plaintext");
         }
@@ -1093,20 +1134,21 @@ mod tests {
 
     #[test]
     fn operation_debug_describes_the_operation_without_its_captured_value() {
-        let encryption: Encryption<'_, (), _, (), ()> = Encryption::ready(Ok("secret metadata"));
+        let encryption: Encryption<'_, (), _, FakeKeysetRegistry, ()> =
+            Encryption::ready(Ok("secret metadata"));
         assert_eq!(
             format!("{encryption:?}"),
             "Encryption { .. }",
             "a ready encryption should not print its captured value"
         );
 
-        let decryption = Decryption::<_, ()>::ready("secret plaintext");
+        let decryption = Decryption::<_, FakeKeysetRegistry>::ready("secret plaintext");
         assert_eq!(
             format!("{decryption:?}"),
             "Decryption { .. }",
             "a ready decryption should not print its plaintext"
         );
-        let failure = Decryption::<(), ()>::failed(Error::NotOpened);
+        let failure = Decryption::<(), FakeKeysetRegistry>::failed(Error::NotOpened);
         assert_eq!(
             format!("{failure:?}"),
             "Decryption { failed: NotOpened, .. }",

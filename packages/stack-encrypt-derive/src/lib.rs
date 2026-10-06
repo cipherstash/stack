@@ -6,7 +6,7 @@
 //! ```
 //! use stack_encrypt::{EncryptFrom, DecryptInto, StackCipher, StackCipherText, nonempty};
 //! use stack_encrypt::sem::EqualityTerm;
-//! use stack_encrypt::kms::FakeDataKeySource;
+//! use stack_encrypt::registry::fake::FakeKeysetRegistry;
 //!
 //! #[derive(EncryptFrom, DecryptInto)]
 //! #[stash(plaintext = String)]
@@ -18,7 +18,10 @@
 //! }
 //!
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-//! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! let cipher = stack_encrypt::StackCipherBuilder::new()
+//!     .registry(FakeKeysetRegistry::new())
+//!     .init()
+//!     .await?;
 //! let keyset = cipher.default_keyset();
 //! let value = "alice@example.com".to_owned();
 //! // The output type selects ciphertext + equality; the context is NonEmpty<&str>, stored in `identifier`.
@@ -111,7 +114,7 @@
 //!     CipherText, Decryptable, Encrypt, EncryptFrom, Encryption, Error, SealedValue, StackCipher,
 //!     nonempty,
 //! };
-//! use stack_encrypt::kms::FakeDataKeySource;
+//! use stack_encrypt::registry::fake::FakeKeysetRegistry;
 //!
 //! /// A column that stores one sealed leaf as bytes.
 //! struct LeafBytes(Vec<u8>);
@@ -140,7 +143,7 @@
 //! // It seals under the AEAD half of the context the record threads to it.
 //! impl<S: Encrypt + Clone> EncryptFrom<S> for LeafBytes {
 //!     type Context = CallerContext;
-//!     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+//!     fn encryption<'s, K: stack_encrypt::KeysetRegistry + 'static>() -> Encryption<'s, S, Self, K, Self::Context>
 //!     where
 //!         S: 's,
 //!     {
@@ -159,7 +162,10 @@
 //! }
 //!
 //! # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-//! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! let cipher = stack_encrypt::StackCipherBuilder::new()
+//!     .registry(FakeKeysetRegistry::new())
+//!     .init()
+//!     .await?;
 //! let keyset = cipher.default_keyset();
 //! let value = "alice@example.com".to_owned();
 //! let context = nonempty!("users/email");

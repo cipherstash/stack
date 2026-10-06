@@ -16,6 +16,7 @@
 use stack_auth::{AuthError, AuthStrategyFn, SecretToken, ServiceToken};
 use stack_encrypt::kms::{EnvKeyProvider, StackKmsBuilder};
 use stack_encrypt::StackCipher;
+use stack_encrypt::StackCipherBuilder;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -46,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Configured but not accepted — typically a stale device session in
         // ~/.cipherstash or an access key for another workspace. `auto()` only
         // checks that a strategy *exists*; ZeroKMS is the first to say no.
-        Err(stack_encrypt::Error::Kms(why)) => {
+        Err(stack_encrypt::Error::Provider(why) | stack_encrypt::Error::Registry(why)) => {
             println!("could not reach or authenticate with ZeroKMS: {why}");
             println!("check the credentials `auto()` detected (CS_* variables, ~/.cipherstash).");
             return Ok(());
@@ -111,7 +112,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()
         .await?;
 
-    let _cipher = StackCipher::builder().kms(kms).init().await?;
+    let _cipher = StackCipherBuilder::new()
+        .registry(std::sync::Arc::new(kms))
+        .init()
+        .await?;
     println!("built a second cipher over a custom auth strategy");
 
     Ok(())

@@ -15,7 +15,7 @@ struct Profile {
 struct Opaque(#[allow(dead_code)] StackCipherText);
 impl EncryptFrom<String> for Opaque {
     type Context = AeadContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context> {
+    fn encryption<'s, K: stack_encrypt::KeysetRegistry + 'static>() -> Encryption<'s, String, Self, K, Self::Context> {
         <StackCipherText as EncryptFrom<String>>::encryption().map(Opaque)
     }
 }

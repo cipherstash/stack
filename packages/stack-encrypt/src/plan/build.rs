@@ -9,6 +9,7 @@ use std::sync::Arc;
 use super::field_ref::{resolve, Access, FieldRef, FieldsOf, Reader};
 use super::values::Slot;
 use super::{FieldValues, PlanError};
+use crate::registry::{KeysetRegistry, NoRegistry};
 use crate::target::{
     ciphertext, indexed, inspect, open, passthrough, AeadContext, Borrowed, CallerContext,
     DeclaredContext, DecryptField, Decryptable, Decryption, EncryptFrom, Encryption,
@@ -243,10 +244,11 @@ pub(crate) fn check_declared(
 /// # use stack_encrypt::plan::pick;
 /// # struct User { email: String, id: u64 }
 /// # async fn example() -> Result<(), stack_encrypt::Error> {
-/// use stack_encrypt::kms::FakeDataKeySource;
+/// use stack_encrypt::registry::fake::FakeKeysetRegistry;
+/// use stack_encrypt::StackCipherBuilder;
 /// use stack_encrypt::{Equality, Plan, StackCipher};
 ///
-/// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+/// let cipher = StackCipherBuilder::new().registry(FakeKeysetRegistry::new()).init().await?;
 /// let user = User { email: "bob@example.com".into(), id: 42 };
 ///
 /// // Built without a context: each call names its own.
@@ -278,11 +280,11 @@ pub(crate) fn check_declared(
 /// # }
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 /// ```
-pub struct Plan<S: 'static, K: 'static> {
+pub struct Plan<S: 'static, K: KeysetRegistry + 'static> {
     inner: Arc<PlanInner<S, K>>,
 }
 
-struct PlanInner<S: 'static, K: 'static> {
+struct PlanInner<S: 'static, K: KeysetRegistry + 'static> {
     source: Source<S>,
     names: Arc<[Arc<str>]>,
     fields: Vec<Built<S, K>>,
@@ -348,7 +350,7 @@ impl<S> ContextField<S> {
     }
 }
 
-struct Built<S: 'static, K: 'static> {
+struct Built<S: 'static, K: KeysetRegistry + 'static> {
     plan: FieldPlan,
     lower: Lower<S, K>,
     probe: Probe<S>,
@@ -376,12 +378,12 @@ type Holds = fn(&Slot) -> Result<(), &'static str>;
 
 /// How a field comes back from a stored record. A field that does not come
 /// back (terms alone, which are one-way) has none.
-struct FieldOpener<K> {
+struct FieldOpener<K: KeysetRegistry> {
     holds: Holds,
     open: Opener<K>,
 }
 
-impl<K> Clone for FieldOpener<K> {
+impl<K: KeysetRegistry> Clone for FieldOpener<K> {
     fn clone(&self) -> Self {
         Self {
             holds: self.holds,
@@ -399,7 +401,7 @@ fn holds<T: 'static>(slot: &Slot) -> Result<(), &'static str> {
     }
 }
 
-impl<S: 'static, K: 'static> Clone for Plan<S, K> {
+impl<S: 'static, K: KeysetRegistry + 'static> Clone for Plan<S, K> {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
@@ -407,7 +409,7 @@ impl<S: 'static, K: 'static> Clone for Plan<S, K> {
     }
 }
 
-impl<S: 'static, K: 'static> fmt::Debug for Plan<S, K> {
+impl<S: 'static, K: KeysetRegistry + 'static> fmt::Debug for Plan<S, K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let context = match &self.inner.source {
             Source::Plan(label) => label.to_string(),
@@ -429,13 +431,13 @@ impl<S: 'static, K: 'static> fmt::Debug for Plan<S, K> {
     }
 }
 
-impl Plan<(), ()> {
+impl Plan<(), NoRegistry> {
     /// Start a plan under `context`, with no value: the saved form of
     /// `cipher.encrypt(&value).context(..)`. Follow it with
     /// [`fields`](PlanContext::fields) or [`with`](PlanContext::with), then
     /// `build()`. The common spelling of `Plan::fields().context(c)`.
     ///
-    /// Anchored on `Plan<(), ()>` only so `Plan::context` resolves without
+    /// Anchored on `Plan<(), NoRegistry>` only so `Plan::context` resolves without
     /// naming a type; that plan is never built.
     pub fn context(context: impl IntoLabel) -> PlanContext {
         PlanContext {
@@ -447,7 +449,7 @@ impl Plan<(), ()> {
     /// [`context`](FieldsBuilder::context) or
     /// [`context_field`](FieldsBuilder::context_field), or leave it for the
     /// call that runs it.
-    pub fn fields<S: 'static, K: 'static>() -> FieldsBuilder<S, K> {
+    pub fn fields<S: 'static, K: KeysetRegistry + 'static>() -> FieldsBuilder<S, K> {
         FieldsBuilder {
             sources: Vec::new(),
             fields: Vec::new(),
@@ -476,7 +478,7 @@ impl PlanContext {
 
     /// Seal each top-level field of the value on its own, under
     /// `<context>/<field>`, as the field verbs that follow declare.
-    pub fn fields<S: 'static, K: 'static>(self) -> FieldsBuilder<S, K> {
+    pub fn fields<S: 'static, K: KeysetRegistry + 'static>(self) -> FieldsBuilder<S, K> {
         let mut fields = Plan::fields();
         fields.sources.push(Declare::Plan(self.context));
         fields
@@ -520,14 +522,14 @@ impl<S> Declare<S> {
 ///
 /// A field is either the data verbs (`encrypt`, `encrypt_index`, `index`,
 /// `passthrough`) or one typed target (`encrypt_into`), never both.
-pub struct FieldsBuilder<S: 'static, K: 'static> {
+pub struct FieldsBuilder<S: 'static, K: KeysetRegistry + 'static> {
     sources: Vec<Declare<S>>,
     fields: Vec<Declared<S, K>>,
     identity_without_field: bool,
     fields_of: Option<FieldsOf<S>>,
 }
 
-struct Declared<S: 'static, K: 'static> {
+struct Declared<S: 'static, K: KeysetRegistry + 'static> {
     name: Arc<str>,
     identity: Option<Arc<str>>,
     kind: FieldKind,
@@ -539,7 +541,7 @@ struct Declared<S: 'static, K: 'static> {
     open: Option<FieldOpener<K>>,
 }
 
-impl<S: 'static, K: 'static> fmt::Debug for FieldsBuilder<S, K> {
+impl<S: 'static, K: KeysetRegistry + 'static> fmt::Debug for FieldsBuilder<S, K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FieldsBuilder")
             .field("context", &self.sources)
@@ -566,7 +568,7 @@ where
     S: 's,
     F: 'static,
     T: std::any::Any + Send + 'static,
-    K: 'static,
+    K: KeysetRegistry + 'static,
 {
     let name = Arc::clone(name);
     let read = Arc::clone(read);
@@ -605,12 +607,12 @@ fn stored<T: 'static>(field: &str, slot: Slot) -> Result<T, PlanError> {
 fn open_sealed<F, K>(ciphertext: StackCipherText, context: CallerContext) -> Decryption<Slot, K>
 where
     F: crate::Decrypt<'static> + Send + 'static,
-    K: 'static,
+    K: KeysetRegistry + 'static,
 {
     open::<F, K>(ciphertext, AeadContext::from(context)).map(Slot::new)
 }
 
-impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
+impl<S: 'static, K: KeysetRegistry + 'static> FieldsBuilder<S, K> {
     fn declare<F: 'static>(
         mut self,
         name: Arc<str>,
@@ -672,10 +674,11 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     /// # use stack_encrypt::plan::pick;
     /// # struct Note { tenant: String, text: String }
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
-    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::registry::fake::FakeKeysetRegistry;
+    /// use stack_encrypt::StackCipherBuilder;
     /// use stack_encrypt::{Error, Plan, StackCipher};
     ///
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let cipher = StackCipherBuilder::new().registry(FakeKeysetRegistry::new()).init().await?;
     /// let notes_plan = Plan::fields()
     ///     .context_field(pick("tenant", |n: &Note| &n.tenant))
     ///     .encrypt(pick("text", |n: &Note| &n.text))
@@ -913,11 +916,12 @@ impl<S: 'static, K: 'static> FieldsBuilder<S, K> {
     /// # use stack_encrypt::plan::pick;
     /// # struct User { email: String }
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
-    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::registry::fake::FakeKeysetRegistry;
+    /// use stack_encrypt::StackCipherBuilder;
     /// use stack_encrypt::sem::{EqualityTerm, MatchTerms};
     /// use stack_encrypt::{Encrypted, Plan, StackCipher};
     ///
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let cipher = StackCipherBuilder::new().registry(FakeKeysetRegistry::new()).init().await?;
     /// let users_plan = Plan::context("users")
     ///     .fields()
     ///     .encrypt_into::<Encrypted<(EqualityTerm, MatchTerms)>, _>(pick("email", |u: &User| &u.email))
@@ -1119,7 +1123,10 @@ pub(crate) fn check_indexes(at: &str, indexes: &[IndexSpec]) -> Result<(), PlanE
 /// name declared once as a target and once with data verbs is reported as
 /// that, and one declared once passthrough and once indexed likewise, since
 /// those are the likelier mistakes.
-fn check_pair<S, K>(earlier: &Declared<S, K>, field: &Declared<S, K>) -> Result<(), PlanError> {
+fn check_pair<S, K: KeysetRegistry>(
+    earlier: &Declared<S, K>,
+    field: &Declared<S, K>,
+) -> Result<(), PlanError> {
     if earlier.name == field.name {
         let target = |f: &Declared<S, K>| matches!(f.kind, FieldKind::EncryptInto);
         if target(earlier) != target(field) {
@@ -1158,7 +1165,7 @@ fn check_pair<S, K>(earlier: &Declared<S, K>, field: &Declared<S, K>) -> Result<
 /// A plan against a type that fixes its fields: every plan field is one of
 /// the type's, at the type the plan declares, and every field of the type
 /// is named.
-fn check_schema<S, K>(
+fn check_schema<S, K: KeysetRegistry>(
     schema: &[super::FieldSchema],
     fields: &[Built<S, K>],
 ) -> Result<(), PlanError> {
@@ -1210,7 +1217,7 @@ enum Base<S> {
     Field(OfValue<S>),
 }
 
-impl<S: 'static, K: 'static> Plan<S, K> {
+impl<S: 'static, K: KeysetRegistry + 'static> Plan<S, K> {
     /// The plan's context, when it was built with one.
     pub fn label(&self) -> Option<&Label> {
         match &self.inner.source {
@@ -1492,7 +1499,7 @@ fn field_label(field: &str, source: LabelError) -> Error {
 /// them, and for a one-value plan likewise. A slice or a `Vec` runs one
 /// description per item and settles all of them in one batch: one key
 /// request for the whole collection.
-pub trait Runs<Src: ?Sized, K> {
+pub trait Runs<Src: ?Sized, K: KeysetRegistry> {
     /// What one run produces.
     type Output: 'static;
     /// Lower the plan and run it over `source`, under the context the call
@@ -1521,7 +1528,7 @@ pub trait Runs<Src: ?Sized, K> {
 
 /// A plan that can open a stored `R`, producing `Output`: what
 /// [`using`](crate::plan::OpenBuilder::using) asks of its plan.
-pub trait Opens<R, K> {
+pub trait Opens<R, K: KeysetRegistry> {
     /// What opening produces.
     type Output: 'static;
     /// The opening of `record`, under the context the call names (if any;
@@ -1548,7 +1555,7 @@ pub trait Opens<R, K> {
     }
 }
 
-impl<S: 'static, K: 'static> Runs<S, K> for Plan<S, K> {
+impl<S: 'static, K: KeysetRegistry + 'static> Runs<S, K> for Plan<S, K> {
     type Output = FieldValues;
     fn pending<'p>(
         &self,
@@ -1625,10 +1632,10 @@ macro_rules! runs_over_collections {
 }
 pub(crate) use runs_over_collections;
 runs_over_collections! {
-    [S, K] Plan<S, K> => S where [S: 'static, K: 'static] check_call;
+    [S, K: KeysetRegistry] Plan<S, K> => S where [S: 'static, K: KeysetRegistry + 'static] check_call;
 }
 
-impl<S: 'static, K: 'static> Opens<FieldValues, K> for Plan<S, K> {
+impl<S: 'static, K: KeysetRegistry + 'static> Opens<FieldValues, K> for Plan<S, K> {
     type Output = FieldValues;
     fn decryption(
         &self,
@@ -1643,7 +1650,7 @@ impl<S: 'static, K: 'static> Opens<FieldValues, K> for Plan<S, K> {
     }
 }
 
-impl<S: 'static, K: 'static> Opens<Vec<FieldValues>, K> for Plan<S, K> {
+impl<S: 'static, K: KeysetRegistry + 'static> Opens<Vec<FieldValues>, K> for Plan<S, K> {
     type Output = Vec<FieldValues>;
     fn decryption(
         &self,

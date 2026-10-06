@@ -1,8 +1,8 @@
 //! The single place holding this crate's native/wasm32 `Send` split.
 //!
-//! Async traits here ([`DataKeySource`](crate::DataKeySource),
-//! [`IndexKeySource`](crate::IndexKeySource),
-//! [`ZeroKMSConnection`](crate::ZeroKMSConnection)) want their returned
+//! Async traits here ([`ZeroKMSConnection`](crate::ZeroKMSConnection), and
+//! the `vitaminc-kms` provider traits [`ZeroKmsKeyset`](crate::ZeroKmsKeyset)
+//! implements) want their returned
 //! futures `Send` on native targets — so callers can drive them on a
 //! multi-threaded runtime — but not on wasm32, where the fetch-backed HTTP and
 //! auth futures aren't `Send` and edge runtimes are single-threaded anyway

@@ -6,33 +6,33 @@ use stack_encrypt::target::{
     ciphertext, equality, matching, ope, ore, CallerContext, Owned, Pending,
 };
 use stack_encrypt::{nonempty, Encrypt, KeysetCipher, StackCipherText};
-use stack_kms::FakeDataKeySource;
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 
 fn seal<'a, S: Encrypt>(
-    keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
+    keyset: &'a KeysetCipher<'_, FakeKeysetRegistry>,
     value: S,
-) -> Pending<'a, StackCipherText, FakeDataKeySource> {
+) -> Pending<'a, StackCipherText, FakeKeysetRegistry> {
     keyset.run(ciphertext::<_, _, Owned>(), value, nonempty!("column").into())
 }
 fn index<'a, S: vitaminc_prf::PrfValue>(
-    keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
+    keyset: &'a KeysetCipher<'_, FakeKeysetRegistry>,
     value: S,
-) -> Pending<'a, EqualityTerm, FakeDataKeySource> {
+) -> Pending<'a, EqualityTerm, FakeKeysetRegistry> {
     keyset.run(equality::<_, _, Owned>(), value, CallerContext::from(nonempty!("column")))
 }
 fn search<'a, S: AsRef<str>>(
-    keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
+    keyset: &'a KeysetCipher<'_, FakeKeysetRegistry>,
     value: S,
-) -> Pending<'a, MatchTerms, FakeDataKeySource> {
+) -> Pending<'a, MatchTerms, FakeKeysetRegistry> {
     keyset.run(matching::<_, _, Owned, _>(), value, CallerContext::from(nonempty!("column")))
 }
 // Bounded only by the scheme's own trait: `CllwOreEncrypt` and
 // `CllwOpeEncrypt` do not imply `Clone`, so `Clone` returning to either
 // constructor's bounds fails this file.
 fn order<'a, S>(
-    keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
+    keyset: &'a KeysetCipher<'_, FakeKeysetRegistry>,
     value: S,
-) -> Pending<'a, OreTerm<S>, FakeDataKeySource>
+) -> Pending<'a, OreTerm<S>, FakeKeysetRegistry>
 where
     S: CllwOreEncrypt + Send + 'static,
     S::Output: Send + 'static,
@@ -40,9 +40,9 @@ where
     keyset.run(ore::<_, _, Owned>(), value, CallerContext::from(nonempty!("column")))
 }
 fn order_preserving<'a, S>(
-    keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
+    keyset: &'a KeysetCipher<'_, FakeKeysetRegistry>,
     value: S,
-) -> Pending<'a, OpeTerm<S>, FakeDataKeySource>
+) -> Pending<'a, OpeTerm<S>, FakeKeysetRegistry>
 where
     S: CllwOpeEncrypt + Send + 'static,
     S::Output: Send + 'static,

@@ -3274,13 +3274,14 @@ dependencies = [
 
 [[package]]
 name = "stack-encrypt"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64ct",
  "cllw-ore",
  "serde",
  "serde_json",
  "stack-auth",
+ "stack-encrypt",
  "stack-encrypt-derive",
  "stack-kms",
  "thiserror 1.0.69",
@@ -3291,15 +3292,17 @@ dependencies = [
  "vitaminc-aead-value",
  "vitaminc-encrypt",
  "vitaminc-hmac",
+ "vitaminc-kms",
  "vitaminc-prf",
  "vitaminc-protected 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "vitaminc-protected 0.5.1 (git+https://github.com/cipherstash/vitaminc?rev=b3bc6eb)",
  "zeroize",
  "zerokms-protocol",
 ]
 
 [[package]]
 name = "stack-encrypt-derive"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3321,7 +3324,7 @@ dependencies = [
 
 [[package]]
 name = "stack-kms"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-mutex",
  "base16ct",
@@ -4177,6 +4180,7 @@ dependencies = [
  "thiserror 2.0.18",
  "vitaminc-async-traits",
  "vitaminc-protected 0.5.1 (git+https://github.com/cipherstash/vitaminc?rev=b3bc6eb)",
+ "vitaminc-random 0.5.1 (git+https://github.com/cipherstash/vitaminc?rev=b3bc6eb)",
  "vitaminc-traits 0.5.1 (git+https://github.com/cipherstash/vitaminc?rev=b3bc6eb)",
  "zeroize",
 ]

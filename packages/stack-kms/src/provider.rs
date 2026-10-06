@@ -192,40 +192,25 @@ where
 mod tests {
     use super::*;
     use crate::client::test_connection::{
-        generated_key, key_material, random_client_key, TestConnection, TestConnectionBuilder,
+        generated_key, key_material, load_keyset_response, random_client_key, TestConnection,
+        TestConnectionBuilder, TEST_KEYSET_ID,
     };
     use crate::client::ClientOpts;
     use crate::key::DataKey;
     use stack_auth::StaticTokenStrategy;
     use std::sync::Mutex;
-    use uuid::uuid;
     use vitaminc_protected_kms::Controlled;
     use zerokms_protocol::{
-        GenerateKeyRequest, GenerateKeyResponse, Keyset, LoadKeysetRequest, LoadKeysetResponse,
-        RetrieveKeyRequest, RetrieveKeyResponse, RetrievedKey,
+        GenerateKeyRequest, GenerateKeyResponse, LoadKeysetRequest, RetrieveKeyRequest,
+        RetrieveKeyResponse, RetrievedKey,
     };
 
-    const KEYSET_ID: Uuid = uuid!("11111111-1111-1111-1111-111111111111");
+    /// From the shared test-support module, so the id this crate's tests
+    /// assert on and the one `stack-encrypt`'s registry tests assert on
+    /// cannot drift apart. `load_keyset_response` comes from there too.
+    const KEYSET_ID: Uuid = TEST_KEYSET_ID;
 
     type TestKeyset = ZeroKmsKeyset<StaticTokenStrategy, TestConnection>;
-
-    /// The `load_keyset` response [`ZeroKmsKeyset::new`] consumes: the keyset
-    /// this provider resolves to, plus the partial key material its index key
-    /// is derived from.
-    fn load_keyset_response() -> LoadKeysetResponse {
-        LoadKeysetResponse {
-            partial_index_key: RetrievedKey {
-                key_material: key_material(),
-            },
-            keyset: Keyset {
-                id: KEYSET_ID,
-                name: "default".to_string(),
-                description: String::new(),
-                is_disabled: false,
-                is_default: true,
-            },
-        }
-    }
 
     /// A `StackKms` over a stub connection the callback configures. Every
     /// request a test expects must be stubbed up front — the stub panics on

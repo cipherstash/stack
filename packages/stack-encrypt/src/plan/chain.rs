@@ -4,32 +4,39 @@
 use std::future::IntoFuture;
 use std::marker::PhantomData;
 
-use stack_kms::{DataKeySource, IdentifiedBy, IndexKeySource, MaybeSend};
 use uuid::Uuid;
+use vitaminc_kms::provider::MaybeSend;
 
 use super::build::{FieldPlan, FieldsBuilder, IntoLabel, Opens, PlanContext, Runs};
 use super::field_ref::FieldRef;
 use super::value::{Indexed, Typed, ValuePlan, ValueShape};
 use super::PlanError;
+use crate::registry::{KeysetId, KeysetRef, KeysetRegistry};
 use crate::target::{
     ciphertext, Borrowed, CallerContext, DeclaredContext, DecryptField, Decryptable, EncryptFrom,
     Equality, Index, Indexes, Owned, Pending, PendingFuture, Select,
 };
 use crate::{Error, KeysetCipher, Label, LabelError, NonEmpty, StackCipher, StackCipherText};
 
-/// What a cipher's data-key source must offer for a chain to run: data keys
-/// to seal and open, index keys to load a keyset named in the chain, and,
-/// on native targets, `Sync`, because the future holds the cipher across an
+/// What a cipher's keyset registry must offer for a chain to run: a
+/// [`KeysetRegistry`], to load a keyset named in the chain and the provider
+/// that seals and opens under it, and, on native targets, `Sync` on both,
+/// because the future holds the cipher and the loaded keyset across an
 /// await (as awaiting a [`Pending`] does).
 #[cfg(not(target_arch = "wasm32"))]
-pub trait PlanKms: DataKeySource + IndexKeySource + Sync + 'static {}
+pub trait PlanKms: KeysetRegistry<Provider: Send + Sync> + Sync + 'static {}
 #[cfg(not(target_arch = "wasm32"))]
-impl<K: DataKeySource + IndexKeySource + Sync + 'static> PlanKms for K {}
-/// See the native definition; the same minus `Sync`.
+impl<K> PlanKms for K
+where
+    K: KeysetRegistry + Sync + 'static,
+    K::Provider: Send + Sync,
+{
+}
+/// See the native definition; the same minus `Send` and `Sync`.
 #[cfg(target_arch = "wasm32")]
-pub trait PlanKms: DataKeySource + IndexKeySource + 'static {}
+pub trait PlanKms: KeysetRegistry + 'static {}
 #[cfg(target_arch = "wasm32")]
-impl<K: DataKeySource + IndexKeySource + 'static> PlanKms for K {}
+impl<K: KeysetRegistry + 'static> PlanKms for K {}
 
 /// The keyset a chain names with `.keyset(..)`: a [`KeysetCipher`] already
 /// in hand, or a keyset by id or name, loaded when the chain is awaited (as
@@ -39,14 +46,14 @@ impl<K: DataKeySource + IndexKeySource + 'static> PlanKms for K {}
 /// and opens leaves from any keyset the client may use. Inside [`all`], a
 /// chain that names none encrypts under the keyset the batch's other chains
 /// name (or the default), and still opens leaves from any keyset.
-pub enum KeysetChoice<'a, K> {
+pub enum KeysetChoice<'a, K: KeysetRegistry> {
     /// A keyset already selected.
     Handle(KeysetCipher<'a, K>),
     /// A keyset to select when the chain runs.
-    Named(IdentifiedBy),
+    Named(KeysetRef),
 }
 
-impl<K> std::fmt::Debug for KeysetChoice<'_, K> {
+impl<K: KeysetRegistry> std::fmt::Debug for KeysetChoice<'_, K> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             KeysetChoice::Handle(keyset) => f.debug_tuple("Handle").field(keyset).finish(),
@@ -55,37 +62,42 @@ impl<K> std::fmt::Debug for KeysetChoice<'_, K> {
     }
 }
 
-impl<'a, K> From<KeysetCipher<'a, K>> for KeysetChoice<'a, K> {
+impl<'a, K: KeysetRegistry> From<KeysetCipher<'a, K>> for KeysetChoice<'a, K> {
     fn from(keyset: KeysetCipher<'a, K>) -> Self {
         KeysetChoice::Handle(keyset)
     }
 }
-impl<'a, K> From<&KeysetCipher<'a, K>> for KeysetChoice<'a, K> {
+impl<'a, K: KeysetRegistry> From<&KeysetCipher<'a, K>> for KeysetChoice<'a, K> {
     fn from(keyset: &KeysetCipher<'a, K>) -> Self {
         KeysetChoice::Handle(keyset.clone())
     }
 }
-impl<K> From<IdentifiedBy> for KeysetChoice<'_, K> {
-    fn from(keyset: IdentifiedBy) -> Self {
+impl<K: KeysetRegistry> From<KeysetRef> for KeysetChoice<'_, K> {
+    fn from(keyset: KeysetRef) -> Self {
         KeysetChoice::Named(keyset)
     }
 }
-impl<K> From<Uuid> for KeysetChoice<'_, K> {
+impl<K: KeysetRegistry> From<KeysetId> for KeysetChoice<'_, K> {
+    fn from(keyset: KeysetId) -> Self {
+        KeysetChoice::Named(KeysetRef::Id(keyset))
+    }
+}
+impl<K: KeysetRegistry> From<Uuid> for KeysetChoice<'_, K> {
     fn from(keyset: Uuid) -> Self {
-        KeysetChoice::Named(IdentifiedBy::Uuid(keyset))
+        KeysetChoice::Named(KeysetRef::from(keyset))
     }
 }
-impl<K> From<&str> for KeysetChoice<'_, K> {
+impl<K: KeysetRegistry> From<&str> for KeysetChoice<'_, K> {
     fn from(name: &str) -> Self {
-        KeysetChoice::Named(IdentifiedBy::Name(name.to_owned().into()))
+        KeysetChoice::Named(KeysetRef::from(name))
     }
 }
-impl<K> From<String> for KeysetChoice<'_, K> {
+impl<K: KeysetRegistry> From<String> for KeysetChoice<'_, K> {
     fn from(name: String) -> Self {
-        KeysetChoice::Named(IdentifiedBy::Name(name.into()))
+        KeysetChoice::Named(KeysetRef::from(name))
     }
 }
-impl<K> From<&String> for KeysetChoice<'_, K> {
+impl<K: KeysetRegistry> From<&String> for KeysetChoice<'_, K> {
     fn from(name: &String) -> Self {
         Self::from(name.as_str())
     }
@@ -94,14 +106,14 @@ impl<K> From<&String> for KeysetChoice<'_, K> {
 /// What every chain carries besides its value: the cipher, the keyset it
 /// names, the context it names for a plan built without one, and the
 /// caller's extension of the plan's contexts.
-struct Common<'a, K> {
+struct Common<'a, K: KeysetRegistry> {
     cipher: &'a StackCipher<K>,
     keyset: Option<KeysetChoice<'a, K>>,
     context: Option<Result<Label, LabelError>>,
     extend: DeclaredContext,
 }
 
-impl<'a, K> Common<'a, K> {
+impl<'a, K: KeysetRegistry> Common<'a, K> {
     fn new(cipher: &'a StackCipher<K>) -> Self {
         Self {
             cipher,
@@ -145,7 +157,7 @@ mod sealed {
 /// Awaiting a chain checks it before it loads a keyset it names, so a plan
 /// that does not hold up is refused before any request to ZeroKMS, the
 /// keyset lookup included.
-pub trait Operation<'a, K: 'static>: sealed::Sealed + Sized {
+pub trait Operation<'a, K: KeysetRegistry + 'static>: sealed::Sealed + Sized {
     /// What the chain produces.
     type Output: MaybeSend + 'static;
     /// The cipher the chain was started on.
@@ -258,7 +270,7 @@ macro_rules! settles {
     )+};
 }
 
-impl<K: 'static> StackCipher<K> {
+impl<K: KeysetRegistry + 'static> StackCipher<K> {
     /// Start a chain that encrypts `value`.
     ///
     /// Finish it with a context ([`context`](EncryptBuilder::context)) or a
@@ -308,12 +320,12 @@ impl<K: 'static> StackCipher<K> {
 }
 
 /// A chain encrypting a value, before its context or plan is chosen.
-pub struct EncryptBuilder<'a, S: ?Sized, K> {
+pub struct EncryptBuilder<'a, S: ?Sized, K: KeysetRegistry> {
     common: Common<'a, K>,
     source: &'a S,
 }
 
-impl<'a, S: ?Sized, K: 'static> EncryptBuilder<'a, S, K> {
+impl<'a, S: ?Sized, K: KeysetRegistry + 'static> EncryptBuilder<'a, S, K> {
     /// Encrypt under `context`: one tree, sealed under that label, as
     /// `keyset.encrypt(&value, label)` does. Text is parsed as a
     /// [`Label`] (`"documents/v2/body"` is three segments), and text that
@@ -344,13 +356,13 @@ impl<'a, S: ?Sized, K: 'static> EncryptBuilder<'a, S, K> {
 /// A chain encrypting a value under a context: awaited as it is, one tree;
 /// or indexed ([`with`](Self::with)), or field by field
 /// ([`fields`](Self::fields)).
-pub struct EncryptWithContext<'a, S: ?Sized, K> {
+pub struct EncryptWithContext<'a, S: ?Sized, K: KeysetRegistry> {
     common: Common<'a, K>,
     source: &'a S,
     context: Result<Label, LabelError>,
 }
 
-impl<'a, S: ?Sized, K: 'static> EncryptWithContext<'a, S, K> {
+impl<'a, S: ?Sized, K: KeysetRegistry + 'static> EncryptWithContext<'a, S, K> {
     /// Encrypt as the saved `plan` declares, under this context: for a plan
     /// built without a context of its own, this call names it. A plan that
     /// has one (built with it, or from a context field) is refused with
@@ -394,7 +406,7 @@ impl<'a, S: ?Sized, K: 'static> EncryptWithContext<'a, S, K> {
     }
 }
 
-impl<'a, S, K: 'static> Operation<'a, K> for EncryptWithContext<'a, S, K>
+impl<'a, S, K: KeysetRegistry + 'static> Operation<'a, K> for EncryptWithContext<'a, S, K>
 where
     S: crate::Encrypt + Clone,
 {
@@ -427,13 +439,13 @@ where
 }
 
 /// A chain encrypting one value with indexes beside it.
-pub struct EncryptIndexed<'a, S, X, K> {
+pub struct EncryptIndexed<'a, S, X, K: KeysetRegistry> {
     common: Common<'a, K>,
     source: &'a S,
     plan: super::value::ValuePlanBuilder<S, Indexed<X>>,
 }
 
-impl<'a, S, X, K: 'static> Operation<'a, K> for EncryptIndexed<'a, S, X, K>
+impl<'a, S, X, K: KeysetRegistry + 'static> Operation<'a, K> for EncryptIndexed<'a, S, X, K>
 where
     S: crate::Encrypt + Clone,
     X: Indexes<S> + Clone,
@@ -463,13 +475,13 @@ where
 /// A chain encrypting a value field by field: the field verbs of
 /// [`FieldsBuilder`], then `.await`. The plan is validated when it is
 /// awaited, with the same errors as [`FieldsBuilder::build`].
-pub struct EncryptFields<'a, S: 'static, K: 'static> {
+pub struct EncryptFields<'a, S: 'static, K: KeysetRegistry + 'static> {
     common: Common<'a, K>,
     source: &'a S,
     plan: FieldsBuilder<S, K>,
 }
 
-impl<'a, S: 'static, K: 'static> EncryptFields<'a, S, K> {
+impl<'a, S: 'static, K: KeysetRegistry + 'static> EncryptFields<'a, S, K> {
     /// [`FieldsBuilder::encrypt`].
     pub fn encrypt<F>(mut self, field: impl FieldRef<S, F>) -> Self
     where
@@ -528,7 +540,7 @@ impl<'a, S: 'static, K: 'static> EncryptFields<'a, S, K> {
     }
 }
 
-impl<'a, S: 'static, K: 'static> Operation<'a, K> for EncryptFields<'a, S, K> {
+impl<'a, S: 'static, K: KeysetRegistry + 'static> Operation<'a, K> for EncryptFields<'a, S, K> {
     type Output = super::FieldValues;
     fn cipher(&self) -> &'a StackCipher<K> {
         self.common.cipher
@@ -551,13 +563,14 @@ impl<'a, S: 'static, K: 'static> Operation<'a, K> for EncryptFields<'a, S, K> {
 }
 
 /// A chain encrypting a value, a slice or a `Vec` as a saved plan declares.
-pub struct EncryptUsing<'a, S: ?Sized, P, K> {
+pub struct EncryptUsing<'a, S: ?Sized, P, K: KeysetRegistry> {
     common: Common<'a, K>,
     source: &'a S,
     plan: &'a P,
 }
 
-impl<'a, S: ?Sized, P: Runs<S, K>, K: 'static> Operation<'a, K> for EncryptUsing<'a, S, P, K>
+impl<'a, S: ?Sized, P: Runs<S, K>, K: KeysetRegistry + 'static> Operation<'a, K>
+    for EncryptUsing<'a, S, P, K>
 where
     P::Output: MaybeSend,
 {
@@ -589,12 +602,12 @@ where
 }
 
 /// A chain deriving a query term, before its plan is named.
-pub struct QueryBuilder<'a, F, K> {
+pub struct QueryBuilder<'a, F, K: KeysetRegistry> {
     common: Common<'a, K>,
     value: F,
 }
 
-impl<'a, F, K: 'static> QueryBuilder<'a, F, K> {
+impl<'a, F, K: KeysetRegistry + 'static> QueryBuilder<'a, F, K> {
     /// Name the context the term is derived under, for a plan built
     /// without one: the context the write's call named, or for a plan with
     /// a context field, the value that field held. A plan built with its
@@ -618,13 +631,13 @@ impl<'a, F, K: 'static> QueryBuilder<'a, F, K> {
 
 /// A chain deriving a query term through a plan, before its index is
 /// chosen.
-pub struct QueryUsing<'a, F, P, K> {
+pub struct QueryUsing<'a, F, P, K: KeysetRegistry> {
     common: Common<'a, K>,
     value: F,
     plan: &'a P,
 }
 
-impl<'a, F: 'static, K: 'static> QueryUsing<'a, F, FieldPlan, K> {
+impl<'a, F: 'static, K: KeysetRegistry + 'static> QueryUsing<'a, F, FieldPlan, K> {
     /// The equality term: sugar for `index(Equality)`.
     pub fn equality(self) -> QueryIndex<'a, F, Equality, K>
     where
@@ -651,7 +664,9 @@ impl<'a, F: 'static, K: 'static> QueryUsing<'a, F, FieldPlan, K> {
     }
 }
 
-impl<'a, F: 'static, X: Indexes<F>, K: 'static> QueryUsing<'a, F, ValuePlan<F, Indexed<X>>, K> {
+impl<'a, F: 'static, X: Indexes<F>, K: KeysetRegistry + 'static>
+    QueryUsing<'a, F, ValuePlan<F, Indexed<X>>, K>
+{
     /// The equality term, selected from the plan's indexes by type: a plan
     /// with no `Equality` index does not compile here.
     pub fn equality<At>(self) -> QueryIndex<'a, F, Equality, K>
@@ -683,7 +698,7 @@ impl<'a, F: 'static, X: Indexes<F>, K: 'static> QueryUsing<'a, F, ValuePlan<F, I
     }
 }
 
-impl<'a, F: 'static, T, K: 'static> QueryUsing<'a, F, ValuePlan<F, Typed<T>>, K>
+impl<'a, F: 'static, T, K: KeysetRegistry + 'static> QueryUsing<'a, F, ValuePlan<F, Typed<T>>, K>
 where
     Typed<T>: ValueShape<F>,
 {
@@ -713,14 +728,15 @@ where
 }
 
 /// A chain deriving one query term, ready to await.
-pub struct QueryIndex<'a, F, I, K> {
+pub struct QueryIndex<'a, F, I, K: KeysetRegistry> {
     common: Common<'a, K>,
     value: F,
     index: I,
     label: Result<Label, PlanError>,
 }
 
-impl<'a, F: 'static, I: Index<F>, K: 'static> Operation<'a, K> for QueryIndex<'a, F, I, K>
+impl<'a, F: 'static, I: Index<F>, K: KeysetRegistry + 'static> Operation<'a, K>
+    for QueryIndex<'a, F, I, K>
 where
     I::Term: MaybeSend,
 {
@@ -755,12 +771,12 @@ where
 }
 
 /// A chain decrypting a stored record, before its plan is named.
-pub struct OpenBuilder<'a, R, K> {
+pub struct OpenBuilder<'a, R, K: KeysetRegistry> {
     common: Common<'a, K>,
     record: R,
 }
 
-impl<'a, R, K: 'static> OpenBuilder<'a, R, K> {
+impl<'a, R, K: KeysetRegistry + 'static> OpenBuilder<'a, R, K> {
     /// Name the context: for a plan built without one, the context the
     /// write's call named; for a plan with a context field, the context the
     /// caller expects the record to hold, so a record whose field says
@@ -785,13 +801,13 @@ impl<'a, R, K: 'static> OpenBuilder<'a, R, K> {
 }
 
 /// A chain decrypting a stored record through a plan, ready to await.
-pub struct OpenUsing<'a, R, P, K> {
+pub struct OpenUsing<'a, R, P, K: KeysetRegistry> {
     common: Common<'a, K>,
     record: R,
     plan: &'a P,
 }
 
-impl<'a, R, P: Opens<R, K>, K: 'static> Operation<'a, K> for OpenUsing<'a, R, P, K>
+impl<'a, R, P: Opens<R, K>, K: KeysetRegistry + 'static> Operation<'a, K> for OpenUsing<'a, R, P, K>
 where
     P::Output: MaybeSend,
 {
@@ -828,25 +844,25 @@ where
 }
 
 chain_options! {
-    ['a, S: ?Sized, K: 'static] EncryptBuilder<'a, S, K>;
-    ['a, S: ?Sized, K: 'static] EncryptWithContext<'a, S, K>;
-    ['a, S, X, K: 'static] EncryptIndexed<'a, S, X, K>;
-    ['a, S: 'static, K: 'static] EncryptFields<'a, S, K>;
-    ['a, S: ?Sized, P, K: 'static] EncryptUsing<'a, S, P, K>;
-    ['a, F, K: 'static] QueryBuilder<'a, F, K>;
-    ['a, F, P, K: 'static] QueryUsing<'a, F, P, K>;
-    ['a, F, I, K: 'static] QueryIndex<'a, F, I, K>;
-    ['a, R, K: 'static] OpenBuilder<'a, R, K>;
-    ['a, R, P, K: 'static] OpenUsing<'a, R, P, K>;
+    ['a, S: ?Sized, K: KeysetRegistry + 'static] EncryptBuilder<'a, S, K>;
+    ['a, S: ?Sized, K: KeysetRegistry + 'static] EncryptWithContext<'a, S, K>;
+    ['a, S, X, K: KeysetRegistry + 'static] EncryptIndexed<'a, S, X, K>;
+    ['a, S: 'static, K: KeysetRegistry + 'static] EncryptFields<'a, S, K>;
+    ['a, S: ?Sized, P, K: KeysetRegistry + 'static] EncryptUsing<'a, S, P, K>;
+    ['a, F, K: KeysetRegistry + 'static] QueryBuilder<'a, F, K>;
+    ['a, F, P, K: KeysetRegistry + 'static] QueryUsing<'a, F, P, K>;
+    ['a, F, I, K: KeysetRegistry + 'static] QueryIndex<'a, F, I, K>;
+    ['a, R, K: KeysetRegistry + 'static] OpenBuilder<'a, R, K>;
+    ['a, R, P, K: KeysetRegistry + 'static] OpenUsing<'a, R, P, K>;
 }
 
 settles! {
-    ['a, S: ?Sized, K] EncryptWithContext<'a, S, K>;
-    ['a, S, X, K] EncryptIndexed<'a, S, X, K>;
-    ['a, S: 'static, K: 'static] EncryptFields<'a, S, K>;
-    ['a, S: ?Sized, P, K] EncryptUsing<'a, S, P, K>;
-    ['a, F, I, K] QueryIndex<'a, F, I, K>;
-    ['a, R, P, K] OpenUsing<'a, R, P, K>;
+    ['a, S: ?Sized, K: KeysetRegistry] EncryptWithContext<'a, S, K>;
+    ['a, S, X, K: KeysetRegistry] EncryptIndexed<'a, S, X, K>;
+    ['a, S: 'static, K: KeysetRegistry + 'static] EncryptFields<'a, S, K>;
+    ['a, S: ?Sized, P, K: KeysetRegistry] EncryptUsing<'a, S, P, K>;
+    ['a, F, I, K: KeysetRegistry] QueryIndex<'a, F, I, K>;
+    ['a, R, P, K: KeysetRegistry] OpenUsing<'a, R, P, K>;
 }
 
 /// Each chain's `Debug` names the chain and nothing it holds: the value
@@ -861,21 +877,21 @@ macro_rules! opaque_debug {
     )+};
 }
 opaque_debug! {
-    ['a, S: ?Sized, K] EncryptBuilder<'a, S, K>, "EncryptBuilder";
-    ['a, S: ?Sized, K] EncryptWithContext<'a, S, K>, "EncryptWithContext";
-    ['a, S, X, K] EncryptIndexed<'a, S, X, K>, "EncryptIndexed";
-    ['a, S: 'static, K: 'static] EncryptFields<'a, S, K>, "EncryptFields";
-    ['a, S: ?Sized, P, K] EncryptUsing<'a, S, P, K>, "EncryptUsing";
-    ['a, F, K] QueryBuilder<'a, F, K>, "QueryBuilder";
-    ['a, F, P, K] QueryUsing<'a, F, P, K>, "QueryUsing";
-    ['a, F, I, K] QueryIndex<'a, F, I, K>, "QueryIndex";
-    ['a, R, K] OpenBuilder<'a, R, K>, "OpenBuilder";
-    ['a, R, P, K] OpenUsing<'a, R, P, K>, "OpenUsing";
+    ['a, S: ?Sized, K: KeysetRegistry] EncryptBuilder<'a, S, K>, "EncryptBuilder";
+    ['a, S: ?Sized, K: KeysetRegistry] EncryptWithContext<'a, S, K>, "EncryptWithContext";
+    ['a, S, X, K: KeysetRegistry] EncryptIndexed<'a, S, X, K>, "EncryptIndexed";
+    ['a, S: 'static, K: KeysetRegistry + 'static] EncryptFields<'a, S, K>, "EncryptFields";
+    ['a, S: ?Sized, P, K: KeysetRegistry] EncryptUsing<'a, S, P, K>, "EncryptUsing";
+    ['a, F, K: KeysetRegistry] QueryBuilder<'a, F, K>, "QueryBuilder";
+    ['a, F, P, K: KeysetRegistry] QueryUsing<'a, F, P, K>, "QueryUsing";
+    ['a, F, I, K: KeysetRegistry] QueryIndex<'a, F, I, K>, "QueryIndex";
+    ['a, R, K: KeysetRegistry] OpenBuilder<'a, R, K>, "OpenBuilder";
+    ['a, R, P, K: KeysetRegistry] OpenUsing<'a, R, P, K>, "OpenUsing";
 }
 
 /// Several chains settled together: one ZeroKMS request per request kind
 /// for all of them, under one keyset. Built by [`all`].
-pub struct All<'a, K, T> {
+pub struct All<'a, K: KeysetRegistry, T> {
     operations: T,
     scope: PhantomData<Scope<'a, K>>,
 }
@@ -884,7 +900,7 @@ pub struct All<'a, K, T> {
 /// the type.
 type Scope<'a, K> = (&'a (), fn() -> K);
 
-impl<K, T> std::fmt::Debug for All<'_, K, T> {
+impl<K: KeysetRegistry, T> std::fmt::Debug for All<'_, K, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("All").finish_non_exhaustive()
     }
@@ -910,10 +926,11 @@ impl<K, T> std::fmt::Debug for All<'_, K, T> {
 ///
 /// ```
 /// # async fn example() -> Result<(), stack_encrypt::Error> {
-/// use stack_encrypt::kms::FakeDataKeySource;
+/// use stack_encrypt::registry::fake::FakeKeysetRegistry;
+/// use stack_encrypt::StackCipherBuilder;
 /// use stack_encrypt::{Equality, Plan, StackCipher};
 ///
-/// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+/// let cipher = StackCipherBuilder::new().registry(FakeKeysetRegistry::new()).init().await?;
 /// let email_plan = Plan::context("users/email").with(Equality).build()?;
 ///
 /// let email = String::from("bob@example.com");
@@ -927,7 +944,7 @@ impl<K, T> std::fmt::Debug for All<'_, K, T> {
 /// # }
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(example()).unwrap();
 /// ```
-pub fn all<'a, K: 'static, T: Batch<'a, K>>(operations: T) -> All<'a, K, T> {
+pub fn all<'a, K: KeysetRegistry + 'static, T: Batch<'a, K>>(operations: T) -> All<'a, K, T> {
     All {
         operations,
         scope: PhantomData,
@@ -935,14 +952,14 @@ pub fn all<'a, K: 'static, T: Batch<'a, K>>(operations: T) -> All<'a, K, T> {
 }
 
 /// A tuple of two to four chains [`all`] can settle together. Sealed.
-pub trait Batch<'a, K: 'static>: sealed::Sealed {}
+pub trait Batch<'a, K: KeysetRegistry + 'static>: sealed::Sealed {}
 
 /// One chain's pending, routed to the group it settles in: the batch,
 /// under the batch keyset, or, for an opening that named no keyset and has
 /// not failed, the openings that read from any keyset. The other group
 /// holds an empty place for it, so a failure always lands in the batch and
 /// stops it before any I/O.
-fn route<'p, T, K>(
+fn route<'p, T, K: KeysetRegistry>(
     cipher: &'p StackCipher<K>,
     pending: Pending<'p, T, K>,
 ) -> (Pending<'p, Option<T>, K>, Pending<'p, Option<T>, K>)
@@ -970,7 +987,7 @@ macro_rules! all_of {
         $(, $rest:ident $rop:ident $rnamed:ident $rbatch:ident $rany:ident)+
     ) => ($batch:pat, $any:pat),)+) => {$(
         impl<$first, $($rest),+> sealed::Sealed for ($first, $($rest),+) {}
-        impl<'a, K: 'static, $first: Operation<'a, K>, $($rest: Operation<'a, K>),+> Batch<'a, K>
+        impl<'a, K: KeysetRegistry + 'static, $first: Operation<'a, K>, $($rest: Operation<'a, K>),+> Batch<'a, K>
             for ($first, $($rest),+)
         {
         }

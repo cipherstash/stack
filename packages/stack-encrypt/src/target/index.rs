@@ -19,12 +19,13 @@
 //!
 //! ```
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
-//! use stack_encrypt::kms::FakeDataKeySource;
+//! use stack_encrypt::registry::fake::FakeKeysetRegistry;
+//! use stack_encrypt::StackCipherBuilder;
 //! use stack_encrypt::sem::{EqualityTerm, OreTerm};
 //! use stack_encrypt::target::{indexed, Borrowed, CallerContext, Encrypted, Equality, Ore};
 //! use stack_encrypt::{nonempty, StackCipher};
 //!
-//! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+//! let cipher = StackCipherBuilder::new().registry(FakeKeysetRegistry::new()).init().await?;
 //! let keyset = cipher.default_keyset();
 //!
 //! let age = 34u32;
@@ -57,6 +58,7 @@ use super::context::{AeadContext, CallerContext};
 use super::operations::{ciphertext, equality, matching, ope, open, ore};
 use super::source::{ConsumeSource, ShareSource};
 use super::{DecryptField, DecryptInto, Decryptable, Decryption, EncryptFrom, Encryption};
+use crate::registry::KeysetRegistry;
 use crate::sem::{
     DefaultMatch, EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreTerm,
 };
@@ -138,7 +140,7 @@ pub trait Index<S> {
     ///
     /// A fresh description per call: a description is single-use, and an
     /// index is not, so a saved plan asks again each time it runs.
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+    fn operation<'s, K: KeysetRegistry + 'static, M: ConsumeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -197,7 +199,7 @@ impl<S: vitaminc_prf::PrfValue> Index<S> for Equality {
     fn spec(&self) -> IndexSpec {
         IndexSpec::Equality
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+    fn operation<'s, K: KeysetRegistry + 'static, M: ConsumeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -211,7 +213,7 @@ impl<S: AsRef<str>, O: MatchConfig + 'static> Index<S> for Match<O> {
     fn spec(&self) -> IndexSpec {
         IndexSpec::Match(O::options())
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+    fn operation<'s, K: KeysetRegistry + 'static, M: ConsumeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -229,7 +231,7 @@ where
     fn spec(&self) -> IndexSpec {
         IndexSpec::Ore
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+    fn operation<'s, K: KeysetRegistry + 'static, M: ConsumeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -247,7 +249,7 @@ where
     fn spec(&self) -> IndexSpec {
         IndexSpec::Ope
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, S>>(
+    fn operation<'s, K: KeysetRegistry + 'static, M: ConsumeSource<'s, S>>(
         &self,
     ) -> Encryption<'s, S, Self::Term, K, CallerContext, M>
     where
@@ -281,7 +283,9 @@ pub trait Indexes<S> {
     ///
     /// Several indexes over one owned plaintext share it, so in
     /// [`Owned`](super::Owned) mode `S` must be `Clone` (see [`ShareSource`]).
-    fn operations<'s, K: 'static, M>(&self) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
+    fn operations<'s, K: KeysetRegistry + 'static, M>(
+        &self,
+    ) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
     where
         S: 's,
         M: ConsumeSource<'s, S> + ShareSource<'s, S>;
@@ -363,7 +367,7 @@ macro_rules! single_index {
             fn specs(&self) -> Vec<IndexSpec> {
                 vec![self.spec()]
             }
-            fn operations<'s, K: 'static, M>(
+            fn operations<'s, K: KeysetRegistry + 'static, M>(
                 &self,
             ) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
             where
@@ -386,7 +390,7 @@ macro_rules! tuple_of_indexes {
             fn specs(&self) -> Vec<IndexSpec> {
                 vec![$(self.$at.spec()),+]
             }
-            fn operations<'s, K: 'static, M>(
+            fn operations<'s, K: KeysetRegistry + 'static, M>(
                 &self,
             ) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
             where
@@ -451,7 +455,7 @@ pub struct Encrypted<Terms> {
 
 impl<P: crate::Decrypt<'static> + 'static, Terms> DecryptInto<P> for Encrypted<Terms> {
     type Context = AeadContext;
-    fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
+    fn decryption<K: KeysetRegistry + 'static>(self, context: Self::Context) -> Decryption<P, K> {
         open(self.ciphertext, context)
     }
 }
@@ -467,7 +471,7 @@ where
     Terms: TermSet<S>,
 {
     type Context = CallerContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    fn encryption<'s, K: KeysetRegistry + 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
         S: 's,
     {
@@ -487,7 +491,10 @@ where
     Self: DecryptInto<P>,
     Ctx: Into<<Self as DecryptInto<P>>::Context>,
 {
-    fn decryption_field<K: 'static>(self, context: Ctx) -> Option<Decryption<P, K>> {
+    fn decryption_field<K: KeysetRegistry + 'static>(
+        self,
+        context: Ctx,
+    ) -> Option<Decryption<P, K>> {
         Some(self.decryption(context.into()))
     }
 }
@@ -578,7 +585,7 @@ pub fn indexed<'s, S, K, M, X>(
 ) -> Encryption<'s, S, Encrypted<X::Terms>, K, CallerContext, M>
 where
     S: crate::Encrypt + 's,
-    K: 'static,
+    K: KeysetRegistry + 'static,
     M: ConsumeSource<'s, S> + ShareSource<'s, S>,
     X: Indexes<S>,
 {

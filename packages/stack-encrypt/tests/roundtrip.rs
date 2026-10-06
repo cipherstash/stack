@@ -1,22 +1,22 @@
 //! End-to-end encrypt/decrypt tests for `StackCipher` against the in-memory
-//! `FakeDataKeySource` — no ZeroKMS credentials or network required. The fake
+//! `FakeKeysetRegistry` — no ZeroKMS credentials or network required. The fake
 //! hands out random key material and remembers it by `(iv, tag)`, so
 //! generate → retrieve round-trips within a test but nothing is reproducible
 //! across processes.
 
 use std::collections::HashMap;
 
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 use stack_encrypt::{
     BoxedPassthrough, Cipher, CipherText, ContextTag, Element, Encrypt, IntoAad, SealedValue,
-    StackCipher,
+    StackCipher, StackCipherBuilder,
 };
-use stack_kms::FakeDataKeySource;
 use vitaminc_aead::{MapCipher, Passthrough};
 use vitaminc_protected::{Controlled, Protected};
 
-async fn cipher() -> StackCipher<FakeDataKeySource> {
-    StackCipher::builder()
-        .kms(FakeDataKeySource::new())
+async fn cipher() -> StackCipher<FakeKeysetRegistry> {
+    StackCipherBuilder::new()
+        .registry(FakeKeysetRegistry::new())
         .init()
         .await
         .expect("build cipher")
@@ -150,6 +150,9 @@ async fn nested_vec_roundtrips() {
     assert_eq!(pt, nested);
 }
 
+/// `ContextTag` carries its tag inside the *value*, so `decrypt_tagged` is
+/// the mirror of sealing one — it keeps the tag out of the descriptor and
+/// folds it in at the decipher, where `Encrypt` folds it in too. CIP-4144.
 #[tokio::test]
 async fn context_tag_binds_and_roundtrips() {
     let cipher = cipher().await;
@@ -161,14 +164,19 @@ async fn context_tag_binds_and_roundtrips() {
 
     // Matching context recovers the value.
     let pt: String = cipher
-        .decrypt(ct, ContextTag::aad("user:42"))
+        .decrypt_tagged(ct, ContextTag::context("user:42"), ())
         .await
         .expect("decrypt");
     assert_eq!(pt, "token");
 }
 
+/// A wrong tag must not decrypt — and must fail at the AEAD, *after* the
+/// key is retrieved, rather than at the provider. That is the property
+/// which makes `decrypt_tagged` work at all: both sides render the
+/// descriptor from `aad` alone, so the retrieve succeeds and the tag does
+/// its binding one layer above.
 #[tokio::test]
-async fn context_tag_wrong_context_fails() {
+async fn context_tag_binds_above_the_descriptor() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
@@ -176,8 +184,68 @@ async fn context_tag_wrong_context_fails() {
         .await
         .expect("encrypt");
 
-    let result: Result<String, _> = cipher.decrypt(ct, ContextTag::aad("user:99")).await;
-    assert!(result.is_err(), "wrong context tag must not decrypt");
+    let result: Result<String, _> = cipher
+        .decrypt_tagged(ct, ContextTag::context("user:99"), ())
+        .await;
+    assert!(
+        matches!(result, Err(stack_encrypt::Error::Aead)),
+        "a wrong tag must fail at the AEAD, not at the provider: {result:?}"
+    );
+}
+
+/// The same tag with different extra AAD is a different binding, and the
+/// extra AAD *is* in the descriptor — so this one is refused by the
+/// provider, before the AEAD.
+#[tokio::test]
+async fn context_tag_extra_aad_is_in_the_descriptor() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let seal = || keyset.encrypt(ContextTag::new("token".to_string(), "user:42"), "row:1");
+
+    // Same tag, same extra AAD: recovers the value.
+    let pt: String = cipher
+        .decrypt_tagged(
+            seal().await.expect("encrypt"),
+            ContextTag::context("user:42"),
+            "row:1",
+        )
+        .await
+        .expect("decrypt");
+    assert_eq!(pt, "token");
+
+    // Same tag, different extra AAD: a different descriptor, so the
+    // provider refuses the retrieve.
+    let result: Result<String, _> = cipher
+        .decrypt_tagged(
+            seal().await.expect("encrypt"),
+            ContextTag::context("user:42"),
+            "row:2",
+        )
+        .await;
+    assert!(
+        matches!(result, Err(stack_encrypt::Error::Provider(_))),
+        "extra AAD belongs to the descriptor, so a mismatch is the provider's to refuse: {result:?}"
+    );
+}
+
+/// `ContextTag::aad` is vitaminc's low-level builder for driving a cipher's
+/// own decrypt entry point. Handed to `decrypt`, it folds the tag into the
+/// descriptor on the open side only, so the retrieve is refused. Pinned so
+/// the trap stays a documented refusal rather than a silent one.
+#[tokio::test]
+async fn context_tag_aad_is_refused_by_plain_decrypt() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let ct = keyset
+        .encrypt(ContextTag::new("token".to_string(), "user:42"), ())
+        .await
+        .expect("encrypt");
+
+    let result: Result<String, _> = cipher.decrypt(ct, ContextTag::aad("user:42")).await;
+    assert!(
+        matches!(result, Err(stack_encrypt::Error::Provider(_))),
+        "ContextTag::aad puts the tag in the descriptor, which the seal side never did: {result:?}"
+    );
 }
 
 #[tokio::test]
@@ -476,8 +544,8 @@ async fn leaf_survives_persistence_via_parts() {
         CipherText::Single(leaf) => leaf,
         other => panic!("expected a Single leaf, got {other:?}"),
     };
-    let (keyset_id, iv, tag, bytes) = leaf.into_parts();
-    let rebuilt = SealedValue::from_parts(keyset_id, iv, tag, bytes).expect("rebuild leaf");
+    let (keyset_id, key_id, bytes) = leaf.into_parts();
+    let rebuilt = SealedValue::from_parts(keyset_id, key_id, bytes).expect("rebuild leaf");
 
     let pt: String = cipher
         .decrypt(CipherText::Single(rebuilt), b"ctx".as_slice())
@@ -501,8 +569,7 @@ async fn leaf_survives_persistence_via_serde() {
     let json = serde_json::to_string(&leaf).expect("serialise leaf");
     let restored: SealedValue = serde_json::from_str(&json).expect("deserialise leaf");
     assert_eq!(restored.keyset_id(), leaf.keyset_id());
-    assert_eq!(restored.iv(), leaf.iv());
-    assert_eq!(restored.tag(), leaf.tag());
+    assert_eq!(restored.key_id(), leaf.key_id());
     assert_eq!(restored.ciphertext(), leaf.ciphertext());
 
     let pt: String = cipher
@@ -524,10 +591,10 @@ async fn tampered_leaf_bytes_fail() {
         CipherText::Single(leaf) => leaf,
         other => panic!("expected a Single leaf, got {other:?}"),
     };
-    let (keyset_id, iv, tag, mut bytes) = leaf.into_parts();
+    let (keyset_id, key_id, mut bytes) = leaf.into_parts();
     let last = bytes.len() - 1;
     bytes[last] ^= 0x01;
-    let tampered = SealedValue::from_parts(keyset_id, iv, tag, bytes).expect("rebuild leaf");
+    let tampered = SealedValue::from_parts(keyset_id, key_id, bytes).expect("rebuild leaf");
 
     let result: Result<String, _> = cipher.decrypt(CipherText::Single(tampered), ()).await;
     assert!(result.is_err(), "a flipped ciphertext bit must not decrypt");

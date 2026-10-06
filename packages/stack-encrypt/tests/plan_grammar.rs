@@ -11,8 +11,8 @@ use std::fmt::Debug;
 use std::sync::atomic::Ordering;
 
 use common::{counting_cipher, loads_counting_cipher, recording_cipher, stack_cipher};
-use stack_encrypt::kms::FakeDataKeySource;
 use stack_encrypt::plan::{pick, Field, FieldKind, FieldValues, Fields, Opens, PlanError, Runs};
+use stack_encrypt::registry::fake::FakeKeysetRegistry;
 use stack_encrypt::sem::{
     EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreTerm, Tokenizer,
 };
@@ -59,7 +59,7 @@ fn age(u: &User) -> &u32 {
 
 /// The picker fields plan every context-source test runs, without a
 /// context of its own.
-fn contextless_plan<K: 'static>() -> Plan<User, K> {
+fn contextless_plan<K: stack_encrypt::KeysetRegistry + 'static>() -> Plan<User, K> {
     Plan::fields()
         .encrypt_index(("email", email), Equality)
         .encrypt(("age", age))
@@ -93,7 +93,7 @@ async fn both_starts_build_the_plan_the_context_start_builds() {
     let mut a = cipher.encrypt(&user()).using(&fields_first).await.unwrap();
     let mut b = cipher.encrypt(&user()).using(&context_first).await.unwrap();
     assert_eq!(
-        sent.lock().unwrap().generated(),
+        sent.calls().generated(),
         ["users/email", "users/age", "users/email", "users/age"]
     );
     let a: Encrypted<EqualityTerm> = a.take("email").unwrap();
@@ -134,7 +134,7 @@ async fn a_plan_built_without_a_context_takes_the_calls() {
         .await
         .unwrap();
     assert_eq!(
-        sent.lock().unwrap().generated(),
+        sent.calls().generated(),
         ["tenants/acme/email", "tenants/acme/age"],
         "every field under <call context>/<identity>"
     );
@@ -173,7 +173,7 @@ async fn a_plan_built_without_a_context_takes_the_calls() {
 
 #[tokio::test]
 async fn a_plan_run_with_no_context_is_refused_before_any_key_request() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let users_plan = Plan::fields()
         .encrypt_index(("email", email), Equality)
         .build()
@@ -223,12 +223,8 @@ async fn a_plan_run_with_no_context_is_refused_before_any_key_request() {
         plan_error(cipher.open(age).using(&age_plan).await),
         PlanError::NoContext
     );
-    assert_eq!(
-        generates.load(Ordering::SeqCst),
-        2,
-        "only the two good writes"
-    );
-    assert_eq!(retrieves.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.call_counts().0, 2, "only the two good writes");
+    assert_eq!(provider.call_counts().1, 0);
     assert!(PlanError::NoContext
         .to_string()
         .starts_with("the plan has no context"));
@@ -237,19 +233,19 @@ async fn a_plan_run_with_no_context_is_refused_before_any_key_request() {
 #[tokio::test]
 async fn a_context_given_twice_is_refused_at_build() {
     let both = Plan::context("users")
-        .fields::<User, FakeDataKeySource>()
+        .fields::<User, FakeKeysetRegistry>()
         .context("people")
         .encrypt(("age", age))
         .build();
     assert_eq!(plan_error(both), two("the plan", "the plan"));
 
     let with_field = Plan::context("users")
-        .fields::<TenantRecord, FakeDataKeySource>()
+        .fields::<TenantRecord, FakeKeysetRegistry>()
         .context_field(("tenant", tenant))
         .build();
     assert_eq!(plan_error(with_field), two("the plan", "a context field"));
 
-    let field_first = Plan::fields::<TenantRecord, FakeDataKeySource>()
+    let field_first = Plan::fields::<TenantRecord, FakeKeysetRegistry>()
         .context_field(("tenant", tenant))
         .context("users")
         .build();
@@ -270,7 +266,7 @@ async fn a_context_given_twice_is_refused_at_build() {
 
 #[tokio::test]
 async fn a_context_given_twice_is_refused_at_the_call_before_any_key_request() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let users_plan: Plan<User, _> = Plan::context("users")
         .fields()
         .encrypt_index(("email", email), Equality)
@@ -347,8 +343,8 @@ async fn a_context_given_twice_is_refused_at_the_call_before_any_key_request() {
         ),
         two("the plan", "the call")
     );
-    assert_eq!(generates.load(Ordering::SeqCst), 1, "only the good write");
-    assert_eq!(retrieves.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.call_counts().0, 1, "only the good write");
+    assert_eq!(provider.call_counts().1, 0);
 }
 
 #[tokio::test]
@@ -402,7 +398,7 @@ fn record_email(r: &TenantRecord) -> &String {
     &r.email
 }
 
-fn records_plan<K: 'static>() -> Plan<TenantRecord, K> {
+fn records_plan<K: stack_encrypt::KeysetRegistry + 'static>() -> Plan<TenantRecord, K> {
     Plan::fields()
         .context_field(("tenant", tenant))
         .encrypt_index(("email", record_email), Equality)
@@ -723,10 +719,7 @@ async fn an_extension_reaches_every_field_of_a_context_field_plan() {
         .extend(7u64)
         .await
         .unwrap();
-    assert_eq!(
-        sent.lock().unwrap().generated(),
-        ["(tenants/acme/email)/7u64"]
-    );
+    assert_eq!(sent.calls().generated(), ["(tenants/acme/email)/7u64"]);
     let back = cipher
         .open(record)
         .using(&records_plan)
@@ -743,7 +736,7 @@ async fn an_extension_reaches_every_field_of_a_context_field_plan() {
         .unwrap();
     assert!(matches!(
         cipher.open(record).using(&records_plan).await,
-        Err(Error::Aead)
+        Err(Error::Provider(_))
     ));
 }
 
@@ -761,7 +754,7 @@ async fn a_vec_through_a_context_field_plan_seals_each_record_under_its_own_tena
     let records = vec![tenant_record(), globex];
     let written = cipher.encrypt(&records).using(&records_plan).await.unwrap();
     assert_eq!(
-        sent.lock().unwrap().generated(),
+        sent.calls().generated(),
         ["tenants/acme/email", "tenants/globex/email"],
     );
     let back = cipher.open(written).using(&records_plan).await.unwrap();
@@ -808,7 +801,7 @@ async fn a_context_field_is_the_context_of_every_other_field() {
         .await
         .unwrap();
     assert_eq!(
-        sent.lock().unwrap().generated(),
+        sent.calls().generated(),
         ["tenants/acme/email"],
         "the field is sealed under <context field>/<identity>"
     );
@@ -853,7 +846,7 @@ async fn a_context_field_is_the_context_of_every_other_field() {
 
 #[tokio::test]
 async fn opening_checks_the_context_field_against_the_expected_context() {
-    let (cipher, _, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let records_plan = records_plan();
 
     let record = cipher
@@ -868,7 +861,7 @@ async fn opening_checks_the_context_field_against_the_expected_context() {
         .await
         .unwrap();
     assert_eq!(back.get::<String>("email"), Some(&tenant_record().email));
-    let before = retrieves.load(Ordering::SeqCst);
+    let before = provider.call_counts().1;
 
     let record = cipher
         .encrypt(&tenant_record())
@@ -885,7 +878,7 @@ async fn opening_checks_the_context_field_against_the_expected_context() {
         "{refused:?}"
     );
     assert_eq!(
-        retrieves.load(Ordering::SeqCst),
+        provider.call_counts().1,
         before,
         "refused before any key request"
     );
@@ -899,12 +892,12 @@ async fn opening_checks_the_context_field_against_the_expected_context() {
         .unwrap();
     moved.insert("tenant", String::from("tenants/globex"));
     let refused = cipher.open(moved).using(&records_plan).await;
-    assert!(matches!(refused, Err(Error::Aead)), "{refused:?}");
+    assert!(matches!(refused, Err(Error::Provider(_))), "{refused:?}");
 }
 
 #[tokio::test]
 async fn a_context_field_that_is_not_a_label_or_missing_is_refused() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let records_plan = records_plan();
     let bad = TenantRecord {
         tenant: "acme corp/(x)".into(),
@@ -950,8 +943,8 @@ async fn a_context_field_that_is_not_a_label_or_missing_is_refused() {
             field: "tenant".into()
         }
     );
-    assert_eq!(generates.load(Ordering::SeqCst), 3, "the three good writes");
-    assert_eq!(retrieves.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.call_counts().0, 3, "the three good writes");
+    assert_eq!(provider.call_counts().1, 0);
 }
 
 // --- encrypt_into: a typed field is the data verbs' bytes ----------------------
@@ -993,7 +986,7 @@ where
     let one = One { v: value.clone() };
     let mut typed_record = cipher.encrypt(&one).using(&typed).await.unwrap();
     let mut data_record = cipher.encrypt(&one).using(&data).await.unwrap();
-    assert_eq!(sent.lock().unwrap().generated(), ["t/v", "t/v"]);
+    assert_eq!(sent.calls().generated(), ["t/v", "t/v"]);
 
     let typed_out: Encrypted<Terms> = typed_record.take("v").unwrap();
     let data_out: Encrypted<Terms> = data_record.take("v").unwrap();
@@ -1079,7 +1072,7 @@ fn a_five_index_field_is_refused_by_both_spellings() {
         index: "match",
     };
     let typed = Plan::context("t")
-        .fields::<One<String>, FakeDataKeySource>()
+        .fields::<One<String>, FakeKeysetRegistry>()
         .encrypt_into::<Encrypted<(EqualityTerm, M, OreTerm<String>, OpeTerm<String>, W)>, _>(pick(
             "v",
             |o: &One<String>| &o.v,
@@ -1087,7 +1080,7 @@ fn a_five_index_field_is_refused_by_both_spellings() {
         .build();
     assert_eq!(plan_error(typed), refused());
     let data = Plan::context("t")
-        .fields::<One<String>, FakeDataKeySource>()
+        .fields::<One<String>, FakeKeysetRegistry>()
         .encrypt_index(
             pick("v", |o: &One<String>| &o.v),
             (Equality, Match::default(), Ore, Ope, Match::<Words>::new()),
@@ -1199,7 +1192,8 @@ async fn a_typed_field_of_terms_alone_does_not_come_back() {
 struct Lying(StackCipherText);
 impl EncryptFrom<u32> for Lying {
     type Context = stack_encrypt::target::AeadContext;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, u32, Self, K, Self::Context> {
+    fn encryption<'s, K: stack_encrypt::KeysetRegistry + 'static>(
+    ) -> Encryption<'s, u32, Self, K, Self::Context> {
         <StackCipherText as EncryptFrom<u32>>::encryption().map(Lying)
     }
 }
@@ -1207,7 +1201,10 @@ impl Decryptable for Lying {
     const DECRYPTABLE: bool = true;
 }
 impl<P, Ctx> DecryptField<P, Ctx> for Lying {
-    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
+    fn decryption_field<K: stack_encrypt::KeysetRegistry + 'static>(
+        self,
+        _: Ctx,
+    ) -> Option<Decryption<P, K>> {
         None
     }
 }
@@ -1228,12 +1225,12 @@ async fn a_typed_field_that_opens_nothing_is_not_opened() {
 #[tokio::test]
 async fn a_field_is_a_target_or_data_verbs_never_both() {
     let target_first = Plan::context("users")
-        .fields::<User, FakeDataKeySource>()
+        .fields::<User, FakeKeysetRegistry>()
         .encrypt_into::<EmailOut, _>(("email", email))
         .encrypt(("email", email))
         .build();
     let verbs_first = Plan::context("users")
-        .fields::<User, FakeDataKeySource>()
+        .fields::<User, FakeKeysetRegistry>()
         .passthrough(("email", email))
         .encrypt_into::<EmailOut, _>(("email", email))
         .build();
@@ -1246,7 +1243,7 @@ async fn a_field_is_a_target_or_data_verbs_never_both() {
         );
     }
     let twice = Plan::context("users")
-        .fields::<User, FakeDataKeySource>()
+        .fields::<User, FakeKeysetRegistry>()
         .encrypt_into::<EmailOut, _>(("email", email))
         .encrypt_into::<EmailOut, _>(("email", email))
         .build();
@@ -1258,7 +1255,7 @@ async fn a_field_is_a_target_or_data_verbs_never_both() {
         "two targets on one field is a field named twice"
     );
     let index_twice = Plan::context("users")
-        .fields::<User, FakeDataKeySource>()
+        .fields::<User, FakeKeysetRegistry>()
         .encrypt_into::<Encrypted<(EqualityTerm, EqualityTerm)>, _>(("email", email))
         .build();
     assert_eq!(
@@ -1298,10 +1295,7 @@ async fn a_one_value_typed_plan_is_the_plaintext_records_bytes() {
         )
         .await
         .unwrap();
-    assert_eq!(
-        sent.lock().unwrap().generated(),
-        ["users/email", "users/email"]
-    );
+    assert_eq!(sent.calls().generated(), ["users/email", "users/email"]);
     assert_eq!(hm, derived.hm, "the same equality term");
 
     // Each ciphertext opens through the other's reader.
@@ -1382,7 +1376,8 @@ async fn a_one_value_plan_without_a_context_names_the_value_in_its_errors() {
 struct Tenanted<const N: usize>(#[allow(dead_code)] EqualityTerm);
 impl<const N: usize> EncryptFrom<String> for Tenanted<N> {
     type Context = NonEmpty<u64>;
-    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context> {
+    fn encryption<'s, K: stack_encrypt::KeysetRegistry + 'static>(
+    ) -> Encryption<'s, String, Self, K, Self::Context> {
         <EqualityTerm as EncryptFrom<String>>::encryption()
             .accepting::<NonEmpty<u64>>()
             .map(Tenanted)
@@ -1417,7 +1412,7 @@ fn a_one_value_plan_builds_over_a_target_of_any_context() {
 
 #[tokio::test]
 async fn a_vec_written_through_a_one_value_plan_opens_through_it_in_one_request() {
-    let (cipher, generates, retrieves) = counting_cipher().await;
+    let (cipher, provider) = counting_cipher().await;
     let ages = vec![30u32, 31, 32];
 
     let age_plan = Plan::context("users/age")
@@ -1427,12 +1422,8 @@ async fn a_vec_written_through_a_one_value_plan_opens_through_it_in_one_request(
     let written = cipher.encrypt(&ages).using(&age_plan).await.unwrap();
     let back: Vec<u32> = cipher.open(written).using(&age_plan).await.unwrap();
     assert_eq!(back, ages);
-    assert_eq!(generates.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        retrieves.load(Ordering::SeqCst),
-        1,
-        "one retrieve for the Vec"
-    );
+    assert_eq!(provider.call_counts().0, 1);
+    assert_eq!(provider.call_counts().1, 1, "one retrieve for the Vec");
 
     let written = cipher.encrypt(&ages).using(&age_plan).await.unwrap();
     let ciphertexts: Vec<StackCipherText> = written.into_iter().map(|e| e.ciphertext).collect();
@@ -1447,11 +1438,11 @@ async fn a_vec_written_through_a_one_value_plan_opens_through_it_in_one_request(
         .encrypt_into::<(StackCipherText, EqualityTerm)>()
         .build()
         .unwrap();
-    let before = retrieves.load(Ordering::SeqCst);
+    let before = provider.call_counts().1;
     let written = cipher.encrypt(&ages).using(&typed_plan).await.unwrap();
     let back: Vec<u32> = cipher.open(written).using(&typed_plan).await.unwrap();
     assert_eq!(back, ages);
-    assert_eq!(retrieves.load(Ordering::SeqCst), before + 1);
+    assert_eq!(provider.call_counts().1, before + 1);
 }
 
 // --- Pickers -----------------------------------------------------------------
@@ -1492,7 +1483,7 @@ async fn a_picker_plan_needs_no_fields_impl_and_is_the_by_name_plans_bytes() {
         .unwrap();
     let mut a = cipher.encrypt(&user()).using(&picked).await.unwrap();
     let mut b = cipher.encrypt(&Named(user())).using(&named).await.unwrap();
-    let sent = sent.lock().unwrap().generated();
+    let sent = sent.calls().generated();
     assert_eq!(
         sent,
         ["users/email", "users/age", "users/email", "users/age"]
@@ -1591,7 +1582,7 @@ async fn a_pinned_identity_rescues_a_field_name_that_is_not_plain() {
         .await
         .unwrap();
     assert_eq!(
-        sent.lock().unwrap().generated(),
+        sent.calls().generated(),
         ["users/totp_secret", "reading/value", "reading/unit"]
     );
     let value: Encrypted<EqualityTerm> = record.take("0").unwrap();
@@ -1610,7 +1601,7 @@ async fn a_pinned_identity_rescues_a_field_name_that_is_not_plain() {
 
     // Without an identity the name is the identity, and must be plain.
     let refused = Plan::context("users")
-        .fields::<Secret, FakeDataKeySource>()
+        .fields::<Secret, FakeKeysetRegistry>()
         .encrypt(pick("2fa_secret", |s: &Secret| &s.totp))
         .build();
     assert!(matches!(
@@ -1618,7 +1609,7 @@ async fn a_pinned_identity_rescues_a_field_name_that_is_not_plain() {
         PlanError::FieldLabel { field, .. } if field == "2fa_secret"
     ));
     // And in a plan whose context comes later, likewise.
-    let refused = Plan::fields::<Secret, FakeDataKeySource>()
+    let refused = Plan::fields::<Secret, FakeKeysetRegistry>()
         .encrypt(pick("2fa_secret", |s: &Secret| &s.totp))
         .build();
     assert!(matches!(
@@ -1646,7 +1637,7 @@ async fn a_pinned_identity_keys_a_call_context_plan_for_query_and_open() {
         .using(&readings_plan)
         .await
         .unwrap();
-    assert_eq!(sent.lock().unwrap().generated(), ["reading/value"]);
+    assert_eq!(sent.calls().generated(), ["reading/value"]);
     let stored: Encrypted<EqualityTerm> = record.take("0").unwrap();
     let query_value = cipher
         .query(&21u32)
@@ -1775,10 +1766,10 @@ async fn a_tuple_opens_through_its_ciphertext_wherever_it_sits() {
 
     // As a field of a derived record, through `DecryptField`.
     let pair: (StackCipherText, EqualityTerm) = keyset.encrypt_as(&7u32, context()).await.unwrap();
-    let opening: Option<Decryption<u32, FakeDataKeySource>> = pair.decryption_field(context());
+    let opening: Option<Decryption<u32, FakeKeysetRegistry>> = pair.decryption_field(context());
     let opened = cipher.run_decryption(opening.unwrap()).await.unwrap();
     assert_eq!(opened, 7);
-    let _ = <(StackCipherText, EqualityTerm) as DecryptInto<u32>>::decryption::<FakeDataKeySource>;
+    let _ = <(StackCipherText, EqualityTerm) as DecryptInto<u32>>::decryption::<FakeKeysetRegistry>;
 }
 
 /// A record whose terms-only tuple comes before its ciphertext.
@@ -1800,7 +1791,7 @@ async fn a_terms_only_tuple_yields_to_the_ciphertext_beside_it() {
 
     let terms_alone: (EqualityTerm, OreTerm<u32>) =
         keyset.encrypt_as(&7u32, context()).await.unwrap();
-    let opening: Option<Decryption<u32, FakeDataKeySource>> =
+    let opening: Option<Decryption<u32, FakeKeysetRegistry>> =
         terms_alone.decryption_field(context());
     assert!(opening.is_none(), "a tuple of terms alone opens nothing");
 
@@ -1816,12 +1807,12 @@ async fn a_terms_only_tuple_yields_to_the_ciphertext_beside_it() {
 
 #[test]
 fn a_plan_says_where_its_context_comes_from() {
-    let records_plan = records_plan::<FakeDataKeySource>();
+    let records_plan = records_plan::<FakeKeysetRegistry>();
     assert!(format!("{records_plan:?}").starts_with(r#"Plan { context: "<from field \"tenant\">""#));
-    let users_plan = contextless_plan::<FakeDataKeySource>();
+    let users_plan = contextless_plan::<FakeKeysetRegistry>();
     assert!(format!("{users_plan:?}").starts_with(r#"Plan { context: "<from the call>""#));
     let builder =
-        Plan::fields::<TenantRecord, FakeDataKeySource>().context_field(("tenant", tenant));
+        Plan::fields::<TenantRecord, FakeKeysetRegistry>().context_field(("tenant", tenant));
     assert!(format!("{builder:?}").starts_with(r#"FieldsBuilder { context: [Field("tenant")]"#));
     let start = Plan::value::<u32>().context("a");
     assert_eq!(

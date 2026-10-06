@@ -10,19 +10,20 @@
 //! sealed under — and then runs each fulfilment over exactly the
 //! [`Responses`] its own requests asked for.
 
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::future::{Future, IntoFuture};
 use std::pin::Pin;
 
-use stack_kms::{DataKey, DataKeySource, GenerateKeyPayload, Iv, MaybeSend, RetrieveKeyPayload};
-use uuid::Uuid;
+use vitaminc_kms::provider::MaybeSend;
+use vitaminc_kms::provider::{Binding, KeyProvider as _};
+use vitaminc_kms::KeyId;
 
-use super::request::{tally, Request, RequestKind, Responses};
+use super::request::{tally, ProviderKey, Request, RequestKind, Responses};
+use crate::registry::{KeysetId, KeysetRegistry};
 use crate::{Descriptor, Error, KeysetCipher, StackCipher};
 
 /// The boxed fulfilment: consumes this pending's slice of the responses and
-/// produces the output. The `Send` split mirrors [`kms::MaybeSend`](crate::kms::MaybeSend) —
+/// produces the output. The `Send` split mirrors [`vitaminc_kms::provider::MaybeSend`] —
 /// the underlying ZeroKMS futures are not `Send` on wasm32.
 #[cfg(not(target_arch = "wasm32"))]
 type FulfilBox<'a, T> = Box<dyn FnOnce(&mut Responses) -> Result<T, Error> + Send + 'a>;
@@ -53,7 +54,7 @@ pub type PendingFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, Error>> + 
 /// responses).
 #[must_use = "a Pending does nothing until it is awaited or merged into one that is; \
               dropping it silently discards the value and any error that produced it"]
-pub struct Pending<'a, T, K> {
+pub struct Pending<'a, T, K: KeysetRegistry> {
     /// The cipher the settled batch dispatches through. Which
     /// [`StackCipher`] value it is does not constrain merging — see
     /// [`zip`](Self::zip) — only which client issues the calls.
@@ -64,7 +65,7 @@ pub struct Pending<'a, T, K> {
     /// keyset and opens leaves from no other; an unscoped one mints nothing
     /// ([`Error::NoKeyset`]) and opens leaves from any keyset, one retrieve
     /// call per keyset. Merging two scopes is [`Error::KeysetMismatch`].
-    keyset: Option<Uuid>,
+    keyset: Option<KeysetId>,
     requests: Vec<Request>,
     /// Set when the value already failed during the synchronous build
     /// (`ready(Err(..))`, a keyset mismatch, a failed sibling). A failed
@@ -88,40 +89,41 @@ pub struct Pending<'a, T, K> {
 /// a scope's id is one the cipher loaded from ZeroKMS. Downstream code
 /// uses the cipher to execute [`EncryptFrom`](super::EncryptFrom); it never
 /// implements a scope of its own.
-pub trait CipherScope<'a, K>: sealed::Sealed {
+pub trait CipherScope<'a, K: KeysetRegistry>: sealed::Sealed {
     /// The client-scoped cipher the pending settles through.
     fn cipher(&self) -> &'a StackCipher<K>;
     /// The keyset the pending is scoped to, if any.
-    fn keyset(&self) -> Option<Uuid>;
+    fn keyset(&self) -> Option<KeysetId>;
 }
 
 mod sealed {
     pub trait Sealed {}
-    impl<K> Sealed for &crate::StackCipher<K> {}
-    impl<K> Sealed for &crate::KeysetCipher<'_, K> {}
+    use crate::registry::KeysetRegistry;
+    impl<K: KeysetRegistry> Sealed for &crate::StackCipher<K> {}
+    impl<K: KeysetRegistry> Sealed for &crate::KeysetCipher<'_, K> {}
 }
 
-impl<'a, K> CipherScope<'a, K> for &'a StackCipher<K> {
+impl<'a, K: KeysetRegistry> CipherScope<'a, K> for &'a StackCipher<K> {
     fn cipher(&self) -> &'a StackCipher<K> {
         self
     }
 
-    fn keyset(&self) -> Option<Uuid> {
+    fn keyset(&self) -> Option<KeysetId> {
         None
     }
 }
 
-impl<'a, K> CipherScope<'a, K> for &'a KeysetCipher<'_, K> {
+impl<'a, K: KeysetRegistry> CipherScope<'a, K> for &'a KeysetCipher<'_, K> {
     fn cipher(&self) -> &'a StackCipher<K> {
         KeysetCipher::cipher(self)
     }
 
-    fn keyset(&self) -> Option<Uuid> {
+    fn keyset(&self) -> Option<KeysetId> {
         Some(self.keyset_id())
     }
 }
 
-impl<'a, T: 'a, K> Pending<'a, T, K> {
+impl<'a, T: 'a, K: KeysetRegistry> Pending<'a, T, K> {
     /// A pending with no requests: `result` was fully derived during the
     /// synchronous build. Awaiting it does no I/O.
     pub fn ready(scope: impl CipherScope<'a, K>, result: Result<T, Error>) -> Self
@@ -244,7 +246,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// leaf from any other keyset fails before any key is retrieved.
     /// Scoping a pending already scoped to another keyset is
     /// [`Error::KeysetMismatch`].
-    pub(crate) fn scoped_to(self, keyset: Uuid) -> Self {
+    pub(crate) fn scoped_to(self, keyset: KeysetId) -> Self {
         if let Some(existing) = self.keyset {
             if existing != keyset {
                 return Pending::failed(
@@ -292,7 +294,7 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     /// global, and a cipher only holds a keyset ZeroKMS resolved for its
     /// client, so either side's client can dispatch the batch; a client that
     /// is *not* authorised for the keyset is refused at ZeroKMS
-    /// ([`Error::Kms`]), exactly as it would be on its own.
+    /// ([`Error::Provider`]), exactly as it would be on its own.
     pub fn zip<U: 'a>(self, other: Pending<'a, U, K>) -> Pending<'a, (T, U), K> {
         let keyset = match merge_scopes(self.keyset, other.keyset) {
             Ok(keyset) => keyset,
@@ -370,11 +372,8 @@ impl<'a, T: 'a, K> Pending<'a, T, K> {
     }
 }
 
-impl<'a, T: 'a, K> Pending<'a, T, K>
-where
-    K: DataKeySource,
-{
-    /// Settle: one batched ZeroKMS call per request kind (none at all for an
+impl<'a, T: 'a, K: KeysetRegistry> Pending<'a, T, K> {
+    /// Settle: one batched provider call per request kind (none at all for an
     /// all-[`ready`](Pending::ready) assembly), then the fulfilments shape the
     /// responses. This is the only place I/O happens — the cipher-directed
     /// API ([`KeysetCipher::encrypt`] / [`StackCipher::decrypt`]) settles
@@ -393,7 +392,10 @@ where
 
 /// The keyset two merged pendings share: either's when the other has none,
 /// [`Error::KeysetMismatch`] when both have one and they differ.
-fn merge_scopes(left: Option<Uuid>, right: Option<Uuid>) -> Result<Option<Uuid>, Error> {
+fn merge_scopes(
+    left: Option<KeysetId>,
+    right: Option<KeysetId>,
+) -> Result<Option<KeysetId>, Error> {
     match (left, right) {
         (Some(left), Some(right)) if left != right => Err(Error::KeysetMismatch { left, right }),
         (Some(keyset), _) | (_, Some(keyset)) => Ok(Some(keyset)),
@@ -406,7 +408,7 @@ fn merge_scopes(left: Option<Uuid>, right: Option<Uuid>) -> Result<Option<Uuid>,
 /// pending before any I/O: a generate request needs a keyset to mint under
 /// ([`Error::NoKeyset`]), and a retrieve request in a scoped pending must
 /// name that keyset ([`Error::ForeignKeyset`]).
-fn check_scope(keyset: Option<Uuid>, requests: &[Request]) -> Result<(), Error> {
+fn check_scope(keyset: Option<KeysetId>, requests: &[Request]) -> Result<(), Error> {
     for request in requests {
         match (keyset, request.retrieve_keyset()) {
             (None, None) => return Err(Error::NoKeyset),
@@ -426,9 +428,9 @@ fn check_scope(keyset: Option<Uuid>, requests: &[Request]) -> Result<(), Error> 
 /// sources that are natural on that target — it is dropped, mirroring the
 /// [`MaybeSend`] split.
 #[cfg(not(target_arch = "wasm32"))]
-impl<'a, T: 'a, K> IntoFuture for Pending<'a, T, K>
+impl<'a, T: 'a, K: KeysetRegistry + Sync> IntoFuture for Pending<'a, T, K>
 where
-    K: DataKeySource + Sync,
+    K::Provider: Send + Sync,
 {
     type Output = Result<T, Error>;
     type IntoFuture = PendingFuture<'a, T>;
@@ -438,12 +440,11 @@ where
     }
 }
 
-/// See the native impl above; identical minus the `Sync` bound.
+/// See the native impl above; identical minus the `Send`/`Sync` bounds,
+/// which a single-threaded wasm target does not need and cannot always
+/// satisfy.
 #[cfg(target_arch = "wasm32")]
-impl<'a, T: 'a, K> IntoFuture for Pending<'a, T, K>
-where
-    K: DataKeySource,
-{
+impl<'a, T: 'a, K: KeysetRegistry> IntoFuture for Pending<'a, T, K> {
     type Output = Result<T, Error>;
     type IntoFuture = PendingFuture<'a, T>;
 
@@ -456,10 +457,10 @@ where
 /// [`dispatch`]: the retrieves are grouped by `keyset_id` and read back by
 /// index, so they are held as a list of their own rather than as requests.
 struct Retrieve {
-    iv: Iv,
-    tag: Vec<u8>,
+    key_id: Vec<u8>,
     descriptor: Descriptor,
-    keyset_id: Uuid,
+    keyset_id: KeysetId,
+    v1_leaf: bool,
 }
 
 /// Issue the batched ZeroKMS calls for `requests`: at most one
@@ -467,9 +468,9 @@ struct Retrieve {
 /// keyset the retrieved leaves were sealed under, whatever the request
 /// count. When ZeroKMS grows a combined operation (data keys + PRF
 /// derivations in one round-trip), this is the one place that changes.
-async fn dispatch<K: DataKeySource>(
+async fn dispatch<K: KeysetRegistry>(
     cipher: &StackCipher<K>,
-    keyset: Option<Uuid>,
+    keyset: Option<KeysetId>,
     requests: Vec<Request>,
 ) -> Result<Responses, Error> {
     let mut generates: Vec<Descriptor> = Vec::new();
@@ -478,48 +479,61 @@ async fn dispatch<K: DataKeySource>(
         match request.into_kind() {
             RequestKind::GenerateDataKey { descriptor } => generates.push(descriptor),
             RequestKind::RetrieveDataKey {
-                iv,
-                tag,
+                key_id,
                 descriptor,
                 keyset_id,
+                v1_leaf,
             } => retrieves.push(Retrieve {
-                iv,
-                tag,
+                key_id,
                 descriptor,
                 keyset_id,
+                v1_leaf,
             }),
         }
     }
 
-    // ZeroKMS binds a descriptor into a fixed-size block and does not check
-    // the length itself. This is the gate: every request passes through
-    // here, including ones built directly from the `pub` constructors. The
-    // entry points check the root descriptor earlier as well, so a tree of
-    // ten thousand leaves is refused before ten thousand requests exist —
-    // a fast path, not a second rule.
+    // A bound backend binds the descriptor into a fixed-size block and does
+    // not check the length itself. This is the gate: every request passes
+    // through here, including ones built directly from the `pub`
+    // constructors. The entry points check the root descriptor earlier as
+    // well, so a tree of ten thousand leaves is refused before ten thousand
+    // requests exist — a fast path, not a second rule.
     generates
         .iter()
         .chain(retrieves.iter().map(|retrieve| &retrieve.descriptor))
         .try_for_each(Descriptor::check)?;
 
+    // A format-1 leaf's key id is ZeroKMS's `iv ‖ tag`, and only ZeroKMS ever
+    // sealed one. Another backend would read those bytes as its own key id,
+    // so the leaf is refused here, before any keyset is resolved or any key
+    // is asked for, unless the registry says it reads format-1 leaves.
+    if !K::READS_V1_LEAVES {
+        if let Some(retrieve) = retrieves.iter().find(|retrieve| retrieve.v1_leaf) {
+            return Err(Error::V1LeafNeedsZeroKms {
+                keyset_id: retrieve.keyset_id,
+            });
+        }
+    }
+
     let generated = if generates.is_empty() {
         Vec::new()
     } else {
         // Every constructor checks this before any I/O (`check_scope`), so
-        // an unscoped generate cannot reach here; kept as the rule, not
-        // as an assumption.
+        // an unscoped generate cannot reach here; kept as the rule, not as
+        // an assumption.
         let keyset = keyset.ok_or(Error::NoKeyset)?;
-        // Each leaf's descriptor is its context, rendered; the lock context
-        // stays empty — see the descriptor module docs.
-        let payloads: Vec<GenerateKeyPayload<'_>> = generates
+        let state = cipher.provider_for(keyset).await?;
+        let provider = &state.provider;
+        // Each leaf's descriptor is its binding, rendered.
+        let bindings: Vec<Binding<'_>> = generates
             .iter()
-            .map(|descriptor| GenerateKeyPayload::new(descriptor.as_str(), Cow::Owned(Vec::new())))
+            .map(|descriptor| Binding::new(descriptor.as_str().as_bytes()))
             .collect();
-        let expected = payloads.len();
-        let keys = cipher
-            .kms()
-            .generate_keys(payloads, Some(keyset), None)
-            .await?;
+        let expected = bindings.len();
+        let keys = provider
+            .generate_keys(&bindings)
+            .await
+            .map_err(|error| Error::Provider(Box::new(error)))?;
         if keys.len() != expected {
             return Err(Error::KeyCountMismatch {
                 expected,
@@ -532,8 +546,12 @@ async fn dispatch<K: DataKeySource>(
     // Retrieves group by the keyset each leaf names — one call per keyset,
     // in first-seen order — and the keys scatter back into request order,
     // which is the order the fulfilments draw them in.
-    let mut groups: Vec<(Uuid, Vec<usize>)> = Vec::new();
-    let mut group_of: HashMap<Uuid, usize> = HashMap::new();
+    //
+    // One call per keyset is not an optimisation this layer chose: a
+    // provider is bound to one backend key, and ZeroKMS's own protocol
+    // carries one keyset per request too.
+    let mut groups: Vec<(KeysetId, Vec<usize>)> = Vec::new();
+    let mut group_of: HashMap<KeysetId, usize> = HashMap::new();
     for (index, retrieve) in retrieves.iter().enumerate() {
         let group = *group_of.entry(retrieve.keyset_id).or_insert_with(|| {
             groups.push((retrieve.keyset_id, Vec::new()));
@@ -541,22 +559,27 @@ async fn dispatch<K: DataKeySource>(
         });
         groups[group].1.push(index);
     }
-    let mut retrieved: Vec<Option<DataKey>> = std::iter::repeat_with(|| None)
+    let mut retrieved: Vec<Option<ProviderKey>> = std::iter::repeat_with(|| None)
         .take(retrieves.len())
         .collect();
     for (keyset_id, indices) in groups {
-        let payloads: Vec<RetrieveKeyPayload<'_>> = indices
+        let state = cipher.provider_for(keyset_id).await?;
+        let provider = &state.provider;
+        let pairs: Vec<(KeyId, Binding<'_>)> = indices
             .iter()
             .map(|&index| {
                 let retrieve = &retrieves[index];
-                RetrieveKeyPayload::new(retrieve.iv, retrieve.descriptor.as_str(), &retrieve.tag)
+                (
+                    KeyId::new(retrieve.key_id.clone()),
+                    Binding::new(retrieve.descriptor.as_str().as_bytes()),
+                )
             })
             .collect();
-        let expected = payloads.len();
-        let keys = cipher
-            .kms()
-            .retrieve_keys(payloads, Some(keyset_id), None)
-            .await?;
+        let expected = pairs.len();
+        let keys = provider
+            .retrieve_keys(&pairs)
+            .await
+            .map_err(|error| Error::Provider(Box::new(error)))?;
         if keys.len() != expected {
             return Err(Error::KeyCountMismatch {
                 expected,
@@ -569,7 +592,7 @@ async fn dispatch<K: DataKeySource>(
     }
     // Every slot was filled by exactly one group; a hole would mean the
     // grouping above lost a request, which is a bug here, not a data error.
-    let retrieved: Vec<DataKey> = retrieved
+    let retrieved: Vec<ProviderKey> = retrieved
         .into_iter()
         .map(|key| key.ok_or(Error::ResponseShape))
         .collect::<Result<_, _>>()?;
@@ -582,123 +605,65 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::panic)]
 
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
 
-    use stack_kms::{FakeDataKeySource, IdentifiedBy, IndexKey, IndexKeySource, UnverifiedContext};
-    use uuid::Uuid;
+    use crate::registry::fake::{FakeKeysetRegistry, FakeProvider};
+    use crate::StackCipherBuilder;
 
     use super::*;
 
-    /// Counts ZeroKMS *calls* (not keys) so the batching claim — one call per
-    /// request kind however many pendings were merged — is testable. Delegates
-    /// everything else to the stub.
-    #[derive(Default)]
-    struct CountingSource {
-        inner: FakeDataKeySource,
-        generate_calls: AtomicUsize,
-        retrieve_calls: AtomicUsize,
-        /// The descriptors of every payload sent, per call, in payload order.
-        generate_descriptors: Mutex<Vec<Vec<String>>>,
-        retrieve_descriptors: Mutex<Vec<Vec<String>>>,
-        /// The keyset each call named, in call order.
-        generate_keysets: Mutex<Vec<Option<Uuid>>>,
-        retrieve_keysets: Mutex<Vec<Option<Uuid>>>,
-    }
+    /// The second keyset, for the tests that cross keysets.
+    const OTHER: &str = "other";
 
-    impl CountingSource {
-        fn generate_calls(&self) -> usize {
-            self.generate_calls.load(Ordering::Relaxed)
-        }
-
-        fn retrieve_calls(&self) -> usize {
-            self.retrieve_calls.load(Ordering::Relaxed)
-        }
-
-        fn generate_descriptors(&self) -> Vec<Vec<String>> {
-            self.generate_descriptors.lock().unwrap().clone()
-        }
-
-        fn retrieve_descriptors(&self) -> Vec<Vec<String>> {
-            self.retrieve_descriptors.lock().unwrap().clone()
-        }
-
-        fn generate_keysets(&self) -> Vec<Option<Uuid>> {
-            self.generate_keysets.lock().unwrap().clone()
-        }
-
-        fn retrieve_keysets(&self) -> Vec<Option<Uuid>> {
-            self.retrieve_keysets.lock().unwrap().clone()
-        }
-    }
-
-    impl DataKeySource for CountingSource {
-        async fn generate_keys(
-            &self,
-            payloads: Vec<GenerateKeyPayload<'_>>,
-            keyset_id: Option<Uuid>,
-            unverified_context: Option<Cow<'_, UnverifiedContext>>,
-        ) -> Result<Vec<stack_kms::DataKeyWithTag>, stack_kms::Error> {
-            self.generate_calls.fetch_add(1, Ordering::Relaxed);
-            self.generate_descriptors
-                .lock()
-                .unwrap()
-                .push(payloads.iter().map(|p| p.descriptor.to_owned()).collect());
-            self.generate_keysets.lock().unwrap().push(keyset_id);
-            self.inner
-                .generate_keys(payloads, keyset_id, unverified_context)
-                .await
-        }
-
-        async fn retrieve_keys(
-            &self,
-            payloads: Vec<RetrieveKeyPayload<'_>>,
-            keyset_id: Option<Uuid>,
-            unverified_context: Option<&UnverifiedContext>,
-        ) -> Result<Vec<stack_kms::DataKey>, stack_kms::Error> {
-            self.retrieve_calls.fetch_add(1, Ordering::Relaxed);
-            self.retrieve_descriptors
-                .lock()
-                .unwrap()
-                .push(payloads.iter().map(|p| p.descriptor.to_owned()).collect());
-            self.retrieve_keysets.lock().unwrap().push(keyset_id);
-            self.inner
-                .retrieve_keys(payloads, keyset_id, unverified_context)
-                .await
-        }
-    }
-
-    impl IndexKeySource for CountingSource {
-        async fn load_index_key(
-            &self,
-            keyset_id: Option<IdentifiedBy>,
-        ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
-            self.inner.load_index_key(keyset_id).await
-        }
+    /// A registry with two keysets, each with its own provider — so a test
+    /// that groups retrieves by keyset is grouping something real.
+    fn registry() -> FakeKeysetRegistry {
+        FakeKeysetRegistry::new()
     }
 
     fn d() -> Descriptor {
         Descriptor::of("test/field")
     }
 
-    async fn cipher() -> StackCipher<CountingSource> {
-        StackCipher::builder()
-            .kms(CountingSource::default())
+    async fn cipher() -> StackCipher<FakeKeysetRegistry> {
+        StackCipherBuilder::new()
+            .registry(registry())
             .init()
             .await
             .unwrap()
     }
 
+    /// The provider serving a cipher's default keyset: the counter and the
+    /// binding record in one.
+    fn default_provider(cipher: &StackCipher<FakeKeysetRegistry>) -> FakeProvider {
+        cipher.registry().default_keyset().1
+    }
+
+    /// The provider serving the second keyset. Which provider served a call
+    /// is how the routing is observed now: a keyset *is* a provider, so
+    /// there is no keyset argument on a call to assert against.
+    fn other_provider(cipher: &StackCipher<FakeKeysetRegistry>) -> FakeProvider {
+        cipher
+            .registry()
+            .keyset(OTHER)
+            .expect("registered keyset")
+            .1
+    }
+
     /// A pending that asks for `n` data keys and resolves to their tags.
     fn generating<'a>(
-        keyset: &'a KeysetCipher<'_, CountingSource>,
+        keyset: &'a KeysetCipher<'_, FakeKeysetRegistry>,
         n: usize,
-    ) -> Pending<'a, Vec<Vec<u8>>, CountingSource> {
+    ) -> Pending<'a, Vec<Vec<u8>>, FakeKeysetRegistry> {
         let requests = std::iter::repeat_with(|| Request::generate_under(d()))
             .take(n)
             .collect();
         Pending::request(keyset, requests, move |responses| {
             (0..n)
-                .map(|_| responses.next_generated_key().map(|key| key.tag))
+                .map(|_| {
+                    responses
+                        .next_generated_key()
+                        .map(|key| key.key_id.as_bytes().to_vec())
+                })
                 .collect()
         })
     }
@@ -710,11 +675,15 @@ mod tests {
 
         assert_eq!(value, 7, "a ready pending resolves to the value it holds");
         assert_eq!(
-            cipher.kms().generate_calls(),
+            default_provider(&cipher).call_counts().0,
             0,
             "a ready pending must not generate any key"
         );
-        assert_eq!(cipher.kms().retrieve_calls(), 0, "nor retrieve one");
+        assert_eq!(
+            default_provider(&cipher).call_counts().1,
+            0,
+            "nor retrieve one"
+        );
     }
 
     #[tokio::test]
@@ -727,7 +696,7 @@ mod tests {
             "the error a ready pending was given comes back: {result:?}"
         );
         assert_eq!(
-            cipher.kms().generate_calls(),
+            default_provider(&cipher).call_counts().0,
             0,
             "a failed pending does no I/O"
         );
@@ -765,7 +734,7 @@ mod tests {
 
         assert_eq!(tags, 3, "map sees all three keys the pending asked for");
         assert_eq!(
-            cipher.kms().generate_calls(),
+            default_provider(&cipher).call_counts().0,
             1,
             "mapping does not split the batch"
         );
@@ -779,7 +748,7 @@ mod tests {
 
         assert_eq!(tags.len(), 5, "every requested key comes back");
         assert_eq!(
-            cipher.kms().generate_calls(),
+            default_provider(&cipher).call_counts().0,
             1,
             "five keys, one generate_keys call"
         );
@@ -800,7 +769,7 @@ mod tests {
             "each side draws exactly its own keys"
         );
         assert_eq!(
-            cipher.kms().generate_calls(),
+            default_provider(&cipher).call_counts().0,
             1,
             "zipping merges the two request lists into one call"
         );
@@ -832,7 +801,7 @@ mod tests {
 
         assert_eq!(pair, (1, "two"), "both ready values resolve, in order");
         assert_eq!(
-            cipher.kms().generate_calls(),
+            default_provider(&cipher).call_counts().0,
             0,
             "nothing was requested, so nothing is dispatched"
         );
@@ -867,7 +836,7 @@ mod tests {
 
         assert_eq!(column.len(), 5, "every item resolves, in build order");
         assert_eq!(
-            cipher.kms().generate_calls(),
+            default_provider(&cipher).call_counts().0,
             1,
             "a whole column is one generate_keys call"
         );
@@ -885,7 +854,11 @@ mod tests {
         let column: Vec<u32> = Pending::all(&cipher, Vec::new()).await.unwrap();
 
         assert!(column.is_empty(), "an empty column resolves empty");
-        assert_eq!(cipher.kms().generate_calls(), 0, "and dispatches nothing");
+        assert_eq!(
+            default_provider(&cipher).call_counts().0,
+            0,
+            "and dispatches nothing"
+        );
     }
 
     #[tokio::test]
@@ -919,7 +892,7 @@ mod tests {
         let result = Pending::collect(&keyset, items).await;
         assert!(matches!(result, Err(Error::Aead)));
         assert_eq!(built.load(Ordering::Relaxed), 2);
-        assert_eq!(cipher.kms().generate_calls(), 0);
+        assert_eq!(default_provider(&cipher).call_counts().0, 0);
     }
 
     /// Over-drawing is the fulfilment's own error, not a stolen sibling key:
@@ -932,7 +905,9 @@ mod tests {
             Pending::request(&keyset, vec![Request::generate_under(d())], |responses| {
                 let _ = responses.next_generated_key()?;
                 // One request, two draws.
-                responses.next_generated_key().map(|key| key.tag)
+                responses
+                    .next_generated_key()
+                    .map(|key| key.key_id.as_bytes().to_vec())
             });
         let result = greedy.zip(generating(&keyset, 1)).await;
 
@@ -973,7 +948,9 @@ mod tests {
         let keyset = cipher.default_keyset();
         let requests = vec![Request::generate_under(d()), Request::generate_under(d())];
         let lazy: Pending<'_, Vec<u8>, _> = Pending::request(&keyset, requests, |responses| {
-            responses.next_generated_key().map(|key| key.tag)
+            responses
+                .next_generated_key()
+                .map(|key| key.key_id.as_bytes().to_vec())
         });
 
         let result = lazy.await;
@@ -990,13 +967,15 @@ mod tests {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let mut pairs = generating_pairs(&keyset, 1).await.unwrap();
-        let (iv, tag) = pairs.remove(0);
+        let (key_id, _) = pairs.remove(0);
         let requests = vec![
             Request::generate_under(d()),
-            Request::retrieve_under(iv, tag, d(), keyset.keyset_id()),
+            Request::retrieve_under(key_id, d(), keyset.keyset_id()),
         ];
         let lazy: Pending<'_, Vec<u8>, _> = Pending::request(&keyset, requests, |responses| {
-            responses.next_generated_key().map(|key| key.tag)
+            responses
+                .next_generated_key()
+                .map(|key| key.key_id.as_bytes().to_vec())
         });
 
         let result = lazy.await;
@@ -1016,23 +995,30 @@ mod tests {
 
         assert_eq!(value, 9, "a request-free pending still resolves");
         assert_eq!(
-            cipher.kms().generate_calls(),
+            default_provider(&cipher).call_counts().0,
             0,
             "no requests, no generate_keys call"
         );
         assert_eq!(
-            cipher.kms().retrieve_calls(),
+            default_provider(&cipher).call_counts().1,
             0,
             "no requests, no retrieve_keys call"
         );
     }
 
-    /// A pending that asks for `n` data keys and resolves to the `(iv, tag)`
-    /// pairs needed to retrieve them again.
+    /// One minted key, as the test needs it back: the opaque id that
+    /// retrieves it, and the material it was minted as, so a retrieval can
+    /// be checked against what was generated.
+    type Minted = (Vec<u8>, [u8; 32]);
+
+    /// A pending that asks for `n` data keys and resolves to what each was
+    /// minted as.
     fn generating_pairs<'a>(
-        keyset: &'a KeysetCipher<'_, CountingSource>,
+        keyset: &'a KeysetCipher<'_, FakeKeysetRegistry>,
         n: usize,
-    ) -> Pending<'a, Vec<(Iv, Vec<u8>)>, CountingSource> {
+    ) -> Pending<'a, Vec<Minted>, FakeKeysetRegistry> {
+        use vitaminc_protected_kms::Controlled as _;
+
         let requests = std::iter::repeat_with(|| Request::generate_under(d()))
             .take(n)
             .collect();
@@ -1041,7 +1027,7 @@ mod tests {
                 .map(|_| {
                     responses
                         .next_generated_key()
-                        .map(|key| (key.key.iv, key.tag))
+                        .map(|key| (key.key_id.as_bytes().to_vec(), key.plaintext.risky_unwrap()))
                 })
                 .collect()
         })
@@ -1055,14 +1041,14 @@ mod tests {
         let keyset = cipher.default_keyset();
         let pairs = generating_pairs(&keyset, 2).await.unwrap();
         assert_eq!(
-            cipher.kms().generate_calls(),
+            default_provider(&cipher).call_counts().0,
             1,
             "the setup seal is one call"
         );
 
         let requests: Vec<Request> = pairs
             .iter()
-            .map(|(iv, tag)| Request::retrieve_under(*iv, tag.clone(), d(), keyset.keyset_id()))
+            .map(|(key_id, _)| Request::retrieve_under(key_id.clone(), d(), keyset.keyset_id()))
             .collect();
         let retrieve: Pending<'_, usize, _> = Pending::request(&keyset, requests, |responses| {
             Ok(responses.drain_retrieved().count())
@@ -1072,12 +1058,12 @@ mod tests {
         assert_eq!(count, 2, "both keys were retrieved");
         assert_eq!(fresh.len(), 1, "and the fresh key was generated");
         assert_eq!(
-            cipher.kms().generate_calls(),
+            default_provider(&cipher).call_counts().0,
             2,
             "one generate for the setup, one for the mixed assembly"
         );
         assert_eq!(
-            cipher.kms().retrieve_calls(),
+            default_provider(&cipher).call_counts().1,
             1,
             "the mixed assembly retrieves in one call"
         );
@@ -1094,29 +1080,33 @@ mod tests {
             Request::generate_under(Descriptor::of(("users", "email"))),
             Request::generate_under(Descriptor::of(("users", "name"))),
         ];
-        let pairs: Vec<(Iv, Vec<u8>)> = Pending::request(&keyset, requests, |responses| {
+        let pairs: Vec<Vec<u8>> = Pending::request(&keyset, requests, |responses| {
             (0..2)
                 .map(|_| {
                     responses
                         .next_generated_key()
-                        .map(|key| (key.key.iv, key.tag))
+                        .map(|key| key.key_id.as_bytes().to_vec())
                 })
                 .collect()
         })
         .await
         .unwrap();
         assert_eq!(
-            cipher.kms().generate_descriptors(),
+            default_provider(&cipher).calls().generate,
             vec![vec!["users/email".to_owned(), "users/name".to_owned()]]
         );
 
+        // Retrieved in the reverse order they were minted, each key still
+        // under its *own* descriptor — the provider is `Bound`, so pairing a
+        // key with another's descriptor is refused rather than ignored, and
+        // what is being proven here is the order, not a mismatch.
         let requests: Vec<Request> = pairs
             .iter()
+            .rev()
             .zip([("users", "name"), ("users", "email")])
-            .map(|((iv, tag), descriptor)| {
+            .map(|(key_id, descriptor)| {
                 Request::retrieve_under(
-                    *iv,
-                    tag.clone(),
+                    key_id.clone(),
                     Descriptor::of(descriptor),
                     keyset.keyset_id(),
                 )
@@ -1130,7 +1120,7 @@ mod tests {
 
         assert_eq!(count, 2, "both keys were retrieved");
         assert_eq!(
-            cipher.kms().retrieve_descriptors(),
+            default_provider(&cipher).calls().retrieve,
             vec![vec!["users/name".to_owned(), "users/email".to_owned()]]
         );
     }
@@ -1155,26 +1145,26 @@ mod tests {
             "{err}"
         );
         assert_eq!(
-            cipher.kms().generate_calls(),
+            default_provider(&cipher).call_counts().0,
             0,
             "no key is minted for a batch that is refused"
         );
 
         let mut pairs = generating_pairs(&keyset, 1).await.unwrap();
-        let (iv, tag) = pairs.remove(0);
-        let requests = vec![Request::retrieve_under(iv, tag, long, keyset.keyset_id())];
+        let (key_id, _) = pairs.remove(0);
+        let requests = vec![Request::retrieve_under(key_id, long, keyset.keyset_id())];
         let Err(err) = dispatch(&cipher, Some(keyset.keyset_id()), requests).await else {
             panic!("an over-long descriptor must be refused");
         };
         assert!(matches!(err, Error::DescriptorTooLong { .. }), "{err}");
         assert_eq!(
-            cipher.kms().retrieve_calls(),
+            default_provider(&cipher).call_counts().1,
             0,
             "and none is retrieved either"
         );
 
         // At the limit is fine.
-        let before = cipher.kms().generate_calls();
+        let before = default_provider(&cipher).call_counts().0;
 
         let requests = vec![Request::generate_under(Descriptor::of(
             "a".repeat(Descriptor::MAX_LEN),
@@ -1186,7 +1176,7 @@ mod tests {
             "at the limit"
         );
         assert_eq!(
-            cipher.kms().generate_calls(),
+            default_provider(&cipher).call_counts().0,
             before + 1,
             "a descriptor exactly at the limit is dispatched"
         );
@@ -1204,13 +1194,15 @@ mod tests {
         let cipher = cipher().await;
         let pending: Pending<'_, Vec<u8>, _> =
             Pending::request(&cipher, vec![Request::generate_under(d())], |responses| {
-                responses.next_generated_key().map(|key| key.tag)
+                responses
+                    .next_generated_key()
+                    .map(|key| key.key_id.as_bytes().to_vec())
             });
         let result = pending.await;
 
         assert!(matches!(result, Err(Error::NoKeyset)), "{result:?}");
         assert_eq!(
-            cipher.kms().generate_calls(),
+            default_provider(&cipher).call_counts().0,
             0,
             "refused at construction, before any call"
         );
@@ -1221,13 +1213,18 @@ mod tests {
     #[tokio::test]
     async fn generates_are_minted_under_the_scopes_keyset() {
         let cipher = cipher().await;
-        let tenant = cipher.keyset(Uuid::from_u128(9)).await.unwrap();
+        let tenant = cipher.keyset(OTHER).await.unwrap();
         generating(&tenant, 2).await.unwrap();
 
         assert_eq!(
-            cipher.kms().generate_keysets(),
-            vec![Some(Uuid::from_u128(9))],
-            "the scope's keyset is what ZeroKMS is asked to mint under"
+            other_provider(&cipher).call_counts().0,
+            1,
+            "the scope's own keyset minted the keys"
+        );
+        assert_eq!(
+            default_provider(&cipher).call_counts().0,
+            0,
+            "and no other keyset was asked"
         );
     }
 
@@ -1237,10 +1234,10 @@ mod tests {
     async fn a_retrieve_from_another_keyset_is_foreign_in_a_keyset_scope() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let other = Uuid::from_u128(2);
+        let other = KeysetId::new(uuid::Uuid::from_u128(404));
         let pending: Pending<'_, usize, _> = Pending::request(
             &keyset,
-            vec![Request::retrieve_under(Iv::default(), vec![1], d(), other)],
+            vec![Request::retrieve_under(vec![1], d(), other)],
             |responses| Ok(responses.drain_retrieved().count()),
         );
         let result = pending.await;
@@ -1254,7 +1251,7 @@ mod tests {
             "{result:?}"
         );
         assert_eq!(
-            cipher.kms().retrieve_calls(),
+            default_provider(&cipher).call_counts().1,
             0,
             "refused at construction, before any key is retrieved"
         );
@@ -1266,10 +1263,10 @@ mod tests {
     async fn scoping_an_unscoped_pending_refuses_its_foreign_retrieves() {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
-        let other = Uuid::from_u128(2);
+        let other = KeysetId::new(uuid::Uuid::from_u128(404));
         let pending: Pending<'_, usize, _> = Pending::request(
             &cipher,
-            vec![Request::retrieve_under(Iv::default(), vec![1], d(), other)],
+            vec![Request::retrieve_under(vec![1], d(), other)],
             |responses| Ok(responses.drain_retrieved().count()),
         );
         let result = pending.scoped_to(keyset.keyset_id()).await;
@@ -1279,7 +1276,7 @@ mod tests {
             "{result:?}"
         );
         assert_eq!(
-            cipher.kms().retrieve_calls(),
+            default_provider(&cipher).call_counts().1,
             0,
             "scoping applies the rule before any key is retrieved"
         );
@@ -1290,13 +1287,13 @@ mod tests {
     #[tokio::test]
     async fn pendings_scoped_to_different_keysets_refuse_to_merge() {
         let cipher = cipher().await;
-        let a = cipher.keyset(Uuid::from_u128(1)).await.unwrap();
-        let b = cipher.keyset(Uuid::from_u128(2)).await.unwrap();
+        let a = cipher.default_keyset();
+        let b = cipher.keyset(OTHER).await.unwrap();
 
         let result = generating(&a, 1).zip(generating(&b, 1)).await;
         assert!(
             matches!(result, Err(Error::KeysetMismatch { left, right })
-                if left == Uuid::from_u128(1) && right == Uuid::from_u128(2)),
+                if left == a.keyset_id() && right == b.keyset_id()),
             "{result:?}"
         );
 
@@ -1306,7 +1303,7 @@ mod tests {
             "{result:?}"
         );
         assert_eq!(
-            cipher.kms().generate_calls(),
+            default_provider(&cipher).call_counts().0,
             0,
             "a mismatched merge mints nothing"
         );
@@ -1318,16 +1315,17 @@ mod tests {
     #[tokio::test]
     async fn rescoping_to_another_keyset_is_a_mismatch() {
         let cipher = cipher().await;
-        let a = cipher.keyset(Uuid::from_u128(1)).await.unwrap();
+        let a = cipher.default_keyset();
+        let other = cipher.keyset(OTHER).await.unwrap().keyset_id();
 
-        let result = generating(&a, 1).scoped_to(Uuid::from_u128(2)).await;
+        let result = generating(&a, 1).scoped_to(other).await;
         assert!(
             matches!(result, Err(Error::KeysetMismatch { left, right })
-                if left == Uuid::from_u128(1) && right == Uuid::from_u128(2)),
+                if left == a.keyset_id() && right == other),
             "{result:?}"
         );
         assert_eq!(
-            cipher.kms().generate_calls(),
+            default_provider(&cipher).call_counts().0,
             0,
             "a mismatched scope mints nothing"
         );
@@ -1342,8 +1340,11 @@ mod tests {
             "rescoping to the same keyset should produce one tag"
         );
         assert_eq!(
-            cipher.kms().generate_keysets(),
-            vec![Some(a.keyset_id())],
+            (
+                default_provider(&cipher).call_counts().0,
+                other_provider(&cipher).call_counts().0
+            ),
+            (1, 0),
             "minted under the one keyset it was scoped to"
         );
     }
@@ -1354,8 +1355,8 @@ mod tests {
     #[tokio::test]
     async fn a_scoped_pending_keeps_its_scope_through_a_merge() {
         let cipher = cipher().await;
-        let a = cipher.keyset(Uuid::from_u128(1)).await.unwrap();
-        let b = cipher.keyset(Uuid::from_u128(2)).await.unwrap();
+        let a = cipher.default_keyset();
+        let b = cipher.keyset(OTHER).await.unwrap();
 
         let scoped = Pending::ready(&cipher, Ok(())).scoped_to(a.keyset_id());
         let result = scoped.zip(generating(&b, 1)).await;
@@ -1365,8 +1366,11 @@ mod tests {
             "{result:?}"
         );
         assert_eq!(
-            cipher.kms().generate_calls(),
-            0,
+            (
+                default_provider(&cipher).call_counts().0,
+                other_provider(&cipher).call_counts().0
+            ),
+            (0, 0),
             "a mismatched merge should not mint a key"
         );
     }
@@ -1377,17 +1381,22 @@ mod tests {
     #[tokio::test]
     async fn an_unscoped_generate_is_not_adopted_by_a_scoped_merge() {
         let cipher = cipher().await;
-        let tenant = cipher.keyset(Uuid::from_u128(9)).await.unwrap();
+        let tenant = cipher.keyset(OTHER).await.unwrap();
         let unscoped: Pending<'_, Vec<u8>, _> =
             Pending::request(&cipher, vec![Request::generate_under(d())], |responses| {
-                responses.next_generated_key().map(|key| key.tag)
+                responses
+                    .next_generated_key()
+                    .map(|key| key.key_id.as_bytes().to_vec())
             });
 
         let result = unscoped.zip(generating(&tenant, 1)).await;
         assert!(matches!(result, Err(Error::NoKeyset)), "{result:?}");
         assert_eq!(
-            cipher.kms().generate_calls(),
-            0,
+            (
+                default_provider(&cipher).call_counts().0,
+                other_provider(&cipher).call_counts().0
+            ),
+            (0, 0),
             "the tenant's keyset mints nothing for it"
         );
     }
@@ -1409,9 +1418,9 @@ mod tests {
             "both sides resolve: the ready value and the minted key"
         );
         assert_eq!(
-            cipher.kms().generate_keysets(),
-            vec![Some(keyset.keyset_id())],
-            "the merged assembly took the scoped side's keyset"
+            default_provider(&cipher).call_counts().0,
+            1,
+            "the merged assembly minted through the scoped side's keyset"
         );
     }
 
@@ -1421,8 +1430,8 @@ mod tests {
     #[tokio::test]
     async fn retrieves_group_by_keyset_and_return_in_request_order() {
         let cipher = cipher().await;
-        let a = cipher.keyset(Uuid::from_u128(1)).await.unwrap();
-        let b = cipher.keyset(Uuid::from_u128(2)).await.unwrap();
+        let a = cipher.default_keyset();
+        let b = cipher.keyset(OTHER).await.unwrap();
         let mut from_a = generating_pairs(&a, 2).await.unwrap();
         let mut from_b = generating_pairs(&b, 1).await.unwrap();
         let (a1, a2) = (from_a.remove(0), from_a.remove(0));
@@ -1430,30 +1439,32 @@ mod tests {
 
         // Interleaved: A, B, A.
         let requests = vec![
-            Request::retrieve_under(a1.0, a1.1.clone(), d(), a.keyset_id()),
-            Request::retrieve_under(b1.0, b1.1.clone(), d(), b.keyset_id()),
-            Request::retrieve_under(a2.0, a2.1.clone(), d(), a.keyset_id()),
+            Request::retrieve_under(a1.0.clone(), d(), a.keyset_id()),
+            Request::retrieve_under(b1.0.clone(), d(), b.keyset_id()),
+            Request::retrieve_under(a2.0.clone(), d(), a.keyset_id()),
         ];
-        let ivs: Vec<Iv> = Pending::request(&cipher, requests, |responses| {
-            Ok(responses.drain_retrieved().map(|key| key.iv).collect())
+        let material: Vec<[u8; 32]> = Pending::request(&cipher, requests, |responses| {
+            use vitaminc_protected_kms::Controlled as _;
+            Ok(responses
+                .drain_retrieved()
+                .map(|key| key.risky_unwrap())
+                .collect())
         })
         .await
         .unwrap();
 
         assert_eq!(
-            ivs,
-            vec![a1.0, b1.0, a2.0],
+            material,
+            vec![a1.1, b1.1, a2.1],
             "keys must come back in request order"
         );
         assert_eq!(
-            cipher.kms().retrieve_calls(),
-            2,
-            "two keysets, two retrieve_keys calls"
-        );
-        assert_eq!(
-            cipher.kms().retrieve_keysets(),
-            vec![Some(a.keyset_id()), Some(b.keyset_id())],
-            "one call per keyset, first seen first"
+            (
+                default_provider(&cipher).call_counts().1,
+                other_provider(&cipher).call_counts().1
+            ),
+            (1, 1),
+            "two keysets, one batched retrieve each — not one call per key"
         );
     }
 }

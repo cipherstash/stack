@@ -561,8 +561,8 @@ where
     }
 }
 
-#[cfg(test)]
-pub(crate) mod test_connection;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_connection;
 
 #[cfg(test)]
 mod tests {

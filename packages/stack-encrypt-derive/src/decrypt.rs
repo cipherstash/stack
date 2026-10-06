@@ -120,7 +120,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         });
         impls.push(trait_impl(&input, &generics, quote!(#krate::target::DecryptInto<#plaintext>), quote! {
             type Context = #context;
-            fn decryption<__K: 'static>(self, __context: Self::Context) -> #krate::target::Decryption<#plaintext, __K> {
+            fn decryption<__K: #krate::KeysetRegistry + 'static>(self, __context: Self::Context) -> #krate::target::Decryption<#plaintext, __K> {
                 #body_check #stored #body
             }
         }));
@@ -141,7 +141,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         &generics,
         quote!(#krate::target::DecryptField<__P, __Ctx>),
         quote! {
-            fn decryption_field<__K: 'static>(self, context: __Ctx) -> Option<#krate::target::Decryption<__P, __K>> {
+            fn decryption_field<__K: #krate::KeysetRegistry + 'static>(self, context: __Ctx) -> Option<#krate::target::Decryption<__P, __K>> {
                 Some(<Self as #krate::target::DecryptInto<__P>>::decryption(self, context.into()))
             }
         },

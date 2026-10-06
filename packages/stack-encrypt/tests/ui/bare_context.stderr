@@ -20,7 +20,7 @@ error[E0277]: the trait bound `CallerContext: From<&str>` is not satisfied
 note: required by a bound in `encrypt_into_with_context`
   --> src/target/operations.rs
    |
-   |     fn encrypt_into_with_context<'a, T, K: 'static>(
+   |     fn encrypt_into_with_context<'a, T, K: KeysetRegistry + 'static>(
    |        ------------------------- required by a bound in this associated function
 ...
    |         context: impl Into<T::Context>,
@@ -48,7 +48,7 @@ error[E0277]: the trait bound `DeclaredContext: From<&str>` is not satisfied
 note: required by a bound in `encrypt_into_with_context`
   --> src/target/operations.rs
    |
-   |     fn encrypt_into_with_context<'a, T, K: 'static>(
+   |     fn encrypt_into_with_context<'a, T, K: KeysetRegistry + 'static>(
    |        ------------------------- required by a bound in this associated function
 ...
    |         context: impl Into<T::Context>,
@@ -76,7 +76,7 @@ error[E0277]: the trait bound `CallerContext: From<&str>` is not satisfied
 note: required by a bound in `encrypt_into_with_context`
   --> src/target/operations.rs
    |
-   |     fn encrypt_into_with_context<'a, T, K: 'static>(
+   |     fn encrypt_into_with_context<'a, T, K: KeysetRegistry + 'static>(
    |        ------------------------- required by a bound in this associated function
 ...
    |         context: impl Into<T::Context>,
@@ -104,7 +104,7 @@ error[E0277]: the trait bound `DeclaredContext: From<&str>` is not satisfied
 note: required by a bound in `decrypt_from_with_context`
   --> src/target/operations.rs
    |
-   |     fn decrypt_from_with_context<'a, S, K: 'static>(
+   |     fn decrypt_from_with_context<'a, S, K: KeysetRegistry + 'static>(
    |        ------------------------- required by a bound in this associated function
 ...
    |         context: impl Into<S::Context>,
@@ -132,7 +132,7 @@ error[E0277]: the trait bound `AeadContext: From<&str>` is not satisfied
 note: required by a bound in `decrypt_into`
   --> src/target/operations.rs
    |
-   |     fn decrypt_into<'a, P: 'static, K: 'static>(
+   |     fn decrypt_into<'a, P: 'static, K: KeysetRegistry + 'static>(
    |        ------------ required by a bound in this associated function
 ...
    |         context: impl Into<<Self as DecryptInto<P>>::Context>,

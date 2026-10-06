@@ -3,7 +3,9 @@
 use libfuzzer_sys::fuzz_target;
 use stack_encrypt::SealedValue;
 
-// Fuzz the frozen v1 leaf byte decoder. A stored ciphertext column comes back
+// Fuzz the frozen leaf byte decoder: format 2, which this crate writes, and
+// format 1, which stack-encrypt 0.2 wrote and this crate still reads (a
+// format-1 leaf writes back in the format-1 layout). A stored ciphertext column comes back
 // through `SealedValue::from_bytes` before anything is authenticated, so the
 // bytes are attacker-controlled: decoding must never panic, only return `Err`.
 //

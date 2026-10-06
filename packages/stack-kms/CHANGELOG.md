@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **`DataKeySource`, `IndexKeySource` and `FakeDataKeySource` are deleted.**
+  A client library is generic over the `vitaminc-kms` key provider traits
+  instead (`KeyProvider`, `IndexKeyProvider`), which `ZeroKmsKeyset`
+  implements. stack-encrypt 0.3 resolves keysets through its own
+  `KeysetRegistry`, and its `test-support` feature provides the fake that
+  replaces `FakeDataKeySource` (`stack_encrypt::registry::fake`).
+- The `test-support` feature no longer provides `FakeDataKeySource`. It
+  provides `test_connection` (see Added).
+
 ### Added
 
 - `ZeroKmsKeyset`: one ZeroKMS keyset, resolved once over a shared
@@ -17,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   descriptor. Its `KeyId` is the IV followed by the tag.
 - `Error::BindingNotUtf8` and `Error::MalformedKeyId`, for a binding or a
   key id that `ZeroKmsKeyset` cannot use.
+- `test_connection` (with `test-support`): the in-memory
+  `ZeroKMSConnection` the crate's own tests use, with its client-key and
+  load-keyset fixtures. stack-encrypt owns `impl KeysetRegistry for
+  Arc<StackKms>` and tests it through this, without a network.
 
 ### Changed
 

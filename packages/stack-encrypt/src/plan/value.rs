@@ -9,6 +9,7 @@ use super::build::{
     PlanContext, Runs, FROM_CALL, FROM_FIELD, FROM_PLAN,
 };
 use super::PlanError;
+use crate::registry::{KeysetRegistry, NoRegistry};
 use crate::target::{
     indexed, Borrowed, CallerContext, DeclaredContext, DecryptInto, Decryption, EncryptFrom,
     Encrypted, Encryption, ExpectedContext, IndexSpec, Indexes, Pending,
@@ -17,9 +18,9 @@ use crate::{
     Error, IntoContext, KeysetCipher, Label, LabelError, MaybeEmpty, NonEmpty, Plan,
     StackCipherText,
 };
-use stack_kms::MaybeSend;
+use vitaminc_kms::provider::MaybeSend;
 
-impl Plan<(), ()> {
+impl Plan<(), NoRegistry> {
     /// Start a one-value plan over plaintext `S`, with no context yet: give
     /// it one with [`context`](ValueStart::context), or leave it for the
     /// call that runs it. Then [`with`](ValueStart::with) its indexes or
@@ -27,11 +28,12 @@ impl Plan<(), ()> {
     ///
     /// ```
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
-    /// use stack_encrypt::kms::FakeDataKeySource;
+    /// use stack_encrypt::registry::fake::FakeKeysetRegistry;
+    /// use stack_encrypt::StackCipherBuilder;
     /// use stack_encrypt::sem::EqualityTerm;
     /// use stack_encrypt::{Equality, Ore, Plan, StackCipher, StackCipherText};
     ///
-    /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
+    /// let cipher = StackCipherBuilder::new().registry(FakeKeysetRegistry::new()).init().await?;
     ///
     /// // With its context and indexes.
     /// let age_plan = Plan::value::<u32>().context("users/age").with((Equality, Ore)).build()?;
@@ -244,7 +246,7 @@ impl<S, C, T> ValuePlan<S, Stored<C, T>> {
     /// The description of one run: `T`'s layout under the context the call
     /// hands over, which is carried out beside it as the record's `C`.
     /// Run it with [`KeysetCipher::run`] and a `NonEmpty<C>`.
-    pub fn encryption_with_context<'s, K: 'static>(
+    pub fn encryption_with_context<'s, K: KeysetRegistry + 'static>(
         &self,
     ) -> Encryption<'s, S, (C, T), K, NonEmpty<C>>
     where
@@ -264,7 +266,7 @@ impl<S, C, T> ValuePlan<S, Stored<C, T>> {
     /// `expected` (which [`ExpectedContext::default`] leaves unchecked beyond
     /// being nonempty), before any key is requested, then `T` opened under
     /// it through its own [`DecryptInto`].
-    pub fn decryption_with_context<K: 'static>(
+    pub fn decryption_with_context<K: KeysetRegistry + 'static>(
         &self,
         record: (C, T),
         expected: ExpectedContext<C>,
@@ -345,7 +347,9 @@ pub trait ValueLayout<S>: sealed::Sealed + Clone {
 /// and a query through the plan ask. Sealed.
 pub trait ValueShape<S>: ValueLayout<S> {
     /// The description of one value, run under its whole context.
-    fn lower<'s, K: 'static>(&self) -> Encryption<'s, S, Self::Output, K, CallerContext>
+    fn lower<'s, K: KeysetRegistry + 'static>(
+        &self,
+    ) -> Encryption<'s, S, Self::Output, K, CallerContext>
     where
         S: 's;
 }
@@ -366,7 +370,9 @@ where
     S: crate::Encrypt + Clone,
     X: Indexes<S> + Clone,
 {
-    fn lower<'s, K: 'static>(&self) -> Encryption<'s, S, Self::Output, K, CallerContext>
+    fn lower<'s, K: KeysetRegistry + 'static>(
+        &self,
+    ) -> Encryption<'s, S, Self::Output, K, CallerContext>
     where
         S: 's,
     {
@@ -389,7 +395,7 @@ where
     T: EncryptFrom<S>,
     CallerContext: Into<T::Context>,
 {
-    fn lower<'s, K: 'static>(&self) -> Encryption<'s, S, T, K, CallerContext>
+    fn lower<'s, K: KeysetRegistry + 'static>(&self) -> Encryption<'s, S, T, K, CallerContext>
     where
         S: 's,
     {
@@ -517,7 +523,7 @@ impl<S, X> ValuePlan<S, X> {
     /// call names (for a plan built without one; `None` otherwise):
     /// the layout `.under(context)`. A context missing or given twice is a
     /// description that fails without I/O.
-    pub fn encryption<'s, K: 'static>(
+    pub fn encryption<'s, K: KeysetRegistry + 'static>(
         &self,
         context: Option<Label>,
     ) -> Encryption<'s, S, X::Output, K, DeclaredContext>
@@ -567,7 +573,9 @@ impl<S, T> ValuePlan<S, Typed<T>> {
     ///
     /// For a plan built without a context; one built with its own fails
     /// with [`PlanError::TwoContextSources`], without I/O.
-    pub fn encryption_with_context<'s, K: 'static, C>(&self) -> Encryption<'s, S, T, K, C>
+    pub fn encryption_with_context<'s, K: KeysetRegistry + 'static, C>(
+        &self,
+    ) -> Encryption<'s, S, T, K, C>
     where
         S: 's,
         T: EncryptFrom<S>,
@@ -586,10 +594,10 @@ impl<S, T> ValuePlan<S, Typed<T>> {
     }
 }
 
-impl<S, X, K> Runs<S, K> for ValuePlan<S, X>
+impl<S, X, K: KeysetRegistry> Runs<S, K> for ValuePlan<S, X>
 where
     X: ValueShape<S>,
-    K: 'static,
+    K: KeysetRegistry + 'static,
 {
     type Output = X::Output;
     fn pending<'p>(
@@ -608,7 +616,7 @@ where
 }
 
 runs_over_collections! {
-    [S, X, K] ValuePlan<S, X> => S where [X: ValueShape<S>, K: 'static] check_call;
+    [S, X, K: KeysetRegistry] ValuePlan<S, X> => S where [X: ValueShape<S>, K: KeysetRegistry + 'static] check_call;
 }
 
 impl<S, X> ValuePlan<S, X> {
@@ -624,7 +632,7 @@ impl<S, X> ValuePlan<S, X> {
         R: DecryptInto<S>,
         CallerContext: Into<R::Context>,
         S: 'static,
-        K: 'static,
+        K: KeysetRegistry + 'static,
     {
         match self.resolve(context) {
             Ok(label) => record.decryption(extend.under(NonEmpty::from(label)).into()),
@@ -643,7 +651,7 @@ impl<S, X> ValuePlan<S, X> {
         R: DecryptInto<S>,
         CallerContext: Into<R::Context>,
         S: 'static,
-        K: 'static,
+        K: KeysetRegistry + 'static,
     {
         Decryption::all(
             records
@@ -657,10 +665,10 @@ impl<S, X> ValuePlan<S, X> {
 /// ciphertext alone, one or a `Vec` of them.
 macro_rules! indexed_opens {
     ($([$($generics:tt)*] $record:ty;)+) => {$(
-        impl<S, X, K, $($generics)*> Opens<$record, K> for ValuePlan<S, Indexed<X>>
+        impl<S, X, K: KeysetRegistry, $($generics)*> Opens<$record, K> for ValuePlan<S, Indexed<X>>
         where
             S: crate::Decrypt<'static> + 'static,
-            K: 'static,
+            K: KeysetRegistry + 'static,
         {
             type Output = S;
             fn decryption(
@@ -675,10 +683,10 @@ macro_rules! indexed_opens {
                 self.check_call(context)
             }
         }
-        impl<S, X, K, $($generics)*> Opens<Vec<$record>, K> for ValuePlan<S, Indexed<X>>
+        impl<S, X, K: KeysetRegistry, $($generics)*> Opens<Vec<$record>, K> for ValuePlan<S, Indexed<X>>
         where
             S: crate::Decrypt<'static> + 'static,
-            K: 'static,
+            K: KeysetRegistry + 'static,
         {
             type Output = Vec<S>;
             fn decryption(
@@ -702,12 +710,12 @@ indexed_opens! {
 
 /// A [`Typed`] plan opens its target, one or a `Vec` of them, through the
 /// target's own [`DecryptInto`].
-impl<S, T, K> Opens<T, K> for ValuePlan<S, Typed<T>>
+impl<S, T, K: KeysetRegistry> Opens<T, K> for ValuePlan<S, Typed<T>>
 where
     T: DecryptInto<S>,
     CallerContext: Into<T::Context>,
     S: 'static,
-    K: 'static,
+    K: KeysetRegistry + 'static,
 {
     type Output = S;
     fn decryption(
@@ -723,12 +731,12 @@ where
     }
 }
 
-impl<S, T, K> Opens<Vec<T>, K> for ValuePlan<S, Typed<T>>
+impl<S, T, K: KeysetRegistry> Opens<Vec<T>, K> for ValuePlan<S, Typed<T>>
 where
     T: DecryptInto<S>,
     CallerContext: Into<T::Context>,
     S: 'static,
-    K: 'static,
+    K: KeysetRegistry + 'static,
 {
     type Output = Vec<S>;
     fn decryption(

@@ -168,7 +168,7 @@ var envZeroKMSHost = []string{"CS_ZEROKMS_HOST", "CS_VITUR_HOST"}
 
 // AutoCredentials is [Credentials] from the environment first, then the
 // developer profile `stash auth login` writes — the order the Rust client
-// (stack-encrypt's StackCipher::builder().init()) resolves them in, so one
+// (stack-encrypt's StackCipherBuilder::new().init()) resolves them in, so one
 // set of variables configures a service in either language:
 //
 //   - The token, by stack-auth's AutoStrategy order: CS_CLIENT_ACCESS_KEY

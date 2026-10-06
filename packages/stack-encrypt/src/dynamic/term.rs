@@ -14,7 +14,7 @@
 //! going to be **stored** should come from the record path, where it shares
 //! one context with the ciphertext beside it (ADR-0004).
 
-use stack_kms::DataKeySource;
+use crate::registry::KeysetRegistry;
 use vitaminc_aead_value::FfiValue;
 use vitaminc_protected::{Controlled, OpaqueDebug, Protected};
 use zeroize::Zeroizing;
@@ -250,12 +250,12 @@ impl Scalar {
 /// ```
 /// use stack_encrypt::dynamic::{context, term, FfiValue, Scalar};
 /// use stack_encrypt::target::IndexSpec;
-/// use stack_encrypt::StackCipher;
-/// use stack_encrypt::kms::FakeDataKeySource;
+/// use stack_encrypt::{StackCipher, StackCipherBuilder};
+/// use stack_encrypt::registry::fake::FakeKeysetRegistry;
 ///
 /// # tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-/// let cipher = StackCipher::builder()
-///     .kms(FakeDataKeySource::new())
+/// let cipher = StackCipherBuilder::new()
+///     .registry(FakeKeysetRegistry::new())
 ///     .init()
 ///     .await?;
 /// let keyset = cipher.default_keyset();
@@ -284,7 +284,8 @@ pub async fn term<'c, K, D>(
     context: NonEmpty<D>,
 ) -> Result<Vec<u8>, Error>
 where
-    K: DataKeySource + Sync,
+    K: KeysetRegistry + Sync,
+    K::Provider: Send + Sync,
     D: IntoPrfContext<'c>,
 {
     match kind {
@@ -303,7 +304,8 @@ async fn equality<'c, K, D>(
     context: NonEmpty<D>,
 ) -> Result<Vec<u8>, Error>
 where
-    K: DataKeySource + Sync,
+    K: KeysetRegistry + Sync,
+    K::Provider: Send + Sync,
     D: IntoPrfContext<'c>,
 {
     let term = match scalar {
@@ -339,7 +341,8 @@ async fn match_term<'c, K, D>(
     context: NonEmpty<D>,
 ) -> Result<Vec<u8>, Error>
 where
-    K: DataKeySource + Sync,
+    K: KeysetRegistry + Sync,
+    K::Provider: Send + Sync,
     D: IntoPrfContext<'c>,
 {
     match scalar {
@@ -367,7 +370,8 @@ async fn ore_of<'c, K, D>(
     context: NonEmpty<D>,
 ) -> Result<Vec<u8>, Error>
 where
-    K: DataKeySource + Sync,
+    K: KeysetRegistry + Sync,
+    K::Provider: Send + Sync,
     D: IntoPrfContext<'c>,
 {
     match scalar {
@@ -391,7 +395,8 @@ async fn ope_of<'c, K, D>(
     context: NonEmpty<D>,
 ) -> Result<Vec<u8>, Error>
 where
-    K: DataKeySource + Sync,
+    K: KeysetRegistry + Sync,
+    K::Provider: Send + Sync,
     D: IntoPrfContext<'c>,
 {
     match scalar {
@@ -415,7 +420,8 @@ async fn ore<'c, K, T, D>(
     context: NonEmpty<D>,
 ) -> Result<Vec<u8>, Error>
 where
-    K: DataKeySource + Sync,
+    K: KeysetRegistry + Sync,
+    K::Provider: Send + Sync,
     T: CllwOreEncrypt + Send + 'static,
     T::Output: AsRef<[u8]> + Send + 'static,
     D: IntoPrfContext<'c>,
@@ -433,7 +439,8 @@ async fn ope<'c, K, T, D>(
     context: NonEmpty<D>,
 ) -> Result<Vec<u8>, Error>
 where
-    K: DataKeySource + Sync,
+    K: KeysetRegistry + Sync,
+    K::Provider: Send + Sync,
     T: CllwOpeEncrypt + Send + 'static,
     T::Output: AsRef<[u8]> + Send + 'static,
     D: IntoPrfContext<'c>,
@@ -448,12 +455,12 @@ where
 mod tests {
     use super::*;
     use crate::dynamic::{context, Output};
-    use crate::{nonempty, StackCipher};
-    use stack_kms::FakeDataKeySource;
+    use crate::registry::fake::FakeKeysetRegistry;
+    use crate::{nonempty, StackCipher, StackCipherBuilder};
 
-    async fn cipher() -> StackCipher<FakeDataKeySource> {
-        StackCipher::builder()
-            .kms(FakeDataKeySource::new())
+    async fn cipher() -> StackCipher<FakeKeysetRegistry> {
+        StackCipherBuilder::new()
+            .registry(FakeKeysetRegistry::new())
             .init()
             .await
             .expect("build cipher")

@@ -15,4 +15,39 @@ error[E0046]: not all trait items implemented, missing: `encryption`
 3 | impl EncryptFrom<u32> for Target {
   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ missing `encryption` in implementation
   |
-  = help: implement the missing item: `fn encryption<'s, K>() -> Encryption<'s, u32, Self, K, <Self as EncryptFrom<u32>>::Context> { todo!() }`
+  = help: implement the missing item: `fn encryption<'s, K>() -> Encryption<'s, u32, Self, K, <Self as EncryptFrom<u32>>::Context> where K: KeysetRegistry { todo!() }`
+
+error[E0277]: the trait bound `K: KeysetRegistry` is not satisfied
+ --> tests/ui/override_encryption.rs:7:25
+  |
+7 |         Pending::failed(cipher, stack_encrypt::Error::Aead)
+  |         --------------- ^^^^^^ the trait `KeysetRegistry` is not implemented for `K`
+  |         |
+  |         required by a bound introduced by this call
+  |
+  = note: required for `&KeysetCipher<'_, K>` to implement `CipherScope<'_, K>`
+note: required by a bound in `stack_encrypt::Pending::<'a, T, K>::failed`
+ --> src/target/pending.rs
+  |
+  |     pub fn failed(scope: impl CipherScope<'a, K>, error: Error) -> Self {
+  |                               ^^^^^^^^^^^^^^^^^^ required by this bound in `Pending::<'a, T, K>::failed`
+help: consider restricting type parameter `K` with trait `KeysetRegistry`
+  |
+6 |     fn encrypt_from<'a,K: stack_encrypt::KeysetRegistry>(_: &u32, cipher: &'a KeysetCipher<'_,K>, _:())->Pending<'a,Self,K> {
+  |                         +++++++++++++++++++++++++++++++
+
+error[E0277]: the trait bound `K: KeysetRegistry` is not satisfied
+ --> tests/ui/override_encryption.rs:7:9
+  |
+7 |         Pending::failed(cipher, stack_encrypt::Error::Aead)
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `KeysetRegistry` is not implemented for `K`
+  |
+note: required by a bound in `stack_encrypt::Pending`
+ --> src/target/pending.rs
+  |
+  | pub struct Pending<'a, T, K: KeysetRegistry> {
+  |                              ^^^^^^^^^^^^^^ required by this bound in `Pending`
+help: consider restricting type parameter `K` with trait `KeysetRegistry`
+  |
+6 |     fn encrypt_from<'a,K: stack_encrypt::KeysetRegistry>(_: &u32, cipher: &'a KeysetCipher<'_,K>, _:())->Pending<'a,Self,K> {
+  |                         +++++++++++++++++++++++++++++++

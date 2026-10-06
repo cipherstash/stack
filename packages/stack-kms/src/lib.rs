@@ -97,7 +97,6 @@ mod errors;
 mod futures;
 mod key;
 mod key_provider;
-mod key_source;
 mod maybe_send;
 mod payload;
 pub mod provider;
@@ -139,14 +138,15 @@ pub use errors::{
 // Key material
 pub use key::{ClientKey, DataKey, DataKeyWithTag, IndexKey, V1KeySet};
 
-// Key source abstractions (production = `StackKms`; tests = `FakeDataKeySource`)
-#[cfg(feature = "test-support")]
-pub use key_source::FakeDataKeySource;
-pub use key_source::{DataKeySource, IndexKeySource};
-
 // ZeroKMS as a `vitaminc-kms` key provider: the trait shape a client library
 // can be generic over. `StackKms` itself stays a plain ZeroKMS client.
 pub use provider::ZeroKmsKeyset;
+
+// The in-memory connection every test of the above is built on. Exported
+// because `stack-encrypt` owns `impl KeysetRegistry for Arc<StackKms>` — the
+// orphan rule puts it there — and cannot test it without a ZeroKMS to stub.
+#[cfg(feature = "test-support")]
+pub use client::test_connection;
 
 // Credential providers: the ZeroKMS *client key*. Note the name collision —
 // `key_provider::KeyProvider` sources that credential, and is not the key
