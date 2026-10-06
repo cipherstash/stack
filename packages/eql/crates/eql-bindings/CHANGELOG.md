@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **EQL types as plan field targets, by name** (`stack-encrypt` feature).
+  `eql_bindings::encryption::targets` holds a catalog-generated table
+  (`targets()`) of every EQL type a Stack Encrypt data plan may name as a
+  field target — name, family, suffix, plaintext `ValueKind`, SQL domain,
+  indexes, query twin, and whether the engine can produce it today with the
+  reason when not — serializable as the guest's `se_targets` export, and
+  `encrypt` / `decrypt` / `query` entry points that dispatch on the name and
+  run the type's own `EncryptFrom` / `DecryptInto` plan, resolving to the EQL
+  value's JSON bytes through the engine's `Pending`. `Identifier::from_label`
+  reads a two-segment plan label as the column identifier. `TextEq` is the
+  one producible type; every other name is refused with its reason.
+
 - **Scalar query-operand bindings.** Every term-bearing scalar
   domain now has a generated query twin — `IntegerEqQuery`, `IntegerOrdOpeQuery`,
   `TextSearchQuery`, … — the **enveloped term-only** operand `{v, i, <terms>}`
