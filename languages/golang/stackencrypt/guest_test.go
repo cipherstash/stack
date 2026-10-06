@@ -762,6 +762,46 @@ func TestGuestRefusesMalformedInputsBeforeState(t *testing.T) {
 	}
 }
 
+// NewPlan leaves two rules to the record call: every field under one table
+// (the label's leading segments), and no two fields under one label. The
+// guest's lowering refuses both at parse, before it looks for a cipher, as
+// the caller's input (ErrEncoding), on the write and on the read.
+func TestGuestRefusesAPlanNewPlanLeavesToTheCall(t *testing.T) {
+	ctx := context.Background()
+	c := rawInstance(t)
+	type row struct {
+		Age   uint32
+		Email string
+	}
+	record := EncryptedRecord{
+		"Age":   {Ciphertext: Sealed(fixtureLeaf)},
+		"Email": {Ciphertext: Sealed(fixtureLeaf)},
+	}
+	for name, fields := range map[string][]FieldPlan{
+		"two tables": {
+			{Field: "Age", Context: label(t, "users/age").Context()},
+			{Field: "Email", Context: label(t, "accounts/email").Context()},
+		},
+		"one label twice": {
+			{Field: "Age", Context: label(t, "users/age").Context(), Terms: []TermKind{Equality}},
+			{Field: "Email", Context: label(t, "users/age").Context(), Terms: []TermKind{Equality}},
+		},
+	} {
+		p, err := NewPlan(fields...)
+		if err != nil {
+			t.Fatalf("%s: NewPlan refused it: %v", name, err)
+		}
+		_, err = c.DefaultKeyset().EncryptRecords(ctx, []row{{Age: 1, Email: "a@b.c"}}, WithPlan(p))
+		if !errors.Is(err, ErrEncoding) {
+			t.Errorf("%s: EncryptRecords err = %v, want ErrEncoding", name, err)
+		}
+		var out row
+		if err := c.DecryptRecord(ctx, record, &out, WithPlan(p)); !errors.Is(err, ErrEncoding) {
+			t.Errorf("%s: DecryptRecord err = %v, want ErrEncoding", name, err)
+		}
+	}
+}
+
 // A bad ExtendContext part fails the call for that reason, on the probe and
 // on both record directions. TestGuestRefusesMalformedInputsBeforeState
 // shows the call never reaches the cipher, but a call that ignored the
