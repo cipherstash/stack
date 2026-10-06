@@ -361,6 +361,66 @@ mod tests {
         );
     }
 
+    /// The two `Error::Target` arms, in order: every target refusal is the
+    /// caller's input, and the resolver's own failure is never reported as
+    /// such. Swapping the arms, or dropping the `Other` one, fails here.
+    #[test]
+    fn target_refusals_are_encoding_and_a_resolver_failure_is_internal() {
+        use stack_encrypt::dynamic::{Error, TargetError};
+        use vitaminc_aead_value::ValueKind;
+        let refusals = [
+            TargetError::NoTargets {
+                name: "TextEq".into(),
+            },
+            TargetError::Unknown {
+                name: "Nope".into(),
+            },
+            TargetError::Unproducible {
+                name: "TextOrdOre".into(),
+                reason: "block ORE".into(),
+            },
+            TargetError::Extended {
+                name: "email".into(),
+                label: "users/email".into(),
+            },
+            TargetError::Kind {
+                name: "email".into(),
+                target: "TextEq".into(),
+                expected: Some(ValueKind::String),
+                declared: ValueKind::UInt64,
+            },
+            TargetError::Column {
+                name: "email".into(),
+                label: "app/users/email".into(),
+                reason: "two segments".into(),
+            },
+            TargetError::Plaintext {
+                name: "email".into(),
+                target: "TextEq".into(),
+                expected: Some(ValueKind::String),
+                found: None,
+            },
+            TargetError::Stored {
+                name: "email".into(),
+                target: "TextEq".into(),
+                reason: "not JSON".into(),
+            },
+        ];
+        for refusal in refusals {
+            let label = refusal.to_string();
+            assert_eq!(
+                status_for_dynamic(&Error::Target(refusal)),
+                STATUS_ENCODING,
+                "{label}: a target refusal is the caller's input"
+            );
+        }
+        assert_eq!(
+            status_for_dynamic(&Error::Target(TargetError::Other("boom".into()))),
+            STATUS_INTERNAL,
+            "the resolver's own failure is never the caller's input"
+        );
+    }
+
     #[test]
     fn dynamic_input_errors_are_encoding_and_a_library_bug_is_internal() {
         use stack_encrypt::dynamic::Error;
