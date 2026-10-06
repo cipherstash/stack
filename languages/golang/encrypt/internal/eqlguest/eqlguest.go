@@ -5,10 +5,21 @@
 // cannot fail: it is two assignments at program start.
 package eqlguest
 
-var module []byte
+var (
+	linked bool
+	module []byte
+)
 
-// Register installs the eql guest build. Called once, by package eql's init.
-func Register(wasm []byte) { module = wasm }
+// Register says package eql is linked and installs its guest build, nil
+// when the module was not built. Called once, by package eql's init.
+func Register(wasm []byte) {
+	linked = true
+	module = wasm
+}
+
+// Linked reports whether package eql is linked: the program names an EQL
+// type, so it must run the build that holds them and never the other.
+func Linked() bool { return linked }
 
 // Module is the registered eql guest build, or nil when package eql is not
 // linked or its module was not built.

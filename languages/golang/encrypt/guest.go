@@ -35,11 +35,22 @@ const guestPath = "wasm/stack_encrypt_guest.wasm"
 // embedded.
 var ErrGuestNotBuilt = errors.New("encrypt: guest module not built — run `mise run wasm:guest:build`")
 
+// ErrEQLGuestNotBuilt is returned by NewClient when the program links
+// package eql (its generated code names an EQL type) and the guest build
+// with the EQL types is not embedded. There is no fallback to the build
+// without them: every encrypt_into call would fail there, so the program
+// fails at startup instead.
+var ErrEQLGuestNotBuilt = errors.New("encrypt: guest module with the EQL types not built — run `mise run wasm:guest:build:eql`")
+
 // embeddedGuest is the guest a client runs: the build with the EQL types
-// when package eql is linked (it registers the module on import, which
-// cannot fail), else this package's own.
+// when package eql is linked (it registers on import, which cannot fail),
+// and only that build; else this package's own.
 func embeddedGuest() ([]byte, error) {
-	if wasm := eqlguest.Module(); wasm != nil {
+	if eqlguest.Linked() {
+		wasm := eqlguest.Module()
+		if wasm == nil {
+			return nil, ErrEQLGuestNotBuilt
+		}
 		return wasm, nil
 	}
 	wasm, err := guestFS.ReadFile(guestPath)

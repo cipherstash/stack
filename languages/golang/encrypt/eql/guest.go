@@ -19,12 +19,14 @@ var guestFS embed.FS
 const guestPath = "wasm/stack_encrypt_guest_eql.wasm"
 
 // Linking this package selects the build of the engine that holds the EQL
-// types. The registration cannot fail: an absent module registers nothing,
-// and package encrypt reports it as ErrGuestNotBuilt as it would its own.
+// types, and only that build: a program whose generated code names an EQL
+// type must not fall back to the build without them, where every
+// encrypt_into call would fail. The registration cannot fail; an absent
+// module registers nil, and encrypt.NewClient reports ErrEQLGuestNotBuilt.
 func init() {
 	wasm, err := guestFS.ReadFile(guestPath)
 	if err != nil {
-		return
+		wasm = nil
 	}
 	eqlguest.Register(wasm)
 }
