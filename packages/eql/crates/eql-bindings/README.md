@@ -202,7 +202,13 @@ let opened: FfiValue = targets::decrypt("TextEq", &cipher, &column, &stored)?.aw
 
 The table and the dispatch are generated into `src/v3/targets.rs` beside
 `inventory.rs` (`mise run types:generate`), gated to the `stack-encrypt`
-feature, and drift-gated by the same parity tests. A type is producible exactly
+feature, and drift-gated by the same parity tests. The same generator writes
+the Go package `languages/golang/encrypt/eql` from the same rows
+(`eql-codegen go-eql`, also under `types:generate` / `types:check`). The
+engine's `TargetResolver` (stack-encrypt's `dynamic` module) is implemented
+over this module by the Go guest's `eql` build, not here: a resolver in this
+crate would need stack-encrypt API newer than the crates.io release the
+published crate names, and the guest already depends on both. A type is producible exactly
 when its generated struct carries the `stack-encrypt` derives
 (`ENCRYPTION_DOMAINS` in `eql-codegen`), because the dispatch runs the derived
 plan; `TextEq` is the only one today.

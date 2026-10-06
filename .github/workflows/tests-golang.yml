@@ -8,8 +8,9 @@ name: Tests (Go)
 #   wasi-check  the stack crates build for wasm32-wasip1 with no JS-host or
 #               native-HTTP dependencies, the no-http shape passes its tests
 #               and docs, both guests pass lint and tests and are built with
-#               their import surfaces checked (the stack-encrypt guest twice:
-#               the real build and the deterministic-kms test build), their
+#               their import surfaces checked (the stack-encrypt guest four
+#               times: the real build, the build with the EQL types, and the
+#               deterministic-kms test build of each), their
 #               sha256 is recorded, `go:test` runs against them, and
 #               `go generate` leaves the tree unchanged.
 #   go-lint     golangci-lint, Linux only.
@@ -32,6 +33,9 @@ on:
       - packages/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-guest-abi/**
+      # The eql guest build links eql-bindings.
+      - packages/eql/crates/eql-bindings/**
+      - packages/eql/crates/eql-domains/**
       - languages/golang/**
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh
@@ -54,6 +58,9 @@ on:
       - packages/stack-encrypt/**
       - packages/stack-encrypt-derive/**
       - packages/stack-guest-abi/**
+      # The eql guest build links eql-bindings.
+      - packages/eql/crates/eql-bindings/**
+      - packages/eql/crates/eql-domains/**
       - languages/golang/**
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh
@@ -156,6 +163,18 @@ jobs:
       - name: stack-encrypt guest deterministic test build
         run: mise run wasm:guest:build:deterministic
 
+      # The build with the EQL types (ADR-0007, amended 2026-10-06), which
+      # package encrypt/eql embeds and registers on import, and its
+      # deterministic test build, which the hermetic tests of a TextEq field
+      # load. Same import-surface gate. The build task prints both builds'
+      # sizes: the plan asks for that measurement before the SDK settles on
+      # one build or two.
+      - name: stack-encrypt guest eql build and import-surface gate
+        run: mise run wasm:guest:build:eql
+
+      - name: stack-encrypt guest eql deterministic test build
+        run: mise run wasm:guest:build:eql:deterministic
+
       - name: Credential guest lint and tests
         run: mise run wasm:auth-guest:test
 
@@ -167,7 +186,7 @@ jobs:
       # same bytes rather than a stale or rebuilt guest.
       - name: Record the guests' checksums
         run: |
-          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/testdata/stack_encrypt_guest_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/testdata/stack_encrypt_guest_deterministic.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
             (cd languages/golang && openssl dgst -sha256 "$guest" | awk '{print $NF}' > "$guest.sha256" && echo "$guest sha256 $(cat "$guest.sha256")")
           done
 
@@ -180,6 +199,10 @@ jobs:
             languages/golang/encrypt/wasm/stack_encrypt_guest.wasm.sha256
             languages/golang/encrypt/testdata/stack_encrypt_guest_deterministic.wasm
             languages/golang/encrypt/testdata/stack_encrypt_guest_deterministic.wasm.sha256
+            languages/golang/encrypt/eql/wasm/stack_encrypt_guest_eql.wasm
+            languages/golang/encrypt/eql/wasm/stack_encrypt_guest_eql.wasm.sha256
+            languages/golang/encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm
+            languages/golang/encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm.sha256
             languages/golang/auth/wasm/stack_auth_guest.wasm
             languages/golang/auth/wasm/stack_auth_guest.wasm.sha256
           if-no-files-found: error
@@ -290,7 +313,7 @@ jobs:
       - name: The guests are the ones Linux built and checked
         run: |
           cd languages/golang
-          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/testdata/stack_encrypt_guest_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/testdata/stack_encrypt_guest_deterministic.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
             want=$(cat "$guest.sha256")
             got=$(openssl dgst -sha256 "$guest" | awk '{print $NF}')
             if [ "$want" != "$got" ]; then
@@ -356,7 +379,7 @@ jobs:
       - name: The guests are the ones the wasi-check job built and checked
         run: |
           cd languages/golang
-          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/testdata/stack_encrypt_guest_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
+          for guest in encrypt/wasm/stack_encrypt_guest.wasm encrypt/testdata/stack_encrypt_guest_deterministic.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm encrypt/testdata/stack_encrypt_guest_eql_deterministic.wasm auth/wasm/stack_auth_guest.wasm; do
             want=$(cat "$guest.sha256")
             got=$(openssl dgst -sha256 "$guest" | awk '{print $NF}')
             if [ "$want" != "$got" ]; then

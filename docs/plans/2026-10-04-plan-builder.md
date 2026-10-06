@@ -667,6 +667,9 @@ The ciphertext inside it is a Stack Encrypt ciphertext, which starts with `stack
 "EQL v4" in this plan is the name of that form, and not a new envelope.
 
 The engine produces one EQL type today: `TextEq`.
+Status (2026-10-06, #1062): `TextEq` is producible through the data plan's target form.
+`stashgen` accepts `encrypt_into=TextEq`, the guest build with the EQL types returns the finished value, and `encrypt/eql` holds the generated Go types; every other type is listed by `se_targets` with the reason it is not producible, and `stashgen` refuses it.
+Open question for Dan: an EQL value is stored under a table and a column, so a target field's label must be exactly `<table>/<column>`; a cipher extended with a tenant part has no column for the extended label, and a plan with a target field refuses the extension rather than dropping it.
 The other types wait for work in the engine:
 
 - **Every family but `Text`:** how the family encodes a plaintext is not specified.
