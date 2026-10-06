@@ -620,34 +620,62 @@ impl std::str::FromStr for Label {
 
 /// Why a string is not a [`Label`] segment. `index` is the segment's
 /// position, counting from zero.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+///
+/// A label is schema — a plan's context and its fields' names — so a message
+/// may quote the character it refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum LabelError {
     /// No segments at all.
     #[error("a label needs at least one segment")]
+    #[diagnostic(code(stack_encrypt::label_empty))]
     Empty,
     /// The segment is the empty string.
     #[error("label segment {index} is empty")]
+    #[diagnostic(code(stack_encrypt::label_empty_segment))]
     EmptySegment { index: usize },
     /// The segment contains the separator, [`/`](Descriptor::SEPARATOR).
     #[error(
         "label segment {index} contains the separator '{}'",
         Descriptor::SEPARATOR
     )]
+    #[diagnostic(
+        code(stack_encrypt::label_separator),
+        help("Give each segment as its own element rather than joining them with `/`.")
+    )]
     Separator { index: usize },
     /// The segment contains a control character, an invisible format
     /// character or a parenthesis, which the descriptor reserves.
     #[error("label segment {index} contains {found:?}, which the descriptor reserves")]
+    #[diagnostic(code(stack_encrypt::label_reserved))]
     Reserved { index: usize, found: char },
     /// The segment begins like another descriptor form: `b64:`, a digit or
     /// `-`.
     #[error("label segment {index} begins like another descriptor form (`b64:`, a digit or `-`)")]
+    #[diagnostic(code(stack_encrypt::label_reserved_prefix))]
     ReservedPrefix { index: usize },
     /// The value a label was read from is not text at all: a number, bytes,
     /// a list or a composite where a context field's value should be a
     /// label such as `tenants/acme`.
     #[error("a label is read from text, and this value is not text")]
+    #[diagnostic(code(stack_encrypt::label_not_text))]
     NotText,
+}
+
+impl crate::ErrorPayload for LabelError {
+    fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
+        use crate::diagnostic::payload;
+        match self {
+            Self::Empty | Self::NotText => serde_json::Map::new(),
+            Self::EmptySegment { index }
+            | Self::Separator { index }
+            | Self::ReservedPrefix { index } => payload([("segment", (*index).into())]),
+            Self::Reserved { index, found } => payload([
+                ("segment", (*index).into()),
+                ("character", found.to_string().into()),
+            ]),
+        }
+    }
 }
 
 impl std::fmt::Display for Descriptor {

@@ -116,12 +116,12 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
 pub fn status_for_dynamic(error: &stack_encrypt::dynamic::Error) -> u32 {
     use stack_encrypt::dynamic::Error;
     match error {
-        Error::Context
+        Error::Context { .. }
         | Error::Term { .. }
-        | Error::Plan
+        | Error::Plan { .. }
         | Error::UntypedIndex { .. }
-        | Error::Source
-        | Error::Record => STATUS_ENCODING,
+        | Error::Source { .. }
+        | Error::Record { .. } => STATUS_ENCODING,
         Error::Cipher(e) => status_for_error(e),
         // A target refusal is a statement about the plan, the label or the
         // value (an unknown or unproducible type, an extended plan, a value
@@ -433,26 +433,52 @@ mod tests {
 
     #[test]
     fn dynamic_input_errors_are_encoding_and_a_library_bug_is_internal() {
-        use stack_encrypt::dynamic::Error;
+        use stack_encrypt::dynamic::{Error, Reason};
         use stack_encrypt::sem::MatchOptions;
         use stack_encrypt::target::IndexSpec;
+        let age = || Some("age".to_string());
         for (label, err) in [
-            ("a bad context", Error::Context),
+            (
+                "a bad context",
+                Error::Context {
+                    field: None,
+                    reason: Reason::EmptyContext,
+                },
+            ),
             (
                 "a bad term request",
                 Error::Term {
+                    field: age(),
                     kind: IndexSpec::Match(MatchOptions::default()),
                 },
             ),
-            ("a bad plan", Error::Plan),
+            (
+                "a bad plan",
+                Error::Plan {
+                    field: age(),
+                    reason: Reason::DuplicateOutput,
+                },
+            ),
             (
                 "an indexed field with no type",
                 Error::UntypedIndex {
                     field: "age".to_string(),
                 },
             ),
-            ("a bad source", Error::Source),
-            ("a bad record", Error::Record),
+            (
+                "a bad source",
+                Error::Source {
+                    field: age(),
+                    reason: Reason::FieldMissing,
+                },
+            ),
+            (
+                "a bad record",
+                Error::Record {
+                    field: age(),
+                    reason: Reason::NoCiphertextNode,
+                },
+            ),
         ] {
             assert_eq!(
                 status_for_dynamic(&err),

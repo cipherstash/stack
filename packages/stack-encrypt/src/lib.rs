@@ -271,6 +271,7 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod cipher;
+mod codes;
 pub mod descriptor;
 #[cfg(feature = "dynamic")]
 pub mod dynamic;
@@ -291,7 +292,13 @@ pub use plan::{all, Plan, PlanError};
 // versioned on its own (release-plz.toml), so a caller reaches it through
 // here and always gets the version this crate was built against, never a
 // second copy whose types do not fit `StackCipher`'s bounds.
+pub use codes::ERROR_CODES;
 pub use stack_kms as kms;
+/// The trait every error here implements to hand over its structured
+/// fields, with the rule for what an error may contain, and the helpers that
+/// go with it. Shared by `stack-profile`, `stack-auth`, `stack-kms` and this
+/// crate, so a binding encodes an error from any of them the same way.
+pub use stack_kms::{diagnostic, ErrorPayload};
 pub use target::{
     CallerContext, CipherScope, DecryptField, DecryptFrom, DecryptInto, Decryptable, Decryption,
     EncryptFrom, EncryptInto, Encrypted, Encryption, Equality, Index, IndexSpec, Indexes, Match,

@@ -167,18 +167,24 @@ const ORE_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ore-key/v1";
 const OPE_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ope-key/v1";
 
 /// Errors from SEM term generation.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum TermError {
     /// The PRF backend failed (for a remote 2-party backend this includes
-    /// transport errors).
-    #[error("PRF failed: {0}")]
+    /// transport errors). The backend's error is the
+    /// [`source`](std::error::Error::source), not part of this message: it
+    /// is another library's text.
+    #[error("PRF failed")]
+    #[diagnostic(code(stack_encrypt::prf_failed))]
     Prf(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
-    /// CLLW ORE/OPE encryption failed.
+    /// CLLW ORE/OPE encryption failed. (`cllw_ore::Error` is deliberately
+    /// contentless, so its message is fixed text.)
     #[error("ORE/OPE encryption failed: {0}")]
+    #[diagnostic(code(stack_encrypt::ore_failed))]
     Ore(#[from] cllw_ore::Error),
     /// The supplied [`MatchOptions`] are invalid.
     #[error("invalid match options: {0}")]
+    #[diagnostic(code(stack_encrypt::invalid_match_options))]
     InvalidOptions(&'static str),
     /// The text produced no tokens under the configured tokenizer — empty or
     /// separator-only text, or (for n-grams, as in the v1 match indexer) text
@@ -189,11 +195,27 @@ pub enum TermError {
     #[error(
         "text produces no match tokens (empty, separator-only, or shorter than the n-gram length)"
     )]
+    #[diagnostic(
+        code(stack_encrypt::empty_term_text),
+        help("A match term needs text with at least one token: a query with none would match every row, and one shorter than the n-gram length could match none. Match on longer text, or skip the match condition for this value.")
+    )]
     EmptyTermText,
     /// Term bytes do not decode under the term kind's frozen encoding — see
     /// [`TermBytesError`].
     #[error(transparent)]
+    #[diagnostic(transparent)]
     Bytes(#[from] TermBytesError),
+}
+
+impl crate::ErrorPayload for TermError {
+    fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
+        match self {
+            Self::Bytes(error) => error.payload(),
+            Self::Prf(_) | Self::Ore(_) | Self::InvalidOptions(_) | Self::EmptyTermText => {
+                serde_json::Map::new()
+            }
+        }
+    }
 }
 
 /// A term's frozen byte encoding failed to decode (see the
@@ -205,22 +227,33 @@ pub enum TermError {
 /// Kept separate from the rest of [`TermError`] (which it converts into) so
 /// decoding has an error a caller can compare: the generation variants carry
 /// boxed and opaque sources that are not [`PartialEq`].
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+///
+/// No message carries a byte of the term: lengths and the filter size only.
+#[derive(Debug, PartialEq, Eq, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum TermBytesError {
     /// Equality-term bytes are not the 32 PRF bytes.
     #[error("equality-term bytes must be exactly 32 bytes, got {0}")]
+    #[diagnostic(code(stack_encrypt::equality_term_length))]
     WrongEqualityTermLength(usize),
     /// Match-term bytes are not a whole number of little-endian `u16`
     /// positions.
     #[error("match-term bytes must be little-endian u16 positions, got an odd length of {0}")]
+    #[diagnostic(code(stack_encrypt::match_term_length))]
     OddMatchTermsLength(usize),
     /// A decoded position lies outside the Bloom filter the term's
     /// [`MatchConfig`] fixes. Genuine positions are always masked into
     /// `0..m`, so an out-of-range one means the bytes were not written by
     /// this encoding — a wrong-endian decoder, most often, which would
     /// otherwise decode cleanly and then silently never match.
-    #[error("match position {position} is outside the {filter_size}-bit filter")]
+    ///
+    /// `position` is kept for a caller in this process; the message leaves
+    /// it out, since it is a value read from the term's bytes.
+    #[error("a match position is outside the {filter_size}-bit filter")]
+    #[diagnostic(
+        code(stack_encrypt::match_position_out_of_range),
+        help("The bytes were not written by this match-term encoding: check they are little-endian, and decoded under the same match options they were derived with.")
+    )]
     MatchPositionOutOfRange {
         /// The offending position.
         position: u16,
@@ -231,7 +264,22 @@ pub enum TermBytesError {
     /// (The length is all there is to report: `cllw_ore::Error` is
     /// deliberately contentless, so its message would say strictly less.)
     #[error("{0} bytes do not fit this CLLW ciphertext shape")]
+    #[diagnostic(code(stack_encrypt::cllw_ciphertext_length))]
     MalformedCllwCiphertext(usize),
+}
+
+impl crate::ErrorPayload for TermBytesError {
+    fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
+        use crate::diagnostic::payload;
+        match self {
+            Self::WrongEqualityTermLength(len)
+            | Self::OddMatchTermsLength(len)
+            | Self::MalformedCllwCiphertext(len) => payload([("len", (*len).into())]),
+            Self::MatchPositionOutOfRange { filter_size, .. } => {
+                payload([("filter_size", (*filter_size).into())])
+            }
+        }
+    }
 }
 
 impl TermError {

@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use vitaminc_aead_value::FfiValue;
 use vitaminc_protected::Controlled;
 
-use super::Error;
+use super::{Error, Reason};
 use crate::{ContextPiece, NonEmpty};
 
 /// A context arrives from a binding as a value and becomes a [`ContextPiece`]
@@ -90,10 +90,12 @@ use crate::{ContextPiece, NonEmpty};
 ///
 /// # Errors
 ///
-/// [`Error::Context`] for anything outside the shape above, and for a
-/// context that renders empty.
+/// [`Error::Context`] for anything outside the shape above
+/// ([`Reason::ContextKind`], [`Reason::ContextNotUtf8`]), and for a context
+/// that renders empty ([`Reason::EmptyContext`]). It names no field: the
+/// caller that knows the field names it ([`Error::in_field`]).
 pub fn context(value: FfiValue) -> Result<NonEmpty<ContextPiece<'static>>, Error> {
-    NonEmpty::new(piece_of(value)?).map_err(|_| Error::Context)
+    NonEmpty::new(piece_of(value)?).map_err(|_| Error::bad_context(Reason::EmptyContext))
 }
 
 fn piece_of(value: FfiValue) -> Result<ContextPiece<'static>, Error> {
@@ -103,7 +105,8 @@ fn piece_of(value: FfiValue) -> Result<ContextPiece<'static>, Error> {
         // moves out of its `Protected` rather than being copied: a context
         // is not secret, and the copy would only be wiped and freed.
         FfiValue::String(s) => ContextPiece::Text(Cow::Owned(
-            String::from_utf8(s.into_inner().risky_unwrap()).map_err(|_| Error::Context)?,
+            String::from_utf8(s.into_inner().risky_unwrap())
+                .map_err(|_| Error::bad_context(Reason::ContextNotUtf8))?,
         )),
         FfiValue::Bytes(bytes) => ContextPiece::Bytes(Cow::Owned(bytes.risky_unwrap())),
         FfiValue::Int32(v) => ContextPiece::I32(v),
@@ -124,7 +127,7 @@ fn piece_of(value: FfiValue) -> Result<ContextPiece<'static>, Error> {
         | FfiValue::Float32(_)
         | FfiValue::Float64(_)
         | FfiValue::Object(_)
-        | FfiValue::Passthrough(_) => return Err(Error::Context),
+        | FfiValue::Passthrough(_) => return Err(Error::bad_context(Reason::ContextKind)),
     })
 }
 
@@ -430,7 +433,7 @@ mod tests {
             ),
         ] {
             assert!(
-                matches!(context(empty), Err(Error::Context)),
+                matches!(context(empty), Err(Error::Context { .. })),
                 "{label} is empty by the tuple rule and must be refused"
             );
         }
@@ -470,7 +473,7 @@ mod tests {
             ),
         ] {
             assert!(
-                matches!(context(bad), Err(Error::Context)),
+                matches!(context(bad), Err(Error::Context { .. })),
                 "{label} is not a context and must be refused"
             );
         }

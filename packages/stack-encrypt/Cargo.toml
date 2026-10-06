@@ -41,6 +41,11 @@ serde = { workspace = true }
 base64ct = { version = "1.7", features = ["alloc"] }
 
 cllw-ore = { workspace = true }
+# Every error derives `miette::Diagnostic` (a code, and help where a caller
+# can act) and gives its structured fields as a `serde_json` map through
+# `ErrorPayload`. Both are already in the graph through stack-kms.
+miette = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true }
@@ -63,7 +68,6 @@ dynamic = ["dep:vitaminc-aead-value"]
 test-support = ["stack-kms/test-support"]
 
 [dev-dependencies]
-serde_json = { workspace = true }
 # `default-features = false` here too: dev-dependency features unify into the
 # `cargo test -p stack-encrypt --no-default-features` graph, so leaving the
 # default on would silently pull `stack-kms/http` -> `stack-auth/http` ->

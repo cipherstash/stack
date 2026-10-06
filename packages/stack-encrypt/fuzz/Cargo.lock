@@ -2025,7 +2025,9 @@ version = "0.2.0"
 dependencies = [
  "base64ct",
  "cllw-ore",
+ "miette",
  "serde",
+ "serde_json",
  "stack-encrypt-derive",
  "stack-kms",
  "thiserror 1.0.69",

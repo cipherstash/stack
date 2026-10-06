@@ -119,19 +119,34 @@ pub type BoxedPassthrough = Box<dyn Any + Send + 'static>;
 pub type StackCipherText = CipherText<SealedValue, BoxedPassthrough>;
 
 /// Errors from sealing or opening a [`StackCipherText`].
-#[derive(Debug, thiserror::Error)]
+///
+/// Every variant has a miette code in [`ERROR_CODES`](crate::ERROR_CODES),
+/// or forwards the code of the error it carries ([`Kms`](Self::Kms),
+/// [`Term`](Self::Term), [`Plan`](Self::Plan)); its structured fields are its
+/// [`ErrorPayload`](crate::ErrorPayload). No message carries a context's
+/// descriptor or another library's text (see the rule on
+/// [`ErrorPayload`](crate::ErrorPayload)).
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum Error {
-    /// A ZeroKMS data-key generate/retrieve call failed.
-    #[error("ZeroKMS data-key operation failed: {0}")]
+    /// A ZeroKMS data-key or keyset operation failed. Transparent: the
+    /// message, code and help are the [`stack_kms::Error`]'s, so a caller
+    /// across a binding sees `stack_kms::keyset_not_found` itself.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
     Kms(#[from] stack_kms::Error),
     /// AEAD sealing/opening failed, or the ciphertext shape did not match the
     /// requested type. On decrypt this is the expected outcome for a wrong key,
     /// wrong AAD, or tampered ciphertext.
     #[error("AEAD operation failed (wrong key, AAD mismatch, or malformed ciphertext)")]
+    #[diagnostic(
+        code(stack_encrypt::aead),
+        help("Open the value under the context it was sealed with. If the context is right, the ciphertext has been altered.")
+    )]
     Aead,
     /// ZeroKMS returned a different number of keys than were requested.
     #[error("expected {expected} data keys from ZeroKMS but received {received}")]
+    #[diagnostic(code(stack_encrypt::key_count_mismatch))]
     KeyCountMismatch { expected: usize, received: usize },
     /// A context rendered to a descriptor longer than ZeroKMS can bind
     /// ([`Descriptor::MAX_LEN`]). Raised before any request is sent, so no
@@ -139,6 +154,13 @@ pub enum Error {
     #[error(
         "context renders to a {len}-byte ZeroKMS descriptor; the limit is {} bytes",
         Descriptor::MAX_LEN
+    )]
+    #[diagnostic(
+        code(stack_encrypt::descriptor_too_long),
+        help(
+            "ZeroKMS binds a descriptor of at most {} bytes. Shorten the context: fewer parts, shorter labels, or an id in place of a long name.",
+            Descriptor::MAX_LEN
+        )
     )]
     DescriptorTooLong { len: usize },
     /// Building a ZeroKMS client from the environment failed: credentials or
@@ -148,15 +170,30 @@ pub enum Error {
     /// that type only exists with `http`, and a variant whose presence tracks
     /// a feature is not additive — feature unification elsewhere in the graph
     /// would then change this enum's shape under a downstream match.
+    ///
+    /// The box holds whatever built it: this crate fills it with
+    /// `StackKmsBuilderError`, whose message obeys the rule on
+    /// [`ErrorPayload`](crate::ErrorPayload), and so may be shown here.
     #[error("could not build a ZeroKMS client from the environment: {0}")]
+    #[diagnostic(
+        code(stack_encrypt::config),
+        help("Check `CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY` and `CS_CLIENT_ACCESS_KEY`, or log in with `stash auth login`.")
+    )]
     Config(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
     /// An index term failed to derive.
     #[error(transparent)]
+    #[diagnostic(transparent)]
     Term(#[from] crate::sem::TermError),
     /// A third-party [`EncryptFrom`](crate::target::EncryptFrom) /
     /// [`DecryptInto`](crate::target::DecryptInto) implementation failed
     /// for a reason of its own.
+    ///
+    /// Its message is the implementation's, shown as given: an
+    /// implementation that fills this slot writes its message under the
+    /// rule on [`ErrorPayload`](crate::ErrorPayload), naming what it refused
+    /// and never a byte of the value or the ciphertext.
     #[error(transparent)]
+    #[diagnostic(code(stack_encrypt::other))]
     Other(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// A [`transcode::Visitor`](crate::target::transcode::Visitor) was handed
     /// an encrypted output shape its destination does not accept: a scalar
@@ -165,12 +202,25 @@ pub enum Error {
     /// Never a data error: the output was produced correctly, the
     /// destination just has nowhere to put it.
     #[error("destination does not support this encrypted output shape")]
+    #[diagnostic(code(stack_encrypt::unsupported_shape))]
     UnsupportedShape,
     /// A record carrying its context in storage (`#[stash(context_field)]`)
     /// was opened with an [`ExpectedContext`](crate::target::ExpectedContext)
-    /// naming a different one. Refused before any key is retrieved; the
-    /// descriptor is the stored context's, rendered as ZeroKMS would log it.
-    #[error("stored context {stored} does not match the expected context")]
+    /// naming a different one. Refused before any key is retrieved.
+    ///
+    /// `stored` is the stored context's descriptor, rendered as ZeroKMS
+    /// would log it, for a caller in this process. The message gives only
+    /// its length and number of parts: a stored context can be built from
+    /// a record field, so its descriptor can be customer data.
+    #[error(
+        "stored context ({} bytes in {} parts) does not match the expected context",
+        stored.len(),
+        descriptor_parts(stored)
+    )]
+    #[diagnostic(
+        code(stack_encrypt::context_mismatch),
+        help("The record was stored under another context than the one it is opened with. Open it with the context it was stored under.")
+    )]
     ContextMismatch { stored: Descriptor },
     /// A [`Pending`](crate::target::Pending) fulfilment's requests and
     /// responses did not line up: it drew more responses — or a different
@@ -178,6 +228,7 @@ pub enum Error {
     /// Always a composition bug in an `EncryptFrom`/`DecryptInto`
     /// implementation, never a data error.
     #[error("a pending fulfilment's responses did not match its requests")]
+    #[diagnostic(code(stack_encrypt::response_shape))]
     ResponseShape,
     /// [`Pending`](crate::target::Pending)s scoped to different keysets were
     /// merged (`zip` / `all`): one built through a [`KeysetCipher`] for one
@@ -195,6 +246,10 @@ pub enum Error {
     /// rather than client identity, and so refused two ciphers over the
     /// same client and the same keyset.)
     #[error("merged pendings were scoped to different keysets ({left} and {right})")]
+    #[diagnostic(
+        code(stack_encrypt::keyset_mismatch),
+        help("Build every part of one record or batch through the same keyset.")
+    )]
     KeysetMismatch { left: Uuid, right: Uuid },
     /// A leaf sealed under one keyset was handed to a [`KeysetCipher`] for
     /// another. The handle's keyset is a constraint the caller asked for —
@@ -202,6 +257,12 @@ pub enum Error {
     /// — so this is refused before any key is retrieved. To open leaves
     /// from any keyset, decrypt through the [`StackCipher`].
     #[error("leaf was sealed under keyset {found}, not the handle's keyset {expected}")]
+    #[diagnostic(
+        code(stack_encrypt::foreign_keyset),
+        help(
+            "Decrypt through the client, not a keyset-bound cipher, to open rows from any keyset."
+        )
+    )]
     ForeignKeyset { expected: Uuid, found: Uuid },
     /// A data key was requested through a [`StackCipher`] rather than a
     /// [`KeysetCipher`]: a [`Request::generate_data_key`] needs a keyset
@@ -211,12 +272,17 @@ pub enum Error {
     ///
     /// [`Request::generate_data_key`]: crate::target::Request::generate_data_key
     #[error("a data key was requested with no keyset to mint it under")]
+    #[diagnostic(
+        code(stack_encrypt::no_keyset),
+        help("Encrypt through a keyset cipher: `default_keyset()` or `keyset(..)` on the client.")
+    )]
     NoKeyset,
     /// A [`DecryptField`](crate::target::DecryptField) implementation
     /// declared its type [`DECRYPTABLE`](crate::target::Decryptable::DECRYPTABLE)
     /// but passed the field over. Always a bug in a third-party
     /// `DecryptField`, never a data error.
     #[error("a field declared decryptable was not opened by its DecryptField implementation")]
+    #[diagnostic(code(stack_encrypt::not_opened))]
     NotOpened,
     /// A [plan](crate::plan) was refused: it did not validate when it was
     /// built, or the value, record or query it was run with does not match
@@ -224,7 +290,52 @@ pub enum Error {
     /// is requested; [`FieldValues::take`](crate::plan::FieldValues::take)
     /// also returns one for a record already in hand.
     #[error(transparent)]
+    #[diagnostic(transparent)]
     Plan(#[from] crate::plan::PlanError),
+}
+
+/// How many separator-delimited parts a descriptor has: what an error about
+/// a context says of it in place of the descriptor itself.
+fn descriptor_parts(descriptor: &Descriptor) -> usize {
+    descriptor.as_str().split(Descriptor::SEPARATOR).count()
+}
+
+impl crate::ErrorPayload for Error {
+    fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
+        use crate::diagnostic::payload;
+        match self {
+            Self::Kms(error) => error.payload(),
+            Self::Term(error) => error.payload(),
+            Self::Plan(error) => error.payload(),
+            Self::KeyCountMismatch { expected, received } => payload([
+                ("expected", (*expected).into()),
+                ("received", (*received).into()),
+            ]),
+            Self::DescriptorTooLong { len } => payload([
+                ("len", (*len).into()),
+                ("limit", Descriptor::MAX_LEN.into()),
+            ]),
+            Self::ContextMismatch { stored } => payload([
+                ("stored_len", stored.len().into()),
+                ("stored_parts", descriptor_parts(stored).into()),
+            ]),
+            Self::KeysetMismatch { left, right } => payload([
+                ("left", left.to_string().into()),
+                ("right", right.to_string().into()),
+            ]),
+            Self::ForeignKeyset { expected, found } => payload([
+                ("expected", expected.to_string().into()),
+                ("found", found.to_string().into()),
+            ]),
+            Self::Aead
+            | Self::Config(_)
+            | Self::Other(_)
+            | Self::UnsupportedShape
+            | Self::ResponseShape
+            | Self::NoKeyset
+            | Self::NotOpened => serde_json::Map::new(),
+        }
+    }
 }
 
 #[cfg(feature = "http")]
@@ -865,7 +976,7 @@ pub struct SealedValue {
 /// structural — a leaf that *decodes* has proven nothing about integrity
 /// (that is the AEAD open's job); a leaf that fails here was never a valid
 /// v1 encoding at all.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum LeafBytesError {
     /// The leading version byte is not one this build knows how to parse.
@@ -873,10 +984,15 @@ pub enum LeafBytesError {
     /// different version, passes here and fails authentication instead —
     /// the version byte is bound into the leaf AAD.)
     #[error("unknown sealed-leaf format version {0}")]
+    #[diagnostic(
+        code(stack_encrypt::leaf_version),
+        help("The value was sealed by a newer build of stack-encrypt, or the bytes are not a sealed value.")
+    )]
     UnknownVersion(u8),
     /// The buffer ends before the fixed-width fields, or before the key tag
     /// the `tag_len` field promises.
     #[error("sealed-leaf bytes are truncated")]
+    #[diagnostic(code(stack_encrypt::leaf_truncated))]
     Truncated,
     /// The key tag does not fit the format's `u16` length field. Every
     /// construction site rejects an oversized tag — [`SealedValue::from_parts`]
@@ -885,7 +1001,19 @@ pub enum LeafBytesError {
     /// of bytes) by failing the encrypt — so a live `SealedValue` always
     /// encodes.
     #[error("key tag of {0} bytes exceeds the format's u16 length field")]
+    #[diagnostic(code(stack_encrypt::leaf_tag_too_long))]
     TagTooLong(usize),
+}
+
+impl crate::ErrorPayload for LeafBytesError {
+    fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
+        use crate::diagnostic::payload;
+        match self {
+            Self::UnknownVersion(version) => payload([("version", (*version).into())]),
+            Self::TagTooLong(len) => payload([("len", (*len).into())]),
+            Self::Truncated => serde_json::Map::new(),
+        }
+    }
 }
 
 impl SealedValue {

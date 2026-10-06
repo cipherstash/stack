@@ -151,7 +151,8 @@ use vitaminc_aead_value::{FfiValue, ValueKind};
 use vitaminc_protected::Controlled;
 
 use super::{
-    admits, utf8, Error, NoTargets, Scalar, Scope, TargetError, TargetResolver, TermBytes, Value,
+    admits, utf8, Error, NoTargets, Reason, Scalar, Scope, TargetError, TargetResolver, TermBytes,
+    Value,
 };
 use crate::plan::{FieldValues, FieldsBuilder, Opens, Runs};
 use crate::target::{CallerContext, DeclaredContext, Decryption, Encrypted, IndexSpec};
@@ -279,23 +280,28 @@ impl FieldPlan {
         context: NonEmpty<ContextPiece<'static>>,
         outputs: Vec<Output>,
     ) -> Result<Self, Error> {
+        let name = name.into();
+        let refuse = |reason| Error::Plan {
+            field: Some(name.clone()),
+            reason,
+        };
         if outputs.is_empty() {
-            return Err(Error::Plan);
+            return Err(refuse(Reason::NoOutputs));
         }
         for (at, output) in outputs.iter().enumerate() {
             if outputs[..at]
                 .iter()
                 .any(|prior| prior.key() == output.key())
             {
-                return Err(Error::Plan);
+                return Err(refuse(Reason::DuplicateOutput));
             }
         }
         if outputs.contains(&Output::Passthrough) && outputs.len() > 1 {
-            return Err(Error::Plan);
+            return Err(refuse(Reason::PassthroughWithOutputs));
         }
-        let (label, extension) = split_context(context.get())?;
+        let (label, extension) = field_context(&name, context.get())?;
         Ok(Self {
-            name: name.into(),
+            name,
             context,
             label,
             extension,
@@ -320,13 +326,17 @@ impl FieldPlan {
         context: NonEmpty<ContextPiece<'static>>,
         target: impl Into<String>,
     ) -> Result<Self, Error> {
+        let name = name.into();
         let target = target.into();
         if target.is_empty() {
-            return Err(Error::Plan);
+            return Err(Error::Plan {
+                field: Some(name),
+                reason: Reason::InvalidTarget,
+            });
         }
-        let (label, extension) = split_context(context.get())?;
+        let (label, extension) = field_context(&name, context.get())?;
         Ok(Self {
-            name: name.into(),
+            name,
             context,
             label,
             extension,
@@ -347,7 +357,10 @@ impl FieldPlan {
         for output in &self.outputs {
             if let Output::Term(index) = output {
                 if !admits(field_type, index) {
-                    return Err(Error::Plan);
+                    return Err(Error::Plan {
+                        field: Some(self.name.clone()),
+                        reason: Reason::IndexNotAdmitted,
+                    });
                 }
             }
         }
@@ -444,7 +457,10 @@ impl FieldPlan {
         let Some((_, prefix)) = segments.split_last() else {
             return Err(Error::Internal);
         };
-        Label::new(prefix).map_err(|_| Error::Plan)
+        Label::new(prefix).map_err(|_| Error::Plan {
+            field: Some(self.name.clone()),
+            reason: Reason::ContextNotLabel,
+        })
     }
 
     /// What the output adapters need of the field: no context, which is the
@@ -483,23 +499,66 @@ fn text_of<'a>(piece: &'a ContextPiece<'_>) -> Option<&'a str> {
 /// plan can give a field. A one-segment label is a label here; whether the
 /// plan admits one is [`Plan::new`]'s and [`Plan::with_context_field`]'s
 /// rule.
-fn split_context(piece: &ContextPiece<'_>) -> Result<(Label, Vec<ContextPiece<'static>>), Error> {
+fn split_context(piece: &ContextPiece<'_>) -> Option<(Label, Vec<ContextPiece<'static>>)> {
     let ContextPiece::List(parts) = piece else {
-        return Err(Error::Plan);
+        return None;
     };
     if let Some(segments) = parts.iter().map(text_of).collect::<Option<Vec<&str>>>() {
         if !segments.is_empty() {
-            let label = Label::new(segments).map_err(|_| Error::Plan)?;
-            return Ok((label, Vec::new()));
+            let label = Label::new(segments).ok()?;
+            return Some((label, Vec::new()));
         }
     }
     match parts.as_slice() {
         [inner, part] if !matches!(part, ContextPiece::List(_)) => {
             let (label, mut extension) = split_context(inner)?;
             extension.push(part.clone().into_owned());
-            Ok((label, extension))
+            Some((label, extension))
         }
-        _ => Err(Error::Plan),
+        _ => None,
+    }
+}
+
+/// [`split_context`] for the field `name`, refusing a context that is not
+/// a label, optionally extended, as that field's.
+fn field_context(
+    name: &str,
+    piece: &ContextPiece<'_>,
+) -> Result<(Label, Vec<ContextPiece<'static>>), Error> {
+    split_context(piece).ok_or_else(|| Error::Plan {
+        field: Some(name.to_owned()),
+        reason: Reason::ContextNotLabel,
+    })
+}
+
+/// A refusal of the plan builder or the engine's own check, as the field it
+/// names and the nearest [`Reason`]. Matched exhaustively, so a new
+/// [`PlanError`](crate::PlanError) says here which reason it reads as; an
+/// engine failure that is not a plan refusal is [`Reason::Refused`].
+fn refusal(error: crate::Error) -> (Option<String>, Reason) {
+    use crate::PlanError as P;
+    let crate::Error::Plan(error) = error else {
+        return (None, Reason::Refused);
+    };
+    match error {
+        P::ContextLabel(_) => (None, Reason::ContextNotLabel),
+        P::FieldLabel { field, .. } => (Some(field), Reason::ContextNotLabel),
+        P::DuplicateField { field } => (Some(field), Reason::DuplicateField),
+        P::SharedIdentity { second, .. } => (Some(second), Reason::SharedIdentity),
+        P::PassthroughIndexed { field } => (Some(field), Reason::PassthroughWithOutputs),
+        P::DuplicateIndex { at, .. } => (Some(at), Reason::DuplicateOutput),
+        P::EmptyIndexes => (None, Reason::NoOutputs),
+        P::NotInPlan { field } => (Some(field), Reason::UnknownField),
+        P::NotInValue { field } => (Some(field), Reason::FieldMissing),
+        P::FieldType { field, .. } => (Some(field), Reason::FieldType),
+        P::NoSuchField { field } => (Some(field), Reason::NoSuchField),
+        P::TargetWithVerbs { field } => (Some(field), Reason::OutputsWithTarget),
+        P::IndexNotDeclared { field, .. } | P::IndexOptions { field, .. } => {
+            (Some(field), Reason::Refused)
+        }
+        P::IdentityWithoutField | P::MixedCiphers | P::TwoContextSources { .. } | P::NoContext => {
+            (None, Reason::Refused)
+        }
     }
 }
 
@@ -568,7 +627,7 @@ impl Plan {
         resolver: &(impl TargetResolver + ?Sized),
     ) -> Result<Self, Error> {
         let Some(first) = fields.first() else {
-            return Err(Error::Plan);
+            return Err(Error::bad_plan(Reason::NoFields));
         };
         let context = first.prefix()?;
         let extension = first.extension.clone();
@@ -576,7 +635,10 @@ impl Plan {
             // `prefix` refuses a one-segment label, which has nothing to
             // sit under; a longer one must sit under the first field's.
             if field.prefix()? != context {
-                return Err(Error::Plan);
+                return Err(Error::Plan {
+                    field: Some(field.name.clone()),
+                    reason: Reason::MixedContexts,
+                });
             }
         }
         for field in fields.iter_mut().filter(|field| field.is_target()) {
@@ -645,23 +707,28 @@ impl Plan {
         fields: Vec<FieldPlan>,
     ) -> Result<Self, Error> {
         let context_field = context_field.into();
-        let Some(field) = fields.iter().find(|field| field.name == context_field) else {
-            return Err(Error::Plan);
+        let refuse = |reason| Error::Plan {
+            field: Some(context_field.clone()),
+            reason,
         };
-        if field.outputs != [Output::Passthrough] {
-            return Err(Error::Plan);
-        }
-        if field
-            .field_type
-            .is_some_and(|kind| kind != ValueKind::String)
+        let Some(field) = fields.iter().find(|field| field.name == context_field) else {
+            return Err(refuse(Reason::NoSuchField));
+        };
+        if field.outputs != [Output::Passthrough]
+            || field
+                .field_type
+                .is_some_and(|kind| kind != ValueKind::String)
         {
-            return Err(Error::Plan);
+            return Err(refuse(Reason::ContextField));
         }
-        if fields
+        if let Some(field) = fields
             .iter()
-            .any(|field| field.label.segments().count() != 1)
+            .find(|field| field.label.segments().count() != 1)
         {
-            return Err(Error::Plan);
+            return Err(Error::Plan {
+                field: Some(field.name.clone()),
+                reason: Reason::ContextNotLabel,
+            });
         }
         // A target field's label must be a column, `<table>/<column>`,
         // which a context field's one-segment identity is not: the table
@@ -693,15 +760,19 @@ impl Plan {
     /// every field with a term output typed, and a whole the builder accepts.
     fn build(context: Context, fields: Vec<FieldPlan>) -> Result<Self, Error> {
         let Some(first) = fields.first() else {
-            return Err(Error::Plan);
+            return Err(Error::bad_plan(Reason::NoFields));
         };
         let extension = first.extension.clone();
         for (at, field) in fields.iter().enumerate() {
+            let refuse = |reason| Error::Plan {
+                field: Some(field.name.clone()),
+                reason,
+            };
             if fields[..at].iter().any(|prior| prior.name == field.name) {
-                return Err(Error::Plan);
+                return Err(refuse(Reason::DuplicateField));
             }
             if field.extension != extension {
-                return Err(Error::Plan);
+                return Err(refuse(Reason::MixedContexts));
             }
             // An indexed field declares its type: every value's term derives
             // from the one declared kind, never from whatever tag each value
@@ -719,14 +790,14 @@ impl Plan {
                     .iter()
                     .any(|prior| prior.identity() == field.identity())
             {
-                return Err(Error::Plan);
+                return Err(refuse(Reason::SharedIdentity));
             }
             if !field.is_target()
                 && fields[..at]
                     .iter()
                     .any(|prior| prior.is_target() && prior.identity() == field.identity())
             {
-                return Err(Error::Plan);
+                return Err(refuse(Reason::SharedIdentity));
             }
         }
         let plan = Self {
@@ -738,7 +809,10 @@ impl Plan {
         // no shared identity) are checked by building, so a plan in hand
         // lowers. `()` stands in for the key source: the check does not
         // depend on it.
-        let _ = plan.lower::<()>().map_err(|_| Error::Plan)?;
+        let _ = plan.lower::<()>().map_err(|error| {
+            let (field, reason) = refusal(error);
+            Error::Plan { field, reason }
+        })?;
         Ok(plan)
     }
 
@@ -992,7 +1066,7 @@ pub fn plan_with(
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<Plan, Error> {
     let FfiValue::Object(entries) = value else {
-        return Err(Error::Plan);
+        return Err(Error::bad_plan(Reason::NotAnObject));
     };
     let mut fields: Vec<FieldPlan> = Vec::with_capacity(entries.len());
     let mut context_field: Option<String> = None;
@@ -1001,14 +1075,22 @@ pub fn plan_with(
             // Reserved: the plan-level key, never a field. A second one, or
             // one that is not a string, is refused rather than read as a
             // field spec.
-            let (None, FfiValue::String(s)) = (&context_field, &spec) else {
-                return Err(Error::Plan);
+            if context_field.is_some() {
+                return Err(Error::bad_plan(Reason::RepeatedKey));
+            }
+            let FfiValue::String(s) = &spec else {
+                return Err(Error::bad_plan(Reason::ContextField));
             };
-            context_field = Some(utf8(s).ok_or(Error::Plan)?.to_owned());
+            let s = utf8(s).ok_or(Error::bad_plan(Reason::ContextField))?;
+            context_field = Some(s.to_owned());
             continue;
         }
+        let refuse = |reason| Error::Plan {
+            field: Some(name.clone()),
+            reason,
+        };
         let FfiValue::Object(spec) = spec else {
-            return Err(Error::Plan);
+            return Err(refuse(Reason::NotAnObject));
         };
         let mut context: Option<NonEmpty<ContextPiece<'static>>> = None;
         let mut outputs: Option<Vec<Output>> = None;
@@ -1016,40 +1098,51 @@ pub fn plan_with(
         let mut field_type: Option<ValueKind> = None;
         for (key, value) in spec {
             match key.as_str() {
-                "context" if context.is_none() => context = Some(super::context(value)?),
+                "context" if context.is_none() => {
+                    context = Some(super::context(value).map_err(|error| error.in_field(&name))?);
+                }
                 "target" if target.is_none() => {
                     let FfiValue::String(s) = &value else {
-                        return Err(Error::Plan);
+                        return Err(refuse(Reason::InvalidTarget));
                     };
-                    target = Some(utf8(s).ok_or(Error::Plan)?.to_owned());
+                    target = Some(
+                        utf8(s)
+                            .ok_or_else(|| refuse(Reason::InvalidTarget))?
+                            .to_owned(),
+                    );
                 }
                 "outputs" if outputs.is_none() => {
                     let FfiValue::Array(items) = value else {
-                        return Err(Error::Plan);
+                        return Err(refuse(Reason::OutputsNotList));
                     };
                     let parsed = items
                         .iter()
                         .map(Output::from_value)
-                        .collect::<Result<Vec<_>, _>>()?;
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|error| error.in_field(&name))?;
                     outputs = Some(parsed);
                 }
                 "type" if field_type.is_none() => {
                     let FfiValue::String(s) = &value else {
-                        return Err(Error::Plan);
+                        return Err(refuse(Reason::UnknownType));
                     };
-                    let name = utf8(s).ok_or(Error::Plan)?;
-                    field_type = Some(name.parse().map_err(|_| Error::Plan)?);
+                    let kind = utf8(s).ok_or_else(|| refuse(Reason::UnknownType))?;
+                    field_type = Some(kind.parse().map_err(|_| refuse(Reason::UnknownType))?);
                 }
-                // An unknown key, or one of the four given twice.
-                _ => return Err(Error::Plan),
+                // One of the four given twice.
+                "context" | "target" | "outputs" | "type" => {
+                    return Err(refuse(Reason::RepeatedKey))
+                }
+                _ => return Err(refuse(Reason::UnknownKey)),
             }
         }
-        let context = context.ok_or(Error::Plan)?;
+        let context = context.ok_or_else(|| refuse(Reason::MissingContext))?;
         // One form or the other: a field with both, or neither, is refused.
         let field = match (outputs, target) {
             (Some(outputs), None) => FieldPlan::new(name, context, outputs)?,
             (None, Some(target)) => FieldPlan::with_target(name, context, target)?,
-            _ => return Err(Error::Plan),
+            (Some(_), Some(_)) => return Err(refuse(Reason::OutputsWithTarget)),
+            (None, None) => return Err(refuse(Reason::MissingOutputs)),
         };
         fields.push(match field_type {
             Some(field_type) => field.with_type(field_type)?,
@@ -1241,8 +1334,14 @@ pub fn query<'a, K: 'static>(
         .fields
         .iter()
         .find(|candidate| candidate.name == field)
-        .ok_or(Error::Plan)?;
-    let name = field.target().ok_or(Error::Plan)?;
+        .ok_or_else(|| Error::Plan {
+            field: Some(field.to_owned()),
+            reason: Reason::NoSuchField,
+        })?;
+    let name = field.target().ok_or_else(|| Error::Plan {
+        field: Some(field.name.clone()),
+        reason: Reason::NotATarget,
+    })?;
     check_field(&value, field)?;
     resolver
         .query(name, cipher, field.label(), value)
@@ -1440,7 +1539,10 @@ pub fn check_source(source: FfiValue, plan: &Plan) -> Result<(), Error> {
     let rows = source_rows(source, plan)?;
     let lowered = plan.lower::<()>().map_err(|_| Error::Internal)?;
     let check = |row: &Row| {
-        Runs::<FieldValues, ()>::check(&lowered, &row.values, None).map_err(|_| Error::Source)
+        Runs::<FieldValues, ()>::check(&lowered, &row.values, None).map_err(|error| {
+            let (field, reason) = refusal(error);
+            Error::Source { field, reason }
+        })
     };
     match &rows {
         Rows::One(row) => check(row),
@@ -1477,7 +1579,10 @@ pub fn check_record(
         Opens::<FieldValues, ()>::check(&lowered, &row.values, expected).map_err(
             |error| match error {
                 mismatch @ crate::Error::ContextMismatch { .. } => Error::Cipher(mismatch),
-                _ => Error::Record,
+                error => {
+                    let (field, reason) = refusal(error);
+                    Error::Record { field, reason }
+                }
             },
         )
     };
@@ -1495,8 +1600,9 @@ pub fn check_record(
 /// inside it: a source value ([`FfiValue`]) or a stored ciphertext
 /// ([`StackCipherText`]), walked the one way the record rules need.
 trait RecordTree: Sized {
-    /// The error a tree that does not fit its plan reports.
-    const MISFIT: Error;
+    /// The error a tree that does not fit its plan reports, for the field
+    /// at fault.
+    fn misfit(field: &str, reason: Reason) -> Error;
 
     /// Whether this node is a passthrough.
     fn is_passthrough(&self) -> bool;
@@ -1513,7 +1619,12 @@ enum Children<'a, T> {
 }
 
 impl RecordTree for FfiValue {
-    const MISFIT: Error = Error::Source;
+    fn misfit(field: &str, reason: Reason) -> Error {
+        Error::Source {
+            field: Some(field.to_owned()),
+            reason,
+        }
+    }
 
     fn is_passthrough(&self) -> bool {
         matches!(self, FfiValue::Passthrough(_))
@@ -1529,7 +1640,12 @@ impl RecordTree for FfiValue {
 }
 
 impl RecordTree for StackCipherText {
-    const MISFIT: Error = Error::Record;
+    fn misfit(field: &str, reason: Reason) -> Error {
+        Error::Record {
+            field: Some(field.to_owned()),
+            reason,
+        }
+    }
 
     fn is_passthrough(&self) -> bool {
         matches!(self, CipherText::Passthrough(_))
@@ -1587,6 +1703,17 @@ fn take<T>(row: &mut Vec<(String, T)>, name: &str) -> Option<(String, T)> {
     Some(row.swap_remove(at))
 }
 
+/// Why [`take`] found no single `name` in `entries`: `repeated` if the key
+/// is there more than once, `missing` if it is not there at all. Read before
+/// anything is taken, so the count is the row's own.
+fn absence<T>(entries: &[(String, T)], name: &str, missing: Reason, repeated: Reason) -> Reason {
+    if entries.iter().any(|(key, _)| key == name) {
+        repeated
+    } else {
+        missing
+    }
+}
+
 /// Whether no key in `entries` repeats.
 fn keys_are_unique<T>(entries: &[(String, T)]) -> bool {
     let mut seen = std::collections::HashSet::with_capacity(entries.len());
@@ -1610,17 +1737,19 @@ fn keys_are_unique<T>(entries: &[(String, T)]) -> bool {
 /// on the encrypt side a passthrough inside a sealed field's value would
 /// produce a `"c"` subtree whose bytes verify nothing; on the decrypt side a
 /// passthrough under `"c"` would be handed back as if it had been opened.
-fn check_tree<T: RecordTree>(tree: &T) -> Result<(), Error> {
+fn check_tree<T: RecordTree>(tree: &T, field: &str) -> Result<(), Error> {
     if tree.is_passthrough() {
-        return Err(T::MISFIT);
+        return Err(T::misfit(field, Reason::Passthrough));
     }
     match tree.children() {
-        Children::Sequence(items) => items.iter().try_for_each(check_tree),
+        Children::Sequence(items) => items.iter().try_for_each(|item| check_tree(item, field)),
         Children::Map(entries) => {
             if !keys_are_unique(entries) {
-                return Err(T::MISFIT);
+                return Err(T::misfit(field, Reason::RepeatedKey));
             }
-            entries.iter().try_for_each(|(_, node)| check_tree(node))
+            entries
+                .iter()
+                .try_for_each(|(_, node)| check_tree(node, field))
         }
         Children::None => Ok(()),
     }
@@ -1645,28 +1774,40 @@ fn source_rows(source: FfiValue, plan: &Plan) -> Result<Rows<Row>, Error> {
                 .into_iter()
                 .map(|item| match item {
                     FfiValue::Object(row) => source_row(row, plan),
-                    _ => Err(Error::Source),
+                    _ => Err(Error::bad_source(Reason::NotAnObject)),
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         )),
-        _ => Err(Error::Source),
+        _ => Err(Error::bad_source(Reason::NotAnObject)),
     }
 }
 
 fn source_row(mut row: Vec<(String, FfiValue)>, plan: &Plan) -> Result<Row, Error> {
-    if row.len() != plan.fields.len() {
-        return Err(Error::Source);
-    }
     let mut values = FieldValues::new();
     let mut targets = Vec::new();
     for field in &plan.fields {
-        let (_, value) = take(&mut row, &field.name).ok_or(Error::Source)?;
+        let Some((_, value)) = take(&mut row, &field.name) else {
+            return Err(FfiValue::misfit(
+                &field.name,
+                absence(
+                    &row,
+                    &field.name,
+                    Reason::FieldMissing,
+                    Reason::FieldRepeated,
+                ),
+            ));
+        };
         check_field(&value, field)?;
         if field.is_target() {
             targets.push(value);
         } else {
             let _ = values.insert(&field.name, Value::new(value));
         }
+    }
+    // Every plan field is taken; anything left is a field the plan does not
+    // name, which would otherwise be dropped unencrypted.
+    if let Some((extra, _)) = row.first() {
+        return Err(FfiValue::misfit(extra, Reason::UnknownField));
     }
     Ok(Row { values, targets })
 }
@@ -1679,21 +1820,25 @@ fn source_row(mut row: Vec<(String, FfiValue)>, plan: &Plan) -> Result<Row, Erro
 fn check_field(value: &FfiValue, field: &FieldPlan) -> Result<(), Error> {
     if let Some(declared) = field.field_type {
         if !declared.holds(value) {
-            return Err(Error::Source);
+            return Err(FfiValue::misfit(&field.name, Reason::FieldType));
         }
     }
     // A target field's value is sealed by the type's own plan, which
     // refuses a passthrough as any ciphertext does; the same walk here.
     if field.is_target() {
-        check_tree(value)?;
+        check_tree(value, &field.name)?;
     }
     for output in &field.outputs {
         match output {
-            Output::Ciphertext => check_tree(value)?,
+            Output::Ciphertext => check_tree(value, &field.name)?,
             Output::Term(kind) => {
-                let scalar = Scalar::of(value, kind)?;
+                let scalar =
+                    Scalar::of(value, kind).map_err(|error| error.in_field(&field.name))?;
                 if !kind.supports(&scalar) {
-                    return Err(Error::Term { kind: kind.clone() });
+                    return Err(Error::Term {
+                        field: Some(field.name.clone()),
+                        kind: kind.clone(),
+                    });
                 }
             }
             Output::Passthrough => {}
@@ -1851,11 +1996,11 @@ fn record_rows(tree: StackCipherText, plan: &Plan) -> Result<Rows<StoredRow>, Er
                 .into_iter()
                 .map(|item| match item {
                     CipherText::Map(row) => record_row(row, plan),
-                    _ => Err(Error::Record),
+                    _ => Err(Error::bad_record(Reason::NotAnObject)),
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         )),
-        _ => Err(Error::Record),
+        _ => Err(Error::bad_record(Reason::NotAnObject)),
     }
 }
 
@@ -1863,38 +2008,56 @@ fn record_row(mut row: Vec<(String, StackCipherText)>, plan: &Plan) -> Result<St
     let mut values = FieldValues::new();
     let mut targets = Vec::new();
     for field in plan.fields.iter().filter(|field| field.opens()) {
-        let (_, node) = take(&mut row, &field.name).ok_or(Error::Record)?;
+        let misfit = |reason| StackCipherText::misfit(&field.name, reason);
+        let Some((_, node)) = take(&mut row, &field.name) else {
+            return Err(misfit(absence(
+                &row,
+                &field.name,
+                Reason::FieldMissing,
+                Reason::FieldRepeated,
+            )));
+        };
         let CipherText::Map(mut outputs) = node else {
-            return Err(Error::Record);
+            return Err(misfit(Reason::OutputsNotMap));
+        };
+        // The one node under `key`, or why there is not exactly one.
+        let mut node = |key: &str, missing: Reason| {
+            take(&mut outputs, key)
+                .map(|(_, node)| node)
+                .ok_or_else(|| misfit(absence(&outputs, key, missing, Reason::RepeatedKey)))
         };
         match field.verb() {
             Verb::Target => {
                 // The EQL value: a passthrough carrying bytes, exactly once.
                 // What it opens to is the type's own decryption's to decide.
-                let (_, node) = take(&mut outputs, EQL_KEY).ok_or(Error::Record)?;
-                let CipherText::Passthrough(payload) = node else {
-                    return Err(Error::Record);
+                let CipherText::Passthrough(payload) = node(EQL_KEY, Reason::NoEqlNode)? else {
+                    return Err(misfit(Reason::NotPassthrough));
                 };
-                let value = *payload.downcast::<FfiValue>().map_err(|_| Error::Record)?;
+                let value = *payload
+                    .downcast::<FfiValue>()
+                    .map_err(|_| misfit(Reason::NotPassthrough))?;
                 let FfiValue::Bytes(bytes) = value else {
-                    return Err(Error::Record);
+                    return Err(misfit(Reason::NotPassthrough));
                 };
                 targets.push(bytes.risky_unwrap());
             }
             Verb::Passthrough => {
-                let (_, node) = take(&mut outputs, "passthrough").ok_or(Error::Record)?;
-                let CipherText::Passthrough(payload) = node else {
-                    return Err(Error::Record);
+                let CipherText::Passthrough(payload) =
+                    node("passthrough", Reason::NoPassthroughNode)?
+                else {
+                    return Err(misfit(Reason::NotPassthrough));
                 };
-                let value = *payload.downcast::<FfiValue>().map_err(|_| Error::Record)?;
+                let value = *payload
+                    .downcast::<FfiValue>()
+                    .map_err(|_| misfit(Reason::NotPassthrough))?;
                 if field.field_type.is_some_and(|kind| !kind.holds(&value)) {
-                    return Err(Error::Record);
+                    return Err(misfit(Reason::FieldType));
                 }
                 let _ = values.insert(&field.name, Value::new(value));
             }
             Verb::Encrypt | Verb::EncryptIndex | Verb::Index => {
-                let (_, ciphertext) = take(&mut outputs, "c").ok_or(Error::Record)?;
-                check_tree(&ciphertext)?;
+                let ciphertext = node("c", Reason::NoCiphertextNode)?;
+                check_tree(&ciphertext, &field.name)?;
                 let _ = values.insert(&field.name, ciphertext);
             }
         }
@@ -2267,13 +2430,15 @@ mod tests {
         fn refuses_a_malformed_plan_before_any_field_is_built() {
             let cases: Vec<Refused> = vec![
                 ("a plan that is not an object", s("x"), |e| {
-                    matches!(e, Error::Plan)
+                    matches!(e, Error::Plan { .. })
                 }),
-                ("an empty plan", obj(vec![]), |e| matches!(e, Error::Plan)),
+                ("an empty plan", obj(vec![]), |e| {
+                    matches!(e, Error::Plan { .. })
+                }),
                 (
                     "a field spec that is not an object",
                     obj(vec![("age", s("x"))]),
-                    |e| matches!(e, Error::Plan),
+                    |e| matches!(e, Error::Plan { .. }),
                 ),
                 (
                     "a field spec with an unknown key",
@@ -2285,22 +2450,22 @@ mod tests {
                             ("nullable", FfiValue::Bool(true)),
                         ]),
                     )]),
-                    |e| matches!(e, Error::Plan),
+                    |e| matches!(e, Error::Plan { .. }),
                 ),
                 (
                     "a field spec with no context",
                     obj(vec![("age", obj(vec![("outputs", strings(&["c"]))]))]),
-                    |e| matches!(e, Error::Plan),
+                    |e| matches!(e, Error::Plan { .. }),
                 ),
                 (
                     "a field spec with no outputs",
                     obj(vec![("age", obj(vec![("context", label("age"))]))]),
-                    |e| matches!(e, Error::Plan),
+                    |e| matches!(e, Error::Plan { .. }),
                 ),
                 (
                     "outputs that are not a list",
                     obj(vec![("age", spec(label("age"), &[]))]),
-                    |e| matches!(e, Error::Plan),
+                    |e| matches!(e, Error::Plan { .. }),
                 ),
                 (
                     "an output that is not a string",
@@ -2311,27 +2476,27 @@ mod tests {
                             ("outputs", FfiValue::Array(vec![FfiValue::UInt32(1)])),
                         ]),
                     )]),
-                    |e| matches!(e, Error::Plan),
+                    |e| matches!(e, Error::Plan { .. }),
                 ),
                 (
                     "an unknown output",
                     obj(vec![("age", spec(label("age"), &["c", "sum"]))]),
-                    |e| matches!(e, Error::Plan),
+                    |e| matches!(e, Error::Plan { .. }),
                 ),
                 (
                     "an output named twice",
                     obj(vec![("age", spec(label("age"), &["c", "eq", "c"]))]),
-                    |e| matches!(e, Error::Plan),
+                    |e| matches!(e, Error::Plan { .. }),
                 ),
                 (
                     "passthrough beside a ciphertext",
                     obj(vec![("age", spec(label("age"), &["passthrough", "c"]))]),
-                    |e| matches!(e, Error::Plan),
+                    |e| matches!(e, Error::Plan { .. }),
                 ),
                 (
                     "passthrough beside an index",
                     obj(vec![("age", spec(label("age"), &["eq", "passthrough"]))]),
-                    |e| matches!(e, Error::Plan),
+                    |e| matches!(e, Error::Plan { .. }),
                 ),
                 (
                     "a field named twice",
@@ -2339,7 +2504,7 @@ mod tests {
                         ("age".to_string(), spec(label("age"), &["c"])),
                         ("age".to_string(), spec(label("age"), &["eq"])),
                     ]),
-                    |e| matches!(e, Error::Plan),
+                    |e| matches!(e, Error::Plan { .. }),
                 ),
                 (
                     "a context given twice",
@@ -2351,7 +2516,7 @@ mod tests {
                             ("context", label("other")),
                         ]),
                     )]),
-                    |e| matches!(e, Error::Plan),
+                    |e| matches!(e, Error::Plan { .. }),
                 ),
                 (
                     "outputs given twice",
@@ -2363,17 +2528,17 @@ mod tests {
                             ("outputs", strings(&["eq"])),
                         ]),
                     )]),
-                    |e| matches!(e, Error::Plan),
+                    |e| matches!(e, Error::Plan { .. }),
                 ),
                 (
                     "a context that is not one",
                     obj(vec![("age", spec(FfiValue::Bool(true), &["c"]))]),
-                    |e| matches!(e, Error::Context),
+                    |e| matches!(e, Error::Context { .. }),
                 ),
                 (
                     "a context that renders empty",
                     obj(vec![("age", spec(s(""), &["c"]))]),
-                    |e| matches!(e, Error::Context),
+                    |e| matches!(e, Error::Context { .. }),
                 ),
             ];
             for (label, value, expected) in cases {
@@ -2416,7 +2581,10 @@ mod tests {
             ];
             for (what, context) in refused {
                 let result = plan(obj(vec![("age", spec(context, &["c"]))]));
-                assert!(matches!(result, Err(Error::Plan)), "{what}: {result:?}");
+                assert!(
+                    matches!(result, Err(Error::Plan { .. })),
+                    "{what}: {result:?}"
+                );
             }
         }
 
@@ -2429,7 +2597,7 @@ mod tests {
                 ("total", spec(strings(&["orders", "total"]), &["c"])),
             ]));
             assert!(
-                matches!(parsed, Err(Error::Plan)),
+                matches!(parsed, Err(Error::Plan { .. })),
                 "two contexts: {parsed:?}"
             );
             let parsed = plan(obj(vec![
@@ -2443,7 +2611,7 @@ mod tests {
                 ("email", spec(label("email"), &["c"])),
             ]));
             assert!(
-                matches!(parsed, Err(Error::Plan)),
+                matches!(parsed, Err(Error::Plan { .. })),
                 "one field extended, one not: {parsed:?}"
             );
             let parsed = plan(obj(vec![
@@ -2463,7 +2631,7 @@ mod tests {
                 ),
             ]));
             assert!(
-                matches!(parsed, Err(Error::Plan)),
+                matches!(parsed, Err(Error::Plan { .. })),
                 "two extensions: {parsed:?}"
             );
             // The same prefix spelled deeper is still one context.
@@ -2486,7 +2654,7 @@ mod tests {
                 ("mail", typed(label("email"), &["c", "eq"], "string")),
                 ("mail2", typed(label("email"), &["c", "eq"], "string")),
             ]));
-            assert!(matches!(parsed, Err(Error::Plan)), "{parsed:?}");
+            assert!(matches!(parsed, Err(Error::Plan { .. })), "{parsed:?}");
             // Two passthrough fields key nothing, so they may share a label.
             let parsed = plan(obj(vec![
                 ("a", spec(label("meta"), &["passthrough"])),
@@ -2518,7 +2686,10 @@ mod tests {
         fn a_field_plan_refuses_no_outputs_and_a_repeated_output() {
             let ctx = context(label("age")).expect("context");
             assert!(
-                matches!(FieldPlan::new("age", ctx.clone(), vec![]), Err(Error::Plan)),
+                matches!(
+                    FieldPlan::new("age", ctx.clone(), vec![]),
+                    Err(Error::Plan { .. })
+                ),
                 "a field must produce something"
             );
             assert!(
@@ -2528,7 +2699,7 @@ mod tests {
                         ctx.clone(),
                         vec![Output::Term(IndexSpec::Ore), Output::Term(IndexSpec::Ore)]
                     ),
-                    Err(Error::Plan)
+                    Err(Error::Plan { .. })
                 ),
                 "an output cannot be produced twice under one key"
             );
@@ -2539,7 +2710,7 @@ mod tests {
                         ctx.clone(),
                         vec![Output::Passthrough, Output::Ciphertext]
                     ),
-                    Err(Error::Plan)
+                    Err(Error::Plan { .. })
                 ),
                 "a passthrough field has no other output"
             );
@@ -2598,7 +2769,7 @@ mod tests {
                 ]),
             )]));
             assert!(
-                matches!(parsed, Err(Error::Plan)),
+                matches!(parsed, Err(Error::Plan { .. })),
                 "two match outputs are one key twice"
             );
             let ctx = context(label("nick")).expect("context");
@@ -2613,7 +2784,10 @@ mod tests {
                     })),
                 ],
             );
-            assert!(matches!(by_hand, Err(Error::Plan)), "and by hand alike");
+            assert!(
+                matches!(by_hand, Err(Error::Plan { .. })),
+                "and by hand alike"
+            );
         }
 
         /// An output list entry is `"c"`, `"passthrough"` or an index in its
@@ -2640,7 +2814,7 @@ mod tests {
                         ("outputs", FfiValue::Array(vec![output])),
                     ]),
                 )]));
-                assert!(matches!(parsed, Err(Error::Plan)), "{label_}");
+                assert!(matches!(parsed, Err(Error::Plan { .. })), "{label_}");
             }
             assert_eq!(Output::parse("c"), Some(Output::Ciphertext));
             assert_eq!(Output::parse("passthrough"), Some(Output::Passthrough));
@@ -2664,13 +2838,13 @@ mod tests {
                 .expect("field")
             };
             assert!(
-                matches!(Plan::new(vec![]), Err(Error::Plan)),
+                matches!(Plan::new(vec![]), Err(Error::Plan { .. })),
                 "a plan must have a field"
             );
             assert!(
                 matches!(
                     Plan::new(vec![field("age"), field("age")]),
-                    Err(Error::Plan)
+                    Err(Error::Plan { .. })
                 ),
                 "a field cannot be planned twice"
             );
@@ -2806,12 +2980,12 @@ mod tests {
                 FfiValue::Array(vec![s("a@x"), FfiValue::Passthrough(Box::new(s("b@x")))]);
             let cases: Vec<Refused> = vec![
                 ("a source that is not an object", FfiValue::UInt32(1), |e| {
-                    matches!(e, Error::Source)
+                    matches!(e, Error::Source { .. })
                 }),
                 (
                     "a batch with an item that is not an object",
                     FfiValue::Array(vec![row(1), FfiValue::UInt32(2)]),
-                    |e| matches!(e, Error::Source),
+                    |e| matches!(e, Error::Source { .. }),
                 ),
                 (
                     "a row missing a plan field",
@@ -2820,7 +2994,7 @@ mod tests {
                         ("email", s("a@x")),
                         ("nick", s("al")),
                     ]),
-                    |e| matches!(e, Error::Source),
+                    |e| matches!(e, Error::Source { .. }),
                 ),
                 (
                     "a row with a field the plan does not name",
@@ -2829,7 +3003,7 @@ mod tests {
                         entries.push(("extra".to_string(), s("x")));
                         FfiValue::Object(entries)
                     },
-                    |e| matches!(e, Error::Source),
+                    |e| matches!(e, Error::Source { .. }),
                 ),
                 (
                     "a row with a field the plan does not name in place of one it does",
@@ -2838,7 +3012,7 @@ mod tests {
                         entries[3].0 = "extra".to_string();
                         FfiValue::Object(entries)
                     },
-                    |e| matches!(e, Error::Source),
+                    |e| matches!(e, Error::Source { .. }),
                 ),
                 (
                     "a passthrough under a sealed field",
@@ -2847,12 +3021,12 @@ mod tests {
                         entries[1].1 = FfiValue::Passthrough(Box::new(s("a@x")));
                         FfiValue::Object(entries)
                     },
-                    |e| matches!(e, Error::Source),
+                    |e| matches!(e, Error::Source { .. }),
                 ),
                 (
                     "a passthrough inside a list under a sealed field",
                     FfiValue::Object(with_passthrough_in_a_list),
-                    |e| matches!(e, Error::Source),
+                    |e| matches!(e, Error::Source { .. }),
                 ),
                 (
                     "a plan field given twice",
@@ -2862,7 +3036,7 @@ mod tests {
                         entries.push(("age".to_string(), FfiValue::UInt32(2)));
                         FfiValue::Object(entries)
                     },
-                    |e| matches!(e, Error::Source),
+                    |e| matches!(e, Error::Source { .. }),
                 ),
                 (
                     "a repeated key inside an object under a sealed field",
@@ -2871,7 +3045,7 @@ mod tests {
                         entries[1].1 = obj(vec![("k", s("a@x")), ("k", s("b@x"))]);
                         FfiValue::Object(entries)
                     },
-                    |e| matches!(e, Error::Source),
+                    |e| matches!(e, Error::Source { .. }),
                 ),
                 (
                     "a container under an indexed field, which declares a scalar kind",
@@ -2880,7 +3054,7 @@ mod tests {
                         entries[2].1 = FfiValue::Array(vec![s("al")]);
                         FfiValue::Object(entries)
                     },
-                    |e| matches!(e, Error::Source),
+                    |e| matches!(e, Error::Source { .. }),
                 ),
                 (
                     "a scalar of another kind under an indexed field",
@@ -2889,7 +3063,7 @@ mod tests {
                         entries[2].1 = FfiValue::UInt32(3);
                         FfiValue::Object(entries)
                     },
-                    |e| matches!(e, Error::Source),
+                    |e| matches!(e, Error::Source { .. }),
                 ),
             ];
             for (label_, source, expected) in cases {
@@ -2906,21 +3080,21 @@ mod tests {
             ]);
             let err = encrypt(&keyset, missing, &plan).err();
             assert!(
-                matches!(err, Some(Error::Source)),
+                matches!(err, Some(Error::Source { .. })),
                 "encrypt refuses a row missing a plan field: {err:?}"
             );
             let mut entries = object(row(1));
             entries[1].1 = FfiValue::Passthrough(Box::new(s("a@x")));
             let err = encrypt(&keyset, FfiValue::Object(entries), &plan).err();
             assert!(
-                matches!(err, Some(Error::Source)),
+                matches!(err, Some(Error::Source { .. })),
                 "encrypt refuses a passthrough under a sealed field: {err:?}"
             );
             let mut entries = object(row(1));
             entries[2].1 = FfiValue::UInt32(3);
             let err = encrypt(&keyset, FfiValue::Object(entries), &plan).err();
             assert!(
-                matches!(err, Some(Error::Source)),
+                matches!(err, Some(Error::Source { .. })),
                 "encrypt refuses a value of another kind than the indexed field declares: {err:?}"
             );
             assert_eq!(
@@ -2944,7 +3118,7 @@ mod tests {
                 typed(label("score"), &["c", "eq"], "float64"),
             )]));
             assert!(
-                matches!(as_float, Err(Error::Plan)),
+                matches!(as_float, Err(Error::Plan { .. })),
                 "no PRF encoding exists for a float: {as_float:?}"
             );
             let as_u32 = plan(obj(vec![(
@@ -2955,7 +3129,7 @@ mod tests {
             let source = obj(vec![("score", FfiValue::Float64(1.5))]);
             let err = encrypt(&keyset, source, &as_u32).err();
             assert!(
-                matches!(err, Some(Error::Source)),
+                matches!(err, Some(Error::Source { .. })),
                 "a float is not the declared kind: {err:?}"
             );
             assert_eq!(generates(&cipher), 0, "refused before any key request");
@@ -3688,7 +3862,7 @@ mod tests {
             for (label_, record) in cases {
                 let err = decrypt(Scope::Client(&cipher), record, &plan, None).err();
                 assert!(
-                    matches!(err, Some(Error::Record)),
+                    matches!(err, Some(Error::Record { .. })),
                     "{label_}: decrypt must refuse it as a misfit record: {err:?}"
                 );
             }
@@ -3706,7 +3880,7 @@ mod tests {
             fields.push(("age".to_string(), CipherText::Map(age)));
             let err = check_record(CipherText::Map(fields), &plan, None).err();
             assert!(
-                matches!(err, Some(Error::Record)),
+                matches!(err, Some(Error::Record { .. })),
                 "check_record refuses a forged ciphertext the same way: {err:?}"
             );
             let mut fields = sealed(&keyset).await;
@@ -3717,7 +3891,7 @@ mod tests {
             fields.push(("age".to_string(), CipherText::Map(age)));
             let err = check_record(CipherText::Map(fields), &plan, None).err();
             assert!(
-                matches!(err, Some(Error::Record)),
+                matches!(err, Some(Error::Record { .. })),
                 "check_record refuses a twice-given ciphertext the same way: {err:?}"
             );
         }
@@ -3955,7 +4129,10 @@ mod tests {
             ];
             for (what, value) in refused {
                 let result = plan(value);
-                assert!(matches!(result, Err(Error::Plan)), "{what}: {result:?}");
+                assert!(
+                    matches!(result, Err(Error::Plan { .. })),
+                    "{what}: {result:?}"
+                );
             }
         }
 
@@ -3980,19 +4157,19 @@ mod tests {
             assert!(
                 matches!(
                     Plan::with_context_field("nope", vec![tenant(), age()]),
-                    Err(Error::Plan)
+                    Err(Error::Plan { .. })
                 ),
                 "a field the plan does not name"
             );
             assert!(
                 matches!(
                     Plan::with_context_field("age", vec![tenant(), age()]),
-                    Err(Error::Plan)
+                    Err(Error::Plan { .. })
                 ),
                 "a sealed field as the context"
             );
             assert!(
-                matches!(Plan::new(vec![tenant(), age()]), Err(Error::Plan)),
+                matches!(Plan::new(vec![tenant(), age()]), Err(Error::Plan { .. })),
                 "one-segment labels need a context field"
             );
         }
@@ -4223,17 +4400,17 @@ mod tests {
             };
             assert!(matches!(
                 check_source(not_text(), &plan),
-                Err(Error::Source)
+                Err(Error::Source { .. })
             ));
             assert!(matches!(
                 encrypt(&keyset, not_text(), &plan),
-                Err(Error::Source)
+                Err(Error::Source { .. })
             ));
 
             let not_a_label = || row("tenants/(acme)", 34);
             assert!(matches!(
                 check_source(not_a_label(), &plan),
-                Err(Error::Source)
+                Err(Error::Source { .. })
             ));
             let failed = encrypt(&keyset, not_a_label(), &plan)
                 .expect("the source fits the plan's shape")
@@ -4249,7 +4426,7 @@ mod tests {
             let sealed = seal(&keyset, row("tenants/acme", 34), &plan).await;
             assert!(matches!(
                 check_record(with_stored_context(sealed, "tenants/(acme)"), &plan, None),
-                Err(Error::Record)
+                Err(Error::Record { .. })
             ));
             let sealed = seal(&keyset, row("tenants/acme", 34), &plan).await;
             let retrieved = retrieves(&cipher);
@@ -4279,7 +4456,7 @@ mod tests {
             let sealed = seal(&keyset, super::row(34), &plan).await;
             assert!(matches!(
                 check_record(sealed, &plan, expected("users").as_ref()),
-                Err(Error::Record)
+                Err(Error::Record { .. })
             ));
             let sealed = seal(&keyset, super::row(34), &plan).await;
             let failed = decrypt(Scope::Client(&cipher), sealed, &plan, expected("users"))
@@ -4466,7 +4643,7 @@ mod tests {
             );
             let refused = plan(obj(vec![("age", early("float64"))]));
             assert!(
-                matches!(refused, Err(Error::Plan)),
+                matches!(refused, Err(Error::Plan { .. })),
                 "equality on a float is refused whatever the key order: {refused:?}"
             );
         }
@@ -4512,7 +4689,10 @@ mod tests {
             ];
             for (label_, field) in refused {
                 let result = plan(obj(vec![("x", field)]));
-                assert!(matches!(result, Err(Error::Plan)), "{label_}: {result:?}");
+                assert!(
+                    matches!(result, Err(Error::Plan { .. })),
+                    "{label_}: {result:?}"
+                );
             }
         }
 
@@ -4532,7 +4712,7 @@ mod tests {
             assert_eq!(typed.field_type(), Some(ValueKind::UInt32));
             assert!(matches!(
                 field.with_type(ValueKind::Float32),
-                Err(Error::Plan)
+                Err(Error::Plan { .. })
             ));
             let sealed_only = FieldPlan::new(
                 "doc",
@@ -4556,7 +4736,7 @@ mod tests {
             let u64_plan = age_plan("uint64");
             let check = check_source(obj(vec![("age", FfiValue::UInt32(34))]), &u64_plan);
             assert!(
-                matches!(check, Err(Error::Source)),
+                matches!(check, Err(Error::Source { .. })),
                 "check_source refuses it too"
             );
             for (label_, value) in [
@@ -4566,14 +4746,14 @@ mod tests {
             ] {
                 let result = encrypt(&keyset, obj(vec![("age", value)]), &u64_plan).err();
                 assert!(
-                    matches!(result, Some(Error::Source)),
+                    matches!(result, Some(Error::Source { .. })),
                     "{label_}: {result:?}"
                 );
             }
             let as_u32 = age_plan("uint32");
             let result = encrypt(&keyset, obj(vec![("age", FfiValue::UInt64(34))]), &as_u32).err();
             assert!(
-                matches!(result, Some(Error::Source)),
+                matches!(result, Some(Error::Source { .. })),
                 "a u64 for a uint32 field: {result:?}"
             );
             let as_string =
@@ -4585,7 +4765,7 @@ mod tests {
             )
             .err();
             assert!(
-                matches!(result, Some(Error::Source)),
+                matches!(result, Some(Error::Source { .. })),
                 "a u32 for a string field: {result:?}"
             );
             assert_eq!(generates(&cipher), 0, "refused before any key request");
@@ -4915,7 +5095,7 @@ mod tests {
                 &plan,
             )
             .err();
-            assert!(matches!(refused, Some(Error::Source)), "{refused:?}");
+            assert!(matches!(refused, Some(Error::Source { .. })), "{refused:?}");
             let sealed = seal(
                 &keyset,
                 obj(vec![
@@ -4938,7 +5118,7 @@ mod tests {
             ));
             let refused =
                 decrypt(Scope::Client(&cipher), CipherText::Map(fields), &plan, None).err();
-            assert!(matches!(refused, Some(Error::Record)), "{refused:?}");
+            assert!(matches!(refused, Some(Error::Record { .. })), "{refused:?}");
         }
     }
 
@@ -5382,7 +5562,7 @@ mod tests {
             let one = FieldPlan::with_target("email", ctx(&["users"]), TEXT_EQ)
                 .expect("one segment is a label; the plan decides");
             assert!(
-                matches!(Plan::new_with(vec![one], &FakeEql), Err(Error::Plan)),
+                matches!(Plan::new_with(vec![one], &FakeEql), Err(Error::Plan { .. })),
                 "under a plan with a context of its own, one segment has nothing to sit under"
             );
             let two = FieldPlan::with_target("email", ctx(&["users", "email"]), TEXT_EQ)
@@ -5490,7 +5670,7 @@ mod tests {
             ));
             assert!(matches!(
                 check_record(CipherText::Map(row), &plan, None),
-                Err(Error::Record)
+                Err(Error::Record { .. })
             ));
             let mut row = seal_mixed(&keyset, &plan).await;
             row.retain(|(k, _)| k != "email");
@@ -5505,7 +5685,7 @@ mod tests {
                 None,
                 &FakeEql,
             ));
-            assert!(matches!(error, Error::Record), "{error:?}");
+            assert!(matches!(error, Error::Record { .. }), "{error:?}");
             assert_eq!(retrieves(&cipher), 0);
         }
 
@@ -5546,12 +5726,12 @@ mod tests {
             ]);
             assert!(matches!(
                 plan_with(obj(vec![("email", both)]), &FakeEql),
-                Err(Error::Plan)
+                Err(Error::Plan { .. })
             ));
             let neither = obj(vec![("context", label("email"))]);
             assert!(matches!(
                 plan_with(obj(vec![("email", neither)]), &FakeEql),
-                Err(Error::Plan)
+                Err(Error::Plan { .. })
             ));
             let not_text = obj(vec![
                 ("context", label("email")),
@@ -5559,12 +5739,12 @@ mod tests {
             ]);
             assert!(matches!(
                 plan_with(obj(vec![("email", not_text)]), &FakeEql),
-                Err(Error::Plan)
+                Err(Error::Plan { .. })
             ));
             let empty = obj(vec![("context", label("email")), ("target", s(""))]);
             assert!(matches!(
                 plan_with(obj(vec![("email", empty)]), &FakeEql),
-                Err(Error::Plan)
+                Err(Error::Plan { .. })
             ));
             let twice = obj(vec![
                 ("context", label("email")),
@@ -5573,7 +5753,7 @@ mod tests {
             ]);
             assert!(matches!(
                 plan_with(obj(vec![("email", twice)]), &FakeEql),
-                Err(Error::Plan)
+                Err(Error::Plan { .. })
             ));
         }
 
@@ -5602,17 +5782,20 @@ mod tests {
             );
             // A value of another kind is refused before the resolver runs.
             let wrong = obj(vec![("email", FfiValue::UInt32(7))]);
-            assert!(matches!(check_source(wrong, &plan), Err(Error::Source)));
+            assert!(matches!(
+                check_source(wrong, &plan),
+                Err(Error::Source { .. })
+            ));
             let wrong = obj(vec![("email", FfiValue::UInt32(7))]);
             assert!(matches!(
                 refused(encrypt_with(&keyset, wrong, &plan, &FakeEql)),
-                Error::Source
+                Error::Source { .. }
             ));
             // A passthrough is refused as it is for any sealed field.
             let forged = obj(vec![("email", FfiValue::Passthrough(Box::new(s("a@x"))))]);
             assert!(matches!(
                 refused(encrypt_with(&keyset, forged, &plan, &FakeEql)),
-                Error::Source
+                Error::Source { .. }
             ));
             assert_eq!(generates(&cipher), 0);
         }
@@ -5690,7 +5873,10 @@ mod tests {
                 .unwrap(),
                 FieldPlan::with_target("email", context(label("email")).unwrap(), TEXT_EQ).unwrap(),
             ];
-            assert!(matches!(Plan::new_with(fields, &FakeEql), Err(Error::Plan)));
+            assert!(matches!(
+                Plan::new_with(fields, &FakeEql),
+                Err(Error::Plan { .. })
+            ));
             let fields = vec![
                 FieldPlan::with_target("email", context(label("email")).unwrap(), TEXT_EQ).unwrap(),
                 FieldPlan::new(
@@ -5700,12 +5886,18 @@ mod tests {
                 )
                 .unwrap(),
             ];
-            assert!(matches!(Plan::new_with(fields, &FakeEql), Err(Error::Plan)));
+            assert!(matches!(
+                Plan::new_with(fields, &FakeEql),
+                Err(Error::Plan { .. })
+            ));
             let fields = vec![
                 FieldPlan::with_target("a", context(label("email")).unwrap(), TEXT_EQ).unwrap(),
                 FieldPlan::with_target("b", context(label("email")).unwrap(), TEXT_EQ).unwrap(),
             ];
-            assert!(matches!(Plan::new_with(fields, &FakeEql), Err(Error::Plan)));
+            assert!(matches!(
+                Plan::new_with(fields, &FakeEql),
+                Err(Error::Plan { .. })
+            ));
         }
 
         #[tokio::test]
@@ -5732,7 +5924,7 @@ mod tests {
             let record = with_email(seal_mixed(&keyset, &plan).await, misplaced);
             assert!(matches!(
                 check_record(record, &plan, None),
-                Err(Error::Record)
+                Err(Error::Record { .. })
             ));
             // The node twice.
             let mut row = seal_mixed(&keyset, &plan).await;
@@ -5747,7 +5939,7 @@ mod tests {
             row.push(("email".to_string(), CipherText::Map(outputs)));
             assert!(matches!(
                 check_record(CipherText::Map(row), &plan, None),
-                Err(Error::Record)
+                Err(Error::Record { .. })
             ));
             // A payload that is not bytes.
             let null = CipherText::Map(vec![(
@@ -5757,7 +5949,7 @@ mod tests {
             let record = with_email(seal_mixed(&keyset, &plan).await, null);
             assert!(matches!(
                 check_record(record, &plan, None),
-                Err(Error::Record)
+                Err(Error::Record { .. })
             ));
             // Bytes that are not the type: the shape fits, and the resolver
             // refuses them before any key is retrieved.
@@ -5811,11 +6003,11 @@ mod tests {
             // bare build: each refused before the resolver runs.
             assert!(matches!(
                 refused(query(&keyset, &plan, "age", s("x"), &FakeEql)),
-                Error::Plan
+                Error::Plan { .. }
             ));
             assert!(matches!(
                 refused(query(&keyset, &plan, "nope", s("x"), &FakeEql)),
-                Error::Plan
+                Error::Plan { .. }
             ));
             assert!(matches!(
                 refused(query(
@@ -5825,7 +6017,7 @@ mod tests {
                     FfiValue::UInt32(1),
                     &FakeEql
                 )),
-                Error::Source
+                Error::Source { .. }
             ));
             assert!(matches!(
                 refused(query(&keyset, &plan, "email", s("x"), &NoTargets)),
@@ -6054,6 +6246,406 @@ mod tests {
                 .await
                 .expect("valid UTF-8 either way");
             assert_eq!(bare, "\nalice", "the string tag, U+000A, read as text");
+        }
+    }
+
+    /// Every refusal names the field it is about, where there is one, and
+    /// says why with a [`Reason`]: the message, the accessors and the
+    /// payload all carry the same two facts.
+    mod every_refusal_names_its_field_and_reason {
+        use super::*;
+        use crate::ErrorPayload;
+
+        /// The variant, the field and the reason an error must report.
+        fn expect(error: &Error, variant: &str, field: Option<&str>, reason: Reason) {
+            let actual = match error {
+                Error::Context { .. } => "Context",
+                Error::Plan { .. } => "Plan",
+                Error::Source { .. } => "Source",
+                Error::Record { .. } => "Record",
+                other => panic!("expected a {variant} error, got {other:?}"),
+            };
+            assert_eq!(actual, variant, "{error}");
+            assert_eq!(error.field(), field, "{error}");
+            assert_eq!(error.reason(), Some(reason), "{error}");
+            let fields = error.payload();
+            assert_eq!(fields["reason"], reason.as_str(), "{error}");
+            assert_eq!(
+                fields.get("field").and_then(|f| f.as_str()),
+                field,
+                "{error}"
+            );
+            if let Some(field) = field {
+                assert!(error.to_string().contains(field), "{error}");
+            }
+        }
+
+        fn refused_plan(value: FfiValue) -> Error {
+            plan(value).expect_err("the plan is refused")
+        }
+
+        fn age(spec: Vec<(&str, FfiValue)>) -> FfiValue {
+            obj(vec![("age", obj(spec))])
+        }
+
+        #[test]
+        fn a_malformed_plan() {
+            use Reason::*;
+            let cases: Vec<(&str, FfiValue, Option<&str>, Reason, &str)> = vec![
+                ("not an object", s("x"), None, NotAnObject, "Plan"),
+                ("no fields", obj(vec![]), None, NoFields, "Plan"),
+                (
+                    "a spec that is not an object",
+                    obj(vec![("age", s("x"))]),
+                    Some("age"),
+                    NotAnObject,
+                    "Plan",
+                ),
+                (
+                    "an unknown key",
+                    age(vec![
+                        ("context", label("age")),
+                        ("outputs", strings(&["c"])),
+                        ("nullable", FfiValue::Bool(true)),
+                    ]),
+                    Some("age"),
+                    UnknownKey,
+                    "Plan",
+                ),
+                (
+                    "a key given twice",
+                    age(vec![
+                        ("context", label("age")),
+                        ("context", label("age")),
+                        ("outputs", strings(&["c"])),
+                    ]),
+                    Some("age"),
+                    RepeatedKey,
+                    "Plan",
+                ),
+                (
+                    "no context",
+                    age(vec![("outputs", strings(&["c"]))]),
+                    Some("age"),
+                    MissingContext,
+                    "Plan",
+                ),
+                (
+                    "no outputs or target",
+                    age(vec![("context", label("age"))]),
+                    Some("age"),
+                    MissingOutputs,
+                    "Plan",
+                ),
+                (
+                    "outputs and a target",
+                    age(vec![
+                        ("context", label("age")),
+                        ("outputs", strings(&["c"])),
+                        ("target", s("TextEq")),
+                    ]),
+                    Some("age"),
+                    OutputsWithTarget,
+                    "Plan",
+                ),
+                (
+                    "outputs that are not a list",
+                    age(vec![("context", label("age")), ("outputs", s("c"))]),
+                    Some("age"),
+                    OutputsNotList,
+                    "Plan",
+                ),
+                (
+                    "an output that is not one",
+                    age(vec![
+                        ("context", label("age")),
+                        ("outputs", strings(&["c", "zz"])),
+                    ]),
+                    Some("age"),
+                    UnknownOutput,
+                    "Plan",
+                ),
+                (
+                    "no outputs",
+                    age(vec![("context", label("age")), ("outputs", strings(&[]))]),
+                    Some("age"),
+                    NoOutputs,
+                    "Plan",
+                ),
+                (
+                    "an output named twice",
+                    age(vec![
+                        ("context", label("age")),
+                        ("outputs", strings(&["c", "c"])),
+                    ]),
+                    Some("age"),
+                    DuplicateOutput,
+                    "Plan",
+                ),
+                (
+                    "passthrough beside another output",
+                    age(vec![
+                        ("context", label("age")),
+                        ("outputs", strings(&["c", "passthrough"])),
+                    ]),
+                    Some("age"),
+                    PassthroughWithOutputs,
+                    "Plan",
+                ),
+                (
+                    "a target that is not a string",
+                    age(vec![
+                        ("context", label("age")),
+                        ("target", FfiValue::UInt32(1)),
+                    ]),
+                    Some("age"),
+                    InvalidTarget,
+                    "Plan",
+                ),
+                (
+                    "a type that is not one",
+                    age(vec![
+                        ("context", label("age")),
+                        ("outputs", strings(&["c"])),
+                        ("type", s("decimal")),
+                    ]),
+                    Some("age"),
+                    UnknownType,
+                    "Plan",
+                ),
+                (
+                    "an index the type has not",
+                    age(vec![
+                        ("context", label("age")),
+                        ("outputs", strings(&["c", "match"])),
+                        ("type", s("uint32")),
+                    ]),
+                    Some("age"),
+                    IndexNotAdmitted,
+                    "Plan",
+                ),
+                (
+                    "a context that is not a label",
+                    age(vec![("context", s("users")), ("outputs", strings(&["c"]))]),
+                    Some("age"),
+                    ContextNotLabel,
+                    "Plan",
+                ),
+                (
+                    "a context of a kind no context has",
+                    age(vec![
+                        ("context", FfiValue::Bool(true)),
+                        ("outputs", strings(&["c"])),
+                    ]),
+                    Some("age"),
+                    ContextKind,
+                    "Context",
+                ),
+                (
+                    "a field named twice",
+                    FfiValue::Object(vec![
+                        ("age".to_string(), spec(label("age"), &["c"])),
+                        ("age".to_string(), spec(label("age"), &["c"])),
+                    ]),
+                    Some("age"),
+                    DuplicateField,
+                    "Plan",
+                ),
+                (
+                    "fields under different contexts",
+                    obj(vec![
+                        ("age", spec(label("age"), &["c"])),
+                        ("email", spec(strings(&["orders", "email"]), &["c"])),
+                    ]),
+                    Some("email"),
+                    MixedContexts,
+                    "Plan",
+                ),
+            ];
+            for (what, value, field, reason, variant) in cases {
+                let error = refused_plan(value);
+                assert!(
+                    !matches!(error, Error::UntypedIndex { .. }),
+                    "{what}: {error}"
+                );
+                expect(&error, variant, field, reason);
+            }
+        }
+
+        #[test]
+        fn a_source_that_does_not_fit() {
+            use Reason::*;
+            let plan = the_plan();
+            let without = |name: &str| {
+                let mut entries = object(row(34));
+                let _ = take(&mut entries, name);
+                entries
+            };
+            let mut repeated = object(row(34));
+            repeated.push(("age".to_string(), FfiValue::UInt32(2)));
+            let mut extra = object(row(34));
+            extra.push(("extra".to_string(), FfiValue::UInt32(2)));
+            let mut mistyped = without("age");
+            mistyped.push(("age".to_string(), s("old")));
+            let mut forged = without("email");
+            forged.push((
+                "email".to_string(),
+                FfiValue::Passthrough(Box::new(s("a@x"))),
+            ));
+            let cases: Vec<(&str, FfiValue, Option<&str>, Reason)> = vec![
+                ("not an object", s("x"), None, NotAnObject),
+                (
+                    "a batch row that is not an object",
+                    FfiValue::Array(vec![s("x")]),
+                    None,
+                    NotAnObject,
+                ),
+                (
+                    "a field missing",
+                    FfiValue::Object(without("email")),
+                    Some("email"),
+                    FieldMissing,
+                ),
+                (
+                    "a field given twice",
+                    FfiValue::Object(repeated),
+                    Some("age"),
+                    FieldRepeated,
+                ),
+                (
+                    "a field the plan does not name",
+                    FfiValue::Object(extra),
+                    Some("extra"),
+                    UnknownField,
+                ),
+                (
+                    "a value of another type",
+                    FfiValue::Object(mistyped),
+                    Some("age"),
+                    FieldType,
+                ),
+                (
+                    "a passthrough under a sealed field",
+                    FfiValue::Object(forged),
+                    Some("email"),
+                    Passthrough,
+                ),
+            ];
+            for (what, source, field, reason) in cases {
+                let error = check_source(source, &plan).expect_err(what);
+                expect(&error, "Source", field, reason);
+            }
+        }
+
+        #[tokio::test]
+        async fn a_stored_record_that_does_not_fit() {
+            use Reason::*;
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = the_plan();
+            let sealed = || async { map(seal(&keyset, row(34), &plan).await) };
+
+            let mut cases: Vec<(&str, StackCipherText, Option<&str>, Reason)> = Vec::new();
+
+            let mut fields = sealed().await;
+            let _ = node(&mut fields, "email");
+            cases.push((
+                "a field missing",
+                CipherText::Map(fields),
+                Some("email"),
+                FieldMissing,
+            ));
+
+            let mut fields = sealed().await;
+            let email = node(&mut fields, "email");
+            fields.push(("email".to_string(), forged(FfiValue::UInt32(1))));
+            fields.push(("email".to_string(), email));
+            cases.push((
+                "a field given twice",
+                CipherText::Map(fields),
+                Some("email"),
+                FieldRepeated,
+            ));
+
+            let mut fields = sealed().await;
+            let _ = node(&mut fields, "email");
+            fields.push(("email".to_string(), forged(FfiValue::UInt32(1))));
+            cases.push((
+                "a field that is not an output map",
+                CipherText::Map(fields),
+                Some("email"),
+                OutputsNotMap,
+            ));
+
+            let mut fields = sealed().await;
+            let mut email = map(node(&mut fields, "email"));
+            let _ = node(&mut email, "c");
+            fields.push(("email".to_string(), CipherText::Map(email)));
+            cases.push((
+                "no ciphertext node",
+                CipherText::Map(fields),
+                Some("email"),
+                NoCiphertextNode,
+            ));
+
+            let mut fields = sealed().await;
+            let mut email = map(node(&mut fields, "email"));
+            let _ = node(&mut email, "c");
+            email.push(("c".to_string(), forged(FfiValue::UInt32(1))));
+            fields.push(("email".to_string(), CipherText::Map(email)));
+            cases.push((
+                "a passthrough under c",
+                CipherText::Map(fields),
+                Some("email"),
+                Passthrough,
+            ));
+
+            let mut fields = sealed().await;
+            let mut id = map(node(&mut fields, "id"));
+            let _ = node(&mut id, "passthrough");
+            fields.push(("id".to_string(), CipherText::Map(id)));
+            cases.push((
+                "no passthrough node",
+                CipherText::Map(fields),
+                Some("id"),
+                NoPassthroughNode,
+            ));
+
+            let fields = sealed().await;
+            let mut first = fields;
+            let mut age = map(node(&mut first, "age"));
+            cases.push(("not a map", node(&mut age, "c"), None, NotAnObject));
+
+            for (what, record, field, reason) in cases {
+                let error = check_record(record, &plan, None).expect_err(what);
+                expect(&error, "Record", field, reason);
+            }
+        }
+
+        /// A binding switches on `as_str`, so no two reasons share a name.
+        #[test]
+        fn every_reason_has_a_distinct_snake_case_name() {
+            let names: std::collections::BTreeSet<&str> =
+                Reason::ALL.iter().map(|reason| reason.as_str()).collect();
+            assert_eq!(names.len(), Reason::ALL.len(), "names are distinct");
+            for reason in Reason::ALL {
+                let name = reason.as_str();
+                assert!(
+                    name.chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+                    "{name}"
+                );
+                assert!(!reason.to_string().is_empty(), "{name}");
+            }
+        }
+
+        /// `in_field` names the field only where none is named yet.
+        #[test]
+        fn in_field_fills_only_an_unnamed_field() {
+            let named = Error::bad_source(Reason::FieldType).in_field("age");
+            assert_eq!(named.field(), Some("age"));
+            assert_eq!(named.in_field("email").field(), Some("age"));
+            assert!(Error::Internal.in_field("age").field().is_none());
         }
     }
 }

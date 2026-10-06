@@ -39,7 +39,7 @@
 //! only carries its value through, may leave it out: no term derives from it.
 use vitaminc_aead_value::{FfiValue, ValueKind};
 
-use super::Error;
+use super::{Error, Reason};
 use crate::target::IndexSpec;
 
 /// Whether the scheme defines an `index` term for values of `kind`.
@@ -104,12 +104,14 @@ pub fn admits(kind: ValueKind, index: &IndexSpec) -> bool {
 ///
 /// # Errors
 ///
-/// [`Error::Source`] if the value cannot be read as `kind` exactly.
+/// [`Error::Source`] ([`Reason::FieldType`]) if the value cannot be read as
+/// `kind` exactly. It names no field: the caller that knows the field names
+/// it ([`Error::in_field`]).
 pub fn read(kind: ValueKind, value: FfiValue) -> Result<FfiValue, Error> {
     if kind.holds(&value) {
         return Ok(value);
     }
-    let number = Number::of(&value).ok_or(Error::Source)?;
+    let number = Number::of(&value).ok_or(Error::bad_source(Reason::FieldType))?;
     let read = match kind {
         ValueKind::Int32 => number
             .integer()
@@ -131,7 +133,7 @@ pub fn read(kind: ValueKind, value: FfiValue) -> Result<FfiValue, Error> {
         ValueKind::Float32 => number.exact_f32().map(FfiValue::Float32),
         _ => None,
     };
-    read.ok_or(Error::Source)
+    read.ok_or(Error::bad_source(Reason::FieldType))
 }
 
 /// A numeric leaf, widened without loss: every integer variant fits an
@@ -362,7 +364,7 @@ mod tests {
         ];
         for (at, (kind, value)) in refused.into_iter().enumerate() {
             assert!(
-                matches!(read(kind, value), Err(Error::Source)),
+                matches!(read(kind, value), Err(Error::Source { .. })),
                 "case {at}, as {kind}"
             );
         }
@@ -426,7 +428,7 @@ mod tests {
         ];
         for (at, (kind, value)) in refused.into_iter().enumerate() {
             assert!(
-                matches!(read(kind, value), Err(Error::Source)),
+                matches!(read(kind, value), Err(Error::Source { .. })),
                 "case {at}, as {kind}"
             );
         }
@@ -438,11 +440,11 @@ mod tests {
     fn read_refuses_a_nan_in_both_float_directions() {
         assert!(matches!(
             read(ValueKind::Float32, FfiValue::Float64(f64::NAN)),
-            Err(Error::Source)
+            Err(Error::Source { .. })
         ));
         assert!(matches!(
             read(ValueKind::Float64, FfiValue::Float32(f32::NAN)),
-            Err(Error::Source)
+            Err(Error::Source { .. })
         ));
     }
 
@@ -465,7 +467,7 @@ mod tests {
         ];
         for (at, (kind, value)) in refused.into_iter().enumerate() {
             assert!(
-                matches!(read(kind, value), Err(Error::Source)),
+                matches!(read(kind, value), Err(Error::Source { .. })),
                 "case {at}, as {kind}"
             );
         }

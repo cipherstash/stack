@@ -3279,6 +3279,7 @@ version = "0.2.0"
 dependencies = [
  "base64ct",
  "cllw-ore",
+ "miette",
  "serde",
  "serde_json",
  "stack-auth",
