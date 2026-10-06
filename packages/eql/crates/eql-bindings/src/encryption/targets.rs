@@ -170,6 +170,13 @@ pub enum TargetError {
         /// The table's reason.
         reason: &'static str,
     },
+    /// The type is produced, and answers no query: a storage-only type has
+    /// no query twin, so there is no operand to derive.
+    #[error("{name} answers no query: it is a storage-only type")]
+    NoQuery {
+        /// The type's name.
+        name: &'static str,
+    },
     /// The field's context is not an EQL column: an [`Identifier`] is a
     /// two-segment label, table then column, and this label is not one.
     #[error("{label:?} is not an EQL column identifier: expected two segments, table and column")]
@@ -324,6 +331,9 @@ pub fn query<'a, K: 'static>(
     plaintext: FfiValue,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     producible(name)?;
+    if let Some(error) = no_query(target(name)) {
+        return Err(error);
+    }
     let column = Identifier::from_label(context)?;
     query_named(name, keyset, column, plaintext)
 }
@@ -338,6 +348,24 @@ fn producible(name: &str) -> Result<(), TargetError> {
 
 /// The error for a name without a dispatch arm: unproducible when the table
 /// has it, unknown otherwise. Called by the generated dispatch's fall-through.
+/// The error for a query on a name the query dispatch has no arm for: a
+/// producible type with no query twin answers no query; otherwise what
+/// [`refuse`] says. Called by the generated query dispatch's fall-through.
+pub(crate) fn refuse_query(name: &str) -> TargetError {
+    no_query(target(name)).unwrap_or_else(|| refuse(name))
+}
+
+/// `NoQuery` for a producible type without a query twin, else `None`: the
+/// one case the query dispatch refuses that the others do not.
+fn no_query(target: Option<&'static Target>) -> Option<TargetError> {
+    match target {
+        Some(target) if target.producible && target.query.is_none() => {
+            Some(TargetError::NoQuery { name: target.name })
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn refuse(name: &str) -> TargetError {
     match target(name) {
         Some(target) => TargetError::Unproducible {
@@ -509,6 +537,47 @@ mod tests {
                 t.name
             );
         }
+    }
+
+    #[test]
+    fn a_producible_type_without_a_query_twin_answers_no_query() {
+        // No such type in the catalog today (`Text` is not producible), so
+        // the rule is pinned on a synthetic row; `refuse_query` on the live
+        // table falls through to `refuse`.
+        let storage_only = Target {
+            name: "Text",
+            family: "text",
+            suffix: "",
+            plaintext: Some("string"),
+            sql_domain: "public.eql_v3_text",
+            indexes: &[],
+            query: None,
+            query_sql_domain: None,
+            producible: true,
+            reason: None,
+        };
+        let leaked: &'static Target = Box::leak(Box::new(storage_only));
+        assert!(matches!(
+            no_query(Some(leaked)),
+            Some(TargetError::NoQuery { name: "Text" })
+        ));
+        assert_eq!(
+            no_query(Some(leaked)).unwrap().to_string(),
+            "Text answers no query: it is a storage-only type"
+        );
+        assert!(
+            no_query(target("TextEq")).is_none(),
+            "TextEq answers a query"
+        );
+        assert!(
+            no_query(target("Text")).is_none(),
+            "an unproducible type is refused as that"
+        );
+        assert!(matches!(
+            refuse_query("Text"),
+            TargetError::Unproducible { .. }
+        ));
+        assert!(matches!(refuse_query("Nope"), TargetError::Unknown { .. }));
     }
 
     #[test]

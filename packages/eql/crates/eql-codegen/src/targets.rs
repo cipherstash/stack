@@ -54,7 +54,12 @@ const JSON_INDEX_KEY: &str = "json";
 /// encoding for the stack-encrypt producer profile is unspecified, which is
 /// every family but text today.
 pub fn plaintext(family: &DomainFamily) -> Option<(&'static str, &'static str)> {
-    (family.name == "text").then_some(("string", "String"))
+    plaintext_of(family.name)
+}
+
+/// [`plaintext`], by family name: what a rendered row carries.
+fn plaintext_of(family: &str) -> Option<(&'static str, &'static str)> {
+    (family == "text").then_some(("string", "String"))
 }
 
 /// Why the engine cannot produce a stored domain's EQL type today, or
@@ -175,8 +180,13 @@ fn option_str(value: Option<&str>) -> TokenStream {
 
 /// Render the generated `crates/eql-bindings/src/v3/targets.rs`.
 pub fn render_targets_rs() -> String {
-    let rows = rows();
+    render_targets_from(&rows())
+}
 
+/// Render the target table and dispatch from the given rows: the catalog's
+/// in [`render_targets_rs`], a synthetic set in tests (a producible type
+/// with no query twin is not in the catalog today).
+fn render_targets_from(rows: &[Row]) -> String {
     let entries: TokenStream = rows
         .iter()
         .map(|r| {
@@ -209,43 +219,38 @@ pub fn render_targets_rs() -> String {
 
     // One arm per producible type. The plaintext Rust type is the family's;
     // a producible family always has one, since a derive names it.
-    let producible: Vec<(&Row, &'static DomainFamily)> = stored_payload_domains()
-        .zip(rows.iter())
-        .filter(|(_, r)| r.reason.is_none())
-        .map(|((f, _), r)| (r, f))
-        .collect();
-    let arm = |r: &Row, f: &DomainFamily, strukt: &str| {
+    let producible: Vec<&Row> = rows.iter().filter(|r| r.reason.is_none()).collect();
+    let arm = |r: &Row, strukt: &str| {
         let name = &r.name;
-        let module = format_ident!("{}", f.name);
+        let module = format_ident!("{}", r.family);
         let ty = format_ident!("{strukt}");
-        let (_, rust) = plaintext(f).expect("a producible family has a specified plaintext");
+        let (_, rust) =
+            plaintext_of(r.family).expect("a producible family has a specified plaintext");
         let source = format_ident!("{rust}");
         (name.clone(), quote!(super::#module::#ty), quote!(#source))
     };
     let encrypt_arms: TokenStream = producible
         .iter()
-        .map(|(r, f)| {
-            let (name, ty, source) = arm(r, f, &r.name);
+        .map(|r| {
+            let (name, ty, source) = arm(r, &r.name);
             quote! { #name => run_target::<#ty, #source, K>(#name, keyset, column, plaintext), }
         })
         .collect();
     let decrypt_arms: TokenStream = producible
         .iter()
-        .map(|(r, f)| {
-            let (name, ty, source) = arm(r, f, &r.name);
+        .map(|r| {
+            let (name, ty, source) = arm(r, &r.name);
             quote! { #name => open_target::<#ty, #source, K>(#name, opener, column, stored), }
         })
         .collect();
+    // A producible type with no query twin (a storage-only domain) gets no
+    // query arm: the fall-through refuses it as answering no query.
     let query_arms: TokenStream = producible
         .iter()
-        .map(|(r, f)| {
-            let query = r
-                .query
-                .as_ref()
-                .map(|(n, _)| n.as_str())
-                .expect("a producible type has a query twin");
-            let (name, ty, source) = arm(r, f, query);
-            quote! { #name => run_target::<#ty, #source, K>(#name, keyset, column, plaintext), }
+        .filter_map(|r| {
+            let (query, _) = r.query.as_ref()?;
+            let (name, ty, source) = arm(r, query);
+            Some(quote! { #name => run_target::<#ty, #source, K>(#name, keyset, column, plaintext), })
         })
         .collect();
     let helpers = if producible.is_empty() {
@@ -267,7 +272,7 @@ pub fn render_targets_rs() -> String {
 
         use vitaminc_aead_value::FfiValue;
 
-        use crate::encryption::targets::{#helpers refuse, Opener, Target, TargetError};
+        use crate::encryption::targets::{#helpers refuse, refuse_query, Opener, Target, TargetError};
         use crate::Identifier;
         use stack_encrypt::{KeysetCipher, NonEmpty, Pending};
 
@@ -309,7 +314,8 @@ pub fn render_targets_rs() -> String {
         }
 
         /// Run the named type's query twin for one plaintext, or refuse the
-        /// name as `encrypt_named` does.
+        /// name: as `encrypt_named` does, or as answering no query
+        /// (`TargetError::NoQuery`) for a producible type with no twin.
         pub(crate) fn query_named<'a, K: 'static>(
             name: &str,
             keyset: &'a KeysetCipher<'_, K>,
@@ -318,7 +324,7 @@ pub fn render_targets_rs() -> String {
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             match name {
                 #query_arms
-                _ => Err(refuse(name)),
+                _ => Err(refuse_query(name)),
             }
         }
     };
@@ -497,6 +503,49 @@ mod tests {
         // producible ones and the three fall-throughs.
         let arms = out.matches("\" => ").count();
         assert_eq!(arms, ENCRYPTION_DOMAINS.len() * 3, "arms: {out}");
-        assert_eq!(out.matches("_ => Err(refuse(name))").count(), 3);
+        assert_eq!(out.matches("_ => Err(refuse(name))").count(), 2);
+        assert_eq!(out.matches("_ => Err(refuse_query(name))").count(), 1);
+    }
+
+    /// A producible type with no query twin — a storage-only domain, once
+    /// its derive lands — renders encrypt and decrypt arms and no query arm,
+    /// rather than aborting the generator: the query dispatch's fall-through
+    /// refuses it as answering no query. Not in the catalog today, so the
+    /// row is flipped by hand.
+    #[test]
+    fn a_producible_type_without_a_query_twin_gets_no_query_arm() {
+        let mut rows = rows();
+        let text = rows
+            .iter_mut()
+            .find(|r| r.name == "Text")
+            .expect("the storage-only text domain");
+        assert!(text.query.is_none() && text.reason.is_some());
+        text.reason = None;
+        let out: String = render_targets_from(&rows)
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let arms_for = |helper: &str| {
+            out.matches(&format!(
+                "\"Text\" => {{ {helper}::<super::text::Text, String, K>(\"Text\","
+            ))
+            .count()
+                + out
+                    .matches(&format!(
+                        "\"Text\" => {helper}::<super::text::Text, String, K>(\"Text\","
+                    ))
+                    .count()
+        };
+        assert_eq!(arms_for("run_target"), 1, "one encrypt arm: {out}");
+        assert_eq!(arms_for("open_target"), 1, "one decrypt arm: {out}");
+        assert!(
+            !out.contains("TextQuery"),
+            "no query arm for a type with no twin: {out}"
+        );
+        assert_eq!(
+            out.matches("\" => ").count(),
+            (ENCRYPTION_DOMAINS.len() + 1) * 3 - 1,
+            "every producible type has three arms but the twinless one, which has two"
+        );
     }
 }

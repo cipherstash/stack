@@ -116,6 +116,9 @@ fn convert(error: eql_bindings::encryption::targets::TargetError) -> TargetError
             name: name.to_owned(),
             reason: reason.to_owned(),
         },
+        Eql::NoQuery { name } => TargetError::NoQuery {
+            name: name.to_owned(),
+        },
         Eql::Context { label } => TargetError::Column {
             name: String::new(),
             label,

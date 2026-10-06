@@ -167,6 +167,14 @@ pub enum TargetError {
         /// The descriptor's reason.
         reason: String,
     },
+    /// The type is produced and answers no query: a storage-only EQL type
+    /// has no query twin, so a query on a field that names it derives
+    /// nothing.
+    #[error("{name} answers no query: it is a storage-only type")]
+    NoQuery {
+        /// The type's name.
+        name: String,
+    },
     /// The plan extends every field's label by the caller's parts (a tenant,
     /// a region), and an EQL value stores a table and a column only: there
     /// is no column for the extended label. A plan with a target field is

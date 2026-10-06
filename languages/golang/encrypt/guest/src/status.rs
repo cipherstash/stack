@@ -383,6 +383,9 @@ mod tests {
                 name: "email".into(),
                 label: "users/email".into(),
             },
+            TargetError::NoQuery {
+                name: "Text".into(),
+            },
             TargetError::Kind {
                 name: "email".into(),
                 target: "TextEq".into(),
