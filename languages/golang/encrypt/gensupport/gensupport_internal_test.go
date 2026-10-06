@@ -1,6 +1,8 @@
 package gensupport
 
 import (
+	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -167,8 +169,10 @@ func TestConvertStaysWithinAFamily(t *testing.T) {
 	if err != nil || gotDefined != "x" {
 		t.Fatalf("Get[defined] = %v %v", gotDefined, err)
 	}
-	if _, err := Get[defined](Values{"d": "x"}, "d"); err == nil {
-		t.Fatal("Get converted a wire string into a defined type; the generated code does that")
+	// A defined type is read at its underlying type when the value is the
+	// engine's wire value.
+	if got, err := Get[defined](Values{"d": "x"}, "d"); err != nil || got != "x" {
+		t.Fatalf("Get[defined] from the wire = %v %v", got, err)
 	}
 	got, err := Get[uint8](Values{"age": uint32(3)}, "age")
 	if err != nil || got != 3 {
@@ -265,4 +269,78 @@ func TestNewReportsAnIncompleteFileAndABadDeclarationOnFirstUse(t *testing.T) {
 	if _, err := userCodec().Decrypt(t.Context(), nil, []encryptedUser{{}}); err == nil {
 		t.Fatal("a nil decrypter was accepted")
 	}
+}
+
+type status string
+
+// Every type the generator accepts on a sealed field, and every type JSON
+// hands back for an opaque one, reads through Get. The reviewer's cases.
+func TestGetReadsEveryTypeTheGeneratorAccepts(t *testing.T) {
+	type labels map[string]string
+	cases := map[string]func() error{
+		"named string": func() error { v, err := Get[status](Values{"v": "active"}, "v"); return check(err, v == "active") },
+		"named int64":  func() error { v, err := Get[time.Duration](Values{"v": int64(5)}, "v"); return check(err, v == 5) },
+		"named int16":  func() error { v, err := Get[Score](Values{"v": int32(-3)}, "v"); return check(err, v == -3) },
+		"named []byte": func() error { v, err := Get[Blob](Values{"v": []byte{1}}, "v"); return check(err, len(v) == 1) },
+		"[]int": func() error {
+			v, err := Get[[]int](Values{"v": []any{json.Number("1")}}, "v")
+			return check(err, len(v) == 1 && v[0] == 1)
+		},
+		"[]int from wire": func() error { v, err := Get[[]int](Values{"v": []any{int64(2)}}, "v"); return check(err, v[0] == 2) },
+		"[]float32": func() error {
+			v, err := Get[[]float32](Values{"v": []any{json.Number("1.5")}}, "v")
+			return check(err, v[0] == 1.5)
+		},
+		"[]status": func() error { v, err := Get[[]status](Values{"v": []any{"a"}}, "v"); return check(err, v[0] == "a") },
+		"[2]uint8": func() error {
+			v, err := Get[[2]uint8](Values{"v": []any{json.Number("9"), json.Number("8")}}, "v")
+			return check(err, v == [2]uint8{9, 8})
+		},
+		"map[string]string": func() error {
+			v, err := Get[map[string]string](Values{"v": map[string]any{"a": "b"}}, "v")
+			return check(err, v["a"] == "b")
+		},
+		"named map": func() error {
+			v, err := Get[labels](Values{"v": map[string]any{"a": "b"}}, "v")
+			return check(err, v["a"] == "b")
+		},
+		"map[string]int": func() error {
+			v, err := Get[map[string]int](Values{"v": vcvalue.Object{{Key: "a", Value: int64(3)}}}, "v")
+			return check(err, v["a"] == 3)
+		},
+		"exact passthrough": func() error {
+			v, err := Get[time.Time](Values{"v": time.Unix(1, 0)}, "v")
+			return check(err, v.Unix() == 1)
+		},
+	}
+	for name, get := range cases {
+		if err := get(); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	// And the refusals stay refusals.
+	if _, err := Get[status](Values{"v": int64(1)}, "v"); err == nil {
+		t.Error("an integer became a named string")
+	}
+	if _, err := Get[[]int8](Values{"v": []any{int64(300)}}, "v"); err == nil {
+		t.Error("300 fit an int8 element")
+	}
+	if _, err := Get[map[int]string](Values{"v": map[string]any{"a": "b"}}, "v"); err == nil {
+		t.Error("a map with integer keys was read from a wire object")
+	}
+}
+
+type (
+	Score int16
+	Blob  []byte
+)
+
+func check(err error, ok bool) error {
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("wrong value")
+	}
+	return nil
 }

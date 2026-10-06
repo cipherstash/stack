@@ -10,13 +10,15 @@ import (
 
 // Kind is a field's wire type: the data form of the Rust chain's `::<F>`,
 // chosen by stashgen from the field's Go type. A String or UInt32 field
-// seals as the typed leaf a Rust record derives; an Untyped field (a struct,
-// a slice, a map) seals as one self-describing value.
+// seals as the typed leaf a Rust record derives. Every sealed field has a
+// scalar kind: stashgen refuses a struct, slice or map outside an opaque
+// struct, and an opaque struct seals as Bytes (one JSON document). Untyped
+// names a field with no declared type and is not what generated code writes.
 type Kind string
 
 // The kinds. int8, int16 and int32 are Int32; int and int64 are Int64;
 // uint8, uint16 and uint32 are UInt32; uint and uint64 are UInt64; []byte is
-// Bytes. Everything else is Untyped.
+// Bytes. A type defined over one of these has its underlying kind.
 const (
 	Untyped Kind = ""
 	Bool    Kind = "bool"

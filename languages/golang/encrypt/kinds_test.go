@@ -1,6 +1,7 @@
 package encrypt_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"reflect"
@@ -51,13 +52,13 @@ func TestEverySealedKindRoundTrips(t *testing.T) {
 		I8: -8, I16: -16, I32: -32, I: -64, I64: -1 << 40,
 		U8: 8, U16: 16, U32: 32, U: 64, U64: 1 << 40,
 		F32: 1.5, F64: -2.25,
-		By: []byte{1, 2, 3}, Bl: testusers.Blob{4, 5}, Sc: -3,
+		By: []byte{1, 2, 3}, Bl: testusers.Blob{4, 5}, Sc: -3, St: "active", D: 90 * time.Second,
 		P: &seven, M: map[string]string{"k": "v"}, T: when, N: sql.NullTime{Time: when, Valid: true},
 		In: testusers.Inner{Name: "in", N: 1}, Sk: []testusers.Inner{{Name: "a", N: 2}},
 	}, {
 		S: "bob", E: "bob@example.com", I8: 127, I16: 32767, I32: 1<<31 - 1, I: 1 << 30, I64: 1<<63 - 1,
 		U8: 255, U16: 65535, U32: 1<<32 - 1, U: 1 << 30, U64: 1<<64 - 1,
-		F32: -0.5, F64: 1e300, By: []byte{}, Bl: testusers.Blob{}, Sc: 32767,
+		F32: -0.5, F64: 1e300, By: []byte{}, Bl: testusers.Blob{}, Sc: 32767, St: "x", D: -time.Minute,
 		M: map[string]string{}, Sk: []testusers.Inner{},
 	}}
 	encrypted, err := testusers.EncryptKinds(ctx, cipher, in)
@@ -85,6 +86,43 @@ func TestEverySealedKindRoundTrips(t *testing.T) {
 	if err != nil || len(one.Ciphertext) == 0 {
 		t.Fatalf("Score field: %v", err)
 	}
+	if probe, err := testusers.KindsFields.St.Equality(ctx, cipher, "active"); err != nil || !probe.Equal(encrypted[0].St.Equality) {
+		t.Fatalf("Status probe: %v", err)
+	}
+}
+
+// A model in separate columns: each term is in its own column, and the rows
+// decrypt back to the input. The reviewer's test.
+func TestModelRowsRoundTrip(t *testing.T) {
+	c := deterministicClient(t)
+	cipher := c.DefaultKeyset()
+	rows, err := testusers.EncryptRows(t.Context(), cipher, people)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe, err := testusers.Fields.Email.Equality(t.Context(), cipher, people[1].Email)
+	if err != nil || !probe.Equal(rows[1].EmailEq) || probe.Equal(rows[0].EmailEq) {
+		t.Fatalf("EmailEq does not hold the email's equality term: %v", err)
+	}
+	ageProbe, err := testusers.Fields.Age.Ore(t.Context(), cipher, people[1].Age)
+	if err != nil || ageProbe.Compare(rows[1].AgeOre) != 0 || !rows[1].AgeOre.Less(rows[0].AgeOre) {
+		t.Fatalf("AgeOre does not hold the age's ORE term: %v", err)
+	}
+	match, err := testusers.Fields.Email.Match(t.Context(), cipher, people[1].Email)
+	if err != nil || !bytes.Equal(match, rows[1].EmailMatch) || len(rows[1].Notes) == 0 || rows[1].ID != people[1].ID {
+		t.Fatalf("the other columns: %v %+v", err, rows[1])
+	}
+	want := append([]testusers.User(nil), people...)
+	want[0].Internal = ""
+	back, err := testusers.DecryptRows(t.Context(), c, rows)
+	if err != nil || !reflect.DeepEqual(back, want) {
+		t.Fatalf("DecryptRows = %+v, %v", back, err)
+	}
+	// A row whose columns were swapped does not open as the input.
+	rows[0].Age, rows[0].Notes = rows[0].Notes, rows[0].Age
+	if _, err := testusers.DecryptRows(t.Context(), c, rows[:1]); err == nil {
+		t.Fatal("swapped columns opened")
+	}
 }
 
 func TestEveryOpaqueFieldTypeRoundTrips(t *testing.T) {
@@ -96,7 +134,7 @@ func TestEveryOpaqueFieldTypeRoundTrips(t *testing.T) {
 	in := []testusers.Everything{{
 		S: "s", E: "e@example.com", Bo: true, I8: -1, I: 42, U64: 1 << 40, F32: 0.25, F64: 9.75,
 		By: []byte("bytes"), Bl: testusers.Blob("blob"), Sc: -7,
-		Tags: []string{"a", "b"}, Emails: []testusers.Email{"x@y"}, Counts: map[string]int{"a": 1}, Labels: map[string]string{"k": "v"}, ByKey: map[int]string{3: "three"},
+		Tags: []string{"a", "b"}, Ints: []int{1, -2}, F32s: []float32{1.5, -0.25}, St: "active", D: time.Hour, Emails: []testusers.Email{"x@y"}, Counts: map[string]int{"a": 1}, Labels: map[string]string{"k": "v"}, ByKey: map[int]string{3: "three"},
 		In: testusers.Inner{Name: "in", N: 5}, Ins: []testusers.Inner{{Name: "i", N: 6}}, P: &hello, PI: &testusers.Inner{Name: "pi", N: 7},
 		T: when, N: sql.NullTime{Time: when, Valid: true}, Nested: [][]byte{{1}, {2, 3}}, Arr: [2]uint8{9, 8},
 	}, {

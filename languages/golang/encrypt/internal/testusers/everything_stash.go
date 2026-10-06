@@ -47,6 +47,10 @@ type everythingShape struct {
 	Bl     Blob
 	Sc     Score
 	Tags   []string
+	Ints   []int
+	F32s   []float32
+	St     Status
+	D      time.Duration
 	Emails []Email
 	Counts map[string]int
 	Labels map[string]string
@@ -76,6 +80,10 @@ type everythingOpaque struct {
 	Bl     Blob              `json:"bl"`
 	Sc     Score             `json:"sc"`
 	Tags   []string          `json:"tags"`
+	Ints   []int             `json:"ints"`
+	F32s   []float32         `json:"f32s"`
+	St     Status            `json:"st"`
+	D      time.Duration     `json:"d"`
 	Emails []Email           `json:"emails"`
 	Counts map[string]int    `json:"counts"`
 	Labels map[string]string `json:"labels"`
@@ -110,6 +118,10 @@ var everythingCodec = gensupport.New(gensupport.Generated[Everything, EncryptedE
 			Bl:     v.Bl,
 			Sc:     v.Sc,
 			Tags:   v.Tags,
+			Ints:   v.Ints,
+			F32s:   v.F32s,
+			St:     v.St,
+			D:      v.D,
 			Emails: v.Emails,
 			Counts: v.Counts,
 			Labels: v.Labels,
@@ -148,6 +160,10 @@ var everythingCodec = gensupport.New(gensupport.Generated[Everything, EncryptedE
 		v.Bl = o.Bl
 		v.Sc = o.Sc
 		v.Tags = o.Tags
+		v.Ints = o.Ints
+		v.F32s = o.F32s
+		v.St = o.St
+		v.D = o.D
 		v.Emails = o.Emails
 		v.Counts = o.Counts
 		v.Labels = o.Labels

@@ -6,7 +6,9 @@
 // changes a file.
 package testusers
 
-//go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type User
+import "github.com/cipherstash/stack/languages/golang/encrypt"
+
+//go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type User -model Rows=UserRow
 
 // User is the record of the Rust record fixture
 // (packages/stack-encrypt/tests/fixtures/record_lowering.json): the same
@@ -19,6 +21,20 @@ type User struct {
 	Email    string   `stash:"email,encrypt,index=equality;match"`
 	Notes    string   `stash:"notes,encrypt"`
 	Internal string   `stash:"-"`
+}
+
+// UserRow is a model for User in separate columns: one field for each
+// output, each tagged with the output it holds, for a library that maps one
+// struct field to one column.
+type UserRow struct {
+	ID         int64                `stash:"id"`
+	Age        encrypt.Ciphertext   `stash:"age"`
+	AgeEq      encrypt.EqualityTerm `stash:"age,equality"`
+	AgeOre     encrypt.OreTerm      `stash:"age,ore"`
+	Email      encrypt.Ciphertext   `stash:"email"`
+	EmailEq    encrypt.EqualityTerm `stash:"email,equality"`
+	EmailMatch encrypt.MatchTerm    `stash:"email,match"`
+	Notes      encrypt.Ciphertext   `stash:"notes"`
 }
 
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Document -name Document

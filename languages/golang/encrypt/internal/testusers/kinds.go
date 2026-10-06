@@ -8,9 +8,10 @@ import (
 // Defined types over scalars: the engine returns the underlying type and the
 // generated code converts.
 type (
-	Email string
-	Blob  []byte
-	Score int16
+	Email  string
+	Blob   []byte
+	Score  int16
+	Status string
 )
 
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Account -name Account
@@ -39,25 +40,27 @@ type Inner struct {
 // an opaque struct, with defined types among them, and passthrough fields of
 // types the codec cannot carry. Everything it accepts round-trips.
 type Kinds struct {
-	_   struct{} `stash:"context=kinds"`
-	S   string   `stash:"s,encrypt,index=equality;match"`
-	E   Email    `stash:"e,encrypt,index=equality;match;ore"`
-	Bo  bool     `stash:"bo,encrypt"`
-	I8  int8     `stash:"i8,encrypt,index=equality;ore"`
-	I16 int16    `stash:"i16,encrypt,index=ope"`
-	I32 int32    `stash:"i32,encrypt,index=equality"`
-	I   int      `stash:"i,encrypt,index=ore"`
-	I64 int64    `stash:"i64,encrypt"`
-	U8  uint8    `stash:"u8,encrypt,index=equality"`
-	U16 uint16   `stash:"u16,encrypt"`
-	U32 uint32   `stash:"u32,encrypt,index=equality;ore"`
-	U   uint     `stash:"u,encrypt"`
-	U64 uint64   `stash:"u64,encrypt,index=ope"`
-	F32 float32  `stash:"f32,encrypt"`
-	F64 float64  `stash:"f64,encrypt,index=ore"`
-	By  []byte   `stash:"by,encrypt,index=equality"`
-	Bl  Blob     `stash:"bl,encrypt"`
-	Sc  Score    `stash:"sc,encrypt,index=ore"`
+	_   struct{}      `stash:"context=kinds"`
+	S   string        `stash:"s,encrypt,index=equality;match"`
+	E   Email         `stash:"e,encrypt,index=equality;match;ore"`
+	Bo  bool          `stash:"bo,encrypt"`
+	I8  int8          `stash:"i8,encrypt,index=equality;ore"`
+	I16 int16         `stash:"i16,encrypt,index=ope"`
+	I32 int32         `stash:"i32,encrypt,index=equality"`
+	I   int           `stash:"i,encrypt,index=ore"`
+	I64 int64         `stash:"i64,encrypt"`
+	U8  uint8         `stash:"u8,encrypt,index=equality"`
+	U16 uint16        `stash:"u16,encrypt"`
+	U32 uint32        `stash:"u32,encrypt,index=equality;ore"`
+	U   uint          `stash:"u,encrypt"`
+	U64 uint64        `stash:"u64,encrypt,index=ope"`
+	F32 float32       `stash:"f32,encrypt"`
+	F64 float64       `stash:"f64,encrypt,index=ore"`
+	By  []byte        `stash:"by,encrypt,index=equality"`
+	Bl  Blob          `stash:"bl,encrypt"`
+	Sc  Score         `stash:"sc,encrypt,index=ore"`
+	St  Status        `stash:"st,encrypt,index=equality"`
+	D   time.Duration `stash:"d,encrypt,index=ore"`
 
 	P  *int              `stash:"p,passthrough"`
 	M  map[string]string `stash:"m,passthrough"`
@@ -85,6 +88,10 @@ type Everything struct {
 	Bl     Blob
 	Sc     Score
 	Tags   []string
+	Ints   []int
+	F32s   []float32
+	St     Status
+	D      time.Duration
 	Emails []Email
 	Counts map[string]int
 	Labels map[string]string

@@ -37,6 +37,8 @@ type EncryptedKinds struct {
 	By  EncryptedKindsBy
 	Bl  EncryptedKindsBl
 	Sc  EncryptedKindsSc
+	St  EncryptedKindsSt
+	D   EncryptedKindsD
 	P   *int
 	M   map[string]string
 	T   time.Time
@@ -134,12 +136,22 @@ type EncryptedKindsSc struct {
 	Ore        encrypt.OreTerm
 }
 
+type EncryptedKindsSt struct {
+	Ciphertext encrypt.Ciphertext
+	Equality   encrypt.EqualityTerm
+}
+
+type EncryptedKindsD struct {
+	Ciphertext encrypt.Ciphertext
+	Ore        encrypt.OreTerm
+}
+
 func (e EncryptedKinds) String() string {
-	return gensupport.Redacted("EncryptedKinds", map[string]any{"P": e.P, "M": e.M, "T": e.T, "N": e.N, "In": e.In, "Sk": e.Sk}, "S", "E", "Bo", "I8", "I16", "I32", "I", "I64", "U8", "U16", "U32", "U", "U64", "F32", "F64", "By", "Bl", "Sc")
+	return gensupport.Redacted("EncryptedKinds", map[string]any{"P": e.P, "M": e.M, "T": e.T, "N": e.N, "In": e.In, "Sk": e.Sk}, "S", "E", "Bo", "I8", "I16", "I32", "I", "I64", "U8", "U16", "U32", "U", "U64", "F32", "F64", "By", "Bl", "Sc", "St", "D")
 }
 
 func (e EncryptedKinds) LogValue() slog.Value {
-	return gensupport.RedactedLog(map[string]any{"P": e.P, "M": e.M, "T": e.T, "N": e.N, "In": e.In, "Sk": e.Sk}, "S", "E", "Bo", "I8", "I16", "I32", "I", "I64", "U8", "U16", "U32", "U", "U64", "F32", "F64", "By", "Bl", "Sc")
+	return gensupport.RedactedLog(map[string]any{"P": e.P, "M": e.M, "T": e.T, "N": e.N, "In": e.In, "Sk": e.Sk}, "S", "E", "Bo", "I8", "I16", "I32", "I", "I64", "U8", "U16", "U32", "U", "U64", "F32", "F64", "By", "Bl", "Sc", "St", "D")
 }
 
 // Stops compiling when Kinds gains, loses, reorders or retypes a field.
@@ -165,6 +177,8 @@ type kindsShape struct {
 	By  []byte
 	Bl  Blob
 	Sc  Score
+	St  Status
+	D   time.Duration
 	P   *int
 	M   map[string]string
 	T   time.Time
@@ -192,6 +206,8 @@ var kindsDeclaration = gensupport.Declare("kinds").
 	EncryptIndex("by", gensupport.Bytes, encrypt.Equality).
 	Encrypt("bl", gensupport.Bytes).
 	EncryptIndex("sc", gensupport.Int32, encrypt.Ore).
+	EncryptIndex("st", gensupport.String, encrypt.Equality).
+	EncryptIndex("d", gensupport.Int64, encrypt.Ore).
 	Passthrough("p").
 	Passthrough("m").
 	Passthrough("t").
@@ -223,6 +239,8 @@ var kindsCodec = gensupport.New(gensupport.Generated[Kinds, EncryptedKinds]{
 			"by":  v.By,
 			"bl":  v.Bl,
 			"sc":  v.Sc,
+			"st":  v.St,
+			"d":   v.D,
 			"p":   v.P,
 			"m":   v.M,
 			"t":   v.T,
@@ -311,6 +329,14 @@ var kindsCodec = gensupport.New(gensupport.Generated[Kinds, EncryptedKinds]{
 			Ciphertext: rec["sc"].Ciphertext,
 			Ore:        rec["sc"].Ore,
 		}
+		e.St = EncryptedKindsSt{
+			Ciphertext: rec["st"].Ciphertext,
+			Equality:   rec["st"].Equality,
+		}
+		e.D = EncryptedKindsD{
+			Ciphertext: rec["d"].Ciphertext,
+			Ore:        rec["d"].Ore,
+		}
 		return e, nil
 	},
 	Open: func(e EncryptedKinds) gensupport.Record {
@@ -333,6 +359,8 @@ var kindsCodec = gensupport.New(gensupport.Generated[Kinds, EncryptedKinds]{
 			"by":  {Ciphertext: e.By.Ciphertext, Equality: e.By.Equality},
 			"bl":  {Ciphertext: e.Bl.Ciphertext},
 			"sc":  {Ciphertext: e.Sc.Ciphertext, Ore: e.Sc.Ore},
+			"st":  {Ciphertext: e.St.Ciphertext, Equality: e.St.Equality},
+			"d":   {Ciphertext: e.D.Ciphertext, Ore: e.D.Ore},
 			"p":   {Value: e.P},
 			"m":   {Value: e.M},
 			"t":   {Value: e.T},
@@ -404,6 +432,16 @@ var kindsCodec = gensupport.New(gensupport.Generated[Kinds, EncryptedKinds]{
 			return Kinds{}, err
 		}
 		v.Sc = Score(rawSc)
+		rawSt, err := gensupport.Get[string](vals, "st")
+		if err != nil {
+			return Kinds{}, err
+		}
+		v.St = Status(rawSt)
+		rawD, err := gensupport.Get[int64](vals, "d")
+		if err != nil {
+			return Kinds{}, err
+		}
+		v.D = time.Duration(rawD)
 		if v.P, err = gensupport.Get[*int](vals, "p"); err != nil {
 			return Kinds{}, err
 		}
@@ -456,6 +494,8 @@ var KindsFields = struct {
 	By  KindsByField
 	Bl  KindsBlField
 	Sc  KindsScField
+	St  KindsStField
+	D   KindsDField
 }{
 	S:   KindsSField{gensupport.NewField[string](kindsDeclaration, "s")},
 	E:   KindsEField{gensupport.NewField[Email](kindsDeclaration, "e")},
@@ -475,6 +515,8 @@ var KindsFields = struct {
 	By:  KindsByField{gensupport.NewField[[]byte](kindsDeclaration, "by")},
 	Bl:  KindsBlField{gensupport.NewField[Blob](kindsDeclaration, "bl")},
 	Sc:  KindsScField{gensupport.NewField[Score](kindsDeclaration, "sc")},
+	St:  KindsStField{gensupport.NewField[Status](kindsDeclaration, "st")},
+	D:   KindsDField{gensupport.NewField[time.Duration](kindsDeclaration, "d")},
 }
 
 type KindsSField struct {
@@ -740,5 +782,37 @@ func (f KindsScField) Encrypt(ctx context.Context, c *encrypt.Cipher, v Score) (
 }
 
 func (f KindsScField) Ore(ctx context.Context, c *encrypt.Cipher, v Score) (encrypt.OreTerm, error) {
+	return f.field.Ore(ctx, c, v)
+}
+
+type KindsStField struct {
+	field gensupport.Field[Status]
+}
+
+func (f KindsStField) Encrypt(ctx context.Context, c *encrypt.Cipher, v Status) (EncryptedKindsSt, error) {
+	out, err := f.field.Encrypt(ctx, c, v)
+	if err != nil {
+		return EncryptedKindsSt{}, err
+	}
+	return EncryptedKindsSt{Ciphertext: out.Ciphertext, Equality: out.Equality}, nil
+}
+
+func (f KindsStField) Equality(ctx context.Context, c *encrypt.Cipher, v Status) (encrypt.EqualityTerm, error) {
+	return f.field.Equality(ctx, c, v)
+}
+
+type KindsDField struct {
+	field gensupport.Field[time.Duration]
+}
+
+func (f KindsDField) Encrypt(ctx context.Context, c *encrypt.Cipher, v time.Duration) (EncryptedKindsD, error) {
+	out, err := f.field.Encrypt(ctx, c, v)
+	if err != nil {
+		return EncryptedKindsD{}, err
+	}
+	return EncryptedKindsD{Ciphertext: out.Ciphertext, Ore: out.Ore}, nil
+}
+
+func (f KindsDField) Ore(ctx context.Context, c *encrypt.Cipher, v time.Duration) (encrypt.OreTerm, error) {
 	return f.field.Ore(ctx, c, v)
 }

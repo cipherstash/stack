@@ -193,3 +193,48 @@ func (f NotesField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (E
 	out, err := f.field.Encrypt(ctx, c, v)
 	return EncryptedUserNotes{Ciphertext: out.Ciphertext}, err
 }
+
+// The -model flag: UserRow converts to and from its shape only while the
+// two have the same fields, with the same types, in the same order.
+type rowsShape struct {
+	ID         int64
+	Age        encrypt.Ciphertext
+	AgeEq      encrypt.EqualityTerm
+	AgeOre     encrypt.OreTerm
+	Email      encrypt.Ciphertext
+	EmailEq    encrypt.EqualityTerm
+	EmailMatch encrypt.MatchTerm
+	Notes      encrypt.Ciphertext
+}
+
+var rowsCodec = gensupport.Records(codec,
+	func(e EncryptedUser) UserRow {
+		return UserRow(rowsShape{
+			ID:         e.ID,
+			Age:        e.Age.Ciphertext,
+			AgeEq:      e.Age.Equality,
+			AgeOre:     e.Age.Ore,
+			Email:      e.Email.Ciphertext,
+			EmailEq:    e.Email.Equality,
+			EmailMatch: e.Email.Match,
+			Notes:      e.Notes.Ciphertext,
+		})
+	},
+	func(r UserRow) EncryptedUser {
+		s := rowsShape(r)
+		return EncryptedUser{
+			ID:    s.ID,
+			Age:   EncryptedUserAge{Ciphertext: s.Age, Equality: s.AgeEq, Ore: s.AgeOre},
+			Email: EncryptedUserEmail{Ciphertext: s.Email, Equality: s.EmailEq, Match: s.EmailMatch},
+			Notes: EncryptedUserNotes{Ciphertext: s.Notes},
+		}
+	},
+)
+
+func EncryptRows(ctx context.Context, cipher *encrypt.Cipher, testusers []User) ([]UserRow, error) {
+	return rowsCodec.Encrypt(ctx, cipher, testusers)
+}
+
+func DecryptRows(ctx context.Context, d encrypt.Decrypter, rows []UserRow) ([]User, error) {
+	return rowsCodec.Decrypt(ctx, d, rows)
+}

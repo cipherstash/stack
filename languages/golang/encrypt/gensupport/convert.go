@@ -1,8 +1,11 @@
 package gensupport
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
+	"reflect"
+	"strconv"
 
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
@@ -13,7 +16,21 @@ import (
 // bool, or a vcvalue.Object for a composite — and the struct's type is in
 // the same family, narrower at most. A value outside the target's range, or
 // of another family, is an error.
+//
+// The switch names the built-in types; a type defined over one (type Status
+// string, time.Duration), or a slice or map of any readable type, is read
+// through its underlying type by [convertVia], the one place this package
+// uses reflection. Generated code uses none: it hands Get the field's type
+// and the engine's value, and reads a value back.
 func convert(v any, out any) error {
+	// A JSON number — what an opaque document carries — widens to its
+	// family's widest type, and the family's range check applies below.
+	if n, ok := v.(json.Number); ok {
+		var err error
+		if v, err = widenNumber(n, out); err != nil {
+			return err
+		}
+	}
 	// A nil slice or map comes back as nil: the zero value it was.
 	if v == nil {
 		switch out.(type) {
@@ -119,9 +136,149 @@ func convert(v any, out any) error {
 	case *any:
 		*out = v
 	default:
-		return fmt.Errorf("the opened value is a %T, which this field's type %T cannot hold", v, out)
+		return convertVia(v, out)
 	}
 	return nil
+}
+
+// convertVia reads a value into a type the switch in convert does not name:
+// a type defined over a scalar is read as its underlying type and converted;
+// a slice or array element by element; a map with string keys entry by
+// entry, each value through convert. Anything else is a mismatch.
+func convertVia(v any, out any) error {
+	target := reflect.ValueOf(out)
+	if target.Kind() != reflect.Pointer || target.IsNil() {
+		return fmt.Errorf("the opened value is a %T, which %T cannot hold", v, out)
+	}
+	elem := target.Elem()
+	t := elem.Type()
+	switch t.Kind() {
+	case reflect.Bool, reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		// A defined type: read the underlying type, then convert.
+		under := reflect.New(underlying(t))
+		if err := convert(v, under.Interface()); err != nil {
+			return err
+		}
+		elem.Set(under.Elem().Convert(t))
+		return nil
+	case reflect.Slice:
+		if t.Elem().Kind() == reflect.Uint8 {
+			var b []byte
+			if err := convert(v, &b); err != nil {
+				return err
+			}
+			elem.Set(reflect.ValueOf(b).Convert(t))
+			return nil
+		}
+		items, ok := v.([]any)
+		if !ok {
+			return fmt.Errorf("opened as %T, not %s", v, t)
+		}
+		result := reflect.MakeSlice(t, len(items), len(items))
+		for i, item := range items {
+			if err := convert(item, result.Index(i).Addr().Interface()); err != nil {
+				return fmt.Errorf("element %d: %w", i, err)
+			}
+		}
+		elem.Set(result)
+		return nil
+	case reflect.Array:
+		items, ok := v.([]any)
+		if !ok || len(items) != t.Len() {
+			return fmt.Errorf("opened as %T with %d elements, not %s", v, len(items), t)
+		}
+		result := reflect.New(t).Elem()
+		for i, item := range items {
+			if err := convert(item, result.Index(i).Addr().Interface()); err != nil {
+				return fmt.Errorf("element %d: %w", i, err)
+			}
+		}
+		elem.Set(result)
+		return nil
+	case reflect.Map:
+		if t.Key().Kind() != reflect.String {
+			return fmt.Errorf("%s has a key that is not a string", t)
+		}
+		vals, err := valuesOf(v)
+		if err != nil {
+			return err
+		}
+		result := reflect.MakeMapWithSize(t, len(vals))
+		for key, item := range vals {
+			slot := reflect.New(t.Elem())
+			if err := convert(item, slot.Interface()); err != nil {
+				return fmt.Errorf("entry %q: %w", key, err)
+			}
+			result.SetMapIndex(reflect.ValueOf(key).Convert(t.Key()), slot.Elem())
+		}
+		elem.Set(result)
+		return nil
+	}
+	return fmt.Errorf("the opened value is a %T, which this field's type %s cannot hold", v, t)
+}
+
+// underlying is the built-in type a defined scalar type is declared over.
+func underlying(t reflect.Type) reflect.Type {
+	switch t.Kind() {
+	case reflect.Bool:
+		return reflect.TypeFor[bool]()
+	case reflect.String:
+		return reflect.TypeFor[string]()
+	case reflect.Int:
+		return reflect.TypeFor[int]()
+	case reflect.Int8:
+		return reflect.TypeFor[int8]()
+	case reflect.Int16:
+		return reflect.TypeFor[int16]()
+	case reflect.Int32:
+		return reflect.TypeFor[int32]()
+	case reflect.Int64:
+		return reflect.TypeFor[int64]()
+	case reflect.Uint:
+		return reflect.TypeFor[uint]()
+	case reflect.Uint8:
+		return reflect.TypeFor[uint8]()
+	case reflect.Uint16:
+		return reflect.TypeFor[uint16]()
+	case reflect.Uint32:
+		return reflect.TypeFor[uint32]()
+	case reflect.Uint64:
+		return reflect.TypeFor[uint64]()
+	case reflect.Float32:
+		return reflect.TypeFor[float32]()
+	}
+	return reflect.TypeFor[float64]()
+}
+
+// widenNumber reads a JSON number as the widest value of the target's
+// family: int64 for a signed target, uint64 for an unsigned one, float64 for
+// a float. The family conversion then applies its range check.
+func widenNumber(n json.Number, out any) (any, error) {
+	kind := reflect.TypeOf(out).Elem().Kind()
+	switch kind {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		i, err := strconv.ParseInt(string(n), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("%s is not an integer that fits an int64", n)
+		}
+		return i, nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		u, err := strconv.ParseUint(string(n), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("%s is not an integer that fits a uint64", n)
+		}
+		return u, nil
+	case reflect.Float32, reflect.Float64, reflect.Interface:
+		f, err := n.Float64()
+		if err != nil {
+			return nil, err
+		}
+		return f, nil
+	}
+	return n, nil
 }
 
 func mismatch(v, want any) error {
