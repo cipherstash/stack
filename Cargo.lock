@@ -3315,8 +3315,11 @@ dependencies = [
 name = "stack-guest-abi"
 version = "0.0.0"
 dependencies = [
+ "miette",
  "proptest",
+ "serde_json",
  "thiserror 1.0.69",
+ "vitaminc-aead-value",
  "vitaminc-protected",
  "zeroize",
 ]

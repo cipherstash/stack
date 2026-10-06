@@ -39,7 +39,10 @@
 //! `catch_unwind`, belt-and-braces for a hypothetical unwind build —
 //! wasm32-wasip1 aborts on panic; the two exports here need none, since
 //! neither has a panic path (allocation goes through `try_reserve_exact`
-//! and release through the registry). Statuses are the only detail leaked.
+//! and release through the registry). A failure is a status number, and
+//! `se_last_error` has the error behind it, encoded under the rule on
+//! `stack-profile`'s `ErrorPayload` ([`last_error`]): no plaintext, key,
+//! token, ciphertext or context value is ever in it.
 //!
 //! Wasm modules are single-threaded; the host must serialize calls into one
 //! instance.
@@ -48,10 +51,57 @@
 //! this crate exports them, so every guest gets `se_alloc` and `se_dealloc`
 //! by depending on it and defines only the exports that are its own.
 
+use std::panic::{catch_unwind, AssertUnwindSafe};
+
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::buffers;
-use crate::status::STATUS_ENCODING;
+use crate::last_error;
+
+/// Run an export's body: clear the last error, run `f` (a panic is an
+/// internal failure), make sure a failure leaves an error recorded, and pack
+/// the result. Every guest export that returns a packed result goes through
+/// here, so "every export clears the last error when it starts and sets it
+/// when it fails" is written once.
+///
+/// wasm32-wasip1 aborts on panic, so the catch is belt-and-braces for an
+/// unwinding build, as each guest's own catch was.
+pub fn export(f: impl FnOnce() -> Result<Vec<u8>, u32>) -> u64 {
+    last_error::clear();
+    let result = catch_unwind(AssertUnwindSafe(f))
+        .unwrap_or_else(|_| Err(last_error::internal("a panic was caught")));
+    match result {
+        Ok(out) => {
+            // An error recorded on the way to a success describes nothing
+            // the host will ask about.
+            last_error::clear();
+            ok_buffer(out)
+        }
+        Err(status) => {
+            last_error::ensure(status);
+            err_status(status)
+        }
+    }
+}
+
+/// The full error behind the most recent failed export, as a packed buffer
+/// result: a transport-codec object of `code`, `message`, `help`, `url`
+/// (when set), `severity`, `fields` and `causes` (see
+/// [`last_error::encode`]). Zero when there is none — no export has failed
+/// since the last success, or the error was already handed over.
+///
+/// The host calls it only after a non-zero status, copies the buffer out
+/// and releases it with [`se_dealloc`], like any output. Handing the buffer
+/// over empties the slot, so a second call returns zero. It reads the last
+/// error and does not clear it first, so it is the one export that is not
+/// run through [`export`].
+#[no_mangle]
+pub extern "C" fn se_last_error() -> u64 {
+    match last_error::take_registered() {
+        Some((ptr, len)) => ((ptr as usize as u64) << 32) | len as u64,
+        None => 0,
+    }
+}
 
 /// Allocate `len` bytes of guest memory for the host to write into. Returns
 /// null if the allocation fails (recoverable host-side; never a trap).
@@ -114,16 +164,17 @@ fn linear_memory_bytes() -> u64 {
 /// is about to free would read freed memory: that is the promise, not a
 /// property this function can check.
 pub unsafe fn input<'a>(ptr: *const u8, len: u32) -> Result<&'a [u8], u32> {
+    let refuse = || last_error::malformed("a pointer/length pair is outside guest memory");
     let len = len as usize;
     if len == 0 {
         return Ok(&[]);
     }
     if ptr.is_null() || len > isize::MAX as usize {
-        return Err(STATUS_ENCODING);
+        return Err(refuse());
     }
-    let end = (ptr as usize).checked_add(len).ok_or(STATUS_ENCODING)?;
+    let end = (ptr as usize).checked_add(len).ok_or_else(refuse)?;
     if end as u64 > linear_memory_bytes() {
-        return Err(STATUS_ENCODING);
+        return Err(refuse());
     }
     // SAFETY: non-null, in-bounds of linear memory, and under `isize::MAX`;
     // wasm linear memory is fully initialized (fresh pages are zero), so

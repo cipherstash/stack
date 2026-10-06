@@ -132,6 +132,9 @@ pub unsafe fn take(ptr: *mut u8, len: usize) -> Option<Vec<u8>> {
 /// linear-memory pressure cannot fail before the wipe on an allocation the
 /// wipe itself made.
 pub fn wipe_all() {
+    // The recorded last error is one of these buffers; its slot must not
+    // outlive the wipe and name freed memory.
+    crate::last_error::forget();
     let live = BUFFERS.with(|b| core::mem::take(&mut *b.borrow_mut()));
     for (ptr, len) in live {
         // SAFETY: every entry was registered by `register`, which leaked a

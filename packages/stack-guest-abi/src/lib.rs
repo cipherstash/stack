@@ -45,10 +45,15 @@
 //! - [`buffers`] — the guest-owned buffer registry: every buffer handed to
 //!   the host is recorded with its true length, released through the
 //!   registry (never on the host's say-so), and zeroized on the way out.
-//! - [`abi`] (wasm32 only) — the `se_alloc` / `se_dealloc` exports every
-//!   guest has, the packed `u64` result encoding, and the hostile-input
-//!   helpers that validate a host `(ptr, len)` pair against linear memory
-//!   before any slice exists.
+//! - [`abi`] (wasm32 only) — the `se_alloc` / `se_dealloc` /
+//!   `se_last_error` exports every guest has, the packed `u64` result
+//!   encoding, the `export` wrapper every guest export runs through, and the
+//!   hostile-input helpers that validate a host `(ptr, len)` pair against
+//!   linear memory before any slice exists.
+//! - [`last_error`] — the full error behind the most recent failed export:
+//!   its code, message, help, fields and causes, encoded once in the
+//!   transport codec for `se_last_error`. The status number stays the fast
+//!   path; this is the detail a host asks for after it.
 //! - [`status`] — the status table. **One numbering for every guest**: the
 //!   codes below keep their values for good, and a guest that needs more
 //!   appends after them. The Go side decodes the table once.
@@ -61,8 +66,10 @@
 //! What is deliberately *not* here: anything that names a crate a guest is
 //! built over. The ZeroKMS connection over the transport, the token import
 //! the crypto guest uses for its phase-1 auth, the mapping from a library's
-//! error type onto the status table, and the `user-agent` a guest sends are
-//! each guest's own.
+//! error type onto the status table (and the recording of that error), and
+//! the `user-agent` a guest sends are each guest's own. The error encoder
+//! takes any miette diagnostic and its fields, so it names none of them
+//! either.
 //!
 //! # Conventions
 //!
@@ -71,7 +78,8 @@
 //! the guest's outputs — with `se_dealloc`, which zeroizes before freeing.
 //! Every fallible export returns one `u64`: a non-zero high half is an
 //! output pointer with the length in the low half; a zero high half carries
-//! a [`status`] code in the low half. Wasm modules are single-threaded; the
+//! a [`status`] code in the low half, and `se_last_error` then has the
+//! error behind it. Wasm modules are single-threaded; the
 //! host serializes calls into one instance, and during an export the host's
 //! imports may re-enter the guest only through `se_alloc`.
 //!
@@ -87,6 +95,7 @@
 
 pub mod buffers;
 pub mod headers;
+pub mod last_error;
 pub mod status;
 
 #[cfg(target_arch = "wasm32")]
