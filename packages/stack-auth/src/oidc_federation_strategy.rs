@@ -1,14 +1,18 @@
+mod cache;
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use cts_common::{Crn, CtsServiceDiscovery, ServiceDiscovery, WorkspaceId};
 
-use crate::auto_refresh::AutoRefresh;
+use crate::auto_refresh::{AutoRefresh, StickyDenial};
+use crate::clock::{system_clock, SharedClock};
 use crate::oidc_refresher::{JwtDigest, JwtRefresher, OidcFederation, OidcProvider};
 use crate::token_store::{NoStore, TokenStore};
 use crate::transport::{self, SharedTransport};
 use crate::HttpTransport;
 use crate::{ensure_trailing_slash, AuthError, AuthStrategy, SecretToken, ServiceToken, Token};
+use cache::JwtCache;
 
 /// How many distinct provider JWTs a strategy keeps a CTS token for unless
 /// [`OidcFederationStrategyBuilder::cache_capacity`] says otherwise.
@@ -90,148 +94,37 @@ pub struct OidcFederationStrategy<P, S = NoStore> {
     federation: Arc<OidcFederation>,
     store: Arc<S>,
     expected_workspace: WorkspaceId,
-    cache: Mutex<Cache<Engine<S>>>,
-}
-
-/// The refresh engine for one provider JWT.
-type Engine<S> = Arc<AutoRefresh<JwtRefresher, BoundStore<S>>>;
-
-/// The per-JWT engines, bounded, least recently used out first.
-///
-/// Generic over the engine handle `T` (an [`Engine`] in the strategy) so the
-/// policy can be tested without building one.
-struct Cache<T> {
-    capacity: usize,
-    /// A logical clock, bumped on every lookup: the entry with the smallest
-    /// stamp is the least recently used one.
-    tick: u64,
-    engines: HashMap<JwtDigest, Cached<T>>,
-}
-
-struct Cached<T> {
-    engine: T,
-    last_used: u64,
-}
-
-impl<T: Clone> Cache<T> {
-    fn new(capacity: usize) -> Self {
-        Self {
-            capacity,
-            tick: 0,
-            engines: HashMap::new(),
-        }
-    }
-
-    /// The engine for `digest`, built with `build` if there is none yet.
+    engines: Mutex<Engines<S>>,
+    /// The last account-level refusal (a usage limit, an unprovisioned org),
+    /// remembered for the strategy as a whole.
     ///
-    /// A new engine is retained only while there is room: at capacity, the
-    /// least recently used entry makes way for it, and with a capacity of
-    /// zero nothing is retained at all.
-    fn engine_for(&mut self, digest: JwtDigest, build: impl FnOnce() -> T) -> T {
-        self.tick += 1;
-        if let Some(cached) = self.engines.get_mut(&digest) {
-            cached.last_used = self.tick;
-            return cached.engine.clone();
-        }
-        let engine = build();
-        if self.capacity == 0 {
-            return engine;
-        }
-        if self.engines.len() >= self.capacity {
-            let victim = self
-                .engines
-                .iter()
-                .min_by_key(|(_, cached)| cached.last_used)
-                .map(|(digest, _)| *digest);
-            if let Some(victim) = victim {
-                let _ = self.engines.remove(&victim);
-            }
-        }
-        let _ = self.engines.insert(
-            digest,
-            Cached {
-                engine: engine.clone(),
-                last_used: self.tick,
-            },
-        );
-        engine
-    }
+    /// Each engine remembers refusals for its own JWT, but an engine whose
+    /// first exchange is refused is not kept (see
+    /// [`forget_failed`](Self::forget_failed)), and a refusal of the
+    /// *account* is the same answer for every JWT. Without this, a client
+    /// over its usage limit would re-ask CTS once per request per user, the
+    /// storm the engine's own denial exists to stop.
+    denial: Mutex<Option<StickyDenial>>,
+    clock: SharedClock,
 }
 
-#[cfg(test)]
-mod cache_tests {
-    use super::*;
+/// The refresh engine for one provider JWT: the same [`AutoRefresh`] every
+/// strategy uses, over a refresher that federates that one JWT and a store
+/// view bound to it.
+type RefreshEngine<S> = Arc<AutoRefresh<JwtRefresher, BoundStore<S>>>;
 
-    fn digest(jwt: &str) -> JwtDigest {
-        JwtDigest::of(&SecretToken::new(jwt))
-    }
-
-    /// A cache over a unit handle: `()` is `Clone`, so the policy runs with
-    /// no engine behind it.
-    fn cache(capacity: usize) -> Cache<()> {
-        Cache::new(capacity)
-    }
-
-    fn last_used(cache: &Cache<()>, jwt: &str) -> Option<u64> {
-        cache.engines.get(&digest(jwt)).map(|c| c.last_used)
-    }
-
-    /// The clock advances by one per lookup, hit or miss, and a hit restamps
-    /// its entry; that is what makes "least recently used" mean used, not
-    /// inserted.
-    #[test]
-    fn every_lookup_advances_the_clock_and_a_hit_restamps_the_entry() {
-        let mut cache = cache(8);
-        let built = std::cell::Cell::new(0);
-        let build = || built.set(built.get() + 1);
-
-        cache.engine_for(digest("a"), build);
-        cache.engine_for(digest("b"), build);
-        assert_eq!(
-            (last_used(&cache, "a"), last_used(&cache, "b")),
-            (Some(1), Some(2))
-        );
-
-        cache.engine_for(digest("a"), build);
-        assert_eq!(cache.tick, 3);
-        assert_eq!(last_used(&cache, "a"), Some(3), "a hit restamps");
-        assert_eq!(
-            last_used(&cache, "b"),
-            Some(2),
-            "an untouched entry keeps its stamp"
-        );
-        assert_eq!(built.get(), 2, "a hit does not build");
-    }
-
-    /// At capacity the entry with the smallest stamp goes: with room for two,
-    /// touching A before C arrives keeps A and evicts B.
-    #[test]
-    fn at_capacity_the_least_recently_used_entry_is_evicted() {
-        let mut cache = cache(2);
-        for jwt in ["a", "b", "a", "c"] {
-            cache.engine_for(digest(jwt), || ());
-        }
-        assert_eq!(cache.engines.len(), 2);
-        assert_eq!(last_used(&cache, "a"), Some(3));
-        assert_eq!(
-            last_used(&cache, "b"),
-            None,
-            "b was the least recently used"
-        );
-        assert_eq!(last_used(&cache, "c"), Some(4));
-    }
-
-    /// Capacity zero retains nothing and builds on every lookup.
-    #[test]
-    fn a_zero_capacity_cache_retains_nothing() {
-        let mut cache = cache(0);
-        let built = std::cell::Cell::new(0);
-        for _ in 0..3 {
-            cache.engine_for(digest("a"), || built.set(built.get() + 1));
-        }
-        assert_eq!(built.get(), 3);
-        assert!(cache.engines.is_empty());
-    }
+/// The strategy's engines, in two tiers.
+///
+/// An engine earns its place in the bounded cache by holding a token. Until
+/// its first exchange has succeeded it waits in `pending`, where concurrent
+/// callers for the same JWT still find it (and so share one exchange), but
+/// where it cannot evict a user who holds a token. A caller presenting JWTs
+/// CTS refuses therefore churns nothing: each refused engine leaves
+/// `pending` with its failure, and `pending` itself is bounded by the number
+/// of exchanges in flight.
+struct Engines<S> {
+    cache: JwtCache<RefreshEngine<S>>,
+    pending: HashMap<JwtDigest, RefreshEngine<S>>,
 }
 
 /// A [`TokenStore`] view that serves a stored token only to the JWT it was
@@ -246,14 +139,17 @@ mod cache_tests {
 /// it.
 struct BoundStore<S> {
     inner: Arc<S>,
-    /// The hex digest the token must carry, see [`Token::federated_from`].
-    federated_from: String,
+    /// The digest a stored token must carry, see [`Token::federated_from`].
+    digest: JwtDigest,
 }
 
 impl<S: TokenStore> TokenStore for BoundStore<S> {
     async fn load(&self) -> Option<Token> {
         let token = self.inner.load().await?;
-        if token.federated_from() == Some(self.federated_from.as_str()) {
+        if token
+            .federated_from()
+            .is_some_and(|hex| self.digest.matches_hex(hex))
+        {
             Some(token)
         } else {
             tracing::debug!("stored token was federated from another JWT; ignoring it");
@@ -291,6 +187,7 @@ impl<P: OidcProvider> OidcFederationStrategy<P> {
             token_store: NoStore,
             transport: None,
             cache_capacity: DEFAULT_CACHE_CAPACITY,
+            clock: system_clock(),
         }
     }
 }
@@ -298,26 +195,106 @@ impl<P: OidcProvider> OidcFederationStrategy<P> {
 impl<P, S: TokenStore> OidcFederationStrategy<P, S> {
     /// The refresh engine for `jwt`: the cached one, or a new one over this
     /// strategy's federation endpoint and store, bound to `jwt`.
-    fn engine_for(&self, digest: JwtDigest, jwt: SecretToken) -> Engine<S> {
-        let mut cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
-        cache.engine_for(digest, || {
-            Arc::new(AutoRefresh::with_store(
-                JwtRefresher::new(jwt, digest, Arc::clone(&self.federation)),
-                BoundStore {
-                    inner: Arc::clone(&self.store),
-                    federated_from: digest.to_hex(),
-                },
-            ))
-        })
+    ///
+    /// A new engine is created only if no account-level refusal is fresh:
+    /// that refusal is the answer every JWT would get, so it is returned
+    /// without an exchange. A cached engine is handed back regardless — it may
+    /// hold a token that is still usable, which a settled refusal does not
+    /// invalidate (the same rule [`AutoRefresh`] applies to its own).
+    fn engine_for(&self, jwt: SecretToken) -> Result<RefreshEngine<S>, AuthError> {
+        let digest = JwtDigest::of(&jwt);
+        let mut engines = self.engines.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(engine) = engines.cache.get(digest) {
+            return Ok(engine);
+        }
+        if let Some(engine) = engines.pending.get(&digest) {
+            return Ok(Arc::clone(engine));
+        }
+        // A new engine is about to make its first exchange: a refusal of the
+        // account answers it without one.
+        if let Some(err) = self.fresh_denial() {
+            return Err(err);
+        }
+        let engine = Arc::new(AutoRefresh::with_store(
+            JwtRefresher::new(jwt, Arc::clone(&self.federation)),
+            BoundStore {
+                inner: Arc::clone(&self.store),
+                digest,
+            },
+        ));
+        let _ = engines.pending.insert(digest, Arc::clone(&engine));
+        Ok(engine)
     }
 
-    /// How many distinct JWTs currently have a cached engine.
+    /// Record how `engine`'s `get_token` went.
+    ///
+    /// Success promotes a pending engine into the cache: it now holds a token
+    /// and may take a slot. Failure drops it from wherever it is — a pending
+    /// engine never earned a slot, and a cached one whose renewal left it
+    /// with no usable token has nothing left to hold one with — unless the
+    /// entry has since been replaced. A refusal of the account rather than
+    /// the credential is also remembered for every JWT.
+    fn settle(&self, engine: &RefreshEngine<S>, outcome: Result<(), &AuthError>) {
+        let digest = engine.refresher().digest();
+        let mut engines = self.engines.lock().unwrap_or_else(PoisonError::into_inner);
+        let was_pending = engines
+            .pending
+            .get(&digest)
+            .is_some_and(|pending| Arc::ptr_eq(pending, engine));
+        if was_pending {
+            let _ = engines.pending.remove(&digest);
+        }
+        match outcome {
+            Ok(()) => {
+                if was_pending {
+                    engines.cache.insert(digest, Arc::clone(engine));
+                }
+            }
+            Err(err) => {
+                engines
+                    .cache
+                    .remove_if(digest, |cached| Arc::ptr_eq(cached, engine));
+                if err.is_account_refusal() {
+                    let now = self.clock.now_unix_secs();
+                    *self.denial.lock().unwrap_or_else(PoisonError::into_inner) =
+                        Some(StickyDenial::new(err, now));
+                }
+            }
+        }
+    }
+
+    /// The remembered account-level refusal, if it is still within its
+    /// window; a stale one is discarded so the next exchange asks CTS again.
+    fn fresh_denial(&self) -> Option<AuthError> {
+        let now = self.clock.now_unix_secs();
+        let mut denial = self.denial.lock().unwrap_or_else(PoisonError::into_inner);
+        match &*denial {
+            Some(recorded) if !recorded.is_stale(now) => Some(recorded.to_error()),
+            Some(_) => {
+                *denial = None;
+                None
+            }
+            None => None,
+        }
+    }
+
+    /// How many distinct JWTs currently hold a token in the cache.
     #[cfg(all(test, feature = "http"))]
     fn cached_jwts(&self) -> usize {
-        self.cache
+        self.engines
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .engines
+            .cache
+            .len()
+    }
+
+    /// How many engines are waiting on their first exchange.
+    #[cfg(all(test, feature = "http"))]
+    fn pending_jwts(&self) -> usize {
+        self.engines
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .pending
             .len()
     }
 }
@@ -327,12 +304,19 @@ impl<P: OidcProvider, S: TokenStore> AuthStrategy for &OidcFederationStrategy<P,
         // Ask who this call is for before anything else: the JWT is the key
         // to the right cached token, and only its owner may receive it.
         let jwt = self.provider.fetch().await?;
-        let digest = JwtDigest::of(&jwt);
-        let engine = self.engine_for(digest, jwt);
-        engine
-            .get_token()
-            .await?
-            .verify_workspace(self.expected_workspace)
+        let engine = self.engine_for(jwt)?;
+        let token = match engine.get_token().await {
+            Ok(token) => {
+                self.settle(&engine, Ok(()));
+                token
+            }
+            Err(err) => {
+                let err = AuthError::from(err);
+                self.settle(&engine, Err(&err));
+                return Err(err);
+            }
+        };
+        token.verify_workspace(self.expected_workspace)
     }
 }
 
@@ -346,9 +330,18 @@ pub struct OidcFederationStrategyBuilder<P, S = NoStore> {
     token_store: S,
     transport: Option<SharedTransport>,
     cache_capacity: usize,
+    clock: SharedClock,
 }
 
 impl<P, S> OidcFederationStrategyBuilder<P, S> {
+    /// Read "now" from `clock` instead of the wall clock, so a test can age
+    /// the remembered account refusal deterministically.
+    #[cfg(all(test, feature = "http"))]
+    fn clock(mut self, clock: SharedClock) -> Self {
+        self.clock = clock;
+        self
+    }
+
     /// Send this strategy's requests through `transport` instead of the
     /// bundled `reqwest` client.
     ///
@@ -392,11 +385,12 @@ impl<P, S> OidcFederationStrategyBuilder<P, S> {
     /// How many distinct provider JWTs the strategy keeps a CTS token for
     /// (1024 unless set). When full, the least recently used JWT's token is
     /// dropped and that user is re-federated on their next call. Zero caches
-    /// nothing: every call exchanges its JWT.
+    /// nothing: every call exchanges its JWT. A JWT whose exchange CTS refuses
+    /// takes no slot.
     ///
     /// Size it to the number of users a client serves concurrently within a
     /// CTS token's lifetime (about 15 minutes); each entry holds that user's
-    /// JWT and CTS token.
+    /// JWT and CTS token. The language bindings build with the default.
     pub fn cache_capacity(mut self, capacity: usize) -> Self {
         self.cache_capacity = capacity;
         self
@@ -428,6 +422,7 @@ impl<P, S> OidcFederationStrategyBuilder<P, S> {
             token_store: store,
             transport: self.transport,
             cache_capacity: self.cache_capacity,
+            clock: self.clock,
         }
     }
 }
@@ -459,7 +454,12 @@ impl<P: OidcProvider, S: TokenStore> OidcFederationStrategyBuilder<P, S> {
             federation: Arc::new(federation),
             store: Arc::new(self.token_store),
             expected_workspace,
-            cache: Mutex::new(Cache::new(self.cache_capacity)),
+            engines: Mutex::new(Engines {
+                cache: JwtCache::new(self.cache_capacity),
+                pending: HashMap::new(),
+            }),
+            denial: Mutex::new(None),
+            clock: self.clock,
         })
     }
 }
@@ -946,7 +946,13 @@ mod tests {
         assert_eq!(
             strategy.cached_jwts(),
             2,
-            "the failed exchange's engine took B's place"
+            "a refused exchange takes no slot: A and C are still cached"
+        );
+        assert_eq!(strategy.pending_jwts(), 0, "B's engine was dropped");
+        act_as(&current, "jwt-a");
+        assert_eq!(
+            subject(&(&strategy).get_token().await.expect("A still cached")),
+            "CS|a"
         );
     }
 
@@ -1132,5 +1138,292 @@ mod tests {
             matches!(err, AuthError::WorkspaceMismatch { .. }),
             "expected WorkspaceMismatch, got {err:?}",
         );
+    }
+
+    // ---- Exchanges counted exactly, over a stub transport ----
+
+    /// A transport that answers `/api/authorise` itself: a CTS token naming
+    /// the JWT it was exchanged from, or a canned refusal, and counts the
+    /// exchanges it saw. Exact counts are what the mock server above cannot
+    /// give.
+    #[derive(Clone)]
+    struct CountingCts(Arc<CountingCtsInner>);
+
+    struct CountingCtsInner {
+        exchanges: AtomicUsize,
+        /// Refusals to hand out, in order, before answering normally.
+        refusals: Mutex<Vec<(u16, &'static str)>>,
+        /// When set, every exchange waits for a permit before answering, so a
+        /// test can look at the strategy while an exchange is in flight.
+        gate: Option<Arc<tokio::sync::Semaphore>>,
+    }
+
+    impl CountingCts {
+        fn new() -> Self {
+            Self(Arc::new(CountingCtsInner {
+                exchanges: AtomicUsize::new(0),
+                refusals: Mutex::new(Vec::new()),
+                gate: None,
+            }))
+        }
+
+        /// A CTS whose exchanges block until the returned semaphore grants
+        /// them a permit.
+        fn gated() -> (Self, Arc<tokio::sync::Semaphore>) {
+            let gate = Arc::new(tokio::sync::Semaphore::new(0));
+            let cts = Self(Arc::new(CountingCtsInner {
+                exchanges: AtomicUsize::new(0),
+                refusals: Mutex::new(Vec::new()),
+                gate: Some(Arc::clone(&gate)),
+            }));
+            (cts, gate)
+        }
+
+        fn exchanges(&self) -> usize {
+            self.0.exchanges.load(Ordering::SeqCst)
+        }
+
+        /// The next exchange is refused with `status` and `body`.
+        fn refuse_next(&self, status: u16, body: &'static str) {
+            self.0
+                .refusals
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push((status, body));
+        }
+    }
+
+    const USAGE_LIMIT_BODY: &str = r#"{"error":"access_denied","cs_code":"USAGE_LIMIT_EXCEEDED","error_description":"Workspace has exceeded its usage limit"}"#;
+
+    impl HttpTransport for CountingCts {
+        async fn send(
+            &self,
+            request: crate::HttpRequest,
+        ) -> Result<crate::HttpResponse, crate::RequestError> {
+            let _ = self.0.exchanges.fetch_add(1, Ordering::SeqCst);
+            if let Some(gate) = &self.0.gate {
+                gate.acquire().await.expect("gate is never closed").forget();
+            }
+            let refusal = {
+                let mut refusals = self
+                    .0
+                    .refusals
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                if refusals.is_empty() {
+                    None
+                } else {
+                    Some(refusals.remove(0))
+                }
+            };
+            if let Some((status, body)) = refusal {
+                return Ok(crate::HttpResponse::new(status, Vec::new(), body.into()));
+            }
+            let body: serde_json::Value =
+                serde_json::from_slice(request.body()).expect("exchange body is JSON");
+            let jwt = body["oidcToken"]
+                .as_str()
+                .expect("exchange carries the JWT");
+            let cts = jwt_for_principal(WS, &format!("CS|{jwt}"));
+            let answer = serde_json::json!({ "accessToken": cts, "expiry": now() + 3600 });
+            Ok(crate::HttpResponse::new(
+                200,
+                Vec::new(),
+                serde_json::to_vec(&answer).expect("JSON"),
+            ))
+        }
+    }
+
+    fn strategy_over<P: OidcProvider>(
+        cts: &CountingCts,
+        provider: P,
+    ) -> OidcFederationStrategyBuilder<P> {
+        OidcFederationStrategy::builder(crn_with_workspace(WS), provider)
+            .transport(cts.clone())
+            .base_url("https://cts.example.com/".parse().expect("url"))
+    }
+
+    /// Two callers arriving together for one JWT share one exchange: the
+    /// engine is in the cache before either federates, so the second waits
+    /// on the first rather than asking CTS again.
+    #[tokio::test]
+    async fn concurrent_first_calls_for_one_jwt_share_one_exchange() {
+        let cts = CountingCts::new();
+        let strategy = strategy_over(&cts, provider()).build().expect("builder");
+
+        let (first, second) = tokio::join!((&strategy).get_token(), (&strategy).get_token());
+        assert_eq!(
+            subject(&first.expect("first")),
+            "CS|header.payload.signature"
+        );
+        assert_eq!(
+            subject(&second.expect("second")),
+            "CS|header.payload.signature"
+        );
+        assert_eq!(cts.exchanges(), 1, "one exchange for both callers");
+        assert_eq!(strategy.cached_jwts(), 1);
+        assert_eq!(strategy.pending_jwts(), 0, "promoted into the cache");
+    }
+
+    /// A refused exchange leaves nothing in the cache: a caller presenting
+    /// JWTs CTS rejects cannot evict users who hold tokens, and the same JWT
+    /// is simply exchanged again on its next call.
+    #[tokio::test]
+    async fn a_refused_exchange_takes_no_slot_and_is_retried() {
+        let cts = CountingCts::new();
+        cts.refuse_next(500, r#"{"error":"boom"}"#);
+        let strategy = strategy_over(&cts, provider()).build().expect("builder");
+
+        let err = (&strategy).get_token().await.expect_err("refused");
+        assert!(matches!(err, AuthError::Server(_)), "{err:?}");
+        assert_eq!(strategy.cached_jwts(), 0, "a refused JWT holds no slot");
+        assert_eq!(strategy.pending_jwts(), 0, "and does not linger as pending");
+
+        let token = (&strategy).get_token().await.expect("retried");
+        assert_eq!(subject(&token), "CS|header.payload.signature");
+        assert_eq!(cts.exchanges(), 2);
+        assert_eq!(strategy.cached_jwts(), 1);
+    }
+
+    /// A refusal of the *account* (a usage limit) is remembered for every
+    /// JWT: the next user's call within the window gets the same answer
+    /// without a second exchange, even though no engine was kept.
+    #[tokio::test]
+    async fn an_account_refusal_is_remembered_across_jwts_without_an_engine() {
+        let cts = CountingCts::new();
+        cts.refuse_next(402, USAGE_LIMIT_BODY);
+        let (current, _, provider) = switchable_provider();
+        let strategy = strategy_over(&cts, provider).build().expect("builder");
+
+        act_as(&current, "jwt-a");
+        let err = (&strategy).get_token().await.expect_err("over the limit");
+        assert!(matches!(err, AuthError::UsageLimitExceeded(_)), "{err:?}");
+        assert_eq!(strategy.cached_jwts(), 0);
+
+        act_as(&current, "jwt-b");
+        let err = (&strategy)
+            .get_token()
+            .await
+            .expect_err("the refusal is the account's, so B gets it too");
+        assert!(matches!(err, AuthError::UsageLimitExceeded(_)), "{err:?}");
+        assert_eq!(cts.exchanges(), 1, "B did not re-ask CTS");
+    }
+
+    /// A remembered account refusal does not take a token away from a user
+    /// who already holds one: a settled refusal suppresses exchanges, it does
+    /// not invalidate a credential that still works.
+    #[tokio::test]
+    async fn a_remembered_refusal_does_not_block_a_cached_user() {
+        let cts = CountingCts::new();
+        let (current, _, provider) = switchable_provider();
+        let strategy = strategy_over(&cts, provider).build().expect("builder");
+
+        act_as(&current, "jwt-a");
+        assert_eq!(
+            subject(&(&strategy).get_token().await.expect("A")),
+            "CS|jwt-a"
+        );
+
+        cts.refuse_next(402, USAGE_LIMIT_BODY);
+        act_as(&current, "jwt-b");
+        let _ = (&strategy).get_token().await.expect_err("B is refused");
+
+        act_as(&current, "jwt-a");
+        assert_eq!(
+            subject(&(&strategy).get_token().await.expect("A still served")),
+            "CS|jwt-a"
+        );
+        assert_eq!(cts.exchanges(), 2, "A's call was served from the cache");
+    }
+
+    /// While its first exchange is in flight an engine is pending, not
+    /// cached: a second caller for the same JWT finds it there and waits,
+    /// and only the answer promotes it into the cache.
+    #[tokio::test]
+    async fn an_engine_is_pending_until_its_first_exchange_answers() {
+        let (cts, gate) = CountingCts::gated();
+        let strategy = Arc::new(strategy_over(&cts, provider()).build().expect("builder"));
+
+        let in_flight = {
+            let strategy = Arc::clone(&strategy);
+            tokio::spawn(async move { (&*strategy).get_token().await })
+        };
+        for _ in 0..1000 {
+            if strategy.pending_jwts() == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(strategy.pending_jwts(), 1, "the engine is waiting on CTS");
+        assert_eq!(strategy.cached_jwts(), 0, "and holds no slot yet");
+
+        // A second caller for the same JWT joins the pending engine rather
+        // than starting another exchange.
+        let joined = {
+            let strategy = Arc::clone(&strategy);
+            tokio::spawn(async move { (&*strategy).get_token().await })
+        };
+        tokio::task::yield_now().await;
+        assert_eq!(strategy.pending_jwts(), 1);
+        assert_eq!(cts.exchanges(), 1, "the second caller did not exchange");
+
+        gate.add_permits(1);
+        let first = in_flight.await.expect("task").expect("first caller");
+        let second = joined.await.expect("task").expect("second caller");
+        assert_eq!(subject(&first), "CS|header.payload.signature");
+        assert_eq!(subject(&second), "CS|header.payload.signature");
+        assert_eq!(strategy.pending_jwts(), 0, "promoted");
+        assert_eq!(strategy.cached_jwts(), 1);
+        assert_eq!(cts.exchanges(), 1);
+    }
+
+    /// The remembered account refusal is forgotten after its window, so the
+    /// next first call asks CTS again: the customer may have upgraded.
+    #[tokio::test]
+    async fn a_remembered_refusal_expires_after_its_window() {
+        let cts = CountingCts::new();
+        cts.refuse_next(402, USAGE_LIMIT_BODY);
+        let clock = crate::clock::TestClock::new(1_700_000_000);
+        let (current, _, provider) = switchable_provider();
+        let strategy = strategy_over(&cts, provider)
+            .clock(Arc::new(clock.clone()))
+            .build()
+            .expect("builder");
+
+        act_as(&current, "jwt-a");
+        let _ = (&strategy).get_token().await.expect_err("over the limit");
+        act_as(&current, "jwt-b");
+        let _ = (&strategy)
+            .get_token()
+            .await
+            .expect_err("still remembered within the window");
+        assert_eq!(cts.exchanges(), 1);
+
+        clock.advance(crate::auto_refresh::DENIAL_TTL_SECS);
+        let token = (&strategy)
+            .get_token()
+            .await
+            .expect("the window has passed, so CTS is asked again and answers");
+        assert_eq!(subject(&token), "CS|jwt-b");
+        assert_eq!(cts.exchanges(), 2);
+    }
+
+    /// A credential refusal (a 500 here) is not an account refusal: the next
+    /// JWT is exchanged normally.
+    #[tokio::test]
+    async fn a_credential_refusal_is_not_remembered_for_other_jwts() {
+        let cts = CountingCts::new();
+        cts.refuse_next(500, r#"{"error":"boom"}"#);
+        let (current, _, provider) = switchable_provider();
+        let strategy = strategy_over(&cts, provider).build().expect("builder");
+
+        act_as(&current, "jwt-a");
+        let _ = (&strategy).get_token().await.expect_err("A refused");
+        act_as(&current, "jwt-b");
+        assert_eq!(
+            subject(&(&strategy).get_token().await.expect("B")),
+            "CS|jwt-b"
+        );
+        assert_eq!(cts.exchanges(), 2);
     }
 }

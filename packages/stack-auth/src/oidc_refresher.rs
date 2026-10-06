@@ -125,6 +125,12 @@ impl JwtDigest {
     pub(crate) fn to_hex(self) -> String {
         self.0.iter().map(|byte| format!("{byte:02x}")).collect()
     }
+
+    /// Whether `hex`, as read back from [`Token::federated_from`], is this
+    /// digest.
+    pub(crate) fn matches_hex(self, hex: &str) -> bool {
+        hex == self.to_hex()
+    }
 }
 
 /// The CTS endpoint a strategy federates against: `POST /api/authorise` on
@@ -213,16 +219,18 @@ pub(crate) struct JwtRefresher {
 }
 
 impl JwtRefresher {
-    pub(crate) fn new(
-        jwt: SecretToken,
-        digest: JwtDigest,
-        federation: Arc<OidcFederation>,
-    ) -> Self {
+    pub(crate) fn new(jwt: SecretToken, federation: Arc<OidcFederation>) -> Self {
+        let digest = JwtDigest::of(&jwt);
         Self {
             jwt,
             digest,
             federation,
         }
+    }
+
+    /// The digest of the JWT this refresher federates.
+    pub(crate) fn digest(&self) -> JwtDigest {
+        self.digest
     }
 }
 
@@ -333,9 +341,12 @@ mod tests {
     }
 
     fn refresher_for(server: &MockServer, jwt: &str) -> JwtRefresher {
-        let jwt = SecretToken::new(jwt);
-        let digest = JwtDigest::of(&jwt);
-        JwtRefresher::new(jwt, digest, federation(server))
+        JwtRefresher::new(SecretToken::new(jwt), federation(server))
+    }
+
+    /// The request body `/api/authorise` receives for `jwt` in this workspace.
+    fn exchange_of(jwt: &str) -> serde_json::Value {
+        serde_json::json!({ "oidcToken": jwt, "workspaceId": WORKSPACE_ID })
     }
 
     // ---- Regression: CTS `expiry` is an absolute epoch (CIP-3233) ----
@@ -393,7 +404,7 @@ mod tests {
         mocks.mock(|when, then| {
             when.post()
                 .path("/api/authorise")
-                .json(serde_json::json!({ "oidcToken": "the-jwt", "workspaceId": WORKSPACE_ID }));
+                .json(exchange_of("the-jwt"));
             then.json(auth_response_json("cts-token", 3600));
         });
         let server = start_server(mocks).await;
@@ -415,7 +426,7 @@ mod tests {
         mocks.mock(|when, then| {
             when.post()
                 .path("/api/authorise")
-                .json(serde_json::json!({ "oidcToken": "held-jwt", "workspaceId": WORKSPACE_ID }));
+                .json(exchange_of("held-jwt"));
             then.json(auth_response_json("cts-token", 3600));
         });
         let server = start_server(mocks).await;
@@ -443,7 +454,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             body,
-            serde_json::json!({ "oidcToken": "the-jwt", "workspaceId": WORKSPACE_ID }),
+            exchange_of("the-jwt"),
             "request body should carry exactly the OIDC token and workspace ID"
         );
     }
@@ -457,7 +468,7 @@ mod tests {
         mocks.mock(|when, then| {
             when.post()
                 .path("/api/authorise")
-                .json(serde_json::json!({ "oidcToken": "held-jwt", "workspaceId": WORKSPACE_ID }));
+                .json(exchange_of("held-jwt"));
             then.json(auth_response_json("first", 0));
         });
         let server = start_server(mocks).await;
@@ -471,7 +482,7 @@ mod tests {
         server.mocks().mock(|when, then| {
             when.post()
                 .path("/api/authorise")
-                .json(serde_json::json!({ "oidcToken": "held-jwt", "workspaceId": WORKSPACE_ID }));
+                .json(exchange_of("held-jwt"));
             then.json(auth_response_json("second", 3600));
         });
         assert_eq!(engine.get_token().await.unwrap().as_str(), "second");

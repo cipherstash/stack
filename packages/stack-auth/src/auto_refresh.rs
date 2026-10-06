@@ -96,14 +96,14 @@ struct State {
 /// types — so the denial is stored as the wire pair it round-trips through and
 /// rebuilt per call. `USAGE_LIMIT_EXCEEDED` round-trips exactly, message
 /// included; see [`AuthError::from_error_code`](crate::AuthError::from_error_code).
-struct StickyDenial {
+pub(crate) struct StickyDenial {
     code: &'static str,
     message: String,
     recorded_at: u64,
 }
 
 impl StickyDenial {
-    fn new(err: &crate::AuthError, now: u64) -> Self {
+    pub(crate) fn new(err: &crate::AuthError, now: u64) -> Self {
         Self {
             code: err.error_code(),
             message: err.to_string(),
@@ -119,11 +119,11 @@ impl StickyDenial {
     /// again costs one request, while pinning the entry locks the caller out
     /// until the clock catches up — which for a large backwards step is
     /// indistinguishable from forever.
-    fn is_stale(&self, now: u64) -> bool {
+    pub(crate) fn is_stale(&self, now: u64) -> bool {
         now < self.recorded_at || now - self.recorded_at >= DENIAL_TTL_SECS
     }
 
-    fn to_error(&self) -> crate::AuthError {
+    pub(crate) fn to_error(&self) -> crate::AuthError {
         crate::AuthError::from_error_code(self.code, &self.message, &serde_json::Map::new())
     }
 }
@@ -292,6 +292,13 @@ impl<R, S: TokenStore> AutoRefresh<R, S> {
             refresh_notify: Notify::new(),
             clock: system_clock(),
         }
+    }
+}
+
+impl<R, S> AutoRefresh<R, S> {
+    /// The refresher this engine renews through.
+    pub(crate) fn refresher(&self) -> &R {
+        &self.refresher
     }
 }
 

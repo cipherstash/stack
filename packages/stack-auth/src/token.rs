@@ -44,15 +44,8 @@ pub struct Token {
     pub(crate) client_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) device_instance_id: Option<String>,
-    /// Set only on a token minted by OIDC federation: the lowercase hex
-    /// SHA-256 of the provider JWT it was exchanged from.
-    ///
-    /// [`OidcFederationStrategy`](crate::OidcFederationStrategy) serves a
-    /// token from a [`TokenStore`](crate::TokenStore) only to the JWT that
-    /// produced it, so one store can be shared across users without ever
-    /// handing one user's token to another. Absent on every other token
-    /// (access key, device session), and on tokens stored before this field
-    /// existed, which the strategy therefore treats as a cache miss.
+    /// See [`federated_from`](Self::federated_from). Absent on tokens stored
+    /// before the field existed, which the strategy treats as a cache miss.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) federated_from: Option<String>,
 }
