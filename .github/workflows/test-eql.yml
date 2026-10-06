@@ -553,8 +553,10 @@ jobs:
         image: postgres:17
         env:
           POSTGRES_PASSWORD: postgres
+        # Container port only: Docker picks the host port, and the test step
+        # reads it from `job.services`, so the number is written once.
         ports:
-          - 7433:5432
+          - 5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -572,11 +574,15 @@ jobs:
           working_directory: packages/eql
           # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
           cache_key_prefix: mise-v1-ubuntu-2204
+      # Its own key, and it saves: this job is the only one that compiles the
+      # stack-encrypt feature tree (eql-encryption-tests, stack-encrypt,
+      # stack-kms, vitaminc), which `build-archive` never builds into the
+      # shared `sqlx-tests` entry. Restoring that entry here left every run a
+      # cold compile of exactly the crates it needed.
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: packages/eql
-          shared-key: sqlx-tests
-          save-if: false
+          shared-key: rust-crates
       # `mise run test:crates` runs `cargo fmt --check` at the workspace root,
       # which covers tests/sqlx (a workspace member). This subsumes the old
       # standalone `test:lint` step that the removed per-version test job ran.
@@ -595,14 +601,14 @@ jobs:
       # so `eql-suite-ci.test.mjs` counts them among the cargo tasks a root
       # workflow must reach, and `eql-workflow-filters.test.mjs` derives the
       # paths they read. The database task takes the connection from
-      # EQL_TEST_DATABASE_URL alone; the port is written once more, in the
-      # service's `ports:`, which no expression can reach from here.
+      # EQL_TEST_DATABASE_URL alone, and the host port in it comes from the
+      # service, so the two cannot disagree.
       - name: Test Rust text equality
         run: mise run test:encryption
 
       - name: Test Rust text equality with PostgreSQL
         env:
-          EQL_TEST_DATABASE_URL: "host=localhost port=7433 user=postgres password=postgres dbname=postgres"
+          EQL_TEST_DATABASE_URL: "host=localhost port=${{ job.services.encryption-postgres.ports['5432'] }} user=postgres password=postgres dbname=postgres"
         run: mise run test:encryption:postgres
 
       - name: Compile Rust text equality for WASI without HTTP
