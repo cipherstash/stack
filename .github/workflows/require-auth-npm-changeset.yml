@@ -6,10 +6,8 @@ name: "Require @cipherstash/auth changeset"
 # and the npm API does not move: the npm binary is built from that crate, and
 # nothing else would release it.
 #
-# The `git diff` pathspec selects the folders; the script's `--shipped` mode
-# then drops paths no published package contains (tests, examples, test
-# config) and manifests whose only change is to devDependencies, so a
-# dev-tool bump does not republish seven packages with nothing in them.
+# Changes that never ship (tests, examples, devDependencies) are filtered out
+# by `check-auth-npm-changeset.mjs --shipped`.
 #
 # The paths below and the job's `git diff` pathspec are held to the same set
 # by scripts/__tests__/check-auth-npm-changeset.test.mjs. There is no `push:`
