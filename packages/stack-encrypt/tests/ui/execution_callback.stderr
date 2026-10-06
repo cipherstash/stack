@@ -5,17 +5,7 @@ error[E0277]: the trait bound `(): KeysetRegistry` is not satisfied
   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `KeysetRegistry` is not implemented for `()`
   |
 help: the following other types implement trait `KeysetRegistry`
- --> src/registry.rs
-  |
-  |   impl KeysetRegistry for NoRegistry {
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoRegistry`
-  |
- ::: src/registry/fake.rs
-  |
-  |   impl KeysetRegistry for FakeKeysetRegistry {
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `FakeKeysetRegistry`
-  |
- ::: src/registry/zerokms.rs
+ --> src/registry/zerokms.rs
   |
   | / impl<C, Conn> KeysetRegistry for Arc<StackKms<C, Conn>>
   | | where
@@ -23,6 +13,23 @@ help: the following other types implement trait `KeysetRegistry`
   | |     for<'a> &'a C: stack_auth::AuthStrategy,
   | |     Conn: stack_kms::ZeroKMSConnection + Send + Sync,
   | |_____________________________________________________^ `Arc<StackKms<C, Conn>>`
+  |
+ ::: src/registry/fake.rs
+  |
+  |   impl KeysetRegistry for FakeKeysetRegistry {
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `FakeKeysetRegistry`
+  |
+ ::: src/registry.rs
+  |
+  |   impl KeysetRegistry for NoRegistry {
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoRegistry`
+  |
+ ::: src/registry/static_keysets.rs
+  |
+  | / impl<P> KeysetRegistry for StaticKeysetRegistry<P>
+  | | where
+  | |     P: KeyProvider<32> + IndexKeyProvider<32> + Send + Sync,
+  | |____________________________________________________________^ `StaticKeysetRegistry<P>`
 note: required by a bound in `Encryption`
  --> src/target/operations.rs
   |
@@ -39,17 +46,7 @@ error[E0277]: the trait bound `(): KeysetRegistry` is not satisfied
   | |__________^ the trait `KeysetRegistry` is not implemented for `()`
   |
 help: the following other types implement trait `KeysetRegistry`
- --> src/registry.rs
-  |
-  |   impl KeysetRegistry for NoRegistry {
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoRegistry`
-  |
- ::: src/registry/fake.rs
-  |
-  |   impl KeysetRegistry for FakeKeysetRegistry {
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `FakeKeysetRegistry`
-  |
- ::: src/registry/zerokms.rs
+ --> src/registry/zerokms.rs
   |
   | / impl<C, Conn> KeysetRegistry for Arc<StackKms<C, Conn>>
   | | where
@@ -57,6 +54,23 @@ help: the following other types implement trait `KeysetRegistry`
   | |     for<'a> &'a C: stack_auth::AuthStrategy,
   | |     Conn: stack_kms::ZeroKMSConnection + Send + Sync,
   | |_____________________________________________________^ `Arc<StackKms<C, Conn>>`
+  |
+ ::: src/registry/fake.rs
+  |
+  |   impl KeysetRegistry for FakeKeysetRegistry {
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `FakeKeysetRegistry`
+  |
+ ::: src/registry.rs
+  |
+  |   impl KeysetRegistry for NoRegistry {
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoRegistry`
+  |
+ ::: src/registry/static_keysets.rs
+  |
+  | / impl<P> KeysetRegistry for StaticKeysetRegistry<P>
+  | | where
+  | |     P: KeyProvider<32> + IndexKeyProvider<32> + Send + Sync,
+  | |____________________________________________________________^ `StaticKeysetRegistry<P>`
 note: required by a bound in `Encryption`
  --> src/target/operations.rs
   |
@@ -70,17 +84,7 @@ error[E0277]: the trait bound `(): KeysetRegistry` is not satisfied
   |                             ^^^^^^ the trait `KeysetRegistry` is not implemented for `()`
   |
 help: the following other types implement trait `KeysetRegistry`
- --> src/registry.rs
-  |
-  |   impl KeysetRegistry for NoRegistry {
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoRegistry`
-  |
- ::: src/registry/fake.rs
-  |
-  |   impl KeysetRegistry for FakeKeysetRegistry {
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `FakeKeysetRegistry`
-  |
- ::: src/registry/zerokms.rs
+ --> src/registry/zerokms.rs
   |
   | / impl<C, Conn> KeysetRegistry for Arc<StackKms<C, Conn>>
   | | where
@@ -88,6 +92,23 @@ help: the following other types implement trait `KeysetRegistry`
   | |     for<'a> &'a C: stack_auth::AuthStrategy,
   | |     Conn: stack_kms::ZeroKMSConnection + Send + Sync,
   | |_____________________________________________________^ `Arc<StackKms<C, Conn>>`
+  |
+ ::: src/registry/fake.rs
+  |
+  |   impl KeysetRegistry for FakeKeysetRegistry {
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `FakeKeysetRegistry`
+  |
+ ::: src/registry.rs
+  |
+  |   impl KeysetRegistry for NoRegistry {
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoRegistry`
+  |
+ ::: src/registry/static_keysets.rs
+  |
+  | / impl<P> KeysetRegistry for StaticKeysetRegistry<P>
+  | | where
+  | |     P: KeyProvider<32> + IndexKeyProvider<32> + Send + Sync,
+  | |____________________________________________________________^ `StaticKeysetRegistry<P>`
 note: required by a bound in `KeysetCipher`
  --> src/keyset.rs
   |
@@ -101,17 +122,7 @@ error[E0277]: the trait bound `(): KeysetRegistry` is not satisfied
   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `KeysetRegistry` is not implemented for `()`
   |
 help: the following other types implement trait `KeysetRegistry`
- --> src/registry.rs
-  |
-  |   impl KeysetRegistry for NoRegistry {
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoRegistry`
-  |
- ::: src/registry/fake.rs
-  |
-  |   impl KeysetRegistry for FakeKeysetRegistry {
-  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `FakeKeysetRegistry`
-  |
- ::: src/registry/zerokms.rs
+ --> src/registry/zerokms.rs
   |
   | / impl<C, Conn> KeysetRegistry for Arc<StackKms<C, Conn>>
   | | where
@@ -119,6 +130,23 @@ help: the following other types implement trait `KeysetRegistry`
   | |     for<'a> &'a C: stack_auth::AuthStrategy,
   | |     Conn: stack_kms::ZeroKMSConnection + Send + Sync,
   | |_____________________________________________________^ `Arc<StackKms<C, Conn>>`
+  |
+ ::: src/registry/fake.rs
+  |
+  |   impl KeysetRegistry for FakeKeysetRegistry {
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `FakeKeysetRegistry`
+  |
+ ::: src/registry.rs
+  |
+  |   impl KeysetRegistry for NoRegistry {
+  |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `NoRegistry`
+  |
+ ::: src/registry/static_keysets.rs
+  |
+  | / impl<P> KeysetRegistry for StaticKeysetRegistry<P>
+  | | where
+  | |     P: KeyProvider<32> + IndexKeyProvider<32> + Send + Sync,
+  | |____________________________________________________________^ `StaticKeysetRegistry<P>`
 note: required by a bound in `stack_encrypt::Pending`
  --> src/target/pending.rs
   |
