@@ -910,8 +910,13 @@ mod tests {
             transport,
         );
         let err = refresher.refresh(&()).await.unwrap_err();
+        // The transport's message is the source, never part of the message.
         match err {
-            AuthError::Request(e) => assert!(e.to_string().contains("connection refused")),
+            AuthError::Request(e) => {
+                assert!(!e.to_string().contains("connection refused"), "{e}");
+                assert!(std::error::Error::source(&e)
+                    .is_some_and(|source| source.to_string().contains("connection refused")));
+            }
             other => panic!("{other:?}"),
         }
     }

@@ -67,21 +67,35 @@ impl FromStr for AccessKey {
 }
 
 /// Error returned when parsing an invalid access key string.
-#[derive(Debug, thiserror::Error)]
+///
+/// No variant quotes the string it refused: an access key is a credential.
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
 pub enum InvalidAccessKey {
     /// The string does not start with the `CSAK` prefix.
     #[error("access key must start with \"{ACCESS_KEY_PREFIX}\"")]
+    #[diagnostic(
+        code(stack_auth::access_key_missing_prefix),
+        help("Access keys have the form `CSAK<key-id>.<secret>`.")
+    )]
     MissingPrefix,
     /// No `.` separator found between key ID and secret.
     #[error("access key must contain a \".\" separator")]
+    #[diagnostic(
+        code(stack_auth::access_key_missing_dot),
+        help("Access keys have the form `CSAK<key-id>.<secret>`.")
+    )]
     MissingDot,
     /// The key ID portion (before the `.`) is empty.
     #[error("access key ID must not be empty")]
+    #[diagnostic(code(stack_auth::access_key_empty_id))]
     EmptyKeyId,
     /// The secret portion (after the `.`) is empty.
     #[error("access key secret must not be empty")]
+    #[diagnostic(code(stack_auth::access_key_empty_secret))]
     EmptySecret,
 }
+
+impl stack_profile::ErrorPayload for InvalidAccessKey {}
 
 #[cfg(test)]
 mod tests {

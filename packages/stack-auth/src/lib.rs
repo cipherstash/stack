@@ -77,12 +77,21 @@ mod oidc_refresher;
 mod refresher;
 
 pub use error::StoreError;
+pub use error::ERROR_CODES;
 pub use error::{
     AccessDenied, AlreadyConsumed, AuthError, AuthErrorKind, CustomError, InternalError,
     InvalidAccessKeyError, InvalidClient, InvalidCrn, InvalidGrant, InvalidToken, InvalidUrl,
     InvalidWorkspaceId, MissingWorkspaceCrn, NotAuthenticated, OrgNotProvisioned, RequestError,
     ServerError, TokenExpired, UnsupportedRegion, UsageLimitExceeded, WorkspaceMismatch,
 };
+/// [`ErrorPayload`]'s module: the payload and code-shape helpers the four
+/// crates share.
+pub use stack_profile::diagnostic;
+/// The trait every error from this crate implements to hand over its
+/// structured fields, and the rule for what an error may contain. Defined in
+/// `stack-profile`, the crate all four of `stack-profile`, `stack-auth`,
+/// `stack-kms` and `stack-encrypt` share.
+pub use stack_profile::ErrorPayload;
 
 // Filesystem-backed device identity and the interactive device-code flow are
 // native-only — both pull `stack-profile` (which uses `dirs` + `gethostname`)
@@ -408,14 +417,20 @@ where
             "JWT must have three segments".to_string(),
         )));
     }
+    // Neither decoder's own message is passed on: base64's names a byte of
+    // the token, and serde_json's can quote the claim it refused. A token is
+    // a credential (see `ErrorPayload` for the rule).
     let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(segments[1])
-        .map_err(|e| {
-            AuthError::InvalidToken(error::InvalidToken(format!("base64 decode failed: {e}")))
+        .map_err(|_| {
+            AuthError::InvalidToken(error::InvalidToken(
+                "the JWT's claims segment is not base64url".to_string(),
+            ))
         })?;
     serde_json::from_slice(&payload).map_err(|e| {
         AuthError::InvalidToken(error::InvalidToken(format!(
-            "failed to decode JWT claims: {e}"
+            "failed to decode JWT claims: {}",
+            stack_profile::diagnostic::describe_json_error(&e)
         )))
     })
 }
@@ -654,7 +669,7 @@ mod tests {
             ),
             (
                 AuthError::NotAuthenticated(crate::error::NotAuthenticated),
-                "stash login",
+                "stash auth login",
             ),
             (
                 AuthError::from("".parse::<crate::access_key::AccessKey>().unwrap_err()),
