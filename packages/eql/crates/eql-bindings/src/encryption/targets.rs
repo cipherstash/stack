@@ -362,8 +362,11 @@ mod sealed {
 /// A Rust plaintext an EQL type is produced from, read out of and written
 /// back into the runtime value. Sealed: the implementations are exactly the
 /// plaintext types the catalog's producible families name, and the generated
-/// dispatch picks one per type.
-pub trait Plaintext: sealed::Sealed + Sized + MaybeSend + 'static {
+/// dispatch picks one per type. `Zeroize`, because [`from_value`](Self::from_value)
+/// copies the plaintext out of the runtime value's `Protected` buffer and
+/// the copy is wiped when it is dropped ([`run_target`] holds it in
+/// [`zeroize::Zeroizing`]), as the original is.
+pub trait Plaintext: sealed::Sealed + Sized + MaybeSend + zeroize::Zeroize + 'static {
     /// The kind of value this plaintext is.
     const KIND: ValueKind;
     /// Read the value as this plaintext, refusing any other kind.
@@ -413,7 +416,10 @@ where
     S: Plaintext,
     K: 'static,
 {
-    let plaintext = S::from_value(name, plaintext)?;
+    // The copy lives only until `encrypt_as` has cloned what it seals, and
+    // is wiped when this returns: the runtime value kept its bytes in
+    // `Protected`, and the copy is held to the same rule.
+    let plaintext = zeroize::Zeroizing::new(S::from_value(name, plaintext)?);
     Ok(keyset
         .encrypt_as::<S, T>(&plaintext, column)
         .try_map(|value| serde_json::to_vec(&value).map_err(|error| Error::Other(Box::new(error)))))

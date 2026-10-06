@@ -1206,6 +1206,7 @@ dependencies = [
  "ts-rs",
  "vitaminc-aead-value",
  "vitaminc-prf",
+ "zeroize",
 ]
 
 [[package]]
