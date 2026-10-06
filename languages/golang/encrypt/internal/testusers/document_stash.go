@@ -38,6 +38,14 @@ type documentShape struct {
 	Tags  []string
 }
 
+// The opaque value as it crosses the binding: one JSON document of the
+// struct's fields, by their declared names.
+type documentOpaque struct {
+	Title string   `json:"title"`
+	Body  string   `json:"body"`
+	Tags  []string `json:"tags"`
+}
+
 var documentDeclaration = gensupport.DeclareOpaque("documents/v2/body")
 
 var documentCodec = gensupport.New(gensupport.Generated[Document, EncryptedDocument]{
@@ -45,10 +53,10 @@ var documentCodec = gensupport.New(gensupport.Generated[Document, EncryptedDocum
 	Declaration:     documentDeclaration,
 	PrintsPlaintext: true,
 	Source: func(v Document) gensupport.Values {
-		return gensupport.Values{gensupport.OpaqueField: map[string]any{
-			"title": v.Title,
-			"body":  v.Body,
-			"tags":  v.Tags,
+		return gensupport.Values{gensupport.OpaqueField: documentOpaque{
+			Title: v.Title,
+			Body:  v.Body,
+			Tags:  v.Tags,
 		}}
 	},
 	Seal: func(rec gensupport.Record) (EncryptedDocument, error) {
@@ -58,20 +66,14 @@ var documentCodec = gensupport.New(gensupport.Generated[Document, EncryptedDocum
 		return gensupport.Record{gensupport.OpaqueField: {Ciphertext: e.Sealed}}
 	},
 	Value: func(e EncryptedDocument, vals gensupport.Values) (Document, error) {
-		fields, err := gensupport.Get[gensupport.Values](vals, gensupport.OpaqueField)
-		if err != nil {
+		var o documentOpaque
+		if err := gensupport.Opaque(vals, &o); err != nil {
 			return Document{}, err
 		}
 		var v Document
-		if v.Title, err = gensupport.Get[string](fields, "title"); err != nil {
-			return Document{}, err
-		}
-		if v.Body, err = gensupport.Get[string](fields, "body"); err != nil {
-			return Document{}, err
-		}
-		if v.Tags, err = gensupport.Get[[]string](fields, "tags"); err != nil {
-			return Document{}, err
-		}
+		v.Title = o.Title
+		v.Body = o.Body
+		v.Tags = o.Tags
 		return v, nil
 	},
 })

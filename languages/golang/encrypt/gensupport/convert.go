@@ -1,39 +1,26 @@
 package gensupport
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"math"
-	"strconv"
 
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
 )
 
-// convert writes an opened value into out, a pointer to the Go type the
-// struct declares. The engine returns a value at the field's declared kind
-// — int32, int64, uint32, uint64, float32, float64, string, []byte, bool,
-// or a vcvalue.Object for a composite — and the struct's type is in the
-// same family, narrower at most. A value outside the target's range, or of
-// another family, is an error.
+// convert writes an opened sealed value into out, a pointer to the Go type
+// the struct declares. The engine returns a value at the field's declared
+// kind — int32, int64, uint32, uint64, float32, float64, string, []byte,
+// bool, or a vcvalue.Object for a composite — and the struct's type is in
+// the same family, narrower at most. A value outside the target's range, or
+// of another family, is an error.
 func convert(v any, out any) error {
-	// A nil slice or map of the struct went out as JSON null and comes back
-	// as nil: the zero value it was.
+	// A nil slice or map comes back as nil: the zero value it was.
 	if v == nil {
 		switch out.(type) {
 		case *[]byte, *[]any, *[]string, *[]int64, *[]int32, *[]uint32, *[]uint64, *[]float64, *[]bool, *[][]byte, *Values, *map[string]any, *any:
 			return nil
 		}
 		return fmt.Errorf("opened as nothing, and %T holds a value", out)
-	}
-	// An opaque struct's fields come back from JSON: a number is a
-	// json.Number, bytes are a base64 string. Widen them to what the kind
-	// paths below read.
-	if n, ok := v.(json.Number); ok {
-		var err error
-		if v, err = widenNumber(n, out); err != nil {
-			return err
-		}
 	}
 	switch out := out.(type) {
 	case *string:
@@ -43,18 +30,11 @@ func convert(v any, out any) error {
 		}
 		*out = s
 	case *[]byte:
-		switch b := v.(type) {
-		case []byte:
-			*out = append([]byte(nil), b...)
-		case string:
-			decoded, err := base64.StdEncoding.DecodeString(b)
-			if err != nil {
-				return fmt.Errorf("opened as a string that is not base64 bytes: %w", err)
-			}
-			*out = decoded
-		default:
+		b, ok := v.([]byte)
+		if !ok {
 			return mismatch(v, *out)
 		}
+		*out = append([]byte(nil), b...)
 	case *bool:
 		b, ok := v.(bool)
 		if !ok {
@@ -242,31 +222,4 @@ func valuesOf(v any) (Values, error) {
 		return Values(obj), nil
 	}
 	return nil, fmt.Errorf("opened as %T, not an object", v)
-}
-
-// widenNumber reads a JSON number as the widest value of the target's
-// family: int64 for a signed target, uint64 for an unsigned one, float64 for
-// a float. The family conversion then applies its range check.
-func widenNumber(n json.Number, out any) (any, error) {
-	switch out.(type) {
-	case *int, *int8, *int16, *int32, *int64:
-		i, err := strconv.ParseInt(string(n), 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("%s is not an integer that fits an int64", n)
-		}
-		return i, nil
-	case *uint, *uint8, *uint16, *uint32, *uint64:
-		u, err := strconv.ParseUint(string(n), 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("%s is not an integer that fits a uint64", n)
-		}
-		return u, nil
-	case *float32, *float64, *any:
-		f, err := n.Float64()
-		if err != nil {
-			return nil, err
-		}
-		return f, nil
-	}
-	return n, nil
 }

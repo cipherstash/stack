@@ -107,6 +107,9 @@ func Passthrough[T any](Record, string) (T, error) { var z T; return z, nil }
 // Get reads one value.
 func Get[T any](Values, string) (T, error) { var z T; return z, nil }
 
+// Opaque reads an opened opaque value into the generated shape struct.
+func Opaque[T any](Values, *T) error { return nil }
+
 // Field is one sealed field's entry.
 type Field[T any] struct{ _ struct{} }
 

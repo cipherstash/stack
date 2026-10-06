@@ -73,6 +73,8 @@ The first part of a tag is the field's name, which is the column name in a datab
 | `` _ struct{} `stash:"context=documents,opaque"` `` | seal the struct as one value |
 
 The index names are `equality`, `match`, `ore`, `ope` and `json`.
+A `match` index needs text with at least one token: the engine derives no match term for an empty or separator-only string, or one shorter than the n-gram, because an empty term would match every row.
+`Encrypt` then returns an error naming the row, the field and the index; give the field a value, or drop the index.
 An index takes its options in parentheses after its name, separated by commas: `index=equality;match(k=3)`.
 These words are the same as the Rust API's words for the same behaviour.
 
@@ -136,7 +138,9 @@ The error names the type and the field, and never a value.
 - a model with a field that has no tag, or with no field for an output;
 - two structs in one package that would both write `Encrypt`;
 - an embedded struct from another package with no tag;
-- a struct whose every field is left out.
+- a struct whose every field is left out;
+- a struct, slice or map field with `encrypt` or `index=` outside an opaque struct;
+- a field of an opaque struct whose type JSON cannot carry both ways.
 
 ## Declarations from a policy
 
@@ -180,7 +184,8 @@ No warning, error or log line holds a plaintext value.
 
 Generated code sends the engine every sealed field with its value, under the declaration lowered to data: each field's label (`<context>/<name>`), its outputs and its wire type (`int64`, `string`, `bytes`, ...), which `stashgen` chose from the field's Go type.
 A passthrough field stays on the host: the engine does nothing to it a program could observe, and the FFI codec cannot carry every Go type a program stores beside a ciphertext.
-An `opaque` struct crosses as one JSON document and is one column; its fields are what JSON carries: scalars, `[]byte`, slices and maps of them.
+An `opaque` struct crosses as one JSON document and is one column, decoded back into the exact Go types the struct declares; a field may be any type `encoding/json` carries both ways (a scalar or a type defined over one, `[]byte`, slices, maps with string or integer keys, pointers, structs whose fields are all exported, `time.Time`).
+A sealed field outside an opaque struct is one scalar, or a type defined over one; a struct, slice or map field seals only inside an opaque struct.
 
 ## Status
 

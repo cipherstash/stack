@@ -25,6 +25,7 @@ func emit(f *genFile) ([]byte, error) {
 	w.encryptedType(f)
 	w.printMethods(f)
 	w.shape(f)
+	w.opaqueShape(f)
 	w.declaration(f)
 	w.codec(f)
 	w.functions(f)
@@ -152,6 +153,22 @@ func (w *writer) printMethods(f *genFile) {
 	w.nl()
 	w.p("func (%s %s) LogValue() slog.Value {", r, f.typeName)
 	w.p("\treturn gensupport.RedactedLog(%s%s)", shown, hidden)
+	w.p("}")
+}
+
+// opaqueShape writes the struct an opaque value crosses the binding as: the
+// struct's fields by their declared names, as one JSON document.
+func (w *writer) opaqueShape(f *genFile) {
+	if !f.decl.Opaque {
+		return
+	}
+	w.nl()
+	w.p("// The opaque value as it crosses the binding: one JSON document of the")
+	w.p("// struct's fields, by their declared names.")
+	w.p("type %s struct {", f.opaqueShape)
+	for _, g := range f.opaque {
+		w.p("\t%s %s `json:%q`", g.GoName, g.typeExpr, g.Name)
+	}
 	w.p("}")
 }
 
@@ -298,9 +315,9 @@ func (w *writer) source(f *genFile) {
 	if f.decl.Opaque {
 		entries := make([]string, len(f.opaque))
 		for i, g := range f.opaque {
-			entries[i] = fmt.Sprintf("%q: v.%s", g.Name, g.GoName)
+			entries[i] = fmt.Sprintf("%s: v.%s", g.GoName, g.GoName)
 		}
-		w.literal("\t\t", "return gensupport.Values{gensupport.OpaqueField: map[string]any{", entries, "}}")
+		w.literal("\t\t", "return gensupport.Values{gensupport.OpaqueField: "+f.opaqueShape+"{", entries, "}}")
 	} else {
 		entries := make([]string, len(f.fields))
 		for i, g := range f.fields {
@@ -386,15 +403,17 @@ func (w *writer) value(f *genFile) {
 	fail := func() { w.p("\t\t\treturn %s, err", f.zeroExpr) }
 	switch {
 	case f.decl.Opaque:
-		w.p("\t\tfields, err := gensupport.Get[gensupport.Values](vals, gensupport.OpaqueField)")
-		w.p("\t\tif err != nil {")
+		w.p("\t\tvar o %s", f.opaqueShape)
+		w.p("\t\tif err := gensupport.Opaque(vals, &o); err != nil {")
 		fail()
 		w.p("\t\t}")
-		w.p("\t\tvar v %s", f.typeExpr)
+		if f.isPointer {
+			w.p("\t\tv := &%s{}", strings.TrimPrefix(f.typeExpr, "*"))
+		} else {
+			w.p("\t\tvar v %s", f.typeExpr)
+		}
 		for _, g := range f.opaque {
-			w.p("\t\tif v.%s, err = gensupport.Get[%s](fields, %q); err != nil {", g.GoName, g.typeExpr, g.Name)
-			fail()
-			w.p("\t\t}")
+			w.p("\t\tv.%s = o.%s", g.GoName, g.GoName)
 		}
 	default:
 		if f.isPointer {
@@ -404,6 +423,16 @@ func (w *writer) value(f *genFile) {
 		}
 		w.p("\t\tvar err error")
 		for _, g := range f.fields {
+			if g.Sealed() && g.definedScalar() {
+				// The engine returns the underlying type; the conversion
+				// to the defined type is the struct's own.
+				w.p("\t\traw%s, err := gensupport.Get[%s](vals, %q)", g.GoName, g.GoType.Basic, g.Name)
+				w.p("\t\tif err != nil {")
+				fail()
+				w.p("\t\t}")
+				w.p("\t\tv.%s = %s(raw%s)", g.GoName, g.typeExpr, g.GoName)
+				continue
+			}
 			w.p("\t\tif v.%s, err = gensupport.Get[%s](vals, %q); err != nil {", g.GoName, g.typeExpr, g.Name)
 			fail()
 			w.p("\t\t}")

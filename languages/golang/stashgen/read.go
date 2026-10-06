@@ -49,11 +49,12 @@ type genFile struct {
 	redact          bool
 	redactRecv      string
 
-	decl    Declaration
-	members []encMember // the fields of the encrypted type
-	fields  []genField  // every stored field, in declared order
-	opaque  []genField  // the fields of an opaque struct
-	models  []genModel
+	decl        Declaration
+	members     []encMember // the fields of the encrypted type
+	fields      []genField  // every stored field, in declared order
+	opaque      []genField  // the fields of an opaque struct
+	opaqueShape string      // the generated struct the opaque value crosses as
+	models      []genModel
 }
 
 // shapeField is one field of the shape struct, which mirrors the plaintext
@@ -84,6 +85,13 @@ type genField struct {
 	queryType  string   // "eql.TextEqQuery", or "" when the field has no query
 	fieldType  string   // "EmailField"
 	pathType   string   // the type with its package path, for model checks
+}
+
+// definedScalar reports whether the field's type is a named type over a
+// scalar (type Email string): the engine returns the underlying type, and
+// the generated code converts.
+func (g genField) definedScalar() bool {
+	return g.GoType.Kind.Scalar() && g.GoType.Basic != "" && g.typeExpr != g.GoType.Basic
 }
 
 // output is one output of a sealed field in separate columns.
@@ -526,8 +534,8 @@ func (r *reader) buildFields(c *collected) error {
 				continue
 			}
 			g := genField{Field: Field{Name: cf.tag.Name, GoName: cf.goName, GoType: r.goType(cf.typ), Verb: VerbEncrypt}, typeExpr: r.typeExpr(cf.typ)}
-			if !readableInOpaque(g.GoType) {
-				return fieldErr(typeName, cf.goName, "the SDK cannot read a %s back out of an opaque struct yet; it reads scalars, []byte, slices of scalars and maps of scalars", g.typeExpr)
+			if reason := notJSONEncodable(cf.typ, map[types.Type]bool{}); reason != "" {
+				return fieldErr(typeName, cf.goName, "an opaque struct crosses as one JSON document, and %s %s", g.typeExpr, reason)
 			}
 			if prev, dup := seen[g.Name]; dup {
 				return fieldErr(typeName, cf.goName, "two fields write the name %q: %s and %s", g.Name, prev, cf.goName)
@@ -537,6 +545,7 @@ func (r *reader) buildFields(c *collected) error {
 			f.decl.Fields = append(f.decl.Fields, g.Field)
 		}
 		f.members = []encMember{{name: "Sealed", typeExpr: "encrypt.Ciphertext"}}
+		f.opaqueShape = lowerFirst(valueBaseName(f)) + "Opaque"
 		return nil
 	}
 
@@ -559,6 +568,11 @@ func (r *reader) buildFields(c *collected) error {
 			continue
 		}
 		g := genField{Field: field, typeExpr: r.typeExpr(cf.typ), via: cf.via, tags: cf.tags, pathType: pathType(cf.typ)}
+		if g.Sealed() && !g.GoType.Kind.Scalar() {
+			// The engine seals a composite as a tree of leaves, and a column
+			// holds one leaf; only an opaque struct seals a whole value.
+			return fieldErr(typeName, cf.goName, "a sealed field is one scalar (a string, number, bool or []byte, or a type defined over one); a %s seals only as part of an opaque struct", g.typeExpr)
+		}
 		switch field.Verb {
 		case VerbPassthrough:
 			g.outputType = g.typeExpr
@@ -774,15 +788,61 @@ func itOrEach(fields []string) string {
 	return "each"
 }
 
-// readableInOpaque reports whether gensupport.Get reads the type back out of
-// an opened opaque value: a scalar, bytes, a slice of scalars, or a map from
-// strings to scalars. A nested struct is not, yet.
-func readableInOpaque(t GoType) bool {
-	switch t.Kind {
-	case KindString, KindBool, KindInt, KindUint, KindFloat, KindBytes:
-		return true
-	case KindSlice, KindMap:
-		return t.Elem != nil && t.Elem.Kind.Scalar()
+// notJSONEncodable says why encoding/json cannot carry a type both ways, or
+// "" when it can: every field of an opaque struct must, because the struct
+// crosses the binding as one JSON document and comes back by decoding it
+// into the generated shape struct. A type with its own MarshalJSON and
+// UnmarshalJSON (time.Time) carries itself; otherwise a scalar, a slice or
+// array of an encodable type, a map with string or integer keys, a pointer,
+// or a struct whose every field is exported and encodable. A struct with an
+// unexported field would come back without it, an interface or a channel
+// not at all.
+func notJSONEncodable(t types.Type, seen map[types.Type]bool) string {
+	if seen[t] {
+		return ""
 	}
-	return false
+	seen[t] = true
+	defer delete(seen, t)
+	if hasMethod(types.NewPointer(t), "UnmarshalJSON") && hasMethod(t, "MarshalJSON") {
+		return ""
+	}
+	switch u := t.Underlying().(type) {
+	case *types.Basic:
+		if u.Info()&(types.IsBoolean|types.IsInteger|types.IsFloat|types.IsString) != 0 && u.Info()&types.IsUntyped == 0 {
+			return ""
+		}
+		return "is not a bool, integer, float or string"
+	case *types.Slice:
+		return notJSONEncodable(u.Elem(), seen)
+	case *types.Array:
+		return notJSONEncodable(u.Elem(), seen)
+	case *types.Pointer:
+		return notJSONEncodable(u.Elem(), seen)
+	case *types.Map:
+		if k, ok := u.Key().Underlying().(*types.Basic); !ok || k.Info()&(types.IsString|types.IsInteger) == 0 {
+			return "has a map key that is not a string or an integer"
+		}
+		return notJSONEncodable(u.Elem(), seen)
+	case *types.Struct:
+		for i := range u.NumFields() {
+			fld := u.Field(i)
+			if !fld.Exported() {
+				return fmt.Sprintf("has an unexported field %s that JSON would drop", fld.Name())
+			}
+			if reason := notJSONEncodable(fld.Type(), seen); reason != "" {
+				return "has a field " + fld.Name() + " that " + reason
+			}
+		}
+		return ""
+	}
+	return "is not a type JSON carries"
+}
+
+// valueBaseName is the plaintext type's bare name: User for User, *pb.Individual, crm.Contact.
+func valueBaseName(f *genFile) string {
+	name := strings.TrimPrefix(f.typeExpr, "*")
+	if i := strings.LastIndexByte(name, '.'); i >= 0 {
+		name = name[i+1:]
+	}
+	return name
 }

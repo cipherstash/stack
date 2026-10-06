@@ -1,7 +1,6 @@
 package gensupport
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -174,11 +173,6 @@ func (c *Codec[P, E]) Decrypt(ctx context.Context, d encrypt.Decrypter, encrypte
 		for name, v := range src {
 			vals[name] = v
 		}
-		if c.g.Declaration.opaque {
-			if vals[OpaqueField], err = opaqueValues(vals[OpaqueField]); err != nil {
-				return nil, fmt.Errorf("gensupport: %s: value %d: %w", c.g.TypeName, i, err)
-			}
-		}
 		if out[i], err = c.g.Value(encrypted[i], vals); err != nil {
 			return nil, fmt.Errorf("gensupport: %s: value %d: %w", c.g.TypeName, i, err)
 		}
@@ -252,16 +246,22 @@ func Passthrough[T any](rec Record, name string) (T, error) {
 	return v, nil
 }
 
-// Get reads one opened field as the Go type the struct declares it. The
-// engine returns a value at the field's declared kind; Get converts within
-// that kind's family (a uint32 into a uint8 that holds it) and refuses
-// anything else, so a value that opens to another type is an error and
-// never a silent zero.
+// Get reads one opened field as the Go type the struct declares it. A
+// passthrough field is the Go value the struct held, whatever its type, and
+// comes back as it is. A sealed field comes back from the engine at its
+// declared wire kind; Get converts within that kind's family (a uint32 into
+// a uint8 that holds it) and refuses anything else, so a value that opens to
+// another type is an error and never a silent zero. A defined type over a
+// scalar (type Email string) is read at its underlying type and converted by
+// the generated code.
 func Get[T any](vals Values, name string) (T, error) {
 	var out T
 	v, ok := vals[name]
 	if !ok {
 		return out, fmt.Errorf("gensupport: the opened value has no field %q", name)
+	}
+	if exact, ok := v.(T); ok {
+		return exact, nil
 	}
 	if err := convert(v, &out); err != nil {
 		return out, fmt.Errorf("gensupport: field %q: %w", name, err)
@@ -311,14 +311,10 @@ func (c *RecordsCodec[P, R]) Decrypt(ctx context.Context, d encrypt.Decrypter, r
 }
 
 // opaqueBytes is an opaque struct's fields as the one value the engine
-// seals: a JSON document, so the struct is one column and its fields come
-// back as what JSON carries.
+// seals: a JSON document of the generated shape struct, so the struct is one
+// column and every field type encoding/json round-trips comes back as it
+// was.
 func opaqueBytes(fields any) ([]byte, error) {
-	switch fields.(type) {
-	case map[string]any, Values:
-	default:
-		return nil, fmt.Errorf("the generated Source gave a %T for the opaque value, not a map of its fields", fields)
-	}
 	encoded, err := json.Marshal(fields)
 	if err != nil {
 		return nil, fmt.Errorf("the opaque value does not encode: %w", err)
@@ -326,19 +322,20 @@ func opaqueBytes(fields any) ([]byte, error) {
 	return encoded, nil
 }
 
-// opaqueValues reads the opened opaque value back into its fields. Numbers
-// stay json.Number so Get converts each to the struct's own integer or
-// float type without a detour through float64.
-func opaqueValues(opened any) (Values, error) {
-	encoded, ok := opened.([]byte)
+// Opaque reads an opened opaque value into the generated shape struct: the
+// JSON document the engine returned, decoded into the exact Go types the
+// struct declares. Generated code calls it from Value.
+func Opaque[T any](vals Values, out *T) error {
+	v, ok := vals[OpaqueField]
 	if !ok {
-		return nil, fmt.Errorf("the opaque value opened as %T, not bytes", opened)
+		return fmt.Errorf("gensupport: the opened value has no field %q", OpaqueField)
 	}
-	dec := json.NewDecoder(bytes.NewReader(encoded))
-	dec.UseNumber()
-	var fields map[string]any
-	if err := dec.Decode(&fields); err != nil {
-		return nil, fmt.Errorf("the opaque value does not decode: %w", err)
+	encoded, ok := v.([]byte)
+	if !ok {
+		return fmt.Errorf("gensupport: the opaque value opened as %T, not bytes", v)
 	}
-	return Values(fields), nil
+	if err := json.Unmarshal(encoded, out); err != nil {
+		return fmt.Errorf("gensupport: the opaque value does not decode: %w", err)
+	}
+	return nil
 }

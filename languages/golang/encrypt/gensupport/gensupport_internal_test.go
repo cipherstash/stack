@@ -1,11 +1,10 @@
 package gensupport
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
@@ -136,32 +135,40 @@ func TestConvertStaysWithinAFamily(t *testing.T) {
 	if err := convert(obj, &x); err == nil {
 		t.Fatal("a struct target was accepted")
 	}
-	// An opaque struct's fields come back from JSON.
-	var n int32
-	if err := convert(json.Number("-7"), &n); err != nil || n != -7 {
-		t.Fatalf("json.Number -> int32: %v %d", err, n)
+	// An opaque value decodes straight into the generated shape type.
+	type shape struct {
+		Title string            `json:"title"`
+		N     int32             `json:"n"`
+		Tags  []string          `json:"tags"`
+		Inner map[string]string `json:"inner"`
 	}
-	if err := convert(json.Number("3000000000"), &n); err == nil {
-		t.Fatal("3000000000 fit an int32")
-	}
-	var f float64
-	if err := convert(json.Number("1.25"), &f); err != nil || f != 1.25 {
-		t.Fatalf("json.Number -> float64: %v %v", err, f)
-	}
-	var raw []byte
-	if err := convert(base64.StdEncoding.EncodeToString([]byte{1, 2}), &raw); err != nil || !reflect.DeepEqual(raw, []byte{1, 2}) {
-		t.Fatalf("base64 -> []byte: %v %v", err, raw)
-	}
-	fields, err := opaqueValues([]byte(`{"title":"x","n":4,"tags":["a"],"inner":{"k":true}}`))
+	encoded, err := opaqueBytes(shape{Title: "x", N: 4, Tags: []string{"a"}, Inner: map[string]string{"k": "v"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	inner, err := Get[Values](fields, "inner")
-	if err != nil || inner["k"] != true {
-		t.Fatalf("nested: %v %v", err, inner)
+	var back shape
+	if err := Opaque(Values{OpaqueField: encoded}, &back); err != nil || back.Title != "x" || back.N != 4 || back.Inner["k"] != "v" {
+		t.Fatalf("Opaque: %v %+v", err, back)
 	}
-	if _, err := opaqueBytes("not a map"); err == nil {
-		t.Fatal("opaqueBytes accepted a string")
+	if err := Opaque(Values{OpaqueField: "not bytes"}, &back); err == nil {
+		t.Fatal("Opaque accepted a string")
+	}
+	if err := Opaque(Values{}, &back); err == nil {
+		t.Fatal("Opaque found a missing field")
+	}
+	// A passthrough value of any type comes back as it is.
+	when := time.Date(2026, 10, 6, 1, 2, 3, 0, time.UTC)
+	gotTime, err := Get[time.Time](Values{"at": when}, "at")
+	if err != nil || !gotTime.Equal(when) {
+		t.Fatalf("Get[time.Time] = %v %v", gotTime, err)
+	}
+	type defined string
+	gotDefined, err := Get[defined](Values{"d": defined("x")}, "d")
+	if err != nil || gotDefined != "x" {
+		t.Fatalf("Get[defined] = %v %v", gotDefined, err)
+	}
+	if _, err := Get[defined](Values{"d": "x"}, "d"); err == nil {
+		t.Fatal("Get converted a wire string into a defined type; the generated code does that")
 	}
 	got, err := Get[uint8](Values{"age": uint32(3)}, "age")
 	if err != nil || got != 3 {
