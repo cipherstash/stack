@@ -2568,6 +2568,16 @@ mod tests {
             serde_json::from_value::<SealedValue>(value.clone()).is_err(),
             "a format-1 key id shorter than its IV is refused"
         );
+        // The format-1 tag must fit its `u16` length field: a tag of exactly
+        // `u16::MAX` bytes does, one more does not.
+        value["key_id"] = serde_json::to_value(vec![0u8; 16 + usize::from(u16::MAX)]).unwrap();
+        let at_limit: SealedValue = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(at_limit.format_version(), SealedValue::FORMAT_VERSION_V1);
+        value["key_id"] = serde_json::to_value(vec![0u8; 16 + usize::from(u16::MAX) + 1]).unwrap();
+        assert!(
+            serde_json::from_value::<SealedValue>(value.clone()).is_err(),
+            "a format-1 tag one byte over the length field is refused"
+        );
         value["version"] = 9.into();
         assert!(serde_json::from_value::<SealedValue>(value).is_err());
     }

@@ -68,8 +68,10 @@ exclude_re = [
   # variant; the native one returns a `FallbackKeyProvider`).
   'stack-encrypt/src/cipher\.rs:\d+:\d+: replace client_key_provider -> EnvKeyProvider with Default::default\(\)$',
   'stack-encrypt/src/target/pending\.rs:443:9: replace <impl IntoFuture for Pending<.*>>::into_future -> Self::IntoFuture with Default::default\(\)$',
+  # stack-encrypt — unreachable: `NoRegistry` is uninhabited (it only
+  # anchors `Plan::context`), so no value exists to call these on.
+  'stack-encrypt/src/registry\.rs:\d+:\d+: replace <impl (KeysetRegistry|KeyProvider<32>|IndexKeyProvider<32>) for NoRegistry>::(resolve|generate_keys|retrieve_keys|load_index_key) ',
   # stack-encrypt — equivalent.
-  'stack-encrypt/src/cipher\.rs:\d+:\d+: replace StackCipher<FromEnv>::builder -> StackCipherBuilder with Default::default\(\)$',
   'stack-encrypt/src/sem/mod\.rs:\d+:\d+: replace <impl MatchConfig for DefaultMatch>::options -> MatchOptions with Default::default\(\)$',
   # Both unit-context conversions explicitly return Self::default().
   'stack-encrypt/src/target/context\.rs:\d+:\d+: replace <impl From<\(\)> for (DeclaredContext|ExpectedContext<T>)>::from -> Self with Default::default\(\)$',
