@@ -93,7 +93,8 @@
 //! seals and which it opens to (checked by kind, both ways), and nothing
 //! about the bytes: declaring a type on a field written without one changes
 //! no leaf. A field with any index declares its type, and a plan whose
-//! indexed field has none is refused when it is built: the term then derives
+//! indexed field has none is refused when it is built
+//! ([`Error::UntypedIndex`], naming the field): the term then derives
 //! from the one declared kind, every value checked against it, never from
 //! whatever tag each value arrived with (`34` sent once as a float and once
 //! as an integer would otherwise store two terms under one field). A field
@@ -233,12 +234,15 @@ enum Verb {
 /// One field of a record plan: what to call it, what label to seal it
 /// under, what to produce for it, and, optionally, what type its values are.
 ///
-/// A field with a declared type (a [`ValueKind`]) admits only the indexes
-/// that kind is defined for ([`admits`], checked when the plan is built),
-/// seals only values of that kind and opens only to one (checked per value),
-/// so the engine verifies what a binding hands it rather than trusting the
-/// binding's tagging. A field with no declared type is dispatched on each
-/// value's own type; see the [module docs](self#what-a-fields-type-decides).
+/// A field may declare the type of its values (a [`ValueKind`]), and must
+/// when it has a term output: [`Plan::new_with`] refuses the plan otherwise
+/// ([`Error::UntypedIndex`]). A typed field admits only the indexes that
+/// kind is defined for ([`admits`], checked when the plan is built), seals
+/// only values of that kind and opens only to one (checked per value), so
+/// the engine verifies what a binding hands it rather than trusting the
+/// binding's tagging. A field that only seals, or only carries its value
+/// through, may leave the type out; see the
+/// [module docs](self#what-a-fields-type-decides-and-what-it-does-not).
 #[derive(Clone, Debug)]
 pub struct FieldPlan {
     name: String,
@@ -553,7 +557,10 @@ impl Plan {
     /// labels sit under different contexts or carry different extensions,
     /// or does not build as a fields plan: two sealed or indexed fields
     /// keyed under one identity, for instance, whose terms would be
-    /// interchangeable. [`Error::Target`] if a target field names a type the
+    /// interchangeable. [`Error::UntypedIndex`], naming the field, if a field
+    /// with a term output declares no type: this is where that rule is
+    /// enforced, for a parsed and a hand-built plan alike.
+    /// [`Error::Target`] if a target field names a type the
     /// resolver does not know or cannot produce, declares a `"type"` other
     /// than the kind that type is produced from, or sits in an extended plan.
     pub fn new_with(
@@ -905,7 +912,8 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
 /// binding is never trusted to have tagged each value alike (a `34` sent once
 /// as a `Float64` and once as an `Int64` would store two terms under one
 /// field). A field with term outputs and no `"type"` is refused when the plan
-/// is built. It is optional on a field whose only output is `"c"` or
+/// is built ([`Error::UntypedIndex`], naming the field). It is optional on a
+/// field whose only output is `"c"` or
 /// `"passthrough"`, and on a target field, whose kind is the EQL type's own.
 /// Declared, it is checked against the field's outputs here ([`admits`]) and
 /// decides nothing about the bytes (see the
@@ -964,15 +972,15 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
 /// is empty, names an output key twice or names `"passthrough"` beside
 /// another output, a `"target"` that is not a non-empty string, a `"type"`
 /// that is not a string naming a [`ValueKind`], a type that does not admit
-/// one of the field's index outputs, a field with a term output and no
-/// `"type"`, a context that is not a label of at
+/// one of the field's index outputs, a context that is not a label of at
 /// least two segments (optionally extended), fields under different
 /// contexts or extensions, or a plan the builder refuses ([`Plan::new`]);
 /// with `"context_field"`, a value that is not a string, given twice,
 /// naming no field of the plan, or a plan [`Plan::with_context_field`]
-/// refuses. [`Error::Context`] for a `"context"` that is present but is
-/// not a context at all, or renders empty. [`Error::Target`] for a target
-/// the resolver refuses ([`Plan::new_with`]).
+/// refuses. [`Error::UntypedIndex`], naming the field, for a field with a
+/// term output and no `"type"`. [`Error::Context`] for a `"context"` that
+/// is present but is not a context at all, or renders empty.
+/// [`Error::Target`] for a target the resolver refuses ([`Plan::new_with`]).
 ///
 /// The transport codec refuses duplicate object keys before a binding's
 /// value reaches here, but an [`FfiValue`] can be built with them directly
@@ -1064,8 +1072,8 @@ pub fn plan_with(
 /// index nothing.
 ///
 /// The source is checked and converted here, with no cipher: that is
-/// [`check_source`], and it is where [`Error::Source`] and [`Error::Term`]
-/// come from. What comes back is the plan's [`Pending`], with every term
+/// [`check_source`], and it is where [`Error::Source`] comes from. What
+/// comes back is the plan's [`Pending`], with every term
 /// derived and every key request queued and nothing sent: one batched
 /// `generate_keys` for every ciphertext leaf of every row when it is
 /// awaited, however many rows and fields there are. Its failure is the
@@ -1127,8 +1135,11 @@ pub fn plan_with(
 ///
 /// # Errors
 ///
-/// [`Error::Source`] if the source does not fit the plan; [`Error::Term`]
-/// if a value has no term the plan asks for. Both are decided here, before
+/// [`Error::Source`] if the source does not fit the plan — a row that is
+/// not an object, a field the plan does not name or one it names that the
+/// row lacks, or a value of another kind than its field declares, which is
+/// how a value no term is defined for is refused: every indexed field
+/// declares its kind and the kind check comes first. Decided here, before
 /// the pending exists. A failure of the pending itself is the engine's.
 ///
 /// A plan with a target field needs the resolver that built it:

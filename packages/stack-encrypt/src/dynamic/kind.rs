@@ -35,7 +35,7 @@
 //!
 //! Every field with a term output declares its kind; a plan whose indexed
 //! field has none is refused when it is built
-//! ([`record::plan`](super::record::plan())). A field that only seals, or
+//! ([`Error::UntypedIndex`], naming the field). A field that only seals, or
 //! only carries its value through, may leave it out: no term derives from it.
 use vitaminc_aead_value::{FfiValue, ValueKind};
 
