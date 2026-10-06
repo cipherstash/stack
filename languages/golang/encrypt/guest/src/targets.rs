@@ -1,14 +1,17 @@
-//! The EQL types this build holds: the [`TargetResolver`] the record
-//! operations run target fields through.
+//! The EQL types this build holds: the `TargetResolver`
+//! (`stack_encrypt::dynamic::TargetResolver`) the record operations run
+//! target fields through. The two names below are cfg-dependent, so they
+//! are code spans, not links: a doc build of either feature set resolves.
 //!
 //! Two builds of this crate, one resolver each (ADR-0007, amended
-//! 2026-10-06). With the `eql` feature, [`Resolver`] is [`EqlTargets`],
+//! 2026-10-06). With the `eql` feature, [`Resolver`] is `EqlTargets`,
 //! which installs `eql-bindings`' by-name dispatch
 //! (`eql_bindings::encryption::targets`): `se_targets` lists every EQL type
 //! the catalog has, and a plan field naming a producible one (`TextEq`) is
 //! run through that type's own `EncryptFrom` / `DecryptInto`, in the same
 //! ZeroKMS request as the rest of the record. Without it, [`Resolver`] is
-//! the engine's [`NoTargets`]: `se_targets` lists nothing, and a plan that
+//! the engine's `NoTargets` (`stack_encrypt::dynamic::NoTargets`):
+//! `se_targets` lists nothing, and a plan that
 //! names a target is refused when it is parsed — at `se_plan_check`, before
 //! any value crosses.
 //!
