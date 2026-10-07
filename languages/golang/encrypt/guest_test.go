@@ -20,7 +20,6 @@ import (
 	"github.com/cipherstash/stack/languages/golang/auth"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
-	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/sys"
 )
@@ -738,6 +737,7 @@ func TestGuestRefusesMalformedInputsBeforeState(t *testing.T) {
 // generator never emits such a declaration, so only a plan built by hand
 // reaches this. A sealed-only untyped field passes.
 func TestCheckerRefusesAnIndexedUntypedField(t *testing.T) {
+	guestOrSkip(t)
 	ctx := context.Background()
 	checker, err := NewChecker(ctx)
 	if err != nil {
@@ -760,14 +760,7 @@ func TestCheckerRefusesAnIndexedUntypedField(t *testing.T) {
 		// stack-encrypt) and the guest reports it as the caller's input. The
 		// ABI carries a status word and no message, so the field's name is
 		// the Go rule's to give; this asserts the two rules agree.
-		encoded, err := vcffi.Marshal(p.Wire())
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = checker.c.call(ctx, func(inst *instance) ([]byte, error) {
-			return inst.call(ctx, inst.planCheck, buf(encoded))
-		})
-		if !errors.Is(err, ErrEncoding) {
+		if err := checker.engineCheck(ctx, p); !errors.Is(err, ErrEncoding) {
 			t.Errorf("%s past Validate: err = %v, want ErrEncoding from the engine", name, err)
 		}
 	}

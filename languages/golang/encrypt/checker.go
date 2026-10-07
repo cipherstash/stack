@@ -46,6 +46,12 @@ func (k *Checker) Check(ctx context.Context, plan *record.Plan) error {
 	if err := plan.Validate(); err != nil {
 		return fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
+	return k.engineCheck(ctx, plan)
+}
+
+// engineCheck asks se_plan_check alone, with no host rule first: the half
+// of Check that reaches the engine.
+func (k *Checker) engineCheck(ctx context.Context, plan *record.Plan) error {
 	encoded, err := vcffi.Marshal(plan.Wire())
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrEncoding, err)
