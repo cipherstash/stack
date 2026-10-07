@@ -4,6 +4,10 @@ dist
 mise.local.toml
 .env
 
+# Local ImpactGate output (CI uses runner.temp) and Python test bytecode.
+/.impact-baseline/
+__pycache__/
+
 # Three generated WASM declaration files are tracked deliberately. They have to
 # be re-included from HERE: git cannot re-include a file whose parent directory
 # is excluded, and the bare `dist` above excludes the directory itself, so a
