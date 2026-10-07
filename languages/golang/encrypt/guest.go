@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/cipherstash/stack/languages/golang/encrypt/internal/eqlguest"
 	"github.com/cipherstash/stack/languages/golang/internal/guest"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
@@ -20,6 +21,11 @@ import (
 // directory so the package compiles without it; NewClient reports its
 // absence.
 //
+// This is the build without the EQL types. Package eql embeds the build
+// with them and registers it on import (internal/eqlguest), so a program
+// whose generated code names an EQL type runs that build instead; see
+// embeddedGuest.
+//
 //go:embed wasm
 var guestFS embed.FS
 
@@ -29,7 +35,24 @@ const guestPath = "wasm/stack_encrypt_guest.wasm"
 // embedded.
 var ErrGuestNotBuilt = errors.New("encrypt: guest module not built — run `mise run wasm:guest:build`")
 
+// ErrEQLGuestNotBuilt is returned by NewClient when the program links
+// package eql (its generated code names an EQL type) and the guest build
+// with the EQL types is not embedded. There is no fallback to the build
+// without them: every encrypt_into call would fail there, so the program
+// fails at startup instead.
+var ErrEQLGuestNotBuilt = errors.New("encrypt: guest module with the EQL types not built — run `mise run wasm:guest:build:eql`")
+
+// embeddedGuest is the guest a client runs: the build with the EQL types
+// when package eql is linked (it registers on import, which cannot fail),
+// and only that build; else this package's own.
 func embeddedGuest() ([]byte, error) {
+	if eqlguest.Linked() {
+		wasm := eqlguest.Module()
+		if wasm == nil {
+			return nil, ErrEQLGuestNotBuilt
+		}
+		return wasm, nil
+	}
 	wasm, err := guestFS.ReadFile(guestPath)
 	if err != nil {
 		return nil, ErrGuestNotBuilt
@@ -61,7 +84,7 @@ type instance struct {
 
 	exports                      guest.Exports
 	cipherInit, shutdown, keyset api.Function
-	term                         api.Function
+	term, query                  api.Function
 	encryptRecord, decryptRecord api.Function
 	planCheck, targets           api.Function
 }
@@ -148,6 +171,7 @@ func newInstance(ctx context.Context, wasm []byte, t *transport, policy guest.Lo
 		"se_shutdown":       &inst.shutdown,
 		"se_keyset":         &inst.keyset,
 		"se_term":           &inst.term,
+		"se_query":          &inst.query,
 		"se_encrypt_record": &inst.encryptRecord,
 		"se_decrypt_record": &inst.decryptRecord,
 		"se_plan_check":     &inst.planCheck,

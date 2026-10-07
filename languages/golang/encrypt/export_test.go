@@ -77,11 +77,36 @@ var ErrDeterministicGuestNotBuilt = errors.New("encrypt: deterministic guest not
 // of the guest, seeded: every key derives from the seed and the context, so
 // it opens what the Rust record fixture sealed under the same seed and
 // needs no ZeroKMS. ErrDeterministicGuestNotBuilt when the build is absent.
+// This is the build WITHOUT the EQL types, whatever is linked: the tests
+// name the build they run against (NewDeterministicEQLClient is the other),
+// so each build keeps its own coverage.
 func NewDeterministicClient(ctx context.Context, seed [32]byte) (*Client, error) {
 	wasm, err := os.ReadFile(deterministicGuestPath)
 	if err != nil {
 		return nil, ErrDeterministicGuestNotBuilt
 	}
+	return deterministicClient(ctx, wasm, seed)
+}
+
+// ErrDeterministicEQLGuestNotBuilt says the test build with the EQL types
+// is absent, or package eql is not linked.
+var ErrDeterministicEQLGuestNotBuilt = errors.New("encrypt: deterministic eql guest not built; run `mise run wasm:guest:build:eql:deterministic`")
+
+// deterministicEQLGuestPath is the test build WITH the EQL types, which
+// `mise run wasm:guest:build:eql:deterministic` writes under testdata too.
+const deterministicEQLGuestPath = "testdata/stack_encrypt_guest_eql_deterministic.wasm"
+
+// NewDeterministicEQLClient is NewDeterministicClient over the test build
+// WITH the EQL types.
+func NewDeterministicEQLClient(ctx context.Context, seed [32]byte) (*Client, error) {
+	wasm, err := os.ReadFile(deterministicEQLGuestPath)
+	if err != nil {
+		return nil, ErrDeterministicEQLGuestNotBuilt
+	}
+	return deterministicClient(ctx, wasm, seed)
+}
+
+func deterministicClient(ctx context.Context, wasm []byte, seed [32]byte) (*Client, error) {
 	tr := &transport{rt: refusingTransport{}, token: noToken{}}
 	inst, err := newInstance(ctx, wasm, tr, guest.BestEffort)
 	if err != nil {
@@ -122,8 +147,31 @@ func RawClient(t *testing.T, wasm []byte) *Client {
 	return c
 }
 
-// EmbeddedGuest is the embedded guest's bytes, or ErrGuestNotBuilt.
+// EmbeddedGuest is the guest a client runs: the build with the EQL types
+// when package eql is linked (it is, by the generated test types), else
+// this package's own. ErrGuestNotBuilt when absent.
 func EmbeddedGuest() ([]byte, error) { return embeddedGuest() }
+
+// PlainGuest is this package's own embedded guest, the build without the
+// EQL types, whatever is linked. ErrGuestNotBuilt when absent.
+func PlainGuest() ([]byte, error) {
+	wasm, err := guestFS.ReadFile(guestPath)
+	if err != nil {
+		return nil, ErrGuestNotBuilt
+	}
+	return wasm, nil
+}
+
+// NewCheckerOver is NewChecker over the given guest bytes, so a test asks a
+// named build its questions.
+func NewCheckerOver(ctx context.Context, wasm []byte) (*Checker, error) {
+	t := &transport{rt: refusingTransport{}, token: noToken{}}
+	inst, err := newInstance(ctx, wasm, t, guest.BestEffort)
+	if err != nil {
+		return nil, err
+	}
+	return &Checker{c: newClient(inst, t)}, nil
+}
 
 // LiveClient is liveClient for the external tests: a client against real
 // ZeroKMS from the STACK_ENCRYPT_TEST_* variables, or a skip.

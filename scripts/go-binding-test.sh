@@ -9,19 +9,20 @@
 # the Rust build is the slow part.
 #
 # Usage: go-binding-test.sh <module dir> [<guest path, relative to it>...]
-# With no guest paths, both guests the module embeds are expected.
+# With no guest paths, every guest the module embeds is expected: the
+# stack-encrypt guest, its build with the EQL types, and the credential guest.
 set -euo pipefail
 
 dir=${1:?usage: go-binding-test.sh <module dir> [<guest path>...]}
 shift || true
 if [ $# -eq 0 ]; then
-  set -- encrypt/wasm/stack_encrypt_guest.wasm auth/wasm/stack_auth_guest.wasm
+  set -- encrypt/wasm/stack_encrypt_guest.wasm encrypt/eql/wasm/stack_encrypt_guest_eql.wasm auth/wasm/stack_auth_guest.wasm
 fi
 
 cd "$dir"
 for guest in "$@"; do
   if [ ! -f "$guest" ]; then
-    echo "guest module not built at $dir/$guest — run: mise run wasm:guest:build wasm:auth-guest:build" >&2
+    echo "guest module not built at $dir/$guest — run: mise run wasm:guest:build wasm:guest:build:eql wasm:auth-guest:build" >&2
     exit 1
   fi
 done

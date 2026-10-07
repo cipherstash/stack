@@ -15,6 +15,9 @@ edition = "2021"
 cargo-fuzz = true
 
 [dependencies]
+# `Protected`, for the check_record model's passthrough-of-bytes node: the
+# same line stack-encrypt builds on.
+vitaminc-protected = "0.5.1"
 libfuzzer-sys = "0.4"
 # Structure-aware inputs for `check_record` and `plan_build`: the mirror
 # types derive `Arbitrary`, so the fuzzer mutates trees and plans, not bytes.

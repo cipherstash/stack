@@ -57,6 +57,33 @@
 //! the two-segment and shared-prefix rules hold, and it seals the same
 //! bytes.
 //!
+//! # A field that names an EQL type
+//!
+//! Instead of outputs, a field may name an EQL type as its **target**:
+//! `{"context": [...], "target": "TextEq"}`. The two forms are exclusive —
+//! a field with both is refused — and the lowering runs the named type's
+//! own plan through the [`TargetResolver`] the host installed
+//! ([`plan_with`], [`encrypt_with`], [`decrypt_with`], [`query`]), zipping
+//! its [`Pending`] into the record's so the whole record is still one
+//! ZeroKMS request. The bare entry points ([`plan`], [`encrypt`],
+//! [`decrypt`]) run with [`NoTargets`], the resolver of a build without EQL
+//! types, which refuses every target name when the plan is built: a plan
+//! that parses there has no target field.
+//!
+//! A target field's label must be a column, `<table>/<column>`, because
+//! that is what an EQL value stores in its `i`: [`Plan::new_with`] refuses
+//! a target field whose label has any other number of segments
+//! ([`TargetError::Column`]) — [`FieldPlan::with_target`] itself takes any
+//! label, as every field constructor does; the segment rules are the
+//! plan's — and an extended plan (a tenant part on every
+//! label) has no column for it and is refused with
+//! [`TargetError::Extended`] rather than silently dropping the extension,
+//! as is a plan with a context field, whose labels are identities alone
+//! under whatever table each record names ([`TargetError::ContextField`]).
+//! The field's `"type"`, when declared, must be the kind the EQL type is
+//! produced from ([`TargetError::Kind`]); undeclared, it is that kind, so
+//! every value is checked against it as any typed field's is.
+//!
 //! # What a field's `"type"` decides, and what it does not
 //!
 //! Every field lowered from data is a [`Value`]: its plaintext type is the
@@ -92,10 +119,19 @@
 //!
 //! A record is stored as `field → { output-key → node }`: `"c"` is the
 //! field's ciphertext, each term rides under its index key (`"eq"`,
-//! `"match"`, `"ore"`, `"ope"`) as a passthrough byte node, and a passthrough
-//! field rides under `"passthrough"`. A row written under one spelling is
-//! read under the same spelling or not at all, so the keys are fixed here
-//! and every binding agrees on them by construction.
+//! `"match"`, `"ore"`, `"ope"`) as a passthrough byte node, a passthrough
+//! field rides under `"passthrough"`, and a target field's EQL value rides
+//! under [`EQL_KEY`] (`"eql"`) as a passthrough byte node holding the EQL
+//! JSON. A row written under one spelling is read under the same spelling
+//! or not at all, so the keys are fixed here and every binding agrees on
+//! them by construction.
+//!
+//! The `"eql"` node is a passthrough on the wire and that is safe where a
+//! passthrough under `"c"` is not: its bytes are not handed back as
+//! plaintext. Opening them runs the EQL type's own decryption, which reads
+//! the ciphertext *inside* the JSON, authenticates it under the field's
+//! column and refuses a different stored identifier — so a forged `"eql"`
+//! node opens to nothing, as a forged `"c"` leaf does.
 //!
 //! Under `"c"` a passthrough is refused in both directions, and that is
 //! load-bearing: opening a passthrough retrieves no key and opens no AEAD,
@@ -106,14 +142,22 @@
 //! that a round-trip invariant rather than data loss.
 
 use vitaminc_aead_value::{FfiValue, ValueKind};
+use vitaminc_protected::Controlled;
 
-use super::{admits, utf8, Error, Scalar, Scope, TermBytes, Value};
+use super::{
+    admits, utf8, Error, NoTargets, Scalar, Scope, TargetError, TargetResolver, TermBytes, Value,
+};
 use crate::plan::{FieldValues, FieldsBuilder, Opens, Runs};
 use crate::target::{CallerContext, DeclaredContext, Decryption, Encrypted, IndexSpec};
 use crate::{
     BoxedPassthrough, CipherText, ContextPiece, KeysetCipher, Label, NonEmpty, Pending,
     StackCipherText,
 };
+
+/// The map key a target field's EQL value rides under in a stored record:
+/// wire format, like the output keys (see the
+/// [module docs](self#the-stored-record-is-wire-format)).
+pub const EQL_KEY: &str = "eql";
 
 /// What a plan field asks for.
 ///
@@ -170,13 +214,15 @@ impl Output {
     }
 }
 
-/// The verb a field's outputs lower to: one of the plan builder's four.
+/// The verb a field's outputs lower to: one of the plan builder's four, or
+/// a target, which the resolver runs beside the lowered plan.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Verb {
     Encrypt,
     EncryptIndex,
     Index,
     Passthrough,
+    Target,
 }
 
 /// One field of a record plan: what to call it, what label to seal it
@@ -195,6 +241,7 @@ pub struct FieldPlan {
     label: Label,
     extension: Vec<ContextPiece<'static>>,
     outputs: Vec<Output>,
+    target: Option<String>,
     field_type: Option<ValueKind>,
 }
 
@@ -244,6 +291,38 @@ impl FieldPlan {
             label,
             extension,
             outputs,
+            target: None,
+            field_type: None,
+        })
+    }
+
+    /// A field plan that names an EQL type as its target instead of
+    /// outputs: the type's own plan decides what is sealed and which terms
+    /// sit beside it. Whether the name is one this build can run is decided
+    /// when the plan is built ([`Plan::new_with`]), against the resolver.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Plan`] if `target` is empty, or if `context` is not a label,
+    /// optionally extended. How many segments the label needs is the plan's
+    /// rule ([`Plan::new_with`]), as it is for [`new`](Self::new).
+    pub fn with_target(
+        name: impl Into<String>,
+        context: NonEmpty<ContextPiece<'static>>,
+        target: impl Into<String>,
+    ) -> Result<Self, Error> {
+        let target = target.into();
+        if target.is_empty() {
+            return Err(Error::Plan);
+        }
+        let (label, extension) = split_context(context.get())?;
+        Ok(Self {
+            name: name.into(),
+            context,
+            label,
+            extension,
+            outputs: Vec::new(),
+            target: Some(target),
             field_type: None,
         })
     }
@@ -293,9 +372,15 @@ impl FieldPlan {
         self.label.segments().last().unwrap_or("")
     }
 
-    /// What the field produces.
+    /// What the field produces. Empty for a field that names a target: its
+    /// outputs are the EQL type's own.
     pub fn outputs(&self) -> &[Output] {
         &self.outputs
+    }
+
+    /// The EQL type this field names as its target, if it does.
+    pub fn target(&self) -> Option<&str> {
+        self.target.as_deref()
     }
 
     /// The declared type of the field's values, if the plan declares one.
@@ -317,7 +402,9 @@ impl FieldPlan {
     }
 
     fn verb(&self) -> Verb {
-        if self.outputs.contains(&Output::Passthrough) {
+        if self.target.is_some() {
+            Verb::Target
+        } else if self.outputs.contains(&Output::Passthrough) {
             Verb::Passthrough
         } else if self.has_ciphertext() {
             if self.indexes().is_empty() {
@@ -360,6 +447,11 @@ impl FieldPlan {
             keys: self.indexes().iter().map(IndexSpec::key).collect(),
             kind: self.field_type,
         }
+    }
+
+    /// Whether the field is run by the resolver rather than the lowered plan.
+    fn is_target(&self) -> bool {
+        self.target.is_some()
     }
 }
 
@@ -435,7 +527,19 @@ enum Context {
 impl Plan {
     /// A plan over `fields`, in the order given — which is the order of the
     /// fields in every result — under the context every field's label
-    /// shares.
+    /// shares, for a build without EQL types: [`new_with`](Self::new_with)
+    /// under [`NoTargets`], so a field that names a target is refused.
+    ///
+    /// # Errors
+    ///
+    /// As [`new_with`](Self::new_with).
+    pub fn new(fields: Vec<FieldPlan>) -> Result<Self, Error> {
+        Self::new_with(fields, &NoTargets)
+    }
+
+    /// A plan over `fields`, in the order given — which is the order of the
+    /// fields in every result — under the context every field's label
+    /// shares, resolving each target field's name through `resolver`.
     ///
     /// # Errors
     ///
@@ -444,17 +548,60 @@ impl Plan {
     /// labels sit under different contexts or carry different extensions,
     /// or does not build as a fields plan: two sealed or indexed fields
     /// keyed under one identity, for instance, whose terms would be
-    /// interchangeable.
-    pub fn new(fields: Vec<FieldPlan>) -> Result<Self, Error> {
+    /// interchangeable. [`Error::Target`] if a target field names a type the
+    /// resolver does not know or cannot produce, declares a `"type"` other
+    /// than the kind that type is produced from, or sits in an extended plan.
+    pub fn new_with(
+        mut fields: Vec<FieldPlan>,
+        resolver: &(impl TargetResolver + ?Sized),
+    ) -> Result<Self, Error> {
         let Some(first) = fields.first() else {
             return Err(Error::Plan);
         };
         let context = first.prefix()?;
+        let extension = first.extension.clone();
         for field in &fields {
             // `prefix` refuses a one-segment label, which has nothing to
             // sit under; a longer one must sit under the first field's.
             if field.prefix()? != context {
                 return Err(Error::Plan);
+            }
+        }
+        for field in fields.iter_mut().filter(|field| field.is_target()) {
+            let name = field.target.clone().unwrap_or_default();
+            let descriptor = resolver.resolve(&name)?;
+            if !extension.is_empty() {
+                return Err(TargetError::Extended {
+                    name: field.name.clone(),
+                    label: field.label.to_string(),
+                }
+                .into());
+            }
+            // An EQL value is stored under a table and a column, so the
+            // label is exactly two segments. Decided here, where the plan is
+            // built and se_plan_check reports it, not at the first value: a
+            // generator that asks the engine must be told before it writes
+            // the code. The resolver re-checks, since it is public API.
+            if field.label.segments().len() != 2 {
+                return Err(TargetError::Column {
+                    name: field.name.clone(),
+                    label: field.label.to_string(),
+                    reason: "an EQL column is a two-segment label: table and column".to_owned(),
+                }
+                .into());
+            }
+            match (field.field_type, descriptor.plaintext) {
+                (Some(declared), expected) if expected != Some(declared) => {
+                    return Err(TargetError::Kind {
+                        name: field.name.clone(),
+                        target: name,
+                        expected,
+                        declared,
+                    }
+                    .into());
+                }
+                (None, Some(kind)) => field.field_type = Some(kind),
+                _ => {}
             }
         }
         Self::build(Context::Label(context), fields)
@@ -476,7 +623,10 @@ impl Plan {
     /// [`Output::Passthrough`] (a context is not sealed, and indexing it
     /// would derive a term from a value that is not secret), declares a
     /// type other than [`ValueKind::String`], or any field's label has
-    /// more than one segment.
+    /// more than one segment. [`Error::Target`]
+    /// ([`TargetError::ContextField`]) if a field names an EQL type as its
+    /// target: an EQL value is stored under a table the declaration fixes,
+    /// and a plan with a context field has none.
     pub fn with_context_field(
         context_field: impl Into<String>,
         fields: Vec<FieldPlan>,
@@ -499,6 +649,17 @@ impl Plan {
             .any(|field| field.label.segments().count() != 1)
         {
             return Err(Error::Plan);
+        }
+        // A target field's label must be a column, `<table>/<column>`,
+        // which a context field's one-segment identity is not: the table
+        // is each record's own, and an EQL value stores one fixed by the
+        // declaration. The same refusal as an extended plan's.
+        if let Some(target) = fields.iter().find(|field| field.is_target()) {
+            return Err(TargetError::ContextField {
+                name: target.name.clone(),
+                context_field,
+            }
+            .into());
         }
         let fields = fields
             .into_iter()
@@ -527,6 +688,23 @@ impl Plan {
                 return Err(Error::Plan);
             }
             if field.extension != extension {
+                return Err(Error::Plan);
+            }
+            // A target field is keyed under its identity like a sealed one;
+            // the builder checks that rule for the fields it lowers, so the
+            // target fields are checked against every field here.
+            if field.is_target()
+                && fields[..at]
+                    .iter()
+                    .any(|prior| prior.identity() == field.identity())
+            {
+                return Err(Error::Plan);
+            }
+            if !field.is_target()
+                && fields[..at]
+                    .iter()
+                    .any(|prior| prior.is_target() && prior.identity() == field.identity())
+            {
                 return Err(Error::Plan);
             }
         }
@@ -591,7 +769,9 @@ impl Plan {
             }
         };
         for field in &self.fields {
-            if self.context_field() == Some(field.name.as_str()) {
+            // The context field is declared by `context_field` above; a
+            // target field is the resolver's.
+            if self.context_field() == Some(field.name.as_str()) || field.is_target() {
                 continue;
             }
             builder = declare(builder, field);
@@ -616,6 +796,11 @@ impl Plan {
     fn shape(&self) -> Vec<FieldShape> {
         self.fields.iter().map(FieldPlan::shape).collect()
     }
+
+    /// The fields that name a target, in plan order: the resolver's.
+    fn target_fields(&self) -> impl Iterator<Item = &FieldPlan> + '_ {
+        self.fields.iter().filter(|field| field.is_target())
+    }
 }
 
 /// One field's verb, over a [`Value`]; its indexes are the [`IndexSpec`]s
@@ -630,10 +815,24 @@ fn declare<K: 'static>(
         Verb::EncryptIndex => builder.encrypt_index::<Value>(name, field.indexes()),
         Verb::Index => builder.index::<Value>(name, field.indexes()),
         Verb::Passthrough => builder.passthrough::<Value>(name),
+        // `lower` never hands a target field here: the resolver runs it.
+        Verb::Target => builder,
     }
 }
 
-/// Read a record plan from a decoded value.
+/// Read a record plan from a decoded value, for a build without EQL types:
+/// [`plan_with`] under [`NoTargets`], so a field that names a `"target"` is
+/// refused ([`TargetError::NoTargets`]).
+///
+/// # Errors
+///
+/// As [`plan_with`].
+pub fn plan(value: FfiValue) -> Result<Plan, Error> {
+    plan_with(value, &NoTargets)
+}
+
+/// Read a record plan from a decoded value, resolving each target field's
+/// name through `resolver`.
 ///
 /// The plan is an [`FfiValue::Object`]:
 ///
@@ -648,6 +847,20 @@ fn declare<K: 'static>(
 /// the shape). The key is reserved: a top-level `"context_field"` whose
 /// value is not a string is refused rather than read as a field of that
 /// name.
+///
+/// A field may name an EQL type as its target instead of outputs:
+///
+/// ```text
+/// { <field>: { "context": <context>, "target": "<EQL type name>", "type": <type> }, ... }
+/// ```
+///
+/// A field has `"outputs"` or `"target"`, never both. `"target"` is the
+/// type's name as the resolver lists it (`"TextEq"`), resolved when the plan
+/// is built so a name the build cannot run fails here and not at the first
+/// value; its `"type"`, when given, must be the kind the type is produced
+/// from. See the [module docs](self#a-field-that-names-an-eql-type). A
+/// target field needs a column for its label, so it is refused under a
+/// context field ([`TargetError::ContextField`]).
 ///
 /// `<index>` is an index in its wire form, which is its key — `"eq"`,
 /// `"match"`, `"ore"` or `"ope"` — save for a match index with options other
@@ -694,12 +907,12 @@ fn declare<K: 'static>(
 /// # Examples
 ///
 /// ```
-/// use stack_encrypt::dynamic::{record, FfiValue, Output};
+/// use stack_encrypt::dynamic::{record, FfiValue, NoTargets, Output};
 /// use stack_encrypt::target::IndexSpec;
 ///
 /// // As a binding would decode it from its caller: seal `age` under the
 /// // label users/age and index it for equality.
-/// let plan = record::plan(FfiValue::Object(vec![(
+/// let plan = record::plan_with(FfiValue::Object(vec![(
 ///     "age".to_string(),
 ///     FfiValue::Object(vec![
 ///         (
@@ -717,7 +930,7 @@ fn declare<K: 'static>(
 ///             ]),
 ///         ),
 ///     ]),
-/// )]))?;
+/// )]), &NoTargets)?;
 ///
 /// assert_eq!(plan.fields().len(), 1);
 /// assert_eq!(plan.fields()[0].name(), "age");
@@ -733,24 +946,29 @@ fn declare<K: 'static>(
 ///
 /// [`Error::Plan`] for a plan that is not an object of field specs, an
 /// empty plan, a field named twice, a spec with a key other than
-/// `"context"`, `"outputs"` and `"type"` or with one given twice, missing
-/// `"context"` or `"outputs"`, an output list that is not a list of outputs
-/// (above), is empty, names an output key twice or names `"passthrough"`
-/// beside another output, a `"type"` that is not a string naming a
-/// [`ValueKind`], a type that does not admit one of the field's index
-/// outputs, a context that is not a label of at least two segments
-/// (optionally extended), fields under different contexts or extensions,
-/// or a plan the builder refuses ([`Plan::new`]); with `"context_field"`,
-/// a value that is not a string, given twice, naming no field of the
-/// plan, or a plan [`Plan::with_context_field`] refuses. [`Error::Context`]
-/// for a `"context"` that is present but is not a context at all, or
-/// renders empty.
+/// `"context"`, `"outputs"`, `"target"` and `"type"` or with one given
+/// twice, missing `"context"`, having neither `"outputs"` nor `"target"`
+/// or having both, an output list that is not a list of outputs (above),
+/// is empty, names an output key twice or names `"passthrough"` beside
+/// another output, a `"target"` that is not a non-empty string, a `"type"`
+/// that is not a string naming a [`ValueKind`], a type that does not admit
+/// one of the field's index outputs, a context that is not a label of at
+/// least two segments (optionally extended), fields under different
+/// contexts or extensions, or a plan the builder refuses ([`Plan::new`]);
+/// with `"context_field"`, a value that is not a string, given twice,
+/// naming no field of the plan, or a plan [`Plan::with_context_field`]
+/// refuses. [`Error::Context`] for a `"context"` that is present but is
+/// not a context at all, or renders empty. [`Error::Target`] for a target
+/// the resolver refuses ([`Plan::new_with`]).
 ///
 /// The transport codec refuses duplicate object keys before a binding's
 /// value reaches here, but an [`FfiValue`] can be built with them directly
 /// and this is a public parser, so it refuses them itself rather than
 /// letting the last one win.
-pub fn plan(value: FfiValue) -> Result<Plan, Error> {
+pub fn plan_with(
+    value: FfiValue,
+    resolver: &(impl TargetResolver + ?Sized),
+) -> Result<Plan, Error> {
     let FfiValue::Object(entries) = value else {
         return Err(Error::Plan);
     };
@@ -772,10 +990,17 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
         };
         let mut context: Option<NonEmpty<ContextPiece<'static>>> = None;
         let mut outputs: Option<Vec<Output>> = None;
+        let mut target: Option<String> = None;
         let mut field_type: Option<ValueKind> = None;
         for (key, value) in spec {
             match key.as_str() {
                 "context" if context.is_none() => context = Some(super::context(value)?),
+                "target" if target.is_none() => {
+                    let FfiValue::String(s) = &value else {
+                        return Err(Error::Plan);
+                    };
+                    target = Some(utf8(s).ok_or(Error::Plan)?.to_owned());
+                }
                 "outputs" if outputs.is_none() => {
                     let FfiValue::Array(items) = value else {
                         return Err(Error::Plan);
@@ -793,15 +1018,17 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
                     let name = utf8(s).ok_or(Error::Plan)?;
                     field_type = Some(name.parse().map_err(|_| Error::Plan)?);
                 }
-                // An unknown key, or one of the three given twice.
+                // An unknown key, or one of the four given twice.
                 _ => return Err(Error::Plan),
             }
         }
-        let field = FieldPlan::new(
-            name,
-            context.ok_or(Error::Plan)?,
-            outputs.ok_or(Error::Plan)?,
-        )?;
+        let context = context.ok_or(Error::Plan)?;
+        // One form or the other: a field with both, or neither, is refused.
+        let field = match (outputs, target) {
+            (Some(outputs), None) => FieldPlan::new(name, context, outputs)?,
+            (None, Some(target)) => FieldPlan::with_target(name, context, target)?,
+            _ => return Err(Error::Plan),
+        };
         fields.push(match field_type {
             Some(field_type) => field.with_type(field_type)?,
             None => field,
@@ -811,7 +1038,7 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
     // hand-built one are refused alike.
     match context_field {
         Some(name) => Plan::with_context_field(name, fields),
-        None => Plan::new(fields),
+        None => Plan::new_with(fields, resolver),
     }
 }
 
@@ -889,30 +1116,141 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
 /// [`Error::Source`] if the source does not fit the plan; [`Error::Term`]
 /// if a value has no term the plan asks for. Both are decided here, before
 /// the pending exists. A failure of the pending itself is the engine's.
+///
+/// A plan with a target field needs the resolver that built it:
+/// [`encrypt_with`]. This runs under [`NoTargets`], so such a plan is
+/// refused ([`Error::Target`]).
 pub fn encrypt<'a, K: 'static>(
     cipher: &'a KeysetCipher<'_, K>,
     source: FfiValue,
     plan: &Plan,
 ) -> Result<Pending<'a, StackCipherText, K>, Error> {
+    encrypt_with(cipher, source, plan, &NoTargets)
+}
+
+/// [`encrypt`], running each target field's EQL type through `resolver`:
+/// the type's own plan yields a [`Pending`] that is zipped into the
+/// record's, so a record with target fields is still one ZeroKMS request.
+/// A target field's value rides under [`EQL_KEY`] in the result.
+///
+/// # Errors
+///
+/// As [`encrypt`], plus [`Error::Target`] for a target value of another
+/// kind than the type takes, or a name the resolver refuses.
+pub fn encrypt_with<'a, K: 'static>(
+    cipher: &'a KeysetCipher<'_, K>,
+    source: FfiValue,
+    plan: &Plan,
+    resolver: &(impl TargetResolver + ?Sized),
+) -> Result<Pending<'a, StackCipherText, K>, Error> {
     let rows = source_rows(source, plan)?;
     let lowered = plan.lower::<K>().map_err(|_| Error::Internal)?;
     let extend = plan.declared_context();
     let shape = plan.shape();
-    Ok(match rows {
-        Rows::One(values) => {
-            Runs::<FieldValues, K>::pending(&lowered, cipher, &values, None, extend)
-                .try_map(move |values| shape_record(values, &shape))
+    // Every target field of every row, in row-major order, run by the
+    // resolver; `all` merges their requests with the lowered plan's below.
+    let mut pendings = Vec::new();
+    let mut targets = |row: Row| -> Result<FieldValues, Error> {
+        for (field, value) in plan.target_fields().zip(row.targets) {
+            let name = field.target().unwrap_or_default();
+            pendings.push(
+                resolver
+                    .encrypt(name, cipher, field.label(), value)
+                    .map_err(|error| Error::Target(name_target(error, &field.name)))?,
+            );
         }
-        Rows::Batch(rows) => Runs::<[FieldValues], K>::pending(
-            &lowered, cipher, &rows, None, extend,
-        )
-        .try_map(move |rows| {
-            rows.into_iter()
-                .map(|values| shape_record(values, &shape))
-                .collect::<Result<Vec<_>, _>>()
-                .map(CipherText::Sequence)
-        }),
+        Ok(row.values)
+    };
+    Ok(match rows {
+        Rows::One(row) => {
+            let values = targets(row)?;
+            let eql = Pending::all(cipher, pendings);
+            Runs::<FieldValues, K>::pending(&lowered, cipher, &values, None, extend)
+                .zip(eql)
+                .try_map(move |(values, eql)| shape_record(values, eql, &shape))
+        }
+        Rows::Batch(rows) => {
+            let values = rows
+                .into_iter()
+                .map(&mut targets)
+                .collect::<Result<Vec<FieldValues>, Error>>()?;
+            let eql = Pending::all(cipher, pendings);
+            let per_row = plan.target_fields().count();
+            Runs::<[FieldValues], K>::pending(&lowered, cipher, &values, None, extend)
+                .zip(eql)
+                .try_map(move |(rows, eql)| {
+                    let mut eql = eql.into_iter();
+                    rows.into_iter()
+                        .map(|values| {
+                            let own: Vec<Vec<u8>> = eql.by_ref().take(per_row).collect();
+                            shape_record(values, own, &shape)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                        .map(CipherText::Sequence)
+                })
+        }
     })
+}
+
+/// Derive the EQL query value of one target field for one plaintext: the
+/// operand that matches stored values of the field, as JSON bytes, through
+/// the type's own query plan. A query derives no data key, so the pending
+/// settles without I/O; it is a [`Pending`] all the same, for one shape at
+/// the call site.
+///
+/// # Errors
+///
+/// [`Error::Plan`] if the plan has no field `field` or it is not a target
+/// field (a term of an indexed field is [`super::term`](super::term()));
+/// [`Error::Source`] for a value of another kind than the field declares;
+/// [`Error::Target`] for what the resolver refuses.
+pub fn query<'a, K: 'static>(
+    cipher: &'a KeysetCipher<'_, K>,
+    plan: &Plan,
+    field: &str,
+    value: FfiValue,
+    resolver: &(impl TargetResolver + ?Sized),
+) -> Result<Pending<'a, Vec<u8>, K>, Error> {
+    let field = plan
+        .fields
+        .iter()
+        .find(|candidate| candidate.name == field)
+        .ok_or(Error::Plan)?;
+    let name = field.target().ok_or(Error::Plan)?;
+    check_field(&value, field)?;
+    resolver
+        .query(name, cipher, field.label(), value)
+        .map_err(|error| Error::Target(name_target(error, &field.name)))
+}
+
+/// A resolver's refusal, with the field named where the resolver could not
+/// name it: a resolver sees a type and a label, the lowering knows the
+/// field.
+fn name_target(error: TargetError, field: &str) -> TargetError {
+    match error {
+        TargetError::Column { label, reason, .. } => TargetError::Column {
+            name: field.to_owned(),
+            label,
+            reason,
+        },
+        TargetError::Plaintext {
+            target,
+            expected,
+            found,
+            ..
+        } => TargetError::Plaintext {
+            name: field.to_owned(),
+            target,
+            expected,
+            found,
+        },
+        TargetError::Stored { target, reason, .. } => TargetError::Stored {
+            name: field.to_owned(),
+            target,
+            reason,
+        },
+        other => other,
+    }
 }
 
 /// Decrypt a record — or a batch — produced by [`encrypt`] under the same
@@ -951,32 +1289,96 @@ pub fn encrypt<'a, K: 'static>(
 /// value of another kind than it declares
 /// ([`PlanError::FieldType`](crate::PlanError::FieldType) — the type tag
 /// is inside the AEAD envelope, so only opening can see it).
+///
+/// A plan with a target field needs the resolver that built it:
+/// [`decrypt_with`]. This runs under [`NoTargets`], so such a plan is
+/// refused ([`Error::Target`]).
 pub fn decrypt<'a, K: 'static>(
     scope: Scope<'a, K>,
     record: StackCipherText,
     plan: &Plan,
     expected: Option<Label>,
 ) -> Result<Pending<'a, FfiValue, K>, Error> {
+    decrypt_with(scope, record, plan, expected, &NoTargets)
+}
+
+/// [`decrypt`], opening each target field's EQL value (the [`EQL_KEY`]
+/// node) through `resolver`: the type's own decryption, under the field's
+/// column, zipped into the record's pending and confined to the scope's
+/// keyset as every other leaf is.
+///
+/// # Errors
+///
+/// As [`decrypt`], plus [`Error::Target`] for a stored value that is not
+/// the type, or a name the resolver refuses.
+pub fn decrypt_with<'a, K: 'static>(
+    scope: Scope<'a, K>,
+    record: StackCipherText,
+    plan: &Plan,
+    expected: Option<Label>,
+    resolver: &(impl TargetResolver + ?Sized),
+) -> Result<Pending<'a, FfiValue, K>, Error> {
     let rows = record_rows(record, plan)?;
     let lowered = plan.lower::<K>().map_err(|_| Error::Internal)?;
     let extend = plan.declared_context();
     let shape = plan.shape();
+    let (cipher, keyset) = match &scope {
+        Scope::Client(cipher) => (*cipher, None),
+        Scope::Keyset(keyset) => (keyset.cipher(), Some(keyset.keyset_id())),
+    };
+    // Confine a pending to the scope's keyset, as the lowered plan's is:
+    // a target value sealed under another keyset is refused before any key
+    // is retrieved.
+    let confine = move |pending: Pending<'a, FfiValue, K>| match keyset {
+        Some(keyset) => pending.scoped_to(keyset),
+        None => pending,
+    };
+    let mut pendings = Vec::new();
+    let mut targets = |row: StoredRow| -> Result<FieldValues, Error> {
+        for (field, stored) in plan.target_fields().zip(row.targets) {
+            let name = field.target().unwrap_or_default();
+            pendings.push(confine(
+                resolver
+                    .decrypt(name, cipher, field.label(), &stored)
+                    .map_err(|error| Error::Target(name_target(error, &field.name)))?,
+            ));
+        }
+        Ok(row.values)
+    };
     Ok(match rows {
-        Rows::One(values) => run(
-            scope,
-            Opens::<FieldValues, K>::decryption(&lowered, values, expected, extend),
-        )
-        .try_map(move |values| open_record(values, &shape)),
-        Rows::Batch(rows) => run(
-            scope,
-            Opens::<Vec<FieldValues>, K>::decryption(&lowered, rows, expected, extend),
-        )
-        .try_map(move |rows| {
-            rows.into_iter()
-                .map(|values| open_record(values, &shape))
-                .collect::<Result<Vec<_>, _>>()
-                .map(FfiValue::Array)
-        }),
+        Rows::One(row) => {
+            let values = targets(row)?;
+            let eql = Pending::all(cipher, pendings);
+            run(
+                scope,
+                Opens::<FieldValues, K>::decryption(&lowered, values, expected, extend),
+            )
+            .zip(eql)
+            .try_map(move |(values, eql)| open_record(values, eql, &shape))
+        }
+        Rows::Batch(rows) => {
+            let values = rows
+                .into_iter()
+                .map(&mut targets)
+                .collect::<Result<Vec<FieldValues>, Error>>()?;
+            let eql = Pending::all(cipher, pendings);
+            let per_row = plan.target_fields().count();
+            run(
+                scope,
+                Opens::<Vec<FieldValues>, K>::decryption(&lowered, values, expected, extend),
+            )
+            .zip(eql)
+            .try_map(move |(rows, eql)| {
+                let mut eql = eql.into_iter();
+                rows.into_iter()
+                    .map(|values| {
+                        let own: Vec<FfiValue> = eql.by_ref().take(per_row).collect();
+                        open_record(values, own, &shape)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(FfiValue::Array)
+            })
+        }
     })
 }
 
@@ -1011,11 +1413,11 @@ fn run<'a, K: 'static, T: 'static>(
 pub fn check_source(source: FfiValue, plan: &Plan) -> Result<(), Error> {
     let rows = source_rows(source, plan)?;
     let lowered = plan.lower::<()>().map_err(|_| Error::Internal)?;
-    let check = |values: &FieldValues| {
-        Runs::<FieldValues, ()>::check(&lowered, values, None).map_err(|_| Error::Source)
+    let check = |row: &Row| {
+        Runs::<FieldValues, ()>::check(&lowered, &row.values, None).map_err(|_| Error::Source)
     };
     match &rows {
-        Rows::One(values) => check(values),
+        Rows::One(row) => check(row),
         Rows::Batch(rows) => rows.iter().try_for_each(check),
     }
 }
@@ -1045,14 +1447,16 @@ pub fn check_record(
 ) -> Result<(), Error> {
     let rows = record_rows(record, plan)?;
     let lowered = plan.lower::<()>().map_err(|_| Error::Internal)?;
-    let check = |values: &FieldValues| {
-        Opens::<FieldValues, ()>::check(&lowered, values, expected).map_err(|error| match error {
-            mismatch @ crate::Error::ContextMismatch { .. } => Error::Cipher(mismatch),
-            _ => Error::Record,
-        })
+    let check = |row: &StoredRow| {
+        Opens::<FieldValues, ()>::check(&lowered, &row.values, expected).map_err(
+            |error| match error {
+                mismatch @ crate::Error::ContextMismatch { .. } => Error::Cipher(mismatch),
+                _ => Error::Record,
+            },
+        )
     };
     match &rows {
-        Rows::One(values) => check(values),
+        Rows::One(row) => check(row),
         Rows::Batch(rows) => rows.iter().try_for_each(check),
     }
 }
@@ -1122,9 +1526,23 @@ impl RecordTree for StackCipherText {
 
 /// The rows of a call, as the engine's records: one, or a batch, so the
 /// result takes the shape the input had.
-enum Rows {
-    One(FieldValues),
-    Batch(Vec<FieldValues>),
+enum Rows<R> {
+    One(R),
+    Batch(Vec<R>),
+}
+
+/// One source row: the lowered plan's values, and each target field's
+/// value in plan order, for the resolver.
+struct Row {
+    values: FieldValues,
+    targets: Vec<FfiValue>,
+}
+
+/// One stored row: the lowered plan's ciphertexts, and each target field's
+/// EQL bytes in plan order, for the resolver.
+struct StoredRow {
+    values: FieldValues,
+    targets: Vec<Vec<u8>>,
 }
 
 /// Take the one entry named `name` out of a row, whatever order the row had
@@ -1193,7 +1611,7 @@ fn check_tree<T: RecordTree>(tree: &T) -> Result<(), Error> {
 /// the plan does not name, and each value fits its field ([`check_field`]).
 /// Each field is moved out of the source into its slot at the type its kind
 /// lowers to; nothing else is copied.
-fn source_rows(source: FfiValue, plan: &Plan) -> Result<Rows, Error> {
+fn source_rows(source: FfiValue, plan: &Plan) -> Result<Rows<Row>, Error> {
     match source {
         FfiValue::Object(row) => Ok(Rows::One(source_row(row, plan)?)),
         FfiValue::Array(items) => Ok(Rows::Batch(
@@ -1209,17 +1627,22 @@ fn source_rows(source: FfiValue, plan: &Plan) -> Result<Rows, Error> {
     }
 }
 
-fn source_row(mut row: Vec<(String, FfiValue)>, plan: &Plan) -> Result<FieldValues, Error> {
+fn source_row(mut row: Vec<(String, FfiValue)>, plan: &Plan) -> Result<Row, Error> {
     if row.len() != plan.fields.len() {
         return Err(Error::Source);
     }
     let mut values = FieldValues::new();
+    let mut targets = Vec::new();
     for field in &plan.fields {
         let (_, value) = take(&mut row, &field.name).ok_or(Error::Source)?;
         check_field(&value, field)?;
-        let _ = values.insert(&field.name, Value::new(value));
+        if field.is_target() {
+            targets.push(value);
+        } else {
+            let _ = values.insert(&field.name, Value::new(value));
+        }
     }
-    Ok(values)
+    Ok(Row { values, targets })
 }
 
 /// A source value against its plan field: a typed field needs a value of
@@ -1232,6 +1655,11 @@ fn check_field(value: &FfiValue, field: &FieldPlan) -> Result<(), Error> {
         if !declared.holds(value) {
             return Err(Error::Source);
         }
+    }
+    // A target field's value is sealed by the type's own plan, which
+    // refuses a passthrough as any ciphertext does; the same walk here.
+    if field.is_target() {
+        check_tree(value)?;
     }
     for output in &field.outputs {
         match output {
@@ -1281,11 +1709,25 @@ fn term_node(term: TermBytes) -> StackCipherText {
 /// order, its output map.
 fn shape_record(
     mut values: FieldValues,
+    eql: Vec<Vec<u8>>,
     shape: &[FieldShape],
 ) -> Result<StackCipherText, crate::Error> {
     let mut fields = Vec::with_capacity(shape.len());
+    let mut eql = eql.into_iter();
     for field in shape {
         let outputs = match field.verb {
+            Verb::Target => {
+                // The resolver answered one value per target field, in plan
+                // order; running short is the engine answering with a
+                // different shape than it was asked.
+                let value = eql.next().ok_or(crate::Error::ResponseShape)?;
+                vec![(
+                    EQL_KEY.to_string(),
+                    CipherText::Passthrough(Box::new(FfiValue::Bytes(
+                        vitaminc_protected::Protected::new(value),
+                    )) as BoxedPassthrough),
+                )]
+            }
             Verb::Encrypt => {
                 let ciphertext: StackCipherText = slot(&mut values, &field.name)?;
                 vec![("c".to_string(), ciphertext)]
@@ -1337,10 +1779,19 @@ fn take_leaf(values: &mut FieldValues, name: &str) -> Result<FfiValue, crate::Er
 /// plan order, each checked against its declared kind. The tag is
 /// authenticated, so a mismatch is not tampering: the row was sealed as
 /// another type than the plan now declares.
-fn open_record(mut values: FieldValues, shape: &[FieldShape]) -> Result<FfiValue, crate::Error> {
+fn open_record(
+    mut values: FieldValues,
+    eql: Vec<FfiValue>,
+    shape: &[FieldShape],
+) -> Result<FfiValue, crate::Error> {
     let mut fields = Vec::with_capacity(shape.len());
+    let mut eql = eql.into_iter();
     for field in shape.iter().filter(|field| field.verb != Verb::Index) {
-        let value = take_leaf(&mut values, &field.name)?;
+        let value = if field.verb == Verb::Target {
+            eql.next().ok_or(crate::Error::ResponseShape)?
+        } else {
+            take_leaf(&mut values, &field.name)?
+        };
         if let Some(kind) = field.kind {
             if !kind.holds(&value) {
                 return Err(crate::PlanError::FieldType {
@@ -1366,7 +1817,7 @@ fn open_record(mut values: FieldValues, shape: &[FieldShape]) -> Result<FfiValue
 /// each passthrough field is present exactly once with exactly one
 /// `"passthrough"` node carrying a value of the field's kind. Terms, and
 /// entries the plan does not open, are ignored: comparands, not ciphertext.
-fn record_rows(tree: StackCipherText, plan: &Plan) -> Result<Rows, Error> {
+fn record_rows(tree: StackCipherText, plan: &Plan) -> Result<Rows<StoredRow>, Error> {
     match tree {
         CipherText::Map(row) => Ok(Rows::One(record_row(row, plan)?)),
         CipherText::Sequence(items) => Ok(Rows::Batch(
@@ -1382,14 +1833,28 @@ fn record_rows(tree: StackCipherText, plan: &Plan) -> Result<Rows, Error> {
     }
 }
 
-fn record_row(mut row: Vec<(String, StackCipherText)>, plan: &Plan) -> Result<FieldValues, Error> {
+fn record_row(mut row: Vec<(String, StackCipherText)>, plan: &Plan) -> Result<StoredRow, Error> {
     let mut values = FieldValues::new();
+    let mut targets = Vec::new();
     for field in plan.fields.iter().filter(|field| field.opens()) {
         let (_, node) = take(&mut row, &field.name).ok_or(Error::Record)?;
         let CipherText::Map(mut outputs) = node else {
             return Err(Error::Record);
         };
         match field.verb() {
+            Verb::Target => {
+                // The EQL value: a passthrough carrying bytes, exactly once.
+                // What it opens to is the type's own decryption's to decide.
+                let (_, node) = take(&mut outputs, EQL_KEY).ok_or(Error::Record)?;
+                let CipherText::Passthrough(payload) = node else {
+                    return Err(Error::Record);
+                };
+                let value = *payload.downcast::<FfiValue>().map_err(|_| Error::Record)?;
+                let FfiValue::Bytes(bytes) = value else {
+                    return Err(Error::Record);
+                };
+                targets.push(bytes.risky_unwrap());
+            }
             Verb::Passthrough => {
                 let (_, node) = take(&mut outputs, "passthrough").ok_or(Error::Record)?;
                 let CipherText::Passthrough(payload) = node else {
@@ -1408,7 +1873,7 @@ fn record_row(mut row: Vec<(String, StackCipherText)>, plan: &Plan) -> Result<Fi
             }
         }
     }
-    Ok(values)
+    Ok(StoredRow { values, targets })
 }
 
 #[cfg(test)]
@@ -1674,7 +2139,7 @@ mod tests {
         let empty = FieldValues::new();
         assert!(
             matches!(
-                shape_record(empty, &shape),
+                shape_record(empty, Vec::new(), &shape),
                 Err(crate::Error::ResponseShape)
             ),
             "a missing slot on the encrypt side"
@@ -1683,7 +2148,7 @@ mod tests {
         let _ = wrong.insert("age", 34u32);
         assert!(
             matches!(
-                shape_record(wrong, &shape),
+                shape_record(wrong, Vec::new(), &shape),
                 Err(crate::Error::ResponseShape)
             ),
             "a mistyped slot on the encrypt side"
@@ -1691,12 +2156,15 @@ mod tests {
         let mut wrong = FieldValues::new();
         let _ = wrong.insert("age", 34u32);
         assert!(
-            matches!(open_record(wrong, &shape), Err(crate::Error::ResponseShape)),
+            matches!(
+                open_record(wrong, Vec::new(), &shape),
+                Err(crate::Error::ResponseShape)
+            ),
             "a mistyped slot on the decrypt side"
         );
         assert!(
             matches!(
-                open_record(FieldValues::new(), &shape),
+                open_record(FieldValues::new(), Vec::new(), &shape),
                 Err(crate::Error::ResponseShape)
             ),
             "a missing slot on the decrypt side"
@@ -4235,6 +4703,936 @@ mod tests {
             let refused =
                 decrypt(Scope::Client(&cipher), CipherText::Map(fields), &plan, None).err();
             assert!(matches!(refused, Some(Error::Record)), "{refused:?}");
+        }
+    }
+
+    /// A resolver shaped like the EQL one, over this engine: it seals a
+    /// string as one leaf under the field's label and writes it into a JSON
+    /// envelope with the label as its `i`, opens it back checking that `i`,
+    /// and derives an equality term for a query. What it proves is the
+    /// lowering's half — the target field rides in the record's request,
+    /// is stored under `"eql"`, opens through the resolver, and every
+    /// refusal is decided before a key is touched — not EQL's envelope,
+    /// which is `eql-bindings`' to prove.
+    mod given_a_target_field {
+        use super::*;
+        use crate::dynamic::{NoTargets, TargetDescriptor, TargetError, TargetResolver};
+        use crate::target::CallerContext;
+        use crate::SealedValue;
+
+        struct FakeEql;
+
+        const TEXT_EQ: &str = "TextEq";
+
+        fn hex(bytes: &[u8]) -> String {
+            bytes.iter().map(|b| format!("{b:02x}")).collect()
+        }
+
+        fn unhex(text: &str) -> Option<Vec<u8>> {
+            (0..text.len())
+                .step_by(2)
+                .map(|at| u8::from_str_radix(text.get(at..at + 2)?, 16).ok())
+                .collect()
+        }
+
+        fn text_of_value(name: &str, value: FfiValue) -> Result<String, TargetError> {
+            match value {
+                FfiValue::String(text) => Ok(utf8(&text).unwrap_or_default().to_owned()),
+                other => Err(TargetError::Plaintext {
+                    name: String::new(),
+                    target: name.to_owned(),
+                    expected: Some(ValueKind::String),
+                    found: other.kind(),
+                }),
+            }
+        }
+
+        fn column(name: &str, label: &Label) -> Result<NonEmpty<Label>, TargetError> {
+            if label.segments().len() != 2 {
+                return Err(TargetError::Column {
+                    name: String::new(),
+                    label: label.to_string(),
+                    reason: format!("{name} is stored under a table and a column"),
+                });
+            }
+            Ok(NonEmpty::from(label.clone()))
+        }
+
+        impl TargetResolver for FakeEql {
+            fn targets(&self) -> Vec<TargetDescriptor> {
+                vec![
+                    TargetDescriptor::new(
+                        TEXT_EQ,
+                        "text",
+                        "Eq",
+                        Some(ValueKind::String),
+                        "public.eql_v3_text_eq",
+                        vec!["eq".to_string()],
+                        Some("TextEqQuery".to_string()),
+                        Some("eql_v3.query_text_eq".to_string()),
+                        true,
+                        None,
+                    ),
+                    TargetDescriptor::new(
+                        "TextOrdOre",
+                        "text",
+                        "OrdOre",
+                        Some(ValueKind::String),
+                        "public.eql_v3_text_ord_ore",
+                        vec!["eq".to_string(), "ore".to_string()],
+                        Some("TextOrdOreQuery".to_string()),
+                        Some("eql_v3.query_text_ord_ore".to_string()),
+                        false,
+                        Some("block ORE is not CLLW ORE".to_string()),
+                    ),
+                ]
+            }
+
+            fn encrypt<'a, K: 'static>(
+                &self,
+                name: &str,
+                keyset: &'a KeysetCipher<'_, K>,
+                label: &Label,
+                plaintext: FfiValue,
+            ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+                let _ = self.resolve(name)?;
+                let text = text_of_value(name, plaintext)?;
+                let column = column(name, label)?;
+                let stored_label = label.to_string();
+                Ok(keyset
+                    .encrypt_as::<String, StackCipherText>(&text, AeadContext::from(column))
+                    .try_map(move |sealed| {
+                        let CipherText::Single(leaf) = sealed else {
+                            return Err(crate::Error::UnsupportedShape);
+                        };
+                        serde_json::to_vec(&serde_json::json!({
+                            "v": 3,
+                            "i": stored_label,
+                            "c": hex(&leaf.to_bytes()),
+                        }))
+                        .map_err(|e| crate::Error::Other(Box::new(e)))
+                    }))
+            }
+
+            fn decrypt<'a, K: 'static>(
+                &self,
+                name: &str,
+                cipher: &'a StackCipher<K>,
+                label: &Label,
+                stored: &[u8],
+            ) -> Result<Pending<'a, FfiValue, K>, TargetError> {
+                let _ = self.resolve(name)?;
+                let column = column(name, label)?;
+                let stored: serde_json::Value =
+                    serde_json::from_slice(stored).map_err(|e| TargetError::Stored {
+                        name: String::new(),
+                        target: name.to_owned(),
+                        reason: e.to_string(),
+                    })?;
+                let leaf = stored["c"]
+                    .as_str()
+                    .and_then(unhex)
+                    .and_then(|bytes| SealedValue::from_bytes(&bytes).ok())
+                    .ok_or_else(|| TargetError::Stored {
+                        name: String::new(),
+                        target: name.to_owned(),
+                        reason: "no ciphertext".to_owned(),
+                    })?;
+                if stored["i"].as_str() != Some(&label.to_string()) {
+                    return Ok(Pending::failed(
+                        cipher,
+                        crate::Error::Other("stored under another column".into()),
+                    ));
+                }
+                let opening: Decryption<String, K> =
+                    crate::target::open(CipherText::Single(leaf), AeadContext::from(column));
+                Ok(cipher
+                    .run_decryption(opening)
+                    .map(|text| FfiValue::String(text.into())))
+            }
+
+            fn query<'a, K: 'static>(
+                &self,
+                name: &str,
+                keyset: &'a KeysetCipher<'_, K>,
+                label: &Label,
+                plaintext: FfiValue,
+            ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
+                let _ = self.resolve(name)?;
+                let text = text_of_value(name, plaintext)?;
+                let column = column(name, label)?;
+                let stored_label = label.to_string();
+                Ok(keyset
+                    .encrypt_as::<String, EqualityTerm>(&text, CallerContext::from(column))
+                    .try_map(move |term| {
+                        serde_json::to_vec(&serde_json::json!({
+                            "v": 3,
+                            "i": stored_label,
+                            "hm": hex(term.as_bytes()),
+                        }))
+                        .map_err(|e| crate::Error::Other(Box::new(e)))
+                    }))
+            }
+        }
+
+        fn target_spec(context: FfiValue, target: &str) -> FfiValue {
+            obj(vec![("context", context), ("target", s(target))])
+        }
+
+        /// `age` sealed and indexed by the lowered plan, `email` a target.
+        fn mixed_plan_value() -> FfiValue {
+            obj(vec![
+                ("age", spec(label("age"), &["c", "eq"])),
+                ("email", target_spec(label("email"), TEXT_EQ)),
+            ])
+        }
+
+        fn mixed_plan() -> Plan {
+            plan_with(mixed_plan_value(), &FakeEql).expect("a plan with a target parses")
+        }
+
+        fn mixed_row(age: u32, email: &str) -> FfiValue {
+            obj(vec![("age", FfiValue::UInt32(age)), ("email", s(email))])
+        }
+
+        fn eql_json(record: &mut Vec<(String, StackCipherText)>, field: &str) -> serde_json::Value {
+            let CipherText::Map(mut outputs) = node(record, field) else {
+                panic!("{field} is a map of outputs");
+            };
+            assert_eq!(keys(&outputs), [EQL_KEY], "{field}: one node, under eql");
+            let CipherText::Passthrough(payload) = node(&mut outputs, EQL_KEY) else {
+                panic!("the eql node is a passthrough");
+            };
+            let FfiValue::Bytes(bytes) = *payload.downcast::<FfiValue>().unwrap() else {
+                panic!("the eql node carries bytes");
+            };
+            serde_json::from_slice(bytes.risky_ref()).expect("the eql node is JSON")
+        }
+
+        fn target_error(error: Error) -> TargetError {
+            match error {
+                Error::Target(error) => error,
+                other => panic!("expected a target refusal, got {other:?}"),
+            }
+        }
+
+        /// The refusal a call returned; a `Pending` has no `Debug`, so this
+        /// stands in for `unwrap_err`.
+        fn refused<T>(result: Result<T, Error>) -> Error {
+            match result {
+                Err(error) => error,
+                Ok(_) => panic!("the call accepted what it should have refused"),
+            }
+        }
+
+        async fn seal_mixed(
+            keyset: &KeysetCipher<'_, Counting>,
+            plan: &Plan,
+        ) -> Vec<(String, StackCipherText)> {
+            map(encrypt_with(keyset, mixed_row(1, "a@x"), plan, &FakeEql)
+                .expect("fits")
+                .await
+                .expect("seals"))
+        }
+
+        #[tokio::test]
+        async fn is_sealed_by_the_resolver_in_the_records_one_request() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = mixed_plan();
+            assert_eq!(plan.fields()[1].target(), Some(TEXT_EQ));
+            assert!(
+                plan.fields()[1].outputs().is_empty(),
+                "a target's outputs are the type's"
+            );
+            assert_eq!(
+                plan.fields()[1].field_type(),
+                Some(ValueKind::String),
+                "an undeclared type is the target's plaintext kind"
+            );
+
+            let sealed = encrypt_with(&keyset, mixed_row(34, "a@x"), &plan, &FakeEql)
+                .expect("the row fits")
+                .await
+                .expect("seals");
+            assert_eq!(
+                generates(&cipher),
+                1,
+                "the target leaf minted in the record's one request"
+            );
+            let mut record = map(sealed);
+            assert_eq!(keys(&record), ["age", "email"], "plan order");
+            let eql = eql_json(&mut record, "email");
+            assert_eq!(eql["v"], 3);
+            assert_eq!(
+                eql["i"], "users/email",
+                "the field's label is the stored column"
+            );
+            assert!(eql["c"].is_string());
+
+            // `node` took the inspected entry out; a fresh record opens.
+            let record = seal_mixed(&keyset, &plan).await;
+            let opened = decrypt_with(
+                Scope::Client(&cipher),
+                CipherText::Map(record),
+                &plan,
+                None,
+                &FakeEql,
+            )
+            .expect("the record fits")
+            .await
+            .expect("opens");
+            assert_eq!(
+                retrieves(&cipher),
+                1,
+                "the target leaf retrieved in the record's one request"
+            );
+            let fields = object(opened);
+            assert_eq!(keys(&fields), ["age", "email"]);
+            assert_eq!(u32_of(&fields[0].1), 1, "seal_mixed's age");
+            assert_eq!(text_of(&fields[1].1), "a@x");
+
+            // Through a keyset scope, the target's pending is confined to it
+            // like every other leaf's.
+            let record = seal_mixed(&keyset, &plan).await;
+            let opened = decrypt_with(
+                Scope::Keyset(cipher.default_keyset()),
+                CipherText::Map(record),
+                &plan,
+                None,
+                &FakeEql,
+            )
+            .expect("the record fits")
+            .await
+            .expect("opens under its own keyset");
+            assert_eq!(text_of(&object(opened)[1].1), "a@x");
+        }
+
+        #[tokio::test]
+        async fn a_batch_keeps_every_rows_target_in_order() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = mixed_plan();
+            let rows = FfiValue::Array(vec![
+                mixed_row(1, "one"),
+                mixed_row(2, "two"),
+                mixed_row(3, "three"),
+            ]);
+            let sealed = encrypt_with(&keyset, rows, &plan, &FakeEql)
+                .expect("the rows fit")
+                .await
+                .expect("seals");
+            assert_eq!(
+                generates(&cipher),
+                1,
+                "three rows, two leaves each, one request"
+            );
+            let opened = decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &FakeEql)
+                .expect("the batch fits")
+                .await
+                .expect("opens");
+            assert_eq!(retrieves(&cipher), 1);
+            let rows = array(opened);
+            let emails: Vec<String> = rows
+                .into_iter()
+                .map(|row| text_of(&object(row)[1].1))
+                .collect();
+            assert_eq!(
+                emails,
+                ["one", "two", "three"],
+                "each row's target is its own"
+            );
+        }
+
+        #[tokio::test]
+        async fn a_plan_of_targets_alone_runs_with_no_lowered_field() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = plan_with(
+                obj(vec![("email", target_spec(label("email"), TEXT_EQ))]),
+                &FakeEql,
+            )
+            .expect("parses");
+            let sealed = encrypt_with(&keyset, obj(vec![("email", s("a@x"))]), &plan, &FakeEql)
+                .expect("fits")
+                .await
+                .expect("seals");
+            assert_eq!(generates(&cipher), 1);
+            let opened = decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &FakeEql)
+                .expect("fits")
+                .await
+                .expect("opens");
+            assert_eq!(text_of(&object(opened)[0].1), "a@x");
+        }
+
+        #[test]
+        fn is_refused_when_the_plan_is_built_without_a_resolver() {
+            // The bare entry points are the build without EQL types.
+            let error = target_error(plan(mixed_plan_value()).unwrap_err());
+            assert!(
+                matches!(&error, TargetError::NoTargets { name } if name == TEXT_EQ),
+                "{error}"
+            );
+            let fields = vec![
+                FieldPlan::new(
+                    "age",
+                    context(label("age")).unwrap(),
+                    vec![Output::Ciphertext],
+                )
+                .unwrap(),
+                FieldPlan::with_target("email", context(label("email")).unwrap(), TEXT_EQ).unwrap(),
+            ];
+            assert!(matches!(
+                Plan::new(fields).unwrap_err(),
+                Error::Target(TargetError::NoTargets { .. })
+            ));
+        }
+
+        #[tokio::test]
+        async fn a_plan_built_with_a_resolver_is_refused_by_the_bare_entry_points() {
+            // Fail closed: a plan from the build with EQL types handed to the
+            // build without them is refused, never half-sealed.
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = mixed_plan();
+            let error = target_error(refused(encrypt(&keyset, mixed_row(1, "a@x"), &plan)));
+            assert!(matches!(error, TargetError::NoTargets { .. }), "{error}");
+            assert_eq!(generates(&cipher), 0, "nothing minted");
+            let sealed = CipherText::Map(seal_mixed(&keyset, &plan).await);
+            let error = target_error(refused(decrypt(
+                Scope::Client(&cipher),
+                sealed,
+                &plan,
+                None,
+            )));
+            assert!(matches!(error, TargetError::NoTargets { .. }), "{error}");
+            assert_eq!(retrieves(&cipher), 0, "nothing retrieved");
+        }
+
+        #[test]
+        fn a_name_the_build_cannot_run_is_refused_when_the_plan_is_built() {
+            let refused = |target: &str| {
+                target_error(
+                    plan_with(
+                        obj(vec![("email", target_spec(label("email"), target))]),
+                        &FakeEql,
+                    )
+                    .unwrap_err(),
+                )
+            };
+            assert!(matches!(refused("Nope"), TargetError::Unknown { name } if name == "Nope"));
+            assert!(matches!(
+                refused("TextOrdOre"),
+                TargetError::Unproducible { name, reason } if name == "TextOrdOre" && reason.contains("CLLW")
+            ));
+            assert!(
+                matches!(refused("texteq"), TargetError::Unknown { .. }),
+                "exact names"
+            );
+        }
+
+        /// The constructor's one bound on the label is "a label", the same
+        /// as every field constructor's: how many segments it needs is the
+        /// plan's rule, where the plan is built. A one-segment label is a
+        /// field's identity under a context field, and under a plan with a
+        /// context of its own it has nothing to sit under; the column rule
+        /// — exactly two — is `Plan::new_with`'s (the test after this one).
+        /// Pinned from both sides so the constructor's bound cannot drift:
+        /// one segment accepted and then refused by the plan, two accepted,
+        /// and three accepted intact.
+        #[test]
+        fn with_target_takes_any_label_and_the_plan_holds_the_segment_rules() {
+            let ctx = |segments: &[&str]| context(strings(segments)).expect("a context value");
+            let one = FieldPlan::with_target("email", ctx(&["users"]), TEXT_EQ)
+                .expect("one segment is a label; the plan decides");
+            assert!(
+                matches!(Plan::new_with(vec![one], &FakeEql), Err(Error::Plan)),
+                "under a plan with a context of its own, one segment has nothing to sit under"
+            );
+            let two = FieldPlan::with_target("email", ctx(&["users", "email"]), TEXT_EQ)
+                .expect("two segments: table and column");
+            assert_eq!(two.label().to_string(), "users/email");
+            let three =
+                FieldPlan::with_target("email", ctx(&["tenant", "users", "email"]), TEXT_EQ)
+                    .expect("three segments are a label; the column rule is the resolver's");
+            assert_eq!(three.label().segments().count(), 3);
+            assert_eq!(three.identity(), "email");
+            assert_eq!(three.target(), Some(TEXT_EQ));
+        }
+
+        /// `context=app/users` with `email,encrypt_into=TextEq` in Go gives
+        /// the label `app/users/email`: no column for it. Refused when the
+        /// plan is built, so `se_plan_check` tells the generator before it
+        /// writes the code, and no value ever reaches the resolver.
+        #[tokio::test]
+        async fn a_target_label_that_is_not_table_and_column_is_refused_when_the_plan_is_built() {
+            let cipher = cipher().await;
+            let value = obj(vec![(
+                "email",
+                target_spec(strings(&["app", "users", "email"]), TEXT_EQ),
+            )]);
+            let error = target_error(plan_with(value, &FakeEql).unwrap_err());
+            assert!(
+                matches!(&error, TargetError::Column { name, label, .. } if name == "email" && label == "app/users/email"),
+                "{error}"
+            );
+            assert_eq!(
+                error.to_string(),
+                "email: the label app/users/email is not an EQL column: an EQL column is a \
+                 two-segment label: table and column"
+            );
+            // A sealed field under the same three-segment label is fine: the
+            // rule is the EQL column's, not the plan's.
+            let value = obj(vec![(
+                "email",
+                spec(strings(&["app", "users", "email"]), &["c"]),
+            )]);
+            assert!(plan_with(value, &FakeEql).is_ok());
+            assert_eq!(generates(&cipher), 0, "nothing minted");
+        }
+
+        /// The resolver opens a target value through the client, which opens
+        /// every keyset's values; `confine` is what holds it to the scope's
+        /// keyset. A plan of one target field, so no lowered leaf can cause
+        /// the refusal instead: this fails if `confine` stops calling
+        /// `scoped_to`, and one tenant's cipher opens another's column.
+        #[tokio::test]
+        async fn a_keyset_scope_refuses_a_target_value_from_another_keyset() {
+            let cipher = cipher().await;
+            let named = |n: &str| IdentifiedBy::Name(n.to_string().into());
+            let acme = cipher.keyset(named("acme")).await.expect("acme");
+            let globex = cipher.keyset(named("globex")).await.expect("globex");
+            let plan = plan_with(
+                obj(vec![("email", target_spec(label("email"), TEXT_EQ))]),
+                &FakeEql,
+            )
+            .unwrap();
+            let sealed = encrypt_with(&acme, obj(vec![("email", s("a@x"))]), &plan, &FakeEql)
+                .unwrap()
+                .await
+                .unwrap();
+            let result = decrypt_with(Scope::Keyset(globex), sealed, &plan, None, &FakeEql)
+                .expect("the record fits")
+                .await;
+            match result {
+                Err(crate::Error::ForeignKeyset { .. }) => {}
+                Err(other) => panic!("refused, but not as a foreign keyset: {other}"),
+                Ok(_) => panic!("globex opened acme's target value"),
+            }
+            assert_eq!(
+                retrieves(&cipher),
+                0,
+                "refused before any key was retrieved"
+            );
+            // acme's own scope, and the client, still open it.
+            let sealed = encrypt_with(&acme, obj(vec![("email", s("a@x"))]), &plan, &FakeEql)
+                .unwrap()
+                .await
+                .unwrap();
+            let opened = decrypt_with(Scope::Keyset(acme), sealed, &plan, None, &FakeEql)
+                .unwrap()
+                .await
+                .expect("its own keyset opens it");
+            assert_eq!(text_of(&object(opened)[0].1), "a@x");
+        }
+
+        /// The node under `"eql"` must be a passthrough: a ciphertext leaf
+        /// there is a record the plan did not produce, refused before any
+        /// key is retrieved. (The "misplaced" case in the test below puts
+        /// the leaf under `"c"`, where `take` of `"eql"` fails first; this
+        /// one reaches the node-shape refusal itself.)
+        #[tokio::test]
+        async fn a_non_passthrough_node_under_eql_is_refused() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = mixed_plan();
+            let mut row = seal_mixed(&keyset, &plan).await;
+            row.retain(|(k, _)| k != "email");
+            row.push((
+                "email".to_string(),
+                CipherText::Map(vec![(EQL_KEY.to_string(), forged(s("x")))]),
+            ));
+            assert!(matches!(
+                check_record(CipherText::Map(row), &plan, None),
+                Err(Error::Record)
+            ));
+            let mut row = seal_mixed(&keyset, &plan).await;
+            row.retain(|(k, _)| k != "email");
+            row.push((
+                "email".to_string(),
+                CipherText::Map(vec![(EQL_KEY.to_string(), forged(s("x")))]),
+            ));
+            let error = refused(decrypt_with(
+                Scope::Client(&cipher),
+                CipherText::Map(row),
+                &plan,
+                None,
+                &FakeEql,
+            ));
+            assert!(matches!(error, Error::Record), "{error:?}");
+            assert_eq!(retrieves(&cipher), 0);
+        }
+
+        /// The adapters trust the resolver to answer one value per target
+        /// field; fewer is the engine's shape disagreeing with the plan's,
+        /// reported as `ResponseShape` (a binding's internal status), never
+        /// as a refusal the caller is told to fix.
+        #[test]
+        fn a_target_slot_the_resolver_did_not_answer_is_a_response_shape_error() {
+            let plan = plan_with(
+                obj(vec![("email", target_spec(label("email"), TEXT_EQ))]),
+                &FakeEql,
+            )
+            .unwrap();
+            let shape = plan.shape();
+            assert!(
+                matches!(
+                    shape_record(FieldValues::new(), Vec::new(), &shape),
+                    Err(crate::Error::ResponseShape)
+                ),
+                "a missing target value on the encrypt side"
+            );
+            assert!(
+                matches!(
+                    open_record(FieldValues::new(), Vec::new(), &shape),
+                    Err(crate::Error::ResponseShape)
+                ),
+                "a missing target value on the decrypt side"
+            );
+        }
+
+        #[test]
+        fn the_target_and_output_forms_are_exclusive() {
+            let both = obj(vec![
+                ("context", label("email")),
+                ("outputs", strings(&["c"])),
+                ("target", s(TEXT_EQ)),
+            ]);
+            assert!(matches!(
+                plan_with(obj(vec![("email", both)]), &FakeEql),
+                Err(Error::Plan)
+            ));
+            let neither = obj(vec![("context", label("email"))]);
+            assert!(matches!(
+                plan_with(obj(vec![("email", neither)]), &FakeEql),
+                Err(Error::Plan)
+            ));
+            let not_text = obj(vec![
+                ("context", label("email")),
+                ("target", FfiValue::UInt32(1)),
+            ]);
+            assert!(matches!(
+                plan_with(obj(vec![("email", not_text)]), &FakeEql),
+                Err(Error::Plan)
+            ));
+            let empty = obj(vec![("context", label("email")), ("target", s(""))]);
+            assert!(matches!(
+                plan_with(obj(vec![("email", empty)]), &FakeEql),
+                Err(Error::Plan)
+            ));
+            let twice = obj(vec![
+                ("context", label("email")),
+                ("target", s(TEXT_EQ)),
+                ("target", s(TEXT_EQ)),
+            ]);
+            assert!(matches!(
+                plan_with(obj(vec![("email", twice)]), &FakeEql),
+                Err(Error::Plan)
+            ));
+        }
+
+        #[tokio::test]
+        async fn the_fields_type_is_the_targets_plaintext_kind() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            // Declared and agreeing: fine.
+            let declared = obj(vec![
+                ("context", label("email")),
+                ("target", s(TEXT_EQ)),
+                ("type", s("string")),
+            ]);
+            let plan = plan_with(obj(vec![("email", declared)]), &FakeEql).expect("agrees");
+            assert_eq!(plan.fields()[0].field_type(), Some(ValueKind::String));
+            // Declared and disagreeing: refused when the plan is built.
+            let other = obj(vec![
+                ("context", label("email")),
+                ("target", s(TEXT_EQ)),
+                ("type", s("uint64")),
+            ]);
+            let error = target_error(plan_with(obj(vec![("email", other)]), &FakeEql).unwrap_err());
+            assert!(
+                matches!(&error, TargetError::Kind { name, target, expected: Some(ValueKind::String), declared: ValueKind::UInt64 } if name == "email" && target == TEXT_EQ),
+                "{error}"
+            );
+            // A value of another kind is refused before the resolver runs.
+            let wrong = obj(vec![("email", FfiValue::UInt32(7))]);
+            assert!(matches!(check_source(wrong, &plan), Err(Error::Source)));
+            let wrong = obj(vec![("email", FfiValue::UInt32(7))]);
+            assert!(matches!(
+                refused(encrypt_with(&keyset, wrong, &plan, &FakeEql)),
+                Error::Source
+            ));
+            // A passthrough is refused as it is for any sealed field.
+            let forged = obj(vec![("email", FfiValue::Passthrough(Box::new(s("a@x"))))]);
+            assert!(matches!(
+                refused(encrypt_with(&keyset, forged, &plan, &FakeEql)),
+                Error::Source
+            ));
+            assert_eq!(generates(&cipher), 0);
+        }
+
+        #[test]
+        fn an_extended_plan_refuses_a_target_field_rather_than_dropping_the_extension() {
+            let extended = |field: &str| FfiValue::Array(vec![label(field), FfiValue::UInt32(7)]);
+            let value = obj(vec![
+                ("age", spec(extended("age"), &["c"])),
+                ("email", target_spec(extended("email"), TEXT_EQ)),
+            ]);
+            let error = target_error(plan_with(value, &FakeEql).unwrap_err());
+            assert!(
+                matches!(&error, TargetError::Extended { name, label } if name == "email" && label == "users/email"),
+                "{error}"
+            );
+            // The same plan without the target field extends as before.
+            let value = obj(vec![("age", spec(extended("age"), &["c"]))]);
+            assert!(plan_with(value, &FakeEql).is_ok());
+        }
+
+        /// A plan with a context field has no table of its own: each
+        /// record names one. An EQL value stores a table the declaration
+        /// fixes, so a target field is refused there as it is in an extended
+        /// plan, and before the resolver is asked.
+        #[test]
+        fn a_context_field_plan_refuses_a_target_field() {
+            let identity = |field: &str| strings(&[field]);
+            let value = obj(vec![
+                ("context_field", s("tenant")),
+                ("tenant", spec(identity("tenant"), &["passthrough"])),
+                ("age", spec(identity("age"), &["c"])),
+                ("email", target_spec(identity("email"), TEXT_EQ)),
+            ]);
+            let error = target_error(plan_with(value, &FakeEql).unwrap_err());
+            assert!(
+                matches!(&error, TargetError::ContextField { name, context_field } if name == "email" && context_field == "tenant"),
+                "{error}"
+            );
+            // Refused by the plan, whatever the build holds: a build with
+            // no EQL types says the same.
+            let value = obj(vec![
+                ("context_field", s("tenant")),
+                ("tenant", spec(identity("tenant"), &["passthrough"])),
+                ("email", target_spec(identity("email"), TEXT_EQ)),
+            ]);
+            assert!(matches!(
+                target_error(plan(value).unwrap_err()),
+                TargetError::ContextField { .. }
+            ));
+            // The same plan without the target field takes its context
+            // from the field as before.
+            let value = obj(vec![
+                ("context_field", s("tenant")),
+                ("tenant", spec(identity("tenant"), &["passthrough"])),
+                ("age", spec(identity("age"), &["c"])),
+            ]);
+            assert_eq!(
+                plan_with(value, &FakeEql).expect("parses").context_field(),
+                Some("tenant")
+            );
+        }
+
+        #[test]
+        fn a_target_field_is_keyed_under_its_identity_like_a_sealed_one() {
+            // Two fields under one label, one of them a target: the terms
+            // and the EQL value would be interchangeable, so refused as two
+            // sealed fields under one identity are.
+            let fields = vec![
+                FieldPlan::new(
+                    "mail",
+                    context(label("email")).unwrap(),
+                    vec![Output::Ciphertext],
+                )
+                .unwrap(),
+                FieldPlan::with_target("email", context(label("email")).unwrap(), TEXT_EQ).unwrap(),
+            ];
+            assert!(matches!(Plan::new_with(fields, &FakeEql), Err(Error::Plan)));
+            let fields = vec![
+                FieldPlan::with_target("email", context(label("email")).unwrap(), TEXT_EQ).unwrap(),
+                FieldPlan::new(
+                    "mail",
+                    context(label("email")).unwrap(),
+                    vec![Output::Ciphertext],
+                )
+                .unwrap(),
+            ];
+            assert!(matches!(Plan::new_with(fields, &FakeEql), Err(Error::Plan)));
+            let fields = vec![
+                FieldPlan::with_target("a", context(label("email")).unwrap(), TEXT_EQ).unwrap(),
+                FieldPlan::with_target("b", context(label("email")).unwrap(), TEXT_EQ).unwrap(),
+            ];
+            assert!(matches!(Plan::new_with(fields, &FakeEql), Err(Error::Plan)));
+        }
+
+        #[tokio::test]
+        async fn a_stored_eql_node_is_passthrough_bytes_exactly_once() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = mixed_plan();
+            // A fresh record each time: a ciphertext tree is not `Clone`.
+            let with_email = |mut row: Vec<(String, StackCipherText)>, node: StackCipherText| {
+                row.retain(|(k, _)| k != "email");
+                row.push(("email".to_string(), node));
+                CipherText::Map(row)
+            };
+            let bytes_node = |bytes: &[u8]| {
+                CipherText::Map(vec![(
+                    EQL_KEY.to_string(),
+                    CipherText::Passthrough(Box::new(FfiValue::Bytes(Protected::new(
+                        bytes.to_vec(),
+                    ))) as BoxedPassthrough),
+                )])
+            };
+            // A ciphertext leaf where the EQL value should be.
+            let misplaced = CipherText::Map(vec![("c".to_string(), forged(s("x")))]);
+            let record = with_email(seal_mixed(&keyset, &plan).await, misplaced);
+            assert!(matches!(
+                check_record(record, &plan, None),
+                Err(Error::Record)
+            ));
+            // The node twice.
+            let mut row = seal_mixed(&keyset, &plan).await;
+            let CipherText::Map(mut outputs) = node(&mut row, "email") else {
+                panic!("a map")
+            };
+            let CipherText::Map(again) = node(&mut seal_mixed(&keyset, &plan).await, "email")
+            else {
+                panic!("a map")
+            };
+            outputs.extend(again);
+            row.push(("email".to_string(), CipherText::Map(outputs)));
+            assert!(matches!(
+                check_record(CipherText::Map(row), &plan, None),
+                Err(Error::Record)
+            ));
+            // A payload that is not bytes.
+            let null = CipherText::Map(vec![(
+                EQL_KEY.to_string(),
+                CipherText::Passthrough(Box::new(FfiValue::Null) as BoxedPassthrough),
+            )]);
+            let record = with_email(seal_mixed(&keyset, &plan).await, null);
+            assert!(matches!(
+                check_record(record, &plan, None),
+                Err(Error::Record)
+            ));
+            // Bytes that are not the type: the shape fits, and the resolver
+            // refuses them before any key is retrieved.
+            let record = with_email(seal_mixed(&keyset, &plan).await, bytes_node(b"not json"));
+            assert!(check_record(record, &plan, None).is_ok(), "the shape fits");
+            let retrieved = retrieves(&cipher);
+            let record = with_email(seal_mixed(&keyset, &plan).await, bytes_node(b"not json"));
+            let error = target_error(refused(decrypt_with(
+                Scope::Client(&cipher),
+                record,
+                &plan,
+                None,
+                &FakeEql,
+            )));
+            assert!(
+                matches!(&error, TargetError::Stored { name, target, .. } if name == "email" && target == TEXT_EQ),
+                "{error}"
+            );
+            assert_eq!(retrieves(&cipher), retrieved, "nothing retrieved");
+            // An untouched record still opens.
+            let record = CipherText::Map(seal_mixed(&keyset, &plan).await);
+            let opened = decrypt_with(Scope::Client(&cipher), record, &plan, None, &FakeEql)
+                .unwrap()
+                .await
+                .unwrap();
+            assert_eq!(text_of(&object(opened)[1].1), "a@x");
+        }
+
+        #[tokio::test]
+        async fn a_query_runs_the_targets_query_through_the_resolver() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = mixed_plan();
+            let probe = query(&keyset, &plan, "email", s("a@x"), &FakeEql)
+                .expect("a target field")
+                .await
+                .expect("derives");
+            let probe: serde_json::Value = serde_json::from_slice(&probe).unwrap();
+            assert_eq!(probe["i"], "users/email");
+            let again = query(&keyset, &plan, "email", s("a@x"), &FakeEql)
+                .unwrap()
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&again).unwrap()["hm"],
+                probe["hm"],
+                "deterministic"
+            );
+            assert_eq!(generates(&cipher), 0, "a query mints nothing");
+            // Not a target field, no such field, the wrong kind, and the
+            // bare build: each refused before the resolver runs.
+            assert!(matches!(
+                refused(query(&keyset, &plan, "age", s("x"), &FakeEql)),
+                Error::Plan
+            ));
+            assert!(matches!(
+                refused(query(&keyset, &plan, "nope", s("x"), &FakeEql)),
+                Error::Plan
+            ));
+            assert!(matches!(
+                refused(query(
+                    &keyset,
+                    &plan,
+                    "email",
+                    FfiValue::UInt32(1),
+                    &FakeEql
+                )),
+                Error::Source
+            ));
+            assert!(matches!(
+                refused(query(&keyset, &plan, "email", s("x"), &NoTargets)),
+                Error::Target(TargetError::NoTargets { .. })
+            ));
+        }
+
+        #[tokio::test]
+        async fn a_resolver_refusal_names_the_field() {
+            // The resolver sees a type and a label; the lowering names the
+            // field the refusal was about.
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = plan_with(
+                obj(vec![("email", target_spec(label("email"), TEXT_EQ))]),
+                &FakeEql,
+            )
+            .unwrap();
+            // A resolver that refuses the value as not its plaintext: the
+            // lowering's own kind check runs first, so reach the resolver
+            // with a kind it does not refuse here but the resolver does —
+            // there is none for a string target, so use the stored side.
+            let junk = CipherText::Map(vec![(
+                "email".to_string(),
+                CipherText::Map(vec![(
+                    EQL_KEY.to_string(),
+                    CipherText::Passthrough(Box::new(FfiValue::Bytes(Protected::new(
+                        b"{}".to_vec(),
+                    ))) as BoxedPassthrough),
+                )]),
+            )]);
+            let error = target_error(refused(decrypt_with(
+                Scope::Client(&cipher),
+                junk,
+                &plan,
+                None,
+                &FakeEql,
+            )));
+            match error {
+                TargetError::Stored { name, .. } => assert_eq!(name, "email"),
+                other => panic!("{other}"),
+            }
+            let _ = keyset;
         }
     }
 

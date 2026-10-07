@@ -240,6 +240,20 @@ reports it, `Client.MemoryLockError` says why not, and
 `WithRequireLockedMemory` makes `NewClient` refuse to start unlocked. See the
 package documentation for the full account.
 
+## EQL columns
+
+A field tagged `encrypt_into=TextEq` is stored as one EQL value, the JSON
+PostgreSQL holds in a `public.eql_v3_text_eq` column, as an `eql.TextEq`
+from package `encrypt/eql`. The guest builds the value: the generated code
+imports `encrypt/eql`, which embeds the build of the engine that holds the
+EQL types and registers it on import, so the program runs that build and
+stores what it returns. `Fields.Email.Query` returns the `eql.TextEqQuery`
+the column's `eql_v3.query_text_eq` operand takes. `mise run
+wasm:guest:build:eql` builds that guest beside the other. A cipher extended
+with a tenant part refuses a struct with an `encrypt_into` field: an EQL
+value is stored under a table and a column, and the extended label has no
+column.
+
 ## Building
 
 The package embeds `wasm/stack_encrypt_guest.wasm`, a build artefact of the

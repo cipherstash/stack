@@ -14,9 +14,9 @@ import (
 // what Value reads. Passthrough fields are in it too.
 type Values map[string]any
 
-// Output is what one field became: the passthrough value, or the ciphertext
-// and each term the field declares. EQL is the EQL value of an encrypt_into
-// field, once the engine produces one.
+// Output is what one field became: the passthrough value, the ciphertext
+// and each term the field declares, or EQL, the EQL value of an encrypt_into
+// field as the JSON bytes its column holds.
 type Output struct {
 	Value      any
 	Ciphertext encrypt.Ciphertext
@@ -163,7 +163,7 @@ func (c *Codec[P, E]) Decrypt(ctx context.Context, d encrypt.Decrypter, encrypte
 				}
 				records[i][f.name] = record.Outputs{Context: label}
 			case f.sealed():
-				records[i][f.name] = record.Outputs{Ciphertext: o.Ciphertext}
+				records[i][f.name] = record.Outputs{Ciphertext: o.Ciphertext, EQL: o.EQL}
 			default:
 				passthrough[i][f.name] = o.Value
 			}
@@ -227,7 +227,7 @@ func outputOf(o record.Outputs) Output {
 		// The context field comes back as the passthrough it is.
 		return Output{Value: o.Context}
 	}
-	out := Output{Ciphertext: o.Ciphertext}
+	out := Output{Ciphertext: o.Ciphertext, EQL: o.EQL}
 	for k, term := range o.Terms {
 		switch k {
 		case record.Equality:

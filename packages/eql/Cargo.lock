@@ -1202,8 +1202,11 @@ dependencies = [
  "serde",
  "serde_json",
  "stack-encrypt",
+ "thiserror 2.0.20",
  "ts-rs",
+ "vitaminc-aead-value",
  "vitaminc-prf",
+ "zeroize",
 ]
 
 [[package]]
@@ -1234,6 +1237,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "eql-bindings",
+ "eql-domains",
  "postgres",
  "serde",
  "serde_json",
@@ -1241,6 +1245,7 @@ dependencies = [
  "stack-kms",
  "tokio",
  "uuid",
+ "vitaminc-aead-value",
 ]
 
 [[package]]
@@ -5070,6 +5075,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
+]
+
+[[package]]
+name = "vitaminc-aead-value"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d78cdadbc6374c3bd7c19fb4d99abca693b96953b18fef8c608efbe092cf3ea"
+dependencies = [
+ "vitaminc-aead 0.5.1",
+ "vitaminc-protected 0.5.1",
+ "zeroize",
 ]
 
 [[package]]

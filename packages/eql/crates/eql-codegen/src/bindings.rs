@@ -574,7 +574,8 @@ pub fn render_inventory_rs() -> String {
 /// shapes are inventory members but not stored column payloads, so they are
 /// excluded — exactly the set `eql_bindings::from_v2` accepts as conversion
 /// targets ([`render_payload_rs`]'s `DomainPayload` variants).
-fn stored_payload_domains() -> impl Iterator<Item = (&'static DomainFamily, &'static Domain)> {
+pub(crate) fn stored_payload_domains(
+) -> impl Iterator<Item = (&'static DomainFamily, &'static Domain)> {
     CATALOG
         .iter()
         .flat_map(|f| f.domains.iter().map(move |d| (f, d)))
@@ -856,6 +857,9 @@ fn render_bindings(dir: &Path) -> Vec<(PathBuf, String)> {
     }
     rendered.push((dir.join("payload.rs"), render_payload_rs()));
     rendered.push((dir.join("query_payload.rs"), render_query_payload_rs()));
+    // The stack-encrypt target table and dispatch (`crate::targets`); gated
+    // to the `stack-encrypt` feature by the hand-written mod.rs.
+    rendered.push((dir.join("targets.rs"), crate::targets::render_targets_rs()));
     rendered.push((dir.join("inventory.rs"), render_inventory_rs()));
     rendered
 }
@@ -1109,12 +1113,14 @@ mod tests {
         let tmp = crate::writer::test_support::tempdir();
         let written = generate_bindings(tmp.path()).unwrap();
         let dir = tmp.path().join("crates/eql-bindings/src/v3");
-        // scalar families + jsonb_storage + payload + query_payload + inventory.
-        assert_eq!(written.len(), eql_domains::scalar_families().count() + 4);
+        // scalar families + jsonb_storage + payload + query_payload + targets
+        // + inventory.
+        assert_eq!(written.len(), eql_domains::scalar_families().count() + 5);
         assert!(dir.join("integer.rs").is_file());
         assert!(dir.join("text.rs").is_file());
         assert!(dir.join("json_storage.rs").is_file());
         assert!(dir.join("payload.rs").is_file());
+        assert!(dir.join("targets.rs").is_file());
         assert!(dir.join("inventory.rs").is_file());
         assert!(
             !dir.join("mod.rs").exists(),
@@ -1135,7 +1141,8 @@ mod tests {
         // source, so a render panic aborts before deletion. Lock in the
         // load-bearing property: render writes NOTHING to disk. A pre-existing
         // file in the target dir survives the render call untouched, and render
-        // returns one entry per family plus payload and inventory (last).
+        // returns one entry per family plus payload, query_payload, targets
+        // and inventory (last).
         let tmp = crate::writer::test_support::tempdir();
         let dir = tmp.path().join(V3_BINDINGS_DIR);
         std::fs::create_dir_all(&dir).unwrap();
@@ -1144,7 +1151,7 @@ mod tests {
 
         let rendered = render_bindings(&dir);
 
-        assert_eq!(rendered.len(), eql_domains::scalar_families().count() + 4);
+        assert_eq!(rendered.len(), eql_domains::scalar_families().count() + 5);
         assert_eq!(
             std::fs::read_to_string(&sentinel).unwrap(),
             "SENTINEL",
@@ -1413,8 +1420,8 @@ mod tests {
             "the json family's scalar storage domain must generate json_storage.rs"
         );
         // One file per scalar family + jsonb_storage + payload + query_payload +
-        // inventory.
-        assert_eq!(rendered.len(), eql_domains::scalar_families().count() + 4);
+        // targets + inventory.
+        assert_eq!(rendered.len(), eql_domains::scalar_families().count() + 5);
     }
 
     #[test]

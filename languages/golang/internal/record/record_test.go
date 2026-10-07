@@ -75,6 +75,54 @@ func TestExtensionNestsToTheLeftAndIdentityReplacesTheName(t *testing.T) {
 	}
 }
 
+func TestTargetFieldWiresItsTypeInsteadOfOutputs(t *testing.T) {
+	p := &Plan{Context: []string{"users"}, Fields: []Field{
+		{Name: "email", Kind: String, Target: "TextEq"},
+		{Name: "notes", Kind: String, Outputs: []Output{Ciphertext}},
+	}}
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !p.Fields[0].IsTarget() || !p.Fields[0].HasCiphertext() || p.Fields[1].IsTarget() {
+		t.Fatal("a target field is one, and is opened; a sealed field is not a target")
+	}
+	want := vcvalue.Object{
+		{Key: "email", Value: vcvalue.Object{
+			{Key: "context", Value: []any{"users", "email"}},
+			{Key: "target", Value: "TextEq"},
+			{Key: "type", Value: "string"},
+		}},
+		{Key: "notes", Value: vcvalue.Object{
+			{Key: "context", Value: []any{"users", "notes"}},
+			{Key: "outputs", Value: []any{"c"}},
+			{Key: "type", Value: "string"},
+		}},
+	}
+	if wire := p.Wire(); !reflect.DeepEqual(wire, want) {
+		t.Fatalf("Wire = %#v", wire)
+	}
+	both := &Plan{Context: []string{"users"}, Fields: []Field{{Name: "email", Target: "TextEq", Outputs: []Output{Ciphertext}}}}
+	if err := both.Validate(); err == nil {
+		t.Fatal("a field with a target and outputs was accepted")
+	}
+	// An EQL column is a table and a column: a two-segment context, or an
+	// extension, leaves the target field no column, and the refusal names
+	// the field — before the guest is asked.
+	deep := &Plan{Context: []string{"app", "users"}, Fields: []Field{{Name: "email", Kind: String, Target: "TextEq"}}}
+	if err := deep.Validate(); err == nil || !strings.Contains(err.Error(), `field "email"`) || !strings.Contains(err.Error(), `"app/users" has 2 segments`) {
+		t.Fatalf("a target under app/users: %v", err)
+	}
+	extended := &Plan{Context: []string{"users"}, Extension: []any{uint64(7)}, Fields: []Field{{Name: "email", Kind: String, Target: "TextEq"}}}
+	if err := extended.Validate(); err == nil || !strings.Contains(err.Error(), "extended context has no column") {
+		t.Fatalf("an extended target: %v", err)
+	}
+	// The same context seals a plain field as before.
+	plain := &Plan{Context: []string{"app", "users"}, Fields: []Field{{Name: "email", Kind: String, Outputs: []Output{Ciphertext}}}}
+	if err := plain.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidateRefusals(t *testing.T) {
 	one := func(f Field) *Plan { return &Plan{Context: []string{"users"}, Fields: []Field{f}} }
 	cases := map[string]*Plan{

@@ -172,6 +172,42 @@ func (cph *Cipher) Derive(ctx context.Context, plan *record.Plan, field string, 
 	})
 }
 
+// Query derives the EQL query value of a field that names an EQL type, for
+// one value: the operand that matches stored values of the field, as the
+// JSON bytes the field's eql_v3.query_* domain takes. The engine runs the
+// EQL type's own query plan; no data key is minted. For generated code.
+func (cph *Cipher) Query(ctx context.Context, plan *record.Plan, field string, value any) ([]byte, error) {
+	p, err := cph.plan(plan)
+	if err != nil {
+		return nil, err
+	}
+	f := p.Field(field)
+	if f == nil {
+		return nil, fmt.Errorf("%w: the plan has no field %q", ErrEncoding, field)
+	}
+	if !f.IsTarget() {
+		return nil, fmt.Errorf("%w: field %q names no EQL type; its terms are derived by index", ErrEncoding, field)
+	}
+	encodedValue, err := vcffi.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
+	}
+	// The probe value is plaintext: its transport copy is wiped once it is
+	// in the guest.
+	defer wipe(encodedValue)
+	encodedPlan, err := vcffi.Marshal(p.Wire())
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
+	}
+	opts, err := vcffi.Marshal(options(cph.keyset, ""))
+	if err != nil {
+		return nil, err
+	}
+	return cph.client.call(ctx, func(inst *instance) ([]byte, error) {
+		return inst.call(ctx, inst.query, buf(encodedValue), buf(encodedPlan), buf([]byte(field)), buf(opts))
+	})
+}
+
 // Open decrypts records sealed under the plan by any keyset of this client:
 // each record is opened under the keyset that sealed it, with one ZeroKMS
 // request for each 500 sealed values from each keyset. For generated code.
@@ -286,6 +322,16 @@ func sealedOf(p *record.Plan, node any) (record.Sealed, error) {
 				o.Ciphertext = leaf
 				continue
 			}
+			if key == record.EQLKey {
+				// The EQL value's JSON, as a passthrough byte node like a
+				// term's; the ciphertext is inside the JSON.
+				value, err := termBytes(out)
+				if err != nil {
+					return nil, fmt.Errorf("field %q: the EQL value: %v", name, err)
+				}
+				o.EQL = value
+				continue
+			}
 			term, err := termBytes(out)
 			if err != nil {
 				return nil, fmt.Errorf("field %q output %q: %v", name, key, err)
@@ -329,6 +375,10 @@ var errNoCiphertext = errors.New("encrypt: the record has no ciphertext for a se
 // errNoContext is a stored record missing its context field.
 var errNoContext = errors.New("encrypt: the record has no value for its context field")
 
+// errNoEQL is a stored record missing the EQL value of a field that names
+// an EQL type.
+var errNoEQL = errors.New("encrypt: the record has no EQL value for a field that names an EQL type")
+
 // open decrypts records under the keyset the selector names, and, when
 // context is not "", refuses a record whose stored context field names
 // another context before any key is retrieved.
@@ -346,14 +396,20 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, context string, p
 			tree[p.ContextField] = map[string]any{string(record.Passthrough): vcvalue.Plain{V: outputs.Context}}
 		}
 		for _, f := range p.Fields {
-			hasCiphertext := false
-			for _, o := range f.Outputs {
-				hasCiphertext = hasCiphertext || o == record.Ciphertext
-			}
-			if !hasCiphertext {
+			if !f.HasCiphertext() {
 				continue
 			}
 			outputs, ok := rec[f.Name]
+			if f.IsTarget() {
+				if !ok || outputs.EQL == nil {
+					return nil, fmt.Errorf("%w: row %d, field %q", errNoEQL, i, f.Name)
+				}
+				// The EQL value rides as a passthrough byte node, the shape
+				// the engine stored it in; opening it runs the EQL type's own
+				// decryption on the ciphertext inside the JSON.
+				tree[f.Name] = map[string]any{record.EQLKey: vcvalue.Plain{V: append([]byte(nil), outputs.EQL...)}}
+				continue
+			}
 			if !ok || outputs.Ciphertext == nil {
 				return nil, fmt.Errorf("%w: row %d, field %q", errNoCiphertext, i, f.Name)
 			}
@@ -400,14 +456,10 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, context string, p
 			src[f.Key] = f.Value
 		}
 		for _, f := range p.Fields {
-			if _, ok := src[f.Name]; !ok {
+			if _, ok := src[f.Name]; !ok && f.HasCiphertext() {
 				// An index-only field has no ciphertext to open and comes
-				// back as nothing; every sealed field must.
-				for _, o := range f.Outputs {
-					if o == record.Ciphertext {
-						return nil, fmt.Errorf("%w: record %d lacks field %q", ErrInternal, i, f.Name)
-					}
-				}
+				// back as nothing; every sealed or target field must.
+				return nil, fmt.Errorf("%w: record %d lacks field %q", ErrInternal, i, f.Name)
 			}
 		}
 		sources[i] = src

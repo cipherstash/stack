@@ -45,10 +45,16 @@
 //! `se_cipher_init`; derived data keys and index keys never leave.
 //!
 //! The exports are the record path (`se_encrypt_record`, `se_decrypt_record`),
-//! per-field term derivation (`se_term`), keyset resolution (`se_keyset`),
-//! the generator's two questions (`se_plan_check`, `se_targets`) and the
-//! lifetime pair (`se_cipher_init`, `se_shutdown`). There is no whole-value
-//! export: the Go SDK seals every value under a declaration (ADR-0007).
+//! per-field term derivation (`se_term`), a target field's EQL query value
+//! (`se_query`), keyset resolution (`se_keyset`), the generator's two
+//! questions (`se_plan_check`, `se_targets`) and the lifetime pair
+//! (`se_cipher_init`, `se_shutdown`). There is no whole-value export: the
+//! Go SDK seals every value under a declaration (ADR-0007).
+//!
+//! The crate has two builds (ADR-0007, amended 2026-10-06): with the `eql`
+//! feature it links `eql-bindings` and a plan field may name an EQL type as
+//! its target ([`targets`]); without it, a plan that does is refused at
+//! `se_plan_check`.
 //!
 //! One instance is one client: `se_cipher_init` runs once per instance and
 //! the keysets that client uses are selected per call through the options
@@ -60,7 +66,7 @@
 //! Split into:
 //!
 //! - [`ops`], [`options`], [`config`], [`response`], [`headers`],
-//!   [`status`] — everything that is pure logic over
+//!   [`status`], [`targets`] — everything that is pure logic over
 //!   `StackCipher<K>` / `KeysetCipher<K>` / bytes. Compiles and unit-tests
 //!   on the native host target (`cargo test` here, no wasm toolchain
 //!   needed) against `stack_kms::FakeDataKeySource`.
@@ -85,6 +91,7 @@ pub mod ops;
 pub mod options;
 pub mod response;
 pub mod status;
+pub mod targets;
 
 // The ABI's packed u64 results embed 32-bit pointers, its bounds checks
 // read the wasm linear-memory size, and `host` calls imported functions —

@@ -31,6 +31,16 @@ crate-type = ["cdylib", "rlib"]
 # hermetic round trips; `mise run wasm:guest:build:deterministic` builds it
 # beside the real guest. Never the embedded guest.
 deterministic-kms = ["stack-kms/test-support"]
+# The guest build that holds the EQL types (ADR-0007, amended 2026-10-06):
+# links eql-bindings and installs its by-name dispatch as the engine's
+# `TargetResolver`, so a plan field may name an EQL type (`TextEq`) and
+# `se_encrypt_record` returns the finished EQL value; `se_targets` lists the
+# catalog. Off, the guest installs `NoTargets` and refuses every target name
+# at `se_plan_check`. The Go module embeds both builds: `encrypt` the one
+# without, `encrypt/eql` the one with, registered on import
+# (`mise run wasm:guest:build:eql`). Combines with `deterministic-kms` for
+# the hermetic Go tests of a TextEq field.
+eql = ["dep:eql-bindings"]
 
 [dependencies]
 # The stack crates with default features off: no reqwest, no native TLS —
@@ -45,6 +55,10 @@ stack-encrypt = { path = "../../../../packages/stack-encrypt", default-features 
 # This crate defines only the exports that are its own.
 stack-guest-abi = { path = "../../../../packages/stack-guest-abi" }
 stack-kms = { path = "../../../../packages/stack-kms", default-features = false }
+# The EQL types, for the `eql` build only. By path, like every other
+# eql-bindings dependency in the repository: the SQL that stores a payload
+# and the Rust that emits it must agree (scripts/lint-no-eql-registry-pins.mjs).
+eql-bindings = { path = "../../../../packages/eql/crates/eql-bindings", features = ["stack-encrypt"], optional = true }
 zerokms-protocol = "=0.12.31"
 
 # The FFI codec + `FfiValue` tree, shared with vitaminc's own guest — one

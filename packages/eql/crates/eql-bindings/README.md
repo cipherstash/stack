@@ -172,6 +172,47 @@ column returns zero rows with no error. The separation will come from the EQL
 version itself (v4), not from a marker inside v3. Until then, one profile per
 column, and record which.
 
+### EQL types as plan field targets
+
+A binding has no Rust type to name: its plan arrives as data, and a field of
+that plan names its EQL type as a string (`"TextEq"`). The
+`eql_bindings::encryption::targets` module is where the string meets the type.
+`targets()` is the catalog-generated table of every EQL type a plan may name —
+its name across languages, family and suffix, the plaintext kind it takes (a
+vitaminc `ValueKind` name, the same names a plan field's `"type"` key uses), the
+indexes it carries (`eq` / `match` / `ore` / `ope` / `json`), its query twin,
+and whether the engine can produce it today, with the reason when not. A guest
+serializes it for its `se_targets` export; the module docs are the wire format.
+`encrypt`, `decrypt` and `query` dispatch on the name and run the type's own
+Rust plan — the same `EncryptFrom` the typed `encrypt_as::<TextEq>` runs, so
+the two paths produce the same identifier and equality term and open each
+other's values. An unproducible name is refused with the table's reason; an
+unknown one with "no such EQL type".
+
+```rust,ignore
+use eql_bindings::encryption::targets;
+use stack_encrypt::Label;
+use vitaminc_aead_value::FfiValue;
+
+let column = Label::new(["users", "email"])?; // the field's context: table/column
+let stored: Vec<u8> = targets::encrypt("TextEq", &keyset, &column, FfiValue::String("alice@example.com".into()))?.await?;
+let probe: Vec<u8> = targets::query("TextEq", &keyset, &column, FfiValue::String("alice@example.com".into()))?.await?;
+let opened: FfiValue = targets::decrypt("TextEq", &cipher, &column, &stored)?.await?;
+```
+
+The table and the dispatch are generated into `src/v3/targets.rs` beside
+`inventory.rs` (`mise run types:generate`), gated to the `stack-encrypt`
+feature, and drift-gated by the same parity tests. The same generator writes
+the Go package `languages/golang/encrypt/eql` from the same rows
+(`eql-codegen go-eql`, also under `types:generate` / `types:check`). The
+engine's `TargetResolver` (stack-encrypt's `dynamic` module) is implemented
+over this module by the Go guest's `eql` build, not here: a resolver in this
+crate would need stack-encrypt API newer than the crates.io release the
+published crate names, and the guest already depends on both. A type is producible exactly
+when its generated struct carries the `stack-encrypt` derives
+(`ENCRYPTION_DOMAINS` in `eql-codegen`), because the dispatch runs the derived
+plan; `TextEq` is the only one today.
+
 ### Developing the `stack-encrypt` feature
 
 Stack Encrypt lives in this repository (`packages/stack-encrypt`), and the

@@ -6,7 +6,7 @@
 //!
 //! - **Every export handed plaintext wipes that buffer in place before it
 //!   returns**, rather than leaving it for `se_dealloc`: [`se_cipher_init`]
-//!   (the config carries the client key), and [`se_term`] and
+//!   (the config carries the client key), and [`se_term`], [`se_query`] and
 //!   [`se_encrypt_record`] (their value/source buffers). The host's plaintext therefore lives no longer
 //!   than the call, instead of until the host gets round to releasing it.
 //!   **A host must not read a plaintext input buffer back after the call, or
@@ -447,8 +447,47 @@ pub unsafe extern "C" fn se_plan_check(plan_ptr: *const u8, plan_len: u32) -> u6
     .map_or_else(err_status, ok_buffer)
 }
 
-/// The EQL types this build produces, as a codec-encoded
-/// `{"targets": [...]}` ([`ops::targets`]). Needs no cipher.
+/// Derive the EQL query value of one target field under the keyset `opts`
+/// selects: a codec-encoded plaintext, the codec-encoded plan and the
+/// field's name (UTF-8 bytes) in, the query value's JSON bytes out
+/// ([`ops::query`]). The plan is parsed against this build's resolver, so
+/// a build without EQL types refuses it as `STATUS_ENCODING` before the
+/// cipher is consulted, as it refuses the same plan at [`se_plan_check`].
+///
+/// # Safety
+///
+/// As for [`se_term`].
+#[no_mangle]
+pub unsafe extern "C" fn se_query(
+    val_ptr: *mut u8,
+    val_len: u32,
+    plan_ptr: *const u8,
+    plan_len: u32,
+    field_ptr: *const u8,
+    field_len: u32,
+    opt_ptr: *const u8,
+    opt_len: u32,
+) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let value = unsafe { take_plaintext(val_ptr, val_len)? };
+        let value = value.as_slice();
+        // SAFETY: host-owned ranges the export was handed; the borrows end
+        // before it returns and before any wipe of an overlapping range.
+        let plan = unsafe { input(plan_ptr, plan_len)? };
+        let field = unsafe { input(field_ptr, field_len)? };
+        let opts = unsafe { input(opt_ptr, opt_len)? };
+        ops::validate::query(value, plan, field)?;
+        with_keyset(opts, |keyset| {
+            block_on(ops::query(keyset, value, plan, field))
+        })
+    }))
+    .unwrap_or(Err(STATUS_INTERNAL))
+    .map_or_else(err_status, ok_buffer)
+}
+
+/// The EQL types this build knows, as a codec-encoded
+/// `{"targets": [...]}` ([`ops::targets`]): the catalog in the `eql` build,
+/// nothing in the other. Needs no cipher.
 #[no_mangle]
 pub extern "C" fn se_targets() -> u64 {
     catch_unwind(AssertUnwindSafe(ops::targets))

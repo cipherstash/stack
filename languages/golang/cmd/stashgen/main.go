@@ -15,6 +15,11 @@ import (
 	"os"
 	"strings"
 
+	// The build of the engine that holds the EQL types: the generator
+	// asks the embedded guest which EQL types it produces, so it links the
+	// build that has them. Generated code imports encrypt/eql only when it
+	// names one.
+	_ "github.com/cipherstash/stack/languages/golang/encrypt/eql"
 	"github.com/cipherstash/stack/languages/golang/stashgen"
 )
 

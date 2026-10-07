@@ -120,6 +120,12 @@ pub fn status_for_dynamic(error: &stack_encrypt::dynamic::Error) -> u32 {
             STATUS_ENCODING
         }
         Error::Cipher(e) => status_for_error(e),
+        // A target refusal is a statement about the plan, the label or the
+        // value (an unknown or unproducible type, an extended plan, a value
+        // of another kind, stored bytes that are not the type) — malformed
+        // input, like the rest — save the resolver's own failure.
+        Error::Target(stack_encrypt::dynamic::TargetError::Other(_)) => STATUS_INTERNAL,
+        Error::Target(_) => STATUS_ENCODING,
         Error::Internal => STATUS_INTERNAL,
         _ => STATUS_INTERNAL,
     }
@@ -352,6 +358,73 @@ mod tests {
         assert_eq!(
             status_for_error(&stack_encrypt::Error::NoKeyset),
             STATUS_INTERNAL
+        );
+    }
+
+    /// The two `Error::Target` arms, in order: every target refusal is the
+    /// caller's input, and the resolver's own failure is never reported as
+    /// such. Swapping the arms, or dropping the `Other` one, fails here.
+    #[test]
+    fn target_refusals_are_encoding_and_a_resolver_failure_is_internal() {
+        use stack_encrypt::dynamic::{Error, TargetError};
+        use vitaminc_aead_value::ValueKind;
+        let refusals = [
+            TargetError::NoTargets {
+                name: "TextEq".into(),
+            },
+            TargetError::Unknown {
+                name: "Nope".into(),
+            },
+            TargetError::Unproducible {
+                name: "TextOrdOre".into(),
+                reason: "block ORE".into(),
+            },
+            TargetError::Extended {
+                name: "email".into(),
+                label: "users/email".into(),
+            },
+            TargetError::ContextField {
+                name: "email".into(),
+                context_field: "tenant".into(),
+            },
+            TargetError::NoQuery {
+                name: "Text".into(),
+            },
+            TargetError::Kind {
+                name: "email".into(),
+                target: "TextEq".into(),
+                expected: Some(ValueKind::String),
+                declared: ValueKind::UInt64,
+            },
+            TargetError::Column {
+                name: "email".into(),
+                label: "app/users/email".into(),
+                reason: "two segments".into(),
+            },
+            TargetError::Plaintext {
+                name: "email".into(),
+                target: "TextEq".into(),
+                expected: Some(ValueKind::String),
+                found: None,
+            },
+            TargetError::Stored {
+                name: "email".into(),
+                target: "TextEq".into(),
+                reason: "not JSON".into(),
+            },
+        ];
+        for refusal in refusals {
+            let label = refusal.to_string();
+            assert_eq!(
+                status_for_dynamic(&Error::Target(refusal)),
+                STATUS_ENCODING,
+                "{label}: a target refusal is the caller's input"
+            );
+        }
+        assert_eq!(
+            status_for_dynamic(&Error::Target(TargetError::Other("boom".into()))),
+            STATUS_INTERNAL,
+            "the resolver's own failure is never the caller's input"
         );
     }
 

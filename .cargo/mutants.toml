@@ -73,6 +73,10 @@ exclude_re = [
   'stack-encrypt/src/sem/mod\.rs:\d+:\d+: replace <impl MatchConfig for DefaultMatch>::options -> MatchOptions with Default::default\(\)$',
   # Both unit-context conversions explicitly return Self::default().
   'stack-encrypt/src/target/context\.rs:\d+:\d+: replace <impl From<\(\)> for (DeclaredContext|ExpectedContext<T>)>::from -> Self with Default::default\(\)$',
+  # The resolver of a build without EQL types holds none: its `targets` IS
+  # the empty list (`dynamic::target::NoTargets`), which a test asserts on
+  # and `resolve` turns into `TargetError::NoTargets`; `vec![]` is the body.
+  'stack-encrypt/src/dynamic/target\.rs:\d+:\d+: replace <impl TargetResolver for NoTargets>::targets -> Vec<TargetDescriptor> with vec!\[\]$',
 ]
 
 # Headroom over the measured baseline before a slow-but-correct mutant is

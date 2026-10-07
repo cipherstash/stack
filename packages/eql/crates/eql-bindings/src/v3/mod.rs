@@ -142,6 +142,14 @@ pub mod payload;
 pub mod query_payload;
 pub mod real;
 pub mod smallint;
+/// Generated: the table of EQL types a Stack Encrypt data plan may name as
+/// a field target (`TARGETS`) and the by-name dispatch that runs a
+/// producible type's own plan. Only meaningful with the engine, so it is
+/// gated here, in the hand-written module list, rather than inside the
+/// generated file. The descriptor type, the errors and the public entry
+/// points are hand-written in [`crate::encryption::targets`].
+#[cfg(feature = "stack-encrypt")]
+pub mod targets;
 pub mod terms;
 pub mod text;
 pub mod timestamp;
