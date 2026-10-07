@@ -1,5 +1,70 @@
 {
   "_comment": "Records sealed by the typed Rust chain and by the data-plan lowering under one declaration (ADR-0007). Read by tests/record_lowering.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand.",
+  "context_field": {
+    "_comment": "The same proof for a plan that takes its context from a field of the record: the plan-level context_field key, the context stored as a passthrough, and the term under <tenant>/text.",
+    "plaintext": {
+      "id": 42,
+      "tenant": "tenants/acme",
+      "text": "hello"
+    },
+    "plan": {
+      "context_field": "tenant",
+      "id": {
+        "context": [
+          "id"
+        ],
+        "outputs": [
+          "passthrough"
+        ],
+        "type": "uint32"
+      },
+      "tenant": {
+        "context": [
+          "tenant"
+        ],
+        "outputs": [
+          "passthrough"
+        ],
+        "type": "string"
+      },
+      "text": {
+        "context": [
+          "text"
+        ],
+        "outputs": [
+          "c",
+          "eq"
+        ],
+        "type": "string"
+      }
+    },
+    "records": {
+      "lowering": {
+        "id": {
+          "passthrough": 42
+        },
+        "tenant": {
+          "passthrough": "tenants/acme"
+        },
+        "text": {
+          "c": "0100000000000000000000000000000000cf1a45d1517a08c45d6ae1c989ae99de2000da620d1dbdbba9372d1439b6d44f7cc4169e9a255387aa180d6a95fb17926d7001a7e8ada1c849706c1f1b5c56ad878ea5deb68ebefecb98a8816cbe658c20b33989cc",
+          "eq": "0d84fbd44d82b5150351556d6d25a038c70cf0c696e2499a71b659a7732a9d08"
+        }
+      },
+      "typed_chain": {
+        "id": {
+          "passthrough": 42
+        },
+        "tenant": {
+          "passthrough": "tenants/acme"
+        },
+        "text": {
+          "c": "010000000000000000000000000000000048a99626f697c02001f07da2edb19f4220009868b833b6220fa0d13b612af03af1f38fee082c7555b6e7fbf8e13ccb70f80701dc7cf368a02a3bd466d24b4037597aeae058b641ff5a2c73736f98d8d49ae10a3d9c",
+          "eq": "0d84fbd44d82b5150351556d6d25a038c70cf0c696e2499a71b659a7732a9d08"
+        }
+      }
+    }
+  },
   "key_source": {
     "kind": "deterministic-sha256",
     "seed": "737461636b2d656e6372797074207265636f7264206669787475726520763120"

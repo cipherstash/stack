@@ -122,6 +122,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A data plan can take its context from a field of the record**, as a
+  Rust chain's `FieldsBuilder::context_field` and the derive's
+  `#[stash(context_field)]` do: a plan-level `"context_field": "<name>"`
+  key beside the field specs (`dynamic::record::plan`,
+  `Plan::with_context_field`). The named field's value in each record (a
+  label such as `"tenants/acme"`) is the context every other field is
+  sealed under, and the field is carried as a passthrough of type
+  `"string"`, so the record stores its own context. Under a context field
+  each field's `"context"` is its identity alone, a one-segment label,
+  extended as before; without the key the two-segment and shared-prefix
+  rules hold and every existing plan seals the same bytes.
+  `record::decrypt` and `record::check_record` take the context the caller
+  expects (an `Option<Label>`, the chain's `open(record).context(expected)`)
+  and refuse a record whose stored context differs with
+  `Error::ContextMismatch` before any key is requested. `Plan::label` is
+  now an `Option<&Label>` (`None` under a context field) and
+  `Plan::context_field` names the field. `dynamic::Value` implements
+  `IntoLabel`, and `LabelError` gains `NotText` for a context read from a
+  value that is not a string.
 - `KeysetCipher::run`: run a description held in a variable over a value,
   under a context, without an `EncryptFrom` declaration.
 - `target::{SourceMode, ConsumeSource, ShareSource, Borrowed, Owned}`. In

@@ -273,7 +273,7 @@ fuzz_target!(|case: Case| {
         return;
     };
     let expected = model_accepts(&record, &plan);
-    let actual = check_record(record.into_ciphertext(), &plan).is_ok();
+    let actual = check_record(record.into_ciphertext(), &plan, None).is_ok();
     if trace {
         eprintln!("verdict: model accepts = {expected}, check_record accepts = {actual}");
     }
