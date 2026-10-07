@@ -136,7 +136,7 @@ func TestValidateRefusals(t *testing.T) {
 		"unknown kind":        one(Field{Name: "a", Kind: "integer", Outputs: []Output{Ciphertext}}),
 		"no output":           one(Field{Name: "a"}),
 		"unknown output":      one(Field{Name: "a", Outputs: []Output{"json"}}),
-		"output twice":        one(Field{Name: "a", Kind: UInt32, Outputs: []Output{Equality, Equality}}),
+		"output twice":        one(Field{Name: "a", Kind: Uint32, Outputs: []Output{Equality, Equality}}),
 		"bad extension part":  {Context: []string{"users"}, Extension: []any{1.5}, Fields: []Field{{Name: "a", Outputs: []Output{Ciphertext}}}},
 		"name is not a label": one(Field{Name: "b64:x", Outputs: []Output{Ciphertext}}),
 		"indexed and untyped": one(Field{Name: "a", Outputs: []Output{Ciphertext, Equality}}),
@@ -158,7 +158,7 @@ func TestValidateRefusals(t *testing.T) {
 	}
 	// A repeated output is refused for the repetition: the field is typed,
 	// so the untyped rule cannot be what refuses it.
-	err = one(Field{Name: "a", Kind: UInt32, Outputs: []Output{Equality, Equality}}).Validate()
+	err = one(Field{Name: "a", Kind: Uint32, Outputs: []Output{Equality, Equality}}).Validate()
 	if err == nil || !strings.Contains(err.Error(), "asked for twice") {
 		t.Errorf("an output asked for twice: err = %v, want the repeated output named", err)
 	}
