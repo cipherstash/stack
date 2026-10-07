@@ -124,15 +124,6 @@ impl GuestError {
     }
 }
 
-/// Every miette code this crate's errors carry. A test builds every
-/// [`GuestError`] and checks its code is here.
-pub const ERROR_CODES: &[&str] = &[
-    "stack_guest_abi::malformed_input",
-    "stack_guest_abi::out_of_order",
-    "stack_guest_abi::internal",
-    "stack_guest_abi::status",
-];
-
 /// A [`GuestError::Malformed`], recorded; returns `STATUS_ENCODING`.
 pub fn malformed(detail: impl Into<Cow<'static, str>>) -> u32 {
     GuestError::Malformed(detail.into()).fail()
@@ -534,23 +525,48 @@ mod tests {
         assert!(take().is_none());
     }
 
+    /// One row per variant of an enum, written `pattern => value`. The
+    /// patterns are the arms of a match with no wildcard, so a variant with
+    /// no row fails to compile, and each value must match its own pattern.
+    macro_rules! variants {
+        ($($pattern:pat => $value:expr),+ $(,)?) => {{
+            let rows = vec![$({
+                let value = $value;
+                assert!(matches!(value, $pattern), "{value:?} is not {}", stringify!($pattern));
+                value
+            }),+];
+            for row in &rows {
+                match row {
+                    $($pattern => {})+
+                }
+            }
+            rows
+        }};
+    }
+
+    /// Every [`GuestError`] has a code in this crate's namespace and
+    /// `snake_case`.
     #[test]
-    fn every_guest_error_has_a_listed_code() {
-        let errors = [
-            GuestError::Malformed("x".into()),
-            GuestError::OutOfOrder("x".into()),
-            GuestError::Internal("x".into()),
-            GuestError::Status(9),
+    fn every_guest_error_has_a_code_of_this_crate() {
+        let errors = variants![
+            GuestError::Malformed(_) => GuestError::Malformed("x".into()),
+            GuestError::OutOfOrder(_) => GuestError::OutOfOrder("x".into()),
+            GuestError::Internal(_) => GuestError::Internal("x".into()),
+            GuestError::Status(_) => GuestError::Status(9),
         ];
-        let codes: Vec<String> = errors
-            .iter()
-            .map(|error| {
-                error
-                    .code()
-                    .map(|code| code.to_string())
-                    .unwrap_or_default()
-            })
-            .collect();
-        assert_eq!(codes, ERROR_CODES);
+        for error in &errors {
+            let code = error
+                .code()
+                .unwrap_or_else(|| panic!("{error:?} has no code"))
+                .to_string();
+            let name = code.strip_prefix("stack_guest_abi::").unwrap_or_default();
+            assert!(
+                name.starts_with(|c: char| c.is_ascii_lowercase())
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+                "{code}"
+            );
+        }
     }
 }
