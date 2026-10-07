@@ -70,8 +70,8 @@ impl IndexSpec {
     ///
     /// [`Error::Plan`] ([`Reason::UnknownOutput`]) for a value that is
     /// neither an index key nor a match options object, or whose options are
-    /// unknown, repeated, mistyped or out of bounds. It names no field: the
-    /// plan parser names it.
+    /// unknown, mistyped or out of bounds; [`Reason::RepeatedKey`] for an
+    /// option given twice. It names no field: the plan parser names it.
     pub fn from_value(value: &FfiValue) -> Result<Self, Error> {
         let unknown = || Error::bad_plan(Reason::UnknownOutput);
         match value {
@@ -1106,10 +1106,17 @@ mod tests {
                 ),
             ];
             for (label, wire) in refused {
+                let error = IndexSpec::from_value(&wire).expect_err(label);
+                let reason = if label == "an option twice" {
+                    Reason::RepeatedKey
+                } else {
+                    Reason::UnknownOutput
+                };
                 assert!(
-                    matches!(IndexSpec::from_value(&wire), Err(Error::Plan { .. })),
-                    "{label} is not an index"
+                    matches!(error, Error::Plan { field: None, .. }),
+                    "{label}: {error:?}"
                 );
+                assert_eq!(error.reason(), Some(reason), "{label}");
             }
         }
 

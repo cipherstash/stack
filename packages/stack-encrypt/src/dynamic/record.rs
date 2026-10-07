@@ -5668,10 +5668,10 @@ mod tests {
                 "email".to_string(),
                 CipherText::Map(vec![(EQL_KEY.to_string(), forged(s("x")))]),
             ));
-            assert!(matches!(
-                check_record(CipherText::Map(row), &plan, None),
-                Err(Error::Record { .. })
-            ));
+            let error = check_record(CipherText::Map(row), &plan, None).expect_err("refused");
+            assert!(matches!(error, Error::Record { .. }), "{error:?}");
+            assert_eq!(error.field(), Some("email"));
+            assert_eq!(error.reason(), Some(Reason::NotPassthrough));
             let mut row = seal_mixed(&keyset, &plan).await;
             row.retain(|(k, _)| k != "email");
             row.push((
@@ -5919,13 +5919,21 @@ mod tests {
                     ))) as BoxedPassthrough),
                 )])
             };
+            // Each misfit is refused naming the field and the reason a
+            // binding reports for that shape.
+            let refusal = |result: Result<(), Error>| {
+                let error = result.expect_err("the record is refused");
+                assert!(matches!(error, Error::Record { .. }), "{error:?}");
+                assert_eq!(error.field(), Some("email"), "{error}");
+                error.reason()
+            };
             // A ciphertext leaf where the EQL value should be.
             let misplaced = CipherText::Map(vec![("c".to_string(), forged(s("x")))]);
             let record = with_email(seal_mixed(&keyset, &plan).await, misplaced);
-            assert!(matches!(
-                check_record(record, &plan, None),
-                Err(Error::Record { .. })
-            ));
+            assert_eq!(
+                refusal(check_record(record, &plan, None)),
+                Some(Reason::NoEqlNode)
+            );
             // The node twice.
             let mut row = seal_mixed(&keyset, &plan).await;
             let CipherText::Map(mut outputs) = node(&mut row, "email") else {
@@ -5937,20 +5945,20 @@ mod tests {
             };
             outputs.extend(again);
             row.push(("email".to_string(), CipherText::Map(outputs)));
-            assert!(matches!(
-                check_record(CipherText::Map(row), &plan, None),
-                Err(Error::Record { .. })
-            ));
+            assert_eq!(
+                refusal(check_record(CipherText::Map(row), &plan, None)),
+                Some(Reason::RepeatedKey)
+            );
             // A payload that is not bytes.
             let null = CipherText::Map(vec![(
                 EQL_KEY.to_string(),
                 CipherText::Passthrough(Box::new(FfiValue::Null) as BoxedPassthrough),
             )]);
             let record = with_email(seal_mixed(&keyset, &plan).await, null);
-            assert!(matches!(
-                check_record(record, &plan, None),
-                Err(Error::Record { .. })
-            ));
+            assert_eq!(
+                refusal(check_record(record, &plan, None)),
+                Some(Reason::NotPassthrough)
+            );
             // Bytes that are not the type: the shape fits, and the resolver
             // refuses them before any key is retrieved.
             let record = with_email(seal_mixed(&keyset, &plan).await, bytes_node(b"not json"));
@@ -6000,15 +6008,14 @@ mod tests {
             );
             assert_eq!(generates(&cipher), 0, "a query mints nothing");
             // Not a target field, no such field, the wrong kind, and the
-            // bare build: each refused before the resolver runs.
-            assert!(matches!(
-                refused(query(&keyset, &plan, "age", s("x"), &FakeEql)),
-                Error::Plan { .. }
-            ));
-            assert!(matches!(
-                refused(query(&keyset, &plan, "nope", s("x"), &FakeEql)),
-                Error::Plan { .. }
-            ));
+            // bare build: each refused before the resolver runs. The first
+            // two name the field asked for and why.
+            for (field, reason) in [("age", Reason::NotATarget), ("nope", Reason::NoSuchField)] {
+                let error = refused(query(&keyset, &plan, field, s("x"), &FakeEql));
+                assert!(matches!(error, Error::Plan { .. }), "{error:?}");
+                assert_eq!(error.field(), Some(field), "{error}");
+                assert_eq!(error.reason(), Some(reason), "{error}");
+            }
             assert!(matches!(
                 refused(query(
                     &keyset,
@@ -6459,6 +6466,40 @@ mod tests {
                     ]),
                     Some("email"),
                     MixedContexts,
+                    "Plan",
+                ),
+                (
+                    "two fields under one identity",
+                    obj(vec![
+                        ("mail", typed(label("email"), &["c", "eq"], "string")),
+                        ("mail2", typed(label("email"), &["c", "eq"], "string")),
+                    ]),
+                    Some("mail2"),
+                    SharedIdentity,
+                    "Plan",
+                ),
+                (
+                    "a context that renders empty",
+                    age(vec![("context", s("")), ("outputs", strings(&["c"]))]),
+                    Some("age"),
+                    EmptyContext,
+                    "Context",
+                ),
+                (
+                    "a match option given twice",
+                    age(vec![
+                        ("context", label("age")),
+                        (
+                            "outputs",
+                            FfiValue::Array(vec![obj(vec![(
+                                "match",
+                                obj(vec![("k", FfiValue::UInt32(6)), ("k", FfiValue::UInt32(6))]),
+                            )])]),
+                        ),
+                        ("type", s("string")),
+                    ]),
+                    Some("age"),
+                    RepeatedKey,
                     "Plan",
                 ),
             ];

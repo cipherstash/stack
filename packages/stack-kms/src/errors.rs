@@ -422,6 +422,69 @@ mod codes {
             .is_some_and(|help| help.to_string().contains("client is unknown")));
     }
 
+    /// Every structured field this crate adds. A binding passes these on as
+    /// they are, so a renamed key breaks the callers that read it.
+    #[test]
+    fn every_payload_carries_its_fields() {
+        use serde_json::json;
+        #[cfg_attr(not(feature = "http"), allow(unused_mut))]
+        let mut rows: Vec<(Box<dyn ErrorPayload>, serde_json::Value)> = vec![
+            (
+                Box::new(InvalidEndpoint::Scheme("ftp".into())),
+                json!({ "scheme": "ftp" }),
+            ),
+            (
+                Box::new(InvalidEndpoint::QueryOrFragment("https://x/?q".into())),
+                json!({}),
+            ),
+            (
+                Box::new(FailureResponse {
+                    status: 503,
+                    body: Some("marker-body".into()),
+                    headers: Default::default(),
+                }),
+                json!({ "status": 503 }),
+            ),
+            (
+                Box::new(RetrieveKeyError::InvalidNumberOfKeys {
+                    expected: 2,
+                    received: 1,
+                }),
+                json!({ "expected": 2, "received": 1 }),
+            ),
+        ];
+        #[cfg(feature = "http")]
+        rows.push((
+            Box::new(crate::builder::StackKmsBuilderError::InvalidEndpoint {
+                env_var: "CS_ZEROKMS_HOST",
+                source: InvalidEndpoint::Userinfo,
+            }),
+            json!({ "env_var": "CS_ZEROKMS_HOST" }),
+        ));
+        for (error, expected) in rows {
+            assert_eq!(
+                serde_json::Value::Object(error.payload()),
+                expected,
+                "{error:?}"
+            );
+        }
+    }
+
+    /// The builder's help names the variable that is wrong.
+    #[cfg(feature = "http")]
+    #[test]
+    fn an_invalid_endpoint_help_names_its_variable() {
+        let error = crate::builder::StackKmsBuilderError::InvalidEndpoint {
+            env_var: "CS_ZEROKMS_HOST",
+            source: InvalidEndpoint::Userinfo,
+        };
+        let help = error
+            .help()
+            .map(|help| help.to_string())
+            .unwrap_or_default();
+        assert!(help.starts_with("Set CS_ZEROKMS_HOST to "), "{help}");
+    }
+
     /// The written-out kinds are the spellings callers already compare.
     #[test]
     fn every_request_kind_keeps_its_spelling() {
