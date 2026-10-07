@@ -7,7 +7,25 @@ use zerokms_protocol::{ViturRequestError, ViturRequestErrorKind};
 /// The fields a failed ZeroKMS request contributes: the request kind
 /// (`NotFound`, `SendRequest`, ...), and nothing from the response body.
 fn request_payload(error: &ViturRequestError) -> serde_json::Map<String, serde_json::Value> {
-    payload([("request_kind", format!("{:?}", error.kind).into())])
+    payload([("request_kind", request_kind(&error.kind).into())])
+}
+
+/// A request kind as the payload spells it. Written out rather than taken
+/// from `Debug`, which is no format and belongs to `zerokms-protocol`: the
+/// match has no wildcard, so a kind added there fails to compile here
+/// instead of reaching a caller as a value nobody wrote down.
+fn request_kind(kind: &ViturRequestErrorKind) -> &'static str {
+    match kind {
+        ViturRequestErrorKind::PrepareRequest => "PrepareRequest",
+        ViturRequestErrorKind::SendRequest => "SendRequest",
+        ViturRequestErrorKind::NotFound => "NotFound",
+        ViturRequestErrorKind::Conflict => "Conflict",
+        ViturRequestErrorKind::FailureResponse => "FailureResponse",
+        ViturRequestErrorKind::ParseResponse => "ParseResponse",
+        ViturRequestErrorKind::Unauthorized => "Unauthorized",
+        ViturRequestErrorKind::Forbidden => "Forbidden",
+        ViturRequestErrorKind::Other => "Other",
+    }
 }
 
 /// The fields of a key-count mismatch.
@@ -402,6 +420,25 @@ mod codes {
         assert!(error
             .help()
             .is_some_and(|help| help.to_string().contains("client is unknown")));
+    }
+
+    /// The written-out kinds are the spellings callers already compare.
+    #[test]
+    fn every_request_kind_keeps_its_spelling() {
+        use ViturRequestErrorKind as K;
+        for kind in [
+            K::PrepareRequest,
+            K::SendRequest,
+            K::NotFound,
+            K::Conflict,
+            K::FailureResponse,
+            K::ParseResponse,
+            K::Unauthorized,
+            K::Forbidden,
+            K::Other,
+        ] {
+            assert_eq!(request_kind(&kind), format!("{kind:?}"));
+        }
     }
 
     #[test]

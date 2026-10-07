@@ -70,7 +70,7 @@ pub enum ProfileError {
 impl ErrorPayload for ProfileError {
     fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
         match self {
-            Self::Io(error) => payload([("io_kind", format!("{:?}", error.kind()).into())]),
+            Self::Io(error) => payload([("io_kind", io_kind(error.kind()).into())]),
             Self::Json(error) => payload([
                 ("line", error.line().into()),
                 ("column", error.column().into()),
@@ -82,6 +82,37 @@ impl ErrorPayload for ProfileError {
             }
             Self::HomeDirNotFound | Self::NoCurrentWorkspace => serde_json::Map::new(),
         }
+    }
+}
+
+/// An I/O error kind as the payload spells it: the kinds a profile store
+/// can meet, written out rather than taken from `Debug`, which is no format.
+/// `ErrorKind` is non-exhaustive, so any other kind is `Other`.
+fn io_kind(kind: std::io::ErrorKind) -> &'static str {
+    use std::io::ErrorKind as K;
+    match kind {
+        K::NotFound => "NotFound",
+        K::PermissionDenied => "PermissionDenied",
+        K::AlreadyExists => "AlreadyExists",
+        K::WouldBlock => "WouldBlock",
+        K::NotADirectory => "NotADirectory",
+        K::IsADirectory => "IsADirectory",
+        K::DirectoryNotEmpty => "DirectoryNotEmpty",
+        K::ReadOnlyFilesystem => "ReadOnlyFilesystem",
+        K::StorageFull => "StorageFull",
+        K::QuotaExceeded => "QuotaExceeded",
+        K::FileTooLarge => "FileTooLarge",
+        K::ResourceBusy => "ResourceBusy",
+        K::InvalidInput => "InvalidInput",
+        K::InvalidData => "InvalidData",
+        K::InvalidFilename => "InvalidFilename",
+        K::TimedOut => "TimedOut",
+        K::WriteZero => "WriteZero",
+        K::Interrupted => "Interrupted",
+        K::Unsupported => "Unsupported",
+        K::UnexpectedEof => "UnexpectedEof",
+        K::OutOfMemory => "OutOfMemory",
+        _ => "Other",
     }
 }
 
@@ -158,6 +189,22 @@ mod tests {
         let shown = format!("{error} {:?}", error.payload());
         assert!(!shown.contains("marker-token"), "{shown}");
         assert!(shown.contains("line 1"), "{shown}");
+    }
+
+    /// The table spells each kind as std names it, and a kind it does not
+    /// list is `Other` rather than a spelling nobody wrote down.
+    #[test]
+    fn an_io_kind_is_spelled_as_std_names_it() {
+        use std::io::ErrorKind as K;
+        for kind in [
+            K::NotFound,
+            K::PermissionDenied,
+            K::StorageFull,
+            K::UnexpectedEof,
+        ] {
+            assert_eq!(io_kind(kind), format!("{kind:?}"));
+        }
+        assert_eq!(io_kind(K::BrokenPipe), "Other");
     }
 
     #[test]

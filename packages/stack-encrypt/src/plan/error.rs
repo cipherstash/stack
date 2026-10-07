@@ -259,8 +259,8 @@ impl crate::ErrorPayload for PlanError {
             } => payload([
                 ("field", field.as_str().into()),
                 ("index", declared.key().into()),
-                ("declared", format!("{declared:?}").into()),
-                ("asked", format!("{asked:?}").into()),
+                ("declared", index_value(declared)),
+                ("asked", index_value(asked)),
             ]),
             Self::TwoContextSources { first, second } => {
                 payload([("first", (*first).into()), ("second", (*second).into())])
@@ -270,5 +270,31 @@ impl crate::ErrorPayload for PlanError {
             | Self::MixedCiphers
             | Self::NoContext => serde_json::Map::new(),
         }
+    }
+}
+
+/// An index as a plan writes it: its key, or for a match index the object of
+/// all four options (`{"match": {"tokenizer": "standard", "downcase": true,
+/// "k": 3, "m": 256}}`, an n-gram tokenizer as `{"ngram": 3}`). A caller in
+/// another language can read it, and it does not move when a field is added
+/// to the Rust type, as `Debug` text would.
+fn index_value(index: &IndexSpec) -> serde_json::Value {
+    use crate::sem::Tokenizer;
+    match index {
+        IndexSpec::Match(options) => {
+            let tokenizer = match options.tokenizer {
+                Tokenizer::Standard => serde_json::Value::from("standard"),
+                Tokenizer::Ngram { length } => serde_json::json!({ "ngram": length }),
+            };
+            serde_json::json!({
+                "match": {
+                    "tokenizer": tokenizer,
+                    "downcase": options.downcase,
+                    "k": options.k,
+                    "m": options.m,
+                }
+            })
+        }
+        IndexSpec::Equality | IndexSpec::Ore | IndexSpec::Ope => index.key().into(),
     }
 }

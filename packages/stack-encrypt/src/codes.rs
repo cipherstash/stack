@@ -446,8 +446,8 @@ mod tests {
                 json!({
                     "field": "age",
                     "index": "match",
-                    "declared": format!("{declared:?}"),
-                    "asked": format!("{asked:?}"),
+                    "declared": { "match": { "tokenizer": { "ngram": 3 }, "downcase": true, "k": 3, "m": 256 } },
+                    "asked": { "match": { "tokenizer": { "ngram": 3 }, "downcase": false, "k": 3, "m": 256 } },
                 }),
             ),
             (
