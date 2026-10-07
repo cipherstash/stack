@@ -27,6 +27,10 @@ jobs:
     name: Build the Alpine musl image
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # `issues: write` for the last step alone; see there.
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -41,7 +45,19 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm cipherstash/musl-build:check sh -euc '
+            echo "Alpine $(cat /etc/alpine-release)"
             for tool in cc c++ cmake perl make curl git rustup-init node; do
               command -v "$tool" >/dev/null || { echo "missing: $tool" >&2; exit 1; }
             done
           '
+      # GitHub mails a scheduled run's failure to one person: whoever last
+      # edited the cron line. An issue is what the rest of the team sees.
+      - name: Open an issue when the weekly build fails
+        if: ${{ failure() && github.event_name == 'schedule' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "The musl build image no longer builds" \
+            --label "github-actions" \
+            --body "The weekly build of .github/docker/musl-build/Dockerfile failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. An apk pin has most likely stopped resolving; re-pin with the command in the Dockerfile's comment."

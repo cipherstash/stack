@@ -30,22 +30,53 @@ const dockerfile = readFileSync(join(REPO_ROOT, DOCKERFILE), 'utf8')
 
 const PINNED = /^node:\d+-alpine@sha256:[0-9a-f]{64}$/
 
-/** The build steps need these; a Dockerfile that lost one would still build. */
+/** A GitHub Actions expression, as the parsed workflow holds it. */
+const gha = (expression) => `\${{ ${expression} }}`
+
+/**
+ * The build steps need these; a Dockerfile that lost one would still build.
+ * `build-base` is a metapackage whose compiler and linker dependencies carry
+ * no version, so the five it pulls in are pinned, and demanded, by name.
+ */
 const TOOLCHAIN = [
+  'binutils',
   'build-base',
   'cmake',
   'curl',
+  'g++',
+  'gcc',
   'git',
   'linux-headers',
+  'make',
+  'musl-dev',
   'perl',
   'rustup',
 ]
 
+/** The tools `musl-build-image.yml` checks for inside the built image. */
+const TOOLS_CHECKED = [
+  'cc',
+  'c++',
+  'cmake',
+  'perl',
+  'make',
+  'curl',
+  'git',
+  'rustup-init',
+  'node',
+]
+
+/** The Dockerfile's instructions, comments dropped and continuations joined. */
+const instructions = dockerfile
+  .split('\n')
+  .filter((line) => !/^\s*#/.test(line))
+  .join('\n')
+  .replace(/\\\n/g, ' ')
+
 /** Each `RUN apk add` in the Dockerfile, as its list of package arguments. */
 function apkAdds(text) {
-  // Join `\`-continued lines so one instruction is one string.
-  const instructions = text.replace(/\\\n/g, ' ').split('\n')
-  return instructions
+  return text
+    .split('\n')
     .filter((line) => /^RUN\s+apk\s+add\b/.test(line))
     .map((line) =>
       line
@@ -57,18 +88,33 @@ function apkAdds(text) {
 
 describe(DOCKERFILE, () => {
   it('starts from a node Alpine image pinned by digest', () => {
+    // Read exactly as the preflights do, `sed -n 's/^FROM //p'`: one space
+    // stripped, nothing trimmed, so a trailing space or CR that would make
+    // `docker run` fail with "invalid reference format" fails here. One
+    // stage, because a second would hand them two images.
     const froms = dockerfile
       .split('\n')
-      .filter((line) => /^FROM\b/.test(line))
-      .map((line) => line.replace(/^FROM\s+/, '').trim())
-    // One stage: the preflights read `FROM` with `sed -n 's/^FROM //p'` and
-    // run the smoke test in that image, so a second stage would hand them two.
+      .filter((line) => line.startsWith('FROM '))
+      .map((line) => line.slice('FROM '.length))
     expect(froms).toHaveLength(1)
     expect(froms[0]).toMatch(PINNED)
   })
 
+  it('reads every apk add in the Dockerfile, so none skips the pin check', () => {
+    // `apkAdds` reads `RUN apk add …` lines only. An `apk add` after `&&`
+    // would install unpinned and pass the test below, and `apk upgrade`
+    // moves versions with no pin at all.
+    const written = instructions.match(/\bapk\s+add\b/g) ?? []
+    expect(written.length).toBeGreaterThan(0)
+    expect(
+      apkAdds(instructions),
+      'An `apk add` is not at the start of a `RUN` line, so its packages are not checked for a `=version`.',
+    ).toHaveLength(written.length)
+    expect(instructions).not.toMatch(/\bapk\s+upgrade\b/)
+  })
+
   it('pins every apk package to an exact version', () => {
-    const adds = apkAdds(dockerfile)
+    const adds = apkAdds(instructions)
     expect(adds.length).toBeGreaterThan(0)
     const packages = adds.flat()
     const unpinned = packages.filter(
@@ -81,7 +127,7 @@ describe(DOCKERFILE, () => {
   })
 
   it('installs the toolchain the build steps rely on', () => {
-    const names = apkAdds(dockerfile)
+    const names = apkAdds(instructions)
       .flat()
       .map((pkg) => pkg.split('=')[0])
     for (const tool of TOOLCHAIN) expect(names).toContain(tool)
@@ -117,13 +163,15 @@ describe('the workflows that use the image', () => {
     }
   })
 
-  it('name the base image digest nowhere, so the Dockerfile is its one home', () => {
+  it('name the node Alpine image nowhere, so the Dockerfile is its one home', () => {
+    // Pinned or not: a copy with no digest is worse than a stale one, because
+    // the tag moves.
     const copies = workflows
-      .filter(({ text }) => /node:\d+-alpine@sha256:/.test(text))
+      .filter(({ text }) => /\bnode:\d+-alpine\b/.test(text))
       .map(({ relPath }) => relPath)
     expect(
       copies,
-      `These workflows carry their own copy of the Alpine image digest. Dependabot moves the one in ${DOCKERFILE}, and a copy is left behind — read it from the Dockerfile as the preflights do.`,
+      `These workflows name the node Alpine image themselves. Dependabot moves the digest in ${DOCKERFILE}, and a copy is left behind or was never pinned — read it from the Dockerfile as the preflights do.`,
     ).toEqual([])
   })
 
@@ -149,6 +197,19 @@ describe('the workflows that use the image', () => {
         `ALPINE_NODE_IMAGE=$(sed -n 's/^FROM //p' ${DOCKERFILE})`,
       )
       expect(run).toMatch(/docker run[\s\S]*"\$ALPINE_NODE_IMAGE"/)
+      // Both preflights sparse-checkout `scripts` alone; the Dockerfile has
+      // to be in that list or the `sed` reads nothing and the step dies.
+      const job = Object.values(wf.jobs).find((j) =>
+        (j?.steps ?? []).some((s) => String(s?.run ?? '').includes(DOCKERFILE)),
+      )
+      const checkout = job.steps.find((s) =>
+        String(s?.uses ?? '').startsWith('actions/checkout'),
+      )
+      const sparse = String(checkout?.with?.['sparse-checkout'] ?? '')
+        .split('\n')
+        .map((path) => path.trim())
+        .filter(Boolean)
+      if (sparse.length > 0) expect(sparse).toContain(DOCKERFILE_DIR)
     }
   })
 })
@@ -164,13 +225,19 @@ describe('keeping the image current', () => {
     expect(docker.map((update) => update.directory)).toContain(
       `/${DOCKERFILE_DIR}`,
     )
+    // Weekly, as the skill says. The cooldown on every entry is
+    // supply-chain.e2e.test.ts's.
+    const entry = docker.find(
+      (update) => update.directory === `/${DOCKERFILE_DIR}`,
+    )
+    expect(entry).toMatchObject({ schedule: { interval: 'weekly' } })
   })
 
   it('builds the Dockerfile on a schedule and on every change to it', () => {
     const relPath = '.github/workflows/musl-build-image.yml'
     const wf = readWorkflow(relPath)
     const on = wf?.on ?? wf?.[true]
-    expect(on?.schedule?.length ?? 0).toBeGreaterThan(0)
+    expect(on?.schedule).toEqual([{ cron: '0 7 * * 1' }])
     for (const trigger of ['push', 'pull_request']) {
       expect(on?.[trigger]?.paths).toEqual(
         expect.arrayContaining([`${DOCKERFILE_DIR}/**`, relPath]),
@@ -185,5 +252,25 @@ describe('keeping the image current', () => {
           run.includes(`docker build --pull`) && run.includes(DOCKERFILE_DIR),
       ),
     ).toBe(true)
+    // A Dockerfile that builds but lost a tool would fail minutes into a
+    // release build; the check step is what sees it first.
+    const check = runs.find((run) => run.includes('for tool in'))
+    expect(
+      check,
+      'no step checks the tools inside the built image',
+    ).toBeDefined()
+    const listed = check
+      .match(/for tool in ([^;]+);/)[1]
+      .trim()
+      .split(/\s+/)
+    expect(listed).toEqual(TOOLS_CHECKED)
+    // A scheduled run's failure mails one person; the issue is for the rest.
+    const steps = Object.values(wf?.jobs ?? {}).flatMap(
+      (job) => job?.steps ?? [],
+    )
+    const notify = steps.find((step) =>
+      String(step?.run ?? '').includes('gh issue create'),
+    )
+    expect(notify?.if).toBe(gha("failure() && github.event_name == 'schedule'"))
   })
 })

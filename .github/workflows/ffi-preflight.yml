@@ -49,7 +49,10 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
-          sparse-checkout: scripts
+          # The musl smoke test reads the Dockerfile's FROM line.
+          sparse-checkout: |
+            scripts
+            .github/docker/musl-build
 
       - uses: actions/download-artifact@v4
         with:
