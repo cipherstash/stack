@@ -1439,12 +1439,12 @@ pub fn check_record(
     let rows = record_rows(record, plan)?;
     let lowered = plan.lower::<()>().map_err(|_| Error::Internal)?;
     let check = |row: &StoredRow| {
-        Opens::<FieldValues, ()>::check(&lowered, &row.values, expected).map_err(|error| {
-            match error {
+        Opens::<FieldValues, ()>::check(&lowered, &row.values, expected).map_err(
+            |error| match error {
                 mismatch @ crate::Error::ContextMismatch { .. } => Error::Cipher(mismatch),
                 _ => Error::Record,
-            }
-        })
+            },
+        )
     };
     match &rows {
         Rows::One(row) => check(row),
@@ -4967,6 +4967,7 @@ mod tests {
                 Scope::Client(&cipher),
                 CipherText::Map(record),
                 &plan,
+                None,
                 &FakeEql,
             )
             .expect("the record fits")
@@ -4989,6 +4990,7 @@ mod tests {
                 Scope::Keyset(cipher.default_keyset()),
                 CipherText::Map(record),
                 &plan,
+                None,
                 &FakeEql,
             )
             .expect("the record fits")
@@ -5016,7 +5018,7 @@ mod tests {
                 1,
                 "three rows, two leaves each, one request"
             );
-            let opened = decrypt_with(Scope::Client(&cipher), sealed, &plan, &FakeEql)
+            let opened = decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &FakeEql)
                 .expect("the batch fits")
                 .await
                 .expect("opens");
@@ -5047,7 +5049,7 @@ mod tests {
                 .await
                 .expect("seals");
             assert_eq!(generates(&cipher), 1);
-            let opened = decrypt_with(Scope::Client(&cipher), sealed, &plan, &FakeEql)
+            let opened = decrypt_with(Scope::Client(&cipher), sealed, &plan, None, &FakeEql)
                 .expect("fits")
                 .await
                 .expect("opens");
@@ -5088,7 +5090,12 @@ mod tests {
             assert!(matches!(error, TargetError::NoTargets { .. }), "{error}");
             assert_eq!(generates(&cipher), 0, "nothing minted");
             let sealed = CipherText::Map(seal_mixed(&keyset, &plan).await);
-            let error = target_error(refused(decrypt(Scope::Client(&cipher), sealed, &plan)));
+            let error = target_error(refused(decrypt(
+                Scope::Client(&cipher),
+                sealed,
+                &plan,
+                None,
+            )));
             assert!(matches!(error, TargetError::NoTargets { .. }), "{error}");
             assert_eq!(retrieves(&cipher), 0, "nothing retrieved");
         }
@@ -5194,7 +5201,7 @@ mod tests {
                 .unwrap()
                 .await
                 .unwrap();
-            let result = decrypt_with(Scope::Keyset(globex), sealed, &plan, &FakeEql)
+            let result = decrypt_with(Scope::Keyset(globex), sealed, &plan, None, &FakeEql)
                 .expect("the record fits")
                 .await;
             match result {
@@ -5212,7 +5219,7 @@ mod tests {
                 .unwrap()
                 .await
                 .unwrap();
-            let opened = decrypt_with(Scope::Keyset(acme), sealed, &plan, &FakeEql)
+            let opened = decrypt_with(Scope::Keyset(acme), sealed, &plan, None, &FakeEql)
                 .unwrap()
                 .await
                 .expect("its own keyset opens it");
@@ -5236,7 +5243,7 @@ mod tests {
                 CipherText::Map(vec![(EQL_KEY.to_string(), forged(s("x")))]),
             ));
             assert!(matches!(
-                check_record(CipherText::Map(row), &plan),
+                check_record(CipherText::Map(row), &plan, None),
                 Err(Error::Record)
             ));
             let mut row = seal_mixed(&keyset, &plan).await;
@@ -5249,6 +5256,7 @@ mod tests {
                 Scope::Client(&cipher),
                 CipherText::Map(row),
                 &plan,
+                None,
                 &FakeEql,
             ));
             assert!(matches!(error, Error::Record), "{error:?}");
@@ -5434,7 +5442,10 @@ mod tests {
             // A ciphertext leaf where the EQL value should be.
             let misplaced = CipherText::Map(vec![("c".to_string(), forged(s("x")))]);
             let record = with_email(seal_mixed(&keyset, &plan).await, misplaced);
-            assert!(matches!(check_record(record, &plan), Err(Error::Record)));
+            assert!(matches!(
+                check_record(record, &plan, None),
+                Err(Error::Record)
+            ));
             // The node twice.
             let mut row = seal_mixed(&keyset, &plan).await;
             let CipherText::Map(mut outputs) = node(&mut row, "email") else {
@@ -5447,7 +5458,7 @@ mod tests {
             outputs.extend(again);
             row.push(("email".to_string(), CipherText::Map(outputs)));
             assert!(matches!(
-                check_record(CipherText::Map(row), &plan),
+                check_record(CipherText::Map(row), &plan, None),
                 Err(Error::Record)
             ));
             // A payload that is not bytes.
@@ -5456,17 +5467,21 @@ mod tests {
                 CipherText::Passthrough(Box::new(FfiValue::Null) as BoxedPassthrough),
             )]);
             let record = with_email(seal_mixed(&keyset, &plan).await, null);
-            assert!(matches!(check_record(record, &plan), Err(Error::Record)));
+            assert!(matches!(
+                check_record(record, &plan, None),
+                Err(Error::Record)
+            ));
             // Bytes that are not the type: the shape fits, and the resolver
             // refuses them before any key is retrieved.
             let record = with_email(seal_mixed(&keyset, &plan).await, bytes_node(b"not json"));
-            assert!(check_record(record, &plan).is_ok(), "the shape fits");
+            assert!(check_record(record, &plan, None).is_ok(), "the shape fits");
             let retrieved = retrieves(&cipher);
             let record = with_email(seal_mixed(&keyset, &plan).await, bytes_node(b"not json"));
             let error = target_error(refused(decrypt_with(
                 Scope::Client(&cipher),
                 record,
                 &plan,
+                None,
                 &FakeEql,
             )));
             assert!(
@@ -5476,7 +5491,7 @@ mod tests {
             assert_eq!(retrieves(&cipher), retrieved, "nothing retrieved");
             // An untouched record still opens.
             let record = CipherText::Map(seal_mixed(&keyset, &plan).await);
-            let opened = decrypt_with(Scope::Client(&cipher), record, &plan, &FakeEql)
+            let opened = decrypt_with(Scope::Client(&cipher), record, &plan, None, &FakeEql)
                 .unwrap()
                 .await
                 .unwrap();
@@ -5558,6 +5573,7 @@ mod tests {
                 Scope::Client(&cipher),
                 junk,
                 &plan,
+                None,
                 &FakeEql,
             )));
             match error {

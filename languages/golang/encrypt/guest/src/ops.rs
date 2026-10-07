@@ -191,16 +191,11 @@ where
     K: DataKeySource + Sync + 'static,
 {
     let plan = parse_plan(plan)?;
-    let value = dynamic::record::decrypt_with(
-        scope,
-        decode_tree(record)?,
-        &plan,
-        expected,
-        &resolver(),
-    )
-        .map_err(|e| status_for_dynamic(&e))?
-        .await
-        .map_err(|e| status_for_error(&e))?;
+    let value =
+        dynamic::record::decrypt_with(scope, decode_tree(record)?, &plan, expected, &resolver())
+            .map_err(|e| status_for_dynamic(&e))?
+            .await
+            .map_err(|e| status_for_error(&e))?;
     encode_value(value)
 }
 
