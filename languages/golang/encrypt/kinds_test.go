@@ -5,6 +5,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"log/slog"
 	"math"
 	"reflect"
 	"strings"
@@ -291,5 +293,21 @@ func TestARenamedFieldOpensUnderItsIdentity(t *testing.T) {
 	}
 	if _, err := unkept.Decrypt(ctx, c, encrypted); err == nil {
 		t.Fatal("renamed without its identity opened the old data")
+	}
+}
+
+// A struct generated with -redact prints no sealed field under any verb:
+// %v and %+v call String, %#v calls GoString, and slog calls LogValue.
+func TestARedactedStructPrintsNoSealedField(t *testing.T) {
+	s := testusers.Secret{ID: 7, Value: "hunter2-plaintext"}
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
+		if got := fmt.Sprintf(verb, s); strings.Contains(got, "hunter2") {
+			t.Errorf("%s printed the sealed field: %s", verb, got)
+		}
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewTextHandler(&buf, nil)).Info("secret", "s", s)
+	if strings.Contains(buf.String(), "hunter2") {
+		t.Errorf("slog printed the sealed field: %s", buf.String())
 	}
 }

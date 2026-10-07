@@ -86,7 +86,7 @@ func (c *Codec[P, E]) notices() {
 	})
 }
 
-// Encrypt seals every value in one request. The result has one element for
+// Encrypt seals every value, with one request for each 500 sealed values. The result has one element for
 // each value, in the same order.
 func (c *Codec[P, E]) Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []P) ([]E, error) {
 	c.notices()
@@ -134,7 +134,7 @@ func (c *Codec[P, E]) Encrypt(ctx context.Context, cipher *encrypt.Cipher, value
 	return out, nil
 }
 
-// Decrypt opens every value in one request.
+// Decrypt opens every value, with one request for each 500 sealed values.
 func (c *Codec[P, E]) Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []E) ([]P, error) {
 	c.notices()
 	if c.err != nil {
@@ -314,12 +314,12 @@ type RecordsCodec[P, R any] struct {
 	decrypt func(context.Context, encrypt.Decrypter, []R) ([]P, error)
 }
 
-// Encrypt seals every value into a model row, in one request.
+// Encrypt seals every value into a model row, with one request for each 500 sealed values.
 func (c *RecordsCodec[P, R]) Encrypt(ctx context.Context, cipher *encrypt.Cipher, values []P) ([]R, error) {
 	return c.encrypt(ctx, cipher, values)
 }
 
-// Decrypt opens every model row, in one request.
+// Decrypt opens every model row, with one request for each 500 sealed values.
 func (c *RecordsCodec[P, R]) Decrypt(ctx context.Context, d encrypt.Decrypter, rows []R) ([]P, error) {
 	return c.decrypt(ctx, d, rows)
 }

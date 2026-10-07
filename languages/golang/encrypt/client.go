@@ -100,7 +100,7 @@ func NewClient(ctx context.Context, opts ...ClientOption) (_ *Client, err error)
 	if explicit, ok := creds.(*explicitCredentials); ok && err == nil && explicit.token == nil {
 		// Knowable from the credentials as they were built: the one place
 		// a missing token source is decided.
-		err = fmt.Errorf("%w: NewCredentials needs a auth strategy for the token", ErrEncoding)
+		err = fmt.Errorf("%w: NewCredentials needs an auth strategy for the token", ErrEncoding)
 	}
 	wasm := cfg.guest
 	if err == nil && wasm == nil {

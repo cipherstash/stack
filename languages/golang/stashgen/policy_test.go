@@ -158,7 +158,7 @@ func TestGenerateRefusals(t *testing.T) {
 		{"no context", policy.SourceFunc(individualFacts), policy.ForMessage(struct{}{}, "", base), "ForMessage needs a Context"},
 		{"an index the engine refuses", policy.SourceFunc(individualFacts),
 			individualRules(policy.When(policy.Field("name"), policy.EncryptIndex(policy.Match(policy.IndexOption{Key: "k", Value: "3"})))),
-			"pb.Individual.Name: index match(k=3): the engine cannot carry index options"},
+			"pb.Individual.Name: index match(k=3): a query term uses only the default index options"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

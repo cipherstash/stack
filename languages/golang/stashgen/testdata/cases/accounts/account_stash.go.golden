@@ -41,6 +41,11 @@ func (a Account) LogValue() slog.Value {
 	return gensupport.RedactedLog(map[string]any{"Model": a.Model}, "Email")
 }
 
+// GoString is what %#v prints; without it %#v prints every field.
+func (a Account) GoString() string {
+	return gensupport.Redacted("Account", map[string]any{"Model": a.Model}, "Email")
+}
+
 // Stops compiling when Account gains, loses, reorders or retypes a field.
 var _ = accountShape(Account{})
 
@@ -122,13 +127,14 @@ var codec = gensupport.New(gensupport.Generated[Account, EncryptedAccount]{
 	},
 })
 
-// Encrypt seals each Account in one ZeroKMS request. The result has one element
-// for each input, in the same order.
+// Encrypt seals each Account, with one ZeroKMS request for each 500 sealed
+// values. The result has one element for each input, in the same order.
 func Encrypt(ctx context.Context, cipher *encrypt.Cipher, accounts []Account) ([]EncryptedAccount, error) {
 	return codec.Encrypt(ctx, cipher, accounts)
 }
 
-// Decrypt opens each EncryptedAccount in one ZeroKMS request.
+// Decrypt opens each EncryptedAccount, with one ZeroKMS request for each 500
+// sealed values.
 func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedAccount) ([]Account, error) {
 	return codec.Decrypt(ctx, d, encrypted)
 }

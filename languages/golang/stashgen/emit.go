@@ -154,6 +154,11 @@ func (w *writer) printMethods(f *genFile) {
 	w.p("func (%s %s) LogValue() slog.Value {", r, f.typeName)
 	w.p("\treturn gensupport.RedactedLog(%s%s)", shown, hidden)
 	w.p("}")
+	w.nl()
+	w.p("// GoString is what %%#v prints; without it %%#v prints every field.")
+	w.p("func (%s %s) GoString() string {", r, f.typeName)
+	w.p("\treturn gensupport.Redacted(%q, %s%s)", f.typeName, shown, hidden)
+	w.p("}")
 }
 
 // opaqueShape writes the struct an opaque value crosses the binding as: the
@@ -455,12 +460,12 @@ func (w *writer) value(f *genFile) {
 
 func (w *writer) functions(f *genFile) {
 	w.nl()
-	w.b.WriteString(wrapComment(fmt.Sprintf("%s seals each %s in one ZeroKMS request. The result has one element for each input, in the same order.", f.encryptFn, f.typeName), 80))
+	w.b.WriteString(wrapComment(fmt.Sprintf("%s seals each %s, with one ZeroKMS request for each 500 sealed values. The result has one element for each input, in the same order.", f.encryptFn, f.typeName), 80))
 	w.p("func %s(ctx context.Context, cipher *encrypt.Cipher, %s []%s) ([]%s, error) {", f.encryptFn, f.paramName, f.typeExpr, f.encName)
 	w.p("\treturn %s.Encrypt(ctx, cipher, %s)", f.codecVar, f.paramName)
 	w.p("}")
 	w.nl()
-	w.b.WriteString(wrapComment(fmt.Sprintf("%s opens each %s in one ZeroKMS request.", f.decryptFn, f.encName), 80))
+	w.b.WriteString(wrapComment(fmt.Sprintf("%s opens each %s, with one ZeroKMS request for each 500 sealed values.", f.decryptFn, f.encName), 80))
 	w.p("func %s(ctx context.Context, d encrypt.Decrypter, encrypted []%s) ([]%s, error) {", f.decryptFn, f.encName, f.typeExpr)
 	w.p("\treturn %s.Decrypt(ctx, d, encrypted)", f.codecVar)
 	w.p("}")

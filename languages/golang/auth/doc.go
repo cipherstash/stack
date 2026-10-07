@@ -29,7 +29,7 @@
 // For authentication and refresh, use [ProfileStore.AccessKey],
 // [ProfileStore.OIDC], [ProfileStore.DeviceSession], or [ProfileStore.Auto].
 // Each returns a [Strategy], which is what encrypt.NewCredentials takes
-// for the bearer token: the only way a token reaches a encrypt client.
+// for the bearer token: the only way a token reaches an encrypt client.
 // A raw token — [ProfileStore.Token]'s included — cannot be refreshed when
 // it expires, and would bypass the cross-process lock a device-session
 // refresh holds with the CLI, so encrypt does not accept one. A

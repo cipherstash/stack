@@ -10,8 +10,9 @@ import (
 )
 
 // Kind is a field's wire type: the data form of the Rust chain's `::<F>`,
-// chosen by stashgen from the field's Go type. A String or UInt32 field
-// seals as the typed leaf a Rust record derives. Every sealed field has a
+// chosen by stashgen from the field's Go type. It decides the terms a field
+// derives; every field seals as vitaminc's tagged leaf whatever its kind,
+// which a Rust record opens when its field is a Value. Every sealed field has a
 // scalar kind: stashgen refuses a struct, slice or map outside an opaque
 // struct, and an opaque struct seals as Bytes (one JSON document). Untyped
 // names a field with no declared type and is not what generated code writes.

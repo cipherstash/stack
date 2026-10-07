@@ -8,7 +8,7 @@ Your program calls those functions, and it never builds or names a plan.
 ## Use the SDK
 
 1. Add the generator to your module.
-   This needs Go 1.24 or later.
+   This needs Go 1.26 or later.
 
    ```sh
    go get -tool github.com/cipherstash/stack/languages/golang/cmd/stashgen
@@ -21,8 +21,8 @@ Your program calls those functions, and it never builds or names a plan.
    type User struct {
    	_     struct{} `stash:"context=users"`
    	ID    int64    `stash:"id,passthrough"`
-   	Email string   `stash:"email,encrypt_into=TextEq"`
-   	Name  string   `stash:"name,encrypt_into=TextEq"`
+   	Email string   `stash:"email,encrypt,index=equality;match"`
+   	Name  string   `stash:"name,encrypt"`
    }
    ```
 
@@ -39,12 +39,13 @@ Your program calls those functions, and it never builds or names a plan.
 
    ```go
    encrypted, err := users.Encrypt(ctx, cipher, people)
-   people, err := users.Decrypt(ctx, cipher, encrypted)
-   query, err := users.Fields.Email.Query(ctx, cipher, "bob@example.com")
+   opened, err := users.Decrypt(ctx, cipher, encrypted)
+   term, err := users.Fields.Email.Equality(ctx, cipher, "bob@example.com")
    ```
 
 6. Store the encrypted type.
-   Each field is one column, so `database/sql`, pgx, sqlx and GORM take it as it is.
+   Each sealed field is one or more byte columns: `Email.Ciphertext`, `Email.Equality`, `Email.Match`.
+   `encrypt.Ciphertext` and each term type implement `driver.Valuer` and `sql.Scanner`, so a database library binds and scans each one as bytes; map each one to its own column.
 
 7. Run the generator again after each change to the struct or to a tag.
    A change to the fields of the struct stops the build until you do.
@@ -52,8 +53,10 @@ Your program calls those functions, and it never builds or names a plan.
 8. In CI, run the generator and fail when a generated file changes.
 
    ```sh
-   go generate ./... && git diff --exit-code
+   go generate ./... && git diff --exit-code && test -z "$(git status --porcelain)"
    ```
+
+   `git diff` sees only files git already tracks; the `git status` check also fails on a generated file that was never committed.
 
 The rest of this file is the reference.
 
@@ -67,7 +70,8 @@ The first part of a tag is the field's name, which is the column name in a datab
 | `stash:"email,encrypt_into=TextEq"` | seal the field into one EQL value, with the terms that EQL type has |
 | `stash:"notes,encrypt"` | seal the field, with no index |
 | `stash:"email,encrypt,index=equality;match"` | seal the field, and derive each index beside it |
-| `stash:"attrs,index=json"` | derive the index alone; no ciphertext is stored, so `Decrypt` leaves the field at its zero value |
+| `stash:"score,index=ore"` | derive the index alone; no ciphertext is stored, so `Decrypt` leaves the field at its zero value |
+| `stash:"attrs,index=json"` | refused in this build: the engine does not derive the `json` index yet |
 | `stash:"id,passthrough"` | store the field as it is |
 | `stash:"-"` | leave the field out |
 | `` _ struct{} `stash:"context=documents,opaque"` `` | seal the struct as one value |
@@ -77,7 +81,10 @@ A `match` index needs text with at least one token: the engine derives no match 
 `Encrypt` then fails for the whole batch, with an error naming the row, the field and the index.
 So an optional or short value does not belong under `match`: give the field `equality` alone, or make the value required.
 An index takes its options in parentheses after its name, separated by commas: `index=equality;match(k=3)`.
-These words are the same as the Rust API's words for the same behaviour.
+This build refuses an index with options: a query term is derived with the default options only, so a stored term with other options would never match one.
+These words are the same as the Rust API's words for the same behaviour, with two that only Go has.
+`opaque` seals the whole struct as one `bytes` field holding a JSON document (see "What crosses the binding").
+`json` names the JSON index, which the Rust API does not declare yet; this build refuses it.
 
 An embedded struct of your own adds its tagged fields to the outer struct.
 An embedded struct from another package takes one tag for all of its fields: `stash:",passthrough"` stores them as they are, and `stash:"-"` leaves them out.
@@ -94,8 +101,9 @@ For `-type User`, the file `user_stash.go` holds:
   A passthrough field keeps its Go type.
   A field with `encrypt_into` holds one EQL value.
   A field with `encrypt` or `index=` holds a struct with one field for each output, such as `Email.Ciphertext` and `Email.Equality`.
-- `Encrypt` and `Decrypt`, which take a slice and return a slice, and send one ZeroKMS request for all of it.
+- `Encrypt` and `Decrypt`, which take a slice and return a slice, and send one ZeroKMS request for each 500 sealed values in it, plus one the first time a keyset is used.
 - `Fields`, with one entry for each sealed field.
+  An opaque struct, or a struct with no sealed field outside an opaque one, gets no `Fields`: nothing in it is sealed on its own, so nothing can be queried.
   An entry encrypts one value, and it has a query method only for what the field declares: `Query` for `encrypt_into`, and `Equality`, `Match`, `Ore` or `Ope` for `index=`.
 - `String` and `LogValue` on `EncryptedUser`, which print the passthrough fields and hide the sealed ones.
 - A copy of the fields of `User`, so a change to them stops the build.
@@ -111,7 +119,7 @@ Generated code uses no reflection, and no function in it panics.
 | `-for P.F` | `T` declares the tags for `F`, a type in another package. Each field of `T` names a field of `F` with the same name and type, and every exported field of `F` is named. |
 | `-model Name=R` | A model `R` for separate columns: one field for each column, each tagged with the output it holds, `stash:"email"` or `stash:"email,equality"`. Writes `EncryptName` and `DecryptName`. Any number. |
 | `-model Name=R:D` | The same, for an `R` that cannot carry tags. The struct `D` in your package declares them. |
-| `-redact` | Write `String` and `LogValue` methods on `T`. |
+| `-redact` | Write `String`, `GoString` and `LogValue` methods on `T`. |
 | `-output file` | The file to write. The default is the type's name in lower case, with `_stash.go`. |
 
 `stashgen` loads the package with `golang.org/x/tools/go/packages` and reads types, not text.
@@ -135,6 +143,7 @@ The error names the type and the field, and never a value.
 - an index or an EQL type that does not apply to the field's Go type, such as `match` on an `int32`;
 - a field type that the engine cannot seal;
 - an EQL type that the engine cannot produce yet;
+- an index the engine does not derive yet (`json`), or an index with options;
 - a `passthrough` field that has an index;
 - a model with a field that has no tag, or with no field for an output;
 - two structs in one package that would both write `Encrypt`;
@@ -172,13 +181,14 @@ func main() {
 The first rule that matches a field decides it.
 Every field needs a decision: a field no rule decides stops the generator with the field's name and its annotations.
 `Name` sets the column name, and `Identity` keeps the field's context when its column is renamed.
+Only a policy can set `Identity`; no tag spells it yet, because how a declaration changes over time is not decided.
 The generated file goes in a package of your own, and the functions take and return pointers to the message.
 
 ## Printing
 
 A generated type hides its sealed fields when a program prints or logs it.
 The struct you wrote is not protected: `stashgen` warns when it has sealed fields and no `String` and `LogValue` methods, and the program prints the same warning to stderr once for each type.
-`-redact` makes `stashgen` write those two methods on the struct.
+`-redact` makes `stashgen` write those two methods on the struct, and `GoString` for `%#v`.
 No warning, error or log line holds a plaintext value.
 
 ## What crosses the binding

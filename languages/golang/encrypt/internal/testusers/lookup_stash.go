@@ -104,13 +104,14 @@ var lookupCodec = gensupport.New(gensupport.Generated[Lookup, EncryptedLookup]{
 	},
 })
 
-// EncryptLookup seals each Lookup in one ZeroKMS request. The result has one
-// element for each input, in the same order.
+// EncryptLookup seals each Lookup, with one ZeroKMS request for each 500 sealed
+// values. The result has one element for each input, in the same order.
 func EncryptLookup(ctx context.Context, cipher *encrypt.Cipher, values []Lookup) ([]EncryptedLookup, error) {
 	return lookupCodec.Encrypt(ctx, cipher, values)
 }
 
-// DecryptLookup opens each EncryptedLookup in one ZeroKMS request.
+// DecryptLookup opens each EncryptedLookup, with one ZeroKMS request for each
+// 500 sealed values.
 func DecryptLookup(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedLookup) ([]Lookup, error) {
 	return lookupCodec.Decrypt(ctx, d, encrypted)
 }

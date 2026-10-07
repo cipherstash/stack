@@ -14,7 +14,7 @@ The package reference is on [pkg.go.dev]; the generator's reference is
 
 ## Use the SDK
 
-1. Add the generator to your module. This needs Go 1.24 or later.
+1. Add the generator to your module. This needs Go 1.26 or later.
 
    ```sh
    go get -tool github.com/cipherstash/stack/languages/golang/cmd/stashgen
@@ -45,17 +45,25 @@ The package reference is on [pkg.go.dev]; the generator's reference is
 
    ```go
    client, err := encrypt.NewClient(ctx)
+   if err != nil {
+   	return err
+   }
    defer client.Close()
    cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
 
-   encrypted, err := users.Encrypt(ctx, cipher, people)  // one ZeroKMS request
-   people, err := users.Decrypt(ctx, cipher, encrypted)
+   encrypted, err := users.Encrypt(ctx, cipher, people)
+   opened, err := users.Decrypt(ctx, cipher, encrypted)
    term, err := users.Fields.Email.Equality(ctx, cipher, "bob@example.com")
    ```
 
-6. Store the encrypted type. Each field is one or more byte columns, so
-   `database/sql`, pgx, sqlx and GORM take it as it is:
-   `e.Email.Ciphertext`, `e.Email.Equality`, `e.Email.Match`.
+   `Encrypt` and `Decrypt` send one ZeroKMS request for each 500 sealed
+   values in the batch, plus one request the first time a keyset is used.
+
+6. Store the encrypted type. Each sealed field is one or more byte columns:
+   `e.Email.Ciphertext`, `e.Email.Equality`, `e.Email.Match`. `Ciphertext`
+   and each term type implement `driver.Valuer` and `sql.Scanner`, so a
+   database library binds and scans each column as bytes; map each one to
+   its own column.
 
 7. Run the generator again after each change to the struct or to a tag. A
    change to the fields of the struct stops the build until you do.
@@ -63,8 +71,11 @@ The package reference is on [pkg.go.dev]; the generator's reference is
 8. In CI, run the generator and fail when a generated file changes.
 
    ```sh
-   go generate ./... && git diff --exit-code
+   go generate ./... && git diff --exit-code && test -z "$(git status --porcelain)"
    ```
+
+   `git diff` sees only files git already tracks; the `git status` check
+   also fails on a generated file that was never committed.
 
 The rest of this file is the reference. [`example/`](example/) is the eight
 steps as a program.

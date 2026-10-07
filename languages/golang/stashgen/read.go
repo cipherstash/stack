@@ -228,7 +228,7 @@ func (r *reader) build(collected *collected, typeName string, valueNamed *types.
 		}
 		f.redact = true
 		f.redactRecv = strings.ToLower(req.Type[:1])
-		for _, m := range []string{"String", "LogValue"} {
+		for _, m := range []string{"String", "GoString", "LogValue"} {
 			if hasMethod(types.NewPointer(tagged), m) {
 				return nil, fmt.Errorf("stashgen: -redact: %s already has a %s method", req.Type, m)
 			}
@@ -272,7 +272,7 @@ func (r *reader) build(collected *collected, typeName string, valueNamed *types.
 	if f.decl.Opaque {
 		sealedCount = 1
 	}
-	if sealedCount > 0 && !f.redact && (!hasMethod(valueNamed, "String") || !hasMethod(valueNamed, "LogValue")) {
+	if sealedCount > 0 && !f.redact && (!isStringer(valueNamed) || !isLogValuer(valueNamed)) {
 		f.printsPlaintext = true
 		if foreign {
 			f.notices = append(f.notices, fmt.Sprintf("%s prints its sealed fields in the clear, and stashgen cannot add print methods to a type from another package.", typeName))
@@ -473,6 +473,37 @@ func hasMethod(t types.Type, name string) bool {
 		}
 	}
 	return false
+}
+
+// isStringer is true when t has fmt.Stringer's method, signature included:
+// a String with another signature is not what fmt calls.
+func isStringer(t types.Type) bool {
+	sig := methodSig(t, "String")
+	return sig != nil && sig.Params().Len() == 0 && sig.Results().Len() == 1 &&
+		types.Identical(sig.Results().At(0).Type(), types.Typ[types.String])
+}
+
+// isLogValuer is true when t has slog.LogValuer's method, signature
+// included: a LogValue returning anything but slog.Value is not what slog
+// calls, and slog then prints every field.
+func isLogValuer(t types.Type) bool {
+	sig := methodSig(t, "LogValue")
+	if sig == nil || sig.Params().Len() != 0 || sig.Results().Len() != 1 {
+		return false
+	}
+	named, ok := sig.Results().At(0).Type().(*types.Named)
+	return ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == "log/slog" && named.Obj().Name() == "Value"
+}
+
+func methodSig(t types.Type, name string) *types.Signature {
+	ms := types.NewMethodSet(t)
+	for i := range ms.Len() {
+		if ms.At(i).Obj().Name() == name {
+			sig, _ := ms.At(i).Type().(*types.Signature)
+			return sig
+		}
+	}
+	return nil
 }
 
 func shapeOf(st *types.Struct, typeExpr func(types.Type) string) []shapeField {

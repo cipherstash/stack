@@ -120,13 +120,14 @@ var codec = gensupport.New(gensupport.Generated[*pb.Individual, EncryptedIndivid
 	},
 })
 
-// Encrypt seals each pb.Individual in one ZeroKMS request. The result has one
-// element for each input, in the same order.
+// Encrypt seals each pb.Individual, with one ZeroKMS request for each 500
+// sealed values. The result has one element for each input, in the same order.
 func Encrypt(ctx context.Context, cipher *encrypt.Cipher, individuals []*pb.Individual) ([]EncryptedIndividual, error) {
 	return codec.Encrypt(ctx, cipher, individuals)
 }
 
-// Decrypt opens each EncryptedIndividual in one ZeroKMS request.
+// Decrypt opens each EncryptedIndividual, with one ZeroKMS request for each 500
+// sealed values.
 func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedIndividual) ([]*pb.Individual, error) {
 	return codec.Decrypt(ctx, d, encrypted)
 }

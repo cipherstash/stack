@@ -14,6 +14,9 @@ import (
 // Stops compiling when the library does not accept this version of generated file.
 const _ = gensupport.GeneratedVersion1
 
+// Refund prints its sealed fields in the clear: it has no String or LogValue
+// method. Write them, or run stashgen with -redact.
+
 type EncryptedRefund struct {
 	ID     int64
 	Reason eql.TextEq
@@ -41,8 +44,9 @@ var declaration = gensupport.Declare("refunds").
 	EncryptInto("reason", gensupport.String, "TextEq")
 
 var codec = gensupport.New(gensupport.Generated[Refund, EncryptedRefund]{
-	TypeName:    "Refund",
-	Declaration: declaration,
+	TypeName:        "Refund",
+	Declaration:     declaration,
+	PrintsPlaintext: true,
 	Source: func(v Refund) gensupport.Values {
 		return gensupport.Values{
 			"id":     v.ID,
@@ -77,13 +81,14 @@ var codec = gensupport.New(gensupport.Generated[Refund, EncryptedRefund]{
 	},
 })
 
-// Encrypt seals each Refund in one ZeroKMS request. The result has one element
-// for each input, in the same order.
+// Encrypt seals each Refund, with one ZeroKMS request for each 500 sealed
+// values. The result has one element for each input, in the same order.
 func Encrypt(ctx context.Context, cipher *encrypt.Cipher, orders []Refund) ([]EncryptedRefund, error) {
 	return codec.Encrypt(ctx, cipher, orders)
 }
 
-// Decrypt opens each EncryptedRefund in one ZeroKMS request.
+// Decrypt opens each EncryptedRefund, with one ZeroKMS request for each 500
+// sealed values.
 func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedRefund) ([]Refund, error) {
 	return codec.Decrypt(ctx, d, encrypted)
 }

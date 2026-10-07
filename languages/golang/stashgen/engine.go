@@ -144,7 +144,12 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 		}
 		for _, idx := range f.Indexes {
 			if len(idx.Options) > 0 {
-				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("index %s: the engine cannot carry index options yet", idx)}
+				// The record plan carries match options, but the guest's
+				// query export derives a term under the default options
+				// only, so a stored term with others would match no query.
+				// The rule belongs in the guest (se_plan_check) once se_term
+				// takes options.
+				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("index %s: a query term uses only the default index options, so this build refuses options", idx)}
 			}
 			out, ok := outputOfIndex[idx.Name]
 			if !ok {

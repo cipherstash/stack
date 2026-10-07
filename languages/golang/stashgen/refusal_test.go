@@ -84,7 +84,7 @@ func TestRefusals(t *testing.T) {
 		{"an EQL type the engine cannot produce yet", user(ctx + "\tEmail string `stash:\"email,encrypt_into=TextMatch\"`"), stashgen.Request{Type: "User"}, "Email", "has no EQL type TextMatch"},
 		{"an index on a composite", user(ctx + "\tAttrs map[string]string `stash:\"attrs,encrypt,index=equality\"`"), stashgen.Request{Type: "User"}, "Attrs", "seals only as part of an opaque struct"},
 		{"the json index, not in the engine yet", user(ctx + "\tAttrs string `stash:\"attrs,index=json\"`"), stashgen.Request{Type: "User"}, "Attrs", "cannot derive the json index yet"},
-		{"an index option the engine cannot carry", user(ctx + "\tEmail string `stash:\"email,encrypt,index=match(k=3)\"`"), stashgen.Request{Type: "User"}, "Email", "cannot carry index options"},
+		{"an index option a query term cannot use", user(ctx + "\tEmail string `stash:\"email,encrypt,index=match(k=3)\"`"), stashgen.Request{Type: "User"}, "Email", "a query term uses only the default index options"},
 		{"a passthrough field that has an index", user(ctx + "\tID int64 `stash:\"id,passthrough,index=equality\"`"), stashgen.Request{Type: "User"}, "ID", "passthrough field has no index"},
 		{"an embedded struct from another package with no tag", user(ctx + "\tgorm.Model\n\tEmail string `stash:\"email,encrypt\"`"), stashgen.Request{Type: "User"}, "Model", "cannot carry tags; tag the field"},
 		{"an embedded struct with a verb other than passthrough", user(ctx + "\tgorm.Model `stash:\",encrypt\"`\n\tEmail string `stash:\"email,encrypt\"`"), stashgen.Request{Type: "User"}, "Model", "takes only passthrough"},
@@ -201,8 +201,13 @@ func TestOtherLibrariesTagsAreCopied(t *testing.T) {
 	}
 }
 
+// withSlog adds log/slog to user's imports.
+func withSlog(src string) string {
+	return strings.Replace(src, "\t\"time\"\n", "\t\"log/slog\"\n\t\"time\"\n", 1)
+}
+
 func TestAStructWithPrintMethodsGetsNoNotice(t *testing.T) {
-	src := user(ctx+"\tEmail string `stash:\"email,encrypt\"`") + "\nfunc (User) String() string { return \"\" }\nfunc (User) LogValue() any { return nil }\n"
+	src := withSlog(user(ctx+"\tEmail string `stash:\"email,encrypt\"`")) + "\nfunc (User) String() string { return \"\" }\nfunc (User) LogValue() slog.Value { return slog.Value{} }\n"
 	file, err := generate(t, src, stashgen.Request{Type: "User"})
 	if err != nil {
 		t.Fatal(err)
@@ -212,6 +217,24 @@ func TestAStructWithPrintMethodsGetsNoNotice(t *testing.T) {
 	}
 	if strings.Contains(string(file.Content), "PrintsPlaintext") {
 		t.Fatal("PrintsPlaintext set for a type with String and LogValue")
+	}
+}
+
+// A method named String or LogValue with another signature is not what fmt
+// or slog calls, so the struct still prints its sealed fields.
+func TestAPrintMethodWithTheWrongSignatureStillGetsANotice(t *testing.T) {
+	for name, methods := range map[string]string{
+		"LogValue any":  "\nfunc (User) String() string { return \"\" }\nfunc (User) LogValue() any { return nil }\n",
+		"String []byte": "\nfunc (User) String() []byte { return nil }\nfunc (User) LogValue() slog.Value { return slog.Value{} }\n",
+	} {
+		src := withSlog(user(ctx+"\tEmail string `stash:\"email,encrypt\"`")) + methods
+		file, err := generate(t, src, stashgen.Request{Type: "User"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(file.Content), "PrintsPlaintext: true") {
+			t.Errorf("%s: PrintsPlaintext not set", name)
+		}
 	}
 }
 

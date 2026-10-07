@@ -4,7 +4,7 @@
 //
 // # Use the SDK
 //
-// 1. Add the generator to your module (Go 1.24 or later):
+// 1. Add the generator to your module (Go 1.26 or later):
 //
 //	go get -tool github.com/cipherstash/stack/languages/golang/cmd/stashgen
 //
@@ -28,21 +28,32 @@
 // 5. Call the generated functions where you write and read:
 //
 //	client, err := encrypt.NewClient(ctx)
+//	if err != nil {
+//		return err
+//	}
+//	defer client.Close()
 //	cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
-//	encrypted, err := users.Encrypt(ctx, cipher, people)   // []users.EncryptedUser, one request
-//	people, err := users.Decrypt(ctx, cipher, encrypted)   // []users.User
+//	encrypted, err := users.Encrypt(ctx, cipher, people) // []users.EncryptedUser
+//	opened, err := users.Decrypt(ctx, cipher, encrypted) // []users.User
 //	term, err := users.Fields.Email.Equality(ctx, cipher, "bob@example.com")
 //
-// 6. Store the encrypted type. Each field is one or more columns of bytes
-// ([Ciphertext] and the term types), so database/sql, pgx, sqlx and GORM take
-// it as it is.
+// Encrypt and Decrypt send one ZeroKMS request for each 500 sealed values in
+// the batch, plus one the first time a keyset is used.
+//
+// 6. Store the encrypted type. Each sealed field is one or more columns of
+// bytes ([Ciphertext] and the term types), each implementing driver.Valuer
+// and sql.Scanner, so a database library binds and scans each one as bytes;
+// map each one to its own column.
 //
 // 7. Run the generator again after each change to the struct or to a tag. A
 // change to the fields of the struct stops the build until you do.
 //
 // 8. In CI, run the generator and fail when a generated file changes:
 //
-//	go generate ./... && git diff --exit-code
+//	go generate ./... && git diff --exit-code && test -z "$(git status --porcelain)"
+//
+// git diff sees only tracked files; the git status check also fails on a
+// generated file that was never committed.
 //
 // The rest is the reference. The generator's own reference — the tag
 // grammar, the flags, what it writes and what it refuses — is in

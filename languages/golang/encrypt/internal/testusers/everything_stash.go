@@ -180,13 +180,15 @@ var everythingCodec = gensupport.New(gensupport.Generated[Everything, EncryptedE
 	},
 })
 
-// EncryptEverything seals each Everything in one ZeroKMS request. The result
-// has one element for each input, in the same order.
+// EncryptEverything seals each Everything, with one ZeroKMS request for each
+// 500 sealed values. The result has one element for each input, in the same
+// order.
 func EncryptEverything(ctx context.Context, cipher *encrypt.Cipher, values []Everything) ([]EncryptedEverything, error) {
 	return everythingCodec.Encrypt(ctx, cipher, values)
 }
 
-// DecryptEverything opens each EncryptedEverything in one ZeroKMS request.
+// DecryptEverything opens each EncryptedEverything, with one ZeroKMS request
+// for each 500 sealed values.
 func DecryptEverything(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedEverything) ([]Everything, error) {
 	return everythingCodec.Decrypt(ctx, d, encrypted)
 }

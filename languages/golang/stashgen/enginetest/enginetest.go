@@ -54,7 +54,7 @@ func (e Static) Check(ctx context.Context, d stashgen.Declaration) error {
 		}
 		for _, idx := range f.Indexes {
 			if len(idx.Options) > 0 {
-				return &stashgen.FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("index %s: the engine cannot carry index options yet", idx)}
+				return &stashgen.FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("index %s: a query term uses only the default index options, so this build refuses options", idx)}
 			}
 			if err := indexApplies(idx.Name, f.GoType); err != nil {
 				return &stashgen.FieldError{Type: d.Type, Field: f.GoName, Reason: err.Error()}

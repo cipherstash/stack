@@ -109,13 +109,14 @@ var codec = gensupport.New(gensupport.Generated[crm.Contact, EncryptedContact]{
 	},
 })
 
-// Encrypt seals each crm.Contact in one ZeroKMS request. The result has one
-// element for each input, in the same order.
+// Encrypt seals each crm.Contact, with one ZeroKMS request for each 500 sealed
+// values. The result has one element for each input, in the same order.
 func Encrypt(ctx context.Context, cipher *encrypt.Cipher, contacts []crm.Contact) ([]EncryptedContact, error) {
 	return codec.Encrypt(ctx, cipher, contacts)
 }
 
-// Decrypt opens each EncryptedContact in one ZeroKMS request.
+// Decrypt opens each EncryptedContact, with one ZeroKMS request for each 500
+// sealed values.
 func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedContact) ([]crm.Contact, error) {
 	return codec.Decrypt(ctx, d, encrypted)
 }

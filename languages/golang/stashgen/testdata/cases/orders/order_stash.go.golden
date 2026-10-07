@@ -122,13 +122,14 @@ var orderCodec = gensupport.New(gensupport.Generated[Order, EncryptedOrder]{
 	},
 })
 
-// EncryptOrder seals each Order in one ZeroKMS request. The result has one
-// element for each input, in the same order.
+// EncryptOrder seals each Order, with one ZeroKMS request for each 500 sealed
+// values. The result has one element for each input, in the same order.
 func EncryptOrder(ctx context.Context, cipher *encrypt.Cipher, values []Order) ([]EncryptedOrder, error) {
 	return orderCodec.Encrypt(ctx, cipher, values)
 }
 
-// DecryptOrder opens each EncryptedOrder in one ZeroKMS request.
+// DecryptOrder opens each EncryptedOrder, with one ZeroKMS request for each 500
+// sealed values.
 func DecryptOrder(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedOrder) ([]Order, error) {
 	return orderCodec.Decrypt(ctx, d, encrypted)
 }

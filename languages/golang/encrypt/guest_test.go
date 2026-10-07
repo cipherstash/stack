@@ -851,7 +851,7 @@ func TestTransportSendCounterAndResponseHeaders(t *testing.T) {
 
 func ExampleNewClient() {
 	// With no options, NewClient uses AutoCredentials. To supply the
-	// credentials yourself, the token comes from a auth strategy —
+	// credentials yourself, the token comes from an auth strategy —
 	// here an access key; live_test.go has a real round trip. The caller
 	// opened the store and the strategy, and closes them after the client.
 	ctx := context.Background()

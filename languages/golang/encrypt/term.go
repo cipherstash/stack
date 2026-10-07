@@ -51,9 +51,9 @@ var (
 )
 
 // MatchOption is an option of the match index. None is defined yet: the
-// engine's data plan carries the match index under its default options, and
-// a non-default option has no wire form (stack-encrypt plan builder,
-// Additions item 7).
+// record plan can carry match options, but the guest derives a query term
+// under the default options only, so a stored term with other options would
+// match no query.
 type MatchOption interface {
 	matchOption()
 }

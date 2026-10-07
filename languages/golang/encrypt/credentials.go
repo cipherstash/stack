@@ -22,7 +22,7 @@ import (
 // profile, in the Rust client's order. [NewCredentials] takes a client id,
 // a client key and a strategy explicitly; [OIDCFederation] mints the token
 // from an identity provider's. Those three are the only implementations:
-// the interface is sealed, so a bearer token always comes from a auth
+// the interface is sealed, so a bearer token always comes from an auth
 // strategy. A raw token cannot be refreshed when it expires, and a source
 // outside the strategies would bypass the cross-process refresh lock the
 // device session shares with the CLI (a refresh token used twice gets the
@@ -57,7 +57,7 @@ type resolvedCredentials struct {
 	// ClientKey is the client key. NewClient consumes it whatever the
 	// outcome, as [NewClientKey] describes.
 	ClientKey *ClientKey
-	// Token supplies the bearer token for every request: a auth
+	// Token supplies the bearer token for every request: an auth
 	// strategy, outside the package's own tests.
 	Token tokenSource
 	// Close, when not nil, releases what the credentials hold open — the

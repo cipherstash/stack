@@ -154,13 +154,14 @@ var probeCodec = gensupport.New(gensupport.Generated[Probe, EncryptedProbe]{
 	},
 })
 
-// EncryptProbe seals each Probe in one ZeroKMS request. The result has one
-// element for each input, in the same order.
+// EncryptProbe seals each Probe, with one ZeroKMS request for each 500 sealed
+// values. The result has one element for each input, in the same order.
 func EncryptProbe(ctx context.Context, cipher *encrypt.Cipher, values []Probe) ([]EncryptedProbe, error) {
 	return probeCodec.Encrypt(ctx, cipher, values)
 }
 
-// DecryptProbe opens each EncryptedProbe in one ZeroKMS request.
+// DecryptProbe opens each EncryptedProbe, with one ZeroKMS request for each 500
+// sealed values.
 func DecryptProbe(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedProbe) ([]Probe, error) {
 	return probeCodec.Decrypt(ctx, d, encrypted)
 }

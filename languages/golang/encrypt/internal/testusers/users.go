@@ -47,6 +47,15 @@ type Document struct {
 	Tags  []string
 }
 
+//go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Secret -name Secret -redact
+
+// Secret is generated with -redact, so it prints no sealed field.
+type Secret struct {
+	_     struct{} `stash:"context=secrets"`
+	ID    int64    `stash:"id,passthrough"`
+	Value string   `stash:"value,encrypt"`
+}
+
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Probe -name Probe
 
 // Probe has one field of each scalar type the ORE and OPE indexes order, for

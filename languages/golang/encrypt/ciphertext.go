@@ -15,8 +15,8 @@ import (
 // vitaminc-encrypt and must never scan or marshal where one belongs.
 //
 // A sealed field is one scalar — a string, a number, a bool or a []byte, or
-// a type defined over one — and seals as the typed leaf a Rust record
-// derives. A struct, slice or map seals only as part of an opaque struct,
+// a type defined over one — and seals as vitaminc's tagged leaf, which a
+// Rust record opens when its field is a Value (not a bare u32 or String). A struct, slice or map seals only as part of an opaque struct,
 // which crosses as one JSON document and is one leaf; stashgen refuses it
 // anywhere else, because the engine would seal it as a tree of leaves and a
 // column holds one.

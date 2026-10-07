@@ -50,7 +50,7 @@ func strategyConfig(opts []StrategyOption) strategyOptions {
 // Strategy is a Rust stack-auth strategy retained inside the credential
 // guest: the source of the bearer token encrypt.NewCredentials takes.
 // Close drops its cached credential; closing the parent profile closes all
-// its strategies. It is the caller's to close: a encrypt client that
+// its strategies. It is the caller's to close: an encrypt client that
 // was given it asks it for tokens but never closes it, so it must stay open
 // until the client is closed.
 type Strategy struct {

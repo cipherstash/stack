@@ -28,9 +28,11 @@ import (
 )
 
 // Kind is a plan field's declared type: the data form of the Rust chain's
-// `::<F>`. A field typed uint32 or string lowers to a real u32 or String
-// leaf, the same bytes a Rust record derives; every other kind, and Untyped,
-// seals in vitaminc's self-describing tagged encoding as one leaf.
+// `::<F>`. It decides which terms the field derives, not how it seals:
+// a field lowered from data seals in vitaminc's self-describing tagged leaf
+// encoding whatever its kind. A Rust record derives the same terms, and
+// opens the leaf only when its field is a Value; a Rust record over a bare
+// u32 or String writes a different leaf, which neither side can open.
 type Kind string
 
 // The kinds. The names are vitaminc's ValueKind names, frozen.
