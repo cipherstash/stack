@@ -9,27 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Every error has a miette code, help where a caller can act, and its
-  facts as structured fields.** `Error`, `PlanError`, `LabelError`,
-  `LeafBytesError`, `sem::TermError`, `sem::TermBytesError` and, with
-  `dynamic`, `dynamic::Error` and `dynamic::TargetError` derive
-  `miette::Diagnostic` with a path-style code named after the crate
-  (`stack_encrypt::aead`, `stack_encrypt::foreign_keyset`), listed in
-  `stack_encrypt::ERROR_CODES` and pinned by a test that builds every
-  variant. A variant that carries another crate's error forwards its code:
-  `Error::Kms` shows `stack_kms::keyset_not_found` itself. Each error
-  implements `ErrorPayload` (re-exported here from `stack-profile`, the
-  crate `stack-profile`, `stack-auth`, `stack-kms` and this crate share),
-  whose `payload()` gives the facts a caller branches on — both keyset ids
-  of a `ForeignKeyset`, the field of a plan refusal — and whose docs hold
-  the rule for what an error may contain: no plaintext, key material,
-  tokens, ciphertext or term bytes, or raw context values. Codes are for
-  crossing a boundary; Rust code keeps matching variants.
-- **A dynamic input error names its field and says why.** `dynamic::Reason`
-  is the fixed vocabulary (`MissingContext`, `DuplicateOutput`,
-  `FieldMissing`, `NoCiphertextNode`, ...; `as_str()` is its `snake_case`
-  name), and `dynamic::Error::field()`, `reason()` and `in_field()` read
-  and fill them.
+- **Errors now expose stable codes, help text, and structured details.**
+  All error types implement `miette::Diagnostic` with codes such as
+  `stack_encrypt::foreign_keyset`. Help text explains how to resolve
+  errors callers can fix. `ErrorPayload::payload()` provides details such
+  as both keyset IDs for a wrong-keyset error or the field rejected by a
+  plan. `ErrorPayload` is re-exported from `stack-profile`, and
+  `ERROR_CODES` lists the crate's codes. Codes identify errors across
+  language boundaries; Rust callers can continue matching enum variants.
+  The payload policy excludes plaintext, key material, tokens,
+  ciphertext, search-index bytes, and raw context values.
+- **Data-driven input errors identify the field and the reason.**
+  `dynamic::Reason` provides fixed reasons such as `MissingContext`,
+  `DuplicateOutput`, and `FieldMissing`, with stable `snake_case` names
+  through `as_str()`. Use `dynamic::Error::field()` and `reason()` to
+  inspect these details, or `in_field()` to attach a field name.
 - **A data plan field may name an EQL type as its target.** Beside the
   output form, `dynamic::record::plan_with` reads `{"context": [...],
   "target": "TextEq", "type"?: ...}` — the two forms are exclusive — and
@@ -53,25 +47,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
-- **`dynamic::Error`'s input variants carry the field and a reason.**
-  `Context`, `Plan`, `Source` and `Record` are struct variants
-  `{ field: Option<String>, reason: Reason }`, and `Term` gains
-  `field: Option<String>`: a match on `Error::Plan` becomes
-  `Error::Plan { .. }`. The messages name both (`record plan is malformed:
-  an output is named twice (field "age")`). A source with a field the plan
-  does not name is now refused naming that field (`UnknownField`) after the
-  plan's own fields are checked, rather than first, on a field count.
-- **`Error::Kms` is transparent.** Its message, code and help are the
-  `stack_kms::Error`'s; the `ZeroKMS data-key operation failed:` prefix is
-  gone, and `source()` skips to the ZeroKMS error's own cause.
-- **Some messages leave out what an error may not contain.**
-  `Error::ContextMismatch` gives the stored context's length and number of
-  parts instead of its descriptor, which can be customer data (the
-  `stored` field still holds it). `sem::TermError::Prf` no longer repeats
-  the PRF backend's message, and
-  `sem::TermBytesError::MatchPositionOutOfRange` no longer quotes the
-  position read from the term's bytes: both stay on the error for a caller
-  in this process.
+- **Update pattern matches for `dynamic::Error`.** `Context`, `Plan`,
+  `Source`, and `Record` now carry
+  `{ field: Option<String>, reason: Reason }`; `Term` also gains
+  `field: Option<String>`. For example, replace `Error::Plan` with
+  `Error::Plan { .. }`. Messages include the reason and the field when
+  known. Extra input fields are reported as `UnknownField` after the
+  plan's declared fields are checked, replacing the earlier field-count
+  check.
+- **Key-management errors pass through directly.** `Error::Kms` now uses
+  the underlying `stack_kms::Error` message, code, and help. The
+  `ZeroKMS data-key operation failed:` prefix is removed, and `source()`
+  returns the underlying error's own cause. ZeroKMS is CipherStash's
+  key-management service.
+- **Error messages omit potentially sensitive values.**
+  `Error::ContextMismatch` reports the stored context's length and number
+  of parts instead of its contents. `sem::TermError::Prf` omits the
+  underlying pseudorandom-function implementation's message, and
+  `sem::TermBytesError::MatchPositionOutOfRange` omits the position read
+  from search-index bytes. These details remain available on the Rust
+  error values for callers in the same process, including the `stored`
+  field on `ContextMismatch`.
 - **A data plan field with a term output must declare its `"type"`.** A
   plan whose indexed field (`"eq"`, `"match"`, `"ore"`, `"ope"`) has no
   `"type"` is refused when it is built (`Error::UntypedIndex`, naming the
