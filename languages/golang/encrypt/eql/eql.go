@@ -6,9 +6,9 @@
 // generated encrypted type, and its Fields entry's Query returns a
 // [TextEqQuery]. The guest builds every value: generated code stores what
 // the guest returns and never assembles an EQL value itself (ADR-0007,
-// amended 2026-10-06). Each type is a driver.Valuer and sql.Scanner, so
-// database/sql, pgx, sqlx and GORM take it as the column's value, and a
-// json.Marshaler that emits the value as the JSON it is.
+// amended 2026-10-06). Each type implements driver.Valuer and sql.Scanner
+// for one column, and json.Marshaler, which writes the value as the JSON
+// it is.
 //
 // Importing this package links the build of the engine that holds the EQL
 // types: eql_gen.go's init registers the embedded module with package
