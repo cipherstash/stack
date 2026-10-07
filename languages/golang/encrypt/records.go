@@ -59,7 +59,8 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 		return inst.call(ctx, inst.encryptRecord, buf(encodedSource), buf(encodedPlan), buf(opts))
 	})
 	if errors.Is(err, ErrTerm) {
-		return nil, cph.locateTermFailure(ctx, p, rows, err)
+		// The plan as given: Derive applies the extension itself.
+		return nil, cph.locateTermFailure(ctx, plan, rows, err)
 	}
 	if err != nil {
 		return nil, err
@@ -86,6 +87,11 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 // in order. A record from another keyset is [ErrForeignKeyset]. For
 // generated code.
 func (cph *Cipher) Open(ctx context.Context, plan *record.Plan, records []record.Sealed) ([]record.Source, error) {
+	if cph == nil {
+		// A Decrypter holding a nil *Cipher is not a nil interface, so the
+		// generated Decrypt cannot see this; say so instead of panicking.
+		return nil, fmt.Errorf("%w: Open on a nil *Cipher", ErrEncoding)
+	}
 	p, err := cph.plan(plan)
 	if err != nil {
 		return nil, err
@@ -140,6 +146,9 @@ func (cph *Cipher) Derive(ctx context.Context, plan *record.Plan, field string, 
 // each record is opened under the keyset that sealed it, with one request
 // per keyset. For generated code.
 func (c *Client) Open(ctx context.Context, plan *record.Plan, records []record.Sealed) ([]record.Source, error) {
+	if c == nil {
+		return nil, fmt.Errorf("%w: Open on a nil *Client", ErrEncoding)
+	}
 	if err := plan.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
@@ -324,7 +333,8 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, p *record.Plan, r
 // derives locally. The engine defines no match term for text that yields no
 // token (empty, separator-only, or shorter than the n-gram), because an
 // empty term would match every row; a program hands such a field a value or
-// drops the match index.
+// drops the match index. p is the plan without this cipher's extension,
+// which Derive adds.
 func (cph *Cipher) locateTermFailure(ctx context.Context, p *record.Plan, rows []record.Source, err error) error {
 	for i, row := range rows {
 		for _, f := range p.Fields {

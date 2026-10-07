@@ -148,6 +148,13 @@ func TestGenerateRefusals(t *testing.T) {
 		{"a struct field with no fact", policy.SourceFunc(func(any) ([]policy.Fact, error) {
 			return []policy.Fact{{Message: "m", Name: "id", GoName: "Id", Kind: "int64"}}, nil
 		}), individualRules(policy.Otherwise(policy.Passthrough())), "pb.Individual.Name: the source gave no fact for this field"},
+		{"two facts that name one field", policy.SourceFunc(func(any) ([]policy.Fact, error) {
+			facts, _ := individualFacts(nil)
+			return append(facts, policy.Fact{Message: "m", Name: "email", GoName: "Email", Kind: "string"}), nil
+		}), individualRules(), "pb.Individual.Email: two facts name this field"},
+		{"a decision that does not parse", policy.SourceFunc(individualFacts),
+			individualRules(policy.When(policy.Field("name"), policy.Encrypt(), policy.Name("name,shred"))),
+			"pb.Individual.Name: the policy's decision does not parse"},
 		{"no context", policy.SourceFunc(individualFacts), policy.ForMessage(struct{}{}, "", base), "ForMessage needs a Context"},
 		{"an index the engine refuses", policy.SourceFunc(individualFacts),
 			individualRules(policy.When(policy.Field("name"), policy.EncryptIndex(policy.Match(policy.IndexOption{Key: "k", Value: "3"})))),
@@ -167,7 +174,7 @@ func TestGenerateRefusals(t *testing.T) {
 }
 
 func TestGenerateNeedsOutputAndAMessage(t *testing.T) {
-	if err := stashgen.Generate(policy.SourceFunc(individualFacts), individualRules()); err == nil || !strings.Contains(err.Error(), "needs Output") {
+	if err := stashgen.Generate(context.Background(), policy.SourceFunc(individualFacts), individualRules()); err == nil || !strings.Contains(err.Error(), "needs Output") {
 		t.Fatalf("err = %v", err)
 	}
 	type local struct{ A int }
@@ -183,7 +190,7 @@ func TestGenerateNeedsOutputAndAMessage(t *testing.T) {
 	}
 	// With no WithEngine the embedded guest answers; the output directory
 	// is no module, so the run stops there or, with no guest built, before.
-	err = stashgen.Generate(policy.SourceFunc(individualFacts), policy.ForMessage(&local{}, "c", base), stashgen.Output(filepath.Join(t.TempDir(), "x_stash.go")))
+	err = stashgen.Generate(context.Background(), policy.SourceFunc(individualFacts), policy.ForMessage(&local{}, "c", base), stashgen.Output(filepath.Join(t.TempDir(), "x_stash.go")))
 	if err == nil {
 		t.Fatal("a message in no module generated")
 	}

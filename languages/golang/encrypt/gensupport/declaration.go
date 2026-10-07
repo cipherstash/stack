@@ -3,6 +3,7 @@ package gensupport
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/stack/languages/golang/internal/record"
@@ -131,6 +132,8 @@ func (d Declaration) Identity(name, identity string) Declaration {
 	}
 	for i := range d.fields {
 		if d.fields[i].name == name {
+			// A copy, so the receiver's fields are not changed under it.
+			d.fields = slices.Clone(d.fields)
 			d.fields[i].identity = identity
 			return d
 		}
@@ -161,7 +164,9 @@ func (d Declaration) add(f field) Declaration {
 		d.err = fmt.Errorf("gensupport: field %q: an indexed field names at least one index", f.name)
 		return d
 	}
-	d.fields = append(d.fields, f)
+	// Clip, so the append copies and never writes into an array that an
+	// earlier Declaration shares.
+	d.fields = append(slices.Clip(d.fields), f)
 	return d
 }
 

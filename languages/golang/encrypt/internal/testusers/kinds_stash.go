@@ -45,6 +45,8 @@ type EncryptedKinds struct {
 	N   sql.NullTime
 	In  Inner
 	Sk  []Inner
+	A   any
+	Er  error
 }
 
 type EncryptedKindsS struct {
@@ -147,11 +149,11 @@ type EncryptedKindsD struct {
 }
 
 func (e EncryptedKinds) String() string {
-	return gensupport.Redacted("EncryptedKinds", map[string]any{"P": e.P, "M": e.M, "T": e.T, "N": e.N, "In": e.In, "Sk": e.Sk}, "S", "E", "Bo", "I8", "I16", "I32", "I", "I64", "U8", "U16", "U32", "U", "U64", "F32", "F64", "By", "Bl", "Sc", "St", "D")
+	return gensupport.Redacted("EncryptedKinds", map[string]any{"P": e.P, "M": e.M, "T": e.T, "N": e.N, "In": e.In, "Sk": e.Sk, "A": e.A, "Er": e.Er}, "S", "E", "Bo", "I8", "I16", "I32", "I", "I64", "U8", "U16", "U32", "U", "U64", "F32", "F64", "By", "Bl", "Sc", "St", "D")
 }
 
 func (e EncryptedKinds) LogValue() slog.Value {
-	return gensupport.RedactedLog(map[string]any{"P": e.P, "M": e.M, "T": e.T, "N": e.N, "In": e.In, "Sk": e.Sk}, "S", "E", "Bo", "I8", "I16", "I32", "I", "I64", "U8", "U16", "U32", "U", "U64", "F32", "F64", "By", "Bl", "Sc", "St", "D")
+	return gensupport.RedactedLog(map[string]any{"P": e.P, "M": e.M, "T": e.T, "N": e.N, "In": e.In, "Sk": e.Sk, "A": e.A, "Er": e.Er}, "S", "E", "Bo", "I8", "I16", "I32", "I", "I64", "U8", "U16", "U32", "U", "U64", "F32", "F64", "By", "Bl", "Sc", "St", "D")
 }
 
 // Stops compiling when Kinds gains, loses, reorders or retypes a field.
@@ -185,6 +187,8 @@ type kindsShape struct {
 	N   sql.NullTime
 	In  Inner
 	Sk  []Inner
+	A   any
+	Er  error
 }
 
 var kindsDeclaration = gensupport.Declare("kinds").
@@ -213,7 +217,9 @@ var kindsDeclaration = gensupport.Declare("kinds").
 	Passthrough("t").
 	Passthrough("n").
 	Passthrough("in").
-	Passthrough("sk")
+	Passthrough("sk").
+	Passthrough("a").
+	Passthrough("er")
 
 var kindsCodec = gensupport.New(gensupport.Generated[Kinds, EncryptedKinds]{
 	TypeName:        "Kinds",
@@ -247,6 +253,8 @@ var kindsCodec = gensupport.New(gensupport.Generated[Kinds, EncryptedKinds]{
 			"n":   v.N,
 			"in":  v.In,
 			"sk":  v.Sk,
+			"a":   v.A,
+			"er":  v.Er,
 		}
 	},
 	Seal: func(rec gensupport.Record) (EncryptedKinds, error) {
@@ -268,6 +276,12 @@ var kindsCodec = gensupport.New(gensupport.Generated[Kinds, EncryptedKinds]{
 			return EncryptedKinds{}, err
 		}
 		if e.Sk, err = gensupport.Passthrough[[]Inner](rec, "sk"); err != nil {
+			return EncryptedKinds{}, err
+		}
+		if e.A, err = gensupport.Passthrough[any](rec, "a"); err != nil {
+			return EncryptedKinds{}, err
+		}
+		if e.Er, err = gensupport.Passthrough[error](rec, "er"); err != nil {
 			return EncryptedKinds{}, err
 		}
 		e.S = EncryptedKindsS{
@@ -367,6 +381,8 @@ var kindsCodec = gensupport.New(gensupport.Generated[Kinds, EncryptedKinds]{
 			"n":   {Value: e.N},
 			"in":  {Value: e.In},
 			"sk":  {Value: e.Sk},
+			"a":   {Value: e.A},
+			"er":  {Value: e.Er},
 		}
 	},
 	Value: func(e EncryptedKinds, vals gensupport.Values) (Kinds, error) {
@@ -458,6 +474,12 @@ var kindsCodec = gensupport.New(gensupport.Generated[Kinds, EncryptedKinds]{
 			return Kinds{}, err
 		}
 		if v.Sk, err = gensupport.Get[[]Inner](vals, "sk"); err != nil {
+			return Kinds{}, err
+		}
+		if v.A, err = gensupport.Get[any](vals, "a"); err != nil {
+			return Kinds{}, err
+		}
+		if v.Er, err = gensupport.Get[error](vals, "er"); err != nil {
 			return Kinds{}, err
 		}
 		return v, nil

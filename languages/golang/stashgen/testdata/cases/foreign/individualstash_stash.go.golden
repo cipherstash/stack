@@ -60,6 +60,9 @@ var codec = gensupport.New(gensupport.Generated[*pb.Individual, EncryptedIndivid
 	Declaration:     declaration,
 	PrintsPlaintext: true,
 	Source: func(v *pb.Individual) gensupport.Values {
+		if v == nil {
+			return nil
+		}
 		return gensupport.Values{
 			"id":              v.Id,
 			"name":            v.Name,

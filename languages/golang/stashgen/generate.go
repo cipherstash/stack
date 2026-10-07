@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,7 +102,51 @@ func FromTags(ctx context.Context, engine Engine, req Request) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := checkNamesFree(pkg.Types.Scope(), gf.typeName, src); err != nil {
+		return nil, err
+	}
 	return &File{Path: outPath, Content: src, Notices: gf.stderrNotices()}, nil
+}
+
+// checkNamesFree refuses a file that declares a package-level name the
+// package already declares: written, it would not compile, and the compiler
+// would point at the generated file rather than at the clash. The previous
+// output is loaded as its package clause only, so its names are not in scope
+// and a second run is not a clash with the first.
+func checkNamesFree(scope *types.Scope, typeName string, src []byte) error {
+	file, err := parser.ParseFile(token.NewFileSet(), "", src, parser.SkipObjectResolution)
+	if err != nil {
+		return fmt.Errorf("stashgen: the generated file does not parse: %w", err)
+	}
+	var clash []string
+	taken := func(name string) {
+		if name != "_" && name != "init" && scope.Lookup(name) != nil {
+			clash = append(clash, name)
+		}
+	}
+	for _, decl := range file.Decls {
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			if d.Recv == nil {
+				taken(d.Name.Name)
+			}
+		case *ast.GenDecl:
+			for _, spec := range d.Specs {
+				switch sp := spec.(type) {
+				case *ast.TypeSpec:
+					taken(sp.Name.Name)
+				case *ast.ValueSpec:
+					for _, n := range sp.Names {
+						taken(n.Name)
+					}
+				}
+			}
+		}
+	}
+	if len(clash) > 0 {
+		return fieldErr(typeName, "", "the package already declares %s, which the generated file declares too; pass -name to give the file's names a prefix (-name Rows writes EncryptRows and rowsCodec)", strings.Join(clash, ", "))
+	}
+	return nil
 }
 
 // stderrNotices are the notices in the form the generator prints.

@@ -8,6 +8,7 @@ import (
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/descriptorpb"
+	"google.golang.org/protobuf/types/dynamicpb"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt/policy"
 	"github.com/cipherstash/stack/languages/golang/encrypt/policy/protosource/internal/testpb"
@@ -114,5 +115,54 @@ func TestScalarSpellsAnEnumByName(t *testing.T) {
 	// A number with no name falls back to the number.
 	if got := scalar(fd, protoreflect.ValueOfEnum(7)); got != "7" {
 		t.Fatalf("scalar(enum 7) = %q", got)
+	}
+}
+
+// A oneof's members live in wrapper types, not in the message struct, so
+// Facts refuses the message by name. A proto3 optional field is a synthetic
+// oneof, which protoc-gen-go makes a pointer field, and stays a fact.
+func TestFactsRefuseAOneof(t *testing.T) {
+	str := descriptorpb.FieldDescriptorProto_TYPE_STRING.Enum()
+	file, err := protodesc.NewFile(&descriptorpb.FileDescriptorProto{
+		Name:    proto.String("oneof_test.proto"),
+		Package: proto.String("oneoftest"),
+		Syntax:  proto.String("proto3"),
+		MessageType: []*descriptorpb.DescriptorProto{{
+			Name: proto.String("Contact"),
+			Field: []*descriptorpb.FieldDescriptorProto{
+				{Name: proto.String("nickname"), Number: proto.Int32(1), Type: str, JsonName: proto.String("nickname"),
+					OneofIndex: proto.Int32(1), Proto3Optional: proto.Bool(true)},
+				{Name: proto.String("email"), Number: proto.Int32(2), Type: str, JsonName: proto.String("email"), OneofIndex: proto.Int32(0)},
+				{Name: proto.String("phone"), Number: proto.Int32(3), Type: str, JsonName: proto.String("phone"), OneofIndex: proto.Int32(0)},
+			},
+			OneofDecl: []*descriptorpb.OneofDescriptorProto{{Name: proto.String("reach")}, {Name: proto.String("_nickname")}},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = New().Facts(dynamicpb.NewMessage(file.Messages().Get(0)))
+	if err == nil || !strings.Contains(err.Error(), "field email is in the oneof reach") {
+		t.Fatalf("err = %v", err)
+	}
+
+	// The synthetic oneof alone is not refused.
+	optional, err := protodesc.NewFile(&descriptorpb.FileDescriptorProto{
+		Name:    proto.String("optional_test.proto"),
+		Package: proto.String("optionaltest"),
+		Syntax:  proto.String("proto3"),
+		MessageType: []*descriptorpb.DescriptorProto{{
+			Name: proto.String("Contact"),
+			Field: []*descriptorpb.FieldDescriptorProto{{Name: proto.String("nickname"), Number: proto.Int32(1), Type: str,
+				JsonName: proto.String("nickname"), OneofIndex: proto.Int32(0), Proto3Optional: proto.Bool(true)}},
+			OneofDecl: []*descriptorpb.OneofDescriptorProto{{Name: proto.String("_nickname")}},
+		}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := New().Facts(dynamicpb.NewMessage(optional.Messages().Get(0)))
+	if err != nil || len(facts) != 1 || facts[0].GoName != "Nickname" {
+		t.Fatalf("Facts = %v, %v", facts, err)
 	}
 }

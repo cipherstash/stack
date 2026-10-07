@@ -22,7 +22,6 @@ type generateConfig struct {
 	output  string
 	engine  Engine
 	notices io.Writer
-	ctx     context.Context
 }
 
 // Output names the file to write. It is required. The file goes in a package
@@ -37,9 +36,6 @@ func WithEngine(e Engine) GenerateOption { return func(c *generateConfig) { c.en
 // WithNotices sends the generator's notices here instead of stderr.
 func WithNotices(w io.Writer) GenerateOption { return func(c *generateConfig) { c.notices = w } }
 
-// WithContext runs the generator under this context.
-func WithContext(ctx context.Context) GenerateOption { return func(c *generateConfig) { c.ctx = ctx } }
-
 // Generate writes the generated file for a message from a policy: the source
 // gives the facts about each field, the message's rules decide each one, and
 // the file is the same one stashgen writes from tags. The generated functions
@@ -48,8 +44,8 @@ func WithContext(ctx context.Context) GenerateOption { return func(c *generateCo
 // Every field of the message needs a decision. A field that no rule decides
 // stops the generator with the field's name and its annotations, and so does
 // a field that a rule refuses with Fail.
-func Generate(source policy.Source, message policy.Message, opts ...GenerateOption) error {
-	cfg := generateConfig{notices: os.Stderr, ctx: context.Background()}
+func Generate(ctx context.Context, source policy.Source, message policy.Message, opts ...GenerateOption) error {
+	cfg := generateConfig{notices: os.Stderr}
 	for _, o := range opts {
 		o(&cfg)
 	}
@@ -57,9 +53,14 @@ func Generate(source policy.Source, message policy.Message, opts ...GenerateOpti
 		return errors.New("stashgen: Generate needs Output(path)")
 	}
 	if cfg.engine == nil {
-		e, err := GuestEngine(cfg.ctx)
+		e, err := GuestEngine(ctx)
 		if err != nil {
 			return err
+		}
+		// The engine Generate starts is its own to close; one given with
+		// WithEngine is the caller's.
+		if c, ok := e.(io.Closer); ok {
+			defer func() { _ = c.Close() }()
 		}
 		cfg.engine = e
 	}
@@ -67,7 +68,7 @@ func Generate(source policy.Source, message policy.Message, opts ...GenerateOpti
 	if err != nil {
 		return err
 	}
-	return generateFor(cfg, source, message, pkgPath, typeName)
+	return generateFor(ctx, cfg, source, message, pkgPath, typeName)
 }
 
 // messageType finds the package path and name of the message's struct type.
@@ -87,11 +88,11 @@ func messageType(message any) (pkgPath, typeName string, err error) {
 
 // generateFor is Generate once the message's type is known by name. The
 // tests drive it with a type in a module the test process cannot import.
-func generateFor(cfg generateConfig, source policy.Source, message policy.Message, pkgPath, typeName string) error {
+func generateFor(ctx context.Context, cfg generateConfig, source policy.Source, message policy.Message, pkgPath, typeName string) error {
 	if message.Context() == "" {
 		return fmt.Errorf("stashgen: %s: ForMessage needs a Context", typeName)
 	}
-	eqlTypes, err := cfg.engine.EQLTypes(cfg.ctx)
+	eqlTypes, err := cfg.engine.EQLTypes(ctx)
 	if err != nil {
 		return fmt.Errorf("stashgen: the engine's EQL types: %w", err)
 	}
@@ -101,11 +102,11 @@ func generateFor(cfg generateConfig, source policy.Source, message policy.Messag
 	}
 
 	outDir := filepath.Dir(cfg.output)
-	outName, outPath, err := outputPackage(cfg.ctx, outDir)
+	outName, outPath, err := outputPackage(ctx, outDir)
 	if err != nil {
 		return err
 	}
-	msgPkg, err := loadImport(cfg.ctx, outDir, pkgPath)
+	msgPkg, err := loadImport(ctx, outDir, pkgPath)
 	if err != nil {
 		return err
 	}
@@ -165,7 +166,7 @@ func generateFor(cfg generateConfig, source policy.Source, message policy.Messag
 	if err != nil {
 		return err
 	}
-	if err := cfg.engine.Check(cfg.ctx, gf.decl); err != nil {
+	if err := cfg.engine.Check(ctx, gf.decl); err != nil {
 		return err
 	}
 	src, err := emit(gf)

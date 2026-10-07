@@ -67,7 +67,7 @@ The first part of a tag is the field's name, which is the column name in a datab
 | `stash:"email,encrypt_into=TextEq"` | seal the field into one EQL value, with the terms that EQL type has |
 | `stash:"notes,encrypt"` | seal the field, with no index |
 | `stash:"email,encrypt,index=equality;match"` | seal the field, and derive each index beside it |
-| `stash:"attrs,index=json"` | derive the index alone |
+| `stash:"attrs,index=json"` | derive the index alone; no ciphertext is stored, so `Decrypt` leaves the field at its zero value |
 | `stash:"id,passthrough"` | store the field as it is |
 | `stash:"-"` | leave the field out |
 | `` _ struct{} `stash:"context=documents,opaque"` `` | seal the struct as one value |
@@ -163,7 +163,7 @@ var Individuals = policy.ForMessage(&pb.Individual{}, policy.Context("individual
 
 //go:generate go run ../cmd/genencrypt
 func main() {
-	err := stashgen.Generate(protosource.New(), rules.Individuals,
+	err := stashgen.Generate(context.Background(), protosource.New(), rules.Individuals,
 		stashgen.Output("../individuals/individual_stash.go"))
 	...
 }
@@ -186,7 +186,10 @@ No warning, error or log line holds a plaintext value.
 Generated code sends the engine every sealed field with its value, under the declaration lowered to data: each field's label (`<context>/<name>`), its outputs and its wire type (`int64`, `string`, `bytes`, ...), which `stashgen` chose from the field's Go type.
 A passthrough field stays on the host: the engine does nothing to it a program could observe, and the FFI codec cannot carry every Go type a program stores beside a ciphertext.
 An `opaque` struct crosses as one JSON document and is one column, decoded back into the exact Go types the struct declares; a field may be any type `encoding/json` carries both ways (a scalar or a type defined over one, `[]byte`, slices, maps with string or integer keys, pointers, structs whose fields are all exported, `time.Time`).
+A float in an opaque struct must be finite: `encoding/json` refuses NaN and the infinities, so `Encrypt` fails for the batch with `encrypt.ErrEncoding`. A sealed float field outside an opaque struct carries them.
 A sealed field outside an opaque struct is one scalar, or a type defined over one; a struct, slice or map field seals only inside an opaque struct.
+A nil `[]byte` in a sealed field, or a nil slice of a type defined over `[]byte`, comes back from `Decrypt` as an empty, non-nil slice; inside an opaque struct, nil comes back as nil.
+A protobuf message with a `oneof` cannot be generated from a policy: protoc-gen-go puts its members in wrapper types, not in the message struct, and `Generate` refuses it.
 
 ## Status
 

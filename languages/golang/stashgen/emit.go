@@ -312,6 +312,12 @@ func (w *writer) codec(f *genFile) {
 
 func (w *writer) source(f *genFile) {
 	w.p("\tSource: func(v %s) gensupport.Values {", f.typeExpr)
+	if f.isPointer {
+		// A nil element is reported by Encrypt, not a panic here.
+		w.p("\t\tif v == nil {")
+		w.p("\t\t\treturn nil")
+		w.p("\t\t}")
+	}
 	if f.decl.Opaque {
 		entries := make([]string, len(f.opaque))
 		for i, g := range f.opaque {
@@ -423,6 +429,11 @@ func (w *writer) value(f *genFile) {
 		}
 		w.p("\t\tvar err error")
 		for _, g := range f.fields {
+			if g.Verb == VerbIndex {
+				// An index-only field stores no ciphertext, so nothing opens
+				// for it: the struct gets the field's zero value.
+				continue
+			}
 			if g.Sealed() && g.definedScalar() {
 				// The engine returns the underlying type; the conversion
 				// to the defined type is the struct's own.

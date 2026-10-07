@@ -100,6 +100,9 @@ func (c *Codec[P, E]) Encrypt(ctx context.Context, cipher *encrypt.Cipher, value
 	passthrough := make([]map[string]any, len(values))
 	for i, v := range values {
 		vals := c.g.Source(v)
+		if vals == nil {
+			return nil, fmt.Errorf("gensupport: %s: value %d is nil", c.g.TypeName, i)
+		}
 		row, keep, err := c.split(vals)
 		if err != nil {
 			return nil, fmt.Errorf("gensupport: %s: value %d: %w", c.g.TypeName, i, err)
@@ -241,6 +244,11 @@ func Passthrough[T any](rec Record, name string) (T, error) {
 	v, ok := o.Value.(T)
 	if !ok {
 		var zero T
+		if o.Value == nil && any(zero) == nil {
+			// A nil interface value asserts to no type. For an interface T
+			// it is the value the struct held.
+			return zero, nil
+		}
 		return zero, fmt.Errorf("gensupport: passthrough field %q holds a %T, not a %T", name, o.Value, zero)
 	}
 	return v, nil
@@ -262,6 +270,12 @@ func Get[T any](vals Values, name string) (T, error) {
 	}
 	if exact, ok := v.(T); ok {
 		return exact, nil
+	}
+	if v == nil && any(out) == nil {
+		// A nil interface value asserts to no type. For an interface T,
+		// such as a passthrough error or any, it is the value the struct
+		// held.
+		return out, nil
 	}
 	if err := convert(v, &out); err != nil {
 		return out, fmt.Errorf("gensupport: field %q: %w", name, err)
@@ -317,7 +331,9 @@ func (c *RecordsCodec[P, R]) Decrypt(ctx context.Context, d encrypt.Decrypter, r
 func opaqueBytes(fields any) ([]byte, error) {
 	encoded, err := json.Marshal(fields)
 	if err != nil {
-		return nil, fmt.Errorf("the opaque value does not encode: %w", err)
+		// encoding/json refuses NaN and the infinities, which a sealed float
+		// field outside an opaque struct accepts.
+		return nil, fmt.Errorf("%w: the opaque value does not encode: %v", encrypt.ErrEncoding, err)
 	}
 	return encoded, nil
 }

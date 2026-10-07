@@ -68,6 +68,20 @@ type Kinds struct {
 	N  sql.NullTime      `stash:"n,passthrough"`
 	In Inner             `stash:"in,passthrough"`
 	Sk []Inner           `stash:"sk,passthrough"`
+	A  any               `stash:"a,passthrough"`
+	Er error             `stash:"er,passthrough"`
+}
+
+//go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Lookup -name Lookup
+
+// Lookup has index-only fields: each stores its terms and no ciphertext, so
+// Decrypt leaves it at its zero value and still opens the sealed field.
+type Lookup struct {
+	_     struct{} `stash:"context=lookups"`
+	ID    int64    `stash:"id,passthrough"`
+	Email string   `stash:"email,encrypt"`
+	Score int32    `stash:"score,index=ore"`
+	Code  Status   `stash:"code,index=equality"`
 }
 
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Everything -name Everything

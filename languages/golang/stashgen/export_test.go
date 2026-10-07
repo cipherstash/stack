@@ -11,7 +11,7 @@ import (
 // type instead of holding a value of it: the type lives in a module the test
 // process cannot import.
 func GenerateFor(ctx context.Context, engine Engine, notices io.Writer, output string, source policy.Source, message policy.Message, pkgPath, typeName string) error {
-	return generateFor(generateConfig{output: output, engine: engine, notices: notices, ctx: ctx}, source, message, pkgPath, typeName)
+	return generateFor(ctx, generateConfig{output: output, engine: engine, notices: notices}, source, message, pkgPath, typeName)
 }
 
 // MessageType is messageType for the external tests.

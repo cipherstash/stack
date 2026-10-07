@@ -33,6 +33,11 @@ func (source) Facts(message any) ([]policy.Fact, error) {
 	facts := make([]policy.Fact, 0, fields.Len())
 	for i := range fields.Len() {
 		fd := fields.Get(i)
+		if od := fd.ContainingOneof(); od != nil && !od.IsSynthetic() {
+			// protoc-gen-go puts a oneof's members in wrapper types behind
+			// one interface field, so the struct has no field for them.
+			return nil, fmt.Errorf("protosource: %s: field %s is in the oneof %s, and a oneof cannot be generated", md.FullName(), fd.Name(), od.Name())
+		}
 		facts = append(facts, policy.Fact{
 			Message:     string(md.FullName()),
 			Name:        string(fd.Name()),
