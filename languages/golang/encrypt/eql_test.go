@@ -322,7 +322,7 @@ func TestTextEqIsRefusedByTheBuildWithoutEQLTypes(t *testing.T) {
 		}
 	}
 	// A declared type other than TextEq's plaintext, and an extended plan.
-	wrongKind := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "email", Kind: record.UInt64, Target: "TextEq"}}}
+	wrongKind := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "email", Kind: record.Uint64, Target: "TextEq"}}}
 	if err := eqlChecker.Check(ctx, wrongKind); !errors.Is(err, encrypt.ErrEncoding) {
 		t.Errorf("a uint64 TextEq field: Check = %v, want ErrEncoding", err)
 	}

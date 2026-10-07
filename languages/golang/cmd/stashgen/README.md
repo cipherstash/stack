@@ -21,8 +21,8 @@ Your program calls those functions, and it never builds or names a plan.
    type User struct {
    	_     struct{} `stash:"context=users"`
    	ID    int64    `stash:"id,passthrough"`
-   	Email string   `stash:"email,encrypt,index=equality;match"`
-   	Name  string   `stash:"name,encrypt"`
+   	Email string   `stash:"email,encrypt_into=TextEq"`
+   	Name  string   `stash:"name,encrypt_into=TextEq"`
    }
    ```
 
@@ -40,12 +40,11 @@ Your program calls those functions, and it never builds or names a plan.
    ```go
    encrypted, err := users.Encrypt(ctx, cipher, people)
    opened, err := users.Decrypt(ctx, cipher, encrypted)
-   term, err := users.Fields.Email.Equality(ctx, cipher, "bob@example.com")
+   query, err := users.Fields.Email.Query(ctx, cipher, "bob@example.com")
    ```
 
 6. Store the encrypted type.
-   Each sealed field is one or more byte columns: `Email.Ciphertext`, `Email.Equality`, `Email.Match`.
-   `encrypt.Ciphertext` and each term type implement `driver.Valuer` and `sql.Scanner`, so a database library binds and scans each one as bytes; map each one to its own column.
+   Each `encrypt_into` field is one EQL column: `eql.TextEq` implements `driver.Valuer` and `sql.Scanner`, so a database library binds and scans it as the JSON a `public.eql_v3_text_eq` column holds.
 
 7. Run the generator again after each change to the struct or to a tag.
    A change to the fields of the struct stops the build until you do.
