@@ -193,7 +193,7 @@ func (p *Plan) Validate() error {
 			return fmt.Errorf("record: field %q: identity %q is used twice", f.Name, identity)
 		}
 		identities[identity] = true
-		if !f.Kind.known() {
+		if !f.Kind.Known() {
 			return fmt.Errorf("record: field %q: unknown kind %q", f.Name, f.Kind)
 		}
 		if len(f.Outputs) == 0 {
@@ -215,7 +215,8 @@ func (p *Plan) Validate() error {
 	return nil
 }
 
-func (k Kind) known() bool {
+// Known reports whether k is a kind that the engine names; Untyped is one.
+func (k Kind) Known() bool {
 	switch k {
 	case Untyped, Bool, Int32, Int64, Uint32, Uint64, Float32, Float64, String, Bytes:
 		return true

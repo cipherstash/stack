@@ -122,6 +122,9 @@ func parseTarget(entry vcvalue.Object) (record.Target, error) {
 			var kind string
 			kind, err = targetOptionalString(f)
 			t.Plaintext = record.Kind(kind)
+			if err == nil && !t.Plaintext.Known() {
+				err = fmt.Errorf("plaintext %q is not a kind", kind)
+			}
 		case "sql_domain":
 			t.SQLDomain, err = targetString(f)
 		case "indexes":
@@ -134,7 +137,14 @@ func parseTarget(entry vcvalue.Object) (record.Target, error) {
 				if !ok {
 					return t, fmt.Errorf("an index is %T, not a string", item)
 				}
-				t.Indexes = append(t.Indexes, record.Output(s))
+				switch o := record.Output(s); o {
+				// "json" is the SteVec document index, which no plan output
+				// carries.
+				case record.Equality, record.Match, record.Ore, record.Ope, "json":
+					t.Indexes = append(t.Indexes, o)
+				default:
+					return t, fmt.Errorf("unknown index %q", s)
+				}
 			}
 		case "query":
 			t.Query, err = targetOptionalString(f)

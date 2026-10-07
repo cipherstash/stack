@@ -47,6 +47,8 @@ func TestParseTargetsReadsEachEntry(t *testing.T) {
 		"list not a list":   vcvalue.Object{{Key: "targets", Value: "x"}},
 		"entry not object":  vcvalue.Object{{Key: "targets", Value: []any{"TextEq"}}},
 		"numeric plaintext": vcvalue.Object{{Key: "targets", Value: []any{entry(vcvalue.Field{Key: "name", Value: "TextEq"}, vcvalue.Field{Key: "plaintext", Value: int64(1)}, vcvalue.Field{Key: "indexes", Value: []any{}}, vcvalue.Field{Key: "producible", Value: true})}}},
+		"misspelled kind":   vcvalue.Object{{Key: "targets", Value: []any{entry(vcvalue.Field{Key: "name", Value: "TextEq"}, vcvalue.Field{Key: "plaintext", Value: "strng"}, vcvalue.Field{Key: "indexes", Value: []any{}}, vcvalue.Field{Key: "producible", Value: true})}}},
+		"misspelled index":  vcvalue.Object{{Key: "targets", Value: []any{entry(vcvalue.Field{Key: "name", Value: "TextEq"}, vcvalue.Field{Key: "indexes", Value: []any{"equality"}}, vcvalue.Field{Key: "producible", Value: true})}}},
 		"unknown key":       vcvalue.Object{{Key: "targets", Value: []any{entry(vcvalue.Field{Key: "name", Value: "TextEq"}, vcvalue.Field{Key: "kind", Value: "string"}, vcvalue.Field{Key: "indexes", Value: []any{}}, vcvalue.Field{Key: "producible", Value: true})}}},
 		"no name":           vcvalue.Object{{Key: "targets", Value: []any{entry(vcvalue.Field{Key: "indexes", Value: []any{}}, vcvalue.Field{Key: "producible", Value: true})}}},
 		"no producible":     vcvalue.Object{{Key: "targets", Value: []any{entry(vcvalue.Field{Key: "name", Value: "TextEq"}, vcvalue.Field{Key: "indexes", Value: []any{}})}}},
