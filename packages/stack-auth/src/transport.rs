@@ -979,11 +979,19 @@ mod tests {
             panic!("built a strategy with nothing to send through");
         };
         assert!(matches!(err, AuthError::Request(_)), "{err:?}");
-        // The message stays fixed; what to do about it is the source's.
-        let source = std::error::Error::source(&err)
-            .map(ToString::to_string)
-            .unwrap_or_default();
-        assert!(source.contains("`.transport(..)`"), "{source:?}");
+        assert_eq!(err.error_code(), "REQUEST_ERROR");
+        // Nothing was sent, so nothing points at the network: the message,
+        // code and help all say what to do, for a binding that shows only
+        // those.
+        use miette::Diagnostic as _;
+        assert!(err.to_string().contains("`.transport(..)`"), "{err}");
+        assert_eq!(
+            err.code().map(|code| code.to_string()).as_deref(),
+            Some("stack_auth::no_transport")
+        );
+        let help = err.help().map(|help| help.to_string()).unwrap_or_default();
+        assert!(help.contains("`.transport(..)`"), "{help}");
+        assert!(!help.contains("network"), "{help}");
     }
 
     #[cfg(not(feature = "http"))]

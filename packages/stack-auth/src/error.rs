@@ -96,18 +96,54 @@ pub(crate) mod codes {
 /// its query string (see [`ErrorPayload`] for the rule). The transport's
 /// error is the [`source`](std::error::Error::source), for a caller in the
 /// same process to log.
-#[derive(Debug, thiserror::Error, miette::Diagnostic)]
-#[error("Request to the auth server failed")]
-#[diagnostic(
-    code(stack_auth::request_error),
-    help(
-        "The auth server could not be reached, or its response could not be read. Check the network path to it; the transport's error is this error's source."
-    )
-)]
+///
+/// One case is not a failed request: a build without `http` whose strategy
+/// was given no transport sends nothing. That error has its own message,
+/// code (`stack_auth::no_transport`) and help, all fixed text of this
+/// crate's, and keeps the old code `REQUEST_ERROR`.
+#[derive(Debug, thiserror::Error)]
+#[error("{}", self.message())]
 pub struct RequestError(#[source] pub Box<dyn std::error::Error + Send + Sync + 'static>);
 impl AuthErrorKind for RequestError {
     fn error_code(&self) -> &'static str {
         codes::REQUEST_ERROR
+    }
+}
+
+impl RequestError {
+    /// True when nothing was sent because the build has no transport: a
+    /// configuration mistake, not a network failure.
+    fn is_no_transport(&self) -> bool {
+        #[cfg(not(feature = "http"))]
+        return self.0.is::<crate::transport::NoTransport>();
+        #[cfg(feature = "http")]
+        false
+    }
+
+    fn message(&self) -> &'static str {
+        if self.is_no_transport() {
+            "No HTTP transport: this build of stack-auth has no `http` feature, so the strategy must be given one with `.transport(..)`"
+        } else {
+            "Request to the auth server failed"
+        }
+    }
+}
+
+impl miette::Diagnostic for RequestError {
+    fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        Some(Box::new(if self.is_no_transport() {
+            "stack_auth::no_transport"
+        } else {
+            "stack_auth::request_error"
+        }))
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        Some(Box::new(if self.is_no_transport() {
+            "Give the strategy a transport with `.transport(..)`, or build stack-auth with its `http` feature."
+        } else {
+            "The auth server could not be reached, or its response could not be read. Check the network path to it."
+        }))
     }
 }
 
@@ -478,10 +514,16 @@ impl AuthErrorKind for CustomError {
 /// binding sees `stack_profile::not_found` whether a profile failure came
 /// through the auth path or straight from the store. Its old code,
 /// `STORE_ERROR`, is unchanged.
+///
+/// The profile error is also the [`source`](std::error::Error::source), so
+/// the library error under it (the parser's or the file system's) stays
+/// reachable from an [`AuthError`]. The message repeats the profile error's
+/// because the TypeScript binding shows the message alone; a report that
+/// prints the whole chain shows it twice.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Token store error: {0}")]
 #[diagnostic(transparent)]
-pub struct StoreError(pub stack_profile::ProfileError);
+pub struct StoreError(#[source] pub stack_profile::ProfileError);
 impl AuthErrorKind for StoreError {
     fn error_code(&self) -> &'static str {
         codes::STORE_ERROR
@@ -1702,6 +1744,19 @@ mod tests {
         // The TypeScript serialization is unchanged: no profile fields.
         let json = serde_json::to_value(&error).unwrap();
         assert!(json.get("workspace_id").is_none(), "{json}");
+    }
+
+    /// The profile error drops the parser's and the file system's text from
+    /// its message and keeps their errors as its source: that holds through
+    /// the auth path too.
+    #[test]
+    fn a_store_failure_keeps_the_library_error_in_its_chain() {
+        let parser = serde_json::from_str::<u8>("\"x\"").unwrap_err();
+        let error = AuthError::from(stack_profile::ProfileError::Json(parser));
+        let profile = std::error::Error::source(&error).expect("the profile error");
+        assert!(profile.is::<stack_profile::ProfileError>(), "{profile:?}");
+        let parser = profile.source().expect("the parser's error");
+        assert!(parser.is::<serde_json::Error>(), "{parser:?}");
     }
 
     #[test]
