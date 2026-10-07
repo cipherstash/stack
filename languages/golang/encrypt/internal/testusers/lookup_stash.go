@@ -105,13 +105,20 @@ var lookupCodec = gensupport.New(gensupport.Generated[Lookup, EncryptedLookup]{
 })
 
 // EncryptLookup seals each Lookup, with one ZeroKMS request for each 500 sealed
-// values. The result has one element for each input, in the same order.
+// values, plus one the first time a keyset is used. The result has one element
+// for each input, in the same order.
 func EncryptLookup(ctx context.Context, cipher *encrypt.Cipher, values []Lookup) ([]EncryptedLookup, error) {
 	return lookupCodec.Encrypt(ctx, cipher, values)
 }
 
 // DecryptLookup opens each EncryptedLookup, with one ZeroKMS request for each
-// 500 sealed values.
+// 500 sealed values, plus one the first time a keyset is used.
+//
+// DecryptLookup leaves Score and Code at the zero value: an index-only field
+// stores no ciphertext, so nothing opens for it. Do not pass a decrypted value
+// back to EncryptLookup to update its row, because EncryptLookup would then
+// store the term for zero. Derive the index-only terms again from the real
+// values through LookupFields.
 func DecryptLookup(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedLookup) ([]Lookup, error) {
 	return lookupCodec.Decrypt(ctx, d, encrypted)
 }

@@ -135,6 +135,14 @@ written through `Extend("tenant-42")` opens and matches only through a cipher
 with the same extension. No call takes a keyset or a context, so the three
 cannot use different ones.
 
+> **Take care**
+>
+> The context binds each value to its table, its column and the cipher's
+> extension. It does not bind the value to its row, so a value copied to
+> another row of the same table decrypts there with no error. The Rust engine
+> can bind a value to its row with `context_field`. The Go SDK cannot do this
+> yet.
+
 `Client.DefaultKeyset()` is the keyset a ZeroKMS administrator set for the
 client; `Client.Keyset(encrypt.KeysetName(..))` or `Client.Keyset(id)` any
 other, loaded on first use. `Cipher.KeysetID(ctx)` resolves it.
@@ -143,7 +151,9 @@ other, loaded on first use. `Cipher.KeysetID(ctx)` resolves it.
 
 `users.Decrypt` takes a `Decrypter`: the `*Cipher`, which refuses a row
 another keyset sealed with `ErrForeignKeyset` before any key is retrieved, or
-the `*Client`, which opens each row under the keyset that sealed it.
+the `*Client`, which opens each row under the keyset that sealed it. The
+`*Client` opens only rows that a cipher with no extension sealed; a row
+written through `Extend` opens only through a cipher with the same extension.
 
 ## What is stored
 
@@ -166,6 +176,17 @@ Terms are byte-equal to the ones the Rust crate derives, so a term from
 language. `EqualityTerm.Equal` compares in constant time; `OreTerm.Compare`
 and `OpeTerm.Compare` order as the plaintexts; `MatchTerm.Positions` decodes
 the token positions.
+
+A database can compare some terms by itself:
+
+- `Equality`: compare with `=`.
+- `Ope`: compare with `<`, `>` and `ORDER BY`. The byte order is the
+  plaintext order.
+- `Ore`: do not compare in SQL. Plain byte order is almost always right, and
+  sometimes wrong, with no error. Compare in Go with `OreTerm.Compare`, or
+  use an EQL type (`encrypt_into=`), which the database compares correctly.
+- `Match`: do not compare in SQL. Decode the positions in Go with
+  `MatchTerm.Positions`, or use an EQL type.
 
 ## Errors
 

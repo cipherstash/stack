@@ -55,9 +55,10 @@ func run(ctx context.Context) error {
 		fmt.Printf("id %d matches bob@example.com: %v\n", e.ID, term.Equal(e.Email.Equality))
 	}
 
-	// Decrypt through the cipher, which refuses another keyset's rows, or
-	// through the client, which opens each row under the keyset that sealed it.
-	back, err := Decrypt(ctx, client, encrypted)
+	// Decrypt through the cipher. It carries the extension that Encrypt
+	// used, and it refuses rows from another keyset. The client would refuse
+	// these rows: it opens only rows sealed with no extension.
+	back, err := Decrypt(ctx, cipher, encrypted)
 	if err != nil {
 		return fmt.Errorf("decrypt: %w", err)
 	}

@@ -113,13 +113,14 @@ var accountCodec = gensupport.New(gensupport.Generated[Account, EncryptedAccount
 })
 
 // EncryptAccount seals each Account, with one ZeroKMS request for each 500
-// sealed values. The result has one element for each input, in the same order.
+// sealed values, plus one the first time a keyset is used. The result has one
+// element for each input, in the same order.
 func EncryptAccount(ctx context.Context, cipher *encrypt.Cipher, values []Account) ([]EncryptedAccount, error) {
 	return accountCodec.Encrypt(ctx, cipher, values)
 }
 
 // DecryptAccount opens each EncryptedAccount, with one ZeroKMS request for each
-// 500 sealed values.
+// 500 sealed values, plus one the first time a keyset is used.
 func DecryptAccount(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedAccount) ([]Account, error) {
 	return accountCodec.Decrypt(ctx, d, encrypted)
 }

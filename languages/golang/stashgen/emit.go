@@ -471,12 +471,25 @@ func (w *writer) value(f *genFile) {
 
 func (w *writer) functions(f *genFile) {
 	w.nl()
-	w.b.WriteString(wrapComment(fmt.Sprintf("%s seals each %s, with one ZeroKMS request for each 500 sealed values. The result has one element for each input, in the same order.", f.encryptFn, f.typeName), 80))
+	w.b.WriteString(wrapComment(fmt.Sprintf("%s seals each %s, with one ZeroKMS request for each 500 sealed values, plus one the first time a keyset is used. The result has one element for each input, in the same order.", f.encryptFn, f.typeName), 80))
 	w.p("func %s(ctx context.Context, cipher *encrypt.Cipher, %s []%s) ([]%s, error) {", f.encryptFn, f.paramName, f.typeExpr, f.encName)
 	w.p("\treturn %s.Encrypt(ctx, cipher, %s)", f.codecVar, f.paramName)
 	w.p("}")
 	w.nl()
-	w.b.WriteString(wrapComment(fmt.Sprintf("%s opens each %s, with one ZeroKMS request for each 500 sealed values.", f.decryptFn, f.encName), 80))
+	w.b.WriteString(wrapComment(fmt.Sprintf("%s opens each %s, with one ZeroKMS request for each 500 sealed values, plus one the first time a keyset is used.", f.decryptFn, f.encName), 80))
+	var indexOnly []string
+	for _, g := range f.fields {
+		if g.Verb == VerbIndex {
+			indexOnly = append(indexOnly, g.GoName)
+		}
+	}
+	if len(indexOnly) > 0 {
+		// Read, change and save is the usual update, and it would store the
+		// term for zero: say so on the function a program calls.
+		w.p("//")
+		w.b.WriteString(wrapComment(fmt.Sprintf("%s leaves %s at the zero value: an index-only field stores no ciphertext, so nothing opens for it. Do not pass a decrypted value back to %s to update its row, because %s would then store the term for zero. Derive the index-only terms again from the real values through %s.",
+			f.decryptFn, joinNames(indexOnly), f.encryptFn, f.encryptFn, f.fieldsVar), 80))
+	}
 	w.p("func %s(ctx context.Context, d encrypt.Decrypter, encrypted []%s) ([]%s, error) {", f.decryptFn, f.encName, f.typeExpr)
 	w.p("\treturn %s.Decrypt(ctx, d, encrypted)", f.codecVar)
 	w.p("}")
@@ -603,4 +616,15 @@ func (m *genModel) fieldFor(g *genField, out *output) string {
 		}
 	}
 	return "/* unbound " + g.Name + " */"
+}
+
+// joinNames lists Go names in prose: "A", "A and B", "A, B and C".
+func joinNames(names []string) string {
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return names[0]
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }

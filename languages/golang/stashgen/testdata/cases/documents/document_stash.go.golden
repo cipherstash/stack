@@ -79,13 +79,14 @@ var codec = gensupport.New(gensupport.Generated[Document, EncryptedDocument]{
 })
 
 // Encrypt seals each Document, with one ZeroKMS request for each 500 sealed
-// values. The result has one element for each input, in the same order.
+// values, plus one the first time a keyset is used. The result has one element
+// for each input, in the same order.
 func Encrypt(ctx context.Context, cipher *encrypt.Cipher, documents []Document) ([]EncryptedDocument, error) {
 	return codec.Encrypt(ctx, cipher, documents)
 }
 
 // Decrypt opens each EncryptedDocument, with one ZeroKMS request for each 500
-// sealed values.
+// sealed values, plus one the first time a keyset is used.
 func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedDocument) ([]Document, error) {
 	return codec.Decrypt(ctx, d, encrypted)
 }

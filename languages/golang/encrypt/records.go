@@ -14,20 +14,21 @@ import (
 // The three methods take and return the internal record types, so a program
 // cannot call them with anything but what a generated declaration lowered
 // to; the generated functions (users.Encrypt, users.Decrypt, users.Fields)
-// are the API. Every call is one guest call, and one batched ZeroKMS request
-// however many rows it carries (one request per 500 sealed leaves).
+// are the API. Every call is one guest call. It sends one ZeroKMS request
+// for each 500 sealed values, plus one the first time a keyset is used.
 
 // Decrypter opens records: a *Cipher, which refuses a record sealed under
 // another keyset before any key is retrieved, or a *Client, which opens each
-// record under the keyset that sealed it. Generated Decrypt functions take
+// record under the keyset that sealed it. A *Client opens only records that
+// a cipher with no extension sealed. Generated Decrypt functions take
 // one. Its method is for generated code; a program does not call it.
 type Decrypter interface {
 	Open(ctx context.Context, plan *record.Plan, records []record.Sealed) ([]record.Source, error)
 }
 
 // Seal encrypts rows under the plan, through this cipher's keyset and with
-// its extension: the sealed fields of every row in one request, in order.
-// For generated code.
+// its extension: the sealed fields of every row, in order, with one ZeroKMS
+// request for each 500 sealed values. For generated code.
 func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.Source) ([]record.Sealed, error) {
 	p, err := cph.plan(plan)
 	if err != nil {
@@ -83,9 +84,9 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 	return sealed, nil
 }
 
-// Open decrypts records sealed under the plan: every row in one request,
-// in order. A record from another keyset is [ErrForeignKeyset]. For
-// generated code.
+// Open decrypts records sealed under the plan: every row, in order, with one
+// ZeroKMS request for each 500 sealed values. A record from another keyset is
+// [ErrForeignKeyset]. For generated code.
 func (cph *Cipher) Open(ctx context.Context, plan *record.Plan, records []record.Sealed) ([]record.Source, error) {
 	if cph == nil {
 		// A Decrypter holding a nil *Cipher is not a nil interface, so the
@@ -143,8 +144,8 @@ func (cph *Cipher) Derive(ctx context.Context, plan *record.Plan, field string, 
 }
 
 // Open decrypts records sealed under the plan by any keyset of this client:
-// each record is opened under the keyset that sealed it, with one request
-// per keyset. For generated code.
+// each record is opened under the keyset that sealed it, with one ZeroKMS
+// request for each 500 sealed values from each keyset. For generated code.
 func (c *Client) Open(ctx context.Context, plan *record.Plan, records []record.Sealed) ([]record.Source, error) {
 	if c == nil {
 		return nil, fmt.Errorf("%w: Open on a nil *Client", ErrEncoding)

@@ -124,13 +124,14 @@ var codec = gensupport.New(gensupport.Generated[Patient, EncryptedPatient]{
 })
 
 // Encrypt seals each Patient, with one ZeroKMS request for each 500 sealed
-// values. The result has one element for each input, in the same order.
+// values, plus one the first time a keyset is used. The result has one element
+// for each input, in the same order.
 func Encrypt(ctx context.Context, cipher *encrypt.Cipher, embedded []Patient) ([]EncryptedPatient, error) {
 	return codec.Encrypt(ctx, cipher, embedded)
 }
 
 // Decrypt opens each EncryptedPatient, with one ZeroKMS request for each 500
-// sealed values.
+// sealed values, plus one the first time a keyset is used.
 func Decrypt(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedPatient) ([]Patient, error) {
 	return codec.Decrypt(ctx, d, encrypted)
 }

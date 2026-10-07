@@ -487,13 +487,14 @@ var kindsCodec = gensupport.New(gensupport.Generated[Kinds, EncryptedKinds]{
 })
 
 // EncryptKinds seals each Kinds, with one ZeroKMS request for each 500 sealed
-// values. The result has one element for each input, in the same order.
+// values, plus one the first time a keyset is used. The result has one element
+// for each input, in the same order.
 func EncryptKinds(ctx context.Context, cipher *encrypt.Cipher, values []Kinds) ([]EncryptedKinds, error) {
 	return kindsCodec.Encrypt(ctx, cipher, values)
 }
 
 // DecryptKinds opens each EncryptedKinds, with one ZeroKMS request for each 500
-// sealed values.
+// sealed values, plus one the first time a keyset is used.
 func DecryptKinds(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedKinds) ([]Kinds, error) {
 	return kindsCodec.Decrypt(ctx, d, encrypted)
 }

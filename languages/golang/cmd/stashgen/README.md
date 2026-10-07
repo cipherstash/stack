@@ -76,6 +76,18 @@ The first part of a tag is the field's name, which is the column name in a datab
 | `stash:"-"` | leave the field out |
 | `` _ struct{} `stash:"context=documents,opaque"` `` | seal the struct as one value |
 
+> **Take care**
+>
+> The name and the `context=` value are part of the encryption context of each stored value.
+> If you change either one, the rows that you stored before the change do not decrypt, and queries do not find them.
+> Do not change them after you store rows. No tag can rename a column and keep its context yet.
+
+> **Take care**
+>
+> Do not encrypt a decrypted value again to update its row.
+> After `Decrypt`, each index-only field is zero, so `Encrypt` stores the term for zero, and a query on that field then matches the wrong rows with no error.
+> To update one column, use its `Fields` entry, such as `Fields.Email.Encrypt`.
+
 The index names are `equality`, `match`, `ore`, `ope` and `json`.
 A `match` index needs text with at least one token: the engine derives no match term for an empty string, separator-only text, or text shorter than the n-gram length (3 characters), because an empty term would match every row.
 `Encrypt` then fails for the whole batch, with an error naming the row, the field and the index.

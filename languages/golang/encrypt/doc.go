@@ -178,8 +178,11 @@
 // the guest's memory that cannot be locked. A Client prints its memory state
 // ([Client.String]) and logs it ([Client.LogValue]).
 //
-// Between calls the guest holds the client key and its keyset cache and
-// nothing else: data keys are per-call values wiped when the export returns,
-// and every buffer staged for a call is wiped before the call's result is
-// returned.
+// Between calls the guest holds the client key and its keyset cache. Data
+// keys are per-call values, wiped when the export returns, and every buffer
+// staged for a call is wiped before the call's result is returned. One
+// exception remains: after Decrypt, one unwiped copy of each opened string
+// stays in the guest's freed heap until that memory is reused. The test
+// TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt records the gap and is
+// skipped until vitaminc wipes that copy.
 package encrypt

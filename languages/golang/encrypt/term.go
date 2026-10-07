@@ -121,7 +121,10 @@ func (t MatchTerm) Positions() ([]uint16, error) {
 
 // OreTerm is an order-revealing term (CLLW ORE): the raw term bytes. Two
 // terms derived under the same keyset and context order as their plaintexts
-// through Compare and Less; plain byte order says nothing.
+// through Compare and Less. Plain byte order is almost always the same
+// order, and sometimes not, with no error: do not compare ORE terms in SQL
+// (ORDER BY, <, >) on a byte column. Compare them in Go, or store the field
+// as an EQL type, which the database compares correctly.
 type OreTerm []byte
 
 // Compare orders two ORE terms as their plaintexts: -1, 0 or +1. Ports the

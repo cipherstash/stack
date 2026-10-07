@@ -6,7 +6,7 @@
 // [Declaration] from the struct's tags, hands the library its conversions in
 // a [Generated] value, and prints through [Redacted] and [RedactedLog]. The
 // library lowers the declaration to the data plan the engine reads, sends a
-// slice of values as one request, and reports the two notices that the
+// slice of values in one guest call, and reports the two notices that the
 // generator also prints. No function in this package panics.
 package gensupport
 

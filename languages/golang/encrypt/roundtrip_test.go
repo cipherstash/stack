@@ -323,13 +323,12 @@ func TestPlaintextDoesNotRemainInGuestMemory(t *testing.T) {
 // into the guest. It fails today: exactly one copy of each opened string
 // stays in the guest's freed heap. The host's copy is wiped (the output
 // buffer goes through se_dealloc) and the FfiValue's Protected payloads are
-// wiped on drop; the copy that stays is made inside vitaminc-aead-value's
-// FfiValue decoder, which copies the decrypted leaf's bytes into a new
-// Protected (value.rs, the `tags::STRING` arm) and leaves the AEAD output
-// it copied from to drop unwiped. That is vitaminc's to fix; the skip
-// records it, and the test runs again once it is.
+// wiped on drop, so the copy is made on vitaminc's decrypt path before the
+// plaintext is wrapped in Protected; which line makes it is not yet known.
+// That is vitaminc's to fix; the skip records it, and the test runs again
+// once it is.
 func TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt(t *testing.T) {
-	t.Skip("known: one unwiped copy of each opened string remains after Decrypt; see the comment above (vitaminc-aead-value FfiValue decode)")
+	t.Skip("known: one unwiped copy of each opened string remains after Decrypt, made on vitaminc's decrypt path; run this test again when vitaminc wipes it")
 	c := deterministicClient(t)
 	cipher := c.DefaultKeyset()
 	const plaintext = "residency-probe-4111-b1c2d3e4f5"

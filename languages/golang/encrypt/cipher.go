@@ -13,7 +13,9 @@ import (
 // the engine directly. A Cipher opens only its own keyset's ciphertexts — a
 // leaf sealed under another keyset is refused as [ErrForeignKeyset] before
 // any key is retrieved. To open ciphertexts from any keyset, pass the
-// [Client] where a [Decrypter] is taken.
+// [Client] where a [Decrypter] is taken. A Client opens only rows that a
+// cipher with no extension encrypted; rows sealed through [Cipher.Extend]
+// open only through a cipher with the same extension.
 //
 // A Cipher holds no guest state: the keyset is selected on every call, and
 // loaded by the guest on first use, so one is cheap to make per request or
