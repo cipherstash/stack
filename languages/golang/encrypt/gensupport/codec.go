@@ -278,7 +278,7 @@ func Get[T any](vals Values, name string) (T, error) {
 		return out, nil
 	}
 	if err := convert(v, &out); err != nil {
-		return out, fmt.Errorf("gensupport: field %q: %w", name, err)
+		return out, fmt.Errorf("gensupport: field %q: %w: %w", name, encrypt.ErrEncoding, err)
 	}
 	return out, nil
 }
@@ -333,7 +333,8 @@ func opaqueBytes(fields any) ([]byte, error) {
 	if err != nil {
 		// encoding/json refuses NaN and the infinities, which a sealed float
 		// field outside an opaque struct accepts.
-		return nil, fmt.Errorf("%w: the opaque value does not encode: %v", encrypt.ErrEncoding, err)
+		// Its error is not wrapped: encoding/json's text quotes the value.
+		return nil, fmt.Errorf("%w: the opaque value does not encode as JSON (NaN, an infinity, or a type encoding/json refuses)", encrypt.ErrEncoding)
 	}
 	return encoded, nil
 }
@@ -348,10 +349,11 @@ func Opaque[T any](vals Values, out *T) error {
 	}
 	encoded, ok := v.([]byte)
 	if !ok {
-		return fmt.Errorf("gensupport: the opaque value opened as %T, not bytes", v)
+		return fmt.Errorf("gensupport: %w: the opaque value opened as %T, not bytes", encrypt.ErrEncoding, v)
 	}
 	if err := json.Unmarshal(encoded, out); err != nil {
-		return fmt.Errorf("gensupport: the opaque value does not decode: %w", err)
+		// Its error is not wrapped: encoding/json's text quotes the value.
+		return fmt.Errorf("gensupport: %w: the opaque value does not decode into a %T", encrypt.ErrEncoding, *out)
 	}
 	return nil
 }

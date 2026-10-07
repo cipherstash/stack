@@ -2,7 +2,9 @@ package gensupport
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -229,6 +231,47 @@ func userCodec() *Codec[user, encryptedUser] {
 			return u, nil
 		},
 	})
+}
+
+// A value that does not fit its Go type is decrypted plaintext: the error
+// names the types and wraps ErrEncoding, and never holds the value.
+func TestDecryptErrorsHoldNoPlaintext(t *testing.T) {
+	cases := []struct {
+		name  string
+		value any
+		read  func(Values) error
+		leak  string
+	}{
+		{"uint8 range", uint32(300), func(v Values) error { _, err := Get[uint8](v, "f"); return err }, "300"},
+		{"int range", uint64(1<<63 + 4242), func(v Values) error { _, err := Get[int](v, "f"); return err }, "4242"},
+		{"negative uint", int64(-4242), func(v Values) error { _, err := Get[uint](v, "f"); return err }, "4242"},
+		{"float32 range", float64(4.242e300), func(v Values) error { _, err := Get[float32](v, "f"); return err }, "4.242"},
+		{"json int", json.Number("4242.5"), func(v Values) error { _, err := Get[int64](v, "f"); return err }, "4242"},
+		{"json uint", json.Number("-4242"), func(v Values) error { _, err := Get[uint64](v, "f"); return err }, "4242"},
+		{"json float", json.Number("4242e999"), func(v Values) error { _, err := Get[float64](v, "f"); return err }, "4242"},
+		{"map key", Values{"secret-key-4242": "x"}, func(v Values) error { _, err := Get[map[string]int](v, "f"); return err }, "4242"},
+		{"opaque bytes", []byte(`{"n":4242}`), func(v Values) error {
+			var out struct{ N uint8 }
+			return Opaque(Values{OpaqueField: v["f"]}, &out)
+		}, "4242"},
+	}
+	for _, tc := range cases {
+		err := tc.read(Values{"f": tc.value})
+		if err == nil {
+			t.Fatalf("%s: no error", tc.name)
+		}
+		if !errors.Is(err, encrypt.ErrEncoding) {
+			t.Errorf("%s: %v does not wrap ErrEncoding", tc.name, err)
+		}
+		if strings.Contains(err.Error(), tc.leak) {
+			t.Errorf("%s: the error holds the value: %v", tc.name, err)
+		}
+	}
+	// encoding/json's own error ("json: unsupported value: NaN") quotes the
+	// value, so it is not wrapped.
+	if _, err := opaqueBytes(struct{ F float64 }{math.NaN()}); !errors.Is(err, encrypt.ErrEncoding) || strings.Contains(err.Error(), "json:") {
+		t.Errorf("opaqueBytes NaN: %v", err)
+	}
 }
 
 func TestSplitFailsClosedInBothDirections(t *testing.T) {

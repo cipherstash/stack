@@ -2,6 +2,7 @@ package gensupport
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -16,6 +17,9 @@ import (
 // bool, or a vcvalue.Object for a composite — and the struct's type is in
 // the same family, narrower at most. A value outside the target's range, or
 // of another family, is an error.
+//
+// An error names types and positions, never the value: the value is
+// decrypted plaintext, and an error is what a program logs.
 //
 // The switch names the built-in types; a type defined over one (type Status
 // string, time.Duration), or a slice or map of any readable type, is read
@@ -84,7 +88,7 @@ func convert(v any, out any) error {
 			*out = f
 		case float64:
 			if f != 0 && !math.IsInf(f, 0) && !math.IsNaN(f) && (math.Abs(f) > math.MaxFloat32 || math.Abs(f) < math.SmallestNonzeroFloat32) {
-				return fmt.Errorf("%v does not fit a float32", f)
+				return outOfRange(*out)
 			}
 			*out = float32(f)
 		default:
@@ -210,7 +214,7 @@ func convertVia(v any, out any) error {
 		for key, item := range vals {
 			slot := reflect.New(t.Elem())
 			if err := convert(item, slot.Interface()); err != nil {
-				return fmt.Errorf("entry %q: %w", key, err)
+				return fmt.Errorf("an entry of %s: %w", t, err)
 			}
 			result.SetMapIndex(reflect.ValueOf(key).Convert(t.Key()), slot.Elem())
 		}
@@ -262,19 +266,20 @@ func widenNumber(n json.Number, out any) (any, error) {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		i, err := strconv.ParseInt(string(n), 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("%s is not an integer that fits an int64", n)
+			return nil, errors.New("the stored number is not an integer that fits an int64")
 		}
 		return i, nil
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		u, err := strconv.ParseUint(string(n), 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("%s is not an integer that fits a uint64", n)
+			return nil, errors.New("the stored number is not an integer that fits a uint64")
 		}
 		return u, nil
 	case reflect.Float32, reflect.Float64, reflect.Interface:
 		f, err := n.Float64()
 		if err != nil {
-			return nil, err
+			// strconv's error quotes the number.
+			return nil, errors.New("the stored number does not fit a float64")
 		}
 		return f, nil
 	}
@@ -283,6 +288,11 @@ func widenNumber(n json.Number, out any) (any, error) {
 
 func mismatch(v, want any) error {
 	return fmt.Errorf("opened as %T, not %T", v, want)
+}
+
+// outOfRange names the target type and not the value, which is plaintext.
+func outOfRange(want any) error {
+	return fmt.Errorf("the stored value does not fit a %T", want)
 }
 
 // setInt writes an integer of any decoded width into a signed target, within
@@ -298,14 +308,14 @@ func setInt[T ~int | ~int8 | ~int16 | ~int32 | ~int64](v any, out *T, lo, hi int
 		n = int64(i)
 	case uint64:
 		if i > math.MaxInt64 {
-			return fmt.Errorf("%d does not fit a %T", i, *out)
+			return outOfRange(*out)
 		}
 		n = int64(i)
 	default:
 		return mismatch(v, *out)
 	}
 	if n < lo || n > hi {
-		return fmt.Errorf("%d does not fit a %T", n, *out)
+		return outOfRange(*out)
 	}
 	*out = T(n)
 	return nil
@@ -322,19 +332,19 @@ func setUint[T ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64](v any, out *T, hi u
 		n = i
 	case int32:
 		if i < 0 {
-			return fmt.Errorf("%d does not fit a %T", i, *out)
+			return outOfRange(*out)
 		}
 		n = uint64(i)
 	case int64:
 		if i < 0 {
-			return fmt.Errorf("%d does not fit a %T", i, *out)
+			return outOfRange(*out)
 		}
 		n = uint64(i)
 	default:
 		return mismatch(v, *out)
 	}
 	if n > hi {
-		return fmt.Errorf("%d does not fit a %T", n, *out)
+		return outOfRange(*out)
 	}
 	*out = T(n)
 	return nil
