@@ -32,6 +32,11 @@ import (
 //	a deeper name             ParseLabel("documents/v2/body")                         documents/v2/body
 //	a one-part name           ParseLabel("users"), the same as NewContext("users")    users
 //
+// A one-part name is a probe's: a planned field ([FieldPlan.Context]) binds
+// a label of at least two segments, a table and a column, since the guest
+// seals every field of a record under one context and the field's own
+// identity.
+//
 // Do not build a name with With, and do not put a scope into a Label. The
 // renderer keeps the two apart: a name is one flat list, a scope nests. So
 // (users/email)/7u64 is never read as a three-segment name, and

@@ -239,7 +239,7 @@ func TestContextsByTarget(t *testing.T) {
 	want := []se.FieldPlan{
 		{Field: "Email", Name: "email", Context: label(t, "users/email").Context(), Terms: []se.TermKind{se.Equality}},
 		// A custom target's context is its own; the pin names the record key only.
-		{Field: "Blob", Name: "blob_v1", Context: se.MustContext("tenant-blobs/v1"), Terms: []se.TermKind{se.Ope}},
+		{Field: "Blob", Name: "blob_v1", Context: label(t, "tenant-blobs/v1").Context(), Terms: []se.TermKind{se.Ope}},
 	}
 	if got := p.Fields(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("fields =\n%+v\nwant\n%+v", got, want)
@@ -275,7 +275,9 @@ func TestBuildRefusesMalformedDecisions(t *testing.T) {
 		"nil target":         {"t", plan.When(plan.Field("a"), plan.Encrypt(nil)), plan.ErrInvalid, "no target"},
 		"column on plain":    {"t", plan.When(plan.Field("a"), plan.Plaintext(), plan.Column("c")), plan.ErrInvalid, "Plaintext"},
 		"identity on plain":  {"t", plan.When(plan.Field("a"), plan.Plaintext(), plan.Identity("c")), plan.ErrInvalid, "Plaintext"},
-		"identity on custom": {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.Custom("ctx")), plan.Identity("c")), plan.ErrInvalid, "context is fixed"},
+		"identity on custom": {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.Custom("t/ctx")), plan.Identity("c")), plan.ErrInvalid, "context is fixed"},
+		"one-part custom":    {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.Custom("ctx"))), nil, "one part, not a label"},
+		"unplain custom":     {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.Custom("t/7up"))), plan.ErrInvalid, "is not a label"},
 		"slash in identity":  {"t", plan.When(plan.Field("a"), plan.Encrypt(plan.EQL()), plan.Column("c"), plan.Identity("x/y")), plan.ErrInvalid, "contains '/'"},
 		// Identifier.Label() refuses more than '/': every reason a segment is
 		// not plain, named as the table or the column identity it came from.
@@ -326,8 +328,10 @@ func TestBuildRefusesMalformedDecisions(t *testing.T) {
 	if !errors.Is(err, plan.ErrInvalid) || !strings.Contains(err.Error(), `identity "a" is already field a's`) {
 		t.Errorf("two fields sharing an identity: err = %v", err)
 	}
-	// Custom targets may share a context: it is the policy's to choose.
-	if _, err := plan.ForMessage(nil, "t", plan.When(plan.Any(plan.Field("a"), plan.Field("b")), plan.Encrypt(plan.Custom("ctx")))).Build(two); err != nil {
+	// Custom targets may share a context: it is the policy's to choose, and
+	// the guest, not NewPlan, refuses two fields under one label when a
+	// record call runs.
+	if _, err := plan.ForMessage(nil, "t", plan.When(plan.Any(plan.Field("a"), plan.Field("b")), plan.Encrypt(plan.Custom("blobs/ctx")))).Build(two); err != nil {
 		t.Errorf("two custom fields sharing a context: %v", err)
 	}
 }
@@ -527,11 +531,11 @@ func TestABadIdentifierKeepsItsLabelError(t *testing.T) {
 // by such a field's context.
 func TestACustomOnlyMessageTakesAnyTableName(t *testing.T) {
 	facts := []plan.Fact{{Field: "a", Annotations: []plan.Annotation{{Key: "k", Values: []string{"v"}}}}}
-	p, err := plan.ForMessage(nil, "a/b", plan.When(plan.Field("a"), plan.Encrypt(plan.Custom("ctx")))).Build(facts)
+	p, err := plan.ForMessage(nil, "a/b", plan.When(plan.Field("a"), plan.Encrypt(plan.Custom("blobs/ctx")))).Build(facts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := p.Fields()[0].Context; !got.Equal(se.MustContext("ctx")) {
-		t.Errorf("context = %v, want the custom part", got)
+	if got := p.Fields()[0].Context; !got.Equal(label(t, "blobs/ctx").Context()) {
+		t.Errorf("context = %v, want the custom label", got)
 	}
 }

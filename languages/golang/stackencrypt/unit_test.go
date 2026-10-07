@@ -222,10 +222,10 @@ func TestPlanFromTags(t *testing.T) {
 			A int `stash:"index=eq"`
 		}{},
 		"unknown kind": struct {
-			A int `stash:"context=c,index=fuzzy"`
+			A int `stash:"label=t/c,index=fuzzy"`
 		}{},
 		"unknown option": struct {
-			A int `stash:"context=c,store=true"`
+			A int `stash:"label=t/c,store=true"`
 		}{},
 		"empty context": struct {
 			A int `stash:"context="`
@@ -234,11 +234,14 @@ func TestPlanFromTags(t *testing.T) {
 		"not a struct":   42,
 		"nil type":       nil,
 		"term twice": struct {
-			A int `stash:"context=c,index=eq;eq"`
+			A int `stash:"label=t/c,index=eq;eq"`
 		}{},
 		"duplicate name": struct {
-			A int `stash:"context=c,name=x"`
-			B int `stash:"context=c,name=x"`
+			A int `stash:"label=t/c,name=x"`
+			B int `stash:"label=t/d,name=x"`
+		}{},
+		"one-part context": struct {
+			A int `stash:"context=c"`
 		}{},
 	} {
 		if _, err := PlanFromTags(reflect.TypeOf(bad)); err == nil {
@@ -462,7 +465,7 @@ func TestPlanBindsByFieldName(t *testing.T) {
 	if _, err := PlanFromTags(typ); err == nil {
 		t.Fatal("untagged struct has a tag plan")
 	}
-	ok, err := NewPlan(FieldPlan{Field: "Email", Context: MustContext("c")})
+	ok, err := NewPlan(FieldPlan{Field: "Email", Context: label(t, "t/c").Context()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,7 +481,7 @@ func TestPlanBindsByFieldName(t *testing.T) {
 		"unexported": "hidden",
 		"promoted":   "Inner",
 	} {
-		p, err := NewPlan(FieldPlan{Field: field, Context: MustContext("c")})
+		p, err := NewPlan(FieldPlan{Field: field, Context: label(t, "t/c").Context()})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -492,14 +495,16 @@ func TestPlanBindsByFieldName(t *testing.T) {
 }
 
 func TestNewPlanRefusesMalformedFields(t *testing.T) {
+	c := label(t, "t/c").Context()
+	d := label(t, "t/d").Context()
 	for name, fields := range map[string][]FieldPlan{
 		"no fields":      nil,
-		"no field name":  {{Context: MustContext("c")}},
+		"no field name":  {{Context: c}},
 		"no context":     {{Field: "A"}},
-		"unknown kind":   {{Field: "A", Context: MustContext("c"), Terms: []TermKind{TermKind(9)}}},
-		"duplicate name": {{Field: "A", Context: MustContext("c"), Name: "x"}, {Field: "B", Context: MustContext("c"), Name: "x"}},
-		"field twice":    {{Field: "A", Name: "x", Context: MustContext("c")}, {Field: "A", Name: "y", Context: MustContext("d")}},
-		"term twice":     {{Field: "A", Context: MustContext("c"), Terms: []TermKind{Equality, Equality}}},
+		"unknown kind":   {{Field: "A", Context: c, Terms: []TermKind{TermKind(9)}}},
+		"duplicate name": {{Field: "A", Context: c, Name: "x"}, {Field: "B", Context: d, Name: "x"}},
+		"field twice":    {{Field: "A", Name: "x", Context: c}, {Field: "A", Name: "y", Context: d}},
+		"term twice":     {{Field: "A", Context: c, Terms: []TermKind{Equality, Equality}}},
 	} {
 		if _, err := NewPlan(fields...); err == nil {
 			t.Errorf("%s: plan accepted", name)
@@ -507,6 +512,64 @@ func TestNewPlanRefusesMalformedFields(t *testing.T) {
 	}
 	if (Plan{}).Fields() != nil {
 		t.Error("zero plan has fields")
+	}
+}
+
+// A planned field's context is a label of at least two plain segments and
+// nothing else: the one shape the guest lowers a plan field under. Every
+// other Context the type can spell is refused when the plan is built, with
+// the field named and the accepted form in the message, rather than by the
+// guest at the first record call.
+func TestNewPlanRefusesAContextThatIsNotAFieldLabel(t *testing.T) {
+	extended, err := label(t, "users/age").Context().With(uint64(7))
+	if err != nil {
+		t.Fatal(err)
+	}
+	barePair, err := MustContext("c").With(uint64(7))
+	if err != nil {
+		t.Fatal(err)
+	}
+	listPart, err := label(t, "users/age").Context().With("eu")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		context Context
+		says    string
+	}{
+		"one text part":                      {MustContext("c"), "one part, not a label"},
+		"one-segment label":                  {label(t, "users").Context(), "one part, not a label"},
+		"an integer":                         {MustContext(uint64(7)), "one part, not a label"},
+		"bytes":                              {MustContext([]byte{1, 2}), "one part, not a label"},
+		"a label extended":                   {extended, "is extended"},
+		"a bare part extended by an integer": {barePair, "is extended"},
+		"a label extended by text":           {listPart, "is extended"},
+	} {
+		_, err := NewPlan(FieldPlan{Field: "Age", Context: tc.context})
+		if err == nil {
+			t.Errorf("%s: NewPlan accepted it", name)
+			continue
+		}
+		if !strings.Contains(err.Error(), "plan field Age") || !strings.Contains(err.Error(), tc.says) {
+			t.Errorf("%s: err = %v; want the field named and %q", name, err, tc.says)
+		}
+	}
+	// A flat list of plain text parts is the label it spells, whichever
+	// constructor built it: the bytes are the label's.
+	pair, err := MustContext("users").With("age")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewPlan(FieldPlan{Field: "Age", Context: pair}); err != nil {
+		t.Errorf("NewContext(\"users\").With(\"age\") refused: %v", err)
+	}
+	// A segment that is not plain is refused for the same reason a Label is.
+	if _, err := NewPlan(FieldPlan{Field: "Age", Context: Context{node: []any{"users", "7up"}}}); err == nil || !strings.Contains(err.Error(), "not a plain label") {
+		t.Errorf("a non-plain segment: err = %v", err)
+	}
+	// Validate on an explicit plan is NewPlan's check: the plan never built.
+	if _, err := NewPlan(FieldPlan{Field: "Age", Context: MustContext("c")}); err == nil {
+		t.Error("a one-part context built a plan Validate could be asked about")
 	}
 }
 

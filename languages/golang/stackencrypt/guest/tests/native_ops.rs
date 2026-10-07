@@ -145,6 +145,12 @@ fn s(value: &str) -> FfiValue {
     FfiValue::String(value.into())
 }
 
+/// The label `users/<field>` as a plan field spells its context: a list of
+/// plain segments, what a Go `label=users/<field>` tag sends.
+fn label(field: &str) -> FfiValue {
+    FfiValue::Array(vec![s("users"), s(field)])
+}
+
 /// The plan shape the record tests share — an ORE-indexed integer and a
 /// match-indexed string, both stored — under whatever context `ctx` gives
 /// each field. Output order is fixed here, and the tests index into it.
@@ -167,9 +173,9 @@ fn plan_under(ctx: impl Fn(&str) -> FfiValue) -> Vec<u8> {
     ]))
 }
 
-/// The plan used by the record tests: `plan_under` with flat contexts.
+/// The plan used by the record tests: `plan_under` with each field's label.
 fn plan() -> Vec<u8> {
-    plan_under(|field| s(&format!("users/{field}")))
+    plan_under(label)
 }
 
 /// A one-field plan storing only the ciphertext, under `context`.
@@ -711,7 +717,7 @@ fn a_passthrough_source_value_is_refused_a_ciphertext_slot() {
         let plan = encode(obj(vec![(
             "age",
             obj(vec![
-                ("context", s("users/age")),
+                ("context", label("age")),
                 ("outputs", FfiValue::Array(vec![s("c")])),
             ]),
         )]));
@@ -759,14 +765,14 @@ fn record_terms_equal_the_native_derivations_and_probe_them() {
     let eq_probe = block_on(
         cipher
             .default_keyset()
-            .equality_term(34u32, nonempty!("users/age")),
+            .equality_term(34u32, nonempty!("users").with("age")),
     )
     .expect("probe");
     assert_eq!(term_bytes(&age_outputs[1].1), eq_probe.as_bytes());
     let ore_probe = block_on(
         cipher
             .default_keyset()
-            .ore_term(34u32, nonempty!("users/age")),
+            .ore_term(34u32, nonempty!("users").with("age")),
     )
     .expect("probe");
     assert_eq!(term_bytes(&age_outputs[2].1), ore_probe.as_ref());
@@ -777,19 +783,20 @@ fn record_terms_equal_the_native_derivations_and_probe_them() {
     let match_probe = block_on(
         cipher
             .default_keyset()
-            .match_terms::<DefaultMatch>("alice smith", nonempty!("users/name")),
+            .match_terms::<DefaultMatch>("alice smith", nonempty!("users").with("name")),
     )
     .expect("probe");
     assert_eq!(term_bytes(&name_outputs[1].1), match_probe.to_bytes());
 
     // And the "c" node is an ordinary value-model ciphertext bound to the
-    // field's context.
+    // field's label.
     let CipherText::Single(leaf) = &age_outputs[0].1 else {
         panic!("expected a single leaf for a scalar field");
     };
     let leaf = SealedValue::from_bytes(leaf).expect("frozen leaf");
-    let value: FfiValue = block_on(cipher.decrypt(CipherText::Single(leaf), "users/age"))
-        .expect("native decrypt of a record field");
+    let value: FfiValue =
+        block_on(cipher.decrypt(CipherText::Single(leaf), nonempty!("users").with("age")))
+            .expect("native decrypt of a record field");
     assert!(matches!(value, FfiValue::UInt32(34)));
 }
 
@@ -797,11 +804,11 @@ fn record_terms_equal_the_native_derivations_and_probe_them() {
 // Structured contexts
 // =============================================================================
 
-/// The caller extension a Rust row gets from
-/// `encrypt_into_with_context(row, 7u64)`: every field's context becomes
-/// `("users/<field>", 7u64)`. A plan spells it as a list.
+/// The caller extension a Rust row gets from the chain's `.extend(7u64)`:
+/// every field's label becomes `(users/<field>)/7u64`. A plan spells it as a
+/// list, the label nested inside.
 fn extended(field: &str) -> FfiValue {
-    FfiValue::Array(vec![s(&format!("users/{field}")), FfiValue::UInt64(7)])
+    FfiValue::Array(vec![label(field), FfiValue::UInt64(7)])
 }
 
 /// `plan()` under the extension.
@@ -811,9 +818,9 @@ fn extended_plan() -> Vec<u8> {
 
 /// A plan whose context is a list seals exactly what the Rust derive seals
 /// under a caller-extended context: the stored terms are the native probes
-/// under `nonempty!("users/age").with(7u64)`, the guest's own probe under
-/// the list is the same bytes, and the `"c"` leaf opens natively under the
-/// tuple. The flat context is a different domain, as it must be.
+/// under `nonempty!("users").with("age").with(7u64)`, the guest's own probe
+/// under the list is the same bytes, and the `"c"` leaf opens natively under
+/// the tuple. The flat label is a different domain, as it must be.
 #[test]
 fn a_structured_plan_context_seals_what_the_native_extended_context_does() {
     let cipher = cipher();
@@ -831,7 +838,7 @@ fn a_structured_plan_context_seals_what_the_native_extended_context_does() {
         panic!("expected an output map for the first field");
     };
 
-    let native = nonempty!("users/age").with(7u64);
+    let native = nonempty!("users").with("age").with(7u64);
     let eq_probe = block_on(cipher.default_keyset().equality_term(34u32, native)).expect("probe");
     assert_eq!(term_bytes(&age_outputs[1].1), eq_probe.as_bytes());
     let ore_probe = block_on(cipher.default_keyset().ore_term(34u32, native)).expect("probe");
@@ -839,7 +846,7 @@ fn a_structured_plan_context_seals_what_the_native_extended_context_does() {
     let flat_probe = block_on(
         cipher
             .default_keyset()
-            .equality_term(34u32, nonempty!("users/age")),
+            .equality_term(34u32, nonempty!("users").with("age")),
     )
     .expect("probe");
     assert_ne!(
@@ -863,7 +870,7 @@ fn a_structured_plan_context_seals_what_the_native_extended_context_does() {
     let match_probe = block_on(
         cipher
             .default_keyset()
-            .match_terms::<DefaultMatch>("alice smith", nonempty!("users/name").with(7u64)),
+            .match_terms::<DefaultMatch>("alice smith", nonempty!("users").with("name").with(7u64)),
     )
     .expect("probe");
     assert_eq!(term_bytes(&name_outputs[1].1), match_probe.to_bytes());
@@ -884,7 +891,7 @@ fn a_structured_plan_context_seals_what_the_native_extended_context_does() {
 fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
     let cipher = cipher();
     let keyset = cipher.default_keyset();
-    let native = nonempty!("users/age").with(7u64);
+    let native = nonempty!("users").with("age").with(7u64);
     let sealed = block_on(
         FfiValue::UInt32(34)
             .encrypt_with_aad(&keyset, native)
@@ -921,15 +928,16 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
         block_on(ops::decrypt_record(
             Scope::Client(&cipher),
             &record,
-            &plan_with(s("users/age"))
+            &plan_with(label("age"))
         )),
         Err(STATUS_AUTH),
-        "the flat context is not the one it was sealed under"
+        "the flat label is not the one it was sealed under"
     );
 }
 
 /// A plan context that is not a context — the wrong value kind, or empty
-/// by the tuple rule — is refused at parse, before anything is sealed.
+/// by the tuple rule — or that is a context but not a field's label is
+/// refused at parse, before anything is sealed.
 #[test]
 fn a_structured_plan_context_is_validated_at_parse() {
     let cipher = cipher();
@@ -944,8 +952,11 @@ fn a_structured_plan_context_is_validated_at_parse() {
         ("a list of one empty string", FfiValue::Array(vec![s("")])),
         (
             "a list with a float in it",
-            FfiValue::Array(vec![s("users/age"), FfiValue::Float64(7.0)]),
+            FfiValue::Array(vec![label("age"), FfiValue::Float64(7.0)]),
         ),
+        ("one text part, not a label", s("users/age")),
+        ("a one-segment label", FfiValue::Array(vec![s("users")])),
+        ("an integer", FfiValue::UInt64(7)),
     ] {
         assert_eq!(
             block_on(ops::encrypt_record(
@@ -963,17 +974,18 @@ fn a_structured_plan_context_is_validated_at_parse() {
         "nothing seals under a context that is not one"
     );
 
-    // Non-empty by the tuple rule: one part carries bytes.
+    // An extension part may be empty: the label carries the context, as a
+    // Go `Context.With("")` extends one.
     let sealed = block_on(ops::encrypt_record(
         &cipher.default_keyset(),
         &source,
-        &plan_with(FfiValue::Array(vec![s(""), FfiValue::UInt64(7)])),
+        &plan_with(FfiValue::Array(vec![label("f"), s("")])),
     ))
-    .expect("an integer part is never empty");
+    .expect("a label extended by an empty part is never empty");
     assert!(block_on(ops::decrypt_record(
         Scope::Client(&cipher),
         &sealed,
-        &plan_with(FfiValue::Array(vec![s(""), FfiValue::UInt64(7)]))
+        &plan_with(FfiValue::Array(vec![label("f"), s("")]))
     ))
     .is_ok());
 }
@@ -1102,12 +1114,13 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
         Err(STATUS_ENCODING)
     );
 
-    // A context of unusual bytes is still a context: it seals, and opens.
-    let odd = String::from_utf8(vec![0u8; 8]).expect("nul bytes are valid utf-8");
+    // A label of unusual but plain text is still a label: it seals, and
+    // opens. (Control characters are not plain, so a NUL is refused at
+    // parse as any non-label is.)
     let odd_plan = encode(obj(vec![(
         "f",
         obj(vec![
-            ("context", s(&odd)),
+            ("context", FfiValue::Array(vec![s("naïve users"), s("f")])),
             ("outputs", FfiValue::Array(vec![s("c")])),
         ]),
     )]));
@@ -1403,7 +1416,7 @@ fn record_validation_refuses_what_encrypt_record_refuses() {
 
     // A passthrough under a ciphertext output, with no term output to mask
     // it (the invariant `a_passthrough_source_value_is_refused_a_ciphertext_slot` pins).
-    let ct_only = single_field_plan("age", s("users/age"));
+    let ct_only = single_field_plan("age", label("age"));
     let passthrough = encode(obj(vec![(
         "age",
         FfiValue::Passthrough(Box::new(FfiValue::UInt32(29))),

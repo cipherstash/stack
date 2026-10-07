@@ -360,13 +360,13 @@ This is the golden file for the `Individuals` policy above:
 table individuals
 
 column email
-  context individuals/email
+  context ["individuals", "email"]
   target EQL
   terms eq match
   fact fides.data_categories user.contact.email
 
 column medicare_number
-  context individuals/medicare_number
+  context ["individuals", "medicare_number"]
   target EQL
   terms eq
   fact fides.data_categories user.government_id

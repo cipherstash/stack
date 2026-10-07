@@ -101,6 +101,8 @@ pub use index::{
     indexed, At, Encrypted, Equality, Index, IndexSpec, Indexes, Match, Ope, Ore, Select, TermSet,
     Whole,
 };
+#[cfg(feature = "dynamic")]
+pub(crate) use operations::chosen;
 pub(crate) use operations::inspect;
 pub use operations::{
     ciphertext, equality, matching, ope, open, ore, passthrough, DecryptField, DecryptFrom,

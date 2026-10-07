@@ -101,19 +101,19 @@ func TestRenameWithoutAPinIsAContextChange(t *testing.T) {
 	_, err := check(path, individualV2(), m, false, "RERUN")
 	mustContain(t, err,
 		"CONTEXT CHANGES",
-		`column medicare_number: no field writes its context "individuals/medicare_number" any more.`,
-		`Field medicare_no (MedicareNo) now writes column medicare_no under "individuals/medicare_no"`,
+		`column medicare_number: no field writes its context ["individuals", "medicare_number"] any more.`,
+		`Field medicare_no (MedicareNo) now writes column medicare_no under ["individuals", "medicare_no"]`,
 		`Pinning the rule that decides field medicare_no (MedicareNo) with plan.Column("medicare_number") keeps it.`,
 		"RERUN",
-		"-  context individuals/medicare_number",
-		"+  context individuals/medicare_no",
+		"-  context [\"individuals\", \"medicare_number\"]",
+		"+  context [\"individuals\", \"medicare_no\"]",
 	)
 	// A context change is data loss, not a migration. The new column is
 	// still listed, since the guess may be wrong.
 	if strings.Contains(err.Error(), "TARGET CHANGES") {
 		t.Errorf("a rename is reported as a migration:\n%s", err)
 	}
-	mustContain(t, err, "OTHER CHANGES", "new column medicare_no, under \"individuals/medicare_no\", with terms [eq]. It is also named above as a possible rename of column medicare_number.")
+	mustContain(t, err, "OTHER CHANGES", `new column medicare_no, under ["individuals", "medicare_no"], with terms [eq]. It is also named above as a possible rename of column medicare_number.`)
 
 	pinned := plan.ForMessage(nil, "individuals", plan.FirstOf(
 		plan.When(plan.Field("medicare_no"), plan.Encrypt(plan.EQL(se.Equality)), plan.Column("medicare_number")),
@@ -168,13 +168,13 @@ func TestChangesAreSortedByWhatTheyCost(t *testing.T) {
 			before:  plan.ForMessage(nil, "individuals", plan.FirstOf(plan.When(plan.Field("medicare_number"), gov, plan.Identity("medicare_no"))).OrElse(base)),
 			after:   plan.ForMessage(nil, "individuals", base),
 			section: "CONTEXT CHANGES",
-			says:    []string{`column medicare_number: its context is "individuals/medicare_number", was "individuals/medicare_no".`, `with plan.Identity("medicare_no") keeps it.`},
+			says:    []string{`column medicare_number: its context is ["individuals", "medicare_number"], was ["individuals", "medicare_no"].`, `with plan.Identity("medicare_no") keeps it.`},
 		},
 		"table changed": {
 			before:  plan.ForMessage(nil, "individuals", base),
 			after:   plan.ForMessage(nil, "people", base),
 			section: "CONTEXT CHANGES",
-			says:    []string{`the message's table is people, was individuals.`, `restore plan.Table("individuals")`, `its context is "people/email", was "individuals/email". Restoring plan.Table("individuals") brings it back.`},
+			says:    []string{`the message's table is people, was individuals.`, `restore plan.Table("individuals")`, `its context is ["people", "email"], was ["individuals", "email"]. Restoring plan.Table("individuals") brings it back.`},
 		},
 		"table changed, nothing encrypted": {
 			before:  plan.ForMessage(nil, "individuals", plan.When(category.Present(), plan.Plaintext())),
@@ -192,9 +192,9 @@ func TestChangesAreSortedByWhatTheyCost(t *testing.T) {
 			before:  plan.ForMessage(nil, "individuals", plan.FirstOf(plan.When(plan.Field("medicare_number"), plan.Encrypt(plan.Custom("individuals/medicare_number")))).OrElse(base)),
 			after:   plan.ForMessage(nil, "people", plan.FirstOf(plan.When(plan.Field("medicare_number"), plan.Encrypt(plan.Custom("people/medicare_number")))).OrElse(base)),
 			section: "CONTEXT CHANGES",
-			says:    []string{`column medicare_number: its context is "people/medicare_number", was "individuals/medicare_number". No plan.Column or plan.Identity pin`},
+			says:    []string{`column medicare_number: its context is ["people", "medicare_number"], was ["individuals", "medicare_number"]. No plan.Column or plan.Identity pin`},
 			// Restoring the table leaves the Custom context as it is.
-			never: []string{`was "individuals/medicare_number". Restoring`},
+			never: []string{`was ["individuals", "medicare_number"]. Restoring`},
 		},
 		"table changed and field renamed": {
 			before:  plan.ForMessage(nil, "individuals", base),
@@ -204,18 +204,14 @@ func TestChangesAreSortedByWhatTheyCost(t *testing.T) {
 			also:    []string{"OTHER CHANGES"},
 			says:    []string{`Restoring plan.Table("individuals") and pinning the rule that decides field medicare_no (MedicareNo) with plan.Column("medicare_number") brings it back.`},
 		},
-		// The Custom text reads like the EQL identity, but it is one text
-		// part, not the (table, column) pair: a different context.
-		"target kind changed, the context spelled the same": {
+		// The Custom label reads like the EQL identity, and it is the same
+		// context: both bind the label (table, column). Only the target
+		// changed, and nothing written is lost.
+		"target kind changed, the context the same": {
 			before:  plan.ForMessage(nil, "individuals", base),
 			after:   plan.ForMessage(nil, "individuals", plan.FirstOf(plan.When(plan.Field("medicare_number"), plan.Encrypt(plan.Custom("individuals/medicare_number", se.Equality)))).OrElse(base)),
-			section: "CONTEXT CHANGES",
-			also:    []string{"OTHER CHANGES"},
-			says: []string{
-				`column medicare_number: its context is "individuals/medicare_number" (one Custom text part), was "individuals/medicare_number" (the EQL table/column pair).`,
-				"column medicare_number: its target is Custom, was EQL.",
-			},
-			never: []string{"under the same context"},
+			section: "OTHER CHANGES",
+			says:    []string{"column medicare_number: its target is Custom, was EQL, under the same context."},
 		},
 		"target kind and context changed": {
 			before:  plan.ForMessage(nil, "individuals", base),
@@ -223,7 +219,7 @@ func TestChangesAreSortedByWhatTheyCost(t *testing.T) {
 			section: "CONTEXT CHANGES",
 			also:    []string{"OTHER CHANGES"},
 			says: []string{
-				`column medicare_number: its context is "elsewhere/v1", was "individuals/medicare_number".`,
+				`column medicare_number: its context is ["elsewhere", "v1"], was ["individuals", "medicare_number"].`,
 				"column medicare_number: its target is Custom, was EQL.",
 			},
 			never: []string{"under the same context"},
@@ -232,13 +228,13 @@ func TestChangesAreSortedByWhatTheyCost(t *testing.T) {
 			before:  plan.ForMessage(nil, "individuals", plan.FirstOf(plan.When(plan.Field("medicare_number"), plan.Encrypt(plan.Custom("gov/v1")))).OrElse(base)),
 			after:   plan.ForMessage(nil, "individuals", plan.FirstOf(plan.When(plan.Field("medicare_number"), plan.Encrypt(plan.Custom("gov/v2")))).OrElse(base)),
 			section: "CONTEXT CHANGES",
-			says:    []string{`its context is "gov/v2", was "gov/v1". No plan.Column or plan.Identity pin`, "a plan.Custom context"},
+			says:    []string{`its context is ["gov", "v2"], was ["gov", "v1"]. No plan.Column or plan.Identity pin`, "a plan.Custom context"},
 		},
 		"encrypted now plaintext": {
 			before:  plan.ForMessage(nil, "individuals", base),
 			after:   plan.ForMessage(nil, "individuals", plan.FirstOf(plan.When(plan.Field("medicare_number"), plan.Plaintext())).OrElse(base)),
 			section: "TARGET CHANGES",
-			says:    []string{"column medicare_number is now field medicare_number, decided Plaintext.", `ciphertexts under "individuals/medicare_number"`},
+			says:    []string{"column medicare_number is now field medicare_number, decided Plaintext.", `ciphertexts under ["individuals", "medicare_number"]`},
 		},
 		"terms changed": {
 			before:  plan.ForMessage(nil, "individuals", base),
@@ -250,7 +246,7 @@ func TestChangesAreSortedByWhatTheyCost(t *testing.T) {
 			before:  plan.ForMessage(nil, "individuals", base),
 			after:   plan.ForMessage(nil, "individuals", plan.FirstOf(plan.When(plan.Field("country"), plan.Encrypt(plan.EQL()))).OrElse(base)),
 			section: "TARGET CHANGES",
-			says:    []string{`field country, decided Plaintext before, is now encrypted into column country under "individuals/country".`},
+			says:    []string{`field country, decided Plaintext before, is now encrypted into column country under ["individuals", "country"].`},
 		},
 		"database column renamed": {
 			before:  plan.ForMessage(nil, "individuals", base),
@@ -267,7 +263,7 @@ func TestChangesAreSortedByWhatTheyCost(t *testing.T) {
 			section: "CONTEXT CHANGES",
 			also:    []string{"OTHER CHANGES"},
 			says: []string{
-				`column medicare_num: no field writes its context "individuals/medicare_id" any more.`,
+				`column medicare_num: no field writes its context ["individuals", "medicare_id"] any more.`,
 				`with plan.Column("medicare_num"), plan.Identity("medicare_id") keeps it.`,
 			},
 		},
@@ -283,7 +279,7 @@ func TestChangesAreSortedByWhatTheyCost(t *testing.T) {
 			before:  plan.ForMessage(nil, "individuals", base),
 			after:   plan.ForMessage(nil, "individuals", plan.FirstOf(plan.When(plan.Field("id"), plan.Encrypt(plan.EQL(se.Ore)))).OrElse(base)),
 			section: "OTHER CHANGES",
-			says:    []string{`new column id, under "individuals/id", with terms [ore].`},
+			says:    []string{`new column id, under ["individuals", "id"], with terms [ore].`},
 		},
 		"facts changed": {
 			before: plan.ForMessage(nil, "individuals", base),
@@ -351,7 +347,7 @@ func TestALostContextWithNoCandidate(t *testing.T) {
 		plan.Fact{Field: "country", GoField: "Country", Number: 4, Annotations: classified("system.operations")},
 	)
 	_, err := check(path, gone, m, false, "RERUN")
-	mustContain(t, err, "CONTEXT CHANGES", `column medicare_number: no field writes its context "individuals/medicare_number" any more. If its field was renamed, pin the renamed field's rule with plan.Column("medicare_number")`)
+	mustContain(t, err, "CONTEXT CHANGES", `column medicare_number: no field writes its context ["individuals", "medicare_number"] any more. If its field was renamed, pin the renamed field's rule with plan.Column("medicare_number")`)
 }
 
 // Custom columns may share a context, so a new one under the context of
@@ -368,8 +364,8 @@ func TestSharedCustomContextIsNotARename(t *testing.T) {
 		plan.Fact{Field: "c", GoField: "C", Number: 3, Annotations: classified("user.content")},
 	), m, false, "RERUN")
 	mustContain(t, err, "OTHER CHANGES",
-		`column a is no longer written. Its context "pii/v1" is not lost, since columns b, c still write it`,
-		`new column c, under "pii/v1"`)
+		`column a is no longer written. Its context ["pii", "v1"] is not lost, since columns b, c still write it`,
+		`new column c, under ["pii", "v1"]`)
 	for _, never := range []string{"RENAME COLUMN", "CONTEXT CHANGES"} {
 		if strings.Contains(err.Error(), never) {
 			t.Errorf("failure says %q:\n%s", never, err)
@@ -393,12 +389,12 @@ func TestARenameGuessStatesTheOtherReading(t *testing.T) {
 	), m, false, "RERUN")
 	mustContain(t, err,
 		"CONTEXT CHANGES",
-		`column home_phone: no field writes its context "individuals/home_phone" any more.`,
-		`Field work_phone (WorkPhone) now writes column work_phone under "individuals/work_phone" with the same facts, so it may be the same field renamed:`,
+		`column home_phone: no field writes its context ["individuals", "home_phone"] any more.`,
+		`Field work_phone (WorkPhone) now writes column work_phone under ["individuals", "work_phone"] with the same facts, so it may be the same field renamed:`,
 		`with plan.Column("home_phone") keeps it.`,
 		"If work_phone is instead a new field and home_phone was removed, do not pin it: that would store two fields in column home_phone under one context.",
 		"OTHER CHANGES",
-		`new column work_phone, under "individuals/work_phone", with terms [none]. It is also named above as a possible rename of column home_phone.`,
+		`new column work_phone, under ["individuals", "work_phone"], with terms [none]. It is also named above as a possible rename of column home_phone.`,
 	)
 	if strings.Contains(err.Error(), "likely") {
 		t.Errorf("the guess is stated as likely:\n%s", err)
@@ -495,13 +491,13 @@ func TestSnapshotIsDeterministic(t *testing.T) {
 table individuals
 
 column email
-  context individuals/email
+  context ["individuals", "email"]
   target EQL
   terms eq match
   fact fides.data_categories user.contact.email
 
 column medicare_number
-  context individuals/medicare_number
+  context ["individuals", "medicare_number"]
   target EQL
   terms eq
   fact fides.data_categories user.government_id
@@ -524,15 +520,12 @@ func TestSnapshotRoundTrips(t *testing.T) {
 		if i%2 == 1 {
 			kind = kindCustom
 		}
-		// A plan never builds an empty context, and parse refuses one.
-		context := v
-		if context == "" {
-			context = "t/empty"
-		}
-		s.columns = append(s.columns, column{name: v + string(rune('a'+i)), context: context, kind: kind, terms: []string{"eq", "ore", "odd term"}, facts: []fact{{v, v}, {"k", v}}})
+		// Each segment is quoted, whatever it holds; a label has at least
+		// two.
+		s.columns = append(s.columns, column{name: v + string(rune('a'+i)), context: shape([]string{"t", v}), kind: kind, terms: []string{"eq", "ore", "odd term"}, facts: []fact{{v, v}, {"k", v}}})
 		s.plaintext = append(s.plaintext, plain{field: v + string(rune('a'+i)), facts: []fact{{v, "x"}}})
 	}
-	s.columns = append(s.columns, column{name: "bare", context: "t/bare", kind: kindEQL})
+	s.columns = append(s.columns, column{name: "bare", context: shape([]string{"t", "bare"}), kind: kindEQL})
 	for i := range s.columns {
 		sortFacts(s.columns[i].facts)
 	}
@@ -609,7 +602,7 @@ func TestTextOnlyAndUnreadableSnapshots(t *testing.T) {
 // parse refuses what render never writes, so a damaged snapshot falls back
 // to the plain diff rather than a summary built on a misreading.
 func TestParseRejects(t *testing.T) {
-	const col = "\ncolumn email\n  context individuals/email\n  target EQL\n  terms eq\n"
+	const col = "\ncolumn email\n  context [\"individuals\", \"email\"]\n  target EQL\n  terms eq\n"
 	for name, tc := range map[string]struct{ text, says string }{
 		"empty file":         {"", "no table line"},
 		"header only":        {header, "no table line"},
@@ -622,8 +615,23 @@ func TestParseRejects(t *testing.T) {
 			header + "\ntable individuals\n" + strings.Replace(col, "  target EQL\n", "", 1),
 			`column "email" has no context or target line`,
 		},
+		// The spelling before contexts were segments: "notes/v1" there was
+		// one text part for a Custom column, so reading it as a label
+		// would guess at the context.
+		"context as joined text": {
+			header + "\ntable individuals\n" + strings.Replace(col, `["individuals", "email"]`, "individuals/email", 1),
+			"is not a list of segments",
+		},
+		"context with a stray separator": {
+			header + "\ntable individuals\n" + strings.Replace(col, `"individuals", "email"`, `"individuals","email"`, 1),
+			`expected ", " or "]"`,
+		},
+		"context with trailing text": {
+			header + "\ntable individuals\n" + strings.Replace(col, `"email"]`, `"email"] x`, 1),
+			`expected ", " or "]"`,
+		},
 		"column without a context": {
-			header + "\ntable individuals\n" + strings.Replace(col, "  context individuals/email\n", "", 1),
+			header + "\ntable individuals\n" + strings.Replace(col, "  context [\"individuals\", \"email\"]\n", "", 1),
 			`column "email" has no context or target line`,
 		},
 	} {

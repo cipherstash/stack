@@ -1,0 +1,98 @@
+{
+  "_comment": "Records sealed by the typed Rust chain and by the data-plan lowering under one declaration (ADR-0007). Read by tests/record_lowering.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand.",
+  "key_source": {
+    "kind": "deterministic-sha256",
+    "seed": "737461636b2d656e6372797074207265636f7264206669787475726520763120"
+  },
+  "keyset_id": "00000000-0000-0000-0000-000000000000",
+  "plaintext": {
+    "age": 34,
+    "email": "bob@example.com",
+    "id": 42,
+    "notes": "likes cats"
+  },
+  "plan": {
+    "age": {
+      "context": [
+        "users",
+        "age"
+      ],
+      "outputs": [
+        "c",
+        "eq",
+        "ore"
+      ],
+      "type": "uint32"
+    },
+    "email": {
+      "context": [
+        "users",
+        "email"
+      ],
+      "outputs": [
+        "c",
+        "eq",
+        "match"
+      ],
+      "type": "string"
+    },
+    "id": {
+      "context": [
+        "users",
+        "id"
+      ],
+      "outputs": [
+        "passthrough"
+      ],
+      "type": "uint32"
+    },
+    "notes": {
+      "context": [
+        "users",
+        "notes"
+      ],
+      "outputs": [
+        "c"
+      ],
+      "type": "string"
+    }
+  },
+  "records": {
+    "lowering": {
+      "age": {
+        "c": "01000000000000000000000000000000004d5626148f77c4c6d9da0ddbdf7663a2200021162641133485216f389886cbd7c6e9b25afa0f5f166f985b23384e81ffcfac010686f7787f57b4c7a2192c3499ea1b890f9f4623d84b72b5f40266b10b7f607a41",
+        "eq": "5433335e609685a33b29c98369e68cd5d92e838aa566a3ff1df5c2d251b63885",
+        "ore": "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a126a605cbf3f1"
+      },
+      "email": {
+        "c": "0100000000000000000000000000000000b2afa77357a61488146c0edaa0246f65200043956c4f4bba857028c28165dfce9c63d904b738bbb039b6e11c805112d4a1ee01ec122b5ee8771a6a37fc17312ff3f7a56e93885e19d4bb189950aa37475eb74f63f5758c4f87a3494c5e46ff",
+        "eq": "ec534cfbf2336785378c3761ff88623c46361b2ba7c5fa83930ebacae49cf646",
+        "match": "06000d0013001d002200260029002a003000320043005a006000660068006c0077008f00960098009e00c200c500d600d900de00e300e700e900eb00ec00f200fa00"
+      },
+      "id": {
+        "passthrough": 42
+      },
+      "notes": {
+        "c": "0100000000000000000000000000000000723f7a7f14b07197168aa13bc52010b3200072a73194b45af604cc6201b5a57554b05cc7ed6ad22b9102cbcb71bd9067849601a2ae59c2cfca81b0ecde824090e2331f2c389202676855068652e9e566dfccb9a55e9973a9301c"
+      }
+    },
+    "typed_chain": {
+      "age": {
+        "c": "010000000000000000000000000000000092e427c5e176b60261add6ce80fd02df20008d231453c97fdec97a0b6559ac8f509129d20163f262d40ce5d77cf1ebe0cad501155707def46648a0c3685910bea6d3ec9c63aeb8c1e864092d47a3bd0269d135c9",
+        "eq": "5433335e609685a33b29c98369e68cd5d92e838aa566a3ff1df5c2d251b63885",
+        "ore": "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a126a605cbf3f1"
+      },
+      "email": {
+        "c": "0100000000000000000000000000000000cf92191950409f9fe82a2b11888ffc1d2000ca4d5bbafbff919af4d3a95c7cc046d632fd4c28785b238f4b6f7ea3aa08482901a3e671679e0e1ac106a28ad8a27e3ae143a6ad5c4b8280dbf6818d1bab32fa45cb0790df8551cec1c9bb3187",
+        "eq": "ec534cfbf2336785378c3761ff88623c46361b2ba7c5fa83930ebacae49cf646",
+        "match": "06000d0013001d002200260029002a003000320043005a006000660068006c0077008f00960098009e00c200c500d600d900de00e300e700e900eb00ec00f200fa00"
+      },
+      "id": {
+        "passthrough": 42
+      },
+      "notes": {
+        "c": "0100000000000000000000000000000000562a41e032316ff2d1264a9e9f5c3b842000de33c8d1f2caaab8b90f691161a57eeb1328f7f1c9b5be76dec83e8a53765f11015924202425d1e3be9754306c2e290e350232d5b5623190ebcc69feb55fb566fe4b4db024f1ebcc"
+      }
+    }
+  }
+}

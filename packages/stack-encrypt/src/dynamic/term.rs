@@ -19,9 +19,9 @@ use vitaminc_aead_value::FfiValue;
 use vitaminc_protected::{Controlled, OpaqueDebug, Protected};
 use zeroize::Zeroizing;
 
-use super::{utf8, Error};
+use super::{utf8, Error, Value};
 use crate::sem::{CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch, MatchOptions, Tokenizer};
-use crate::target::IndexSpec;
+use crate::target::{chosen, CallerContext, ConsumeSource, Encryption, Index, IndexSpec, Pending};
 use crate::{IntoPrfContext, KeysetCipher, NonEmpty};
 
 /// The runtime half of [`IndexSpec`]: the domain table, and the index's wire
@@ -271,6 +271,11 @@ impl Scalar {
 /// # }).unwrap();
 /// ```
 ///
+/// The derivation is `scalar_term`'s, the one dispatch from a runtime
+/// scalar to the typed term operation; the record path runs the same
+/// dispatch as an [`Index`] of a [`Value`] field. It is local to the keyset
+/// cipher, so the await settles a pending that has nothing to request.
+///
 /// # Errors
 ///
 /// [`Error::Term`] if the scheme defines no such term for the scalar
@@ -284,39 +289,93 @@ pub async fn term<'c, K, D>(
     context: NonEmpty<D>,
 ) -> Result<Vec<u8>, Error>
 where
-    K: DataKeySource + Sync,
+    K: DataKeySource + Sync + 'static,
     D: IntoPrfContext<'c>,
 {
-    match kind {
-        IndexSpec::Equality => equality(cipher, scalar, context).await,
-        IndexSpec::Match(options) => match_term(cipher, scalar, options, context).await,
-        IndexSpec::Ore => ore_of(cipher, scalar, context).await,
-        IndexSpec::Ope => ope_of(cipher, scalar, context).await,
+    scalar_term(cipher, scalar, kind, context)?
+        .await
+        .map(TermBytes::into_bytes)
+        .map_err(Error::Cipher)
+}
+
+/// An index term in its frozen byte encoding, as a binding stores and
+/// compares it: the raw 32 PRF bytes of an equality term, a match term's
+/// positions, the raw CLLW bytes of an ORE or OPE term (see
+/// [`sem`](crate::sem)'s byte encodings).
+///
+/// The term type of [`IndexSpec`]'s [`Index`] impl: a term derived through
+/// the dynamic path has no Rust term type to be, since the index was named
+/// as data, so it is its bytes. Those bytes are exactly the typed term's
+/// (`EqualityTerm::into_bytes`, `OreTerm::to_bytes`, …), which is what
+/// makes a Rust-written term and a binding's probe compare.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct TermBytes(Vec<u8>);
+
+impl TermBytes {
+    /// The bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
     }
+
+    /// The bytes, owned.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.0
+    }
+}
+
+impl AsRef<[u8]> for TermBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+/// The one dispatch from a runtime scalar to a typed term operation: which
+/// arm a scalar takes decides the term's input encoding, and each arm is
+/// the operation a Rust caller would have named for that type, so the
+/// bytes are the typed path's. Nothing is requested: a term is derived by
+/// the keyset cipher's own PRF, so the pending is ready when it is built.
+///
+/// # Errors
+///
+/// [`Error::Term`] if the scheme defines no such term for the scalar.
+pub(super) fn scalar_term<'a, 'c, K: 'static, D>(
+    cipher: &'a KeysetCipher<'_, K>,
+    scalar: Scalar,
+    kind: &IndexSpec,
+    context: NonEmpty<D>,
+) -> Result<Pending<'a, TermBytes, K>, Error>
+where
+    D: IntoPrfContext<'c>,
+{
+    Ok(match kind {
+        IndexSpec::Equality => equality_of(cipher, scalar, context)?,
+        IndexSpec::Match(options) => match_of(cipher, scalar, options, context)?,
+        IndexSpec::Ore => ore_of(cipher, scalar, context),
+        IndexSpec::Ope => ope_of(cipher, scalar, context),
+    })
+}
+
+fn equality_bytes(term: crate::sem::EqualityTerm) -> TermBytes {
+    TermBytes(term.into_bytes().to_vec())
 }
 
 /// [`IndexSpec::Equality`] per scalar: one PRF block over the value, for
 /// every integer width, text and bytes.
-async fn equality<'c, K, D>(
-    cipher: &KeysetCipher<'_, K>,
+fn equality_of<'a, 'c, K: 'static, D>(
+    cipher: &'a KeysetCipher<'_, K>,
     scalar: Scalar,
     context: NonEmpty<D>,
-) -> Result<Vec<u8>, Error>
+) -> Result<Pending<'a, TermBytes, K>, Error>
 where
-    K: DataKeySource + Sync,
     D: IntoPrfContext<'c>,
 {
     let term = match scalar {
-        Scalar::I32(v) => cipher.equality_term(v, context).await,
-        Scalar::I64(v) => cipher.equality_term(v, context).await,
-        Scalar::U32(v) => cipher.equality_term(v, context).await,
-        Scalar::U64(v) => cipher.equality_term(v, context).await,
-        Scalar::Text(t) => cipher.equality_term(String::clone(&t), context).await,
-        Scalar::Bytes(b) => {
-            cipher
-                .equality_term(Protected::new(Vec::clone(&b)), context)
-                .await
-        }
+        Scalar::I32(v) => cipher.equality_term(v, context),
+        Scalar::I64(v) => cipher.equality_term(v, context),
+        Scalar::U32(v) => cipher.equality_term(v, context),
+        Scalar::U64(v) => cipher.equality_term(v, context),
+        Scalar::Text(t) => cipher.equality_term(String::clone(&t), context),
+        Scalar::Bytes(b) => cipher.equality_term(Protected::new(Vec::clone(&b)), context),
         // No PRF encoding is defined for floats (equality on IEEE-754
         // values is a modelling error) or booleans.
         Scalar::Bool(_) | Scalar::F32(_) | Scalar::F64(_) => {
@@ -324,29 +383,27 @@ where
                 kind: IndexSpec::Equality,
             })
         }
-    }?;
-    Ok(term.into_bytes().to_vec())
+    };
+    Ok(term.map(equality_bytes))
 }
 
 /// [`IndexSpec::Match`] per scalar: text only, under the index's options.
 /// Under the default options the bytes are the typed
 /// `match_terms::<DefaultMatch>`'s; under others, those of a
 /// [`MatchConfig`](crate::sem::MatchConfig) returning the same options.
-async fn match_term<'c, K, D>(
-    cipher: &KeysetCipher<'_, K>,
+fn match_of<'a, 'c, K: 'static, D>(
+    cipher: &'a KeysetCipher<'_, K>,
     scalar: Scalar,
     options: &MatchOptions,
     context: NonEmpty<D>,
-) -> Result<Vec<u8>, Error>
+) -> Result<Pending<'a, TermBytes, K>, Error>
 where
-    K: DataKeySource + Sync,
     D: IntoPrfContext<'c>,
 {
     match scalar {
         Scalar::Text(t) => Ok(cipher
             .match_terms_under::<DefaultMatch>(&t, context, options.clone())
-            .await
-            .map(|t| t.to_bytes())?),
+            .map(|terms| TermBytes(terms.to_bytes()))),
         _ => Err(Error::Term {
             kind: IndexSpec::Match(options.clone()),
         }),
@@ -361,87 +418,124 @@ where
 /// cloned-out `String`/`Vec<u8>` would be freed with the plaintext
 /// still in it — in a guest's linear memory, where the host can read
 /// it. Keeping the wrapper costs nothing and saves the copy as well.
-async fn ore_of<'c, K, D>(
-    cipher: &KeysetCipher<'_, K>,
+fn ore_of<'a, 'c, K: 'static, D>(
+    cipher: &'a KeysetCipher<'_, K>,
     scalar: Scalar,
     context: NonEmpty<D>,
-) -> Result<Vec<u8>, Error>
+) -> Pending<'a, TermBytes, K>
 where
-    K: DataKeySource + Sync,
     D: IntoPrfContext<'c>,
 {
     match scalar {
-        Scalar::Bool(v) => ore(cipher, v, context).await,
-        Scalar::I32(v) => ore(cipher, v, context).await,
-        Scalar::I64(v) => ore(cipher, v, context).await,
-        Scalar::U32(v) => ore(cipher, v, context).await,
-        Scalar::U64(v) => ore(cipher, v, context).await,
-        Scalar::F32(v) => ore(cipher, v, context).await,
-        Scalar::F64(v) => ore(cipher, v, context).await,
-        Scalar::Text(t) => ore(cipher, t, context).await,
-        Scalar::Bytes(b) => ore(cipher, b, context).await,
+        Scalar::Bool(v) => ore(cipher, v, context),
+        Scalar::I32(v) => ore(cipher, v, context),
+        Scalar::I64(v) => ore(cipher, v, context),
+        Scalar::U32(v) => ore(cipher, v, context),
+        Scalar::U64(v) => ore(cipher, v, context),
+        Scalar::F32(v) => ore(cipher, v, context),
+        Scalar::F64(v) => ore(cipher, v, context),
+        Scalar::Text(t) => ore(cipher, t, context),
+        Scalar::Bytes(b) => ore(cipher, b, context),
     }
 }
 
 /// [`IndexSpec::Ope`] per scalar; see [`ore_of`] for why the text and bytes
 /// arms pass the wrapper.
-async fn ope_of<'c, K, D>(
-    cipher: &KeysetCipher<'_, K>,
+fn ope_of<'a, 'c, K: 'static, D>(
+    cipher: &'a KeysetCipher<'_, K>,
     scalar: Scalar,
     context: NonEmpty<D>,
-) -> Result<Vec<u8>, Error>
+) -> Pending<'a, TermBytes, K>
 where
-    K: DataKeySource + Sync,
     D: IntoPrfContext<'c>,
 {
     match scalar {
-        Scalar::Bool(v) => ope(cipher, v, context).await,
-        Scalar::I32(v) => ope(cipher, v, context).await,
-        Scalar::I64(v) => ope(cipher, v, context).await,
-        Scalar::U32(v) => ope(cipher, v, context).await,
-        Scalar::U64(v) => ope(cipher, v, context).await,
-        Scalar::F32(v) => ope(cipher, v, context).await,
-        Scalar::F64(v) => ope(cipher, v, context).await,
-        Scalar::Text(t) => ope(cipher, t, context).await,
-        Scalar::Bytes(b) => ope(cipher, b, context).await,
+        Scalar::Bool(v) => ope(cipher, v, context),
+        Scalar::I32(v) => ope(cipher, v, context),
+        Scalar::I64(v) => ope(cipher, v, context),
+        Scalar::U32(v) => ope(cipher, v, context),
+        Scalar::U64(v) => ope(cipher, v, context),
+        Scalar::F32(v) => ope(cipher, v, context),
+        Scalar::F64(v) => ope(cipher, v, context),
+        Scalar::Text(t) => ope(cipher, t, context),
+        Scalar::Bytes(b) => ope(cipher, b, context),
     }
 }
 
 /// The `AsRef<[u8]>` on the output is what turns the typed CLLW ciphertext
 /// into the frozen raw-bytes encoding.
-async fn ore<'c, K, T, D>(
-    cipher: &KeysetCipher<'_, K>,
+fn ore<'a, 'c, K: 'static, T, D>(
+    cipher: &'a KeysetCipher<'_, K>,
     value: T,
     context: NonEmpty<D>,
-) -> Result<Vec<u8>, Error>
+) -> Pending<'a, TermBytes, K>
 where
-    K: DataKeySource + Sync,
     T: CllwOreEncrypt + Send + 'static,
     T::Output: AsRef<[u8]> + Send + 'static,
     D: IntoPrfContext<'c>,
 {
-    Ok(cipher
+    cipher
         .ore_term(value, context)
-        .await
-        .map(|t| t.as_ref().to_vec())?)
+        .map(|term| TermBytes(term.as_ref().to_vec()))
 }
 
 /// See [`ore`].
-async fn ope<'c, K, T, D>(
-    cipher: &KeysetCipher<'_, K>,
+fn ope<'a, 'c, K: 'static, T, D>(
+    cipher: &'a KeysetCipher<'_, K>,
     value: T,
     context: NonEmpty<D>,
-) -> Result<Vec<u8>, Error>
+) -> Pending<'a, TermBytes, K>
 where
-    K: DataKeySource + Sync,
     T: CllwOpeEncrypt + Send + 'static,
     T::Output: AsRef<[u8]> + Send + 'static,
     D: IntoPrfContext<'c>,
 {
-    Ok(cipher
+    cipher
         .ope_term(value, context)
-        .await
-        .map(|t| t.as_ref().to_vec())?)
+        .map(|term| TermBytes(term.as_ref().to_vec()))
+}
+
+/// A dynamic error, where an operation's pending can only carry the crate's.
+fn lifted(error: Error) -> crate::Error {
+    crate::Error::Other(Box::new(error))
+}
+
+/// An [`IndexSpec`] is an [`Index`] of a [`Value`]: the index named as data,
+/// over a plaintext whose type is known only when it arrives. Its
+/// `operation` is `scalar_term`'s dispatch — the one step of the dynamic
+/// path that stays dynamic — wrapped as a description, so a field lowered
+/// from data runs through the same `indexed()` and `zip` every other field
+/// does, and its term is a [`TermBytes`]. A Rust chain over `Value` fields
+/// names its indexes this way too (`(IndexSpec::Equality, IndexSpec::Ore)`),
+/// and is then the same declaration as a data plan's.
+///
+/// A value the scheme defines no such term for (a container, a float under
+/// equality) fails the description when it runs; a plan lowered from data
+/// refuses it before that, at its boundary ([`IndexSpec::supports`]).
+impl Index<Value> for IndexSpec {
+    type Term = TermBytes;
+    fn spec(&self) -> IndexSpec {
+        self.clone()
+    }
+    fn operation<'s, K: 'static, M: ConsumeSource<'s, Value>>(
+        &self,
+    ) -> Encryption<'s, Value, TermBytes, K, CallerContext, M> {
+        let spec = self.clone();
+        chosen(move |source: M::Source, cipher, cx: CallerContext| {
+            let scalar = match Scalar::of(M::view(&source).get(), &spec) {
+                Ok(scalar) => scalar,
+                Err(error) => return Pending::failed(cipher, lifted(error)),
+            };
+            let context = match cx.validated() {
+                Ok(context) => context,
+                Err(error) => return Pending::failed(cipher, error),
+            };
+            match scalar_term(cipher, scalar, &spec, context) {
+                Ok(pending) => pending,
+                Err(error) => Pending::failed(cipher, lifted(error)),
+            }
+        })
+    }
 }
 
 #[cfg(test)]
@@ -457,6 +551,83 @@ mod tests {
             .init()
             .await
             .expect("build cipher")
+    }
+
+    /// A pair the scheme refuses fails the run of `IndexSpec`'s public
+    /// `Index<Value>` with the dynamic `Error::Term` inside the crate error,
+    /// and requests nothing: the record path refuses such a pair at its
+    /// boundary, a Rust caller running the index directly meets it here.
+    #[tokio::test]
+    async fn a_refused_pair_fails_the_index_when_it_runs() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let ctx = || CallerContext::from(nonempty!("users/age"));
+        for (what, value, kind) in [
+            (
+                "a float under equality",
+                FfiValue::Float64(1.5),
+                IndexSpec::Equality,
+            ),
+            (
+                "an integer under match",
+                FfiValue::UInt32(34),
+                default_match(),
+            ),
+            (
+                "a container under ore",
+                FfiValue::Array(vec![FfiValue::UInt32(1)]),
+                IndexSpec::Ore,
+            ),
+        ] {
+            let refused = keyset
+                .run(
+                    Index::<Value>::operation::<FakeDataKeySource, crate::target::Owned>(&kind),
+                    Value::new(value),
+                    ctx(),
+                )
+                .await;
+            match refused {
+                Err(crate::Error::Other(inner)) => assert!(
+                    matches!(
+                        inner.downcast_ref::<Error>(),
+                        Some(Error::Term { kind: refused_kind }) if *refused_kind == kind
+                    ),
+                    "{what}: the lifted error names the index: {inner:?}"
+                ),
+                other => panic!("{what}: expected the lifted Error::Term, got {other:?}"),
+            }
+        }
+    }
+
+    /// A `TermBytes` reads as the typed term's bytes, through every
+    /// accessor: `as_bytes`, `as_ref` and `into_bytes` give the same
+    /// 32 PRF bytes an `EqualityTerm` holds, for a term derived through
+    /// `IndexSpec`'s `Index<Value>`.
+    #[tokio::test]
+    async fn term_bytes_read_as_the_typed_terms_bytes() {
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let typed = keyset
+            .equality_term(34u32, nonempty!("users/age"))
+            .await
+            .expect("typed")
+            .into_bytes()
+            .to_vec();
+        assert_eq!(typed.len(), 32);
+
+        let through_value: TermBytes = keyset
+            .run(
+                Index::<Value>::operation::<FakeDataKeySource, crate::target::Owned>(
+                    &IndexSpec::Equality,
+                ),
+                Value::new(FfiValue::UInt32(34)),
+                CallerContext::from(nonempty!("users/age")),
+            )
+            .await
+            .expect("the dynamic index derives");
+        assert_eq!(through_value.as_bytes(), typed.as_slice());
+        assert_eq!(through_value.as_ref(), typed.as_slice());
+        assert_eq!(through_value.into_bytes(), typed);
     }
 
     /// A match index under the default options: what a plan's bare

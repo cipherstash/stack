@@ -373,6 +373,32 @@ impl<'s, S: 's, T: 'static, K: 'static, Ctx: 's> Encryption<'s, S, T, K, Ctx> {
     }
 }
 
+/// A description whose operation is chosen by the value it is handed, at
+/// the moment it runs: `choose` sees the source, the keyset cipher and the
+/// context, and returns the pending of whichever typed operation applies.
+///
+/// Crate-internal, and deliberately so: this is the one constructor that
+/// hands a closure the plaintext and the cipher together, which the public
+/// constructors never do. Its one caller is the `dynamic` module, where a
+/// value's type is known only at run time and the step that stays dynamic
+/// is dispatching a runtime scalar to the typed term operation a Rust
+/// caller would have named. Everything else about the field (its context,
+/// its place in the record, its batching) is the engine's, as for any other
+/// description.
+#[cfg(feature = "dynamic")]
+pub(crate) fn chosen<'s, S: 's, T: 'static, K: 'static, Ctx: 's, M: SourceMode<'s, S>, G>(
+    choose: G,
+) -> Encryption<'s, S, T, K, Ctx, M>
+where
+    G: for<'a, 'k> FnOnce(M::Source, &'a KeysetCipher<'k, K>, Ctx) -> Pending<'a, T, K>
+        + MaybeSend
+        + 's,
+{
+    Encryption {
+        build: Box::new(choose),
+    }
+}
+
 /// A description that only checks the borrowed source, yielding `()` or the
 /// error without I/O. Zipped beside a record's fields, a failed check fails
 /// the whole record before any key is requested. Crate-internal: the plan

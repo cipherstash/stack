@@ -28,6 +28,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dynamic::term` take an `IndexSpec` (the last two by reference), and
   `Output` is no longer `Copy`. A plan's wire form is unchanged: a bare
   `"match"` still means the default options.
+- **`dynamic::record` is a lowering into the plan builder, not a second
+  executor** (ADR-0007). `record::encrypt` and `record::decrypt` are no
+  longer `async`: each checks and converts its input with no cipher
+  (`Error::Source`, `Error::Term`, `Error::Record`, as before) and returns
+  the plan's `Pending`, whose failure is the crate's `Error`; a typed field
+  that opens to another kind is now `Error::Plan(PlanError::FieldType)` on
+  the await rather than `dynamic::Error::Record`. `dynamic::term` asks
+  `K: 'static`. The stored record shape (`"c"` and the term keys per field)
+  is unchanged, with one addition below.
+- **A data plan field's `"context"` must be the field's label** — a list of
+  at least two plain segments (`["users", "age"]`), optionally extended by
+  scalar parts nested to the left (`[["users", "age"], 7]`) — and every
+  field of one plan must share the label's prefix and the extension, which
+  become the plan's one context and its `.extend(..)`. A bare text part
+  (`"users/age"`), an integer, bytes or a one-segment label is refused
+  (`Error::Plan`): a fields plan cannot seal a field outside the record
+  context, and the derive lost that in the same release. Two sealed or
+  indexed fields under one label are refused for the same reason the
+  builder refuses them (`PlanError::SharedIdentity`). A record a Go program
+  wrote with a `label=` tag is unaffected; one written with a `context=`
+  tag is not readable through a plan. For the same reason Go
+  `plan.Custom("notes/v1")` now binds the label `["notes", "v1"]`, not the
+  one text part `"notes/v1"`: a row written under the old form does not
+  decrypt and its terms match no query, with no error, and a one-segment
+  `Custom("ctx")` is refused. `plantest` snapshots now spell every context
+  as its segments (`context ["notes", "v1"]`), so a golden file changes on
+  regeneration and refuses the old spelling until it does; check each
+  `target Custom` column before recording it.
+- **Every data plan field seals the tagged `FfiValue` leaf, whatever its
+  `"type"`**, as every field did before; the type admits indexes and checks
+  kinds and changes no bytes, so a row written without a type opens under a
+  plan that declares one, and a binding that starts sending `"type"`
+  re-encrypts nothing. A Rust `u32` or `String` field under the same label
+  derives the same terms as the data field but a different leaf, and the
+  two leaves cannot be told apart by inspection (a bare string that begins
+  with U+000A is a valid tagged string), so the lowering does not choose an
+  encoding from the type and a Rust record whose rows a binding must open
+  declares `dynamic::Value` fields, which are the same declaration as a data
+  plan's. One leaf encoding for both authors, or the encoding bound into
+  the leaf's context so the wrong reader fails closed, is a change to the
+  Rust chain's bytes, tracked in #1118.
+- `dynamic::Output` gains `Passthrough` (the wire key `"passthrough"`). The
+  enum is exhaustive on purpose, so a match over it must name the variant.
+- `target::DeclaredContext` holds several extension parts: `with(part)`
+  appends one, and `under` nests them to the left as `NonEmpty::with` does.
+  One part behaves exactly as before.
 - **`stack-encrypt-derive`: a field-level `#[stash(context = "..")]` is
   removed on every derive form** (0.2.0 accepted it). On a `plaintext = T`
   record, remove it: all outputs of the record share the caller's context. On
@@ -98,6 +144,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Decryption` held in a variable.
 - A dynamic plan's match index can carry options, as
   `{"match": {"tokenizer", "downcase", "k", "m"}}`.
+- A dynamic plan field may be carried through: `"outputs": ["passthrough"]`
+  stores the value as it is under the `"passthrough"` key, unsealed and
+  unauthenticated, and it comes back from `decrypt`.
+- `dynamic::Value`: an `FfiValue` as a plan field's plaintext, `Clone` by
+  deep copy into fresh `Protected` payloads, so the borrowed engine can
+  consume it. `dynamic::TermBytes`: a term as its frozen bytes.
+- `IndexSpec` implements `Index<Value>`, with `TermBytes` as its term, so
+  an index named as data runs through `indexed()` like an index named as a
+  type, from a data plan or from a Rust chain over `Value` fields. `Vec<I>`
+  implements
+  `Indexes<S>` for any `I: Index<S>`: an index set sized at run time, whose
+  terms are a `Vec`; an empty one is refused when it runs
+  (`PlanError::EmptyIndexes`).
+- `tests/fixtures/record_lowering.json`: records a Rust chain over `Value`
+  fields and the data-plan lowering each sealed under one declaration, with
+  their term bytes, under a deterministic key source;
+  `tests/record_lowering.rs` opens each with the other. The fixture is the
+  proof that the two are one engine (ADR-0007), and a Go test can read it
+  later.
 - A dynamic plan field may declare its type, as `"type": "<kind>"`. The
   vocabulary is vitaminc's `ValueKind` (re-exported as
   `dynamic::ValueKind`), not a new enum, so this crate now needs vitaminc

@@ -75,6 +75,11 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
         // A context that renders past ZeroKMS's descriptor limit is the
         // caller's input, refused before any request is sent.
         stack_encrypt::Error::DescriptorTooLong { .. } => STATUS_ENCODING,
+        // A plan refusal — a value or stored record that does not fit the
+        // plan it is run with, a typed field opened to another kind — is a
+        // statement about the caller's input, raised by the engine the
+        // record exports run their plans through.
+        stack_encrypt::Error::Plan(_) => STATUS_ENCODING,
         _ => STATUS_INTERNAL,
     }
 }
@@ -293,6 +298,16 @@ mod tests {
         assert_eq!(
             status_for_error(&stack_encrypt::Error::Kms(stack_kms::Error::Auth(err))),
             STATUS_KMS_UNAUTHORIZED
+        );
+    }
+
+    #[test]
+    fn a_plan_refusal_is_the_callers_input() {
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::Plan(
+                stack_encrypt::PlanError::NoContext
+            )),
+            STATUS_ENCODING
         );
     }
 

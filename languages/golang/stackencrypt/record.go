@@ -28,15 +28,16 @@ import (
 //	    Notes string `stash:"label=users/notes"`                // sealed only
 //	}
 //
-// Options are comma-separated: the field's own context as either
-// `label=<table>/<column>` (a [Label], parsed with [ParseLabel]) or
-// `context=<part>` (one arbitrary text part, as [NewContext] makes it, what
-// a Rust `#[stash(context = "..")]` literal binds) — exactly one of the two,
-// required for a planned field; see [FieldPlan.Context] — `index=<kind>[;<kind>]`
-// (eq, match, ore, ope), and `name=<wire name>` (the record key; the Go
-// field name otherwise). A field tagged `-` or `plain`, or not tagged at
-// all, is not part of the record: it never crosses the boundary, and stays
-// the caller's to store. Unexported fields are ignored.
+// Options are comma-separated: the field's label, `label=<table>/<column>`
+// (a [Label] of at least two plain segments, parsed with [ParseLabel]),
+// required for a planned field — see [FieldPlan.Context]; `index=<kind>[;<kind>]`
+// (eq, match, ore, ope); and `name=<wire name>` (the record key; the Go
+// field name otherwise). The `context=<part>` option, which named one text
+// part as the field's whole context, is refused: the guest seals every
+// field under the record's one context and the field's own identity, and a
+// one-part context has neither. A field tagged `-` or `plain`, or not
+// tagged at all, is not part of the record: it never crosses the boundary,
+// and stays the caller's to store. Unexported fields are ignored.
 //
 // The same plan, built by hand. Each field's context is a [Label], the
 // table and the column; [ParseLabel] refuses a name that would not render
@@ -68,9 +69,9 @@ import (
 //
 // Every planned field is sealed (the `"c"` output). What the guest receives
 // is the same object whichever way the plan was built. The context each
-// field binds is the plan's part, extended by [ExtendContext] parts exactly
-// as the Rust derive extends a field's context by the caller's:
-// NewContext(part).With(p1).With(p2).
+// field binds is its label, extended by [ExtendContext] parts exactly as a
+// Rust chain's .extend(..) extends a field's label:
+// label.Context().With(p1).With(p2).
 
 // EncryptedField is one field's outputs from EncryptRecords: the sealed
 // ciphertext and whichever index terms the plan asked for (nil otherwise).
@@ -210,17 +211,21 @@ type FieldPlan struct {
 	// Name is the record key the field's outputs are stored under: the
 	// column name, in EQL terms. Field when empty.
 	Name string
-	// Context is the field's own encryption context; the record call
-	// extends it by any ExtendContext parts. Required.
+	// Context is the field's label: the context it is sealed and indexed
+	// under, before the record call extends it by any ExtendContext parts.
+	// Required.
 	//
-	// A field stored in a database is named by a [Label] — a table and a
+	// It is a [Label] of at least two plain segments — a table and a
 	// column, ParseLabel("users/age") then .Context(): the pair ["users", "age"]
 	// a Rust `#[derive(EncryptFrom)]` with `struct = .., context = "users"`
 	// binds its `age` field under, rendering the ZeroKMS descriptor
-	// users/age. Any other context is one [NewContext] makes: an arbitrary
-	// part, what a Rust `#[stash(context = "..")]` literal binds, rendered
-	// escaped if it would read as something else. A probe for the field
-	// ([Cipher.Term]) takes the same Context, so the two cannot drift.
+	// users/age. Nothing else: the guest lowers a record plan into one
+	// context per record (the label's leading segments) with one identity
+	// per field (its last), so a one-part context ([NewContext]), a
+	// one-segment label, a byte or integer part, and a Context already
+	// extended with [Context.With] are refused by [NewPlan], naming the
+	// field. A probe for the field ([Cipher.Term]) takes the same Context,
+	// so the two cannot drift.
 	Context Context
 	// Terms lists the terms to derive beside the ciphertext, in order.
 	Terms []TermKind
@@ -260,10 +265,18 @@ func (f planField) outputs() []string {
 }
 
 // NewPlan validates the fields and returns the plan. Every field needs a
-// Field and a non-zero Context; Go field names must be unique, and so must record
+// Field and a Context that is a label of at least two plain segments (see
+// [FieldPlan.Context]); Go field names must be unique, and so must record
 // names (Name, or Field); Terms must be kinds this package defines, each
-// at most once per field. A plan is built once and reused across calls,
-// like the type it describes.
+// at most once per field. These are the rules the guest holds a plan to
+// when a record call runs, checked here so a mistake is found when the plan
+// is built. Two rules stay with the call: every field of a plan must sit
+// under one table (the label's leading segments), as a Rust chain's
+// `Plan::context(table).fields()` does, and no two fields may bind one
+// label, since they would share a context and their terms would be
+// interchangeable; a plan that breaks either is refused by the record call
+// that runs it. A plan is built once and reused across calls, like the type
+// it describes.
 func NewPlan(fields ...FieldPlan) (Plan, error) {
 	p, err := newPlan(fields)
 	if err != nil {
@@ -291,6 +304,9 @@ func newPlan(fields []FieldPlan) (Plan, error) {
 		seenField[f.Field] = true
 		if f.Context.isZero() {
 			return Plan{}, fmt.Errorf("plan field %s: a planned field needs a context", f.Field)
+		}
+		if _, err := f.Context.fieldLabel(); err != nil {
+			return Plan{}, fmt.Errorf("plan field %s: context %w", f.Field, err)
 		}
 		pf := planField{field: f.Field, name: f.Field, context: f.Context}
 		if f.Name != "" {
@@ -354,7 +370,7 @@ func PlanFromTags(t reflect.Type) (Plan, error) {
 			continue
 		}
 		pf := FieldPlan{Field: f.Name, Name: f.Name}
-		var ownKey string // the option that set pf.Context, for the message on a second one
+		var ownKey, ownValue string // the option that set pf.Context, for the message on a second one
 		for _, opt := range strings.Split(tag, ",") {
 			key, value, _ := strings.Cut(opt, "=")
 			switch key {
@@ -362,7 +378,7 @@ func PlanFromTags(t reflect.Type) (Plan, error) {
 				if ownKey != "" {
 					return Plan{}, fmt.Errorf("stackencrypt: field %s.%s: %s= and %s= both given; a field has one own context", t, f.Name, ownKey, key)
 				}
-				ownKey = key
+				ownKey, ownValue = key, value
 				var err error
 				if key == "label" {
 					var l Label
@@ -391,6 +407,12 @@ func PlanFromTags(t reflect.Type) (Plan, error) {
 			default:
 				return Plan{}, fmt.Errorf("stackencrypt: field %s.%s: unknown stash tag option %q", t, f.Name, opt)
 			}
+		}
+		// Checked after the options so a repeated or doubled option is
+		// reported as what the author wrote; NewPlan would refuse the one
+		// part too, but this names the tag to use instead.
+		if ownKey == "context" {
+			return Plan{}, fmt.Errorf("stackencrypt: field %s.%s: context=%q names one text part, which a planned field cannot bind; use label=<table>/<column>", t, f.Name, ownValue)
 		}
 		fields = append(fields, pf)
 	}

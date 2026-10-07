@@ -375,7 +375,7 @@ macro_rules! single_index {
         }
     )+};
 }
-single_index!([] Equality, [O] Match<O>, [] Ore, [] Ope);
+single_index!([] Equality, [O] Match<O>, [] Ore, [] Ope, [] IndexSpec);
 
 /// A tuple of indexes: each index's operation, zipped left to right, and the
 /// nested pairs `zip` builds flattened back into one tuple of terms.
@@ -423,6 +423,39 @@ mod tuples {
         (A 0, B 1, C 2) => ((A, B), C),
         (A 0, B 1, C 2, D 3) => (((A, B), C), D),
         (A 0, B 1, C 2, D 3, E 4) => ((((A, B), C), D), E),
+    }
+}
+
+/// A set of indexes whose size is known only at run time: what a plan
+/// lowered from data holds, where the indexes arrive as a list rather than
+/// a tuple. The terms come out as a `Vec`, one per index, in order.
+///
+/// A `Vec` cannot be refused for being empty at compile time as `()` is, so
+/// an empty one is refused when it runs, with
+/// [`PlanError::EmptyIndexes`](crate::PlanError::EmptyIndexes), before any
+/// key is requested: a field declared indexed derives at least one term.
+/// [`select`](Indexes::select) is not available on a `Vec`; a binding
+/// answers a query by index key, through its own `Index` impl.
+impl<S, I: Index<S>> Indexes<S> for Vec<I> {
+    type Terms = Vec<I::Term>;
+    fn specs(&self) -> Vec<IndexSpec> {
+        self.iter().map(Index::spec).collect()
+    }
+    fn operations<'s, K: 'static, M>(&self) -> Encryption<'s, S, Self::Terms, K, CallerContext, M>
+    where
+        S: 's,
+        M: ConsumeSource<'s, S> + ShareSource<'s, S>,
+    {
+        let mut indexes = self.iter();
+        let Some(first) = indexes.next() else {
+            return Encryption::failed(crate::PlanError::EmptyIndexes.into());
+        };
+        indexes.fold(first.operation().map(|term| vec![term]), |terms, index| {
+            terms.zip(index.operation()).map(|(mut terms, term)| {
+                terms.push(term);
+                terms
+            })
+        })
     }
 }
 

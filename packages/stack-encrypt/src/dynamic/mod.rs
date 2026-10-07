@@ -20,35 +20,44 @@
 //!
 //! * [`context`](context()) — an [`FfiValue`] read as an encryption context.
 //! * [`term`](term()) — one index term for a value, dispatched on its variant.
-//! * [`record`] — the runtime form of `#[derive(EncryptFrom)]`: a *plan*
-//!   says per field what context to bind and what outputs to produce, and
-//!   the whole call seals from one batched key request.
+//! * [`record`] — a fields plan spelled as data, *lowered* into the plan
+//!   builder ([`Plan`](crate::Plan)) and run by the engine: the same code a
+//!   Rust chain and the derive run, so a record written from any language
+//!   is the same bytes (ADR-0007). The one step that stays dynamic is
+//!   dispatching a value whose type is known only at run time to the typed
+//!   term operation, which [`IndexSpec`]'s `Index` impls do.
+//! * [`Value`] — an [`FfiValue`] as a plan field's plaintext, the type of
+//!   every field lowered from data; [`TermBytes`] — the term such a field
+//!   derives, as its frozen bytes.
 //! * [`Scope`] — which cipher an opening operation decrypts through.
 //!
 //! # What is not here
 //!
 //! Encrypting a whole value is not: [`FfiValue`] implements `Encrypt`
 //! already, so `keyset.encrypt(value, aad)` is the whole of it and needs
-//! nothing from this module.
+//! nothing from this module. Nor is a second executor: nothing here calls
+//! the term functions or the seal path to produce a record. A capability a
+//! data plan needs and the builder lacks is added to the builder, once.
 //!
 //! # Stability
 //!
 //! The output keys this module spells (`"c"`, `"eq"`, `"match"`, `"ore"`,
-//! `"ope"`) are **wire format**, not just API: they are map keys in stored
-//! ciphertext, so a row written under one spelling is read under the same
-//! spelling or not at all. They are fixed here so that bindings in different
-//! languages agree on them by construction rather than by each re-deriving
-//! them. Their long-term home is beside vitaminc's frozen tag table, which
-//! already owns this class of constant.
+//! `"ope"`, `"passthrough"`) are **wire format**, not just API: they are map
+//! keys in stored ciphertext, so a row written under one spelling is read
+//! under the same spelling or not at all. They are fixed here so that
+//! bindings in different languages agree on them by construction rather
+//! than by each re-deriving them. Their long-term home is beside vitaminc's
+//! frozen tag table, which already owns this class of constant.
 //!
 //! A plan field's `"type"` names (`"int64"`, `"string"`, …) are wire format
 //! in the same way: a binding spells them, and a stored row opens only under
 //! the type it was sealed as. They are not this crate's: a declared type is
 //! vitaminc's [`ValueKind`], re-exported here, whose names vitaminc freezes
 //! beside its tag table. This crate adds only what a kind means to an index
-//! ([`admits`]) and to a query value ([`read`]). A field without `"type"` is
-//! dispatched on each value's own tag; that is transitional, and
-//! [`record::plan`] says until when.
+//! ([`admits`]) and to a query value ([`read`]); it decides nothing about
+//! the bytes ([`record`]). A field without `"type"` is dispatched on each
+//! value's own tag; that is transitional, and [`record::plan`] says until
+//! when.
 //!
 //! For the same reason the enums that spell them — [`Output`],
 //! [`IndexSpec`] and [`ValueKind`] — are *not* `#[non_exhaustive]`, against this workspace's
@@ -60,13 +69,15 @@ mod context;
 mod kind;
 pub mod record;
 mod term;
+mod value;
 
 use std::fmt;
 
 pub use context::{borrowed, context};
 pub use kind::{admits, read};
 pub use record::{FieldPlan, Output, Plan};
-pub use term::{term, Scalar};
+pub use term::{term, Scalar, TermBytes};
+pub use value::Value;
 /// vitaminc's language-neutral value tree — the runtime value every binding
 /// funnels through. Its transport codec is `vitaminc_aead_value::transport`,
 /// which stays the binding's: this crate takes and returns values, never
@@ -129,13 +140,13 @@ fn utf8(s: &vitaminc_aead_value::Utf8String) -> Option<&str> {
 /// The split that matters to a caller is malformed input versus something
 /// else: every variant but [`Cipher`](Error::Cipher) and
 /// [`Internal`](Error::Internal) is a statement about the value or the
-/// request, decided before any key is minted or retrieved — save one: a
-/// typed field's opened value is checked against its declared type once it
-/// is open (the type tag is inside the AEAD envelope), and a mismatch is
-/// still [`Record`](Error::Record), a statement about the stored data. `Cipher` is the
+/// request, decided before any key is minted or retrieved. `Cipher` is the
 /// operation failing; `Internal` is this module's own bug. A binding maps
 /// them to its own status codes on those lines, and must not report
-/// `Internal` as the caller's fault.
+/// `Internal` as the caller's fault. The record path's operations hand back
+/// the engine's [`Pending`](crate::Pending), whose failure is the crate's
+/// [`Error`](crate::Error); a [`Plan`](crate::Error::Plan) failure there is
+/// again a statement about the caller's data.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum Error {
@@ -161,7 +172,10 @@ pub enum Error {
     /// A record plan is malformed: not an object of field specs, empty,
     /// missing or duplicating an output, carrying a key that is not
     /// `"context"`, `"outputs"` or `"type"`, naming a type that is not one,
-    /// or asking for an index its declared type is not defined for.
+    /// asking for an index its declared type is not defined for, giving a
+    /// field a context that is not a label a fields plan can seal it under,
+    /// or declaring what the plan builder refuses (two fields under one
+    /// identity, fields under different contexts).
     #[error("record plan is malformed")]
     Plan,
 
@@ -176,10 +190,14 @@ pub enum Error {
 
     /// A stored record does not fit its plan: not a map (or a sequence of
     /// them), a ciphertext-bearing field that is absent or given twice, or
-    /// has no `"c"` node or two of them, a repeated map key under `"c"`, or
-    /// a passthrough under `"c"` — which would hand back unauthenticated
-    /// bytes as if they had been opened — or a typed field that opens to a
-    /// value of another type than it declares.
+    /// has no `"c"` node or two of them, a repeated map key under `"c"`, a
+    /// passthrough under `"c"` — which would hand back unauthenticated
+    /// bytes as if they had been opened — or a passthrough field that is
+    /// absent, carries no `"passthrough"` node, or carries a value of
+    /// another type than it declares. A sealed field that opens to a value
+    /// of another type than it declares fails the pending instead
+    /// ([`PlanError::FieldType`](crate::PlanError::FieldType)): the type tag
+    /// is inside the AEAD envelope.
     #[error("stored record does not fit the plan")]
     Record,
 
