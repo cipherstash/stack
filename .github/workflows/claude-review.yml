@@ -97,7 +97,7 @@ jobs:
 
       - name: Review pull request
         id: claude-review
-        uses: anthropics/claude-code-action@bf38e86e58df9ebf3420326d019f955bb3be64dd # v1.0.225
+        uses: anthropics/claude-code-action@12dd8d74c712f5f3669365b2369b558c495b1104 # v1.0.238
         with:
           # Without this the action trades the job's OIDC token for a Claude
           # GitHub App installation token with write access to contents, pull

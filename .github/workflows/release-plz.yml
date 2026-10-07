@@ -176,7 +176,7 @@ jobs:
           git_tag_gpgsign: true
 
       - name: Run release-plz release
-        uses: release-plz/action@8e61445f0b34e7c6d985255f2f1f05a36eb350dc # v0.5
+        uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5
         with:
           command: release
           # Required here and absent upstream: a composite action's steps do not
@@ -270,7 +270,7 @@ jobs:
           git_tag_gpgsign: true
 
       - name: Run release-plz release (root workspace)
-        uses: release-plz/action@8e61445f0b34e7c6d985255f2f1f05a36eb350dc # v0.5
+        uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5
         with:
           command: release
           manifest_path: Cargo.toml
