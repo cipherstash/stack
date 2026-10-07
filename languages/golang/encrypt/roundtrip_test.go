@@ -142,11 +142,14 @@ func TestExtendIsPartOfTheIdentity(t *testing.T) {
 	if ext[1].Email.Equality.Equal(plain[1].Email.Equality) || ext[1].Email.Equality.Equal(other[1].Email.Equality) {
 		t.Error("terms under different extensions are equal")
 	}
-	if _, err := testusers.Decrypt(ctx, cipher, ext); err == nil {
-		t.Fatal("an extended record opened without its extension")
+	// A wrong context is refused by the key source as ZeroKMS refuses it,
+	// with HTTP 403: the deterministic source reports the same
+	// ErrForbidden the live suite asserts, so the two suites agree.
+	if _, err := testusers.Decrypt(ctx, cipher, ext); !errors.Is(err, encrypt.ErrForbidden) {
+		t.Fatalf("an extended record without its extension: %v, want ErrForbidden", err)
 	}
-	if _, err := testusers.Decrypt(ctx, tenant8, ext); err == nil {
-		t.Fatal("an extended record opened under another extension")
+	if _, err := testusers.Decrypt(ctx, tenant8, ext); !errors.Is(err, encrypt.ErrForbidden) {
+		t.Fatalf("an extended record under another extension: %v, want ErrForbidden", err)
 	}
 	back, err := testusers.Decrypt(ctx, tenant7, ext)
 	if err != nil || back[1].Email != "bob@example.com" {

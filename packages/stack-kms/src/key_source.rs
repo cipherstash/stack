@@ -285,7 +285,9 @@ mod deterministic {
 
     use sha2::{Digest, Sha256};
     use uuid::Uuid;
-    use zerokms_protocol::{IdentifiedBy, UnverifiedContext};
+    use zerokms_protocol::{
+        IdentifiedBy, UnverifiedContext, ViturRequestError, ViturRequestErrorKind,
+    };
 
     use super::fake::FakeDataKeySource;
     use super::{DataKeySource, IndexKeySource};
@@ -303,8 +305,13 @@ mod deterministic {
     /// renders it. `retrieve_keys` re-derives the key and the tag from what
     /// the leaf stores and refuses a tag that is not this descriptor's, so a
     /// leaf opened under another field's label is refused as ZeroKMS would
-    /// refuse it. The index key is [`FakeDataKeySource`]'s, deterministic per
-    /// keyset, so terms are the terms every other test derives.
+    /// refuse it — and with the same classification: a forbidden request
+    /// ([`RetrieveKeyError::RequestFailed`] of kind
+    /// [`ViturRequestErrorKind::Forbidden`], ZeroKMS's HTTP 403), not a
+    /// missing key. A test that asserts the error of a wrong-context open
+    /// against this source therefore asserts what production reports. The
+    /// index key is [`FakeDataKeySource`]'s, deterministic per keyset, so
+    /// terms are the terms every other test derives.
     ///
     /// A test double, not a cipher: the derivation is SHA-256 over
     /// concatenated parts and models nothing of ZeroKMS beyond determinism.
@@ -377,8 +384,12 @@ mod deterministic {
                     let iv: crate::Iv = *payload.iv.as_ref();
                     let tag = self.derive("tag", payload.descriptor, &iv);
                     if tag[..] != *payload.tag {
-                        return Err(Error::RetrieveKey(RetrieveKeyError::FailedRetrieval(
-                            "the tag is not this descriptor's".to_string(),
+                        return Err(Error::RetrieveKey(RetrieveKeyError::RequestFailed(
+                            ViturRequestError::new(
+                                ViturRequestErrorKind::Forbidden,
+                                "the data key is bound to another context",
+                                WrongContext,
+                            ),
                         )));
                     }
                     let key = self.derive("key", payload.descriptor, &iv);
@@ -396,6 +407,19 @@ mod deterministic {
             self.index.load_index_key(keyset_id).await
         }
     }
+
+    /// The error behind the forbidden request: what ZeroKMS's 403 stands
+    /// for here, a tag derived under one descriptor presented with another.
+    #[derive(Debug)]
+    struct WrongContext;
+
+    impl std::fmt::Display for WrongContext {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("the tag is not this descriptor's")
+        }
+    }
+
+    impl std::error::Error for WrongContext {}
 }
 
 #[cfg(feature = "test-support")]
@@ -435,6 +459,52 @@ mod tests {
             Err(other) => panic!("{what}: expected FailedRetrieval, got {other:?}"),
             Ok(_) => panic!("{what}: expected rejection, got a key"),
         }
+    }
+
+    /// The deterministic source refuses a key retrieved under another
+    /// descriptor the way ZeroKMS does, as a forbidden request, so the Go
+    /// hermetic suite and the live suite assert one error for a wrong
+    /// context.
+    #[tokio::test]
+    async fn deterministic_wrong_descriptor_is_forbidden_not_missing() {
+        use zerokms_protocol::ViturRequestErrorKind;
+        let src = DeterministicSource::new([7u8; 32]);
+        let dk = src
+            .generate_keys(
+                vec![GenerateKeyPayload::new("users/email", Cow::Owned(vec![]))],
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .remove(0);
+        let result = src
+            .retrieve_keys(
+                vec![RetrieveKeyPayload::new(dk.key.iv, "users/notes", &dk.tag)],
+                None,
+                None,
+            )
+            .await;
+        match result {
+            Err(Error::RetrieveKey(RetrieveKeyError::RequestFailed(e))) => {
+                assert!(
+                    matches!(e.kind, ViturRequestErrorKind::Forbidden),
+                    "{:?}",
+                    e.kind
+                )
+            }
+            other => panic!("expected a forbidden request, got {other:?}"),
+        }
+        // Under its own descriptor the key comes back.
+        let keys = src
+            .retrieve_keys(
+                vec![RetrieveKeyPayload::new(dk.key.iv, "users/email", &dk.tag)],
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(keys[0].key, dk.key.key);
     }
 
     #[tokio::test]
