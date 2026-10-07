@@ -161,7 +161,7 @@ const EXPECTED_ASYMMETRIES = new Map([
     // not unchecked: `eql-workflow-filters.test.mjs` compares it against the
     // `relevant:` filter in the `changes` job, which is the second copy of the
     // same list and the one this file cannot see.
-    'pull_request is deliberately unfiltered (per-job relevance instead), so PRs run a superset of what push runs; the push list is compared against the `changes` job filter by eql-workflow-filters.test.mjs',
+    'pull_request is deliberately unfiltered (per-job path gates instead), so every PR starts the workflow; the push list is compared against the `changes` job `relevant:` filter by eql-workflow-filters.test.mjs',
   ],
   [
     '.github/workflows/bench-eql.yml',

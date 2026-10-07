@@ -81,8 +81,9 @@ on:
     # surface removed in 3.0.0. All four were missing from all three copies of
     # this list, so a push to main touching only docs started no run of this
     # workflow at all — `pull_request` was unaffected, because it applies no
-    # `paths:` filter and `docs-static` is deliberately not relevance-gated.
-    # Derived rather than remembered now: the second half of
+    # `paths:` filter and `docs-static` was never gated on this list. (It is
+    # gated on the `changes` job's wider `eql:` filter, which selects the whole
+    # subtree.) Derived rather than remembered now: the second half of
     # `scripts/__tests__/eql-workflow-filters.test.mjs` walks each `mise run`
     # out to the paths the task names and fails on any this list does not select.
     paths:
@@ -149,13 +150,18 @@ concurrency:
 
 jobs:
   # Runs on EVERY event and MUST always succeed (never skipped, never failed) —
-  # downstream heavy jobs `needs: [changes]`, and a skipped/failed `changes`
+  # every gated job `needs: [changes]`, and a skipped/failed `changes`
   # would either skip the merge-queue matrix or deadlock `ci-required`.
+  #
+  # Two outputs. `relevant` gates the heavy jobs. `eql` gates the three cheap
+  # ones (`docs-static`, `doc-anchors`, `known-failures`), which read more of
+  # the subtree than `relevant` selects. See the filter step below.
   changes:
     name: "Detect relevant changes"
     runs-on: blacksmith-16vcpu-ubuntu-2204
     outputs:
       relevant: ${{ steps.r.outputs.relevant }}
+      eql: ${{ steps.r.outputs.eql }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -186,11 +192,37 @@ jobs:
           # reading as coverage).
           #
           # The four documentation entries are inputs to `docs-static` and
-          # `doc-anchors`, neither of which is relevance-gated, so this copy
-          # does not strictly need them. It carries them because the three
-          # copies are held EQUAL — see the note above the `push` list, and the
-          # reasoning on `bench-eql.yml`'s own filter for why equal beats
-          # minimal.
+          # `doc-anchors`, which are gated on `eql:` rather than on this list,
+          # so this copy does not strictly need them. It lists them because the
+          # three copies are kept EQUAL — see the note above the `push` list,
+          # and the reasoning on `bench-eql.yml`'s own filter for why equal
+          # beats minimal.
+          #
+          # `eql:` is a SECOND question, not a fourth copy of the list, and the
+          # parity check reads `relevant:` alone. It gates `docs-static`,
+          # `doc-anchors` and `known-failures`, which read more of the subtree
+          # than `relevant:` selects: `test:public_identifiers` runs `git grep`
+          # over every tracked file under `packages/eql/`, and
+          # `test:doc-anchors` reads every tracked `*.md` file there
+          # (`AGENTS.md`, `CHANGELOG.md`, `DEVELOPMENT.md`, …). So it takes the
+          # whole subtree, plus what the three jobs read OUTSIDE it:
+          #
+          #   * `mise.toml` and the task files its `[task_config].includes`
+          #     names. mise reads config from every parent directory, so each
+          #     job installs the root's tools (go, golangci-lint, wasm-pack)
+          #     and loads the root's tasks. Four of those task files are under
+          #     the crate globs below; `stack-guest-abi`'s is not.
+          #   * `.cargo/config.toml`, `Cargo.toml` and the five stack-* crates.
+          #     `docs:validate:source` depends on `build`, which runs
+          #     `cargo run -p eql-codegen`. cargo reads config from every parent
+          #     directory, and to resolve the EQL workspace it loads the crates
+          #     `eql-bindings` and `tests/encryption` reach by path, plus the
+          #     root manifest those crates inherit from.
+          #
+          # None of the three jobs runs `require-cs-secrets`, so it is absent.
+          # `eql-workflow-filters.test.mjs` fails if this list stops selecting
+          # any input named above; `eql-suite-ci.test.mjs` fails if it selects
+          # any other path outside the subtree.
           filters: |
             relevant:
               - ".github/workflows/test-eql.yml"
@@ -213,12 +245,24 @@ jobs:
               - "packages/stack-auth/**"
               - "packages/stack-profile/**"
               - "Cargo.toml"
+            eql:
+              - ".github/workflows/test-eql.yml"
+              - "packages/eql/**"
+              - "mise.toml"
+              - "packages/stack-guest-abi/tasks.toml"
+              - ".cargo/config.toml"
+              - "Cargo.toml"
+              - "packages/stack-encrypt/**"
+              - "packages/stack-encrypt-derive/**"
+              - "packages/stack-kms/**"
+              - "packages/stack-auth/**"
+              - "packages/stack-profile/**"
 
       # Explicit default (not `|| 'true'`, which trips GitHub's inconsistent
       # treatment of the string 'false'). push/schedule/merge_group/dispatch
       # never run the filter above — it needs a base ref that only a pull
-      # request has — so they take the default, and `push` is already narrowed
-      # by its own `on:`-level `paths:`.
+      # request has — so both outputs take the default, and `push` is already
+      # narrowed by its own `on:`-level `paths:`.
       #
       # The event arrives through `env:`, not through a `${{ }}` interpolated
       # into the body. That is what lets
@@ -229,12 +273,15 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           FILTER_RELEVANT: ${{ steps.f.outputs.relevant }}
+          FILTER_EQL: ${{ steps.f.outputs.eql }}
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "pull_request" ]; then
             echo "relevant=$FILTER_RELEVANT" >> "$GITHUB_OUTPUT"
+            echo "eql=$FILTER_EQL" >> "$GITHUB_OUTPUT"
           else
             echo "relevant=true" >> "$GITHUB_OUTPUT"
+            echo "eql=true" >> "$GITHUB_OUTPUT"
           fi
 
   # Pure bash; no checkout/toolchain. Derives the PG-version + shard fan-out
@@ -833,12 +880,19 @@ jobs:
           mise run --output prefix test:splinter --postgres "${POSTGRES_VERSION}"
 
   # Source-only SQL documentation validation (coverage + required Doxygen tags).
-  # Deliberately NOT relevance-gated: it runs on EVERY pull_request — including
-  # docs-only PRs that skip the heavy jobs — so documentation is always
-  # validated. DB-free and creds-free (the psql-backed syntax check stays in the
-  # per-version `validate` job).
+  # Gated on `eql`, not `relevant`: it runs on every pull_request that touches
+  # the EQL subtree or a file it reads outside it, and skips the rest. The
+  # `relevant` list leaves out files this job reads — `test:public_identifiers`
+  # greps every tracked file under `packages/eql/`. DB-free and creds-free (the
+  # psql-backed syntax check stays in the per-version `validate` job).
   docs-static:
     name: "SQL doc validation"
+    needs: [changes]
+    # Exclusion, not an allowlist — see the note on `build-archive`. No fork
+    # clause: this job has no credentials.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.eql == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -875,9 +929,21 @@ jobs:
   # this is the half that stops a suppression outliving a closed issue.
   #
   # Credential-free and DB-free — it only reads the registry and asks GitHub for
-  # issue state, so it runs on every PR rather than hiding behind the e2e job.
+  # issue state, so it runs on its own rather than behind the e2e job.
+  #
+  # Gated on `eql`. The second step asks GitHub whether each issue is open NOW,
+  # so ungated, closing an issue would fail the next run of every pull request,
+  # including one that touches nothing in EQL. It still runs on every PR that
+  # touches EQL, and on every push and schedule run, where a closed issue
+  # belongs.
   known-failures:
     name: "known-failure markers"
+    needs: [changes]
+    # Exclusion, not an allowlist — see the note on `build-archive`. No fork
+    # clause: this job has no credentials.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.eql == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     permissions:
       contents: read
@@ -910,12 +976,19 @@ jobs:
         run: |
           mise run test:known-failures
 
-  # Markdown anchor links. DB-free, credential-free and fast, and deliberately
-  # NOT relevance-gated: its inputs are the docs themselves, so gating it on the
-  # `relevant` filter (src/**, crates/**) would skip it on exactly the docs-only
-  # PRs it exists to check.
+  # Markdown anchor links. DB-free, credential-free and fast. Gated on `eql`,
+  # not `relevant`: it reads every tracked `*.md` file in the subtree, and the
+  # `relevant` list leaves out several of them (`AGENTS.md`, `CHANGELOG.md`,
+  # `DEVELOPMENT.md`, …), so gating it there would skip it on exactly the
+  # docs-only PRs it exists to check.
   doc-anchors:
     name: "doc anchor links"
+    needs: [changes]
+    # Exclusion, not an allowlist — see the note on `build-archive`. No fork
+    # clause: this job has no credentials.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.eql == 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -992,8 +1065,9 @@ jobs:
   # protection never references an event-dependent leaf name (which would
   # deadlock). Passes iff every needed job is success or skipped. Treating
   # skipped as pass is intentional: heavy jobs are legitimately skipped on
-  # docs-only PRs, and a genuine failure is still caught because the FAILING
-  # source job is itself in `needs` and reports failure.
+  # docs-only PRs, the three `eql`-gated jobs on PRs that touch no EQL input,
+  # and a genuine failure is still caught because the FAILING source job is
+  # itself in `needs` and reports failure.
   ci-required:
     name: "ci-required"
     needs: [changes, setup, build-archive, test, validate, schema, rust-crates,
