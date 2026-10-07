@@ -383,6 +383,10 @@ mod tests {
                 name: "email".into(),
                 label: "users/email".into(),
             },
+            TargetError::ContextField {
+                name: "email".into(),
+                context_field: "tenant".into(),
+            },
             TargetError::NoQuery {
                 name: "Text".into(),
             },

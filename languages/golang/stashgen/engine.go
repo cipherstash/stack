@@ -163,9 +163,13 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 			}
 			// An EQL value is stored under a table and a column: the struct's
 			// context is the table and the field's name the column, so a
-			// context of two or more segments leaves the field no column.
-			// The engine refuses it too (se_plan_check); naming it here
-			// names the field.
+			// context of two or more segments leaves the field no column,
+			// and a struct whose context is one of its fields has no table
+			// of its own. The engine refuses both too (se_plan_check);
+			// naming them here names the field.
+			if d.ContextField != "" {
+				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s is stored under a table and a column, and a struct whose context is its field %q has no table of its own; give the struct a context= tag", f.EQLType, d.ContextField)}
+			}
 			if len(plan.Context) != 1 {
 				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s is stored under a table and a column, and the context %q has %d segments, not one", f.EQLType, d.Context, len(plan.Context))}
 			}

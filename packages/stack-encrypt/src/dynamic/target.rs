@@ -189,6 +189,21 @@ pub enum TargetError {
         /// The field's label, before the extension.
         label: String,
     },
+    /// The plan takes its context from a field of each record (the
+    /// plan-level `"context_field"`), so a field's label is its identity
+    /// alone and the table is whatever each record names; an EQL value
+    /// stores a table and a column fixed by the declaration. A plan with a
+    /// target field has a context of its own.
+    #[error(
+        "{name}: an EQL value is stored under a table and a column, so a plan that takes \
+         its context from its field {context_field} has no table for it"
+    )]
+    ContextField {
+        /// The target field's name.
+        name: String,
+        /// The field the plan takes its context from.
+        context_field: String,
+    },
     /// The field's declared `"type"` is not the kind the EQL type is
     /// produced from.
     #[error(

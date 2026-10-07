@@ -74,10 +74,12 @@
 //! that is what an EQL value stores in its `i`: [`Plan::new_with`] refuses
 //! a target field whose label has any other number of segments
 //! ([`TargetError::Column`]) — [`FieldPlan::with_target`] itself takes any
-//! label of two or more segments, as every field constructor does; the
-//! column rule is the plan's — and an extended plan (a tenant part on every
+//! label, as every field constructor does; the segment rules are the
+//! plan's — and an extended plan (a tenant part on every
 //! label) has no column for it and is refused with
-//! [`TargetError::Extended`] rather than silently dropping the extension.
+//! [`TargetError::Extended`] rather than silently dropping the extension,
+//! as is a plan with a context field, whose labels are identities alone
+//! under whatever table each record names ([`TargetError::ContextField`]).
 //! The field's `"type"`, when declared, must be the kind the EQL type is
 //! produced from ([`TargetError::Kind`]); undeclared, it is that kind, so
 //! every value is checked against it as any typed field's is.
@@ -301,8 +303,9 @@ impl FieldPlan {
     ///
     /// # Errors
     ///
-    /// [`Error::Plan`] if `target` is empty, or if `context` is not a label
-    /// of at least two segments, optionally extended.
+    /// [`Error::Plan`] if `target` is empty, or if `context` is not a label,
+    /// optionally extended. How many segments the label needs is the plan's
+    /// rule ([`Plan::new_with`]), as it is for [`new`](Self::new).
     pub fn with_target(
         name: impl Into<String>,
         context: NonEmpty<ContextPiece<'static>>,
@@ -313,9 +316,6 @@ impl FieldPlan {
             return Err(Error::Plan);
         }
         let (label, extension) = split_context(context.get())?;
-        if label.segments().len() < 2 {
-            return Err(Error::Plan);
-        }
         Ok(Self {
             name: name.into(),
             context,
@@ -623,7 +623,10 @@ impl Plan {
     /// [`Output::Passthrough`] (a context is not sealed, and indexing it
     /// would derive a term from a value that is not secret), declares a
     /// type other than [`ValueKind::String`], or any field's label has
-    /// more than one segment.
+    /// more than one segment. [`Error::Target`]
+    /// ([`TargetError::ContextField`]) if a field names an EQL type as its
+    /// target: an EQL value is stored under a table the declaration fixes,
+    /// and a plan with a context field has none.
     pub fn with_context_field(
         context_field: impl Into<String>,
         fields: Vec<FieldPlan>,
@@ -648,9 +651,15 @@ impl Plan {
             return Err(Error::Plan);
         }
         // A target field's label must be a column, `<table>/<column>`,
-        // which a context field's one-segment identity is not.
-        if fields.iter().any(FieldPlan::is_target) {
-            return Err(Error::Plan);
+        // which a context field's one-segment identity is not: the table
+        // is each record's own, and an EQL value stores one fixed by the
+        // declaration. The same refusal as an extended plan's.
+        if let Some(target) = fields.iter().find(|field| field.is_target()) {
+            return Err(TargetError::ContextField {
+                name: target.name.clone(),
+                context_field,
+            }
+            .into());
         }
         let fields = fields
             .into_iter()
@@ -851,7 +860,7 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
 /// value; its `"type"`, when given, must be the kind the type is produced
 /// from. See the [module docs](self#a-field-that-names-an-eql-type). A
 /// target field needs a column for its label, so it is refused under a
-/// context field.
+/// context field ([`TargetError::ContextField`]).
 ///
 /// `<index>` is an index in its wire form, which is its key — `"eq"`,
 /// `"match"`, `"ore"` or `"ope"` — save for a match index with options other
@@ -5122,22 +5131,23 @@ mod tests {
             );
         }
 
-        /// The constructor's one bound on the label is "at least two
-        /// segments", the same as every field constructor's: a longer label
-        /// is still a label. The column rule — exactly two — is
-        /// `Plan::new_with`'s, where the plan is built (the test after this
-        /// one). Pinned from both sides so the constructor's bound cannot
-        /// drift to "exactly two" or flip: one segment refused (it is no
-        /// label), two accepted, and three accepted intact.
+        /// The constructor's one bound on the label is "a label", the same
+        /// as every field constructor's: how many segments it needs is the
+        /// plan's rule, where the plan is built. A one-segment label is a
+        /// field's identity under a context field, and under a plan with a
+        /// context of its own it has nothing to sit under; the column rule
+        /// — exactly two — is `Plan::new_with`'s (the test after this one).
+        /// Pinned from both sides so the constructor's bound cannot drift:
+        /// one segment accepted and then refused by the plan, two accepted,
+        /// and three accepted intact.
         #[test]
-        fn with_target_takes_any_label_of_two_or_more_segments() {
+        fn with_target_takes_any_label_and_the_plan_holds_the_segment_rules() {
             let ctx = |segments: &[&str]| context(strings(segments)).expect("a context value");
+            let one = FieldPlan::with_target("email", ctx(&["users"]), TEXT_EQ)
+                .expect("one segment is a label; the plan decides");
             assert!(
-                matches!(
-                    FieldPlan::with_target("email", ctx(&["users"]), TEXT_EQ),
-                    Err(Error::Plan)
-                ),
-                "one segment is not a label"
+                matches!(Plan::new_with(vec![one], &FakeEql), Err(Error::Plan)),
+                "under a plan with a context of its own, one segment has nothing to sit under"
             );
             let two = FieldPlan::with_target("email", ctx(&["users", "email"]), TEXT_EQ)
                 .expect("two segments: table and column");
@@ -5386,6 +5396,48 @@ mod tests {
             // The same plan without the target field extends as before.
             let value = obj(vec![("age", spec(extended("age"), &["c"]))]);
             assert!(plan_with(value, &FakeEql).is_ok());
+        }
+
+        /// A plan with a context field has no table of its own: each
+        /// record names one. An EQL value stores a table the declaration
+        /// fixes, so a target field is refused there as it is in an extended
+        /// plan, and before the resolver is asked.
+        #[test]
+        fn a_context_field_plan_refuses_a_target_field() {
+            let identity = |field: &str| strings(&[field]);
+            let value = obj(vec![
+                ("context_field", s("tenant")),
+                ("tenant", spec(identity("tenant"), &["passthrough"])),
+                ("age", spec(identity("age"), &["c"])),
+                ("email", target_spec(identity("email"), TEXT_EQ)),
+            ]);
+            let error = target_error(plan_with(value, &FakeEql).unwrap_err());
+            assert!(
+                matches!(&error, TargetError::ContextField { name, context_field } if name == "email" && context_field == "tenant"),
+                "{error}"
+            );
+            // Refused by the plan, whatever the build holds: a build with
+            // no EQL types says the same.
+            let value = obj(vec![
+                ("context_field", s("tenant")),
+                ("tenant", spec(identity("tenant"), &["passthrough"])),
+                ("email", target_spec(identity("email"), TEXT_EQ)),
+            ]);
+            assert!(matches!(
+                target_error(plan(value).unwrap_err()),
+                TargetError::ContextField { .. }
+            ));
+            // The same plan without the target field takes its context
+            // from the field as before.
+            let value = obj(vec![
+                ("context_field", s("tenant")),
+                ("tenant", spec(identity("tenant"), &["passthrough"])),
+                ("age", spec(identity("age"), &["c"])),
+            ]);
+            assert_eq!(
+                plan_with(value, &FakeEql).expect("parses").context_field(),
+                Some("tenant")
+            );
         }
 
         #[test]
