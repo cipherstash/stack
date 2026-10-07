@@ -95,13 +95,14 @@ var contactCodec = gensupport.New(gensupport.Generated[Contact, EncryptedContact
 })
 
 // EncryptContact seals each Contact, with one ZeroKMS request for each 500
-// sealed values. The result has one element for each input, in the same order.
+// sealed values, plus one the first time a keyset is used. The result has one
+// element for each input, in the same order.
 func EncryptContact(ctx context.Context, cipher *encrypt.Cipher, values []Contact) ([]EncryptedContact, error) {
 	return contactCodec.Encrypt(ctx, cipher, values)
 }
 
 // DecryptContact opens each EncryptedContact, with one ZeroKMS request for each
-// 500 sealed values.
+// 500 sealed values, plus one the first time a keyset is used.
 func DecryptContact(ctx context.Context, d encrypt.Decrypter, encrypted []EncryptedContact) ([]Contact, error) {
 	return contactCodec.Decrypt(ctx, d, encrypted)
 }
