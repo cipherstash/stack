@@ -174,10 +174,13 @@ pub enum Error {
     /// The box holds whatever built it: this crate fills it with
     /// `StackKmsBuilderError`, whose message obeys the rule on
     /// [`ErrorPayload`](crate::ErrorPayload), and so may be shown here.
+    ///
+    /// Its payload is the builder error's (the variable at fault, say). Its
+    /// code stays this one; the builder error's own is on the source.
     #[error("could not build a ZeroKMS client from the environment: {0}")]
     #[diagnostic(
         code(stack_encrypt::config),
-        help("Check `CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY` and `CS_CLIENT_ACCESS_KEY`, or log in with `stash auth login`.")
+        help("The message says which setting failed. Check `CS_WORKSPACE_CRN`, `CS_CLIENT_ID`, `CS_CLIENT_KEY`, `CS_CLIENT_ACCESS_KEY` and `CS_ZEROKMS_HOST`, or log in with `stash auth login`.")
     )]
     Config(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
     /// An index term failed to derive.
@@ -327,8 +330,14 @@ impl crate::ErrorPayload for Error {
                 ("expected", expected.to_string().into()),
                 ("found", found.to_string().into()),
             ]),
+            #[cfg(feature = "http")]
+            Self::Config(error) => error
+                .downcast_ref::<stack_kms::StackKmsBuilderError>()
+                .map(crate::ErrorPayload::payload)
+                .unwrap_or_default(),
+            #[cfg(not(feature = "http"))]
+            Self::Config(_) => serde_json::Map::new(),
             Self::Aead
-            | Self::Config(_)
             | Self::Other(_)
             | Self::UnsupportedShape
             | Self::ResponseShape

@@ -459,6 +459,21 @@ mod tests {
             ),
             (Box::new(PlanError::NoContext), json!({})),
         ];
+        // The builder error's fields come through the box.
+        #[cfg(feature = "http")]
+        let payloads = {
+            let mut payloads = payloads;
+            payloads.push((
+                Box::new(Error::from(
+                    crate::kms::StackKmsBuilderError::InvalidEndpoint {
+                        env_var: "CS_ZEROKMS_HOST",
+                        source: crate::kms::InvalidEndpoint::Userinfo,
+                    },
+                )),
+                json!({ "env_var": "CS_ZEROKMS_HOST" }),
+            ));
+            payloads
+        };
         #[cfg(feature = "dynamic")]
         let payloads = payloads.into_iter().chain(dynamic_payloads()).collect();
         payloads
