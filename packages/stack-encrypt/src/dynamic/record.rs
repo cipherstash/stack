@@ -5243,7 +5243,7 @@ mod tests {
                     serde_json::from_slice(stored).map_err(|e| TargetError::Stored {
                         name: String::new(),
                         target: name.to_owned(),
-                        reason: e.to_string(),
+                        reason: crate::diagnostic::describe_json_error(&e),
                     })?;
                 let leaf = stored["c"]
                     .as_str()

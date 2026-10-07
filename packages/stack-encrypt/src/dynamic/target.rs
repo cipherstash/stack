@@ -272,7 +272,11 @@ pub enum TargetError {
         name: String,
         /// The EQL type.
         target: String,
-        /// What the parser refused.
+        /// What the parser refused, by kind and position. Never the
+        /// parser's own message: serde_json's quotes the input it refused,
+        /// and the input is the stored value, ciphertext and index terms.
+        /// [`describe_json_error`](crate::diagnostic::describe_json_error)
+        /// writes one.
         reason: String,
     },
     /// The resolver's own failure: a value that did not serialize, an
