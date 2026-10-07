@@ -67,7 +67,7 @@
 		"@cipherstash/test-kit": "workspace:*",
 		"fta-cli": "3.0.1",
 		"dotenv": "17.4.2",
-		"drizzle-orm": "^0.45.2",
+		"drizzle-orm": "^0.45.3",
 		"postgres": "^3.4.8",
 		"tsup": "catalog:repo",
 		"typescript": "catalog:repo",

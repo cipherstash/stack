@@ -83,7 +83,7 @@
 		"@prisma/orm-family-sql": "0.17.0",
 		"@prisma/orm-framework": "0.17.0",
 		"@prisma/orm-toolchain": "0.17.0",
-		"arktype": "^2.2.3"
+		"arktype": "^2.2.5"
 	},
 	"peerDependencies": {
 		"@prisma/orm-target-postgres": "0.17.0"
