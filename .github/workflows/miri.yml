@@ -54,9 +54,7 @@ jobs:
           working_directory: .
           install_args: rust
           cache: true
-          # One cache per runner image: a cargo tool built on ubuntu-2404 links
-          # glibc 2.39 and does not run on ubuntu-2204, and the default key does
-          # not name the image. scripts/__tests__/workflow-mise-cache-image.test.mjs
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
           cache_key_prefix: mise-v1-ubuntu-2404
 
       - name: Install the nightly toolchain with Miri

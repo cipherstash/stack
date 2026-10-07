@@ -73,9 +73,7 @@ jobs:
           install: true
           working_directory: .
           cache: true
-          # One cache per runner image: a cargo tool built on ubuntu-2404 links
-          # glibc 2.39 and does not run on ubuntu-2204, and the default key does
-          # not name the image. scripts/__tests__/workflow-mise-cache-image.test.mjs
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
           cache_key_prefix: mise-v1-ubuntu-2204
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
@@ -98,9 +96,7 @@ jobs:
           install: true
           working_directory: .
           cache: true
-          # One cache per runner image: a cargo tool built on ubuntu-2404 links
-          # glibc 2.39 and does not run on ubuntu-2204, and the default key does
-          # not name the image. scripts/__tests__/workflow-mise-cache-image.test.mjs
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
           cache_key_prefix: mise-v1-ubuntu-2204
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
