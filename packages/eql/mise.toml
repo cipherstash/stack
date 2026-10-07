@@ -296,7 +296,12 @@ cargo clippy --locked -p eql-bindings -p eql-encryption-tests --all-features --a
 """
 
 [tasks."test:encryption:postgres"]
-description = "Install the EQL bundle into the database EQL_TEST_DATABASE_URL names and run the stack-encrypt PostgreSQL test against it (fresh encryption, fake KMS)"
+description = "Install the EQL bundle built from the tree into the database EQL_TEST_DATABASE_URL names and run the stack-encrypt PostgreSQL test against it (fresh encryption, fake KMS)"
+# `build` writes release/cipherstash-encrypt.sql from the SQL in the tree. The
+# copy under crates/eql-bindings/sql is the RELEASED bundle, rewritten only by
+# the lockstep version bump, so a test that installs it cannot see a SQL edit
+# made in the same pull request.
+depends = ["build"]
 dir = "{{config_root}}"
 run = """
 #!/usr/bin/env bash
@@ -304,7 +309,12 @@ run = """
 # different databases. psql accepts a libpq conninfo string as its dbname.
 set -euo pipefail
 : "${EQL_TEST_DATABASE_URL:?set EQL_TEST_DATABASE_URL to a libpq connection string for a disposable PostgreSQL}"
-psql "$EQL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f crates/eql-bindings/sql/cipherstash-encrypt.sql
+psql "$EQL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f release/cipherstash-encrypt.sql
+# `--ignored` selects by attribute, and cargo exits 0 on an empty selection, so
+# a test that loses its `#[ignore]` or is renamed would leave this task passing
+# on nothing. List what the filter selects before running it.
+listing=$(cargo test --locked -p eql-encryption-tests --test text_eq -- --ignored --list | sed -n 's/: test$//p')
+[ -n "$listing" ] || { echo "error: '--ignored' selects no test in text_eq; the PostgreSQL test has gone missing." >&2; exit 1; }
 cargo test --locked -p eql-encryption-tests --test text_eq -- --ignored
 """
 
