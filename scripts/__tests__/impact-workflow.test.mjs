@@ -4,6 +4,12 @@ import { readWorkflow } from './lib/workflows.mjs'
 const workflowPath = '.github/workflows/impact.yml'
 
 describe('advisory change impact', () => {
+  it('applies every generated-output exclusion to both report scopes', () => {
+    const all = readWorkflow('.github/impact-gate/all.yml')
+    const source = readWorkflow('.github/impact-gate/source.yml')
+    expect(source.ignore).toEqual(expect.arrayContaining(all.ignore))
+  })
+
   it('reports every pull request and refreshes main with read-only permissions', () => {
     const workflow = readWorkflow(workflowPath)
     expect(workflow.on).toEqual({

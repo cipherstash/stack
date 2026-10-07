@@ -86,3 +86,33 @@ At the recorded base, applying the final scope to tracked filenames yields the f
 | Python | 5 | 3 |
 
 There are also 281 tracked SQL files and seven `.mts`/`.cts` files outside the language map. The EQL `eql-domains/src/fixtures` tree is a production catalog DSL and remains eligible; fixture exclusions deliberately do not blanket-match every directory named `fixtures`. Shared `test-kit` code and Go's fake allocator backend in `internal/guest/testing.go` are excluded only by the test-file policy. Generated Go `_stash.go`/`_gen.go` files and declaration outputs are excluded from both.
+
+## Final calibration and operational budget
+
+The final matching baseline pair was generated sequentially from the pinned base SHA using the exact policies below. Each process exited 0; generation was fresh, with no restored baseline. Git objects and the OS filesystem cache were already present, so “cold” here means cold derived baseline, not a cold machine or repository clone. Installation and checkout time are excluded.
+
+| Policy | Generation time | Observations (`n`) | Distribution minimum | Maximum |
+| --- | ---: | ---: | ---: | ---: |
+| Including test files | 194.15 s | 418 | 0 | 55,662,006,240 |
+| Excluding test files | 85.40 s | 344 | 0 | 210,644,488 |
+| Sequential pair | **279.55 s** | | | |
+
+Policy SHA-256 digests used for these measurements:
+
+- `all.yml`: `2e45fcb24fe9535a26c99d1685c0b3fbce1c1285e65f5c4474cbba179110b655`
+- `source.yml`: `810eaafd26b3c5df42b5992395855ac40a5c2f1c516be469fc9c8626f489bb6e`
+
+Using those existing baseline files, the sample range described above took 1.02 seconds including test files and 0.60 seconds excluding them, **1.63 seconds combined**. This measures local baseline reuse, not an Actions cache hit. The all-source report counted 172 files, impact 545,037,040, p99.51; the report excluding test files counted 119 files, impact 310,445,058, p99.82. Both exceeded p98, showed WARN, and exited **0**, directly confirming advisory behavior on a large real Stack change. The underlying CLI's canned wording about future blocking does not change the configured warn enforcement.
+
+Adopt **200 recent first-parent entries** and a **20-minute workflow timeout**. The observed cold pair fits with more than four times its local measured runtime available for a slower runner, tool installation, checkout, and reporting. This is an operational allowance, not a hosted-runner SLA. There is no reason from these timings to narrow the window to omit the imports; 50- or 30-entry alternatives were therefore not needed. The recursive history yielded more observations than mainline entries, so report `n` rather than describing the baseline as “200 changes.” The project weights are approximately 0.6764 and 0.6324; the remaining grading weight comes from the shipped seed distribution.
+
+The large historical maximum and parser defects argue for retaining advisory enforcement. Do not trim large observations to make scores look better. Revisit the time budget if future imports or unusually deep merge histories approach the timeout; failed analysis must remain visible.
+
+## Implementation validation
+
+- The nine real-tool tests passed against temporary Git histories: cold generation, reuse/refresh, invalid and incompatible cache rebuilding, target ancestry, production-fixture retention, test-file filtering, unsupported/generated changes, renames, explicit seed-only grading, high-impact advisory success, and visible operational failure. Generation calls the pinned upstream baseline API because its CLI rejects a genuinely empty distribution; reporting still invokes the real CLI.
+- The repository script suite passed: 72 files, 1,269 tests, 28 skips. A subsequent review added one generated-scope parity guard; the focused workflow suite then passed all four tests. That guard keeps the duplicated exclusion policies aligned.
+- Repository-wide typechecking passed all 16 Turbo tasks. The workflow test also passed direct TypeScript check-JS validation; the Python driver/tests passed mypy 1.18.2 with `--ignore-missing-imports --follow-imports skip --check-untyped-defs`. Keep mypy's cache outside the checkout when running locally, since Biome otherwise scans its generated JSON.
+- All 28 supply-chain tests passed. The workflow passed `actionlint`; the repository Biome check exited successfully with existing warnings/information diagnostics and no errors.
+- The full package suite was attempted with `pnpm test --continue`: 12 of 19 Turbo tasks passed. Auth, profile, Stack, migrate, wizard, CLI, and Supabase tasks failed with missing local native bindings. Two auth package-packing tests additionally failed: sandboxed npm could not write its cache; rerunning just those tests outside the sandbox removed that error but exposed their existing assumption about the shape of npm's JSON output (`[0].files` was undefined). No package runtime or packaging source is changed by this work, and the full package suite is not claimed green.
+- Separate standards/spec reviews found no documented-standard or implementation-correctness violations. The standards review's shared-exclusion drift concern is covered by the new guard. Final calibration evidence resolves the timing-evidence gap; the hosted Actions checks described above remain rollout work.
