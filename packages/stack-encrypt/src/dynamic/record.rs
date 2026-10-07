@@ -2685,6 +2685,23 @@ mod tests {
         }
     }
 
+    /// The refusal names the indexed field that has no type. A typed indexed
+    /// field, a sealed-only field and a passthrough field beside it are not
+    /// what is refused.
+    #[test]
+    fn untyped_index_names_the_field_that_has_no_type() {
+        let parsed = plan(obj(vec![
+            ("age", typed(label("age"), &["c", "eq"], "uint32")),
+            ("email", spec(label("email"), &["c"])),
+            ("id", spec(label("id"), &["passthrough"])),
+            ("nick", spec(label("nick"), &["match"])),
+        ]));
+        assert!(
+            matches!(&parsed, Err(Error::UntypedIndex { field }) if field == "nick"),
+            "{parsed:?}"
+        );
+    }
+
     /// An indexed field declares its type. A plan whose indexed field has
     /// none is refused when it is built, for every index kind, with no key
     /// request; a field that only seals or only carries its value through
@@ -4584,6 +4601,76 @@ mod tests {
                 plan(obj(vec![("age", typed(label("age"), &["c"], "uint64"))])).expect("plan");
             let opened = open(&cipher, sealed, &as_uint64).await;
             assert_eq!(u64_of(&object(opened)[0].1), 34, "the declared type opens");
+        }
+
+        /// One row stored as another kind fails the whole batch, as the
+        /// CHANGELOG says. The other rows are not returned.
+        #[tokio::test]
+        async fn decrypt_fails_a_batch_when_one_row_opens_to_another_type() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let untyped = plan(obj(vec![("age", spec(label("age"), &["c"]))])).expect("plan");
+            let rows = FfiValue::Array(vec![
+                obj(vec![("age", FfiValue::UInt64(34))]),
+                obj(vec![("age", FfiValue::Float64(34.0))]),
+            ]);
+            let sealed = seal(&keyset, rows, &untyped).await;
+            let as_uint64 =
+                plan(obj(vec![("age", typed(label("age"), &["c"], "uint64"))])).expect("plan");
+            let result = decrypt(Scope::Client(&cipher), sealed, &as_uint64, None)
+                .expect("the shape fits")
+                .await;
+            assert_eq!(
+                plan_error(result.err().expect("the batch is refused")),
+                PlanError::FieldType {
+                    field: "age".into(),
+                    expected: "uint64",
+                }
+            );
+        }
+
+        /// The migration path the CHANGELOG gives for rows stored as
+        /// another kind: a plan that gives the field only `"c"` and no
+        /// `"type"` opens a row of any kind, whatever indexes it was sealed
+        /// with, and the value, converted to the declared kind, seals again
+        /// under the typed plan and opens there.
+        #[tokio::test]
+        async fn a_ciphertext_only_untyped_plan_reads_rows_of_any_kind() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let as_uint32 = seal(
+                &keyset,
+                obj(vec![("age", FfiValue::UInt32(34))]),
+                &age_plan("uint32"),
+            )
+            .await;
+            let as_int64 = seal(
+                &keyset,
+                obj(vec![("age", FfiValue::Int64(34))]),
+                &age_plan("int64"),
+            )
+            .await;
+            let read = plan(obj(vec![("age", spec(label("age"), &["c"]))])).expect("plan");
+
+            let opened = object(open(&cipher, as_uint32, &read).await);
+            assert!(
+                matches!(opened[0].1, FfiValue::UInt32(34)),
+                "a uint32 row opens as one"
+            );
+            let opened = object(open(&cipher, as_int64, &read).await);
+            let FfiValue::Int64(value) = opened[0].1 else {
+                panic!("an int64 row opens as one")
+            };
+
+            let converted = u32::try_from(value).expect("fits");
+            let resealed = seal(
+                &keyset,
+                obj(vec![("age", FfiValue::UInt32(converted))]),
+                &age_plan("uint32"),
+            )
+            .await;
+            let reopened = object(open(&cipher, resealed, &age_plan("uint32")).await);
+            assert_eq!(u32_of(&reopened[0].1), 34);
         }
 
         /// In a batch, each opened value is checked against its own field,

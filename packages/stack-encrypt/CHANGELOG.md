@@ -48,7 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as before. A row stored as another kind fails to open with
   `PlanError::FieldType`, and fails any batch that holds it; its terms do
   not match a query of the declared kind either. Re-encrypt such rows as
-  the declared kind.
+  the declared kind: they are still readable, because a plan that gives the
+  field only `"c"` and no `"type"` remains valid and opens a row of any
+  kind, whatever indexes it was sealed with. Open the rows under that plan,
+  convert each value to the declared kind, and encrypt it again under the
+  typed plan.
 
 - **A target description carries a source mode.** `Encryption` gains a
   last type parameter, `M: SourceMode = Borrowed`, saying how it is handed
