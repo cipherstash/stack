@@ -65,7 +65,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of parts instead of its contents. `sem::TermError::Prf` omits the
   underlying pseudorandom-function implementation's message, and
   `sem::TermBytesError::MatchPositionOutOfRange` omits the position read
-  from search-index bytes. These details remain available on the Rust
+  from search-index bytes, and `LabelError::Reserved` names the segment
+  but not the reserved character, since a `context_field` label is record
+  data. These details remain available on the Rust
   error values for callers in the same process, including the `stored`
   field on `ContextMismatch`.
 - **A data plan field with a term output must declare its `"type"`.** A

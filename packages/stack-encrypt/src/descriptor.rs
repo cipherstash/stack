@@ -621,8 +621,12 @@ impl std::str::FromStr for Label {
 /// Why a string is not a [`Label`] segment. `index` is the segment's
 /// position, counting from zero.
 ///
-/// A label is schema — a plan's context and its fields' names — so a message
-/// may quote the character it refused.
+/// A label is not always schema: a plan's context and its fields' names
+/// are, but [`context_field`](crate::plan::FieldsBuilder::context_field)
+/// builds the context from a record's own field, which is customer data.
+/// So no message or payload quotes a segment or the character it refused;
+/// they name the segment by position. A caller in the same process can
+/// still read [`Reserved`](Self::Reserved)'s `found`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum LabelError {
@@ -646,7 +650,7 @@ pub enum LabelError {
     Separator { index: usize },
     /// The segment contains a control character, an invisible format
     /// character or a parenthesis, which the descriptor reserves.
-    #[error("label segment {index} contains {found:?}, which the descriptor reserves")]
+    #[error("label segment {index} contains a character the descriptor reserves")]
     #[diagnostic(code(stack_encrypt::label_reserved))]
     Reserved { index: usize, found: char },
     /// The segment begins like another descriptor form: `b64:`, a digit or
@@ -669,11 +673,8 @@ impl crate::ErrorPayload for LabelError {
             Self::Empty | Self::NotText => serde_json::Map::new(),
             Self::EmptySegment { index }
             | Self::Separator { index }
+            | Self::Reserved { index, .. }
             | Self::ReservedPrefix { index } => payload([("segment", (*index).into())]),
-            Self::Reserved { index, found } => payload([
-                ("segment", (*index).into()),
-                ("character", found.to_string().into()),
-            ]),
         }
     }
 }
@@ -1111,6 +1112,21 @@ mod label_tests {
                 index: 0,
                 found: '\u{85}'
             })
+        );
+    }
+
+    /// A context field's label is record data, so a refusal names the
+    /// segment and never the character it refused.
+    #[test]
+    fn a_reserved_character_is_not_quoted() {
+        let error = Label::new(["tenants", "acme(marker"]).unwrap_err();
+        let shown = format!(
+            "{error} {}",
+            serde_json::Value::Object(crate::ErrorPayload::payload(&error))
+        );
+        assert_eq!(
+            shown,
+            r#"label segment 1 contains a character the descriptor reserves {"segment":1}"#
         );
     }
 

@@ -389,7 +389,7 @@ mod tests {
                     index: 0,
                     found: '(',
                 }),
-                json!({ "segment": 0, "character": "(" }),
+                json!({ "segment": 0 }),
             ),
             (
                 Box::new(PlanError::ContextLabel(LabelError::Separator { index: 2 })),
