@@ -30,12 +30,17 @@ type snapshot struct {
 
 // column is one encrypted field, named by its record key.
 type column struct {
-	name    string
+	name string
+	// context is the label the column binds, spelled as its segments by
+	// [shape]: ["individuals", "email"]. The segments, not a joined text,
+	// are what a context is, so the file spells them: "notes/v1" as one
+	// text part and as two segments are different contexts that read alike.
 	context string
-	// kind is how the context is bound: kindEQL when it is the column
-	// identity, "<table>/<column>", so the table and a column rename move
-	// it; kindCustom when the target supplies it whatever the column, so
-	// several columns may share it.
+	// kind is how the context is chosen: kindEQL when it is the column
+	// identity, ["<table>", "<column>"], so the table and a column rename
+	// move it; kindCustom when the target supplies it whatever the column,
+	// so several columns may share it. Both bind a label, so an EQL column
+	// and a Custom one with the same segments bind the same context.
 	kind  string
 	terms []string
 	facts []fact
@@ -85,33 +90,29 @@ func targetKind(t plan.Target) (string, error) {
 	return kindEQL, nil
 }
 
-// contextText is the text a snapshot stores for a column's context, the
-// same text the policy spells it with. An EQL column's context is its
-// identity's label, the pair (table, column identity), stored as
-// "<table>/<identity>"; a Custom column's is the one text part
-// [plan.Custom] was given, stored as written. The two are told apart by
-// the column's target line, not by the text. The text is checked against
-// the context the plan actually binds, so the file cannot name a context
-// the plan does not use.
+// contextText is the [shape] a snapshot stores for a column's context. An
+// EQL column's context is its identity's label, (table, column identity);
+// a Custom column's is the label [plan.Custom] parses from its argument.
+// The shape is checked against the context the plan actually binds, so
+// the file cannot name a context the plan does not use.
 func contextText(table string, kind string, d plan.Decision, fp stackencrypt.FieldPlan) (string, error) {
-	var text string
-	var want stackencrypt.Context
+	var label stackencrypt.Label
 	switch kind {
 	case kindEQL:
 		identity := d.Identity()
 		if identity == "" {
 			identity = fp.Name
 		}
-		label, err := plan.Identifier{Table: table, Column: identity}.Label()
-		if err != nil {
+		var err error
+		if label, err = (plan.Identifier{Table: table, Column: identity}).Label(); err != nil {
 			return "", fmt.Errorf("plantest: column %q: %w", fp.Name, err)
 		}
-		text, want = label.String(), label.Context()
 	default:
 		// A Custom context has no accessor: plan.Custom renders its
 		// argument quoted, as Custom("<context>", ...), so read it back.
 		target, _ := d.Target()
 		spelled, ok := strings.CutPrefix(fmt.Sprint(target), "Custom(")
+		var text string
 		var err error
 		if ok {
 			if text, err = strconv.QuotedPrefix(spelled); err == nil {
@@ -121,22 +122,67 @@ func contextText(table string, kind string, d plan.Decision, fp stackencrypt.Fie
 		if !ok || err != nil {
 			return "", fmt.Errorf("plantest: column %q: cannot spell the context of target %v; a target that does not bind its column identity must be plan.Custom", fp.Name, target)
 		}
-		var l stackencrypt.Label
-		if l, err = stackencrypt.ParseLabel(text); err != nil {
+		if label, err = stackencrypt.ParseLabel(text); err != nil {
 			return "", fmt.Errorf("plantest: column %q: %w", fp.Name, err)
 		}
-		want = l.Context()
 	}
-	if !want.Equal(fp.Context) {
-		return "", fmt.Errorf("plantest: column %q: the plan binds a context other than %q", fp.Name, text)
+	if !label.Context().Equal(fp.Context) {
+		return "", fmt.Errorf("plantest: column %q: the plan binds a context other than %s", fp.Name, shape(label.Segments()))
 	}
-	return text, nil
+	return shape(label.Segments()), nil
+}
+
+// shape spells a label's segments as a snapshot stores them: a bracketed,
+// comma-separated list of Go string literals, ["individuals", "email"].
+// Every segment is quoted, so the spelling does not depend on which
+// characters a segment holds.
+func shape(segments []string) string {
+	quoted := make([]string, len(segments))
+	for i, s := range segments {
+		quoted[i] = strconv.Quote(s)
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
+}
+
+// segmentsOf reads a [shape] back into its segments. It accepts only what
+// shape writes, so a context in any other spelling (a file written before
+// contexts were spelled as segments) is refused rather than guessed at.
+func segmentsOf(spelled string) ([]string, error) {
+	rest, ok := strings.CutPrefix(spelled, "[")
+	if !ok {
+		return nil, fmt.Errorf("context %s is not a list of segments such as [\"table\", \"column\"]; a file written by an older plantest spells contexts differently, so read what the new one writes before recording it", spelled)
+	}
+	var out []string
+	for {
+		q, err := strconv.QuotedPrefix(rest)
+		if err != nil {
+			return nil, fmt.Errorf("context %s: bad segment", spelled)
+		}
+		seg, _ := strconv.Unquote(q)
+		out = append(out, seg)
+		rest = rest[len(q):]
+		if r, ok := strings.CutPrefix(rest, ", "); ok {
+			rest = r
+			continue
+		}
+		if rest != "]" {
+			return nil, fmt.Errorf("context %s: expected \", \" or \"]\" after a segment", spelled)
+		}
+		if shape(out) != spelled {
+			return nil, fmt.Errorf("context %s is not spelled as plantest writes it", spelled)
+		}
+		return out, nil
+	}
 }
 
 // contextOf is the context a snapshot's column names, rebuilt from its
-// text and target kind: what [contextText] wrote.
+// segments: what [contextText] wrote.
 func contextOf(c column) (stackencrypt.Context, error) {
-	label, err := stackencrypt.ParseLabel(c.context)
+	segments, err := segmentsOf(c.context)
+	if err != nil {
+		return stackencrypt.Context{}, err
+	}
+	label, err := stackencrypt.NewLabel(segments...)
 	if err != nil {
 		return stackencrypt.Context{}, err
 	}
@@ -248,7 +294,7 @@ func (s snapshot) render() []byte {
 	fmt.Fprintf(&b, "\ntable %s\n", token(s.table))
 	for _, c := range s.columns {
 		fmt.Fprintf(&b, "\ncolumn %s\n", token(c.name))
-		fmt.Fprintf(&b, "  context %s\n", token(c.context))
+		fmt.Fprintf(&b, "  context %s\n", c.context)
 		fmt.Fprintf(&b, "  target %s\n", c.kind)
 		fmt.Fprintf(&b, "  terms %s\n", termList(c.terms))
 		writeFacts(&b, c.facts)
@@ -317,6 +363,15 @@ func parse(data []byte) (snapshot, error) {
 			continue
 		}
 		indented := strings.HasPrefix(line, "  ")
+		// A context line holds a shape, not tokens: its segments are
+		// quoted and separated by ", ".
+		if spelled, ok := strings.CutPrefix(line, "  context "); ok && colAt >= 0 {
+			if _, err := segmentsOf(spelled); err != nil {
+				return snapshot{}, fmt.Errorf("line %d: %w", n+1, err)
+			}
+			s.columns[colAt].context = spelled
+			continue
+		}
 		toks, err := tokens(strings.TrimSpace(line))
 		if err != nil {
 			return snapshot{}, fmt.Errorf("line %d: %w", n+1, err)
@@ -330,8 +385,6 @@ func parse(data []byte) (snapshot, error) {
 		case !indented && toks[0] == "plaintext" && len(toks) == 2:
 			s.plaintext = append(s.plaintext, plain{field: toks[1]})
 			colAt, plainAt = -1, len(s.plaintext)-1
-		case indented && toks[0] == "context" && len(toks) == 2 && colAt >= 0:
-			s.columns[colAt].context = toks[1]
 		case indented && toks[0] == "target" && len(toks) == 2 && colAt >= 0 && (toks[1] == kindEQL || toks[1] == kindCustom):
 			s.columns[colAt].kind = toks[1]
 		case indented && toks[0] == "terms" && len(toks) >= 2 && colAt >= 0:

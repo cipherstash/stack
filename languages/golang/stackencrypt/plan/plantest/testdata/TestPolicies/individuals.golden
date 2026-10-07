@@ -5,25 +5,25 @@
 table individuals
 
 column email
-  context individuals/email
+  context ["individuals", "email"]
   target EQL
   terms eq match
   fact fides.data_categories user.contact.email
 
 column medicare_num
-  context individuals/medicare_number
+  context ["individuals", "medicare_number"]
   target EQL
   terms eq
   fact fides.data_categories user.government_id
 
 column name
-  context individuals/name
+  context ["individuals", "name"]
   target EQL
   terms ore
   fact fides.data_categories user.name
 
 column notes
-  context individuals-notes/v1
+  context ["individuals-notes", "v1"]
   target Custom
   terms none
   fact fides.data_categories user.content

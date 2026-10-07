@@ -48,7 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   indexed fields under one label are refused for the same reason the
   builder refuses them (`PlanError::SharedIdentity`). A record a Go program
   wrote with a `label=` tag is unaffected; one written with a `context=`
-  tag is not readable through a plan.
+  tag is not readable through a plan. For the same reason Go
+  `plan.Custom("notes/v1")` now binds the label `["notes", "v1"]`, not the
+  one text part `"notes/v1"`: a row written under the old form does not
+  decrypt and its terms match no query, with no error, and a one-segment
+  `Custom("ctx")` is refused. `plantest` snapshots now spell every context
+  as its segments (`context ["notes", "v1"]`), so a golden file changes on
+  regeneration and refuses the old spelling until it does; check each
+  `target Custom` column before recording it.
 - **Every data plan field seals the tagged `FfiValue` leaf, whatever its
   `"type"`**, as every field did before; the type admits indexes and checks
   kinds and changes no bytes, so a row written without a type opens under a
