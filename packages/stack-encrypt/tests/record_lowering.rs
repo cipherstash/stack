@@ -491,20 +491,23 @@ async fn the_fixture_records_are_bound_to_their_labels() {
     let CipherText::Map(mut fields) = sealed else {
         panic!("a map");
     };
-    // Swap the `age` and `notes` field names: each ciphertext now sits under
-    // the other's label.
+    // `email` and `notes` are both `string` fields, so the per-field type
+    // check cannot refuse the swap: only the key source's label binding can.
     for (name, _) in &mut fields {
         *name = match name.as_str() {
-            "age" => "notes".into(),
-            "notes" => "age".into(),
+            "email" => "notes".into(),
+            "notes" => "email".into(),
             other => other.into(),
         };
     }
     let result = record::decrypt(Scope::Client(&cipher), CipherText::Map(fields), &plan)
         .expect("the shape fits")
         .await;
-    assert!(
-        result.is_err(),
-        "a leaf under another field's label does not open"
-    );
+    match result {
+        Err(stack_encrypt::Error::Kms(_)) => {}
+        Err(other) => {
+            panic!("a leaf under another field's label is refused by the key source, got {other:?}")
+        }
+        Ok(_) => panic!("a leaf under another field's label opened"),
+    }
 }
