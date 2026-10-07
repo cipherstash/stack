@@ -1,8 +1,9 @@
 //! The per-call options object, and the keyset selector it carries.
 //!
 //! Every export that touches a keyset takes one more codec-encoded
-//! argument: an [`FfiValue::Object`] with exactly one key, `keyset`, whose
-//! value is a tagged object naming the keyset the call binds to:
+//! argument: an [`FfiValue::Object`] with one required key, `keyset`, whose
+//! value is a tagged object naming the keyset the call binds to, and on
+//! `se_decrypt_record` one optional key, `context` (below):
 //!
 //! | selector          | meaning |
 //! |-------------------|---------|
@@ -23,12 +24,25 @@
 //! to mint under. Anything else — another key, a second key, a wrong value
 //! type, an id that is not 16 bytes — is [`STATUS_ENCODING`].
 //!
+//! `context` is the context the host expects a record's context field to
+//! hold, for a plan that takes its context from a field (the plan-level
+//! `"context_field"` key of `dynamic::record::plan`): a string that parses
+//! as a plain label, `"tenants/acme"`, which the engine checks against each
+//! record's stored context field before any key is retrieved and refuses
+//! with [`STATUS_CONTEXT_MISMATCH`](crate::status::STATUS_CONTEXT_MISMATCH).
+//! Omitted, each record opens under the context it stores. It is the data
+//! form of the Rust chain's `open(record).context(expected)`. On
+//! `se_encrypt_record` and `se_term` it is [`STATUS_ENCODING`]: a plan that
+//! names a context field reads the context from each value when it seals,
+//! and a term's context arrives as its own argument. A `context` that is
+//! not a string, or not a plain label, is [`STATUS_ENCODING`] too.
+//!
 //! This object is a cross-language contract: every binding builds it, so
 //! it is objects, strings, bytes and nothing else, and this module is its
 //! one home. The Go bindings plan points here.
 
 use stack_encrypt::dynamic::Scope;
-use stack_encrypt::{KeysetCipher, StackCipher};
+use stack_encrypt::{KeysetCipher, Label, StackCipher};
 use stack_kms::{IdentifiedBy, IndexKeySource};
 use uuid::Uuid;
 use vitaminc_aead_value::FfiValue;
@@ -65,6 +79,9 @@ pub enum Side {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Options {
     pub keyset: KeysetSelector,
+    /// The context the host expects a record's context field to hold;
+    /// opening only. See the [module docs](self).
+    pub context: Option<Label>,
 }
 
 /// Parse a decoded options object for `side`. Anything outside the shape in
@@ -74,9 +91,22 @@ pub fn parse_options(value: FfiValue, side: Side) -> Result<Options, u32> {
         return Err(STATUS_ENCODING);
     };
     let mut keyset: Option<KeysetSelector> = None;
+    let mut context: Option<Label> = None;
     for (key, value) in entries {
         match key.as_str() {
             "keyset" if keyset.is_none() => keyset = Some(parse_selector(value)?),
+            "context" if context.is_none() && side == Side::Open => {
+                let FfiValue::String(text) = value else {
+                    return Err(STATUS_ENCODING);
+                };
+                // Valid UTF-8 by `Utf8String`'s construction invariant;
+                // checked rather than assumed because this is boundary
+                // code. A context is not secret, so the payload moves out
+                // of its `Protected` rather than being copied and wiped.
+                let text = String::from_utf8(text.into_inner().risky_unwrap())
+                    .map_err(|_| STATUS_ENCODING)?;
+                context = Some(Label::parse(&text).map_err(|_| STATUS_ENCODING)?);
+            }
             _ => return Err(STATUS_ENCODING),
         }
     }
@@ -84,7 +114,7 @@ pub fn parse_options(value: FfiValue, side: Side) -> Result<Options, u32> {
     if side == Side::Mint && keyset == KeysetSelector::Any {
         return Err(STATUS_ENCODING);
     }
-    Ok(Options { keyset })
+    Ok(Options { keyset, context })
 }
 
 /// Parse a keyset selector: a tagged object with exactly one key. Spelled
@@ -265,7 +295,8 @@ mod tests {
         assert_eq!(
             parse_options(options(obj(vec![("default", empty())])), Side::Mint),
             Ok(Options {
-                keyset: KeysetSelector::Default
+                keyset: KeysetSelector::Default,
+                context: None,
             })
         );
         for (label, bad) in [
@@ -295,12 +326,59 @@ mod tests {
     }
 
     #[test]
+    fn an_expected_context_is_an_opening_option_only() {
+        let with = |context: FfiValue| {
+            obj(vec![
+                ("keyset", obj(vec![("default", empty())])),
+                ("context", context),
+            ])
+        };
+        assert_eq!(
+            parse_options(with(FfiValue::String("tenants/acme".into())), Side::Open),
+            Ok(Options {
+                keyset: KeysetSelector::Default,
+                context: Some(Label::parse("tenants/acme").expect("a label")),
+            })
+        );
+        for (label, bad, side) in [
+            (
+                "on the sealing side",
+                with(FfiValue::String("tenants/acme".into())),
+                Side::Mint,
+            ),
+            ("not a string", with(FfiValue::UInt64(7)), Side::Open),
+            (
+                "not a plain label",
+                with(FfiValue::String("tenants/(acme)".into())),
+                Side::Open,
+            ),
+            ("empty", with(FfiValue::String("".into())), Side::Open),
+            (
+                "given twice",
+                obj(vec![
+                    ("keyset", obj(vec![("default", empty())])),
+                    ("context", FfiValue::String("a".into())),
+                    ("context", FfiValue::String("a".into())),
+                ]),
+                Side::Open,
+            ),
+        ] {
+            assert_eq!(
+                parse_options(bad, side).err(),
+                Some(STATUS_ENCODING),
+                "{label} must be refused"
+            );
+        }
+    }
+
+    #[test]
     fn any_is_an_opening_selector_only() {
         let any = || options(obj(vec![("any", empty())]));
         assert_eq!(
             parse_options(any(), Side::Open),
             Ok(Options {
-                keyset: KeysetSelector::Any
+                keyset: KeysetSelector::Any,
+                context: None,
             })
         );
         assert_eq!(

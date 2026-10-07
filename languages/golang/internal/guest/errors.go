@@ -82,6 +82,9 @@ var (
 	// ErrAuthRefreshRequired tells the Go credential host to take the
 	// cross-process lock and call the device-session refresh export.
 	ErrAuthRefreshRequired = errors.New("cipherstash: device session needs refresh")
+	// ErrContextMismatch is a row whose stored context field is not the
+	// context the caller named, refused before any key is retrieved.
+	ErrContextMismatch = errors.New("cipherstash: the stored context is not the one expected")
 	// ErrMemoryLock is guest memory that could not be locked in RAM (or,
 	// on Linux, excluded from core dumps). A constructor returns it when
 	// asked for locked memory and refused, and so does any later call under

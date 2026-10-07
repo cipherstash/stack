@@ -392,6 +392,9 @@ pub unsafe extern "C" fn se_encrypt_record(
 /// keyset: `{"any"}` opens leaves from whichever keyset each was sealed
 /// under; `{"name"}`, `{"id"}` and `{"default"}` refuse a leaf from any
 /// other keyset as `STATUS_FOREIGN_KEYSET`, before any key is retrieved.
+/// `opts` may also carry `context`, the context the host expects each
+/// record's context field to hold ([`crate::options`]); a record storing
+/// another is `STATUS_CONTEXT_MISMATCH`, before any key is retrieved.
 /// The output buffer contains **plaintext**: the host copies it out and
 /// immediately `se_dealloc`s it (which wipes it).
 ///
@@ -413,9 +416,10 @@ pub unsafe extern "C" fn se_decrypt_record(
         let record = unsafe { input(rec_ptr, rec_len)? };
         let plan = unsafe { input(plan_ptr, plan_len)? };
         let opts = unsafe { input(opt_ptr, opt_len)? };
-        ops::validate::record_tree(record, plan)?;
+        let expected = parse_options(decode(opts)?, Side::Open)?.context;
+        ops::validate::record_tree(record, plan, expected.as_ref())?;
         with_scope(opts, |scope| {
-            block_on(ops::decrypt_record(scope, record, plan))
+            block_on(ops::decrypt_record(scope, record, plan, expected))
         })
     }))
     .unwrap_or(Err(STATUS_INTERNAL))

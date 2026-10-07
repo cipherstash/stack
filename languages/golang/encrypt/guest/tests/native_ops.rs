@@ -19,9 +19,11 @@ use std::future::IntoFuture;
 
 use stack_encrypt::dynamic::Scope;
 use stack_encrypt::sem::DefaultMatch;
-use stack_encrypt::{nonempty, CipherText, Encrypt, SealedValue, StackCipher};
+use stack_encrypt::{nonempty, CipherText, Encrypt, Label, SealedValue, StackCipher};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
-use stack_encrypt_guest::status::{STATUS_AUTH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET};
+use stack_encrypt_guest::status::{
+    STATUS_AUTH, STATUS_CONTEXT_MISMATCH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET,
+};
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IndexKeySource,
     RetrieveKeyPayload,
@@ -406,6 +408,7 @@ fn a_record_batch_encrypts_in_one_call_and_round_trips() {
         Scope::Client(&cipher),
         &record,
         &plan(),
+        None,
     ))
     .expect("decrypt records");
     assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), 1);
@@ -462,7 +465,8 @@ fn a_forged_passthrough_ciphertext_slot_is_rejected_not_decrypted() {
         block_on(ops::decrypt_record(
             Scope::Client(&cipher),
             &forged,
-            &plan()
+            &plan(),
+            None
         )),
         Err(STATUS_ENCODING),
         "a passthrough in a ciphertext slot must be a hard error, never plaintext"
@@ -684,6 +688,7 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
         Scope::Client(&cipher),
         &record,
         &plan_with(extended("age")),
+        None,
     ))
     .expect("open through the plan");
     let FfiValue::Object(fields) = decode(&opened) else {
@@ -695,7 +700,8 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
         block_on(ops::decrypt_record(
             Scope::Client(&cipher),
             &record,
-            &plan_with(label("age"))
+            &plan_with(label("age")),
+            None
         )),
         Err(STATUS_AUTH),
         "the flat label is not the one it was sealed under"
@@ -752,7 +758,8 @@ fn a_structured_plan_context_is_validated_at_parse() {
     assert!(block_on(ops::decrypt_record(
         Scope::Client(&cipher),
         &sealed,
-        &plan_with(FfiValue::Array(vec![label("f"), s("")]))
+        &plan_with(FfiValue::Array(vec![label("f"), s("")])),
+        None
     ))
     .is_ok());
 }
@@ -876,7 +883,8 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
         block_on(ops::decrypt_record(
             Scope::Client(&cipher),
             &source,
-            &bad_plan
+            &bad_plan,
+            None
         )),
         Err(STATUS_ENCODING)
     );
@@ -901,6 +909,7 @@ fn an_empty_plan_context_is_refused_before_anything_is_sealed() {
         Scope::Client(&cipher),
         &sealed,
         &odd_plan,
+        None,
     ))
     .expect("decrypt");
     let FfiValue::Object(fields) = decode(&opened) else {
@@ -961,8 +970,13 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
     };
 
     let before = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
-    let pt = block_on(ops::decrypt_record(Scope::Client(&cipher), &batch, &plan()))
-        .expect("any opens the mixed batch");
+    let pt = block_on(ops::decrypt_record(
+        Scope::Client(&cipher),
+        &batch,
+        &plan(),
+        None,
+    ))
+    .expect("any opens the mixed batch");
     assert_eq!(
         cipher.kms().retrieve_calls.load(Ordering::SeqCst) - before,
         2,
@@ -975,7 +989,12 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
 
     let before = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
     assert_eq!(
-        block_on(ops::decrypt_record(Scope::Keyset(acme), &batch, &plan())),
+        block_on(ops::decrypt_record(
+            Scope::Keyset(acme),
+            &batch,
+            &plan(),
+            None
+        )),
         Err(STATUS_FOREIGN_KEYSET)
     );
     assert_eq!(cipher.kms().retrieve_calls.load(Ordering::SeqCst), before);
@@ -1175,7 +1194,7 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
         &plan,
     ))
     .expect("encrypt record");
-    assert_eq!(ops::validate::record_tree(&record, &plan), Ok(()));
+    assert_eq!(ops::validate::record_tree(&record, &plan, None), Ok(()));
 
     type Node = CipherText<Vec<u8>, FfiValue>;
     // The tree is not `Clone`; every variant decodes the record afresh.
@@ -1236,12 +1255,17 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
     ] {
         let tree = re_encode(tree);
         assert_eq!(
-            ops::validate::record_tree(&tree, &plan),
+            ops::validate::record_tree(&tree, &plan, None),
             Err(STATUS_ENCODING),
             "{label} must be refused by validation"
         );
         assert_eq!(
-            block_on(ops::decrypt_record(Scope::Client(&cipher), &tree, &plan)),
+            block_on(ops::decrypt_record(
+                Scope::Client(&cipher),
+                &tree,
+                &plan,
+                None
+            )),
             Err(STATUS_ENCODING),
             "{label} must be refused by the op too"
         );
@@ -1298,4 +1322,134 @@ fn targets_is_an_empty_list_for_now() {
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].0, "targets");
     assert!(matches!(&entries[0].1, FfiValue::Array(items) if items.is_empty()));
+}
+
+// =============================================================================
+// A plan whose context is a field of the record
+// =============================================================================
+
+/// The plan-level `"context_field"` key: `tenant` names each record's
+/// context, `age` is sealed under `<tenant>/age`.
+fn context_field_plan() -> Vec<u8> {
+    let identity = |field: &str| FfiValue::Array(vec![s(field)]);
+    encode(obj(vec![
+        ("context_field", s("tenant")),
+        (
+            "tenant",
+            obj(vec![
+                ("context", identity("tenant")),
+                ("outputs", FfiValue::Array(vec![s("passthrough")])),
+                ("type", s("string")),
+            ]),
+        ),
+        (
+            "age",
+            obj(vec![
+                ("context", identity("age")),
+                ("outputs", FfiValue::Array(vec![s("c"), s("eq")])),
+                ("type", s("uint32")),
+            ]),
+        ),
+    ]))
+}
+
+fn tenant_row(tenant: &str, age: u32) -> FfiValue {
+    obj(vec![("tenant", s(tenant)), ("age", FfiValue::UInt32(age))])
+}
+
+/// Two tenants in one batch seal under their own contexts and open back
+/// with no context named; the expected context the host passes through
+/// `se_decrypt_record`'s options refuses a record stored under another,
+/// as `STATUS_CONTEXT_MISMATCH`, before any key is retrieved — and the
+/// boundary validation says the same.
+#[test]
+fn a_context_field_record_opens_under_the_context_it_stores() {
+    let cipher = cipher();
+    let plan = context_field_plan();
+    let batch = encode(FfiValue::Array(vec![
+        tenant_row("tenants/acme", 34),
+        tenant_row("tenants/globex", 34),
+    ]));
+    let record = block_on(ops::encrypt_record(&cipher.default_keyset(), &batch, &plan))
+        .expect("encrypt a batch of two tenants");
+    assert_eq!(cipher.kms().generate_calls.load(Ordering::SeqCst), 1);
+
+    // The same age under two tenants is two terms.
+    let CipherText::Sequence(rows) = decode_tree(&record) else {
+        panic!("a batch is a sequence");
+    };
+    let eq_of = |row: &CipherText<Vec<u8>, FfiValue>| {
+        let CipherText::Map(fields) = row else {
+            panic!("a row is a map");
+        };
+        let CipherText::Map(age) = &fields[1].1 else {
+            panic!("age is a map of outputs");
+        };
+        term_bytes(&age[1].1)
+    };
+    assert_ne!(eq_of(&rows[0]), eq_of(&rows[1]));
+
+    let opened = block_on(ops::decrypt_record(
+        Scope::Client(&cipher),
+        &record,
+        &plan,
+        None,
+    ))
+    .expect("each record opens under the context it stores");
+    let FfiValue::Array(opened) = decode(&opened) else {
+        panic!("an array of rows");
+    };
+    let FfiValue::Object(globex) = &opened[1] else {
+        panic!("an object row");
+    };
+    assert_eq!(
+        text(&globex[0].1),
+        "tenants/globex",
+        "the context field comes back"
+    );
+    assert!(matches!(globex[1].1, FfiValue::UInt32(34)));
+
+    let acme = Label::parse("tenants/acme").expect("a label");
+    let before = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
+    assert_eq!(
+        block_on(ops::decrypt_record(
+            Scope::Client(&cipher),
+            &record,
+            &plan,
+            Some(acme.clone()),
+        )),
+        Err(STATUS_CONTEXT_MISMATCH),
+        "the globex record is not the acme one"
+    );
+    assert_eq!(
+        cipher.kms().retrieve_calls.load(Ordering::SeqCst),
+        before,
+        "refused before any key is retrieved"
+    );
+    assert_eq!(
+        ops::validate::record_tree(&record, &plan, Some(&acme)),
+        Err(STATUS_CONTEXT_MISMATCH),
+        "and the boundary validation refuses it the same way"
+    );
+    assert_eq!(ops::validate::record_tree(&record, &plan, None), Ok(()));
+
+    // One record stored under the expected context opens under it.
+    let one = encode(tenant_row("tenants/acme", 35));
+    let record =
+        block_on(ops::encrypt_record(&cipher.default_keyset(), &one, &plan)).expect("encrypt one");
+    assert_eq!(
+        ops::validate::record_tree(&record, &plan, Some(&acme)),
+        Ok(())
+    );
+    let opened = block_on(ops::decrypt_record(
+        Scope::Client(&cipher),
+        &record,
+        &plan,
+        Some(acme),
+    ))
+    .expect("the expected context opens it");
+    let FfiValue::Object(fields) = decode(&opened) else {
+        panic!("an object row");
+    };
+    assert!(matches!(fields[1].1, FfiValue::UInt32(35)));
 }

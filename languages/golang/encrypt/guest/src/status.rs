@@ -48,15 +48,23 @@
 //!   that verdict is only reached on the path where the constraint let it
 //!   through. Read this status as "not this keyset's row", never as "an
 //!   untampered row".
+//! - [`STATUS_CONTEXT_MISMATCH`] is the same kind of constraint on the
+//!   record export: the host named, in its options, the context it expects
+//!   a record's context field to hold, and the stored field says otherwise.
+//!   The field is a passthrough, so this is read before anything is
+//!   retrieved or authenticated: "not the row this caller asked for", never
+//!   "an untampered row". A stored context changed in storage fails later,
+//!   as [`STATUS_KMS_FORBIDDEN`] or [`STATUS_AUTH`], because every field was
+//!   sealed under the original.
 
 use stack_auth::AuthError;
 use stack_kms::{GenerateKeyError, LoadKeysetError, RetrieveKeyError};
 use zerokms_protocol::ViturRequestErrorKind;
 
 pub use stack_guest_abi::status::{
-    STATUS_AUTH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET, STATUS_INTERNAL, STATUS_KMS_CONFLICT,
-    STATUS_KMS_FORBIDDEN, STATUS_KMS_NOT_FOUND, STATUS_KMS_OTHER, STATUS_KMS_TRANSPORT,
-    STATUS_KMS_UNAUTHORIZED, STATUS_STATE, STATUS_TERM,
+    STATUS_AUTH, STATUS_CONTEXT_MISMATCH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET, STATUS_INTERNAL,
+    STATUS_KMS_CONFLICT, STATUS_KMS_FORBIDDEN, STATUS_KMS_NOT_FOUND, STATUS_KMS_OTHER,
+    STATUS_KMS_TRANSPORT, STATUS_KMS_UNAUTHORIZED, STATUS_STATE, STATUS_TERM,
 };
 
 /// Map a sealing/opening error onto the ABI status word.
@@ -71,6 +79,10 @@ pub fn status_for_error(error: &stack_encrypt::Error) -> u32 {
         stack_encrypt::Error::Aead => STATUS_AUTH,
         stack_encrypt::Error::Term(_) => STATUS_TERM,
         stack_encrypt::Error::ForeignKeyset { .. } => STATUS_FOREIGN_KEYSET,
+        // A record's stored context field is not the one the host named in
+        // its options: the host's own constraint, checked before any key is
+        // retrieved, like a foreign keyset and unlike a wrong-context open.
+        stack_encrypt::Error::ContextMismatch { .. } => STATUS_CONTEXT_MISMATCH,
         stack_encrypt::Error::Kms(kms) => status_for_kms(kms),
         // A context that renders past ZeroKMS's descriptor limit is the
         // caller's input, refused before any request is sent.
@@ -308,6 +320,18 @@ mod tests {
                 stack_encrypt::PlanError::NoContext
             )),
             STATUS_ENCODING
+        );
+    }
+
+    #[test]
+    fn a_context_mismatch_is_its_own_status() {
+        use stack_encrypt::Describe;
+        let stored = stack_encrypt::Label::parse("tenants/globex")
+            .expect("a label")
+            .descriptor();
+        assert_eq!(
+            status_for_error(&stack_encrypt::Error::ContextMismatch { stored }),
+            STATUS_CONTEXT_MISMATCH
         );
     }
 

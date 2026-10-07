@@ -35,6 +35,8 @@ const (
 	StatusAuthConfig                = 25
 	StatusAuthOther                 = 26
 	StatusAuthRefreshRequired       = 27
+	// Appended by the crypto guest after the credential guest's codes.
+	StatusContextMismatch = 28
 )
 
 // StatusError is the sentinel a guest status decodes to. A status this host
@@ -96,6 +98,8 @@ func StatusError(status uint32) error {
 		return ErrAuthOther
 	case StatusAuthRefreshRequired:
 		return ErrAuthRefreshRequired
+	case StatusContextMismatch:
+		return ErrContextMismatch
 	default:
 		return fmt.Errorf("%w (unrecognized guest status %d)", ErrInternal, status)
 	}

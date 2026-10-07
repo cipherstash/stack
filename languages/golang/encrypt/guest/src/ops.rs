@@ -38,7 +38,9 @@
 use stack_encrypt::dynamic::{self, Scalar, Scope};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::IndexSpec;
-use stack_encrypt::{BoxedPassthrough, CipherText, KeysetCipher, SealedValue, StackCipherText};
+use stack_encrypt::{
+    BoxedPassthrough, CipherText, KeysetCipher, Label, SealedValue, StackCipherText,
+};
 use stack_kms::DataKeySource;
 use vitaminc_aead_value::{transport as codec, FfiValue};
 use vitaminc_protected::Controlled;
@@ -165,6 +167,14 @@ where
 /// same plan. Only the `"c"` and `"passthrough"` outputs participate (terms
 /// are one-way).
 ///
+/// `expected` is the context the host expects each record's context field
+/// to hold, from the options object's `context` key (see
+/// [`crate::options`]), for a plan that takes its context from a field; a
+/// record whose stored context differs is
+/// [`STATUS_CONTEXT_MISMATCH`](crate::status::STATUS_CONTEXT_MISMATCH)
+/// before any key is retrieved. `None` opens each record under the
+/// context it stores.
+///
 /// The plan's opener runs in the engine; awaiting it here is the one
 /// batched `retrieve_keys` per invocation, dispatched as one ZeroKMS call
 /// per 500 keyed leaves and, under [`Scope::Client`], per keyset the leaves
@@ -174,12 +184,13 @@ pub async fn decrypt_record<K>(
     scope: Scope<'_, K>,
     record: &[u8],
     plan: &[u8],
+    expected: Option<Label>,
 ) -> Result<Vec<u8>, u32>
 where
     K: DataKeySource + Sync + 'static,
 {
     let plan = dynamic::record::plan(decode_value(plan)?).map_err(|e| status_for_dynamic(&e))?;
-    let value = dynamic::record::decrypt(scope, decode_tree(record)?, &plan)
+    let value = dynamic::record::decrypt(scope, decode_tree(record)?, &plan, expected)
         .map_err(|e| status_for_dynamic(&e))?
         .await
         .map_err(|e| status_for_error(&e))?;
@@ -269,12 +280,14 @@ pub mod validate {
     }
 
     /// A record tree against its plan, as [`decrypt_record`] takes them:
-    /// the plan parses, the tree decodes with well-formed leaves, and every
-    /// ciphertext-bearing field has a `"c"` node that is not a passthrough.
-    pub fn record_tree(record: &[u8], plan: &[u8]) -> Result<(), u32> {
+    /// the plan parses, the tree decodes with well-formed leaves, every
+    /// ciphertext-bearing field has a `"c"` node that is not a passthrough,
+    /// and a stored context field is the `expected` one, when the host
+    /// names one.
+    pub fn record_tree(record: &[u8], plan: &[u8], expected: Option<&Label>) -> Result<(), u32> {
         let plan =
             dynamic::record::plan(decode_value(plan)?).map_err(|e| status_for_dynamic(&e))?;
-        dynamic::record::check_record(decode_tree(record)?, &plan)
+        dynamic::record::check_record(decode_tree(record)?, &plan, expected)
             .map_err(|e| status_for_dynamic(&e))
     }
 }
