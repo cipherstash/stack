@@ -55,7 +55,7 @@ type userShape struct {
 var declaration = gensupport.Declare("users").
 	Passthrough("id").
 	EncryptIndex("email", gensupport.String, encrypt.Equality, encrypt.Match()).
-	EncryptIndex("age", gensupport.UInt32, encrypt.Equality, encrypt.Ore)
+	EncryptIndex("age", gensupport.Uint32, encrypt.Equality, encrypt.Ore)
 
 var codec = gensupport.New(gensupport.Generated[User, EncryptedUser]{
 	TypeName:        "User",

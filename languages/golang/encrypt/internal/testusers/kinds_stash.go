@@ -200,11 +200,11 @@ var kindsDeclaration = gensupport.Declare("kinds").
 	EncryptIndex("i32", gensupport.Int32, encrypt.Equality).
 	EncryptIndex("i", gensupport.Int64, encrypt.Ore).
 	Encrypt("i64", gensupport.Int64).
-	EncryptIndex("u8", gensupport.UInt32, encrypt.Equality).
-	Encrypt("u16", gensupport.UInt32).
-	EncryptIndex("u32", gensupport.UInt32, encrypt.Equality, encrypt.Ore).
-	Encrypt("u", gensupport.UInt64).
-	EncryptIndex("u64", gensupport.UInt64, encrypt.Ope).
+	EncryptIndex("u8", gensupport.Uint32, encrypt.Equality).
+	Encrypt("u16", gensupport.Uint32).
+	EncryptIndex("u32", gensupport.Uint32, encrypt.Equality, encrypt.Ore).
+	Encrypt("u", gensupport.Uint64).
+	EncryptIndex("u64", gensupport.Uint64, encrypt.Ope).
 	Encrypt("f32", gensupport.Float32).
 	EncryptIndex("f64", gensupport.Float64, encrypt.Ore).
 	EncryptIndex("by", gensupport.Bytes, encrypt.Equality).

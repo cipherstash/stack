@@ -210,7 +210,7 @@ func (autoCredentials) resolve(ctx context.Context, opts resolveOptions) (*resol
 			}
 			return nil, fmt.Errorf("%w: no token: set %s and %s, or run `stash auth login`: %w",
 				ErrNoCredentials, envAccessKey, envWorkspaceCRN, err)
-		case errors.Is(err, auth.ErrAuthConfig) && accessKeyConfigured():
+		case errors.Is(err, auth.ErrConfig) && accessKeyConfigured():
 			// The status covers every configuration fault the guest reports;
 			// name the variables only when they are what was configured.
 			return nil, fmt.Errorf("encrypt: credentials: check %s and %s: %w", envAccessKey, envWorkspaceCRN, err)
@@ -234,7 +234,7 @@ func (autoCredentials) resolve(ctx context.Context, opts resolveOptions) (*resol
 // developer profile.
 //
 // opts configure the federation strategy as they would
-// auth.ProfileStore.OIDC: auth.WithAuthBaseURL pins the CTS
+// auth.ProfileStore.OIDC: auth.WithBaseURL pins the CTS
 // endpoint for these credentials alone (without it, CS_CTS_HOST overrides
 // the endpoint, else it is discovered), and auth.WithCacheCapacity
 // sets how many users' tokens are kept (1024 unless set).

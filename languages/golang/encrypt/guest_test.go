@@ -578,7 +578,7 @@ func mustHex(s string) []byte {
 // users package lowers its tags to.
 func usersPlan() *record.Plan {
 	return &record.Plan{Context: []string{"users"}, Fields: []record.Field{
-		{Name: "age", Kind: record.UInt32, Outputs: []record.Output{record.Ciphertext, record.Equality, record.Ore}},
+		{Name: "age", Kind: record.Uint32, Outputs: []record.Output{record.Ciphertext, record.Equality, record.Ore}},
 		{Name: "email", Kind: record.String, Outputs: []record.Output{record.Ciphertext, record.Equality, record.Match}},
 	}}
 }
@@ -670,7 +670,7 @@ func TestGuestRefusesMalformedInputsBeforeState(t *testing.T) {
 	def := c.DefaultKeyset()
 	plan := usersPlan()
 	floatAge := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.Float64, Outputs: []record.Output{record.Ciphertext, record.Equality}}}}
-	matchInt := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.UInt32, Outputs: []record.Output{record.Ciphertext, record.Match}}}}
+	matchInt := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.Uint32, Outputs: []record.Output{record.Ciphertext, record.Match}}}}
 	calls := map[string]func() error{
 		"float under equality":    func() error { _, err := def.Derive(ctx, floatAge, "age", record.Equality, 1.5); return err },
 		"integer under match":     func() error { _, err := def.Derive(ctx, matchInt, "age", record.Match, uint32(1)); return err },
@@ -707,7 +707,7 @@ func TestPlanCheckAnswersWithoutACipher(t *testing.T) {
 		t.Fatalf("a good plan: %v", err)
 	}
 	refused := []*record.Plan{
-		{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.UInt32, Outputs: []record.Output{record.Ciphertext, record.Match}}}},
+		{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.Uint32, Outputs: []record.Output{record.Ciphertext, record.Match}}}},
 		{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.Float64, Outputs: []record.Output{record.Equality}}}},
 	}
 	for i, p := range refused {

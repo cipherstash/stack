@@ -52,7 +52,7 @@ func liveClient(t *testing.T) *Client {
 	t.Cleanup(func() { _ = store.Close() })
 	var strategyOpts []auth.StrategyOption
 	if cts := os.Getenv("STACK_ENCRYPT_TEST_CTS_HOST"); cts != "" {
-		strategyOpts = append(strategyOpts, auth.WithAuthBaseURL(cts))
+		strategyOpts = append(strategyOpts, auth.WithBaseURL(cts))
 	}
 	strategy, err := store.AccessKey(t.Context(), crn, accessKey, strategyOpts...)
 	if err != nil {

@@ -184,10 +184,10 @@ func wireKind(t GoType) record.Kind {
 		return record.Int32
 	case "gensupport.Int64":
 		return record.Int64
-	case "gensupport.UInt32":
-		return record.UInt32
-	case "gensupport.UInt64":
-		return record.UInt64
+	case "gensupport.Uint32":
+		return record.Uint32
+	case "gensupport.Uint64":
+		return record.Uint64
 	case "gensupport.Float32":
 		return record.Float32
 	case "gensupport.Float64":
@@ -208,7 +208,7 @@ func kindOfWire(k record.Kind) Kind {
 		return KindBytes
 	case record.Int32, record.Int64:
 		return KindInt
-	case record.UInt32, record.UInt64:
+	case record.Uint32, record.Uint64:
 		return KindUint
 	case record.Float32, record.Float64:
 		return KindFloat

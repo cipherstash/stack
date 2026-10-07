@@ -90,7 +90,7 @@ func TestAccessKeyStrategyCachesAndPreservesRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithAuthBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestOIDCStrategyFederatesEachProviderTokenOnce(t *testing.T) {
 			return "", errors.New("provider did not receive the Token caller's context")
 		}
 		return idp, nil
-	}), WithAuthBaseURL(server.URL))
+	}), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestOIDCStrategyCacheCapacityZeroExchangesEveryCall(t *testing.T) {
 	defer profile.Close()
 	strategy, err := profile.OIDC(context.Background(), testCRN, OIDCProviderFunc(func(context.Context) (string, error) {
 		return "idp-a", nil
-	}), WithAuthBaseURL(server.URL), WithCacheCapacity(0))
+	}), WithBaseURL(server.URL), WithCacheCapacity(0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestUsageLimitIsPreservedAcrossGuest(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithAuthBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestDeviceRefreshReportsInvalidClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	strategy, err := ws.DeviceSession(context.Background(), WithAuthBaseURL(server.URL))
+	strategy, err := ws.DeviceSession(context.Background(), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestAutoPrefersAccessKeyThenDeviceSession(t *testing.T) {
 	}
 	t.Setenv("CS_CLIENT_ACCESS_KEY", "CSAKtestKeyId.testKeySecret")
 	t.Setenv("CS_WORKSPACE_CRN", testCRN)
-	strategy, err := profile.Auto(context.Background(), WithAuthBaseURL(server.URL))
+	strategy, err := profile.Auto(context.Background(), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ func TestAutoPrefersAccessKeyThenDeviceSession(t *testing.T) {
 	if err := os.Unsetenv("CS_CLIENT_ACCESS_KEY"); err != nil {
 		t.Fatal(err)
 	}
-	strategy, err = profile.Auto(context.Background(), WithAuthBaseURL(server.URL))
+	strategy, err = profile.Auto(context.Background(), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +342,7 @@ func TestAutoPrefersAccessKeyThenDeviceSession(t *testing.T) {
 	if err := profile.ClearCurrentWorkspace(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := profile.Auto(context.Background(), WithAuthBaseURL(server.URL)); !errors.Is(err, ErrNotAuthenticated) {
+	if _, err := profile.Auto(context.Background(), WithBaseURL(server.URL)); !errors.Is(err, ErrNotAuthenticated) {
 		t.Fatalf("no credentials: error = %v, want %v", err, ErrNotAuthenticated)
 	}
 }
@@ -372,7 +372,7 @@ func TestDeviceSessionFreshTokenDoesNotTakeRefreshLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	strategy, err := workspace.DeviceSession(context.Background(), WithAuthBaseURL("https://cts.example.com"))
+	strategy, err := workspace.DeviceSession(context.Background(), WithBaseURL("https://cts.example.com"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,7 +423,7 @@ func TestDeviceSessionMissingAndInvalidProfilesKeepTheirErrors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			strategy, err := workspace.DeviceSession(context.Background(), WithAuthBaseURL("https://cts.example.com"))
+			strategy, err := workspace.DeviceSession(context.Background(), WithBaseURL("https://cts.example.com"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -448,28 +448,28 @@ func TestAutoUsesEnvironmentPresenceAndProfileExistence(t *testing.T) {
 	}
 	t.Setenv("CS_WORKSPACE_CRN", testCRN)
 	t.Setenv("CS_CLIENT_ACCESS_KEY", "")
-	if _, err := profile.Auto(context.Background()); !errors.Is(err, ErrAuthConfig) {
-		t.Fatalf("set but empty access key: error = %v, want %v", err, ErrAuthConfig)
+	if _, err := profile.Auto(context.Background()); !errors.Is(err, ErrConfig) {
+		t.Fatalf("set but empty access key: error = %v, want %v", err, ErrConfig)
 	}
 	// A key that does not parse is a configuration error like the empty one,
 	// the class Rust's AutoStrategy reports, not a malformed-input error.
 	t.Setenv("CS_CLIENT_ACCESS_KEY", "not-a-key")
-	if _, err := profile.Auto(context.Background()); !errors.Is(err, ErrAuthConfig) {
-		t.Fatalf("malformed access key: error = %v, want %v", err, ErrAuthConfig)
+	if _, err := profile.Auto(context.Background()); !errors.Is(err, ErrConfig) {
+		t.Fatalf("malformed access key: error = %v, want %v", err, ErrConfig)
 	}
-	if _, err := profile.AccessKey(context.Background(), "invalid", "CSAKtestKeyId.testKeySecret"); !errors.Is(err, ErrAuthConfig) {
-		t.Fatalf("malformed CRN for access key: error = %v, want %v", err, ErrAuthConfig)
+	if _, err := profile.AccessKey(context.Background(), "invalid", "CSAKtestKeyId.testKeySecret"); !errors.Is(err, ErrConfig) {
+		t.Fatalf("malformed CRN for access key: error = %v, want %v", err, ErrConfig)
 	}
 	provider := OIDCProviderFunc(func(context.Context) (string, error) { return "", nil })
-	if _, err := profile.OIDC(context.Background(), "invalid", provider); !errors.Is(err, ErrAuthConfig) {
-		t.Fatalf("malformed CRN for OIDC: error = %v, want %v", err, ErrAuthConfig)
+	if _, err := profile.OIDC(context.Background(), "invalid", provider); !errors.Is(err, ErrConfig) {
+		t.Fatalf("malformed CRN for OIDC: error = %v, want %v", err, ErrConfig)
 	}
 	if err := os.Unsetenv("CS_CLIENT_ACCESS_KEY"); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("CS_WORKSPACE_CRN", "invalid")
-	if _, err := profile.Auto(context.Background()); !errors.Is(err, ErrAuthConfig) {
-		t.Fatalf("invalid CRN without key: error = %v, want %v", err, ErrAuthConfig)
+	if _, err := profile.Auto(context.Background()); !errors.Is(err, ErrConfig) {
+		t.Fatalf("invalid CRN without key: error = %v, want %v", err, ErrConfig)
 	}
 	if err := os.Unsetenv("CS_WORKSPACE_CRN"); err != nil {
 		t.Fatal(err)
@@ -525,7 +525,7 @@ func TestDeviceRefreshLockPreventsReplay(t *testing.T) {
 				errCh <- err
 				return
 			}
-			strategy, err := ws.DeviceSession(context.Background(), WithAuthBaseURL(server.URL))
+			strategy, err := ws.DeviceSession(context.Background(), WithBaseURL(server.URL))
 			if err != nil {
 				errCh <- err
 				return
@@ -578,7 +578,7 @@ func TestDeviceRefreshReportsInvalidGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	strategy, err := ws.DeviceSession(context.Background(), WithAuthBaseURL(server.URL))
+	strategy, err := ws.DeviceSession(context.Background(), WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -613,7 +613,7 @@ func TestAuthRequestsIdentifyTheLibraryNotGo(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithAuthBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -654,14 +654,14 @@ func TestAuthTransportErrorNamesTheHTTPStatusNotTheBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithAuthBaseURL(server.URL))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer strategy.Close()
 	_, err = strategy.Token(context.Background())
-	if !errors.Is(err, ErrAuthTransport) {
-		t.Fatalf("Token error = %v, want ErrAuthTransport", err)
+	if !errors.Is(err, ErrTransport) {
+		t.Fatalf("Token error = %v, want ErrTransport", err)
 	}
 	if want := "cipherstash: auth transport failed: HTTP 403"; err.Error() != want {
 		t.Fatalf("Token error = %q, want %q", err, want)
@@ -680,14 +680,14 @@ func TestAuthTransportErrorWithoutAResponseNamesNoStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer profile.Close()
-	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithAuthBaseURL(addr))
+	strategy, err := profile.AccessKey(context.Background(), testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL(addr))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer strategy.Close()
 	_, err = strategy.Token(context.Background())
-	if !errors.Is(err, ErrAuthTransport) || strings.Contains(err.Error(), "HTTP") {
-		t.Fatalf("Token error = %v, want a bare ErrAuthTransport", err)
+	if !errors.Is(err, ErrTransport) || strings.Contains(err.Error(), "HTTP") {
+		t.Fatalf("Token error = %v, want a bare ErrTransport", err)
 	}
 }
 
@@ -719,13 +719,13 @@ func TestOutOfRangeAuthStatusIsTransport(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer profile.Close()
-			strategy, err := profile.AccessKey(ctx, testCRN, "CSAKtestKeyId.testKeySecret", WithAuthBaseURL("https://cts.invalid"))
+			strategy, err := profile.AccessKey(ctx, testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL("https://cts.invalid"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer strategy.Close()
-			if _, err := strategy.Token(ctx); !errors.Is(err, ErrAuthTransport) {
-				t.Fatalf("Token: %v, want ErrAuthTransport", err)
+			if _, err := strategy.Token(ctx); !errors.Is(err, ErrTransport) {
+				t.Fatalf("Token: %v, want ErrTransport", err)
 			}
 		})
 	}
@@ -760,7 +760,7 @@ func TestOpenWithoutProfileRunsAccessKeyAndRefusesProfileReads(t *testing.T) {
 	}
 	t.Setenv("CS_CLIENT_ACCESS_KEY", "CSAKtestKeyId.testKeySecret")
 	t.Setenv("CS_WORKSPACE_CRN", testCRN)
-	strategy, err := store.Auto(ctx, WithAuthBaseURL(server.URL))
+	strategy, err := store.Auto(ctx, WithBaseURL(server.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -782,7 +782,7 @@ func TestOpenWithoutProfileRunsAccessKeyAndRefusesProfileReads(t *testing.T) {
 func TestStrategyReportsItsStoresMemoryLockLive(t *testing.T) {
 	ctx := context.Background()
 	_, s := profile(t)
-	strategy, err := s.AccessKey(ctx, testCRN, "CSAKtestKeyId.testKeySecret", WithAuthBaseURL("https://cts.invalid"))
+	strategy, err := s.AccessKey(ctx, testCRN, "CSAKtestKeyId.testKeySecret", WithBaseURL("https://cts.invalid"))
 	if err != nil {
 		t.Fatal(err)
 	}

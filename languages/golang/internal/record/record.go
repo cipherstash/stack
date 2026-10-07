@@ -41,8 +41,8 @@ const (
 	Bool    Kind = "bool"
 	Int32   Kind = "int32"
 	Int64   Kind = "int64"
-	UInt32  Kind = "uint32"
-	UInt64  Kind = "uint64"
+	Uint32  Kind = "uint32"
+	Uint64  Kind = "uint64"
 	Float32 Kind = "float32"
 	Float64 Kind = "float64"
 	String  Kind = "string"
@@ -217,7 +217,7 @@ func (p *Plan) Validate() error {
 
 func (k Kind) known() bool {
 	switch k {
-	case Untyped, Bool, Int32, Int64, UInt32, UInt64, Float32, Float64, String, Bytes:
+	case Untyped, Bool, Int32, Int64, Uint32, Uint64, Float32, Float64, String, Bytes:
 		return true
 	}
 	return false

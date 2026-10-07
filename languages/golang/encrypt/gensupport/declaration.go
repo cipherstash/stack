@@ -19,15 +19,15 @@ import (
 type Kind string
 
 // The kinds. int8, int16 and int32 are Int32; int and int64 are Int64;
-// uint8, uint16 and uint32 are UInt32; uint and uint64 are UInt64; []byte is
+// uint8, uint16 and uint32 are Uint32; uint and uint64 are Uint64; []byte is
 // Bytes. A type defined over one of these has its underlying kind.
 const (
 	Untyped Kind = ""
 	Bool    Kind = "bool"
 	Int32   Kind = "int32"
 	Int64   Kind = "int64"
-	UInt32  Kind = "uint32"
-	UInt64  Kind = "uint64"
+	Uint32  Kind = "uint32"
+	Uint64  Kind = "uint64"
 	Float32 Kind = "float32"
 	Float64 Kind = "float64"
 	String  Kind = "string"

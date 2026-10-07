@@ -46,12 +46,12 @@ var (
 	ErrUsageLimit = guest.ErrAuthUsageLimit
 	// ErrNotAuthenticated means no usable auth credential is available.
 	ErrNotAuthenticated = guest.ErrAuthNotAuthenticated
-	// ErrAuthTransport is a failed auth HTTP exchange or response read.
-	ErrAuthTransport = guest.ErrAuthTransport
-	// ErrAuthConfig is invalid auth configuration or token data.
-	ErrAuthConfig = guest.ErrAuthConfig
-	// ErrAuthOther is an auth failure outside the actionable categories above.
-	ErrAuthOther = guest.ErrAuthOther
+	// ErrTransport is a failed auth HTTP exchange or response read.
+	ErrTransport = guest.ErrAuthTransport
+	// ErrConfig is invalid auth configuration or token data.
+	ErrConfig = guest.ErrAuthConfig
+	// ErrOther is an auth failure outside the actionable categories above.
+	ErrOther = guest.ErrAuthOther
 	// ErrMemoryLock is guest memory that could not be locked in RAM (or, on
 	// Linux, excluded from core dumps). Open returns it under
 	// [RequireLockedMemory]; otherwise [ProfileStore.MemoryLockError]

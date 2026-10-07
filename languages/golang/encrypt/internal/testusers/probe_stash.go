@@ -75,8 +75,8 @@ type probeShape struct {
 }
 
 var probeDeclaration = gensupport.Declare("prop").
-	EncryptIndex("u32", gensupport.UInt32, encrypt.Ore, encrypt.Ope).
-	EncryptIndex("u64", gensupport.UInt64, encrypt.Ore, encrypt.Ope).
+	EncryptIndex("u32", gensupport.Uint32, encrypt.Ore, encrypt.Ope).
+	EncryptIndex("u64", gensupport.Uint64, encrypt.Ore, encrypt.Ope).
 	EncryptIndex("i64", gensupport.Int64, encrypt.Ore, encrypt.Ope).
 	EncryptIndex("s", gensupport.String, encrypt.Ore, encrypt.Ope).
 	EncryptIndex("b", gensupport.Bytes, encrypt.Ore, encrypt.Ope)

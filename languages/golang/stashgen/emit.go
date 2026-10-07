@@ -228,9 +228,9 @@ func kindExpr(t GoType) string {
 	case KindUint:
 		switch t.Basic {
 		case "uint8", "uint16", "uint32", "byte":
-			return "gensupport.UInt32"
+			return "gensupport.Uint32"
 		}
-		return "gensupport.UInt64"
+		return "gensupport.Uint64"
 	case KindFloat:
 		if t.Basic == "float32" {
 			return "gensupport.Float32"

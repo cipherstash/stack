@@ -148,7 +148,7 @@ func TestRequireLockedMemoryRefusesACallerStoreUnlocked(t *testing.T) {
 		fmt.Println("case skipped: mlock succeeds under RLIMIT_MEMLOCK=0")
 		return
 	}
-	strategy, err := store.AccessKey(ctx, "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY", "CSAKtestKeyId.testKeySecret", auth.WithAuthBaseURL("https://cts.invalid"))
+	strategy, err := store.AccessKey(ctx, "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY", "CSAKtestKeyId.testKeySecret", auth.WithBaseURL("https://cts.invalid"))
 	if err != nil {
 		t.Fatal(err)
 	}

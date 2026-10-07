@@ -21,8 +21,8 @@ type strategyOptions struct {
 	cacheCapacity *uint32
 }
 
-// WithAuthBaseURL overrides CTS service discovery for one strategy.
-func WithAuthBaseURL(url string) StrategyOption {
+// WithBaseURL overrides CTS service discovery for one strategy.
+func WithBaseURL(url string) StrategyOption {
 	return func(o *strategyOptions) { o.baseURL = url }
 }
 
@@ -82,7 +82,7 @@ func (s *ProfileStore) newStrategy(ctx context.Context, config any, device bool)
 // stays in the guest after construction; it is not sent on each Token call.
 func (s *ProfileStore) AccessKey(ctx context.Context, crn, key string, opts ...StrategyOption) (*Strategy, error) {
 	if crn == "" || key == "" {
-		return nil, ErrAuthConfig
+		return nil, ErrConfig
 	}
 	o := strategyConfig(opts)
 	return s.newStrategy(ctx, struct {
@@ -100,7 +100,7 @@ func (s *ProfileStore) AccessKey(ctx context.Context, crn, key string, opts ...S
 // JWTs that cache holds.
 func (s *ProfileStore) OIDC(ctx context.Context, crn string, provider OIDCProvider, opts ...StrategyOption) (*Strategy, error) {
 	if crn == "" || provider == nil {
-		return nil, ErrAuthConfig
+		return nil, ErrConfig
 	}
 	o := strategyConfig(opts)
 	id := s.root.inst.transport.register(provider)
@@ -125,7 +125,7 @@ func (s *ProfileStore) OIDC(ctx context.Context, crn string, provider OIDCProvid
 // CLI, then the guest re-reads and saves before the lock is released.
 func (s *ProfileStore) DeviceSession(ctx context.Context, opts ...StrategyOption) (*Strategy, error) {
 	if s.dir == guestRoot {
-		return nil, ErrAuthConfig
+		return nil, ErrConfig
 	}
 	o := strategyConfig(opts)
 	return s.newStrategy(ctx, struct {
@@ -147,7 +147,7 @@ func (s *ProfileStore) Auto(ctx context.Context, opts ...StrategyOption) (*Strat
 	}
 	if key, keySet := os.LookupEnv("CS_CLIENT_ACCESS_KEY"); keySet {
 		if !crnSet {
-			return nil, ErrAuthConfig
+			return nil, ErrConfig
 		}
 		return s.AccessKey(ctx, crn, key, opts...)
 	}

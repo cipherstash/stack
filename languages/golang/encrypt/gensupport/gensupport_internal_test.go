@@ -18,7 +18,7 @@ import (
 func TestDeclarationLowersToTheEnginesPlan(t *testing.T) {
 	d := Declare("users").
 		Passthrough("id").
-		EncryptIndex("age", UInt32, encrypt.Equality, encrypt.Ore).
+		EncryptIndex("age", Uint32, encrypt.Equality, encrypt.Ore).
 		EncryptIndex("email", String, encrypt.Equality, encrypt.Match()).
 		Encrypt("notes", String).
 		Index("score", Int64, encrypt.Ope).
@@ -28,7 +28,7 @@ func TestDeclarationLowersToTheEnginesPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := &record.Plan{Context: []string{"users"}, Fields: []record.Field{
-		{Name: "age", Kind: record.UInt32, Outputs: []record.Output{record.Ciphertext, record.Equality, record.Ore}},
+		{Name: "age", Kind: record.Uint32, Outputs: []record.Output{record.Ciphertext, record.Equality, record.Ore}},
 		{Name: "email", Kind: record.String, Outputs: []record.Output{record.Ciphertext, record.Equality, record.Match}},
 		{Name: "notes", Kind: record.String, Outputs: []record.Output{record.Ciphertext}},
 		{Name: "score", Kind: record.Int64, Outputs: []record.Output{record.Ope}},

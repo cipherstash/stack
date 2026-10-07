@@ -11,7 +11,7 @@ import (
 
 func users() *Plan {
 	return &Plan{Context: []string{"users"}, Fields: []Field{
-		{Name: "age", Kind: UInt32, Outputs: []Output{Ciphertext, Equality, Ore}},
+		{Name: "age", Kind: Uint32, Outputs: []Output{Ciphertext, Equality, Ore}},
 		{Name: "email", Kind: String, Outputs: []Output{Ciphertext, Equality, Match}},
 		{Name: "notes", Kind: String, Outputs: []Output{Ciphertext}},
 	}}

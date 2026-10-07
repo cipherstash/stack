@@ -94,7 +94,7 @@ func TestTheSameCredentialsPassedTwiceAreNotConsumed(t *testing.T) {
 // does not panic, whichever constructor made them.
 func TestCredentialsAreComparable(t *testing.T) {
 	a := OIDCFederation("crn:a", nil)
-	b := OIDCFederation("crn:b", nil, auth.WithAuthBaseURL("https://cts.example.com"))
+	b := OIDCFederation("crn:b", nil, auth.WithBaseURL("https://cts.example.com"))
 	if a == b || AutoCredentials() != AutoCredentials() {
 		t.Fatal("unexpected comparison result")
 	}
@@ -195,12 +195,12 @@ func TestOIDCFederationResolvesTheKeyLikeAuto(t *testing.T) {
 	}
 	// No CRN is a configuration error from the strategy, before any
 	// provider or key is asked.
-	if _, err := OIDCFederation("", provider).resolve(context.Background(), resolveOptions{Transport: http.DefaultTransport}); !errors.Is(err, auth.ErrAuthConfig) {
-		t.Fatalf("OIDCFederation with no CRN: %v, want ErrAuthConfig", err)
+	if _, err := OIDCFederation("", provider).resolve(context.Background(), resolveOptions{Transport: http.DefaultTransport}); !errors.Is(err, auth.ErrConfig) {
+		t.Fatalf("OIDCFederation with no CRN: %v, want ErrConfig", err)
 	}
 }
 
-// OIDCFederation's strategy options reach the strategy: WithAuthBaseURL
+// OIDCFederation's strategy options reach the strategy: WithBaseURL
 // pins CTS for these credentials, over CS_CTS_HOST, which here names a
 // decoy that fails the test if it is asked.
 func TestOIDCFederationTakesStrategyOptions(t *testing.T) {
@@ -208,7 +208,7 @@ func TestOIDCFederationTakesStrategyOptions(t *testing.T) {
 	cleanEnv(t, filepath.Join(t.TempDir(), "absent"))
 	cts := newAuthServer(t)
 	decoy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("CS_CTS_HOST was asked (%s) though WithAuthBaseURL pinned CTS", r.URL.Path)
+		t.Errorf("CS_CTS_HOST was asked (%s) though WithBaseURL pinned CTS", r.URL.Path)
 		http.NotFound(w, r)
 	}))
 	t.Cleanup(decoy.Close)
@@ -216,7 +216,7 @@ func TestOIDCFederationTakesStrategyOptions(t *testing.T) {
 	t.Setenv(envClientID, testClientID)
 	t.Setenv(envClientKey, testClientKey)
 	provider := auth.OIDCProviderFunc(func(context.Context) (string, error) { return "idp-token", nil })
-	creds := OIDCFederation(testCRN, provider, auth.WithAuthBaseURL(cts.URL))
+	creds := OIDCFederation(testCRN, provider, auth.WithBaseURL(cts.URL))
 	resolved, err := creds.resolve(context.Background(), resolveOptions{Transport: http.DefaultTransport})
 	if err != nil {
 		t.Fatal(err)

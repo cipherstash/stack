@@ -61,7 +61,7 @@ type userShape struct {
 
 var declaration = gensupport.Declare("users").
 	Passthrough("id").
-	EncryptIndex("age", gensupport.UInt32, encrypt.Equality, encrypt.Ore).
+	EncryptIndex("age", gensupport.Uint32, encrypt.Equality, encrypt.Ore).
 	EncryptIndex("email", gensupport.String, encrypt.Equality, encrypt.Match()).
 	Encrypt("notes", gensupport.String).
 	Omit("internal")
