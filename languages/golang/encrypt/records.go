@@ -20,8 +20,9 @@ import (
 // Decrypter opens records: a *Cipher, which refuses a record sealed under
 // another keyset before any key is retrieved, or a *Client, which opens each
 // record under the keyset that sealed it. A *Client opens only records that
-// a cipher with no extension sealed. Generated Decrypt functions take
-// one. Its method is for generated code; a program does not call it.
+// a cipher with no extension sealed, and checks no stored context field
+// against a label: that is [Cipher.Context]. Generated Decrypt functions
+// take one. Its method is for generated code; a program does not call it.
 type Decrypter interface {
 	Open(ctx context.Context, plan *record.Plan, records []record.Sealed) ([]record.Source, error)
 }
@@ -40,6 +41,14 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 		if err != nil {
 			return nil, fmt.Errorf("%w: row %d: %v", ErrEncoding, i, err)
 		}
+		if cph.context != "" {
+			// The cipher names the context every row is under: a value
+			// whose context field says otherwise is refused here, before
+			// anything is sent, as Open refuses a stored row.
+			if label := row[p.ContextField]; label != cph.context {
+				return nil, fmt.Errorf("%w: row %d: the context field %q holds %q, and the cipher names %q", ErrContextMismatch, i, p.ContextField, label, cph.context)
+			}
+		}
 	}
 	encodedSource, err := vcffi.Marshal(source)
 	if err != nil {
@@ -52,7 +61,7 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	opts, err := vcffi.Marshal(options(cph.keyset))
+	opts, err := vcffi.Marshal(options(cph.keyset, ""))
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +95,9 @@ func (cph *Cipher) Seal(ctx context.Context, plan *record.Plan, rows []record.So
 
 // Open decrypts records sealed under the plan: every row, in order, with one
 // ZeroKMS request for each 500 sealed values. A record from another keyset is
-// [ErrForeignKeyset]. For generated code.
+// [ErrForeignKeyset]; under [Cipher.Context], a record whose stored context
+// field names another context is [ErrContextMismatch]. Both are refused
+// before any key is retrieved. For generated code.
 func (cph *Cipher) Open(ctx context.Context, plan *record.Plan, records []record.Sealed) ([]record.Source, error) {
 	if cph == nil {
 		// A Decrypter holding a nil *Cipher is not a nil interface, so the
@@ -97,16 +108,34 @@ func (cph *Cipher) Open(ctx context.Context, plan *record.Plan, records []record
 	if err != nil {
 		return nil, err
 	}
-	return cph.client.open(ctx, cph.keyset, p, records)
+	return cph.client.open(ctx, cph.keyset, cph.context, p, records)
 }
 
 // Derive derives one index term for one value of a field, under the plan's
 // context for that field and this cipher's extension: the term a query
-// compares against the stored one. For generated code.
+// compares against the stored one. A plan that takes its context from a
+// field has none of its own, so the term derives under the context named
+// with [Cipher.Context], and a cipher that names none is refused as
+// [ErrEncoding]. For generated code.
 func (cph *Cipher) Derive(ctx context.Context, plan *record.Plan, field string, output record.Output, value any) ([]byte, error) {
 	p, err := cph.plan(plan)
 	if err != nil {
 		return nil, err
+	}
+	if p.ContextField != "" {
+		if cph.context == "" {
+			return nil, fmt.Errorf("%w: field %q: the type takes its context from its field %q, so a query names it with Cipher.Context", ErrEncoding, field, p.ContextField)
+		}
+		// The label a query compares against is <context>/<identity>, as
+		// the record stored it: the plan under the named context, with no
+		// context field of its own. Validate has checked the label.
+		segments, err := record.ParseContext(cph.context)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
+		}
+		under := *p
+		under.Context, under.ContextField = segments, ""
+		p = &under
 	}
 	f := p.Field(field)
 	if f == nil {
@@ -134,7 +163,7 @@ func (cph *Cipher) Derive(ctx context.Context, plan *record.Plan, field string, 
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	opts, err := vcffi.Marshal(options(cph.keyset))
+	opts, err := vcffi.Marshal(options(cph.keyset, ""))
 	if err != nil {
 		return nil, err
 	}
@@ -153,16 +182,23 @@ func (c *Client) Open(ctx context.Context, plan *record.Plan, records []record.S
 	if err := plan.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	return c.open(ctx, anyKeyset{}, plan, records)
+	return c.open(ctx, anyKeyset{}, "", plan, records)
 }
 
-// plan is the declaration's plan with this cipher's extension, checked.
+// plan is the declaration's plan with this cipher's extension, checked. A
+// cipher that names a context serves a plan that takes its context from a
+// field and no other: for one with a context of its own there is nothing
+// the label could be, so it is refused as two sources, as the engine
+// refuses it.
 func (cph *Cipher) plan(plan *record.Plan) (*record.Plan, error) {
 	if cph.err != nil {
 		return nil, cph.err
 	}
 	if plan == nil {
 		return nil, fmt.Errorf("%w: no plan", ErrEncoding)
+	}
+	if cph.context != "" && plan.ContextField == "" {
+		return nil, fmt.Errorf("%w: the cipher names the context %q, and the type has its context in its tags; Context is for a type with a context_field", ErrEncoding, cph.context)
 	}
 	p := *plan
 	p.Extension = append(append([]any(nil), plan.Extension...), cph.extension...)
@@ -172,18 +208,33 @@ func (cph *Cipher) plan(plan *record.Plan) (*record.Plan, error) {
 	return &p, nil
 }
 
-// sourceRow renders one row for the guest: the plan's fields, in plan order,
-// each with its value. Fail closed in both directions: a field with no value
-// and a value with no field are both refused before anything is sent.
+// sourceRow renders one row for the guest: the context field first, when
+// the plan has one, then the plan's fields, in plan order, each with its
+// value. Fail closed in both directions: a field with no value and a value
+// with no field are both refused before anything is sent.
 func sourceRow(p *record.Plan, row record.Source) (vcvalue.Object, error) {
-	if len(row) != len(p.Fields) {
+	expected := len(p.Fields)
+	if p.ContextField != "" {
+		expected++
+	}
+	if len(row) != expected {
 		for name := range row {
-			if p.Field(name) == nil {
+			if p.Field(name) == nil && name != p.ContextField {
 				return nil, fmt.Errorf("the plan has no field %q", name)
 			}
 		}
 	}
-	out := make(vcvalue.Object, 0, len(p.Fields))
+	out := make(vcvalue.Object, 0, expected)
+	if p.ContextField != "" {
+		v, ok := row[p.ContextField]
+		if !ok {
+			return nil, fmt.Errorf("no value for the context field %q", p.ContextField)
+		}
+		if _, isString := v.(string); !isString {
+			return nil, fmt.Errorf("the context field %q holds a %T, not a string", p.ContextField, v)
+		}
+		out = append(out, vcvalue.Field{Key: p.ContextField, Value: v})
+	}
 	for _, f := range p.Fields {
 		v, ok := row[f.Name]
 		if !ok {
@@ -202,7 +253,7 @@ func sealedOf(p *record.Plan, node any) (record.Sealed, error) {
 	}
 	sealed := make(record.Sealed, len(fields))
 	for name, outputs := range fields {
-		if p.Field(name) == nil {
+		if p.Field(name) == nil && name != p.ContextField {
 			return nil, fmt.Errorf("the engine returned a field %q the plan does not name", name)
 		}
 		om, ok := outputs.(map[string]any)
@@ -210,6 +261,22 @@ func sealedOf(p *record.Plan, node any) (record.Sealed, error) {
 			return nil, fmt.Errorf("field %q came back as %T", name, outputs)
 		}
 		var o record.Outputs
+		if name == p.ContextField {
+			// The context field comes back as it went in: a passthrough
+			// carrying the label, which the record stores in the clear.
+			if len(om) != 1 {
+				return nil, fmt.Errorf("the context field %q came back with %d outputs", name, len(om))
+			}
+			plain, ok := om[string(record.Passthrough)].(vcvalue.Plain)
+			if !ok {
+				return nil, fmt.Errorf("the context field %q did not come back as a passthrough", name)
+			}
+			if o.Context, ok = plain.V.(string); !ok {
+				return nil, fmt.Errorf("the context field %q came back as a %T, not a string", name, plain.V)
+			}
+			sealed[name] = o
+			continue
+		}
 		for key, out := range om {
 			if key == string(record.Ciphertext) {
 				leaf, ok := out.(Ciphertext)
@@ -235,6 +302,11 @@ func sealedOf(p *record.Plan, node any) (record.Sealed, error) {
 			return nil, fmt.Errorf("the engine returned no outputs for field %q", f.Name)
 		}
 	}
+	if p.ContextField != "" {
+		if _, ok := sealed[p.ContextField]; !ok {
+			return nil, fmt.Errorf("the engine returned no context field %q", p.ContextField)
+		}
+	}
 	return sealed, nil
 }
 
@@ -254,10 +326,25 @@ func termBytes(node any) ([]byte, error) {
 // errNoCiphertext is a stored record missing a field the plan seals.
 var errNoCiphertext = errors.New("encrypt: the record has no ciphertext for a sealed field")
 
-func (c *Client) open(ctx context.Context, sel KeysetSelector, p *record.Plan, records []record.Sealed) ([]record.Source, error) {
+// errNoContext is a stored record missing its context field.
+var errNoContext = errors.New("encrypt: the record has no value for its context field")
+
+// open decrypts records under the keyset the selector names, and, when
+// context is not "", refuses a record whose stored context field names
+// another context before any key is retrieved.
+func (c *Client) open(ctx context.Context, sel KeysetSelector, context string, p *record.Plan, records []record.Sealed) ([]record.Source, error) {
 	trees := make([]any, len(records))
 	for i, rec := range records {
-		tree := make(map[string]any, len(p.Fields))
+		tree := make(map[string]any, len(p.Fields)+1)
+		if p.ContextField != "" {
+			// The stored context is what every field opens under: it
+			// crosses as the passthrough it was stored as.
+			outputs, ok := rec[p.ContextField]
+			if !ok || outputs.Context == "" {
+				return nil, fmt.Errorf("%w: row %d, field %q", errNoContext, i, p.ContextField)
+			}
+			tree[p.ContextField] = map[string]any{string(record.Passthrough): vcvalue.Plain{V: outputs.Context}}
+		}
 		for _, f := range p.Fields {
 			hasCiphertext := false
 			for _, o := range f.Outputs {
@@ -282,7 +369,7 @@ func (c *Client) open(ctx context.Context, sel KeysetSelector, p *record.Plan, r
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrEncoding, err)
 	}
-	opts, err := vcffi.Marshal(options(sel))
+	opts, err := vcffi.Marshal(options(sel, context))
 	if err != nil {
 		return nil, err
 	}

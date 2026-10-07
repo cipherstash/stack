@@ -15,7 +15,11 @@
 // Passthrough fields do not appear in a Plan. The Go SDK keeps them on the
 // host: the FFI codec cannot carry every Go type a program stores beside a
 // ciphertext (a time.Time, a driver.Valuer), and nothing the engine does to
-// a passthrough value could be observed.
+// a passthrough value could be observed. The one exception is a context
+// field: a string field whose value is the context every other field is
+// sealed under (the engine's context_field). It crosses the binding as a
+// passthrough of type string, because the engine reads it to seal and to
+// open, and the stored record carries it in the clear.
 package record
 
 import (
@@ -52,13 +56,15 @@ const (
 // Output is one output of a sealed field, by its wire key.
 type Output string
 
-// The outputs. Passthrough is not one a Plan asks for; see the package doc.
+// The outputs. Passthrough is not one a Plan's Fields ask for (see the
+// package doc); it is the context field's, which Wire writes itself.
 const (
-	Ciphertext Output = "c"
-	Equality   Output = "eq"
-	Match      Output = "match"
-	Ore        Output = "ore"
-	Ope        Output = "ope"
+	Ciphertext  Output = "c"
+	Equality    Output = "eq"
+	Match       Output = "match"
+	Ore         Output = "ore"
+	Ope         Output = "ope"
+	Passthrough Output = "passthrough"
 )
 
 // IsTerm reports whether the output is an index term.
@@ -83,8 +89,14 @@ type Field struct {
 type Plan struct {
 	// Context is the label every field's label extends: at least one plain
 	// segment. The guest requires a field's label to have two or more
-	// segments, which the identity supplies.
+	// segments, which the identity supplies. Empty when ContextField is set.
 	Context []string
+	// ContextField is the name of the record's field whose value is the
+	// context, when the declaration takes its context from a field rather
+	// than from Context: the engine's context_field. The field is a string,
+	// crosses the binding as a passthrough, and is not in Fields. Each
+	// field's label is then its identity alone, under that value.
+	ContextField string
 	// Extension is the caller's parts, nested to the left of every field's
 	// label, in order: a tenant, a region.
 	Extension []any
@@ -160,7 +172,16 @@ func CheckPart(part any) error {
 // carries. The engine's own rules — which index a kind admits, what the
 // builder refuses — are the engine's, asked through se_plan_check.
 func (p *Plan) Validate() error {
-	if len(p.Context) == 0 {
+	switch {
+	case p.ContextField != "" && len(p.Context) > 0:
+		return errors.New("record: the plan has a context and a context field; it takes one")
+	case p.ContextField != "":
+		// The field's name is its label segment on the wire, so it has to
+		// be a plain one.
+		if err := CheckSegment(p.ContextField); err != nil {
+			return fmt.Errorf("record: context field %q %v", p.ContextField, err)
+		}
+	case len(p.Context) == 0:
 		return errors.New("record: the plan has no context")
 	}
 	for i, seg := range p.Context {
@@ -177,6 +198,9 @@ func (p *Plan) Validate() error {
 		return errors.New("record: the plan has no sealed field")
 	}
 	names, identities := map[string]bool{}, map[string]bool{}
+	if p.ContextField != "" {
+		names[p.ContextField], identities[p.ContextField] = true, true
+	}
 	for _, f := range p.Fields {
 		if f.Name == "" {
 			return errors.New("record: a field has no name")
@@ -242,9 +266,21 @@ func (p *Plan) Field(name string) *Field {
 }
 
 // Wire renders the plan as the guest parses it: per field, its context
-// (the label, extended), its outputs and its type. Validate first.
+// (the label, extended), its outputs and its type; with a context field,
+// the plan-level "context_field" key and that field's own entry, a
+// passthrough of type string. Validate first.
 func (p *Plan) Wire() vcvalue.Object {
-	out := make(vcvalue.Object, 0, len(p.Fields))
+	out := make(vcvalue.Object, 0, len(p.Fields)+2)
+	if p.ContextField != "" {
+		out = append(out,
+			vcvalue.Field{Key: "context_field", Value: p.ContextField},
+			vcvalue.Field{Key: p.ContextField, Value: vcvalue.Object{
+				{Key: "context", Value: p.FieldContext(Field{Name: p.ContextField})},
+				{Key: "outputs", Value: []any{string(Passthrough)}},
+				{Key: "type", Value: string(String)},
+			}},
+		)
+	}
 	for _, f := range p.Fields {
 		outputs := make([]any, len(f.Outputs))
 		for i, o := range f.Outputs {
@@ -265,7 +301,8 @@ func (p *Plan) Wire() vcvalue.Object {
 // FieldContext is one field's context as the guest reads it: the label as a
 // flat list of its segments, then each extension part nested to the left —
 // [[["users", "age"], 7], "eu"] — exactly the shape se_term takes for a
-// probe of that field.
+// probe of that field. Under a context field the label is the identity
+// alone: [["age"], 7].
 func (p *Plan) FieldContext(f Field) any {
 	label := make([]any, 0, len(p.Context)+1)
 	for _, s := range p.Context {
@@ -291,23 +328,34 @@ func ownPart(part any) any {
 }
 
 // Descriptor renders a field's label as ZeroKMS logs it, for messages.
+// Under a context field the context is the record's, so the descriptor
+// names the field in its place: "<tenant>/age".
 func (p *Plan) Descriptor(f Field) string {
+	if p.ContextField != "" {
+		return "<" + p.ContextField + ">/" + f.identity()
+	}
 	return strings.Join(append(append([]string{}, p.Context...), f.identity()), "/")
 }
 
 // Source is one record's plaintext for the engine: each sealed field's value
-// by name. Passthrough and omitted fields are not in it.
+// by name, and the context field's string when the plan has one.
+// Passthrough and omitted fields are not in it.
 type Source = map[string]any
 
-// Outputs is what the engine produced for one sealed field.
+// Outputs is what the engine produced for one sealed field, or what it
+// stored for the context field.
 type Outputs struct {
 	// Ciphertext is the frozen leaf bytes, or nil for an index-only field.
 	Ciphertext []byte
 	// Terms are the index terms by output, each its frozen bytes.
 	Terms map[Output][]byte
+	// Context is the context field's value as the record stores it, in the
+	// clear, and nothing for any other field.
+	Context string
 }
 
-// Sealed is one record as stored: each sealed field's outputs by name.
+// Sealed is one record as stored: each sealed field's outputs by name, and
+// the context field's under its name when the plan has one.
 type Sealed = map[string]Outputs
 
 // Target is one EQL type as se_targets lists it. The entry's keys are wire

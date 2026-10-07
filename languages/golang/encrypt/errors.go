@@ -49,6 +49,11 @@ var (
 	// under another keyset, before any key is retrieved. Open it through the
 	// Client, which is not bound to one keyset.
 	ErrForeignKeyset = guest.ErrForeignKeyset
+	// ErrContextMismatch is a row whose context field, stored in the clear
+	// beside its sealed fields, is not the context named with
+	// [Cipher.Context]. Refused before any key is retrieved; a row stored
+	// under another tenant is a mismatch, never a decrypted value.
+	ErrContextMismatch = guest.ErrContextMismatch
 	// ErrMemoryLock is guest memory that could not be locked in RAM (or,
 	// on Linux, excluded from core dumps). NewClient returns it when
 	// WithRequireLockedMemory is given, and so does any later call under

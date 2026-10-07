@@ -68,3 +68,16 @@ type Probe struct {
 	S   string   `stash:"s,encrypt,index=ore;ope"`
 	B   []byte   `stash:"b,encrypt,index=ore;ope"`
 }
+
+//go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Note -name Note
+
+// Note takes its context from its own Tenant field, as the Rust record
+// fixture's context-field case does (the `context_field` key of
+// packages/stack-encrypt/tests/fixtures/record_lowering.json): the same
+// field names, kinds and index, so the fixture's records open through the
+// generated code and its term compares.
+type Note struct {
+	Tenant string `stash:"tenant,context_field"`
+	Text   string `stash:"text,encrypt,index=equality"`
+	ID     uint32 `stash:"id,passthrough"`
+}

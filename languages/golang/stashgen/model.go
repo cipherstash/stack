@@ -150,7 +150,7 @@ func outputWord(g *genField, out *output) string {
 	switch {
 	case out.index != "":
 		return string(out.index) + " term"
-	case g.Verb == VerbPassthrough:
+	case g.Stored():
 		return "value"
 	case g.Verb == VerbEncryptInto:
 		return "EQL value"
@@ -161,7 +161,7 @@ func outputWord(g *genField, out *output) string {
 // sourceExpr is the expression that reads one output from the encrypted value e.
 func sourceExpr(e string, g *genField, out *output) string {
 	switch g.Verb {
-	case VerbPassthrough, VerbEncryptInto:
+	case VerbPassthrough, VerbContextField, VerbEncryptInto:
 		return e + "." + g.GoName
 	}
 	return e + "." + g.GoName + "." + out.name

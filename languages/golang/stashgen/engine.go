@@ -99,7 +99,7 @@ func (e *guestEngine) Check(ctx context.Context, d Declaration) error {
 		return nil
 	}
 	for _, f := range plan.Fields {
-		one := &record.Plan{Context: plan.Context, Fields: []record.Field{f}}
+		one := &record.Plan{Context: plan.Context, ContextField: plan.ContextField, Fields: []record.Field{f}}
 		if err := e.checker.Check(ctx, one); err != nil {
 			field := d.field(f.Name)
 			return &FieldError{Type: d.Type, Field: field.GoName, Reason: fmt.Sprintf(
@@ -117,11 +117,14 @@ func (e *guestEngine) Check(ctx context.Context, d Declaration) error {
 // the engine reads: the same shape gensupport lowers the generated
 // declaration to. Passthrough and omitted fields stay on the host.
 func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
-	segments, err := record.ParseContext(d.Context)
-	if err != nil {
-		return nil, &FieldError{Type: d.Type, Reason: err.Error()}
+	plan := &record.Plan{ContextField: d.ContextField}
+	if d.ContextField == "" {
+		segments, err := record.ParseContext(d.Context)
+		if err != nil {
+			return nil, &FieldError{Type: d.Type, Reason: err.Error()}
+		}
+		plan.Context = segments
 	}
-	plan := &record.Plan{Context: segments}
 	if d.Opaque {
 		// gensupport seals an opaque struct as one JSON document under
 		// <context>/value; see gensupport.OpaqueField.

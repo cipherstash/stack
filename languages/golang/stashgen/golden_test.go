@@ -35,7 +35,10 @@ var goldenCases = map[string]goldenCase{
 	"orders":   {req: stashgen.Request{Type: "Order", Name: "Order"}, golden: "order_stash.go.golden"},
 	"refunds":  {dir: "", req: stashgen.Request{Type: "Refund"}, golden: "refund_stash.go.golden"},
 	"embedded": {req: stashgen.Request{Type: "Patient"}, golden: "patient_stash.go.golden"},
-	"foreign":  {req: stashgen.Request{Type: "individualStash", For: "pb.Individual"}, golden: "individualstash_stash.go.golden"},
+	// A struct whose context is one of its fields, with a model that binds
+	// the context field to a column.
+	"tenants": {req: stashgen.Request{Type: "Note", Models: []stashgen.ModelRequest{{Name: "Rows", Type: "NoteRow"}}}, golden: "note_stash.go.golden"},
+	"foreign": {req: stashgen.Request{Type: "individualStash", For: "pb.Individual"}, golden: "individualstash_stash.go.golden"},
 }
 
 func TestGolden(t *testing.T) {

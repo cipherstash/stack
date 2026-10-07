@@ -73,8 +73,16 @@ The first part of a tag is the field's name, which is the column name in a datab
 | `stash:"score,index=ore"` | derive the index alone; no ciphertext is stored, so `Decrypt` leaves the field at its zero value |
 | `stash:"attrs,index=json"` | refused in this build: the engine does not derive the `json` index yet |
 | `stash:"id,passthrough"` | store the field as it is |
+| `stash:"tenant,context_field"` | the field's value is the context of every other field in the struct, in place of a `context=` tag; stored as it is |
 | `stash:"-"` | leave the field out |
 | `` _ struct{} `stash:"context=documents,opaque"` `` | seal the struct as one value |
+
+A struct has one context: either a `_ struct{}` field with `context=`, or one field with `context_field`, not both.
+A `context_field` is a `string` whose value is a label such as `"tenants/acme"`, segments separated by `/`.
+Every other field is sealed under that value, so each row is bound to the context it names, and a sealed value copied to another tenant's row does not decrypt there.
+The field is stored as it is, in the clear and unauthenticated like a `passthrough` field, so the row names its own context when it is read.
+`Decrypt` opens each row under the context it stores; `cipher.Context("tenants/acme")` names the context every row through the cipher is under, and refuses a row stored under another with `encrypt.ErrContextMismatch`.
+A query on such a type derives its term under the context the cipher names, so it takes a cipher from `Context`.
 
 > **Take care**
 >
@@ -151,7 +159,8 @@ The error names the type and the field, and never a value.
 
 - an exported field with no `stash` tag;
 - a tag that does not parse, or two fields with one name;
-- a struct with no `context=` field;
+- a struct with no `context=` field and no `context_field`;
+- a `context_field` beside a `context=` field, a second `context_field`, one that is not a `string`, one with another part such as `encrypt` or `index=`, or one whose name is not a label segment;
 - an index or an EQL type that does not apply to the field's Go type, such as `match` on an `int32`;
 - a field type that the engine cannot seal;
 - an EQL type that the engine cannot produce yet;

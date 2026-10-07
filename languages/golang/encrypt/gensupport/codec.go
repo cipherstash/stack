@@ -156,6 +156,12 @@ func (c *Codec[P, E]) Decrypt(ctx context.Context, d encrypt.Decrypter, encrypte
 				continue
 			case !ok:
 				return nil, fmt.Errorf("gensupport: %s: value %d: Open gave no field %q", c.g.TypeName, i, f.name)
+			case f.verb == verbContextField:
+				label, isString := o.Value.(string)
+				if !isString {
+					return nil, fmt.Errorf("gensupport: %s: value %d: the context field %q holds a %T, not a string", c.g.TypeName, i, f.name, o.Value)
+				}
+				records[i][f.name] = record.Outputs{Context: label}
 			case f.sealed():
 				records[i][f.name] = record.Outputs{Ciphertext: o.Ciphertext}
 			default:
@@ -196,7 +202,7 @@ func (c *Codec[P, E]) split(vals Values) (record.Source, map[string]any, error) 
 		if !ok {
 			return nil, nil, fmt.Errorf("the generated Source gave no field %q", f.name)
 		}
-		if f.sealed() {
+		if f.crosses() {
 			row[f.name] = v
 		} else {
 			keep[f.name] = v
@@ -217,6 +223,10 @@ func (c *Codec[P, E]) split(vals Values) (record.Source, map[string]any, error) 
 }
 
 func outputOf(o record.Outputs) Output {
+	if o.Context != "" {
+		// The context field comes back as the passthrough it is.
+		return Output{Value: o.Context}
+	}
 	out := Output{Ciphertext: o.Ciphertext}
 	for k, term := range o.Terms {
 		switch k {

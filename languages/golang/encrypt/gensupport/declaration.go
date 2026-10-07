@@ -50,6 +50,7 @@ const (
 	verbEncryptIndex
 	verbIndex
 	verbEncryptInto
+	verbContextField
 )
 
 type field struct {
@@ -68,10 +69,11 @@ type field struct {
 // function in this package panics, and the error comes back from the first
 // call through the codec.
 type Declaration struct {
-	context []string
-	opaque  bool
-	fields  []field
-	err     error
+	context      []string
+	contextField string
+	opaque       bool
+	fields       []field
+	err          error
 }
 
 // Declare starts a declaration with the struct's context: the `context=`
@@ -90,6 +92,20 @@ func DeclareOpaque(context string) Declaration {
 	d := Declare(context)
 	d.opaque = true
 	return d.add(field{name: OpaqueField, kind: Bytes, verb: verbEncrypt})
+}
+
+// DeclareContextField starts a declaration whose context is the named
+// field of each value, a string such as "tenants/acme": the `context_field`
+// tag, the engine's context_field. Every other field is sealed under that
+// value, and the field is stored as it is, in the clear and unauthenticated
+// like a passthrough, so a row names its own context. The field's name is
+// a label segment on the wire, so it must be a plain one.
+func DeclareContextField(name string) Declaration {
+	if err := record.CheckSegment(name); err != nil {
+		return Declaration{err: fmt.Errorf("gensupport: context field %q %v", name, err)}
+	}
+	d := Declaration{contextField: name}
+	return d.add(field{name: name, kind: String, verb: verbContextField})
 }
 
 // Passthrough stores the field as it is. It stays on the host: see the
@@ -174,7 +190,7 @@ func (d Declaration) add(f field) Declaration {
 // Err is the declaration's mistake, if any.
 func (d Declaration) Err() error { return d.err }
 
-// sealed reports whether a field crosses the binding.
+// sealed reports whether a field has a ciphertext or a term.
 func (f field) sealed() bool {
 	switch f.verb {
 	case verbEncrypt, verbEncryptIndex, verbIndex, verbEncryptInto:
@@ -183,13 +199,19 @@ func (f field) sealed() bool {
 	return false
 }
 
+// crosses reports whether a field crosses the binding: a sealed field, and
+// the context field, which the engine reads.
+func (f field) crosses() bool {
+	return f.sealed() || f.verb == verbContextField
+}
+
 // plan lowers the declaration to what the engine reads: the sealed fields,
 // each with its label, outputs and type.
 func (d Declaration) plan() (*record.Plan, error) {
 	if d.err != nil {
 		return nil, d.err
 	}
-	p := &record.Plan{Context: d.context}
+	p := &record.Plan{Context: d.context, ContextField: d.contextField}
 	for _, f := range d.fields {
 		if !f.sealed() {
 			continue

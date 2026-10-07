@@ -13,8 +13,14 @@ type Declaration struct {
 	// Type is the Go type the declaration is for, as the generator prints it
 	// in an error: "User" or "crm.Contact".
 	Type string
-	// Context is the context of every field, from the `context=` tag.
+	// Context is the context of every field, from the `context=` tag; ""
+	// when ContextField is set.
 	Context string
+	// ContextField is the declaration name of the field whose value is the
+	// context of every other field, from the `context_field` tag; "" when
+	// the context comes from Context. The field is a string, stored as it
+	// is, in the clear and unauthenticated like a passthrough.
+	ContextField string
 	// Opaque seals the whole struct as one value. The fields then carry no
 	// tags and no indexes.
 	Opaque bool
@@ -59,6 +65,9 @@ const (
 	VerbIndex
 	// VerbEncryptInto seals the field into one EQL value.
 	VerbEncryptInto
+	// VerbContextField stores the field as it is, and its value is the
+	// context every other field is sealed under.
+	VerbContextField
 )
 
 // String returns the tag word for the verb.
@@ -76,8 +85,16 @@ func (v Verb) String() string {
 		return "index"
 	case VerbEncryptInto:
 		return "encrypt_into"
+	case VerbContextField:
+		return "context_field"
 	}
 	return fmt.Sprintf("Verb(%d)", uint8(v))
+}
+
+// Stored reports whether the field is stored as it is: a passthrough, or
+// the context field.
+func (f Field) Stored() bool {
+	return f.Verb == VerbPassthrough || f.Verb == VerbContextField
 }
 
 // Sealed reports whether the field has a ciphertext or a term: every verb

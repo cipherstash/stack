@@ -20,6 +20,7 @@ const tagKey = "stash"
 //	stash:"email,encrypt,index=equality;match" Name, VerbEncryptIndex, Indexes
 //	stash:"attrs,index=json"                  Name, VerbIndex, Indexes
 //	stash:"id,passthrough"                    Name, VerbPassthrough
+//	stash:"tenant,context_field"              Name, VerbContextField
 //	stash:",passthrough"                      VerbPassthrough with no Name, on an embedded struct
 type tag struct {
 	Omit    bool
@@ -67,7 +68,7 @@ func parseTagValue(value string) (tag, error) {
 	if strings.ContainsAny(t.Name, "=();") {
 		return tag{}, fmt.Errorf("tag %q: the first part is the field's name, and %q is not a name", value, t.Name)
 	}
-	var sawEncrypt, sawPassthrough, sawIndex, sawInto bool
+	var sawEncrypt, sawPassthrough, sawIndex, sawInto, sawContextField bool
 	for _, item := range items[1:] {
 		switch {
 		case item == "encrypt":
@@ -80,6 +81,11 @@ func parseTagValue(value string) (tag, error) {
 				return tag{}, fmt.Errorf("tag %q: passthrough is given twice", value)
 			}
 			sawPassthrough = true
+		case item == "context_field":
+			if sawContextField {
+				return tag{}, fmt.Errorf("tag %q: context_field is given twice", value)
+			}
+			sawContextField = true
 		case strings.HasPrefix(item, "encrypt_into="):
 			if sawInto {
 				return tag{}, fmt.Errorf("tag %q: encrypt_into is given twice", value)
@@ -103,10 +109,18 @@ func parseTagValue(value string) (tag, error) {
 		case item == "":
 			return tag{}, fmt.Errorf("tag %q: an empty part", value)
 		default:
-			return tag{}, fmt.Errorf("tag %q: unknown part %q; the parts are encrypt, encrypt_into=, index=, passthrough and -", value, item)
+			return tag{}, fmt.Errorf("tag %q: unknown part %q; the parts are encrypt, encrypt_into=, index=, passthrough, context_field and -", value, item)
 		}
 	}
 	switch {
+	case sawContextField && (sawEncrypt || sawInto || sawIndex || sawPassthrough):
+		return tag{}, fmt.Errorf("tag %q: a context field is the context of the other fields, stored as it is; it takes no other part", value)
+	case sawContextField:
+		t.Verb = VerbContextField
+		if t.Name == "" {
+			return tag{}, fmt.Errorf("tag %q: a context field has a name", value)
+		}
+		return t, nil
 	case sawPassthrough && (sawEncrypt || sawInto):
 		return tag{}, fmt.Errorf("tag %q: a field is passthrough or encrypted, not both", value)
 	case sawPassthrough && sawIndex:

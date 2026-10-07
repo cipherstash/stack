@@ -76,7 +76,13 @@ type anyKeyset struct{}
 
 func (anyKeyset) selector() map[string]any { return map[string]any{"any": map[string]any{}} }
 
-// options renders the per-call options object the guest parses.
-func options(sel KeysetSelector) map[string]any {
-	return map[string]any{"keyset": sel.selector()}
+// options renders the per-call options object the guest parses: the keyset
+// selector and, on an open with a context named, the context the guest
+// checks each record's context field against.
+func options(sel KeysetSelector, context string) map[string]any {
+	opts := map[string]any{"keyset": sel.selector()}
+	if context != "" {
+		opts["context"] = context
+	}
+	return opts
 }

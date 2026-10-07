@@ -51,7 +51,7 @@ func TestSelectorsSpellEveryVariant(t *testing.T) {
 		if got := tc.sel.selector(); !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("%T: got %v, want %v", tc.sel, got, tc.want)
 		}
-		if _, err := vcffi.Marshal(options(tc.sel)); err != nil {
+		if _, err := vcffi.Marshal(options(tc.sel, "")); err != nil {
 			t.Errorf("%T options do not marshal: %v", tc.sel, err)
 		}
 	}

@@ -70,6 +70,9 @@ func Declare(context string) Declaration { return Declaration{} }
 // DeclareOpaque declares a struct sealed as one value.
 func DeclareOpaque(context string) Declaration { return Declaration{} }
 
+// DeclareContextField starts a declaration whose context is a field.
+func DeclareContextField(name string) Declaration { return Declaration{} }
+
 func (d Declaration) Passthrough(name string) Declaration                                   { return d }
 func (d Declaration) Encrypt(name string, kind Kind) Declaration                            { return d }
 func (d Declaration) EncryptIndex(name string, kind Kind, idx ...encrypt.Index) Declaration { return d }

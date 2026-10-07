@@ -87,7 +87,7 @@ func (w *writer) encryptedType(f *genFile) {
 	}
 	w.p("}")
 	for _, g := range f.fields {
-		if g.Verb == VerbPassthrough || g.Verb == VerbEncryptInto {
+		if g.Stored() || g.Verb == VerbEncryptInto {
 			continue
 		}
 		w.nl()
@@ -112,7 +112,7 @@ func shownAndHidden(f *genFile, recv string) (shown string, hidden string) {
 		if g.via != "" {
 			continue
 		}
-		if g.Verb == VerbPassthrough {
+		if g.Stored() {
 			entries = append(entries, fmt.Sprintf("%q: %s.%s", g.GoName, recv, g.GoName))
 		} else {
 			hiddenNames = append(hiddenNames, fmt.Sprintf("%q", g.GoName))
@@ -254,10 +254,22 @@ func (w *writer) declaration(f *genFile) {
 		w.p("var %s = gensupport.DeclareOpaque(%q)", f.declVar, f.decl.Context)
 		return
 	}
-	w.p("var %s = gensupport.Declare(%q).", f.declVar, f.decl.Context)
-	for i, fld := range f.decl.Fields {
+	if f.decl.ContextField != "" {
+		w.p("var %s = gensupport.DeclareContextField(%q).", f.declVar, f.decl.ContextField)
+	} else {
+		w.p("var %s = gensupport.Declare(%q).", f.declVar, f.decl.Context)
+	}
+	// DeclareContextField adds the context field itself; the chain names
+	// the others.
+	var fields []Field
+	for _, fld := range f.decl.Fields {
+		if fld.Verb != VerbContextField {
+			fields = append(fields, fld)
+		}
+	}
+	for i, fld := range fields {
 		end := "."
-		if i == len(f.decl.Fields)-1 && fld.Identity == "" {
+		if i == len(fields)-1 && fld.Identity == "" {
 			end = ""
 		}
 		switch fld.Verb {
@@ -282,7 +294,7 @@ func (w *writer) declaration(f *genFile) {
 		}
 		if fld.Identity != "" {
 			end = "."
-			if i == len(f.decl.Fields)-1 {
+			if i == len(fields)-1 {
 				end = ""
 			}
 			w.p("\tIdentity(%q, %q)%s", fld.Name, fld.Identity, end)
@@ -362,7 +374,7 @@ func (w *writer) seal(f *genFile) {
 	w.p("\t\tvar e %s", f.encName)
 	hasPassthrough := false
 	for _, g := range f.fields {
-		if g.Verb == VerbPassthrough {
+		if g.Stored() {
 			hasPassthrough = true
 		}
 	}
@@ -370,7 +382,7 @@ func (w *writer) seal(f *genFile) {
 		w.p("\t\tvar err error")
 	}
 	for _, g := range f.fields {
-		if g.Verb != VerbPassthrough {
+		if !g.Stored() {
 			continue
 		}
 		w.p("\t\tif e.%s, err = gensupport.Passthrough[%s](rec, %q); err != nil {", g.GoName, g.typeExpr, g.Name)
@@ -379,7 +391,7 @@ func (w *writer) seal(f *genFile) {
 	}
 	for _, g := range f.fields {
 		switch g.Verb {
-		case VerbPassthrough:
+		case VerbPassthrough, VerbContextField:
 		case VerbEncryptInto:
 			w.p("\t\te.%s = %s(rec[%q].EQL)", g.GoName, g.outputType, g.Name)
 		default:
@@ -404,7 +416,7 @@ func (w *writer) open(f *genFile) {
 	entries := make([]string, len(f.fields))
 	for i, g := range f.fields {
 		switch g.Verb {
-		case VerbPassthrough:
+		case VerbPassthrough, VerbContextField:
 			entries[i] = fmt.Sprintf("%q: {Value: e.%s}", g.Name, g.GoName)
 		case VerbEncryptInto:
 			entries[i] = fmt.Sprintf("%q: {EQL: e.%s}", g.Name, g.GoName)
@@ -585,7 +597,7 @@ func (w *writer) model(f *genFile, m *genModel) {
 	entries = entries[:0]
 	for _, g := range f.fields {
 		switch g.Verb {
-		case VerbPassthrough, VerbEncryptInto:
+		case VerbPassthrough, VerbContextField, VerbEncryptInto:
 			entries = append(entries, fmt.Sprintf("%s: s.%s", g.GoName, m.fieldFor(&g, &g.outputs[0])))
 		default:
 			parts := make([]string, len(g.outputs))

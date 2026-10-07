@@ -24,9 +24,12 @@ type Cipher struct {
 	client    *Client
 	keyset    KeysetSelector
 	extension []any
-	// err is a refused extension part, reported by the first call rather
-	// than by Extend: a cipher is made without a request, and no call on
-	// this package panics.
+	// context is the label Context named, for a type whose context is one
+	// of its fields; "" names none.
+	context string
+	// err is a refused extension part or context, reported by the first
+	// call rather than by Extend or Context: a cipher is made without a
+	// request, and no call on this package panics.
 	err error
 }
 
@@ -56,7 +59,7 @@ func (cph *Cipher) KeysetID(ctx context.Context) (KeysetID, error) {
 // An unsupported part type is reported by the first call through the
 // cipher, as [ErrEncoding].
 func (cph *Cipher) Extend(parts ...any) *Cipher {
-	next := &Cipher{client: cph.client, keyset: cph.keyset, err: cph.err}
+	next := &Cipher{client: cph.client, keyset: cph.keyset, context: cph.context, err: cph.err}
 	next.extension = append(next.extension, cph.extension...)
 	for _, part := range parts {
 		if err := record.CheckPart(part); err != nil && next.err == nil {
@@ -72,3 +75,30 @@ func (cph *Cipher) Extend(parts ...any) *Cipher {
 func (cph *Cipher) Extension() []any {
 	return append([]any(nil), cph.extension...)
 }
+
+// Context returns a cipher that names the context every row through it is
+// under, for a type whose context is one of its own fields (a field tagged
+// `context_field`): the Rust chain's `.context(..)`. Through such a cipher,
+// Decrypt checks each row's stored context field against the label before
+// any key is retrieved and refuses a row that names another with
+// [ErrContextMismatch]; Encrypt refuses a value whose context field says
+// otherwise the same way, before anything is sent; a query derives its term
+// under the label, which such a type cannot derive otherwise; and a field's
+// own Encrypt seals the one value under it. Without a Context, Encrypt and
+// Decrypt take each row's context from the row, and a query has no context
+// to derive under. A type with a `context=` tag has its context already, so
+// every call through a cipher with a Context refuses it as [ErrEncoding].
+// The label is segments separated by '/', such as "tenants/acme"; one that
+// is not a plain label is reported by the first call, as ErrEncoding.
+func (cph *Cipher) Context(label string) *Cipher {
+	next := &Cipher{client: cph.client, keyset: cph.keyset, context: label, err: cph.err}
+	next.extension = append(next.extension, cph.extension...)
+	if _, err := record.ParseContext(label); err != nil && next.err == nil {
+		next.err = fmt.Errorf("%w: Context: %v", ErrEncoding, err)
+	}
+	return next
+}
+
+// ContextLabel is the label [Cipher.Context] named, or "" for a cipher
+// that names none.
+func (cph *Cipher) ContextLabel() string { return cph.context }

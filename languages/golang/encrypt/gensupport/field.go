@@ -32,7 +32,7 @@ func NewField[T any](d Declaration, name string) Field[T] {
 	}
 	// One field, its own plan: the label is the same, so the bytes are the
 	// same as in a whole record.
-	f.plan = &record.Plan{Context: plan.Context, Fields: []record.Field{*rf}}
+	f.plan = &record.Plan{Context: plan.Context, ContextField: plan.ContextField, Fields: []record.Field{*rf}}
 	return f
 }
 
@@ -45,7 +45,17 @@ func (f Field[T]) Encrypt(ctx context.Context, c *encrypt.Cipher, v T) (Output, 
 	if c == nil {
 		return Output{}, fmt.Errorf("gensupport: %s: Encrypt needs a cipher", f.name)
 	}
-	sealed, err := c.Seal(ctx, f.plan, []record.Source{{f.name: v}})
+	row := record.Source{f.name: v}
+	if f.plan.ContextField != "" {
+		// One value of one field has no record to take its context from:
+		// the cipher names it, as it does for a query.
+		label := c.ContextLabel()
+		if label == "" {
+			return Output{}, fmt.Errorf("%w: %s: the type takes its context from its field %q, so one value is encrypted through a cipher that names it with Cipher.Context", encrypt.ErrEncoding, f.name, f.plan.ContextField)
+		}
+		row[f.plan.ContextField] = label
+	}
+	sealed, err := c.Seal(ctx, f.plan, []record.Source{row})
 	if err != nil {
 		return Output{}, err
 	}

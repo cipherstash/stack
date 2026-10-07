@@ -18,6 +18,7 @@ func TestParseTagEveryFormInTheTable(t *testing.T) {
 			Indexes: []Index{{Name: IndexEquality}, {Name: IndexMatch}}}},
 		{`stash:"attrs,index=json"`, tag{Name: "attrs", Verb: VerbIndex, Indexes: []Index{{Name: IndexJSON}}}},
 		{`stash:"id,passthrough"`, tag{Name: "id", Verb: VerbPassthrough}},
+		{`stash:"tenant,context_field"`, tag{Name: "tenant", Verb: VerbContextField}},
 		{`stash:"-"`, tag{Omit: true}},
 		{`stash:"context=documents,opaque"`, tag{Context: "documents", Opaque: true}},
 		{`stash:",passthrough"`, tag{Verb: VerbPassthrough}},

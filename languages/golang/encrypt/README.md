@@ -139,9 +139,28 @@ cannot use different ones.
 >
 > The context binds each value to its table, its column and the cipher's
 > extension. It does not bind the value to its row, so a value copied to
-> another row of the same table decrypts there with no error. The Rust engine
-> can bind a value to its row with `context_field`. The Go SDK cannot do this
-> yet.
+> another row of the same table decrypts there with no error. To bind each
+> row to a context of its own, such as its tenant, give the struct a
+> `context_field` instead of a `context=` tag:
+>
+> ```go
+> type Note struct {
+> 	Tenant string `stash:"tenant,context_field"`
+> 	Text   string `stash:"text,encrypt,index=equality"`
+> }
+> ```
+>
+> The field's value is the context every other field is sealed under, a
+> label such as `"tenants/acme"`. It is stored as it is, in the clear and
+> unauthenticated like a passthrough field, so the row names its own
+> context. A row's sealed values open only under the context the row
+> stores: a value copied to another tenant's row does not decrypt there.
+> `Encrypt` and `Decrypt` take each row's context from the row.
+> `cipher.Context("tenants/acme")` names the context every row through the
+> cipher is under: `Decrypt` then refuses a row stored under another tenant
+> with `ErrContextMismatch`, before any key is retrieved, and `Encrypt`
+> refuses a value whose field says otherwise. A query on such a type derives
+> its term under the context the cipher names, and fails without one.
 
 `Client.DefaultKeyset()` is the keyset a ZeroKMS administrator set for the
 client; `Client.Keyset(encrypt.KeysetName(..))` or `Client.Keyset(id)` any
@@ -154,6 +173,10 @@ another keyset sealed with `ErrForeignKeyset` before any key is retrieved, or
 the `*Client`, which opens each row under the keyset that sealed it. The
 `*Client` opens only rows that a cipher with no extension sealed; a row
 written through `Extend` opens only through a cipher with the same extension.
+For a type with a `context_field`, the `*Cipher` from `cipher.Context(..)`
+also refuses a row whose stored context is another, with
+`ErrContextMismatch`; the `*Client` opens each row under the context it
+stores.
 
 ## What is stored
 
@@ -195,6 +218,8 @@ returns an error for one. A call returns an error for a key, for the network,
 or for stored data; read them with `errors.Is`:
 
 - `ErrForeignKeyset`: a `*Cipher` got a row another keyset sealed.
+- `ErrContextMismatch`: a `*Cipher` with a `Context` got a row whose
+  `context_field` names another context, or a value whose field does.
 - `ErrForbidden`, `ErrAuthentication`: a ciphertext that does not open under
   its field's context (ZeroKMS refuses the key, or the AEAD fails).
 - `ErrEncoding`: a stored value or a call that does not fit the declaration.

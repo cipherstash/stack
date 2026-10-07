@@ -5,6 +5,7 @@ import (
 	"go/types"
 	"strings"
 
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -190,8 +191,8 @@ func (r *reader) read() (*genFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	if collected.context == "" {
-		return nil, fieldErr(req.Type, "", "no `_ struct{}` field with `stash:\"context=...\"` declares the context")
+	if collected.context == "" && collected.contextField == "" {
+		return nil, fieldErr(req.Type, "", "no `_ struct{}` field with `stash:\"context=...\"` declares the context, and no field is tagged `context_field`")
 	}
 	if req.For != "" {
 		if err := r.matchFor(collected, valueNamed, valueStruct); err != nil {
@@ -245,7 +246,7 @@ func (r *reader) build(collected *collected, typeName string, valueNamed *types.
 		}
 	}
 
-	f.decl = Declaration{Type: typeName, Context: collected.context, Opaque: collected.opaque}
+	f.decl = Declaration{Type: typeName, Context: collected.context, ContextField: collected.contextField, Opaque: collected.opaque}
 	f.unexported = collected.unexported
 
 	// The shape check. A type from another package with an unexported field
@@ -335,10 +336,13 @@ type collectedField struct {
 }
 
 type collected struct {
-	context    string
-	opaque     bool
-	fields     []collectedField
-	unexported []string
+	context string
+	// contextField is the declaration name of the field tagged
+	// context_field, or "".
+	contextField string
+	opaque       bool
+	fields       []collectedField
+	unexported   []string
 }
 
 // collectFields reads the tags of a struct. An embedded struct of the same
@@ -431,6 +435,26 @@ func (r *reader) collectFields(named *types.Named, st *types.Struct, typeName st
 			c.unexported = append(c.unexported, fld.Name())
 		case !hasTag:
 			return nil, fieldErr(typeName, fld.Name(), "no stash tag; every exported field says what happens to it")
+		case t.Verb == VerbContextField:
+			// The same rules as the Rust derive's `context_field`: one per
+			// struct, not beside a literal context, and a string, since
+			// its value is read as a label.
+			switch {
+			case !top:
+				return nil, fieldErr(typeName, fld.Name(), "context_field goes on a field of the outer struct, not of an embedded one")
+			case c.contextField != "":
+				return nil, fieldErr(typeName, fld.Name(), "a struct has exactly one context_field, and %q already is one", c.contextField)
+			case c.context != "":
+				return nil, fieldErr(typeName, fld.Name(), "context_field supplies the complete context, so the `context=` tag does not apply; drop one of them")
+			}
+			if err := record.CheckSegment(t.Name); err != nil {
+				return nil, fieldErr(typeName, fld.Name(), "the name of a context field is a label segment on the wire, and %q %v", t.Name, err)
+			}
+			if b, ok := fld.Type().(*types.Basic); !ok || b.Kind() != types.String {
+				return nil, fieldErr(typeName, fld.Name(), "a context field is a string (its value is the context, a label such as \"tenants/acme\"), and this field is %s", r.typeExpr(fld.Type()))
+			}
+			c.contextField = t.Name
+			c.fields = append(c.fields, collectedField{tag: t, goName: fld.Name(), typ: fld.Type(), tags: stripTagKey(raw, tagKey), exported: fld.Exported()})
 		default:
 			c.fields = append(c.fields, collectedField{tag: t, goName: fld.Name(), typ: fld.Type(), tags: stripTagKey(raw, tagKey), exported: fld.Exported()})
 		}
@@ -653,7 +677,7 @@ func (r *reader) buildFields(c *collected) error {
 			return fieldErr(typeName, cf.goName, "a sealed field is one scalar (a string, number, bool or []byte, or a type defined over one); a %s seals only as part of an opaque struct", g.typeExpr)
 		}
 		switch field.Verb {
-		case VerbPassthrough:
+		case VerbPassthrough, VerbContextField:
 			g.outputType = g.typeExpr
 			g.outputs = []output{{name: "Value", typeExpr: g.typeExpr, pathType: g.pathType}}
 		case VerbEncryptInto:
