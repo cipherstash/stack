@@ -357,6 +357,7 @@ impl PendingDeviceCode {
                     region: None,
                     client_id: None,
                     device_instance_id: None,
+                    federated_from: None,
                 };
                 token.set_region(self.region.identifier());
                 token.set_client_id(&self.client_id);

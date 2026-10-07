@@ -149,6 +149,7 @@ mod tests {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         }
     }
 
@@ -709,6 +710,7 @@ mod tests {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         }
     }
 
@@ -978,6 +980,7 @@ mod tests {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         };
 
         let refresher = AccessKeyRefresher::new(
@@ -1163,6 +1166,7 @@ mod tests {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         };
         let strategy = Arc::new(AutoRefresh::with_token(refresher, token));
 
@@ -1214,6 +1218,7 @@ mod tests {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         };
         let refresher = AccessKeyRefresher::new(
             SecretToken::new("test-access-key"),

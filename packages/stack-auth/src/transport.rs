@@ -524,7 +524,7 @@ mod tests {
 
     use super::*;
     use crate::access_key_refresher::AccessKeyRefresher;
-    use crate::oidc_refresher::{OidcProviderFn, OidcRefresher};
+    use crate::oidc_refresher::OidcFederation;
     use crate::refresher::Refresher;
     use crate::{SecretToken, Token};
 
@@ -836,10 +836,9 @@ mod tests {
             200,
             r#"{"accessToken":"svc","expiry":4102444800}"#,
         ));
-        let provider = OidcProviderFn::new(|| async { Ok(SecretToken::new("h.p.s")) });
-        let refresher = OidcRefresher::new(provider, workspace_id(), base_url(), stub.clone());
+        let federation = OidcFederation::new(workspace_id(), base_url(), stub.clone());
 
-        let _ = refresher.refresh(&()).await;
+        let _ = federation.federate(&SecretToken::new("h.p.s")).await;
 
         let (method, url, headers, _) = seen(&stub);
         assert_eq!(method, "POST");
@@ -864,9 +863,10 @@ mod tests {
         assert!(matches!(err, AuthError::UsageLimitExceeded(_)), "{err:?}");
 
         let transport: SharedTransport = Arc::new(Stub::replying(402, ""));
-        let provider = OidcProviderFn::new(|| async { Ok(SecretToken::new("h.p.s")) });
-        let refresher = OidcRefresher::new(provider, workspace_id(), base_url(), transport);
-        let err = refresher.refresh(&()).await.unwrap_err();
+        let err = OidcFederation::new(workspace_id(), base_url(), transport)
+            .federate(&SecretToken::new("h.p.s"))
+            .await
+            .unwrap_err();
         assert!(matches!(err, AuthError::UsageLimitExceeded(_)), "{err:?}");
 
         let transport: SharedTransport = Arc::new(Stub::replying(402, ""));

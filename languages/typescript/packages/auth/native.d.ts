@@ -114,17 +114,38 @@ export declare class OidcFederationStrategy {
    * the CRN and used for service discovery; the workspace ID is used to
    * verify every federated token belongs to the right workspace.
    *
-   * `getJwt` is called on every federation — initial auth and every
-   * re-federation after the CTS token expires — and must return
-   * `Promise<string>` resolving to the *current* third-party OIDC JWT.
+   * `getJwt` is called on every `getToken()` and must return
+   * `Promise<string>` resolving to the third-party OIDC JWT of the user the
+   * current request is for. The strategy keeps one CTS token per distinct
+   * JWT (a bounded, least-recently-used cache) and exchanges a JWT only
+   * while it has no unexpired token, so one long-lived strategy serves many
+   * users and no caller is ever handed another user's token. The `index.js`
+   * wrapper's `getToken()` calls `getJwt` in the caller's own async
+   * context (so it may read the request from `AsyncLocalStorage`, as
+   * Clerk's `auth()` and Next.js `headers()` do) and then calls
+   * `getTokenForJwt`; the threadsafe function here serves only the raw
+   * `getToken()`. Keep the callback cheap: identity-provider SDKs cache
+   * their session, so calling them per operation is fine. Return the same
+   * JWT for a user until the
+   * identity provider rotates it: the cache is keyed on the whole JWT, so
+   * a callback that mints a new JWT on every call makes the strategy
+   * exchange on every call, and each new JWT takes a cache slot from
+   * another user.
    *
    * `baseUrl`, when supplied, pins this strategy to a specific CTS host —
    * e.g. a self-hosted CTS or a local mock auth server. It takes precedence
    * over the `CS_CTS_HOST` environment variable and region service
    * discovery, and is scoped to this strategy alone (unlike `CS_CTS_HOST`,
    * which redirects every CTS client in the process).
+   *
+   * `cacheCapacity` is how many distinct JWTs the strategy keeps a CTS
+   * token for (1024 unless set); when full, the least recently used JWT's
+   * token is dropped and that user is exchanged again on their next call.
+   * Size it to the users a long-lived strategy serves within a CTS token's
+   * lifetime (about 15 minutes). `0` caches nothing. Each eviction is
+   * logged at `debug`.
    */
-  static create(workspaceCrn: string, getJwt: () => any, baseUrl?: string | undefined | null): OidcFederationStrategy
+  static create(workspaceCrn: string, getJwt: () => any, baseUrl?: string | undefined | null, cacheCapacity?: number | undefined | null): OidcFederationStrategy
   /**
    * Create an `OidcFederationStrategy` backed by external token-store callbacks.
    *
@@ -132,15 +153,35 @@ export declare class OidcFederationStrategy {
    * token through `loadToken` (`() => Promise<string | null | undefined>`)
    * and `saveToken` (`(json: string) => Promise<void>`) — e.g. an HTTP-only
    * cookie — so a federated token survives across requests without
-   * re-federating.
+   * re-federating. A stored token is served only to the JWT it was
+   * federated from: a cookie left over from another user's sign-in is a
+   * cache miss, not that user's token.
    *
-   * `baseUrl` behaves as in `create` — an explicit,
+   * `baseUrl` and `cacheCapacity` behave as in `create` — an explicit,
    * strategy-scoped CTS host that overrides `CS_CTS_HOST` and service
-   * discovery.
+   * discovery, and the number of JWTs whose token is kept in memory.
    */
-  static createWithStore(workspaceCrn: string, getJwt: () => any, loadToken: () => any, saveToken: (arg: string) => any, baseUrl?: string | undefined | null): OidcFederationStrategy
-  /** Retrieve a valid CTS service token, federating or re-federating as needed. */
+  static createWithStore(workspaceCrn: string, getJwt: () => any, loadToken: () => any, saveToken: (arg: string) => any, baseUrl?: string | undefined | null, cacheCapacity?: number | undefined | null): OidcFederationStrategy
+  /**
+   * Retrieve a valid CTS service token, federating or re-federating as needed.
+   *
+   * Asks `getJwt` through the threadsafe function, which runs it in the
+   * async context of the `create()` call rather than of this caller, so a
+   * callback that reads the request from `AsyncLocalStorage` cannot see it
+   * here. The `index.js` wrapper therefore calls `getJwt` itself and uses
+   * `getTokenForJwt`; this entry stays for callers of the raw binding whose
+   * `getJwt` needs no request context.
+   */
   getToken(): Promise<TokenResult>
+  /**
+   * Retrieve a valid CTS service token for `jwt`, the caller's own provider
+   * JWT, federating it if no unexpired token is cached for it.
+   *
+   * `getToken()` minus the `getJwt` call: the wrapper fetches the JWT on the
+   * JavaScript side, in the caller's async context, and hands it in here.
+   * Both entries share the strategy's cache.
+   */
+  getTokenForJwt(jwt: string): Promise<TokenResult>
 }
 export declare class DeviceCodeResult {
   get userCode(): string

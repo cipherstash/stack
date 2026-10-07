@@ -114,17 +114,27 @@ export declare class DeviceSessionStrategy {
 export declare class OidcFederationStrategy {
   /**
    * Create an `OidcFederationStrategy` for the given workspace CRN. `getJwt` is
-   * called on every federation and must resolve to the current third-party OIDC
-   * JWT. `baseUrl` pins the strategy to a specific CTS host.
+   * called on every `getToken()` and must resolve to the third-party OIDC JWT of
+   * the user the current request is for; it runs in the `getToken()` caller's
+   * async context, so it may read the request from `AsyncLocalStorage` (Clerk's
+   * `auth()`, Next.js `headers()`), and one strategy serves many users. One
+   * CTS token is cached per distinct JWT, for up to `cacheCapacity` JWTs (1024 unless set;
+   * the least recently used is dropped and exchanged again on its next call;
+   * `0` caches nothing). Return the same JWT for a user until the identity
+   * provider rotates it: a `getJwt` that mints a new JWT on every call
+   * exchanges on every call, and each new JWT takes a slot from another user.
+   * `baseUrl` pins the strategy to a specific CTS host.
    */
   static create(
     workspaceCrn: string,
     getJwt: () => Promise<string> | string,
     baseUrl?: string | undefined | null,
+    cacheCapacity?: number | undefined | null,
   ): Result<OidcFederationStrategy, AuthFailure>;
   /**
    * Like `create` but persists the federated CTS token through `loadToken` /
-   * `saveToken` (e.g. an HTTP-only cookie) so it survives across requests.
+   * `saveToken` (e.g. an HTTP-only cookie) so it survives across requests. A
+   * stored token is served only to the JWT it was federated from.
    */
   static createWithStore(
     workspaceCrn: string,
@@ -132,9 +142,20 @@ export declare class OidcFederationStrategy {
     loadToken: () => Promise<string | null | undefined> | string | null | undefined,
     saveToken: (json: string) => Promise<void> | void,
     baseUrl?: string | undefined | null,
+    cacheCapacity?: number | undefined | null,
   ): Result<OidcFederationStrategy, AuthFailure>;
-  /** Retrieve a valid CTS service token, federating or re-federating as needed. */
+  /**
+   * Retrieve a valid CTS service token, federating or re-federating as needed.
+   * Calls `getJwt` in this caller's async context (so it may read the current
+   * request from `AsyncLocalStorage`) and then {@link getTokenForJwt}.
+   */
   getToken(): Promise<Result<TokenResult, AuthFailure>>;
+  /**
+   * The CTS token for `jwt`, the caller's own provider JWT: `getToken()`
+   * minus the `getJwt` call, sharing its cache. For a caller that already
+   * holds the user's JWT.
+   */
+  getTokenForJwt(jwt: string): Promise<Result<TokenResult, AuthFailure>>;
 }
 
 /** The pending state of an in-progress OAuth 2.0 Device Authorization flow. */

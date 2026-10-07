@@ -113,12 +113,14 @@ export declare class OidcFederationStrategy {
    *
    * `baseUrl`, when supplied, pins this strategy to a specific CTS host —
    * e.g. a self-hosted CTS or a local mock auth server — overriding region
-   * service discovery, scoped to this strategy alone.
+   * service discovery, scoped to this strategy alone. `cacheCapacity` is how
+   * many distinct JWTs keep a CTS token (1024 unless set; `0` caches nothing).
    */
   static create(
     workspaceCrn: string,
     getJwt: () => Promise<string>,
     baseUrl?: string | undefined | null,
+    cacheCapacity?: number | undefined | null,
   ): OidcFederationStrategy
   /**
    * Create an `OidcFederationStrategy` backed by external token-store
@@ -126,8 +128,9 @@ export declare class OidcFederationStrategy {
    * service discovery, workspace ID for verification) plus `loadToken` /
    * `saveToken` to persist the federated CTS token across requests.
    *
-   * `baseUrl` behaves as in {@link create} — an explicit, strategy-scoped CTS
-   * host that overrides region service discovery.
+   * `baseUrl` and `cacheCapacity` behave as in {@link create} — an explicit,
+   * strategy-scoped CTS host that overrides region service discovery, and the
+   * number of JWTs whose token is kept in memory.
    */
   static createWithStore(
     workspaceCrn: string,
@@ -135,9 +138,15 @@ export declare class OidcFederationStrategy {
     loadToken: () => Promise<string | null | undefined>,
     saveToken: (json: string) => Promise<void>,
     baseUrl?: string | undefined | null,
+    cacheCapacity?: number | undefined | null,
   ): OidcFederationStrategy
   /** Retrieve a valid CTS service token, federating or re-federating as needed. */
   getToken(): Promise<TokenResult>
+  /**
+   * The CTS token for `jwt`, the caller's own provider JWT: `getToken()` minus
+   * the `getJwt` call, sharing its cache.
+   */
+  getTokenForJwt(jwt: string): Promise<TokenResult>
   /** Release the underlying wasm resources. */
   free(): void
 }

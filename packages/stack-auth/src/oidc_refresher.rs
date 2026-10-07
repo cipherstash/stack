@@ -1,6 +1,8 @@
 use std::future::Future;
+use std::sync::Arc;
 
 use cts_common::WorkspaceId;
+use sha2::{Digest, Sha256};
 use url::Url;
 
 use crate::authorize_dto::AuthoriseResponse;
@@ -8,13 +10,24 @@ use crate::refresher::Refresher;
 use crate::transport::{self, SharedTransport};
 use crate::{AuthError, SecretToken, Token};
 
-/// Asynchronously supplies the *current* third-party OIDC JWT to federate.
+/// Asynchronously supplies the third-party OIDC JWT of the caller a request
+/// is for.
 ///
-/// [`OidcFederationStrategy`](crate::OidcFederationStrategy) re-invokes this on every refresh:
-/// `/api/authorise` issues no CTS refresh token, so renewing an expired CTS
-/// token means re-federating with a fresh provider JWT. Implementations
-/// typically wrap a provider SDK call (`clerk.session.getToken()`,
-/// `supabase.auth.getSession()`), an FFI callback, or a test double.
+/// [`OidcFederationStrategy`](crate::OidcFederationStrategy) calls this on
+/// **every** [`get_token`](crate::AuthStrategy::get_token): the JWT it returns
+/// is how the strategy tells one user from another, so a server that serves
+/// many users through one client must return the JWT of the user behind the
+/// *current* request (read from the request's context, session, or
+/// `Authorization` header), never a value captured once. The strategy then
+/// re-federates only when that JWT has no cached, unexpired CTS token, so the
+/// call is cheap on the hot path as long as the implementation is: provider
+/// SDKs (`clerk.session.getToken()`, `supabase.auth.getSession()`) cache their
+/// session locally and are fine to call per request. Return the same JWT for
+/// a user until the identity provider rotates it: the cache is keyed on the
+/// whole JWT, so a provider that mints a new JWT on every call (or bypasses
+/// its SDK's session cache) makes the strategy exchange on every call, and
+/// each new JWT takes a cache slot from another user. Implementations
+/// typically wrap such an SDK call, an FFI callback, or a test double.
 ///
 /// On native targets the trait carries `Send + Sync` bounds so the provider
 /// can be driven from `tokio::spawn` background work. On wasm32 the bounds
@@ -22,27 +35,27 @@ use crate::{AuthError, SecretToken, Token};
 /// runtimes are single-threaded anyway.
 #[cfg(not(target_arch = "wasm32"))]
 pub trait OidcProvider: Send + Sync {
-    /// Fetch the current third-party OIDC JWT to federate.
+    /// Fetch the third-party OIDC JWT of the caller this request is for.
     fn fetch(&self) -> impl Future<Output = Result<SecretToken, AuthError>> + Send;
 }
 
 /// Wasm32 variant of [`OidcProvider`] — drops the `Send + Sync` bounds.
 #[cfg(target_arch = "wasm32")]
 pub trait OidcProvider {
-    /// Fetch the current third-party OIDC JWT to federate.
+    /// Fetch the third-party OIDC JWT of the caller this request is for.
     fn fetch(&self) -> impl Future<Output = Result<SecretToken, AuthError>>;
 }
 
 /// [`OidcProvider`] backed by a user-supplied async closure.
 ///
-/// The closure fires on every federation — initial auth and every
-/// re-federation after expiry — so it must return the *current* JWT each
-/// time, not a value captured once. The point of the closure is to defer to
-/// the provider's own session machinery on every call: a provider SDK
-/// (`clerk.session.getToken()`, `supabase.auth.getSession()`) hands back a
-/// freshly-minted short-lived JWT, transparently refreshing its own session
-/// as needed. Capturing a single token up front would instead pin a JWT that
-/// expires and can never be renewed.
+/// The closure fires on every [`get_token`](crate::AuthStrategy::get_token),
+/// so it must return the *current* caller's JWT each time, not a value
+/// captured once. The point of the closure is to defer to the provider's own
+/// session machinery on every call: a provider SDK (`clerk.session.getToken()`,
+/// `supabase.auth.getSession()`) hands back a freshly-minted short-lived JWT,
+/// transparently refreshing its own session as needed. Capturing a single
+/// token up front would instead pin one user's JWT, which expires and can
+/// never be renewed — and would make every caller that user.
 ///
 /// # Example
 ///
@@ -90,66 +103,72 @@ where
     }
 }
 
-/// A [`Refresher`] that federates a third-party OIDC JWT into a CTS service
-/// token via `POST /api/authorise`.
+/// The identity of a provider JWT inside
+/// [`OidcFederationStrategy`](crate::OidcFederationStrategy): the SHA-256 of
+/// the whole token.
 ///
-/// *Our* federation step is stateless: the credential is always available (the
-/// [`OidcProvider`] is re-callable), so `try_credential` returns `Some(())` and
-/// `restore` is a no-op — exactly like
-/// [`AccessKeyRefresher`](crate::access_key_refresher). The *upstream* OIDC
-/// provider that issues the JWT is typically not stateless — it usually relies
-/// on its own session machinery (cookies, a session store, a refresh token)
-/// to mint the short-lived JWT that [`OidcProvider::fetch`] returns.
+/// The strategy keys its per-user cache on this, and stamps it (as hex, see
+/// [`Token::federated_from`]) on every token it federates, so a stored token
+/// is served only to the JWT that produced it.
 ///
-/// `/api/authorise` issues no CTS refresh token. Keeping the federated CTS
-/// token fresh is therefore the upstream caller's responsibility, via whatever
-/// mechanism the provider requires: when the CTS token expires, `AutoRefresh`
-/// renews it by calling `refresh` again, which re-invokes the `OidcProvider`
-/// for a current JWT — so a provider that hands back an expired or stale JWT
-/// will produce an expired or stale CTS token in turn.
-pub(crate) struct OidcRefresher<P> {
-    oidc_provider: P,
+/// It is deliberately the *whole JWT*, not the `iss`/`sub` claims read from
+/// it. The client cannot verify a JWT's signature, so a cache keyed on claims
+/// would hand a forged JWT carrying a victim's `sub` the victim's cached CTS
+/// token without CTS ever seeing it. Keyed on the bytes, a forged JWT gets
+/// its own entry and is refused by CTS. The cost is one exchange each time
+/// the identity provider rotates a user's JWT.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct JwtDigest([u8; 32]);
+
+impl JwtDigest {
+    pub(crate) fn of(jwt: &SecretToken) -> Self {
+        Self(Sha256::digest(jwt.as_str().as_bytes()).into())
+    }
+
+    /// Lowercase hex, the form [`Token::federated_from`] carries.
+    pub(crate) fn to_hex(self) -> String {
+        self.0.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+
+    /// Whether `hex`, as read back from [`Token::federated_from`], is this
+    /// digest.
+    pub(crate) fn matches_hex(self, hex: &str) -> bool {
+        hex == self.to_hex()
+    }
+}
+
+/// The CTS endpoint a strategy federates against: `POST /api/authorise` on
+/// one base URL, for one workspace, over one transport.
+///
+/// The exchange is stateless. `/api/authorise` issues no CTS refresh token, so
+/// keeping a federated token fresh means federating again with a current
+/// provider JWT — which [`JwtRefresher`] does, one refresher per JWT. The
+/// *upstream* OIDC provider that issues the JWT is typically not stateless: it
+/// relies on its own session machinery (cookies, a session store, a refresh
+/// token) to mint the short-lived JWT that [`OidcProvider::fetch`] returns.
+pub(crate) struct OidcFederation {
     workspace_id: WorkspaceId,
     base_url: Url,
     transport: SharedTransport,
 }
 
-impl<P> OidcRefresher<P> {
+impl OidcFederation {
+    /// The exchange for `workspace_id` at `base_url` (already ending in `/`),
+    /// sent over `transport`.
     pub(crate) fn new(
-        oidc_provider: P,
         workspace_id: WorkspaceId,
         base_url: Url,
         transport: SharedTransport,
     ) -> Self {
         Self {
-            oidc_provider,
             workspace_id,
             base_url,
             transport,
         }
     }
-}
 
-impl<P: OidcProvider> Refresher for OidcRefresher<P> {
-    type Credential = ();
-
-    fn save(&self, _token: &Token) {
-        // Federated tokens are ephemeral — no per-refresher persistence.
-    }
-
-    fn try_credential(&self, _token: Option<&mut Token>) -> Option<Self::Credential> {
-        // The OIDC provider is always re-callable, so federation can always be
-        // attempted — including on cold start (initial auth).
-        Some(())
-    }
-
-    fn restore(&self, _token: &mut Token, _credential: Self::Credential) {
-        // Nothing to restore — the OIDC provider is re-callable.
-    }
-
-    async fn refresh(&self, _credential: &Self::Credential) -> Result<Token, AuthError> {
-        let oidc_token = self.oidc_provider.fetch().await?;
-
+    /// Exchange `jwt` for a CTS service token.
+    pub(crate) async fn federate(&self, jwt: &SecretToken) -> Result<Token, AuthError> {
         let url = self.base_url.join("api/authorise")?;
         tracing::debug!(url = %url, "federating OIDC token");
 
@@ -157,7 +176,7 @@ impl<P: OidcProvider> Refresher for OidcRefresher<P> {
             &self.transport,
             url,
             &OidcAuthoriseRequest {
-                oidc_token: oidc_token.as_str(),
+                oidc_token: jwt.as_str(),
                 workspace_id: self.workspace_id.as_str(),
             },
         )
@@ -183,6 +202,71 @@ impl<P: OidcProvider> Refresher for OidcRefresher<P> {
     }
 }
 
+/// A [`Refresher`] for **one** provider JWT: every refresh federates that
+/// same JWT again.
+///
+/// [`OidcFederationStrategy`](crate::OidcFederationStrategy) keeps one of
+/// these, inside its own [`AutoRefresh`](crate::auto_refresh::AutoRefresh),
+/// per distinct JWT its provider has returned. Re-federating the held JWT is
+/// right because the JWT *is* the cache key: while a caller keeps presenting
+/// it, it is still what that caller has, and a CTS token that expires before
+/// the JWT does (CTS tokens last about 15 minutes) is renewed from it. Once
+/// the provider rotates the JWT, callers land on a different refresher and
+/// this one ages out of the cache. A JWT that has itself expired is refused
+/// by CTS, and that refusal is the caller's answer.
+///
+/// `try_credential` always yields and `restore` is a no-op, like
+/// [`AccessKeyRefresher`](crate::access_key_refresher::AccessKeyRefresher):
+/// the credential is always to hand.
+pub(crate) struct JwtRefresher {
+    jwt: SecretToken,
+    digest: JwtDigest,
+    federation: Arc<OidcFederation>,
+}
+
+impl JwtRefresher {
+    pub(crate) fn new(jwt: SecretToken, federation: Arc<OidcFederation>) -> Self {
+        let digest = JwtDigest::of(&jwt);
+        Self {
+            jwt,
+            digest,
+            federation,
+        }
+    }
+
+    /// The digest of the JWT this refresher federates.
+    pub(crate) fn digest(&self) -> JwtDigest {
+        self.digest
+    }
+}
+
+impl Refresher for JwtRefresher {
+    type Credential = ();
+
+    fn save(&self, _token: &Token) {
+        // Federated tokens are ephemeral — no per-refresher persistence.
+    }
+
+    fn try_credential(&self, _token: Option<&mut Token>) -> Option<Self::Credential> {
+        // The JWT is held, so federation can always be attempted — including
+        // on cold start (initial auth).
+        Some(())
+    }
+
+    fn restore(&self, _token: &mut Token, _credential: Self::Credential) {
+        // Nothing to restore — the JWT is still held.
+    }
+
+    async fn refresh(&self, _credential: &Self::Credential) -> Result<Token, AuthError> {
+        let mut token = self.federation.federate(&self.jwt).await?;
+        // Stamp the token with the JWT it came from, so a `TokenStore` that
+        // persists it can tell the strategy, on a later cold start, which
+        // caller it belongs to.
+        token.federated_from = Some(self.digest.to_hex());
+        Ok(token)
+    }
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OidcAuthoriseRequest<'a> {
@@ -191,11 +275,35 @@ struct OidcAuthoriseRequest<'a> {
 }
 
 #[cfg(test)]
+mod digest_tests {
+    use super::*;
+
+    /// The hex form is what lands in a persisted token (and so in a
+    /// customer's cookie), so pin it to an independently computed vector:
+    /// `printf '%s' header.payload.signature | shasum -a 256`.
+    #[test]
+    fn digest_hex_is_sha256_of_the_whole_jwt() {
+        let digest = JwtDigest::of(&SecretToken::new("header.payload.signature"));
+        assert_eq!(
+            digest.to_hex(),
+            "256d04db4e5e4ac308751ed0885b722b758630567c53a7125ed9fbd068e5c3f6"
+        );
+    }
+
+    #[test]
+    fn different_jwts_have_different_digests() {
+        let a = JwtDigest::of(&SecretToken::new("jwt-a"));
+        let b = JwtDigest::of(&SecretToken::new("jwt-b"));
+        assert_ne!(a, b);
+        assert_eq!(a, JwtDigest::of(&SecretToken::new("jwt-a")));
+    }
+}
+
+#[cfg(test)]
 #[cfg(feature = "http")]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use crate::transport::default_transport;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -203,7 +311,6 @@ mod tests {
 
     use super::*;
     use crate::auto_refresh::{AutoRefresh, AutoRefreshError};
-    use crate::TokenStore;
 
     const WORKSPACE_ID: &str = "ZVATKW3VHMFG27DY";
 
@@ -231,55 +338,28 @@ mod tests {
         server
     }
 
-    /// A [`OidcProvider`] test double that counts invocations and returns a
-    /// distinct JWT each call (`jwt-0`, `jwt-1`, …).
-    fn counting_provider() -> (Arc<AtomicUsize>, impl OidcProvider) {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let calls_clone = Arc::clone(&calls);
-        let provider = OidcProviderFn::new(move || {
-            let calls = Arc::clone(&calls_clone);
-            async move {
-                let n = calls.fetch_add(1, Ordering::SeqCst);
-                Ok(SecretToken::new(format!("jwt-{n}")))
-            }
-        });
-        (calls, provider)
-    }
-
-    fn make_strategy<P: OidcProvider>(
-        server: &MockServer,
-        provider: P,
-    ) -> AutoRefresh<OidcRefresher<P>> {
-        let refresher = OidcRefresher::new(
-            provider,
+    fn federation(server: &MockServer) -> Arc<OidcFederation> {
+        Arc::new(OidcFederation::new(
             workspace_id(),
             server.url(""),
             default_transport(),
-        );
-        AutoRefresh::with_store(refresher, crate::NoStore)
+        ))
     }
 
-    fn make_token(access: &str, expires_in_secs: u64) -> Token {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        Token {
-            access_token: SecretToken::new(access),
-            token_type: "Bearer".to_string(),
-            expires_at: now + expires_in_secs,
-            refresh_token: None,
-            region: None,
-            client_id: None,
-            device_instance_id: None,
-        }
+    fn refresher_for(server: &MockServer, jwt: &str) -> JwtRefresher {
+        JwtRefresher::new(SecretToken::new(jwt), federation(server))
+    }
+
+    /// The request body `/api/authorise` receives for `jwt` in this workspace.
+    fn exchange_of(jwt: &str) -> serde_json::Value {
+        serde_json::json!({ "oidcToken": jwt, "workspaceId": WORKSPACE_ID })
     }
 
     // ---- Regression: CTS `expiry` is an absolute epoch (CIP-3233) ----
 
     /// CTS `/api/authorise` returns `expiry` as an ABSOLUTE Unix epoch (the JWT
     /// `exp` claim), not a relative duration — identical to the access-key path
-    /// fixed in CIP-3233. The OIDC refresher must use it as-is.
+    /// fixed in CIP-3233. The federation step must use it as-is.
     ///
     /// Pre-fix (`expires_at = now + expiry`), this token's `expires_at` lands
     /// ~decades in the future, so `is_expired()` is never true — the federated
@@ -304,14 +384,10 @@ mod tests {
         });
         let server = start_server(mocks).await;
 
-        let (_calls, provider) = counting_provider();
-        let refresher = OidcRefresher::new(
-            provider,
-            workspace_id(),
-            server.url(""),
-            default_transport(),
-        );
-        let token = refresher.refresh(&()).await.unwrap();
+        let token = federation(&server)
+            .federate(&SecretToken::new("jwt-0"))
+            .await
+            .unwrap();
 
         assert!(
             token.expires_in() <= 1000,
@@ -325,24 +401,53 @@ mod tests {
         );
     }
 
+    /// The federation step sends exactly the JWT it was given, and nothing it
+    /// mints is stamped — stamping is the refresher's job, so a token that
+    /// came straight from the endpoint is not mistaken for a cached one.
     #[tokio::test]
-    async fn test_initial_federation() {
+    async fn federate_sends_the_given_jwt_and_leaves_the_token_unstamped() {
         let mut mocks = MockSet::new();
         mocks.mock(|when, then| {
-            when.post().path("/api/authorise");
+            when.post()
+                .path("/api/authorise")
+                .json(exchange_of("the-jwt"));
             then.json(auth_response_json("cts-token", 3600));
         });
         let server = start_server(mocks).await;
-        let (calls, provider) = counting_provider();
-        let strategy = make_strategy(&server, provider);
 
-        let token = strategy.get_token().await.unwrap();
+        let token = federation(&server)
+            .federate(&SecretToken::new("the-jwt"))
+            .await
+            .expect("a body carrying exactly the JWT and workspace is what the mock matched");
 
-        assert_eq!(token.as_str(), "cts-token");
+        assert_eq!(token.access_token().as_str(), "cts-token");
+        assert!(token.federated_from().is_none());
+    }
+
+    /// The refresher federates the one JWT it holds, and stamps the result
+    /// with that JWT's digest so a store can bind it.
+    #[tokio::test]
+    async fn refresh_federates_the_held_jwt_and_stamps_its_digest() {
+        let mut mocks = MockSet::new();
+        mocks.mock(|when, then| {
+            when.post()
+                .path("/api/authorise")
+                .json(exchange_of("held-jwt"));
+            then.json(auth_response_json("cts-token", 3600));
+        });
+        let server = start_server(mocks).await;
+        let refresher = refresher_for(&server, "held-jwt");
+
+        let token = refresher.refresh(&()).await.unwrap();
+
+        assert_eq!(token.access_token().as_str(), "cts-token");
         assert_eq!(
-            calls.load(Ordering::SeqCst),
-            1,
-            "initial federation should invoke the OIDC provider once"
+            token.federated_from(),
+            Some(
+                JwtDigest::of(&SecretToken::new("held-jwt"))
+                    .to_hex()
+                    .as_str()
+            )
         );
     }
 
@@ -355,96 +460,47 @@ mod tests {
         .unwrap();
         assert_eq!(
             body,
-            serde_json::json!({ "oidcToken": "the-jwt", "workspaceId": WORKSPACE_ID }),
+            exchange_of("the-jwt"),
             "request body should carry exactly the OIDC token and workspace ID"
         );
     }
 
+    /// Under `AutoRefresh`, one refresher caches its token and re-federates the
+    /// same JWT when that token expires — the per-user engine the strategy
+    /// builds on.
     #[tokio::test]
-    async fn test_caches_token_after_initial_federation() {
+    async fn under_auto_refresh_the_same_jwt_is_federated_again_on_expiry() {
         let mut mocks = MockSet::new();
         mocks.mock(|when, then| {
-            when.post().path("/api/authorise");
-            then.json(auth_response_json("cts-token", 3600));
+            when.post()
+                .path("/api/authorise")
+                .json(exchange_of("held-jwt"));
+            then.json(auth_response_json("first", 0));
         });
         let server = start_server(mocks).await;
-        let (calls, provider) = counting_provider();
-        let strategy = make_strategy(&server, provider);
+        let engine = AutoRefresh::with_store(refresher_for(&server, "held-jwt"), crate::NoStore);
 
-        assert_eq!(strategy.get_token().await.unwrap().as_str(), "cts-token");
+        assert_eq!(engine.get_token().await.unwrap().as_str(), "first");
 
-        // Replace the mock so a second federation call would fail loudly.
+        // The first token is already expired, so the next call must federate
+        // again — with the same JWT, which is all the second mock accepts.
+        server.mocks().clear();
+        server.mocks().mock(|when, then| {
+            when.post()
+                .path("/api/authorise")
+                .json(exchange_of("held-jwt"));
+            then.json(auth_response_json("second", 3600));
+        });
+        assert_eq!(engine.get_token().await.unwrap().as_str(), "second");
+
+        // Now cached: a federation call would fail loudly.
         server.mocks().clear();
         server.mocks().mock(|when, then| {
             when.post().path("/api/authorise");
             then.internal_server_error()
                 .json(serde_json::json!({"error": "should not be called"}));
         });
-
-        assert_eq!(strategy.get_token().await.unwrap().as_str(), "cts-token");
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            1,
-            "cached token should be returned without re-federating"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_re_federates_on_expiry() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/api/authorise");
-            then.json(auth_response_json("re-federated-token", 3600));
-        });
-        let server = start_server(mocks).await;
-
-        let (calls, provider) = counting_provider();
-        // Pre-seed the store with an already-expired token.
-        let store = Arc::new(crate::InMemoryTokenStore::new());
-        store.save(&make_token("stale-cts-token", 0)).await;
-
-        let refresher = OidcRefresher::new(
-            provider,
-            workspace_id(),
-            server.url(""),
-            default_transport(),
-        );
-        let strategy = AutoRefresh::with_store(refresher, Arc::clone(&store));
-
-        let token = strategy.get_token().await.unwrap();
-        assert_eq!(
-            token.as_str(),
-            "re-federated-token",
-            "expired cached token should trigger re-federation"
-        );
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            1,
-            "re-federation should invoke the OIDC provider for a current JWT"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_oidc_provider_failure_propagates() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/api/authorise");
-            then.json(auth_response_json("unreachable", 3600));
-        });
-        let server = start_server(mocks).await;
-
-        let provider = OidcProviderFn::new(|| async {
-            Err::<SecretToken, _>(AuthError::Server(crate::error::ServerError(
-                "provider exploded".to_string(),
-            )))
-        });
-        let strategy = make_strategy(&server, provider);
-
-        let err = strategy.get_token().await.unwrap_err();
-        assert!(
-            matches!(err, AutoRefreshError::Auth(AuthError::Server(_))),
-            "OIDC provider failure should surface as an auth error, got: {err:?}"
-        );
+        assert_eq!(engine.get_token().await.unwrap().as_str(), "second");
     }
 
     #[tokio::test]
@@ -456,10 +512,9 @@ mod tests {
                 .json(serde_json::json!({"error": "workspace mismatch"}));
         });
         let server = start_server(mocks).await;
-        let (_calls, provider) = counting_provider();
-        let strategy = make_strategy(&server, provider);
+        let engine = AutoRefresh::with_store(refresher_for(&server, "jwt-0"), crate::NoStore);
 
-        let err = strategy.get_token().await.unwrap_err();
+        let err = engine.get_token().await.unwrap_err();
         assert!(
             matches!(err, AutoRefreshError::Auth(AuthError::Server(_))),
             "a 500 from /api/authorise should surface as a server error, got: {err:?}"
@@ -482,10 +537,9 @@ mod tests {
                 }));
         });
         let server = start_server(mocks).await;
-        let (_calls, provider) = counting_provider();
-        let strategy = make_strategy(&server, provider);
+        let engine = AutoRefresh::with_store(refresher_for(&server, "jwt-0"), crate::NoStore);
 
-        let AutoRefreshError::Auth(err) = strategy.get_token().await.unwrap_err() else {
+        let AutoRefreshError::Auth(err) = engine.get_token().await.unwrap_err() else {
             panic!("expected a typed auth error");
         };
 
@@ -494,65 +548,5 @@ mod tests {
             crate::error::codes::USAGE_LIMIT_EXCEEDED,
             "a usage limit must not be flattened into SERVER_ERROR",
         );
-    }
-
-    #[tokio::test]
-    async fn test_loads_token_from_store_on_cold_start_no_http() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/api/authorise");
-            then.internal_server_error()
-                .json(serde_json::json!({"error": "should not be called"}));
-        });
-        let server = start_server(mocks).await;
-
-        let store = Arc::new(crate::InMemoryTokenStore::new());
-        store.save(&make_token("from-store", 3600)).await;
-
-        let (calls, provider) = counting_provider();
-        let refresher = OidcRefresher::new(
-            provider,
-            workspace_id(),
-            server.url(""),
-            default_transport(),
-        );
-        let strategy = AutoRefresh::with_store(refresher, Arc::clone(&store));
-
-        let token = strategy.get_token().await.unwrap();
-        assert_eq!(token.as_str(), "from-store");
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            0,
-            "a fresh cached token should be used without invoking the OIDC provider"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_persists_token_to_store_after_federation() {
-        let mut mocks = MockSet::new();
-        mocks.mock(|when, then| {
-            when.post().path("/api/authorise");
-            then.json(auth_response_json("freshly-federated", 3600));
-        });
-        let server = start_server(mocks).await;
-
-        let store = Arc::new(crate::InMemoryTokenStore::new());
-        let (_calls, provider) = counting_provider();
-        let refresher = OidcRefresher::new(
-            provider,
-            workspace_id(),
-            server.url(""),
-            default_transport(),
-        );
-        let strategy = AutoRefresh::with_store(refresher, Arc::clone(&store));
-
-        let token = strategy.get_token().await.unwrap();
-        assert_eq!(token.as_str(), "freshly-federated");
-
-        let saved = store
-            .load()
-            .await
-            .expect("store should hold a token after federation");
-        assert_eq!(saved.access_token().as_str(), "freshly-federated");
     }
 }

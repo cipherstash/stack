@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MockCtsServer } from './helpers/mock-cts-server'
 
@@ -28,13 +29,13 @@ afterEach(async () => {
 })
 
 /** A `getJwt` callback that counts invocations and returns a fixed JWT. */
-function countingJwt() {
+function countingJwt(jwt = 'header.payload.signature') {
   let calls = 0
   return {
     calls: () => calls,
     getJwt: () => {
       calls += 1
-      return Promise.resolve('header.payload.signature')
+      return Promise.resolve(jwt)
     },
   }
 }
@@ -116,15 +117,36 @@ describe('OidcFederationStrategy (TypeScript / vitest)', () => {
 
   it('re-federates after the cached token expires', async () => {
     // expiry 0 → the federated token is immediately expired, so the second
-    // getToken() must re-federate rather than serve a cached token.
-    server.mockAuthorizeEndpoint(0)
+    // getToken() must re-federate rather than serve a cached token. Replacing
+    // the mock with a 500 would make that second call fail.
     server.mockAuthorizeEndpoint(0)
     const jwt = countingJwt()
     const strategy = mustCreate(WORKSPACE_CRN, jwt.getJwt)
 
-    await strategy.getToken()
-    await strategy.getToken()
+    const first = await strategy.getToken()
+    expect(first.failure).toBeUndefined()
+    server.clearMocks()
+    server.mockAuthorizeEndpointError()
+    const second = await strategy.getToken()
 
+    expect(second.failure?.type).toBe('SERVER_ERROR')
+    expect(jwt.calls()).toBe(2)
+  })
+
+  it('serves a cached token on the second call for the same JWT', async () => {
+    server.mockAuthorizeEndpoint()
+    const jwt = countingJwt()
+    const strategy = mustCreate(WORKSPACE_CRN, jwt.getJwt)
+
+    const first = await strategy.getToken()
+    expect(first.failure).toBeUndefined()
+    // A federation call would now fail loudly; getJwt is still asked, since
+    // it is what says whose cached token to serve.
+    server.clearMocks()
+    server.mockAuthorizeEndpointError()
+    const second = await strategy.getToken()
+
+    expect(second.failure).toBeUndefined()
     expect(jwt.calls()).toBe(2)
   })
 
@@ -283,7 +305,7 @@ describe('OidcFederationStrategy (TypeScript / vitest)', () => {
     expect(jwt.calls()).toBe(1)
   })
 
-  it('loads a cached token from the store without re-federating', async () => {
+  it('loads a cached token from the store without re-federating the same JWT', async () => {
     // First strategy federates and populates the shared store.
     server.mockAuthorizeEndpoint()
     const store = memStore()
@@ -296,13 +318,15 @@ describe('OidcFederationStrategy (TypeScript / vitest)', () => {
     await first.getToken()
     expect(store.saved()).not.toBeNull()
 
-    // Second strategy shares the store. Federation would fail (500) and getJwt
-    // would throw — proving the token came from the store, not the network.
+    // Second strategy shares the store and is asked for the same JWT.
+    // Federation would fail (500) — proving the token came from the store,
+    // not the network. getJwt *is* called: it says whose token to look for.
     server.clearMocks()
     server.mockAuthorizeEndpointError()
+    const jwt = countingJwt('h.p.s')
     const second = mustCreateWithStore(
       WORKSPACE_CRN,
-      () => Promise.reject(new Error('getJwt must not be called')),
+      jwt.getJwt,
       store.load,
       store.save,
     )
@@ -312,6 +336,180 @@ describe('OidcFederationStrategy (TypeScript / vitest)', () => {
       expect.unreachable(`getToken failed: ${r.failure.type}`)
     }
     expect(r.data.workspaceId).toBe(WORKSPACE_ID)
+    expect(jwt.calls()).toBe(1)
+  })
+
+  it('does not serve a stored token to a different JWT', async () => {
+    // The persisted form of the per-user bug: a store (shared Redis, or a
+    // cookie left over from another sign-in) holding a token federated from
+    // someone else's JWT. The caller must be exchanged — here refused with a
+    // 500 — never handed that token.
+    server.mockAuthorizeEndpoint()
+    const store = memStore()
+    const first = mustCreateWithStore(
+      WORKSPACE_CRN,
+      () => Promise.resolve('user-a.jwt.sig'),
+      store.load,
+      store.save,
+    )
+    await first.getToken()
+    expect(store.saved()).toContain('"federated_from"')
+
+    server.clearMocks()
+    server.mockAuthorizeEndpointError()
+    const second = mustCreateWithStore(
+      WORKSPACE_CRN,
+      () => Promise.resolve('user-b.jwt.sig'),
+      store.load,
+      store.save,
+    )
+
+    const r = await second.getToken()
+    expect(r.failure?.type).toBe('SERVER_ERROR')
+  })
+
+  it('serves each JWT its own token and asks getJwt on every call', async () => {
+    server.mockAuthorizeEndpointNamingTheJwt()
+    let current = 'jwt-a'
+    let calls = 0
+    const strategy = mustCreate(WORKSPACE_CRN, () => {
+      calls += 1
+      return Promise.resolve(current)
+    })
+    const subjectFor = async (jwt: string) => {
+      current = jwt
+      const r = await strategy.getToken()
+      if (r.failure) {
+        expect.unreachable(`getToken as ${jwt} failed: ${r.failure.type}`)
+      }
+      return r.data.subject
+    }
+
+    expect(await subjectFor('jwt-a')).toBe('CS|jwt-a')
+    expect(await subjectFor('jwt-b')).toBe('CS|jwt-b')
+    expect(await subjectFor('jwt-a')).toBe('CS|jwt-a')
+    expect(calls).toBe(3)
+
+    // Both are cached now: nothing below may reach the (refusing) exchange.
+    server.clearMocks()
+    server.mockAuthorizeEndpointError()
+    expect(await subjectFor('jwt-b')).toBe('CS|jwt-b')
+    expect(await subjectFor('jwt-a')).toBe('CS|jwt-a')
+    expect(calls).toBe(5)
+  })
+
+  it('caches nothing with cacheCapacity 0, so the same JWT is exchanged on every call', async () => {
+    // The capacity argument reaches the Rust builder: with room for no JWT at
+    // all, the second call for a cached-looking JWT must hit the (now
+    // refusing) exchange rather than be served from memory. The default
+    // (1024) would serve it, as the tests above show.
+    server.mockAuthorizeEndpointNamingTheJwt()
+    const strategy = mustCreate(
+      WORKSPACE_CRN,
+      () => Promise.resolve('jwt-a'),
+      undefined,
+      0,
+    )
+
+    const first = await strategy.getToken()
+    if (first.failure) {
+      expect.unreachable(`first call failed: ${first.failure.type}`)
+    }
+    expect(first.data.subject).toBe('CS|jwt-a')
+
+    server.clearMocks()
+    server.mockAuthorizeEndpointError()
+    const second = await strategy.getToken()
+    expect(second.failure?.type).toBe('SERVER_ERROR')
+  })
+
+  it('threads cacheCapacity through createWithStore too', async () => {
+    server.mockAuthorizeEndpointNamingTheJwt()
+    const store = memStore()
+    const strategy = mustCreateWithStore(
+      WORKSPACE_CRN,
+      () => Promise.resolve('jwt-a'),
+      store.load,
+      store.save,
+      undefined,
+      0,
+    )
+
+    const first = await strategy.getToken()
+    if (first.failure) {
+      expect.unreachable(`first call failed: ${first.failure.type}`)
+    }
+    expect(first.data.subject).toBe('CS|jwt-a')
+    expect(store.saved()).not.toBeNull()
+
+    // Nothing is held in memory, but the store still answers for this JWT:
+    // the exchange is refused and the stored token is served instead.
+    server.clearMocks()
+    server.mockAuthorizeEndpointError()
+    const second = await strategy.getToken()
+    if (second.failure) {
+      expect.unreachable(`second call failed: ${second.failure.type}`)
+    }
+    expect(second.data.subject).toBe('CS|jwt-a')
+  })
+
+  it("runs getJwt in the getToken() caller's async context, so one strategy serves every user", async () => {
+    // One strategy, created outside any request scope as a module-level one
+    // is. Each getToken() runs inside its own AsyncLocalStorage scope, the way
+    // Clerk's auth() and Next.js headers() find the current request, and
+    // getJwt reads the "user" from the store it can see.
+    server.mockAuthorizeEndpointNamingTheJwt()
+    const als = new AsyncLocalStorage<string>()
+    const strategy = mustCreate(WORKSPACE_CRN, () => {
+      const jwt = als.getStore()
+      return jwt === undefined
+        ? Promise.reject(new Error('no request in scope'))
+        : Promise.resolve(jwt)
+    })
+    const tokenAs = (jwt: string) => als.run(jwt, () => strategy.getToken())
+
+    const a = await tokenAs('jwt-a')
+    const b = await tokenAs('jwt-b')
+    if (a.failure || b.failure) {
+      expect.unreachable(
+        `getToken failed: ${a.failure?.error.message ?? b.failure?.error.message}`,
+      )
+    }
+    expect(a.data.subject).toBe('CS|jwt-a')
+    expect(b.data.subject).toBe('CS|jwt-b')
+
+    // The limitation the wrapper exists for: the native getToken() asks getJwt
+    // through a napi ThreadsafeFunction, which Node runs in the async context
+    // of create(), not of this call, so the same getJwt sees no store there.
+    const nativeGetToken = Object.getPrototypeOf(strategy).getToken as (
+      this: typeof strategy,
+    ) => ReturnType<typeof strategy.getToken>
+    const viaNative = await als.run('jwt-c', () =>
+      nativeGetToken.call(strategy),
+    )
+    expect(viaNative.failure?.type).toBe('SERVER_ERROR')
+    expect(viaNative.failure?.error.message).toContain('no request in scope')
+  })
+
+  it("never serves the first user's token to a second user", async () => {
+    // The bug, as a test. A federates; every exchange is then refused, so the
+    // only token the strategy *could* hand out is A's. B's call must fail —
+    // it must try to exchange B's JWT — rather than succeed with A's token.
+    server.mockAuthorizeEndpointNamingTheJwt()
+    let current = 'jwt-a'
+    const strategy = mustCreate(WORKSPACE_CRN, () => Promise.resolve(current))
+
+    const a = await strategy.getToken()
+    if (a.failure) {
+      expect.unreachable(`A failed: ${a.failure.type}`)
+    }
+    expect(a.data.subject).toBe('CS|jwt-a')
+
+    server.clearMocks()
+    server.mockAuthorizeEndpointError()
+    current = 'jwt-b'
+    const b = await strategy.getToken()
+    expect(b.failure?.type).toBe('SERVER_ERROR')
   })
 
   it('re-federates when the stored token JSON is malformed', async () => {

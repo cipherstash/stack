@@ -16,11 +16,24 @@ import (
 // StrategyOption configures an auth strategy.
 type StrategyOption func(*strategyOptions)
 
-type strategyOptions struct{ baseURL string }
+type strategyOptions struct {
+	baseURL       string
+	cacheCapacity *uint32
+}
 
 // WithAuthBaseURL overrides CTS service discovery for one strategy.
 func WithAuthBaseURL(url string) StrategyOption {
 	return func(o *strategyOptions) { o.baseURL = url }
+}
+
+// WithCacheCapacity sets how many distinct IdP JWTs an OIDC strategy keeps
+// a CTS token for (1024 unless set). When the cache is full the least
+// recently used JWT's token is dropped and that user is exchanged again on
+// their next call, so size it to the users one strategy serves within a CTS
+// token's lifetime (about 15 minutes); each entry holds that user's JWT and
+// CTS token. Zero caches nothing. Only [ProfileStore.OIDC] reads it.
+func WithCacheCapacity(n uint32) StrategyOption {
+	return func(o *strategyOptions) { o.cacheCapacity = &n }
 }
 
 func strategyConfig(opts []StrategyOption) strategyOptions {
@@ -80,8 +93,11 @@ func (s *ProfileStore) AccessKey(ctx context.Context, crn, key string, opts ...S
 	}{"access_key", crn, key, o.baseURL}, false)
 }
 
-// OIDC constructs stack-auth's federation strategy. provider is called for
-// a fresh IdP JWT only when the strategy needs to mint a CTS token.
+// OIDC constructs stack-auth's federation strategy. provider is called on
+// every Token call for the IdP JWT of the user that call is for; the
+// strategy keeps one CTS token per distinct JWT and mints a new one only
+// for a JWT that has no unexpired token. [WithCacheCapacity] sets how many
+// JWTs that cache holds.
 func (s *ProfileStore) OIDC(ctx context.Context, crn string, provider OIDCProvider, opts ...StrategyOption) (*Strategy, error) {
 	if crn == "" || provider == nil {
 		return nil, ErrAuthConfig
@@ -89,11 +105,12 @@ func (s *ProfileStore) OIDC(ctx context.Context, crn string, provider OIDCProvid
 	o := strategyConfig(opts)
 	id := s.root.inst.transport.register(provider)
 	config := struct {
-		Kind     string `json:"kind"`
-		CRN      string `json:"crn"`
-		Provider uint32 `json:"provider"`
-		BaseURL  string `json:"base_url,omitempty"`
-	}{"oidc", crn, id, o.baseURL}
+		Kind          string  `json:"kind"`
+		CRN           string  `json:"crn"`
+		Provider      uint32  `json:"provider"`
+		BaseURL       string  `json:"base_url,omitempty"`
+		CacheCapacity *uint32 `json:"cache_capacity,omitempty"`
+	}{"oidc", crn, id, o.baseURL, o.cacheCapacity}
 	strategy, err := s.newStrategy(ctx, config, false)
 	if err != nil {
 		s.root.inst.transport.unregister(id)

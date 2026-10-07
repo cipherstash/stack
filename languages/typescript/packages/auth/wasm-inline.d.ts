@@ -139,9 +139,14 @@ export declare class AccessKeyStrategy {
 }
 
 /**
- * Supplies the *current* third-party OIDC JWT to federate. Called on every
- * federation — initial auth and every re-federation after expiry — so it
- * should return a live token each time (e.g. `() => clerk.session.getToken()`).
+ * Supplies the third-party OIDC JWT of the user the current request is for.
+ * Called on every `getToken()`, in the caller's async context; one CTS token
+ * is cached per distinct JWT, so one strategy serves many users. Return a live
+ * token each time (e.g. `() => getClerkSessionToken(req)`), never one captured
+ * at startup. Return the same JWT for a user until the
+ * identity provider rotates it: a callback that mints a new JWT on every call
+ * exchanges on every call, and each new JWT takes a cache slot from another
+ * user.
  */
 export type OidcProvider = () => string | Promise<string>;
 
@@ -159,6 +164,14 @@ export interface OidcFederationStrategyOptions {
    * this is the only way to target a host other than the region-discovered one.
    */
   baseUrl?: string;
+  /**
+   * How many distinct JWTs the strategy keeps a CTS token for (1024 unless
+   * set). When full, the least recently used JWT's token is dropped and that
+   * user is exchanged again on their next call; `0` caches nothing. Size it to
+   * the users one strategy serves within a CTS token's lifetime (about 15
+   * minutes).
+   */
+  cacheCapacity?: number;
 }
 
 /**
@@ -182,17 +195,26 @@ export declare class OidcFederationStrategy {
    * CRN and used for service discovery; the workspace ID is used to verify
    * every federated token belongs to the right workspace.
    *
-   * `getJwt` must return the current third-party OIDC JWT (it is re-invoked
-   * on every re-federation). Pass `options.store` to back the strategy with a
-   * persistent cache — see {@link TokenStore}.
+   * `getJwt` is asked on every `getToken()` for the JWT of this request's
+   * user — see {@link OidcProvider}. Pass `options.store` to back the
+   * strategy with a persistent cache — see {@link TokenStore}.
    */
   static create(
     workspaceCrn: string,
     getJwt: OidcProvider,
     options?: OidcFederationStrategyOptions,
   ): Result<OidcFederationStrategy, AuthFailure>;
-  /** Retrieve a valid CTS service token, federating or re-federating as needed. */
+  /**
+   * Retrieve a valid CTS service token, federating or re-federating as needed.
+   * Calls `getJwt` in this caller's async context and then
+   * {@link getTokenForJwt}.
+   */
   getToken(): Promise<GetTokenResult>;
+  /**
+   * The CTS token for `jwt`, the caller's own provider JWT: `getToken()`
+   * minus the `getJwt` call, sharing its cache.
+   */
+  getTokenForJwt(jwt: string): Promise<GetTokenResult>;
   /** Release the underlying wasm resources. */
   free(): void;
 }

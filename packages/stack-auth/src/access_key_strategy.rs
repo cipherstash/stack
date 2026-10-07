@@ -363,6 +363,7 @@ mod workspace_verification_tests {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         };
         let store = std::sync::Arc::new(crate::InMemoryTokenStore::new());
         store.save(&stored).await;

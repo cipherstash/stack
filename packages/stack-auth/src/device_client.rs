@@ -200,6 +200,7 @@ mod tests {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         };
         store.init_workspace(TEST_WORKSPACE_ID).unwrap();
         let ws_store = store.current_workspace_store().unwrap();

@@ -22,6 +22,7 @@ pub(crate) fn raw_token(access_token: &str) -> Token {
         region: None,
         client_id: None,
         device_instance_id: None,
+        federated_from: None,
     }
 }
 
@@ -75,6 +76,13 @@ pub(crate) fn crn_with_workspace(workspace: &str) -> Crn {
 /// Only the mock-server tests, which need the bundled transport, mint one.
 #[cfg(feature = "http")]
 pub(crate) fn jwt_with_workspace(workspace: &str) -> String {
+    jwt_for_principal(workspace, "CS|test-principal")
+}
+
+/// [`jwt_with_workspace`] for a named principal (`sub`), so a test with
+/// several callers can tell whose CTS token it was handed.
+#[cfg(feature = "http")]
+pub(crate) fn jwt_for_principal(workspace: &str, sub: &str) -> String {
     use jsonwebtoken::{encode, EncodingKey, Header};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -84,7 +92,7 @@ pub(crate) fn jwt_with_workspace(workspace: &str) -> String {
         .as_secs();
     let claims = serde_json::json!({
         "iss": "https://cts.example.com/",
-        "sub": "CS|test-principal",
+        "sub": sub,
         "aud": "test-audience",
         "iat": now,
         "exp": now + 3600,

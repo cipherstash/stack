@@ -85,9 +85,13 @@ read is `ErrNoProfile`.
 takes. `Auto` checks `CS_CLIENT_ACCESS_KEY` and
 `CS_WORKSPACE_CRN` first, then the current workspace's stored device session.
 The OIDC provider is a one-method `Token(context.Context) (string, error)`
-interface. Use `stackauth.OAuth2TokenSource(source)` to adapt a
+interface, called on every token fetch for the JWT of the user the call is
+for; each distinct JWT is exchanged once while its CTS token lasts. Use
+`stackauth.OAuth2TokenSource(source)` to adapt a
 `golang.org/x/oauth2.TokenSource`. `WithAuthBaseURL(url)` overrides service
-discovery for local tests or a custom CTS host.
+discovery for local tests or a custom CTS host; `WithCacheCapacity(n)` sets
+how many users' CTS tokens an OIDC strategy keeps (1024 unless set), sized to
+the users it serves within a CTS token's lifetime.
 
 ## What the guest is given
 

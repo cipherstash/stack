@@ -28,14 +28,41 @@ const testCRN = "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"
 
 func testJWT(t *testing.T, issuer string) string {
 	t.Helper()
+	return testJWTFor(t, issuer, "CS|test")
+}
+
+// testJWTFor is testJWT with a chosen subject, so a test with several
+// callers can tell whose token came back.
+func testJWTFor(t *testing.T, issuer, sub string) string {
+	t.Helper()
 	payload, err := json.Marshal(map[string]any{
-		"iss": issuer, "sub": "CS|test", "workspace": "ZVATKW3VHMFG27DY",
+		"iss": issuer, "sub": sub, "workspace": "ZVATKW3VHMFG27DY",
 		"exp": time.Now().Add(time.Hour).Unix(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return "e30." + base64.RawURLEncoding.EncodeToString(payload) + ".c2ln"
+}
+
+// jwtSubject reads the sub claim of an unverified JWT.
+func jwtSubject(t *testing.T, jwt string) string {
+	t.Helper()
+	parts := strings.Split(jwt, ".")
+	if len(parts) != 3 {
+		t.Fatalf("not a JWT: %q", jwt)
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		t.Fatal(err)
+	}
+	return claims.Sub
 }
 
 func TestAccessKeyStrategyCachesAndPreservesRequest(t *testing.T) {
@@ -79,21 +106,101 @@ func TestAccessKeyStrategyCachesAndPreservesRequest(t *testing.T) {
 	}
 }
 
-func TestOIDCStrategyCallsProviderOnlyOnExchange(t *testing.T) {
+// The provider is asked on every Token call, and each distinct IdP token is
+// exchanged once: two users through one strategy each get the CTS token
+// minted for their own IdP token, and a user whose token is cached is not
+// exchanged again. One cached token per strategy handed the second user the
+// first user's token (stack-auth CIP-4301).
+// callerKey carries the caller's identity in the ctx of a Token call, the
+// way a request-scoped provider finds its user.
+type callerKey struct{}
+
+func TestOIDCStrategyFederatesEachProviderTokenOnce(t *testing.T) {
 	guestOrSkip(t)
-	var calls atomic.Int32
+	var exchanges atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
+		exchanges.Add(1)
+		var body struct {
+			OIDCToken   string `json:"oidcToken"`
+			WorkspaceID string `json:"workspaceId"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Error(err)
 		}
-		if want := (map[string]any{"oidcToken": "idp-token", "workspaceId": "ZVATKW3VHMFG27DY"}); !reflect.DeepEqual(body, want) {
-			t.Errorf("request body = %#v, want %#v", body, want)
+		if body.WorkspaceID != "ZVATKW3VHMFG27DY" {
+			t.Errorf("workspaceId = %q, want ZVATKW3VHMFG27DY", body.WorkspaceID)
 		}
 		if ua := r.Header.Get("User-Agent"); !isStackAuthGoAgent(ua) {
 			t.Errorf("OIDC federation User-Agent = %q, want stack-auth/<version> (Go)", ua)
 		}
-		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, testJWT(t, "https://cts.example"), time.Now().Add(time.Hour).Unix())
+		// The CTS token names the IdP token it was exchanged from, so the
+		// test can tell whose token the strategy handed back.
+		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, testJWTFor(t, "https://cts.example", "CS|"+body.OIDCToken), time.Now().Add(time.Hour).Unix())
+	}))
+	defer server.Close()
+	profile, err := Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer profile.Close()
+	var providerCalls atomic.Int32
+	// The provider learns who is calling only from the ctx of the Token
+	// call, as a provider reading the request's user does; a shared variable
+	// would pass even if the guest handed it some other context.
+	strategy, err := profile.OIDC(context.Background(), testCRN, OIDCProviderFunc(func(ctx context.Context) (string, error) {
+		providerCalls.Add(1)
+		idp, ok := ctx.Value(callerKey{}).(string)
+		if !ok {
+			return "", errors.New("provider did not receive the Token caller's context")
+		}
+		return idp, nil
+	}), WithAuthBaseURL(server.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer strategy.Close()
+	tokenFor := func(idp string) string {
+		token, err := strategy.Token(context.WithValue(context.Background(), callerKey{}, idp))
+		if err != nil {
+			t.Fatalf("Token for %s: %v", idp, err)
+		}
+		return token
+	}
+	a := tokenFor("idp-a")
+	b := tokenFor("idp-b")
+	again := tokenFor("idp-a")
+	if got := jwtSubject(t, a); got != "CS|idp-a" {
+		t.Errorf("A's token subject = %q, want CS|idp-a", got)
+	}
+	if got := jwtSubject(t, b); got != "CS|idp-b" {
+		t.Errorf("B's token subject = %q, want CS|idp-b: B was handed A's token", got)
+	}
+	if again != a {
+		t.Errorf("A's second call did not serve A's cached token")
+	}
+	if exchanges.Load() != 2 {
+		t.Errorf("exchanges = %d, want 2 (one per IdP token)", exchanges.Load())
+	}
+	if providerCalls.Load() != 3 {
+		t.Errorf("provider calls = %d, want 3 (one per Token call)", providerCalls.Load())
+	}
+}
+
+// WithCacheCapacity reaches the Rust builder: with room for no JWT at all,
+// the same IdP token is exchanged on every Token call, where the default
+// (1024) serves the second call from the cache, as the test above shows.
+func TestOIDCStrategyCacheCapacityZeroExchangesEveryCall(t *testing.T) {
+	guestOrSkip(t)
+	var exchanges atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		exchanges.Add(1)
+		var body struct {
+			OIDCToken string `json:"oidcToken"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		fmt.Fprintf(w, `{"accessToken":%q,"expiry":%d}`, testJWTFor(t, "https://cts.example", "CS|"+body.OIDCToken), time.Now().Add(time.Hour).Unix())
 	}))
 	defer server.Close()
 	profile, err := Open(context.Background(), t.TempDir())
@@ -102,20 +209,23 @@ func TestOIDCStrategyCallsProviderOnlyOnExchange(t *testing.T) {
 	}
 	defer profile.Close()
 	strategy, err := profile.OIDC(context.Background(), testCRN, OIDCProviderFunc(func(context.Context) (string, error) {
-		calls.Add(1)
-		return "idp-token", nil
-	}), WithAuthBaseURL(server.URL))
+		return "idp-a", nil
+	}), WithAuthBaseURL(server.URL), WithCacheCapacity(0))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer strategy.Close()
 	for i := 0; i < 2; i++ {
-		if _, err := strategy.Token(context.Background()); err != nil {
-			t.Fatal(err)
+		token, err := strategy.Token(context.Background())
+		if err != nil {
+			t.Fatalf("Token #%d: %v", i, err)
+		}
+		if got := jwtSubject(t, token); got != "CS|idp-a" {
+			t.Errorf("Token #%d subject = %q, want CS|idp-a", i, got)
 		}
 	}
-	if calls.Load() != 1 {
-		t.Fatalf("provider calls = %d, want 1", calls.Load())
+	if exchanges.Load() != 2 {
+		t.Errorf("exchanges = %d, want 2 (nothing cached)", exchanges.Load())
 	}
 }
 

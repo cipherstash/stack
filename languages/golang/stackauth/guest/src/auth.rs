@@ -33,6 +33,9 @@ enum Config {
         crn: String,
         provider: u32,
         base_url: Option<String>,
+        /// How many distinct JWTs keep a CTS token; the strategy's default
+        /// when absent. See `stackauth.WithCacheCapacity`.
+        cache_capacity: Option<usize>,
     },
     DeviceSession {
         workspace_dir: String,
@@ -95,12 +98,16 @@ pub fn create(config: &[u8]) -> Result<Vec<u8>, u32> {
             crn,
             provider,
             base_url,
+            cache_capacity,
         } => {
             let crn: Crn = crn.parse().map_err(|_| STATUS_AUTH_CONFIG)?;
             let mut builder = OidcFederationStrategy::builder(crn, HostOidcProvider(provider))
                 .transport(WasiAuthTransport);
             if let Some(url) = parse_base_url(base_url)? {
                 builder = builder.base_url(url);
+            }
+            if let Some(capacity) = cache_capacity {
+                builder = builder.cache_capacity(capacity);
             }
             Strategy::Oidc(builder.build().map_err(|e| status_for_auth(&e))?)
         }

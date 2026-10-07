@@ -4206,6 +4206,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
+ "sha2 0.10.9",
  "stack-profile 0.43.0",
  "thiserror 1.0.69",
  "tokio",

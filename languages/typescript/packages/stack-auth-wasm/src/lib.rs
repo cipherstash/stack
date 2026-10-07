@@ -350,6 +350,13 @@ impl OidcFederationStrategyInner {
             Self::WithStore(s) => s.get_token().await,
         }
     }
+
+    async fn get_token_for_jwt(&self, jwt: SecretToken) -> Result<ServiceToken, AuthError> {
+        match self {
+            Self::NoStore(s) => s.get_token_for_jwt(jwt).await,
+            Self::WithStore(s) => s.get_token_for_jwt(jwt).await,
+        }
+    }
 }
 
 /// Federates a third-party OIDC JWT (Clerk, Supabase, …) into a CTS service
@@ -370,27 +377,43 @@ impl OidcFederationStrategy {
     /// the CRN and used for service discovery; the workspace ID is used to
     /// verify every federated token belongs to the right workspace.
     ///
-    /// `getJwt` is called on every federation — initial auth and every
-    /// re-federation after expiry — and must return `Promise<string>`
-    /// resolving to the *current* third-party OIDC JWT (e.g. by calling
-    /// `clerk.session.getToken()`).
+    /// `getJwt` is called on every `getToken()` and must return
+    /// `Promise<string>` resolving to the third-party OIDC JWT of the user the
+    /// current request is for (e.g. `() => getClerkSessionToken(req)`). The
+    /// strategy keeps one CTS token per distinct JWT and exchanges a JWT only
+    /// while it has no unexpired token, so one strategy serves many users and
+    /// no caller is ever handed another user's token. The `wasm-inline`
+    /// wrapper calls `getJwt` on the JavaScript side and uses `getTokenForJwt`;
+    /// the callback here serves only the raw `getToken()`. Return the same
+    /// JWT for a user until the identity provider rotates it: a callback that
+    /// mints a new JWT on every call exchanges on every call, and each new JWT
+    /// takes a cache slot from another user.
     ///
     /// `baseUrl`, when supplied, pins this strategy to a specific CTS host —
     /// e.g. a self-hosted CTS or a local mock auth server. It overrides region
     /// service discovery and is scoped to this strategy alone. In wasm there is
     /// no `CS_CTS_HOST` env fallback (the sandbox can't read env), so `baseUrl`
     /// is the only way to target a host other than the region-discovered one.
+    ///
+    /// `cacheCapacity` is how many distinct JWTs the strategy keeps a CTS
+    /// token for (1024 unless set); when full, the least recently used JWT's
+    /// token is dropped and that user is exchanged again on their next call.
+    /// `0` caches nothing.
     pub fn create(
         workspace_crn: String,
         get_jwt: js_sys::Function,
         base_url: Option<String>,
+        cache_capacity: Option<u32>,
     ) -> Result<OidcFederationStrategy, JsValue> {
         let crn = parse_workspace_crn(&workspace_crn)?;
-        let inner = stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
-            .maybe_base_url(base_url)
-            .map_err(to_js_error)?
-            .build()
-            .map_err(to_js_error)?;
+        let mut builder =
+            stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
+                .maybe_base_url(base_url)
+                .map_err(to_js_error)?;
+        if let Some(capacity) = cache_capacity {
+            builder = builder.cache_capacity(capacity as usize);
+        }
+        let inner = builder.build().map_err(to_js_error)?;
         Ok(OidcFederationStrategy {
             inner: OidcFederationStrategyInner::NoStore(inner),
         })
@@ -402,10 +425,12 @@ impl OidcFederationStrategy {
     /// token through `loadToken` / `saveToken` — see
     /// [`AccessKeyStrategy::create_with_store`] for the callback contract. Use
     /// this to back the strategy with an HTTP-only cookie so a federated token
-    /// survives across Edge Function invocations without re-federating.
+    /// survives across Edge Function invocations without re-federating. A
+    /// stored token is served only to the JWT it was federated from.
     ///
-    /// `baseUrl` behaves as in `create` — an explicit,
-    /// strategy-scoped CTS host that overrides region service discovery.
+    /// `baseUrl` and `cacheCapacity` behave as in `create` — an explicit,
+    /// strategy-scoped CTS host that overrides region service discovery, and
+    /// the number of JWTs whose token is kept in memory.
     #[wasm_bindgen(js_name = createWithStore)]
     pub fn create_with_store(
         workspace_crn: String,
@@ -413,15 +438,21 @@ impl OidcFederationStrategy {
         load_token: js_sys::Function,
         save_token: js_sys::Function,
         base_url: Option<String>,
+        cache_capacity: Option<u32>,
     ) -> Result<OidcFederationStrategy, JsValue> {
         let crn = parse_workspace_crn(&workspace_crn)?;
         let store = JsTokenStore {
             load: load_token,
             save: save_token,
         };
-        let inner = stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
-            .maybe_base_url(base_url)
-            .map_err(to_js_error)?
+        let mut builder =
+            stack_auth::OidcFederationStrategy::builder(crn, JsOidcProvider { get_jwt })
+                .maybe_base_url(base_url)
+                .map_err(to_js_error)?;
+        if let Some(capacity) = cache_capacity {
+            builder = builder.cache_capacity(capacity as usize);
+        }
+        let inner = builder
             .with_token_store(store)
             .build()
             .map_err(to_js_error)?;
@@ -435,6 +466,19 @@ impl OidcFederationStrategy {
     pub async fn get_token(&self) -> Result<JsValue, JsValue> {
         self.inner
             .get_token()
+            .await
+            .map_err(to_js_error)
+            .and_then(token_result_from)
+    }
+
+    /// Retrieve a valid CTS service token for `jwt`, the caller's own provider
+    /// JWT: `getToken()` minus the `getJwt` call, sharing its cache. The
+    /// `wasm-inline` wrapper calls `getJwt` on the JavaScript side and uses
+    /// this, matching the Node entry.
+    #[wasm_bindgen(js_name = getTokenForJwt)]
+    pub async fn get_token_for_jwt(&self, jwt: String) -> Result<JsValue, JsValue> {
+        self.inner
+            .get_token_for_jwt(SecretToken::new(jwt))
             .await
             .map_err(to_js_error)
             .and_then(token_result_from)
@@ -734,6 +778,7 @@ mod tests {
             "not-a-crn".to_string(),
             jwt_fn("h.p.s"),
             None,
+            None,
         ));
         assert_eq!(error_code_of(&err), "INVALID_CRN");
     }
@@ -749,13 +794,15 @@ mod tests {
             "crn:ap-southeast-2.aws:not-a-valid-workspace".to_string(),
             jwt_fn("h.p.s"),
             None,
+            None,
         ));
         assert_eq!(error_code_of(&err), "INVALID_CRN");
     }
 
     #[wasm_bindgen_test]
     fn oidc_federation_strategy_accepts_valid_inputs() {
-        let result = OidcFederationStrategy::create(VALID_CRN.to_string(), jwt_fn("h.p.s"), None);
+        let result =
+            OidcFederationStrategy::create(VALID_CRN.to_string(), jwt_fn("h.p.s"), None, None);
         assert!(result.is_ok());
     }
 
@@ -766,6 +813,7 @@ mod tests {
             VALID_CRN.to_string(),
             jwt_fn("h.p.s"),
             Some("https://cts.example.com".to_string()),
+            None,
         );
         assert!(result.is_ok());
     }
@@ -778,6 +826,7 @@ mod tests {
             VALID_CRN.to_string(),
             jwt_fn("h.p.s"),
             Some(String::new()),
+            None,
         );
         assert!(result.is_ok());
     }
@@ -789,8 +838,17 @@ mod tests {
             VALID_CRN.to_string(),
             jwt_fn("h.p.s"),
             Some("not a url".to_string()),
+            None,
         ));
         assert_eq!(error_code_of(&err), "INVALID_URL");
+    }
+
+    /// `cacheCapacity` is optional and `0` (cache nothing) is accepted.
+    #[wasm_bindgen_test]
+    fn oidc_federation_strategy_accepts_zero_cache_capacity() {
+        let result =
+            OidcFederationStrategy::create(VALID_CRN.to_string(), jwt_fn("h.p.s"), None, Some(0));
+        assert!(result.is_ok());
     }
 
     #[wasm_bindgen_test]
@@ -800,6 +858,7 @@ mod tests {
             jwt_fn("h.p.s"),
             empty_load_fn(),
             noop_save_fn(),
+            None,
             None,
         ));
         assert_eq!(error_code_of(&err), "INVALID_CRN");
@@ -812,6 +871,7 @@ mod tests {
             jwt_fn("h.p.s"),
             empty_load_fn(),
             noop_save_fn(),
+            None,
             None,
         );
         assert!(result.is_ok());
@@ -827,6 +887,7 @@ mod tests {
             empty_load_fn(),
             noop_save_fn(),
             Some("https://cts.example.com".to_string()),
+            None,
         );
         assert!(result.is_ok());
     }
@@ -841,6 +902,7 @@ mod tests {
             empty_load_fn(),
             noop_save_fn(),
             Some(String::new()),
+            None,
         );
         assert!(result.is_ok());
     }
@@ -854,6 +916,7 @@ mod tests {
             empty_load_fn(),
             noop_save_fn(),
             Some("not a url".to_string()),
+            None,
         ));
         assert_eq!(error_code_of(&err), "INVALID_URL");
     }

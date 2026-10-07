@@ -117,7 +117,7 @@ Deno.serve(async (req) => {
 
   const created = OidcFederationStrategy.create(
     Deno.env.get("CS_WORKSPACE_CRN")!, // e.g. "crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY"
-    // Returns the *current* provider JWT — re-invoked on every re-federation.
+    // Returns this request's user's provider JWT — asked on every getToken().
     () => getClerkSessionToken(req),
     { store: cookieStore({ request: req, responseHeaders }) },
   );
@@ -134,7 +134,7 @@ Deno.serve(async (req) => {
 });
 ```
 
-`/api/authorise` issues no CTS refresh token, so when the cached CTS token expires `OidcFederationStrategy` re-federates — it calls `getJwt` again for a fresh provider JWT. Pass a `getJwt` that returns a live token each time (e.g. wrapping the provider SDK), not a value captured once. The same API is available on the Node-native entry: `const { OidcFederationStrategy } = require("@cipherstash/auth")`.
+`getJwt` is called on **every** `getToken()` and must return the JWT of the user the current request is for — never a value captured once. The strategy keeps one CTS token per distinct provider JWT (a bounded, least-recently-used cache) and exchanges a JWT only while it has no unexpired CTS token, so one long-lived strategy serves many users and no caller is ever handed another user's token. `getToken()` calls `getJwt` in the caller's own async context, so it may read the current request from `AsyncLocalStorage` the way Clerk's `auth()` and Next.js `headers()` do; a strategy created at module level works. (Only the wrapper's `getToken()` does this — the raw binding's `getToken()` runs `getJwt` through a napi `ThreadsafeFunction` in the async context of `create()`, which is why the wrapper fetches the JWT itself and calls `getTokenForJwt`.) Return the same JWT for a user until the provider rotates it: a `getJwt` that mints a new JWT on every call (or bypasses the SDK's session cache) exchanges on every call, and each new JWT takes a cache slot from another user. `/api/authorise` issues no CTS refresh token, so when a user's CTS token expires their JWT is federated again; when the provider rotates a user's JWT, the new JWT is exchanged once more. A strategy that does outlive requests (one per user, say) keeps tokens for up to `cacheCapacity` JWTs — `options.cacheCapacity` here, the fourth argument of `create` (sixth of `createWithStore`) on the Node-native entry — 1024 unless set; when full, the least recently used JWT's token is dropped and that user is exchanged again on their next call, and each eviction is logged at `debug`. The same API is available on the Node-native entry: `const { OidcFederationStrategy } = require("@cipherstash/auth")`.
 
 ### Caching with `cookieStore`
 
@@ -234,7 +234,7 @@ interface TokenStore {
 }
 ```
 
-The strategy calls `load` on cold start (no in-memory token); if it returns a still-fresh JSON, the strategy reuses it. Otherwise it hits CTS for a fresh token and writes it back via `save`. Stale tokens trigger a refresh and the refreshed token is persisted.
+The strategy calls `load` when the caller's JWT has no token in memory; if it returns a still-fresh JSON that was federated from that same JWT, the strategy reuses it. Otherwise it hits CTS for a fresh token and writes it back via `save`. Stale tokens trigger a refresh and the refreshed token is persisted. A token federated from another JWT (a store shared across users, or a cookie left over from a previous sign-in on the same browser) is a cache miss, never that user's token.
 
 ### Edge — `cookieStore`
 
@@ -467,7 +467,7 @@ production rollout rather than a nice-to-have.
 | `request` | — required — | Incoming `Request` (reads the token cookie) |
 | `responseHeaders` | — required — | Outgoing `Headers` (the refreshed cookie is appended as `Set-Cookie`) |
 | `workspaceCrn` | — required — | `crn:<region>:<workspace-id>` |
-| `getJwt` | — required — | Returns the *current* third-party OIDC JWT (re-invoked on every re-federation) |
+| `getJwt` | — required — | Returns the third-party OIDC JWT of this request's user (asked on every call) |
 | `baseUrl` | region discovery | Pin federation to a specific CTS host / mock |
 | `cookieName` | `cs_token_<workspace-id>` | Override the per-workspace cookie name |
 | `secure` | `true` | Cookie `Secure` flag — set `false` only for localhost HTTP dev |

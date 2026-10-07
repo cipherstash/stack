@@ -275,7 +275,8 @@ them is the standard mistake. Identity-bound encryption needs both:
 
 1. **Authenticate as the user** — build an `OidcFederationStrategy` (or
    `AccessKeyStrategy` for service-to-service) and pass it as
-   `config.authStrategy`. The client then acts as that user for its lifetime.
+   `config.authStrategy`. The client then acts, on each operation, as the
+   user whose JWT `getJwt` returns (stash-auth skill, "Client lifetime").
    **Available on this entry**, and shown below.
 2. **Bind the data key to a claim** — chain `.withLockContext({ identityClaim })`
    on the operation. *This* is what binds key retrieval to the user's claim.
@@ -311,7 +312,7 @@ import { Encryption, OidcFederationStrategy } from '@cipherstash/stack/wasm-inli
 // `authStrategy` is the easy mistake, and it fails opaquely later.
 const strategy = OidcFederationStrategy.create(
   workspaceCrn,                   // 'crn:<region>:<workspace-id>'
-  () => getUserJwt(req),          // called on every re-federation — Clerk, Supabase Auth, …
+  () => getUserJwt(req),          // the current request's user; runs on every operation
 )
 if (strategy.failure) throw new Error(strategy.failure.error.message)
 
@@ -341,8 +342,10 @@ Result-returning shape, for service-to-service use with a custom token store.
 When you pass an auth strategy, do **not** also pass `config.accessKey` — they
 are mutually exclusive and the client rejects the combination.
 
-Construct a client **per request** when using a user-scoped strategy — a
-module-level client would bind whichever user happened to arrive first.
+A client built with a user-scoped strategy acts as whichever user `getJwt`
+names on each operation; constructing it per request, with `req` captured in
+`getJwt` as above, is the simplest way to make sure that is the current one
+(stash-auth skill, "Client lifetime").
 
 ### The bulk shape differs — don't copy the native form
 

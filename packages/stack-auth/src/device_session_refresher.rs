@@ -198,6 +198,7 @@ mod tests {
             region: Some("ap-southeast-2.aws".to_string()),
             client_id: Some("cli".to_string()),
             device_instance_id: None,
+            federated_from: None,
         }
     }
 

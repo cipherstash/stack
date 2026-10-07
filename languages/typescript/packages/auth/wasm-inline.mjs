@@ -15,7 +15,7 @@ import {
 /** @typedef {{ load(): Promise<string | null | undefined>; save(json: string): Promise<void> }} TokenStore */
 /** @typedef {{ store?: TokenStore }} AccessKeyStrategyOptions */
 /** @typedef {() => string | Promise<string>} OidcProvider */
-/** @typedef {{ store?: TokenStore; baseUrl?: string }} OidcFederationStrategyOptions */
+/** @typedef {{ store?: TokenStore; baseUrl?: string; cacheCapacity?: number }} OidcFederationStrategyOptions */
 
 // Convert a thrown/rejected wasm error into a `Result` `failure`. The wasm
 // binding attaches the serialized `AuthError` as an `__authFailure` object on
@@ -41,6 +41,15 @@ function toFailure(err) {
     failure.url = url;
   }
   return { failure };
+}
+
+// A `getJwt` failure as the binding would report one (`SERVER_ERROR`, same
+// message prefix), so callers cannot tell which side of the boundary the
+// callback failed on.
+function getJwtFailure(detail) {
+  const err = new Error(`getJwt ${detail}`);
+  err.__authFailure = { type: "SERVER_ERROR", message: err.message };
+  return toFailure(err);
 }
 
 // Mirror index.js's `wrapAsync`: a synchronous throw from the inner `getToken`
@@ -116,6 +125,8 @@ export class AccessKeyStrategy {
 
 export class OidcFederationStrategy {
   #inner;
+  /** @type {OidcProvider} */
+  #getJwt;
 
   // Federated strategy: the third-party JWT lives in request scope and the
   // cache is request-scoped, so federation must happen in scope. Consumers
@@ -123,9 +134,13 @@ export class OidcFederationStrategy {
   // `getToken()` from a detached context.
   requiresFederation = true;
 
-  /** @param {RawOidcFederationStrategy} inner */
-  constructor(inner) {
+  /**
+   * @param {RawOidcFederationStrategy} inner
+   * @param {OidcProvider} getJwt
+   */
+  constructor(inner, getJwt) {
     this.#inner = inner;
+    this.#getJwt = getJwt;
   }
 
   /**
@@ -142,6 +157,7 @@ export class OidcFederationStrategy {
       const jwt = () => Promise.resolve(getJwt());
       const store = options?.store;
       const baseUrl = options?.baseUrl;
+      const cacheCapacity = options?.cacheCapacity;
       if (store) {
         const load = () => Promise.resolve(store.load());
         const save = (/** @type {string} */ json) =>
@@ -154,13 +170,21 @@ export class OidcFederationStrategy {
               load,
               save,
               baseUrl,
+              cacheCapacity,
             ),
+            getJwt,
           ),
         };
       }
       return {
         data: new OidcFederationStrategy(
-          RawOidcFederationStrategy.create(workspaceCrn, jwt, baseUrl),
+          RawOidcFederationStrategy.create(
+            workspaceCrn,
+            jwt,
+            baseUrl,
+            cacheCapacity,
+          ),
+          getJwt,
         ),
       };
     } catch (err) {
@@ -168,9 +192,45 @@ export class OidcFederationStrategy {
     }
   }
 
-  /** @returns {Promise<import("./wasm-inline.d.ts").GetTokenResult>} */
-  getToken() {
-    return settleGetToken(this.#inner);
+  /**
+   * Calls `getJwt` here, in the caller's async context, and hands the JWT to
+   * the binding's `getTokenForJwt` — the same split as the Node entry
+   * (index.js), so a `getJwt` that reads the request from an async-context
+   * store works the same way on both. The binding's own `getToken()` would
+   * call `getJwt` from inside the wasm future instead.
+   *
+   * @returns {Promise<import("./wasm-inline.d.ts").GetTokenResult>}
+   */
+  async getToken() {
+    let jwt;
+    try {
+      jwt = await this.#getJwt();
+    } catch (err) {
+      return getJwtFailure(
+        `rejected: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (typeof jwt !== "string") {
+      return getJwtFailure("callback did not return a string");
+    }
+    return this.getTokenForJwt(jwt);
+  }
+
+  /**
+   * The CTS token for `jwt`, the caller's own provider JWT: `getToken()`
+   * minus the `getJwt` call, sharing its cache.
+   *
+   * @param {string} jwt
+   * @returns {Promise<import("./wasm-inline.d.ts").GetTokenResult>}
+   */
+  getTokenForJwt(jwt) {
+    try {
+      return this.#inner
+        .getTokenForJwt(jwt)
+        .then((data) => ({ data }), toFailure);
+    } catch (err) {
+      return Promise.reject(err);
+    }
   }
 
   free() {

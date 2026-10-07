@@ -794,9 +794,17 @@ export function __resetStrategyDeprecationWarningForTests(): void {
  * ```typescript
  * import { Encryption, OidcFederationStrategy } from "@cipherstash/stack"
  *
- * // Authenticate every ZeroKMS request as the signed-in user.
+ * // Authenticate every ZeroKMS request as the signed-in user. `getUserJwt`
+ * // runs on every operation and must return the JWT of the user behind the
+ * // *current* request; each user's JWT is exchanged for that user's own token,
+ * // so one strategy serves every user. On this native entry the client calls
+ * // the strategy from a background task (a Neon channel), so a `getJwt` that
+ * // reads the request from `AsyncLocalStorage` (Clerk's `auth()`, Next.js
+ * // `headers()`) does not see it there yet: capture the request in the
+ * // closure as below, or build the client per request, until the client
+ * // carries a per-call snapshot (cipherstash/stack#1065).
  * // `create()` returns a `Result` — unwrap it before passing the strategy.
- * const federation = OidcFederationStrategy.create(workspaceCrn, () => getUserJwt())
+ * const federation = OidcFederationStrategy.create(workspaceCrn, () => getUserJwt(req))
  * if (federation.failure) throw new Error(federation.failure.error.message)
  *
  * const client = await Encryption({

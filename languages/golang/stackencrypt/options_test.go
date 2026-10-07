@@ -145,7 +145,7 @@ func (c *countingTransport) count(rawURL string) int {
 }
 
 // OIDCFederation mints its token from the provider's through CTS, asking
-// the provider only when a token has to be minted; its client key comes
+// the provider on every fetch and exchanging each IdP token once; its client key comes
 // from the environment as AutoCredentials' does; and WithTransport carries
 // the token exchange as well as the ZeroKMS request.
 func TestOIDCFederationThroughTheClientTransport(t *testing.T) {

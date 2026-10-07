@@ -141,9 +141,11 @@ and a source outside the strategies would bypass the cross-process lock a
 device-session refresh holds with the `stash` CLI.
 
 To authenticate through your own identity provider, pass `OIDCFederation`
-with the workspace CRN and a provider of the IdP's tokens. CTS exchanges
-the IdP token for a CipherStash one, and the provider is asked again only
-when that token needs replacing. `stackauth.OAuth2TokenSource` adapts a
+with the workspace CRN and a provider of the IdP's tokens. The provider is
+asked on every token fetch for the IdP token of the user the call is for;
+CTS exchanges each distinct IdP token for a CipherStash one, which is cached
+for that token until it expires, so one client serves many users and none
+rides another's token. `stackauth.OAuth2TokenSource` adapts a
 `golang.org/x/oauth2` source. The client key is found as `AutoCredentials`
 finds it. `stackauth` strategy options follow the provider:
 `OIDCFederation(crn, provider, stackauth.WithAuthBaseURL(cts))` pins the CTS

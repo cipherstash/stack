@@ -44,6 +44,10 @@ pub struct Token {
     pub(crate) client_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) device_instance_id: Option<String>,
+    /// See [`federated_from`](Self::federated_from). Absent on tokens stored
+    /// before the field existed, which the strategy treats as a cache miss.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) federated_from: Option<String>,
 }
 
 impl Token {
@@ -140,6 +144,23 @@ impl Token {
         self.device_instance_id.as_deref()
     }
 
+    /// For a token minted by OIDC federation, the lowercase hex SHA-256 of the
+    /// provider JWT it was exchanged from; `None` for every other token.
+    ///
+    /// [`OidcFederationStrategy`](crate::OidcFederationStrategy) stamps this
+    /// on the tokens it federates and serves a token from a
+    /// [`TokenStore`](crate::TokenStore) only to the JWT whose digest it
+    /// carries, so a store shared across users never hands one user's token
+    /// to another: a token stamped with another JWT's digest is a cache miss
+    /// and a fresh exchange. A store can read it to write one entry per user,
+    /// but [`load`](crate::TokenStore::load) receives no key, so a store
+    /// shared by several users can return at most one user's token on a read;
+    /// the rest are misses. Give each user their own store (a per-browser
+    /// cookie already is one) to cache more than the most recent of them.
+    pub fn federated_from(&self) -> Option<&str> {
+        self.federated_from.as_deref()
+    }
+
     /// Set the device instance ID on this token.
     pub(crate) fn set_device_instance_id(&mut self, id: impl Into<String>) {
         self.device_instance_id = Some(id.into());
@@ -212,6 +233,7 @@ impl Token {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         }
         .decode_claims()
         .map(|_| ())
@@ -317,6 +339,7 @@ impl Token {
             // refresh response. Until then, callers (e.g. DeviceSessionRefresher) must
             // re-attach it manually after refresh.
             device_instance_id: None,
+            federated_from: None,
         })
     }
 }
@@ -370,6 +393,7 @@ mod tests {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         }
     }
 
@@ -397,6 +421,7 @@ mod tests {
             region: None,
             client_id: None,
             device_instance_id: None,
+            federated_from: None,
         }
     }
 
