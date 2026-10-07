@@ -1,0 +1,130 @@
+package encrypt
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"testing"
+
+	"github.com/cipherstash/stack/languages/golang/internal/guest"
+	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
+)
+
+// The test-only ways to give a client a token. The public API takes tokens
+// only from auth strategies; the tests that talk to httptest stubs
+// need a fixed one, and get it here rather than through anything a caller
+// could reach.
+
+// tokenFunc adapts a function to a tokenSource.
+type tokenFunc func(ctx context.Context) (string, error)
+
+func (f tokenFunc) Token(ctx context.Context) (string, error) { return f(ctx) }
+
+// staticToken is a tokenSource that always returns token.
+func staticToken(token string) tokenSource {
+	return tokenFunc(func(context.Context) (string, error) { return token, nil })
+}
+
+// newTestCredentials is NewCredentials with token in place of a strategy:
+// the same type, so the same consume-on-refusal and no-Close semantics.
+// A nil token is refused as NewCredentials refuses a nil strategy.
+func newTestCredentials(clientID string, key *ClientKey, token tokenSource) Credentials {
+	return &explicitCredentials{clientID: clientID, key: key, token: token}
+}
+
+// withZeroKMSURL points the client at a ZeroKMS stub. There is no public
+// option for it: applications take the endpoint from the token, or from
+// CS_ZEROKMS_HOST.
+func withZeroKMSURL(url string) ClientOption {
+	return func(o *clientOptions) { o.zerokmsURL = url }
+}
+
+// The hooks the external tests (package encrypt_test, which can import the
+// generated test types this package cannot) reach the internals through.
+
+// WithZeroKMSURL is withZeroKMSURL for the external tests.
+func WithZeroKMSURL(url string) ClientOption { return withZeroKMSURL(url) }
+
+// Sends is how many ZeroKMS requests the client has made.
+func Sends(c *Client) int64 { return c.transport.sends.Load() }
+
+// ResetSends zeroes the count.
+func ResetSends(c *Client) { c.transport.sends.Store(0) }
+
+// GuestMemory is a copy of the guest's linear memory, for residency scans.
+func GuestMemory(t *testing.T, c *Client) []byte {
+	t.Helper()
+	mem := c.inst.module.Memory()
+	view, ok := mem.Read(0, mem.Size())
+	if !ok {
+		t.Fatal("cannot read guest memory")
+	}
+	return append([]byte(nil), view...)
+}
+
+// deterministicGuestPath is the deterministic-kms test build, which `mise
+// run wasm:guest:build:deterministic` writes under testdata: a directory
+// `go build` and the package's `//go:embed wasm` ignore, so the test build
+// is read from disk here and embedded in no binary.
+const deterministicGuestPath = "testdata/stack_encrypt_guest_deterministic.wasm"
+
+// ErrDeterministicGuestNotBuilt says the test build is absent.
+var ErrDeterministicGuestNotBuilt = errors.New("encrypt: deterministic guest not built; run `mise run wasm:guest:build:deterministic`")
+
+// NewDeterministicClient is a client over the deterministic-kms test build
+// of the guest, seeded: every key derives from the seed and the context, so
+// it opens what the Rust record fixture sealed under the same seed and
+// needs no ZeroKMS. ErrDeterministicGuestNotBuilt when the build is absent.
+func NewDeterministicClient(ctx context.Context, seed [32]byte) (*Client, error) {
+	wasm, err := os.ReadFile(deterministicGuestPath)
+	if err != nil {
+		return nil, ErrDeterministicGuestNotBuilt
+	}
+	tr := &transport{rt: refusingTransport{}, token: noToken{}}
+	inst, err := newInstance(ctx, wasm, tr, guest.BestEffort)
+	if err != nil {
+		return nil, err
+	}
+	c := newClient(inst, tr)
+	encoded, err := vcffi.Marshal(seed[:])
+	if err != nil {
+		_ = c.Close()
+		return nil, err
+	}
+	out, err := c.call(ctx, func(inst *instance) ([]byte, error) {
+		return inst.call(ctx, inst.cipherInit, buf(encoded))
+	})
+	if err != nil {
+		_ = c.Close()
+		return nil, fmt.Errorf("encrypt: deterministic cipher init: %w", err)
+	}
+	if len(out) != len(KeysetID{}) {
+		_ = c.Close()
+		return nil, fmt.Errorf("%w: cipher init returned %d bytes for the keyset id", ErrInternal, len(out))
+	}
+	copy(c.def[:], out)
+	return c, nil
+}
+
+// RawClient is a guest that was never given a client key: every well-formed
+// operation is ErrState, every malformed one ErrEncoding, and the checker
+// exports work.
+func RawClient(t *testing.T, wasm []byte) *Client {
+	t.Helper()
+	inst, err := newInstance(context.Background(), wasm, &transport{rt: http.DefaultTransport, token: staticToken("t")}, guest.BestEffort)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newClient(inst, nil)
+	t.Cleanup(func() { _ = c.Close() })
+	return c
+}
+
+// EmbeddedGuest is the embedded guest's bytes, or ErrGuestNotBuilt.
+func EmbeddedGuest() ([]byte, error) { return embeddedGuest() }
+
+// LiveClient is liveClient for the external tests: a client against real
+// ZeroKMS from the STACK_ENCRYPT_TEST_* variables, or a skip.
+func LiveClient(t *testing.T) *Client { return liveClient(t) }

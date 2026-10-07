@@ -6,6 +6,9 @@ use vitaminc_aead::{Cipher, Decipher, Decrypt, Encrypt, IntoAad};
 use vitaminc_aead_value::FfiValue;
 use vitaminc_protected::{Controlled, Protected};
 
+use crate::plan::IntoLabel;
+use crate::{Label, LabelError};
+
 /// A runtime value as the plaintext of a plan field: what every field
 /// lowered from data holds, whatever its declared type, and what a Rust
 /// chain's field holds when its rows must open from a binding.
@@ -119,6 +122,23 @@ impl<'c> Decrypt<'c> for Value {
         A: IntoAad<'a>,
     {
         D::map_ok(FfiValue::decrypt_with_aad(decipher, aad), Value)
+    }
+}
+
+/// A string value read as a plan's context: what a data plan's
+/// `"context_field"` holds (`"tenants/acme"`), parsed as a Rust chain's
+/// `String` context field is ([`Label::parse`]). Any other variant is
+/// [`LabelError::NotText`], which the plan reports as
+/// `PlanError::ContextLabel` before any key is requested.
+impl IntoLabel for Value {
+    fn into_label(self) -> Result<Label, LabelError> {
+        match self.0 {
+            FfiValue::String(s) => match std::str::from_utf8(s.risky_ref()) {
+                Ok(text) => Label::parse(text),
+                Err(_) => Err(LabelError::NotText),
+            },
+            _ => Err(LabelError::NotText),
+        }
     }
 }
 

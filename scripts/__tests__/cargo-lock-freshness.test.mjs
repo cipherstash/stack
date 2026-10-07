@@ -191,8 +191,8 @@ describe('Cargo.lock records this tree’s crates at their real versions', () =>
         'packages/stack-auth/fuzz/Cargo.lock',
         'packages/stack-kms/fuzz/Cargo.lock',
         'packages/stack-encrypt/fuzz/Cargo.lock',
-        'languages/golang/stackencrypt/guest/Cargo.lock',
-        'languages/golang/stackauth/guest/Cargo.lock',
+        'languages/golang/encrypt/guest/Cargo.lock',
+        'languages/golang/auth/guest/Cargo.lock',
       ]),
     )
   })

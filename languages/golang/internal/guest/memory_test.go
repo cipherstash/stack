@@ -17,7 +17,7 @@ import (
 
 // The allocator on its own, under the grow probe. What it does for a real
 // guest, and what a client reports about it, is tested where the guest is
-// embedded (stackencrypt's memory tests).
+// embedded (encrypt's memory tests).
 
 // The whole point of owning the allocation: growth commits more of one
 // reservation, so the buffer's address is the same before and after, and

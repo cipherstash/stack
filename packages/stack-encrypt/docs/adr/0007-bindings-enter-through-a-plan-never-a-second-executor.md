@@ -18,6 +18,17 @@ extends: ADR-0003, ADR-0004
 > and language SDK, what crosses the binding from Go, the proof of the
 > lowering, where the generator gets the engine's rules, what the guest takes
 > in one call, and the value exports.
+>
+> **Amended 2026-10-07**, by #1094. One sentence of the decision was wrong:
+> it listed `context_field` among "the typed parts" that are Rust-only and
+> have no data form. `FieldsBuilder::context_field` is not typed — it names
+> a field whose value is the context, as `passthrough` names one — so the
+> last bullet of the decision applies to it: a capability the data grammar
+> cannot express is added to the grammar, once. The data grammar now has it,
+> as a plan-level `"context_field"` key (`dynamic::record`), and so does the
+> Go SDK, as the `context_field` tag word. The typed parts that stay
+> Rust-only are the typed verb `encrypt_into`, the picker and the one-value
+> start.
 
 Stack Encrypt has one execution engine: the `Encryption` and `Decryption`
 descriptions in `target/` and the batched `Pending` they produce. ADR-0003

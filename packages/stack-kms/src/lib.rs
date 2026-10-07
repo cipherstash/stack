@@ -128,6 +128,8 @@ pub use key::{ClientKey, DataKey, DataKeyWithTag, IndexKey, V1KeySet};
 
 // Key source abstractions (production = `StackKms`; tests = `FakeDataKeySource`)
 #[cfg(feature = "test-support")]
+pub use key_source::DeterministicSource;
+#[cfg(feature = "test-support")]
 pub use key_source::FakeDataKeySource;
 pub use key_source::{DataKeySource, IndexKeySource};
 

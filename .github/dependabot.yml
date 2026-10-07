@@ -211,8 +211,8 @@ updates:
       - /packages/stack-auth/fuzz
       - /packages/stack-kms/fuzz
       - /packages/stack-encrypt/fuzz
-      - /languages/golang/stackencrypt/guest
-      - /languages/golang/stackauth/guest
+      - /languages/golang/encrypt/guest
+      - /languages/golang/auth/guest
     # Monthly, matching the other two cargo entries.
     schedule:
       interval: monthly

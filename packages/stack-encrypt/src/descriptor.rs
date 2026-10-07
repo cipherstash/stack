@@ -643,6 +643,11 @@ pub enum LabelError {
     /// `-`.
     #[error("label segment {index} begins like another descriptor form (`b64:`, a digit or `-`)")]
     ReservedPrefix { index: usize },
+    /// The value a label was read from is not text at all: a number, bytes,
+    /// a list or a composite where a context field's value should be a
+    /// label such as `tenants/acme`.
+    #[error("a label is read from text, and this value is not text")]
+    NotText,
 }
 
 impl std::fmt::Display for Descriptor {

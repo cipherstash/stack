@@ -264,10 +264,14 @@
 //! A language binding has no types to name, so it declares a record as
 //! data. With the `dynamic` feature, the `dynamic::record` module
 //! reads that declaration and lowers it into this builder — one context,
-//! `encrypt` / `encrypt_index` / `index` / `passthrough` per field — and
-//! runs the result through [`KeysetCipher::run`](crate::KeysetCipher::run)
-//! and the plan's opener. It is the third author of this grammar, beside a
-//! Rust chain and the derive, and not a second executor.
+//! given by the plan or taken from a field of each record
+//! ([`context_field`](FieldsBuilder::context_field)), and `encrypt` /
+//! `encrypt_index` / `index` / `passthrough` per field — and runs the
+//! result through [`KeysetCipher::run`](crate::KeysetCipher::run) and the
+//! plan's opener. It is the third author of this grammar, beside a Rust
+//! chain and the derive, and not a second executor. Of the three context
+//! sources only the call has no data form: a binding names the context in
+//! the declaration it sends, or in the record.
 //!
 //! The engine is shared; the stored leaf is not. A data plan seals every
 //! field as the tagged `dynamic::Value` leaf, whatever its type, so a Rust

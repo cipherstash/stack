@@ -48,14 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   indexed fields under one label are refused for the same reason the
   builder refuses them (`PlanError::SharedIdentity`). A record a Go program
   wrote with a `label=` tag is unaffected; one written with a `context=`
-  tag is not readable through a plan. For the same reason Go
-  `plan.Custom("notes/v1")` now binds the label `["notes", "v1"]`, not the
-  one text part `"notes/v1"`: a row written under the old form does not
-  decrypt and its terms match no query, with no error, and a one-segment
-  `Custom("ctx")` is refused. `plantest` snapshots now spell every context
-  as its segments (`context ["notes", "v1"]`), so a golden file changes on
-  regeneration and refuses the old spelling until it does; check each
-  `target Custom` column before recording it.
+  tag is not readable through a plan.
 - **Every data plan field seals the tagged `FfiValue` leaf, whatever its
   `"type"`**, as every field did before; the type admits indexes and checks
   kinds and changes no bytes, so a row written without a type opens under a
@@ -129,6 +122,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A data plan can take its context from a field of the record**, as a
+  Rust chain's `FieldsBuilder::context_field` and the derive's
+  `#[stash(context_field)]` do: a plan-level `"context_field": "<name>"`
+  key beside the field specs (`dynamic::record::plan`,
+  `Plan::with_context_field`). The named field's value in each record (a
+  label such as `"tenants/acme"`) is the context every other field is
+  sealed under, and the field is carried as a passthrough of type
+  `"string"`, so the record stores its own context. Under a context field
+  each field's `"context"` is its identity alone, a one-segment label,
+  extended as before; without the key the two-segment and shared-prefix
+  rules hold and every existing plan seals the same bytes.
+  `record::decrypt` and `record::check_record` take the context the caller
+  expects (an `Option<Label>`, the chain's `open(record).context(expected)`)
+  and refuse a record whose stored context differs with
+  `Error::ContextMismatch` before any key is requested. `Plan::label` is
+  now an `Option<&Label>` (`None` under a context field) and
+  `Plan::context_field` names the field. `dynamic::Value` implements
+  `IntoLabel`, and `LabelError` gains `NotText` for a context read from a
+  value that is not a string.
 - `KeysetCipher::run`: run a description held in a variable over a value,
   under a context, without an `EncryptFrom` declaration.
 - `target::{SourceMode, ConsumeSource, ShareSource, Borrowed, Owned}`. In

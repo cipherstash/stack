@@ -15,7 +15,8 @@
 //! run this call against. Codes 5–10 are the outcomes of a request to
 //! ZeroKMS, so a host can distinguish a refused credential from a tampered
 //! ciphertext without parsing strings; 11 and 12 were appended by the
-//! crypto guest, 13–19 by the credential guest.
+//! crypto guest, 13–27 by the credential guest, and 28 by the crypto guest
+//! again.
 //!
 //! Each code is documented here as the *verdict* it carries to a host — the
 //! thing the host can act on. Which of a library's errors reach which code,
@@ -113,10 +114,18 @@ pub const STATUS_AUTH_OTHER: u32 = 26;
 /// export; this is a control-flow signal, not a caller-facing auth failure.
 pub const STATUS_AUTH_REFRESH_REQUIRED: u32 = 27;
 
+// ---- Appended by the crypto guest, after the credential guest's codes.
+
+/// An opening export was told which context to expect a record's context
+/// field to hold, and the stored field names another; refused before any
+/// key is retrieved. A constraint failure, like [`STATUS_FOREIGN_KEYSET`],
+/// and only that — never a verdict on the record's integrity.
+pub const STATUS_CONTEXT_MISMATCH: u32 = 28;
+
 /// The last code in the table. A guest appending a code of its own starts
 /// at `LAST_STATUS + 1` and moves this constant with it, so two guests can
 /// never claim one number.
-pub const LAST_STATUS: u32 = STATUS_AUTH_REFRESH_REQUIRED;
+pub const LAST_STATUS: u32 = STATUS_CONTEXT_MISMATCH;
 
 #[cfg(test)]
 mod tests {
@@ -154,6 +163,7 @@ mod tests {
             STATUS_AUTH_CONFIG,
             STATUS_AUTH_OTHER,
             STATUS_AUTH_REFRESH_REQUIRED,
+            STATUS_CONTEXT_MISMATCH,
         ];
         for (i, code) in codes.iter().enumerate() {
             assert_eq!(*code, i as u32 + 1, "code {i} is out of sequence");

@@ -272,6 +272,159 @@ mod fake {
 #[cfg(feature = "test-support")]
 pub use fake::FakeDataKeySource;
 
+/// The deterministic test source: every key derives from a seed and the
+/// descriptor, so a record sealed in one process opens in another built from
+/// the same seed. `stack-encrypt`'s record fixture
+/// (`tests/fixtures/record_lowering.json`) is sealed under it, and the Go
+/// guest's `deterministic-kms` test build runs over it, so both read one
+/// definition and cannot drift apart.
+#[cfg(feature = "test-support")]
+mod deterministic {
+    use std::borrow::Cow;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use sha2::{Digest, Sha256};
+    use uuid::Uuid;
+    use zerokms_protocol::{
+        IdentifiedBy, UnverifiedContext, ViturRequestError, ViturRequestErrorKind,
+    };
+
+    use super::fake::FakeDataKeySource;
+    use super::{DataKeySource, IndexKeySource};
+    use crate::errors::{Error, RetrieveKeyError};
+    use crate::key::{DataKey, DataKeyWithTag, IndexKey};
+    use crate::payload::{GenerateKeyPayload, RetrieveKeyPayload};
+
+    /// A [`DataKeySource`] whose keys are a function of a seed and the
+    /// descriptor, for fixtures that hold real sealed bytes.
+    ///
+    /// Every data key is `SHA-256(seed ‖ "key" ‖ 0 ‖ descriptor ‖ 0 ‖ iv)`,
+    /// its tag `SHA-256(seed ‖ "tag" ‖ 0 ‖ descriptor ‖ 0 ‖ iv)`, and the IV
+    /// `SHA-256(seed ‖ "iv" ‖ 0 ‖ descriptor ‖ 0 ‖ counter)[..16]`, where
+    /// `descriptor` is the context the leaf is sealed under as ZeroKMS
+    /// renders it. `retrieve_keys` re-derives the key and the tag from what
+    /// the leaf stores and refuses a tag that is not this descriptor's, so a
+    /// leaf opened under another field's label is refused as ZeroKMS would
+    /// refuse it — and with the same classification: a forbidden request
+    /// ([`RetrieveKeyError::RequestFailed`] of kind
+    /// [`ViturRequestErrorKind::Forbidden`], ZeroKMS's HTTP 403), not a
+    /// missing key. A test that asserts the error of a wrong-context open
+    /// against this source therefore asserts what production reports. The
+    /// index key is [`FakeDataKeySource`]'s, deterministic per keyset, so
+    /// terms are the terms every other test derives.
+    ///
+    /// A test double, not a cipher: the derivation is SHA-256 over
+    /// concatenated parts and models nothing of ZeroKMS beyond determinism.
+    pub struct DeterministicSource {
+        seed: [u8; 32],
+        counter: AtomicU64,
+        index: FakeDataKeySource,
+    }
+
+    // Debug without the seed, which derives every key.
+    opaque_debug::implement!(DeterministicSource);
+
+    impl DeterministicSource {
+        /// A source over `seed`.
+        pub fn new(seed: [u8; 32]) -> Self {
+            Self {
+                seed,
+                counter: AtomicU64::new(0),
+                index: FakeDataKeySource::new(),
+            }
+        }
+
+        fn derive(&self, what: &str, descriptor: &str, salt: &[u8]) -> [u8; 32] {
+            let mut hasher = Sha256::new();
+            hasher.update(self.seed);
+            hasher.update(what.as_bytes());
+            hasher.update([0u8]);
+            hasher.update(descriptor.as_bytes());
+            hasher.update([0u8]);
+            hasher.update(salt);
+            hasher.finalize().into()
+        }
+    }
+
+    impl DataKeySource for DeterministicSource {
+        async fn generate_keys(
+            &self,
+            payloads: Vec<GenerateKeyPayload<'_>>,
+            _keyset_id: Option<Uuid>,
+            _unverified_context: Option<Cow<'_, UnverifiedContext>>,
+        ) -> Result<Vec<DataKeyWithTag>, Error> {
+            Ok(payloads
+                .into_iter()
+                .map(|payload| {
+                    let n = self.counter.fetch_add(1, Ordering::SeqCst);
+                    let iv_bytes = self.derive("iv", payload.descriptor, &n.to_le_bytes());
+                    let mut iv = crate::Iv::default();
+                    let width = iv.len();
+                    iv.copy_from_slice(&iv_bytes[..width]);
+                    let key = self.derive("key", payload.descriptor, &iv);
+                    let tag = self.derive("tag", payload.descriptor, &iv);
+                    DataKeyWithTag {
+                        key: DataKey { iv, key },
+                        tag: tag.to_vec(),
+                        decryption_policy: payload.decryption_policy,
+                    }
+                })
+                .collect())
+        }
+
+        async fn retrieve_keys(
+            &self,
+            payloads: Vec<RetrieveKeyPayload<'_>>,
+            _keyset_id: Option<Uuid>,
+            _unverified_context: Option<&UnverifiedContext>,
+        ) -> Result<Vec<DataKey>, Error> {
+            payloads
+                .iter()
+                .map(|payload| {
+                    let iv: crate::Iv = *payload.iv.as_ref();
+                    let tag = self.derive("tag", payload.descriptor, &iv);
+                    if tag[..] != *payload.tag {
+                        return Err(Error::RetrieveKey(RetrieveKeyError::RequestFailed(
+                            ViturRequestError::new(
+                                ViturRequestErrorKind::Forbidden,
+                                "the data key is bound to another context",
+                                WrongContext,
+                            ),
+                        )));
+                    }
+                    let key = self.derive("key", payload.descriptor, &iv);
+                    Ok(DataKey { iv, key })
+                })
+                .collect()
+        }
+    }
+
+    impl IndexKeySource for DeterministicSource {
+        async fn load_index_key(
+            &self,
+            keyset_id: Option<IdentifiedBy>,
+        ) -> Result<(Uuid, IndexKey), Error> {
+            self.index.load_index_key(keyset_id).await
+        }
+    }
+
+    /// The error behind the forbidden request: what ZeroKMS's 403 stands
+    /// for here, a tag derived under one descriptor presented with another.
+    #[derive(Debug)]
+    struct WrongContext;
+
+    impl std::fmt::Display for WrongContext {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("the tag is not this descriptor's")
+        }
+    }
+
+    impl std::error::Error for WrongContext {}
+}
+
+#[cfg(feature = "test-support")]
+pub use deterministic::DeterministicSource;
+
 #[cfg(all(test, feature = "test-support"))]
 mod tests {
     use super::*;
@@ -306,6 +459,52 @@ mod tests {
             Err(other) => panic!("{what}: expected FailedRetrieval, got {other:?}"),
             Ok(_) => panic!("{what}: expected rejection, got a key"),
         }
+    }
+
+    /// The deterministic source refuses a key retrieved under another
+    /// descriptor the way ZeroKMS does, as a forbidden request, so the Go
+    /// hermetic suite and the live suite assert one error for a wrong
+    /// context.
+    #[tokio::test]
+    async fn deterministic_wrong_descriptor_is_forbidden_not_missing() {
+        use zerokms_protocol::ViturRequestErrorKind;
+        let src = DeterministicSource::new([7u8; 32]);
+        let dk = src
+            .generate_keys(
+                vec![GenerateKeyPayload::new("users/email", Cow::Owned(vec![]))],
+                None,
+                None,
+            )
+            .await
+            .unwrap()
+            .remove(0);
+        let result = src
+            .retrieve_keys(
+                vec![RetrieveKeyPayload::new(dk.key.iv, "users/notes", &dk.tag)],
+                None,
+                None,
+            )
+            .await;
+        match result {
+            Err(Error::RetrieveKey(RetrieveKeyError::RequestFailed(e))) => {
+                assert!(
+                    matches!(e.kind, ViturRequestErrorKind::Forbidden),
+                    "{:?}",
+                    e.kind
+                )
+            }
+            other => panic!("expected a forbidden request, got {other:?}"),
+        }
+        // Under its own descriptor the key comes back.
+        let keys = src
+            .retrieve_keys(
+                vec![RetrieveKeyPayload::new(dk.key.iv, "users/email", &dk.tag)],
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(keys[0].key, dk.key.key);
     }
 
     #[tokio::test]

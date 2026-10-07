@@ -19,8 +19,10 @@ different leaf encoding, which the other reader cannot open or tell apart;
 Regenerate with `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p
 stack-encrypt --all-features --test record_lowering`. Only the sealed bytes
 change between runs (every leaf carries a fresh nonce); the plan, the
-plaintext and the terms must not, and the test fails if they do. Do not edit
-the file by hand.
+plaintext and the terms must not, and the test fails if they do. Each test
+rewrites only the entries it owns, so a filter on one test's name
+regenerates one case and leaves the rest as committed. Do not edit the file
+by hand.
 
 ## Schema
 
@@ -34,9 +36,27 @@ the file by hand.
   "records": {
     "typed_chain": { "<field>": { "<output key>": <node>, ... }, ... },
     "lowering":    { "<field>": { "<output key>": <node>, ... }, ... }
+  },
+  "context_field": {
+    "_comment":  "the same proof for a plan whose context is a field of the record",
+    "plan":      { "context_field": "<field>", "<field>": { "context": ["<identity>"], ... }, ... },
+    "plaintext": { "<field>": <value>, ... },
+    "records":   { "typed_chain": { ... }, "lowering": { ... } }
   }
 }
 ```
+
+- **`context_field`.** A second case under the same key source and keyset:
+  a plan that takes its context from a field of the record (the Rust
+  chain's `FieldsBuilder::context_field`, the data grammar's plan-level
+  `"context_field"` key). Its `plan` names the context field, each field's
+  `context` is its identity alone, and the context field's node in each
+  record is `"passthrough"` carrying the label the record was sealed under
+  (`"tenants/acme"`); the sealed field's term is derived under
+  `<that label>/<identity>`. `tests/record_lowering.rs` opens each record
+  with the other author under the stored context and refuses it under
+  another; the Go SDK's `encrypt` tests do the same through a generated
+  type with a `context_field` tag.
 
 - **`key_source`.** The test double in `tests/common/mod.rs`
   (`DeterministicSource`): every data key is `SHA-256(seed ‖ "key" ‖ 0 ‖

@@ -33,7 +33,7 @@ It also carries the source of five Rust crates published to crates.io,
 `packages/stack-profile`) and **`stack-kms`**, **`stack-encrypt`** and
 **`stack-encrypt-derive`** (`packages/stack-kms`, `packages/stack-encrypt`,
 `packages/stack-encrypt-derive`), and of the **Go module** at
-`languages/golang` (`stackencrypt` and `stackauth`, over WASI guests built
+`languages/golang` (`encrypt` and `auth`, over WASI guests built
 from the stack-* crates), which has no release yet. All of these are in scope
 for security reports on the same terms as the npm packages above.
 

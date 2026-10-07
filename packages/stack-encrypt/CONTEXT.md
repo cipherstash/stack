@@ -3,7 +3,7 @@
 Client-side encryption of values under per-value ZeroKMS data keys, and the
 derivation of searchable index terms from the same values. Covers
 `stack-encrypt`, `stack-encrypt-derive`, and the WASI guest in
-`languages/golang/stackencrypt/guest` that exposes them to Go.
+`languages/golang/encrypt/guest` that exposes them to Go.
 
 ## Language
 

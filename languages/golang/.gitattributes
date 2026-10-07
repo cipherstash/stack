@@ -1,0 +1,10 @@
+# stashgen's golden test expectations. Marked `linguist-generated` so GitHub
+# collapses them in pull-request and commit diffs by default and excludes them
+# from repository language statistics. This is a GitHub display hint only:
+# nothing about Git, CI, or the build changes.
+#
+# The generated *_stash.go files are deliberately NOT marked. They are the
+# committed record of which fields are encrypted, with which indexes and under
+# which context, so a change to them must stay expanded for the reviewer to
+# read (docs/sdk-design-principles.md, Go principle 10).
+*.golden linguist-generated

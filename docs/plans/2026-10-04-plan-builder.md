@@ -16,6 +16,13 @@ the builder itself, #1071), with a second round of decisions: decrypt is
 spelled `open`, the two starts and the three context sources, the typed
 verb and the picker, the derive narrowed before it emits the plan, and EQL
 types assembled per language with no registry.
+Amended 2026-10-07 (#1094): where this document says the typed parts "have
+no data form" and lists `context_field` among them ("Consolidation", and
+item 3 under "Why the first draft was dropped"), it is wrong about
+`context_field`. That verb is not typed, and the data grammar now spells it
+as a plan-level `"context_field"` key; the Go SDK spells it as the
+`context_field` tag word. The typed parts that have no data form are
+`encrypt_into`, the picker and the one-value start.
 **Date:** 2026-10-04
 **Issue:** #1046
 **Builds on:** #1050 (one context per column; `Label`, `Describe`), #971 (EQL v3

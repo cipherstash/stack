@@ -1,0 +1,194 @@
+package encrypt_test
+
+import (
+	"bytes"
+	"cmp"
+	"context"
+	"math/rand"
+	"reflect"
+	"testing"
+	"testing/quick"
+
+	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testusers"
+)
+
+// Property tests of term ordering: random plaintexts, terms derived by the
+// guest through the generated Probe fields, comparison in Go. ORE is
+// probabilistic — a wrong comparator or a wrong derivation still agrees
+// with plaintext order on many pairs — so a fixed vector set says little;
+// hundreds of random pairs per type say more. The index key is the
+// deterministic build's, so these run hermetically.
+
+// termOf derives one ORE or OPE term for v.
+type termOf[T any] func(ctx context.Context, c *encrypt.Cipher, v T) ([]byte, error)
+
+func oreOf[T any](f func(context.Context, *encrypt.Cipher, T) (encrypt.OreTerm, error)) termOf[T] {
+	return func(ctx context.Context, c *encrypt.Cipher, v T) ([]byte, error) { return f(ctx, c, v) }
+}
+
+func opeOf[T any](f func(context.Context, *encrypt.Cipher, T) (encrypt.OpeTerm, error)) termOf[T] {
+	return func(ctx context.Context, c *encrypt.Cipher, v T) ([]byte, error) { return f(ctx, c, v) }
+}
+
+func compareTerms(ope bool, a, b []byte) int {
+	if ope {
+		return encrypt.OpeTerm(a).Compare(encrypt.OpeTerm(b))
+	}
+	return encrypt.OreTerm(a).Compare(encrypt.OreTerm(b))
+}
+
+// orderProperty checks, for random pairs of T, that the Go comparison of
+// their terms agrees with the plaintext order and that a term compares
+// equal to itself (derivation is deterministic). gen, when given, replaces
+// quick's generator for T.
+func orderProperty[T any](t *testing.T, cipher *encrypt.Cipher, ope bool, derive termOf[T], less func(a, b T) int, gen ...func(*rand.Rand) T) {
+	t.Helper()
+	ctx := context.Background()
+	term := func(v T) []byte {
+		t.Helper()
+		out, err := derive(ctx, cipher, v)
+		if err != nil {
+			t.Fatalf("term(%v): %v", v, err)
+		}
+		return out
+	}
+	sign := func(n int) int { return cmp.Compare(n, 0) }
+	holds := func(a, b T) bool {
+		ta, tb := term(a), term(b)
+		if compareTerms(ope, ta, ta) != 0 || compareTerms(ope, tb, tb) != 0 {
+			t.Logf("a term does not compare equal to itself: %v", a)
+			return false
+		}
+		if !bytes.Equal(ta, term(a)) {
+			t.Logf("derivation is not deterministic for %v", a)
+			return false
+		}
+		want, got := sign(less(a, b)), sign(compareTerms(ope, ta, tb))
+		if got != want {
+			t.Logf("%v vs %v: plaintext order %d, term order %d", a, b, want, got)
+			return false
+		}
+		return sign(compareTerms(ope, tb, ta)) == -want
+	}
+	seed := int64(3)
+	if ope {
+		seed = 4
+	}
+	cfg := &quick.Config{MaxCount: 300, Rand: rand.New(rand.NewSource(seed))}
+	if len(gen) > 0 {
+		cfg.Values = func(args []reflect.Value, r *rand.Rand) {
+			for i := range args {
+				args[i] = reflect.ValueOf(gen[0](r))
+			}
+		}
+	}
+	if err := quick.Check(holds, cfg); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Neighbouring values are where a comparator that mishandles the last
+// differing bit shows; quick's uniform generator almost never produces
+// them, so they are checked explicitly alongside.
+func adjacentProperty[T any](t *testing.T, cipher *encrypt.Cipher, ope bool, derive termOf[T], values []T, less func(a, b T) int) {
+	t.Helper()
+	ctx := context.Background()
+	terms := make([][]byte, len(values))
+	for i, v := range values {
+		out, err := derive(ctx, cipher, v)
+		if err != nil {
+			t.Fatalf("term(%v): %v", v, err)
+		}
+		terms[i] = out
+	}
+	for i := range values {
+		for j := range values {
+			if got, want := compareTerms(ope, terms[i], terms[j]), cmp.Compare(less(values[i], values[j]), 0); got != want {
+				t.Errorf("%v vs %v: plaintext order %d, term order %d", values[i], values[j], want, got)
+			}
+		}
+	}
+}
+
+// collatedAlphabet holds characters that the ORE and OPE string encodings
+// keep as they are. Before deriving a term, cllw-ore's orderize_string
+// decomposes each character canonically and drops anything that is not
+// alphanumeric, whitespace or ASCII punctuation. So two strings order by
+// their UTF-8 bytes only when that collation leaves both unchanged: a
+// private-use character is dropped, and a precomposed Hangul syllable or
+// an accented letter decomposes. The non-ASCII letters here have no
+// canonical decomposition, so multi-byte UTF-8 ordering is still covered.
+var collatedAlphabet = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ßжω中")
+
+func collatedString(r *rand.Rand) string {
+	out := make([]rune, r.Intn(24))
+	for i := range out {
+		out[i] = collatedAlphabet[r.Intn(len(collatedAlphabet))]
+	}
+	return string(out)
+}
+
+func TestTermOrderIsPlaintextOrder(t *testing.T) {
+	c := deterministicClient(t)
+	cipher := c.DefaultKeyset()
+	f := testusers.ProbeFields
+	byteOrder := func(a, b string) int { return bytes.Compare([]byte(a), []byte(b)) }
+	same := func(a, b string) int { return 0 }
+	for _, ope := range []bool{false, true} {
+		name := "ore"
+		if ope {
+			name = "ope"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Run("uint32", func(t *testing.T) {
+				d := oreOf(f.U32.Ore)
+				if ope {
+					d = opeOf(f.U32.Ope)
+				}
+				orderProperty(t, cipher, ope, d, cmp.Compare[uint32])
+				adjacentProperty(t, cipher, ope, d, []uint32{0, 1, 2, 255, 256, 257, 65535, 65536, 1<<31 - 1, 1 << 31, 1<<32 - 2, 1<<32 - 1}, cmp.Compare[uint32])
+			})
+			t.Run("uint64", func(t *testing.T) {
+				d := oreOf(f.U64.Ore)
+				if ope {
+					d = opeOf(f.U64.Ope)
+				}
+				orderProperty(t, cipher, ope, d, cmp.Compare[uint64])
+				adjacentProperty(t, cipher, ope, d, []uint64{0, 1, 1<<32 - 1, 1 << 32, 1<<63 - 1, 1 << 63, 1<<64 - 1}, cmp.Compare[uint64])
+			})
+			t.Run("int64", func(t *testing.T) {
+				d := oreOf(f.I64.Ore)
+				if ope {
+					d = opeOf(f.I64.Ope)
+				}
+				orderProperty(t, cipher, ope, d, cmp.Compare[int64])
+				adjacentProperty(t, cipher, ope, d, []int64{-1 << 63, -1<<63 + 1, -2, -1, 0, 1, 2, 1<<63 - 1}, cmp.Compare[int64])
+			})
+			t.Run("string", func(t *testing.T) {
+				d := oreOf(f.S.Ore)
+				if ope {
+					d = opeOf(f.S.Ope)
+				}
+				// Strings order by the UTF-8 bytes of their collated form; a
+				// prefix orders before its extensions. See collatedAlphabet.
+				orderProperty(t, cipher, ope, d, byteOrder, collatedString)
+				adjacentProperty(t, cipher, ope, d, []string{"", "a", "aa", "ab", "b", "ba", "ß", "ßa", "中"}, byteOrder)
+				// Collation drops a control or private-use character, and
+				// strips the accent from a decomposed letter, so the terms
+				// cannot tell these pairs apart.
+				adjacentProperty(t, cipher, ope, d, []string{"", "\x7f"}, same)
+				adjacentProperty(t, cipher, ope, d, []string{"ab", "ab"}, same)
+				adjacentProperty(t, cipher, ope, d, []string{"e", "é"}, same)
+			})
+			t.Run("bytes", func(t *testing.T) {
+				d := oreOf(f.B.Ore)
+				if ope {
+					d = opeOf(f.B.Ope)
+				}
+				orderProperty(t, cipher, ope, d, bytes.Compare)
+				adjacentProperty(t, cipher, ope, d, [][]byte{{}, {0}, {0, 0}, {0, 1}, {1}, {255}, {255, 0}}, bytes.Compare)
+			})
+		})
+	}
+}

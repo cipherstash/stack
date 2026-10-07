@@ -9,8 +9,16 @@
 //! bytes open in any process, and its README gives the schema a Go test
 //! reads later.
 //!
+//! The fixture holds a second case under its `context_field` key: the same
+//! proof for a plan that takes its context from a field of the record
+//! (`FieldsBuilder::context_field`, the data grammar's `"context_field"`),
+//! sealed by each author and opened by the other under the context the
+//! record stores, and refused by both under another.
+//!
 //! Regenerate the fixture with `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test
-//! --test record_lowering --all-features`; every other run reads it.
+//! --test record_lowering --all-features`; every other run reads it. Each
+//! test rewrites only the entries it owns, so a filter on one test name
+//! regenerates one case and leaves the rest as committed.
 #![cfg(feature = "dynamic")]
 
 mod common;
@@ -25,7 +33,7 @@ use stack_encrypt::dynamic::{FfiValue, Scope, TermBytes, Value};
 use stack_encrypt::plan::{pick, FieldValues};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::{Encrypted, IndexSpec};
-use stack_encrypt::{CipherText, Plan, SealedValue, StackCipher, StackCipherText};
+use stack_encrypt::{CipherText, Error, Label, Plan, SealedValue, StackCipher, StackCipherText};
 use vitaminc_protected::Controlled;
 
 const SEED: [u8; 32] = *b"stack-encrypt record fixture v1 ";
@@ -172,7 +180,10 @@ fn json_of_record(tree: StackCipherText) -> Json {
                 ("passthrough", CipherText::Passthrough(payload)) => {
                     match *payload.downcast::<FfiValue>().expect("a value") {
                         FfiValue::UInt32(v) => json!(v),
-                        _ => panic!("the fixture's passthrough is a u32"),
+                        FfiValue::String(s) => {
+                            json!(String::from_utf8(s.risky_ref().to_vec()).expect("utf8"))
+                        }
+                        _ => panic!("the fixture's passthroughs are a u32 and text"),
                     }
                 }
                 (_, CipherText::Passthrough(payload)) => {
@@ -205,9 +216,13 @@ fn record_of_json(record: &Json) -> StackCipherText {
                                 SealedValue::from_bytes(&unhex(value.as_str().expect("hex")))
                                     .expect("a frozen leaf"),
                             ),
-                            "passthrough" => CipherText::Passthrough(Box::new(FfiValue::UInt32(
-                                u32::try_from(value.as_u64().expect("an integer")).expect("u32"),
-                            ))
+                            "passthrough" => CipherText::Passthrough(Box::new(match value {
+                                Json::String(text) => FfiValue::String(text.as_str().into()),
+                                _ => FfiValue::UInt32(
+                                    u32::try_from(value.as_u64().expect("an integer"))
+                                        .expect("u32"),
+                                ),
+                            })
                                 as stack_encrypt::BoxedPassthrough),
                             _ => CipherText::Passthrough(Box::new(FfiValue::Bytes(
                                 vitaminc_protected::Protected::new(unhex(
@@ -368,7 +383,7 @@ async fn open_lowered(
     plan: &DataPlan,
 ) -> Json {
     json_of_opened(
-        record::decrypt(Scope::Client(cipher), tree, plan)
+        record::decrypt(Scope::Client(cipher), tree, plan, None)
             .expect("the record fits")
             .await
             .expect("the lowering opens it"),
@@ -414,20 +429,27 @@ async fn the_committed_fixture_opens_both_ways() {
     let path = fixture_path();
 
     if std::env::var_os("STACK_ENCRYPT_UPDATE_FIXTURES").is_some() {
-        let fixture = json!({
-            "_comment": "Records sealed by the typed Rust chain and by the data-plan lowering under one declaration (ADR-0007). Read by tests/record_lowering.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand.",
-            "key_source": { "kind": "deterministic-sha256", "seed": hex(&SEED) },
-            "keyset_id": cipher.default_keyset().keyset_id().to_string(),
-            "plan": data_plan_json(),
-            "plaintext": plaintext_json(),
-            "records": {
+        let mut fixture = committed_fixture(&path);
+        let entries = fixture.as_object_mut().expect("an object");
+        let _ = entries.insert("_comment".into(), json!("Records sealed by the typed Rust chain and by the data-plan lowering under one declaration (ADR-0007). Read by tests/record_lowering.rs; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand."));
+        let _ = entries.insert(
+            "key_source".into(),
+            json!({ "kind": "deterministic-sha256", "seed": hex(&SEED) }),
+        );
+        let _ = entries.insert(
+            "keyset_id".into(),
+            json!(cipher.default_keyset().keyset_id().to_string()),
+        );
+        let _ = entries.insert("plan".into(), data_plan_json());
+        let _ = entries.insert("plaintext".into(), plaintext_json());
+        let _ = entries.insert(
+            "records".into(),
+            json!({
                 "typed_chain": json_of_record(seal_typed(&cipher).await),
                 "lowering": json_of_record(seal_lowered(&cipher, &plan).await),
-            },
-        });
-        let mut text = serde_json::to_string_pretty(&fixture).expect("serialise");
-        text.push('\n');
-        std::fs::write(&path, text).expect("write the fixture");
+            }),
+        );
+        write_fixture(&path, &fixture);
     }
 
     let fixture: Json =
@@ -480,6 +502,321 @@ async fn the_committed_fixture_opens_both_ways() {
     );
 }
 
+/// The committed fixture, or an empty object before the first run that
+/// writes it. Each test's update path rewrites the entries it owns and
+/// leaves the others as committed.
+fn committed_fixture(path: &PathBuf) -> Json {
+    match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(&text).expect("the fixture is JSON"),
+        Err(_) => json!({}),
+    }
+}
+
+fn write_fixture(path: &PathBuf, fixture: &Json) {
+    let mut text = serde_json::to_string_pretty(fixture).expect("serialise");
+    text.push('\n');
+    std::fs::write(path, text).expect("write the fixture");
+}
+
+// ---- The context-field case ---------------------------------------------------
+
+/// A record whose context is one of its own fields: `tenant` names the
+/// context, `text` is sealed and indexed under `<tenant>/text`, `id` is
+/// carried through.
+struct Note {
+    tenant: Value,
+    text: Value,
+    id: u32,
+}
+
+fn note() -> Note {
+    Note {
+        tenant: Value::new(FfiValue::String("tenants/acme".into())),
+        text: Value::new(FfiValue::String("hello".into())),
+        id: 42,
+    }
+}
+
+/// The declaration as the Rust chain writes it: `context_field` in place
+/// of `Plan::context(..)`.
+fn note_plan() -> Plan<Note, DeterministicSource> {
+    Plan::fields()
+        .context_field(pick("tenant", |n: &Note| &n.tenant))
+        .encrypt_index(pick("text", |n: &Note| &n.text), IndexSpec::Equality)
+        .passthrough(pick("id", |n: &Note| &n.id))
+        .build()
+        .expect("the note plan builds")
+}
+
+/// The same declaration as a binding sends it: the plan-level
+/// `"context_field"` key, and each field's context its identity alone.
+fn note_plan_json() -> Json {
+    json!({
+        "context_field": "tenant",
+        "tenant": { "context": ["tenant"], "outputs": ["passthrough"], "type": "string" },
+        "text":   { "context": ["text"],   "outputs": ["c", "eq"],      "type": "string" },
+        "id":     { "context": ["id"],     "outputs": ["passthrough"],  "type": "uint32" },
+    })
+}
+
+fn note_json() -> Json {
+    json!({ "tenant": "tenants/acme", "text": "hello", "id": 42 })
+}
+
+fn acme() -> Label {
+    Label::parse("tenants/acme").expect("a label")
+}
+
+fn globex() -> Label {
+    Label::parse("tenants/globex").expect("a label")
+}
+
+/// The typed chain's note record, shaped as the stored tree.
+fn record_of_note(mut values: FieldValues) -> StackCipherText {
+    let tenant: Value = values.take("tenant").expect("tenant");
+    let text: Encrypted<TermBytes> = values.take("text").expect("text");
+    let id: u32 = values.take("id").expect("id");
+    let passthrough = |value: FfiValue| -> StackCipherText {
+        CipherText::Passthrough(Box::new(value) as stack_encrypt::BoxedPassthrough)
+    };
+    CipherText::Map(vec![
+        (
+            "tenant".into(),
+            CipherText::Map(vec![(
+                "passthrough".into(),
+                passthrough(tenant.into_inner()),
+            )]),
+        ),
+        (
+            "text".into(),
+            CipherText::Map(vec![
+                ("c".into(), text.ciphertext),
+                (
+                    "eq".into(),
+                    passthrough(FfiValue::Bytes(vitaminc_protected::Protected::new(
+                        text.terms.into_bytes(),
+                    ))),
+                ),
+            ]),
+        ),
+        (
+            "id".into(),
+            CipherText::Map(vec![(
+                "passthrough".into(),
+                passthrough(FfiValue::UInt32(id)),
+            )]),
+        ),
+    ])
+}
+
+/// A stored tree as the typed chain's note record, for `open`.
+fn note_of_record(tree: StackCipherText) -> FieldValues {
+    let CipherText::Map(fields) = tree else {
+        panic!("a record is a map");
+    };
+    let mut values = FieldValues::new();
+    for (name, node) in fields {
+        let CipherText::Map(outputs) = node else {
+            panic!("a field is a map of outputs");
+        };
+        for (key, node) in outputs {
+            match key.as_str() {
+                "c" => {
+                    let _ = values.insert(&name, node);
+                }
+                "passthrough" => {
+                    let CipherText::Passthrough(payload) = node else {
+                        panic!("a passthrough node");
+                    };
+                    match *payload.downcast::<FfiValue>().expect("a value") {
+                        FfiValue::UInt32(id) => {
+                            let _ = values.insert(&name, id);
+                        }
+                        text => {
+                            let _ = values.insert(&name, Value::new(text));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    values
+}
+
+async fn seal_note_typed(cipher: &StackCipher<DeterministicSource>) -> StackCipherText {
+    record_of_note(
+        cipher
+            .encrypt(&note())
+            .using(&note_plan())
+            .await
+            .expect("the typed chain seals the note"),
+    )
+}
+
+async fn seal_note_lowered(
+    cipher: &StackCipher<DeterministicSource>,
+    plan: &DataPlan,
+) -> StackCipherText {
+    record::encrypt(
+        &cipher.default_keyset(),
+        source_of(&note_json(), plan),
+        plan,
+    )
+    .expect("the source fits")
+    .await
+    .expect("the lowering seals the note")
+}
+
+/// Open through the typed chain, under the context `expected` if given.
+async fn open_note_typed(
+    cipher: &StackCipher<DeterministicSource>,
+    tree: StackCipherText,
+    expected: Option<Label>,
+) -> Result<Json, Error> {
+    let open = cipher.open(note_of_record(tree));
+    let mut opened = match expected {
+        Some(expected) => open.context(expected).using(&note_plan()).await?,
+        None => open.using(&note_plan()).await?,
+    };
+    let mut value =
+        |name: &str| json_of_opened(opened.take::<Value>(name).expect(name).into_inner());
+    let (tenant, text) = (value("tenant"), value("text"));
+    Ok(json!({ "tenant": tenant, "text": text, "id": opened.take::<u32>("id").expect("id") }))
+}
+
+async fn open_note_lowered(
+    cipher: &StackCipher<DeterministicSource>,
+    tree: StackCipherText,
+    plan: &DataPlan,
+    expected: Option<Label>,
+) -> Result<Json, Error> {
+    Ok(json_of_opened(
+        record::decrypt(Scope::Client(cipher), tree, plan, expected)
+            .expect("the record fits")
+            .await?,
+    ))
+}
+
+/// The two authors under a context field, run now: the same term, each
+/// opens the other's record under the context it stores, and each refuses
+/// the other's record under another context before any key is requested.
+#[tokio::test]
+async fn the_chain_and_the_lowering_agree_on_a_context_field_today() {
+    let cipher = deterministic_cipher(SEED).await;
+    let plan = record::plan(ffi_of_json(&note_plan_json())).expect("the data plan parses");
+    assert_eq!(plan.context_field(), Some("tenant"));
+
+    let typed = json_of_record(seal_note_typed(&cipher).await);
+    let lowered = json_of_record(seal_note_lowered(&cipher, &plan).await);
+    assert_eq!(
+        terms_of(&typed),
+        terms_of(&lowered),
+        "the same term under tenants/acme/text"
+    );
+    assert_eq!(
+        typed["tenant"]["passthrough"],
+        json!("tenants/acme"),
+        "the record stores its context"
+    );
+
+    for expected in [None, Some(acme())] {
+        assert_eq!(
+            open_note_lowered(&cipher, record_of_json(&typed), &plan, expected.clone())
+                .await
+                .expect("the lowering opens the chain's note"),
+            note_json()
+        );
+        assert_eq!(
+            open_note_typed(&cipher, record_of_json(&lowered), expected)
+                .await
+                .expect("the chain opens the lowering's note"),
+            note_json()
+        );
+    }
+    assert!(matches!(
+        open_note_lowered(&cipher, record_of_json(&typed), &plan, Some(globex())).await,
+        Err(Error::ContextMismatch { .. })
+    ));
+    assert!(matches!(
+        open_note_typed(&cipher, record_of_json(&lowered), Some(globex())).await,
+        Err(Error::ContextMismatch { .. })
+    ));
+}
+
+/// The committed context-field case, under the fixture's `context_field`
+/// key: sealed by each author in an earlier run, opened by the other now.
+/// With `STACK_ENCRYPT_UPDATE_FIXTURES=1` this test rewrites that key and
+/// nothing else in the file.
+#[tokio::test]
+async fn the_committed_context_field_case_opens_both_ways() {
+    let cipher = deterministic_cipher(SEED).await;
+    let plan = record::plan(ffi_of_json(&note_plan_json())).expect("the data plan parses");
+    let path = fixture_path();
+
+    if std::env::var_os("STACK_ENCRYPT_UPDATE_FIXTURES").is_some() {
+        let mut fixture = committed_fixture(&path);
+        let _ = fixture.as_object_mut().expect("an object").insert(
+            "context_field".into(),
+            json!({
+                "_comment": "The same proof for a plan that takes its context from a field of the record: the plan-level context_field key, the context stored as a passthrough, and the term under <tenant>/text.",
+                "plan": note_plan_json(),
+                "plaintext": note_json(),
+                "records": {
+                    "typed_chain": json_of_record(seal_note_typed(&cipher).await),
+                    "lowering": json_of_record(seal_note_lowered(&cipher, &plan).await),
+                },
+            }),
+        );
+        write_fixture(&path, &fixture);
+    }
+
+    let fixture = committed_fixture(&path);
+    let case = &fixture["context_field"];
+    assert_eq!(
+        case["plan"],
+        note_plan_json(),
+        "the case's declaration is this one"
+    );
+    assert_eq!(case["plaintext"], note_json());
+
+    let typed = &case["records"]["typed_chain"];
+    let lowered = &case["records"]["lowering"];
+    let now = json_of_record(seal_note_lowered(&cipher, &plan).await);
+    assert_eq!(
+        terms_of(typed),
+        terms_of(&now),
+        "the chain's fixture term is today's"
+    );
+    assert_eq!(
+        terms_of(lowered),
+        terms_of(&now),
+        "the lowering's fixture term is today's"
+    );
+    assert_eq!(typed["tenant"]["passthrough"], json!("tenants/acme"));
+
+    assert_eq!(
+        open_note_lowered(&cipher, record_of_json(typed), &plan, Some(acme()))
+            .await
+            .expect("the lowering opens the chain's committed note"),
+        note_json()
+    );
+    assert_eq!(
+        open_note_typed(&cipher, record_of_json(lowered), Some(acme()))
+            .await
+            .expect("the chain opens the lowering's committed note"),
+        note_json()
+    );
+    assert!(matches!(
+        open_note_lowered(&cipher, record_of_json(typed), &plan, Some(globex())).await,
+        Err(Error::ContextMismatch { .. })
+    ));
+    assert!(matches!(
+        open_note_typed(&cipher, record_of_json(lowered), Some(globex())).await,
+        Err(Error::ContextMismatch { .. })
+    ));
+}
+
 /// The deterministic source refuses a leaf opened under another descriptor,
 /// as ZeroKMS does, so the fixture's records are bound to their labels and
 /// not merely decodable.
@@ -500,7 +837,7 @@ async fn the_fixture_records_are_bound_to_their_labels() {
             other => other.into(),
         };
     }
-    let result = record::decrypt(Scope::Client(&cipher), CipherText::Map(fields), &plan)
+    let result = record::decrypt(Scope::Client(&cipher), CipherText::Map(fields), &plan, None)
         .expect("the shape fits")
         .await;
     match result {

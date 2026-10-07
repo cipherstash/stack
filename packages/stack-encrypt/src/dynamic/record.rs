@@ -30,8 +30,32 @@
 //! time (`[["users", "age"], 7]`, then `[[["users", "age"], 7], "eu"]`), and
 //! every field must carry the same extension: it becomes the call's
 //! `.extend(..)`. A context that is not a label (one text part `"users/age"`,
-//! an integer, bytes, a one-element list) is refused as a plan a fields plan
-//! cannot express.
+//! an integer, bytes) is refused as a plan a fields plan cannot express.
+//!
+//! # A plan whose context is a field of the record
+//!
+//! The plan builder's third context source, `context_field`, has a data
+//! form too: a plan-level key, `"context_field": "<field name>"`, beside
+//! the field specs. The named field's value in each record is then the
+//! context every other field is sealed under — a tenant label such as
+//! `"tenants/acme"`, which must parse as a plain [`Label`] — and the field
+//! itself is carried as a passthrough of type `"string"`, so the stored
+//! record names its own context. With a context field the plan has no
+//! context of its own, so each field's `"context"` is its identity alone, a
+//! one-segment label (`["email"]`), extended by the caller's parts exactly
+//! as above (`[["email"], 7]`). The context field's own spec names its
+//! identity the same way, asks for `"passthrough"` and nothing else, and
+//! declares `"string"` or no type (it is a string either way). Opening a
+//! record reads the stored context field and opens every field under it;
+//! [`decrypt`] takes the context the caller expects, when it has one, and
+//! refuses a record whose stored context differs with
+//! [`Error::ContextMismatch`](crate::Error::ContextMismatch) before any
+//! key is requested. A stored context changed in storage opens nothing
+//! either way: every field was sealed under the original. The key
+//! `"context_field"` is reserved at the top level of a plan, so no field
+//! may be called that. A plan without the key is read exactly as before:
+//! the two-segment and shared-prefix rules hold, and it seals the same
+//! bytes.
 //!
 //! # What a field's `"type"` decides, and what it does not
 //!
@@ -178,10 +202,14 @@ impl FieldPlan {
     /// A field plan.
     ///
     /// `context` is the field's whole context as a binding spells it: its
-    /// label, a list of at least two plain segments, extended by zero or more
-    /// scalar parts nested to the left (see the
+    /// label, a list of plain segments, extended by zero or more scalar
+    /// parts nested to the left (see the
     /// [module docs](self#what-a-fields-context-must-be)). Build one from a
-    /// value with [`super::context`](super::context()).
+    /// value with [`super::context`](super::context()). How many segments
+    /// the label needs is the plan's rule, not the field's: two or more
+    /// under a plan with a context of its own ([`Plan::new`]), exactly one
+    /// under a plan that takes its context from a field
+    /// ([`Plan::with_context_field`]).
     ///
     /// # Errors
     ///
@@ -189,8 +217,7 @@ impl FieldPlan {
     /// outputs with the same [key](Output::key) are the same output — two
     /// match indexes under different options would both ride under
     /// `"match"`), or names [`Output::Passthrough`] beside another output;
-    /// or if `context` is not a label of at least two segments, optionally
-    /// extended.
+    /// or if `context` is not a label, optionally extended.
     pub fn new(
         name: impl Into<String>,
         context: NonEmpty<ContextPiece<'static>>,
@@ -211,9 +238,6 @@ impl FieldPlan {
             return Err(Error::Plan);
         }
         let (label, extension) = split_context(context.get())?;
-        if label.segments().len() < 2 {
-            return Err(Error::Plan);
-        }
         Ok(Self {
             name: name.into(),
             context,
@@ -255,7 +279,8 @@ impl FieldPlan {
     }
 
     /// The label the field is sealed and indexed under before any
-    /// extension: the plan's context, then the field's identity.
+    /// extension: the plan's context, then the field's identity — or the
+    /// identity alone, under a plan that takes its context from a field.
     pub fn label(&self) -> &Label {
         &self.label
     }
@@ -263,7 +288,7 @@ impl FieldPlan {
     /// The label segment the field's data is keyed under: the last segment
     /// of its label.
     pub fn identity(&self) -> &str {
-        // A label has at least two segments by construction (`new`), so
+        // A label has at least one segment by construction (`new`), so
         // this never falls back.
         self.label.segments().last().unwrap_or("")
     }
@@ -349,18 +374,20 @@ fn text_of<'a>(piece: &'a ContextPiece<'_>) -> Option<&'a str> {
 /// A field's declared context, taken apart into its label and the
 /// extension parts around it.
 ///
-/// A list of plain text segments is the label. A two-element list whose
-/// second element is a scalar is a context extended by that part, nested to
-/// the left, so the first element is taken apart in turn. Anything else — a
-/// bare part, a one-element list, a list mixing segments and other parts, a
-/// part that is itself a list — is not a context a fields plan can give a
-/// field.
+/// A non-empty list of plain text segments is the label. A two-element list
+/// whose second element is a scalar is a context extended by that part,
+/// nested to the left, so the first element is taken apart in turn.
+/// Anything else — a bare part, an empty list, a list mixing segments and
+/// other parts, a part that is itself a list — is not a context a fields
+/// plan can give a field. A one-segment label is a label here; whether the
+/// plan admits one is [`Plan::new`]'s and [`Plan::with_context_field`]'s
+/// rule.
 fn split_context(piece: &ContextPiece<'_>) -> Result<(Label, Vec<ContextPiece<'static>>), Error> {
     let ContextPiece::List(parts) = piece else {
         return Err(Error::Plan);
     };
     if let Some(segments) = parts.iter().map(text_of).collect::<Option<Vec<&str>>>() {
-        if segments.len() >= 2 {
+        if !segments.is_empty() {
             let label = Label::new(segments).map_err(|_| Error::Plan)?;
             return Ok((label, Vec::new()));
         }
@@ -381,39 +408,125 @@ fn split_context(piece: &ContextPiece<'_>) -> Result<(Label, Vec<ContextPiece<'s
 /// Opaque, because the operations over a plan rely on properties of the
 /// whole that no single [`FieldPlan`] can carry: there is at least one
 /// field, no two fields share a name, every field's label sits under the
-/// one plan context and carries the one extension, and the whole lowers to
-/// a [`Plan`](crate::Plan) that builds. Both the parser ([`plan`]) and the
-/// manual constructor ([`Plan::new`]) go through the one check, so a plan in
-/// hand is a plan that holds them, whichever way it was built.
+/// one plan context (or, under a context field, is its identity alone) and
+/// carries the one extension, and the whole lowers to a
+/// [`Plan`](crate::Plan) that builds. Both the parser ([`plan`]) and the
+/// manual constructors ([`Plan::new`], [`Plan::with_context_field`]) go
+/// through the one check, so a plan in hand is a plan that holds them,
+/// whichever way it was built.
 #[derive(Clone, Debug)]
 pub struct Plan {
-    context: Label,
+    context: Context,
     extension: Vec<ContextPiece<'static>>,
     fields: Vec<FieldPlan>,
 }
 
+/// Where a data plan takes its context from: the builder's first and third
+/// sources. The second, the call, has no data form: a binding names the
+/// context in the declaration it sends.
+#[derive(Clone, Debug)]
+enum Context {
+    /// The plan's own label, which every field's label extends.
+    Label(Label),
+    /// The named field of each record, whose value is the context.
+    Field(String),
+}
+
 impl Plan {
     /// A plan over `fields`, in the order given — which is the order of the
-    /// fields in every result.
+    /// fields in every result — under the context every field's label
+    /// shares.
     ///
     /// # Errors
     ///
-    /// [`Error::Plan`] if `fields` is empty, names a field twice, has
-    /// fields whose labels sit under different contexts or carry different
-    /// extensions, or does not build as a fields plan: two sealed or indexed
-    /// fields keyed under one identity, for instance, whose terms would be
+    /// [`Error::Plan`] if `fields` is empty, names a field twice, has a
+    /// field whose label has fewer than two segments, has fields whose
+    /// labels sit under different contexts or carry different extensions,
+    /// or does not build as a fields plan: two sealed or indexed fields
+    /// keyed under one identity, for instance, whose terms would be
     /// interchangeable.
     pub fn new(fields: Vec<FieldPlan>) -> Result<Self, Error> {
         let Some(first) = fields.first() else {
             return Err(Error::Plan);
         };
         let context = first.prefix()?;
+        for field in &fields {
+            // `prefix` refuses a one-segment label, which has nothing to
+            // sit under; a longer one must sit under the first field's.
+            if field.prefix()? != context {
+                return Err(Error::Plan);
+            }
+        }
+        Self::build(Context::Label(context), fields)
+    }
+
+    /// A plan over `fields` that takes its context from the field named
+    /// `context_field`: the plan builder's
+    /// [`context_field`](FieldsBuilder::context_field), as data. That
+    /// field's value in each record is the context every other field is
+    /// sealed under, and the field is carried as a passthrough of type
+    /// string. Each field's label is its identity alone, a one-segment
+    /// label, optionally extended; see the
+    /// [module docs](self#a-plan-whose-context-is-a-field-of-the-record).
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Plan`] as [`new`](Self::new) refuses, and if no field is
+    /// named `context_field`, that field asks for anything but
+    /// [`Output::Passthrough`] (a context is not sealed, and indexing it
+    /// would derive a term from a value that is not secret), declares a
+    /// type other than [`ValueKind::String`], or any field's label has
+    /// more than one segment.
+    pub fn with_context_field(
+        context_field: impl Into<String>,
+        fields: Vec<FieldPlan>,
+    ) -> Result<Self, Error> {
+        let context_field = context_field.into();
+        let Some(field) = fields.iter().find(|field| field.name == context_field) else {
+            return Err(Error::Plan);
+        };
+        if field.outputs != [Output::Passthrough] {
+            return Err(Error::Plan);
+        }
+        if field
+            .field_type
+            .is_some_and(|kind| kind != ValueKind::String)
+        {
+            return Err(Error::Plan);
+        }
+        if fields
+            .iter()
+            .any(|field| field.label.segments().count() != 1)
+        {
+            return Err(Error::Plan);
+        }
+        let fields = fields
+            .into_iter()
+            .map(|mut field| {
+                if field.name == context_field {
+                    // A string whether or not the declaration says so: the
+                    // value is read as a label, and the opener checks the
+                    // stored one is text before any key is requested.
+                    field.field_type = Some(ValueKind::String);
+                }
+                field
+            })
+            .collect();
+        Self::build(Context::Field(context_field), fields)
+    }
+
+    /// The rules both constructors share: fields named once, one extension,
+    /// and a whole the builder accepts.
+    fn build(context: Context, fields: Vec<FieldPlan>) -> Result<Self, Error> {
+        let Some(first) = fields.first() else {
+            return Err(Error::Plan);
+        };
         let extension = first.extension.clone();
         for (at, field) in fields.iter().enumerate() {
             if fields[..at].iter().any(|prior| prior.name == field.name) {
                 return Err(Error::Plan);
             }
-            if field.prefix()? != context || field.extension != extension {
+            if field.extension != extension {
                 return Err(Error::Plan);
             }
         }
@@ -431,14 +544,29 @@ impl Plan {
     }
 
     /// The plan's fields, in result order. Never empty, and no two share a
-    /// name.
+    /// name. Under a context field, that field is among them.
     pub fn fields(&self) -> &[FieldPlan] {
         &self.fields
     }
 
     /// The plan's one context: the label every field's label extends.
-    pub fn label(&self) -> &Label {
-        &self.context
+    /// `None` for a plan that takes its context from a field
+    /// ([`context_field`](Self::context_field)), as the builder's
+    /// [`Plan::label`](crate::Plan::label) is.
+    pub fn label(&self) -> Option<&Label> {
+        match &self.context {
+            Context::Label(label) => Some(label),
+            Context::Field(_) => None,
+        }
+    }
+
+    /// The field the plan takes its context from, if it has one: the
+    /// builder's [`Plan::context_field`](crate::Plan::context_field).
+    pub fn context_field(&self) -> Option<&str> {
+        match &self.context {
+            Context::Field(name) => Some(name),
+            Context::Label(_) => None,
+        }
     }
 
     /// The parts every field's label is extended by, in order; empty when
@@ -452,10 +580,20 @@ impl Plan {
     /// Built afresh per call: a built plan is bound to its key source type,
     /// and a declaration is not. Every field is declared by name, as a
     /// [`Value`], read out of the [`FieldValues`] the source is converted
-    /// into.
+    /// into. A context field is declared through the builder's own
+    /// `context_field`, which carries it as a passthrough and reads it as
+    /// the context; the loop then skips it.
     fn lower<K: 'static>(&self) -> Result<crate::Plan<FieldValues, K>, crate::Error> {
-        let mut builder = crate::Plan::context(self.context.clone()).fields::<FieldValues, K>();
+        let mut builder = match &self.context {
+            Context::Label(label) => crate::Plan::context(label.clone()).fields::<FieldValues, K>(),
+            Context::Field(name) => {
+                crate::Plan::fields::<FieldValues, K>().context_field::<Value>(name.as_str())
+            }
+        };
         for field in &self.fields {
+            if self.context_field() == Some(field.name.as_str()) {
+                continue;
+            }
             builder = declare(builder, field);
             if field.identity() != field.name {
                 builder = builder.identity(field.identity());
@@ -502,6 +640,14 @@ fn declare<K: 'static>(
 /// ```text
 /// { <field>: { "context": <context>, "outputs": [ "c" | "passthrough" | <index>, ... ], "type": <type> }, ... }
 /// ```
+///
+/// with one optional key beside the field specs, `"context_field":
+/// "<field name>"`, which makes the plan take its context from that field
+/// of each record ([`Plan::with_context_field`]; the
+/// [module docs](self#a-plan-whose-context-is-a-field-of-the-record) give
+/// the shape). The key is reserved: a top-level `"context_field"` whose
+/// value is not a string is refused rather than read as a field of that
+/// name.
 ///
 /// `<index>` is an index in its wire form, which is its key — `"eq"`,
 /// `"match"`, `"ore"` or `"ope"` — save for a match index with options other
@@ -575,7 +721,7 @@ fn declare<K: 'static>(
 ///
 /// assert_eq!(plan.fields().len(), 1);
 /// assert_eq!(plan.fields()[0].name(), "age");
-/// assert_eq!(plan.label().to_string(), "users");
+/// assert_eq!(plan.label().map(ToString::to_string).as_deref(), Some("users"));
 /// assert_eq!(
 ///     plan.fields()[0].outputs(),
 ///     [Output::Ciphertext, Output::Term(IndexSpec::Equality)]
@@ -594,9 +740,11 @@ fn declare<K: 'static>(
 /// [`ValueKind`], a type that does not admit one of the field's index
 /// outputs, a context that is not a label of at least two segments
 /// (optionally extended), fields under different contexts or extensions,
-/// or a plan the builder refuses ([`Plan::new`]). [`Error::Context`] for a
-/// `"context"` that is present but is not a context at all, or renders
-/// empty.
+/// or a plan the builder refuses ([`Plan::new`]); with `"context_field"`,
+/// a value that is not a string, given twice, naming no field of the
+/// plan, or a plan [`Plan::with_context_field`] refuses. [`Error::Context`]
+/// for a `"context"` that is present but is not a context at all, or
+/// renders empty.
 ///
 /// The transport codec refuses duplicate object keys before a binding's
 /// value reaches here, but an [`FfiValue`] can be built with them directly
@@ -607,7 +755,18 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
         return Err(Error::Plan);
     };
     let mut fields: Vec<FieldPlan> = Vec::with_capacity(entries.len());
+    let mut context_field: Option<String> = None;
     for (name, spec) in entries {
+        if name == "context_field" {
+            // Reserved: the plan-level key, never a field. A second one, or
+            // one that is not a string, is refused rather than read as a
+            // field spec.
+            let (None, FfiValue::String(s)) = (&context_field, &spec) else {
+                return Err(Error::Plan);
+            };
+            context_field = Some(utf8(s).ok_or(Error::Plan)?.to_owned());
+            continue;
+        }
         let FfiValue::Object(spec) = spec else {
             return Err(Error::Plan);
         };
@@ -648,9 +807,12 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
             None => field,
         });
     }
-    // The whole-plan rules are `Plan::new`'s, so a parsed plan and a
+    // The whole-plan rules are the constructors', so a parsed plan and a
     // hand-built one are refused alike.
-    Plan::new(fields)
+    match context_field {
+        Some(name) => Plan::with_context_field(name, fields),
+        None => Plan::new(fields),
+    }
 }
 
 /// Encrypt a record — or a batch of records — per a plan.
@@ -713,7 +875,7 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
 /// let sealed = record::encrypt(&keyset, row, &plan)?.await?;
 ///
 /// // Only the ciphertext comes back; the term is one-way.
-/// let opened = record::decrypt(Scope::Client(&cipher), sealed, &plan)?.await?;
+/// let opened = record::decrypt(Scope::Client(&cipher), sealed, &plan, None)?.await?;
 /// let FfiValue::Object(fields) = opened else {
 ///     unreachable!("one record opens to one object");
 /// };
@@ -766,19 +928,34 @@ pub fn encrypt<'a, K: 'static>(
 /// fields that come back, in plan order — or an [`FfiValue::Array`] of them
 /// for a batch.
 ///
+/// `expected` is the context the caller expects, for a plan with a
+/// [context field](Plan::with_context_field): the chain's
+/// `open(record).context(expected)`. Each record's stored context field is
+/// checked against it before any key is requested, and a record that
+/// names another context fails the pending with
+/// [`Error::ContextMismatch`](crate::Error::ContextMismatch). `None`
+/// opens each record under whatever context it stores. For a plan with a
+/// context of its own there is nothing to expect: `Some` is refused as the
+/// chain refuses it, with
+/// [`PlanError::TwoContextSources`](crate::PlanError::TwoContextSources).
+///
 /// # Errors
 ///
 /// [`Error::Record`] if the stored tree does not fit the plan, decided
 /// here. A failure of the pending is the engine's: a wrong context, a wrong
 /// key, a tampered ciphertext, a leaf from a keyset other than a
 /// [`Scope::Keyset`]'s ([`Error::ForeignKeyset`](crate::Error::ForeignKeyset),
-/// before any key is retrieved), or a typed field that opens to a value of
-/// another kind than it declares ([`PlanError::FieldType`](crate::PlanError::FieldType)
-/// — the type tag is inside the AEAD envelope, so only opening can see it).
+/// before any key is retrieved), a stored context field that is not the
+/// one expected ([`Error::ContextMismatch`](crate::Error::ContextMismatch),
+/// likewise before any key is retrieved), or a typed field that opens to a
+/// value of another kind than it declares
+/// ([`PlanError::FieldType`](crate::PlanError::FieldType) — the type tag
+/// is inside the AEAD envelope, so only opening can see it).
 pub fn decrypt<'a, K: 'static>(
     scope: Scope<'a, K>,
     record: StackCipherText,
     plan: &Plan,
+    expected: Option<Label>,
 ) -> Result<Pending<'a, FfiValue, K>, Error> {
     let rows = record_rows(record, plan)?;
     let lowered = plan.lower::<K>().map_err(|_| Error::Internal)?;
@@ -787,12 +964,12 @@ pub fn decrypt<'a, K: 'static>(
     Ok(match rows {
         Rows::One(values) => run(
             scope,
-            Opens::<FieldValues, K>::decryption(&lowered, values, None, extend),
+            Opens::<FieldValues, K>::decryption(&lowered, values, expected, extend),
         )
         .try_map(move |values| open_record(values, &shape)),
         Rows::Batch(rows) => run(
             scope,
-            Opens::<Vec<FieldValues>, K>::decryption(&lowered, rows, None, extend),
+            Opens::<Vec<FieldValues>, K>::decryption(&lowered, rows, expected, extend),
         )
         .try_map(move |rows| {
             rows.into_iter()
@@ -848,16 +1025,31 @@ pub fn check_source(source: FfiValue, plan: &Plan) -> Result<(), Error> {
 ///
 /// A typed field's declared type is not among them: the type is the sealed
 /// leaf's tag, inside the AEAD envelope, so only awaiting [`decrypt`] can
-/// check it.
+/// check it. A stored context field *is*: it is a passthrough, so the
+/// check reads it and compares it with `expected`, as [`decrypt`] does
+/// before any key is requested.
 ///
 /// # Errors
 ///
-/// As [`decrypt`], minus the cipher.
-pub fn check_record(record: StackCipherText, plan: &Plan) -> Result<(), Error> {
+/// As [`decrypt`], minus the cipher: [`Error::Record`] for a tree that
+/// does not fit the plan, including a stored context field that is not
+/// text or an `expected` given for a plan with a context of its own, and
+/// [`Error::Cipher`] holding
+/// [`Error::ContextMismatch`](crate::Error::ContextMismatch) for a stored
+/// context that is not the one expected — the same error the pending
+/// would fail with.
+pub fn check_record(
+    record: StackCipherText,
+    plan: &Plan,
+    expected: Option<&Label>,
+) -> Result<(), Error> {
     let rows = record_rows(record, plan)?;
     let lowered = plan.lower::<()>().map_err(|_| Error::Internal)?;
     let check = |values: &FieldValues| {
-        Opens::<FieldValues, ()>::check(&lowered, values, None).map_err(|_| Error::Record)
+        Opens::<FieldValues, ()>::check(&lowered, values, expected).map_err(|error| match error {
+            mismatch @ crate::Error::ContextMismatch { .. } => Error::Cipher(mismatch),
+            _ => Error::Record,
+        })
     };
     match &rows {
         Rows::One(values) => check(values),
@@ -1378,7 +1570,7 @@ mod tests {
         record: StackCipherText,
         plan: &Plan,
     ) -> FfiValue {
-        decrypt(Scope::Client(cipher), record, plan)
+        decrypt(Scope::Client(cipher), record, plan, None)
             .expect("the record fits the plan")
             .await
             .expect("decrypt")
@@ -1558,7 +1750,11 @@ mod tests {
                     && !plan.fields()[3].has_ciphertext(),
                 "has_ciphertext follows the outputs"
             );
-            assert_eq!(plan.label().to_string(), "users", "the plan's one context");
+            assert_eq!(
+                plan.label().expect("a plan context").to_string(),
+                "users",
+                "the plan's one context"
+            );
             assert!(plan.extension().is_empty(), "no extension was spelled");
             assert_eq!(
                 plan.fields()[1].label().to_string(),
@@ -1782,7 +1978,10 @@ mod tests {
                 ("email", spec(strings(&["app", "users", "email"]), &["c"])),
             ]))
             .expect("one two-segment context");
-            assert_eq!(parsed.label().to_string(), "app/users");
+            assert_eq!(
+                parsed.label().expect("a plan context").to_string(),
+                "app/users"
+            );
         }
 
         /// Two sealed fields keyed under one identity would have one context
@@ -2379,7 +2578,7 @@ mod tests {
             let plan = the_plan();
             let sealed = seal(&keyset, row(34), &plan).await;
 
-            let pending = decrypt(Scope::Client(&cipher), sealed, &plan).expect("fits");
+            let pending = decrypt(Scope::Client(&cipher), sealed, &plan, None).expect("fits");
             assert_eq!(
                 retrieves(&cipher),
                 0,
@@ -2404,7 +2603,7 @@ mod tests {
             // Through the keyset it was sealed under, too.
             let sealed = seal(&keyset, row(35), &plan).await;
             let fields = object(
-                decrypt(Scope::Keyset(keyset.clone()), sealed, &plan)
+                decrypt(Scope::Keyset(keyset.clone()), sealed, &plan, None)
                     .expect("fits")
                     .await
                     .expect("decrypt through the keyset"),
@@ -2432,7 +2631,7 @@ mod tests {
 
             check_source(source(), &plan).expect("check_source accepts it");
             let sealed = seal(&keyset, source(), &plan).await;
-            check_record(sealed, &plan).expect("check_record accepts it");
+            check_record(sealed, &plan, None).expect("check_record accepts it");
 
             let sealed = seal(&keyset, source(), &plan).await;
             let fields = object(open(&cipher, sealed, &plan).await);
@@ -2892,7 +3091,7 @@ mod tests {
 
             let before = retrieves(&cipher);
             for (label_, record) in cases {
-                let err = decrypt(Scope::Client(&cipher), record, &plan).err();
+                let err = decrypt(Scope::Client(&cipher), record, &plan, None).err();
                 assert!(
                     matches!(err, Some(Error::Record)),
                     "{label_}: decrypt must refuse it as a misfit record: {err:?}"
@@ -2910,7 +3109,7 @@ mod tests {
             let _ = node(&mut age, "c");
             age.push(("c".to_string(), forged(FfiValue::UInt32(99))));
             fields.push(("age".to_string(), CipherText::Map(age)));
-            let err = check_record(CipherText::Map(fields), &plan).err();
+            let err = check_record(CipherText::Map(fields), &plan, None).err();
             assert!(
                 matches!(err, Some(Error::Record)),
                 "check_record refuses a forged ciphertext the same way: {err:?}"
@@ -2921,7 +3120,7 @@ mod tests {
             let mut stale_age = map(node(&mut stale, "age"));
             age.push(("c".to_string(), node(&mut stale_age, "c")));
             fields.push(("age".to_string(), CipherText::Map(age)));
-            let err = check_record(CipherText::Map(fields), &plan).err();
+            let err = check_record(CipherText::Map(fields), &plan, None).err();
             assert!(
                 matches!(err, Some(Error::Record)),
                 "check_record refuses a twice-given ciphertext the same way: {err:?}"
@@ -2955,6 +3154,551 @@ mod tests {
         }
     }
 
+    mod given_a_context_field {
+        use super::*;
+
+        /// A one-segment label: the field's identity alone, which is what a
+        /// field's context is under a context field.
+        fn identity(field: &str) -> FfiValue {
+            strings(&[field])
+        }
+
+        /// The plan most of these tests share: the record's `tenant` field is
+        /// its context, `age` is sealed and indexed for equality under
+        /// `<tenant>/age`, and `id` is carried through.
+        fn plan_value() -> FfiValue {
+            obj(vec![
+                ("context_field", s("tenant")),
+                (
+                    "tenant",
+                    typed(identity("tenant"), &["passthrough"], "string"),
+                ),
+                ("age", typed(identity("age"), &["c", "eq"], "uint32")),
+                ("id", typed(identity("id"), &["passthrough"], "uint64")),
+            ])
+        }
+
+        fn the_plan() -> Plan {
+            plan(plan_value()).expect("the context-field plan parses")
+        }
+
+        fn row(tenant: &str, age: u32) -> FfiValue {
+            obj(vec![
+                ("tenant", s(tenant)),
+                ("age", FfiValue::UInt32(age)),
+                ("id", FfiValue::UInt64(7)),
+            ])
+        }
+
+        fn expected(label: &str) -> Option<Label> {
+            Some(Label::parse(label).expect("a label"))
+        }
+
+        /// The error a pending failed with. `FfiValue` has no `Debug`, so
+        /// `expect_err` cannot be used on an opened value.
+        fn refused<T>(result: Result<T, crate::Error>) -> crate::Error {
+            match result {
+                Err(error) => error,
+                Ok(_) => panic!("the operation was not refused"),
+            }
+        }
+
+        fn keys_of(plan: &Plan) -> Vec<&str> {
+            plan.fields().iter().map(FieldPlan::name).collect()
+        }
+
+        struct Age {
+            age: u32,
+        }
+
+        /// The equality term the typed chain stores for `age` under
+        /// `<context>/age`, extended by `parts`: what the lowering must
+        /// derive when the context comes from the record.
+        async fn chain_term(
+            cipher: &StackCipher<Counting>,
+            context: &str,
+            age: u32,
+            parts: &[u64],
+        ) -> Vec<u8> {
+            let value = Age { age };
+            let chain = cipher
+                .encrypt(&value)
+                .context(context)
+                .fields()
+                .encrypt_index(pick("age", |a: &Age| &a.age), Equality);
+            let mut record = match parts {
+                [] => chain.await,
+                [part] => chain.extend(*part).await,
+                _ => panic!("one part at most"),
+            }
+            .expect("typed chain");
+            let typed: Encrypted<EqualityTerm> = record.take("age").expect("age");
+            typed.terms.to_bytes()
+        }
+
+        /// The stored record with its context field replaced by `tenant`,
+        /// as an attacker with write access to the row would leave it.
+        fn with_stored_context(sealed: StackCipherText, tenant: &str) -> StackCipherText {
+            let mut fields = map(sealed);
+            let _ = take(&mut fields, "tenant").expect("the tenant node");
+            fields.push((
+                "tenant".to_string(),
+                CipherText::Map(vec![("passthrough".to_string(), forged(s(tenant)))]),
+            ));
+            CipherText::Map(fields)
+        }
+
+        #[test]
+        fn parses_as_the_builders_context_field() {
+            let plan = the_plan();
+            assert_eq!(plan.context_field(), Some("tenant"));
+            assert_eq!(plan.label(), None, "the plan has no context of its own");
+            assert_eq!(
+                keys_of(&plan),
+                ["tenant", "age", "id"],
+                "the context field is a field"
+            );
+            let tenant = &plan.fields()[0];
+            assert_eq!(tenant.outputs(), [Output::Passthrough]);
+            assert_eq!(tenant.field_type(), Some(ValueKind::String));
+            assert_eq!(
+                tenant.label().to_string(),
+                "tenant",
+                "its label is its identity"
+            );
+            assert_eq!(plan.fields()[1].label().to_string(), "age");
+        }
+
+        /// The context field needs no `"type"`: it is a string either way.
+        #[test]
+        fn an_untyped_context_field_is_a_string() {
+            let plan = plan(obj(vec![
+                ("context_field", s("tenant")),
+                ("tenant", spec(identity("tenant"), &["passthrough"])),
+                ("age", spec(identity("age"), &["c"])),
+            ]))
+            .expect("parses");
+            assert_eq!(plan.fields()[0].field_type(), Some(ValueKind::String));
+        }
+
+        #[test]
+        fn refuses_what_the_builder_and_the_grammar_refuse() {
+            let refused = [
+                (
+                    "a context field the plan does not name",
+                    obj(vec![
+                        ("context_field", s("tenant")),
+                        ("age", typed(identity("age"), &["c"], "uint32")),
+                    ]),
+                ),
+                (
+                    "a context_field key that is not a string",
+                    obj(vec![
+                        ("context_field", FfiValue::UInt64(7)),
+                        ("age", typed(identity("age"), &["c"], "uint32")),
+                    ]),
+                ),
+                (
+                    "a context_field key given twice",
+                    obj(vec![
+                        ("context_field", s("tenant")),
+                        ("context_field", s("tenant")),
+                        ("tenant", spec(identity("tenant"), &["passthrough"])),
+                        ("age", typed(identity("age"), &["c"], "uint32")),
+                    ]),
+                ),
+                (
+                    "a field named context_field",
+                    obj(vec![(
+                        "context_field",
+                        spec(label("context_field"), &["passthrough"]),
+                    )]),
+                ),
+                (
+                    "a context field that is sealed",
+                    obj(vec![
+                        ("context_field", s("tenant")),
+                        ("tenant", typed(identity("tenant"), &["c"], "string")),
+                        ("age", typed(identity("age"), &["c"], "uint32")),
+                    ]),
+                ),
+                (
+                    "a context field that is indexed",
+                    obj(vec![
+                        ("context_field", s("tenant")),
+                        ("tenant", typed(identity("tenant"), &["eq"], "string")),
+                        ("age", typed(identity("age"), &["c"], "uint32")),
+                    ]),
+                ),
+                (
+                    "a context field typed as something other than a string",
+                    obj(vec![
+                        ("context_field", s("tenant")),
+                        (
+                            "tenant",
+                            typed(identity("tenant"), &["passthrough"], "int64"),
+                        ),
+                        ("age", typed(identity("age"), &["c"], "uint32")),
+                    ]),
+                ),
+                (
+                    "a field under a context of its own beside the context field",
+                    obj(vec![
+                        ("context_field", s("tenant")),
+                        ("tenant", spec(identity("tenant"), &["passthrough"])),
+                        ("age", typed(label("age"), &["c"], "uint32")),
+                    ]),
+                ),
+                (
+                    "the context field itself under a two-segment label",
+                    obj(vec![
+                        ("context_field", s("tenant")),
+                        ("tenant", spec(label("tenant"), &["passthrough"])),
+                        ("age", typed(identity("age"), &["c"], "uint32")),
+                    ]),
+                ),
+            ];
+            for (what, value) in refused {
+                let result = plan(value);
+                assert!(matches!(result, Err(Error::Plan)), "{what}: {result:?}");
+            }
+        }
+
+        /// The manual constructor holds the same rules, so a plan in hand
+        /// holds them whichever way it was built.
+        #[test]
+        fn the_manual_constructor_refuses_the_same() {
+            let field = |name: &str, ctx: FfiValue, outputs: &[&str]| {
+                FieldPlan::new(
+                    name,
+                    context(ctx).expect("context"),
+                    outputs
+                        .iter()
+                        .map(|o| Output::parse(o).expect("output"))
+                        .collect(),
+                )
+                .expect("field")
+            };
+            let tenant = || field("tenant", identity("tenant"), &["passthrough"]);
+            let age = || field("age", identity("age"), &["c"]);
+            assert!(Plan::with_context_field("tenant", vec![tenant(), age()]).is_ok());
+            assert!(
+                matches!(
+                    Plan::with_context_field("nope", vec![tenant(), age()]),
+                    Err(Error::Plan)
+                ),
+                "a field the plan does not name"
+            );
+            assert!(
+                matches!(
+                    Plan::with_context_field("age", vec![tenant(), age()]),
+                    Err(Error::Plan)
+                ),
+                "a sealed field as the context"
+            );
+            assert!(
+                matches!(Plan::new(vec![tenant(), age()]), Err(Error::Plan)),
+                "one-segment labels need a context field"
+            );
+        }
+
+        /// Two tenants in one batch: each record is sealed under the context
+        /// its own field names, in one key request, and each opens back
+        /// under the context it stores.
+        #[tokio::test]
+        async fn each_record_in_a_batch_is_sealed_under_its_own_context() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = the_plan();
+            let batch = FfiValue::Array(vec![row("tenants/acme", 34), row("tenants/globex", 34)]);
+
+            let sealed = seal(&keyset, batch, &plan).await;
+            assert_eq!(generates(&cipher), 1, "one key request for both tenants");
+
+            // The stored term is the one derived under <tenant>/age: the
+            // context came from the record, not from the plan.
+            let mut rows = sequence(sealed);
+            let mut acme = map(rows.remove(0));
+            let mut globex = map(rows.remove(0));
+            let acme_term = term_bytes(&node(&mut map(node(&mut acme, "age")), "eq"));
+            let globex_term = term_bytes(&node(&mut map(node(&mut globex, "age")), "eq"));
+            assert_eq!(
+                acme_term,
+                chain_term(&cipher, "tenants/acme", 34, &[]).await,
+                "the chain's term under tenants/acme"
+            );
+            assert_eq!(
+                globex_term,
+                chain_term(&cipher, "tenants/globex", 34, &[]).await,
+                "the chain's term under tenants/globex"
+            );
+            assert_ne!(
+                acme_term, globex_term,
+                "the same age, two tenants, two terms"
+            );
+
+            // The context field rides as a passthrough, so the record stores
+            // its own context.
+            let mut tenant = map(node(&mut acme, "tenant"));
+            let CipherText::Passthrough(payload) = node(&mut tenant, "passthrough") else {
+                panic!("the context field rides as a passthrough");
+            };
+            let FfiValue::String(stored) = *payload.downcast::<FfiValue>().expect("a value") else {
+                panic!("the stored context is text");
+            };
+            assert_eq!(utf8(&stored), Some("tenants/acme"));
+
+            // Each opens under what it stores, with no context named.
+            let sealed = seal(
+                &keyset,
+                FfiValue::Array(vec![row("tenants/acme", 34), row("tenants/globex", 35)]),
+                &plan,
+            )
+            .await;
+            let mut opened = array(open(&cipher, sealed, &plan).await);
+            let globex = object(opened.remove(1));
+            let acme = object(opened.remove(0));
+            assert_eq!(
+                text_of(&acme[0].1),
+                "tenants/acme",
+                "the context field comes back"
+            );
+            assert_eq!(u32_of(&acme[1].1), 34);
+            assert_eq!(text_of(&globex[0].1), "tenants/globex");
+            assert_eq!(u32_of(&globex[1].1), 35);
+        }
+
+        /// The caller's expected context is checked against each record's
+        /// stored one before any key is requested: the chain's
+        /// `open(record).context(expected)`.
+        #[tokio::test]
+        async fn an_expected_context_refuses_a_record_stored_under_another() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = the_plan();
+            let retrieved = retrieves(&cipher);
+
+            let sealed = seal(&keyset, row("tenants/acme", 34), &plan).await;
+            let refused = decrypt(
+                Scope::Client(&cipher),
+                sealed,
+                &plan,
+                expected("tenants/globex"),
+            )
+            .expect("the shape fits")
+            .await;
+            match refused {
+                Err(crate::Error::ContextMismatch { stored }) => {
+                    assert_eq!(stored.to_string(), "tenants/acme")
+                }
+                Err(other) => panic!("expected ContextMismatch, got {other:?}"),
+                Ok(_) => panic!("a record stored under another context opened"),
+            }
+            assert_eq!(
+                retrieves(&cipher),
+                retrieved,
+                "refused before any key is retrieved"
+            );
+
+            // The preflight says the same, as the error the pending would
+            // fail with.
+            let sealed = seal(&keyset, row("tenants/acme", 34), &plan).await;
+            let preflight = check_record(sealed, &plan, expected("tenants/globex").as_ref());
+            assert!(
+                matches!(
+                    preflight,
+                    Err(Error::Cipher(crate::Error::ContextMismatch { .. }))
+                ),
+                "{preflight:?}"
+            );
+            let sealed = seal(&keyset, row("tenants/acme", 34), &plan).await;
+            check_record(sealed, &plan, expected("tenants/acme").as_ref())
+                .expect("the expected context");
+            let sealed = seal(&keyset, row("tenants/acme", 34), &plan).await;
+            check_record(sealed, &plan, None).expect("no expectation");
+
+            let sealed = seal(&keyset, row("tenants/acme", 34), &plan).await;
+            let opened = object(
+                decrypt(
+                    Scope::Client(&cipher),
+                    sealed,
+                    &plan,
+                    expected("tenants/acme"),
+                )
+                .expect("fits")
+                .await
+                .expect("the expected context opens"),
+            );
+            assert_eq!(u32_of(&opened[1].1), 34);
+
+            // One wrong record refuses the whole batch, before any key.
+            let batch = seal(
+                &keyset,
+                FfiValue::Array(vec![row("tenants/acme", 1), row("tenants/globex", 2)]),
+                &plan,
+            )
+            .await;
+            let retrieved = retrieves(&cipher);
+            let refused = decrypt(
+                Scope::Client(&cipher),
+                batch,
+                &plan,
+                expected("tenants/acme"),
+            )
+            .expect("fits")
+            .await;
+            assert!(matches!(refused, Err(crate::Error::ContextMismatch { .. })));
+            assert_eq!(retrieves(&cipher), retrieved);
+        }
+
+        /// A stored context changed in storage opens nothing: every field was
+        /// sealed under the original, so the key source (or the AEAD) refuses
+        /// it even with no expectation.
+        #[tokio::test]
+        async fn a_context_changed_in_storage_opens_nothing() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = the_plan();
+            let sealed = seal(&keyset, row("tenants/acme", 34), &plan).await;
+            let result = decrypt(
+                Scope::Client(&cipher),
+                with_stored_context(sealed, "tenants/globex"),
+                &plan,
+                None,
+            )
+            .expect("the shape fits")
+            .await;
+            assert!(result.is_err(), "sealed under acme, opened under globex");
+        }
+
+        /// The context field's value is read as a label when the plan runs:
+        /// a value that is not text is refused by the field's type, and text
+        /// that is not a plain label by the label rules, both before any
+        /// key request.
+        #[tokio::test]
+        async fn a_context_value_that_is_not_a_label_is_refused_before_any_key() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = the_plan();
+            let not_text = || {
+                obj(vec![
+                    ("tenant", FfiValue::UInt64(7)),
+                    ("age", FfiValue::UInt32(34)),
+                    ("id", FfiValue::UInt64(7)),
+                ])
+            };
+            assert!(matches!(
+                check_source(not_text(), &plan),
+                Err(Error::Source)
+            ));
+            assert!(matches!(
+                encrypt(&keyset, not_text(), &plan),
+                Err(Error::Source)
+            ));
+
+            let not_a_label = || row("tenants/(acme)", 34);
+            assert!(matches!(
+                check_source(not_a_label(), &plan),
+                Err(Error::Source)
+            ));
+            let failed = encrypt(&keyset, not_a_label(), &plan)
+                .expect("the source fits the plan's shape")
+                .await;
+            assert!(
+                matches!(plan_error(refused(failed)), PlanError::ContextLabel(_)),
+                "the label rule, when the plan runs"
+            );
+            assert_eq!(generates(&cipher), 0, "nothing was requested");
+
+            // Stored text that is not a label is refused the same way on
+            // open.
+            let sealed = seal(&keyset, row("tenants/acme", 34), &plan).await;
+            assert!(matches!(
+                check_record(with_stored_context(sealed, "tenants/(acme)"), &plan, None),
+                Err(Error::Record)
+            ));
+            let sealed = seal(&keyset, row("tenants/acme", 34), &plan).await;
+            let retrieved = retrieves(&cipher);
+            let failed = decrypt(
+                Scope::Client(&cipher),
+                with_stored_context(sealed, "tenants/(acme)"),
+                &plan,
+                None,
+            )
+            .expect("the shape fits")
+            .await;
+            assert!(matches!(
+                plan_error(refused(failed)),
+                PlanError::ContextLabel(_)
+            ));
+            assert_eq!(retrieves(&cipher), retrieved);
+        }
+
+        /// An expected context is for a plan that takes its context from a
+        /// field. For one with a context of its own it is a second source,
+        /// refused as the chain refuses it.
+        #[tokio::test]
+        async fn an_expected_context_on_a_plan_with_its_own_is_two_sources() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let plan = super::the_plan();
+            let sealed = seal(&keyset, super::row(34), &plan).await;
+            assert!(matches!(
+                check_record(sealed, &plan, expected("users").as_ref()),
+                Err(Error::Record)
+            ));
+            let sealed = seal(&keyset, super::row(34), &plan).await;
+            let failed = decrypt(Scope::Client(&cipher), sealed, &plan, expected("users"))
+                .expect("the shape fits")
+                .await;
+            assert!(matches!(
+                plan_error(refused(failed)),
+                PlanError::TwoContextSources { .. }
+            ));
+        }
+
+        /// `.extend(..)` extends the context the field supplies, as it
+        /// extends a plan's own: the term is the probe under
+        /// `<tenant>/age` then the part.
+        #[tokio::test]
+        async fn an_extension_extends_the_fields_context() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let extended =
+                |field: &str| FfiValue::Array(vec![identity(field), FfiValue::UInt64(7)]);
+            let plan = plan(obj(vec![
+                ("context_field", s("tenant")),
+                (
+                    "tenant",
+                    typed(extended("tenant"), &["passthrough"], "string"),
+                ),
+                ("age", typed(extended("age"), &["c", "eq"], "uint32")),
+            ]))
+            .expect("parses");
+            assert_eq!(plan.extension().len(), 1);
+            let source = || {
+                obj(vec![
+                    ("tenant", s("tenants/acme")),
+                    ("age", FfiValue::UInt32(34)),
+                ])
+            };
+            let mut fields = map(seal(&keyset, source(), &plan).await);
+            let stored = term_bytes(&node(&mut map(node(&mut fields, "age")), "eq"));
+            assert_eq!(
+                stored,
+                chain_term(&cipher, "tenants/acme", 34, &[7]).await,
+                "the chain's term under tenants/acme, extended by 7"
+            );
+            let sealed = seal(&keyset, source(), &plan).await;
+            let opened = object(open(&cipher, sealed, &plan).await);
+            assert_eq!(
+                u32_of(&opened[1].1),
+                34,
+                "and it opens under the extended context"
+            );
+        }
+    }
+
     mod given_a_keyset_scope {
         use super::*;
 
@@ -2970,7 +3714,7 @@ mod tests {
             let plan = the_plan();
 
             let sealed = seal(&acme, row(34), &plan).await;
-            let err = decrypt(Scope::Keyset(globex.clone()), sealed, &plan)
+            let err = decrypt(Scope::Keyset(globex.clone()), sealed, &plan, None)
                 .expect("the record fits")
                 .await
                 .err();
@@ -2990,7 +3734,7 @@ mod tests {
 
             let sealed = seal(&acme, row(34), &plan).await;
             let opened = object(
-                decrypt(Scope::Keyset(acme.clone()), sealed, &plan)
+                decrypt(Scope::Keyset(acme.clone()), sealed, &plan, None)
                     .expect("fits")
                     .await
                     .expect("its own keyset opens it"),
@@ -3247,7 +3991,7 @@ mod tests {
             let sealed = seal(&keyset, obj(vec![("age", FfiValue::UInt64(34))]), &untyped).await;
             let as_int64 =
                 plan(obj(vec![("age", typed(label("age"), &["c"], "int64"))])).expect("plan");
-            let result = decrypt(Scope::Client(&cipher), sealed, &as_int64)
+            let result = decrypt(Scope::Client(&cipher), sealed, &as_int64, None)
                 .expect("the shape fits")
                 .await;
             assert_eq!(
@@ -3382,10 +4126,11 @@ mod tests {
                 plan(obj(vec![("age", typed(label("age"), &["c"], "uint64"))])).expect("plan");
 
             let sealed = seal(&keyset, obj(vec![("age", FfiValue::UInt32(34))]), &untyped).await;
-            check_record(sealed, &as_uint64).expect("the type is not visible without opening");
+            check_record(sealed, &as_uint64, None)
+                .expect("the type is not visible without opening");
 
             let sealed = seal(&keyset, obj(vec![("age", FfiValue::UInt32(34))]), &untyped).await;
-            let result = decrypt(Scope::Client(&cipher), sealed, &as_uint64)
+            let result = decrypt(Scope::Client(&cipher), sealed, &as_uint64, None)
                 .expect("the shape fits")
                 .await;
             assert!(
@@ -3487,7 +4232,8 @@ mod tests {
                     forged(FfiValue::UInt32(7)),
                 )]),
             ));
-            let refused = decrypt(Scope::Client(&cipher), CipherText::Map(fields), &plan).err();
+            let refused =
+                decrypt(Scope::Client(&cipher), CipherText::Map(fields), &plan, None).err();
             assert!(matches!(refused, Some(Error::Record)), "{refused:?}");
         }
     }
@@ -3644,7 +4390,7 @@ mod tests {
                 "age".to_string(),
                 CipherText::Map(vec![("c".to_string(), derived.c)]),
             )]);
-            let result = decrypt(Scope::Client(&cipher), stored, &plan)
+            let result = decrypt(Scope::Client(&cipher), stored, &plan, None)
                 .expect("the shape fits")
                 .await;
             assert!(
