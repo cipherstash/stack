@@ -735,9 +735,9 @@ mod tests {
         assert_eq!(eql["hm"].as_str().unwrap().len(), 64);
 
         // Opens back through the EQL type's own decryption.
-        validate::record_tree(&sealed, &plan).expect("the tree fits");
+        validate::record_tree(&sealed, &plan, None).expect("the tree fits");
         let opened =
-            block_on(decrypt_record(Scope::Client(&cipher), &sealed, &plan)).expect("opens");
+            block_on(decrypt_record(Scope::Client(&cipher), &sealed, &plan, None)).expect("opens");
         let FfiValue::Object(values) = decode_value(&opened).expect("a value") else {
             panic!("an object")
         };
