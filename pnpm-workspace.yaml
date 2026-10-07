@@ -99,7 +99,9 @@ overrides:
   # three land on the same transitive dep (rimraf>glob>minimatch>brace-expansion).
   # Pinned to the matured 5.0.9 (published 2026-07-30) to close all three at
   # once rather than leaving two open after only clearing the first.
-  'brace-expansion@<5.0.9': '5.0.9'
+  # #220 CVE-2026-102277 — raised to 5.0.12 (published 2026-09-14); the
+  # ceiling moves with the pin so 5.0.9-5.0.11 cannot resolve.
+  'brace-expansion@<5.0.12': '5.0.12'
   # #153 GHSA-h67p-54hq-rp68 / CVE-2026-53550 — js-yaml merge-key DoS, 3.x line.
   # #189 GHSA-5p4m-2wfm-xmqj / CVE-2026-59870 (HIGH) — quadratic-CPU DoS in
   # `!!omap` duplicate-key detection; patched in 3.15.1.
