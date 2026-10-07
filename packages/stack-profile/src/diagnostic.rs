@@ -134,8 +134,8 @@ pub fn describe_json_error(error: &serde_json::Error) -> String {
 /// Checks that a code uses the given crate prefix and a `snake_case` name.
 ///
 /// For example, `is_code_of("stack_profile", "stack_profile::not_found")`
-/// returns `true`. This checks the format, not whether the crate defines the
-/// code; use the crate's `ERROR_CODES` list to check membership.
+/// returns `true`. This checks the format, not whether any error carries the
+/// code. Each crate's tests run it on a code from every one of its variants.
 pub fn is_code_of(crate_name: &str, code: &str) -> bool {
     let Some(name) = code
         .strip_prefix(crate_name)

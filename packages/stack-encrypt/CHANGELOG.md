@@ -14,9 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `stack_encrypt::foreign_keyset`. Help text explains how to resolve
   errors callers can fix. `ErrorPayload::payload()` provides details such
   as both keyset IDs for a wrong-keyset error or the field rejected by a
-  plan. `ErrorPayload` is re-exported from `stack-profile`, and
-  `ERROR_CODES` lists the crate's codes. Codes identify errors across
-  language boundaries; Rust callers can continue matching enum variants.
+  plan. `ErrorPayload` is re-exported from `stack-profile`. Codes
+  identify errors across language boundaries; Rust callers can continue
+  matching enum variants.
   The payload policy excludes plaintext, key material, tokens,
   ciphertext, search-index bytes, and raw context values.
 - **Data-driven input errors identify the field and the reason.**

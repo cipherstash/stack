@@ -120,9 +120,9 @@ pub type StackCipherText = CipherText<SealedValue, BoxedPassthrough>;
 
 /// Errors from sealing or opening a [`StackCipherText`].
 ///
-/// Every variant has a miette code in [`ERROR_CODES`](crate::ERROR_CODES),
-/// or forwards the code of the error it carries ([`Kms`](Self::Kms),
-/// [`Term`](Self::Term), [`Plan`](Self::Plan)); its structured fields are its
+/// Every variant has a `stack_encrypt::` miette code, or forwards the code
+/// of the error it carries ([`Kms`](Self::Kms), [`Term`](Self::Term),
+/// [`Plan`](Self::Plan)); its structured fields are its
 /// [`ErrorPayload`](crate::ErrorPayload). No message carries a context's
 /// descriptor or another library's text (see the rule on
 /// [`ErrorPayload`](crate::ErrorPayload)).

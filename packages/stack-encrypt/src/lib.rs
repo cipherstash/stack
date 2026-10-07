@@ -271,6 +271,7 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod cipher;
+#[cfg(test)]
 mod codes;
 pub mod descriptor;
 #[cfg(feature = "dynamic")]
@@ -292,7 +293,6 @@ pub use plan::{all, Plan, PlanError};
 // versioned on its own (release-plz.toml), so a caller reaches it through
 // here and always gets the version this crate was built against, never a
 // second copy whose types do not fit `StackCipher`'s bounds.
-pub use codes::ERROR_CODES;
 pub use stack_kms as kms;
 /// The trait every error here implements to hand over its structured
 /// fields, with the rule for what an error may contain, and the helpers that

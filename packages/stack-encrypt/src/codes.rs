@@ -1,202 +1,161 @@
-//! Every miette code an error from this crate can carry.
-
-/// Every miette code an error from this crate can carry: [`Error`](crate::Error),
-/// [`PlanError`](crate::PlanError), [`LabelError`](crate::LabelError),
-/// [`LeafBytesError`](crate::LeafBytesError), the term errors in
-/// [`sem`](crate::sem), and with the `dynamic` feature the dynamic module's
-/// errors. A variant that carries a `stack_kms` or `stack_auth` error carries
-/// its code instead.
-///
-/// A test builds every variant and checks its code is here, so renaming a
-/// code means editing this list on purpose. Codes are for crossing a
-/// boundary: Rust code that branches on an error matches the variant.
-pub const ERROR_CODES: &[&str] = &[
-    // `Error`
-    "stack_encrypt::aead",
-    "stack_encrypt::key_count_mismatch",
-    "stack_encrypt::descriptor_too_long",
-    "stack_encrypt::config",
-    "stack_encrypt::other",
-    "stack_encrypt::unsupported_shape",
-    "stack_encrypt::context_mismatch",
-    "stack_encrypt::response_shape",
-    "stack_encrypt::keyset_mismatch",
-    "stack_encrypt::foreign_keyset",
-    "stack_encrypt::no_keyset",
-    "stack_encrypt::not_opened",
-    // `LeafBytesError`
-    "stack_encrypt::leaf_version",
-    "stack_encrypt::leaf_truncated",
-    "stack_encrypt::leaf_tag_too_long",
-    // `sem::TermError`
-    "stack_encrypt::prf_failed",
-    "stack_encrypt::ore_failed",
-    "stack_encrypt::invalid_match_options",
-    "stack_encrypt::empty_term_text",
-    // `sem::TermBytesError`
-    "stack_encrypt::equality_term_length",
-    "stack_encrypt::match_term_length",
-    "stack_encrypt::match_position_out_of_range",
-    "stack_encrypt::cllw_ciphertext_length",
-    // `LabelError`
-    "stack_encrypt::label_empty",
-    "stack_encrypt::label_empty_segment",
-    "stack_encrypt::label_separator",
-    "stack_encrypt::label_reserved",
-    "stack_encrypt::label_reserved_prefix",
-    // `PlanError`
-    "stack_encrypt::plan_context_label",
-    "stack_encrypt::plan_field_label",
-    "stack_encrypt::plan_identity_without_field",
-    "stack_encrypt::plan_duplicate_field",
-    "stack_encrypt::plan_shared_identity",
-    "stack_encrypt::plan_passthrough_indexed",
-    "stack_encrypt::plan_duplicate_index",
-    "stack_encrypt::plan_empty_indexes",
-    "stack_encrypt::plan_field_not_in_plan",
-    "stack_encrypt::plan_field_not_in_value",
-    "stack_encrypt::plan_field_type",
-    "stack_encrypt::plan_no_such_field",
-    "stack_encrypt::plan_mixed_ciphers",
-    "stack_encrypt::plan_index_not_declared",
-    "stack_encrypt::plan_index_options",
-    "stack_encrypt::plan_two_context_sources",
-    "stack_encrypt::plan_no_context",
-    "stack_encrypt::plan_target_with_verbs",
-    // `dynamic::Error`
-    "stack_encrypt::dynamic_context",
-    "stack_encrypt::dynamic_term",
-    "stack_encrypt::dynamic_plan",
-    "stack_encrypt::dynamic_untyped_index",
-    "stack_encrypt::dynamic_source",
-    "stack_encrypt::dynamic_record",
-    "stack_encrypt::dynamic_internal",
-    // `dynamic::TargetError`
-    "stack_encrypt::target_none",
-    "stack_encrypt::target_unknown",
-    "stack_encrypt::target_unproducible",
-    "stack_encrypt::target_no_query",
-    "stack_encrypt::target_extended",
-    "stack_encrypt::target_kind",
-    "stack_encrypt::target_column",
-    "stack_encrypt::target_plaintext",
-    "stack_encrypt::target_stored",
-    "stack_encrypt::target_other",
-];
+//! Every error in this crate carries a miette code: one in this crate's
+//! namespace, or, for a variant that wraps another crate's error, that
+//! error's. The tests here build one of every variant to check it, and pin
+//! each error's payload fields.
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
     use miette::Diagnostic;
     use uuid::Uuid;
 
-    use super::ERROR_CODES;
     use crate::diagnostic::is_code_of;
     use crate::sem::{MatchOptions, TermBytesError, TermError};
     use crate::target::IndexSpec;
     use crate::{Descriptor, Error, LabelError, LeafBytesError, PlanError};
 
-    /// One of every variant of every error type here. A transparent variant
-    /// is built once, to show the code it forwards is listed somewhere.
+    /// One row per variant of an enum, written `pattern => value`. The
+    /// patterns are the arms of a match with no wildcard, so a variant with
+    /// no row fails to compile, and each value must match its own pattern.
+    macro_rules! variants {
+        ($($pattern:pat => $value:expr),+ $(,)?) => {{
+            let rows = vec![$({
+                let value = $value;
+                assert!(matches!(value, $pattern), "{value:?} is not {}", stringify!($pattern));
+                value
+            }),+];
+            for row in &rows {
+                match row {
+                    $($pattern => {})+
+                }
+            }
+            rows
+        }};
+    }
+
+    fn boxed<E: Diagnostic + 'static>(rows: Vec<E>) -> impl Iterator<Item = Box<dyn Diagnostic>> {
+        rows.into_iter()
+            .map(|error| Box::new(error) as Box<dyn Diagnostic>)
+    }
+
+    /// One of every variant of every error type here.
     fn every_variant() -> Vec<Box<dyn Diagnostic>> {
-        let boxed = || Box::new(std::io::Error::other("cause"));
+        let cause = || Box::new(std::io::Error::other("cause"));
         let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
         let field = || "age".to_string();
-        let errors: Vec<Box<dyn Diagnostic>> = vec![
-            Box::new(Error::Kms(crate::kms::Error::Unexpected("kms".into()))),
-            Box::new(Error::Aead),
-            Box::new(Error::KeyCountMismatch {
+        let mut errors = Vec::new();
+        errors.extend(boxed(variants![
+            Error::Kms(_) => Error::Kms(crate::kms::Error::Unexpected("kms".into())),
+            Error::Aead => Error::Aead,
+            Error::KeyCountMismatch { .. } => Error::KeyCountMismatch {
                 expected: 2,
                 received: 1,
-            }),
-            Box::new(Error::DescriptorTooLong { len: 513 }),
-            Box::new(Error::Config(boxed())),
-            Box::new(Error::Term(TermError::EmptyTermText)),
-            Box::new(Error::Other(boxed())),
-            Box::new(Error::UnsupportedShape),
-            Box::new(Error::ContextMismatch {
+            },
+            Error::DescriptorTooLong { .. } => Error::DescriptorTooLong { len: 513 },
+            Error::Config(_) => Error::Config(cause()),
+            Error::Term(_) => Error::Term(TermError::EmptyTermText),
+            Error::Other(_) => Error::Other(cause()),
+            Error::UnsupportedShape => Error::UnsupportedShape,
+            Error::ContextMismatch { .. } => Error::ContextMismatch {
                 stored: Descriptor::of("users"),
-            }),
-            Box::new(Error::ResponseShape),
-            Box::new(Error::KeysetMismatch { left: a, right: b }),
-            Box::new(Error::ForeignKeyset {
+            },
+            Error::ResponseShape => Error::ResponseShape,
+            Error::KeysetMismatch { .. } => Error::KeysetMismatch { left: a, right: b },
+            Error::ForeignKeyset { .. } => Error::ForeignKeyset {
                 expected: a,
                 found: b,
-            }),
-            Box::new(Error::NoKeyset),
-            Box::new(Error::NotOpened),
-            Box::new(Error::Plan(PlanError::NoContext)),
-            Box::new(LeafBytesError::UnknownVersion(9)),
-            Box::new(LeafBytesError::Truncated),
-            Box::new(LeafBytesError::TagTooLong(70_000)),
-            Box::new(TermError::Prf(boxed())),
-            Box::new(TermError::Ore(cllw_ore::Error)),
-            Box::new(TermError::InvalidOptions("k out of range")),
-            Box::new(TermError::EmptyTermText),
-            Box::new(TermError::Bytes(TermBytesError::OddMatchTermsLength(3))),
-            Box::new(TermBytesError::WrongEqualityTermLength(3)),
-            Box::new(TermBytesError::OddMatchTermsLength(3)),
-            Box::new(TermBytesError::MatchPositionOutOfRange {
-                position: 900,
-                filter_size: 256,
-            }),
-            Box::new(TermBytesError::MalformedCllwCiphertext(3)),
-            Box::new(LabelError::Empty),
-            Box::new(LabelError::EmptySegment { index: 0 }),
-            Box::new(LabelError::Separator { index: 0 }),
-            Box::new(LabelError::Reserved {
+            },
+            Error::NoKeyset => Error::NoKeyset,
+            Error::NotOpened => Error::NotOpened,
+            Error::Plan(_) => Error::Plan(PlanError::NoContext),
+        ]));
+        errors.extend(boxed(variants![
+            LeafBytesError::UnknownVersion(_) => LeafBytesError::UnknownVersion(9),
+            LeafBytesError::Truncated => LeafBytesError::Truncated,
+            LeafBytesError::TagTooLong(_) => LeafBytesError::TagTooLong(70_000),
+        ]));
+        errors.extend(boxed(variants![
+            TermError::Prf(_) => TermError::Prf(cause()),
+            TermError::Ore(_) => TermError::Ore(cllw_ore::Error),
+            TermError::InvalidOptions(_) => TermError::InvalidOptions("k out of range"),
+            TermError::EmptyTermText => TermError::EmptyTermText,
+            TermError::Bytes(_) => TermError::Bytes(TermBytesError::OddMatchTermsLength(3)),
+        ]));
+        errors.extend(boxed(variants![
+            TermBytesError::WrongEqualityTermLength(_) => {
+                TermBytesError::WrongEqualityTermLength(3)
+            },
+            TermBytesError::OddMatchTermsLength(_) => TermBytesError::OddMatchTermsLength(3),
+            TermBytesError::MatchPositionOutOfRange { .. } => {
+                TermBytesError::MatchPositionOutOfRange {
+                    position: 900,
+                    filter_size: 256,
+                }
+            },
+            TermBytesError::MalformedCllwCiphertext(_) => {
+                TermBytesError::MalformedCllwCiphertext(3)
+            },
+        ]));
+        errors.extend(boxed(variants![
+            LabelError::Empty => LabelError::Empty,
+            LabelError::EmptySegment { .. } => LabelError::EmptySegment { index: 0 },
+            LabelError::Separator { .. } => LabelError::Separator { index: 0 },
+            LabelError::Reserved { .. } => LabelError::Reserved {
                 index: 0,
                 found: '(',
-            }),
-            Box::new(LabelError::ReservedPrefix { index: 0 }),
-            Box::new(PlanError::ContextLabel(LabelError::Empty)),
-            Box::new(PlanError::FieldLabel {
+            },
+            LabelError::ReservedPrefix { .. } => LabelError::ReservedPrefix { index: 0 },
+            LabelError::NotText => LabelError::NotText,
+        ]));
+        errors.extend(boxed(variants![
+            PlanError::ContextLabel(_) => PlanError::ContextLabel(LabelError::Empty),
+            PlanError::FieldLabel { .. } => PlanError::FieldLabel {
                 field: field(),
                 source: LabelError::Empty,
-            }),
-            Box::new(PlanError::IdentityWithoutField),
-            Box::new(PlanError::DuplicateField { field: field() }),
-            Box::new(PlanError::SharedIdentity {
+            },
+            PlanError::IdentityWithoutField => PlanError::IdentityWithoutField,
+            PlanError::DuplicateField { .. } => PlanError::DuplicateField { field: field() },
+            PlanError::SharedIdentity { .. } => PlanError::SharedIdentity {
                 identity: "age".into(),
                 first: "age".into(),
                 second: "years".into(),
-            }),
-            Box::new(PlanError::PassthroughIndexed { field: field() }),
-            Box::new(PlanError::DuplicateIndex {
+            },
+            PlanError::PassthroughIndexed { .. } => {
+                PlanError::PassthroughIndexed { field: field() }
+            },
+            PlanError::DuplicateIndex { .. } => PlanError::DuplicateIndex {
                 at: field(),
                 index: "eq",
-            }),
-            Box::new(PlanError::EmptyIndexes),
-            Box::new(PlanError::NotInPlan { field: field() }),
-            Box::new(PlanError::NotInValue { field: field() }),
-            Box::new(PlanError::FieldType {
+            },
+            PlanError::EmptyIndexes => PlanError::EmptyIndexes,
+            PlanError::NotInPlan { .. } => PlanError::NotInPlan { field: field() },
+            PlanError::NotInValue { .. } => PlanError::NotInValue { field: field() },
+            PlanError::FieldType { .. } => PlanError::FieldType {
                 field: field(),
                 expected: "int64",
-            }),
-            Box::new(PlanError::NoSuchField { field: field() }),
-            Box::new(PlanError::MixedCiphers),
-            Box::new(PlanError::IndexNotDeclared {
+            },
+            PlanError::NoSuchField { .. } => PlanError::NoSuchField { field: field() },
+            PlanError::MixedCiphers => PlanError::MixedCiphers,
+            PlanError::IndexNotDeclared { .. } => PlanError::IndexNotDeclared {
                 field: field(),
                 index: "ore",
-            }),
-            Box::new(PlanError::IndexOptions {
+            },
+            PlanError::IndexOptions { .. } => PlanError::IndexOptions {
                 field: field(),
                 declared: IndexSpec::Match(MatchOptions::default()),
                 asked: IndexSpec::Match(MatchOptions {
                     downcase: false,
                     ..MatchOptions::default()
                 }),
-            }),
-            Box::new(PlanError::TwoContextSources {
+            },
+            PlanError::TwoContextSources { .. } => PlanError::TwoContextSources {
                 first: "the plan",
                 second: "the call",
-            }),
-            Box::new(PlanError::NoContext),
-            Box::new(PlanError::TargetWithVerbs { field: field() }),
-        ];
+            },
+            PlanError::NoContext => PlanError::NoContext,
+            PlanError::TargetWithVerbs { .. } => PlanError::TargetWithVerbs { field: field() },
+        ]));
         #[cfg(feature = "dynamic")]
-        let errors = errors.into_iter().chain(dynamic_variants()).collect();
+        errors.extend(dynamic_variants());
         errors
     }
 
@@ -205,83 +164,78 @@ mod tests {
         use crate::dynamic::{Error, Reason, TargetError, ValueKind};
         let name = || "email".to_string();
         let target = || "TextEq".to_string();
-        vec![
-            Box::new(Error::bad_context(Reason::EmptyContext)),
-            Box::new(Error::Term {
+        let mut errors = Vec::new();
+        errors.extend(boxed(variants![
+            Error::Context { .. } => Error::bad_context(Reason::EmptyContext),
+            Error::Term { .. } => Error::Term {
                 field: Some(name()),
                 kind: IndexSpec::Equality,
-            }),
-            Box::new(Error::bad_plan(Reason::NoFields)),
-            Box::new(Error::UntypedIndex { field: name() }),
-            Box::new(Error::bad_source(Reason::FieldMissing)),
-            Box::new(Error::bad_record(Reason::NoCiphertextNode)),
-            Box::new(Error::Internal),
-            Box::new(Error::Target(TargetError::NoTargets { name: target() })),
-            Box::new(Error::Cipher(crate::Error::Aead)),
-            Box::new(TargetError::NoTargets { name: target() }),
-            Box::new(TargetError::Unknown { name: target() }),
-            Box::new(TargetError::Unproducible {
+            },
+            Error::Plan { .. } => Error::bad_plan(Reason::NoFields),
+            Error::UntypedIndex { .. } => Error::UntypedIndex { field: name() },
+            Error::Source { .. } => Error::bad_source(Reason::FieldMissing),
+            Error::Record { .. } => Error::bad_record(Reason::NoCiphertextNode),
+            Error::Internal => Error::Internal,
+            Error::Target(_) => Error::Target(TargetError::NoTargets { name: target() }),
+            Error::Cipher(_) => Error::Cipher(crate::Error::Aead),
+        ]));
+        errors.extend(boxed(variants![
+            TargetError::NoTargets { .. } => TargetError::NoTargets { name: target() },
+            TargetError::Unknown { .. } => TargetError::Unknown { name: target() },
+            TargetError::Unproducible { .. } => TargetError::Unproducible {
                 name: target(),
                 reason: "block ORE".into(),
-            }),
-            Box::new(TargetError::NoQuery { name: target() }),
-            Box::new(TargetError::Extended {
+            },
+            TargetError::NoQuery { .. } => TargetError::NoQuery { name: target() },
+            TargetError::Extended { .. } => TargetError::Extended {
                 name: name(),
                 label: "users/email".into(),
-            }),
-            Box::new(TargetError::Kind {
+            },
+            TargetError::ContextField { .. } => TargetError::ContextField {
+                name: name(),
+                context_field: "tenant".into(),
+            },
+            TargetError::Kind { .. } => TargetError::Kind {
                 name: name(),
                 target: target(),
                 expected: Some(ValueKind::String),
                 declared: ValueKind::UInt64,
-            }),
-            Box::new(TargetError::Column {
+            },
+            TargetError::Column { .. } => TargetError::Column {
                 name: name(),
                 label: "app/users/email".into(),
                 reason: "two segments".into(),
-            }),
-            Box::new(TargetError::Plaintext {
+            },
+            TargetError::Plaintext { .. } => TargetError::Plaintext {
                 name: name(),
                 target: target(),
                 expected: Some(ValueKind::String),
                 found: None,
-            }),
-            Box::new(TargetError::Stored {
+            },
+            TargetError::Stored { .. } => TargetError::Stored {
                 name: name(),
                 target: target(),
                 reason: "not JSON".into(),
-            }),
-            Box::new(TargetError::Other(Box::new(std::io::Error::other("boom")))),
-        ]
+            },
+            TargetError::Other(_) => TargetError::Other(Box::new(std::io::Error::other("boom"))),
+        ]));
+        errors
     }
 
+    /// Every variant has a code in this crate's namespace and `snake_case`,
+    /// save one that carries a stack-kms error, whose code is that error's.
     #[test]
-    fn every_variant_has_a_listed_code() {
-        let mut seen = BTreeSet::new();
+    fn every_variant_has_a_code_of_this_crate() {
         for error in every_variant() {
             let code = error
                 .code()
                 .unwrap_or_else(|| panic!("{error:?} has no code"))
                 .to_string();
-            if code.starts_with("stack_kms::") {
-                assert!(crate::kms::ERROR_CODES.contains(&code.as_str()), "{code}");
-                continue;
-            }
-            assert!(is_code_of("stack_encrypt", &code), "{code}");
-            assert!(ERROR_CODES.contains(&code.as_str()), "{code} is unlisted");
-            seen.insert(code);
+            assert!(
+                is_code_of("stack_encrypt", &code) || is_code_of("stack_kms", &code),
+                "{code}"
+            );
         }
-        // The dynamic module's codes need its feature to be built.
-        let listed: BTreeSet<String> = ERROR_CODES
-            .iter()
-            .filter(|code| {
-                cfg!(feature = "dynamic")
-                    || !(code.starts_with("stack_encrypt::dynamic_")
-                        || code.starts_with("stack_encrypt::target_"))
-            })
-            .map(|code| code.to_string())
-            .collect();
-        assert_eq!(seen, listed, "every listed code is produced");
     }
 
     /// A stored context can be customer data: its descriptor stays out of

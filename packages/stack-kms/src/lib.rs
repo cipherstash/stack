@@ -121,7 +121,6 @@ pub use maybe_send::MaybeSend;
 // Errors
 pub use errors::{
     Error, GenerateKeyError, InvalidKeyMaterialError, LoadKeysetError, RetrieveKeyError,
-    ERROR_CODES,
 };
 /// The trait every error from this crate implements to hand over its
 /// structured fields, with the rule for what an error may contain, and the

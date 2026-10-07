@@ -13,9 +13,9 @@ use crate::LabelError;
 ///
 /// [`Error::Plan`]: crate::Error::Plan
 ///
-/// Every variant has a miette code in [`ERROR_CODES`](crate::ERROR_CODES),
-/// and names the field it is about where there is one, in its message and
-/// its [`ErrorPayload`](crate::ErrorPayload). Field names describe the
+/// Every variant has a `stack_encrypt::` miette code, and names the field
+/// it is about where there is one, in its message and its
+/// [`ErrorPayload`](crate::ErrorPayload). Field names describe the
 /// schema, not the data, so a message may carry them.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]

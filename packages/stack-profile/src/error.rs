@@ -4,7 +4,8 @@ use crate::diagnostic::{describe_json_error, payload, ErrorPayload};
 
 /// Errors that can occur when reading or writing profile files.
 ///
-/// Every variant has a miette code in [`ERROR_CODES`](crate::ERROR_CODES).
+/// Every variant has a miette code, `stack_profile::` and a `snake_case`
+/// name.
 /// [`Io`](Self::Io) and [`Json`](Self::Json) wrap another library's error
 /// and keep its message out of their own (see [`ErrorPayload`] for the
 /// rule): the wrapped error is their [`source`](std::error::Error::source).
@@ -84,61 +85,62 @@ impl ErrorPayload for ProfileError {
     }
 }
 
-/// Every miette code [`ProfileError`] can carry. A test builds every variant
-/// and checks its code is here, so renaming a code means editing this list
-/// on purpose.
-pub const ERROR_CODES: &[&str] = &[
-    "stack_profile::io",
-    "stack_profile::json",
-    "stack_profile::home_dir_not_found",
-    "stack_profile::not_found",
-    "stack_profile::invalid_filename",
-    "stack_profile::no_current_workspace",
-    "stack_profile::invalid_workspace_id",
-    "stack_profile::workspace_not_found",
-];
-
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
-
     use miette::Diagnostic;
 
     use super::*;
     use crate::diagnostic::is_code_of;
 
+    /// One row per variant of an enum, written `pattern => value`. The
+    /// patterns are the arms of a match with no wildcard, so a variant with
+    /// no row fails to compile, and each value must match its own pattern.
+    macro_rules! variants {
+        ($($pattern:pat => $value:expr),+ $(,)?) => {{
+            let rows = vec![$({
+                let value = $value;
+                assert!(matches!(value, $pattern), "{value:?} is not {}", stringify!($pattern));
+                value
+            }),+];
+            for row in &rows {
+                match row {
+                    $($pattern => {})+
+                }
+            }
+            rows
+        }};
+    }
+
     /// One of every variant, so the code test covers them all.
     fn every_variant() -> Vec<ProfileError> {
-        vec![
-            ProfileError::Io(std::io::Error::other("disk")),
-            serde_json::from_str::<u8>("\"secret\"")
+        variants![
+            ProfileError::Io(_) => ProfileError::Io(std::io::Error::other("disk")),
+            ProfileError::Json(_) => serde_json::from_str::<u8>("\"secret\"")
                 .map_err(ProfileError::Json)
                 .unwrap_err(),
-            ProfileError::HomeDirNotFound,
-            ProfileError::NotFound {
+            ProfileError::HomeDirNotFound => ProfileError::HomeDirNotFound,
+            ProfileError::NotFound { .. } => ProfileError::NotFound {
                 path: "auth.json".into(),
             },
-            ProfileError::InvalidFilename("../x".into()),
-            ProfileError::NoCurrentWorkspace,
-            ProfileError::InvalidWorkspaceId("short".into()),
-            ProfileError::WorkspaceNotFound("AAAAAAAAAAAAAAAA".into()),
+            ProfileError::InvalidFilename(_) => ProfileError::InvalidFilename("../x".into()),
+            ProfileError::NoCurrentWorkspace => ProfileError::NoCurrentWorkspace,
+            ProfileError::InvalidWorkspaceId(_) => ProfileError::InvalidWorkspaceId("short".into()),
+            ProfileError::WorkspaceNotFound(_) => {
+                ProfileError::WorkspaceNotFound("AAAAAAAAAAAAAAAA".into())
+            }
         ]
     }
 
+    /// Every variant has a code, in this crate's namespace and `snake_case`.
     #[test]
-    fn every_variant_has_a_listed_code() {
-        let mut seen = BTreeSet::new();
+    fn every_variant_has_a_code_of_this_crate() {
         for error in every_variant() {
             let code = error
                 .code()
                 .unwrap_or_else(|| panic!("{error:?} has no code"))
                 .to_string();
             assert!(is_code_of("stack_profile", &code), "{code}");
-            assert!(ERROR_CODES.contains(&code.as_str()), "{code} is unlisted");
-            seen.insert(code);
         }
-        let listed: BTreeSet<String> = ERROR_CODES.iter().map(|c| c.to_string()).collect();
-        assert_eq!(seen, listed, "every listed code is produced by a variant");
     }
 
     /// serde_json quotes the value it refused; a profile file can hold a

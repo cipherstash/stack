@@ -26,7 +26,7 @@ use crate::access_key;
 /// [`error_code`](Self::error_code) is the frozen code the TypeScript
 /// bindings publish (`INVALID_CRN`), kept unchanged beside the miette
 /// [`code`](miette::Diagnostic::code) (`stack_auth::invalid_crn`) every error
-/// also carries; [`ERROR_CODES`](crate::ERROR_CODES) lists the miette codes.
+/// also carries.
 pub trait AuthErrorKind: std::error::Error + miette::Diagnostic {
     /// Stable machine-readable identifier surfaced across FFI boundaries
     /// (e.g. JS `Error.code`). Named `error_code` to avoid colliding with
@@ -985,44 +985,6 @@ impl ErrorPayload for AuthError {
     }
 }
 
-/// Every miette code an error from this crate can carry: [`AuthError`]'s
-/// twenty own codes and [`InvalidAccessKey`](crate::InvalidAccessKey)'s
-/// four. `DeviceClientError` adds none: each of its variants carries the
-/// code of the [`AuthError`] it converts into. A store failure carries a
-/// `stack_profile` code ([`StoreError`]), so it is not here.
-///
-/// Not [`AuthError::ERROR_CODES`]: that is the frozen list of `INVALID_CRN`
-/// style codes the TypeScript bindings publish. A test maps each
-/// [`AuthError`] miette code to its frozen code, so the two cannot drift,
-/// and another builds every variant and checks its code is here, so renaming
-/// a code means editing this list on purpose.
-pub const ERROR_CODES: &[&str] = &[
-    "stack_auth::request_error",
-    "stack_auth::access_denied",
-    "stack_auth::invalid_grant",
-    "stack_auth::invalid_client",
-    "stack_auth::invalid_url",
-    "stack_auth::invalid_region",
-    "stack_auth::invalid_crn",
-    "stack_auth::workspace_mismatch",
-    "stack_auth::invalid_workspace_id",
-    "stack_auth::missing_workspace_crn",
-    "stack_auth::not_authenticated",
-    "stack_auth::expired_token",
-    "stack_auth::invalid_access_key",
-    "stack_auth::invalid_token",
-    "stack_auth::usage_limit_exceeded",
-    "stack_auth::org_not_provisioned",
-    "stack_auth::server_error",
-    "stack_auth::already_consumed",
-    "stack_auth::internal_error",
-    "stack_auth::custom",
-    "stack_auth::access_key_missing_prefix",
-    "stack_auth::access_key_missing_dot",
-    "stack_auth::access_key_empty_id",
-    "stack_auth::access_key_empty_secret",
-];
-
 // ---------------------------------------------------------------------------
 // Ergonomic `From<Foreign>` impls — keep `?` working where call sites lift a
 // foreign error straight into `AuthError` (the per-struct wrapping is internal).
@@ -1674,41 +1636,59 @@ mod tests {
         );
     }
 
-    /// Every code an error from this crate produces is in [`ERROR_CODES`],
-    /// in this crate's namespace, and every listed code is produced.
+    /// One row per variant of an enum, written `pattern => value`. The
+    /// patterns are the arms of a match with no wildcard, so a variant with
+    /// no row fails to compile, and each value must match its own pattern.
+    macro_rules! variants {
+        ($($pattern:pat => $value:expr),+ $(,)?) => {{
+            let rows = vec![$({
+                let value = $value;
+                assert!(matches!(value, $pattern), "{value:?} is not {}", stringify!($pattern));
+                value
+            }),+];
+            for row in &rows {
+                match row {
+                    $($pattern => {})+
+                }
+            }
+            rows
+        }};
+    }
+
+    /// Every variant has a code in this crate's namespace and `snake_case`,
+    /// save a store failure, whose code is its profile error's.
+    /// [`every_variant`] has a row for every frozen code, so every
+    /// [`AuthError`] variant is here; the access-key rows cover
+    /// [`InvalidAccessKey`](crate::InvalidAccessKey).
     #[test]
-    fn every_variant_has_a_listed_code() {
+    fn every_variant_has_a_code_of_this_crate() {
+        use crate::InvalidAccessKey;
         use miette::Diagnostic;
         use stack_profile::diagnostic::is_code_of;
         let mut errors: Vec<Box<dyn Diagnostic>> = every_variant()
             .into_iter()
             .map(|(error, _, _)| Box::new(error) as Box<dyn Diagnostic>)
             .collect();
-        for key in ["CSAK", "nope", "CSAK.secret", "CSAKid."] {
-            errors.push(Box::new(
-                key.parse::<crate::access_key::AccessKey>().unwrap_err(),
-            ));
-        }
-        let mut seen = std::collections::BTreeSet::new();
+        errors.extend(
+            variants![
+                InvalidAccessKey::MissingPrefix => InvalidAccessKey::MissingPrefix,
+                InvalidAccessKey::MissingDot => InvalidAccessKey::MissingDot,
+                InvalidAccessKey::EmptyKeyId => InvalidAccessKey::EmptyKeyId,
+                InvalidAccessKey::EmptySecret => InvalidAccessKey::EmptySecret,
+            ]
+            .into_iter()
+            .map(|error| Box::new(error) as Box<dyn Diagnostic>),
+        );
         for error in &errors {
             let code = error
                 .code()
                 .unwrap_or_else(|| panic!("{error:?} has no code"))
                 .to_string();
-            if code.starts_with("stack_profile::") {
-                assert!(
-                    stack_profile::ERROR_CODES.contains(&code.as_str()),
-                    "{code}"
-                );
-                continue;
-            }
-            assert!(is_code_of("stack_auth", &code), "{code}");
-            assert!(ERROR_CODES.contains(&code.as_str()), "{code} is unlisted");
-            seen.insert(code);
+            assert!(
+                is_code_of("stack_auth", &code) || is_code_of("stack_profile", &code),
+                "{code}"
+            );
         }
-        let listed: std::collections::BTreeSet<String> =
-            ERROR_CODES.iter().map(|code| code.to_string()).collect();
-        assert_eq!(seen, listed, "every listed code is produced");
     }
 
     /// A store failure's payload is the profile error's, so a binding

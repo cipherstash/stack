@@ -191,46 +191,8 @@ impl From<ViturRequestError> for LoadKeysetError {
     }
 }
 
-/// Every miette code an error from this crate can carry. The variants that
-/// carry a `stack_auth` error carry its code instead, so those are in
-/// `stack_auth::ERROR_CODES`. A test builds every variant and checks its code
-/// is here, so renaming a code means editing this list on purpose.
-pub const ERROR_CODES: &[&str] = &[
-    "stack_kms::invalid_key_material",
-    "stack_kms::retrieve_key_failed",
-    "stack_kms::retrieved_key_count",
-    "stack_kms::key_not_retrieved",
-    "stack_kms::generate_key_unauthorized",
-    "stack_kms::generate_key_forbidden",
-    "stack_kms::generate_iv",
-    "stack_kms::generated_key_count",
-    "stack_kms::generate_key_failed",
-    "stack_kms::load_keyset_unauthorized",
-    "stack_kms::load_keyset_forbidden",
-    "stack_kms::keyset_not_found",
-    "stack_kms::load_keyset_failed",
-    "stack_kms::connection_init",
-    "stack_kms::invalid_endpoint",
-    "stack_kms::unexpected",
-    "stack_kms::endpoint_not_url",
-    "stack_kms::endpoint_no_host",
-    "stack_kms::endpoint_scheme",
-    "stack_kms::endpoint_query_or_fragment",
-    "stack_kms::endpoint_userinfo",
-    "stack_kms::client_key_not_configured",
-    "stack_kms::invalid_client_key",
-    "stack_kms::client_key_load",
-    "stack_kms::invalid_client_opts",
-    "stack_kms::base_url_unresolved",
-    "stack_kms::unexpected_content_type",
-    "stack_kms::failure_response",
-    "stack_kms::http_client_init",
-];
-
 #[cfg(test)]
 mod codes {
-    use std::collections::BTreeSet;
-
     use stack_auth::diagnostic::is_code_of;
 
     use super::*;
@@ -250,66 +212,34 @@ mod codes {
         .into()
     }
 
-    /// One of every variant of every error type here. A transparent
-    /// variant is built once, to show the code it forwards is listed
-    /// somewhere.
+    /// One row per variant of an enum, written `pattern => value`. The
+    /// patterns are the arms of a match with no wildcard, so a variant with
+    /// no row fails to compile, and each value must match its own pattern.
+    macro_rules! variants {
+        ($($pattern:pat => $value:expr),+ $(,)?) => {{
+            let rows = vec![$({
+                let value = $value;
+                assert!(matches!(value, $pattern), "{value:?} is not {}", stringify!($pattern));
+                value
+            }),+];
+            for row in &rows {
+                match row {
+                    $($pattern => {})+
+                }
+            }
+            rows
+        }};
+    }
+
+    fn boxed<E: Diagnostic + 'static>(rows: Vec<E>) -> impl Iterator<Item = Box<dyn Diagnostic>> {
+        rows.into_iter()
+            .map(|error| Box::new(error) as Box<dyn Diagnostic>)
+    }
+
+    /// One of every variant of every error type here.
     fn every_variant() -> Vec<Box<dyn Diagnostic>> {
         let mut errors: Vec<Box<dyn Diagnostic>> = vec![
             Box::new(material()),
-            Box::new(RetrieveKeyError::RequestFailed(vitur(
-                ViturRequestErrorKind::SendRequest,
-            ))),
-            Box::new(RetrieveKeyError::InvalidNumberOfKeys {
-                expected: 2,
-                received: 1,
-            }),
-            Box::new(RetrieveKeyError::FailedRetrieval("no key".into())),
-            Box::new(RetrieveKeyError::InvalidKeyMaterial(material())),
-            Box::new(GenerateKeyError::Unauthorized),
-            Box::new(GenerateKeyError::Forbidden),
-            Box::new(GenerateKeyError::GenerateIv(RandomError::GenerationFailed)),
-            Box::new(GenerateKeyError::InvalidNumberOfKeys {
-                expected: 2,
-                received: 1,
-            }),
-            Box::new(GenerateKeyError::InvalidKeyMaterial(material())),
-            Box::new(GenerateKeyError::RequestFailed(vitur(
-                ViturRequestErrorKind::Other,
-            ))),
-            Box::new(LoadKeysetError::Unauthorized(vitur(
-                ViturRequestErrorKind::Unauthorized,
-            ))),
-            Box::new(LoadKeysetError::Forbidden(vitur(
-                ViturRequestErrorKind::Forbidden,
-            ))),
-            Box::new(LoadKeysetError::KeysetNotFound(vitur(
-                ViturRequestErrorKind::NotFound,
-            ))),
-            Box::new(LoadKeysetError::InvalidKeyMaterial(material())),
-            Box::new(LoadKeysetError::RequestFailed(vitur(
-                ViturRequestErrorKind::Conflict,
-            ))),
-            Box::new(Error::GenerateKey(GenerateKeyError::Forbidden)),
-            Box::new(Error::RetrieveKey(RetrieveKeyError::FailedRetrieval(
-                "no key".into(),
-            ))),
-            Box::new(Error::LoadKeyset(LoadKeysetError::KeysetNotFound(vitur(
-                ViturRequestErrorKind::NotFound,
-            )))),
-            Box::new(Error::Auth(stack_auth::AuthError::TokenExpired(
-                stack_auth::TokenExpired,
-            ))),
-            Box::new(Error::ConnectionInit(Box::new(std::io::Error::other("no")))),
-            Box::new(Error::InvalidEndpoint(InvalidEndpoint::Userinfo)),
-            Box::new(Error::Unexpected("unexpected".into())),
-            Box::new(InvalidEndpoint::Parse(url::ParseError::EmptyHost)),
-            Box::new(InvalidEndpoint::NoHost("localhost:8080".into())),
-            Box::new(InvalidEndpoint::Scheme("ftp".into())),
-            Box::new(InvalidEndpoint::QueryOrFragment("https://x/?q".into())),
-            Box::new(InvalidEndpoint::Userinfo),
-            Box::new(KeyProviderError::NotConfigured("unset".into())),
-            Box::new(KeyProviderError::InvalidKey("not hex".into())),
-            Box::new(KeyProviderError::LoadError("disk".into())),
             Box::new(BaseUrlUnresolved),
             Box::new(UnexpectedContentType {
                 received: Some("text/html".into()),
@@ -323,6 +253,88 @@ mod codes {
                 headers: Default::default(),
             }),
         ];
+        errors.extend(boxed(variants![
+            RetrieveKeyError::RequestFailed(_) => {
+                RetrieveKeyError::RequestFailed(vitur(ViturRequestErrorKind::SendRequest))
+            },
+            RetrieveKeyError::InvalidNumberOfKeys { .. } => RetrieveKeyError::InvalidNumberOfKeys {
+                expected: 2,
+                received: 1,
+            },
+            RetrieveKeyError::FailedRetrieval(_) => {
+                RetrieveKeyError::FailedRetrieval("no key".into())
+            },
+            RetrieveKeyError::InvalidKeyMaterial(_) => {
+                RetrieveKeyError::InvalidKeyMaterial(material())
+            },
+        ]));
+        errors.extend(boxed(variants![
+            GenerateKeyError::Unauthorized => GenerateKeyError::Unauthorized,
+            GenerateKeyError::Forbidden => GenerateKeyError::Forbidden,
+            GenerateKeyError::GenerateIv(_) => {
+                GenerateKeyError::GenerateIv(RandomError::GenerationFailed)
+            },
+            GenerateKeyError::InvalidNumberOfKeys { .. } => GenerateKeyError::InvalidNumberOfKeys {
+                expected: 2,
+                received: 1,
+            },
+            GenerateKeyError::InvalidKeyMaterial(_) => {
+                GenerateKeyError::InvalidKeyMaterial(material())
+            },
+            GenerateKeyError::RequestFailed(_) => {
+                GenerateKeyError::RequestFailed(vitur(ViturRequestErrorKind::Other))
+            },
+        ]));
+        errors.extend(boxed(variants![
+            LoadKeysetError::Unauthorized(_) => {
+                LoadKeysetError::Unauthorized(vitur(ViturRequestErrorKind::Unauthorized))
+            },
+            LoadKeysetError::Forbidden(_) => {
+                LoadKeysetError::Forbidden(vitur(ViturRequestErrorKind::Forbidden))
+            },
+            LoadKeysetError::KeysetNotFound(_) => {
+                LoadKeysetError::KeysetNotFound(vitur(ViturRequestErrorKind::NotFound))
+            },
+            LoadKeysetError::InvalidKeyMaterial(_) => {
+                LoadKeysetError::InvalidKeyMaterial(material())
+            },
+            LoadKeysetError::RequestFailed(_) => {
+                LoadKeysetError::RequestFailed(vitur(ViturRequestErrorKind::Conflict))
+            },
+        ]));
+        // A variant that wraps another of this crate's errors, or a
+        // stack-auth error, forwards that error's code.
+        errors.extend(boxed(variants![
+            Error::GenerateKey(_) => Error::GenerateKey(GenerateKeyError::Forbidden),
+            Error::RetrieveKey(_) => {
+                Error::RetrieveKey(RetrieveKeyError::FailedRetrieval("no key".into()))
+            },
+            Error::LoadKeyset(_) => Error::LoadKeyset(LoadKeysetError::KeysetNotFound(vitur(
+                ViturRequestErrorKind::NotFound,
+            ))),
+            Error::Auth(_) => {
+                Error::Auth(stack_auth::AuthError::TokenExpired(stack_auth::TokenExpired))
+            },
+            Error::ConnectionInit(_) => {
+                Error::ConnectionInit(Box::new(std::io::Error::other("no")))
+            },
+            Error::InvalidEndpoint(_) => Error::InvalidEndpoint(InvalidEndpoint::Userinfo),
+            Error::Unexpected(_) => Error::Unexpected("unexpected".into()),
+        ]));
+        errors.extend(boxed(variants![
+            InvalidEndpoint::Parse(_) => InvalidEndpoint::Parse(url::ParseError::EmptyHost),
+            InvalidEndpoint::NoHost(_) => InvalidEndpoint::NoHost("localhost:8080".into()),
+            InvalidEndpoint::Scheme(_) => InvalidEndpoint::Scheme("ftp".into()),
+            InvalidEndpoint::QueryOrFragment(_) => {
+                InvalidEndpoint::QueryOrFragment("https://x/?q".into())
+            },
+            InvalidEndpoint::Userinfo => InvalidEndpoint::Userinfo,
+        ]));
+        errors.extend(boxed(variants![
+            KeyProviderError::NotConfigured(_) => KeyProviderError::NotConfigured("unset".into()),
+            KeyProviderError::InvalidKey(_) => KeyProviderError::InvalidKey("not hex".into()),
+            KeyProviderError::LoadError(_) => KeyProviderError::LoadError("disk".into()),
+        ]));
         if let Err(error) = crate::ClientOpts::new(()).with_max_keys_per_req(0) {
             errors.push(Box::new(error));
         }
@@ -334,43 +346,47 @@ mod codes {
                 .build()
                 .expect_err("not a URL");
             errors.push(Box::new(crate::ConnectionInitError::from(reqwest_error)));
-            errors.push(Box::new(StackKmsBuilderError::InvalidEndpoint {
-                env_var: "CS_ZEROKMS_HOST",
-                source: InvalidEndpoint::Userinfo,
-            }));
-            errors.push(Box::new(StackKmsBuilderError::ClientInit(
-                Error::Unexpected("x".into()),
-            )));
-            errors.push(Box::new(StackKmsBuilderError::KeyProvider(
-                KeyProviderError::NotConfigured("unset".into()),
-            )));
+            errors.extend(boxed(variants![
+                StackKmsBuilderError::InvalidEndpoint { .. } => {
+                    StackKmsBuilderError::InvalidEndpoint {
+                        env_var: "CS_ZEROKMS_HOST",
+                        source: InvalidEndpoint::Userinfo,
+                    }
+                },
+                StackKmsBuilderError::ClientInit(_) => {
+                    StackKmsBuilderError::ClientInit(Error::Unexpected("x".into()))
+                },
+                StackKmsBuilderError::Auth(_) => StackKmsBuilderError::Auth(
+                    stack_auth::AuthError::TokenExpired(stack_auth::TokenExpired)
+                ),
+                StackKmsBuilderError::InvalidConfig(_) => StackKmsBuilderError::InvalidConfig(
+                    crate::ClientOpts::new(())
+                        .with_max_keys_per_req(0)
+                        .err()
+                        .expect("zero keys per request is refused"),
+                ),
+                StackKmsBuilderError::KeyProvider(_) => StackKmsBuilderError::KeyProvider(
+                    KeyProviderError::NotConfigured("unset".into()),
+                ),
+            ]));
         }
         errors
     }
 
+    /// Every variant has a code in this crate's namespace and `snake_case`,
+    /// save one that carries a stack-auth error, whose code is that error's.
     #[test]
-    fn every_variant_has_a_listed_code() {
-        let mut seen = BTreeSet::new();
+    fn every_variant_has_a_code_of_this_crate() {
         for error in every_variant() {
             let code = error
                 .code()
                 .unwrap_or_else(|| panic!("{error:?} has no code"))
                 .to_string();
-            if code.starts_with("stack_auth::") {
-                assert!(stack_auth::ERROR_CODES.contains(&code.as_str()), "{code}");
-                continue;
-            }
-            assert!(is_code_of("stack_kms", &code), "{code}");
-            assert!(ERROR_CODES.contains(&code.as_str()), "{code} is unlisted");
-            seen.insert(code);
+            assert!(
+                is_code_of("stack_kms", &code) || is_code_of("stack_auth", &code),
+                "{code}"
+            );
         }
-        // `http_client_init` needs the `http` feature to be built.
-        let listed: BTreeSet<String> = ERROR_CODES
-            .iter()
-            .filter(|code| cfg!(feature = "http") || **code != "stack_kms::http_client_init")
-            .map(|code| code.to_string())
-            .collect();
-        assert_eq!(seen, listed, "every listed code is produced");
     }
 
     /// A ZeroKMS failure gives its request kind, never the response it

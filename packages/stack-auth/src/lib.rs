@@ -77,7 +77,6 @@ mod oidc_refresher;
 mod refresher;
 
 pub use error::StoreError;
-pub use error::ERROR_CODES;
 pub use error::{
     AccessDenied, AlreadyConsumed, AuthError, AuthErrorKind, CustomError, InternalError,
     InvalidAccessKeyError, InvalidClient, InvalidCrn, InvalidGrant, InvalidToken, InvalidUrl,

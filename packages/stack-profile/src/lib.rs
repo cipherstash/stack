@@ -69,7 +69,7 @@ mod profile_store;
 
 pub use device_identity::DeviceIdentity;
 pub use diagnostic::ErrorPayload;
-pub use error::{ProfileError, ERROR_CODES};
+pub use error::ProfileError;
 pub use profile_store::{FileLockGuard, ProfileStore};
 
 /// A type that can be stored in a profile directory.
