@@ -32,6 +32,10 @@ type genFile struct {
 	shapeName   string
 	shapeSource string // "User{}", "crm.Contact{}"
 	shapeFields []shapeField
+	// One shape for each embedded struct the file reads fields through:
+	// the outer shape embeds the same named type, so a field added to it
+	// would still convert.
+	embeddedShapes []embeddedShape
 
 	// Generated names.
 	encName         string // "EncryptedUser"
@@ -63,6 +67,12 @@ type shapeField struct {
 	embedded bool
 	name     string
 	typeExpr string
+}
+
+type embeddedShape struct {
+	name   string // "patientShapePerson"
+	source string // "Person{}"
+	fields []shapeField
 }
 
 // encMember is one member of the encrypted struct: a field, or an embedded
@@ -253,6 +263,11 @@ func (r *reader) build(collected *collected, typeName string, valueNamed *types.
 		conversionNotice = fmt.Sprintf("%s has unexported fields, so Go cannot convert it to a copy of its fields. This file reads each field by name: the compiler finds a removed or retyped field, and CI finds an added one.", typeName)
 	default:
 		f.shapeFields = shapeOf(valueStruct, r.typeExpr)
+	}
+	if f.shapeName != "" {
+		if notice := r.embedShapes(f, valueStruct, f.shapeName); notice != "" {
+			conversionNotice = notice
+		}
 	}
 
 	if err := r.buildFields(collected); err != nil {
@@ -504,6 +519,39 @@ func methodSig(t types.Type, name string) *types.Signature {
 		}
 	}
 	return nil
+}
+
+// embedShapes adds a shape for each embedded struct of st the file reads,
+// recursively, so a field added to one stops the build as a field added to
+// the outer struct does. An embedded struct left out with `stash:"-"` is not
+// read and gets none. One from another package with an unexported field
+// cannot convert; the notice it returns says CI finds a field added to it.
+func (r *reader) embedShapes(f *genFile, st *types.Struct, prefix string) string {
+	var notice string
+	for i := range st.NumFields() {
+		fld := st.Field(i)
+		if !fld.Embedded() {
+			continue
+		}
+		if t, err := parseTag(st.Tag(i)); err == nil && t.Omit {
+			continue
+		}
+		named, inner, ok := embeddedStruct(fld.Type())
+		if !ok || named == nil {
+			continue
+		}
+		name := prefix + named.Obj().Name()
+		samePkg := named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == r.pkg.PkgPath
+		if !samePkg && hasUnexported(inner) {
+			notice = fmt.Sprintf("%s has unexported fields, so Go cannot convert it to a copy of its fields: the compiler finds a removed or retyped field of it, and CI finds an added one.", r.typeExpr(named))
+			continue
+		}
+		f.embeddedShapes = append(f.embeddedShapes, embeddedShape{name: name, source: r.typeExpr(named) + "{}", fields: shapeOf(inner, r.typeExpr)})
+		if n := r.embedShapes(f, inner, name); n != "" {
+			notice = n
+		}
+	}
+	return notice
 }
 
 func shapeOf(st *types.Struct, typeExpr func(types.Type) string) []shapeField {

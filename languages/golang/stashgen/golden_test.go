@@ -164,3 +164,51 @@ func diff(want, got string) string {
 	}
 	return b.String()
 }
+
+// A field added to an embedded struct stops the build, as one added to the
+// outer struct does: the outer shape embeds the same named type, so only
+// the embedded struct's own shape notices.
+func TestAFieldAddedToAnEmbeddedStructStopsTheBuild(t *testing.T) {
+	caseDir := filepath.Join("testdata", "cases", "embedded")
+	golden, err := os.ReadFile(filepath.Join(caseDir, "patient_stash.go.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	if err := copyTree(caseDir, tmp); err != nil {
+		t.Fatal(err)
+	}
+	testdata, err := filepath.Abs("testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gomod, err := os.ReadFile(filepath.Join(tmp, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gomod = bytes.ReplaceAll(gomod, []byte("../../stubsdk"), []byte(filepath.Join(testdata, "stubsdk")))
+	gomod = bytes.ReplaceAll(gomod, []byte("../../stubgorm"), []byte(filepath.Join(testdata, "stubgorm")))
+	src, err := os.ReadFile(filepath.Join(tmp, "embedded.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	grown := bytes.Replace(src, []byte("\tnotes string\n"), []byte("\tnotes string\n\tPhone string `stash:\"phone,encrypt\"`\n"), 1)
+	if bytes.Equal(grown, src) {
+		t.Fatal("the case's Person changed; update this test")
+	}
+	for name, data := range map[string][]byte{"go.mod": gomod, "embedded.go": grown, "patient_stash.go": golden} {
+		if err := os.WriteFile(filepath.Join(tmp, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command("go", "build", "./...")
+	cmd.Dir = tmp
+	cmd.Env = append(os.Environ(), "GOPROXY=off", "GOWORK=off", "GOFLAGS=-mod=mod", "CGO_ENABLED=0")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("the stale file still compiles after Person gained a field")
+	}
+	if !strings.Contains(string(out), "patientShapePerson") {
+		t.Fatalf("the build failed, but not at the embedded shape:\n%s", out)
+	}
+}

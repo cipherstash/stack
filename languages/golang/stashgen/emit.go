@@ -185,8 +185,19 @@ func (w *writer) shape(f *genFile) {
 	w.p("// Stops compiling when %s gains, loses, reorders or retypes a field.", f.typeName)
 	w.p("var _ = %s(%s)", f.shapeName, f.shapeSource)
 	w.nl()
-	w.p("type %s struct {", f.shapeName)
-	for _, s := range f.shapeFields {
+	w.shapeStruct(f.shapeName, f.shapeFields)
+	for _, e := range f.embeddedShapes {
+		w.nl()
+		w.p("// Stops compiling when the embedded %s gains, loses, reorders or retypes a field.", strings.TrimSuffix(e.source, "{}"))
+		w.p("var _ = %s(%s)", e.name, e.source)
+		w.nl()
+		w.shapeStruct(e.name, e.fields)
+	}
+}
+
+func (w *writer) shapeStruct(name string, fields []shapeField) {
+	w.p("type %s struct {", name)
+	for _, s := range fields {
 		if s.embedded {
 			w.p("\t%s", s.typeExpr)
 		} else {

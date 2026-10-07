@@ -201,12 +201,19 @@ jobs:
       # file is committed, and this fails when `go generate` would change
       # one. It runs the real stashgen against the guest just built, so it
       # also proves the generator and the engine agree on the module's own
-      # examples.
+      # examples. `git diff` sees only tracked files, so the status check
+      # catches a generated file that was never committed.
       - name: Generated code is committed
         working-directory: languages/golang
         run: |
           CGO_ENABLED=0 go generate ./...
           git diff --exit-code -- .
+          untracked="$(git status --porcelain -- .)"
+          if [ -n "$untracked" ]; then
+            echo "::error::go generate wrote files that are not committed:"
+            echo "$untracked"
+            exit 1
+          fi
 
   # Linux only: macOS and Windows would report the same findings. Needs no
   # guests: the packages embed a directory and compile without them.

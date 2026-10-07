@@ -54,6 +54,15 @@ type patientShape struct {
 	Chart []byte
 }
 
+// Stops compiling when the embedded Person gains, loses, reorders or retypes a field.
+var _ = patientShapePerson(Person{})
+
+type patientShapePerson struct {
+	Name  string
+	Email string
+	notes string
+}
+
 var declaration = gensupport.Declare("patients").
 	EncryptInto("name", gensupport.String, "TextEq").
 	EncryptIndex("email", gensupport.String, encrypt.Equality).

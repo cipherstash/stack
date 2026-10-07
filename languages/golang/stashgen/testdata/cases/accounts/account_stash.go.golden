@@ -57,6 +57,16 @@ type accountShape struct {
 	token string
 }
 
+// Stops compiling when the embedded gorm.Model gains, loses, reorders or retypes a field.
+var _ = accountShapeModel(gorm.Model{})
+
+type accountShapeModel struct {
+	ID        uint
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt
+}
+
 var declaration = gensupport.Declare("accounts").
 	Passthrough("id").
 	Passthrough("created_at").
