@@ -71,8 +71,11 @@ export class EncryptOperation extends EncryptionOperation<Encrypted> {
           // or a `types.Json` column (whose document type admits `null`).
           // Return null directly so the result
           // matches DB NULL semantics rather than encrypting JSON null
-          // into a SteVec. The cast acknowledges the type-narrow
-          // contract at the public boundary.
+          // into a SteVec. The cast does NOT reflect a narrow contract:
+          // for a `types.Json` column the public type admits `null`, yet the
+          // result is still typed `Encrypted` while carrying `null` at
+          // runtime. That type mismatch is a known gap, tracked as a
+          // follow-up.
           return null as unknown as Encrypted
         }
 

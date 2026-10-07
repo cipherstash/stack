@@ -2,8 +2,12 @@ import type { JsPlaintext } from '@cipherstash/protect-ffi'
 import type { PlaintextInput } from '@/types'
 
 /**
- * Hand a plaintext to the FFI. This is the ONE place the encrypt paths assert a
- * plaintext type, and it exists because the FFI's declared input union,
+ * Hand a plaintext to the FFI. This is where the typed encrypt operations
+ * (`encrypt`, `bulkEncrypt`, `encryptQuery`) assert a plaintext type. The model
+ * paths in `./model-helpers` (`encryptModelFields` / `bulkEncryptModels` and
+ * their lock-context variants) do NOT route through here: they walk a model as
+ * `Record<string, unknown>` and still assert each field with their own
+ * `value as string` cast. It exists because the FFI's declared input union,
  * `JsPlaintext`, is narrower than what the FFI actually accepts:
  *
  * - `Date` — not in `JsPlaintext`; serialized via `toJSON` at the boundary.

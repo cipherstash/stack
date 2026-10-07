@@ -16,7 +16,12 @@ import {
   type V3DecryptedModel,
   type V3EncryptedModel,
 } from '@/encryption/v3'
-import type { Encrypted } from '@/types'
+import type {
+  Encrypted,
+  EncryptQueryArgs,
+  EncryptQueryOptions,
+  QueryTermInput,
+} from '@/types'
 
 // A v3 table mixing every relevant capability tier:
 const users = encryptedTable('users', {
@@ -380,8 +385,11 @@ describe('typed v3 client — an optional lock context still type-checks', () =>
  * they check `EncryptionClient<S>`'s declared signatures — NOT
  * `createEncryptionClient`'s construction. That the factory's object literal
  * satisfies the interface is checked by `tsc` on `src` (it is annotated
- * `EncryptionClient<S>`); that its runtime output matches the declared types is
- * checked by `typed-client-v3.test.ts`.
+ * `EncryptionClient<S>`). `typed-client-v3.test.ts` checks the factory at
+ * runtime: that the encrypt methods forward their arguments to the native
+ * client unchanged and return its operation, and that the model decrypt paths
+ * reconstruct `Date` columns. It does not check that a native operation
+ * resolves to the declared type — that needs live credentials.
  */
 describe('typed v3 client — each method resolves to its precise operation', () => {
   /** The `data` of an awaited operation's success arm. */
@@ -452,5 +460,63 @@ describe('typed v3 client — each method resolves to its precise operation', ()
         ReturnType<typeof client.bulkDecryptModels<EncRow>>
       >[number]['createdAt']
     >().toEqualTypeOf<string>()
+  })
+})
+
+/**
+ * The native `encryptQuery`'s argument list, as the wrapper forwards it with
+ * `...args`. It is a tuple union so the one call the runtime rejects by
+ * throwing — a scalar with no options — does not compile, while both real
+ * forms still forward unchanged.
+ */
+describe('EncryptQueryArgs — a scalar needs its options, a batch takes none', () => {
+  it('accepts (value, opts) and (terms)', () => {
+    expectTypeOf<[string, EncryptQueryOptions]>().toExtend<EncryptQueryArgs>()
+    expectTypeOf<[QueryTermInput[]]>().toExtend<EncryptQueryArgs>()
+  })
+
+  it('rejects a scalar without options, and bare values posing as terms', () => {
+    expectTypeOf<[string]>().not.toExtend<EncryptQueryArgs>()
+    expectTypeOf<[string[]]>().not.toExtend<EncryptQueryArgs>()
+  })
+
+  it('rejects a scalar without options on the public client', () => {
+    // @ts-expect-error - a scalar query needs { table, column }
+    client.encryptQuery('a@b.com')
+  })
+})
+
+/**
+ * A `types.Json` document may hold `null` array elements. The FFI's
+ * `JsPlaintext[]` has no `null` element, so the encrypt paths take
+ * `PlaintextInput`, which does. These pin that a caller reaches every encrypt
+ * path with such a document through the public client, with no cast.
+ */
+const documents = encryptedTable('documents', {
+  body: types.Json('body'),
+})
+
+declare const docClient: EncryptionClient<readonly [typeof documents]>
+
+describe('typed v3 client — a JSON document with null array elements needs no cast', () => {
+  const doc = { tags: ['staff', null] }
+
+  it('encrypt accepts it', () => {
+    docClient.encrypt(doc, { table: documents, column: documents.body })
+  })
+
+  it('encryptQuery accepts it as a searchableJson needle', () => {
+    docClient.encryptQuery(doc, {
+      table: documents,
+      column: documents.body,
+      queryType: 'searchableJson',
+    })
+  })
+
+  it('bulkEncrypt accepts it', () => {
+    docClient.bulkEncrypt([{ id: '1', plaintext: doc }, { plaintext: null }], {
+      table: documents,
+      column: documents.body,
+    })
   })
 })
