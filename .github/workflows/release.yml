@@ -627,8 +627,15 @@ jobs:
       # #1044). A push made with a GitHub App's token does start CI. The token is
       # narrowed to this repository and the two permissions changesets needs,
       # whatever the App itself holds; the post step revokes it.
+      #
+      # `continue-on-error`: the same step gates `changeset publish` below, and
+      # a mint fails on a rotated secret, a suspended App or an environment
+      # rule — none of which bears on whether the merged release is good to
+      # publish. The fallback is GITHUB_TOKEN, which publishes as before and
+      # loses only the PR's CI; the step after says so where the run is read.
       - name: Mint the Version Packages token
         id: app-token
+        continue-on-error: true
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ secrets.RELEASE_PLZ_APP_CLIENT_ID }}
@@ -636,6 +643,10 @@ jobs:
           repositories: stack
           permission-contents: write
           permission-pull-requests: write
+
+      - name: Warn when the Version Packages PR will carry no CI
+        if: ${{ steps.app-token.outputs.token == '' }}
+        run: echo "::warning title=No App token::Minting the cipherstash-release-plz token failed, so changesets is pushing the Version Packages PR with GITHUB_TOKEN and that PR will run no CI. Close and reopen it to start checks, and check the release environment's RELEASE_PLZ_APP_* secrets."
 
       - name: Publish to npm
         id: changesets
@@ -658,9 +669,10 @@ jobs:
           # changesets/action writes a token .npmrc that shadows OIDC and
           # every publish fails with E404 (see npm/cli#8976).
           #
-          # The App token from the step above, not secrets.GITHUB_TOKEN, so the
-          # Version Packages PR it pushes runs CI.
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          # The App token from the step above, so the Version Packages PR it
+          # pushes runs CI; GITHUB_TOKEN when the mint failed, so a release
+          # still publishes.
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
           # Embeds the CLI's PostHog project key at build time (see
           # languages/typescript/packages/cli/tsup.config.ts). A repo *variable*, not a secret: the
           # key is public and write-only (like a web SDK key). Unset until GA, so

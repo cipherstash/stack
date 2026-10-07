@@ -71,8 +71,19 @@ describe('release.yml pushes the Version Packages PR as a GitHub App', () => {
     expect(tokenStep.id).toBeTruthy()
     expect(tokenIndex).toBeLessThan(changesetsIndex)
     expect(changesetsStep.env?.GITHUB_TOKEN).toBe(
-      `\${{ steps.${tokenStep.id}.outputs.token }}`,
+      `\${{ steps.${tokenStep.id}.outputs.token || secrets.GITHUB_TOKEN }}`,
     )
+  })
+
+  it('publishes even when the mint fails, and says the PR will carry no CI', () => {
+    // The mint gates `changeset publish` in the same job. A rotated secret or
+    // a suspended App must cost the PR its CI, not the release its publish.
+    expect(tokenStep['continue-on-error']).toBe(true)
+    const warning = steps
+      .slice(tokenIndex + 1, changesetsIndex)
+      .find((step) => String(step?.run ?? '').includes('::warning'))
+    expect(warning, 'no step warns when the token is empty').toBeDefined()
+    expect(warning.if).toBe(`\${{ steps.${tokenStep.id}.outputs.token == '' }}`)
   })
 
   it('keeps the commits signed by GitHub', () => {
