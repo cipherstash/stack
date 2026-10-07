@@ -59,6 +59,9 @@ exclude_re = [
   # Production http_client variants are cfg-disabled here; the test variant
   # builds an unconfigured Client, equivalent to Client::default().
   'stack-auth/src/transport\.rs:\d+:\d+: replace http_client -> reqwest::Client with Default::default\(\)$',
+  # Under `http` the body is `false`; the no-`http` arm is pinned by
+  # `a_builder_without_a_transport_is_refused_when_there_is_no_bundled_one`.
+  'stack-auth/src/error\.rs:\d+:\d+: replace RequestError::is_no_transport -> bool with false$',
   'stack-auth/src/auto_strategy\.rs:150:9: replace AutoStrategy::detect_inner -> Result<Self, AuthError> with Ok\(Default::default\(\)\)$',
   'stack-auth/src/token_store\.rs:(258|266):9: replace <impl TokenStore for TokenStoreFn<L, S>>::(load|save)',
   # stack-auth — equivalent.

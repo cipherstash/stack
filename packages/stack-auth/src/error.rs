@@ -1678,6 +1678,22 @@ mod tests {
         );
     }
 
+    /// A failed request says so in fixed text of this crate's, and keeps the
+    /// transport's own message out: a binding shows only the message, code
+    /// and help.
+    #[test]
+    fn a_failed_request_has_a_fixed_message_and_help() {
+        use miette::Diagnostic;
+        let error = RequestError(Box::new(std::io::Error::other("refused")));
+        assert_eq!(error.to_string(), "Request to the auth server failed");
+        assert_eq!(
+            error.help().map(|help| help.to_string()).as_deref(),
+            Some(
+                "The auth server could not be reached, or its response could not be read. Check the network path to it."
+            )
+        );
+    }
+
     /// One row per variant of an enum, written `pattern => value`. The
     /// patterns are the arms of a match with no wildcard, so a variant with
     /// no row fails to compile, and each value must match its own pattern.
