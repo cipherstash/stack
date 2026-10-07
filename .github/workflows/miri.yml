@@ -54,6 +54,8 @@ jobs:
           working_directory: .
           install_args: rust
           cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2404
 
       - name: Install the nightly toolchain with Miri
         run: |

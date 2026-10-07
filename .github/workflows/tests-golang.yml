@@ -105,6 +105,8 @@ jobs:
           install: true
           working_directory: .
           cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
 
       # mise caches its rust install as a symlink into ~/.rustup, which the
       # cache does not hold. On a runner image that already carries a 1.94.1
@@ -201,6 +203,8 @@ jobs:
           working_directory: .
           install_args: go golangci-lint
           cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2404
 
       - name: golangci-lint
         run: mise run go:lint
@@ -309,6 +313,8 @@ jobs:
           working_directory: .
           install_args: rust go
           cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2404
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 

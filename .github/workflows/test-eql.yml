@@ -348,6 +348,8 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -422,6 +424,8 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -473,6 +477,8 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
@@ -523,6 +529,8 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: packages/eql
@@ -562,6 +570,8 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: packages/eql
@@ -670,6 +680,8 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: packages/eql
@@ -700,6 +712,8 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: packages/eql
@@ -734,6 +748,8 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: packages/eql
@@ -776,6 +792,8 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
       # This job looks Rust-free and is not. `test:splinter` is a bash script
       # that pipes SQL through psql, but the build step below runs `mise run
       # build`, and `tasks/build.sh` shells out to `cargo run -q -p eql-codegen`
@@ -832,6 +850,8 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: packages/eql
@@ -872,6 +892,8 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
       # The gate detects drift by cross-checking a loose declaration count against
       # a strict parse, so an over-accepting parser defeats it silently. Runs
       # first, and needs no token: a broken parser makes the gate below
@@ -905,6 +927,8 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
       - name: Every intra-document anchor link resolves
         run: |
           mise run test:doc-anchors
@@ -950,6 +974,8 @@ jobs:
           install: true
           cache: true
           working_directory: packages/eql
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: packages/eql

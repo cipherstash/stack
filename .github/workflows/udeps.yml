@@ -82,6 +82,8 @@ jobs:
           working_directory: .
           install_args: rust cargo:cargo-udeps
           cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2404
 
       - name: Install the pinned nightly toolchain
         run: rustup toolchain install "$NIGHTLY_TOOLCHAIN" --profile minimal --no-self-update

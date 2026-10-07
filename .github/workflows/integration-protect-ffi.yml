@@ -338,6 +338,8 @@ jobs:
         with:
           install: true
           working_directory: languages/typescript/packages/protect-ffi
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2404
 
       # One task, four things the suite cannot run without (see
       # integration-tests/tasks.toml): `pnpm install --frozen-lockfile` (a

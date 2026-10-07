@@ -89,6 +89,8 @@ jobs:
           install: true
           working_directory: .
           cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2404
 
       - name: Install the nightly toolchain (cargo-fuzz requires it)
         run: rustup toolchain install nightly --profile minimal
@@ -135,6 +137,8 @@ jobs:
           install: true
           working_directory: .
           cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2404
 
       - name: Install the nightly toolchain (cargo-fuzz requires it)
         run: rustup toolchain install nightly --profile minimal

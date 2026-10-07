@@ -84,6 +84,8 @@ jobs:
           working_directory: .
           install_args: rust cargo:cargo-nextest cargo:cargo-mutants
           cache: true
+          # Must name runs-on's image; see scripts/__tests__/workflow-mise-cache-image.test.mjs
+          cache_key_prefix: mise-v1-ubuntu-2204
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
