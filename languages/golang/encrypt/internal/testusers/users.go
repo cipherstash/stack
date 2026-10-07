@@ -6,7 +6,10 @@
 // changes a file.
 package testusers
 
-import "github.com/cipherstash/stack/languages/golang/encrypt"
+import (
+	"github.com/cipherstash/stack/languages/golang/encrypt"
+	"github.com/cipherstash/stack/languages/golang/encrypt/internal/testmember"
+)
 
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type User -model Rows=UserRow
 
@@ -81,3 +84,22 @@ type Note struct {
 	Text   string `stash:"text,encrypt,index=equality"`
 	ID     uint32 `stash:"id,passthrough"`
 }
+
+//go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type memberStash -for testmember.Member -name Member
+
+// memberStash declares the tags for testmember.Member, a type that cannot
+// carry them: the -for path. The declaration is User's, so the round-trip
+// tests compare the bytes the two paths seal for the same values.
+type memberStash struct {
+	_     struct{} `stash:"context=users"`
+	ID    int64    `stash:"id,passthrough"`
+	Age   uint32   `stash:"age,encrypt,index=equality;ore"`
+	Email string   `stash:"email,encrypt,index=equality;match"`
+	Notes string   `stash:"notes,encrypt"`
+}
+
+// The struct exists for its tags; nothing constructs it.
+var (
+	_ memberStash
+	_ = testmember.Member{}
+)
