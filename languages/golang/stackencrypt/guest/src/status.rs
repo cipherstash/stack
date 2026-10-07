@@ -145,6 +145,14 @@ fn status_for_kms(error: &stack_kms::Error) -> u32 {
         stack_kms::Error::ConnectionInit(_) | stack_kms::Error::InvalidEndpoint(_) => {
             STATUS_KMS_TRANSPORT
         }
+        // Neither reaches ZeroKMS: the provider refuses its own input first.
+        // A binding that is not UTF-8 cannot be a descriptor, and a key id
+        // too short to hold an IV cannot name a key — so both are malformed
+        // input at the boundary, which is what a host can act on, rather
+        // than a ZeroKMS verdict it can only log.
+        stack_kms::Error::BindingNotUtf8 | stack_kms::Error::MalformedKeyId { .. } => {
+            STATUS_ENCODING
+        }
         stack_kms::Error::Unexpected(_) => STATUS_KMS_OTHER,
     }
 }
@@ -293,6 +301,24 @@ mod tests {
         assert_eq!(
             status_for_error(&stack_encrypt::Error::Kms(stack_kms::Error::Auth(err))),
             STATUS_KMS_UNAUTHORIZED
+        );
+    }
+
+    /// The provider's own input refusals never reach ZeroKMS, so they are
+    /// the caller's to fix rather than a verdict to log. Pinned because the
+    /// enclosing match is exhaustive over `stack_kms::Error`: a variant
+    /// added upstream fails the build, but one *reclassified* here would
+    /// not, and the difference between "fix your input" and "log this" is
+    /// the whole point of the status word.
+    #[test]
+    fn the_providers_own_input_refusals_are_encoding() {
+        assert_eq!(
+            status_for_kms(&stack_kms::Error::BindingNotUtf8),
+            STATUS_ENCODING
+        );
+        assert_eq!(
+            status_for_kms(&stack_kms::Error::MalformedKeyId { len: 4, min: 16 }),
+            STATUS_ENCODING
         );
     }
 

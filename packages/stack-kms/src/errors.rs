@@ -299,6 +299,18 @@ pub enum Error {
     #[error("Invalid ZeroKMS endpoint in the token's services claim: {0}")]
     InvalidEndpoint(#[from] crate::endpoint::InvalidEndpoint),
 
+    /// A [`Binding`](vitaminc_kms::provider::Binding) handed to
+    /// [`ZeroKmsKeyset`](crate::ZeroKmsKeyset) was not UTF-8. ZeroKMS
+    /// descriptors are strings.
+    #[error("a ZeroKMS binding must be UTF-8 text (it is the descriptor)")]
+    BindingNotUtf8,
+
+    /// A [`KeyId`](vitaminc_kms::KeyId) handed to
+    /// [`ZeroKmsKeyset`](crate::ZeroKmsKeyset) is too short to hold the IV
+    /// that leads every id it mints.
+    #[error("ZeroKMS key id is {len} bytes; the IV alone is {min}")]
+    MalformedKeyId { len: usize, min: usize },
+
     #[error("Unexpected error: {0}")]
     Unexpected(String),
 }

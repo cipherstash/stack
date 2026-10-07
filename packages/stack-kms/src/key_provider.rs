@@ -4,6 +4,15 @@
 //! to generate or retrieve data keys. Each provider yields a complete [`ClientKey`]
 //! (client ID + key material) from a self-contained source.
 //!
+//! <div class="warning">
+//!
+//! This is the *client key* provider — the ZeroKMS credential half. It is not
+//! the **key provider** a client library such as `stack-encrypt` is generic
+//! over: that is [`vitaminc_kms::provider::KeyProvider`], which this crate
+//! implements as [`ZeroKmsKeyset`](crate::ZeroKmsKeyset).
+//!
+//! </div>
+//!
 //! # Built-in providers
 //!
 //! | Provider | Source |

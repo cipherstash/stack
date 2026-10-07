@@ -45,9 +45,25 @@ stack-auth = { workspace = true }
 zerokms-protocol = { workspace = true }
 
 vitaminc = { workspace = true, features = ["protected", "random"] }
+# The key-provider traits `ZeroKmsKeyset` implements (`KeyProvider`,
+# `IndexKeyProvider`, `Binding`) and their value types. `default-features =
+# false` keeps every vendor SDK — and the native HTTP/TLS stack the WASI gate
+# forbids — out of this crate's graph: nothing here talks to AWS, Azure,
+# Google Cloud or Vault, only to ZeroKMS.
+#
+# Pinned to a git rev because these traits are not published yet. Swap to a
+# version once vitaminc releases them.
+vitaminc-kms = { git = "https://github.com/cipherstash/vitaminc", rev = "b3bc6eb", default-features = false }
 # Direct dep required because the `TimingSafeEq` derive macro expands to a
 # `::vitaminc_protected` path.
 vitaminc-protected = { workspace = true }
+# `vitaminc-kms` is built against its own git-sourced `vitaminc-protected`.
+# It has the same version (0.5.1) as the crates.io one the workspace pins
+# above, but a version-matched and differently-sourced dependency is a *different* type at compile time, so
+# this must resolve to the identical git rev as `vitaminc-kms`'s own copy or
+# every call into its types is an E0308. Renamed so it cannot collide with
+# the entry above; used only by `provider.rs`.
+vitaminc-protected-kms = { package = "vitaminc-protected", git = "https://github.com/cipherstash/vitaminc", rev = "b3bc6eb" }
 
 blake3 = { workspace = true }
 lazy_static = { workspace = true, optional = true }

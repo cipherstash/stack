@@ -562,56 +562,17 @@ where
 }
 
 #[cfg(test)]
-mod test_connection;
+pub(crate) mod test_connection;
 
 #[cfg(test)]
 mod tests {
     use super::test_connection::*;
     use super::*;
-    use crate::key::V1KeySet;
-    use recipher::keyset::{EncryptionKeySet, ProxyKeySet};
     use std::borrow::Cow;
     use uuid::uuid;
     use zerokms_protocol::{
         GenerateKeyResponse, GeneratedKey, RetrieveKeyResponse, RetrievedKey, ViturKeyMaterial,
     };
-
-    fn random_client_key() -> ClientKey {
-        let domain_key = EncryptionKeySet::generate().unwrap();
-        let authority_key = EncryptionKeySet::generate().unwrap();
-        let keyset = ProxyKeySet::generate(&authority_key, &domain_key);
-
-        ClientKey {
-            key_id: uuid!("00000000-0000-0000-0000-000000000000"),
-            keyset: V1KeySet(keyset),
-        }
-    }
-
-    fn build_client(
-        callback: impl FnOnce(TestConnectionBuilder) -> TestConnectionBuilder,
-    ) -> Client<TestConnection> {
-        let builder = callback(TestConnectionBuilder::new());
-        let client_opts = ClientOpts::new(builder)
-            .with_max_keys_per_req(10)
-            .unwrap()
-            .with_max_concurrent_reqs(5)
-            .unwrap();
-        Client::init_opts(client_opts).expect("Failed to initialize test client")
-    }
-
-    // 528 bytes is the size of the key material returned by ZeroKMS for the
-    // recipher proxy re-encryption scheme.
-    fn key_material() -> ViturKeyMaterial {
-        ViturKeyMaterial::from(vec![7u8; 528])
-    }
-
-    fn generated_key(tag: Vec<u8>) -> GeneratedKey {
-        GeneratedKey {
-            key_material: key_material(),
-            tag,
-            decryption_policy: None,
-        }
-    }
 
     fn policy(claim: &str, value: &str) -> zerokms_protocol::DecryptionPolicy {
         zerokms_protocol::DecryptionPolicy {

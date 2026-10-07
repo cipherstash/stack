@@ -15,6 +15,18 @@
 //! Encryption/decryption, keyset and client management, and config save/load
 //! all remain in `cipherstash-client` for now.
 //!
+//! # ZeroKMS as a key provider
+//!
+//! A client library does not have to take a `StackKms` directly. It can be
+//! generic over the `vitaminc-kms` **key provider** traits
+//! ([`vitaminc_kms::provider::KeyProvider`] and
+//! [`vitaminc_kms::provider::IndexKeyProvider`]), so the same code runs on
+//! ZeroKMS or on any vitaminc **data key source** (AWS KMS, Azure Key Vault,
+//! Google Cloud KMS, Vault Transit). [`ZeroKmsKeyset`] is this crate's
+//! implementation of those traits: one resolved keyset over a shared
+//! `Arc<StackKms>`, binding each value's descriptor into the data key
+//! server-side.
+//!
 //! # Quick start
 //!
 // The quick start goes through `StackKmsBuilder`, which configures the default
@@ -88,6 +100,7 @@ mod key_provider;
 mod key_source;
 mod maybe_send;
 mod payload;
+pub mod provider;
 mod secret_key;
 #[cfg(feature = "http")]
 mod user_agent;
@@ -131,7 +144,14 @@ pub use key::{ClientKey, DataKey, DataKeyWithTag, IndexKey, V1KeySet};
 pub use key_source::FakeDataKeySource;
 pub use key_source::{DataKeySource, IndexKeySource};
 
-// Key providers
+// ZeroKMS as a `vitaminc-kms` key provider: the trait shape a client library
+// can be generic over. `StackKms` itself stays a plain ZeroKMS client.
+pub use provider::ZeroKmsKeyset;
+
+// Credential providers: the ZeroKMS *client key*. Note the name collision —
+// `key_provider::KeyProvider` sources that credential, and is not the key
+// provider of the glossary (`vitaminc_kms::provider::KeyProvider`, which
+// `ZeroKmsKeyset` above implements).
 pub use key_provider::{
     EnvKeyProvider, FallbackKeyProvider, KeyProvider, KeyProviderError, StaticKeyProvider,
 };
