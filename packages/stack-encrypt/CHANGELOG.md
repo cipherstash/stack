@@ -61,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declares `dynamic::Value` fields, which are the same declaration as a data
   plan's. One leaf encoding for both authors, or the encoding bound into
   the leaf's context so the wrong reader fails closed, is a change to the
-  Rust chain's bytes and is left to #1082.
+  Rust chain's bytes, tracked in #1118.
 - `dynamic::Output` gains `Passthrough` (the wire key `"passthrough"`). The
   enum is exhaustive on purpose, so a match over it must name the variant.
 - `target::DeclaredContext` holds several extension parts: `with(part)`

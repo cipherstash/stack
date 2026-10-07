@@ -62,7 +62,7 @@
 //! terms and nothing else. Closing that gap — one leaf encoding both authors
 //! read, or the encoding bound into the leaf's context so the wrong reader
 //! fails closed — is a change to the Rust chain's bytes, and so a decision
-//! recorded against #1082, not something the lowering can take on its own.
+//! tracked in #1118, not something the lowering can take on its own.
 //!
 //! # The stored record is wire format
 //!
