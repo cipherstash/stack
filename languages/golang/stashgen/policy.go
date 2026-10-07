@@ -20,14 +20,16 @@ type GenerateOption func(*generateConfig)
 
 type generateConfig struct {
 	output  string
+	name    string
 	engine  Engine
 	notices io.Writer
 }
 
-// Output names the file to write. It is required. The file goes in a package
-// of your own, not in the package of the generated type, so the generate
-// program never imports a file that it wrote.
-func Output(path string) GenerateOption { return func(c *generateConfig) { c.output = path } }
+// WithName gives the generated names a prefix, as -name does on the tag
+// path: WithName("Individual") writes EncryptIndividual, DecryptIndividual
+// and IndividualFields. A package holds one Encrypt, so the second message
+// generated into one package needs a name.
+func WithName(name string) GenerateOption { return func(c *generateConfig) { c.name = name } }
 
 // WithEngine checks the declaration with this engine instead of the one the
 // SDK embeds.
@@ -36,21 +38,26 @@ func WithEngine(e Engine) GenerateOption { return func(c *generateConfig) { c.en
 // WithNotices sends the generator's notices here instead of stderr.
 func WithNotices(w io.Writer) GenerateOption { return func(c *generateConfig) { c.notices = w } }
 
-// Generate writes the generated file for a message from a policy: the source
-// gives the facts about each field, the message's rules decide each one, and
-// the file is the same one stashgen writes from tags. The generated functions
-// take and return pointers to the message.
+// Generate writes the generated file for a message from a policy to output:
+// the source gives the facts about each field, the message's rules decide
+// each one, and the file is the same one stashgen writes from tags. The
+// generated functions take and return pointers to the message. output goes
+// in a package of your own, not in the package of the generated type, so the
+// generate program never imports a file that it wrote.
 //
 // Every field of the message needs a decision. A field that no rule decides
 // stops the generator with the field's name and its annotations, and so does
 // a field that a rule refuses with Fail.
-func Generate(ctx context.Context, source policy.Source, message policy.Message, opts ...GenerateOption) error {
-	cfg := generateConfig{notices: os.Stderr}
+func Generate(ctx context.Context, source policy.Source, message policy.Message, output string, opts ...GenerateOption) error {
+	cfg := generateConfig{output: output, notices: os.Stderr}
 	for _, o := range opts {
 		o(&cfg)
 	}
 	if cfg.output == "" {
-		return errors.New("stashgen: Generate needs Output(path)")
+		return errors.New("stashgen: Generate needs the path of the file to write")
+	}
+	if cfg.name != "" && (!isIdent(cfg.name) || strings.ToUpper(cfg.name[:1]) != cfg.name[:1]) {
+		return fmt.Errorf("stashgen: WithName(%q) must be an exported Go name", cfg.name)
 	}
 	if cfg.engine == nil {
 		e, err := GuestEngine(ctx)
@@ -161,7 +168,7 @@ func generateFor(ctx context.Context, cfg generateConfig, source policy.Source, 
 		}
 	}
 
-	r := &reader{pkg: msgPkg, req: Request{Type: typeName}, eql: eqlTypes, imports: newImportSet(), outPkgName: outName, outPkgPath: outPath}
+	r := &reader{pkg: msgPkg, req: Request{Type: typeName, Name: cfg.name}, eql: eqlTypes, imports: newImportSet(), outPkgName: outName, outPkgPath: outPath}
 	gf, err := r.build(collected, display, named, st, true, nil)
 	if err != nil {
 		return err
@@ -173,10 +180,42 @@ func generateFor(ctx context.Context, cfg generateConfig, source policy.Source, 
 	if err != nil {
 		return err
 	}
+	if err := checkOutputNamesFree(ctx, outDir, cfg.output, display, src); err != nil {
+		return err
+	}
 	for _, n := range gf.stderrNotices() {
 		fmt.Fprintln(cfg.notices, n)
 	}
 	return (&File{Path: cfg.output, Content: src}).Write()
+}
+
+// checkOutputNamesFree is the tag path's name check for the policy path:
+// the output package, without the file being replaced, must not declare a
+// name the generated file declares. A directory with no other Go file
+// declares nothing.
+func checkOutputNamesFree(ctx context.Context, dir, output, display string, src []byte) error {
+	others, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	if err != nil {
+		return err
+	}
+	outAbs, err := filepath.Abs(output)
+	if err != nil {
+		return err
+	}
+	n := 0
+	for _, o := range others {
+		if !sameFile(o, outAbs) {
+			n++
+		}
+	}
+	if n == 0 {
+		return nil
+	}
+	pkg, err := loadPackage(ctx, dir, output)
+	if err != nil {
+		return err
+	}
+	return checkNamesFree(pkg.Types.Scope(), display, src, "pass WithName to give the file's names a prefix (WithName(\"Individual\") writes EncryptIndividual)")
 }
 
 // structFields indexes a struct's fields by the proto name in their protobuf

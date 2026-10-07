@@ -102,7 +102,7 @@ func FromTags(ctx context.Context, engine Engine, req Request) (*File, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := checkNamesFree(pkg.Types.Scope(), gf.typeName, src); err != nil {
+	if err := checkNamesFree(pkg.Types.Scope(), gf.typeName, src, "pass -name to give the file's names a prefix (-name Rows writes EncryptRows and rowsCodec)"); err != nil {
 		return nil, err
 	}
 	return &File{Path: outPath, Content: src, Notices: gf.stderrNotices()}, nil
@@ -113,7 +113,7 @@ func FromTags(ctx context.Context, engine Engine, req Request) (*File, error) {
 // would point at the generated file rather than at the clash. The previous
 // output is loaded as its package clause only, so its names are not in scope
 // and a second run is not a clash with the first.
-func checkNamesFree(scope *types.Scope, typeName string, src []byte) error {
+func checkNamesFree(scope *types.Scope, typeName string, src []byte, remedy string) error {
 	file, err := parser.ParseFile(token.NewFileSet(), "", src, parser.SkipObjectResolution)
 	if err != nil {
 		return fmt.Errorf("stashgen: the generated file does not parse: %w", err)
@@ -144,7 +144,7 @@ func checkNamesFree(scope *types.Scope, typeName string, src []byte) error {
 		}
 	}
 	if len(clash) > 0 {
-		return fieldErr(typeName, "", "the package already declares %s, which the generated file declares too; pass -name to give the file's names a prefix (-name Rows writes EncryptRows and rowsCodec)", strings.Join(clash, ", "))
+		return fieldErr(typeName, "", "the package already declares %s, which the generated file declares too; %s", strings.Join(clash, ", "), remedy)
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package stashgen_test
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,7 +175,7 @@ func TestGenerateRefusals(t *testing.T) {
 }
 
 func TestGenerateNeedsOutputAndAMessage(t *testing.T) {
-	if err := stashgen.Generate(context.Background(), policy.SourceFunc(individualFacts), individualRules()); err == nil || !strings.Contains(err.Error(), "needs Output") {
+	if err := stashgen.Generate(context.Background(), policy.SourceFunc(individualFacts), individualRules(), ""); err == nil || !strings.Contains(err.Error(), "needs the path") {
 		t.Fatalf("err = %v", err)
 	}
 	type local struct{ A int }
@@ -190,8 +191,40 @@ func TestGenerateNeedsOutputAndAMessage(t *testing.T) {
 	}
 	// With no WithEngine the embedded guest answers; the output directory
 	// is no module, so the run stops there or, with no guest built, before.
-	err = stashgen.Generate(context.Background(), policy.SourceFunc(individualFacts), policy.ForMessage(&local{}, "c", base), stashgen.Output(filepath.Join(t.TempDir(), "x_stash.go")))
+	err = stashgen.Generate(context.Background(), policy.SourceFunc(individualFacts), policy.ForMessage(&local{}, "c", base), filepath.Join(t.TempDir(), "x_stash.go"))
 	if err == nil {
 		t.Fatal("a message in no module generated")
+	}
+}
+
+// The policy path keeps the tag path's name check: a second message written
+// into a package that already declares Encrypt is refused, naming WithName,
+// and WithName gives the file its own names.
+func TestGenerateRefusesANameThePackageDeclares(t *testing.T) {
+	dir := policyModule(t)
+	if err := os.WriteFile(filepath.Join(dir, "individuals", "other.go"), []byte("package individuals\n\nfunc Encrypt() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "individuals", "individual_stash.go")
+	err := stashgen.GenerateFor(context.Background(), enginetest.Static{}, io.Discard, out, policy.SourceFunc(individualFacts), individualRules(), "example.com/app/pb", "Individual")
+	if err == nil || !strings.Contains(err.Error(), "already declares Encrypt") || !strings.Contains(err.Error(), "WithName") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, statErr := os.Stat(out); statErr == nil {
+		t.Fatal("a file was written after a refusal")
+	}
+	if err := stashgen.GenerateForNamed(context.Background(), enginetest.Static{}, io.Discard, out, "Individual", policy.SourceFunc(individualFacts), individualRules(), "example.com/app/pb", "Individual"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "func EncryptIndividual(") {
+		t.Fatalf("WithName did not prefix the names:\n%s", got)
+	}
+	// A rerun over its own output is not a clash with itself.
+	if err := stashgen.GenerateForNamed(context.Background(), enginetest.Static{}, io.Discard, out, "Individual", policy.SourceFunc(individualFacts), individualRules(), "example.com/app/pb", "Individual"); err != nil {
+		t.Fatalf("rerun: %v", err)
 	}
 }

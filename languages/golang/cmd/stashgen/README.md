@@ -173,7 +173,7 @@ var Individuals = policy.ForMessage(&pb.Individual{}, policy.Context("individual
 //go:generate go run ../cmd/genencrypt
 func main() {
 	err := stashgen.Generate(context.Background(), protosource.New(), rules.Individuals,
-		stashgen.Output("../individuals/individual_stash.go"))
+		"../individuals/individual_stash.go")
 	...
 }
 ```
@@ -183,6 +183,7 @@ Every field needs a decision: a field no rule decides stops the generator with t
 `Name` sets the column name, and `Identity` keeps the field's context when its column is renamed.
 Only a policy can set `Identity`; no tag spells it yet, because how a declaration changes over time is not decided.
 The generated file goes in a package of your own, and the functions take and return pointers to the message.
+`stashgen.WithName("Individual")` gives the file's names a prefix, as `-name` does: the second message generated into one package needs one, and `Generate` refuses a file whose names the package already declares.
 
 ## Printing
 
