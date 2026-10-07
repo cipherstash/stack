@@ -269,6 +269,16 @@
 //! and the plan's opener. It is the third author of this grammar, beside a
 //! Rust chain and the derive, and not a second executor.
 //!
+//! The engine is shared; the stored leaf is not. A data plan seals every
+//! field as the tagged `dynamic::Value` leaf, whatever its type, so a Rust
+//! record whose rows a binding also reads must declare those fields as
+//! `dynamic::Value`. A bare `String` or `u32` field derives the same terms
+//! but encrypts a different leaf. A bare `String` reader accepts a
+//! binding's leaf and returns its type tag as a leading line feed
+//! (`"\nalice"`), with no error. One leaf encoding for both, or the
+//! encoding bound into the leaf's context so the wrong reader fails, is
+//! tracked in #1118.
+//!
 //! # How a chain lowers
 //!
 //! The builder adds no cryptographic operation and no executor; every call
