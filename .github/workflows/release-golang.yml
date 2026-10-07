@@ -1,0 +1,168 @@
+name: Release Go
+
+# The Go module's release line: tags `languages/golang/v<version>` when the
+# version in `languages/golang/package.json` has no tag. The process, and why a
+# release tags a commit of its own rather than one of main, is in
+# languages/golang/RELEASING.md; the logic is scripts/golang-release.mjs.
+#
+# Not part of release.yml. That file is the npm trusted publisher, so any job
+# in it holding `id-token: write` can mint a token npm accepts for a publish.
+# Nothing here publishes to npm or needs an OIDC token: the release is a git
+# tag and a GitHub release.
+#
+# READ-ONLY BY DEFAULT; `publish` escalates to `contents: write` for itself.
+permissions:
+  contents: read
+
+on:
+  # The Version Packages PR moves languages/golang/package.json when it versions
+  # a Go changeset, so merging that PR is a release. Nothing else changes it.
+  push:
+    branches:
+      - main
+    paths:
+      - languages/golang/package.json
+  # A re-run after a failed release (`plan` makes it a no-op when the version's
+  # tag exists), or a dry run.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: >-
+          Dry run: build the dispatched commit, make and check the release
+          commit on a scratch branch, then delete it. Tags nothing and writes
+          no release.
+        type: boolean
+        default: false
+
+# One release at a time, and never cancelled part-way: a run stopped between
+# the scratch branch and the tag leaves the branch behind (the next run reuses
+# it).
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: Is a Go release owed?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      needed: ${{ steps.plan.outputs.needed }}
+      version: ${{ steps.plan.outputs.version }}
+      ref: ${{ steps.plan.outputs.ref }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          # The release is built at the commit that set the version, which is
+          # found from history; a shallow clone cannot say.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      # No pnpm install: the script imports node builtins only.
+      - name: Ask the tags
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          # Empty on a push, which is not a dry run.
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: node scripts/golang-release.mjs plan
+
+  # Twice, on separate runners. `publish` refuses to tag unless the two builds
+  # are identical byte for byte, which is what lets anyone check a release's
+  # guests against its source.
+  build:
+    name: Build the guests (${{ matrix.build }})
+    needs: plan
+    if: needs.plan.outputs.needed == 'true'
+    strategy:
+      matrix:
+        build: [first, second]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      # The pinned Rust toolchain, with the wasm32-wasip1 target, from the root
+      # mise.toml. No cache: what this job builds is what the release ships.
+      # See scripts/lint-no-workflow-caching.mjs.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          cache: false
+
+      # Each guest's mise task builds the release module, checks its
+      # host-import surface and copies it into the module.
+      - name: Build every embedded guest
+        run: node scripts/golang-release-build.mjs dist/golang-guests
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: golang-guests-${{ matrix.build }}
+          path: dist/golang-guests/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Tag and release
+    needs: [plan, build]
+    if: needs.plan.outputs.needed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      # The scratch branch, the release commit, the tag and the GitHub release.
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ needs.plan.outputs.ref }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      # Go, to download the module the way `go get` will before the tag exists,
+      # and through proxy.golang.org after.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          install_args: go
+          working_directory: .
+          cache: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: golang-guests-first
+          path: dist/first
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: golang-guests-second
+          path: dist/second
+
+      - name: Compare the builds, check the release commit, tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          REF: ${{ needs.plan.outputs.ref }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: node scripts/golang-release.mjs publish dist/first dist/second

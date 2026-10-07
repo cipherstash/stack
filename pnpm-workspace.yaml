@@ -33,6 +33,12 @@ packages:
   # `eql-bindings` — exactly the skew the subtree import exists to make
   # unrepresentable.
   - languages/typescript/packages/protect-ffi/integration-tests
+  # The Go module's version, and nothing else: a private placeholder
+  # (`@cipherstash/golang`) with no dependencies and no scripts, so a changeset
+  # can name the Go module and the Version Packages PR moves its version.
+  # .github/workflows/release-golang.yml tags `languages/golang/v<version>`
+  # when that version has no tag. See languages/golang/RELEASING.md.
+  - languages/golang
   - languages/typescript/examples/*
   - e2e
 

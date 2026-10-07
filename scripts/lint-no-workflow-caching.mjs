@@ -34,6 +34,9 @@ const TARGETS = process.argv.slice(2).length
       '.github/workflows/_build-eql-docs.yml',
       '.github/workflows/release-plz.yml',
       '.github/workflows/release-postgres-eql-image.yml',
+      // The Go module's release line. The guests it builds are committed into
+      // the tagged tree, so a poisoned restore lands in every `go get`.
+      '.github/workflows/release-golang.yml',
       '.github/workflows/tests-supply-chain.yml',
     ]
 

@@ -114,6 +114,16 @@ const EXPECTED_ASYMMETRIES = new Map([
     'push is the only trigger; a pull_request copy would make a crates.io publisher reachable from a fork',
   ],
   [
+    '.github/workflows/release-golang.yml',
+    // Like release-plz.yml: no `pull_request:` trigger, and there must not be
+    // one, because the workflow pushes a release tag. The direction that would
+    // hurt is a release that never triggers, and the filter names the one
+    // file a Go version change moves: the Version Packages PR rewrites
+    // languages/golang/package.json whenever it versions a Go changeset.
+    // A missed run is still recoverable by `workflow_dispatch`.
+    'push is the only trigger; a pull_request copy would make a release tagger reachable from a fork',
+  ],
+  [
     '.github/workflows/tests-rust.yml',
     // `push:` is `branches: [main]` with no `paths:`, so every push to main runs
     // the Rust checks and only pull requests are filtered. There is no second

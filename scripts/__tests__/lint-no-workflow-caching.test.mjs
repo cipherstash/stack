@@ -27,6 +27,7 @@ const TARGET_WORKFLOWS = [
   '.github/workflows/_build-eql-docs.yml',
   '.github/workflows/release-plz.yml',
   '.github/workflows/release-postgres-eql-image.yml',
+  '.github/workflows/release-golang.yml',
   '.github/workflows/tests-supply-chain.yml',
 ]
 

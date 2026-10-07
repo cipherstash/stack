@@ -102,6 +102,8 @@ importers:
         specifier: ^2.9.0
         version: 2.9.0
 
+  languages/golang: {}
+
   languages/typescript/examples/basic:
     dependencies:
       '@cipherstash/stack':

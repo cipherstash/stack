@@ -40,6 +40,7 @@ on:
       - .github/workflows/_build-eql-docs.yml
       - .github/workflows/release-plz.yml
       - .github/workflows/release-postgres-eql-image.yml
+      - .github/workflows/release-golang.yml
       - .github/workflows/lint-release.yml
       - .github/actionlint.yaml
       - packages/eql/tasks/release/*.sh
@@ -100,6 +101,7 @@ jobs:
             .github/workflows/_build-eql-docs.yml \
             .github/workflows/release-plz.yml \
             .github/workflows/release-postgres-eql-image.yml \
+            .github/workflows/release-golang.yml \
             .github/workflows/lint-release.yml
 
       # `prepare-bindings-assets.sh` stamps the SQL bundle and rewrites the four

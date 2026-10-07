@@ -80,6 +80,9 @@ const EXPECTED_DISPATCHABLE = [
   '.github/workflows/release.yml',
   '.github/workflows/release-plz.yml',
   '.github/workflows/release-postgres-eql-image.yml',
+  // The Go module's release line: dispatched to re-run a failed release, or
+  // for a dry run.
+  '.github/workflows/release-golang.yml',
 ]
 
 /**
@@ -208,6 +211,16 @@ const PERMISSIVE_NEEDS = {
   // release-postgres-eql-image.yml's `promote-latest` reads this from its own
   // `build-sql` job, which copies the dispatch input through.
   'build-sql': { outputs: { update_floating_tags: 'true' } },
+  // release-golang.yml's `build` and `publish` run when its `plan` finds the
+  // tree's Go version untagged.
+  plan: {
+    result: 'success',
+    outputs: {
+      needed: 'true',
+      version: '0.1.0',
+      ref: 'cb58a7b993646173578e2bb3c35d8e22ed1a7944',
+    },
+  },
 }
 
 /**

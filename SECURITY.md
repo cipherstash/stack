@@ -34,7 +34,9 @@ It also carries the source of five Rust crates published to crates.io,
 **`stack-encrypt-derive`** (`packages/stack-kms`, `packages/stack-encrypt`,
 `packages/stack-encrypt-derive`), and of the **Go module** at
 `languages/golang` (`stackencrypt` and `stackauth`, over WASI guests built
-from the stack-* crates), which has no release yet. All of these are in scope
+from the stack-* crates). Its releases are git tags, `languages/golang/v<version>`,
+cut by `.github/workflows/release-golang.yml` (see
+`languages/golang/RELEASING.md`); it has had none yet. All of these are in scope
 for security reports on the same terms as the npm packages above.
 
 The five stack-* crates are licensed under the PolyForm Internal Use License
