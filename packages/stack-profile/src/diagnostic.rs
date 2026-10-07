@@ -1,93 +1,112 @@
-//! The structured fields an error carries, and what an error may contain.
+//! Inspect error codes, recovery hints, and structured details.
+//!
+//! [`ProfileError`](crate::ProfileError) provides a readable message through
+//! `Display`, a code and optional help through [`miette::Diagnostic`], and
+//! structured fields through [`ErrorPayload::payload`]. Use these fields when
+//! you need details such as a missing profile's path or a JSON error's line
+//! and column. You do not need to parse the message.
+//!
+//! # Read an error's details
+//!
+//! Import both traits to access their methods:
+//!
+//! ```
+//! use miette::Diagnostic;
+//! use stack_profile::{ErrorPayload, ProfileError};
+//!
+//! let error = ProfileError::NotFound {
+//!     path: "auth.json".into(),
+//! };
+//!
+//! assert_eq!(error.code().unwrap().to_string(), "stack_profile::not_found");
+//! assert_eq!(error.payload()["path"], "auth.json");
+//! assert!(error.help().is_some());
+//! ```
+//!
+//! In Rust, match error variants to decide how to handle a failure. Codes
+//! identify errors when reporting them to another language or service; fields
+//! provide the details needed to explain or handle that failure. Payload keys
+//! use `snake_case`, and errors without additional details return an empty map.
+//!
+//! `stack-auth`, `stack-kms`, and `stack-encrypt` use the same trait and
+//! re-export it, so you can import it from the crate you already use.
+//!
+//! # Handle underlying errors with care
+//!
+//! These crates avoid including sensitive input in diagnostic messages, help,
+//! and payloads. Wrapped library errors remain available through
+//! [`std::error::Error::source`] for local troubleshooting. Their messages may
+//! contain input, credentials, or URLs: inspect them before including them in
+//! logs or reports. Do not assume that formatting an entire error chain is
+//! safe because its top-level message omits sensitive values.
+//!
+//! For example, [`describe_json_error`] reports the error kind, line, and
+//! column instead of the JSON parser's message, which can quote profile
+//! contents containing a token.
+//!
+//! # Implement an error payload
+//!
+//! Implement [`ErrorPayload`] for an error that already implements
+//! [`miette::Diagnostic`]. Override `payload()` to return its structured
+//! details, using the [`payload`] helper to build a map from name/value pairs.
+//! Keep the default empty map when there are no useful details.
+//!
+//! The following policy applies to messages, help, payload fields, and any
+//! causes reported through a language binding.
+//!
+//! ## Allowed details
+//!
+//! - Keyset IDs and names; counts and lengths; index names and kinds.
+//! - Schema field names from a plan or Go struct, rather than field values.
+//! - Request kinds and HTTP status codes for ZeroKMS, CipherStash's
+//!   key-management service.
+//! - Workspace IDs, workspace resource names (CRNs), and regions.
+//! - Profile file paths, which identify a store rather than its contents.
+//! - The CipherStash token service's OAuth `error_description`, intended for
+//!   people to read.
+//! - Messages from errors governed by this policy, or fixed library messages
+//!   such as those from `url::ParseError`.
+//!
+//! ## Details to exclude
+//!
+//! Never include plaintext, key material (data, index, or client keys), access
+//! or refresh tokens, ciphertext bytes, search-index bytes, or raw context
+//! values. Contexts can contain customer data taken from record fields; report
+//! their length and number of parts instead of their contents.
+//!
+//! Do not forward arbitrary library error messages. Report the operation or
+//! error kind instead, and retain the original error through `source()`.
+//! Likewise, omit ZeroKMS response bodies because they may echo request data;
+//! report the request kind and HTTP status instead.
+//!
+//! Custom implementations that supply boxed errors, such as
+//! `stack_encrypt::Error::Other` or `dynamic::TargetError::Other`, are
+//! responsible for their messages: these messages are displayed as supplied.
+//! Describe what failed without quoting the value or ciphertext, and do not
+//! pass through another library's message.
+//!
+//! If a new field is not covered by this policy, decide whether it is safe
+//! and document that decision here before adding it.
 
-/// The structured fields an error carries beside its message, its miette
-/// [`code`](miette::Diagnostic::code) and its help.
+/// Structured error details that callers can read without parsing a message.
 ///
-/// Every error in `stack-profile`, `stack-auth`, `stack-kms` and
-/// `stack-encrypt` implements it. Those are the crates whose errors reach a
-/// caller through a language binding. The trait is defined here because this
-/// crate is the one all four depend on, and each of the others re-exports
-/// it, so a caller names it from the crate it uses.
-///
-/// [`payload`](Self::payload) gives the error's facts as data: which keyset a
-/// value was sealed under, which plan field was refused, how long a context
-/// was. A binding hands them to its caller beside the code, so the caller can
-/// branch on a field instead of parsing a message. Codes are for crossing a
-/// boundary: Rust code that needs to branch on an error matches the variant.
-///
-/// # What an error may contain
-///
-/// The rule covers an error's message (its `Display`), its help and every
-/// field of its payload, and every error under it that a binding reports as
-/// a cause. The Go guests enforce it with a leak test: every error path a
-/// test can reach is driven with marker values, and the test fails if a
-/// marker appears anywhere in what the guest encodes.
-///
-/// **Allowed:**
-///
-/// - keyset ids and names
-/// - counts and lengths
-/// - term kinds and index names
-/// - field names from a plan or a Go struct: these describe the schema, not
-///   the data
-/// - ZeroKMS request kinds and HTTP status numbers
-/// - workspace ids, workspace CRNs and region names
-/// - the path of a profile file, which names the store and not its contents
-/// - a description the CipherStash token service sends for a person to read
-///   (an OAuth `error_description`)
-/// - the message of an error this rule also governs: one from these four
-///   crates, or from a library whose messages are fixed text, such as
-///   `url::ParseError`
-///
-/// **Never allowed:**
-///
-/// - plaintext, or any part of it
-/// - key material: data keys, index keys, client keys
-/// - access tokens and refresh tokens
-/// - ciphertext bytes and index term bytes
-/// - raw context values
-///
-/// **Decided, with the reason:**
-///
-/// - **Context descriptors are left out.** A context can be built from a
-///   record field (`#[stash(context_field)]`), so its descriptor can hold
-///   customer data. An error about a context gives the descriptor's length
-///   and its number of parts instead.
-/// - **An error from another library gives its type, not its message.** That
-///   message is text these crates do not control: an HTTP client's error can
-///   carry a URL with its query string, and a JSON parser's can quote the
-///   input it refused. Where these crates wrap such an error, their message
-///   names what failed, and the wrapped error stays reachable through
-///   [`source`](std::error::Error::source) for a caller in the same process,
-///   who decides what to log. It never appears in a message or a payload.
-/// - **A slot any implementation can fill shows that implementation's
-///   message**, and the implementation answers for it under this rule. Such
-///   a slot is a `Box<dyn Error>` a trait implementor hands back:
-///   `stack_encrypt::Error::Other` from an `EncryptFrom` or `DecryptInto`
-///   implementation, `TargetError::Other` from an EQL type resolver. Their
-///   own report ("unsupported EQL ciphertext producer or version") is the
-///   one a caller needs, so it is shown as given. An implementation that
-///   fills one names what it refused, never a byte of the value or the
-///   ciphertext, and does not pass another library's message through.
-/// - **ZeroKMS response bodies are left out**, until someone confirms that a
-///   ZeroKMS error body never echoes what the request carried. An error from
-///   a ZeroKMS request gives the request kind and the HTTP status instead.
-///
-/// A field that falls under none of these needs a decision before it is
-/// added, recorded here.
+/// Use [`miette::Diagnostic`] for the code and help, and [`payload`](Self::payload)
+/// for fields such as a profile path or a JSON error's position. See the
+/// [module documentation](crate::diagnostic) for examples and the policy on error contents.
 pub trait ErrorPayload: miette::Diagnostic {
-    /// The error's structured fields, keyed by `snake_case` name. Every value
-    /// obeys the rule above. Empty unless the error has facts worth
-    /// branching on.
+    /// Returns structured details with `snake_case` keys.
+    ///
+    /// Values must follow this module's policy on error contents. The default
+    /// implementation returns an empty map.
     fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
         serde_json::Map::new()
     }
 }
 
-/// A payload built from `(name, value)` pairs.
+/// Builds a payload map from `(name, value)` pairs.
 ///
-/// Shared by the four crates' [`ErrorPayload`] impls so each reads as a list
-/// of fields rather than a map built by hand.
+/// Use this when implementing [`ErrorPayload::payload`]. Names should use
+/// `snake_case`, and values must follow this module's policy on error contents.
 pub fn payload<const N: usize>(
     fields: [(&str, serde_json::Value); N],
 ) -> serde_json::Map<String, serde_json::Value> {
@@ -97,9 +116,11 @@ pub fn payload<const N: usize>(
         .collect()
 }
 
-/// A JSON error as the rule allows it: what kind of error, and where. Never
-/// serde_json's own message, which can quote the input it refused:
-/// `syntax error at line 1 column 5`.
+/// Describes a JSON error by kind, line, and column without quoting input.
+///
+/// For example: `syntax error at line 1 column 5`. Use this instead of the
+/// parser's own message when the input may contain credentials or other
+/// sensitive data.
 pub fn describe_json_error(error: &serde_json::Error) -> String {
     let kind = match error.classify() {
         serde_json::error::Category::Io => "read error",
@@ -110,12 +131,11 @@ pub fn describe_json_error(error: &serde_json::Error) -> String {
     format!("{kind} at line {} column {}", error.line(), error.column())
 }
 
-/// Whether `code` has the shape every code from these crates has: the crate's
-/// name, `::`, then a `snake_case` name — `stack_encrypt::foreign_keyset`.
+/// Checks that a code uses the given crate prefix and a `snake_case` name.
 ///
-/// Each crate's code test runs every code it can produce through this, so a
-/// code in the wrong crate's namespace, or spelled in another case, fails
-/// there rather than reaching a binding.
+/// For example, `is_code_of("stack_profile", "stack_profile::not_found")`
+/// returns `true`. This checks the format, not whether the crate defines the
+/// code; use the crate's `ERROR_CODES` list to check membership.
 pub fn is_code_of(crate_name: &str, code: &str) -> bool {
     let Some(name) = code
         .strip_prefix(crate_name)
