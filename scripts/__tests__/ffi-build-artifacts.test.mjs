@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
+import { readWorkflow } from './lib/workflows.mjs'
 
 /**
  * `_build-ffi-artifacts.yml` builds the seven `@cipherstash/protect-ffi`
@@ -10,9 +10,10 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  * 1. Every Linux binary's C library is checked before it is packed. Without
  *    the check, only a hand-run ffi-preflight sees a glibc-linked musl binary,
  *    which fails to load on musl systems such as Alpine Linux.
- * 2. The musl binary is built inside Alpine Linux, from an image pinned by
- *    digest, and loaded there. Its toolchain used to come from musl.cc, which
- *    timed out from GitHub's runners on six tries on 2 October 2026.
+ * 2. The musl binary is built inside Alpine Linux, from the pinned Dockerfile
+ *    at .github/docker/musl-build, and loaded there. Its toolchain used to
+ *    come from musl.cc, which timed out from GitHub's runners on six tries on
+ *    2 October 2026. The Dockerfile's pins are musl-build-image.test.mjs's.
  */
 
 const workflow = readWorkflow('.github/workflows/_build-ffi-artifacts.yml')
@@ -25,7 +26,6 @@ const gha = (expression) => `\${{ ${expression} }}`
 
 const MUSL = "matrix.cfg.platform == 'linux-x64-musl'"
 const NOT_MUSL = "matrix.cfg.platform != 'linux-x64-musl'"
-const PINNED = /^node:\d+-alpine@sha256:[0-9a-f]{64}$/
 
 describe('_build-ffi-artifacts.yml', () => {
   it('checks the C library of every Linux binary before it is packed', () => {
@@ -51,15 +51,14 @@ describe('_build-ffi-artifacts.yml', () => {
     )
   })
 
-  it('builds the musl binding inside Alpine, from an image pinned by digest', () => {
+  it('builds the musl binding inside Alpine, from the pinned Dockerfile', () => {
     const musl = steps.filter((step) => String(step?.if ?? '').includes(MUSL))
     expect(musl).toHaveLength(1)
     const [build] = musl
     const run = runOf(build)
-    expect(build.env?.ALPINE_NODE_IMAGE).toMatch(PINNED)
-    // The pinned image is the one that runs, not a mutable tag.
-    expect(run).toMatch(/docker run[\s\S]*"\$ALPINE_NODE_IMAGE"/)
-    expect(run).not.toMatch(/\bnode:\d+-alpine(?!@)/)
+    expect(run).toMatch(
+      /docker build --pull -t "\$MUSL_BUILD_IMAGE" \.github\/docker\/musl-build\n[\s\S]*docker run[\s\S]*"\$MUSL_BUILD_IMAGE"/,
+    )
     expect(run).toContain('RUSTFLAGS="-C target-feature=-crt-static"')
     // The container hands its files back even when the build fails.
     expect(run).toMatch(/^\s*trap "chown -R .*\/build" EXIT$/m)
@@ -153,6 +152,8 @@ describe('ffi-preflight.yml', () => {
     const alpine = smoke.find((step) => /\bdocker run\b/.test(runOf(step)))
     expect(alpine).toBeDefined()
     const run = runOf(alpine)
+    // On the image the build image starts from, read from the Dockerfile.
+    expect(run).toContain("ALPINE_NODE_IMAGE=$(sed -n 's/^FROM //p'")
     expect(run).toMatch(/docker run[\s\S]*"\$ALPINE_NODE_IMAGE"/)
     expect(run).toContain('cipherstash-protect-ffi-linux-x64-musl-')
     expect(run).toMatch(
@@ -160,21 +161,5 @@ describe('ffi-preflight.yml', () => {
     )
     // A bare require loads nothing: the binding resolves on first use.
     expect(run).toContain('ffi.assertNativeBindingAvailable()')
-  })
-})
-
-describe('the Alpine image', () => {
-  it('is one pinned image in every workflow, so a load test matches its build', () => {
-    const images = workflowFiles().flatMap((file) =>
-      Object.values(readWorkflow(file)?.jobs ?? {}).flatMap((job) =>
-        (job?.steps ?? [])
-          .map((step) => step?.env?.ALPINE_NODE_IMAGE)
-          .filter(Boolean),
-      ),
-    )
-    // Both builds and both preflights.
-    expect(images.length).toBeGreaterThanOrEqual(4)
-    expect(new Set(images).size).toBe(1)
-    expect(images[0]).toMatch(PINNED)
   })
 })

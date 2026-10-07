@@ -59,14 +59,14 @@ the registry.
 
 ### 5. Cooldown'd auto-updates — practice #6
 
-Dependabot opens grouped, cooldown'd PRs (7 days minor/patch) for `npm`, `cargo` and `github-actions`. Major bumps are not proposed at all — every entry ignores `version-update:semver-major`, so majors are reviewed and applied by hand.
+Dependabot opens grouped, cooldown'd PRs (7 days minor/patch) for `npm`, `cargo`, `gomod`, `github-actions` and `docker` (the digest of the Alpine image the musl binaries are built in). Major bumps are not proposed at all — every entry ignores `version-update:semver-major`, so majors are reviewed and applied by hand.
 
 There is deliberately **no `semver-major-days` cooldown** on any entry. It would delay major *version update* PRs, which the `ignore` above means Dependabot never opens, and cooldown does not reach the security path either ("the cooldown option is only available for version updates, not security updates"). Don't add one back as a safety net for the day the `ignore` is dropped — dead config reads as policy, and the test below fails on the pair.
 
 `cargo` covers the in-tree Rust workspace at `languages/typescript/packages/protect-ffi` (**not** the repo root — that is where `Cargo.toml`/`Cargo.lock` live). It runs monthly rather than weekly because each bump costs a native rebuild to validate, and it ignores the exact-pinned CipherStash crates (`cipherstash-client`, `cts-common`, `stack-auth`, `stack-profile`, `eql-bindings`, `vitaminc`) — they share a release train with the `@cipherstash/auth` catalog and must be bumped together, manually.
 
 - **Where**: `.github/dependabot.yml`
-- **Test asserts**: cooldown ≥ 3 days on npm/github-actions; every entry ignores `version-update:semver-major` for `*` **and** sets no `semver-major-days` (both ends, so neither half can drift alone); every lockfile present in the repo maps to a monitored `package-ecosystem`; every entry's `directory` actually contains the manifest its ecosystem reads
+- **Test asserts**: cooldown ≥ 3 days on every entry; the sentence above names every monitored ecosystem; every entry ignores `version-update:semver-major` for `*` **and** sets no `semver-major-days` (both ends, so neither half can drift alone); every lockfile present in the repo maps to a monitored `package-ecosystem`; every entry's `directory` actually contains the manifest its ecosystem reads
 
 The ecosystem-coverage assertion is derived from the filesystem, so **adding a lockfile for a new language fails the suite until `dependabot.yml` covers it.** Two lockfiles are exempt because Dependabot has no ecosystem for them (`e2e/wasm/deno.lock`, `.flox/env/manifest.lock`); both are named with their reason in the test.
 

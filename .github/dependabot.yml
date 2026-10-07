@@ -296,3 +296,28 @@ updates:
       - dependency-name: "*"
         update-types:
           - version-update:semver-major
+
+  # ── Docker ─────────────────────────────────────────────────────
+  # The Alpine image the musl binaries are built in. Only the `FROM` digest is
+  # read here: the `apk` pins in that Dockerfile are moved by hand, and
+  # musl-build-image.yml says when they stop resolving.
+  - package-ecosystem: docker
+    directory: /.github/docker/musl-build
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 2
+    labels:
+      - dependencies
+      - supply-chain
+    commit-message:
+      prefix: "chore"
+      include: scope
+    ignore:
+      # A new Node.js major (node:24-alpine) is reviewed and applied manually,
+      # with the host legs' Node version, not by Dependabot.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major

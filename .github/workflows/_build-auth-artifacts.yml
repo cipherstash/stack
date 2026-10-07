@@ -118,28 +118,29 @@ jobs:
       # suite's 0.44.0 has that fault. Ubuntu's musl-gcc cannot link a Rust
       # shared library (it has no musl libgcc_s), and the musl.cc toolchain
       # that _build-ffi-artifacts.yml downloads timed out from GitHub's runners
-      # on 2 October 2026. The image is pinned by digest because its output is
-      # published with provenance. `-crt-static` keeps the binary linked
-      # against musl at load time, which a Node.js native module needs, and
-      # which the C library check below reads. The same napi flags as the host
-      # build, for the same reasons.
+      # on 2 October 2026. The image is .github/docker/musl-build/Dockerfile,
+      # base image and packages pinned, because its output is published with
+      # provenance. `-crt-static` keeps the binary linked against musl at load
+      # time, which a Node.js native module needs, and which the C library
+      # check below reads. The same napi flags as the host build, for the same
+      # reasons.
       - name: Build the native binding in Alpine (linux-x64-musl)
         if: ${{ matrix.platform == 'linux-x64-musl' }}
         env:
           TARGET: ${{ matrix.target }}
-          ALPINE_NODE_IMAGE: node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
+          MUSL_BUILD_IMAGE: cipherstash/musl-build:local
         run: |
           set -euo pipefail
           rust_version=$(mise current rust)
           pnpm_spec=$(node -p "require('./package.json').packageManager")
+          docker build --pull -t "$MUSL_BUILD_IMAGE" .github/docker/musl-build
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/build" -w /build \
             -e TARGET -e RUST_VERSION="$rust_version" -e PNPM_SPEC="$pnpm_spec" \
             -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
             -e RUSTFLAGS="-C target-feature=-crt-static" \
-            "$ALPINE_NODE_IMAGE" sh -euc '
+            "$MUSL_BUILD_IMAGE" sh -euc '
               trap "chown -R \"\$HOST_UID:\$HOST_GID\" /build" EXIT
-              apk add --no-cache build-base cmake perl linux-headers git curl rustup
               rustup-init -y --profile minimal --default-toolchain "$RUST_VERSION" --target "$TARGET"
               . "$HOME/.cargo/env"
               corepack enable

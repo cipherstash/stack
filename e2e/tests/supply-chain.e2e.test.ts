@@ -625,6 +625,7 @@ const MANIFEST_BY_ECOSYSTEM: Record<string, string> = {
   uv: 'pyproject.toml',
   mix: 'mix.exs',
   pub: 'pubspec.yaml',
+  docker: 'Dockerfile',
   // github-actions is special-cased: Dependabot requires `directory: /` and
   // discovers .github/workflows itself.
   'github-actions': '.github/workflows',
@@ -720,6 +721,35 @@ describe('supply chain — automated dependency updates (Dependabot)', () => {
     )
     expect(gha).toBeDefined()
     expect(gha?.cooldown?.['default-days']).toBeGreaterThanOrEqual(3)
+  })
+
+  it('every entry has a ≥ 3 day cooldown', () => {
+    // The two above are the named controls; this is the one that catches an
+    // entry added later without one, which would propose a dependency the
+    // day it is published.
+    expect(db.updates.length).toBeGreaterThan(0)
+    for (const entry of db.updates) {
+      expect(
+        entry.cooldown?.['default-days'] ?? 0,
+        `${entry['package-ecosystem']} at ${entry.directory} has no cooldown of at least 3 days`,
+      ).toBeGreaterThanOrEqual(3)
+    }
+  })
+
+  it('the skill names every ecosystem Dependabot monitors', () => {
+    // The sentence is what a customer's agent reads; it omitted gomod for
+    // months with nothing to say so.
+    const skill = read('skills/stash-supply-chain-security/SKILL.md')
+    const sentence = skill
+      .split('\n')
+      .find((line) => line.startsWith('Dependabot opens grouped'))
+    expect(sentence).toBeDefined()
+    const ecosystems = new Set(db.updates.map((u) => u['package-ecosystem']))
+    for (const ecosystem of ecosystems) {
+      expect(sentence, `the skill does not name \`${ecosystem}\``).toContain(
+        `\`${ecosystem}\``,
+      )
+    }
   })
 
   it('every entry ignores majors, so none configures a major cooldown window', () => {
