@@ -27,7 +27,9 @@ http = ["dep:reqwest", "dep:lazy_static", "stack-auth/http"]
 profile = ["dep:stack-profile"]
 # Exposes `FakeDataKeySource`, a deterministic in-memory `DataKeySource` for
 # downstream crates (e.g. `stack-encrypt`) to unit-test encrypt/decrypt without
-# ZeroKMS credentials or network access.
+# ZeroKMS credentials or network access, and `DeterministicSource`, whose keys
+# are a function of a seed and the descriptor, for fixtures that hold real
+# sealed bytes (the stack-encrypt record fixture and the Go test guest).
 test-support = []
 # Enables HTTP/2 in the reqwest client. ZeroKMS endpoints negotiate h2 via
 # ALPN; without it reqwest is HTTP/1.1-only and opens a connection per

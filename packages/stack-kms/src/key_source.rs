@@ -314,6 +314,9 @@ mod deterministic {
         index: FakeDataKeySource,
     }
 
+    // Debug without the seed, which derives every key.
+    opaque_debug::implement!(DeterministicSource);
+
     impl DeterministicSource {
         /// A source over `seed`.
         pub fn new(seed: [u8; 32]) -> Self {
