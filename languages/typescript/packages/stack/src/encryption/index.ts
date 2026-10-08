@@ -46,11 +46,12 @@ import { BulkEncryptOperation } from './operations/bulk-encrypt'
 import { BulkEncryptModelsOperation } from './operations/bulk-encrypt-models'
 import { DecryptOperation } from './operations/decrypt'
 import { DecryptModelOperation } from './operations/decrypt-model'
-import { EncryptOperation } from './operations/encrypt'
+import { EncryptOperation, type EncryptResult } from './operations/encrypt'
 import { EncryptModelOperation } from './operations/encrypt-model'
 import { EncryptQueryOperation } from './operations/encrypt-query'
 
 export type { EncryptionClient } from './client-v3'
+export type { EncryptResult } from './operations/encrypt'
 
 // Re-export the operation classes returned by `EncryptionClient` methods so they
 // are part of the public API and appear in the generated reference, allowing
@@ -269,8 +270,11 @@ class NativeEncryptionClient {
    * @see {@link LockContext}
    * @see {@link EncryptOperation}
    */
-  encrypt(plaintext: PlaintextInput, opts: EncryptOptions): EncryptOperation {
-    return new EncryptOperation(this.client, plaintext, opts)
+  encrypt<P extends PlaintextInput>(
+    plaintext: P,
+    opts: EncryptOptions,
+  ): EncryptOperation<EncryptResult<P>> {
+    return new EncryptOperation<EncryptResult<P>>(this.client, plaintext, opts)
   }
 
   /**

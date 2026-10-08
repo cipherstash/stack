@@ -16,6 +16,7 @@ import {
   type V3DecryptedModel,
   type V3EncryptedModel,
 } from '@/encryption/v3'
+import type { JsonDocument } from '@/eql/v3/columns'
 import type {
   Encrypted,
   EncryptQueryArgs,
@@ -518,5 +519,80 @@ describe('typed v3 client — a JSON document with null array elements needs no 
       table: documents,
       column: documents.body,
     })
+  })
+})
+
+/**
+ * `encrypt` short-circuits a `null` plaintext to a `null` result rather than
+ * encrypting it (DB NULL semantics). Only a `types.Json` column's plaintext
+ * type admits `null` (its document type is `null | JsonValue[] | {…}`), so for
+ * that column the result's `data` must admit `null` too — otherwise
+ * `result.data.c` compiles and throws. A value the compiler knows is non-null
+ * keeps the plain `Encrypted`, so callers that cannot pass `null` see no change.
+ */
+declare const maybeDoc: JsonDocument
+
+describe('typed v3 client — encrypt result admits null exactly when the plaintext can be null', () => {
+  type SuccessData<Op> = Extract<Awaited<Op>, { data: unknown }>['data']
+  const docOpts = { table: documents, column: documents.body }
+
+  it('a literal null on a Json column resolves to Encrypted | null', () => {
+    const op = docClient.encrypt(null, docOpts)
+    expectTypeOf<SuccessData<typeof op>>().toEqualTypeOf<Encrypted | null>()
+  })
+
+  it('a value typed JsonDocument resolves to Encrypted | null', () => {
+    const op = docClient.encrypt(maybeDoc, docOpts)
+    expectTypeOf<SuccessData<typeof op>>().toEqualTypeOf<Encrypted | null>()
+  })
+
+  it('a non-null document resolves to Encrypted', () => {
+    const op = docClient.encrypt({ tags: ['staff', null] }, docOpts)
+    expectTypeOf<SuccessData<typeof op>>().toEqualTypeOf<Encrypted>()
+  })
+
+  it('a scalar column with a string is unchanged: Encrypted', () => {
+    const op = client.encrypt('a@b.com', { table: users, column: users.email })
+    expectTypeOf<SuccessData<typeof op>>().toEqualTypeOf<Encrypted>()
+  })
+
+  it('.withLockContext() carries the same result type', () => {
+    const nullable = docClient
+      .encrypt(null, docOpts)
+      .withLockContext(lockContext)
+    expectTypeOf<
+      SuccessData<typeof nullable>
+    >().toEqualTypeOf<Encrypted | null>()
+    const typed = docClient
+      .encrypt(maybeDoc, docOpts)
+      .withLockContext(lockContext)
+    expectTypeOf<SuccessData<typeof typed>>().toEqualTypeOf<Encrypted | null>()
+    const nonNull = docClient
+      .encrypt({ tags: ['staff'] }, docOpts)
+      .withLockContext(lockContext)
+    expectTypeOf<SuccessData<typeof nonNull>>().toEqualTypeOf<Encrypted>()
+    const scalar = client
+      .encrypt('a@b.com', { table: users, column: users.email })
+      .withLockContext(lockContext)
+    expectTypeOf<SuccessData<typeof scalar>>().toEqualTypeOf<Encrypted>()
+  })
+
+  it('.audit() carries the same result type, before and after binding', () => {
+    const audited = docClient.encrypt(null, docOpts).audit({ metadata: {} })
+    expectTypeOf<
+      SuccessData<typeof audited>
+    >().toEqualTypeOf<Encrypted | null>()
+    const bound = docClient
+      .encrypt(null, docOpts)
+      .withLockContext(lockContext)
+      .audit({ metadata: {} })
+    expectTypeOf<SuccessData<typeof bound>>().toEqualTypeOf<Encrypted | null>()
+  })
+
+  it('execute() resolves to the same type as awaiting', () => {
+    const op = docClient.encrypt(maybeDoc, docOpts)
+    expectTypeOf<
+      SuccessData<ReturnType<typeof op.execute>>
+    >().toEqualTypeOf<Encrypted | null>()
   })
 })

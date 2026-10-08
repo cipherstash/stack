@@ -42,6 +42,7 @@ import type {
   EncryptOperation,
   EncryptQueryOperation,
 } from './index'
+import type { EncryptResult } from './operations/encrypt'
 import {
   type AuditableDecryptModelOperation,
   type LockBoundDecryptModelOperation,
@@ -69,7 +70,10 @@ import {
  * the implementation class.
  */
 type UnderlyingNativeClient = {
-  encrypt: (plaintext: PlaintextInput, opts: EncryptOptions) => EncryptOperation
+  encrypt: <P extends PlaintextInput>(
+    plaintext: P,
+    opts: EncryptOptions,
+  ) => EncryptOperation<EncryptResult<P>>
   encryptQuery: (
     ...args: EncryptQueryArgs
   ) => EncryptQueryOperation | BatchEncryptQueryOperation
@@ -172,10 +176,20 @@ type BulkEncryptPayloadFor<Col> = Array<{
 export interface EncryptionClient<
   S extends readonly AnyV3Table[] = readonly AnyV3Table[],
 > {
-  encrypt<Table extends S[number], Col extends ColumnsOf<Table>>(
-    plaintext: PlaintextForColumn<Col>,
+  /**
+   * Encrypt one value for `column`. The success `data` is `Encrypted`, or
+   * `Encrypted | null` when the plaintext's type admits `null` — only a
+   * `types.Json` column's document type does — because a `null` plaintext
+   * short-circuits to a `null` result (DB NULL) rather than being encrypted.
+   */
+  encrypt<
+    Table extends S[number],
+    Col extends ColumnsOf<Table>,
+    P extends PlaintextForColumn<Col>,
+  >(
+    plaintext: P,
     opts: { table: Table; column: Col },
-  ): EncryptOperation
+  ): EncryptOperation<EncryptResult<P>>
 
   encryptQuery<
     Table extends S[number],

@@ -1913,4 +1913,28 @@ describe('v3 in-list term encryption batches by column', () => {
     expect(status).toBe(500)
     expect(error?.message).toMatch(/null envelope at position 0/)
   })
+
+  it('rejects a null envelope on the per-term fallback rather than sending "null"', async () => {
+    const supabase = createMockSupabase()
+    const encryption = createMockEncryptionClient()
+    delete (encryption as unknown as { bulkEncrypt?: unknown }).bulkEncrypt
+    // `encrypt` short-circuits a null plaintext to a null result; the per-term
+    // path must apply the same guard as the bulk path.
+    ;(
+      encryption as unknown as { encrypt: (...a: unknown[]) => unknown }
+    ).encrypt = () => operation(null)
+
+    const { error, status } = await new EncryptedQueryBuilderV3Impl(
+      'users',
+      users,
+      encryption,
+      supabase.client,
+      USERS_ALL_COLUMNS,
+    )
+      .select('id')
+      .in('nickname', ['ada', 'grace'])
+
+    expect(status).toBe(500)
+    expect(error?.message).toMatch(/null envelope at position 0/)
+  })
 })

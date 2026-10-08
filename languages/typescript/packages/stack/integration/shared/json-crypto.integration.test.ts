@@ -60,6 +60,13 @@ describe('v3 typed client — encrypted JSONB round-trip', () => {
       const encrypted = unwrapResult(
         await client.encrypt(value, { table: docs, column: docs.profile }),
       )
+      // A null document short-circuits to a null result (DB NULL) rather than
+      // being encrypted, and `encrypt`'s result type says so for a plaintext
+      // that may be null.
+      if (encrypted === null) {
+        expect(value).toBeNull()
+        return
+      }
       const decrypted = unwrapResult(await client.decrypt(encrypted))
       expect(decrypted).toEqual(value)
     },
@@ -84,7 +91,9 @@ describe('v3 typed client — encrypted JSONB round-trip', () => {
       const encrypted = unwrapResult(
         await client.encrypt(value, { table: docs, column: docs.profile }),
       )
-      expect(encrypted).not.toBeNull()
+      if (encrypted === null) {
+        throw new Error('a non-null document must encrypt to a payload')
+      }
       expect(Array.isArray((encrypted as { sv?: unknown }).sv)).toBe(true)
 
       const decrypted = unwrapResult(await client.decrypt(encrypted))

@@ -438,7 +438,7 @@ if (!decrypted.failure) {
 }
 ```
 
-`decrypt` of a single value cannot be strongly typed — TypeScript cannot know which column a runtime payload came from, so the result is the whole plaintext union. All plaintext values passed to `encrypt` must be non-null; null handling is managed at the model level by `encryptModel` and `decryptModel`.
+`decrypt` of a single value cannot be strongly typed — TypeScript cannot know which column a runtime payload came from, so the result is the whole plaintext union. A scalar column's `encrypt` rejects `null` at compile time; null handling for those fields is managed at the model level by `encryptModel` and `decryptModel`. The one exception is a `types.Json` column, whose document type admits `null`: on the native client `encrypt(null, …)` makes no ZeroKMS call and resolves to `{ data: null }`, and when the plaintext's type can be `null` (a literal `null`, or a value typed `JsonDocument`) the result's `data` is typed `Encrypted | null` — check it before reading `data.c` or passing it to `decrypt`. A value TypeScript knows is non-null keeps `data: Encrypted`.
 
 > **`decrypt` / `bulkDecrypt` hand back date columns as strings, not `Date`.** Reconstruction is driven by the table's `cast_as`, and only the model path is given a table — so the same stored value comes back as a `Date` from `decryptModel(row, table)` and as its stored ISO string from `decrypt(payload)`. Nothing warns: the raw path's declared type is the plaintext union, which includes `string`. Comparing two ISO strings orders correctly, so this survives review and breaks later on `.getTime()` or date arithmetic. Use the model helpers when you want the column's declared plaintext type, or rebuild at the call site (`new Date(value)`). Same on the WASM entry, and same for the one-arg `decryptModel(row)` / `bulkDecryptModels(rows)` forms, which take no table.
 
@@ -667,7 +667,7 @@ Scalar filters compare through each domain's `eql_v3.*` operators (`col = term`,
 
 ## Encrypted JSON (`types.Json`)
 
-A `types.Json("metadata")` column encrypts a whole JSON document to a `public.eql_v3_json_search` value. The plaintext is a **`JsonDocument`: an object, an array, or `null` — NOT a bare top-level scalar** (protect-ffi rejects a top-level string/number/boolean; a scalar belongs in a scalar domain like `types.TextEq` or `types.IntegerEq`). Nested scalars are fully supported.
+A `types.Json("metadata")` column encrypts a whole JSON document to a `public.eql_v3_json_search` value. The plaintext is a **`JsonDocument`: an object, an array, or `null` — NOT a bare top-level scalar** (protect-ffi rejects a top-level string/number/boolean; a scalar belongs in a scalar domain like `types.TextEq` or `types.IntegerEq`). Nested scalars are fully supported. On the native client a `null` document is not encrypted: `encrypt` resolves to `{ data: null }` (store SQL NULL), and its `data` is typed `Encrypted | null` whenever the argument's type admits `null`.
 
 `types.Json` carries no equality or ordering capability — `eq` / `gt` / `asc` on it throw. It supports two query patterns: containment and JSONPath selectors.
 
