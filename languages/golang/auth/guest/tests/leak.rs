@@ -4,9 +4,11 @@
 //! Every error path a native test can reach is driven with marker values
 //! where a caller's secrets would be — an access token in `auth.json`, an
 //! access key in a strategy config, a client key in `secretkey.json` —
-//! through the same functions the wasm exports run. Each failure's encoded
-//! error, the bytes `se_last_error` would hand the host, is decoded and
-//! searched at every depth: no marker may appear. The rule it enforces is
+//! through the same functions the wasm exports run, inside the real export
+//! lifecycle. Each failure's encoded error, read back through
+//! `se_last_error`'s packing, is decoded and searched at every depth: no
+//! marker may appear. Each scenario also pins the code it reaches, so one
+//! that stops reaching it fails by name. The rule it enforces is
 //! written on `ErrorPayload` in `stack-profile`.
 //!
 //! The profile exports (`ops`) run natively, so they are driven directly.
@@ -17,13 +19,12 @@
 //! exchanges themselves need the host's HTTP import; their errors are
 //! stack-auth's, which the crypto guest's leak test also encodes.
 
-use std::collections::BTreeSet;
 use std::path::Path;
 
 use stack_auth::AuthError;
 use stack_auth_guest::ops;
 use stack_auth_guest::status::fail_auth;
-use stack_guest_abi::last_error;
+use stack_guest_abi::call;
 use vitaminc_aead_value::{transport as codec, FfiValue};
 
 const ACCESS_TOKEN: &str = "leak-marker-access-token";
@@ -32,14 +33,31 @@ const CLIENT_KEY: &str = "leak-marker-client-key";
 
 const MARKERS: &[&str] = &[ACCESS_TOKEN, ACCESS_KEY, CLIENT_KEY];
 
-/// Run one failing step the way an export does — clear, run, make sure a
-/// failure is recorded — and return the decoded error.
-fn failure<T: std::fmt::Debug>(what: &str, step: impl FnOnce() -> Result<T, u32>) -> FfiValue {
-    last_error::clear();
-    let status = step().expect_err(what);
-    last_error::ensure(status);
-    let bytes = last_error::take().unwrap_or_else(|| panic!("{what}: no error recorded"));
-    codec::decode_value(&mut codec::Reader::new(&bytes)).expect("an error decodes")
+/// Run one failing step through the real export lifecycle
+/// ([`call::run`]), read its error the way the host does, through
+/// `se_last_error`'s packing ([`call::take_last_error`]), and check it has
+/// the codes this scenario is there to reach: its own code, then its
+/// causes'. Each scenario pins its own, so one that stops reaching the code
+/// that could leak its marker fails by name.
+fn failure<T: std::fmt::Debug>(
+    what: &str,
+    expect: &[&str],
+    step: impl FnOnce() -> Result<T, u32>,
+) -> FfiValue {
+    let _ = call::run(step).expect_err(what);
+    let bytes = call::take_last_error().unwrap_or_else(|| panic!("{what}: no error recorded"));
+    let error = codec::decode_value(&mut codec::Reader::new(&bytes)).expect("an error decodes");
+    assert_eq!(codes(&error), expect, "{what}: the codes it reaches");
+    error
+}
+
+/// An error's code, then its causes' codes, in order.
+fn codes(value: &FfiValue) -> Vec<String> {
+    let mut out: Vec<String> = text(get(value, "code")).into_iter().collect();
+    if let Some(FfiValue::Array(causes)) = get(value, "causes") {
+        out.extend(causes.iter().filter_map(|cause| text(get(cause, "code"))));
+    }
+    out
 }
 
 fn check(text: &[u8], at: &str, found: &mut Vec<String>) {
@@ -103,33 +121,47 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         // -- the profile store ---------------------------------------------
         (
             "an empty store directory",
-            failure("empty dir", || ops::current_workspace(b"")),
-        ),
-        (
-            "no current workspace",
-            failure("no current", || ops::current_workspace(&store)),
-        ),
-        (
-            "a workspace id that is not one",
-            failure("bad id", || ops::set_current_workspace(&store, b"short")),
-        ),
-        (
-            "a workspace with no directory",
-            failure("no workspace", || {
-                ops::set_current_workspace(&store, b"BBBBBBBBBBBBBBBB")
+            failure("empty dir", &["stack_guest_abi::malformed_input"], || {
+                ops::current_workspace(b"")
             }),
         ),
         (
+            "no current workspace",
+            failure(
+                "no current",
+                &["stack_profile::no_current_workspace"],
+                || ops::current_workspace(&store),
+            ),
+        ),
+        (
+            "a workspace id that is not one",
+            failure("bad id", &["stack_profile::invalid_workspace_id"], || {
+                ops::set_current_workspace(&store, b"short")
+            }),
+        ),
+        (
+            "a workspace with no directory",
+            failure(
+                "no workspace",
+                &["stack_profile::workspace_not_found"],
+                || ops::set_current_workspace(&store, b"BBBBBBBBBBBBBBBB"),
+            ),
+        ),
+        (
             "a filename that names a path",
-            failure("bad filename", || ops::lock_path(&store, b"../auth.json")),
+            failure("bad filename", &["stack_profile::invalid_filename"], || {
+                ops::lock_path(&store, b"../auth.json")
+            }),
         ),
         (
             "a profile file that is not there",
-            failure("missing", || ops::token(&dir(&workspace))),
+            failure("missing", &["stack_profile::not_found"], || {
+                ops::token(&dir(&workspace))
+            }),
         ),
         (
             "an auth.json whose expiry is the token",
-            failure("json", || {
+            failure("json", &["stack_profile::json"], || {
                 std::fs::write(
                     workspace.join("auth.json"),
                     format!(
@@ -142,10 +174,13 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         ),
         (
             "a secretkey.json whose client id is the key",
-            failure("secret key json", || {
+            failure("secret key json", &["stack_profile::json"], || {
                 std::fs::write(
                     workspace.join("secretkey.json"),
-                    format!(r#"{{"client_id":{{"{CLIENT_KEY}":1}}}}"#),
+                    // A JSON string where an object belongs: serde_json's
+                    // message would quote it. (As an object key it would
+                    // not: serde says only "invalid type: map".)
+                    format!(r#""{CLIENT_KEY}""#),
                 )
                 .expect("write secretkey.json");
                 ops::secret_key(&dir(&workspace))
@@ -153,7 +188,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         ),
         (
             "a profile file that is a directory",
-            failure("io", || {
+            failure("io", &["stack_profile::io"], || {
                 std::fs::create_dir_all(workspace.join("device.json")).expect("dir");
                 ops::device_identity(&dir(&workspace))
             }),
@@ -161,7 +196,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         // -- strategies, as `auth` records their refusals -----------------
         (
             "an access key that is not one",
-            failure("access key", || {
+            failure("access key", &["stack_auth::invalid_access_key"], || {
                 ACCESS_KEY
                     .parse::<stack_auth::AccessKey>()
                     .map_err(|e| fail_auth(&AuthError::from(e)))
@@ -169,72 +204,53 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         ),
         (
             "a CRN that is not one",
-            failure("crn", || {
+            failure("crn", &["stack_auth::invalid_crn"], || {
                 "not a crn"
                     .parse::<cts_common::Crn>()
                     .map_err(|e| fail_auth(&AuthError::from(e)))
             }),
         ),
+        // Coverage only: no marker can reach this error. The token parses,
+        // and the refusal is `NotAuthenticated`, which this test builds and
+        // which has no field that could hold the token.
         (
             "a device token with no region",
-            failure("not authenticated", || {
-                let session = root.path().join("session");
-                std::fs::create_dir_all(&session).expect("dir");
-                std::fs::write(
+            failure(
+                "not authenticated",
+                &["stack_auth::not_authenticated"],
+                || {
+                    let session = root.path().join("session");
+                    std::fs::create_dir_all(&session).expect("dir");
+                    std::fs::write(
                     session.join("auth.json"),
                     format!(
                         r#"{{"access_token":"{ACCESS_TOKEN}","token_type":"Bearer","expires_at":99999999999}}"#
                     ),
                 )
                 .expect("write auth.json");
-                let token: stack_auth::Token = stack_profile::ProfileStore::new(&session)
-                    .load_profile()
-                    .expect("a token that parses");
-                if token.region().is_none() {
-                    return Err(fail_auth(&stack_auth::NotAuthenticated.into()));
-                }
-                Ok(())
-            }),
+                    let token: stack_auth::Token = stack_profile::ProfileStore::new(&session)
+                        .load_profile()
+                        .expect("a token that parses");
+                    if token.region().is_none() {
+                        return Err(fail_auth(&stack_auth::NotAuthenticated.into()));
+                    }
+                    Ok(())
+                },
+            ),
         ),
     ]
 }
 
 #[test]
 fn no_encoded_error_carries_a_marker() {
-    let expected: BTreeSet<&str> = [
-        "stack_guest_abi::malformed_input",
-        "stack_profile::no_current_workspace",
-        "stack_profile::invalid_workspace_id",
-        "stack_profile::workspace_not_found",
-        "stack_profile::invalid_filename",
-        "stack_profile::not_found",
-        "stack_profile::json",
-        "stack_profile::io",
-        "stack_auth::invalid_access_key",
-        "stack_auth::invalid_crn",
-        "stack_auth::not_authenticated",
-    ]
-    .into_iter()
-    .collect();
-    let mut reached = BTreeSet::new();
     let mut found = Vec::new();
     for (what, error) in scenarios() {
         leaks(&error, what, &mut found);
-        let code = text(get(&error, "code")).unwrap_or_else(|| panic!("{what}: no code"));
-        reached.insert(code);
     }
     assert!(
         found.is_empty(),
         "markers in encoded errors:\n{}",
         found.join("\n")
-    );
-    let missing: Vec<&str> = expected
-        .into_iter()
-        .filter(|code| !reached.contains(*code))
-        .collect();
-    assert!(
-        missing.is_empty(),
-        "codes no scenario reached: {missing:?}\nreached: {reached:?}"
     );
 }
 
@@ -244,7 +260,9 @@ fn no_encoded_error_carries_a_marker() {
 fn a_profile_json_error_points_at_the_line() {
     let root = tempfile::tempdir().expect("temp dir");
     std::fs::write(root.path().join("auth.json"), "{\n  \"access_token\": 7\n}").expect("write");
-    let error = failure("json", || ops::token(&dir(root.path())));
+    let error = failure("json", &["stack_profile::json"], || {
+        ops::token(&dir(root.path()))
+    });
     assert_eq!(
         text(get(&error, "code")).as_deref(),
         Some("stack_profile::json")

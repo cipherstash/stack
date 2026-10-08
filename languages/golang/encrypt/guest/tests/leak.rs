@@ -9,14 +9,15 @@
 //! depth, keys included: no marker may appear. The rule it enforces is
 //! written on `ErrorPayload` in `stack-profile`.
 //!
-//! The test also pins which codes it reached, so a path that stops being
-//! driven fails here instead of quietly dropping out of the check.
+//! Each step runs through the real export lifecycle and its error is read
+//! back through `se_last_error`'s packing. Each scenario also pins the codes
+//! it reaches, so a path that stops being driven fails here, by name,
+//! instead of quietly dropping out of the check.
 //! Unreachable natively, and so not here: the host imports (`token_get`,
 //! `transport_send`), whose failures arrive as stack-auth and ZeroKMS
 //! errors the key-source and token scenarios below already encode.
 
 use std::borrow::Cow;
-use std::collections::BTreeSet;
 use std::future::IntoFuture;
 
 use stack_auth::{SecretToken, ServiceToken};
@@ -25,7 +26,7 @@ use stack_encrypt::{CipherText, Descriptor, StackCipher};
 use stack_encrypt_guest::options::{parse_options, Side};
 use stack_encrypt_guest::status::fail_error;
 use stack_encrypt_guest::{config, ops};
-use stack_guest_abi::last_error;
+use stack_guest_abi::{call, last_error};
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyError,
     GenerateKeyPayload, IndexKeySource, LoadKeysetError, RetrieveKeyError, RetrieveKeyPayload,
@@ -204,14 +205,22 @@ fn tree_with_leaf(leaf: CipherText<Vec<u8>, Box<dyn std::any::Any + Send>>) -> V
 // Reading an encoded error
 // =============================================================================
 
-/// Run one failing step the way an export does — clear, run, make sure a
-/// failure is recorded — and return the decoded error.
-fn failure<T: std::fmt::Debug>(what: &str, step: impl FnOnce() -> Result<T, u32>) -> FfiValue {
-    last_error::clear();
-    let status = step().expect_err(what);
-    last_error::ensure(status);
-    let bytes = last_error::take().unwrap_or_else(|| panic!("{what}: no error recorded"));
-    codec::decode_value(&mut codec::Reader::new(&bytes)).expect("an error decodes")
+/// Run one failing step through the real export lifecycle
+/// ([`call::run`]), read its error the way the host does, through
+/// `se_last_error`'s packing ([`call::take_last_error`]), and check it has
+/// the codes this scenario is there to reach: its own code, then its
+/// causes'. Each scenario pins its own, so one that stops reaching the code
+/// that could leak its marker fails by name.
+fn failure<T: std::fmt::Debug>(
+    what: &str,
+    expect: &[&str],
+    step: impl FnOnce() -> Result<T, u32>,
+) -> FfiValue {
+    let _ = call::run(step).expect_err(what);
+    let bytes = call::take_last_error().unwrap_or_else(|| panic!("{what}: no error recorded"));
+    let error = codec::decode_value(&mut codec::Reader::new(&bytes)).expect("an error decodes");
+    assert_eq!(codes(&error), expect, "{what}: the codes it reaches");
+    error
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -290,7 +299,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         // -- terms --------------------------------------------------------
         (
             "a context that is not codec bytes",
-            failure("context", || {
+            failure("context", &["stack_guest_abi::malformed_input"], || {
                 let context = [&[0xff][..], CONTEXT.as_bytes()].concat();
                 block_on(ops::term(
                     &keyset,
@@ -302,7 +311,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         ),
         (
             "a context of a kind no context has",
-            failure("context kind", || {
+            failure("context kind", &["stack_encrypt::dynamic_context"], || {
                 block_on(ops::term(
                     &keyset,
                     &encode(s(PLAINTEXT)),
@@ -313,18 +322,22 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         ),
         (
             "an equality term over a boolean",
-            failure("equality over a boolean", || {
-                block_on(ops::term(
-                    &keyset,
-                    &encode(FfiValue::Bool(true)),
-                    &encode(s(CONTEXT)),
-                    ops::TERM_EQUALITY,
-                ))
-            }),
+            failure(
+                "equality over a boolean",
+                &["stack_encrypt::dynamic_term"],
+                || {
+                    block_on(ops::term(
+                        &keyset,
+                        &encode(FfiValue::Bool(true)),
+                        &encode(s(CONTEXT)),
+                        ops::TERM_EQUALITY,
+                    ))
+                },
+            ),
         ),
         (
             "a term kind that is not one",
-            failure("kind", || {
+            failure("kind", &["stack_guest_abi::malformed_input"], || {
                 block_on(ops::term(
                     &keyset,
                     &encode(s(PLAINTEXT)),
@@ -335,7 +348,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         ),
         (
             "match text with no tokens",
-            failure("empty match", || {
+            failure("empty match", &["stack_encrypt::empty_term_text"], || {
                 block_on(ops::term(
                     &keyset,
                     &encode(s("  ")),
@@ -347,11 +360,13 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         // -- plans --------------------------------------------------------
         (
             "a plan that is not codec bytes",
-            failure("plan bytes", || ops::plan_check(CONTEXT.as_bytes())),
+            failure("plan bytes", &["stack_guest_abi::malformed_input"], || {
+                ops::plan_check(CONTEXT.as_bytes())
+            }),
         ),
         (
             "a plan field context of a kind no context has",
-            failure("plan context", || {
+            failure("plan context", &["stack_encrypt::dynamic_context"], || {
                 ops::plan_check(&encode(obj(vec![(
                     "email",
                     field(FfiValue::Bool(true), &["c"], None),
@@ -360,7 +375,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         ),
         (
             "an indexed field with no type",
-            failure("untyped", || {
+            failure("untyped", &["stack_encrypt::dynamic_untyped_index"], || {
                 ops::plan_check(&encode(obj(vec![(
                     "email",
                     field(label("email"), &["eq"], None),
@@ -369,7 +384,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         ),
         (
             "an output that is not one",
-            failure("output", || {
+            failure("output", &["stack_encrypt::dynamic_plan"], || {
                 ops::plan_check(&encode(obj(vec![(
                     "email",
                     field(extended("email", CONTEXT), &["zz"], None),
@@ -378,17 +393,25 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         ),
         (
             "a target this build cannot run",
-            failure("target", || {
-                ops::plan_check(&encode(obj(vec![(
-                    "email",
-                    obj(vec![("context", label("email")), ("target", s("Nope"))]),
-                )])))
-            }),
+            failure(
+                "target",
+                if cfg!(feature = "eql") {
+                    &["stack_encrypt::target_unknown"]
+                } else {
+                    &["stack_encrypt::target_none"]
+                },
+                || {
+                    ops::plan_check(&encode(obj(vec![(
+                        "email",
+                        obj(vec![("context", label("email")), ("target", s("Nope"))]),
+                    )])))
+                },
+            ),
         ),
         // -- records ------------------------------------------------------
         (
             "a source value of another type",
-            failure("source type", || {
+            failure("source type", &["stack_encrypt::dynamic_source"], || {
                 let plan = encode(obj(vec![(
                     "age",
                     field(label("age"), &["c", "ore"], Some("uint32")),
@@ -402,42 +425,54 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         ),
         (
             "a passthrough under a sealed field",
-            failure("source passthrough", || {
-                let source = obj(vec![(
-                    "email",
-                    FfiValue::Passthrough(Box::new(s(PLAINTEXT))),
-                )]);
-                block_on(ops::encrypt_record(
-                    &keyset,
-                    &encode(source),
-                    &plan_under(label("email")),
-                ))
-            }),
+            failure(
+                "source passthrough",
+                &["stack_encrypt::dynamic_source"],
+                || {
+                    let source = obj(vec![(
+                        "email",
+                        FfiValue::Passthrough(Box::new(s(PLAINTEXT))),
+                    )]);
+                    block_on(ops::encrypt_record(
+                        &keyset,
+                        &encode(source),
+                        &plan_under(label("email")),
+                    ))
+                },
+            ),
         ),
         (
             "a context too long for ZeroKMS",
-            failure("descriptor", || {
-                block_on(ops::encrypt_record(
-                    &keyset,
-                    &encode(row(PLAINTEXT)),
-                    &plan_under(extended("email", &long_context)),
-                ))
-            }),
+            failure(
+                "descriptor",
+                &["stack_encrypt::descriptor_too_long"],
+                || {
+                    block_on(ops::encrypt_record(
+                        &keyset,
+                        &encode(row(PLAINTEXT)),
+                        &plan_under(extended("email", &long_context)),
+                    ))
+                },
+            ),
         ),
         (
             "a record that is not codec bytes",
-            failure("record bytes", || {
-                block_on(ops::decrypt_record(
-                    Scope::Client(&cipher),
-                    CIPHERTEXT,
-                    &plan_under(label("email")),
-                    None,
-                ))
-            }),
+            failure(
+                "record bytes",
+                &["stack_guest_abi::malformed_input"],
+                || {
+                    block_on(ops::decrypt_record(
+                        Scope::Client(&cipher),
+                        CIPHERTEXT,
+                        &plan_under(label("email")),
+                        None,
+                    ))
+                },
+            ),
         ),
         (
             "a leaf that is not a sealed value",
-            failure("leaf", || {
+            failure("leaf", &["stack_encrypt::leaf_version"], || {
                 let record = tree_with_leaf(CipherText::Single(CIPHERTEXT.to_vec()));
                 block_on(ops::decrypt_record(
                     Scope::Client(&cipher),
@@ -449,21 +484,25 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         ),
         (
             "a passthrough under c",
-            failure("record passthrough", || {
-                let record = tree_with_leaf(CipherText::Passthrough(Box::new(FfiValue::Bytes(
-                    vitaminc_protected::Protected::new(CIPHERTEXT.to_vec()),
-                ))));
-                block_on(ops::decrypt_record(
-                    Scope::Client(&cipher),
-                    &record,
-                    &plan_under(label("email")),
-                    None,
-                ))
-            }),
+            failure(
+                "record passthrough",
+                &["stack_encrypt::dynamic_record"],
+                || {
+                    let record = tree_with_leaf(CipherText::Passthrough(Box::new(
+                        FfiValue::Bytes(vitaminc_protected::Protected::new(CIPHERTEXT.to_vec())),
+                    )));
+                    block_on(ops::decrypt_record(
+                        Scope::Client(&cipher),
+                        &record,
+                        &plan_under(label("email")),
+                        None,
+                    ))
+                },
+            ),
         ),
         (
             "a record missing a field",
-            failure("record field", || {
+            failure("record field", &["stack_encrypt::dynamic_record"], || {
                 let plan = encode(obj(vec![
                     ("email", field(label("email"), &["c"], None)),
                     ("nick", field(label("nick"), &["c"], None)),
@@ -479,7 +518,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         ),
         (
             "a record opened under another context",
-            failure("aead", || {
+            failure("aead", &["stack_encrypt::aead"], || {
                 let record = sealed(&cipher, &plan_under(label("email")));
                 block_on(ops::decrypt_record(
                     Scope::Client(&cipher),
@@ -491,7 +530,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         ),
         (
             "a record opened through another keyset",
-            failure("foreign keyset", || {
+            failure("foreign keyset", &["stack_encrypt::foreign_keyset"], || {
                 let globex =
                     block_on(cipher.keyset(IdentifiedBy::Name("globex".to_owned().into())))
                         .expect("keyset");
@@ -507,12 +546,14 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         // -- options ------------------------------------------------------
         (
             "options that are not an object",
-            failure("options", || parse_options(s(CONTEXT), Side::Open)),
+            failure("options", &["stack_guest_abi::malformed_input"], || {
+                parse_options(s(CONTEXT), Side::Open)
+            }),
         ),
         // -- ZeroKMS, through a key source whose answers carry the body ---
         (
             "a data-key generation ZeroKMS refused",
-            failure("generate", || {
+            failure("generate", &["stack_kms::generate_key_failed"], || {
                 block_on(ops::encrypt_record(
                     &failing.default_keyset(),
                     &encode(row(PLAINTEXT)),
@@ -522,7 +563,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         ),
         (
             "a data key ZeroKMS could not retrieve",
-            failure("retrieve", || {
+            failure("retrieve", &["stack_kms::key_not_retrieved"], || {
                 let record = sealed(&cipher, &plan_under(label("email")));
                 block_on(ops::decrypt_record(
                     Scope::Client(&failing),
@@ -534,7 +575,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         ),
         (
             "a keyset ZeroKMS does not know",
-            failure("keyset", || {
+            failure("keyset", &["stack_kms::keyset_not_found"], || {
                 let options = parse_options(
                     obj(vec![("keyset", obj(vec![("name", s("tenant"))]))]),
                     Side::Mint,
@@ -545,7 +586,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         // -- the access token ----------------------------------------------
         (
             "a token that is not a JWT",
-            failure("token", || {
+            failure("token", &["stack_auth::invalid_token"], || {
                 ServiceToken::new(SecretToken::new(ACCESS_TOKEN))
                     .zerokms_url()
                     .map_err(|e| fail_error(&stack_encrypt::Error::Kms(stack_kms::Error::Auth(e))))
@@ -553,7 +594,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         ),
         (
             "a token whose claims are not the claims",
-            failure("claims", || {
+            failure("claims", &["stack_auth::invalid_token"], || {
                 use base64ct::{Base64UrlUnpadded, Encoding};
                 let claims = format!(r#"{{"sub": "x", "iss": "x", "services": "{ACCESS_TOKEN}"}}"#);
                 let jwt = format!(
@@ -568,7 +609,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         // -- the config, which carries the client key ----------------------
         (
             "a client key that is not one",
-            failure("config", || {
+            failure("config", &["stack_guest_abi::malformed_input"], || {
                 let config = obj(vec![
                     ("client_id", s("6a1b8c6e-6f3a-4e43-9a3b-2f0f6f8b1c2d")),
                     ("client_key", s(CLIENT_KEY)),
@@ -580,7 +621,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         ),
         (
             "a config key this version does not know",
-            failure("config key", || {
+            failure("config key", &["stack_guest_abi::malformed_input"], || {
                 config::parse_config(obj(vec![(CLIENT_KEY, s(CLIENT_KEY))]))
                     .map(drop)
                     .map_err(|e| last_error::malformed(e.describe()))
@@ -589,11 +630,15 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
         // -- an error no native path raises, recorded the same way ---------
         (
             "a stored context that does not match",
-            failure("context mismatch", || {
-                Err::<(), _>(fail_error(&stack_encrypt::Error::ContextMismatch {
-                    stored: Descriptor::of(("tenant", CONTEXT)),
-                }))
-            }),
+            failure(
+                "context mismatch",
+                &["stack_encrypt::context_mismatch"],
+                || {
+                    Err::<(), _>(fail_error(&stack_encrypt::Error::ContextMismatch {
+                        stored: Descriptor::of(("tenant", CONTEXT)),
+                    }))
+                },
+            ),
         ),
     ];
     // An EQL value whose stored bytes are a JSON string where an object
@@ -601,7 +646,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
     #[cfg(feature = "eql")]
     out.push((
         "stored EQL bytes that do not parse",
-        failure("eql stored", || {
+        failure("eql stored", &["stack_encrypt::target_stored"], || {
             let plan = encode(obj(vec![(
                 "email",
                 obj(vec![("context", label("email")), ("target", s("TextEq"))]),
@@ -631,7 +676,7 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
     // backend's error is reported by its type, never its message.
     out.push((
         "a cause no one vouches for",
-        failure("prf", || {
+        failure("prf", &["stack_encrypt::prf_failed"], || {
             Err::<(), _>(fail_error(&stack_encrypt::Error::Term(
                 stack_encrypt::sem::TermError::Prf(Box::new(std::io::Error::other(ZEROKMS_BODY))),
             )))
@@ -640,43 +685,8 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
     out
 }
 
-/// The codes the scenarios must reach between them: every code this guest
-/// can produce in a native test.
-fn expected_codes() -> BTreeSet<&'static str> {
-    let mut codes: BTreeSet<&str> = [
-        "stack_guest_abi::malformed_input",
-        "stack_encrypt::dynamic_context",
-        "stack_encrypt::dynamic_term",
-        "stack_encrypt::empty_term_text",
-        "stack_encrypt::dynamic_untyped_index",
-        "stack_encrypt::dynamic_plan",
-        "stack_encrypt::dynamic_source",
-        "stack_encrypt::descriptor_too_long",
-        "stack_encrypt::leaf_version",
-        "stack_encrypt::dynamic_record",
-        "stack_encrypt::aead",
-        "stack_encrypt::foreign_keyset",
-        "stack_encrypt::context_mismatch",
-        "stack_encrypt::prf_failed",
-        "stack_kms::generate_key_failed",
-        "stack_kms::key_not_retrieved",
-        "stack_kms::keyset_not_found",
-        "stack_auth::invalid_token",
-    ]
-    .into_iter()
-    .collect();
-    if cfg!(feature = "eql") {
-        codes.insert("stack_encrypt::target_unknown");
-        codes.insert("stack_encrypt::target_stored");
-    } else {
-        codes.insert("stack_encrypt::target_none");
-    }
-    codes
-}
-
 #[test]
 fn no_encoded_error_carries_a_marker() {
-    let mut reached = BTreeSet::new();
     let mut found = Vec::new();
     for (what, error) in scenarios() {
         leaks(&error, what, &mut found);
@@ -688,20 +698,11 @@ fn no_encoded_error_carries_a_marker() {
             text(get(&error, "code")).is_some(),
             "{what}: every error has a code"
         );
-        reached.extend(codes(&error));
     }
     assert!(
         found.is_empty(),
         "markers in encoded errors:\n{}",
         found.join("\n")
-    );
-    let missing: Vec<&str> = expected_codes()
-        .into_iter()
-        .filter(|code| !reached.contains(*code))
-        .collect();
-    assert!(
-        missing.is_empty(),
-        "codes no scenario reached: {missing:?}\nreached: {reached:?}"
     );
 }
 
@@ -729,7 +730,7 @@ fn the_marker_check_finds_a_marker_at_any_depth() {
 #[test]
 fn a_keyset_not_found_carries_its_help_and_request_kind() {
     let failing = failing();
-    let error = failure("keyset", || {
+    let error = failure("keyset", &["stack_kms::keyset_not_found"], || {
         let options = parse_options(
             obj(vec![("keyset", obj(vec![("name", s("tenant"))]))]),
             Side::Mint,
@@ -776,7 +777,7 @@ fn a_foreign_keyset_carries_both_keyset_ids() {
         block_on(cipher.keyset(IdentifiedBy::Name("globex".to_owned().into()))).expect("keyset");
     let globex_id = globex.keyset_id();
     let record = sealed(&cipher, &plan_under(label("email")));
-    let error = failure("foreign", || {
+    let error = failure("foreign", &["stack_encrypt::foreign_keyset"], || {
         block_on(ops::decrypt_record(
             Scope::Keyset(globex),
             &record,
