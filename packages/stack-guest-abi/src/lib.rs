@@ -46,10 +46,13 @@
 //!   the host is recorded with its true length, released through the
 //!   registry (never on the host's say-so), and zeroized on the way out.
 //! - [`abi`] (wasm32 only) — the `se_alloc` / `se_dealloc` /
-//!   `se_last_error` exports every guest has, the packed `u64` result
-//!   encoding, the `export` wrapper every guest export runs through, and the
-//!   hostile-input helpers that validate a host `(ptr, len)` pair against
-//!   linear memory before any slice exists.
+//!   `se_last_error` exports every guest has, the `export` wrapper every
+//!   guest export runs through, and the hostile-input helpers that validate
+//!   a host `(ptr, len)` pair against linear memory before any slice exists.
+//! - [`call`] — what those exports do that is not wasm: the last-error
+//!   lifecycle every export runs and the packed `u64` result encoding, so
+//!   both are tested natively and the guests' leak tests run the real
+//!   lifecycle.
 //! - [`last_error`] — the full error behind the most recent failed export:
 //!   its code, message, help, fields and causes, encoded once in the
 //!   transport codec for `se_last_error`. The status number stays the fast
@@ -83,8 +86,9 @@
 //! host serializes calls into one instance, and during an export the host's
 //! imports may re-enter the guest only through `se_alloc`.
 //!
-//! The crate builds natively too — the registry and the header format have
-//! no wasm in them and are unit-tested on the host — but only the wasm32
+//! The crate builds natively too — the registry, the header format and the
+//! export lifecycle have no wasm in them and are unit-tested on the host —
+//! but only the wasm32
 //! build has an ABI: on any other target the export and import modules do
 //! not exist, so a native library built over this crate exports no `se_*`
 //! symbol at all rather than a silently wrong one (the packed result would
@@ -94,6 +98,7 @@
 //! assumes wasm.
 
 pub mod buffers;
+pub mod call;
 pub mod headers;
 pub mod last_error;
 pub mod status;

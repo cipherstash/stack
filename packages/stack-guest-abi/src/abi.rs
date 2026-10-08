@@ -51,36 +51,22 @@
 //! this crate exports them, so every guest gets `se_alloc` and `se_dealloc`
 //! by depending on it and defines only the exports that are its own.
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
-
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::buffers;
+use crate::call;
 use crate::last_error;
 
-/// Run an export's body: clear the last error, run `f` (a panic is an
-/// internal failure), make sure a failure leaves an error recorded, and pack
-/// the result. Every guest export that returns a packed result goes through
-/// here, so "every export clears the last error when it starts and sets it
-/// when it fails" is written once.
-///
-/// wasm32-wasip1 aborts on panic, so the catch is belt-and-braces for an
-/// unwinding build, as each guest's own catch was.
+/// Run an export's body through [`call::run`] — clear the last error, run
+/// `f` (a panic is an internal failure), clear it again on success or make
+/// sure one is recorded on failure — and pack the result. Every guest export
+/// that returns a packed result goes through here, so "every export clears
+/// the last error when it starts and sets it when it fails" is written once,
+/// in [`call`], where it is tested natively.
 pub fn export(f: impl FnOnce() -> Result<Vec<u8>, u32>) -> u64 {
-    last_error::clear();
-    let result = catch_unwind(AssertUnwindSafe(f))
-        .unwrap_or_else(|_| Err(last_error::internal("a panic was caught")));
-    match result {
-        Ok(out) => {
-            // An error recorded on the way to a success describes nothing
-            // the host will ask about.
-            last_error::clear();
-            ok_buffer(out)
-        }
-        Err(status) => {
-            last_error::ensure(status);
-            err_status(status)
-        }
+    match call::run(f) {
+        Ok(out) => ok_buffer(out),
+        Err(status) => err_status(status),
     }
 }
 
@@ -92,15 +78,12 @@ pub fn export(f: impl FnOnce() -> Result<Vec<u8>, u32>) -> u64 {
 ///
 /// The host calls it only after a non-zero status, copies the buffer out
 /// and releases it with [`se_dealloc`], like any output. Handing the buffer
-/// over empties the slot, so a second call returns zero. It reads the last
-/// error and does not clear it first, so it is the one export that is not
-/// run through [`export`].
+/// over empties the slot, so a second call returns zero
+/// ([`call::pack_last_error`]). It reads the last error and does not clear
+/// it first, so it is the one export that is not run through [`export`].
 #[no_mangle]
 pub extern "C" fn se_last_error() -> u64 {
-    match last_error::take_registered() {
-        Some((ptr, len)) => ((ptr as usize as u64) << 32) | len as u64,
-        None => 0,
-    }
+    call::pack_last_error(address)
 }
 
 /// Allocate `len` bytes of guest memory for the host to write into. Returns
@@ -123,18 +106,24 @@ pub unsafe extern "C" fn se_dealloc(ptr: *mut u8, len: u32) {
     unsafe { buffers::dealloc(ptr, len as usize) }
 }
 
-/// Pack a buffer result: `ptr << 32 | len`. The buffer is registered so the
-/// host's eventual [`se_dealloc`] wipes and frees exactly what was
-/// allocated.
+/// Pack a buffer result: `ptr << 32 | len` ([`call::pack_buffer`]). The
+/// buffer is registered so the host's eventual [`se_dealloc`] wipes and
+/// frees exactly what was allocated.
 pub fn ok_buffer(out: Vec<u8>) -> u64 {
-    let len = out.len() as u64;
-    let ptr = buffers::register(out) as usize as u64;
-    (ptr << 32) | len
+    let len = out.len() as u32;
+    call::pack_buffer(address(buffers::register(out)), len)
 }
 
-/// Pack an error: the status in the low 32 bits, high bits zero.
+/// Pack an error: the status in the low 32 bits, high bits zero
+/// ([`call::pack_status`]).
 pub fn err_status(status: u32) -> u64 {
-    status as u64
+    call::pack_status(status)
+}
+
+/// A pointer's wasm32 address: the whole pointer, since `usize` is 32 bits
+/// here.
+fn address(ptr: *mut u8) -> u32 {
+    ptr as usize as u32
 }
 
 /// Current linear-memory size in bytes. `u64` because a full 4 GiB memory
