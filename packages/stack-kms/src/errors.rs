@@ -411,14 +411,20 @@ mod codes {
     /// `invalid_endpoint` is shared on purpose: an endpoint from
     /// `CS_ZEROKMS_HOST` (the builder's) and one from the token's services
     /// claim (the client's) are refused for the same reasons, and the message
-    /// says which source it was.
+    /// says which source it was. The builder exists only with `http`, so
+    /// without it nothing is shared.
     #[test]
     fn no_two_variants_share_a_code_by_mistake() {
         let errors = every_variant();
         let shared =
             stack_auth::diagnostic::shared_codes(errors.iter().map(|error| error.as_ref()));
         let codes: Vec<&str> = shared.keys().map(String::as_str).collect();
-        assert_eq!(codes, ["stack_kms::invalid_endpoint"], "{shared:#?}");
+        let intended: &[&str] = if cfg!(feature = "http") {
+            &["stack_kms::invalid_endpoint"]
+        } else {
+            &[]
+        };
+        assert_eq!(codes, intended, "{shared:#?}");
     }
 
     /// A ZeroKMS failure gives its request kind, never the response it
