@@ -23,6 +23,7 @@ from stackencrypt._markers import (
     UInt32,
     UInt64,
 )
+from stackencrypt.plan import Plan, PlanSpec
 
 __all__ = [
     "engine_version",
@@ -45,6 +46,9 @@ __all__ = [
     # What the field produces.
     "EQL",
     "Passthrough",
+    # The declaration itself.
+    "Plan",
+    "PlanSpec",
 ]
 
 
