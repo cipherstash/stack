@@ -19,6 +19,11 @@ use crate::{
 };
 use stack_kms::MaybeSend;
 
+/// What a one-value plan's errors name where a fields plan's name a field.
+/// Never the context: a context can carry customer data (a tenant, a user),
+/// so an error reports none of it.
+const THE_VALUE: &str = "the value";
+
 impl Plan<(), ()> {
     /// Start a one-value plan over plaintext `S`, with no context yet: give
     /// it one with [`context`](ValueStart::context), or leave it for the
@@ -231,7 +236,7 @@ impl<S, C, T: EncryptFrom<S>> ValuePlanBuilder<S, Stored<C, T>> {
             }
             .into());
         }
-        check_indexes("the value", &T::indexes())?;
+        check_indexes(THE_VALUE, &T::indexes())?;
         Ok(ValuePlan {
             context: None,
             shape: self.shape,
@@ -451,10 +456,7 @@ impl<S, X: ValueLayout<S>> ValuePlanBuilder<S, X> {
                 .into())
             }
         };
-        let at = context
-            .as_ref()
-            .map_or_else(|| String::from("the value"), Label::to_string);
-        check_indexes(&at, &self.shape.specs())?;
+        check_indexes(THE_VALUE, &self.shape.specs())?;
         Ok(context)
     }
 }
@@ -551,7 +553,7 @@ where
         call: Option<Label>,
     ) -> Result<Label, PlanError> {
         let label = self.resolve(call)?;
-        check_declared(&label.to_string(), &self.shape.specs(), index)?;
+        check_declared(THE_VALUE, &self.shape.specs(), index)?;
         Ok(label)
     }
 }

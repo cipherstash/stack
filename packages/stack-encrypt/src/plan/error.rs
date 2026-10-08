@@ -16,7 +16,8 @@ use crate::LabelError;
 /// Every variant has a `stack_encrypt::` miette code, and names the field
 /// it is about where there is one, in its message and its
 /// [`ErrorPayload`](crate::ErrorPayload). Field names describe the
-/// schema, not the data, so a message may carry them.
+/// schema, not the data, so a message may carry them. A context is data,
+/// so a one-value plan's errors name `the value` in its place.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum PlanError {
@@ -90,7 +91,7 @@ pub enum PlanError {
     #[error("{at:?} names the {index} index twice")]
     #[diagnostic(code(stack_encrypt::plan_duplicate_index))]
     DuplicateIndex {
-        /// The field, or the context of a one-value plan.
+        /// The field, or `the value` for a one-value plan.
         at: String,
         /// The index named twice, as its key (`"eq"`, `"match"`, ...).
         index: &'static str,
@@ -158,7 +159,7 @@ pub enum PlanError {
         help("Query the field through an index it declares, or declare the index on the field.")
     )]
     IndexNotDeclared {
-        /// The field, or the context of a one-value plan.
+        /// The field, or `the value` for a one-value plan.
         field: String,
         /// The index asked for, as its key.
         index: &'static str,
@@ -175,7 +176,7 @@ pub enum PlanError {
         help("Query with the options the field declares: terms derived under other options never match.")
     )]
     IndexOptions {
-        /// The field, or the context of a one-value plan.
+        /// The field, or `the value` for a one-value plan.
         field: String,
         /// The index as the field declares it.
         declared: IndexSpec,

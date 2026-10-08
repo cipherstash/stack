@@ -1177,7 +1177,7 @@ async fn every_build_error_is_its_own() {
                 .build()
         ),
         PlanError::DuplicateIndex {
-            at: "users/age".into(),
+            at: "the value".into(),
             index: "ore"
         }
     );
@@ -1192,7 +1192,7 @@ async fn every_build_error_is_its_own() {
                 .await
         ),
         PlanError::DuplicateIndex {
-            at: "users/age".into(),
+            at: "the value".into(),
             index: "eq"
         }
     );

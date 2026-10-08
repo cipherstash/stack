@@ -69,7 +69,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   but not the reserved character, since a `context_field` label is record
   data. These details remain available on the Rust
   error values for callers in the same process, including the `stored`
-  field on `ContextMismatch`.
+  field on `ContextMismatch`. A one-value plan's
+  `PlanError::DuplicateIndex`, `IndexNotDeclared` and `IndexOptions` name
+  `the value` where they used to quote the plan's or the call's context;
+  the caller already holds that context.
 - **A data plan field with a term output must declare its `"type"`.** A
   plan whose indexed field (`"eq"`, `"match"`, `"ore"`, `"ope"`) has no
   `"type"` is refused when it is built (`Error::UntypedIndex`, naming the
