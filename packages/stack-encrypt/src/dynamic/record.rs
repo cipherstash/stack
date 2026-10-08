@@ -558,8 +558,8 @@ impl Plan {
     /// or does not build as a fields plan: two sealed or indexed fields
     /// keyed under one identity, for instance, whose terms would be
     /// interchangeable. [`Error::UntypedIndex`], naming the field, if a field
-    /// with a term output declares no type: this is where that rule is
-    /// enforced, for a parsed and a hand-built plan alike.
+    /// with a term output declares no type: every constructor shares that
+    /// rule, so a parsed and a hand-built plan are refused alike.
     /// [`Error::Target`] if a target field names a type the
     /// resolver does not know or cannot produce, declares a `"type"` other
     /// than the kind that type is produced from, or sits in an extended plan.
@@ -635,7 +635,8 @@ impl Plan {
     /// [`Output::Passthrough`] (a context is not sealed, and indexing it
     /// would derive a term from a value that is not secret), declares a
     /// type other than [`ValueKind::String`], or any field's label has
-    /// more than one segment. [`Error::Target`]
+    /// more than one segment. [`Error::UntypedIndex`], naming the field, as
+    /// [`new_with`](Self::new_with) refuses. [`Error::Target`]
     /// ([`TargetError::ContextField`]) if a field names an EQL type as its
     /// target: an EQL value is stored under a table the declaration fixes,
     /// and a plan with a context field has none.
@@ -689,7 +690,7 @@ impl Plan {
     }
 
     /// The rules both constructors share: fields named once, one extension,
-    /// and a whole the builder accepts.
+    /// every field with a term output typed, and a whole the builder accepts.
     fn build(context: Context, fields: Vec<FieldPlan>) -> Result<Self, Error> {
         let Some(first) = fields.first() else {
             return Err(Error::Plan);
@@ -3993,6 +3994,45 @@ mod tests {
             assert!(
                 matches!(Plan::new(vec![tenant(), age()]), Err(Error::Plan)),
                 "one-segment labels need a context field"
+            );
+        }
+
+        /// A plan with a context field holds the type rule too: an untyped
+        /// indexed field beside the context field is refused, parsed or
+        /// built by hand, and the refusal names it.
+        #[test]
+        fn an_untyped_indexed_field_beside_the_context_field_is_refused() {
+            let parsed = plan(obj(vec![
+                ("context_field", s("tenant")),
+                ("tenant", spec(identity("tenant"), &["passthrough"])),
+                ("age", spec(identity("age"), &["c", "eq"])),
+            ]));
+            assert!(
+                matches!(&parsed, Err(Error::UntypedIndex { field }) if field == "age"),
+                "{parsed:?}"
+            );
+
+            let field = |name: &str, outputs: &[&str]| {
+                FieldPlan::new(
+                    name,
+                    context(identity(name)).expect("context"),
+                    outputs
+                        .iter()
+                        .map(|o| Output::parse(o).expect("output"))
+                        .collect(),
+                )
+                .expect("field")
+            };
+            let built = Plan::with_context_field(
+                "tenant",
+                vec![
+                    field("tenant", &["passthrough"]),
+                    field("age", &["c", "eq"]),
+                ],
+            );
+            assert!(
+                matches!(&built, Err(Error::UntypedIndex { field }) if field == "age"),
+                "{built:?}"
             );
         }
 

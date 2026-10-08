@@ -36,7 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plan whose indexed field (`"eq"`, `"match"`, `"ore"`, `"ope"`) has no
   `"type"` is refused when it is built (`Error::UntypedIndex`, naming the
   field), by `record::plan`,
-  `record::plan_with` and `Plan::new` / `Plan::new_with` alike: the field's
+  `record::plan_with`, `Plan::new` / `Plan::new_with` and
+  `Plan::with_context_field` alike: the field's
   terms derive from the one declared kind, with every value checked against
   it, never from whatever tag each value arrived with. The type stays
   optional on a field whose only output is `"c"` or `"passthrough"`, and on
