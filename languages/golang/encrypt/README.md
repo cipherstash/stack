@@ -231,7 +231,7 @@ or for stored data. Check an error two ways.
 `errors.As` with a `*Diagnostic` gives you the detail behind a failure the
 engine reports: a stable `Code` (`stack_encrypt::foreign_keyset`,
 `stack_kms::keyset_not_found`, ...), the one-line `Message` that `Error()`
-returns, `Help` saying what to do about it, `Fields` (structured values, by
+returns after the kind's text, `Help` saying what to do about it, `Fields` (structured values, by
 name) and `Causes` (the errors behind it). Accessors read the values a program
 is likely to branch on:
 

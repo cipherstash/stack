@@ -78,11 +78,11 @@ var (
 //
 // Its fields are Code ("stack_encrypt::foreign_keyset",
 // "stack_kms::keyset_not_found", ...; stable), Message (what Error
-// returns), Help, URL, Severity, Fields (the structured fields, by name)
-// and Causes (the errors behind it, outermost first). Accessors read the
-// fields a caller branches on: ExpectedKeyset and FoundKeyset on an
-// [ErrForeignKeyset] (each a [KeysetID]'s bytes), and Field and Reason on a
-// refused plan, record or value.
+// returns after the sentinel's text), Help, URL, Severity, Fields (the
+// structured fields, by name) and Causes (the errors behind it, outermost
+// first). Accessors read the fields a caller branches on: ExpectedKeyset
+// and FoundKeyset on an [ErrForeignKeyset] (each a [KeysetID]'s bytes), and
+// Field and Reason on a refused plan, record or value.
 //
 // What one may carry is fixed: keyset ids and names, field names, counts,
 // index kinds, ZeroKMS request kinds and HTTP statuses. Never plaintext,
