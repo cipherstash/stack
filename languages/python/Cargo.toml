@@ -51,6 +51,10 @@ eql-bindings = { path = "../../packages/eql/crates/eql-bindings", features = [
 # vitaminc lines in one graph do not interoperate, and the failure is two
 # `FfiValue` types with one name.
 vitaminc-aead-value = "0.5.1"
+# The `Controlled` trait, which carries `risky_ref` on `Protected` and
+# `Utf8String`. Same 0.5.1 line; stack-encrypt re-exports `NonEmpty` and
+# friends from this crate but not `Controlled`.
+vitaminc-protected = "0.5.1"
 # The engine's `Pending` is `IntoFuture`, so every operation is async even
 # though this shell's surface is sync. `rt-multi-thread` because the ZeroKMS
 # client wants a reactor; `block_on` over it is the sync path.

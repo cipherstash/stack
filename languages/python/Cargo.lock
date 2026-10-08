@@ -2975,6 +2975,7 @@ dependencies = [
  "stack-encrypt",
  "tokio",
  "vitaminc-aead-value",
+ "vitaminc-protected",
 ]
 
 [[package]]
