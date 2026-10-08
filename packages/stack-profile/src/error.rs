@@ -51,8 +51,11 @@ pub enum ProfileError {
     )]
     InvalidFilename(String),
     /// No current workspace is set but a workspace-scoped operation was attempted.
-    #[error("No current workspace set. Run `stash login` or `stash workspaces switch` first.")]
-    #[diagnostic(code(stack_profile::no_current_workspace))]
+    #[error("No current workspace set")]
+    #[diagnostic(
+        code(stack_profile::no_current_workspace),
+        help("Log in with `stash auth login`, or set the current workspace on the profile store.")
+    )]
     NoCurrentWorkspace,
     /// The workspace ID is invalid (not a 16-character base32 string).
     #[error("Invalid workspace ID: {0}")]
@@ -62,8 +65,11 @@ pub enum ProfileError {
     )]
     InvalidWorkspaceId(String),
     /// The workspace has no local profile data (not logged in).
-    #[error("Workspace not found: {0}. Log in to this workspace first.")]
-    #[diagnostic(code(stack_profile::workspace_not_found))]
+    #[error("Workspace not found: {0}")]
+    #[diagnostic(
+        code(stack_profile::workspace_not_found),
+        help("Log in to this workspace with `stash auth login`.")
+    )]
     WorkspaceNotFound(String),
 }
 
@@ -171,6 +177,25 @@ mod tests {
                 .unwrap_or_else(|| panic!("{error:?} has no code"))
                 .to_string();
             assert!(is_code_of("stack_profile", &code), "{code}");
+        }
+    }
+
+    /// The workspace errors name the one CLI command there is for this,
+    /// `stash auth login`, and no command the CLI does not have.
+    #[test]
+    fn the_workspace_errors_name_stash_auth_login() {
+        for error in [
+            ProfileError::NoCurrentWorkspace,
+            ProfileError::WorkspaceNotFound("AAAAAAAAAAAAAAAA".into()),
+        ] {
+            let help = error
+                .help()
+                .map(|help| help.to_string())
+                .unwrap_or_default();
+            assert!(help.contains("`stash auth login`"), "{error:?}: {help}");
+            let shown = format!("{error} {help}");
+            assert!(!shown.contains("`stash login`"), "{shown}");
+            assert!(!shown.contains("workspaces switch"), "{shown}");
         }
     }
 
