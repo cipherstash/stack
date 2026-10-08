@@ -1713,16 +1713,11 @@ mod tests {
         }};
     }
 
-    /// Every variant has a code in this crate's namespace and `snake_case`,
-    /// save a store failure, whose code is its profile error's.
-    /// [`every_variant`] has a row for every frozen code, so every
-    /// [`AuthError`] variant is here; the access-key rows cover
-    /// [`InvalidAccessKey`](crate::InvalidAccessKey).
-    #[test]
-    fn every_variant_has_a_code_of_this_crate() {
+    /// [`every_variant`]'s errors, and one of every
+    /// [`InvalidAccessKey`](crate::InvalidAccessKey) variant.
+    fn every_diagnostic() -> Vec<Box<dyn miette::Diagnostic>> {
         use crate::InvalidAccessKey;
         use miette::Diagnostic;
-        use stack_profile::diagnostic::is_code_of;
         let mut errors: Vec<Box<dyn Diagnostic>> = every_variant()
             .into_iter()
             .map(|(error, _, _)| Box::new(error) as Box<dyn Diagnostic>)
@@ -1737,7 +1732,18 @@ mod tests {
             .into_iter()
             .map(|error| Box::new(error) as Box<dyn Diagnostic>),
         );
-        for error in &errors {
+        errors
+    }
+
+    /// Every variant has a code in this crate's namespace and `snake_case`,
+    /// save a store failure, whose code is its profile error's.
+    /// [`every_variant`] has a row for every frozen code, so every
+    /// [`AuthError`] variant is here; the access-key rows cover
+    /// [`InvalidAccessKey`](crate::InvalidAccessKey).
+    #[test]
+    fn every_variant_has_a_code_of_this_crate() {
+        use stack_profile::diagnostic::is_code_of;
+        for error in &every_diagnostic() {
             let code = error
                 .code()
                 .unwrap_or_else(|| panic!("{error:?} has no code"))
@@ -1747,6 +1753,52 @@ mod tests {
                 "{code}"
             );
         }
+    }
+
+    /// No two variants share a code by mistake: callers branch on it.
+    /// [`DeviceClientError`](crate::DeviceClientError)'s own variants share
+    /// on purpose: each carries the code of the [`AuthError`] it converts
+    /// into.
+    #[test]
+    fn no_two_variants_share_a_code_by_mistake() {
+        #[allow(unused_mut)]
+        let mut errors = every_diagnostic();
+        #[allow(unused_mut)]
+        let mut intended: Vec<&str> = Vec::new();
+        #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+        {
+            use crate::DeviceClientError;
+            errors.extend(
+                variants![
+                    DeviceClientError::Profile(_) => DeviceClientError::Profile(
+                        stack_profile::ProfileError::NotFound { path: "auth.json".into() }
+                    ),
+                    DeviceClientError::Auth(_) => DeviceClientError::Auth(AccessDenied.into()),
+                    DeviceClientError::Request(_) => DeviceClientError::Request(RequestError(
+                        Box::new(std::io::Error::other("refused"))
+                    )),
+                    DeviceClientError::Server { .. } => DeviceClientError::Server {
+                        status: 503,
+                        body: String::new(),
+                    },
+                    DeviceClientError::InvalidUrl(_) => DeviceClientError::InvalidUrl(
+                        "not a url".parse::<url::Url>().unwrap_err()
+                    ),
+                ]
+                .into_iter()
+                .map(|error| Box::new(error) as Box<dyn miette::Diagnostic>),
+            );
+            // The profile error both wrappers carry, as its own row: a
+            // wrapper counts as the error it forwards.
+            errors.push(Box::new(stack_profile::ProfileError::NotFound {
+                path: "auth.json".into(),
+            }));
+            intended.extend(["stack_auth::invalid_url", "stack_auth::server_error"]);
+        }
+        let shared =
+            stack_profile::diagnostic::shared_codes(errors.iter().map(|error| error.as_ref()));
+        let codes: Vec<&str> = shared.keys().map(String::as_str).collect();
+        assert_eq!(codes, intended, "{shared:#?}");
     }
 
     /// A store failure's payload is the profile error's, so a binding

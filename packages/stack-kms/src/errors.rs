@@ -372,7 +372,7 @@ mod codes {
                     }
                 },
                 StackKmsBuilderError::ClientInit(_) => {
-                    StackKmsBuilderError::ClientInit(Error::Unexpected("x".into()))
+                    StackKmsBuilderError::ClientInit(Error::Unexpected("unexpected".into()))
                 },
                 StackKmsBuilderError::Auth(_) => StackKmsBuilderError::Auth(
                     stack_auth::AuthError::TokenExpired(stack_auth::TokenExpired)
@@ -405,6 +405,20 @@ mod codes {
                 "{code}"
             );
         }
+    }
+
+    /// No two variants share a code by mistake: callers branch on it.
+    /// `invalid_endpoint` is shared on purpose: an endpoint from
+    /// `CS_ZEROKMS_HOST` (the builder's) and one from the token's services
+    /// claim (the client's) are refused for the same reasons, and the message
+    /// says which source it was.
+    #[test]
+    fn no_two_variants_share_a_code_by_mistake() {
+        let errors = every_variant();
+        let shared =
+            stack_auth::diagnostic::shared_codes(errors.iter().map(|error| error.as_ref()));
+        let codes: Vec<&str> = shared.keys().map(String::as_str).collect();
+        assert_eq!(codes, ["stack_kms::invalid_endpoint"], "{shared:#?}");
     }
 
     /// A ZeroKMS failure gives its request kind, never the response it

@@ -180,6 +180,16 @@ mod tests {
         }
     }
 
+    /// No two variants share a code: callers branch on it.
+    #[test]
+    fn no_two_variants_share_a_code_by_mistake() {
+        let errors = every_variant();
+        let shared =
+            crate::diagnostic::shared_codes(errors.iter().map(|error| error as &dyn Diagnostic));
+        let codes: Vec<&str> = shared.keys().map(String::as_str).collect();
+        assert_eq!(codes, [] as [&str; 0], "{shared:#?}");
+    }
+
     /// The workspace errors name the one CLI command there is for this,
     /// `stash auth login`, and no command the CLI does not have.
     #[test]

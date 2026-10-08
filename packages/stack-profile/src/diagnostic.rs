@@ -156,9 +156,86 @@ pub fn is_code_of(crate_name: &str, code: &str) -> bool {
         && !name.contains("__")
 }
 
+/// The codes that more than one variant carries, each with the messages of
+/// the errors that carry it.
+///
+/// Callers branch on a code, so two variants that share one by mistake (a
+/// copied `#[diagnostic(code(..))]` line) are two errors a caller cannot
+/// tell apart. Each crate's tests pass one error of every variant and
+/// compare the result with the codes it shares on purpose.
+///
+/// Errors are told apart by their message. A wrapper that forwards its
+/// inner error's code shows that error's message, alone or after a prefix
+/// of its own, so a message ending in another of the same code counts as
+/// that error, not as a second variant. The test builds the wrapper's inner
+/// error with the same value as that error's own row.
+///
+/// Hidden from the documentation, as [`is_code_of`] is.
+#[doc(hidden)]
+pub fn shared_codes<'a>(
+    errors: impl IntoIterator<Item = &'a dyn miette::Diagnostic>,
+) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+    let mut by_code = std::collections::BTreeMap::<_, std::collections::BTreeSet<_>>::new();
+    for error in errors {
+        if let Some(code) = error.code() {
+            let _ = by_code
+                .entry(code.to_string())
+                .or_default()
+                .insert(error.to_string());
+        }
+    }
+    for messages in by_code.values_mut() {
+        let wrappers: Vec<String> = messages
+            .iter()
+            .filter(|message| {
+                messages
+                    .iter()
+                    .any(|inner| inner != *message && message.ends_with(inner.as_str()))
+            })
+            .cloned()
+            .collect();
+        for wrapper in wrappers {
+            let _ = messages.remove(&wrapper);
+        }
+    }
+    by_code.retain(|_, messages| messages.len() > 1);
+    by_code
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug, thiserror::Error, miette::Diagnostic)]
+    enum Probe {
+        #[error("first")]
+        #[diagnostic(code(probe::one))]
+        First,
+        #[error("second")]
+        #[diagnostic(code(probe::one))]
+        Second,
+        #[error("wrapped: {0}")]
+        #[diagnostic(transparent)]
+        Wrapper(Box<Probe>),
+        #[error("third")]
+        #[diagnostic(code(probe::three))]
+        Third,
+    }
+
+    /// Two variants with one code are reported; a wrapper forwarding its
+    /// inner error's code, after a prefix of its own, is not a second one.
+    #[test]
+    fn a_shared_code_is_found_and_a_wrapper_is_not_one() {
+        let errors = [
+            Probe::First,
+            Probe::Second,
+            Probe::Third,
+            Probe::Wrapper(Box::new(Probe::Third)),
+        ];
+        let shared = shared_codes(errors.iter().map(|error| error as &dyn miette::Diagnostic));
+        assert_eq!(shared.keys().collect::<Vec<_>>(), ["probe::one"]);
+        assert_eq!(shared["probe::one"].len(), 2);
+    }
 
     #[test]
     fn a_code_is_its_crate_then_one_snake_case_name() {

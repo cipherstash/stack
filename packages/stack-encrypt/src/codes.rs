@@ -238,6 +238,15 @@ mod tests {
         }
     }
 
+    /// No two variants share a code: callers branch on it.
+    #[test]
+    fn no_two_variants_share_a_code_by_mistake() {
+        let errors = every_variant();
+        let shared = crate::diagnostic::shared_codes(errors.iter().map(|error| error.as_ref()));
+        let codes: Vec<&str> = shared.keys().map(String::as_str).collect();
+        assert_eq!(codes, [] as [&str; 0], "{shared:#?}");
+    }
+
     /// A stored context can be customer data: its descriptor stays out of
     /// the message and the payload, which give its length and parts.
     #[test]
