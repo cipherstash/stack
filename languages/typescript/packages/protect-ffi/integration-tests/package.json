@@ -12,7 +12,7 @@
   "dependencies": {
     "@cipherstash/auth": "workspace:*",
     "@cipherstash/protect-ffi": "workspace:*",
-    "pg": "8.23.0"
+    "pg": "8.23.1"
   },
   "devDependencies": {
     "@cipherstash/eql": "workspace:^",

@@ -84,7 +84,7 @@
 		"@types/pg": "^8.23.1",
 		"fast-check": "^4.9.0",
 		"dotenv": "17.4.2",
-		"pg": "8.23.0",
+		"pg": "8.23.1",
 		"postgres": "^3.4.8",
 		"tsup": "catalog:repo",
 		"typescript": "catalog:repo",
