@@ -156,50 +156,69 @@ pub fn is_code_of(crate_name: &str, code: &str) -> bool {
         && !name.contains("__")
 }
 
-/// The codes that more than one variant carries, each with the messages of
-/// the errors that carry it.
+/// One error of a test's rows, boxed with the name of its type, for
+/// [`shared_codes`].
+///
+/// Derived `Debug` prints a variant without its enum, so two enums'
+/// `Unauthorized` variants look alike; the type name tells them apart.
+///
+/// Hidden from the documentation, as [`is_code_of`] is.
+#[doc(hidden)]
+pub fn named<E: miette::Diagnostic + 'static>(
+    error: E,
+) -> (&'static str, Box<dyn miette::Diagnostic>) {
+    (std::any::type_name::<E>(), Box::new(error))
+}
+
+/// The codes that more than one variant carries, each with the variants
+/// that carry it.
 ///
 /// Callers branch on a code, so two variants that share one by mistake (a
 /// copied `#[diagnostic(code(..))]` line) are two errors a caller cannot
-/// tell apart. Each crate's tests pass one error of every variant and
-/// compare the result with the codes it shares on purpose.
+/// tell apart. Each crate's tests pass one error of every variant, with its
+/// type's name (see [`named`]), and compare the result with the codes it
+/// shares on purpose.
 ///
-/// Errors are told apart by their message. A wrapper that forwards its
-/// inner error's code shows that error's message, alone or after a prefix
-/// of its own, so a message ending in another of the same code counts as
-/// that error, not as a second variant. The test builds the wrapper's inner
-/// error with the same value as that error's own row.
+/// A variant is its type's name and its `Debug` text, so two variants
+/// with the same message are still two. A wrapper that forwards its inner
+/// error's code is not a second variant: its `Debug` text holds the inner
+/// error's in parentheses (`Kms(Unexpected("kms"))`), so a row whose `Debug`
+/// text holds another row's of the same code that way counts as that row.
+/// The test builds the wrapper's inner error with the same value as that
+/// error's own row, and gives rows of unrelated variants different values,
+/// so that one's `Debug` text does not hold another's by chance.
 ///
 /// Hidden from the documentation, as [`is_code_of`] is.
 #[doc(hidden)]
 pub fn shared_codes<'a>(
-    errors: impl IntoIterator<Item = &'a dyn miette::Diagnostic>,
+    errors: impl IntoIterator<Item = (&'a str, &'a dyn miette::Diagnostic)>,
 ) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
-    let mut by_code = std::collections::BTreeMap::<_, std::collections::BTreeSet<_>>::new();
-    for error in errors {
+    use std::collections::{BTreeMap, BTreeSet};
+    // Per code: each variant's `Debug` text, keyed with its type's name.
+    let mut by_code = BTreeMap::<String, BTreeSet<(String, String)>>::new();
+    for (type_name, error) in errors {
         if let Some(code) = error.code() {
             let _ = by_code
                 .entry(code.to_string())
                 .or_default()
-                .insert(error.to_string());
+                .insert((format!("{error:?}"), type_name.to_owned()));
         }
     }
-    for messages in by_code.values_mut() {
-        let wrappers: Vec<String> = messages
-            .iter()
-            .filter(|message| {
-                messages
-                    .iter()
-                    .any(|inner| inner != *message && message.ends_with(inner.as_str()))
-            })
-            .cloned()
-            .collect();
-        for wrapper in wrappers {
-            let _ = messages.remove(&wrapper);
-        }
-    }
-    by_code.retain(|_, messages| messages.len() > 1);
     by_code
+        .into_iter()
+        .filter_map(|(code, rows)| {
+            let variants: BTreeSet<String> = rows
+                .iter()
+                .filter(|(debug, _)| {
+                    !rows
+                        .iter()
+                        .any(|(inner, _)| inner != debug && debug.contains(&format!("({inner})")))
+                })
+                .map(|(debug, type_name)| format!("{type_name}: {debug}"))
+                .collect();
+            (variants.len() > 1).then_some((code, variants))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -232,9 +251,30 @@ mod tests {
             Probe::Third,
             Probe::Wrapper(Box::new(Probe::Third)),
         ];
-        let shared = shared_codes(errors.iter().map(|error| error as &dyn miette::Diagnostic));
+        let shared = shared_codes(
+            errors
+                .iter()
+                .map(|error| ("Probe", error as &dyn miette::Diagnostic)),
+        );
         assert_eq!(shared.keys().collect::<Vec<_>>(), ["probe::one"]);
         assert_eq!(shared["probe::one"].len(), 2);
+    }
+
+    #[derive(Debug, thiserror::Error, miette::Diagnostic)]
+    enum Other {
+        #[error("first")]
+        #[diagnostic(code(probe::one))]
+        First,
+    }
+
+    /// Two variants with the same message and the same code are two
+    /// variants, also when they share a name in two enums.
+    #[test]
+    fn a_shared_code_is_found_when_the_messages_are_the_same() {
+        let rows = [named(Probe::First), named(Other::First)];
+        let shared = shared_codes(rows.iter().map(|(name, error)| (*name, error.as_ref())));
+        assert_eq!(shared.keys().collect::<Vec<_>>(), ["probe::one"]);
+        assert_eq!(shared["probe::one"].len(), 2, "{shared:#?}");
     }
 
     #[test]

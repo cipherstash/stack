@@ -184,8 +184,11 @@ mod tests {
     #[test]
     fn no_two_variants_share_a_code_by_mistake() {
         let errors = every_variant();
-        let shared =
-            crate::diagnostic::shared_codes(errors.iter().map(|error| error as &dyn Diagnostic));
+        let shared = crate::diagnostic::shared_codes(
+            errors
+                .iter()
+                .map(|error| ("ProfileError", error as &dyn Diagnostic)),
+        );
         let codes: Vec<&str> = shared.keys().map(String::as_str).collect();
         assert_eq!(codes, [] as [&str; 0], "{shared:#?}");
     }

@@ -1715,12 +1715,12 @@ mod tests {
 
     /// [`every_variant`]'s errors, and one of every
     /// [`InvalidAccessKey`](crate::InvalidAccessKey) variant.
-    fn every_diagnostic() -> Vec<Box<dyn miette::Diagnostic>> {
+    fn every_diagnostic() -> Vec<(&'static str, Box<dyn miette::Diagnostic>)> {
         use crate::InvalidAccessKey;
-        use miette::Diagnostic;
-        let mut errors: Vec<Box<dyn Diagnostic>> = every_variant()
+        use stack_profile::diagnostic::named;
+        let mut errors: Vec<_> = every_variant()
             .into_iter()
-            .map(|(error, _, _)| Box::new(error) as Box<dyn Diagnostic>)
+            .map(|(error, _, _)| named(error))
             .collect();
         errors.extend(
             variants![
@@ -1730,7 +1730,7 @@ mod tests {
                 InvalidAccessKey::EmptySecret => InvalidAccessKey::EmptySecret,
             ]
             .into_iter()
-            .map(|error| Box::new(error) as Box<dyn Diagnostic>),
+            .map(named),
         );
         errors
     }
@@ -1743,7 +1743,7 @@ mod tests {
     #[test]
     fn every_variant_has_a_code_of_this_crate() {
         use stack_profile::diagnostic::is_code_of;
-        for error in &every_diagnostic() {
+        for (_, error) in &every_diagnostic() {
             let code = error
                 .code()
                 .unwrap_or_else(|| panic!("{error:?} has no code"))
@@ -1781,22 +1781,31 @@ mod tests {
                         status: 503,
                         body: String::new(),
                     },
+                    // Not the AuthError row's URL error: rows of unrelated
+                    // variants hold different values, so neither reads as
+                    // a wrapper of the other.
                     DeviceClientError::InvalidUrl(_) => DeviceClientError::InvalidUrl(
-                        "not a url".parse::<url::Url>().unwrap_err()
+                        "http://[::1".parse::<url::Url>().unwrap_err()
                     ),
                 ]
                 .into_iter()
-                .map(|error| Box::new(error) as Box<dyn miette::Diagnostic>),
+                .map(stack_profile::diagnostic::named),
             );
-            // The profile error both wrappers carry, as its own row: a
+            // The errors two wrappers each carry, as rows of their own: a
             // wrapper counts as the error it forwards.
-            errors.push(Box::new(stack_profile::ProfileError::NotFound {
-                path: "auth.json".into(),
-            }));
+            errors.push(stack_profile::diagnostic::named(
+                stack_profile::ProfileError::NotFound {
+                    path: "auth.json".into(),
+                },
+            ));
+            errors.push(stack_profile::diagnostic::named(RequestError(Box::new(
+                std::io::Error::other("refused"),
+            ))));
             intended.extend(["stack_auth::invalid_url", "stack_auth::server_error"]);
         }
-        let shared =
-            stack_profile::diagnostic::shared_codes(errors.iter().map(|error| error.as_ref()));
+        let shared = stack_profile::diagnostic::shared_codes(
+            errors.iter().map(|(name, error)| (*name, error.as_ref())),
+        );
         let codes: Vec<&str> = shared.keys().map(String::as_str).collect();
         assert_eq!(codes, intended, "{shared:#?}");
     }

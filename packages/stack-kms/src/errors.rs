@@ -249,23 +249,25 @@ mod codes {
         }};
     }
 
-    fn boxed<E: Diagnostic + 'static>(rows: Vec<E>) -> impl Iterator<Item = Box<dyn Diagnostic>> {
-        rows.into_iter()
-            .map(|error| Box::new(error) as Box<dyn Diagnostic>)
+    /// A test's row: an error, boxed with its type's name.
+    type Row = (&'static str, Box<dyn Diagnostic>);
+
+    fn boxed<E: Diagnostic + 'static>(rows: Vec<E>) -> impl Iterator<Item = Row> {
+        rows.into_iter().map(stack_auth::diagnostic::named)
     }
 
     /// One of every variant of every error type here.
-    fn every_variant() -> Vec<Box<dyn Diagnostic>> {
-        let mut errors: Vec<Box<dyn Diagnostic>> = vec![
-            Box::new(material()),
-            Box::new(BaseUrlUnresolved),
-            Box::new(UnexpectedContentType {
+    fn every_variant() -> Vec<Row> {
+        let mut errors: Vec<Row> = vec![
+            stack_auth::diagnostic::named(material()),
+            stack_auth::diagnostic::named(BaseUrlUnresolved),
+            stack_auth::diagnostic::named(UnexpectedContentType {
                 received: Some("text/html".into()),
                 expected: "application/json",
                 body: None,
                 headers: Default::default(),
             }),
-            Box::new(FailureResponse {
+            stack_auth::diagnostic::named(FailureResponse {
                 status: 500,
                 body: None,
                 headers: Default::default(),
@@ -354,8 +356,13 @@ mod codes {
             KeyProviderError::LoadError(_) => KeyProviderError::LoadError("disk".into()),
         ]));
         if let Err(error) = crate::ClientOpts::new(()).with_max_keys_per_req(0) {
-            errors.push(Box::new(error));
+            errors.push(stack_auth::diagnostic::named(error));
         }
+        // The auth error the two `Auth` wrappers carry, as a row of its own:
+        // a wrapper counts as the error it forwards.
+        errors.push(stack_auth::diagnostic::named(
+            stack_auth::AuthError::TokenExpired(stack_auth::TokenExpired),
+        ));
         #[cfg(feature = "http")]
         {
             use crate::builder::StackKmsBuilderError;
@@ -363,7 +370,9 @@ mod codes {
                 .get("not a url")
                 .build()
                 .expect_err("not a URL");
-            errors.push(Box::new(crate::ConnectionInitError::from(reqwest_error)));
+            errors.push(stack_auth::diagnostic::named(
+                crate::ConnectionInitError::from(reqwest_error),
+            ));
             errors.extend(boxed(variants![
                 StackKmsBuilderError::InvalidEndpoint { .. } => {
                     StackKmsBuilderError::InvalidEndpoint {
@@ -395,7 +404,7 @@ mod codes {
     /// save one that carries a stack-auth error, whose code is that error's.
     #[test]
     fn every_variant_has_a_code_of_this_crate() {
-        for error in every_variant() {
+        for (_, error) in every_variant() {
             let code = error
                 .code()
                 .unwrap_or_else(|| panic!("{error:?} has no code"))
@@ -416,8 +425,9 @@ mod codes {
     #[test]
     fn no_two_variants_share_a_code_by_mistake() {
         let errors = every_variant();
-        let shared =
-            stack_auth::diagnostic::shared_codes(errors.iter().map(|error| error.as_ref()));
+        let shared = stack_auth::diagnostic::shared_codes(
+            errors.iter().map(|(name, error)| (*name, error.as_ref())),
+        );
         let codes: Vec<&str> = shared.keys().map(String::as_str).collect();
         let intended: &[&str] = if cfg!(feature = "http") {
             &["stack_kms::invalid_endpoint"]

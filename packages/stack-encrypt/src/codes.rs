@@ -32,13 +32,15 @@ mod tests {
         }};
     }
 
-    fn boxed<E: Diagnostic + 'static>(rows: Vec<E>) -> impl Iterator<Item = Box<dyn Diagnostic>> {
-        rows.into_iter()
-            .map(|error| Box::new(error) as Box<dyn Diagnostic>)
+    /// A test's row: an error, boxed with its type's name.
+    type Row = (&'static str, Box<dyn Diagnostic>);
+
+    fn boxed<E: Diagnostic + 'static>(rows: Vec<E>) -> impl Iterator<Item = Row> {
+        rows.into_iter().map(crate::diagnostic::named)
     }
 
     /// One of every variant of every error type here.
-    fn every_variant() -> Vec<Box<dyn Diagnostic>> {
+    fn every_variant() -> Vec<Row> {
         let cause = || Box::new(std::io::Error::other("cause"));
         let (a, b) = (Uuid::from_u128(1), Uuid::from_u128(2));
         let field = || "age".to_string();
@@ -160,7 +162,7 @@ mod tests {
     }
 
     #[cfg(feature = "dynamic")]
-    fn dynamic_variants() -> Vec<Box<dyn Diagnostic>> {
+    fn dynamic_variants() -> Vec<Row> {
         use crate::dynamic::{Error, Reason, TargetError, ValueKind};
         let name = || "email".to_string();
         let target = || "TextEq".to_string();
@@ -226,7 +228,7 @@ mod tests {
     /// save one that carries a stack-kms error, whose code is that error's.
     #[test]
     fn every_variant_has_a_code_of_this_crate() {
-        for error in every_variant() {
+        for (_, error) in every_variant() {
             let code = error
                 .code()
                 .unwrap_or_else(|| panic!("{error:?} has no code"))
@@ -242,7 +244,9 @@ mod tests {
     #[test]
     fn no_two_variants_share_a_code_by_mistake() {
         let errors = every_variant();
-        let shared = crate::diagnostic::shared_codes(errors.iter().map(|error| error.as_ref()));
+        let shared = crate::diagnostic::shared_codes(
+            errors.iter().map(|(name, error)| (*name, error.as_ref())),
+        );
         let codes: Vec<&str> = shared.keys().map(String::as_str).collect();
         assert_eq!(codes, [] as [&str; 0], "{shared:#?}");
     }
