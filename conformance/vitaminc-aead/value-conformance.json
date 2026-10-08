@@ -1,0 +1,295 @@
+{
+  "vectors": [
+    {
+      "name": "null",
+      "kind": "null",
+      "value": null,
+      "transport": "00"
+    },
+    {
+      "name": "undefined",
+      "kind": "undefined",
+      "value": null,
+      "transport": "01",
+      "go_reencode": "00"
+    },
+    {
+      "name": "false",
+      "kind": "bool",
+      "value": false,
+      "transport": "02"
+    },
+    {
+      "name": "true",
+      "kind": "bool",
+      "value": true,
+      "transport": "03"
+    },
+    {
+      "name": "int8",
+      "kind": "int8",
+      "value": "-128",
+      "transport": "0c80"
+    },
+    {
+      "name": "uint8",
+      "kind": "uint8",
+      "value": "255",
+      "transport": "0dff"
+    },
+    {
+      "name": "int16",
+      "kind": "int16",
+      "value": "-32768",
+      "transport": "0e0080"
+    },
+    {
+      "name": "uint16",
+      "kind": "uint16",
+      "value": "65535",
+      "transport": "0fffff"
+    },
+    {
+      "name": "int32",
+      "kind": "int32",
+      "value": "-2147483648",
+      "transport": "0400000080"
+    },
+    {
+      "name": "uint32",
+      "kind": "uint32",
+      "value": "4294967295",
+      "transport": "06ffffffff"
+    },
+    {
+      "name": "int64",
+      "kind": "int64",
+      "value": "-9223372036854775808",
+      "transport": "050000000000000080"
+    },
+    {
+      "name": "uint64",
+      "kind": "uint64",
+      "value": "18446744073709551615",
+      "transport": "07ffffffffffffffff"
+    },
+    {
+      "name": "int128",
+      "kind": "int128",
+      "value": "-170141183460469231731687303715884105728",
+      "transport": "1000000000000000000000000000000080"
+    },
+    {
+      "name": "uint128",
+      "kind": "uint128",
+      "value": "340282366920938463463374607431768211455",
+      "transport": "11ffffffffffffffffffffffffffffffff"
+    },
+    {
+      "name": "float32",
+      "kind": "float32",
+      "value": 1.5,
+      "transport": "080000c03f",
+      "js_reencode": "09000000000000f83f"
+    },
+    {
+      "name": "float64",
+      "kind": "float64",
+      "value": -1.5,
+      "transport": "09000000000000f8bf"
+    },
+    {
+      "name": "text",
+      "kind": "string",
+      "value": "é",
+      "transport": "0a02000000c3a9"
+    },
+    {
+      "name": "text-nul",
+      "kind": "string",
+      "value": "a\u0000b",
+      "transport": "0a03000000610062"
+    },
+    {
+      "name": "bytes",
+      "kind": "bytes",
+      "value": "00ff07",
+      "transport": "0b0300000000ff07"
+    },
+    {
+      "name": "date",
+      "kind": "date",
+      "value": "2024-02-29",
+      "transport": "1281460b00"
+    },
+    {
+      "name": "date-year-zero",
+      "kind": "date",
+      "value": "0000-01-01",
+      "transport": "1293feffff"
+    },
+    {
+      "name": "timestamp",
+      "kind": "timestamp",
+      "value": "1970-01-01T00:00:00.123Z",
+      "transport": "130000000000000000c0d45407",
+      "js_date": true
+    },
+    {
+      "name": "timestamp-nanos",
+      "kind": "timestamp",
+      "value": "1969-12-31T23:59:59.999999999Z",
+      "transport": "13ffffffffffffffffffc99a3b",
+      "js_date": false
+    },
+    {
+      "name": "timestamp-leap",
+      "kind": "timestamp",
+      "value": "1970-01-01T00:00:60.123456789Z",
+      "transport": "133b000000000000001597f642",
+      "js_date": false
+    },
+    {
+      "name": "decimal",
+      "kind": "decimal",
+      "value": "1.50",
+      "transport": "1400000200960000000000000000000000"
+    },
+    {
+      "name": "decimal-min",
+      "kind": "decimal",
+      "value": "-79228162514264337593543950335",
+      "transport": "1400000080ffffffffffffffffffffffff"
+    },
+    {
+      "name": "decimal-small",
+      "kind": "decimal",
+      "value": "0.0000000000000000000000000001",
+      "transport": "1400001c00010000000000000000000000"
+    },
+    {
+      "name": "empty-array",
+      "kind": "array",
+      "value": [],
+      "transport": "f000000000"
+    },
+    {
+      "name": "empty-object",
+      "kind": "object",
+      "value": {},
+      "transport": "f100000000"
+    },
+    {
+      "name": "decimal-negative-zero",
+      "kind": "decimal",
+      "value": "-0.00",
+      "transport": "1400000280000000000000000000000000"
+    }
+  ],
+  "malformed": [
+    {
+      "name": "unknown-tag",
+      "transport": "ef"
+    },
+    {
+      "name": "invalid-utf8",
+      "transport": "0a01000000ff"
+    },
+    {
+      "name": "trailing",
+      "transport": "0000"
+    },
+    {
+      "name": "invalid-date",
+      "transport": "12ffffff7f"
+    },
+    {
+      "name": "invalid-timestamp-nanos",
+      "transport": "13000000000000000000ca9a3b"
+    },
+    {
+      "name": "invalid-timestamp-range",
+      "transport": "13ffffffffffffff7f00000000"
+    },
+    {
+      "name": "decimal-reserved-bits",
+      "transport": "1401000000000000000000000000000000"
+    },
+    {
+      "name": "decimal-scale",
+      "transport": "1400001d00000000000000000000000000"
+    },
+    {
+      "name": "tag-0c-width-0",
+      "transport": "0c"
+    },
+    {
+      "name": "tag-0c-width-2",
+      "transport": "0c0000"
+    },
+    {
+      "name": "tag-0d-width-0",
+      "transport": "0d"
+    },
+    {
+      "name": "tag-0d-width-2",
+      "transport": "0d0000"
+    },
+    {
+      "name": "tag-0e-width-1",
+      "transport": "0e00"
+    },
+    {
+      "name": "tag-0e-width-3",
+      "transport": "0e000000"
+    },
+    {
+      "name": "tag-0f-width-1",
+      "transport": "0f00"
+    },
+    {
+      "name": "tag-0f-width-3",
+      "transport": "0f000000"
+    },
+    {
+      "name": "tag-10-width-15",
+      "transport": "10000000000000000000000000000000"
+    },
+    {
+      "name": "tag-10-width-17",
+      "transport": "100000000000000000000000000000000000"
+    },
+    {
+      "name": "tag-11-width-15",
+      "transport": "11000000000000000000000000000000"
+    },
+    {
+      "name": "tag-11-width-17",
+      "transport": "110000000000000000000000000000000000"
+    },
+    {
+      "name": "tag-12-width-3",
+      "transport": "12000000"
+    },
+    {
+      "name": "tag-12-width-5",
+      "transport": "120000000000"
+    },
+    {
+      "name": "tag-13-width-11",
+      "transport": "130000000000000000000000"
+    },
+    {
+      "name": "tag-13-width-13",
+      "transport": "1300000000000000000000000000"
+    },
+    {
+      "name": "tag-14-width-15",
+      "transport": "14000000000000000000000000000000"
+    },
+    {
+      "name": "tag-14-width-17",
+      "transport": "140000000000000000000000000000000000"
+    }
+  ]
+}
