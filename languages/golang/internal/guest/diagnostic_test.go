@@ -369,3 +369,34 @@ func TestATrapFetchingTheDetailIsATrap(t *testing.T) {
 		t.Fatalf("err = %v, want it to match ErrEncoding and ErrTrap", err)
 	}
 }
+
+// The detail is fetched under a context that cannot be cancelled: a
+// deadline that passes once the export has returned does not cost the
+// caller the detail of a failure already in hand. The real guests close
+// their module when the context is done, so the stub runtime does too; a
+// fetch under the caller's context would trap instead.
+func TestADoneContextStillFetchesTheDetail(t *testing.T) {
+	ctx := context.Background()
+	rt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().WithCloseOnContextDone(true))
+	defer func() { _ = rt.Close(ctx) }()
+	detail := encode(t, map[string]any{"code": "stack_encrypt::foreign_keyset", "message": "sealed under another keyset"})
+	m, err := rt.Instantiate(ctx, stubGuest(guest.StatusForeignKeyset, detail, withLastError))
+	if err != nil {
+		t.Fatalf("instantiating the stub guest: %v", err)
+	}
+	exports := guest.Exports{
+		Alloc:     m.ExportedFunction("se_alloc"),
+		Dealloc:   m.ExportedFunction("se_dealloc"),
+		LastError: guest.LastErrorExport(m),
+	}
+	done, cancel := context.WithCancel(ctx)
+	cancel()
+	err = exports.Diagnose(done, m, guest.ErrForeignKeyset)
+	if errors.Is(err, guest.ErrTrap) {
+		t.Fatalf("err = %v, want the detail, not a trap", err)
+	}
+	var d *guest.Diagnostic
+	if !errors.As(err, &d) || !errors.Is(err, guest.ErrForeignKeyset) || d.Code != "stack_encrypt::foreign_keyset" {
+		t.Fatalf("err = %#v, want a foreign-keyset Diagnostic", err)
+	}
+}
