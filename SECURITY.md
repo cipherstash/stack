@@ -38,6 +38,13 @@ from the stack-* crates), released by `.github/workflows/release-golang.yml`
 as `languages/golang/vX.Y.Z` tags. All of these are in scope
 for security reports on the same terms as the npm packages above.
 
+The **Python SDK tracer** at `languages/python` (`stackencrypt`, a PyO3 shell
+over `stack-encrypt`) is also in scope, with one caveat worth stating: it is
+**unpublished and not for production**. There is no PyPI release, so no
+artefact of it is installed anywhere, and a report against it is a report
+against this repository's source rather than against something a user is
+running.
+
 The five stack-* crates are licensed under the PolyForm Internal Use License
 1.0.0 (each crate's `LICENSE`), not the repository's MIT licence: they may be
 used for internal business operations only, and not redistributed. That

@@ -122,3 +122,17 @@ languages/golang/auth/wasm/*.sha256
 # wasm:guest:build:deterministic`; under testdata so no binary embeds it.
 languages/golang/encrypt/testdata/*.wasm
 languages/golang/encrypt/testdata/*.sha256
+
+# Python build and dev artifacts (languages/python). `target` above already
+# covers the Rust side. maturin installs into a virtual environment, so one
+# lives in the package directory; it is a local toolchain, never committed.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+# `maturin develop` installs the extension editable, which writes the built
+# library into the package SOURCE directory, next to __init__.py. It is a
+# build output and was staged once before this line existed.
+languages/python/python/stackencrypt/_engine*.so
+languages/python/python/stackencrypt/_engine*.pyd

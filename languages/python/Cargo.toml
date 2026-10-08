@@ -1,0 +1,57 @@
+# Its own Cargo workspace, excluded from the root one. The reason is the
+# `eql-bindings` path dependency below: that crate is a member of the EQL
+# workspace (`packages/eql`), which pins its own vitaminc. Cargo accepts a
+# path dep across workspaces, and keeping the workspaces separate is what
+# stops the root resolver pulling EQL's graph into every stack-* build.
+# `languages/typescript/packages/protect-ffi` is arranged the same way for
+# the same reason.
+[workspace]
+resolver = "2"
+members = ["."]
+
+[package]
+name = "stackencrypt-python"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+# maturin imports this as `stackencrypt._engine`.
+name = "_engine"
+crate-type = ["cdylib"]
+
+[dependencies]
+# abi3 is what makes one wheel per platform serve every Python 3.9+, instead
+# of one per platform per interpreter minor. It is also what lets this build
+# against a CPython newer than pyo3 knows about — the local interpreter is
+# 3.14, and a non-abi3 build refuses an unknown version.
+pyo3 = { version = "0.29", features = ["abi3-py39", "extension-module"] }
+# `dynamic` is NOT a default feature and is the whole of what this shell
+# calls: `stack_encrypt::dynamic::record`, the data-plan entry point. Without
+# it the module does not exist and every call site here fails to resolve.
+# `http` IS a default, and is what gives `StackCipher::new()` its credential
+# discovery (CS_* then the `stash auth login` profile); it is named
+# explicitly so a later `default-features = false` cannot remove it silently.
+stack-encrypt = { path = "../../packages/stack-encrypt", features = [
+  "dynamic",
+  "http",
+] }
+# Never a registry version: the Rust that EMITS a payload and the SQL that
+# STORES one must move together. `scripts/lint-no-eql-registry-pins.mjs`
+# enforces this.
+#
+# Its own `stack-encrypt` feature takes stack-encrypt with
+# `default-features = false` and does not enable `dynamic`, so the feature
+# line above is what turns it on for the whole graph. Cargo unifies features
+# across a dependency graph, so enabling it once here is enough.
+eql-bindings = { path = "../../packages/eql/crates/eql-bindings", features = [
+  "stack-encrypt",
+] }
+# The same 0.5.1 line the root workspace and eql-bindings both name. Two
+# vitaminc lines in one graph do not interoperate, and the failure is two
+# `FfiValue` types with one name.
+vitaminc-aead-value = "0.5.1"
+# The engine's `Pending` is `IntoFuture`, so every operation is async even
+# though this shell's surface is sync. `rt-multi-thread` because the ZeroKMS
+# client wants a reactor; `block_on` over it is the sync path.
+tokio = { version = "1", features = ["rt-multi-thread"] }

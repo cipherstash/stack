@@ -1,0 +1,20 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "stackencrypt"
+version = "0.0.0"
+description = "Searchable encryption for Python, over the CipherStash Stack engine. Tracer; not released."
+requires-python = ">=3.9"
+classifiers = ["Private :: Do Not Upload"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "psycopg[binary]>=3.2"]
+
+[tool.maturin]
+# The Rust extension is a submodule of the pure-Python package, so the
+# declaration code can be edited without a recompile.
+module-name = "stackencrypt._engine"
+python-source = "python"
+features = ["pyo3/extension-module"]

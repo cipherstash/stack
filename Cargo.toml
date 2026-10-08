@@ -29,6 +29,9 @@ exclude = [
   # `wasm:auth-guest:build`.
   "languages/golang/encrypt/guest",
   "languages/golang/auth/guest",
+  # The PyO3 shell: its own workspace, because it takes a path dependency on
+  # `eql-bindings` from the EQL workspace. See languages/python/Cargo.toml.
+  "languages/python",
 ]
 
 [workspace.package]
