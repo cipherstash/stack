@@ -14,9 +14,9 @@
   "dependencies": {
     "@cipherstash/stack": "workspace:*",
     "@cipherstash/stack-drizzle": "workspace:*",
-    "drizzle-orm": "^0.45.2",
+    "drizzle-orm": "^0.45.3",
     "dotenv": "^17.4.2",
-    "pg": "8.23.0"
+    "pg": "8.23.1"
   },
   "devDependencies": {
     "stash": "workspace:*",
