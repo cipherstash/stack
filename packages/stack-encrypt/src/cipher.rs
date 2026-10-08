@@ -141,7 +141,7 @@ pub enum Error {
     #[error("AEAD operation failed (wrong key, AAD mismatch, or malformed ciphertext)")]
     #[diagnostic(
         code(stack_encrypt::aead),
-        help("Open the value under the context it was sealed with. If the context is right, the ciphertext has been altered.")
+        help("Open the value under the context it was sealed with. If the context is right, the ciphertext is damaged or was altered.")
     )]
     Aead,
     /// ZeroKMS returned a different number of keys than were requested.
