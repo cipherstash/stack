@@ -25,7 +25,13 @@ crate-type = ["cdylib"]
 # of one per platform per interpreter minor. It is also what lets this build
 # against a CPython newer than pyo3 knows about — the local interpreter is
 # 3.14, and a non-abi3 build refuses an unknown version.
-pyo3 = { version = "0.29", features = ["abi3-py39", "extension-module"] }
+# `extension-module` is NOT here, deliberately. It tells pyo3 not to link
+# libpython, which is right for the wheel and wrong for `cargo test`: a test
+# binary is its own executable and has to link it, so with the feature on by
+# default `cargo test` fails with ~40 undefined `_Py*` symbols. maturin turns
+# it on through `[tool.maturin].features` in pyproject.toml, so the wheel
+# still gets it and the Rust tests still run.
+pyo3 = { version = "0.29", features = ["abi3-py39"] }
 # `dynamic` is NOT a default feature and is the whole of what this shell
 # calls: `stack_encrypt::dynamic::record`, the data-plan entry point. Without
 # it the module does not exist and every call site here fails to resolve.

@@ -9,7 +9,7 @@ from typing import Annotated
 
 import pytest
 
-from stackencrypt import EQL, Equality, Int64, Match, Passthrough, Plan, Text
+from stackencrypt import EQL, Equality, Int64, Match, Passthrough, Plan, Text, _declare
 from stackencrypt.errors import DeclarationError
 
 
@@ -34,8 +34,16 @@ def test_a_target_field_carries_context_and_type_but_no_outputs():
     assert spec.fields["email"]["type"] == "string"
     # A target field and an outputs field are exclusive in the wire grammar.
     assert "outputs" not in spec.fields["email"]
-    # The pair, not an EQL name: Task 4 resolves it through the engine.
-    assert spec.fields["email"]["target"] == {"index": "eq", "kind": "string"}
+
+
+def test_the_declaration_writes_a_target_request_not_an_eql_name():
+    # Read `_declare` directly: by the time `build()` returns, the engine's
+    # resolver has replaced the request with the name it answered. The pair
+    # is what Python writes, and that it writes NO EQL name is principle G1
+    # at the declaration layer.
+    written = _declare.fields(User, ("users",))
+
+    assert written["email"]["target"] == {"index": "eq", "kind": "string"}
 
 
 def test_a_passthrough_field_carries_outputs_and_no_target():

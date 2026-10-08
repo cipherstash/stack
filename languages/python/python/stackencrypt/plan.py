@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from stackencrypt import _declare
+from stackencrypt import _declare, _engine
 from stackencrypt.errors import DeclarationError
 
 
@@ -54,10 +54,21 @@ class PlanBuilder:
                 f"{self._model.__name__} has no context: call "
                 f".context('<table>') before .build()"
             )
+        fields = _declare.fields(self._model, self._context)
+        # The engine's own checks, and the EQL type each target field
+        # resolves to. No credentials needed: parsing a plan mints no key
+        # and makes no request, so a declaration defect is an import-time
+        # error wherever the code runs.
+        domains = _engine.check_plan(fields)
+        for name, resolved in domains.items():
+            # What crosses to the engine is the resolved NAME. The pair
+            # `_declare` wrote was a request for the resolver to answer.
+            fields[name]["target"] = resolved["name"]
         return PlanSpec(
             model=self._model,
             context=self._context,
-            fields=_declare.fields(self._model, self._context),
+            fields=fields,
+            domains=domains,
         )
 
 

@@ -4,10 +4,12 @@
 //! replaces this crate and nothing above it.
 
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
+use pyo3::types::{PyAny, PyDict};
 
 mod convert;
 mod errors;
+mod plan;
+mod targets;
 
 /// This shell's own version. The one export that needs no engine state, so
 /// it is what proves the wheel loads.
@@ -35,11 +37,41 @@ fn roundtrip(py: Python<'_>, value: &Bound<'_, PyAny>, kind: Option<&str>) -> Py
     convert::from_ffi(py, crossed)
 }
 
+/// Parse a data plan through the engine, and resolve each target field.
+///
+/// Parsing mints no key and makes no request, so this runs with no
+/// credentials — which is the point: a declaration error is an import-time
+/// error, not a first-write error (principle G3).
+///
+/// Returns `{field: {name, sql_domain, query_sql_domain}}` for the target
+/// fields, which is what the caller needs to write its SQL casts. A plan
+/// with no target field returns an empty dict.
+#[pyfunction]
+fn check_plan(py: Python<'_>, fields: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+    let (wire, resolved) = plan::resolve(fields)?;
+    // The engine's own checks: context, the outputs/target exclusivity, a
+    // type on every field with a term output, a type that admits each index,
+    // and a target name the resolver knows.
+    stack_encrypt::dynamic::record::plan_with(wire, &targets::Resolver)
+        .map_err(|error| errors::PlanError::new_err(format!("{error}")))?;
+
+    let domains = PyDict::new(py);
+    for field in resolved {
+        let entry = PyDict::new(py);
+        entry.set_item("name", field.name)?;
+        entry.set_item("sql_domain", field.sql_domain)?;
+        entry.set_item("query_sql_domain", field.query_sql_domain)?;
+        domains.set_item(field.field, entry)?;
+    }
+    Ok(domains.into_any().unbind())
+}
+
 #[pymodule]
 fn _engine(module: &Bound<'_, PyModule>) -> PyResult<()> {
     let py = module.py();
     module.add_function(wrap_pyfunction!(version, module)?)?;
     module.add_function(wrap_pyfunction!(roundtrip, module)?)?;
+    module.add_function(wrap_pyfunction!(check_plan, module)?)?;
     module.add(
         "StackEncryptError",
         py.get_type::<errors::StackEncryptError>(),
