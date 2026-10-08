@@ -673,7 +673,7 @@ func TestAuthTransportErrorNamesTheHTTPStatusNotTheBody(t *testing.T) {
 	if !errors.Is(err, ErrTransport) {
 		t.Fatalf("Token error = %v, want ErrTransport", err)
 	}
-	if want := "Server error: 403: HTTP 403"; err.Error() != want {
+	if want := "cipherstash: auth transport failed: Server error: 403: HTTP 403"; err.Error() != want {
 		t.Fatalf("Token error = %q, want %q", err, want)
 	}
 	var d *Diagnostic

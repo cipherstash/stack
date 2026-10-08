@@ -75,9 +75,10 @@ var (
 //	}
 //
 // Its fields are Code ("stack_profile::not_found", "stack_auth::invalid_crn",
-// ...; stable), Message (what Error returns), Help, URL, Severity, Fields
-// (the structured fields, by name: a profile file's "path", a JSON error's
-// "line" and "column") and Causes (the errors behind it, outermost first).
+// ...; stable), Message (what Error returns after the sentinel's text), Help,
+// URL, Severity, Fields (the structured fields, by name: a profile file's
+// "path", a JSON error's "line" and "column") and Causes (the errors behind
+// it, outermost first).
 //
 // What one may carry is fixed: workspace ids, CRNs and regions, profile
 // file paths, HTTP statuses and the auth server's error descriptions.

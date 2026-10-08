@@ -225,8 +225,8 @@ func TestAFailureCarriesItsDiagnostic(t *testing.T) {
 	if !errors.As(err, &d) {
 		t.Fatalf("err = %#v, want a *Diagnostic", err)
 	}
-	if err.Error() != "ciphertext was sealed under another keyset" {
-		t.Errorf("Error() = %q, want the Rust message", err.Error())
+	if want := guest.ErrForeignKeyset.Error() + ": ciphertext was sealed under another keyset"; err.Error() != want {
+		t.Errorf("Error() = %q, want %q: the sentinel's text, then the Rust message", err.Error(), want)
 	}
 	if d.Code != "stack_encrypt::foreign_keyset" || d.Help != "Open it through the client." ||
 		d.URL != "https://example.com/errors/foreign_keyset" || d.Severity != "warning" {

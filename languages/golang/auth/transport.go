@@ -59,8 +59,9 @@ func withAuthHTTPStatus(ctx context.Context) (context.Context, *authHTTPStatus) 
 }
 
 // wrap names the HTTP status of a refused exchange on an ErrTransport
-// ("cipherstash: auth transport failed: HTTP 403"). The body is never
-// included: it may be an HTML error page, or echo a credential.
+// ("cipherstash: auth transport failed: Server error: 403: HTTP 403", the
+// guest's Diagnostic then the status). The body is never included: it may
+// be an HTML error page, or echo a credential.
 func (s *authHTTPStatus) wrap(err error) error {
 	if err == nil || !errors.Is(err, ErrTransport) || s.code == 0 || (s.code >= 200 && s.code < 300) {
 		return err

@@ -3,7 +3,6 @@ package guest
 import (
 	"context"
 	"encoding/hex"
-	"errors"
 	"fmt"
 
 	"github.com/cipherstash/vitaminc/bindings/go/vcffi"
@@ -36,7 +35,8 @@ type Diagnostic struct {
 	// a caller may branch on it; the sentinel Unwrap returns is the coarser
 	// kind.
 	Code string
-	// Message is the error's one-line message, what Error returns.
+	// Message is the Rust error's one-line message. Error returns it after
+	// the sentinel's text.
 	Message string
 	// Help says what to do about it, where the error knows.
 	Help string
@@ -64,8 +64,15 @@ type Cause struct {
 	Message string
 }
 
-// Error returns the Rust error's message.
-func (d *Diagnostic) Error() string { return d.Message }
+// Error returns the sentinel's text, then the Rust error's message:
+// "cipherstash: auth transport failed: Server error: 403", so a log line
+// still says which package and which kind of failure it was.
+func (d *Diagnostic) Error() string {
+	if d.kind == nil {
+		return d.Message
+	}
+	return d.kind.Error() + ": " + d.Message
+}
 
 // Unwrap returns the sentinel the guest's status maps to, so errors.Is
 // matches the same kinds it matched before the detail existed.
@@ -132,11 +139,6 @@ func parseUUID(text string) ([16]byte, bool) {
 // guest has no se_last_error (one built before it), recorded nothing, or
 // handed over bytes that do not decode into an error with a message.
 //
-// For a status this host does not know, the Diagnostic comes behind kind's
-// own text, so the status number stays in every log line: a newer guest
-// records its own error for a status it added, and that error does not
-// say the host is too old to know it.
-//
 // A trap in se_last_error leaves the guest in an unknown state, so the
 // error then also wraps ErrTrap, for the caller to close the instance as
 // it would after any trap; it still matches kind.
@@ -168,10 +170,6 @@ func (e Exports) diagnose(ctx context.Context, m api.Module, kind error) error {
 		return kind
 	}
 	d.kind = kind
-	var unknown unrecognizedStatus
-	if errors.As(kind, &unknown) {
-		return fmt.Errorf("%w: %w", kind, d)
-	}
 	return d
 }
 
