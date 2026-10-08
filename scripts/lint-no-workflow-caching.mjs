@@ -161,6 +161,10 @@ const AUDITED_ACTIONS = new Map([
   // release.yml's publish step. Runs `pnpm run release` and talks to npm over
   // OIDC; no cache, no cache input.
   ['changesets/action', { cacheInput: null }],
+  // Mints the GitHub App token that pushes the Version Packages PR. Read at the
+  // pinned v3.2.0 (bcd2ba49): a node24 action with a `post` step that revokes
+  // the token; no cache, no cache input.
+  ['actions/create-github-app-token', { cacheInput: null }],
   // Artifact transport between the build matrix and the publish job. Neither
   // touches the GitHub Actions cache: they use the artifact API, a different
   // per-run store with no cross-run key.
