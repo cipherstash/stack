@@ -175,11 +175,17 @@ enum SpecEntry {
     Unknown(Ctx),
 }
 
-/// A `"type"` value: a few kinds, and a name that is not one.
+/// A `"type"` value: the scalar kinds, an object, and a name that is not
+/// one. `Bool` is the kind that admits `"ore"` / `"ope"` but not `"eq"`, so
+/// a plan can be refused for one index and accepted for another.
 #[derive(Arbitrary, Debug, Clone, Copy)]
 enum Kind {
+    Bool,
     UInt32,
+    UInt64,
+    Int32,
     Int64,
+    Float32,
     String,
     Bytes,
     Float64,
@@ -190,8 +196,12 @@ enum Kind {
 impl Kind {
     fn as_str(self) -> &'static str {
         match self {
+            Kind::Bool => "bool",
             Kind::UInt32 => "uint32",
+            Kind::UInt64 => "uint64",
+            Kind::Int32 => "int32",
             Kind::Int64 => "int64",
+            Kind::Float32 => "float32",
             Kind::String => "string",
             Kind::Bytes => "bytes",
             Kind::Float64 => "float64",
@@ -214,10 +224,9 @@ impl SpecEntry {
                         .collect(),
                 ),
             ),
-            SpecEntry::Target(name) => (
-                "target".to_string(),
-                FfiValue::String(name.as_str().into()),
-            ),
+            SpecEntry::Target(name) => {
+                ("target".to_string(), FfiValue::String(name.as_str().into()))
+            }
             SpecEntry::Type(kind) => ("type".to_string(), FfiValue::String(kind.as_str().into())),
             SpecEntry::ContextWrongShape(v) => ("context".to_string(), FfiValue::UInt32(v)),
             SpecEntry::OutputsWrongShape(v) => ("outputs".to_string(), FfiValue::UInt32(v)),
