@@ -29,6 +29,13 @@ import (
 // A guest built before se_last_error, or one whose error does not decode,
 // returns the bare sentinel instead: the detail is never allowed to hide
 // the failure.
+//
+// Only a guest makes a Diagnostic that unwraps to a sentinel. A fake in a
+// caller's test that needs both wraps the two together, and errors.Is and
+// errors.As each find theirs:
+//
+//	d := &encrypt.Diagnostic{Code: "stack_encrypt::foreign_keyset", Message: "..."}
+//	return fmt.Errorf("%w: %w", encrypt.ErrForeignKeyset, d)
 type Diagnostic struct {
 	// Code is the error's code, "crate::name": "stack_encrypt::foreign_keyset",
 	// "stack_kms::keyset_not_found", "stack_profile::not_found". Stable, so
