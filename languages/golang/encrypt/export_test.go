@@ -176,3 +176,10 @@ func NewCheckerOver(ctx context.Context, wasm []byte) (*Checker, error) {
 // LiveClient is liveClient for the external tests: a client against real
 // ZeroKMS from the STACK_ENCRYPT_TEST_* variables, or a skip.
 func LiveClient(t *testing.T) *Client { return liveClient(t) }
+
+// WantDiagnostic asserts that err carries a *Diagnostic with code and a
+// message, and returns it; WantCode only asserts.
+var (
+	WantDiagnostic = wantDiagnostic
+	WantCode       = wantCode
+)

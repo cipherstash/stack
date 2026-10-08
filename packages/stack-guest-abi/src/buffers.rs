@@ -132,6 +132,9 @@ pub unsafe fn take(ptr: *mut u8, len: usize) -> Option<Vec<u8>> {
 /// linear-memory pressure cannot fail before the wipe on an allocation the
 /// wipe itself made.
 pub fn wipe_all() {
+    // The recorded last error is one of these buffers; its slot must not
+    // outlive the wipe and name freed memory.
+    crate::last_error::forget();
     let live = BUFFERS.with(|b| core::mem::take(&mut *b.borrow_mut()));
     for (ptr, len) in live {
         // SAFETY: every entry was registered by `register`, which leaked a
@@ -178,6 +181,16 @@ unsafe fn reclaim(ptr: *mut u8, len: usize) -> Option<Vec<u8>> {
     // `into_boxed_slice`), and the entry has just been removed so it cannot
     // be reclaimed twice.
     Some(unsafe { Vec::from_raw_parts(ptr, real_len, real_len) })
+}
+
+/// How many buffers are live: sized, then empty. For tests that a buffer
+/// was freed, not merely forgotten.
+#[cfg(test)]
+pub(crate) fn live() -> (usize, usize) {
+    (
+        BUFFERS.with(|b| b.borrow().len()),
+        EMPTY_BUFFERS.with(Cell::get),
+    )
 }
 
 #[cfg(test)]

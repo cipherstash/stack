@@ -1867,7 +1867,10 @@ dependencies = [
 name = "stack-guest-abi"
 version = "0.0.0"
 dependencies = [
+ "miette",
+ "serde_json",
  "thiserror 1.0.69",
+ "vitaminc-aead-value",
  "vitaminc-protected",
  "zeroize",
 ]
@@ -1878,6 +1881,7 @@ version = "0.43.0"
 dependencies = [
  "dirs",
  "gethostname",
+ "miette",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -2282,9 +2286,9 @@ dependencies = [
 
 [[package]]
 name = "vitaminc-aead-value"
-version = "0.5.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b63326e8bf21f695080c50d8d849324fa92e4cf6ce7257bef198b1ff2eeea0d"
+checksum = "5d78cdadbc6374c3bd7c19fb4d99abca693b96953b18fef8c608efbe092cf3ea"
 dependencies = [
  "vitaminc-aead",
  "vitaminc-protected",

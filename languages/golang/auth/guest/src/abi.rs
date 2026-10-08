@@ -25,9 +25,8 @@
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use stack_guest_abi::abi::{err_status, input, ok_buffer};
-use stack_guest_abi::buffers;
-use stack_guest_abi::status::STATUS_INTERNAL;
+use stack_guest_abi::abi::{export, input};
+use stack_guest_abi::{buffers, last_error};
 
 use crate::{auth, ops};
 
@@ -42,27 +41,25 @@ type Op1 = fn(&[u8]) -> Result<Vec<u8>, u32>;
 type Op2 = fn(&[u8], &[u8]) -> Result<Vec<u8>, u32>;
 
 /// Run a two-input operation as an export: validate both pairs, run,
-/// pack. A panic is `STATUS_INTERNAL` (wasm32-wasip1 aborts on panic; the
-/// catch is belt-and-braces for an unwinding build).
+/// pack, through the shared [`export`] wrapper — which clears the last
+/// error first, records one for any failure, and makes a panic
+/// `STATUS_INTERNAL` (wasm32-wasip1 aborts on panic; the catch is
+/// belt-and-braces for an unwinding build).
 fn export2(a_ptr: *const u8, a_len: u32, b_ptr: *const u8, b_len: u32, op: Op2) -> u64 {
-    catch_unwind(AssertUnwindSafe(|| {
+    export(|| {
         // SAFETY: host-owned ranges the export was handed; the borrows end
         // when `op` returns, inside the call, and nothing here writes to
         // linear memory while they are live.
         let a = unsafe { input(a_ptr, a_len)? };
         let b = unsafe { input(b_ptr, b_len)? };
         op(a, b)
-    }))
-    .unwrap_or(Err(STATUS_INTERNAL))
-    .map_or_else(err_status, ok_buffer)
+    })
 }
 
 /// [`export2`] for a one-input operation.
 fn export1(a_ptr: *const u8, a_len: u32, op: Op1) -> u64 {
     // SAFETY: as in `export2`.
-    catch_unwind(AssertUnwindSafe(|| op(unsafe { input(a_ptr, a_len)? })))
-        .unwrap_or(Err(STATUS_INTERNAL))
-        .map_or_else(err_status, ok_buffer)
+    export(|| op(unsafe { input(a_ptr, a_len)? }))
 }
 
 /// The current workspace id of the store at `dir`. See
@@ -241,5 +238,6 @@ pub unsafe extern "C" fn sa_auth_free(ptr: *const u8, len: u32) -> u64 {
 #[no_mangle]
 pub extern "C" fn sa_shutdown() {
     let _ = catch_unwind(AssertUnwindSafe(auth::clear));
+    let _ = catch_unwind(AssertUnwindSafe(last_error::clear));
     let _ = catch_unwind(AssertUnwindSafe(buffers::wipe_all));
 }

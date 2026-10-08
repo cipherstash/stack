@@ -21,8 +21,8 @@ use stack_encrypt::target::{
     EncryptFrom, Encrypted, Encryption, IndexSpec, Indexes, TermSet,
 };
 use stack_encrypt::{
-    nonempty, Decrypt, Encrypt, Equality, Error, Label, Match, NonEmpty, Ope, Ore, Plan,
-    StackCipherText,
+    nonempty, Decrypt, Encrypt, Equality, Error, ErrorPayload, Label, Match, NonEmpty, Ope, Ore,
+    Plan, StackCipherText,
 };
 
 fn plan_error<T: Debug>(result: Result<T, Error>) -> PlanError {
@@ -1347,14 +1347,48 @@ async fn a_one_value_typed_plan_answers_its_targets_queries_and_no_other() {
                 .await
         ),
         PlanError::IndexNotDeclared {
-            field: "users/email".into(),
+            field: "the value".into(),
             index: "ore"
         }
     );
 }
 
+/// A context can carry customer data, so a one-value plan's refusal names
+/// `the value`, never the label the call gave: not in the message, not in
+/// the payload a binding hands its callers.
 #[tokio::test]
-async fn a_one_value_plan_without_a_context_names_the_value_in_its_errors() {
+async fn a_one_value_plan_quotes_no_call_context_in_its_refusals() {
+    let cipher = stack_cipher().await;
+    let plan = Plan::value::<String>()
+        .encrypt_into::<(StackCipherText, EqualityTerm)>()
+        .build()
+        .unwrap();
+    let marker = "tenants/marker-tenant";
+
+    let error = plan_error(
+        cipher
+            .query("bob@example.com")
+            .context(marker)
+            .using(&plan)
+            .index(Ore)
+            .await,
+    );
+    assert_eq!(
+        error,
+        PlanError::IndexNotDeclared {
+            field: "the value".into(),
+            index: "ore"
+        }
+    );
+    let message = error.to_string();
+    let payload = serde_json::Value::Object(error.payload()).to_string();
+    for shown in [&message, &payload] {
+        assert!(!shown.contains("marker-tenant"), "{shown}");
+    }
+}
+
+#[tokio::test]
+async fn a_one_value_plan_names_the_value_in_its_errors_never_its_context() {
     let refused = Plan::value::<u32>().with((Equality, Equality)).build();
     assert_eq!(
         plan_error(refused),
@@ -1370,7 +1404,7 @@ async fn a_one_value_plan_without_a_context_names_the_value_in_its_errors() {
     assert_eq!(
         plan_error(refused),
         PlanError::DuplicateIndex {
-            at: "a".into(),
+            at: "the value".into(),
             index: "eq"
         }
     );

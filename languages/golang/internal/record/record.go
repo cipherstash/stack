@@ -197,8 +197,8 @@ func CheckPart(part any) error {
 
 // Validate checks what the host can check before the engine sees the plan:
 // a context, plain segments, at least one field, names and identities once,
-// outputs once and at least one, known kinds, and extension parts the codec
-// carries. The engine's own rules — which index a kind admits, what the
+// outputs once and at least one, known kinds, a kind on every indexed field,
+// and extension parts the codec carries. The engine's own rules — which index a kind admits, what the
 // builder refuses — are the engine's, asked through se_plan_check.
 func (p *Plan) Validate() error {
 	switch {
@@ -279,6 +279,11 @@ func (p *Plan) Validate() error {
 				return fmt.Errorf("record: field %q: output %q is asked for twice", f.Name, o)
 			}
 			seen[o] = true
+			// The engine refuses this too; it is named here, with the field,
+			// so a declaration is corrected where it was written.
+			if o.IsTerm() && f.Kind == Untyped {
+				return fmt.Errorf("record: field %q: an indexed field declares its type, so every value's %s term derives from one kind; declare the field's kind", f.Name, o)
+			}
 		}
 	}
 	return nil

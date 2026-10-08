@@ -179,20 +179,24 @@ func TestNewClientIssuesTheLoadKeysetRequest(t *testing.T) {
 
 func TestTransportOutcomesMapToErrors(t *testing.T) {
 	guestOrSkip(t)
+	// Each outcome is its sentinel for errors.Is and a Diagnostic for
+	// errors.As, whose code names the refusal and which never carries
+	// ZeroKMS's response body.
 	cases := []struct {
 		name        string
 		status      int
 		contentType string
 		body        string
 		want        error
+		code        string
 	}{
-		{"401", http.StatusUnauthorized, "", "nope", ErrUnauthorized},
-		{"403", http.StatusForbidden, "", "not permitted", ErrForbidden},
-		{"404", http.StatusNotFound, "", "missing", ErrNotFound},
-		{"409", http.StatusConflict, "", "exists", ErrConflict},
-		{"500", http.StatusInternalServerError, "", "boom", ErrKMS},
-		{"200 html", http.StatusOK, "text/html", "<html>gateway</html>", ErrKMS},
-		{"200 not json", http.StatusOK, "application/json", "not json", ErrKMS},
+		{"401", http.StatusUnauthorized, "", "nope", ErrUnauthorized, "stack_kms::load_keyset_unauthorized"},
+		{"403", http.StatusForbidden, "", "not permitted", ErrForbidden, "stack_kms::load_keyset_forbidden"},
+		{"404", http.StatusNotFound, "", "missing", ErrNotFound, "stack_kms::keyset_not_found"},
+		{"409", http.StatusConflict, "", "exists", ErrConflict, "stack_kms::load_keyset_failed"},
+		{"500", http.StatusInternalServerError, "", "boom", ErrKMS, "stack_kms::load_keyset_failed"},
+		{"200 html", http.StatusOK, "text/html", "<html>gateway</html>", ErrKMS, "stack_kms::load_keyset_failed"},
+		{"200 not json", http.StatusOK, "application/json", "not json", ErrKMS, "stack_kms::load_keyset_failed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -200,6 +204,13 @@ func TestTransportOutcomesMapToErrors(t *testing.T) {
 			_, err := NewClient(context.Background(), testConfig(stub.URL)...)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("NewClient: %v, want %v", err, tc.want)
+			}
+			d := wantDiagnostic(t, err, tc.code)
+			if d.Fields["request_kind"] == nil {
+				t.Errorf("fields = %v, want the request kind", d.Fields)
+			}
+			if shown := fmt.Sprintf("%s %v %v %s", d.Message, d.Fields, d.Causes, d.Help); strings.Contains(shown, tc.body) {
+				t.Errorf("the response body is in the detail: %s", shown)
 			}
 		})
 	}
@@ -210,6 +221,9 @@ func TestTransportOutcomesMapToErrors(t *testing.T) {
 		_, err := NewClient(context.Background(), testConfig(url)...)
 		if !errors.Is(err, ErrTransport) {
 			t.Fatalf("NewClient: %v, want ErrTransport", err)
+		}
+		if d := wantDiagnostic(t, err, "stack_kms::load_keyset_failed"); d.Fields["request_kind"] != "SendRequest" {
+			t.Errorf("fields = %v, want request_kind SendRequest", d.Fields)
 		}
 	})
 	t.Run("no token", func(t *testing.T) {
@@ -228,6 +242,22 @@ func TestTransportOutcomesMapToErrors(t *testing.T) {
 		}
 		if len(stub.requests) != 0 {
 			t.Fatalf("a request was made without a token: %+v", stub.requests)
+		}
+	})
+	t.Run("a token source that says why", func(t *testing.T) {
+		stub := newStub(t, http.StatusOK, "application/json", "{}")
+		cfg := testConfig(stub.URL)
+		// An auth strategy's refusal, as the auth package reports one.
+		refused := &Diagnostic{Code: "stack_auth::invalid_grant", Message: "Invalid grant", Help: "Log in again."}
+		cfg = append(cfg, WithCredentials(testCredentials(tokenFunc(func(context.Context) (string, error) { return "", refused }))))
+		_, err := NewClient(context.Background(), cfg...)
+		// errors.As finds the token source's detail, not the guest's
+		// "token_get failed", and errors.Is still matches both.
+		if d := wantDiagnostic(t, err, "stack_auth::invalid_grant"); d.Help != "Log in again." {
+			t.Errorf("Help = %q", d.Help)
+		}
+		if !errors.Is(err, ErrTransport) || !errors.Is(err, refused) {
+			t.Errorf("NewClient: %v, want it to match ErrTransport and the token source's error", err)
 		}
 	})
 }
@@ -729,6 +759,70 @@ func TestGuestRefusesMalformedInputsBeforeState(t *testing.T) {
 		if err := call(); !errors.Is(err, ErrEncoding) {
 			t.Errorf("%s: %v, want ErrEncoding", name, err)
 		}
+	}
+}
+
+// An indexed field with no declared kind is refused by the Checker, naming
+// the field: the engine derives every term from one declared kind, and the
+// generator never emits such a declaration, so only a plan built by hand
+// reaches this. A sealed-only untyped field passes.
+func TestCheckerRefusesAnIndexedUntypedField(t *testing.T) {
+	guestOrSkip(t)
+	ctx := context.Background()
+	checker, err := NewChecker(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer checker.Close()
+	for name, outputs := range map[string][]record.Output{
+		"equality": {record.Ciphertext, record.Equality},
+		"match":    {record.Ciphertext, record.Match},
+		"ore":      {record.Ciphertext, record.Ore},
+		"ope":      {record.Ope},
+	} {
+		p := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "age", Kind: record.Untyped, Outputs: outputs}}}
+		// Through Check, the Go rule refuses first and names the field.
+		err := checker.Check(ctx, p)
+		if !errors.Is(err, ErrEncoding) || !strings.Contains(err.Error(), `field "age"`) {
+			t.Errorf("%s: err = %v, want ErrEncoding naming the field", name, err)
+		}
+		// Past it, the engine refuses the same plan (Error::UntypedIndex in
+		// stack-encrypt) and the guest reports it as the caller's input,
+		// naming the same field: the two rules agree.
+		err = checker.engineCheck(ctx, p)
+		if !errors.Is(err, ErrEncoding) {
+			t.Errorf("%s past Validate: err = %v, want ErrEncoding from the engine", name, err)
+		}
+		if d := wantDiagnostic(t, err, "stack_encrypt::dynamic_untyped_index"); d.Field() != "age" {
+			t.Errorf("%s past Validate: the engine named field %q, want \"age\"", name, d.Field())
+		}
+	}
+	sealed := &record.Plan{Context: []string{"users"}, Fields: []record.Field{{Name: "notes", Kind: record.Untyped, Outputs: []record.Output{record.Ciphertext}}}}
+	if err := checker.Check(ctx, sealed); err != nil {
+		t.Errorf("a sealed-only untyped field: %v", err)
+	}
+}
+
+// The engine's reason reaches Go under the key Reason reads: a field whose
+// outputs name the ciphertext twice is refused as a duplicate output.
+func TestAPlanRefusalNamesItsReason(t *testing.T) {
+	guestOrSkip(t)
+	ctx := context.Background()
+	checker, err := NewChecker(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer checker.Close()
+	p := &record.Plan{Context: []string{"users"}, Fields: []record.Field{
+		{Name: "age", Kind: record.Uint32, Outputs: []record.Output{record.Ciphertext, record.Ciphertext}},
+	}}
+	err = checker.engineCheck(ctx, p)
+	if !errors.Is(err, ErrEncoding) {
+		t.Fatalf("err = %v, want ErrEncoding", err)
+	}
+	d := wantDiagnostic(t, err, "stack_encrypt::dynamic_plan")
+	if d.Field() != "age" || d.Reason() != "duplicate_output" {
+		t.Errorf("Field() = %q, Reason() = %q", d.Field(), d.Reason())
 	}
 }
 

@@ -4231,7 +4231,9 @@ version = "0.2.0"
 dependencies = [
  "base64ct",
  "cllw-ore 0.5.0",
+ "miette",
  "serde",
+ "serde_json",
  "stack-encrypt-derive",
  "stack-kms",
  "thiserror 1.0.69",
@@ -4301,6 +4303,7 @@ version = "0.43.0"
 dependencies = [
  "dirs",
  "gethostname",
+ "miette",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

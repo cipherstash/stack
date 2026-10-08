@@ -5,7 +5,7 @@
 //! orchestration logic so that any consumer (not just the CLI) can perform
 //! this step.
 
-use stack_profile::{DeviceIdentity, ProfileStore};
+use stack_profile::{DeviceIdentity, ErrorPayload, ProfileStore};
 use uuid::Uuid;
 use zerokms_protocol::{CreateClientRequest, CreateClientResponse, ViturKeyMaterial, ViturRequest};
 
@@ -36,27 +36,52 @@ struct SecretKeyFile {
 // ---------------------------------------------------------------------------
 
 /// Errors that can occur during device client provisioning.
-#[derive(Debug, thiserror::Error)]
+///
+/// Each variant carries the miette code of the [`AuthError`](crate::AuthError)
+/// it converts into, so a binding reports the same code either way.
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
 pub enum DeviceClientError {
     /// The profile store could not load or create required data.
     #[error("Profile error: {0}")]
+    #[diagnostic(transparent)]
     Profile(#[from] stack_profile::ProfileError),
 
     /// Authentication token could not be loaded or decoded.
     #[error("Auth error: {0}")]
+    #[diagnostic(transparent)]
     Auth(#[from] crate::AuthError),
 
     /// The HTTP request to ZeroKMS failed, or its response did not decode.
     #[error("ZeroKMS request failed: {0}")]
+    #[diagnostic(transparent)]
     Request(#[from] RequestError),
 
     /// ZeroKMS returned a non-success, non-conflict status.
-    #[error("ZeroKMS returned {status}: {body}")]
+    ///
+    /// The message gives the status alone. `body` is ZeroKMS's response
+    /// text, kept for a caller in this process to inspect; no message or
+    /// payload carries it (see [`ErrorPayload`] for the rule).
+    #[error("ZeroKMS returned {status}")]
+    #[diagnostic(code(stack_auth::server_error))]
     Server { status: u16, body: String },
 
     /// Failed to construct the ZeroKMS endpoint URL.
     #[error("Invalid ZeroKMS URL: {0}")]
+    #[diagnostic(code(stack_auth::invalid_url))]
     InvalidUrl(#[from] url::ParseError),
+}
+
+impl ErrorPayload for DeviceClientError {
+    fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
+        match self {
+            Self::Profile(error) => error.payload(),
+            Self::Auth(error) => error.payload(),
+            Self::Request(_) | Self::InvalidUrl(_) => serde_json::Map::new(),
+            Self::Server { status, .. } => {
+                stack_profile::diagnostic::payload([("status", (*status).into())])
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +174,25 @@ mod tests {
     use crate::SecretToken;
     use mocktail::prelude::*;
     use tempfile::TempDir;
+
+    /// ZeroKMS's status is the payload; its response body is in neither the
+    /// payload nor the message. A profile failure carries the profile's.
+    #[test]
+    fn a_server_error_carries_the_status_and_not_the_body() {
+        let error = DeviceClientError::Server {
+            status: 503,
+            body: "marker-body".into(),
+        };
+        let payload = error.payload();
+        assert_eq!(payload["status"], 503);
+        let shown = format!("{error} {payload:?}");
+        assert!(!shown.contains("marker-body"), "{shown}");
+
+        let error = DeviceClientError::Profile(stack_profile::ProfileError::NotFound {
+            path: "/profiles/auth.json".into(),
+        });
+        assert_eq!(error.payload()["path"], "/profiles/auth.json");
+    }
 
     fn make_test_jwt(zerokms_url: impl std::fmt::Display) -> String {
         use jsonwebtoken::{encode, EncodingKey, Header};

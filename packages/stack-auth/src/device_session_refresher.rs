@@ -126,10 +126,12 @@ impl DeviceSessionRefresher {
         };
         let lock = tokio::task::spawn_blocking(move || store.lock_exclusive(Token::FILENAME))
             .await
-            .map_err(|e| {
-                AuthError::Server(crate::error::ServerError(format!(
-                    "refresh lock task join failed: {e}"
-                )))
+            // A join error is tokio's: it says only that the task panicked
+            // or was cancelled, and is not ours to repeat.
+            .map_err(|_| {
+                AuthError::Server(crate::error::ServerError(
+                    "refresh lock task join failed".to_owned(),
+                ))
             })?
             .map_err(|e| {
                 AuthError::Server(crate::error::ServerError(format!(

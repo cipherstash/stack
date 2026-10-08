@@ -41,9 +41,13 @@ func BufArg(data []byte) Arg { return Arg{data: data, isBuf: true} }
 // ScalarArg is a scalar argument.
 func ScalarArg(v uint64) Arg { return Arg{scalar: v} }
 
-// Exports is the pair of exports every guest has, resolved on one module.
+// Exports is the exports every guest package drives, resolved on one module.
 type Exports struct {
 	Alloc, Dealloc api.Function
+	// LastError is se_last_error: the full error behind the last failed
+	// export (see Diagnostic). Nil for a guest built before it, which
+	// reports the status alone.
+	LastError api.Function
 }
 
 // AllocWrite stages data into a fresh guest buffer.
@@ -81,7 +85,9 @@ func (e Exports) Free(ctx context.Context, b Buf) {
 // Call stages every buffer argument, calls fn with the arguments in
 // order, and copies the output out before every buffer — inputs and
 // output — is wiped and freed. mem is the module's allocator, held
-// mapped for the whole call.
+// mapped for the whole call. A failure the guest reports comes back as a
+// *Diagnostic wrapping its status's sentinel, or as the sentinel alone
+// when the guest gives no detail.
 func Call(ctx context.Context, mem *Allocator, m api.Module, e Exports, fn api.Function, args ...Arg) ([]byte, error) {
 	mem.Enter()
 	defer mem.Exit()
@@ -110,7 +116,7 @@ func Call(ctx context.Context, mem *Allocator, m api.Module, e Exports, fn api.F
 	}
 	ptr, n, err := PackedResult(res[0])
 	if err != nil {
-		return nil, err
+		return nil, e.diagnose(ctx, m, err)
 	}
 	out := Buf{Ptr: ptr, Len: n}
 	bufs = append(bufs, out)

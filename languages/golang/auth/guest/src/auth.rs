@@ -16,10 +16,10 @@ use stack_profile::ProfileStore;
 use zeroize::Zeroizing;
 
 use crate::host::{HostOidcProvider, WasiAuthTransport};
-use crate::status::{
-    status_for_auth, status_for_profile, STATUS_AUTH_CONFIG, STATUS_AUTH_REFRESH_REQUIRED,
-    STATUS_ENCODING, STATUS_STATE,
-};
+use stack_auth::AuthError;
+use stack_guest_abi::last_error::{malformed, out_of_order};
+
+use crate::status::{fail_auth, fail_profile, STATUS_AUTH_REFRESH_REQUIRED};
 
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -62,13 +62,16 @@ thread_local! {
 
 fn parse_base_url(value: Option<String>) -> Result<Option<url::Url>, u32> {
     value
-        .map(|v| v.parse::<url::Url>().map_err(|_| STATUS_ENCODING))
+        .map(|v| {
+            v.parse::<url::Url>()
+                .map_err(|_| malformed("the strategy config's base_url is not a URL"))
+        })
         .transpose()
 }
 
 pub fn validate_crn(bytes: &[u8]) -> Result<Vec<u8>, u32> {
-    let text = std::str::from_utf8(bytes).map_err(|_| STATUS_ENCODING)?;
-    let _: Crn = text.parse().map_err(|_| STATUS_AUTH_CONFIG)?;
+    let text = std::str::from_utf8(bytes).map_err(|_| malformed("the CRN is not UTF-8"))?;
+    let _: Crn = text.parse().map_err(|e| fail_auth(&AuthError::from(e)))?;
     Ok(Vec::new())
 }
 
@@ -78,7 +81,10 @@ pub fn validate_crn(bytes: &[u8]) -> Result<Vec<u8>, u32> {
 // JSON envelope itself.
 
 pub fn create(config: &[u8]) -> Result<Vec<u8>, u32> {
-    let config: Config = serde_json::from_slice(config).map_err(|_| STATUS_ENCODING)?;
+    // Never serde_json's message: it can quote the config, which carries
+    // the access key.
+    let config: Config = serde_json::from_slice(config)
+        .map_err(|_| malformed("the strategy config is not a JSON object of the expected shape"))?;
     let strategy = match config {
         Config::AccessKey {
             crn,
@@ -86,13 +92,15 @@ pub fn create(config: &[u8]) -> Result<Vec<u8>, u32> {
             base_url,
         } => {
             let access_key = Zeroizing::new(access_key);
-            let crn: Crn = crn.parse().map_err(|_| STATUS_AUTH_CONFIG)?;
-            let key: AccessKey = access_key.parse().map_err(|_| STATUS_AUTH_CONFIG)?;
+            let crn: Crn = crn.parse().map_err(|e| fail_auth(&AuthError::from(e)))?;
+            let key: AccessKey = access_key
+                .parse()
+                .map_err(|e| fail_auth(&AuthError::from(e)))?;
             let mut builder = AccessKeyStrategy::builder(crn, key).transport(WasiAuthTransport);
             if let Some(url) = parse_base_url(base_url)? {
                 builder = builder.base_url(url);
             }
-            Strategy::AccessKey(builder.build().map_err(|e| status_for_auth(&e))?)
+            Strategy::AccessKey(builder.build().map_err(|e| fail_auth(&e))?)
         }
         Config::Oidc {
             crn,
@@ -100,7 +108,7 @@ pub fn create(config: &[u8]) -> Result<Vec<u8>, u32> {
             base_url,
             cache_capacity,
         } => {
-            let crn: Crn = crn.parse().map_err(|_| STATUS_AUTH_CONFIG)?;
+            let crn: Crn = crn.parse().map_err(|e| fail_auth(&AuthError::from(e)))?;
             let mut builder = OidcFederationStrategy::builder(crn, HostOidcProvider(provider))
                 .transport(WasiAuthTransport);
             if let Some(url) = parse_base_url(base_url)? {
@@ -109,14 +117,14 @@ pub fn create(config: &[u8]) -> Result<Vec<u8>, u32> {
             if let Some(capacity) = cache_capacity {
                 builder = builder.cache_capacity(capacity);
             }
-            Strategy::Oidc(builder.build().map_err(|e| status_for_auth(&e))?)
+            Strategy::Oidc(builder.build().map_err(|e| fail_auth(&e))?)
         }
         Config::DeviceSession {
             workspace_dir,
             base_url,
         } => {
             if workspace_dir.is_empty() {
-                return Err(STATUS_ENCODING);
+                return Err(malformed("the strategy config's workspace_dir is empty"));
             }
             Strategy::DeviceSession {
                 workspace_dir,
@@ -136,22 +144,23 @@ pub fn create(config: &[u8]) -> Result<Vec<u8>, u32> {
 }
 
 fn parse_handle(bytes: &[u8]) -> Result<u32, u32> {
-    let text = std::str::from_utf8(bytes).map_err(|_| STATUS_ENCODING)?;
-    text.parse::<u32>().map_err(|_| STATUS_ENCODING)
+    let refuse = || malformed("a strategy handle is not a decimal number");
+    let text = std::str::from_utf8(bytes).map_err(|_| refuse())?;
+    text.parse::<u32>().map_err(|_| refuse())
 }
 
 pub fn token(handle: &[u8]) -> Result<Vec<u8>, u32> {
     let id = parse_handle(handle)?;
     STRATEGIES.with(|items| {
         let items = items.borrow();
-        let strategy = items.get(&id).ok_or(STATUS_STATE)?;
+        let strategy = items.get(&id).ok_or_else(no_strategy)?;
         match strategy {
             Strategy::AccessKey(strategy) => block_on(strategy.get_token())
                 .map(|token| token.as_str().as_bytes().to_vec())
-                .map_err(|e| status_for_auth(&e)),
+                .map_err(|e| fail_auth(&e)),
             Strategy::Oidc(strategy) => block_on(strategy.get_token())
                 .map(|token| token.as_str().as_bytes().to_vec())
-                .map_err(|e| status_for_auth(&e)),
+                .map_err(|e| fail_auth(&e)),
             Strategy::DeviceSession {
                 workspace_dir,
                 base_url,
@@ -165,12 +174,12 @@ pub fn token(handle: &[u8]) -> Result<Vec<u8>, u32> {
 fn cached_device_token(workspace_dir: &str, base_url: &Option<url::Url>) -> Result<Vec<u8>, u32> {
     let token: Token = ProfileStore::new(workspace_dir)
         .load_profile()
-        .map_err(|e| status_for_profile(&e))?;
+        .map_err(|e| fail_profile(&e))?;
     if token.region().is_none() || token.client_id().is_none() {
-        return Err(stack_guest_abi::status::STATUS_AUTH_NOT_AUTHENTICATED);
+        return Err(fail_auth(&stack_auth::NotAuthenticated.into()));
     }
     if base_url.is_none() {
-        let _ = token.issuer().map_err(|e| status_for_auth(&e))?;
+        let _ = token.issuer().map_err(|e| fail_auth(&e))?;
     }
     if token.is_expired() {
         return Err(STATUS_AUTH_REFRESH_REQUIRED);
@@ -187,9 +196,9 @@ pub fn refresh(handle: &[u8]) -> Result<Vec<u8>, u32> {
         let Strategy::DeviceSession {
             workspace_dir,
             base_url,
-        } = items.get(&id).ok_or(STATUS_STATE)?
+        } = items.get(&id).ok_or_else(no_strategy)?
         else {
-            return Err(STATUS_STATE);
+            return Err(out_of_order("only a device session strategy refreshes"));
         };
         let store = ProfileStore::new(workspace_dir);
         let mut builder =
@@ -197,8 +206,8 @@ pub fn refresh(handle: &[u8]) -> Result<Vec<u8>, u32> {
         if let Some(url) = base_url {
             builder = builder.base_url(url.clone());
         }
-        let strategy = builder.build().map_err(|e| status_for_auth(&e))?;
-        let token = block_on(strategy.get_token()).map_err(|e| status_for_auth(&e))?;
+        let strategy = builder.build().map_err(|e| fail_auth(&e))?;
+        let token = block_on(strategy.get_token()).map_err(|e| fail_auth(&e))?;
         Ok(token.as_str().as_bytes().to_vec())
     })
 }
@@ -206,9 +215,14 @@ pub fn refresh(handle: &[u8]) -> Result<Vec<u8>, u32> {
 pub fn free(handle: &[u8]) -> Result<Vec<u8>, u32> {
     let id = parse_handle(handle)?;
     STRATEGIES.with(|items| {
-        let _removed = items.borrow_mut().remove(&id).ok_or(STATUS_STATE)?;
+        let _removed = items.borrow_mut().remove(&id).ok_or_else(no_strategy)?;
         Ok(Vec::new())
     })
+}
+
+/// A handle that names no live strategy: never created, or already freed.
+fn no_strategy() -> u32 {
+    out_of_order("no strategy has this handle: it was never created, or was freed")
 }
 
 pub fn clear() {

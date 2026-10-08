@@ -215,7 +215,9 @@ A database can compare some terms by itself:
 
 The generator and the compiler find a mistake in a declaration, so no call
 returns an error for one. A call returns an error for a key, for the network,
-or for stored data; read them with `errors.Is`:
+or for stored data. Check an error two ways.
+
+`errors.Is` tells you the kind, which is what a program branches on:
 
 - `ErrForeignKeyset`: a `*Cipher` got a row another keyset sealed.
 - `ErrContextMismatch`: a `*Cipher` with a `Context` got a row whose
@@ -226,9 +228,37 @@ or for stored data; read them with `errors.Is`:
 - `ErrUnauthorized`, `ErrNotFound`, `ErrTransport`, `ErrKMS`: ZeroKMS.
 - `ErrState`: a call on a closed client. `ErrMemoryLock`: see below.
 
-No error, warning or log line holds a plaintext value. A generated type hides
-its sealed fields when a program prints or logs it; the struct you wrote does
-not, and `stashgen -redact` writes `String` and `LogValue` for it.
+`errors.As` with a `*Diagnostic` gives you the detail behind a failure the
+engine reports: a stable `Code` (`stack_encrypt::foreign_keyset`,
+`stack_kms::keyset_not_found`, ...), the one-line `Message` that `Error()`
+returns after the kind's text, `Help` saying what to do about it, `Fields` (structured values, by
+name) and `Causes` (the errors behind it). Accessors read the values a program
+is likely to branch on:
+
+```go
+var d *encrypt.Diagnostic
+if errors.As(err, &d) {
+    log.Printf("%s: %s (%s)", d.Code, d.Message, d.Help)
+    if expected, ok := d.ExpectedKeyset(); ok {
+        found, _ := d.FoundKeyset()
+        log.Printf("cipher is bound to %s; the row was sealed under %s",
+            encrypt.KeysetID(expected), encrypt.KeysetID(found))
+    }
+}
+```
+
+`Field` and `Reason` name the field and the problem (`field_missing`,
+`unknown_key`, ...) on a refused plan, record or value. An error the client
+raises itself carries no `Diagnostic`: a closed client, a guest that did not
+return, `ErrMemoryLock`, and an argument refused before it reached the engine.
+
+What an error may contain is fixed. It may carry keyset ids and names, field
+names, counts, index kinds, ZeroKMS request kinds and HTTP statuses. It never
+carries a plaintext value, key material, a token, ciphertext or term bytes, or
+the values of an encryption context. No warning or log line holds a plaintext
+value either. A generated type hides its sealed fields when a program prints
+or logs it; the struct you wrote does not, and `stashgen -redact` writes
+`String` and `LogValue` for it.
 
 ## Key material
 

@@ -19,7 +19,7 @@ use vitaminc_aead_value::FfiValue;
 use vitaminc_protected::{Controlled, OpaqueDebug, Protected};
 use zeroize::Zeroizing;
 
-use super::{utf8, Error, Value};
+use super::{utf8, Error, Reason, Value};
 use crate::sem::{CllwOpeEncrypt, CllwOreEncrypt, DefaultMatch, MatchOptions, Tokenizer};
 use crate::target::{chosen, CallerContext, ConsumeSource, Encryption, Index, IndexSpec, Pending};
 use crate::{IntoPrfContext, KeysetCipher, NonEmpty};
@@ -68,19 +68,21 @@ impl IndexSpec {
     ///
     /// # Errors
     ///
-    /// [`Error::Plan`] for a value that is neither an index key nor a match
-    /// options object, or whose options are unknown, repeated, mistyped or
-    /// out of bounds.
+    /// [`Error::Plan`] ([`Reason::UnknownOutput`]) for a value that is
+    /// neither an index key nor a match options object, or whose options are
+    /// unknown, mistyped or out of bounds; [`Reason::RepeatedKey`] for an
+    /// option given twice. It names no field: the plan parser names it.
     pub fn from_value(value: &FfiValue) -> Result<Self, Error> {
+        let unknown = || Error::bad_plan(Reason::UnknownOutput);
         match value {
-            FfiValue::String(s) => Self::parse(utf8(s).ok_or(Error::Plan)?).ok_or(Error::Plan),
+            FfiValue::String(s) => Self::parse(utf8(s).ok_or_else(unknown)?).ok_or_else(unknown),
             FfiValue::Object(entries) => match entries.as_slice() {
                 [(key, FfiValue::Object(options))] if key == "match" => {
                     Ok(IndexSpec::Match(match_options(options)?))
                 }
-                _ => Err(Error::Plan),
+                _ => Err(unknown()),
             },
-            _ => Err(Error::Plan),
+            _ => Err(unknown()),
         }
     }
 
@@ -135,11 +137,12 @@ impl IndexSpec {
 /// The options object of a match index's wire form: each key at most once,
 /// each defaulting, and the whole checked against the scheme's bounds.
 fn match_options(entries: &[(String, FfiValue)]) -> Result<MatchOptions, Error> {
+    let unknown = || Error::bad_plan(Reason::UnknownOutput);
     let mut options = MatchOptions::default();
     let mut seen: Vec<&str> = Vec::with_capacity(entries.len());
     for (key, value) in entries {
         if seen.contains(&key.as_str()) {
-            return Err(Error::Plan);
+            return Err(Error::bad_plan(Reason::RepeatedKey));
         }
         seen.push(key);
         match (key.as_str(), value) {
@@ -152,22 +155,22 @@ fn match_options(entries: &[(String, FfiValue)]) -> Result<MatchOptions, Error> 
                         length: integer(length)?,
                     };
                 }
-                _ => return Err(Error::Plan),
+                _ => return Err(unknown()),
             },
             ("downcase", FfiValue::Bool(downcase)) => options.downcase = *downcase,
             ("k", k) => options.k = integer(k)?,
             ("m", m) => options.m = integer(m)?,
-            _ => return Err(Error::Plan),
+            _ => return Err(unknown()),
         }
     }
     if options.validate().is_err() {
-        return Err(Error::Plan);
+        return Err(unknown());
     }
     Ok(options)
 }
 
 /// A non-negative integer leaf of any width, as the target type, or
-/// [`Error::Plan`].
+/// [`Error::Plan`] ([`Reason::UnknownOutput`]: it is a match option).
 fn integer<T: TryFrom<u64>>(value: &FfiValue) -> Result<T, Error> {
     let wide = match value {
         FfiValue::Int32(v) => u64::try_from(*v).ok(),
@@ -176,7 +179,8 @@ fn integer<T: TryFrom<u64>>(value: &FfiValue) -> Result<T, Error> {
         FfiValue::UInt64(v) => Some(*v),
         _ => None,
     };
-    wide.and_then(|v| T::try_from(v).ok()).ok_or(Error::Plan)
+    wide.and_then(|v| T::try_from(v).ok())
+        .ok_or(Error::bad_plan(Reason::UnknownOutput))
 }
 
 /// A term-able scalar lifted out of an [`FfiValue`] leaf.
@@ -230,12 +234,20 @@ impl Scalar {
             FfiValue::Float64(v) => Scalar::F64(*v),
             FfiValue::String(s) => Scalar::Text(Zeroizing::new(
                 utf8(s)
-                    .ok_or_else(|| Error::Term { kind: kind.clone() })?
+                    .ok_or_else(|| Error::Term {
+                        field: None,
+                        kind: kind.clone(),
+                    })?
                     .to_string(),
             )),
             FfiValue::Bytes(b) => Scalar::Bytes(Zeroizing::new(b.risky_ref().to_vec())),
             // Containers, nulls and passthroughs have no term semantics.
-            _ => return Err(Error::Term { kind: kind.clone() }),
+            _ => {
+                return Err(Error::Term {
+                    field: None,
+                    kind: kind.clone(),
+                })
+            }
         })
     }
 }
@@ -380,6 +392,7 @@ where
         // values is a modelling error) or booleans.
         Scalar::Bool(_) | Scalar::F32(_) | Scalar::F64(_) => {
             return Err(Error::Term {
+                field: None,
                 kind: IndexSpec::Equality,
             })
         }
@@ -405,6 +418,7 @@ where
             .match_terms_under::<DefaultMatch>(&t, context, options.clone())
             .map(|terms| TermBytes(terms.to_bytes()))),
         _ => Err(Error::Term {
+            field: None,
             kind: IndexSpec::Match(options.clone()),
         }),
     }
@@ -590,7 +604,7 @@ mod tests {
                 Err(crate::Error::Other(inner)) => assert!(
                     matches!(
                         inner.downcast_ref::<Error>(),
-                        Some(Error::Term { kind: refused_kind }) if *refused_kind == kind
+                        Some(Error::Term { kind: refused_kind, .. }) if *refused_kind == kind
                     ),
                     "{what}: the lifted error names the index: {inner:?}"
                 ),
@@ -831,7 +845,7 @@ mod tests {
                 );
                 let result = term(&keyset, scalar, &kind, ctx.clone()).await;
                 assert!(
-                    matches!(&result, Err(Error::Term { kind: k }) if *k == kind),
+                    matches!(&result, Err(Error::Term { kind: k, .. }) if *k == kind),
                     "{label} asked for a {kind} term must be refused as that kind: {result:?}"
                 );
             }
@@ -865,7 +879,7 @@ mod tests {
                 ] {
                     let result = Scalar::of(&value, &kind);
                     assert!(
-                        matches!(&result, Err(Error::Term { kind: k }) if *k == kind),
+                        matches!(&result, Err(Error::Term { kind: k, .. }) if *k == kind),
                         "{label} has no {kind} term: {result:?}"
                     );
                 }
@@ -1092,10 +1106,17 @@ mod tests {
                 ),
             ];
             for (label, wire) in refused {
+                let error = IndexSpec::from_value(&wire).expect_err(label);
+                let reason = if label == "an option twice" {
+                    Reason::RepeatedKey
+                } else {
+                    Reason::UnknownOutput
+                };
                 assert!(
-                    matches!(IndexSpec::from_value(&wire), Err(Error::Plan)),
-                    "{label} is not an index"
+                    matches!(error, Error::Plan { field: None, .. }),
+                    "{label}: {error:?}"
                 );
+                assert_eq!(error.reason(), Some(reason), "{label}");
             }
         }
 

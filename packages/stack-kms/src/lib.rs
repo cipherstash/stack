@@ -122,6 +122,11 @@ pub use maybe_send::MaybeSend;
 pub use errors::{
     Error, GenerateKeyError, InvalidKeyMaterialError, LoadKeysetError, RetrieveKeyError,
 };
+/// The trait every error from this crate implements to hand over its
+/// structured fields, with the rule for what an error may contain, and the
+/// helpers that go with it. Shared by `stack-profile`, `stack-auth`,
+/// `stack-kms` and `stack-encrypt`.
+pub use stack_auth::{diagnostic, ErrorPayload};
 
 // Key material
 pub use key::{ClientKey, DataKey, DataKeyWithTag, IndexKey, V1KeySet};

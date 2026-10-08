@@ -83,6 +83,14 @@ pub use error::{
     InvalidWorkspaceId, MissingWorkspaceCrn, NotAuthenticated, OrgNotProvisioned, RequestError,
     ServerError, TokenExpired, UnsupportedRegion, UsageLimitExceeded, WorkspaceMismatch,
 };
+/// [`ErrorPayload`]'s module: the payload and code-shape helpers the four
+/// crates share.
+pub use stack_profile::diagnostic;
+/// The trait every error from this crate implements to hand over its
+/// structured fields, and the rule for what an error may contain. Defined in
+/// `stack-profile`, the crate all four of `stack-profile`, `stack-auth`,
+/// `stack-kms` and `stack-encrypt` share.
+pub use stack_profile::ErrorPayload;
 
 // Filesystem-backed device identity and the interactive device-code flow are
 // native-only — both pull `stack-profile` (which uses `dirs` + `gethostname`)
@@ -408,14 +416,20 @@ where
             "JWT must have three segments".to_string(),
         )));
     }
+    // Neither decoder's own message is passed on: base64's names a byte of
+    // the token, and serde_json's can quote the claim it refused. A token is
+    // a credential (see `ErrorPayload` for the rule).
     let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(segments[1])
-        .map_err(|e| {
-            AuthError::InvalidToken(error::InvalidToken(format!("base64 decode failed: {e}")))
+        .map_err(|_| {
+            AuthError::InvalidToken(error::InvalidToken(
+                "the JWT's claims segment is not base64url".to_string(),
+            ))
         })?;
     serde_json::from_slice(&payload).map_err(|e| {
         AuthError::InvalidToken(error::InvalidToken(format!(
-            "failed to decode JWT claims: {e}"
+            "failed to decode JWT claims: {}",
+            stack_profile::diagnostic::describe_json_error(&e)
         )))
     })
 }
@@ -423,6 +437,32 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A claims segment that does not decode is reported by kind and
+    /// position, never by the decoder's text: base64's names a byte of the
+    /// token, serde_json's quotes the claim it refused, and a token is a
+    /// credential.
+    #[test]
+    fn a_jwt_whose_claims_do_not_decode_quotes_nothing_from_it() {
+        use base64::Engine;
+        let error = decode_jwt_payload::<serde_json::Value>("h.marker*claims.s").unwrap_err();
+        assert!(matches!(error, AuthError::InvalidToken(_)), "{error:?}");
+        assert_eq!(
+            error.to_string(),
+            "Invalid token: the JWT's claims segment is not base64url"
+        );
+
+        let claims =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(r#"{"exp":"marker-claim"}"#);
+        // serde_json's own text is `invalid type: string "marker-claim", ...`.
+        let error =
+            decode_jwt_payload::<std::collections::HashMap<String, u64>>(&format!("h.{claims}.s"))
+                .unwrap_err();
+        assert!(matches!(error, AuthError::InvalidToken(_)), "{error:?}");
+        let shown = error.to_string();
+        assert!(!shown.contains("marker"), "{shown}");
+        assert!(shown.contains("line 1"), "{shown}");
+    }
 
     /// The `error_code` strings are a stable contract surfaced across FFI
     /// (JS `Error.code`, Node-API codes), so pin every variant's code. If a
@@ -654,11 +694,35 @@ mod tests {
             ),
             (
                 AuthError::NotAuthenticated(crate::error::NotAuthenticated),
-                "stash login",
+                "stash auth login",
             ),
             (
                 AuthError::from("".parse::<crate::access_key::AccessKey>().unwrap_err()),
                 "CSAK<key-id>.<secret>",
+            ),
+            (
+                AuthError::Request(crate::error::RequestError(Box::new(std::io::Error::other(
+                    "refused",
+                )))),
+                "network path",
+            ),
+            (
+                AuthError::InvalidGrant(crate::error::InvalidGrant),
+                "stash auth login",
+            ),
+            (
+                AuthError::from("short".parse::<cts_common::WorkspaceId>().unwrap_err()),
+                "16 base32 characters",
+            ),
+            (
+                AuthError::AlreadyConsumed(crate::error::AlreadyConsumed),
+                "new device-code flow",
+            ),
+            (
+                AuthError::from(stack_profile::ProfileError::NotFound {
+                    path: "auth.json".into(),
+                }),
+                "stash auth login",
             ),
         ];
 

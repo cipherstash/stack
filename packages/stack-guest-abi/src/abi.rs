@@ -39,7 +39,10 @@
 //! `catch_unwind`, belt-and-braces for a hypothetical unwind build —
 //! wasm32-wasip1 aborts on panic; the two exports here need none, since
 //! neither has a panic path (allocation goes through `try_reserve_exact`
-//! and release through the registry). Statuses are the only detail leaked.
+//! and release through the registry). A failure is a status number, and
+//! `se_last_error` has the error behind it, encoded under the rule on
+//! `stack-profile`'s `ErrorPayload` ([`last_error`]): no plaintext, key,
+//! token, ciphertext or context value is ever in it.
 //!
 //! Wasm modules are single-threaded; the host must serialize calls into one
 //! instance.
@@ -51,7 +54,37 @@
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::buffers;
-use crate::status::STATUS_ENCODING;
+use crate::call;
+use crate::last_error;
+
+/// Run an export's body through [`call::run`] — clear the last error, run
+/// `f` (a panic is an internal failure), clear it again on success or make
+/// sure one is recorded on failure — and pack the result. Every guest export
+/// that returns a packed result goes through here, so "every export clears
+/// the last error when it starts and sets it when it fails" is written once,
+/// in [`call`], where it is tested natively.
+pub fn export(f: impl FnOnce() -> Result<Vec<u8>, u32>) -> u64 {
+    match call::run(f) {
+        Ok(out) => ok_buffer(out),
+        Err(status) => err_status(status),
+    }
+}
+
+/// The full error behind the most recent failed export, as a packed buffer
+/// result: a transport-codec object of `code`, `message`, `help`, `url`
+/// (when set), `severity`, `fields` and `causes` (see
+/// [`last_error::encode`]). Zero when there is none — no export has failed
+/// since the last success, or the error was already handed over.
+///
+/// The host calls it only after a non-zero status, copies the buffer out
+/// and releases it with [`se_dealloc`], like any output. Handing the buffer
+/// over empties the slot, so a second call returns zero
+/// ([`call::pack_last_error`]). It reads the last error and does not clear
+/// it first, so it is the one export that is not run through [`export`].
+#[no_mangle]
+pub extern "C" fn se_last_error() -> u64 {
+    call::pack_last_error(address)
+}
 
 /// Allocate `len` bytes of guest memory for the host to write into. Returns
 /// null if the allocation fails (recoverable host-side; never a trap).
@@ -73,18 +106,24 @@ pub unsafe extern "C" fn se_dealloc(ptr: *mut u8, len: u32) {
     unsafe { buffers::dealloc(ptr, len as usize) }
 }
 
-/// Pack a buffer result: `ptr << 32 | len`. The buffer is registered so the
-/// host's eventual [`se_dealloc`] wipes and frees exactly what was
-/// allocated.
+/// Pack a buffer result: `ptr << 32 | len` ([`call::pack_buffer`]). The
+/// buffer is registered so the host's eventual [`se_dealloc`] wipes and
+/// frees exactly what was allocated.
 pub fn ok_buffer(out: Vec<u8>) -> u64 {
-    let len = out.len() as u64;
-    let ptr = buffers::register(out) as usize as u64;
-    (ptr << 32) | len
+    let len = out.len() as u32;
+    call::pack_buffer(address(buffers::register(out)), len)
 }
 
-/// Pack an error: the status in the low 32 bits, high bits zero.
+/// Pack an error: the status in the low 32 bits, high bits zero
+/// ([`call::pack_status`]).
 pub fn err_status(status: u32) -> u64 {
-    status as u64
+    call::pack_status(status)
+}
+
+/// A pointer's wasm32 address: the whole pointer, since `usize` is 32 bits
+/// here.
+fn address(ptr: *mut u8) -> u32 {
+    ptr as usize as u32
 }
 
 /// Current linear-memory size in bytes. `u64` because a full 4 GiB memory
@@ -114,16 +153,17 @@ fn linear_memory_bytes() -> u64 {
 /// is about to free would read freed memory: that is the promise, not a
 /// property this function can check.
 pub unsafe fn input<'a>(ptr: *const u8, len: u32) -> Result<&'a [u8], u32> {
+    let refuse = || last_error::malformed("a pointer/length pair is outside guest memory");
     let len = len as usize;
     if len == 0 {
         return Ok(&[]);
     }
     if ptr.is_null() || len > isize::MAX as usize {
-        return Err(STATUS_ENCODING);
+        return Err(refuse());
     }
-    let end = (ptr as usize).checked_add(len).ok_or(STATUS_ENCODING)?;
+    let end = (ptr as usize).checked_add(len).ok_or_else(refuse)?;
     if end as u64 > linear_memory_bytes() {
-        return Err(STATUS_ENCODING);
+        return Err(refuse());
     }
     // SAFETY: non-null, in-bounds of linear memory, and under `isize::MAX`;
     // wasm linear memory is fully initialized (fresh pages are zero), so

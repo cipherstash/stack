@@ -2068,7 +2068,9 @@ version = "0.2.0"
 dependencies = [
  "base64ct",
  "cllw-ore",
+ "miette",
  "serde",
+ "serde_json",
  "stack-encrypt-derive",
  "stack-kms",
  "thiserror 1.0.69",
@@ -2117,7 +2119,10 @@ dependencies = [
 name = "stack-guest-abi"
 version = "0.0.0"
 dependencies = [
+ "miette",
+ "serde_json",
  "thiserror 1.0.69",
+ "vitaminc-aead-value",
  "vitaminc-protected",
  "zeroize",
 ]
@@ -2156,6 +2161,7 @@ version = "0.43.0"
 dependencies = [
  "dirs",
  "gethostname",
+ "miette",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

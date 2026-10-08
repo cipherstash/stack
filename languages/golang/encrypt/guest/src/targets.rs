@@ -134,10 +134,12 @@ fn convert(error: eql_bindings::encryption::targets::TargetError) -> TargetError
             expected: Some(expected),
             found,
         },
+        // The parser's kind and position, never its message: serde_json
+        // quotes the input it refused, and the input is stored ciphertext.
         Eql::Stored { target, source } => TargetError::Stored {
             name: String::new(),
             target: target.to_owned(),
-            reason: source.to_string(),
+            reason: stack_encrypt::diagnostic::describe_json_error(&source),
         },
         other => TargetError::Other(Box::new(other)),
     }
@@ -206,5 +208,24 @@ mod tests {
             }),
             TargetError::Plaintext { target, expected: Some(vitaminc_aead_value::ValueKind::String), .. } if target == "TextEq"
         ));
+    }
+
+    /// serde_json quotes the value it refused, and a stored EQL value holds
+    /// ciphertext and index terms: only its kind and position cross.
+    #[cfg(feature = "eql")]
+    #[test]
+    fn a_stored_value_that_does_not_parse_quotes_none_of_it() {
+        use eql_bindings::encryption::targets::TargetError as Eql;
+        let source = serde_json::from_str::<u8>(r#""marker-ciphertext""#).unwrap_err();
+        let error = convert(Eql::Stored {
+            target: "TextEq",
+            source,
+        });
+        let TargetError::Stored { reason, .. } = &error else {
+            panic!("{error:?}");
+        };
+        assert_eq!(reason, "unexpected data at line 1 column 19");
+        let shown = format!("{error} {:?}", stack_encrypt::ErrorPayload::payload(&error));
+        assert!(!shown.contains("marker"), "{shown}");
     }
 }

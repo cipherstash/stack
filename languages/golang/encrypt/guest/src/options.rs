@@ -49,7 +49,11 @@ use vitaminc_aead_value::FfiValue;
 use vitaminc_protected::Controlled;
 use zerokms_protocol::Name;
 
-use crate::status::{status_for_error, STATUS_ENCODING};
+use stack_guest_abi::last_error::malformed;
+
+use crate::status::fail_error;
+#[cfg(any(doc, test))]
+use crate::status::STATUS_ENCODING;
 
 /// Which keyset a call binds to. See the [module docs](self).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,7 +92,7 @@ pub struct Options {
 /// the [module docs](self) is [`STATUS_ENCODING`].
 pub fn parse_options(value: FfiValue, side: Side) -> Result<Options, u32> {
     let FfiValue::Object(entries) = value else {
-        return Err(STATUS_ENCODING);
+        return Err(malformed("the options are not an object"));
     };
     let mut keyset: Option<KeysetSelector> = None;
     let mut context: Option<Label> = None;
@@ -97,22 +101,29 @@ pub fn parse_options(value: FfiValue, side: Side) -> Result<Options, u32> {
             "keyset" if keyset.is_none() => keyset = Some(parse_selector(value)?),
             "context" if context.is_none() && side == Side::Open => {
                 let FfiValue::String(text) = value else {
-                    return Err(STATUS_ENCODING);
+                    return Err(malformed(r#"the "context" option is not a string"#));
                 };
                 // Valid UTF-8 by `Utf8String`'s construction invariant;
                 // checked rather than assumed because this is boundary
                 // code. A context is not secret, so the payload moves out
                 // of its `Protected` rather than being copied and wiped.
                 let text = String::from_utf8(text.into_inner().risky_unwrap())
-                    .map_err(|_| STATUS_ENCODING)?;
-                context = Some(Label::parse(&text).map_err(|_| STATUS_ENCODING)?);
+                    .map_err(|_| malformed(r#"the "context" option is not UTF-8"#))?;
+                context = Some(
+                    Label::parse(&text)
+                        .map_err(|_| malformed(r#"the "context" option is not a label"#))?,
+                );
             }
-            _ => return Err(STATUS_ENCODING),
+            _ => {
+                return Err(malformed(
+                    r#"the options have a key other than "keyset" and, when opening, "context", or give one twice"#,
+                ))
+            }
         }
     }
-    let keyset = keyset.ok_or(STATUS_ENCODING)?;
+    let keyset = keyset.ok_or_else(|| malformed("the options name no keyset"))?;
     if side == Side::Mint && keyset == KeysetSelector::Any {
-        return Err(STATUS_ENCODING);
+        return Err(malformed(r#"{"any"} names no keyset to encrypt under"#));
     }
     Ok(Options { keyset, context })
 }
@@ -121,13 +132,14 @@ pub fn parse_options(value: FfiValue, side: Side) -> Result<Options, u32> {
 /// out here rather than in [`parse_options`] so `se_keyset`, which takes a
 /// bare selector, shares the one definition.
 pub fn parse_selector(value: FfiValue) -> Result<KeysetSelector, u32> {
+    let not_one = || malformed("a keyset selector is not an object with exactly one key");
     let FfiValue::Object(mut entries) = value else {
-        return Err(STATUS_ENCODING);
+        return Err(not_one());
     };
     if entries.len() != 1 {
-        return Err(STATUS_ENCODING);
+        return Err(not_one());
     }
-    let (tag, value) = entries.pop().ok_or(STATUS_ENCODING)?;
+    let (tag, value) = entries.pop().ok_or_else(not_one)?;
     Ok(match (tag.as_str(), value) {
         ("default", FfiValue::Object(fields)) if fields.is_empty() => KeysetSelector::Default,
         ("any", FfiValue::Object(fields)) if fields.is_empty() => KeysetSelector::Any,
@@ -137,14 +149,22 @@ pub fn parse_selector(value: FfiValue) -> Result<KeysetSelector, u32> {
             // name is not secret, so the payload moves out of its
             // `Protected` rather than being copied and wiped. ZeroKMS's
             // naming rules apply here, at the boundary, not at resolution.
-            let name =
-                String::from_utf8(name.into_inner().risky_unwrap()).map_err(|_| STATUS_ENCODING)?;
-            KeysetSelector::Name(Name::try_from(name.as_str()).map_err(|_| STATUS_ENCODING)?)
+            let name = String::from_utf8(name.into_inner().risky_unwrap())
+                .map_err(|_| malformed("a keyset name is not UTF-8"))?;
+            KeysetSelector::Name(
+                Name::try_from(name.as_str())
+                    .map_err(|_| malformed("a keyset name breaks ZeroKMS's naming rules"))?,
+            )
         }
-        ("id", FfiValue::Bytes(bytes)) => {
-            KeysetSelector::Id(Uuid::from_slice(bytes.risky_ref()).map_err(|_| STATUS_ENCODING)?)
+        ("id", FfiValue::Bytes(bytes)) => KeysetSelector::Id(
+            Uuid::from_slice(bytes.risky_ref())
+                .map_err(|_| malformed("a keyset id is not 16 bytes"))?,
+        ),
+        _ => {
+            return Err(malformed(
+                r#"a keyset selector is not {"default"}, {"any"}, {"name"} or {"id"}"#,
+            ))
         }
-        _ => return Err(STATUS_ENCODING),
     })
 }
 
@@ -163,11 +183,11 @@ impl KeysetSelector {
     {
         let by: IdentifiedBy = match self {
             KeysetSelector::Default => return Ok(cipher.default_keyset()),
-            KeysetSelector::Any => return Err(STATUS_ENCODING),
+            KeysetSelector::Any => return Err(malformed(r#"{"any"} is not a keyset"#)),
             KeysetSelector::Name(name) => IdentifiedBy::Name(name.clone()),
             KeysetSelector::Id(id) => IdentifiedBy::Uuid(*id),
         };
-        cipher.keyset(by).await.map_err(|e| status_for_error(&e))
+        cipher.keyset(by).await.map_err(|e| fail_error(&e))
     }
 }
 

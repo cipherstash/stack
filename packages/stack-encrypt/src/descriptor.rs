@@ -620,34 +620,63 @@ impl std::str::FromStr for Label {
 
 /// Why a string is not a [`Label`] segment. `index` is the segment's
 /// position, counting from zero.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+///
+/// A label is not always schema: a plan's context and its fields' names
+/// are, but [`context_field`](crate::plan::FieldsBuilder::context_field)
+/// builds the context from a record's own field, which is customer data.
+/// So no message or payload quotes a segment or the character it refused;
+/// they name the segment by position. A caller in the same process can
+/// still read [`Reserved`](Self::Reserved)'s `found`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum LabelError {
     /// No segments at all.
     #[error("a label needs at least one segment")]
+    #[diagnostic(code(stack_encrypt::label_empty))]
     Empty,
     /// The segment is the empty string.
     #[error("label segment {index} is empty")]
+    #[diagnostic(code(stack_encrypt::label_empty_segment))]
     EmptySegment { index: usize },
     /// The segment contains the separator, [`/`](Descriptor::SEPARATOR).
     #[error(
         "label segment {index} contains the separator '{}'",
         Descriptor::SEPARATOR
     )]
+    #[diagnostic(
+        code(stack_encrypt::label_separator),
+        help("Give each segment as its own element rather than joining them with `/`.")
+    )]
     Separator { index: usize },
     /// The segment contains a control character, an invisible format
     /// character or a parenthesis, which the descriptor reserves.
-    #[error("label segment {index} contains {found:?}, which the descriptor reserves")]
+    #[error("label segment {index} contains a character the descriptor reserves")]
+    #[diagnostic(code(stack_encrypt::label_reserved))]
     Reserved { index: usize, found: char },
     /// The segment begins like another descriptor form: `b64:`, a digit or
     /// `-`.
     #[error("label segment {index} begins like another descriptor form (`b64:`, a digit or `-`)")]
+    #[diagnostic(code(stack_encrypt::label_reserved_prefix))]
     ReservedPrefix { index: usize },
     /// The value a label was read from is not text at all: a number, bytes,
     /// a list or a composite where a context field's value should be a
     /// label such as `tenants/acme`.
     #[error("a label is read from text, and this value is not text")]
+    #[diagnostic(code(stack_encrypt::label_not_text))]
     NotText,
+}
+
+impl crate::ErrorPayload for LabelError {
+    fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
+        use crate::diagnostic::payload;
+        match self {
+            Self::Empty | Self::NotText => serde_json::Map::new(),
+            Self::EmptySegment { index }
+            | Self::Separator { index }
+            | Self::Reserved { index, .. }
+            | Self::ReservedPrefix { index } => payload([("segment", (*index).into())]),
+        }
+    }
 }
 
 impl std::fmt::Display for Descriptor {
@@ -1083,6 +1112,21 @@ mod label_tests {
                 index: 0,
                 found: '\u{85}'
             })
+        );
+    }
+
+    /// A context field's label is record data, so a refusal names the
+    /// segment and never the character it refused.
+    #[test]
+    fn a_reserved_character_is_not_quoted() {
+        let error = Label::new(["tenants", "acme(marker"]).unwrap_err();
+        let shown = format!(
+            "{error} {}",
+            serde_json::Value::Object(crate::ErrorPayload::payload(&error))
+        );
+        assert_eq!(
+            shown,
+            r#"label segment 1 contains a character the descriptor reserves {"segment":1}"#
         );
     }
 

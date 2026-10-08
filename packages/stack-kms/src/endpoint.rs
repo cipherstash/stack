@@ -5,29 +5,56 @@ use thiserror::Error;
 use url::Url;
 
 /// Why a URL was rejected as a [`ZeroKmsEndpoint`].
-#[derive(Debug, Error, PartialEq, Eq)]
+///
+/// No message repeats the URL it refused: [`NoHost`](Self::NoHost) and
+/// [`QueryOrFragment`](Self::QueryOrFragment) are checked before
+/// [`Userinfo`](Self::Userinfo), so the URL they hold can still carry
+/// credentials, and a query string can carry anything. The URL stays in the
+/// variant for a caller in this process.
+#[derive(Debug, Error, PartialEq, Eq, miette::Diagnostic)]
 pub enum InvalidEndpoint {
     /// The value did not parse as a URL at all.
     #[error("not a valid URL: {0}")]
+    #[diagnostic(code(stack_kms::endpoint_not_url))]
     Parse(#[from] url::ParseError),
 
     /// The URL parsed but has no authority — `localhost:8080` parses as scheme
     /// `localhost`, path `8080` — so no request path could ever be joined to it.
-    #[error("`{0}` has no host; is the `http://` or `https://` prefix missing?")]
+    #[error("the URL has no host; is the `http://` or `https://` prefix missing?")]
+    #[diagnostic(code(stack_kms::endpoint_no_host))]
     NoHost(String),
 
     /// Only `http` and `https` can reach ZeroKMS.
     #[error("unsupported scheme `{0}`; expected `http` or `https`")]
+    #[diagnostic(code(stack_kms::endpoint_scheme))]
     Scheme(String),
 
     /// Request URLs are built by joining an endpoint path onto the base, which
     /// discards any query or fragment — so accepting one would silently drop it.
-    #[error("query strings and fragments are not supported on a ZeroKMS endpoint: `{0}`")]
+    #[error("query strings and fragments are not supported on a ZeroKMS endpoint")]
+    #[diagnostic(code(stack_kms::endpoint_query_or_fragment))]
     QueryOrFragment(String),
 
     /// Credentials belong in the bearer token, never in the URL.
     #[error("userinfo is not supported on a ZeroKMS endpoint")]
+    #[diagnostic(
+        code(stack_kms::endpoint_userinfo),
+        help("Remove the user and password from the URL: ZeroKMS takes the credential as a bearer token.")
+    )]
     Userinfo,
+}
+
+impl stack_auth::ErrorPayload for InvalidEndpoint {
+    fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
+        match self {
+            Self::Scheme(scheme) => {
+                stack_auth::diagnostic::payload([("scheme", scheme.as_str().into())])
+            }
+            Self::Parse(_) | Self::NoHost(_) | Self::QueryOrFragment(_) | Self::Userinfo => {
+                serde_json::Map::new()
+            }
+        }
+    }
 }
 
 /// A validated ZeroKMS base URL.

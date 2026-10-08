@@ -25,9 +25,15 @@ use zerokms_protocol::{ViturRequestError, ViturRequestErrorKind};
 /// Classified as a request-*preparation* error, never an authentication
 /// failure — a caller that read it as a 401 would refresh its token and retry
 /// forever against what is really a configuration problem.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, miette::Diagnostic)]
 #[error("ZeroKMS base URL was not resolved from the token's `services` claim")]
+#[diagnostic(
+    code(stack_kms::base_url_unresolved),
+    help("Configure the ZeroKMS endpoint explicitly (`CS_ZEROKMS_HOST`), or use a token whose services claim names ZeroKMS.")
+)]
 pub struct BaseUrlUnresolved;
+
+impl stack_auth::ErrorPayload for BaseUrlUnresolved {}
 
 /// A 2xx response whose `Content-Type` is not JSON — typically a proxy or load
 /// balancer answering with an HTML error page.
@@ -35,8 +41,9 @@ pub struct BaseUrlUnresolved;
 /// `Display` carries only what was received and expected: the body and headers
 /// are attacker-influenced and unbounded, and this type's `Display` reaches
 /// logs. They stay available through `Debug` for structured inspection.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, miette::Diagnostic)]
 #[error("Received '{received:?}', expected '{expected}'")]
+#[diagnostic(code(stack_kms::unexpected_content_type))]
 #[non_exhaustive]
 pub struct UnexpectedContentType {
     pub received: Option<String>,
@@ -50,13 +57,24 @@ pub struct UnexpectedContentType {
 /// `Display` is the status alone, for the same reason as
 /// [`UnexpectedContentType`]: body and headers are unbounded server text that
 /// must not be pulled into a log line. `Debug` still carries them.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, miette::Diagnostic)]
 #[error("Status: {status}")]
+#[diagnostic(code(stack_kms::failure_response))]
 #[non_exhaustive]
 pub struct FailureResponse {
     pub status: u16,
     pub body: Option<String>,
     pub headers: HashMap<String, String>,
+}
+
+/// The content type alone is a header value, kept out like the body.
+impl stack_auth::ErrorPayload for UnexpectedContentType {}
+
+/// The status alone: the body is ZeroKMS response text.
+impl stack_auth::ErrorPayload for FailureResponse {
+    fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
+        stack_auth::diagnostic::payload([("status", self.status.into())])
+    }
 }
 
 /// `true` if a `content-type` header value denotes JSON, ignoring any

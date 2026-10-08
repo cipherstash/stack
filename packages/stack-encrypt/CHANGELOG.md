@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Errors now expose stable codes, help text, and structured details.**
+  All error types implement `miette::Diagnostic` with codes such as
+  `stack_encrypt::foreign_keyset`. Help text explains how to resolve
+  errors callers can fix. `ErrorPayload::payload()` provides details such
+  as both keyset IDs for a wrong-keyset error or the field rejected by a
+  plan. `ErrorPayload` is re-exported from `stack-profile`. Codes
+  identify errors across language boundaries; Rust callers can continue
+  matching enum variants.
+  The payload policy excludes plaintext, key material, tokens,
+  ciphertext, search-index bytes, and raw context values.
+- **Data-driven input errors identify the field and the reason.**
+  `dynamic::Reason` provides fixed reasons such as `MissingContext`,
+  `DuplicateOutput`, and `FieldMissing`, with stable `snake_case` names
+  through `as_str()`. Use `dynamic::Error::field()` and `reason()` to
+  inspect these details, or `in_field()` to attach a field name.
 - **A data plan field may name an EQL type as its target.** Beside the
   output form, `dynamic::record::plan_with` reads `{"context": [...],
   "target": "TextEq", "type"?: ...}` — the two forms are exclusive — and
@@ -31,6 +46,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Plan::new_with`.
 
 ### Breaking
+
+- **Update pattern matches for `dynamic::Error`.** `Context`, `Plan`,
+  `Source`, and `Record` now carry
+  `{ field: Option<String>, reason: Reason }`; `Term` also gains
+  `field: Option<String>`. For example, replace `Error::Plan` with
+  `Error::Plan { .. }`. Messages include the reason and the field when
+  known. Extra input fields are reported as `UnknownField` after the
+  plan's declared fields are checked, replacing the earlier field-count
+  check.
+- **Key-management errors pass through directly.** `Error::Kms` now uses
+  the underlying `stack_kms::Error` message, code, and help. The
+  `ZeroKMS data-key operation failed:` prefix is removed, and `source()`
+  returns the underlying error's own cause. ZeroKMS is CipherStash's
+  key-management service.
+- **Error messages omit potentially sensitive values.**
+  `Error::ContextMismatch` reports the stored context's length and number
+  of parts instead of its contents. `sem::TermError::Prf` omits the
+  underlying pseudorandom-function implementation's message, and
+  `sem::TermBytesError::MatchPositionOutOfRange` omits the position read
+  from search-index bytes, and `LabelError::Reserved` names the segment
+  but not the reserved character, since a `context_field` label is record
+  data. These details remain available on the Rust
+  error values for callers in the same process, including the `stored`
+  field on `ContextMismatch`. A one-value plan's
+  `PlanError::DuplicateIndex`, `IndexNotDeclared` and `IndexOptions` name
+  `the value` where they used to quote the plan's or the call's context;
+  the caller already holds that context.
+- **A data plan field with a term output must declare its `"type"`.** A
+  plan whose indexed field (`"eq"`, `"match"`, `"ore"`, `"ope"`) has no
+  `"type"` is refused when it is built (`Error::UntypedIndex`, naming the
+  field), by `record::plan`,
+  `record::plan_with`, `Plan::new` / `Plan::new_with` and
+  `Plan::with_context_field` alike: the field's
+  terms derive from the one declared kind, with every value checked against
+  it, never from whatever tag each value arrived with. The type stays
+  optional on a field whose only output is `"c"` or `"passthrough"`, and on
+  a target field, whose kind is the EQL type's own. The Go SDK already
+  fills `"type"` on every field from the Go type, and `record.Plan.Validate`
+  refuses an indexed `Untyped` field naming it, so generated code is
+  unaffected; a plan written by hand without types must add them. Declaring
+  a type changes no stored byte, so a row stored as the declared kind opens
+  as before. A row stored as another kind fails to open with
+  `PlanError::FieldType`, and fails any batch that holds it; its terms do
+  not match a query of the declared kind either. Re-encrypt such rows as
+  the declared kind: they are still readable, because a plan that gives the
+  field only `"c"` and no `"type"` remains valid and opens a row of any
+  kind, whatever indexes it was sealed with. Open the rows under that plan,
+  convert each value to the declared kind, and encrypt it again under the
+  typed plan.
 
 - **A target description carries a source mode.** `Encryption` gains a
   last type parameter, `M: SourceMode = Borrowed`, saying how it is handed
@@ -75,8 +139,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Every data plan field seals the tagged `FfiValue` leaf, whatever its
   `"type"`**, as every field did before; the type admits indexes and checks
   kinds and changes no bytes, so a row written without a type opens under a
-  plan that declares one, and a binding that starts sending `"type"`
-  re-encrypts nothing. A Rust `u32` or `String` field under the same label
+  plan that declares the kind it was sealed as, and a binding that starts
+  sending `"type"` re-encrypts nothing stored as that kind. A Rust `u32` or `String` field under the same label
   derives the same terms as the data field but a different leaf, and the
   two leaves cannot be told apart by inspection (a bare string that begins
   with U+000A is a valid tagged string), so the lowering does not choose an

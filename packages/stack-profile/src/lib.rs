@@ -63,10 +63,12 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 mod device_identity;
+pub mod diagnostic;
 mod error;
 mod profile_store;
 
 pub use device_identity::DeviceIdentity;
+pub use diagnostic::ErrorPayload;
 pub use error::ProfileError;
 pub use profile_store::{FileLockGuard, ProfileStore};
 

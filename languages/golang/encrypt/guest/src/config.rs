@@ -31,8 +31,9 @@ use vitaminc_aead_value::FfiValue;
 use zeroize::Zeroizing;
 
 /// A parse failure, carrying which key was at fault. Maps to
-/// `STATUS_ENCODING` at the ABI; the detail exists for the native tests and
-/// is never surfaced across the boundary (statuses leak no config content).
+/// `STATUS_ENCODING` at the ABI, and [`describe`](Self::describe) is the
+/// message the host reads through `se_last_error`: the name of the key at
+/// fault crosses the boundary, its value never does.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ConfigError {
     /// The config was not an object of string values.
@@ -50,6 +51,25 @@ pub enum ConfigError {
     Duplicate(&'static str),
     /// A key this version does not recognise.
     UnknownKey(String),
+}
+
+impl ConfigError {
+    /// Says what was wrong with the config, for the host to read.
+    ///
+    /// The message names the key at fault but never its value, because the
+    /// config holds the client key. An unrecognised key is not named
+    /// either: if a value is pasted where a key should be, the unrecognised
+    /// key *is* that value.
+    pub fn describe(&self) -> String {
+        match self {
+            Self::NotAnObject => "the config is not an object of string values".to_owned(),
+            Self::Missing(key) => format!("the config has no {key}"),
+            Self::NotAString(key) => format!("the config's {key} is not a string"),
+            Self::Invalid(key) => format!("the config's {key} is not valid"),
+            Self::Duplicate(key) => format!("the config gives {key} twice"),
+            Self::UnknownKey(_) => "the config has a key this version does not know".to_owned(),
+        }
+    }
 }
 
 /// Everything `se_cipher_init` needs to build the cipher.

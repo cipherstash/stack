@@ -954,9 +954,9 @@ mod tests {
         // `device_client_to_napi_error` routes every `DeviceClientError` through
         // its canonical `AuthError` mapping. A help-carrying error (here an
         // `Auth`-wrapped `WorkspaceMismatch`) must keep its help + structured
-        // payload; a help-less one (`Profile` -> `Store`) yields just
-        // type + message. A regression that dropped the canonical routing would
-        // lose the help/payload here.
+        // payload; a `Profile` -> `Store` one carries the profile error's
+        // help. A regression that dropped the canonical routing would lose
+        // the help/payload here.
         #[test]
         fn device_client_auth_arm_preserves_full_envelope() {
             let ws = |s: &str| s.parse::<cts_common::WorkspaceId>().unwrap();
@@ -976,15 +976,20 @@ mod tests {
             );
 
             // Non-Auth variant routes through `From<DeviceClientError>` to the
-            // canonical `Store` error: same `STORE_ERROR` code, and no help
-            // (StoreError carries none).
+            // canonical `Store` error: same `STORE_ERROR` code, and the
+            // profile error's help, which `StoreError` forwards.
             let err = device_client_to_napi_error(DeviceClientError::Profile(
                 stack_profile::ProfileError::HomeDirNotFound,
             ));
             let json = assertions::failure_json(&err);
             assert_eq!(json["type"], "STORE_ERROR");
             assert!(json["message"].as_str().is_some());
-            assert!(json.get("help").is_none());
+            assert!(
+                json["help"]
+                    .as_str()
+                    .is_some_and(|help| help.contains("HOME")),
+                "a store failure carries the profile error's help, got: {json}"
+            );
         }
     }
 

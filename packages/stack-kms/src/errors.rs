@@ -1,7 +1,37 @@
 use miette::Diagnostic;
+use stack_auth::diagnostic::{payload, ErrorPayload};
 use thiserror::Error;
 use vitaminc::random::RandomError;
 use zerokms_protocol::{ViturRequestError, ViturRequestErrorKind};
+
+/// The fields a failed ZeroKMS request contributes: the request kind
+/// (`NotFound`, `SendRequest`, ...), and nothing from the response body.
+fn request_payload(error: &ViturRequestError) -> serde_json::Map<String, serde_json::Value> {
+    payload([("request_kind", request_kind(&error.kind).into())])
+}
+
+/// A request kind as the payload spells it. Written out rather than taken
+/// from `Debug`, which is no format and belongs to `zerokms-protocol`: the
+/// match has no wildcard, so a kind added there fails to compile here
+/// instead of reaching a caller as a value nobody wrote down.
+fn request_kind(kind: &ViturRequestErrorKind) -> &'static str {
+    match kind {
+        ViturRequestErrorKind::PrepareRequest => "PrepareRequest",
+        ViturRequestErrorKind::SendRequest => "SendRequest",
+        ViturRequestErrorKind::NotFound => "NotFound",
+        ViturRequestErrorKind::Conflict => "Conflict",
+        ViturRequestErrorKind::FailureResponse => "FailureResponse",
+        ViturRequestErrorKind::ParseResponse => "ParseResponse",
+        ViturRequestErrorKind::Unauthorized => "Unauthorized",
+        ViturRequestErrorKind::Forbidden => "Forbidden",
+        ViturRequestErrorKind::Other => "Other",
+    }
+}
+
+/// The fields of a key-count mismatch.
+fn count_payload(expected: usize, received: usize) -> serde_json::Map<String, serde_json::Value> {
+    payload([("expected", expected.into()), ("received", received.into())])
+}
 
 /// Key material returned by ZeroKMS failed up-front validation before key
 /// derivation — e.g. a truncated or corrupt response whose material is not the
@@ -9,18 +39,33 @@ use zerokms_protocol::{ViturRequestError, ViturRequestErrorKind};
 /// network-supplied, so this must surface as an error, never a panic.
 #[derive(Diagnostic, Error, Debug)]
 #[error("Invalid keyset key material: {0}")]
+#[diagnostic(code(stack_kms::invalid_key_material))]
 pub struct InvalidKeyMaterialError(#[from] pub recipher::errors::RecipherError);
+
+impl ErrorPayload for InvalidKeyMaterialError {}
 
 #[derive(Diagnostic, Error, Debug)]
 pub enum RetrieveKeyError {
+    // `ViturRequestError`'s Display is its kind and a static message; the
+    // response it carries stays behind `source()`.
     #[error("Failed to send request: {0}")]
+    #[diagnostic(code(stack_kms::retrieve_key_failed))]
     RequestFailed(#[from] ViturRequestError),
     #[error("Received an invalid number of keys from request. Expected {expected} but received {received}")]
+    #[diagnostic(code(stack_kms::retrieved_key_count))]
     InvalidNumberOfKeys { expected: usize, received: usize },
 
     /// Represents an error that occurs when a single key retrieval fails.
     /// May be part of a batch retrieval operation.
-    #[error("Failed to retrieve key: {0}")]
+    ///
+    /// The string is ZeroKMS's own reason for the one key, kept for a caller
+    /// in this process to inspect. It is response text, so the message does
+    /// not repeat it (see [`ErrorPayload`] for the rule).
+    #[error("Failed to retrieve key")]
+    #[diagnostic(
+        code(stack_kms::key_not_retrieved),
+        help("ZeroKMS returned no data key for this value. Check it is opened under the context it was sealed with.")
+    )]
     FailedRetrieval(String),
 
     #[error(transparent)]
@@ -31,12 +76,23 @@ pub enum RetrieveKeyError {
 #[derive(Diagnostic, Error, Debug)]
 pub enum GenerateKeyError {
     #[error("Request not authorized")]
+    #[diagnostic(
+        code(stack_kms::generate_key_unauthorized),
+        help("ZeroKMS refused the access token. Refresh the credential and retry.")
+    )]
     Unauthorized,
     #[error("Request forbidden due to insufficient permissions")]
+    #[diagnostic(
+        code(stack_kms::generate_key_forbidden),
+        help("The client is not allowed to generate keys in this keyset: check the keyset's grants, and that it is enabled.")
+    )]
     Forbidden,
-    #[error("Failed to generate IV: {0}")]
-    GenerateIv(RandomError),
+    // The random source's own message is not repeated; it is the source.
+    #[error("Failed to generate IV")]
+    #[diagnostic(code(stack_kms::generate_iv))]
+    GenerateIv(#[source] RandomError),
     #[error("Received an invalid number of keys from request. Expected {expected} but received {received}")]
+    #[diagnostic(code(stack_kms::generated_key_count))]
     InvalidNumberOfKeys { expected: usize, received: usize },
 
     #[error(transparent)]
@@ -52,7 +108,30 @@ pub enum GenerateKeyError {
     // underlying transport / response error; the Display string itself
     // stays free of dynamic data.
     #[error("Unexpected error ({}: {})", .0.kind, .0.message)]
+    #[diagnostic(code(stack_kms::generate_key_failed))]
     RequestFailed(#[source] ViturRequestError),
+}
+
+impl ErrorPayload for RetrieveKeyError {
+    fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
+        match self {
+            Self::RequestFailed(error) => request_payload(error),
+            Self::InvalidNumberOfKeys { expected, received } => count_payload(*expected, *received),
+            Self::FailedRetrieval(_) => serde_json::Map::new(),
+            Self::InvalidKeyMaterial(error) => error.payload(),
+        }
+    }
+}
+
+impl ErrorPayload for GenerateKeyError {
+    fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
+        match self {
+            Self::RequestFailed(error) => request_payload(error),
+            Self::InvalidNumberOfKeys { expected, received } => count_payload(*expected, *received),
+            Self::InvalidKeyMaterial(error) => error.payload(),
+            Self::Unauthorized | Self::Forbidden | Self::GenerateIv(_) => serde_json::Map::new(),
+        }
+    }
 }
 
 impl From<ViturRequestError> for GenerateKeyError {
@@ -74,8 +153,16 @@ pub enum LoadKeysetError {
     // static (no dynamic data); the distinguishing server response is
     // reachable through `source()`.
     #[error("Request not authorized")]
+    #[diagnostic(
+        code(stack_kms::load_keyset_unauthorized),
+        help("ZeroKMS refused the access token. Refresh the credential and retry.")
+    )]
     Unauthorized(#[source] ViturRequestError),
     #[error("Request forbidden due to insufficient permissions")]
+    #[diagnostic(
+        code(stack_kms::load_keyset_forbidden),
+        help("The client is not granted this keyset, or the keyset is disabled.")
+    )]
     Forbidden(#[source] ViturRequestError),
     // `load-keyset` uniquely takes a caller-supplied keyset id or name, so a
     // server 404 is an expected, user-actionable outcome — e.g. a typo'd
@@ -84,6 +171,10 @@ pub enum LoadKeysetError {
     // not prove the named keyset is missing: inspect `source()` for the
     // server's response body before treating this as "create the keyset".
     #[error("Keyset not found (or the client is unknown or has no default keyset)")]
+    #[diagnostic(
+        code(stack_kms::keyset_not_found),
+        help("ZeroKMS answers 404 when no keyset has this id or name, and also when the client is unknown or has no default keyset. Check the client ID and the keyset's name before creating a keyset.")
+    )]
     KeysetNotFound(#[source] ViturRequestError),
     #[error(transparent)]
     #[diagnostic(transparent)]
@@ -91,7 +182,20 @@ pub enum LoadKeysetError {
     // Same shape as `GenerateKeyError::RequestFailed`: Display carries only the
     // static kind/message; the dynamic error stays behind `source()`.
     #[error("Unexpected error ({}: {})", .0.kind, .0.message)]
+    #[diagnostic(code(stack_kms::load_keyset_failed))]
     RequestFailed(#[source] ViturRequestError),
+}
+
+impl ErrorPayload for LoadKeysetError {
+    fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
+        match self {
+            Self::Unauthorized(error)
+            | Self::Forbidden(error)
+            | Self::KeysetNotFound(error)
+            | Self::RequestFailed(error) => request_payload(error),
+            Self::InvalidKeyMaterial(error) => error.payload(),
+        }
+    }
 }
 
 impl From<ViturRequestError> for LoadKeysetError {
@@ -101,6 +205,342 @@ impl From<ViturRequestError> for LoadKeysetError {
             ViturRequestErrorKind::Unauthorized => Self::Unauthorized(err),
             ViturRequestErrorKind::NotFound => Self::KeysetNotFound(err),
             _ => Self::RequestFailed(err),
+        }
+    }
+}
+
+#[cfg(test)]
+mod codes {
+    use stack_auth::diagnostic::is_code_of;
+
+    use super::*;
+    use crate::connection::{BaseUrlUnresolved, FailureResponse, UnexpectedContentType};
+    use crate::endpoint::InvalidEndpoint;
+    use crate::key_provider::KeyProviderError;
+
+    fn vitur(kind: ViturRequestErrorKind) -> ViturRequestError {
+        ViturRequestError::new(kind, "boom", std::io::Error::other("detail"))
+    }
+
+    fn material() -> InvalidKeyMaterialError {
+        recipher::errors::RecipherError::InvalidInputLength {
+            expected: 32,
+            received: 3,
+        }
+        .into()
+    }
+
+    /// One row per variant of an enum, written `pattern => value`. The
+    /// patterns are the arms of a match with no wildcard, so a variant with
+    /// no row fails to compile, and each value must match its own pattern.
+    macro_rules! variants {
+        ($($pattern:pat => $value:expr),+ $(,)?) => {{
+            let rows = vec![$({
+                let value = $value;
+                assert!(matches!(value, $pattern), "{value:?} is not {}", stringify!($pattern));
+                value
+            }),+];
+            for row in &rows {
+                match row {
+                    $($pattern => {})+
+                }
+            }
+            rows
+        }};
+    }
+
+    /// A test's row: an error, boxed with its type's name.
+    type Row = (&'static str, Box<dyn Diagnostic>);
+
+    fn boxed<E: Diagnostic + 'static>(rows: Vec<E>) -> impl Iterator<Item = Row> {
+        rows.into_iter().map(stack_auth::diagnostic::named)
+    }
+
+    /// One of every variant of every error type here.
+    fn every_variant() -> Vec<Row> {
+        let mut errors: Vec<Row> = vec![
+            stack_auth::diagnostic::named(material()),
+            stack_auth::diagnostic::named(BaseUrlUnresolved),
+            stack_auth::diagnostic::named(UnexpectedContentType {
+                received: Some("text/html".into()),
+                expected: "application/json",
+                body: None,
+                headers: Default::default(),
+            }),
+            stack_auth::diagnostic::named(FailureResponse {
+                status: 500,
+                body: None,
+                headers: Default::default(),
+            }),
+        ];
+        errors.extend(boxed(variants![
+            RetrieveKeyError::RequestFailed(_) => {
+                RetrieveKeyError::RequestFailed(vitur(ViturRequestErrorKind::SendRequest))
+            },
+            RetrieveKeyError::InvalidNumberOfKeys { .. } => RetrieveKeyError::InvalidNumberOfKeys {
+                expected: 2,
+                received: 1,
+            },
+            RetrieveKeyError::FailedRetrieval(_) => {
+                RetrieveKeyError::FailedRetrieval("no key".into())
+            },
+            RetrieveKeyError::InvalidKeyMaterial(_) => {
+                RetrieveKeyError::InvalidKeyMaterial(material())
+            },
+        ]));
+        errors.extend(boxed(variants![
+            GenerateKeyError::Unauthorized => GenerateKeyError::Unauthorized,
+            GenerateKeyError::Forbidden => GenerateKeyError::Forbidden,
+            GenerateKeyError::GenerateIv(_) => {
+                GenerateKeyError::GenerateIv(RandomError::GenerationFailed)
+            },
+            GenerateKeyError::InvalidNumberOfKeys { .. } => GenerateKeyError::InvalidNumberOfKeys {
+                expected: 2,
+                received: 1,
+            },
+            GenerateKeyError::InvalidKeyMaterial(_) => {
+                GenerateKeyError::InvalidKeyMaterial(material())
+            },
+            GenerateKeyError::RequestFailed(_) => {
+                GenerateKeyError::RequestFailed(vitur(ViturRequestErrorKind::Other))
+            },
+        ]));
+        errors.extend(boxed(variants![
+            LoadKeysetError::Unauthorized(_) => {
+                LoadKeysetError::Unauthorized(vitur(ViturRequestErrorKind::Unauthorized))
+            },
+            LoadKeysetError::Forbidden(_) => {
+                LoadKeysetError::Forbidden(vitur(ViturRequestErrorKind::Forbidden))
+            },
+            LoadKeysetError::KeysetNotFound(_) => {
+                LoadKeysetError::KeysetNotFound(vitur(ViturRequestErrorKind::NotFound))
+            },
+            LoadKeysetError::InvalidKeyMaterial(_) => {
+                LoadKeysetError::InvalidKeyMaterial(material())
+            },
+            LoadKeysetError::RequestFailed(_) => {
+                LoadKeysetError::RequestFailed(vitur(ViturRequestErrorKind::Conflict))
+            },
+        ]));
+        // A variant that wraps another of this crate's errors, or a
+        // stack-auth error, forwards that error's code.
+        errors.extend(boxed(variants![
+            Error::GenerateKey(_) => Error::GenerateKey(GenerateKeyError::Forbidden),
+            Error::RetrieveKey(_) => {
+                Error::RetrieveKey(RetrieveKeyError::FailedRetrieval("no key".into()))
+            },
+            Error::LoadKeyset(_) => Error::LoadKeyset(LoadKeysetError::KeysetNotFound(vitur(
+                ViturRequestErrorKind::NotFound,
+            ))),
+            Error::Auth(_) => {
+                Error::Auth(stack_auth::AuthError::TokenExpired(stack_auth::TokenExpired))
+            },
+            Error::ConnectionInit(_) => {
+                Error::ConnectionInit(Box::new(std::io::Error::other("no")))
+            },
+            Error::InvalidEndpoint(_) => Error::InvalidEndpoint(InvalidEndpoint::Userinfo),
+            Error::Unexpected(_) => Error::Unexpected("unexpected".into()),
+        ]));
+        errors.extend(boxed(variants![
+            InvalidEndpoint::Parse(_) => InvalidEndpoint::Parse(url::ParseError::EmptyHost),
+            InvalidEndpoint::NoHost(_) => InvalidEndpoint::NoHost("localhost:8080".into()),
+            InvalidEndpoint::Scheme(_) => InvalidEndpoint::Scheme("ftp".into()),
+            InvalidEndpoint::QueryOrFragment(_) => {
+                InvalidEndpoint::QueryOrFragment("https://x/?q".into())
+            },
+            InvalidEndpoint::Userinfo => InvalidEndpoint::Userinfo,
+        ]));
+        errors.extend(boxed(variants![
+            KeyProviderError::NotConfigured(_) => KeyProviderError::NotConfigured("unset".into()),
+            KeyProviderError::InvalidKey(_) => KeyProviderError::InvalidKey("not hex".into()),
+            KeyProviderError::LoadError(_) => KeyProviderError::LoadError("disk".into()),
+        ]));
+        if let Err(error) = crate::ClientOpts::new(()).with_max_keys_per_req(0) {
+            errors.push(stack_auth::diagnostic::named(error));
+        }
+        // The auth error the two `Auth` wrappers carry, as a row of its own:
+        // a wrapper counts as the error it forwards.
+        errors.push(stack_auth::diagnostic::named(
+            stack_auth::AuthError::TokenExpired(stack_auth::TokenExpired),
+        ));
+        #[cfg(feature = "http")]
+        {
+            use crate::builder::StackKmsBuilderError;
+            let reqwest_error = reqwest::Client::new()
+                .get("not a url")
+                .build()
+                .expect_err("not a URL");
+            errors.push(stack_auth::diagnostic::named(
+                crate::ConnectionInitError::from(reqwest_error),
+            ));
+            errors.extend(boxed(variants![
+                StackKmsBuilderError::InvalidEndpoint { .. } => {
+                    StackKmsBuilderError::InvalidEndpoint {
+                        env_var: "CS_ZEROKMS_HOST",
+                        source: InvalidEndpoint::Userinfo,
+                    }
+                },
+                StackKmsBuilderError::ClientInit(_) => {
+                    StackKmsBuilderError::ClientInit(Error::Unexpected("unexpected".into()))
+                },
+                StackKmsBuilderError::Auth(_) => StackKmsBuilderError::Auth(
+                    stack_auth::AuthError::TokenExpired(stack_auth::TokenExpired)
+                ),
+                StackKmsBuilderError::InvalidConfig(_) => StackKmsBuilderError::InvalidConfig(
+                    crate::ClientOpts::new(())
+                        .with_max_keys_per_req(0)
+                        .err()
+                        .expect("zero keys per request is refused"),
+                ),
+                StackKmsBuilderError::KeyProvider(_) => StackKmsBuilderError::KeyProvider(
+                    KeyProviderError::NotConfigured("unset".into()),
+                ),
+            ]));
+        }
+        errors
+    }
+
+    /// Every variant has a code in this crate's namespace and `snake_case`,
+    /// save one that carries a stack-auth error, whose code is that error's.
+    #[test]
+    fn every_variant_has_a_code_of_this_crate() {
+        for (_, error) in every_variant() {
+            let code = error
+                .code()
+                .unwrap_or_else(|| panic!("{error:?} has no code"))
+                .to_string();
+            assert!(
+                is_code_of("stack_kms", &code) || is_code_of("stack_auth", &code),
+                "{code}"
+            );
+        }
+    }
+
+    /// No two variants share a code by mistake: callers branch on it.
+    /// `invalid_endpoint` is shared on purpose: an endpoint from
+    /// `CS_ZEROKMS_HOST` (the builder's) and one from the token's services
+    /// claim (the client's) are refused for the same reasons, and the message
+    /// says which source it was. The builder exists only with `http`, so
+    /// without it nothing is shared.
+    #[test]
+    fn no_two_variants_share_a_code_by_mistake() {
+        let errors = every_variant();
+        let shared = stack_auth::diagnostic::shared_codes(
+            errors.iter().map(|(name, error)| (*name, error.as_ref())),
+        );
+        let codes: Vec<&str> = shared.keys().map(String::as_str).collect();
+        let intended: &[&str] = if cfg!(feature = "http") {
+            &["stack_kms::invalid_endpoint"]
+        } else {
+            &[]
+        };
+        assert_eq!(codes, intended, "{shared:#?}");
+    }
+
+    /// A ZeroKMS failure gives its request kind, never the response it
+    /// carried: the detail behind `source()` stays out of the payload too.
+    #[test]
+    fn a_request_failure_gives_the_kind_and_not_the_response() {
+        let error = Error::LoadKeyset(LoadKeysetError::KeysetNotFound(vitur(
+            ViturRequestErrorKind::NotFound,
+        )));
+        let fields = error.payload();
+        assert_eq!(fields["request_kind"], "NotFound");
+        assert!(!format!("{fields:?}").contains("detail"), "{fields:?}");
+        assert!(error
+            .help()
+            .is_some_and(|help| help.to_string().contains("client is unknown")));
+    }
+
+    /// Every structured field this crate adds. A binding passes these on as
+    /// they are, so a renamed key breaks the callers that read it.
+    #[test]
+    fn every_payload_carries_its_fields() {
+        use serde_json::json;
+        #[cfg_attr(not(feature = "http"), allow(unused_mut))]
+        let mut rows: Vec<(Box<dyn ErrorPayload>, serde_json::Value)> = vec![
+            (
+                Box::new(InvalidEndpoint::Scheme("ftp".into())),
+                json!({ "scheme": "ftp" }),
+            ),
+            (
+                Box::new(InvalidEndpoint::QueryOrFragment("https://x/?q".into())),
+                json!({}),
+            ),
+            (
+                Box::new(FailureResponse {
+                    status: 503,
+                    body: Some("marker-body".into()),
+                    headers: Default::default(),
+                }),
+                json!({ "status": 503 }),
+            ),
+            (
+                Box::new(RetrieveKeyError::InvalidNumberOfKeys {
+                    expected: 2,
+                    received: 1,
+                }),
+                json!({ "expected": 2, "received": 1 }),
+            ),
+        ];
+        #[cfg(feature = "http")]
+        rows.push((
+            Box::new(crate::builder::StackKmsBuilderError::InvalidEndpoint {
+                env_var: "CS_ZEROKMS_HOST",
+                source: InvalidEndpoint::Userinfo,
+            }),
+            json!({ "env_var": "CS_ZEROKMS_HOST" }),
+        ));
+        for (error, expected) in rows {
+            assert_eq!(
+                serde_json::Value::Object(error.payload()),
+                expected,
+                "{error:?}"
+            );
+        }
+    }
+
+    /// The builder's help names the variable that is wrong.
+    #[cfg(feature = "http")]
+    #[test]
+    fn an_invalid_endpoint_help_names_its_variable() {
+        let error = crate::builder::StackKmsBuilderError::InvalidEndpoint {
+            env_var: "CS_ZEROKMS_HOST",
+            source: InvalidEndpoint::Userinfo,
+        };
+        let help = error
+            .help()
+            .map(|help| help.to_string())
+            .unwrap_or_default();
+        assert!(help.starts_with("Set CS_ZEROKMS_HOST to "), "{help}");
+    }
+
+    /// The written-out kinds are the spellings callers already compare.
+    #[test]
+    fn every_request_kind_keeps_its_spelling() {
+        use ViturRequestErrorKind as K;
+        for kind in [
+            K::PrepareRequest,
+            K::SendRequest,
+            K::NotFound,
+            K::Conflict,
+            K::FailureResponse,
+            K::ParseResponse,
+            K::Unauthorized,
+            K::Forbidden,
+            K::Other,
+        ] {
+            assert_eq!(request_kind(&kind), format!("{kind:?}"));
+        }
+    }
+
+    #[test]
+    fn no_endpoint_message_repeats_the_url() {
+        for error in [
+            InvalidEndpoint::NoHost("marker://user:pass@".into()),
+            InvalidEndpoint::QueryOrFragment("https://x/?marker".into()),
+        ] {
+            assert!(!error.to_string().contains("marker"), "{error}");
         }
     }
 }
@@ -293,12 +733,36 @@ pub enum Error {
     /// initialise. Boxed because the error type belongs to whichever
     /// connection the client was built over.
     #[error("Failed to initialize the ZeroKMS connection")]
+    #[diagnostic(code(stack_kms::connection_init))]
     ConnectionInit(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
 
     /// The ZeroKMS endpoint named by the token's `services` claim is unusable.
     #[error("Invalid ZeroKMS endpoint in the token's services claim: {0}")]
-    InvalidEndpoint(#[from] crate::endpoint::InvalidEndpoint),
+    #[diagnostic(
+        code(stack_kms::invalid_endpoint),
+        help("Configure the ZeroKMS endpoint explicitly (`CS_ZEROKMS_HOST`), or use a token whose services claim names a usable one.")
+    )]
+    InvalidEndpoint(
+        #[from]
+        #[diagnostic_source]
+        crate::endpoint::InvalidEndpoint,
+    ),
 
     #[error("Unexpected error: {0}")]
+    #[diagnostic(code(stack_kms::unexpected))]
     Unexpected(String),
+}
+
+impl ErrorPayload for Error {
+    fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
+        match self {
+            Self::GenerateKey(error) => error.payload(),
+            Self::RetrieveKey(error) => error.payload(),
+            Self::LoadKeyset(error) => error.payload(),
+            Self::Auth(error) => error.payload(),
+            Self::ConnectionInit(_) | Self::InvalidEndpoint(_) | Self::Unexpected(_) => {
+                serde_json::Map::new()
+            }
+        }
+    }
 }

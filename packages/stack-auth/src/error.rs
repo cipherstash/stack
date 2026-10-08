@@ -14,12 +14,19 @@ use std::convert::Infallible;
 
 use cts_common::protocol::{CS_CODE_ORG_NOT_PROVISIONED, CS_CODE_USAGE_LIMIT_EXCEEDED};
 
+use stack_profile::diagnostic::ErrorPayload;
+
 use crate::access_key;
 
 /// Behaviour shared by every concrete error wrapped in an [`AuthError`] variant.
 ///
 /// Implemented by the per-error structs so each owns its FFI code and any
 /// structured payload; [`AuthError`] dispatches to it via `AuthError::kind`.
+///
+/// [`error_code`](Self::error_code) is the frozen code the TypeScript
+/// bindings publish (`INVALID_CRN`), kept unchanged beside the miette
+/// [`code`](miette::Diagnostic::code) (`stack_auth::invalid_crn`) every error
+/// also carries.
 pub trait AuthErrorKind: std::error::Error + miette::Diagnostic {
     /// Stable machine-readable identifier surfaced across FFI boundaries
     /// (e.g. JS `Error.code`). Named `error_code` to avoid colliding with
@@ -83,18 +90,67 @@ pub(crate) mod codes {
 /// use reported — the bundled one's `reqwest::Error`, or a host transport's
 /// own — or the encoder's or decoder's error for a body that did not
 /// serialize or parse.
-#[derive(Debug, thiserror::Error, miette::Diagnostic)]
-#[error("Request to the auth server failed: {0}")]
-pub struct RequestError(pub Box<dyn std::error::Error + Send + Sync + 'static>);
+///
+/// The transport's own message is not part of this one: it is text this
+/// crate does not control, and an HTTP client's error can carry a URL with
+/// its query string (see [`ErrorPayload`] for the rule). The transport's
+/// error is the [`source`](std::error::Error::source), for a caller in the
+/// same process to log.
+///
+/// One case is not a failed request: a build without `http` whose strategy
+/// was given no transport sends nothing. That error has its own message,
+/// code (`stack_auth::no_transport`) and help, all fixed text of this
+/// crate's, and keeps the old code `REQUEST_ERROR`.
+#[derive(Debug, thiserror::Error)]
+#[error("{}", self.message())]
+pub struct RequestError(#[source] pub Box<dyn std::error::Error + Send + Sync + 'static>);
 impl AuthErrorKind for RequestError {
     fn error_code(&self) -> &'static str {
         codes::REQUEST_ERROR
     }
 }
 
+impl RequestError {
+    /// True when nothing was sent because the build has no transport: a
+    /// configuration mistake, not a network failure.
+    fn is_no_transport(&self) -> bool {
+        #[cfg(not(feature = "http"))]
+        return self.0.is::<crate::transport::NoTransport>();
+        #[cfg(feature = "http")]
+        false
+    }
+
+    fn message(&self) -> &'static str {
+        if self.is_no_transport() {
+            "No HTTP transport: this build of stack-auth has no `http` feature, so the strategy must be given one with `.transport(..)`"
+        } else {
+            "Request to the auth server failed"
+        }
+    }
+}
+
+impl miette::Diagnostic for RequestError {
+    fn code<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        Some(Box::new(if self.is_no_transport() {
+            "stack_auth::no_transport"
+        } else {
+            "stack_auth::request_error"
+        }))
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn std::fmt::Display + 'a>> {
+        Some(Box::new(if self.is_no_transport() {
+            "Give the strategy a transport with `.transport(..)`, or build stack-auth with its `http` feature."
+        } else {
+            "The auth server could not be reached, or its response could not be read. Check the network path to it."
+        }))
+    }
+}
+
 /// The user denied the authorization request.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Authorization was denied")]
+#[diagnostic(code(stack_auth::access_denied))]
 pub struct AccessDenied;
 impl AuthErrorKind for AccessDenied {
     fn error_code(&self) -> &'static str {
@@ -105,6 +161,10 @@ impl AuthErrorKind for AccessDenied {
 /// The grant type was rejected by the server.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Invalid grant")]
+#[diagnostic(
+    code(stack_auth::invalid_grant),
+    help("The credential was refused. Log in again with `stash auth login`, or use a current access key.")
+)]
 pub struct InvalidGrant;
 impl AuthErrorKind for InvalidGrant {
     fn error_code(&self) -> &'static str {
@@ -115,6 +175,7 @@ impl AuthErrorKind for InvalidGrant {
 /// The client ID is not recognized.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Invalid client")]
+#[diagnostic(code(stack_auth::invalid_client))]
 pub struct InvalidClient;
 impl AuthErrorKind for InvalidClient {
     fn error_code(&self) -> &'static str {
@@ -125,6 +186,7 @@ impl AuthErrorKind for InvalidClient {
 /// A URL could not be parsed.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Invalid URL: {0}")]
+#[diagnostic(code(stack_auth::invalid_url))]
 pub struct InvalidUrl(pub url::ParseError);
 impl AuthErrorKind for InvalidUrl {
     fn error_code(&self) -> &'static str {
@@ -135,7 +197,10 @@ impl AuthErrorKind for InvalidUrl {
 /// The requested region is not supported.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Unsupported region: {0}")]
-#[diagnostic(help("Use a supported region, e.g. `ap-southeast-2.aws`."))]
+#[diagnostic(
+    code(stack_auth::invalid_region),
+    help("Use a supported region, e.g. `ap-southeast-2.aws`.")
+)]
 pub struct UnsupportedRegion(pub cts_common::RegionError);
 impl AuthErrorKind for UnsupportedRegion {
     fn error_code(&self) -> &'static str {
@@ -146,9 +211,12 @@ impl AuthErrorKind for UnsupportedRegion {
 /// The workspace CRN could not be parsed.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Invalid workspace CRN: {0}")]
-#[diagnostic(help(
-    "A workspace CRN looks like `crn:<region>:<workspace-id>`, e.g. `crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY`."
-))]
+#[diagnostic(
+    code(stack_auth::invalid_crn),
+    help(
+        "A workspace CRN looks like `crn:<region>:<workspace-id>`, e.g. `crn:ap-southeast-2.aws:ZVATKW3VHMFG27DY`."
+    )
+)]
 pub struct InvalidCrn(pub cts_common::InvalidCrn);
 impl AuthErrorKind for InvalidCrn {
     fn error_code(&self) -> &'static str {
@@ -161,9 +229,12 @@ impl AuthErrorKind for InvalidCrn {
 /// a different workspace, or when the wrong CRN was passed.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Workspace mismatch: token issued for {token_workspace}, but strategy is configured for {expected_workspace}")]
-#[diagnostic(help(
-    "The access key or workspace CRN is scoped to a different workspace than the one requested — check which workspace the credential belongs to."
-))]
+#[diagnostic(
+    code(stack_auth::workspace_mismatch),
+    help(
+        "The access key or workspace CRN is scoped to a different workspace than the one requested — check which workspace the credential belongs to."
+    )
+)]
 pub struct WorkspaceMismatch {
     /// The workspace the strategy was configured for (from the CRN).
     pub expected_workspace: cts_common::WorkspaceId,
@@ -193,6 +264,10 @@ impl AuthErrorKind for WorkspaceMismatch {
 /// The workspace ID could not be parsed.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Invalid workspace ID: {0}")]
+#[diagnostic(
+    code(stack_auth::invalid_workspace_id),
+    help("A workspace ID is 16 base32 characters, such as `ZVATKW3VHMFG27DY`.")
+)]
 pub struct InvalidWorkspaceId(pub cts_common::InvalidWorkspaceId);
 impl AuthErrorKind for InvalidWorkspaceId {
     fn error_code(&self) -> &'static str {
@@ -205,9 +280,12 @@ impl AuthErrorKind for InvalidWorkspaceId {
 #[error(
     "Workspace CRN is required when using an access key — set CS_WORKSPACE_CRN or call AutoStrategyBuilder::with_workspace_crn"
 )]
-#[diagnostic(help(
-    "Most strategies need a workspace CRN — set the `CS_WORKSPACE_CRN` environment variable, or pass it explicitly, e.g. `AutoStrategyBuilder::with_workspace_crn`."
-))]
+#[diagnostic(
+    code(stack_auth::missing_workspace_crn),
+    help(
+        "Most strategies need a workspace CRN — set the `CS_WORKSPACE_CRN` environment variable, or pass it explicitly, e.g. `AutoStrategyBuilder::with_workspace_crn`."
+    )
+)]
 pub struct MissingWorkspaceCrn;
 impl AuthErrorKind for MissingWorkspaceCrn {
     fn error_code(&self) -> &'static str {
@@ -218,9 +296,12 @@ impl AuthErrorKind for MissingWorkspaceCrn {
 /// No credentials are available (e.g. not logged in, no access key configured).
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Not authenticated")]
-#[diagnostic(help(
-    "Log in with `stash login`, or set `CS_CLIENT_ACCESS_KEY` for service-to-service auth."
-))]
+#[diagnostic(
+    code(stack_auth::not_authenticated),
+    help(
+        "Log in with `stash auth login`, or set `CS_CLIENT_ACCESS_KEY` for service-to-service auth."
+    )
+)]
 pub struct NotAuthenticated;
 impl AuthErrorKind for NotAuthenticated {
     fn error_code(&self) -> &'static str {
@@ -231,6 +312,7 @@ impl AuthErrorKind for NotAuthenticated {
 /// A token (access token or device code) has expired.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Token expired")]
+#[diagnostic(code(stack_auth::expired_token))]
 pub struct TokenExpired;
 impl AuthErrorKind for TokenExpired {
     fn error_code(&self) -> &'static str {
@@ -241,7 +323,10 @@ impl AuthErrorKind for TokenExpired {
 /// The access key string is malformed (e.g. missing `CSAK` prefix or `.`).
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Invalid access key: {0}")]
-#[diagnostic(help("Access keys have the form `CSAK<key-id>.<secret>`."))]
+#[diagnostic(
+    code(stack_auth::invalid_access_key),
+    help("Access keys have the form `CSAK<key-id>.<secret>`.")
+)]
 pub struct InvalidAccessKeyError(pub access_key::InvalidAccessKey);
 impl AuthErrorKind for InvalidAccessKeyError {
     fn error_code(&self) -> &'static str {
@@ -252,6 +337,7 @@ impl AuthErrorKind for InvalidAccessKeyError {
 /// The JWT could not be decoded or its claims are malformed.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Invalid token: {0}")]
+#[diagnostic(code(stack_auth::invalid_token))]
 pub struct InvalidToken(pub String);
 impl AuthErrorKind for InvalidToken {
     fn error_code(&self) -> &'static str {
@@ -273,6 +359,7 @@ impl AuthErrorKind for InvalidToken {
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("{0}")]
 #[diagnostic(
+    code(stack_auth::usage_limit_exceeded),
     help(
         "The organisation has used its allowance for the current billing period. Upgrade the plan from the CipherStash dashboard, then retry."
     ),
@@ -294,6 +381,7 @@ impl UsageLimitExceeded {
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("{0}")]
 #[diagnostic(
+    code(stack_auth::org_not_provisioned),
     help(
         "The organisation is not set up for usage tracking. Contact CipherStash support — retrying and upgrading the plan will both fail."
     ),
@@ -320,12 +408,51 @@ impl AuthErrorKind for UsageLimitExceeded {
 }
 
 /// An unexpected error was returned by the auth server.
+///
+/// The message the crate builds names the HTTP status and, where the auth
+/// server gave one, its `error_description`: never the response body. From
+/// the edge in front of the auth server a body is an HTML page, and any
+/// body may echo the credential the request carried (see
+/// [`ErrorPayload`] for the rule).
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Server error: {0}")]
+#[diagnostic(code(stack_auth::server_error))]
 pub struct ServerError(pub String);
 impl AuthErrorKind for ServerError {
     fn error_code(&self) -> &'static str {
         codes::SERVER_ERROR
+    }
+}
+
+impl ServerError {
+    /// A refused exchange no classifier had anything more specific for: the
+    /// status, and the auth server's `error_description` when the body is
+    /// its JSON error.
+    pub(crate) fn refused(status: u16, body: &str) -> Self {
+        let description = serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("error_description")?
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .map(str::to_owned)
+            });
+        match description {
+            Some(description) => Self(format!("{status}: {description}")),
+            None => Self(status.to_string()),
+        }
+    }
+
+    /// An error body that is not the JSON the endpoint answers with: the
+    /// status, and where the JSON broke. serde_json's own message can quote
+    /// the body, so it is not used.
+    pub(crate) fn unparseable(status: u16, error: &serde_json::Error) -> Self {
+        Self(format!(
+            "{status}: unparseable error body ({})",
+            stack_profile::diagnostic::describe_json_error(error)
+        ))
     }
 }
 
@@ -335,6 +462,10 @@ impl AuthErrorKind for ServerError {
 /// across the FFI boundary.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Handle already consumed")]
+#[diagnostic(
+    code(stack_auth::already_consumed),
+    help("A device-code poll can be awaited once. Start a new device-code flow.")
+)]
 pub struct AlreadyConsumed;
 impl AuthErrorKind for AlreadyConsumed {
     fn error_code(&self) -> &'static str {
@@ -347,6 +478,7 @@ impl AuthErrorKind for AlreadyConsumed {
 /// boundary as a `Result` failure.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Internal error: {0}")]
+#[diagnostic(code(stack_auth::internal_error))]
 pub struct InternalError(pub String);
 impl AuthErrorKind for InternalError {
     fn error_code(&self) -> &'static str {
@@ -367,6 +499,7 @@ impl AuthErrorKind for InternalError {
 /// on the failure code must handle it.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("{0}")]
+#[diagnostic(code(stack_auth::custom))]
 pub struct CustomError(pub String);
 impl AuthErrorKind for CustomError {
     fn error_code(&self) -> &'static str {
@@ -375,9 +508,22 @@ impl AuthErrorKind for CustomError {
 }
 
 /// A token store operation failed.
+///
+/// Diagnostic-transparent: its code, help and payload are the
+/// [`ProfileError`](stack_profile::ProfileError)'s, so a caller across a
+/// binding sees `stack_profile::not_found` whether a profile failure came
+/// through the auth path or straight from the store. Its old code,
+/// `STORE_ERROR`, is unchanged.
+///
+/// The profile error is also the [`source`](std::error::Error::source), so
+/// the library error under it (the parser's or the file system's) stays
+/// reachable from an [`AuthError`]. The message repeats the profile error's
+/// because the TypeScript binding shows the message alone; a report that
+/// prints the whole chain shows it twice.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[error("Token store error: {0}")]
-pub struct StoreError(pub stack_profile::ProfileError);
+#[diagnostic(transparent)]
+pub struct StoreError(#[source] pub stack_profile::ProfileError);
 impl AuthErrorKind for StoreError {
     fn error_code(&self) -> &'static str {
         codes::STORE_ERROR
@@ -869,6 +1015,18 @@ impl serde::Serialize for AuthError {
     }
 }
 
+/// The same fields [`AuthErrorKind::payload`] gives the TypeScript bindings,
+/// save for a store failure, whose fields are the profile error's: a store
+/// failure is diagnostic-transparent ([`StoreError`]).
+impl ErrorPayload for AuthError {
+    fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
+        match self {
+            Self::Store(StoreError(profile)) => profile.payload(),
+            _ => self.kind().payload(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Ergonomic `From<Foreign>` impls — keep `?` working where call sites lift a
 // foreign error straight into `AuthError` (the per-struct wrapping is internal).
@@ -929,8 +1087,11 @@ impl From<crate::DeviceClientError> for AuthError {
             E::Auth(e) => e,
             E::Request(e) => e.into(),
             E::InvalidUrl(e) => e.into(),
-            E::Server { status, body } => {
-                Self::Server(ServerError(format!("ZeroKMS returned {status}: {body}")))
+            // The body stays on the `DeviceClientError` for a caller in this
+            // process; it is ZeroKMS response text, which no message carries
+            // (see `ErrorPayload` for the rule).
+            E::Server { status, .. } => {
+                Self::Server(ServerError(format!("ZeroKMS returned {status}")))
             }
         }
     }
@@ -1368,6 +1529,313 @@ mod classify_issuance_failure_tests {
 mod tests {
     use super::*;
 
+    /// One of every [`AuthError`] variant, with the frozen code and the
+    /// miette code it must carry. A store failure's miette code is its
+    /// profile error's, so its row names the `stack_profile` code.
+    fn every_variant() -> Vec<(AuthError, &'static str, &'static str)> {
+        let workspace = |id: &str| id.parse::<cts_common::WorkspaceId>().unwrap();
+        vec![
+            (
+                RequestError(Box::new(std::io::Error::other("refused"))).into(),
+                codes::REQUEST_ERROR,
+                "stack_auth::request_error",
+            ),
+            (
+                AccessDenied.into(),
+                codes::ACCESS_DENIED,
+                "stack_auth::access_denied",
+            ),
+            (
+                InvalidGrant.into(),
+                codes::INVALID_GRANT,
+                "stack_auth::invalid_grant",
+            ),
+            (
+                InvalidClient.into(),
+                codes::INVALID_CLIENT,
+                "stack_auth::invalid_client",
+            ),
+            (
+                "not a url".parse::<url::Url>().unwrap_err().into(),
+                codes::INVALID_URL,
+                "stack_auth::invalid_url",
+            ),
+            (
+                "nowhere".parse::<cts_common::Region>().unwrap_err().into(),
+                codes::INVALID_REGION,
+                "stack_auth::invalid_region",
+            ),
+            (
+                "not a crn".parse::<crate::Crn>().unwrap_err().into(),
+                codes::INVALID_CRN,
+                "stack_auth::invalid_crn",
+            ),
+            (
+                WorkspaceMismatch {
+                    expected_workspace: workspace("ZVATKW3VHMFG27DY"),
+                    token_workspace: workspace("AAAAAAAAAAAAAAAA"),
+                }
+                .into(),
+                codes::WORKSPACE_MISMATCH,
+                "stack_auth::workspace_mismatch",
+            ),
+            (
+                "short"
+                    .parse::<cts_common::WorkspaceId>()
+                    .unwrap_err()
+                    .into(),
+                codes::INVALID_WORKSPACE_ID,
+                "stack_auth::invalid_workspace_id",
+            ),
+            (
+                MissingWorkspaceCrn.into(),
+                codes::MISSING_WORKSPACE_CRN,
+                "stack_auth::missing_workspace_crn",
+            ),
+            (
+                NotAuthenticated.into(),
+                codes::NOT_AUTHENTICATED,
+                "stack_auth::not_authenticated",
+            ),
+            (
+                TokenExpired.into(),
+                codes::EXPIRED_TOKEN,
+                "stack_auth::expired_token",
+            ),
+            (
+                "".parse::<crate::access_key::AccessKey>()
+                    .unwrap_err()
+                    .into(),
+                codes::INVALID_ACCESS_KEY,
+                "stack_auth::invalid_access_key",
+            ),
+            (
+                InvalidToken("malformed".into()).into(),
+                codes::INVALID_TOKEN,
+                "stack_auth::invalid_token",
+            ),
+            (
+                UsageLimitExceeded("over".into()).into(),
+                codes::USAGE_LIMIT_EXCEEDED,
+                "stack_auth::usage_limit_exceeded",
+            ),
+            (
+                OrgNotProvisioned("unknown".into()).into(),
+                codes::ORG_NOT_PROVISIONED,
+                "stack_auth::org_not_provisioned",
+            ),
+            (
+                ServerError("boom".into()).into(),
+                codes::SERVER_ERROR,
+                "stack_auth::server_error",
+            ),
+            (
+                AlreadyConsumed.into(),
+                codes::ALREADY_CONSUMED,
+                "stack_auth::already_consumed",
+            ),
+            (
+                InternalError("poisoned".into()).into(),
+                codes::INTERNAL_ERROR,
+                "stack_auth::internal_error",
+            ),
+            (
+                CustomError("custom".into()).into(),
+                codes::CUSTOM,
+                "stack_auth::custom",
+            ),
+            (
+                stack_profile::ProfileError::NotFound {
+                    path: "auth.json".into(),
+                }
+                .into(),
+                codes::STORE_ERROR,
+                "stack_profile::not_found",
+            ),
+        ]
+    }
+
+    /// The frozen codes and the miette codes are two names for one error:
+    /// every variant carries the pair in its row, so a code changed on one
+    /// side and not the other fails here. Every frozen code has a row.
+    #[test]
+    fn every_miette_code_maps_to_its_frozen_code() {
+        use miette::Diagnostic;
+        let mut frozen = std::collections::BTreeSet::new();
+        for (error, old, new) in every_variant() {
+            assert_eq!(error.error_code(), old, "{error:?}");
+            assert_eq!(
+                error.code().map(|code| code.to_string()).as_deref(),
+                Some(new),
+                "{error:?}"
+            );
+            frozen.insert(old);
+        }
+        assert_eq!(
+            frozen,
+            AuthError::ERROR_CODES.iter().copied().collect(),
+            "every frozen code has a row"
+        );
+    }
+
+    /// A failed request says so in fixed text of this crate's, and keeps the
+    /// transport's own message out: a binding shows only the message, code
+    /// and help.
+    #[test]
+    fn a_failed_request_has_a_fixed_message_and_help() {
+        use miette::Diagnostic;
+        let error = RequestError(Box::new(std::io::Error::other("refused")));
+        assert_eq!(error.to_string(), "Request to the auth server failed");
+        assert_eq!(
+            error.help().map(|help| help.to_string()).as_deref(),
+            Some(
+                "The auth server could not be reached, or its response could not be read. Check the network path to it."
+            )
+        );
+    }
+
+    /// One row per variant of an enum, written `pattern => value`. The
+    /// patterns are the arms of a match with no wildcard, so a variant with
+    /// no row fails to compile, and each value must match its own pattern.
+    macro_rules! variants {
+        ($($pattern:pat => $value:expr),+ $(,)?) => {{
+            let rows = vec![$({
+                let value = $value;
+                assert!(matches!(value, $pattern), "{value:?} is not {}", stringify!($pattern));
+                value
+            }),+];
+            for row in &rows {
+                match row {
+                    $($pattern => {})+
+                }
+            }
+            rows
+        }};
+    }
+
+    /// [`every_variant`]'s errors, and one of every
+    /// [`InvalidAccessKey`](crate::InvalidAccessKey) variant.
+    fn every_diagnostic() -> Vec<(&'static str, Box<dyn miette::Diagnostic>)> {
+        use crate::InvalidAccessKey;
+        use stack_profile::diagnostic::named;
+        let mut errors: Vec<_> = every_variant()
+            .into_iter()
+            .map(|(error, _, _)| named(error))
+            .collect();
+        errors.extend(
+            variants![
+                InvalidAccessKey::MissingPrefix => InvalidAccessKey::MissingPrefix,
+                InvalidAccessKey::MissingDot => InvalidAccessKey::MissingDot,
+                InvalidAccessKey::EmptyKeyId => InvalidAccessKey::EmptyKeyId,
+                InvalidAccessKey::EmptySecret => InvalidAccessKey::EmptySecret,
+            ]
+            .into_iter()
+            .map(named),
+        );
+        errors
+    }
+
+    /// Every variant has a code in this crate's namespace and `snake_case`,
+    /// save a store failure, whose code is its profile error's.
+    /// [`every_variant`] has a row for every frozen code, so every
+    /// [`AuthError`] variant is here; the access-key rows cover
+    /// [`InvalidAccessKey`](crate::InvalidAccessKey).
+    #[test]
+    fn every_variant_has_a_code_of_this_crate() {
+        use stack_profile::diagnostic::is_code_of;
+        for (_, error) in &every_diagnostic() {
+            let code = error
+                .code()
+                .unwrap_or_else(|| panic!("{error:?} has no code"))
+                .to_string();
+            assert!(
+                is_code_of("stack_auth", &code) || is_code_of("stack_profile", &code),
+                "{code}"
+            );
+        }
+    }
+
+    /// No two variants share a code by mistake: callers branch on it.
+    /// [`DeviceClientError`](crate::DeviceClientError)'s own variants share
+    /// on purpose: each carries the code of the [`AuthError`] it converts
+    /// into.
+    #[test]
+    fn no_two_variants_share_a_code_by_mistake() {
+        #[allow(unused_mut)]
+        let mut errors = every_diagnostic();
+        #[allow(unused_mut)]
+        let mut intended: Vec<&str> = Vec::new();
+        #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+        {
+            use crate::DeviceClientError;
+            errors.extend(
+                variants![
+                    DeviceClientError::Profile(_) => DeviceClientError::Profile(
+                        stack_profile::ProfileError::NotFound { path: "auth.json".into() }
+                    ),
+                    DeviceClientError::Auth(_) => DeviceClientError::Auth(AccessDenied.into()),
+                    DeviceClientError::Request(_) => DeviceClientError::Request(RequestError(
+                        Box::new(std::io::Error::other("refused"))
+                    )),
+                    DeviceClientError::Server { .. } => DeviceClientError::Server {
+                        status: 503,
+                        body: String::new(),
+                    },
+                    // Not the AuthError row's URL error: rows of unrelated
+                    // variants hold different values, so neither reads as
+                    // a wrapper of the other.
+                    DeviceClientError::InvalidUrl(_) => DeviceClientError::InvalidUrl(
+                        "http://[::1".parse::<url::Url>().unwrap_err()
+                    ),
+                ]
+                .into_iter()
+                .map(stack_profile::diagnostic::named),
+            );
+            // The errors two wrappers each carry, as rows of their own: a
+            // wrapper counts as the error it forwards.
+            errors.push(stack_profile::diagnostic::named(
+                stack_profile::ProfileError::NotFound {
+                    path: "auth.json".into(),
+                },
+            ));
+            errors.push(stack_profile::diagnostic::named(RequestError(Box::new(
+                std::io::Error::other("refused"),
+            ))));
+            intended.extend(["stack_auth::invalid_url", "stack_auth::server_error"]);
+        }
+        let shared = stack_profile::diagnostic::shared_codes(
+            errors.iter().map(|(name, error)| (*name, error.as_ref())),
+        );
+        let codes: Vec<&str> = shared.keys().map(String::as_str).collect();
+        assert_eq!(codes, intended, "{shared:#?}");
+    }
+
+    /// A store failure's payload is the profile error's, so a binding
+    /// reports the same fields whichever path the failure came through.
+    #[test]
+    fn a_store_failure_carries_the_profile_payload() {
+        let error = AuthError::from(stack_profile::ProfileError::WorkspaceNotFound(
+            "AAAAAAAAAAAAAAAA".into(),
+        ));
+        assert_eq!(error.payload()["workspace_id"], "AAAAAAAAAAAAAAAA");
+        // The TypeScript serialization is unchanged: no profile fields.
+        let json = serde_json::to_value(&error).unwrap();
+        assert!(json.get("workspace_id").is_none(), "{json}");
+    }
+
+    /// The profile error drops the parser's and the file system's text from
+    /// its message and keeps their errors as its source: that holds through
+    /// the auth path too.
+    #[test]
+    fn a_store_failure_keeps_the_library_error_in_its_chain() {
+        let parser = serde_json::from_str::<u8>("\"x\"").unwrap_err();
+        let error = AuthError::from(stack_profile::ProfileError::Json(parser));
+        let profile = std::error::Error::source(&error).expect("the profile error");
+        assert!(profile.is::<stack_profile::ProfileError>(), "{profile:?}");
+        let parser = profile.source().expect("the parser's error");
+        assert!(parser.is::<serde_json::Error>(), "{parser:?}");
+    }
+
     #[test]
     fn profile_error_retains_store_type() {
         let err = AuthError::from(stack_profile::ProfileError::NotFound {
@@ -1532,8 +2000,13 @@ mod tests {
         )))));
         assert_eq!(request.error_code(), codes::REQUEST_ERROR);
         assert!(
-            request.to_string().contains("connection refused"),
-            "{request}"
+            !request.to_string().contains("connection refused"),
+            "the transport's message stays out of the message: {request}"
+        );
+        assert!(
+            std::error::Error::source(&request)
+                .is_some_and(|source| source.to_string().contains("connection refused")),
+            "the transport's error is the source: {request:?}"
         );
         // Non-`Auth` variants route to their canonical `AuthError` equivalent.
         assert_eq!(
@@ -1547,12 +2020,16 @@ mod tests {
         );
         let server = AuthError::from(E::Server {
             status: 500,
-            body: "boom".to_string(),
+            body: "marker-body".to_string(),
         });
         assert_eq!(server.error_code(), codes::SERVER_ERROR);
         assert!(
-            server.to_string().contains("ZeroKMS returned 500: boom"),
-            "server error should preserve the status/body detail: {server}"
+            server.to_string().contains("ZeroKMS returned 500"),
+            "server error should keep the status: {server}"
+        );
+        assert!(
+            !server.to_string().contains("marker-body"),
+            "a ZeroKMS response body stays out of the message: {server}"
         );
     }
 }

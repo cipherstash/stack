@@ -33,7 +33,7 @@ use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use stack_encrypt::dynamic::record::{check_record, plan_with, Plan};
 use stack_encrypt::dynamic::{
-    FfiValue, TargetDescriptor, TargetError, TargetResolver, ValueKind,
+    FfiValue, Output, TargetDescriptor, TargetError, TargetResolver, ValueKind,
 };
 use stack_encrypt::{KeysetCipher, Label, Pending, SealedValue, StackCipher, StackCipherText};
 use uuid::Uuid;
@@ -166,10 +166,49 @@ enum SpecEntry {
     Context(Ctx),
     Outputs(Vec<Name>),
     Target(Name),
+    /// A `"type"`: required on an indexed field, so a plan with terms parses
+    /// only when one of these names a kind that admits them.
+    Type(Kind),
     ContextWrongShape(u32),
     OutputsWrongShape(u32),
     TargetWrongShape(u32),
     Unknown(Ctx),
+}
+
+/// A `"type"` value: the scalar kinds, an object, and a name that is not
+/// one. `Bool` is the kind that admits `"ore"` / `"ope"` but not `"eq"`, so
+/// a plan can be refused for one index and accepted for another.
+#[derive(Arbitrary, Debug, Clone, Copy)]
+enum Kind {
+    Bool,
+    UInt32,
+    UInt64,
+    Int32,
+    Int64,
+    Float32,
+    String,
+    Bytes,
+    Float64,
+    Object,
+    NotAKind,
+}
+
+impl Kind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Kind::Bool => "bool",
+            Kind::UInt32 => "uint32",
+            Kind::UInt64 => "uint64",
+            Kind::Int32 => "int32",
+            Kind::Int64 => "int64",
+            Kind::Float32 => "float32",
+            Kind::String => "string",
+            Kind::Bytes => "bytes",
+            Kind::Float64 => "float64",
+            Kind::Object => "object",
+            Kind::NotAKind => "integer",
+        }
+    }
 }
 
 impl SpecEntry {
@@ -185,10 +224,10 @@ impl SpecEntry {
                         .collect(),
                 ),
             ),
-            SpecEntry::Target(name) => (
-                "target".to_string(),
-                FfiValue::String(name.as_str().into()),
-            ),
+            SpecEntry::Target(name) => {
+                ("target".to_string(), FfiValue::String(name.as_str().into()))
+            }
+            SpecEntry::Type(kind) => ("type".to_string(), FfiValue::String(kind.as_str().into())),
             SpecEntry::ContextWrongShape(v) => ("context".to_string(), FfiValue::UInt32(v)),
             SpecEntry::OutputsWrongShape(v) => ("outputs".to_string(), FfiValue::UInt32(v)),
             SpecEntry::TargetWrongShape(v) => ("target".to_string(), FfiValue::UInt32(v)),
@@ -364,6 +403,23 @@ fuzz_target!(|case: Case| {
         }
         return;
     };
+    // One rule of the parsed plan is asserted here rather than left to the
+    // model: every field with a term output declares its type. The parser
+    // ends in `Plan::new_with`, which enforces it, so a plan that reaches
+    // this point with an untyped indexed field means a parse path was added
+    // that does not. A target field's kind is the type's own and it has no
+    // outputs of its own, so the rule reads as written over `outputs()`.
+    for field in plan.fields() {
+        let indexed = field
+            .outputs()
+            .iter()
+            .any(|output| matches!(output, Output::Term(_)));
+        assert!(
+            !indexed || field.target().is_some() || field.field_type().is_some(),
+            "a parsed plan has an indexed field with no type: {:?}",
+            field.name()
+        );
+    }
     let expected = model_accepts(&record, &plan);
     let actual = check_record(record.into_ciphertext(), &plan, None).is_ok();
     if trace {

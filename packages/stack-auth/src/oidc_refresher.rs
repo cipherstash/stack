@@ -189,9 +189,9 @@ impl OidcFederation {
             if let Some(err) = crate::error::classify_issuance_failure(status, &body) {
                 return Err(err);
             }
-            return Err(AuthError::Server(crate::error::ServerError(format!(
-                "{status}: {body}"
-            ))));
+            return Err(AuthError::Server(crate::error::ServerError::refused(
+                status, &body,
+            )));
         }
 
         let auth_resp: AuthoriseResponse = resp.json()?;

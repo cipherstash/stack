@@ -143,24 +143,32 @@ impl TargetDescriptor {
 /// the value or the stored bytes, decided before any key is minted or
 /// retrieved; a binding maps them to its malformed-input status. `Other` is
 /// the resolver's own failure.
-#[derive(Debug, thiserror::Error)]
+///
+/// A resolver writes the `reason` strings, so they are under the rule on
+/// [`ErrorPayload`](crate::ErrorPayload) like everything else here: a
+/// resolver says what it refused, never a byte of the value or the stored
+/// ciphertext it refused.
+#[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum TargetError {
     /// This build holds no EQL types: the plan names one, and only a build
     /// linked with them can run it.
     #[error("this build holds no EQL types; a plan cannot name {name} as a target")]
+    #[diagnostic(code(stack_encrypt::target_none))]
     NoTargets {
         /// The name the plan gave.
         name: String,
     },
     /// No EQL type has this name.
     #[error("no such EQL type: {name}")]
+    #[diagnostic(code(stack_encrypt::target_unknown))]
     Unknown {
         /// The name the plan gave.
         name: String,
     },
     /// The type exists and the engine cannot produce it yet.
     #[error("the engine cannot produce {name} yet: {reason}")]
+    #[diagnostic(code(stack_encrypt::target_unproducible))]
     Unproducible {
         /// The type's name.
         name: String,
@@ -171,6 +179,7 @@ pub enum TargetError {
     /// has no query twin, so a query on a field that names it derives
     /// nothing.
     #[error("{name} answers no query: it is a storage-only type")]
+    #[diagnostic(code(stack_encrypt::target_no_query))]
     NoQuery {
         /// The type's name.
         name: String,
@@ -183,6 +192,7 @@ pub enum TargetError {
         "{name}: an EQL value is stored under a table and a column, so the label {label} \
          cannot be extended by the caller's parts"
     )]
+    #[diagnostic(code(stack_encrypt::target_extended))]
     Extended {
         /// The target field's name.
         name: String,
@@ -198,6 +208,7 @@ pub enum TargetError {
         "{name}: an EQL value is stored under a table and a column, so a plan that takes \
          its context from its field {context_field} has no table for it"
     )]
+    #[diagnostic(code(stack_encrypt::target_context_field))]
     ContextField {
         /// The target field's name.
         name: String,
@@ -209,6 +220,10 @@ pub enum TargetError {
     #[error(
         "{name}: {target} is produced from a {} plaintext, and the field declares {declared}",
         expected.map_or("unspecified", ValueKind::name)
+    )]
+    #[diagnostic(
+        code(stack_encrypt::target_kind),
+        help("Declare the field's \"type\" as the kind the EQL type is produced from, or leave it out to take that kind.")
     )]
     Kind {
         /// The field's name.
@@ -222,6 +237,7 @@ pub enum TargetError {
     },
     /// The field's label is not a column the EQL type can be stored under.
     #[error("{name}: the label {label} is not an EQL column: {reason}")]
+    #[diagnostic(code(stack_encrypt::target_column))]
     Column {
         /// The target field's name.
         name: String,
@@ -236,6 +252,7 @@ pub enum TargetError {
         expected.map_or("unspecified", ValueKind::name),
         found.map_or("a value with no kind", ValueKind::name)
     )]
+    #[diagnostic(code(stack_encrypt::target_plaintext))]
     Plaintext {
         /// The field's name.
         name: String,
@@ -249,18 +266,96 @@ pub enum TargetError {
     },
     /// The stored bytes are not a value of the type.
     #[error("{name}: the stored value is not a {target}: {reason}")]
+    #[diagnostic(code(stack_encrypt::target_stored))]
     Stored {
         /// The field's name.
         name: String,
         /// The EQL type.
         target: String,
-        /// What the parser refused.
+        /// What the parser refused, by kind and position. Never the
+        /// parser's own message: serde_json's quotes the input it refused,
+        /// and the input is the stored value, ciphertext and index terms.
+        /// [`describe_json_error`](crate::diagnostic::describe_json_error)
+        /// writes one.
         reason: String,
     },
     /// The resolver's own failure: a value that did not serialize, an
-    /// invariant of the host's that did not hold.
+    /// invariant of the host's that did not hold. Its message is the
+    /// resolver's, shown as given, so a resolver writes it under the rule on
+    /// [`ErrorPayload`](crate::ErrorPayload).
     #[error(transparent)]
+    #[diagnostic(code(stack_encrypt::target_other))]
     Other(Box<dyn std::error::Error + Send + Sync + 'static>),
+}
+
+impl crate::ErrorPayload for TargetError {
+    fn payload(&self) -> serde_json::Map<String, serde_json::Value> {
+        use crate::diagnostic::payload;
+        let kind = |kind: &Option<ValueKind>| -> serde_json::Value {
+            kind.map_or(serde_json::Value::Null, |kind| kind.name().into())
+        };
+        let mut fields = match self {
+            Self::NoTargets { .. }
+            | Self::Unknown { .. }
+            | Self::NoQuery { .. }
+            | Self::Other(_) => serde_json::Map::new(),
+            Self::Unproducible { reason, .. } => payload([("reason", reason.as_str().into())]),
+            Self::Extended { label, .. } => payload([("label", label.as_str().into())]),
+            Self::ContextField { context_field, .. } => {
+                payload([("context_field", context_field.as_str().into())])
+            }
+            Self::Kind {
+                target,
+                expected,
+                declared,
+                ..
+            } => payload([
+                ("target", target.as_str().into()),
+                ("expected", kind(expected)),
+                ("declared", declared.name().into()),
+            ]),
+            Self::Column { label, reason, .. } => payload([
+                ("label", label.as_str().into()),
+                ("reason", reason.as_str().into()),
+            ]),
+            Self::Plaintext {
+                target,
+                expected,
+                found,
+                ..
+            } => payload([
+                ("target", target.as_str().into()),
+                ("expected", kind(expected)),
+                ("found", kind(found)),
+            ]),
+            Self::Stored { target, reason, .. } => payload([
+                ("target", target.as_str().into()),
+                ("reason", reason.as_str().into()),
+            ]),
+        };
+        // `name` is the target type for the first four, and the field for
+        // the rest (the lowering fills it in): keep the two apart.
+        match self {
+            Self::NoTargets { name }
+            | Self::Unknown { name }
+            | Self::NoQuery { name }
+            | Self::Unproducible { name, .. } => {
+                let _ = fields.insert("target".to_owned(), name.as_str().into());
+            }
+            Self::Extended { name, .. }
+            | Self::ContextField { name, .. }
+            | Self::Kind { name, .. }
+            | Self::Column { name, .. }
+            | Self::Plaintext { name, .. }
+            | Self::Stored { name, .. } => {
+                if !name.is_empty() {
+                    let _ = fields.insert("field".to_owned(), name.as_str().into());
+                }
+            }
+            Self::Other(_) => {}
+        }
+        fields
+    }
 }
 
 /// The EQL types a build holds, and how to run one.

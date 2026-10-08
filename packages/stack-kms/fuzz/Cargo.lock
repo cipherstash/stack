@@ -1948,6 +1948,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
+ "sha2",
  "stack-profile",
  "thiserror 1.0.69",
  "tokio",
@@ -2003,6 +2004,7 @@ version = "0.43.0"
 dependencies = [
  "dirs",
  "gethostname",
+ "miette",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

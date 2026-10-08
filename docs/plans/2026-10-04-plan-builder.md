@@ -1122,9 +1122,10 @@ uses the guest.
    kinds, not new names. A wire-format addition, so it goes in the first
    engine PR. This is the one gap in the plan approach itself that the
    language check found. #1069 added the type to the grammar as an optional
-   key, so a field with none is still dispatched on each value's own tag;
-   that is transitional, until Go fills the type (#1046) and the key becomes
-   required on indexed fields.
+   key; the Go SDK fills it on every field from the Go type (#1094), and
+   since #1082 the key is required on every field with a term output: a plan
+   whose indexed field has none is refused when it is built. A field that
+   only seals, or only carries its value through, may still leave it out.
 2. **The guest's synchronous transport import, on the edge path only.**
    `transport_send` is synchronous from the guest's point of view and the ABI
    relies on it ("`block_on` never parks"). A wazero host function may block a

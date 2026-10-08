@@ -39,6 +39,13 @@
 //!   the guest **only** through `se_alloc` (to place the transport response
 //!   / token); calling any other export from inside a host import is
 //!   undefined behaviour of the embedding, not of this module.
+//! - **Every export runs through `stack_guest_abi::abi::export`**, so a
+//!   failure leaves its full error for `se_last_error`: the code, message,
+//!   help and fields of the `stack_encrypt`, `stack_kms` or `stack_auth`
+//!   error behind the status, recorded where the status is decided
+//!   ([`crate::status::fail_error`] and [`crate::status::fail_dynamic`]),
+//!   or a `GuestError` naming what this boundary refused. [`se_shutdown`]
+//!   wipes it with every other buffer.
 //!
 //! There are no whole-value exports: every value crosses as a record under
 //! a declaration (ADR-0007, amended). The record and term exports bind
@@ -66,15 +73,19 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use futures::executor::block_on;
 use stack_encrypt::{KeysetCipher, StackCipher};
-use stack_guest_abi::abi::{err_status, input, ok_buffer, take_plaintext, wipe_input};
+use stack_guest_abi::abi::{export, input, take_plaintext, wipe_input};
 use stack_guest_abi::buffers;
+use stack_guest_abi::last_error::{self, malformed, out_of_order};
 use vitaminc_aead_value::transport as codec;
 use vitaminc_aead_value::FfiValue;
 
 use crate::ops;
 use crate::options::{parse_options, parse_selector, scope_for, KeysetSelector, Side};
-use crate::status::{STATUS_ENCODING, STATUS_INTERNAL, STATUS_STATE};
+#[cfg(not(feature = "deterministic-kms"))]
+use crate::status::STATUS_INTERNAL;
 use stack_encrypt::dynamic::Scope;
+#[cfg(not(feature = "deterministic-kms"))]
+use stack_encrypt::ErrorPayload;
 
 /// The key source the instance's cipher runs over: the host-transport
 /// ZeroKMS client with host-supplied tokens — or, in the `deterministic-kms`
@@ -100,7 +111,8 @@ thread_local! {
 
 /// Decode one codec-encoded input.
 fn decode(bytes: &[u8]) -> Result<FfiValue, u32> {
-    codec::decode_value(&mut codec::Reader::new(bytes)).map_err(|_| STATUS_ENCODING)
+    codec::decode_value(&mut codec::Reader::new(bytes))
+        .map_err(|_| malformed("an input is not a value in the transport codec"))
 }
 
 /// Run `f` with the instance's cipher, or report `STATUS_STATE` when there
@@ -108,7 +120,11 @@ fn decode(bytes: &[u8]) -> Result<FfiValue, u32> {
 fn with_cipher<R>(f: impl FnOnce(&GuestCipher) -> Result<R, u32>) -> Result<R, u32> {
     CIPHER.with(|c| {
         let c = c.borrow();
-        let cipher = c.as_ref().ok_or(STATUS_STATE)?;
+        let cipher = c.as_ref().ok_or_else(|| {
+            out_of_order(
+                "there is no cipher: call se_cipher_init first, and none after se_shutdown",
+            )
+        })?;
         f(cipher)
     })
 }
@@ -161,7 +177,7 @@ fn with_scope<R>(
 /// the bytes are the ones the host intended.
 #[no_mangle]
 pub unsafe extern "C" fn se_cipher_init(cfg_ptr: *mut u8, cfg_len: u32) -> u64 {
-    catch_unwind(AssertUnwindSafe(|| {
+    export(|| {
         // The pointer/length pair is validated first and on its own: a pair
         // that fails here returns before anything touches the range, which
         // is `wipe_input`'s precondition. Only a validated buffer is decoded
@@ -175,9 +191,7 @@ pub unsafe extern "C" fn se_cipher_init(cfg_ptr: *mut u8, cfg_len: u32) -> u64 {
         // before the init round trip), whatever the decode outcome.
         unsafe { wipe_input(cfg_ptr, cfg_len) };
         cipher_init(decoded?)
-    }))
-    .unwrap_or(Err(STATUS_INTERNAL))
-    .map_or_else(err_status, ok_buffer)
+    })
 }
 
 #[cfg(not(feature = "deterministic-kms"))]
@@ -186,9 +200,9 @@ fn cipher_init(decoded: FfiValue) -> Result<Vec<u8>, u32> {
     use crate::status::STATUS_KMS_TRANSPORT;
     use stack_kms::{ClientOpts, StackKms};
 
-    let config = crate::config::parse_config(decoded).map_err(|_| STATUS_ENCODING)?;
+    let config = crate::config::parse_config(decoded).map_err(|e| malformed(e.describe()))?;
     if SHUT_DOWN.with(Cell::get) || CIPHER.with(|c| c.borrow().is_some()) {
-        return Err(STATUS_STATE);
+        return Err(init_out_of_order());
     }
 
     // One request at a time: the host import is synchronous, so concurrency
@@ -203,19 +217,26 @@ fn cipher_init(decoded: FfiValue) -> Result<Vec<u8>, u32> {
     // docs say 500 rather than "one".
     let opts = ClientOpts::new(config.endpoint)
         .with_max_concurrent_reqs(1)
-        .map_err(|_| STATUS_INTERNAL)?;
+        .map_err(|e| last_error::record(&e, e.payload(), STATUS_INTERNAL))?;
     let kms = StackKms::<HostTokenStrategy, WasiHostConnection>::connect(
         opts,
         HostTokenStrategy,
         config.client_key,
     )
-    .map_err(|_| STATUS_KMS_TRANSPORT)?;
+    .map_err(|e| {
+        last_error::record_with(
+            &e,
+            e.payload(),
+            &crate::status::describe,
+            STATUS_KMS_TRANSPORT,
+        )
+    })?;
 
     let mut builder = StackCipher::builder().kms(kms);
     if let Some(size) = config.keyset_cache_size {
         builder = builder.keyset_cache_size(size);
     }
-    install(block_on(builder.init()).map_err(|e| crate::status::status_for_error(&e))?)
+    install(block_on(builder.init()).map_err(|e| crate::status::fail_error(&e))?)
 }
 
 /// The `deterministic-kms` build's init: the config buffer is the
@@ -226,19 +247,25 @@ fn cipher_init(decoded: FfiValue) -> Result<Vec<u8>, u32> {
 fn cipher_init(decoded: FfiValue) -> Result<Vec<u8>, u32> {
     use vitaminc_protected::Controlled;
 
+    let not_a_seed = || malformed("the deterministic build's config is a 32-byte seed");
     let FfiValue::Bytes(seed) = decoded else {
-        return Err(STATUS_ENCODING);
+        return Err(not_a_seed());
     };
     let seed: [u8; 32] = seed
         .risky_ref()
         .as_slice()
         .try_into()
-        .map_err(|_| STATUS_ENCODING)?;
+        .map_err(|_| not_a_seed())?;
     if SHUT_DOWN.with(Cell::get) || CIPHER.with(|c| c.borrow().is_some()) {
-        return Err(STATUS_STATE);
+        return Err(init_out_of_order());
     }
     let builder = StackCipher::builder().kms(crate::deterministic::DeterministicSource::new(seed));
-    install(block_on(builder.init()).map_err(|e| crate::status::status_for_error(&e))?)
+    install(block_on(builder.init()).map_err(|e| crate::status::fail_error(&e))?)
+}
+
+/// `se_cipher_init` called a second time, or after `se_shutdown`.
+fn init_out_of_order() -> u32 {
+    out_of_order("the cipher is already initialised, or the instance is shut down")
 }
 
 /// Install the built cipher as the instance's and return its default
@@ -271,6 +298,7 @@ pub extern "C" fn se_shutdown() {
         CIPHER.with(|c| {
             let _ = c.borrow_mut().take();
         });
+        last_error::clear();
         buffers::wipe_all();
     }));
 }
@@ -286,20 +314,18 @@ pub extern "C" fn se_shutdown() {
 /// As for [`se_term`].
 #[no_mangle]
 pub unsafe extern "C" fn se_keyset(sel_ptr: *const u8, sel_len: u32) -> u64 {
-    catch_unwind(AssertUnwindSafe(|| {
+    export(|| {
         // SAFETY: host-owned ranges the export was handed; the borrows end
         // before it returns and before any wipe of an overlapping range.
         let selector = parse_selector(decode(unsafe { input(sel_ptr, sel_len)? })?)?;
         if selector == KeysetSelector::Any {
-            return Err(STATUS_ENCODING);
+            return Err(malformed(r#"{"any"} is not a keyset"#));
         }
         with_cipher(|cipher| {
             let keyset = block_on(selector.resolve(cipher))?;
             Ok(keyset.keyset_id().as_bytes().to_vec())
         })
-    }))
-    .unwrap_or(Err(STATUS_INTERNAL))
-    .map_or_else(err_status, ok_buffer)
+    })
 }
 
 /// Derive one index term under the keyset `opts` selects: a codec-encoded
@@ -334,7 +360,7 @@ pub unsafe extern "C" fn se_term(
     opt_ptr: *const u8,
     opt_len: u32,
 ) -> u64 {
-    catch_unwind(AssertUnwindSafe(|| {
+    export(|| {
         let value = unsafe { take_plaintext(val_ptr, val_len)? };
         let value = value.as_slice();
         // SAFETY: host-owned ranges the export was handed; the borrows end
@@ -345,9 +371,7 @@ pub unsafe extern "C" fn se_term(
         with_keyset(opts, |keyset| {
             block_on(ops::term(keyset, value, context, kind))
         })
-    }))
-    .unwrap_or(Err(STATUS_INTERNAL))
-    .map_or_else(err_status, ok_buffer)
+    })
 }
 
 /// Encrypt a record (or a batch) per a plan under the keyset `opts` selects
@@ -369,7 +393,7 @@ pub unsafe extern "C" fn se_encrypt_record(
     opt_ptr: *const u8,
     opt_len: u32,
 ) -> u64 {
-    catch_unwind(AssertUnwindSafe(|| {
+    export(|| {
         let source = unsafe { take_plaintext(src_ptr, src_len)? };
         let source = source.as_slice();
         // SAFETY: host-owned ranges the export was handed; the borrows end
@@ -380,9 +404,7 @@ pub unsafe extern "C" fn se_encrypt_record(
         with_keyset(opts, |keyset| {
             block_on(ops::encrypt_record(keyset, source, plan))
         })
-    }))
-    .unwrap_or(Err(STATUS_INTERNAL))
-    .map_or_else(err_status, ok_buffer)
+    })
 }
 
 /// Decrypt a record (or a batch) produced by [`se_encrypt_record`] under
@@ -410,7 +432,7 @@ pub unsafe extern "C" fn se_decrypt_record(
     opt_ptr: *const u8,
     opt_len: u32,
 ) -> u64 {
-    catch_unwind(AssertUnwindSafe(|| {
+    export(|| {
         // SAFETY: host-owned ranges the export was handed; the borrows end
         // before it returns and before any wipe of an overlapping range.
         let record = unsafe { input(rec_ptr, rec_len)? };
@@ -421,9 +443,7 @@ pub unsafe extern "C" fn se_decrypt_record(
         with_scope(opts, |scope| {
             block_on(ops::decrypt_record(scope, record, plan, expected))
         })
-    }))
-    .unwrap_or(Err(STATUS_INTERNAL))
-    .map_or_else(err_status, ok_buffer)
+    })
 }
 
 /// Check a codec-encoded plan without a cipher: `STATUS_ENCODING` for a
@@ -437,14 +457,12 @@ pub unsafe extern "C" fn se_decrypt_record(
 /// As for [`se_term`].
 #[no_mangle]
 pub unsafe extern "C" fn se_plan_check(plan_ptr: *const u8, plan_len: u32) -> u64 {
-    catch_unwind(AssertUnwindSafe(|| {
+    export(|| {
         // SAFETY: a host-owned range the export was handed; the borrow ends
         // before it returns.
         let plan = unsafe { input(plan_ptr, plan_len)? };
         ops::plan_check(plan).map(|()| Vec::new())
-    }))
-    .unwrap_or(Err(STATUS_INTERNAL))
-    .map_or_else(err_status, ok_buffer)
+    })
 }
 
 /// Derive the EQL query value of one target field under the keyset `opts`
@@ -468,7 +486,7 @@ pub unsafe extern "C" fn se_query(
     opt_ptr: *const u8,
     opt_len: u32,
 ) -> u64 {
-    catch_unwind(AssertUnwindSafe(|| {
+    export(|| {
         let value = unsafe { take_plaintext(val_ptr, val_len)? };
         let value = value.as_slice();
         // SAFETY: host-owned ranges the export was handed; the borrows end
@@ -480,9 +498,7 @@ pub unsafe extern "C" fn se_query(
         with_keyset(opts, |keyset| {
             block_on(ops::query(keyset, value, plan, field))
         })
-    }))
-    .unwrap_or(Err(STATUS_INTERNAL))
-    .map_or_else(err_status, ok_buffer)
+    })
 }
 
 /// The EQL types this build knows, as a codec-encoded
@@ -490,7 +506,5 @@ pub unsafe extern "C" fn se_query(
 /// nothing in the other. Needs no cipher.
 #[no_mangle]
 pub extern "C" fn se_targets() -> u64 {
-    catch_unwind(AssertUnwindSafe(ops::targets))
-        .unwrap_or(Err(STATUS_INTERNAL))
-        .map_or_else(err_status, ok_buffer)
+    export(ops::targets)
 }

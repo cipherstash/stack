@@ -15,13 +15,19 @@ publish = false
 
 [dependencies]
 zeroize = { workspace = true }
+# `last_error`: an error is any miette diagnostic plus its structured fields
+# (a serde_json map, as `ErrorPayload::payload` gives them), encoded in the
+# one transport codec every input and output already uses.
+miette = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+vitaminc-aead-value = { workspace = true }
 
 # Only `transport` (wasm32-only) needs these: the import's error type and
 # `OpaqueDebug` for its response, whose body can carry wrapped key material
 # or a credential and so never prints. Declared for that target alone, so a
 # native build carries nothing it does not use and `cargo udeps` sees none.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-thiserror = { workspace = true }
 vitaminc-protected = { workspace = true }
 
 [dev-dependencies]

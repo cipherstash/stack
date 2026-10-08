@@ -42,9 +42,11 @@ func (f OIDCProviderFunc) Token(ctx context.Context) (string, error) { return f(
 const maxAuthResponseBytes = 16 << 20
 
 // authHTTPStatus records the status of the last HTTP response the transport
-// received during one guest call. Only a status code crosses the guest ABI,
-// so without it a refused exchange (the edge in front of CTS answering 403)
-// reaches the caller as a bare ErrTransport. It lives on the call's
+// received during one guest call. The guest's error does not always name it
+// (a refused response whose body could not be read reaches the guest as a
+// transport failure, with no status), and a guest built before se_last_error
+// gives no error at all, so without it a refused exchange (the edge in front
+// of CTS answering 403) could reach the caller as a bare ErrTransport. It lives on the call's
 // context, which wazero hands to the host import, so concurrent calls on
 // different profiles never see each other's status.
 type authHTTPStatus struct{ code int }
@@ -57,8 +59,9 @@ func withAuthHTTPStatus(ctx context.Context) (context.Context, *authHTTPStatus) 
 }
 
 // wrap names the HTTP status of a refused exchange on an ErrTransport
-// ("cipherstash: auth transport failed: HTTP 403"). The body is never
-// included: it may be an HTML error page, or echo a credential.
+// ("cipherstash: auth transport failed: Server error: 403: HTTP 403", the
+// guest's Diagnostic then the status). The body is never included: it may
+// be an HTML error page, or echo a credential.
 func (s *authHTTPStatus) wrap(err error) error {
 	if err == nil || !errors.Is(err, ErrTransport) || s.code == 0 || (s.code >= 200 && s.code < 300) {
 		return err
