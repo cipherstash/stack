@@ -183,6 +183,16 @@ unsafe fn reclaim(ptr: *mut u8, len: usize) -> Option<Vec<u8>> {
     Some(unsafe { Vec::from_raw_parts(ptr, real_len, real_len) })
 }
 
+/// How many buffers are live: sized, then empty. For tests that a buffer
+/// was freed, not merely forgotten.
+#[cfg(test)]
+pub(crate) fn live() -> (usize, usize) {
+    (
+        BUFFERS.with(|b| b.borrow().len()),
+        EMPTY_BUFFERS.with(Cell::get),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

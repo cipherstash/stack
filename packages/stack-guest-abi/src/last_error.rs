@@ -558,9 +558,15 @@ mod tests {
     fn clearing_wipes_and_frees_the_registered_buffer() {
         let _ = internal("boom");
         assert!(is_set());
+        assert_eq!(buffers::live(), (1, 0), "the error is a registered buffer");
         clear();
         assert!(!is_set());
+        assert_eq!(buffers::live(), (0, 0), "clear frees it");
         assert!(take().is_none());
+
+        let _ = internal("boom");
+        assert!(take().is_some());
+        assert_eq!(buffers::live(), (0, 0), "take frees it too");
     }
 
     /// One row per variant of an enum, written `pattern => value`. The
