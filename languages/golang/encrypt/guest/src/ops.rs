@@ -402,10 +402,8 @@ fn decode_tree(bytes: &[u8]) -> Result<StackCipherText, u32> {
     // Structural only — a decoded leaf proves nothing until its AEAD opens
     // (see the `SealedValue` docs).
     map_leaves(tree, &mut |l: Vec<u8>| {
-        SealedValue::from_bytes(&l).map_err(|e| {
-            last_error::record(&e, e.payload());
-            STATUS_ENCODING
-        })
+        SealedValue::from_bytes(&l)
+            .map_err(|e| last_error::record(&e, e.payload(), STATUS_ENCODING))
     })
 }
 

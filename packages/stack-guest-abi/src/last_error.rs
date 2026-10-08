@@ -11,10 +11,14 @@
 //!
 //! # Lifecycle
 //!
-//! Every export runs through [`abi::export`](crate::abi::export), which
-//! [`clear`]s the stored error when the export starts and makes sure one is
-//! stored when it fails ([`ensure`]): the error the export recorded itself,
-//! or a [`GuestError`] for its status if it recorded none. Guests are
+//! Every export runs through [`abi::export`](crate::abi::export) (its
+//! lifecycle is [`call::run`](crate::call::run)), which [`clear`]s the
+//! stored error when the export starts and makes sure one is stored when it
+//! fails ([`ensure`]): the error the export recorded itself for the status
+//! it returned, or a [`GuestError`] for that status if it recorded none or
+//! recorded one for another status. An error is always recorded with the
+//! status it stands for, so the status a host acts on and the error it asks
+//! for cannot disagree. Guests are
 //! single-threaded and the host serialises calls into one instance, so "the
 //! most recent failed call" is well defined.
 //!
@@ -45,10 +49,18 @@ use crate::buffers;
 use crate::status::{STATUS_ENCODING, STATUS_INTERNAL, STATUS_STATE};
 
 thread_local! {
-    /// The registered buffer holding the encoded last error, if any. Keyed
-    /// by the pointer the registry handed out, provenance intact, as the
-    /// registry keys it.
-    static LAST: Cell<Option<(*mut u8, usize)>> = const { Cell::new(None) };
+    /// The registered buffer holding the encoded last error, if any, and
+    /// the status it was recorded for. Keyed by the pointer the registry
+    /// handed out, provenance intact, as the registry keys it.
+    static LAST: Cell<Option<Recorded>> = const { Cell::new(None) };
+}
+
+/// A recorded error: its registered buffer and the status it stands for.
+#[derive(Clone, Copy)]
+struct Recorded {
+    ptr: *mut u8,
+    len: usize,
+    status: u32,
 }
 
 /// How deep the cause chain is followed. A chain this long is a loop or a
@@ -119,8 +131,7 @@ impl GuestError {
     /// Record this error as the last one and return its status: the one
     /// call a guest makes where it would otherwise return a bare number.
     pub fn fail(self) -> u32 {
-        record(&self, self.fields());
-        self.status()
+        record(&self, self.fields(), self.status())
     }
 }
 
@@ -299,11 +310,16 @@ fn json_value(value: serde_json::Value) -> FfiValue {
     }
 }
 
-/// Record `error` as the last error, with its structured fields and
-/// [`describe_std`] for causes from other libraries. Replaces any error
-/// already recorded in this call.
-pub fn record(error: &dyn Diagnostic, fields: serde_json::Map<String, serde_json::Value>) {
-    record_with(error, fields, &describe_std);
+/// Record `error` as the last error for `status`, with its structured
+/// fields and [`describe_std`] for causes from other libraries, and return
+/// `status`: a guest writes `Err(record(&e, e.payload(), STATUS_..))`.
+/// Replaces any error already recorded in this call.
+pub fn record(
+    error: &dyn Diagnostic,
+    fields: serde_json::Map<String, serde_json::Value>,
+    status: u32,
+) -> u32 {
+    record_with(error, fields, &describe_std, status)
 }
 
 /// [`record`], with a guest's own describer for causes from the libraries
@@ -313,30 +329,41 @@ pub fn record_with(
     error: &dyn Diagnostic,
     fields: serde_json::Map<String, serde_json::Value>,
     describe: &dyn Fn(&(dyn Error + 'static)) -> Option<String>,
-) {
+    status: u32,
+) -> u32 {
     let mut bytes = Vec::new();
     // An error that does not encode (it cannot: every leaf is a string, a
     // number or a container) leaves the last error empty rather than half
     // written; the status still says what happened.
     if codec::encode_value(encode(error, fields, describe), &mut bytes).is_err() {
         clear();
-        return;
+        return status;
     }
-    store(bytes);
+    store(bytes, status);
+    status
 }
 
-/// Store encoded bytes as the last error, wiping any before them.
-fn store(bytes: Vec<u8>) {
+/// Store encoded bytes as the last error for `status`, wiping any before
+/// them.
+fn store(bytes: Vec<u8>, status: u32) {
     clear();
     let len = bytes.len();
     let ptr = buffers::register(bytes);
-    LAST.with(|last| last.set(Some((ptr, len))));
+    LAST.with(|last| last.set(Some(Recorded { ptr, len, status })));
 }
 
-/// Make sure an error is recorded for a failed call: if the call recorded
-/// none, a [`GuestError`] for its status.
+/// Make sure the error recorded for a failed call is one for `status`.
+///
+/// An error the call recorded for this status stays: it is the detail
+/// behind the number. One recorded for another status is replaced, as is
+/// none at all, by a [`GuestError`] for `status`: a call that recorded an
+/// error, carried on and then failed differently must not hand the host a
+/// status and a code that disagree.
 pub fn ensure(status: u32) {
-    if is_set() {
+    if LAST
+        .with(Cell::get)
+        .is_some_and(|recorded| recorded.status == status)
+    {
         return;
     }
     let error = match status {
@@ -345,7 +372,7 @@ pub fn ensure(status: u32) {
         STATUS_INTERNAL => GuestError::Internal("an unexpected failure".into()),
         other => GuestError::Status(other),
     };
-    record(&error, error.fields());
+    let _ = record(&error, error.fields(), status);
 }
 
 /// Whether an error is recorded.
@@ -355,7 +382,7 @@ pub fn is_set() -> bool {
 
 /// Wipe and free the recorded error, if any.
 pub fn clear() {
-    if let Some((ptr, len)) = LAST.with(Cell::take) {
+    if let Some(Recorded { ptr, len, .. }) = LAST.with(Cell::take) {
         // SAFETY: the pair is the one `buffers::register` returned for the
         // bytes `store` registered, and nothing else holds it: the host is
         // only given it by `take_registered`, which empties the slot first.
@@ -375,6 +402,7 @@ pub(crate) fn forget() {
 /// `se_dealloc`.
 pub fn take_registered() -> Option<(*mut u8, usize)> {
     LAST.with(Cell::take)
+        .map(|recorded| (recorded.ptr, recorded.len))
 }
 
 /// Take the recorded error's bytes out of the registry: for a native
@@ -436,7 +464,7 @@ mod tests {
             },
         };
         let fields = [("count".to_owned(), 2.into())].into_iter().collect();
-        record(&error, fields);
+        let _ = record(&error, fields, STATUS_INTERNAL);
         let value = decode(&take().expect("recorded"));
         assert_eq!(string(get(&value, "code")).as_deref(), Some("test::outer"));
         assert_eq!(string(get(&value, "message")).as_deref(), Some("outer"));
@@ -474,7 +502,7 @@ mod tests {
         #[error("wrapper")]
         #[diagnostic(code(test::wrapper))]
         struct Wrapper(#[source] Foreign);
-        record(&Wrapper(Foreign), serde_json::Map::new());
+        let _ = record(&Wrapper(Foreign), serde_json::Map::new(), STATUS_INTERNAL);
         let value = decode(&take().expect("recorded"));
         let Some(FfiValue::Array(causes)) = get(&value, "causes") else {
             panic!("causes is a list");
@@ -486,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn ensure_records_a_guest_error_only_when_nothing_was_recorded() {
+    fn ensure_keeps_only_an_error_recorded_for_the_same_status() {
         clear();
         ensure(STATUS_STATE);
         let value = decode(&take().expect("recorded"));
@@ -496,12 +524,22 @@ mod tests {
         );
 
         let _ = malformed("the selector is not an object");
-        ensure(STATUS_INTERNAL);
+        ensure(STATUS_ENCODING);
         let value = decode(&take().expect("recorded"));
         assert_eq!(
             string(get(&value, "message")).as_deref(),
             Some("malformed input: the selector is not an object"),
-            "the error the call recorded wins over the status fallback"
+            "the error the call recorded for this status wins over the fallback"
+        );
+
+        let _ = malformed("the selector is not an object");
+        ensure(STATUS_INTERNAL);
+        let value = decode(&take().expect("recorded"));
+        assert_eq!(
+            string(get(&value, "code")).as_deref(),
+            Some("stack_guest_abi::internal"),
+            "an error recorded for another status is replaced, so the status \
+             and the code agree"
         );
 
         ensure(42);

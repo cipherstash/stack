@@ -217,18 +217,19 @@ fn cipher_init(decoded: FfiValue) -> Result<Vec<u8>, u32> {
     // docs say 500 rather than "one".
     let opts = ClientOpts::new(config.endpoint)
         .with_max_concurrent_reqs(1)
-        .map_err(|e| {
-            last_error::record(&e, e.payload());
-            STATUS_INTERNAL
-        })?;
+        .map_err(|e| last_error::record(&e, e.payload(), STATUS_INTERNAL))?;
     let kms = StackKms::<HostTokenStrategy, WasiHostConnection>::connect(
         opts,
         HostTokenStrategy,
         config.client_key,
     )
     .map_err(|e| {
-        last_error::record_with(&e, e.payload(), &crate::status::describe);
-        STATUS_KMS_TRANSPORT
+        last_error::record_with(
+            &e,
+            e.payload(),
+            &crate::status::describe,
+            STATUS_KMS_TRANSPORT,
+        )
     })?;
 
     let mut builder = StackCipher::builder().kms(kms);

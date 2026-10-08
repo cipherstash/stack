@@ -74,19 +74,18 @@ pub use stack_guest_abi::status::{
 /// `map_err` calls, so the status a host acts on and the error it can ask
 /// for come from the one site.
 pub fn fail_error(error: &stack_encrypt::Error) -> u32 {
-    record(error);
-    status_for_error(error)
+    record(error, status_for_error(error))
 }
 
 /// [`fail_error`] for a dynamic-path error.
 pub fn fail_dynamic(error: &stack_encrypt::dynamic::Error) -> u32 {
-    record(error);
-    status_for_dynamic(error)
+    record(error, status_for_dynamic(error))
 }
 
-/// Record an error with its structured fields and this guest's describer.
-fn record<E: ErrorPayload>(error: &E) {
-    last_error::record_with(error, error.payload(), &describe);
+/// Record an error for `status` with its structured fields and this
+/// guest's describer, and return `status`.
+fn record<E: ErrorPayload>(error: &E, status: u32) -> u32 {
+    last_error::record_with(error, error.payload(), &describe, status)
 }
 
 /// What this guest vouches for in a cause from another library: a ZeroKMS

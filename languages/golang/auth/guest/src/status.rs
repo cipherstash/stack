@@ -26,14 +26,12 @@ pub use stack_guest_abi::status::{
 /// every export's `map_err` calls, so the status a host acts on and the
 /// error it can ask for come from the one site.
 pub fn fail_auth(error: &AuthError) -> u32 {
-    last_error::record(error, error.payload());
-    status_for_auth(error)
+    last_error::record(error, error.payload(), status_for_auth(error))
 }
 
 /// [`fail_auth`] for a profile error.
 pub fn fail_profile(error: &ProfileError) -> u32 {
-    last_error::record(error, error.payload());
-    status_for_profile(error)
+    last_error::record(error, error.payload(), status_for_profile(error))
 }
 
 /// Preserve the auth decisions callers can act on without exposing token
