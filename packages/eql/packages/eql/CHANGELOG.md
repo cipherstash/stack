@@ -1,5 +1,12 @@
 # @cipherstash/eql
 
+## 3.1.0
+
+### Minor Changes
+
+- 0275684: **The `eql-bindings` crate resolves an EQL type named as a string to its own Stack Encrypt plan** (`stack-encrypt` feature). `eql_bindings::encryption::targets` carries a catalog-generated table of every EQL type a data plan may name as a field target — its name across languages, family and suffix, the plaintext `ValueKind` it takes, the indexes it carries, its query twin, and whether the engine can produce it today with the reason when not — and `encrypt` / `decrypt` / `query` entry points that dispatch on the name and run the type's derived `EncryptFrom` / `DecryptInto`, resolving to the EQL value's JSON bytes through the engine's `Pending` so a guest batches it with the rest of a plan. This is the EQL half of EQL types as plan field targets (cipherstash/stack#1062): a Go data plan names `TextEq` and the guest returns the finished EQL value instead of assembling one. `TextEq` is the only producible type; every other name is refused with the plan's reason. The SQL surface and the TypeScript package are unchanged.
+- c851db5: **Rust `TextEq` and `TextEqQuery` support Stack Encrypt's target-directed API behind the `stack-encrypt` feature.** The stored table and column identifier supplies the encryption context; native ciphertext and equality terms are transcoded into EQL payloads while Vitamin C owns plaintext encoding. This is a new producer profile with exact string equality, independent of existing cipherstash-client ciphertext and terms. Query operands carry no recoverable ciphertext.
+
 ## 3.0.6
 
 ### Patch Changes
