@@ -4,239 +4,239 @@
 -- REQUIRE: src/v3/scalars/smallint/smallint_functions.sql
 
 --! @file encrypted_domain/smallint/smallint_operators.sql
---! @brief Operators for public.eql_v3_smallint.
+--! @brief Operators for public.{{prefix}}_smallint.
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = public.eql_v3_smallint
-);
-
-CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3_internal.eq,
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = jsonb
+);
+
+CREATE OPERATOR = (
+  FUNCTION = {{prefix}}_internal.eq,
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = jsonb
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3_internal.neq,
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal.neq,
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = jsonb
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = jsonb
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = jsonb
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = jsonb
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR @> (
-  FUNCTION = eql_v3_internal.contains,
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal.contains,
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR @> (
-  FUNCTION = eql_v3_internal.contains,
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal.contains,
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = jsonb
 );
 
 CREATE OPERATOR @> (
-  FUNCTION = eql_v3_internal.contains,
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal.contains,
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR <@ (
-  FUNCTION = eql_v3_internal.contained_by,
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal.contained_by,
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR <@ (
-  FUNCTION = eql_v3_internal.contained_by,
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal.contained_by,
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = jsonb
 );
 
 CREATE OPERATOR <@ (
-  FUNCTION = eql_v3_internal.contained_by,
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal.contained_by,
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR -> (
-  FUNCTION = eql_v3_internal."->",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = text
+  FUNCTION = {{prefix}}_internal."->",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = text
 );
 
 CREATE OPERATOR -> (
-  FUNCTION = eql_v3_internal."->",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = integer
+  FUNCTION = {{prefix}}_internal."->",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = integer
 );
 
 CREATE OPERATOR -> (
-  FUNCTION = eql_v3_internal."->",
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal."->",
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR ->> (
-  FUNCTION = eql_v3_internal."->>",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = text
+  FUNCTION = {{prefix}}_internal."->>",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = text
 );
 
 CREATE OPERATOR ->> (
-  FUNCTION = eql_v3_internal."->>",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = integer
+  FUNCTION = {{prefix}}_internal."->>",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = integer
 );
 
 CREATE OPERATOR ->> (
-  FUNCTION = eql_v3_internal."->>",
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal."->>",
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR ? (
-  FUNCTION = eql_v3_internal."?",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = text
+  FUNCTION = {{prefix}}_internal."?",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = text
 );
 
 CREATE OPERATOR ?| (
-  FUNCTION = eql_v3_internal."?|",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = text[]
+  FUNCTION = {{prefix}}_internal."?|",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = text[]
 );
 
 CREATE OPERATOR ?& (
-  FUNCTION = eql_v3_internal."?&",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = text[]
+  FUNCTION = {{prefix}}_internal."?&",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = text[]
 );
 
 CREATE OPERATOR @? (
-  FUNCTION = eql_v3_internal."@?",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = jsonpath
+  FUNCTION = {{prefix}}_internal."@?",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = jsonpath
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3_internal."@@",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3_internal."@@",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = jsonb
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3_internal."@@",
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3_internal."@@",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = jsonpath
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = jsonpath
 );
 
 CREATE OPERATOR #> (
-  FUNCTION = eql_v3_internal."#>",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = text[]
+  FUNCTION = {{prefix}}_internal."#>",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = text[]
 );
 
 CREATE OPERATOR #>> (
-  FUNCTION = eql_v3_internal."#>>",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = text[]
+  FUNCTION = {{prefix}}_internal."#>>",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = text[]
 );
 
 CREATE OPERATOR - (
-  FUNCTION = eql_v3_internal."-",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = text
+  FUNCTION = {{prefix}}_internal."-",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = text
 );
 
 CREATE OPERATOR - (
-  FUNCTION = eql_v3_internal."-",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = integer
+  FUNCTION = {{prefix}}_internal."-",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = integer
 );
 
 CREATE OPERATOR - (
-  FUNCTION = eql_v3_internal."-",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = text[]
+  FUNCTION = {{prefix}}_internal."-",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = text[]
 );
 
 CREATE OPERATOR #- (
-  FUNCTION = eql_v3_internal."#-",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = text[]
+  FUNCTION = {{prefix}}_internal."#-",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = text[]
 );
 
 CREATE OPERATOR || (
-  FUNCTION = eql_v3_internal."||",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal."||",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = public.{{prefix}}_smallint
 );
 
 CREATE OPERATOR || (
-  FUNCTION = eql_v3_internal."||",
-  LEFTARG = public.eql_v3_smallint, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal."||",
+  LEFTARG = public.{{prefix}}_smallint, RIGHTARG = jsonb
 );
 
 CREATE OPERATOR || (
-  FUNCTION = eql_v3_internal."||",
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_smallint
+  FUNCTION = {{prefix}}_internal."||",
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_smallint
 );

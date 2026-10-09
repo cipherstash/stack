@@ -6,65 +6,65 @@
 
 DO $$
 BEGIN
-  --! @brief Encrypted domain public.eql_v3_text.
+  --! @brief Encrypted domain public.{{prefix}}_text.
   IF NOT EXISTS (
     SELECT 1 FROM pg_type
-    WHERE typname = 'eql_v3_text' AND typnamespace = 'public'::regnamespace
+    WHERE typname = '{{prefix}}_text' AND typnamespace = 'public'::regnamespace
   ) THEN
-    CREATE DOMAIN public.eql_v3_text AS jsonb
+    CREATE DOMAIN public.{{prefix}}_text AS jsonb
       CHECK (
         jsonb_typeof(VALUE) = 'object'
         AND VALUE ? 'v'
         AND VALUE ? 'i'
         AND VALUE ? 'c'
-        AND VALUE->>'v' = '3'
+        AND VALUE->>'v' = '{{eql_version}}'
       );
   END IF;
 
-  COMMENT ON DOMAIN public.eql_v3_text IS 'EQL encrypted text (storage only)';
+  COMMENT ON DOMAIN public.{{prefix}}_text IS 'EQL encrypted text (storage only)';
 
-  --! @brief Encrypted domain public.eql_v3_text_eq.
+  --! @brief Encrypted domain public.{{prefix}}_text_eq.
   IF NOT EXISTS (
     SELECT 1 FROM pg_type
-    WHERE typname = 'eql_v3_text_eq' AND typnamespace = 'public'::regnamespace
+    WHERE typname = '{{prefix}}_text_eq' AND typnamespace = 'public'::regnamespace
   ) THEN
-    CREATE DOMAIN public.eql_v3_text_eq AS jsonb
+    CREATE DOMAIN public.{{prefix}}_text_eq AS jsonb
       CHECK (
         jsonb_typeof(VALUE) = 'object'
         AND VALUE ? 'v'
         AND VALUE ? 'i'
         AND VALUE ? 'c'
         AND VALUE ? 'hm'
-        AND VALUE->>'v' = '3'
+        AND VALUE->>'v' = '{{eql_version}}'
       );
   END IF;
 
-  COMMENT ON DOMAIN public.eql_v3_text_eq IS 'EQL encrypted text (equality)';
+  COMMENT ON DOMAIN public.{{prefix}}_text_eq IS 'EQL encrypted text (equality)';
 
-  --! @brief Encrypted domain public.eql_v3_text_match.
+  --! @brief Encrypted domain public.{{prefix}}_text_match.
   IF NOT EXISTS (
     SELECT 1 FROM pg_type
-    WHERE typname = 'eql_v3_text_match' AND typnamespace = 'public'::regnamespace
+    WHERE typname = '{{prefix}}_text_match' AND typnamespace = 'public'::regnamespace
   ) THEN
-    CREATE DOMAIN public.eql_v3_text_match AS jsonb
+    CREATE DOMAIN public.{{prefix}}_text_match AS jsonb
       CHECK (
         jsonb_typeof(VALUE) = 'object'
         AND VALUE ? 'v'
         AND VALUE ? 'i'
         AND VALUE ? 'c'
         AND VALUE ? 'bf'
-        AND VALUE->>'v' = '3'
+        AND VALUE->>'v' = '{{eql_version}}'
       );
   END IF;
 
-  COMMENT ON DOMAIN public.eql_v3_text_match IS 'EQL encrypted text (matching)';
+  COMMENT ON DOMAIN public.{{prefix}}_text_match IS 'EQL encrypted text (matching)';
 
-  --! @brief Encrypted domain public.eql_v3_text_ord_ore.
+  --! @brief Encrypted domain public.{{prefix}}_text_ord_ore.
   IF NOT EXISTS (
     SELECT 1 FROM pg_type
-    WHERE typname = 'eql_v3_text_ord_ore' AND typnamespace = 'public'::regnamespace
+    WHERE typname = '{{prefix}}_text_ord_ore' AND typnamespace = 'public'::regnamespace
   ) THEN
-    CREATE DOMAIN public.eql_v3_text_ord_ore AS jsonb
+    CREATE DOMAIN public.{{prefix}}_text_ord_ore AS jsonb
       CHECK (
         jsonb_typeof(VALUE) = 'object'
         AND VALUE ? 'v'
@@ -74,18 +74,18 @@ BEGIN
         AND VALUE ? 'ob'
         AND jsonb_typeof(VALUE -> 'ob') = 'array'
         AND jsonb_array_length(VALUE -> 'ob') > 0
-        AND VALUE->>'v' = '3'
+        AND VALUE->>'v' = '{{eql_version}}'
       );
   END IF;
 
-  COMMENT ON DOMAIN public.eql_v3_text_ord_ore IS 'EQL encrypted text (equality, ordering)';
+  COMMENT ON DOMAIN public.{{prefix}}_text_ord_ore IS 'EQL encrypted text (equality, ordering)';
 
-  --! @brief Encrypted domain public.eql_v3_text_ord.
+  --! @brief Encrypted domain public.{{prefix}}_text_ord.
   IF NOT EXISTS (
     SELECT 1 FROM pg_type
-    WHERE typname = 'eql_v3_text_ord' AND typnamespace = 'public'::regnamespace
+    WHERE typname = '{{prefix}}_text_ord' AND typnamespace = 'public'::regnamespace
   ) THEN
-    CREATE DOMAIN public.eql_v3_text_ord AS jsonb
+    CREATE DOMAIN public.{{prefix}}_text_ord AS jsonb
       CHECK (
         jsonb_typeof(VALUE) = 'object'
         AND VALUE ? 'v'
@@ -93,18 +93,18 @@ BEGIN
         AND VALUE ? 'c'
         AND VALUE ? 'hm'
         AND VALUE ? 'op'
-        AND VALUE->>'v' = '3'
+        AND VALUE->>'v' = '{{eql_version}}'
       );
   END IF;
 
-  COMMENT ON DOMAIN public.eql_v3_text_ord IS 'EQL encrypted text (equality, ordering)';
+  COMMENT ON DOMAIN public.{{prefix}}_text_ord IS 'EQL encrypted text (equality, ordering)';
 
-  --! @brief Encrypted domain public.eql_v3_text_ord_ope.
+  --! @brief Encrypted domain public.{{prefix}}_text_ord_ope.
   IF NOT EXISTS (
     SELECT 1 FROM pg_type
-    WHERE typname = 'eql_v3_text_ord_ope' AND typnamespace = 'public'::regnamespace
+    WHERE typname = '{{prefix}}_text_ord_ope' AND typnamespace = 'public'::regnamespace
   ) THEN
-    CREATE DOMAIN public.eql_v3_text_ord_ope AS jsonb
+    CREATE DOMAIN public.{{prefix}}_text_ord_ope AS jsonb
       CHECK (
         jsonb_typeof(VALUE) = 'object'
         AND VALUE ? 'v'
@@ -112,18 +112,18 @@ BEGIN
         AND VALUE ? 'c'
         AND VALUE ? 'hm'
         AND VALUE ? 'op'
-        AND VALUE->>'v' = '3'
+        AND VALUE->>'v' = '{{eql_version}}'
       );
   END IF;
 
-  COMMENT ON DOMAIN public.eql_v3_text_ord_ope IS 'EQL encrypted text (equality, ordering)';
+  COMMENT ON DOMAIN public.{{prefix}}_text_ord_ope IS 'EQL encrypted text (equality, ordering)';
 
-  --! @brief Encrypted domain public.eql_v3_text_search_ore.
+  --! @brief Encrypted domain public.{{prefix}}_text_search_ore.
   IF NOT EXISTS (
     SELECT 1 FROM pg_type
-    WHERE typname = 'eql_v3_text_search_ore' AND typnamespace = 'public'::regnamespace
+    WHERE typname = '{{prefix}}_text_search_ore' AND typnamespace = 'public'::regnamespace
   ) THEN
-    CREATE DOMAIN public.eql_v3_text_search_ore AS jsonb
+    CREATE DOMAIN public.{{prefix}}_text_search_ore AS jsonb
       CHECK (
         jsonb_typeof(VALUE) = 'object'
         AND VALUE ? 'v'
@@ -134,18 +134,18 @@ BEGIN
         AND VALUE ? 'bf'
         AND jsonb_typeof(VALUE -> 'ob') = 'array'
         AND jsonb_array_length(VALUE -> 'ob') > 0
-        AND VALUE->>'v' = '3'
+        AND VALUE->>'v' = '{{eql_version}}'
       );
   END IF;
 
-  COMMENT ON DOMAIN public.eql_v3_text_search_ore IS 'EQL encrypted text (equality, ordering, matching)';
+  COMMENT ON DOMAIN public.{{prefix}}_text_search_ore IS 'EQL encrypted text (equality, ordering, matching)';
 
-  --! @brief Encrypted domain public.eql_v3_text_search.
+  --! @brief Encrypted domain public.{{prefix}}_text_search.
   IF NOT EXISTS (
     SELECT 1 FROM pg_type
-    WHERE typname = 'eql_v3_text_search' AND typnamespace = 'public'::regnamespace
+    WHERE typname = '{{prefix}}_text_search' AND typnamespace = 'public'::regnamespace
   ) THEN
-    CREATE DOMAIN public.eql_v3_text_search AS jsonb
+    CREATE DOMAIN public.{{prefix}}_text_search AS jsonb
       CHECK (
         jsonb_typeof(VALUE) = 'object'
         AND VALUE ? 'v'
@@ -154,10 +154,10 @@ BEGIN
         AND VALUE ? 'hm'
         AND VALUE ? 'op'
         AND VALUE ? 'bf'
-        AND VALUE->>'v' = '3'
+        AND VALUE->>'v' = '{{eql_version}}'
       );
   END IF;
 
-  COMMENT ON DOMAIN public.eql_v3_text_search IS 'EQL encrypted text (equality, ordering, matching)';
+  COMMENT ON DOMAIN public.{{prefix}}_text_search IS 'EQL encrypted text (equality, ordering, matching)';
 END
 $$;
