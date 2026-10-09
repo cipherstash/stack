@@ -269,6 +269,42 @@ updates:
         update-types:
           - version-update:semver-major
 
+  # ── pip (.github/impact-gate — the advisory ImpactGate toolchain) ──
+  # impact.yml installs this hashed requirements.txt with `--require-hashes
+  # --no-deps`, so every transitive package is a pin here and nothing resolves
+  # in CI. Dependabot regenerates the hashes when it bumps one. Any change here
+  # also changes the baseline cache key, so a bump costs one cold rebuild.
+  - package-ecosystem: pip
+    directory: /.github/impact-gate
+    # Monthly, matching the other non-npm toolchains: the tools only feed an
+    # advisory report, and security fixes are driven by alerts, not `schedule`.
+    # No `day:`, for the reason recorded on the cargo entries.
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - supply-chain
+    commit-message:
+      prefix: "chore"
+      include: scope
+    groups:
+      # impact-gate constrains lizard (it excludes 1.24.0), so the set moves
+      # together in one PR rather than as conflicting per-package bumps.
+      impact-gate-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Major bumps are reviewed and applied manually, not by Dependabot.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
   # ── GitHub Actions ─────────────────────────────────────────────
   - package-ecosystem: github-actions
     directory: /

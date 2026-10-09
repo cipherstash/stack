@@ -57,9 +57,15 @@ that publishes to npm — ran a bare `pnpm install` the whole time. The single
 install allowed to resolve outside the lockfile was the one whose output goes to
 the registry.
 
+A pip requirements file installed in CI is held to the same bar: pin every
+package, transitive ones included, with `==` and a `--hash`, and install it with
+`pip install --require-hashes --no-deps -r <file>`, so nothing resolves at
+install time. `uv pip compile --generate-hashes` produces such a file. (This one
+is checked by the workflow's own test, not by `supply-chain.e2e.test.ts`.)
+
 ### 5. Cooldown'd auto-updates — practice #6
 
-Dependabot opens grouped, cooldown'd PRs (7 days minor/patch) for `npm`, `cargo`, `gomod`, `github-actions` and `docker` (the digest of the Alpine image the musl binaries are built in). Major bumps are not proposed at all — every entry ignores `version-update:semver-major`, so majors are reviewed and applied by hand.
+Dependabot opens grouped, cooldown'd PRs (7 days minor/patch) for `npm`, `cargo`, `gomod`, `pip` (the hashed requirements file for a Python tool CI runs), `github-actions` and `docker` (the digest of the Alpine image the musl binaries are built in). Major bumps are not proposed at all — every entry ignores `version-update:semver-major`, so majors are reviewed and applied by hand.
 
 There is deliberately **no `semver-major-days` cooldown** on any entry. It would delay major *version update* PRs, which the `ignore` above means Dependabot never opens, and cooldown does not reach the security path either ("the cooldown option is only available for version updates, not security updates"). Don't add one back as a safety net for the day the `ignore` is dropped — dead config reads as policy, and the test below fails on the pair.
 
