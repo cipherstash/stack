@@ -1150,6 +1150,65 @@ mod tests {
             .expect("domain name")
     }
 
+    // The renderers emit placeholder SQL. These shadow them, rendering their
+    // output as eql_v3, so the assertions below read as installed SQL and every
+    // rendered file is also checked to be free of literal names and unknown
+    // placeholders.
+    fn v3(sql: String) -> String {
+        crate::render::render_str(&sql, crate::render::EqlVersion::V3).expect("renders as eql_v3")
+    }
+
+    fn render_types_file(spec: &DomainFamily) -> String {
+        v3(super::render_types_file(spec))
+    }
+
+    fn render_functions_file(family_name: &str, domain: &Domain) -> String {
+        v3(super::render_functions_file(family_name, domain))
+    }
+
+    fn render_operators_file(family_name: &str, domain: &Domain) -> String {
+        v3(super::render_operators_file(family_name, domain))
+    }
+
+    fn render_aggregates_file(family_name: &str, domain: &Domain) -> Option<String> {
+        super::render_aggregates_file(family_name, domain).map(v3)
+    }
+
+    fn render_ore_fallback_file() -> String {
+        v3(super::render_ore_fallback_file())
+    }
+
+    fn render_json_entry_cross_functions(
+        spec: &DomainFamily,
+        domains: &[&Domain],
+        blocked_domains: &[&Domain],
+    ) -> String {
+        v3(super::render_json_entry_cross_functions(
+            spec,
+            domains,
+            blocked_domains,
+        ))
+    }
+
+    fn render_json_entry_cross_operators(
+        spec: &DomainFamily,
+        domains: &[&Domain],
+        blocked_domains: &[&Domain],
+    ) -> String {
+        v3(super::render_json_entry_cross_operators(
+            spec,
+            domains,
+            blocked_domains,
+        ))
+    }
+
+    fn render_type(spec: &DomainFamily, out_dir: &Path) -> Vec<(PathBuf, String)> {
+        super::render_type(spec, out_dir)
+            .into_iter()
+            .map(|(p, sql)| (p, v3(sql)))
+            .collect()
+    }
+
     use std::fs;
 
     #[test]
@@ -1873,8 +1932,8 @@ mod tests {
                 shape: Shape::Scalar,
             },
         );
-        assert_eq!(block.typname, "eql_v3_integer_q"); // no quote present → unchanged
-                                                       // keys are sql_str-escaped key tokens; none should carry a bare unescaped quote.
+        assert_eq!(block.typname, "{{prefix}}_integer_q"); // no quote present → unchanged
+                                                           // keys are sql_str-escaped key tokens; none should carry a bare unescaped quote.
         assert!(block.keys.iter().all(|k| !k.contains("o'")));
     }
 
@@ -2169,7 +2228,7 @@ mod tests {
     fn json_entry_type_is_derived_from_the_catalog() {
         // Not a hardcoded literal: a catalog rename or PUBLIC_TYPNAME_PREFIX bump
         // must flow through rather than silently drift (cf. #398 jsonb -> json).
-        assert_eq!(json_entry_type(), "public.eql_v3_json_entry");
+        assert_eq!(json_entry_type(), "public.{{prefix}}_json_entry");
         assert_eq!(json_entry_stem("integer"), "json_entry_integer");
         assert_eq!(
             json_entry_functions_path("integer"),

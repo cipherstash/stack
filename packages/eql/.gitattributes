@@ -8,6 +8,8 @@
 #     and drift-gated by `mise run codegen:parity`. (The hand-written
 #     src/v3/scalars/functions.sql and *_extensions.sql are NOT generated and
 #     are deliberately left unmarked.)
+#   - src/v3/scalars/ore_fallback.sql : the one generated file directly under
+#     src/v3/scalars, outside the per-type directories the globs above match.
 #   - tests/sqlx/snapshots/*_expanded.rs : `cargo expand` snapshots of the
 #     scalar matrix macros (the start_line/end_line churn is location drift).
 #   - tests/sqlx/snapshots/matrix_tests*.txt : matrix-coverage inventory pinned
@@ -19,6 +21,7 @@ src/v3/scalars/*/*_types.sql linguist-generated
 src/v3/scalars/*/*_functions.sql linguist-generated
 src/v3/scalars/*/*_operators.sql linguist-generated
 src/v3/scalars/*/*_aggregates.sql linguist-generated
+src/v3/scalars/ore_fallback.sql linguist-generated
 tests/sqlx/snapshots/*_expanded.rs linguist-generated
 tests/sqlx/snapshots/matrix_tests*.txt linguist-generated
 

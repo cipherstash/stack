@@ -5,7 +5,7 @@
 -- REQUIRE: src/v3/sem/ope_cllw/types.sql
 
 --! @file v3/json/operators.sql
---! @brief Operators on public.eql_v3_json_search and public.eql_v3_json_entry.
+--! @brief Operators on public.{{prefix}}_json_search and public.{{prefix}}_json_entry.
 
 ------------------------------------------------------------------------------
 -- -> field accessor (returns jsonb_entry)
@@ -15,67 +15,67 @@
 --!
 --! Returns the sv entry whose `s` equals @p selector, with root `i`/`v` merged
 --! in. Inlinable: range predicates reduce structurally through
---! `eql_v3.ord_term(col -> 'sel')` and match a functional btree index on that
+--! `{{prefix}}.ord_term(col -> 'sel')` and match a functional btree index on that
 --! expression. Exact equality is document containment on a value selector.
 --!
 --! @warning The selector operand MUST carry a known type — a text-typed
 --!   parameter (`$1`, the Proxy interface) or an explicit cast (`col -> 'sel'::%text`).
 --!   A bare untyped literal (`col -> 'sel'`) resolves to the NATIVE `jsonb -> %text`
 --!   operator and silently returns native jsonb semantics (a root-key lookup,
---!   typically NULL), NOT this operator: PostgreSQL reduces the `public.eql_v3_json_search`
+--!   typically NULL), NOT this operator: PostgreSQL reduces the `public.{{prefix}}_json_search`
 --!   domain to its base type `jsonb` when resolving an unknown-typed RHS, and the
 --!   native base-type operator wins the exact-match tiebreak. This is intrinsic to
 --!   the domain type-kind and applies to the native-jsonb blockers too. See
 --!   the "Typed operands" caveat in docs/reference/json-support.md.
 --!
---! @param e public.eql_v3_json_search Root encrypted payload.
+--! @param e public.{{prefix}}_json_search Root encrypted payload.
 --! @param selector text Selector hash.
---! @return public.eql_v3_json_entry Matching entry merged with root meta, or NULL.
-CREATE FUNCTION eql_v3."->"(e public.eql_v3_json_search, selector text)
-  RETURNS public.eql_v3_json_entry
+--! @return public.{{prefix}}_json_entry Matching entry merged with root meta, or NULL.
+CREATE FUNCTION {{prefix}}."->"(e public.{{prefix}}_json_search, selector text)
+  RETURNS public.{{prefix}}_json_entry
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
   SELECT (
-    eql_v3.meta_data(e) ||
+    {{prefix}}.meta_data(e) ||
     jsonb_path_query_first(
       e,
       '$.sv[*] ? (@.s == $sel)'::jsonpath,
       jsonb_build_object('sel', selector)
     )
-  )::public.eql_v3_json_entry
+  )::public.{{prefix}}_json_entry
 $$;
 
 CREATE OPERATOR ->(
-  FUNCTION=eql_v3."->",
-  LEFTARG=public.eql_v3_json_search,
+  FUNCTION={{prefix}}."->",
+  LEFTARG=public.{{prefix}}_json_search,
   RIGHTARG=text
 );
 
 --! @brief -> operator with integer array index (0-based, JSONB convention).
---! @param e public.eql_v3_json_search Encrypted sv-array payload.
+--! @param e public.{{prefix}}_json_search Encrypted sv-array payload.
 --! @param selector integer Array index.
---! @return public.eql_v3_json_entry Matching entry merged with root meta, or NULL.
-CREATE FUNCTION eql_v3."->"(e public.eql_v3_json_search, selector integer)
-  RETURNS public.eql_v3_json_entry
+--! @return public.{{prefix}}_json_entry Matching entry merged with root meta, or NULL.
+CREATE FUNCTION {{prefix}}."->"(e public.{{prefix}}_json_search, selector integer)
+  RETURNS public.{{prefix}}_json_entry
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
   SELECT CASE
-    WHEN eql_v3_internal.is_ste_vec_array(e) THEN
+    WHEN {{prefix}}_internal.is_ste_vec_array(e) THEN
       -- NOTE: `e::jsonb` makes the native-jsonb traversal explicit. `'sv'` is an
-      -- unknown-typed literal, so `e -> 'sv'` already flattens `public.eql_v3_json_search` to
+      -- unknown-typed literal, so `e -> 'sv'` already flattens `public.{{prefix}}_json_search` to
       -- its base type and binds native `jsonb -> text` (see the @warning above) —
-      -- the custom `->(public.eql_v3_json_search, text)` operator does NOT capture a bare
+      -- the custom `->(public.{{prefix}}_json_search, text)` operator does NOT capture a bare
       -- untyped literal. The cast documents that intent and guards the `-> selector`
-      -- (integer) hop from ever resolving to the v3 `->(public.eql_v3_json_search, integer)`
+      -- (integer) hop from ever resolving to the v3 `->(public.{{prefix}}_json_search, integer)`
       -- operator instead of native array access.
-      (eql_v3.meta_data(e) || (e::jsonb -> 'sv' -> selector))::public.eql_v3_json_entry
+      ({{prefix}}.meta_data(e) || (e::jsonb -> 'sv' -> selector))::public.{{prefix}}_json_entry
     ELSE NULL
   END
 $$;
 
 CREATE OPERATOR ->(
-  FUNCTION=eql_v3."->",
-  LEFTARG=public.eql_v3_json_search,
+  FUNCTION={{prefix}}."->",
+  LEFTARG=public.{{prefix}}_json_search,
   RIGHTARG=integer
 );
 
@@ -89,37 +89,37 @@ CREATE OPERATOR ->(
 --! Intentional v2 parity: this serializes the entire matched jsonb_entry
 --! object as JSON text. It does not decrypt or return scalar plaintext like
 --! native `jsonb ->>`.
---! @param e public.eql_v3_json_search Encrypted payload.
+--! @param e public.{{prefix}}_json_search Encrypted payload.
 --! @param selector text Field selector hash.
 --! @return text The matching entry as text.
-CREATE FUNCTION eql_v3."->>"(e public.eql_v3_json_search, selector text)
+CREATE FUNCTION {{prefix}}."->>"(e public.{{prefix}}_json_search, selector text)
   RETURNS text
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT eql_v3."->"(e, selector)::jsonb::text
+  SELECT {{prefix}}."->"(e, selector)::jsonb::text
 $$;
 
 CREATE OPERATOR ->> (
-  FUNCTION=eql_v3."->>",
-  LEFTARG=public.eql_v3_json_search,
+  FUNCTION={{prefix}}."->>",
+  LEFTARG=public.{{prefix}}_json_search,
   RIGHTARG=text
 );
 
 --! @brief ->> operator with integer array index. Inlinable alias of
 --!        ->(json, integer) coerced to text.
---! @param e public.eql_v3_json_search Encrypted sv-array payload.
+--! @param e public.{{prefix}}_json_search Encrypted sv-array payload.
 --! @param selector integer Array index.
 --! @return text The matching entry as text.
-CREATE FUNCTION eql_v3."->>"(e public.eql_v3_json_search, selector integer)
+CREATE FUNCTION {{prefix}}."->>"(e public.{{prefix}}_json_search, selector integer)
   RETURNS text
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT eql_v3."->"(e, selector)::jsonb::text
+  SELECT {{prefix}}."->"(e, selector)::jsonb::text
 $$;
 
 CREATE OPERATOR ->> (
-  FUNCTION=eql_v3."->>",
-  LEFTARG=public.eql_v3_json_search,
+  FUNCTION={{prefix}}."->>",
+  LEFTARG=public.{{prefix}}_json_search,
   RIGHTARG=integer
 );
 
@@ -128,43 +128,43 @@ CREATE OPERATOR ->> (
 ------------------------------------------------------------------------------
 
 --! @brief @> contains operator (document, document).
---! @param a public.eql_v3_json_search Container.
---! @param b public.eql_v3_json_search Contained value.
+--! @param a public.{{prefix}}_json_search Container.
+--! @param b public.{{prefix}}_json_search Contained value.
 --! @return boolean True if a contains b.
---! @see eql_v3.jsonb_document_contains
-CREATE FUNCTION eql_v3."@>"(a public.eql_v3_json_search, b public.eql_v3_json_search)
+--! @see {{prefix}}.jsonb_document_contains
+CREATE FUNCTION {{prefix}}."@>"(a public.{{prefix}}_json_search, b public.{{prefix}}_json_search)
 RETURNS boolean
 LANGUAGE SQL IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT eql_v3.jsonb_document_contains(a, b)
+  SELECT {{prefix}}.jsonb_document_contains(a, b)
 $$;
 
 CREATE OPERATOR @>(
-  FUNCTION=eql_v3."@>",
-  LEFTARG=public.eql_v3_json_search,
-  RIGHTARG=public.eql_v3_json_search
+  FUNCTION={{prefix}}."@>",
+  LEFTARG=public.{{prefix}}_json_search,
+  RIGHTARG=public.{{prefix}}_json_search
 );
 
 --! @brief @> contains operator with an query_json needle.
 --!
---! Inlines to native `jsonb @>` over `eql_v3.to_ste_vec_query(a)::jsonb`, so a
+--! Inlines to native `jsonb @>` over `{{prefix}}.to_ste_vec_query(a)::jsonb`, so a
 --! functional GIN index on the same expression engages.
 --!
---! @param a public.eql_v3_json_search Container.
---! @param b eql_v3.query_json Query payload.
+--! @param a public.{{prefix}}_json_search Container.
+--! @param b {{prefix}}.query_json Query payload.
 --! @return boolean True if a contains b.
-CREATE FUNCTION eql_v3."@>"(a public.eql_v3_json_search, b eql_v3.query_json)
+CREATE FUNCTION {{prefix}}."@>"(a public.{{prefix}}_json_search, b {{prefix}}.query_json)
 RETURNS boolean
 LANGUAGE SQL IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT eql_v3.to_ste_vec_query(a)::jsonb
-       @> eql_v3.to_ste_vec_query(b)::jsonb
+  SELECT {{prefix}}.to_ste_vec_query(a)::jsonb
+       @> {{prefix}}.to_ste_vec_query(b)::jsonb
 $$;
 
 CREATE OPERATOR @>(
-  FUNCTION=eql_v3."@>",
-  LEFTARG=public.eql_v3_json_search,
-  RIGHTARG=eql_v3.query_json
+  FUNCTION={{prefix}}."@>",
+  LEFTARG=public.{{prefix}}_json_search,
+  RIGHTARG={{prefix}}.query_json
 );
 
 -- NOTE: there is deliberately NO computable `@>`(json_search, json_entry)
@@ -173,7 +173,7 @@ CREATE OPERATOR @>(
 -- ({s,c,op?}) and carries no value selector, so it can only ever match
 -- structurally ("the document has a node at this path") — value-blind for
 -- bool/null/object/array and op-lossy for number/string. Exact field equality is
--- document containment on the value selector: `col @> $1::eql_v3.query_json`,
+-- document containment on the value selector: `col @> $1::{{prefix}}.query_json`,
 -- where a value-selector's presence in the stored document IS the exact match.
 -- Routing all value equality through that one exact mechanism is why the
 -- structural single-entry behavior (and its `<@` reverse) was blocked.
@@ -183,38 +183,38 @@ CREATE OPERATOR @>(
 ------------------------------------------------------------------------------
 
 --! @brief <@ contained-by operator (document, document).
---! @param a public.eql_v3_json_search Contained value.
---! @param b public.eql_v3_json_search Container.
+--! @param a public.{{prefix}}_json_search Contained value.
+--! @param b public.{{prefix}}_json_search Container.
 --! @return boolean True if a is contained by b.
-CREATE FUNCTION eql_v3."<@"(a public.eql_v3_json_search, b public.eql_v3_json_search)
+CREATE FUNCTION {{prefix}}."<@"(a public.{{prefix}}_json_search, b public.{{prefix}}_json_search)
 RETURNS boolean
 LANGUAGE SQL IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT eql_v3.to_ste_vec_query(b)::jsonb
-       @> eql_v3.to_ste_vec_query(a)::jsonb
+  SELECT {{prefix}}.to_ste_vec_query(b)::jsonb
+       @> {{prefix}}.to_ste_vec_query(a)::jsonb
 $$;
 
 CREATE OPERATOR <@(
-  FUNCTION=eql_v3."<@",
-  LEFTARG=public.eql_v3_json_search,
-  RIGHTARG=public.eql_v3_json_search
+  FUNCTION={{prefix}}."<@",
+  LEFTARG=public.{{prefix}}_json_search,
+  RIGHTARG=public.{{prefix}}_json_search
 );
 
 --! @brief <@ contained-by operator with an query_json LHS.
---! @param a eql_v3.query_json Query payload.
---! @param b public.eql_v3_json_search Container.
+--! @param a {{prefix}}.query_json Query payload.
+--! @param b public.{{prefix}}_json_search Container.
 --! @return boolean True if b contains a.
-CREATE FUNCTION eql_v3."<@"(a eql_v3.query_json, b public.eql_v3_json_search)
+CREATE FUNCTION {{prefix}}."<@"(a {{prefix}}.query_json, b public.{{prefix}}_json_search)
 RETURNS boolean
 LANGUAGE SQL IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT eql_v3."@>"(b, a)
+  SELECT {{prefix}}."@>"(b, a)
 $$;
 
 CREATE OPERATOR <@(
-  FUNCTION=eql_v3."<@",
-  LEFTARG=eql_v3.query_json,
-  RIGHTARG=public.eql_v3_json_search
+  FUNCTION={{prefix}}."<@",
+  LEFTARG={{prefix}}.query_json,
+  RIGHTARG=public.{{prefix}}_json_search
 );
 
 -- NOTE: `<@`(json_entry, json_search) is likewise a fail-loud blocker — it is
@@ -230,60 +230,60 @@ CREATE OPERATOR <@(
 --!       `bigint`/`numeric`/`text`; exact equality is document containment on a
 --!       value-selector needle. This blocker is deliberately non-STRICT so a
 --!       NULL operand cannot bypass the error.
---! @param a public.eql_v3_json_entry Left operand
---! @param b public.eql_v3_json_entry Right operand
+--! @param a public.{{prefix}}_json_entry Left operand
+--! @param b public.{{prefix}}_json_entry Right operand
 --! @return boolean Never returns; always raises 'operator not supported'.
-CREATE FUNCTION eql_v3.eq(a public.eql_v3_json_entry, b public.eql_v3_json_entry)
+CREATE FUNCTION {{prefix}}.eq(a public.{{prefix}}_json_entry, b public.{{prefix}}_json_entry)
   RETURNS boolean
   IMMUTABLE PARALLEL SAFE
   SET search_path = pg_catalog, extensions, public
 AS $$
 BEGIN
-  RETURN eql_v3_internal.encrypted_domain_unsupported_bool('public.eql_v3_json_entry', '=');
+  RETURN {{prefix}}_internal.encrypted_domain_unsupported_bool('public.{{prefix}}_json_entry', '=');
 END;
 $$ LANGUAGE plpgsql;
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3.eq,
-  LEFTARG  = public.eql_v3_json_entry,
-  RIGHTARG = public.eql_v3_json_entry
+  FUNCTION = {{prefix}}.eq,
+  LEFTARG  = public.{{prefix}}_json_entry,
+  RIGHTARG = public.{{prefix}}_json_entry
 );
 
 --! @brief Block inequality between two extracted jsonb entries.
---! @param a public.eql_v3_json_entry Left operand
---! @param b public.eql_v3_json_entry Right operand
+--! @param a public.{{prefix}}_json_entry Left operand
+--! @param b public.{{prefix}}_json_entry Right operand
 --! @return boolean Never returns; always raises 'operator not supported'.
-CREATE FUNCTION eql_v3.neq(a public.eql_v3_json_entry, b public.eql_v3_json_entry)
+CREATE FUNCTION {{prefix}}.neq(a public.{{prefix}}_json_entry, b public.{{prefix}}_json_entry)
   RETURNS boolean
   IMMUTABLE PARALLEL SAFE
   SET search_path = pg_catalog, extensions, public
 AS $$
 BEGIN
-  RETURN eql_v3_internal.encrypted_domain_unsupported_bool('public.eql_v3_json_entry', '<>');
+  RETURN {{prefix}}_internal.encrypted_domain_unsupported_bool('public.{{prefix}}_json_entry', '<>');
 END;
 $$ LANGUAGE plpgsql;
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3.neq,
-  LEFTARG  = public.eql_v3_json_entry,
-  RIGHTARG = public.eql_v3_json_entry
+  FUNCTION = {{prefix}}.neq,
+  LEFTARG  = public.{{prefix}}_json_entry,
+  RIGHTARG = public.{{prefix}}_json_entry
 );
 
 --! @brief Less-than on jsonb_entry via the CLLW OPE term (native bytea order).
---! @param a public.eql_v3_json_entry Left operand
---! @param b public.eql_v3_json_entry Right operand
+--! @param a public.{{prefix}}_json_entry Left operand
+--! @param b public.{{prefix}}_json_entry Right operand
 --! @return boolean True if a is less than b
-CREATE FUNCTION eql_v3.lt(a public.eql_v3_json_entry, b public.eql_v3_json_entry)
+CREATE FUNCTION {{prefix}}.lt(a public.{{prefix}}_json_entry, b public.{{prefix}}_json_entry)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT eql_v3.ord_term(a) < eql_v3.ord_term(b)
+  SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b)
 $$;
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3.lt,
-  LEFTARG  = public.eql_v3_json_entry,
-  RIGHTARG = public.eql_v3_json_entry,
+  FUNCTION = {{prefix}}.lt,
+  LEFTARG  = public.{{prefix}}_json_entry,
+  RIGHTARG = public.{{prefix}}_json_entry,
   COMMUTATOR = >,
   NEGATOR  = >=,
   RESTRICT = scalarltsel,
@@ -291,20 +291,20 @@ CREATE OPERATOR < (
 );
 
 --! @brief Less-than-or-equal on jsonb_entry via the CLLW OPE term.
---! @param a public.eql_v3_json_entry Left operand
---! @param b public.eql_v3_json_entry Right operand
+--! @param a public.{{prefix}}_json_entry Left operand
+--! @param b public.{{prefix}}_json_entry Right operand
 --! @return boolean True if a is less than or equal to b
-CREATE FUNCTION eql_v3.lte(a public.eql_v3_json_entry, b public.eql_v3_json_entry)
+CREATE FUNCTION {{prefix}}.lte(a public.{{prefix}}_json_entry, b public.{{prefix}}_json_entry)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT eql_v3.ord_term(a) <= eql_v3.ord_term(b)
+  SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b)
 $$;
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3.lte,
-  LEFTARG  = public.eql_v3_json_entry,
-  RIGHTARG = public.eql_v3_json_entry,
+  FUNCTION = {{prefix}}.lte,
+  LEFTARG  = public.{{prefix}}_json_entry,
+  RIGHTARG = public.{{prefix}}_json_entry,
   COMMUTATOR = >=,
   NEGATOR  = >,
   RESTRICT = scalarlesel,
@@ -312,20 +312,20 @@ CREATE OPERATOR <= (
 );
 
 --! @brief Greater-than on jsonb_entry via the CLLW OPE term.
---! @param a public.eql_v3_json_entry Left operand
---! @param b public.eql_v3_json_entry Right operand
+--! @param a public.{{prefix}}_json_entry Left operand
+--! @param b public.{{prefix}}_json_entry Right operand
 --! @return boolean True if a is greater than b
-CREATE FUNCTION eql_v3.gt(a public.eql_v3_json_entry, b public.eql_v3_json_entry)
+CREATE FUNCTION {{prefix}}.gt(a public.{{prefix}}_json_entry, b public.{{prefix}}_json_entry)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT eql_v3.ord_term(a) > eql_v3.ord_term(b)
+  SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b)
 $$;
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3.gt,
-  LEFTARG  = public.eql_v3_json_entry,
-  RIGHTARG = public.eql_v3_json_entry,
+  FUNCTION = {{prefix}}.gt,
+  LEFTARG  = public.{{prefix}}_json_entry,
+  RIGHTARG = public.{{prefix}}_json_entry,
   COMMUTATOR = <,
   NEGATOR  = <=,
   RESTRICT = scalargtsel,
@@ -333,20 +333,20 @@ CREATE OPERATOR > (
 );
 
 --! @brief Greater-than-or-equal on jsonb_entry via the CLLW OPE term.
---! @param a public.eql_v3_json_entry Left operand
---! @param b public.eql_v3_json_entry Right operand
+--! @param a public.{{prefix}}_json_entry Left operand
+--! @param b public.{{prefix}}_json_entry Right operand
 --! @return boolean True if a is greater than or equal to b
-CREATE FUNCTION eql_v3.gte(a public.eql_v3_json_entry, b public.eql_v3_json_entry)
+CREATE FUNCTION {{prefix}}.gte(a public.{{prefix}}_json_entry, b public.{{prefix}}_json_entry)
   RETURNS boolean
   LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
-  SELECT eql_v3.ord_term(a) >= eql_v3.ord_term(b)
+  SELECT {{prefix}}.ord_term(a) >= {{prefix}}.ord_term(b)
 $$;
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3.gte,
-  LEFTARG  = public.eql_v3_json_entry,
-  RIGHTARG = public.eql_v3_json_entry,
+  FUNCTION = {{prefix}}.gte,
+  LEFTARG  = public.{{prefix}}_json_entry,
+  RIGHTARG = public.{{prefix}}_json_entry,
   COMMUTATOR = <=,
   NEGATOR  = <,
   RESTRICT = scalargesel,

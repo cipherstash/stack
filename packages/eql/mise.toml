@@ -244,14 +244,14 @@ depends = ["build"]
 dir = "{{config_root}}"
 run = """
 bash tasks/test/symbol_order_selftest.sh
-bash tasks/test/verify_symbol_order_v3.sh src/deps-ordered-v3.txt
+bash tasks/test/verify_symbol_order_v3.sh build/render/eql_v3/deps-ordered.txt
 """
 
 [tasks."test:installer_complete"]
 description = "Assert the installer contains every ordered src/v3 file's body (DB-free)"
 depends = ["build"]
 dir = "{{config_root}}"
-run = "bash tasks/test/verify_installer_complete.sh src/deps-ordered-v3.txt release/cipherstash-encrypt.sql"
+run = "bash tasks/test/verify_installer_complete.sh build/render/eql_v3/deps-ordered.txt release/cipherstash-encrypt.sql build/render/eql_v3"
 
 [tasks."test:build_ordering_helpers"]
 description = "Unit tests for tasks/build/ordering.sh strip_require_lines (DB-free)"

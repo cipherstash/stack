@@ -2,7 +2,7 @@
 
 --! @brief EQL lint: detect non-inlinable operator implementation functions
 --!
---! Returns one row per violation found in the installed `eql_v3` surface. The
+--! Returns one row per violation found in the installed `{{prefix}}` surface. The
 --! Postgres planner can only inline a function during index matching when:
 --!
 --!   * `LANGUAGE sql` (plpgsql / C / etc. cannot be inlined)
@@ -18,11 +18,11 @@
 --! remaining non-inlinable. Implementing the check requires walking `prosrc`
 --! (or `pg_get_functiondef`); tracked as a follow-up.
 --!
---! Operators on `eql_v3` types (the jsonb-backed encrypted-domain families and
---! the SEM index-term type `eql_v3_internal.ore_block_256`) whose
+--! Operators on `{{prefix}}` types (the jsonb-backed encrypted-domain families and
+--! the SEM index-term type `{{prefix}}_internal.ore_block_256`) whose
 --! implementation functions fail any of these rules silently fall back to seq
---! scan when the documented functional indexes (`eql_v3.eq_term(col)`,
---! `eql_v3.ord_term(col)`) are in place. This lint surfaces every such case.
+--! scan when the documented functional indexes (`{{prefix}}.eq_term(col)`,
+--! `{{prefix}}.ord_term(col)`) are in place. This lint surfaces every such case.
 --!
 --! Severity:
 --!   `error`   — fixable, blocks index matching, ship-blocking.
@@ -47,32 +47,32 @@
 --!                                PostgreSQL skips the body and returns NULL
 --!                                on NULL arguments, silently bypassing the
 --!                                RAISE.
---!   `domain_over_domain`      — an `eql_v3` encrypted domain is derived from
+--!   `domain_over_domain`      — an `{{prefix}}` encrypted domain is derived from
 --!                                another encrypted domain rather than jsonb.
 --!                                Operators resolve against the ultimate base
 --!                                type, so the derived domain does not
 --!                                inherit the base domain's blocker surface.
 --!   `domain_opclass`          — an operator class is declared FOR TYPE on an
---!                                `eql_v3` encrypted domain. Opclasses on
+--!                                `{{prefix}}` encrypted domain. Opclasses on
 --!                                domains bypass operator resolution; use a
 --!                                functional index on the extractor instead.
 --!   `schema_placement`        — a naked composite or enum TYPE lives in the
---!                                public `eql_v3` schema. Internal index-term
+--!                                public `{{prefix}}` schema. Internal index-term
 --!                                types (e.g. `ore_block_256_term`) belong in
---!                                `eql_v3_internal`; a composite/enum in
---!                                `eql_v3` clutters the Supabase Table Builder
+--!                                `{{prefix}}_internal`; a composite/enum in
+--!                                `{{prefix}}` clutters the Supabase Table Builder
 --!                                type picker, which the schema split exists to
---!                                prevent. Move it to `eql_v3_internal`.
+--!                                prevent. Move it to `{{prefix}}_internal`.
 --!
 --! @code{.sql}
 --! SELECT severity, category, object_name, message
---!   FROM eql_v3.lints()
+--!   FROM {{prefix}}.lints()
 --!  WHERE severity = 'error'
 --!  ORDER BY category, object_name;
 --! @endcode
 --!
 --! @return SETOF record (severity text, category text, object_name text, message text)
-CREATE OR REPLACE FUNCTION eql_v3.lints()
+CREATE OR REPLACE FUNCTION {{prefix}}.lints()
 RETURNS TABLE (
   severity text,
   category text,
@@ -98,7 +98,7 @@ AS $$
       AND bn.nspname = 'pg_catalog'
       AND (
            dn.nspname = 'public'
-        OR dn.nspname = ANY(eql_v3_internal.owned_schemas())
+        OR dn.nspname = ANY({{prefix}}_internal.owned_schemas())
       )
   ),
 
@@ -118,7 +118,7 @@ AS $$
         SELECT 1 FROM pg_type t
          WHERE t.oid IN (op.oprleft, op.oprright)
            AND (
-                t.typnamespace IN (SELECT oid FROM pg_namespace WHERE nspname = ANY(eql_v3_internal.owned_schemas()))
+                t.typnamespace IN (SELECT oid FROM pg_namespace WHERE nspname = ANY({{prefix}}_internal.owned_schemas()))
              OR t.oid IN (SELECT typid FROM encrypted_domain_types)
            )
       )
@@ -143,7 +143,7 @@ AS $$
     JOIN pg_language lang_l ON lang_l.oid = p.prolang
   ),
 
-  -- Encrypted-domain blockers: functions in `eql_v3` whose body contains
+  -- Encrypted-domain blockers: functions in `{{prefix}}` whose body contains
   -- a blocker marker emitted by the codegen (any of the
   -- `encrypted_domain_unsupported_*` helper calls — `_bool` for boolean
   -- blockers, `_jsonb` for the native-jsonb-operator blockers; plus the
@@ -161,7 +161,7 @@ AS $$
     FROM pg_catalog.pg_proc p
     JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
     JOIN pg_catalog.pg_language lang_l ON lang_l.oid = p.prolang
-    WHERE n.nspname = ANY(eql_v3_internal.owned_schemas())
+    WHERE n.nspname = ANY({{prefix}}_internal.owned_schemas())
       AND (p.prosrc LIKE '%encrypted_domain_unsupported%'
         OR p.prosrc LIKE '%is not supported for%')
       AND EXISTS (
@@ -343,7 +343,7 @@ AS $$
   JOIN pg_catalog.pg_type bt ON bt.oid = dt.typbasetype
   JOIN pg_catalog.pg_namespace bn ON bn.oid = bt.typnamespace
   WHERE dt.typtype = 'd'
-    AND dn.nspname = ANY(eql_v3_internal.owned_schemas())
+    AND dn.nspname = ANY({{prefix}}_internal.owned_schemas())
     AND bt.typtype = 'd'
     AND bt.oid IN (SELECT typid FROM encrypted_domain_types)
 
@@ -369,7 +369,7 @@ AS $$
   WHERE t.oid IN (SELECT typid FROM encrypted_domain_types)
 
   -- ┌─────────────────────────────────────────────────────────────────┐
-  -- │ Schema placement: the public `eql_v3` schema must hold only the  │
+  -- │ Schema placement: the public `{{prefix}}` schema must hold only the  │
   -- │ jsonb-backed encrypted-domain types. A naked composite/enum type │
   -- │ there is an internal index-term type in the wrong schema — it     │
   -- │ clutters the Supabase type picker the split exists to keep clean. │
@@ -382,19 +382,19 @@ AS $$
     'schema_placement',
     format('type %I.%I', n.nspname, t.typname),
     format(
-      'Type `%s.%s` is a %s in the public `eql_v3` schema. Only jsonb-backed encrypted-domain types belong in `eql_v3`; internal index-term types belong in `eql_v3_internal` so they stay out of the Supabase Table Builder type picker. Move it to `eql_v3_internal`.',
+      'Type `%s.%s` is a %s in the public `{{prefix}}` schema. Only jsonb-backed encrypted-domain types belong in `{{prefix}}`; internal index-term types belong in `{{prefix}}_internal` so they stay out of the Supabase Table Builder type picker. Move it to `{{prefix}}_internal`.',
       n.nspname, t.typname,
       CASE t.typtype WHEN 'c' THEN 'composite type' WHEN 'e' THEN 'enum type' ELSE 'type' END)
   FROM pg_catalog.pg_type t
   JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
-  WHERE n.nspname = 'eql_v3'
+  WHERE n.nspname = '{{prefix}}'
     AND t.typtype IN ('c', 'e')
 
   ORDER BY 1, 2, 3;
 $$;
 
-COMMENT ON FUNCTION eql_v3.lints() IS
+COMMENT ON FUNCTION {{prefix}}.lints() IS
   'EQL lint: returns one row per non-inlinable operator implementation. '
-  'Run `SELECT * FROM eql_v3.lints() WHERE severity = ''error''` for a '
-  'CI-gateable check that all operator implementations on eql_v3 types are '
+  'Run `SELECT * FROM {{prefix}}.lints() WHERE severity = ''error''` for a '
+  'CI-gateable check that all operator implementations on {{prefix}} types are '
   'eligible for planner inlining.';
