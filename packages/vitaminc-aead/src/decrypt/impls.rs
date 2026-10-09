@@ -147,6 +147,62 @@ impl<'c> Decrypt<'c> for u32 {
     }
 }
 
+impl<'c> Decrypt<'c> for i128 {
+    fn decrypt_with_aad<'a, D, A>(decipher: D, aad: A) -> D::Ok<Self>
+    where
+        D: Decipher<'c>,
+        A: IntoAad<'a>,
+    {
+        D::map_ok(
+            Self::decrypt_protected(decipher, aad),
+            Controlled::risky_unwrap,
+        )
+    }
+
+    fn decrypt_protected<'a, D, A>(decipher: D, aad: A) -> D::Ok<Protected<Self>>
+    where
+        D: Decipher<'c>,
+        A: IntoAad<'a>,
+    {
+        struct IntegerVisitor;
+        impl<'c> DecipherVisitor<'c> for IntegerVisitor {
+            type Value = Protected<i128>;
+            fn visit_bytes_vec(self, data: Protected<Vec<u8>>) -> Result<Self::Value, Unspecified> {
+                Ok(array_from_protected::<16>(&data)?.map(i128::from_le_bytes))
+            }
+        }
+        decipher.decrypt_bytes(IntegerVisitor, aad)
+    }
+}
+
+impl<'c> Decrypt<'c> for u128 {
+    fn decrypt_with_aad<'a, D, A>(decipher: D, aad: A) -> D::Ok<Self>
+    where
+        D: Decipher<'c>,
+        A: IntoAad<'a>,
+    {
+        D::map_ok(
+            Self::decrypt_protected(decipher, aad),
+            Controlled::risky_unwrap,
+        )
+    }
+
+    fn decrypt_protected<'a, D, A>(decipher: D, aad: A) -> D::Ok<Protected<Self>>
+    where
+        D: Decipher<'c>,
+        A: IntoAad<'a>,
+    {
+        struct IntegerVisitor;
+        impl<'c> DecipherVisitor<'c> for IntegerVisitor {
+            type Value = Protected<u128>;
+            fn visit_bytes_vec(self, data: Protected<Vec<u8>>) -> Result<Self::Value, Unspecified> {
+                Ok(array_from_protected::<16>(&data)?.map(u128::from_le_bytes))
+            }
+        }
+        decipher.decrypt_bytes(IntegerVisitor, aad)
+    }
+}
+
 impl<'c, T> Decrypt<'c> for Vec<T>
 where
     T: Decrypt<'c> + 'c,

@@ -156,7 +156,7 @@ pub trait Cipher: Sized {
     /// [`Encrypt`](crate::Encrypt) implementations that cannot name this
     /// cipher's [`Passthrough`](Cipher::Passthrough) type at the call site.
     ///
-    /// A tree-shaped, dynamically typed value (e.g. `FfiValue`) implements
+    /// A tree-shaped, dynamically typed value (e.g. `Value`) implements
     /// `Encrypt` generically over *every* cipher, so its impl has no way to
     /// construct a specific cipher's payload type — the trait method signature
     /// forbids the extra bound (`impl has stricter requirements than trait`).

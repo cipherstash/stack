@@ -19,6 +19,50 @@ impl Encrypt for u32 {
     }
 }
 
+impl Encrypt for i128 {
+    fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
+    where
+        C: Cipher,
+        A: IntoAad<'a>,
+    {
+        Self::encrypt_protected(Protected::new(self), cipher, aad)
+    }
+
+    fn encrypt_protected<'a, C, A>(
+        this: Protected<Self>,
+        cipher: C,
+        aad: A,
+    ) -> Result<C::Ok, C::Error>
+    where
+        C: Cipher,
+        A: IntoAad<'a>,
+    {
+        cipher.encrypt_bytes_array(this.map(i128::to_le_bytes), aad)
+    }
+}
+
+impl Encrypt for u128 {
+    fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
+    where
+        C: Cipher,
+        A: IntoAad<'a>,
+    {
+        Self::encrypt_protected(Protected::new(self), cipher, aad)
+    }
+
+    fn encrypt_protected<'a, C, A>(
+        this: Protected<Self>,
+        cipher: C,
+        aad: A,
+    ) -> Result<C::Ok, C::Error>
+    where
+        C: Cipher,
+        A: IntoAad<'a>,
+    {
+        cipher.encrypt_bytes_array(this.map(u128::to_le_bytes), aad)
+    }
+}
+
 impl Encrypt for String {
     fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
     where

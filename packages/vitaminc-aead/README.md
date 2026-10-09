@@ -93,7 +93,7 @@ impl<'c> Cipher for &'c MyCipher {
         self,
         _value: Box<dyn Any + Send + 'static>,
     ) -> Result<Self::Ok, Self::Error> {
-        // Type-erased passthrough for self-describing encoders (e.g. FfiValue).
+        // Type-erased passthrough for self-describing encoders (e.g. Value).
         // When the payload type IS `Box<dyn Any + Send>`, forward to `passthrough`.
         unimplemented!("store the boxed value unencrypted (or downcast to an owned type)")
     }
@@ -195,7 +195,7 @@ let plaintext: String = cipher.decrypt(ciphertext)?;
 let plaintext: String = cipher.decrypt_with_aad(ciphertext, "context data")?;
 ```
 
-`String`, `Vec<u8>`, `[u8; N]`, `u32`, `Vec<T: Decrypt>`, `HashMap<String, T: Decrypt>`, and `Protected<T: Decrypt>` all implement `Decrypt` out of the box.
+`String`, `Vec<u8>`, `[u8; N]`, `u32`, `i128`, `u128`, `Vec<T: Decrypt>`, `HashMap<String, T: Decrypt>`, and `Protected<T: Decrypt>` all implement `Decrypt` out of the box.
 
 > **Note on maps:** both `HashMap<&'static str, T>` and `HashMap<String, T>` implement `Encrypt` (keys are anything `Into<Cow<'static, str>>`), and decryption yields `HashMap<String, T>`. Map keys travel in the clear but are bound into each value's AAD via [`Context::for_map_entry`], so swapping or renaming keys inside a stored ciphertext causes decryption to fail.
 
