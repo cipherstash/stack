@@ -399,7 +399,7 @@ async function encryptGroupPerTerm(
 ): Promise<Encrypted[]> {
   const client = dynamicEncryptionClient(ctx.encryptionClient)
   return Promise.all(
-    values.map(async (value) => {
+    values.map(async (value, i) => {
       const result = await withOpContext(
         client.encrypt(value, {
           column,
@@ -409,6 +409,16 @@ async function encryptGroupPerTerm(
       )
       if (result.failure) {
         encryptionFailure(ctx.tableName, result.failure.message, result.failure)
+      }
+      // `encrypt` short-circuits a `null` plaintext to a `null` result, and a
+      // JSON operand's type admits `null`. Same contract as the bulk path
+      // above: a null envelope would be `JSON.stringify`'d to `"null"` and
+      // sent as the filter operand, so fail rather than send it.
+      if (result.data === null) {
+        encryptionFailure(
+          ctx.tableName,
+          `encryption returned a null envelope at position ${i} for column "${column.getName()}".`,
+        )
       }
       return result.data
     }),

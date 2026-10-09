@@ -10,6 +10,7 @@ import type {
   QueryOpName,
 } from '@cipherstash/protect-ffi'
 import type { AnyV3Table } from '@/eql/v3'
+import type { JsonDocument } from '@/eql/v3/columns'
 import type {
   ColumnSchema,
   EncryptedColumn,
@@ -91,6 +92,18 @@ export type EncryptedQuery =
  * arms can collapse back into `JsPlaintext`.
  */
 export type Plaintext = JsPlaintext | Date | bigint
+
+/**
+ * @internal What the encrypt operations ACCEPT: {@link Plaintext} plus the v3
+ * `types.Json` document. The document is the one v3 plaintext `Plaintext`
+ * cannot express — it may be `null`, and its arrays may hold `null` elements,
+ * which the FFI's `JsPlaintext[]` omits although the FFI serializes the value
+ * as JSON and accepts them. Kept separate from `Plaintext` (and from the public
+ * `ScalarQueryTerm` / `BulkEncryptPayload` built on it) so no exported type
+ * changes meaning; the gap is bridged once, at the FFI call, by
+ * `toJsPlaintext`.
+ */
+export type PlaintextInput = Plaintext | JsonDocument
 
 // ---------------------------------------------------------------------------
 // Client configuration
@@ -431,6 +444,12 @@ export type BulkEncryptPayload = Array<{
   plaintext: Plaintext | null
 }>
 
+/** @internal {@link BulkEncryptPayload} over {@link PlaintextInput}. */
+export type BulkEncryptPayloadInput = Array<{
+  id?: string
+  plaintext: PlaintextInput | null
+}>
+
 export type BulkEncryptedData = Array<{ id?: string; data: Encrypted | null }>
 export type BulkDecryptPayload = Array<{ id?: string; data: Encrypted | null }>
 export type BulkDecryptedData = Array<DecryptionResult<JsPlaintext | null>>
@@ -536,3 +555,19 @@ export type EncryptQueryOptions = QueryTermBase
 export type ScalarQueryTerm = QueryTermBase & {
   value: Plaintext
 }
+
+/** @internal {@link ScalarQueryTerm} over {@link PlaintextInput}. */
+export type QueryTermInput = QueryTermBase & {
+  value: PlaintextInput
+}
+
+/**
+ * @internal The two call forms of the native `encryptQuery`, as one argument
+ * list: a scalar WITH its options, or a batch of terms with none. Written as a
+ * tuple union rather than `(plaintextOrTerms, opts?)` so a scalar without
+ * options — which the runtime rejects by throwing — does not type-check, while
+ * a wrapper can still forward either form unchanged with `...args`.
+ */
+export type EncryptQueryArgs =
+  | [plaintext: PlaintextInput, opts: EncryptQueryOptions]
+  | [terms: readonly QueryTermInput[], opts?: undefined]

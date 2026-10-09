@@ -2,7 +2,7 @@ import type { QueryOpName } from '@cipherstash/protect-ffi'
 import type {
   BuildableQueryColumn,
   FfiIndexTypeName,
-  Plaintext,
+  PlaintextInput,
   QueryTypeName,
 } from '../../types'
 import { queryTypeToFfi, queryTypeToQueryOp } from '../../types'
@@ -38,7 +38,9 @@ export function inferIndexType(column: BuildableQueryColumn): FfiIndexTypeName {
  * - String → ste_vec_selector (JSONPath queries like '$.user.email')
  * - Object/Array/Number/Boolean → default (containment queries)
  */
-export function inferQueryOpFromPlaintext(plaintext: Plaintext): QueryOpName {
+export function inferQueryOpFromPlaintext(
+  plaintext: NonNullable<PlaintextInput>,
+): QueryOpName {
   if (typeof plaintext === 'string') {
     return 'ste_vec_selector'
   }
@@ -123,7 +125,7 @@ function equalityOrderingIndex(
 export function resolveIndexType(
   column: BuildableQueryColumn,
   queryType?: QueryTypeName,
-  plaintext?: Plaintext | null,
+  plaintext?: PlaintextInput | null,
 ): { indexType: FfiIndexTypeName; queryOp?: QueryOpName } {
   let indexType = queryType ? queryTypeToFfi[queryType] : inferIndexType(column)
 

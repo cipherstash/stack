@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createEncryptionClient } from '@/encryption/client-v3'
 import { encryptedTable, types } from '@/eql/v3'
 import type { Encrypted } from '@/types'
@@ -329,5 +329,106 @@ describe('createEncryptionClient — raw decrypt paths are unmapped', () => {
     // Position-stable identifiers survive the (absent) mapping too.
     expect(first.id).toBe('u1')
     expect(forwarded).toEqual([[{ id: 'u1', data: payload }]])
+  })
+})
+
+/**
+ * The encrypt half of the wrapper is pure forwarding: each method hands its
+ * arguments to the native client and returns the native operation as-is. No
+ * credentials are needed to check that, and nothing else does — the type tests
+ * run against a `declare const client`, and the integration suites need live
+ * credentials. A swapped or dropped argument in any forwarding line would
+ * otherwise pass every credential-free check.
+ *
+ * Each stub returns its own sentinel, so `toBe` proves the wrapper returned the
+ * native operation unchanged, and `toHaveBeenLastCalledWith` proves the argument
+ * list arrived intact: same values, same order, same arity.
+ */
+describe('createEncryptionClient — encrypt paths forward their arguments', () => {
+  const queryable = encryptedTable('q', {
+    email: types.TextEq('email'),
+    note: types.Text('note'),
+  })
+
+  function forwardingClient() {
+    const sentinels = {
+      encrypt: Symbol('encrypt'),
+      encryptQuery: Symbol('encryptQuery'),
+      encryptModel: Symbol('encryptModel'),
+      bulkEncryptModels: Symbol('bulkEncryptModels'),
+      bulkEncrypt: Symbol('bulkEncrypt'),
+    }
+    const native = {
+      encrypt: vi.fn(() => sentinels.encrypt),
+      encryptQuery: vi.fn(() => sentinels.encryptQuery),
+      encryptModel: vi.fn(() => sentinels.encryptModel),
+      bulkEncryptModels: vi.fn(() => sentinels.bulkEncryptModels),
+      bulkEncrypt: vi.fn(() => sentinels.bulkEncrypt),
+    }
+    const client = createEncryptionClient(
+      native as unknown as NativeClientStub,
+      queryable,
+    )
+    return { client, native, sentinels }
+  }
+
+  it('encrypt forwards (plaintext, opts)', () => {
+    const { client, native, sentinels } = forwardingClient()
+    const opts = { table: queryable, column: queryable.note }
+
+    expect(client.encrypt('hi', opts)).toBe(sentinels.encrypt)
+    expect(native.encrypt).toHaveBeenLastCalledWith('hi', opts)
+  })
+
+  it('encryptQuery forwards a scalar with its options', () => {
+    const { client, native, sentinels } = forwardingClient()
+    const opts = {
+      table: queryable,
+      column: queryable.email,
+      queryType: 'equality' as const,
+    }
+
+    expect(client.encryptQuery('a@b.com', opts)).toBe(sentinels.encryptQuery)
+    expect(native.encryptQuery).toHaveBeenLastCalledWith('a@b.com', opts)
+  })
+
+  it('encryptQuery forwards a batch of terms as its only argument', () => {
+    const { client, native, sentinels } = forwardingClient()
+    const terms = [
+      { value: 'a@b.com', table: queryable, column: queryable.email },
+    ]
+
+    expect(client.encryptQuery(terms)).toBe(sentinels.encryptQuery)
+    // Exactly one argument: a trailing `undefined` would be a different call
+    // to a native method that branches on its argument count.
+    expect(native.encryptQuery).toHaveBeenLastCalledWith(terms)
+    expect(native.encryptQuery.mock.lastCall).toHaveLength(1)
+  })
+
+  it('encryptModel forwards (model, table)', () => {
+    const { client, native, sentinels } = forwardingClient()
+    const model = { id: 'u1', email: 'a@b.com' }
+
+    expect(client.encryptModel(model, queryable)).toBe(sentinels.encryptModel)
+    expect(native.encryptModel).toHaveBeenLastCalledWith(model, queryable)
+  })
+
+  it('bulkEncryptModels forwards (models, table)', () => {
+    const { client, native, sentinels } = forwardingClient()
+    const models = [{ id: 'u1', email: 'a@b.com' }]
+
+    expect(client.bulkEncryptModels(models, queryable)).toBe(
+      sentinels.bulkEncryptModels,
+    )
+    expect(native.bulkEncryptModels).toHaveBeenLastCalledWith(models, queryable)
+  })
+
+  it('bulkEncrypt forwards (plaintexts, opts)', () => {
+    const { client, native, sentinels } = forwardingClient()
+    const plaintexts = [{ id: '1', plaintext: 'a@b.com' }, { plaintext: null }]
+    const opts = { table: queryable, column: queryable.email }
+
+    expect(client.bulkEncrypt(plaintexts, opts)).toBe(sentinels.bulkEncrypt)
+    expect(native.bulkEncrypt).toHaveBeenLastCalledWith(plaintexts, opts)
   })
 })

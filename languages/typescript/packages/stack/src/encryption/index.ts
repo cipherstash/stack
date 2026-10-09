@@ -22,16 +22,14 @@ import type {
   AuthStrategy,
   BuildableTable,
   BulkDecryptPayload,
-  BulkEncryptPayload,
+  BulkEncryptPayloadInput,
   Client,
   ClientConfig,
   Encrypted,
-  EncryptedFromBuildableTable,
   EncryptOptions,
-  EncryptQueryOptions,
+  EncryptQueryArgs,
   KeysetIdentifier,
-  Plaintext,
-  ScalarQueryTerm,
+  PlaintextInput,
 } from '@/types'
 import { hasBuildColumnKeyMap } from '@/types'
 import { logger } from '@/utils/logger'
@@ -48,11 +46,12 @@ import { BulkEncryptOperation } from './operations/bulk-encrypt'
 import { BulkEncryptModelsOperation } from './operations/bulk-encrypt-models'
 import { DecryptOperation } from './operations/decrypt'
 import { DecryptModelOperation } from './operations/decrypt-model'
-import { EncryptOperation } from './operations/encrypt'
+import { EncryptOperation, type EncryptResult } from './operations/encrypt'
 import { EncryptModelOperation } from './operations/encrypt-model'
 import { EncryptQueryOperation } from './operations/encrypt-query'
 
 export type { EncryptionClient } from './client-v3'
+export type { EncryptResult } from './operations/encrypt'
 
 // Re-export the operation classes returned by `EncryptionClient` methods so they
 // are part of the public API and appear in the generated reference, allowing
@@ -271,16 +270,21 @@ class NativeEncryptionClient {
    * @see {@link LockContext}
    * @see {@link EncryptOperation}
    */
-  encrypt(plaintext: Plaintext, opts: EncryptOptions): EncryptOperation {
-    return new EncryptOperation(this.client, plaintext, opts)
+  encrypt<P extends PlaintextInput>(
+    plaintext: P,
+    opts: EncryptOptions,
+  ): EncryptOperation<EncryptResult<P>> {
+    return new EncryptOperation<EncryptResult<P>>(this.client, plaintext, opts)
   }
 
   /**
    * Encrypt a query value - returns a promise which resolves to an encrypted query value.
    *
-   * @param plaintext - The plaintext value to be encrypted for querying.
-   * @param opts - Options specifying the column, table, and optional queryType for encryption.
-   * @returns An EncryptQueryOperation that can be awaited or chained with additional methods.
+   * @param args - `[plaintext, opts]` to encrypt one value for querying (opts
+   *   specify the column, table, and optional queryType), or `[terms]` for the
+   *   batch form below. See `EncryptQueryArgs`.
+   * @returns An EncryptQueryOperation (or, for the batch form, a
+   *   BatchEncryptQueryOperation) that can be awaited or chained.
    *
    * @example
    * The following example demonstrates how to encrypt a query value using the Encryption client.
@@ -327,53 +331,39 @@ class NativeEncryptionClient {
    * When `queryType` is omitted on a `searchableJson()` column, the query operation is inferred:
    * - String plaintext → `steVecSelector` (JSONPath queries like `'$.user.email'`)
    * - Object/Array plaintext → default SteVec containment (for example `{ role: 'admin' }`)
+   *
+   * **Batch form:** called with an array of query terms and no options, encrypts
+   * every term in one call and returns a {@link BatchEncryptQueryOperation}.
    */
   encryptQuery(
-    plaintext: Plaintext,
-    opts: EncryptQueryOptions,
-  ): EncryptQueryOperation
-
-  /**
-   * Encrypt multiple values for use in queries (batch operation).
-   * @param terms - Array of query terms to encrypt
-   */
-  encryptQuery(terms: readonly ScalarQueryTerm[]): BatchEncryptQueryOperation
-
-  encryptQuery(
-    plaintextOrTerms: Plaintext | readonly ScalarQueryTerm[],
-    opts?: EncryptQueryOptions,
+    ...args: EncryptQueryArgs
   ): EncryptQueryOperation | BatchEncryptQueryOperation {
-    // Discriminate between ScalarQueryTerm[] and Plaintext (which can also be an
+    // `args` is `[plaintext, opts]` or `[terms]` (see `EncryptQueryArgs`); the
+    // typed client forwards its caller's arguments here unchanged with
+    // `...args`. Discriminating on `args[1]` is what lets TypeScript narrow the
+    // pair together, so neither branch needs an assertion.
+    // Discriminate between a term array and a plaintext (which can also be an
     // array) using a type guard function. Only route to batch mode when no opts
     // are supplied — an explicit EncryptQueryOptions forces the single-plaintext
     // path even if the plaintext value happens to be an array.
-    if (!opts && isScalarQueryTermArray(plaintextOrTerms)) {
-      return new BatchEncryptQueryOperation(this.client, plaintextOrTerms)
+    if (!args[1] && isScalarQueryTermArray(args[0])) {
+      return new BatchEncryptQueryOperation(this.client, args[0])
     }
 
     // Handle empty arrays: if opts provided, treat as single value; otherwise batch mode
     // This maintains backward compatibility for encryptQuery([]) while allowing
     // encryptQuery([], opts) to encrypt an empty array as a single value
-    if (
-      Array.isArray(plaintextOrTerms) &&
-      plaintextOrTerms.length === 0 &&
-      !opts
-    ) {
-      return new BatchEncryptQueryOperation(
-        this.client,
-        [] as readonly ScalarQueryTerm[],
-      )
+    if (Array.isArray(args[0]) && args[0].length === 0 && !args[1]) {
+      return new BatchEncryptQueryOperation(this.client, [])
     }
 
-    if (!opts) {
+    // Unreachable through the types — `EncryptQueryArgs` has no scalar form
+    // without options — but kept for untyped callers.
+    if (!args[1]) {
       throw new Error('EncryptQueryOptions are required')
     }
 
-    return new EncryptQueryOperation(
-      this.client,
-      plaintextOrTerms as Plaintext,
-      opts,
-    )
+    return new EncryptQueryOperation(this.client, args[0], args[1])
   }
 
   /**
@@ -426,10 +416,11 @@ class NativeEncryptionClient {
    * All other fields are passed through unchanged. Returns a thenable operation
    * that supports `.withLockContext()` for identity-aware encryption.
    *
-   * The return type is **schema-aware**: fields matching the table schema are
-   * typed as `Encrypted`, while other fields retain their original types. For
-   * best results, let TypeScript infer the type parameters from the arguments
-   * rather than providing an explicit type argument.
+   * Typed `Record<string, unknown>` in and out: the encrypted model is built
+   * at runtime by walking `table`, so no precise shape is known here. The
+   * typed {@link EncryptionClient} narrows the result to the schema-aware
+   * `V3EncryptedModel<Table, T>` (schema fields `Encrypted`, others unchanged),
+   * which is the type callers see.
    *
    * @param input - The model object with plaintext values to encrypt.
    * @param table - The table schema defining which fields to encrypt.
@@ -465,15 +456,11 @@ class NativeEncryptionClient {
    * }
    * ```
    */
-  encryptModel<T extends Record<string, unknown>, Table extends BuildableTable>(
-    input: T,
-    table: Table,
-  ): EncryptModelOperation<EncryptedFromBuildableTable<T, Table>> {
-    return new EncryptModelOperation(
-      this.client,
-      input as Record<string, unknown>,
-      table,
-    )
+  encryptModel(
+    input: Record<string, unknown>,
+    table: BuildableTable,
+  ): EncryptModelOperation<Record<string, unknown>> {
+    return new EncryptModelOperation(this.client, input, table)
   }
 
   /**
@@ -517,9 +504,11 @@ class NativeEncryptionClient {
    * while still using a unique key for each encrypted value. Only fields
    * matching the table schema are encrypted; other fields pass through unchanged.
    *
-   * The return type is **schema-aware**: fields matching the table schema are
-   * typed as `Encrypted`, while other fields retain their original types. For
-   * best results, let TypeScript infer the type parameters from the arguments.
+   * Typed `Record<string, unknown>` in and out: the encrypted model is built
+   * at runtime by walking `table`, so no precise shape is known here. The
+   * typed {@link EncryptionClient} narrows the result to the schema-aware
+   * `V3EncryptedModel<Table, T>` (schema fields `Encrypted`, others unchanged),
+   * which is the type callers see.
    *
    * @param input - An array of model objects with plaintext values to encrypt.
    * @param table - The table schema defining which fields to encrypt.
@@ -555,18 +544,11 @@ class NativeEncryptionClient {
    * }
    * ```
    */
-  bulkEncryptModels<
-    T extends Record<string, unknown>,
-    Table extends BuildableTable,
-  >(
-    input: Array<T>,
-    table: Table,
-  ): BulkEncryptModelsOperation<EncryptedFromBuildableTable<T, Table>> {
-    return new BulkEncryptModelsOperation(
-      this.client,
-      input as Array<Record<string, unknown>>,
-      table,
-    )
+  bulkEncryptModels(
+    input: Array<Record<string, unknown>>,
+    table: BuildableTable,
+  ): BulkEncryptModelsOperation<Record<string, unknown>> {
+    return new BulkEncryptModelsOperation(this.client, input, table)
   }
 
   /**
@@ -640,7 +622,7 @@ class NativeEncryptionClient {
    * ```
    */
   bulkEncrypt(
-    plaintexts: BulkEncryptPayload,
+    plaintexts: BulkEncryptPayloadInput,
     opts: EncryptOptions,
   ): BulkEncryptOperation {
     return new BulkEncryptOperation(this.client, plaintexts, opts)

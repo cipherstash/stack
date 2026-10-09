@@ -1,7 +1,6 @@
 import { type Result, withResult } from '@byteslice/result'
 import {
   encryptQueryBulk as ffiEncryptQueryBulk,
-  type JsPlaintext,
   type QueryPayload,
 } from '@cipherstash/protect-ffi'
 import { formatEncryptedResult } from '@/encryption/helpers'
@@ -10,13 +9,19 @@ import {
   failureMessage,
 } from '@/encryption/helpers/auth-failure'
 import { getErrorCode } from '@/encryption/helpers/error-code'
+import { toJsPlaintext } from '@/encryption/helpers/js-plaintext'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import {
   type Context,
   type LockContextInput,
   resolveLockContext,
 } from '@/identity'
-import type { Client, EncryptedQueryResult, ScalarQueryTerm } from '@/types'
+import type {
+  Client,
+  EncryptedQueryResult,
+  PlaintextInput,
+  QueryTermInput,
+} from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import { resolveIndexType } from '../helpers/infer-index-type'
 import {
@@ -27,15 +32,22 @@ import {
 import { noClientError } from '../index'
 import { EncryptionOperation } from './base-operation'
 
+/** A term whose value survived {@link filterNullTerms}. */
+type NonNullTerm = QueryTermInput & { value: NonNullable<PlaintextInput> }
+
+function hasValue(term: QueryTermInput): term is NonNullTerm {
+  return term.value !== null && term.value !== undefined
+}
+
 // Separates null/undefined values from non-null terms in the input array
 // so they bypass the FFI call. Original indices are tracked so the
 // reassembled result preserves position.
-function filterNullTerms(terms: readonly ScalarQueryTerm[]): {
-  nonNullTerms: { term: ScalarQueryTerm; originalIndex: number }[]
+function filterNullTerms(terms: readonly QueryTermInput[]): {
+  nonNullTerms: { term: NonNullTerm; originalIndex: number }[]
 } {
-  const nonNullTerms: { term: ScalarQueryTerm; originalIndex: number }[] = []
+  const nonNullTerms: { term: NonNullTerm; originalIndex: number }[] = []
   terms.forEach((term, index) => {
-    if (term.value !== null && term.value !== undefined) {
+    if (hasValue(term)) {
       nonNullTerms.push({ term, originalIndex: index })
     }
   })
@@ -48,7 +60,7 @@ function filterNullTerms(terms: readonly ScalarQueryTerm[]): {
  * Optionally includes lockContext if provided.
  */
 function buildQueryPayload(
-  term: ScalarQueryTerm,
+  term: NonNullTerm,
   lockContext?: Context,
 ): QueryPayload {
   assertValidNumericValue(term.value)
@@ -64,7 +76,7 @@ function buildQueryPayload(
   assertMatchNeedleQueryable(term.value, indexType, term.column)
 
   const payload: QueryPayload = {
-    plaintext: term.value as JsPlaintext,
+    plaintext: toJsPlaintext(term.value),
     column: term.column.getName(),
     table: term.table.tableName,
     indexType,
@@ -87,7 +99,7 @@ function assembleResults(
   // Typed as the FFI bulk-query return so it tracks scalar, SteVec containment,
   // selector-hash, value-selector, and selector-ordering query shapes.
   encryptedValues: Awaited<ReturnType<typeof ffiEncryptQueryBulk>>,
-  nonNullTerms: { term: ScalarQueryTerm; originalIndex: number }[],
+  nonNullTerms: { term: NonNullTerm; originalIndex: number }[],
 ): EncryptedQueryResult[] {
   const results: EncryptedQueryResult[] = new Array(totalLength).fill(null)
   nonNullTerms.forEach(({ term, originalIndex }, i) => {
@@ -104,7 +116,7 @@ export class BatchEncryptQueryOperation extends EncryptionOperation<
 > {
   constructor(
     private client: Client,
-    private terms: readonly ScalarQueryTerm[],
+    private terms: readonly QueryTermInput[],
   ) {
     super()
   }
@@ -178,7 +190,7 @@ export class BatchEncryptQueryOperationWithLockContext extends EncryptionOperati
 > {
   constructor(
     private client: Client,
-    private terms: readonly ScalarQueryTerm[],
+    private terms: readonly QueryTermInput[],
     private lockContext: LockContextInput,
     auditMetadata?: Record<string, unknown>,
   ) {

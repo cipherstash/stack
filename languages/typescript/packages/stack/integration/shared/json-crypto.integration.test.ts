@@ -9,6 +9,7 @@ import { unwrapResult } from '@cipherstash/test-kit'
 import { beforeAll, describe, expect, it } from 'vitest'
 import type { EncryptionClient } from '@/encryption/v3'
 import { Encryption, encryptedTable, types } from '@/encryption/v3'
+import type { JsonDocument } from '@/eql/v3/columns'
 
 const docs = encryptedTable('v3_json_docs', {
   profile: types.Json('profile'),
@@ -59,11 +60,67 @@ describe('v3 typed client — encrypted JSONB round-trip', () => {
       const encrypted = unwrapResult(
         await client.encrypt(value, { table: docs, column: docs.profile }),
       )
+      // A null document short-circuits to a null result (DB NULL) rather than
+      // being encrypted, and `encrypt`'s result type says so for a plaintext
+      // that may be null.
+      if (encrypted === null) {
+        expect(value).toBeNull()
+        return
+      }
       const decrypted = unwrapResult(await client.decrypt(encrypted))
       expect(decrypted).toEqual(value)
     },
     30000,
   )
+
+  // `toJsPlaintext` (src/encryption/helpers/js-plaintext.ts) casts a JSON
+  // document to protect-ffi's `JsPlaintext`, whose array type omits `null`, on
+  // the claim that the FFI accepts `null` array ELEMENTS anyway. A top-level
+  // `null` never reaches the FFI (encrypt short-circuits it), so the null-root
+  // case above does not prove that claim — these do, on both the single and the
+  // bulk encrypt paths.
+  it.each<[string, JsonDocument]>([
+    [
+      'object with null array elements',
+      { tags: ['a', null], grid: [[null, 1]] },
+    ],
+    ['array root with a null element', [null, 1]],
+  ])(
+    'round-trips an %s through encrypt',
+    async (_label, value) => {
+      const encrypted = unwrapResult(
+        await client.encrypt(value, { table: docs, column: docs.profile }),
+      )
+      if (encrypted === null) {
+        throw new Error('a non-null document must encrypt to a payload')
+      }
+      expect(Array.isArray((encrypted as { sv?: unknown }).sv)).toBe(true)
+
+      const decrypted = unwrapResult(await client.decrypt(encrypted))
+      expect(decrypted).toEqual(value)
+    },
+    30000,
+  )
+
+  it('round-trips a document with null array elements through bulkEncrypt', async () => {
+    const value = { tags: ['a', null], grid: [[null, 1]] }
+
+    const encrypted = unwrapResult(
+      await client.bulkEncrypt([{ id: 'nulls', plaintext: value }], {
+        table: docs,
+        column: docs.profile,
+      }),
+    )
+    expect(encrypted).toHaveLength(1)
+    expect(encrypted[0].data).not.toBeNull()
+    expect(Array.isArray((encrypted[0].data as { sv?: unknown }).sv)).toBe(true)
+
+    const decrypted = unwrapResult(
+      await client.bulkDecrypt([{ id: 'nulls', data: encrypted[0].data }]),
+    )
+    expect(decrypted).toHaveLength(1)
+    expect(decrypted[0].data).toEqual(value)
+  }, 30000)
 
   // The boundary the `JsonDocument` type encodes: a top-level SCALAR is not a
   // JSON document. protect-ffi rejects it ("Cannot convert … to Json") — a bare

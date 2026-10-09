@@ -1,10 +1,11 @@
 import { type Result, withResult } from '@byteslice/result'
-import { encryptBulk, type JsPlaintext } from '@cipherstash/protect-ffi'
+import { encryptBulk } from '@cipherstash/protect-ffi'
 import {
   failureDiagnostics,
   failureMessage,
 } from '@/encryption/helpers/auth-failure'
 import { getErrorCode } from '@/encryption/helpers/error-code'
+import { toJsPlaintext } from '@/encryption/helpers/js-plaintext'
 import { assertValidNumericValue } from '@/encryption/helpers/validation'
 import { type EncryptionError, EncryptionErrorTypes } from '@/errors'
 import {
@@ -16,10 +17,11 @@ import type {
   BuildableColumn,
   BuildableTable,
   BulkEncryptedData,
-  BulkEncryptPayload,
+  BulkEncryptPayloadInput,
   Client,
   Encrypted,
   EncryptOptions,
+  PlaintextInput,
 } from '@/types'
 import { createRequestLogger } from '@/utils/logger'
 import { noClientError } from '../index'
@@ -42,17 +44,20 @@ import { EncryptionOperation } from './base-operation'
 // lost by the drop either way — results are correlated back to ids positionally
 // by `mapEncryptedDataToResult`, reading the ORIGINAL array, not this one.
 const createEncryptPayloads = (
-  plaintexts: BulkEncryptPayload,
+  plaintexts: BulkEncryptPayloadInput,
   column: BuildableColumn,
   table: BuildableTable,
   lockContext?: Context,
 ) => {
   return plaintexts
-    .filter(({ plaintext }) => plaintext !== null)
+    .filter(
+      (entry): entry is { plaintext: NonNullable<PlaintextInput> } =>
+        entry.plaintext !== null,
+    )
     .map(({ plaintext }) => {
       assertValidNumericValue(plaintext)
       return {
-        plaintext: plaintext as JsPlaintext,
+        plaintext: toJsPlaintext(plaintext),
         column: column.getName(),
         table: table.tableName,
         ...(lockContext && { lockContext }),
@@ -60,11 +65,12 @@ const createEncryptPayloads = (
     })
 }
 
-const createNullResult = (plaintexts: BulkEncryptPayload): BulkEncryptedData =>
-  plaintexts.map(({ id }) => ({ id, data: null }))
+const createNullResult = (
+  plaintexts: BulkEncryptPayloadInput,
+): BulkEncryptedData => plaintexts.map(({ id }) => ({ id, data: null }))
 
 const mapEncryptedDataToResult = (
-  plaintexts: BulkEncryptPayload,
+  plaintexts: BulkEncryptPayloadInput,
   encryptedData: Encrypted[],
 ): BulkEncryptedData => {
   const result: BulkEncryptedData = new Array(plaintexts.length)
@@ -82,13 +88,13 @@ const mapEncryptedDataToResult = (
 
 export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData> {
   private client: Client
-  private plaintexts: BulkEncryptPayload
+  private plaintexts: BulkEncryptPayloadInput
   private column: BuildableColumn
   private table: BuildableTable
 
   constructor(
     client: Client,
-    plaintexts: BulkEncryptPayload,
+    plaintexts: BulkEncryptPayloadInput,
     opts: EncryptOptions,
   ) {
     super()
@@ -157,7 +163,7 @@ export class BulkEncryptOperation extends EncryptionOperation<BulkEncryptedData>
 
   public getOperation(): {
     client: Client
-    plaintexts: BulkEncryptPayload
+    plaintexts: BulkEncryptPayloadInput
     column: BuildableColumn
     table: BuildableTable
   } {

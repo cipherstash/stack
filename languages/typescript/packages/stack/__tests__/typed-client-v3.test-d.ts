@@ -1,6 +1,13 @@
 import type { JsPlaintext } from '@cipherstash/protect-ffi'
 import { describe, expectTypeOf, it } from 'vitest'
-import type { EncryptionClient } from '@/encryption'
+import type {
+  BatchEncryptQueryOperation,
+  BulkEncryptModelsOperation,
+  EncryptionClient,
+  EncryptModelOperation,
+  EncryptOperation,
+  EncryptQueryOperation,
+} from '@/encryption'
 // Everything comes from the single `@cipherstash/stack/v3` surface (re-exported
 // from src/encryption/v3.ts), exercising the re-export at the same time.
 import {
@@ -9,7 +16,13 @@ import {
   type V3DecryptedModel,
   type V3EncryptedModel,
 } from '@/encryption/v3'
-import type { Encrypted } from '@/types'
+import type { JsonDocument } from '@/eql/v3/columns'
+import type {
+  Encrypted,
+  EncryptQueryArgs,
+  EncryptQueryOptions,
+  QueryTermInput,
+} from '@/types'
 
 // A v3 table mixing every relevant capability tier:
 const users = encryptedTable('users', {
@@ -360,5 +373,239 @@ describe('typed v3 client — an optional lock context still type-checks', () =>
       users,
       maybe,
     )
+  })
+})
+
+/**
+ * What each method RETURNS, on the interface. The cases above pin what the
+ * methods accept, the `V3EncryptedModel` / `V3DecryptedModel` mappings, and the
+ * single-model decrypt `data`; these add the operation types and the bulk and
+ * positional-lock-context `data`.
+ *
+ * Like everything in this file they run against `declare const client`, so
+ * they check `EncryptionClient<S>`'s declared signatures — NOT
+ * `createEncryptionClient`'s construction. That the factory's object literal
+ * satisfies the interface is checked by `tsc` on `src` (it is annotated
+ * `EncryptionClient<S>`). `typed-client-v3.test.ts` checks the factory at
+ * runtime: that the encrypt methods forward their arguments to the native
+ * client unchanged and return its operation, and that the model decrypt paths
+ * reconstruct `Date` columns. It does not check that a native operation
+ * resolves to the declared type — that needs live credentials.
+ */
+describe('typed v3 client — each method resolves to its precise operation', () => {
+  /** The `data` of an awaited operation's success arm. */
+  type SuccessData<Op> = Extract<Awaited<Op>, { data: unknown }>['data']
+
+  it('encrypt returns an EncryptOperation', () => {
+    expectTypeOf(
+      client.encrypt('a@b.com', { table: users, column: users.email }),
+    ).toEqualTypeOf<EncryptOperation>()
+  })
+
+  it('encryptQuery returns the scalar operation for (value, opts) and the batch one for terms', () => {
+    expectTypeOf(
+      client.encryptQuery('a@b.com', { table: users, column: users.email }),
+    ).toEqualTypeOf<EncryptQueryOperation>()
+    expectTypeOf(
+      client.encryptQuery([
+        { value: 'a@b.com', table: users, column: users.email },
+      ]),
+    ).toEqualTypeOf<BatchEncryptQueryOperation>()
+  })
+
+  it('encryptModel / bulkEncryptModels return operations over the precise encrypted model', () => {
+    type Row = { id: string; email: string }
+    expectTypeOf(
+      client.encryptModel({ id: 'u1', email: 'a@b.com' }, users),
+    ).toEqualTypeOf<
+      EncryptModelOperation<V3EncryptedModel<typeof users, Row>>
+    >()
+
+    const bulk = client.bulkEncryptModels(
+      [{ id: 'u1', email: 'a@b.com' }],
+      users,
+    )
+    expectTypeOf(bulk).toEqualTypeOf<
+      BulkEncryptModelsOperation<V3EncryptedModel<typeof users, Row>>
+    >()
+    expectTypeOf<SuccessData<typeof bulk>>().toEqualTypeOf<
+      Array<{ id: string; email: Encrypted }>
+    >()
+  })
+
+  it('a positional lock context keeps the precise decrypted model', () => {
+    type EncRow = { id: string; email: Encrypted; createdAt: Encrypted }
+    const bound = client.decryptModel({} as EncRow, users, lockContext)
+    expectTypeOf<SuccessData<typeof bound>>().toEqualTypeOf<{
+      id: string
+      email: string
+      createdAt: Date
+    }>()
+  })
+
+  it('bulkDecryptModels resolves to an array of the table plaintext model, or Decrypted<T>[] without a table', () => {
+    type EncRow = { id: string; email: Encrypted; createdAt: Encrypted }
+    const rows = [] as EncRow[]
+
+    expectTypeOf<
+      SuccessData<
+        ReturnType<typeof client.bulkDecryptModels<typeof users, EncRow>>
+      >
+    >().toEqualTypeOf<Array<{ id: string; email: string; createdAt: Date }>>()
+    const bound = client.bulkDecryptModels(rows, users, lockContext)
+    expectTypeOf<SuccessData<typeof bound>>().toEqualTypeOf<
+      Array<{ id: string; email: string; createdAt: Date }>
+    >()
+    expectTypeOf<
+      SuccessData<
+        ReturnType<typeof client.bulkDecryptModels<EncRow>>
+      >[number]['createdAt']
+    >().toEqualTypeOf<string>()
+  })
+})
+
+/**
+ * The native `encryptQuery`'s argument list, as the wrapper forwards it with
+ * `...args`. It is a tuple union so the one call the runtime rejects by
+ * throwing — a scalar with no options — does not compile, while both real
+ * forms still forward unchanged.
+ */
+describe('EncryptQueryArgs — a scalar needs its options, a batch takes none', () => {
+  it('accepts (value, opts) and (terms)', () => {
+    expectTypeOf<[string, EncryptQueryOptions]>().toExtend<EncryptQueryArgs>()
+    expectTypeOf<[QueryTermInput[]]>().toExtend<EncryptQueryArgs>()
+  })
+
+  it('rejects a scalar without options, and bare values posing as terms', () => {
+    expectTypeOf<[string]>().not.toExtend<EncryptQueryArgs>()
+    expectTypeOf<[string[]]>().not.toExtend<EncryptQueryArgs>()
+  })
+
+  it('rejects a scalar without options on the public client', () => {
+    // @ts-expect-error - a scalar query needs { table, column }
+    client.encryptQuery('a@b.com')
+  })
+})
+
+/**
+ * A `types.Json` document may hold `null` array elements. The FFI's
+ * `JsPlaintext[]` has no `null` element, so the encrypt paths take
+ * `PlaintextInput`, which does. These pin that a caller reaches every encrypt
+ * path with such a document through the public client, with no cast.
+ */
+const documents = encryptedTable('documents', {
+  body: types.Json('body'),
+})
+
+declare const docClient: EncryptionClient<readonly [typeof documents]>
+
+describe('typed v3 client — a JSON document with null array elements needs no cast', () => {
+  const doc = { tags: ['staff', null] }
+
+  it('encrypt accepts it', () => {
+    docClient.encrypt(doc, { table: documents, column: documents.body })
+  })
+
+  it('encryptQuery accepts it as a searchableJson needle', () => {
+    docClient.encryptQuery(doc, {
+      table: documents,
+      column: documents.body,
+      queryType: 'searchableJson',
+    })
+  })
+
+  it('bulkEncrypt accepts it', () => {
+    docClient.bulkEncrypt([{ id: '1', plaintext: doc }, { plaintext: null }], {
+      table: documents,
+      column: documents.body,
+    })
+  })
+})
+
+/**
+ * `encrypt` short-circuits a `null` plaintext to a `null` result rather than
+ * encrypting it (DB NULL semantics). Only a `types.Json` column's plaintext
+ * type admits `null` (its document type is `null | JsonValue[] | {…}`), so for
+ * that column the result's `data` must admit `null` too — otherwise
+ * `result.data.c` compiles and throws. A value the compiler knows is non-null
+ * keeps the plain `Encrypted`, so callers that cannot pass `null` see no change.
+ */
+declare const maybeDoc: JsonDocument
+
+describe('typed v3 client — encrypt result admits null exactly when the plaintext can be null', () => {
+  type SuccessData<Op> = Extract<Awaited<Op>, { data: unknown }>['data']
+  const docOpts = { table: documents, column: documents.body }
+
+  it('a literal null on a Json column resolves to Encrypted | null', () => {
+    const op = docClient.encrypt(null, docOpts)
+    expectTypeOf<SuccessData<typeof op>>().toEqualTypeOf<Encrypted | null>()
+  })
+
+  it('a value typed JsonDocument resolves to Encrypted | null', () => {
+    const op = docClient.encrypt(maybeDoc, docOpts)
+    expectTypeOf<SuccessData<typeof op>>().toEqualTypeOf<Encrypted | null>()
+  })
+
+  it('a non-null document resolves to Encrypted', () => {
+    const op = docClient.encrypt({ tags: ['staff', null] }, docOpts)
+    expectTypeOf<SuccessData<typeof op>>().toEqualTypeOf<Encrypted>()
+  })
+
+  it('a scalar column with a string is unchanged: Encrypted', () => {
+    const op = client.encrypt('a@b.com', { table: users, column: users.email })
+    expectTypeOf<SuccessData<typeof op>>().toEqualTypeOf<Encrypted>()
+  })
+
+  it('.withLockContext() carries the same result type', () => {
+    const nullable = docClient
+      .encrypt(null, docOpts)
+      .withLockContext(lockContext)
+    expectTypeOf<
+      SuccessData<typeof nullable>
+    >().toEqualTypeOf<Encrypted | null>()
+    const typed = docClient
+      .encrypt(maybeDoc, docOpts)
+      .withLockContext(lockContext)
+    expectTypeOf<SuccessData<typeof typed>>().toEqualTypeOf<Encrypted | null>()
+    const nonNull = docClient
+      .encrypt({ tags: ['staff'] }, docOpts)
+      .withLockContext(lockContext)
+    expectTypeOf<SuccessData<typeof nonNull>>().toEqualTypeOf<Encrypted>()
+    const scalar = client
+      .encrypt('a@b.com', { table: users, column: users.email })
+      .withLockContext(lockContext)
+    expectTypeOf<SuccessData<typeof scalar>>().toEqualTypeOf<Encrypted>()
+  })
+
+  it('.audit() carries the same result type, before and after binding', () => {
+    const audited = docClient.encrypt(null, docOpts).audit({ metadata: {} })
+    expectTypeOf<
+      SuccessData<typeof audited>
+    >().toEqualTypeOf<Encrypted | null>()
+    const bound = docClient
+      .encrypt(null, docOpts)
+      .withLockContext(lockContext)
+      .audit({ metadata: {} })
+    expectTypeOf<SuccessData<typeof bound>>().toEqualTypeOf<Encrypted | null>()
+  })
+
+  it('explicit <Table, Col> type arguments still compile, typed from the column', () => {
+    const doc = docClient.encrypt<typeof documents, typeof documents.body>(
+      maybeDoc,
+      docOpts,
+    )
+    expectTypeOf<SuccessData<typeof doc>>().toEqualTypeOf<Encrypted | null>()
+    const scalar = client.encrypt<typeof users, typeof users.email>('a@b.com', {
+      table: users,
+      column: users.email,
+    })
+    expectTypeOf<SuccessData<typeof scalar>>().toEqualTypeOf<Encrypted>()
+  })
+
+  it('execute() resolves to the same type as awaiting', () => {
+    const op = docClient.encrypt(maybeDoc, docOpts)
+    expectTypeOf<
+      SuccessData<ReturnType<typeof op.execute>>
+    >().toEqualTypeOf<Encrypted | null>()
   })
 })
