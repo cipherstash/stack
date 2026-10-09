@@ -104,6 +104,13 @@ const DISPATCH_SKIPPED_JOBS = [
   '.github/workflows/release.yml / prerelease-eql-docs',
   '.github/workflows/release.yml / prerelease-eql-npm',
   '.github/workflows/release.yml / prerelease-eql-sql',
+  // The unattended-failure reporters. Whoever dispatches a run is watching it,
+  // and may have pointed it at any branch, so a dispatched failure must not
+  // open an issue against main. See _report-unattended-failure.yml.
+  '.github/workflows/bench-eql.yml / report',
+  '.github/workflows/fuzz.yml / report',
+  '.github/workflows/macro-expand-eql.yml / report',
+  '.github/workflows/test-eql.yml / report',
 ]
 
 /**
@@ -363,8 +370,11 @@ describe('a declared workflow_dispatch actually dispatches', () => {
   it('skips exactly the jobs declared unreachable by a plain dispatch', () => {
     // Both directions, so the list cannot become a place findings go to be
     // forgotten.
+    // `failure()` held true, like the job outputs in PERMISSIVE_NEEDS: a
+    // report job skipping because nothing failed is not a dispatch skip.
     const skipped = DISPATCHABLE_CONDITIONS.filter(
-      ({ condition }) => !runsWhen(condition, CONTEXTS.workflow_dispatch),
+      ({ condition }) =>
+        !runsWhen(condition, CONTEXTS.workflow_dispatch, { failure: true }),
     ).map((entry) => entry.id)
 
     expect(
@@ -378,7 +388,7 @@ describe('a declared workflow_dispatch actually dispatches', () => {
   )) {
     it(`${id} runs on a manual dispatch`, () => {
       expect(
-        runsWhen(condition, CONTEXTS.workflow_dispatch),
+        runsWhen(condition, CONTEXTS.workflow_dispatch, { failure: true }),
         `This job is skipped when the workflow is dispatched by hand, so its declared \`workflow_dispatch:\` trigger does nothing: the run is created and reports success having executed no job.\n  if: ${condition}\nGate on the case that genuinely cannot run — a fork pull request has no secrets — rather than enumerating the events that can: \`github.event_name != 'pull_request' || <same-repo check>\`.`,
       ).toBe(true)
     })
@@ -513,6 +523,18 @@ describe('the expression evaluator this guard depends on', () => {
       expect(runsWhen('!cancelled()', context, { cancelled: true })).toBe(false)
     }
     expect(() => runsWhen('cancelled(true)', CONTEXTS.push)).toThrow(
+      UnsupportedExpression,
+    )
+  })
+
+  it('reads `failure()` from the run state, and refuses to guess it', () => {
+    // Unlike `cancelled()`, there is no safe default: whether a job's `needs:`
+    // failed is the whole question a report job asks.
+    for (const context of Object.values(CONTEXTS)) {
+      expect(runsWhen('failure()', context, { failure: true })).toBe(true)
+      expect(runsWhen('failure()', context, { failure: false })).toBe(false)
+    }
+    expect(() => runsWhen('failure()', CONTEXTS.push)).toThrow(
       UnsupportedExpression,
     )
   })

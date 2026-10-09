@@ -180,3 +180,23 @@ jobs:
           active_rust_toolchain=$(rustup show active-toolchain | cut -d' ' -f1)
           rustup component add --toolchain "${active_rust_toolchain}" rustfmt clippy
           mise run --output prefix test:bench --postgres "${POSTGRES_VERSION}"
+
+  # Every run but a pull request or a manual dispatch is one nobody is
+  # watching, with no PR to turn red, so record its failure on an issue. See
+  # _report-unattended-failure.yml; `needs` must name every other job.
+  report:
+    needs:
+      - bench
+    if: >-
+      failure() && github.event_name != 'pull_request' &&
+      github.event_name != 'workflow_dispatch'
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_report-unattended-failure.yml
+    with:
+      guidance: >-
+        The EQL benchmark run failed. If the first failing step is the
+        `require-cs-secrets` pre-flight, a CipherStash credential was rotated
+        or cleared; otherwise a benchmark, regression or scale test broke, and
+        on a push run the commit it ran is the first suspect. Close this issue
+        once a run on main passes again.

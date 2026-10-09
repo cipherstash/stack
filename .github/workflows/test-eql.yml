@@ -1028,3 +1028,38 @@ jobs:
             esac
           done
           echo "ci-required: all needed jobs passed or were skipped"
+
+  # Every run but a pull request or a manual dispatch is one nobody is
+  # watching, with no PR to turn red, so record its failure on an issue. See
+  # _report-unattended-failure.yml; `needs` must name every other job.
+  report:
+    needs:
+      - changes
+      - setup
+      - build-archive
+      - test
+      - validate
+      - schema
+      - rust-crates
+      - codegen
+      - self-contained-v3
+      - matrix-coverage
+      - splinter
+      - docs-static
+      - known-failures
+      - doc-anchors
+      - e2e
+      - ci-required
+    if: >-
+      failure() && github.event_name != 'pull_request' &&
+      github.event_name != 'workflow_dispatch'
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_report-unattended-failure.yml
+    with:
+      guidance: >-
+        The full EQL matrix (PG 14-17) failed. On a push run the commit it ran
+        is the first suspect; a failure seen only on the nightly run usually
+        means a dependency, toolchain or image moved underneath an unchanged
+        tree. Find the failing job in the run, fix it, then close this issue
+        once a run on main passes again.
