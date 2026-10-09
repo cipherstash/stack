@@ -178,7 +178,7 @@ function extractForkClause(condition) {
  * run.
  */
 const PERMISSIVE_NEEDS = {
-  changes: { outputs: { relevant: 'true' } },
+  changes: { outputs: { relevant: 'true', eql: 'true' } },
   // The release workflows' gates, none of which is about how the run was
   // triggered. Held open, or "skips because there is nothing to publish" would
   // be indistinguishable from "skips on a dispatch".
