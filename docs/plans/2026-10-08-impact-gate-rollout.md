@@ -8,6 +8,7 @@ Calibration date: 2026-10-08. This implements [Stack issue #1137](https://github
 - Hyper reproduction source: `cd294f1c02e9718c7627a8d7fe7dd35ecd3ee407`, `.scratch/impact-gate/issues/05-reduce-the-lizard-typescript-span-defect.md`.
 - Installed and exercised: `impact-gate==0.4.1`, `lizard==1.23.0`. Lizard 1.24.0 is excluded by upstream ImpactGate package metadata; it is not an upgrade candidate for this rollout.
 - Local measurement runtime: Python 3.13 on macOS arm64. Dependencies resolved during calibration: PyYAML 6.0.3, pygments 2.21.0, pathspec 1.1.1. Runtime timings are local evidence, not hosted-runner guarantees.
+- CI installs `.github/impact-gate/requirements.txt`, which pins those transitive dependencies at the same versions with hashes for every distribution, using `pip install --require-hashes --no-deps`. Its header records the regeneration command; Dependabot proposes pip updates for that directory.
 - Official release source: [CLI](https://github.com/officefloor/ImpactGate/blob/v0.4.1/impact_gate/cli.py), [baseline](https://github.com/officefloor/ImpactGate/blob/v0.4.1/impact_gate/baseline.py), [measurement scope](https://github.com/officefloor/ImpactGate/blob/v0.4.1/impact_gate/core/config.py). Flags and baseline serialization were also inspected in the installed wheel.
 
 ## Parser checks
@@ -35,7 +36,7 @@ The upstream baseline serializes `_meta` (`tool`, `n`, `head`, `base_ref`) plus 
 
 ## Actions verification still required
 
-Local calibration and tests cannot verify GitHub cache scoping, main-run cache saves, later PR restores, or the rendered job summary. After the workflow is available in Actions, record links to a cold run, a main run saving the pair, and a PR run restoring it. Verify both report sections, policy/version cache invalidation, malformed-pair rebuilding, and explicit seed-only disclosure. Do not mark these checks complete based on local cache simulation.
+Local calibration and tests cannot verify GitHub cache scoping, cache saves, later PR restores, or the rendered job summary. Any run that rebuilds the pair saves it, pull requests included; a PR's cache is scoped to its own ref, so it cannot replace main's, and it spares later pushes to that PR a full rebuild. Main pushes run in per-SHA concurrency groups so a quick second merge cannot cancel the first before it saves. After the workflow is available in Actions, record links to a cold run, a main run saving the pair, a PR run restoring it, and a PR run reusing its own saved pair. Verify both report sections, policy/version cache invalidation, malformed-pair rebuilding, and explicit seed-only disclosure. Do not mark these checks complete based on local cache simulation.
 
 ## Imported history and rename checks
 
