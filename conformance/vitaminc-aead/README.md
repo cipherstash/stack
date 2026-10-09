@@ -13,6 +13,12 @@ other timestamps retain their nanoseconds in a wrapper, spelled RFC 3339 for
 years 0000-9999 and with an ISO 8601 expanded year (`+12000-…`) otherwise. `malformed` vectors
 must be refused by the decoders.
 
+Rust, Go and Node each build the expected host value from `kind` and `value`
+without their transport decoder, then check both directions: decoding the
+bytes gives that value, and encoding that value gives the bytes. A bug that
+decodes and encodes symmetrically wrong therefore still fails. Adding a kind
+means teaching each language's `expected` helper to build it.
+
 Rust re-encodes every valid vector byte-for-byte. The optional `js_reencode`
 and `go_reencode` fields record established host projections explicitly:
 JavaScript Float32 becomes Number/Float64; Go undefined becomes nil/null.
