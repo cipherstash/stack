@@ -181,11 +181,15 @@ export interface EncryptionClient<
    * `Encrypted | null` when the plaintext's type admits `null` — only a
    * `types.Json` column's document type does — because a `null` plaintext
    * short-circuits to a `null` result (DB NULL) rather than being encrypted.
+   *
+   * `P` defaults to the column's plaintext type so a call naming only
+   * `<Table, Col>` still compiles; it then types the result from the column,
+   * which for a `types.Json` column is `Encrypted | null`.
    */
   encrypt<
     Table extends S[number],
     Col extends ColumnsOf<Table>,
-    P extends PlaintextForColumn<Col>,
+    P extends PlaintextForColumn<Col> = PlaintextForColumn<Col>,
   >(
     plaintext: P,
     opts: { table: Table; column: Col },

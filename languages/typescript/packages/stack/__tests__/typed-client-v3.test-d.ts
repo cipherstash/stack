@@ -589,6 +589,19 @@ describe('typed v3 client — encrypt result admits null exactly when the plaint
     expectTypeOf<SuccessData<typeof bound>>().toEqualTypeOf<Encrypted | null>()
   })
 
+  it('explicit <Table, Col> type arguments still compile, typed from the column', () => {
+    const doc = docClient.encrypt<typeof documents, typeof documents.body>(
+      maybeDoc,
+      docOpts,
+    )
+    expectTypeOf<SuccessData<typeof doc>>().toEqualTypeOf<Encrypted | null>()
+    const scalar = client.encrypt<typeof users, typeof users.email>('a@b.com', {
+      table: users,
+      column: users.email,
+    })
+    expectTypeOf<SuccessData<typeof scalar>>().toEqualTypeOf<Encrypted>()
+  })
+
   it('execute() resolves to the same type as awaiting', () => {
     const op = docClient.encrypt(maybeDoc, docOpts)
     expectTypeOf<
