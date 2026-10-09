@@ -25,14 +25,14 @@
 --!
 --! Runs after the DO block in src/v3/sem/ore_block_256/operator_class.sql,
 --! which ATTEMPTS to create the default btree operator class for
---! eql_v3_internal.ore_block_256 and skips it on insufficient_privilege
+--! {{prefix}}_internal.ore_block_256 and skips it on insufficient_privilege
 --! (CREATE OPERATOR CLASS requires superuser; managed platforms — cloud
 --! Supabase and most hosted Postgres — run the installer as a non-superuser
 --! role). When the class was created, this file is a no-op.
 --!
 --! When the class was skipped, the ORE-carrying domains would otherwise
 --! install half-working: `<`/`>` comparisons still run (as unindexable seq
---! scans), while `CREATE INDEX ... (eql_v3.ord_term(col))` and bare
+--! scans), while `CREATE INDEX ... ({{prefix}}.ord_term(col))` and bare
 --! `ORDER BY` fail with opaque Postgres errors. Instead of that silent
 --! degradation, this file poisons every ORE-carrying domain (and its
 --! query-operand twin) with an always-raising CHECK constraint, so the first
@@ -62,7 +62,7 @@ BEGIN
     JOIN pg_catalog.pg_am am ON am.oid = c.opcmethod
     WHERE am.amname = 'btree'
       AND c.opcdefault
-      AND c.opcintype = 'eql_v3_internal.ore_block_256'::pg_catalog.regtype
+      AND c.opcintype = '{{prefix}}_internal.ore_block_256'::pg_catalog.regtype
   ) THEN
     RETURN;
   END IF;
@@ -70,7 +70,7 @@ BEGIN
   --! @brief Poison CHECK backing for the ORE-carrying domains on platforms
   --!        without the ORE operator class. Always raises; never returns.
   --! @internal
-  CREATE FUNCTION eql_v3_internal.ore_domain_unavailable(val jsonb, domain_name text, alternatives text)
+  CREATE FUNCTION {{prefix}}_internal.ore_domain_unavailable(val jsonb, domain_name text, alternatives text)
   RETURNS boolean
   IMMUTABLE PARALLEL SAFE
   SET search_path = pg_catalog, extensions, public
@@ -87,65 +87,65 @@ BEGIN
   -- must not abort). Domain coercion still enforces the CHECK on every new
   -- cast/insert regardless of validation status.
 
-  ALTER DOMAIN public.eql_v3_integer_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'public.eql_v3_integer_ord_ore', 'public.eql_v3_integer_eq (equality) or public.eql_v3_integer_ord (ordering) or public.eql_v3_integer_ord_ope (ordering)')) NOT VALID;
+  ALTER DOMAIN public.{{prefix}}_integer_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, 'public.{{prefix}}_integer_ord_ore', 'public.{{prefix}}_integer_eq (equality) or public.{{prefix}}_integer_ord (ordering) or public.{{prefix}}_integer_ord_ope (ordering)')) NOT VALID;
 
-  ALTER DOMAIN eql_v3.query_integer_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'eql_v3.query_integer_ord_ore', 'eql_v3.query_integer_eq (equality) or eql_v3.query_integer_ord (ordering) or eql_v3.query_integer_ord_ope (ordering)')) NOT VALID;
+  ALTER DOMAIN {{prefix}}.query_integer_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, '{{prefix}}.query_integer_ord_ore', '{{prefix}}.query_integer_eq (equality) or {{prefix}}.query_integer_ord (ordering) or {{prefix}}.query_integer_ord_ope (ordering)')) NOT VALID;
 
-  ALTER DOMAIN public.eql_v3_smallint_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'public.eql_v3_smallint_ord_ore', 'public.eql_v3_smallint_eq (equality) or public.eql_v3_smallint_ord (ordering) or public.eql_v3_smallint_ord_ope (ordering)')) NOT VALID;
+  ALTER DOMAIN public.{{prefix}}_smallint_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, 'public.{{prefix}}_smallint_ord_ore', 'public.{{prefix}}_smallint_eq (equality) or public.{{prefix}}_smallint_ord (ordering) or public.{{prefix}}_smallint_ord_ope (ordering)')) NOT VALID;
 
-  ALTER DOMAIN eql_v3.query_smallint_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'eql_v3.query_smallint_ord_ore', 'eql_v3.query_smallint_eq (equality) or eql_v3.query_smallint_ord (ordering) or eql_v3.query_smallint_ord_ope (ordering)')) NOT VALID;
+  ALTER DOMAIN {{prefix}}.query_smallint_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, '{{prefix}}.query_smallint_ord_ore', '{{prefix}}.query_smallint_eq (equality) or {{prefix}}.query_smallint_ord (ordering) or {{prefix}}.query_smallint_ord_ope (ordering)')) NOT VALID;
 
-  ALTER DOMAIN public.eql_v3_bigint_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'public.eql_v3_bigint_ord_ore', 'public.eql_v3_bigint_eq (equality) or public.eql_v3_bigint_ord (ordering) or public.eql_v3_bigint_ord_ope (ordering)')) NOT VALID;
+  ALTER DOMAIN public.{{prefix}}_bigint_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, 'public.{{prefix}}_bigint_ord_ore', 'public.{{prefix}}_bigint_eq (equality) or public.{{prefix}}_bigint_ord (ordering) or public.{{prefix}}_bigint_ord_ope (ordering)')) NOT VALID;
 
-  ALTER DOMAIN eql_v3.query_bigint_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'eql_v3.query_bigint_ord_ore', 'eql_v3.query_bigint_eq (equality) or eql_v3.query_bigint_ord (ordering) or eql_v3.query_bigint_ord_ope (ordering)')) NOT VALID;
+  ALTER DOMAIN {{prefix}}.query_bigint_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, '{{prefix}}.query_bigint_ord_ore', '{{prefix}}.query_bigint_eq (equality) or {{prefix}}.query_bigint_ord (ordering) or {{prefix}}.query_bigint_ord_ope (ordering)')) NOT VALID;
 
-  ALTER DOMAIN public.eql_v3_date_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'public.eql_v3_date_ord_ore', 'public.eql_v3_date_eq (equality) or public.eql_v3_date_ord (ordering) or public.eql_v3_date_ord_ope (ordering)')) NOT VALID;
+  ALTER DOMAIN public.{{prefix}}_date_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, 'public.{{prefix}}_date_ord_ore', 'public.{{prefix}}_date_eq (equality) or public.{{prefix}}_date_ord (ordering) or public.{{prefix}}_date_ord_ope (ordering)')) NOT VALID;
 
-  ALTER DOMAIN eql_v3.query_date_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'eql_v3.query_date_ord_ore', 'eql_v3.query_date_eq (equality) or eql_v3.query_date_ord (ordering) or eql_v3.query_date_ord_ope (ordering)')) NOT VALID;
+  ALTER DOMAIN {{prefix}}.query_date_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, '{{prefix}}.query_date_ord_ore', '{{prefix}}.query_date_eq (equality) or {{prefix}}.query_date_ord (ordering) or {{prefix}}.query_date_ord_ope (ordering)')) NOT VALID;
 
-  ALTER DOMAIN public.eql_v3_timestamp_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'public.eql_v3_timestamp_ord_ore', 'public.eql_v3_timestamp_eq (equality) or public.eql_v3_timestamp_ord (ordering) or public.eql_v3_timestamp_ord_ope (ordering)')) NOT VALID;
+  ALTER DOMAIN public.{{prefix}}_timestamp_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, 'public.{{prefix}}_timestamp_ord_ore', 'public.{{prefix}}_timestamp_eq (equality) or public.{{prefix}}_timestamp_ord (ordering) or public.{{prefix}}_timestamp_ord_ope (ordering)')) NOT VALID;
 
-  ALTER DOMAIN eql_v3.query_timestamp_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'eql_v3.query_timestamp_ord_ore', 'eql_v3.query_timestamp_eq (equality) or eql_v3.query_timestamp_ord (ordering) or eql_v3.query_timestamp_ord_ope (ordering)')) NOT VALID;
+  ALTER DOMAIN {{prefix}}.query_timestamp_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, '{{prefix}}.query_timestamp_ord_ore', '{{prefix}}.query_timestamp_eq (equality) or {{prefix}}.query_timestamp_ord (ordering) or {{prefix}}.query_timestamp_ord_ope (ordering)')) NOT VALID;
 
-  ALTER DOMAIN public.eql_v3_numeric_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'public.eql_v3_numeric_ord_ore', 'public.eql_v3_numeric_eq (equality) or public.eql_v3_numeric_ord (ordering) or public.eql_v3_numeric_ord_ope (ordering)')) NOT VALID;
+  ALTER DOMAIN public.{{prefix}}_numeric_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, 'public.{{prefix}}_numeric_ord_ore', 'public.{{prefix}}_numeric_eq (equality) or public.{{prefix}}_numeric_ord (ordering) or public.{{prefix}}_numeric_ord_ope (ordering)')) NOT VALID;
 
-  ALTER DOMAIN eql_v3.query_numeric_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'eql_v3.query_numeric_ord_ore', 'eql_v3.query_numeric_eq (equality) or eql_v3.query_numeric_ord (ordering) or eql_v3.query_numeric_ord_ope (ordering)')) NOT VALID;
+  ALTER DOMAIN {{prefix}}.query_numeric_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, '{{prefix}}.query_numeric_ord_ore', '{{prefix}}.query_numeric_eq (equality) or {{prefix}}.query_numeric_ord (ordering) or {{prefix}}.query_numeric_ord_ope (ordering)')) NOT VALID;
 
-  ALTER DOMAIN public.eql_v3_text_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'public.eql_v3_text_ord_ore', 'public.eql_v3_text_eq (equality) or public.eql_v3_text_match (match) or public.eql_v3_text_ord (ordering) or public.eql_v3_text_ord_ope (ordering) or public.eql_v3_text_search (ordering)')) NOT VALID;
+  ALTER DOMAIN public.{{prefix}}_text_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, 'public.{{prefix}}_text_ord_ore', 'public.{{prefix}}_text_eq (equality) or public.{{prefix}}_text_match (match) or public.{{prefix}}_text_ord (ordering) or public.{{prefix}}_text_ord_ope (ordering) or public.{{prefix}}_text_search (ordering)')) NOT VALID;
 
-  ALTER DOMAIN eql_v3.query_text_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'eql_v3.query_text_ord_ore', 'eql_v3.query_text_eq (equality) or eql_v3.query_text_match (match) or eql_v3.query_text_ord (ordering) or eql_v3.query_text_ord_ope (ordering) or eql_v3.query_text_search (ordering)')) NOT VALID;
+  ALTER DOMAIN {{prefix}}.query_text_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, '{{prefix}}.query_text_ord_ore', '{{prefix}}.query_text_eq (equality) or {{prefix}}.query_text_match (match) or {{prefix}}.query_text_ord (ordering) or {{prefix}}.query_text_ord_ope (ordering) or {{prefix}}.query_text_search (ordering)')) NOT VALID;
 
-  ALTER DOMAIN public.eql_v3_text_search_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'public.eql_v3_text_search_ore', 'public.eql_v3_text_eq (equality) or public.eql_v3_text_match (match) or public.eql_v3_text_ord (ordering) or public.eql_v3_text_ord_ope (ordering) or public.eql_v3_text_search (ordering)')) NOT VALID;
+  ALTER DOMAIN public.{{prefix}}_text_search_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, 'public.{{prefix}}_text_search_ore', 'public.{{prefix}}_text_eq (equality) or public.{{prefix}}_text_match (match) or public.{{prefix}}_text_ord (ordering) or public.{{prefix}}_text_ord_ope (ordering) or public.{{prefix}}_text_search (ordering)')) NOT VALID;
 
-  ALTER DOMAIN eql_v3.query_text_search_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'eql_v3.query_text_search_ore', 'eql_v3.query_text_eq (equality) or eql_v3.query_text_match (match) or eql_v3.query_text_ord (ordering) or eql_v3.query_text_ord_ope (ordering) or eql_v3.query_text_search (ordering)')) NOT VALID;
+  ALTER DOMAIN {{prefix}}.query_text_search_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, '{{prefix}}.query_text_search_ore', '{{prefix}}.query_text_eq (equality) or {{prefix}}.query_text_match (match) or {{prefix}}.query_text_ord (ordering) or {{prefix}}.query_text_ord_ope (ordering) or {{prefix}}.query_text_search (ordering)')) NOT VALID;
 
-  ALTER DOMAIN public.eql_v3_real_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'public.eql_v3_real_ord_ore', 'public.eql_v3_real_eq (equality) or public.eql_v3_real_ord (ordering) or public.eql_v3_real_ord_ope (ordering)')) NOT VALID;
+  ALTER DOMAIN public.{{prefix}}_real_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, 'public.{{prefix}}_real_ord_ore', 'public.{{prefix}}_real_eq (equality) or public.{{prefix}}_real_ord (ordering) or public.{{prefix}}_real_ord_ope (ordering)')) NOT VALID;
 
-  ALTER DOMAIN eql_v3.query_real_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'eql_v3.query_real_ord_ore', 'eql_v3.query_real_eq (equality) or eql_v3.query_real_ord (ordering) or eql_v3.query_real_ord_ope (ordering)')) NOT VALID;
+  ALTER DOMAIN {{prefix}}.query_real_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, '{{prefix}}.query_real_ord_ore', '{{prefix}}.query_real_eq (equality) or {{prefix}}.query_real_ord (ordering) or {{prefix}}.query_real_ord_ope (ordering)')) NOT VALID;
 
-  ALTER DOMAIN public.eql_v3_double_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'public.eql_v3_double_ord_ore', 'public.eql_v3_double_eq (equality) or public.eql_v3_double_ord (ordering) or public.eql_v3_double_ord_ope (ordering)')) NOT VALID;
+  ALTER DOMAIN public.{{prefix}}_double_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, 'public.{{prefix}}_double_ord_ore', 'public.{{prefix}}_double_eq (equality) or public.{{prefix}}_double_ord (ordering) or public.{{prefix}}_double_ord_ope (ordering)')) NOT VALID;
 
-  ALTER DOMAIN eql_v3.query_double_ord_ore ADD CONSTRAINT eql_ore_unavailable
-    CHECK (eql_v3_internal.ore_domain_unavailable(VALUE, 'eql_v3.query_double_ord_ore', 'eql_v3.query_double_eq (equality) or eql_v3.query_double_ord (ordering) or eql_v3.query_double_ord_ope (ordering)')) NOT VALID;
+  ALTER DOMAIN {{prefix}}.query_double_ord_ore ADD CONSTRAINT eql_ore_unavailable
+    CHECK ({{prefix}}_internal.ore_domain_unavailable(VALUE, '{{prefix}}.query_double_ord_ore', '{{prefix}}.query_double_eq (equality) or {{prefix}}.query_double_ord (ordering) or {{prefix}}.query_double_ord_ope (ordering)')) NOT VALID;
 
   RAISE NOTICE 'EQL: ORE operator class absent (creation requires superuser) — 20 ORE-backed domains disabled and will raise on use; use the _ord_ope (ordering) and _eq (equality) domains — and text_match for text pattern match — instead';
 END;

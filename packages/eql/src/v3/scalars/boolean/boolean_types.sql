@@ -6,21 +6,21 @@
 
 DO $$
 BEGIN
-  --! @brief Encrypted domain public.eql_v3_boolean.
+  --! @brief Encrypted domain public.{{prefix}}_boolean.
   IF NOT EXISTS (
     SELECT 1 FROM pg_type
-    WHERE typname = 'eql_v3_boolean' AND typnamespace = 'public'::regnamespace
+    WHERE typname = '{{prefix}}_boolean' AND typnamespace = 'public'::regnamespace
   ) THEN
-    CREATE DOMAIN public.eql_v3_boolean AS jsonb
+    CREATE DOMAIN public.{{prefix}}_boolean AS jsonb
       CHECK (
         jsonb_typeof(VALUE) = 'object'
         AND VALUE ? 'v'
         AND VALUE ? 'i'
         AND VALUE ? 'c'
-        AND VALUE->>'v' = '3'
+        AND VALUE->>'v' = '{{eql_version}}'
       );
   END IF;
 
-  COMMENT ON DOMAIN public.eql_v3_boolean IS 'EQL encrypted boolean (storage only)';
+  COMMENT ON DOMAIN public.{{prefix}}_boolean IS 'EQL encrypted boolean (storage only)';
 END
 $$;
