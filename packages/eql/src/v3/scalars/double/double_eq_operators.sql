@@ -4,245 +4,245 @@
 -- REQUIRE: src/v3/scalars/double/double_eq_functions.sql
 
 --! @file encrypted_domain/double/double_eq_operators.sql
---! @brief Operators for public.eql_v3_double_eq.
+--! @brief Operators for public.{{prefix}}_double_eq.
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3.eq,
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = public.eql_v3_double_eq,
+  FUNCTION = {{prefix}}.eq,
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = public.{{prefix}}_double_eq,
   COMMUTATOR = =, NEGATOR = <>, RESTRICT = eqsel, JOIN = eqjoinsel
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3.eq,
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = jsonb,
+  FUNCTION = {{prefix}}.eq,
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = jsonb,
   COMMUTATOR = =, NEGATOR = <>, RESTRICT = eqsel, JOIN = eqjoinsel
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3.eq,
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_double_eq,
+  FUNCTION = {{prefix}}.eq,
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_double_eq,
   COMMUTATOR = =, NEGATOR = <>, RESTRICT = eqsel, JOIN = eqjoinsel
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3.neq,
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = public.eql_v3_double_eq,
+  FUNCTION = {{prefix}}.neq,
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = public.{{prefix}}_double_eq,
   COMMUTATOR = <>, NEGATOR = =, RESTRICT = neqsel, JOIN = neqjoinsel
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3.neq,
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = jsonb,
+  FUNCTION = {{prefix}}.neq,
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = jsonb,
   COMMUTATOR = <>, NEGATOR = =, RESTRICT = neqsel, JOIN = neqjoinsel
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3.neq,
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_double_eq,
+  FUNCTION = {{prefix}}.neq,
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_double_eq,
   COMMUTATOR = <>, NEGATOR = =, RESTRICT = neqsel, JOIN = neqjoinsel
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = public.{{prefix}}_double_eq
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = jsonb
 );
 
 CREATE OPERATOR < (
-  FUNCTION = eql_v3_internal.lt,
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal.lt,
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_double_eq
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = public.{{prefix}}_double_eq
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = jsonb
 );
 
 CREATE OPERATOR <= (
-  FUNCTION = eql_v3_internal.lte,
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal.lte,
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_double_eq
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = public.{{prefix}}_double_eq
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = jsonb
 );
 
 CREATE OPERATOR > (
-  FUNCTION = eql_v3_internal.gt,
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal.gt,
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_double_eq
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = public.{{prefix}}_double_eq
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = jsonb
 );
 
 CREATE OPERATOR >= (
-  FUNCTION = eql_v3_internal.gte,
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal.gte,
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_double_eq
 );
 
 CREATE OPERATOR @> (
-  FUNCTION = eql_v3_internal.contains,
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal.contains,
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = public.{{prefix}}_double_eq
 );
 
 CREATE OPERATOR @> (
-  FUNCTION = eql_v3_internal.contains,
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal.contains,
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = jsonb
 );
 
 CREATE OPERATOR @> (
-  FUNCTION = eql_v3_internal.contains,
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal.contains,
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_double_eq
 );
 
 CREATE OPERATOR <@ (
-  FUNCTION = eql_v3_internal.contained_by,
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal.contained_by,
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = public.{{prefix}}_double_eq
 );
 
 CREATE OPERATOR <@ (
-  FUNCTION = eql_v3_internal.contained_by,
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal.contained_by,
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = jsonb
 );
 
 CREATE OPERATOR <@ (
-  FUNCTION = eql_v3_internal.contained_by,
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal.contained_by,
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_double_eq
 );
 
 CREATE OPERATOR -> (
-  FUNCTION = eql_v3_internal."->",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = text
+  FUNCTION = {{prefix}}_internal."->",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = text
 );
 
 CREATE OPERATOR -> (
-  FUNCTION = eql_v3_internal."->",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = integer
+  FUNCTION = {{prefix}}_internal."->",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = integer
 );
 
 CREATE OPERATOR -> (
-  FUNCTION = eql_v3_internal."->",
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal."->",
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_double_eq
 );
 
 CREATE OPERATOR ->> (
-  FUNCTION = eql_v3_internal."->>",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = text
+  FUNCTION = {{prefix}}_internal."->>",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = text
 );
 
 CREATE OPERATOR ->> (
-  FUNCTION = eql_v3_internal."->>",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = integer
+  FUNCTION = {{prefix}}_internal."->>",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = integer
 );
 
 CREATE OPERATOR ->> (
-  FUNCTION = eql_v3_internal."->>",
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal."->>",
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_double_eq
 );
 
 CREATE OPERATOR ? (
-  FUNCTION = eql_v3_internal."?",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = text
+  FUNCTION = {{prefix}}_internal."?",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = text
 );
 
 CREATE OPERATOR ?| (
-  FUNCTION = eql_v3_internal."?|",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = text[]
+  FUNCTION = {{prefix}}_internal."?|",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = text[]
 );
 
 CREATE OPERATOR ?& (
-  FUNCTION = eql_v3_internal."?&",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = text[]
+  FUNCTION = {{prefix}}_internal."?&",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = text[]
 );
 
 CREATE OPERATOR @? (
-  FUNCTION = eql_v3_internal."@?",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = jsonpath
+  FUNCTION = {{prefix}}_internal."@?",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = jsonpath
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3_internal."@@",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = public.{{prefix}}_double_eq
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3_internal."@@",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = jsonb
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3_internal."@@",
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_double_eq
 );
 
 CREATE OPERATOR @@ (
-  FUNCTION = eql_v3_internal."@@",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = jsonpath
+  FUNCTION = {{prefix}}_internal."@@",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = jsonpath
 );
 
 CREATE OPERATOR #> (
-  FUNCTION = eql_v3_internal."#>",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = text[]
+  FUNCTION = {{prefix}}_internal."#>",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = text[]
 );
 
 CREATE OPERATOR #>> (
-  FUNCTION = eql_v3_internal."#>>",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = text[]
+  FUNCTION = {{prefix}}_internal."#>>",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = text[]
 );
 
 CREATE OPERATOR - (
-  FUNCTION = eql_v3_internal."-",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = text
+  FUNCTION = {{prefix}}_internal."-",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = text
 );
 
 CREATE OPERATOR - (
-  FUNCTION = eql_v3_internal."-",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = integer
+  FUNCTION = {{prefix}}_internal."-",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = integer
 );
 
 CREATE OPERATOR - (
-  FUNCTION = eql_v3_internal."-",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = text[]
+  FUNCTION = {{prefix}}_internal."-",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = text[]
 );
 
 CREATE OPERATOR #- (
-  FUNCTION = eql_v3_internal."#-",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = text[]
+  FUNCTION = {{prefix}}_internal."#-",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = text[]
 );
 
 CREATE OPERATOR || (
-  FUNCTION = eql_v3_internal."||",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal."||",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = public.{{prefix}}_double_eq
 );
 
 CREATE OPERATOR || (
-  FUNCTION = eql_v3_internal."||",
-  LEFTARG = public.eql_v3_double_eq, RIGHTARG = jsonb
+  FUNCTION = {{prefix}}_internal."||",
+  LEFTARG = public.{{prefix}}_double_eq, RIGHTARG = jsonb
 );
 
 CREATE OPERATOR || (
-  FUNCTION = eql_v3_internal."||",
-  LEFTARG = jsonb, RIGHTARG = public.eql_v3_double_eq
+  FUNCTION = {{prefix}}_internal."||",
+  LEFTARG = jsonb, RIGHTARG = public.{{prefix}}_double_eq
 );
