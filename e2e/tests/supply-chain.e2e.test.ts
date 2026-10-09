@@ -622,6 +622,9 @@ const MANIFEST_BY_ECOSYSTEM: Record<string, string> = {
   gomod: 'go.mod',
   bundler: 'Gemfile',
   composer: 'composer.json',
+  // A pip `directory` holds a requirements file rather than a lockfile, so the
+  // lockfile scan above never demands this entry; it only checks it is aimed.
+  pip: 'requirements.txt',
   uv: 'pyproject.toml',
   mix: 'mix.exs',
   pub: 'pubspec.yaml',

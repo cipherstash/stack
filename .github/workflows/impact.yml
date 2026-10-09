@@ -1,0 +1,93 @@
+name: Change impact
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer push to the same pull request supersedes the older run. Main pushes
+# are grouped per SHA instead: one shared main group cancelled a merge's run
+# before it saved that SHA's baselines, leaving PRs on it to rebuild.
+concurrency:
+  group: impact-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  impact:
+    name: Change impact (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      BASE_REF: refs/remotes/origin/${{ github.base_ref || github.ref_name }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Install analysis tools
+        run: python -m pip install --require-hashes --no-deps -r .github/impact-gate/requirements.txt
+
+      - name: Check reporting behavior with the real CLI
+        run: python -m unittest discover -s scripts/tests -p test_impact_gate.py -v
+
+      - name: Pin and identify target branch
+        id: target
+        env:
+          TARGET_BRANCH: ${{ github.base_ref || github.ref_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          # Keep one logical target ref across push/PR events, pinned to the
+          # event's commit even if the remote branch advances while queued.
+          git update-ref "$BASE_REF" "$BASE_SHA"
+          echo "BASELINE_DIR=$RUNNER_TEMP/impact-baseline" >> "$GITHUB_ENV"
+          python - <<'PY'
+          import hashlib
+          import os
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              key = hashlib.sha256(os.environ['TARGET_BRANCH'].encode()).hexdigest()
+              output.write(f'key={key}\n')
+          PY
+
+      # The fallback stays within one tool/policy AND target branch. Never use a
+      # repository-wide fallback: another release branch has different history.
+      - name: Restore baselines
+        id: restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.BASELINE_DIR }}
+          key: impact-${{ hashFiles('.github/impact-gate/**', 'scripts/impact-gate.py', '.github/workflows/impact.yml') }}-${{ steps.target.outputs.key }}-${{ github.event.pull_request.base.sha || github.sha }}
+          restore-keys: impact-${{ hashFiles('.github/impact-gate/**', 'scripts/impact-gate.py', '.github/workflows/impact.yml') }}-${{ steps.target.outputs.key }}-
+
+      - name: Validate or build baselines
+        id: prepare
+        env:
+          REFRESH: ${{ github.event_name == 'push' && steps.restore.outputs.cache-hit != 'true' }}
+        run: |
+          args=()
+          if [[ "$REFRESH" == 'true' ]]; then args+=(--refresh); fi
+          python scripts/impact-gate.py prepare --base "$BASE_REF" --cache-dir "$BASELINE_DIR" "${args[@]}"
+
+      # Any rebuilt pair is saved, including on pull requests: a PR's cache is
+      # scoped to its own ref, so it cannot replace main's, and later pushes to
+      # the PR reuse it instead of rebuilding both scopes again.
+      - name: Save baselines
+        if: steps.prepare.outputs.rebuilt == 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.BASELINE_DIR }}
+          key: ${{ steps.restore.outputs.cache-primary-key }}
+
+      - name: Report pull request impact
+        if: github.event_name == 'pull_request'
+        run: python scripts/impact-gate.py report --base "$BASE_REF" --cache-dir "$BASELINE_DIR"
