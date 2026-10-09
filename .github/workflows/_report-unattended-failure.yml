@@ -1,0 +1,84 @@
+name: "Report an unattended failure (reusable)"
+
+# Records a failed run that nobody is watching on a GitHub issue. Called as the
+# last job of fuzz.yml, bench-eql.yml, macro-expand-eql.yml and test-eql.yml.
+#
+# WHY. A scheduled run, or a push to main, has no pull request to turn red.
+# GitHub mails a scheduled run's failure to one person — whoever last edited
+# the cron line — and a push run's to whoever pushed. Everyone else learns of
+# it only by opening the Actions tab. An issue notifies the repository's
+# watchers and stays open until someone deals with it.
+#
+# ONE ISSUE PER WORKFLOW AND BRANCH, NOT PER RUN. The issue is found by its
+# exact title, which names both. If one is open, the failure is added to it as
+# a comment, so a workflow that keeps failing nightly builds one thread rather
+# than a pile of duplicates. Once it is closed, the next failure opens a new
+# one.
+#
+# The caller decides when this runs and grants the permission, because a called
+# workflow cannot raise its caller's token:
+#
+#     report:
+#       needs: [<every other job>]
+#       if: >-
+#         failure() && github.event_name != 'pull_request' &&
+#         github.event_name != 'workflow_dispatch'
+#       permissions:
+#         issues: write
+#       uses: ./.github/workflows/_report-unattended-failure.yml
+#       with:
+#         guidance: <what the person who picks this up should do>
+#
+# A pull request shows its own failure, and whoever dispatches a run by hand is
+# watching it (and may have pointed it at any branch). Every other event is
+# reported, so a trigger added later is covered without editing the condition.
+#
+# `needs` must list every other job in the workflow: `failure()` only sees the
+# jobs a job needs, so a failure in one left out is not reported.
+# scripts/__tests__/unattended-failure-report.test.mjs checks this, and that
+# every scheduled workflow either calls this file or is listed there with the
+# reason it does not.
+on:
+  workflow_call:
+    inputs:
+      guidance:
+        description: "What to do about the failure. Goes in the issue body and in every comment."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    name: Open or update the failure issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          # `github.workflow` in a called workflow is the CALLER's name.
+          TITLE: "${{ github.workflow }} failed on ${{ github.ref_name }}"
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GUIDANCE: ${{ inputs.guidance }}
+        run: |
+          set -euo pipefail
+          body="The \`$EVENT\` run at $SHA failed: $RUN_URL
+
+          $GUIDANCE"
+          # `--search` matches words, not the whole title; the jq filter
+          # demands an exact match so a similarly named workflow's issue is
+          # never commented on.
+          issue=$(gh issue list --state open --search "in:title \"$TITLE\"" \
+            --json number,title --jq "map(select(.title == env.TITLE)) | .[0].number // empty")
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body "$body"
+          else
+            gh issue create --title "$TITLE" --label needs-triage --body "$body"
+          fi
