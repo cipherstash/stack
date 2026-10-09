@@ -1,6 +1,26 @@
 ---
 name: stash-managed-platforms
-description: Implement CipherStash encryption on a managed AI app platform — Lovable, v0, Bolt, Replit, and anything else with no developer-controlled shell, an edge/Workers runtime, a database role that is not `postgres`, and schema changes only through the platform's own migration tool. Covers the one fact that decides whether the product works there at all (use `@cipherstash/stack` with the `wasm-inline` entry — `@cipherstash/protect` is the deprecated predecessor and its native module will not load), running `stash auth login --json` headlessly in an ephemeral sandbox, minting deployment credentials with `stash env`, installing EQL as a role that is not `postgres`, which query predicates survive PostgREST, and how to construct `encryptedSupabase` inside a Worker by declaring your schemas. Also covers the platform guards that break installs: command-time ceilings that kill the EQL bundle partway (half-installed schema after a 600s limit), the PostgREST grants the installer never emits, minimum-release-age cooldowns refusing a fresh release ("version too new"), and secrets handoff when there is no secrets API. Use when the project is hosted on one of these platforms, when there is no terminal you control, when a native module fails to load in the deployed runtime, when an EQL install times out or PostgREST calls fail with permission errors, when a freshly published package refuses to install, or when you are about to conclude CipherStash cannot be used here.
+description: >-
+  Implement CipherStash encryption on a managed AI app platform — Lovable, v0,
+  Bolt, Replit, and anything else with no developer-controlled shell, an
+  edge/Workers runtime, a database role that is not `postgres`, and schema
+  changes only through the platform's own migration tool. Covers the one fact
+  that decides whether the product works there at all (use `@cipherstash/stack`
+  with the `wasm-inline` entry — `@cipherstash/protect` is the deprecated
+  predecessor and its native module will not load), running `stash auth login
+  --json` headlessly in an ephemeral sandbox, minting deployment credentials
+  with `stash env`, installing EQL as a role that is not `postgres`, which query
+  predicates survive PostgREST, and how to construct `encryptedSupabase` inside
+  a Worker by declaring your schemas. Also covers the platform guards that break
+  installs: command-time ceilings that kill the EQL bundle partway
+  (half-installed schema after a 600s limit), the PostgREST grants the installer
+  never emits, minimum-release-age cooldowns refusing a fresh release ("version
+  too new"), and secrets handoff when there is no secrets API. Use when the
+  project is hosted on one of these platforms, when there is no terminal you
+  control, when a native module fails to load in the deployed runtime, when an
+  EQL install times out or PostgREST calls fail with permission errors, when a
+  freshly published package refuses to install, or when you are about to
+  conclude CipherStash cannot be used here.
 ---
 
 # CipherStash on Managed AI App Platforms
