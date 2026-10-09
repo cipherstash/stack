@@ -1,5 +1,5 @@
 ---
-'@cipherstash/stack': patch
+'@cipherstash/stack': minor
 '@cipherstash/stack-supabase': patch
 'stash': patch
 ---
