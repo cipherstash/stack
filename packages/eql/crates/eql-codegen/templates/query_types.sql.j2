@@ -33,7 +33,7 @@ BEGIN
         AND jsonb_typeof(VALUE -> '{{ k }}') = 'array'
         AND jsonb_array_length(VALUE -> '{{ k }}') > 0
         {%- endfor %}
-        AND VALUE->>'v' = '3'
+        AND VALUE->>'v' = '{{ eql_version }}'
       );
   END IF;
 

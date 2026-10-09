@@ -10,8 +10,10 @@ if [ "$#" -ne 1 ]; then
   exit 2
 fi
 
-# Prepares SQL for Doxygen's C++ parser. Four transforms:
+# Prepares SQL for Doxygen's C++ parser. Five transforms:
 #
+#  0. Render the {{prefix}} / {{eql_version}} placeholders (ADR-0002) as EQL v3,
+#     so the reference names `eql_v3.eq_term`, not `{{prefix}}.eq_term`.
 #  1. Omit blocks marked `@cond deprecated_compatibility`. These functions
 #     remain callable for backwards compatibility but must not appear in the
 #     generated function reference or source browser.
@@ -102,4 +104,4 @@ awk '
     gsub(/--/, "//", out)
     print out
   }
-' "$1"
+' < <(sed -e 's/{{prefix}}/eql_v3/g' -e 's/{{eql_version}}/3/g' "$1")

@@ -260,3 +260,7 @@ nextest.tar.zst
 docs/decisions/2026-06-10-eql-v3-json-type-kind.md
 docs/handoff/2026-06-10-v3-jsonb-fixture-alignment.md
 .claude/
+
+# Rendered SQL per EQL version, written by tasks/build.sh from the placeholder
+# source (ADR-0002).
+build/

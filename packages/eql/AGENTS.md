@@ -42,6 +42,21 @@ This project uses `mise` for task management. Common commands:
   - `cipherstash-encrypt.sql` - The sole installer: the self-contained `eql_v3` surface, globbed from `src/v3` only (no `eql_v2`; installable into a DB with no `eql_v2` present)
   - `cipherstash-encrypt-uninstall.sql` - Matching uninstaller
 
+#### Schema and version placeholders
+
+The SQL source never names its schemas or its payload version literally. It writes two placeholders, and the build renders the one source once per EQL version (ADR-0002, `docs/adr/0002-*` at the repo root):
+
+| placeholder | rendered for `eql_v3` | rendered for `eql_v4` |
+|---|---|---|
+| `{{prefix}}` | `eql_v3` | `eql_v4` |
+| `{{eql_version}}` | `3` | `4` |
+
+`{{prefix}}` is the schema and the start of every other name: `{{prefix}}.eq_term`, `{{prefix}}_internal.hmac_256`, `public.{{prefix}}_text_eq`. `{{eql_version}}` appears in every domain CHECK: `VALUE->>'v' = '{{eql_version}}'`. This covers every file under `src/v3/` (hand-written and generated), `src/v3/version.template`, `tasks/pin_search_path_v3.sql` and `tasks/uninstall-v3.sql`. The generator emits the placeholders too: `SCHEMA`, `INTERNAL_SCHEMA`, `PUBLIC_TYPNAME_PREFIX` and `EQL_VERSION` in `crates/eql-codegen/src/consts.rs` are placeholder strings. The Rust bindings are the exception. They describe v3 payloads and keep `eql_domains::PUBLIC_TYPNAME_PREFIX`, the literal `eql_v3_`.
+
+`tasks/build.sh` renders the ordered source into `build/render/eql_v3/` (gitignored, same relative paths) with `eql-codegen render`, runs the symbol-order and installer-completeness gates on the rendered files, and assembles `release/` from them. The renderer refuses three things: an unknown placeholder, an unterminated `{{`, and a **literal `eql_v3` or `eql_v4`** anywhere in the source, comments included. A literal name renders identically for both versions, so the v4 bundle would reach into v3. Write the placeholder in prose too.
+
+Anything that needs the source as real SQL reads the rendered tree, not `src/`: `docs:validate:documented-sql` runs psql over `build/render/eql_v3/src`, and the Doxygen input filter (`tasks/docs/doxygen-filter.sh`) renders `eql_v3` names on the fly. A new tool that parses `src/v3` must do one or the other.
+
 There are no longer separate Main / Supabase / Protect / v3-only build variants. The combined `eql_v2` build that previously produced multiple artefacts has been removed; the v3 surface now ships as one self-contained installer under the canonical `cipherstash-encrypt.sql` name (`eql-codegen order` walks `src/v3` only). Because the surface owns no `eql_v2` dependency, it is already Supabase / managed-Postgres compatible (functional indexes over extractors, no superuser-only operator classes) without a dedicated subset build. Self-containment — no `-- REQUIRE:` edge pointing outside `src/v3`, no `eql_v2.<symbol>` anywhere in the surface — is enforced at build time by `surface_order`'s `OutsideSurface` error (`crates/eql-codegen/src/ordering.rs`) and CI-gated by `mise run test:self_contained_v3`.
 
 ## Project Architecture

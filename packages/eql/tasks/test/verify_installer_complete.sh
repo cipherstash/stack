@@ -24,9 +24,12 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-ORDERED="${1:-src/deps-ordered-v3.txt}"
+ORDERED="${1:-build/render/eql_v3/deps-ordered.txt}"
 INSTALLER="${2:-release/cipherstash-encrypt.sql}"
-PIN="tasks/pin_search_path_v3.sql"
+# The rendered tree the ordered paths point into (build.sh renders the
+# placeholder source into build/render/eql_v<N>/, keeping relative paths).
+ROOT="${3:-build/render/eql_v3}"
+PIN="$ROOT/tasks/pin_search_path_v3.sql"
 
 for f in "$ORDERED" "$INSTALLER" "$PIN"; do
   if [[ ! -f "$f" ]]; then
@@ -73,7 +76,7 @@ fail=0
 echo "==> Non-vacuity gate: the order names every src/v3 SQL file"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-find src/v3 -type f -name '*.sql' ! -name '*_test.sql' | LC_ALL=C sort > "$work/disk"
+find "$ROOT/src/v3" -type f -name '*.sql' ! -name '*_test.sql' | LC_ALL=C sort > "$work/disk"
 grep -v '^[[:space:]]*$' "$ORDERED" | LC_ALL=C sort > "$work/order" || true
 n_disk=$(count_lines "$work/disk")
 

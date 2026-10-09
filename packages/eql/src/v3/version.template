@@ -2,10 +2,10 @@
 -- Source is src/v3/version.template
 -- REQUIRE: src/v3/schema.sql
 
-DROP FUNCTION IF EXISTS eql_v3.version();
+DROP FUNCTION IF EXISTS {{prefix}}.version();
 
 --! @file v3/version.sql
---! @brief EQL version reporting (self-contained eql_v3 surface)
+--! @brief EQL version reporting (self-contained {{prefix}} surface)
 --!
 --! This file is auto-generated from src/v3/version.template during build.
 --! The $RELEASE_VERSION placeholder is replaced with the actual release
@@ -21,9 +21,9 @@ DROP FUNCTION IF EXISTS eql_v3.version();
 --!
 --! @note Auto-generated during build from src/v3/version.template
 --!
---! Example: `SELECT eql_v3.version()` returns the installed version string,
+--! Example: `SELECT {{prefix}}.version()` returns the installed version string,
 --! e.g. `'3.0.0'` (or `'DEV'` for development builds).
-CREATE FUNCTION eql_v3.version()
+CREATE FUNCTION {{prefix}}.version()
   RETURNS text
   IMMUTABLE STRICT PARALLEL SAFE
 AS $$
@@ -32,6 +32,6 @@ $$ LANGUAGE SQL;
 
 --! @brief Schema-level version marker for obj_description() discoverability
 --!
---! Mirrors eql_v3.version() as a comment on the schema so the installed
---! version can also be read via obj_description('eql_v3'::regnamespace).
-COMMENT ON SCHEMA eql_v3 IS '$RELEASE_VERSION';
+--! Mirrors {{prefix}}.version() as a comment on the schema so the installed
+--! version can also be read via obj_description('{{prefix}}'::regnamespace).
+COMMENT ON SCHEMA {{prefix}} IS '$RELEASE_VERSION';

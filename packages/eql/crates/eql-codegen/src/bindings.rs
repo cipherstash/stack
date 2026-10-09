@@ -91,6 +91,13 @@ fn capability_label(domain_name: &str) -> &'static str {
 /// `Term::term_json_keys`) — so it stays deterministic and cannot drift from the
 /// payload shape. No free-form prose and no field docs: per-field semantics live
 /// on the shared term newtypes (`terms.rs`) and per-family caveats in `mod.rs`.
+/// The schema-qualified `eql_v3` domain a payload struct binds, e.g.
+/// `public.eql_v3_integer_eq`. The bindings describe v3 payloads only, so they
+/// name it literally, where the SQL surface writes the `{{prefix}}` placeholder.
+fn v3_domain_name(full: &str) -> String {
+    format!("public.{}{full}", eql_domains::PUBLIC_TYPNAME_PREFIX)
+}
+
 fn struct_doc_lines(full: &str, domain: &Domain) -> [String; 3] {
     // Leading space matches the `///` doc-comment convention (`#[doc = " …"]`):
     // rustfmt renders it as `/// …` and ts-rs as ` * …`. Without it the emitted
@@ -98,7 +105,7 @@ fn struct_doc_lines(full: &str, domain: &Domain) -> [String; 3] {
     // single leading space, so JSON Schema `description` is unaffected.
     let summary = format!(
         " `{}` — {}.",
-        crate::context::domain_name(full),
+        v3_domain_name(full),
         capability_label(domain.name)
     );
 
@@ -162,7 +169,7 @@ fn reference_docs(family: &DomainFamily) -> TokenStream {
 fn render_struct(family: &DomainFamily, domain: &Domain) -> TokenStream {
     let full = domain.full_name(family.name);
     let ident = format_ident!("{}", domain.struct_ident(family.name));
-    let sql_domain = crate::context::domain_name(&full);
+    let sql_domain = v3_domain_name(&full);
     let [doc_summary, doc_blank, doc_detail] = struct_doc_lines(&full, domain);
     let reference = reference_docs(family);
     let (encryption, version, context) = encryption_attrs(family, domain, false);
@@ -604,7 +611,7 @@ pub fn render_payload_rs() -> String {
         let module = format_ident!("{}", f.name);
         let strukt = format_ident!("{}", d.rust_struct_name(f.name));
         let full = d.full_name(f.name);
-        let doc = format!(" The `{}` payload.", crate::context::domain_name(&full));
+        let doc = format!(" The `{}` payload.", v3_domain_name(&full));
         variants.extend(quote! {
             #[doc = #doc]
             #strukt(super::#module::#strukt),

@@ -1,11 +1,11 @@
 --! @file pin_search_path_v3.sql
---! @brief Post-install: pin search_path on every eql_v3.* function.
+--! @brief Post-install: pin search_path on every {{prefix}}.* function.
 --!
 --! Appended verbatim by `tasks/build.sh` to the end of the v3-only release
 --! artifact, AFTER all src/v3/**/*.sql files have been concatenated. It lives
 --! outside src/ so it stays out of the dependency graph.
 --!
---! Iterates over functions in the `eql_v3` and `eql_v3_internal` schemas and
+--! Iterates over functions in the `{{prefix}}` and `{{prefix}}_internal` schemas and
 --! applies a fixed `search_path` via `ALTER FUNCTION ... SET search_path = ...`,
 --! satisfying Supabase splinter's `function_search_path_mutable` lint.
 --!
@@ -32,19 +32,19 @@ BEGIN
     RAISE EXCEPTION 'pin_search_path_v3: type pg_catalog.jsonb not found';
   END IF;
 
-  -- eql_v3 SEM index-term functions that must stay inlinable for
-  -- functional-index matching (no SET, IMMUTABLE). Mirrors the eql_v3 clause
+  -- {{prefix}} SEM index-term functions that must stay inlinable for
+  -- functional-index matching (no SET, IMMUTABLE). Mirrors the {{prefix}} clause
   -- in the legacy combined pin_search_path.sql.
   SELECT pg_catalog.array_agg(p.oid) INTO inline_critical_oids
   FROM pg_catalog.pg_proc p
   JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-  WHERE n.nspname = ANY(eql_v3_internal.owned_schemas())
+  WHERE n.nspname = ANY({{prefix}}_internal.owned_schemas())
     AND (
       (p.pronargs = 2
         AND p.proname IN ('ore_block_256_eq', 'ore_block_256_neq',
                           'ore_block_256_lt', 'ore_block_256_lte',
                           'ore_block_256_gt', 'ore_block_256_gte'))
-      -- The CLLW-OPE surface is the extractor alone: eql_v3_internal.ope_cllw is a
+      -- The CLLW-OPE surface is the extractor alone: {{prefix}}_internal.ope_cllw is a
       -- domain over bytea (native comparison operators and btree opclass),
       -- so there are no ope-specific comparison functions to keep inlinable.
       OR (p.pronargs = 1
@@ -62,7 +62,7 @@ BEGIN
     SELECT p.oid
     FROM pg_catalog.pg_proc p
     JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname = ANY(eql_v3_internal.owned_schemas())
+    WHERE n.nspname = ANY({{prefix}}_internal.owned_schemas())
       AND p.prokind IN ('f', 'w')
       AND NOT EXISTS (
         SELECT 1 FROM pg_catalog.unnest(coalesce(p.proconfig, '{}'::text[])) c
@@ -86,7 +86,7 @@ BEGIN
             AND dt.typbasetype = jsonb_oid
             AND (
               dn.nspname = 'public'
-              OR dn.nspname = ANY(eql_v3_internal.owned_schemas())
+              OR dn.nspname = ANY({{prefix}}_internal.owned_schemas())
             )
         )
       )

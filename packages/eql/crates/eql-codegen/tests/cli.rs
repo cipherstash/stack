@@ -81,7 +81,7 @@ fn list_schemas_subcommand_prints_owned_schemas() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(
-        stdout, "eql_v3\neql_v3_internal\n",
+        stdout, "{{prefix}}\n{{prefix}}_internal\n",
         "list-schemas must print the public schema first, then the internal schema"
     );
 }

@@ -1,7 +1,7 @@
 -- REQUIRE: src/v3/schema.sql
 
 --! @file v3/sem/ope_cllw/types.sql
---! @brief CLLW OPE index term type for scalar range queries (eql_v3 SEM)
+--! @brief CLLW OPE index term type for scalar range queries ({{prefix}} SEM)
 --!
 --! Domain type representing a CLLW (Copyless Logarithmic Width)
 --! Order-Preserving Encryption term. The ciphertext is stored hex-encoded in
@@ -12,13 +12,13 @@
 --! order-preserving under plain byte comparison, so the domain inherits
 --! bytea's native comparison operators and DEFAULT btree operator class
 --! outright — no hand-written operators, comparator, or operator class (the
---! same pattern as eql_v3_internal.hmac_256 over text). That keeps the whole
+--! same pattern as {{prefix}}_internal.hmac_256 over text). That keeps the whole
 --! comparison chain inlinable, so a functional btree index on
---! `eql_v3.ord_term(col)` engages structurally for the `_ord` / `_ord_ope`
---! domains' comparison operators. Contrast eql_v3_internal.ore_block_256 (`ob`),
+--! `{{prefix}}.ord_term(col)` engages structurally for the `_ord` / `_ord_ope`
+--! domains' comparison operators. Contrast {{prefix}}_internal.ore_block_256 (`ob`),
 --! the block-ORE term behind the `_ord_ore` escape hatch, compared by a custom
 --! N-block protocol.
 --!
 --! @note Transient type used only during query execution.
---! @see eql_v3_internal.ore_block_256
-CREATE DOMAIN eql_v3_internal.ope_cllw AS bytea;
+--! @see {{prefix}}_internal.ore_block_256
+CREATE DOMAIN {{prefix}}_internal.ope_cllw AS bytea;
