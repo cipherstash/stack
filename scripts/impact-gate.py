@@ -24,7 +24,19 @@ SCOPES = {'all': 'Including test files', 'source': 'Excluding test files'}
 
 
 def run(*args: str) -> str:
-    return subprocess.check_output(args, text=True).strip()
+    # Capture stderr: CalledProcessError's message omits it, and the summary needs it.
+    return subprocess.run(args, text=True, check=True, capture_output=True).stdout.strip()
+
+
+def describe(error: Exception) -> str:
+    if not isinstance(error, subprocess.CalledProcessError):
+        return f'{type(error).__name__}: {error}'
+    args = [str(arg) for arg in error.cmd]
+    # Name the tool and subcommand, not the absolute-path argv.
+    command = ' '.join(args[2:4] if args[1:2] == ['-m'] else args[:2])
+    text = f'`{command}` exited with status {error.returncode}.'
+    stderr = (error.stderr or '').strip()
+    return text + (f'\n\n```\n{stderr}\n```' if stderr else '')
 
 
 def cli(*args: str) -> str:
@@ -154,10 +166,12 @@ def main() -> int:
             prepare(args, policy, head)
         else:
             report(args, policy)
-    except (subprocess.CalledProcessError, OSError, ValueError, KeyError, TypeError,
-            importlib.metadata.PackageNotFoundError) as error:
-        publish(f'**ImpactGate analysis failed:** {error}')
-        return error.returncode if isinstance(error, subprocess.CalledProcessError) else 1
+    except subprocess.CalledProcessError as error:
+        publish(f'**ImpactGate analysis failed:** {describe(error)}')
+        return error.returncode
+    except Exception as error:  # A broken policy file must still reach the summary.
+        publish(f'**ImpactGate analysis failed:** {describe(error)}')
+        return 1
     return 0
 
 

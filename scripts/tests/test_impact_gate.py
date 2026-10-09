@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -36,8 +37,19 @@ class ImpactWorkflowTest(unittest.TestCase):
         self.git('commit', '-qm', name)
         return self.git('rev-parse', 'HEAD')
 
-    def run_driver(self, command, *args, expect=0):
-        result = subprocess.run([sys.executable, str(DRIVER), command,
+    def policy_copy(self, **files):
+        # Policy is bound to the driver's checkout, so damage a copied checkout.
+        root = Path(self.temp.name) / 'driver-checkout'
+        shutil.copytree(DRIVER.parents[1] / '.github' / 'impact-gate',
+                        root / '.github' / 'impact-gate')
+        (root / 'scripts').mkdir()
+        shutil.copy(DRIVER, root / 'scripts' / DRIVER.name)
+        for name, content in files.items():
+            (root / '.github' / 'impact-gate' / name).write_text(content)
+        return root / 'scripts' / DRIVER.name
+
+    def run_driver(self, command, *args, expect=0, driver=DRIVER):
+        result = subprocess.run([sys.executable, str(driver), command,
                                  '--base', 'main', '--cache-dir', str(self.cache), *args],
                                 cwd=self.repo, text=True, capture_output=True,
                                 env={**os.environ, 'GITHUB_OUTPUT': str(self.output),
@@ -121,6 +133,24 @@ class ImpactWorkflowTest(unittest.TestCase):
         result = self.run_driver('prepare', '--base', 'missing-target', expect=128)
         self.assertIn('analysis failed', self.summary.read_text())
         self.assertNotIn('rebuilt=true', result.stdout)
+
+    def test_malformed_policy_failure_reaches_summary(self):
+        for content in ('ignore: [unclosed\n', '- a\n'):
+            with self.subTest(content=content):
+                shutil.rmtree(Path(self.temp.name) / 'driver-checkout', ignore_errors=True)
+                self.summary.write_text('')
+                driver = self.policy_copy(**{'all.yml': content})
+                self.run_driver('prepare', '--refresh', expect=1, driver=driver)
+                self.assertIn('ImpactGate analysis failed', self.summary.read_text())
+
+    def test_score_failure_summary_includes_tool_stderr(self):
+        self.run_driver('prepare')
+        driver = self.policy_copy(**{'gate.yml': 'warn_percentile: 99\nblock_percentile: 50\n'})
+        # The copied checkout has a different policy identity; rebuild its pair.
+        self.run_driver('prepare', '--refresh', driver=driver)
+        self.summary.write_text('')
+        self.run_driver('report', expect=1, driver=driver)
+        self.assertIn('warn_percentile must be <= block_percentile', self.summary.read_text())
 
     def test_scopes_and_empty_history(self):
         self.git('checkout', '-qb', 'feature')
