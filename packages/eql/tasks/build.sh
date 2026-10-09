@@ -2,7 +2,7 @@
 #MISE description="Build SQL into single release file"
 #MISE alias="b"
 #MISE sources=["src/v3/**/*.sql", "src/v3/version.template", "tasks/pin_search_path_v3.sql", "tasks/uninstall-v3.sql", "crates/eql-domains/src/**/*.rs", "crates/eql-codegen/src/**/*.rs", "Cargo.toml", "Cargo.lock", "crates/eql-codegen/Cargo.toml", "crates/eql-domains/Cargo.toml", "tasks/build/ordering.sh", "tasks/test/verify_symbol_order_v3.sh", "tasks/test/verify_installer_complete.sh", "tasks/test/symbol_order_allowlist.txt"]
-#MISE outputs=["release/cipherstash-encrypt.sql","release/cipherstash-encrypt-uninstall.sql","src/deps-ordered-v3.txt"]
+#MISE outputs=["release/cipherstash-encrypt.sql","release/cipherstash-encrypt-uninstall.sql","src/deps-ordered-v3.txt","build/render/eql_v3/deps-ordered.txt"]
 #USAGE flag "--version <version>" help="Specify release version of EQL" default="DEV"
 
 #!/bin/bash
@@ -80,23 +80,44 @@ sed "s/\$RELEASE_VERSION/$RELEASE_VERSION/g" src/v3/version.template > src/v3/ve
 cargo run -q -p eql-codegen -- order > src/deps-ordered-v3.txt.tmp
 mv src/deps-ordered-v3.txt.tmp src/deps-ordered-v3.txt
 
-bash tasks/test/verify_symbol_order_v3.sh src/deps-ordered-v3.txt
+# The source names its schemas and payload version by placeholder
+# ({{prefix}}, {{eql_version}}; ADR-0002), so it is not installable SQL until it
+# is rendered. Render the ordered files, the pin script and the uninstaller as
+# EQL v3 into build/render/eql_v3/ (same relative paths), then run every gate
+# and assemble the installer from the rendered tree. `eql-codegen render` fails
+# on an unknown placeholder and on a literal eql_v3/eql_v4 in the source, and
+# writes nothing unless every file renders.
+assemble() {
+  local version=$1 installer=$2 uninstaller=$3
+  local root="build/render/eql_v${version}"
+  local ordered="$root/deps-ordered.txt"
 
-: > release/cipherstash-encrypt.sql
-while IFS= read -r f; do
-  strip_require_lines "$f" >> release/cipherstash-encrypt.sql
-done < src/deps-ordered-v3.txt
-cat tasks/pin_search_path_v3.sql >> release/cipherstash-encrypt.sql
+  rm -rf "$root"
+  # shellcheck disable=SC2046 # one path per line, none with spaces
+  cargo run -q -p eql-codegen -- render "$version" "$root" \
+    $(cat src/deps-ordered-v3.txt) tasks/pin_search_path_v3.sql tasks/uninstall-v3.sql
+  sed "s|^|$root/|" src/deps-ordered-v3.txt > "$ordered"
 
-# `eql-codegen order` guarantees the ORDER contains every file on disk. This gate
-# closes the layer below — that the concat loop above actually emitted each ordered
-# file's body. 93 of the ~244 v3 files are leaves (required by nothing, defining
-# nothing another file references), so dropping one yields an installer that applies
-# cleanly and passes the symbol checker while silently shipping less than it should.
-bash tasks/test/verify_installer_complete.sh src/deps-ordered-v3.txt release/cipherstash-encrypt.sql
+  bash tasks/test/verify_symbol_order_v3.sh "$ordered"
 
-cat tasks/uninstall-v3.sql >> release/cipherstash-encrypt-uninstall.sql
+  : > "$installer"
+  while IFS= read -r f; do
+    strip_require_lines "$f" >> "$installer"
+  done < "$ordered"
+  cat "$root/tasks/pin_search_path_v3.sql" >> "$installer"
 
+  # `eql-codegen order` guarantees the ORDER contains every file on disk. This
+  # gate closes the layer below — that the concat loop above actually emitted
+  # each ordered file's body. 93 of the ~244 v3 files are leaves (required by
+  # nothing, defining nothing another file references), so dropping one yields
+  # an installer that applies cleanly and passes the symbol checker while
+  # silently shipping less than it should.
+  bash tasks/test/verify_installer_complete.sh "$ordered" "$installer" "$root"
+
+  cat "$root/tasks/uninstall-v3.sql" > "$uninstaller"
+}
+
+assemble 3 release/cipherstash-encrypt.sql release/cipherstash-encrypt-uninstall.sql
 
 echo
 echo '###############################################'
