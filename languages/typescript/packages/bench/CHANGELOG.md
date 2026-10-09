@@ -1,5 +1,15 @@
 # @cipherstash/bench
 
+## 0.0.10
+
+### Patch Changes
+
+- Updated dependencies [fd0ee91]
+- Updated dependencies [bbb1bfa]
+- Updated dependencies [20ccab3]
+  - @cipherstash/stack@1.3.0
+  - @cipherstash/stack-drizzle@1.3.0
+
 ## 0.0.9
 
 ### Patch Changes

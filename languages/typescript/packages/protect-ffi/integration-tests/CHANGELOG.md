@@ -1,5 +1,15 @@
 # @cipherstash/ffi-integration-tests
 
+## 1.0.3
+
+### Patch Changes
+
+- Updated dependencies [fb75f40]
+- Updated dependencies [fd0ee91]
+- Updated dependencies [f7f1c76]
+  - @cipherstash/auth@1.0.0
+  - @cipherstash/protect-ffi@0.33.1
+
 ## 1.0.2
 
 ### Patch Changes

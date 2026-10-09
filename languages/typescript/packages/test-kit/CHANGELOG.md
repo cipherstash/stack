@@ -1,5 +1,14 @@
 # @cipherstash/test-kit
 
+## 0.0.6
+
+### Patch Changes
+
+- Updated dependencies [fd0ee91]
+- Updated dependencies [bbb1bfa]
+- Updated dependencies [20ccab3]
+  - @cipherstash/stack@1.3.0
+
 ## 0.0.5
 
 ### Patch Changes

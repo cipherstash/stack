@@ -1,5 +1,40 @@
 # stash
 
+## 1.3.0
+
+### Patch Changes
+
+- e5a3575: The supply-chain skill names every Dependabot ecosystem the repository monitors, including the Go module and the Docker image the musl binaries are built in.
+- fd0ee91: Document how `OidcFederationStrategy` serves many users through one client: the
+  `getJwt` callback runs on every operation, in the caller's async context, and
+  must return the JWT of the user behind the current request, and each user's
+  JWT is exchanged for that user's own token (stack-auth's fix for
+  cipherstash/stack#1045). One caveat is documented for the `@cipherstash/stack`
+  client on the native entry, which calls the strategy from a background task so
+  a request read from `AsyncLocalStorage` is not visible inside `getJwt` there
+  yet: capture the request in the closure or build the client per request until
+  cipherstash/stack#1065 lands. The docs and the `stash-auth`, `stash-encryption`,
+  `stash-supabase` and `stash-edge` skills say so, and say that on earlier
+  `@cipherstash/auth` releases a strategy caches one token for everyone, so a
+  client there must serve one user.
+- ae63dcd: `skills/stash-prisma`: the stale-`migrations/cipherstash/` table now describes
+  eql-3.1.0. The baseline bakes 3.1.0, 1.2.x shipped 3.0.6, and the table names
+  the `db init` refusal a stale 1.2.x directory produces.
+- bbb1bfa: `encrypt` on a `types.Json` column now types its result as `Encrypted | null` when the plaintext may be `null`. A `null` document has always resolved to `{ data: null }` at runtime (it is stored as SQL NULL, not encrypted), but the result was typed `Encrypted`, so `result.data.c` compiled and then threw. `encrypt` is now generic over the plaintext's type: a literal `null`, or a value typed `JsonDocument`, gives `data: Encrypted | null`, through `.withLockContext()` and `.audit()` too. A value TypeScript knows is non-null, and every scalar column, still gives `data: Encrypted`. No runtime change. If your code reads `result.data` after encrypting a Json value that may be `null`, it must now check for `null` first. `EncryptOperation` and `EncryptOperationWithLockContext` take an optional result type parameter (default `Encrypted`), and the `EncryptResult<P>` helper type is exported from `@cipherstash/stack/encryption`.
+
+  `@cipherstash/stack-supabase`: the per-term query-encryption fallback (used when the client has no `bulkEncrypt`) now rejects a `null` envelope instead of sending the string `"null"` as a filter operand, matching the bulk path.
+
+  `stash`: the `stash-encryption` skill now says what `encrypt` returns for a `null` Json document.
+
+- Updated dependencies [fb75f40]
+- Updated dependencies [0275684]
+- Updated dependencies [c851db5]
+- Updated dependencies [fd0ee91]
+- Updated dependencies [f7f1c76]
+  - @cipherstash/auth@1.0.0
+  - @cipherstash/eql@3.1.0
+  - @cipherstash/migrate@1.0.1
+
 ## 1.2.1
 
 ### Patch Changes

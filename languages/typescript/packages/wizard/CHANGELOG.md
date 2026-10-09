@@ -1,5 +1,13 @@
 # @cipherstash/wizard
 
+## 1.3.0
+
+### Patch Changes
+
+- Updated dependencies [fb75f40]
+- Updated dependencies [fd0ee91]
+  - @cipherstash/auth@1.0.0
+
 ## 1.2.1
 
 ### Patch Changes
