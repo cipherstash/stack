@@ -150,6 +150,20 @@
       "js_date": false
     },
     {
+      "name": "timestamp-expanded-year",
+      "kind": "timestamp",
+      "value": "+12000-01-01T00:00:00.000000001Z",
+      "transport": "130001d6b14900000001000000",
+      "js_date": false
+    },
+    {
+      "name": "timestamp-negative-year",
+      "kind": "timestamp",
+      "value": "-0005-03-01T12:00:00.000000001Z",
+      "transport": "1340a2727df1ffffff01000000",
+      "js_date": false
+    },
+    {
       "name": "decimal",
       "kind": "decimal",
       "value": "1.50",

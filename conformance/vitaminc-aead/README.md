@@ -9,7 +9,8 @@ nanoseconds, and decimals retain their flags and 96-bit coefficient.
 Each valid vector gives a name, kind, expected host value and hexadecimal
 transport bytes. Integer and decimal values are strings to avoid JSON number
 rounding. Bytes are hexadecimal. `js_date` selects a native JavaScript Date;
-other timestamps retain their nanoseconds in a wrapper. `malformed` vectors
+other timestamps retain their nanoseconds in a wrapper, spelled RFC 3339 for
+years 0000-9999 and with an ISO 8601 expanded year (`+12000-…`) otherwise. `malformed` vectors
 must be refused by the decoders.
 
 Rust re-encodes every valid vector byte-for-byte. The optional `js_reencode`
