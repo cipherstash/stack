@@ -15,6 +15,7 @@ pub mod generate;
 pub mod go_eql;
 pub mod operator_surface;
 pub mod ordering;
+pub mod render;
 pub mod targets;
 pub mod writer;
 

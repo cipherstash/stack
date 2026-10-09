@@ -1,9 +1,9 @@
 -- REQUIRE: src/v3/schema.sql
 
 --! @file v3/common.sql
---! @brief Common utility functions for the self-contained eql_v3 surface.
+--! @brief Common utility functions for the self-contained {{prefix}} surface.
 --!
---! Forked from src/common.sql (design D7) so the eql_v3 ORE constructor owns the
+--! Forked from src/common.sql (design D7) so the {{prefix}} ORE constructor owns the
 --! one transitive helper it needs without reaching into another schema. The
 --! eql_v2 original is unchanged.
 
@@ -29,7 +29,7 @@
 --!   raised) — both callers only ever pass an array or JSON null (`val->'ob'`),
 --!   so the divergence stays unreachable in practice; JSON null and empty
 --!   array still return NULL exactly as before.
-CREATE FUNCTION eql_v3_internal.jsonb_array_to_bytea_array(val jsonb)
+CREATE FUNCTION {{prefix}}_internal.jsonb_array_to_bytea_array(val jsonb)
 RETURNS bytea[]
   IMMUTABLE
 AS $$
@@ -53,5 +53,5 @@ $$ LANGUAGE plpgsql;
 --! It takes a bare `jsonb` arg (not a jsonb-backed encrypted DOMAIN), so the
 --! structural skip in tasks/pin_search_path_v3.sql does not recognise it;
 --! this marker is the documented manual opt-in.
-COMMENT ON FUNCTION eql_v3_internal.jsonb_array_to_bytea_array(jsonb) IS
+COMMENT ON FUNCTION {{prefix}}_internal.jsonb_array_to_bytea_array(jsonb) IS
   'eql-inline-critical: per-encrypted-value ORE opclass-path helper; must stay unpinned (SET search_path adds per-call overhead)';

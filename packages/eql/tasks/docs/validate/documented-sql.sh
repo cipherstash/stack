@@ -10,7 +10,10 @@ PGPORT=${PGPORT:-7432}
 PGUSER=${PGUSER:-cipherstash}
 PGPASSWORD=${PGPASSWORD:-password}
 PGDATABASE=${PGDATABASE:-postgres}
-source_directory="src"
+# The rendered eql_v3 tree, not src/: the source writes its schemas and payload
+# version as {{prefix}} / {{eql_version}} placeholders (ADR-0002), which psql
+# cannot parse. `mise run build` renders it.
+source_directory="build/render/eql_v3/src"
 
 echo "Validating SQL syntax for all documented files..."
 echo ""

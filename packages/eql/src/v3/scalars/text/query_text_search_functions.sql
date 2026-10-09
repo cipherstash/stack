@@ -4,140 +4,140 @@
 -- REQUIRE: src/v3/scalars/text/text_search_functions.sql
 
 --! @file encrypted_domain/text/query_text_search_functions.sql
---! @brief Functions for eql_v3.query_text_search.
+--! @brief Functions for {{prefix}}.query_text_search.
 
---! @brief Index extractor for eql_v3.query_text_search.
---! @param a eql_v3.query_text_search
---! @return eql_v3_internal.hmac_256
-CREATE FUNCTION eql_v3.eq_term(a eql_v3.query_text_search)
-RETURNS eql_v3_internal.hmac_256
+--! @brief Index extractor for {{prefix}}.query_text_search.
+--! @param a {{prefix}}.query_text_search
+--! @return {{prefix}}_internal.hmac_256
+CREATE FUNCTION {{prefix}}.eq_term(a {{prefix}}.query_text_search)
+RETURNS {{prefix}}_internal.hmac_256
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3_internal.hmac_256(a::jsonb) $$;
+AS $$ SELECT {{prefix}}_internal.hmac_256(a::jsonb) $$;
 
---! @brief Index extractor for eql_v3.query_text_search.
---! @param a eql_v3.query_text_search
---! @return eql_v3_internal.ope_cllw
-CREATE FUNCTION eql_v3.ord_term(a eql_v3.query_text_search)
-RETURNS eql_v3_internal.ope_cllw
+--! @brief Index extractor for {{prefix}}.query_text_search.
+--! @param a {{prefix}}.query_text_search
+--! @return {{prefix}}_internal.ope_cllw
+CREATE FUNCTION {{prefix}}.ord_term(a {{prefix}}.query_text_search)
+RETURNS {{prefix}}_internal.ope_cllw
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3_internal.ope_cllw(a::jsonb) $$;
+AS $$ SELECT {{prefix}}_internal.ope_cllw(a::jsonb) $$;
 
---! @brief Index extractor for eql_v3.query_text_search.
---! @param a eql_v3.query_text_search
---! @return eql_v3_internal.bloom_filter
-CREATE FUNCTION eql_v3.match_term(a eql_v3.query_text_search)
-RETURNS eql_v3_internal.bloom_filter
+--! @brief Index extractor for {{prefix}}.query_text_search.
+--! @param a {{prefix}}.query_text_search
+--! @return {{prefix}}_internal.bloom_filter
+CREATE FUNCTION {{prefix}}.match_term(a {{prefix}}.query_text_search)
+RETURNS {{prefix}}_internal.bloom_filter
 LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3_internal.bloom_filter(a::jsonb) $$;
+AS $$ SELECT {{prefix}}_internal.bloom_filter(a::jsonb) $$;
 
---! @brief Operator wrapper for eql_v3.query_text_search.
---! @param a public.eql_v3_text_search
---! @param b eql_v3.query_text_search
+--! @brief Operator wrapper for {{prefix}}.query_text_search.
+--! @param a public.{{prefix}}_text_search
+--! @param b {{prefix}}.query_text_search
 --! @return boolean
-CREATE FUNCTION eql_v3.eq(a public.eql_v3_text_search, b eql_v3.query_text_search)
+CREATE FUNCTION {{prefix}}.eq(a public.{{prefix}}_text_search, b {{prefix}}.query_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b) $$;
+AS $$ SELECT {{prefix}}.eq_term(a) = {{prefix}}.eq_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_text_search.
---! @param a eql_v3.query_text_search
---! @param b public.eql_v3_text_search
+--! @brief Operator wrapper for {{prefix}}.query_text_search.
+--! @param a {{prefix}}.query_text_search
+--! @param b public.{{prefix}}_text_search
 --! @return boolean
-CREATE FUNCTION eql_v3.eq(a eql_v3.query_text_search, b public.eql_v3_text_search)
+CREATE FUNCTION {{prefix}}.eq(a {{prefix}}.query_text_search, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) = eql_v3.eq_term(b) $$;
+AS $$ SELECT {{prefix}}.eq_term(a) = {{prefix}}.eq_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_text_search.
---! @param a public.eql_v3_text_search
---! @param b eql_v3.query_text_search
+--! @brief Operator wrapper for {{prefix}}.query_text_search.
+--! @param a public.{{prefix}}_text_search
+--! @param b {{prefix}}.query_text_search
 --! @return boolean
-CREATE FUNCTION eql_v3.neq(a public.eql_v3_text_search, b eql_v3.query_text_search)
+CREATE FUNCTION {{prefix}}.neq(a public.{{prefix}}_text_search, b {{prefix}}.query_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b) $$;
+AS $$ SELECT {{prefix}}.eq_term(a) <> {{prefix}}.eq_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_text_search.
---! @param a eql_v3.query_text_search
---! @param b public.eql_v3_text_search
+--! @brief Operator wrapper for {{prefix}}.query_text_search.
+--! @param a {{prefix}}.query_text_search
+--! @param b public.{{prefix}}_text_search
 --! @return boolean
-CREATE FUNCTION eql_v3.neq(a eql_v3.query_text_search, b public.eql_v3_text_search)
+CREATE FUNCTION {{prefix}}.neq(a {{prefix}}.query_text_search, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.eq_term(a) <> eql_v3.eq_term(b) $$;
+AS $$ SELECT {{prefix}}.eq_term(a) <> {{prefix}}.eq_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_text_search.
---! @param a public.eql_v3_text_search
---! @param b eql_v3.query_text_search
+--! @brief Operator wrapper for {{prefix}}.query_text_search.
+--! @param a public.{{prefix}}_text_search
+--! @param b {{prefix}}.query_text_search
 --! @return boolean
-CREATE FUNCTION eql_v3.lt(a public.eql_v3_text_search, b eql_v3.query_text_search)
+CREATE FUNCTION {{prefix}}.lt(a public.{{prefix}}_text_search, b {{prefix}}.query_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) < eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_text_search.
---! @param a eql_v3.query_text_search
---! @param b public.eql_v3_text_search
+--! @brief Operator wrapper for {{prefix}}.query_text_search.
+--! @param a {{prefix}}.query_text_search
+--! @param b public.{{prefix}}_text_search
 --! @return boolean
-CREATE FUNCTION eql_v3.lt(a eql_v3.query_text_search, b public.eql_v3_text_search)
+CREATE FUNCTION {{prefix}}.lt(a {{prefix}}.query_text_search, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) < eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) < {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_text_search.
---! @param a public.eql_v3_text_search
---! @param b eql_v3.query_text_search
+--! @brief Operator wrapper for {{prefix}}.query_text_search.
+--! @param a public.{{prefix}}_text_search
+--! @param b {{prefix}}.query_text_search
 --! @return boolean
-CREATE FUNCTION eql_v3.lte(a public.eql_v3_text_search, b eql_v3.query_text_search)
+CREATE FUNCTION {{prefix}}.lte(a public.{{prefix}}_text_search, b {{prefix}}.query_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) <= eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_text_search.
---! @param a eql_v3.query_text_search
---! @param b public.eql_v3_text_search
+--! @brief Operator wrapper for {{prefix}}.query_text_search.
+--! @param a {{prefix}}.query_text_search
+--! @param b public.{{prefix}}_text_search
 --! @return boolean
-CREATE FUNCTION eql_v3.lte(a eql_v3.query_text_search, b public.eql_v3_text_search)
+CREATE FUNCTION {{prefix}}.lte(a {{prefix}}.query_text_search, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) <= eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) <= {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_text_search.
---! @param a public.eql_v3_text_search
---! @param b eql_v3.query_text_search
+--! @brief Operator wrapper for {{prefix}}.query_text_search.
+--! @param a public.{{prefix}}_text_search
+--! @param b {{prefix}}.query_text_search
 --! @return boolean
-CREATE FUNCTION eql_v3.gt(a public.eql_v3_text_search, b eql_v3.query_text_search)
+CREATE FUNCTION {{prefix}}.gt(a public.{{prefix}}_text_search, b {{prefix}}.query_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) > eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_text_search.
---! @param a eql_v3.query_text_search
---! @param b public.eql_v3_text_search
+--! @brief Operator wrapper for {{prefix}}.query_text_search.
+--! @param a {{prefix}}.query_text_search
+--! @param b public.{{prefix}}_text_search
 --! @return boolean
-CREATE FUNCTION eql_v3.gt(a eql_v3.query_text_search, b public.eql_v3_text_search)
+CREATE FUNCTION {{prefix}}.gt(a {{prefix}}.query_text_search, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) > eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) > {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_text_search.
---! @param a public.eql_v3_text_search
---! @param b eql_v3.query_text_search
+--! @brief Operator wrapper for {{prefix}}.query_text_search.
+--! @param a public.{{prefix}}_text_search
+--! @param b {{prefix}}.query_text_search
 --! @return boolean
-CREATE FUNCTION eql_v3.gte(a public.eql_v3_text_search, b eql_v3.query_text_search)
+CREATE FUNCTION {{prefix}}.gte(a public.{{prefix}}_text_search, b {{prefix}}.query_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) >= eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_text_search.
---! @param a eql_v3.query_text_search
---! @param b public.eql_v3_text_search
+--! @brief Operator wrapper for {{prefix}}.query_text_search.
+--! @param a {{prefix}}.query_text_search
+--! @param b public.{{prefix}}_text_search
 --! @return boolean
-CREATE FUNCTION eql_v3.gte(a eql_v3.query_text_search, b public.eql_v3_text_search)
+CREATE FUNCTION {{prefix}}.gte(a {{prefix}}.query_text_search, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
-AS $$ SELECT eql_v3.ord_term(a) >= eql_v3.ord_term(b) $$;
+AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}.ord_term(b) $$;
 
---! @brief Operator wrapper for eql_v3.query_text_search.
---! @param a public.eql_v3_text_search
---! @param b eql_v3.query_text_search
+--! @brief Operator wrapper for {{prefix}}.query_text_search.
+--! @param a public.{{prefix}}_text_search
+--! @param b {{prefix}}.query_text_search
 --! @return boolean
-CREATE FUNCTION eql_v3.matches(a public.eql_v3_text_search, b eql_v3.query_text_search)
+CREATE FUNCTION {{prefix}}.matches(a public.{{prefix}}_text_search, b {{prefix}}.query_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT eql_v3.match_term(a) @> eql_v3.match_term(b) AND (cardinality(eql_v3.match_term(b)) > 0 OR cardinality(eql_v3.match_term(a)) = 0) $$;
+AS $$ SELECT {{prefix}}.match_term(a) @> {{prefix}}.match_term(b) AND (cardinality({{prefix}}.match_term(b)) > 0 OR cardinality({{prefix}}.match_term(a)) = 0) $$;
 
---! @brief Operator wrapper for eql_v3.query_text_search.
---! @param a eql_v3.query_text_search
---! @param b public.eql_v3_text_search
+--! @brief Operator wrapper for {{prefix}}.query_text_search.
+--! @param a {{prefix}}.query_text_search
+--! @param b public.{{prefix}}_text_search
 --! @return boolean
-CREATE FUNCTION eql_v3.matches(a eql_v3.query_text_search, b public.eql_v3_text_search)
+CREATE FUNCTION {{prefix}}.matches(a {{prefix}}.query_text_search, b public.{{prefix}}_text_search)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE
-AS $$ SELECT eql_v3.match_term(a) @> eql_v3.match_term(b) AND (cardinality(eql_v3.match_term(b)) > 0 OR cardinality(eql_v3.match_term(a)) = 0) $$;
+AS $$ SELECT {{prefix}}.match_term(a) @> {{prefix}}.match_term(b) AND (cardinality({{prefix}}.match_term(b)) > 0 OR cardinality({{prefix}}.match_term(a)) = 0) $$;

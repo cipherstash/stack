@@ -64,7 +64,7 @@ done
 
 # Deprecated SQL compatibility aliases remain installed, but the explicitly
 # hidden block must never reach Doxygen — including its generated source browser.
-ste_vec_alias_count=$(grep -c '^CREATE FUNCTION eql_v3\.ste_vec_contains' src/v3/json/functions.sql || true)
+ste_vec_alias_count=$(grep -c '^CREATE FUNCTION {{prefix}}\.ste_vec_contains' src/v3/json/functions.sql || true)
 if [ "$ste_vec_alias_count" -ne 2 ]; then
   echo "FAIL: expected both deprecated ste_vec_contains overloads in src/v3/json/functions.sql" >&2
   status=1

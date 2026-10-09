@@ -61,6 +61,7 @@ pub fn environment() -> minijinja::Environment<'static> {
     .expect("ore_fallback.sql template");
     env.add_global("schema", SCHEMA);
     env.add_global("internal_schema", INTERNAL_SCHEMA);
+    env.add_global("eql_version", EQL_VERSION);
     env
 }
 
@@ -390,15 +391,15 @@ pub struct OreFallbackEntry {
 }
 
 /// The bare pg_type typname of a public-schema encrypted domain: the catalog
-/// name carrying the [`eql_domains::PUBLIC_TYPNAME_PREFIX`] version prefix,
-/// e.g. `eql_v3_integer_eq`. The prefix keeps EQL domains from
+/// name carrying the [`PUBLIC_TYPNAME_PREFIX`] version prefix,
+/// e.g. `{{prefix}}_integer_eq` (`eql_v3_integer_eq` once rendered). The prefix keeps EQL domains from
 /// shadowing PostgreSQL built-in type names (`integer`, `text`, `json`, …)
 /// and gives each EQL version a distinct column-type namespace so multiple
 /// versions can coexist in one database. Catalog names stay bare — the prefix
 /// is applied only at SQL-name construction (file names, REQUIRE paths,
 /// struct idents, and test names all keep the bare name).
 pub fn public_typname(name: &str) -> String {
-    format!("{}{name}", eql_domains::PUBLIC_TYPNAME_PREFIX)
+    format!("{PUBLIC_TYPNAME_PREFIX}{name}")
 }
 
 /// The schema-qualified SQL domain type name, e.g. `public.eql_v3_integer_eq`.
@@ -463,13 +464,13 @@ mod tests {
 
     #[test]
     fn domain_name_qualifies_user_domains_with_public_schema() {
-        assert_eq!(domain_name("integer_eq"), "public.eql_v3_integer_eq");
+        assert_eq!(domain_name("integer_eq"), "public.{{prefix}}_integer_eq");
     }
 
     #[test]
     fn public_typname_carries_version_prefix() {
-        assert_eq!(public_typname("integer"), "eql_v3_integer");
-        assert_eq!(public_typname("text_match"), "eql_v3_text_match");
+        assert_eq!(public_typname("integer"), "{{prefix}}_integer");
+        assert_eq!(public_typname("text_match"), "{{prefix}}_text_match");
     }
 
     #[test]

@@ -1,11 +1,11 @@
 -- REQUIRE: src/v3/schema.sql
 
 --! @file v3/crypto.sql
---! @brief PostgreSQL pgcrypto extension enablement (eql_v3 fork)
+--! @brief PostgreSQL pgcrypto extension enablement ({{prefix}} fork)
 --!
---! Forked from src/crypto.sql (design D8) so the entire eql_v3 dependency
+--! Forked from src/crypto.sql (design D8) so the entire {{prefix}} dependency
 --! closure lives under src/v3/. Enables the pgcrypto extension which provides
---! cryptographic functions used by the eql_v3 ORE comparison path.
+--! cryptographic functions used by the {{prefix}} ORE comparison path.
 --!
 --! Installs pgcrypto into the `extensions` schema (Supabase convention) to
 --! avoid the `extension_in_public` lint. Every EQL function that uses pgcrypto
