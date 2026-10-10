@@ -113,6 +113,70 @@ async fn ore_terms_array_null_and_empty_base_cases(pool: PgPool) -> Result<()> {
     Ok(())
 }
 
+/// T4b — Multi-term arrays (text carries up to six terms) are compared across
+/// every paired term with one hash for the first unequal pair, instead of
+/// term by term. Pins the structural results that path must keep: an equal
+/// prefix sorts the shorter array first; NULL elements order before
+/// non-NULL ones and equal each other; and every paired term is
+/// length-checked, including one after the first unequal pair (the
+/// term-by-term form stopped before reaching it). Creds-free: identical
+/// hand-built 65-byte terms (N = 1) compare equal by construction.
+#[sqlx::test]
+async fn ore_terms_array_multi_term_structure(pool: PgPool) -> Result<()> {
+    let t = "ROW(repeat('a', 65)::bytea)::eql_v3_internal.ore_block_256_term";
+    let u = "ROW(repeat('b', 65)::bytea)::eql_v3_internal.ore_block_256_term";
+    let n = "NULL::eql_v3_internal.ore_block_256_term";
+    let short = "ROW(repeat('a', 64)::bytea)::eql_v3_internal.ore_block_256_term";
+    let cmp = |x: String, y: String| {
+        format!("SELECT eql_v3_internal.compare_ore_block_256_terms({x}, {y})")
+    };
+    let arr = |items: &[&str]| format!("ARRAY[{}]", items.join(", "));
+
+    let cases = [
+        (cmp(arr(&[t, t]), arr(&[t, t])), 0, "equal arrays"),
+        (
+            cmp(arr(&[t, t]), arr(&[t, t, t])),
+            -1,
+            "equal prefix, shorter first",
+        ),
+        (
+            cmp(arr(&[t, t, t]), arr(&[t, t])),
+            1,
+            "equal prefix, longer second",
+        ),
+        (
+            cmp(arr(&[n, t]), arr(&[t, t])),
+            -1,
+            "NULL first element sorts first",
+        ),
+        (
+            cmp(arr(&[t, t]), arr(&[n, t])),
+            1,
+            "non-NULL first element sorts second",
+        ),
+        (
+            cmp(arr(&[t, n]), arr(&[t, t])),
+            -1,
+            "NULL after an equal term sorts first",
+        ),
+        (
+            cmp(arr(&[n, t]), arr(&[n, t])),
+            0,
+            "NULL elements equal each other",
+        ),
+    ];
+    for (sql, expected, what) in cases {
+        let got: i32 = sqlx::query_scalar(&sql).fetch_one(&pool).await?;
+        assert_eq!(got, expected, "{what}: {sql}");
+    }
+
+    // The first pair differs; the second is malformed. Every paired term is
+    // checked, so this raises rather than returning on the first pair.
+    let sql = cmp(arr(&[t, short]), arr(&[u, short]));
+    assert_raises(&pool, &sql, &[], "Malformed ORE term").await?;
+    Ok(())
+}
+
 /// T5 — SEM presence checks (`has_ore_block_256`, `has_hmac_256`), the
 /// extractor's missing-`ob` and non-array-`ob` RAISEs, and its NULL-jsonb
 /// short-circuit.
