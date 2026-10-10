@@ -252,10 +252,10 @@ async fn empty_ore_term_sorts_before_non_empty(pool: PgPool) -> Result<()> {
 ///
 /// Valid lengths are pinned to exact return values (verified against
 /// `src/v3/sem/ore_block_256/functions.sql`):
-///   * equal operands take the all-blocks-equal path → return **0**
-///     (`functions.sql:166-168`; the `encrypt()` branch is unreachable);
-///   * differing operands fall through to the `encrypt()` path → return **±1**
-///     (`functions.sql:170-190`), which is the branch the length guard protects.
+///   * equal operands → return **0**. The comparator still runs its one
+///     `encrypt()` (constant operation count) and discards the result;
+///   * differing operands → return **±1** from that `encrypt()`, which is the
+///     read the length guard protects.
 #[sqlx::test]
 async fn comparator_length_guard_sweep(pool: PgPool) -> Result<()> {
     // Invalid: not 49*N + 16 (16 and 4 are covered by the dedicated tests above).
