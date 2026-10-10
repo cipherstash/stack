@@ -16,3 +16,7 @@ self-hosted-runner:
     # the tests. Kept as its own label rather than renamed to the 4vcpu one —
     # rehoming those jobs is a cost decision, not a lint fix.
     - blacksmith-16vcpu-ubuntu-2204
+    # The Claude PR review. It waits on the Anthropic API rather than
+    # compiling anything, so it takes the smallest arm64 runner, which
+    # Blacksmith bills for less than x64.
+    - blacksmith-2vcpu-ubuntu-2404-arm
