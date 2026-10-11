@@ -6,6 +6,15 @@ relates-to: ADR-0001; stack-encrypt ADR-0003, ADR-0007
 
 # One value model, three encodings in vitaminc, and EQL v4 separated by producer
 
+> **Amended 2026-10-11** by
+> [`docs/plans/2026-10-11-order-and-equality-terms-layering.md`](../plans/2026-10-11-order-and-equality-terms-layering.md).
+> Where the two disagree, the plan wins. In short: vitaminc sits at the
+> bottom of the stack and the ORE schemes implement `vitaminc-ore`'s trait;
+> equality and order terms take their own per-domain transforms instead of
+> one shared canonical form; `vitaminc-prf` no longer depends on order
+> encodings; and `orderable-bytes` is frozen. The plan lists every statement
+> below that it replaces.
+
 Every value Stack Encrypt handles is encoded three times: as a **ciphertext**
 (reversible and self-describing), as an **equality term** (a keyed hash that
 must be unambiguous) and as an **order term** (bytes whose order is the
