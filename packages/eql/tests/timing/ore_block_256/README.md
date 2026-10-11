@@ -68,7 +68,8 @@ Sampling follows dudect, with three lessons from the ore.rs benches built in:
 1. **Both classes share one table, in random order.** With separate storage
    per class, placement alone produced a timing difference.
 2. **Several comparisons per sample** (16 single-term, 8 multi-term), so a
-   sample spans many ticks of `clock_timestamp()`'s microsecond clock.
+   sample spans many ticks of `clock_timestamp()`'s microsecond clock. Each
+   comparison's pair is drawn at random, with replacement, from that class.
 3. **The plain Welch t over every sample**, not a percentile-cropped maximum.
    Cropping turns a difference in spread into a large t with no difference in
    mean.

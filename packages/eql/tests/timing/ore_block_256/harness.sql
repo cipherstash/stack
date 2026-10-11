@@ -43,8 +43,10 @@ INSERT INTO pairs
   ) s;
 
 -- dudect-style sampling. Each sample picks a class at random and times
--- `per_sample` comparisons of distinct random pairs of that class through
--- compare_ore_block_256_terms (the operator-class path). clock_timestamp()
+-- `per_sample` comparisons of pairs of that class, each drawn at random with
+-- replacement (a sample can repeat a pair; both classes are drawn the same
+-- way from pools of the same size), through compare_ore_block_256_terms
+-- (the operator-class path). clock_timestamp()
 -- ticks in microseconds, so a sample must span many of them.
 CREATE FUNCTION bench(which_kind text, samples int, per_sample int)
   RETURNS TABLE (cls int, us double precision)
