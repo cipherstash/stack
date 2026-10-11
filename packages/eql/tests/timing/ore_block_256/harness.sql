@@ -1,7 +1,7 @@
 -- ORE comparator timing harness. Loaded by run.sh into a database with EQL
 -- installed, after run.sh has created the `ore_timing` schema and loaded the
 -- ctgen output into ore_timing.staging (`\copy` cannot take a psql variable).
--- Everything lives in `ore_timing`, which run.sh drops afterwards.
+-- Everything lives in `ore_timing`, which run.sh creates and drops afterwards.
 
 SET search_path = ore_timing, public;
 
@@ -23,6 +23,24 @@ CREATE TABLE pairs AS
   SELECT kind, row_number() OVER (PARTITION BY kind ORDER BY random()) AS id,
          (label = 'last')::int AS cls, terms_of(a_hex) AS a, terms_of(b_hex) AS b
   FROM staging WHERE kind LIKE 'timing%';
+
+-- Two shapes built from the six-term pairs, where a and b differ in term 1.
+-- Class 1 in both is a's first five terms against b (term 1 differs). Class 0:
+--   prefix: a's first five terms against all six of a: every paired term is
+--           equal and the term counts differ;
+--   null:   a's first five terms and a NULL against a: the first unequal pair
+--           is the NULL one, after five equal terms.
+-- A comparator that skips its hash once the order is settled by structure
+-- shows a difference here.
+INSERT INTO pairs
+  SELECT kind, row_number() OVER (PARTITION BY kind ORDER BY random()), cls, a, b FROM (
+    SELECT 'prefix' AS kind, 0 AS cls, a[1:5] AS a, a AS b FROM pairs WHERE kind = 'timing6' AND cls = 0
+    UNION ALL SELECT 'prefix', 1, a[1:5], b FROM pairs WHERE kind = 'timing6' AND cls = 0
+    UNION ALL SELECT 'null', 0, a[1:5] || NULL::eql_v3_internal.ore_block_256_term, a
+      FROM pairs WHERE kind = 'timing6' AND cls = 0
+    UNION ALL SELECT 'null', 1, a[1:5] || NULL::eql_v3_internal.ore_block_256_term, b
+      FROM pairs WHERE kind = 'timing6' AND cls = 0
+  ) s;
 
 -- dudect-style sampling. Each sample picks a class at random and times
 -- `per_sample` comparisons of distinct random pairs of that class through

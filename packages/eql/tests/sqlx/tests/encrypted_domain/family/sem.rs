@@ -12,20 +12,42 @@
 //!   equal length, so the matrix never hits it).
 //! - T3: NULL-term ordering inside `compare_ore_block_256_term` — the
 //!   `STRICT` comparison wrappers short-circuit before these branches run.
-//! - T4: array-level NULL + empty/cardinality base cases of the recursion.
+//! - T4: array-level NULL + empty/cardinality base cases of the array
+//!   comparator.
+//! - T4b: the multi-term structure (equal prefixes, NULL elements, the
+//!   later-term length check).
+//! - T4c: ordering against plaintext, single- and multi-term, with real ORE
+//!   ciphertexts encrypted in-process by ore-rs.
 //! - T5: presence checks (`has_*`) and the missing-`ob` RAISE.
 //!
-//! These tests build terms directly from hex literals, so they need no fixture
-//! data or table setup.
+//! None needs fixture data or CipherStash credentials. Apart from T4c, these
+//! tests build terms directly from hex literals.
 
 use anyhow::Result;
 use eql_tests::assert_raises;
+use ore_rs::scheme::bit2::OreAes128ChaCha20;
+use ore_rs::{OreCipher, OreEncrypt, OreOutput};
 use sqlx::PgPool;
 
 /// A single term built directly from hex — no encryption needed for the
 /// structural/edge-case tests.
 fn term(hex: &str) -> String {
     format!("ROW(decode('{hex}', 'hex'))::eql_v3_internal.ore_block_256_term")
+}
+
+/// An ore-rs cipher for the legacy 8-bit block scheme behind `ore_block_256`,
+/// under a fresh throwaway key: real ciphertexts without CipherStash
+/// credentials.
+fn ore_cipher() -> Result<OreAes128ChaCha20> {
+    let (k1, k2): ([u8; 16], [u8; 16]) = (rand::random(), rand::random());
+    OreCipher::init(&k1, &k2).map_err(|e| anyhow::anyhow!("ORE init: {e:?}"))
+}
+
+/// The hex of `x`'s ORE term (408 bytes, N = 8).
+fn ore_hex(ore: &OreAes128ChaCha20, x: u64) -> Result<String> {
+    x.encrypt(ore)
+        .map(|ct| hex::encode(ct.to_bytes()))
+        .map_err(|e| anyhow::anyhow!("ORE encrypt: {e:?}"))
 }
 
 /// T2 — The term comparator must reject ciphertexts of different lengths. This
@@ -72,7 +94,7 @@ async fn ore_term_comparator_null_ordering(pool: PgPool) -> Result<()> {
     Ok(())
 }
 
-/// T4 — Array-level NULL and empty/cardinality base cases of the recursive
+/// T4 — Array-level NULL and empty/cardinality base cases of
 /// `compare_ore_block_256_terms(term[], term[])`. NULL array → NULL;
 /// both empty → 0; empty vs non-empty → -1; non-empty vs empty → 1.
 #[sqlx::test]
@@ -119,14 +141,16 @@ async fn ore_terms_array_null_and_empty_base_cases(pool: PgPool) -> Result<()> {
 /// prefix sorts the shorter array first; NULL elements order before
 /// non-NULL ones and equal each other; and every paired term is
 /// length-checked, including one after the first unequal pair (the
-/// term-by-term form stopped before reaching it). Creds-free: identical
-/// hand-built 65-byte terms (N = 1) compare equal by construction.
+/// term-by-term form stopped before reaching it). `t` and `u` are real
+/// ore-rs terms; `short` is malformed on purpose, one byte short of N = 8.
 #[sqlx::test]
 async fn ore_terms_array_multi_term_structure(pool: PgPool) -> Result<()> {
-    let t = "ROW(repeat('a', 65)::bytea)::eql_v3_internal.ore_block_256_term";
-    let u = "ROW(repeat('b', 65)::bytea)::eql_v3_internal.ore_block_256_term";
+    let ore = ore_cipher()?;
+    let t = term(&ore_hex(&ore, 1)?);
+    let u = term(&ore_hex(&ore, 2)?);
     let n = "NULL::eql_v3_internal.ore_block_256_term";
-    let short = "ROW(repeat('a', 64)::bytea)::eql_v3_internal.ore_block_256_term";
+    let short = term(&ore_hex(&ore, 1)?[2..]);
+    let (t, u, short) = (t.as_str(), u.as_str(), short.as_str());
     let cmp = |x: String, y: String| {
         format!("SELECT eql_v3_internal.compare_ore_block_256_terms({x}, {y})")
     };
@@ -174,6 +198,119 @@ async fn ore_terms_array_multi_term_structure(pool: PgPool) -> Result<()> {
     // checked, so this raises rather than returning on the first pair.
     let sql = cmp(arr(&[t, short]), arr(&[u, short]));
     assert_raises(&pool, &sql, &[], "Malformed ORE term").await?;
+    Ok(())
+}
+
+/// u64 arrays whose pairwise comparisons reach every part of the ORE
+/// comparator: single terms first differing in each of the eight blocks, and
+/// multi-term (text-shaped) values that share prefixes of every length,
+/// differ in an early or late block of a later term, or extend one another.
+fn ore_vectors() -> Vec<Vec<u64>> {
+    let b: u64 = 0x8040_2010_0804_0201;
+    let p: [u64; 6] = [
+        0x0123_4567_89ab_cdef,
+        0xfedc_ba98_7654_3210,
+        0x0f1e_2d3c_4b5a_6978,
+        0x8796_a5b4_c3d2_e1f0,
+        0x1122_3344_5566_7788,
+        0x99aa_bbcc_ddee_ff00,
+    ];
+    let mut v: Vec<Vec<u64>> = vec![vec![0], vec![u64::MAX], vec![b]];
+    // Block k is byte k from the most significant end.
+    for k in 0..8 {
+        v.push(vec![b ^ (0x10u64 << (8 * (7 - k)))]);
+    }
+    for len in 1..=6 {
+        v.push(p[..len].to_vec());
+    }
+    for (term, bit) in [(1, 63), (1, 0), (2, 56), (2, 7), (5, 31), (5, 0)] {
+        let mut x = p.to_vec();
+        x[term] ^= 1 << bit;
+        v.push(x);
+    }
+    v.push(vec![p[0], p[1], p[2], 0]);
+    v.push(vec![p[0], p[1], p[2], u64::MAX]);
+    v.push(vec![p[0] ^ 1, p[1]]);
+    v
+}
+
+/// T4c — The array comparator orders like plaintext. The scalar matrix
+/// covers ordering only with credential-generated fixtures, and the text ones
+/// rarely share a whole leading term, so this pins the multi-term path (a
+/// latched pair after an equal prefix, a first difference in a late block)
+/// without credentials. The values in `ore_vectors` are encrypted here with
+/// ore-rs (the legacy 8-bit block scheme behind `ore_block_256`) under a
+/// fresh throwaway key: real ciphertexts, made on every run. `numeric[]`
+/// compares lexicographically with the shorter array first on an equal
+/// prefix, as the comparator does.
+#[sqlx::test]
+async fn ore_terms_array_orders_like_plaintext(pool: PgPool) -> Result<()> {
+    let ore = ore_cipher()?;
+
+    sqlx::query(
+        "CREATE TABLE ore_block_256_vectors (
+           id integer PRIMARY KEY,
+           plain numeric[] NOT NULL,
+           terms eql_v3_internal.ore_block_256_term[] NOT NULL)",
+    )
+    .execute(&pool)
+    .await?;
+    for (id, xs) in ore_vectors().iter().enumerate() {
+        let plain: Vec<String> = xs.iter().map(|x| x.to_string()).collect();
+        let terms = xs
+            .iter()
+            .map(|&x| ore_hex(&ore, x))
+            .collect::<Result<Vec<String>>>()?;
+        sqlx::query(
+            "INSERT INTO ore_block_256_vectors
+             SELECT $1, $2::text[]::numeric[],
+                    array_agg(ROW(decode(h, 'hex'))::eql_v3_internal.ore_block_256_term ORDER BY o)
+             FROM unnest($3::text[]) WITH ORDINALITY AS u(h, o)",
+        )
+        .bind(id as i32)
+        .bind(&plain)
+        .bind(&terms)
+        .execute(&pool)
+        .await?;
+    }
+
+    let (pairs, wrong): (i64, Vec<String>) = sqlx::query_as(
+        "WITH c AS (
+           SELECT x.id AS i, y.id AS j,
+                  eql_v3_internal.compare_ore_block_256_terms(x.terms, y.terms) AS got,
+                  CASE WHEN x.plain < y.plain THEN -1
+                       WHEN x.plain > y.plain THEN 1 ELSE 0 END AS want
+           FROM ore_block_256_vectors x CROSS JOIN ore_block_256_vectors y)
+         SELECT count(*),
+                coalesce(array_agg(format('%s vs %s: got %s, want %s', i, j, got, want))
+                           FILTER (WHERE got IS DISTINCT FROM want), '{}')
+         FROM c",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(pairs, (ore_vectors().len() * ore_vectors().len()) as i64);
+    assert!(wrong.is_empty(), "misordered pairs: {wrong:?}");
+
+    // A NULL second element against a real second term: after an equal first
+    // term the NULL sorts first; otherwise the first terms decide. Both ways
+    // round.
+    let wrong: Vec<String> = sqlx::query_scalar(
+        "WITH c AS (
+           SELECT x.id AS i, y.id AS j,
+                  x.terms[1:1] || NULL::eql_v3_internal.ore_block_256_term AS a, y.terms AS b,
+                  CASE WHEN x.plain[1] = y.plain[1] THEN -1
+                       ELSE sign(x.plain[1] - y.plain[1])::int END AS want
+           FROM ore_block_256_vectors x CROSS JOIN ore_block_256_vectors y
+           WHERE cardinality(y.terms) >= 2)
+         SELECT coalesce(array_agg(format('[%s, NULL] vs %s', i, j))
+                  FILTER (WHERE eql_v3_internal.compare_ore_block_256_terms(a, b) IS DISTINCT FROM want
+                             OR eql_v3_internal.compare_ore_block_256_terms(b, a) IS DISTINCT FROM -want),
+                  '{}')
+         FROM c",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert!(wrong.is_empty(), "misordered NULL pairs: {wrong:?}");
     Ok(())
 }
 

@@ -14,18 +14,29 @@ samples="${1:-200000}"
 here="$(cd "$(dirname "$0")" && pwd)"
 : "${DATABASE_URL:?set DATABASE_URL to a database with EQL installed}"
 
+# Everything lives in the ore_timing schema, which is dropped on exit. Refuse
+# to start if it already exists, so a run never drops a schema it did not make.
+if [ "$(psql "$DATABASE_URL" -tA -c "SELECT to_regnamespace('ore_timing') IS NOT NULL")" != "f" ]; then
+    echo "schema ore_timing already exists (or the database is unreachable); not touching it" >&2
+    exit 1
+fi
+
 tmp="$(mktemp -d)"
+created=0
 cleanup() {
     rm -rf "$tmp"
-    psql "$DATABASE_URL" -q -c "DROP SCHEMA IF EXISTS ore_timing CASCADE" >/dev/null 2>&1 || true
+    if [ "$created" = 1 ]; then
+        psql "$DATABASE_URL" -q -c "DROP SCHEMA ore_timing CASCADE" >/dev/null 2>&1 || true
+    fi
 }
 trap cleanup EXIT
 
 echo "== generating ciphertexts (ore-rs, throwaway key)"
 cargo run --quiet --release --manifest-path "$here/ctgen/Cargo.toml" -- 256 >"$tmp/ct.tsv"
 
-psql "$DATABASE_URL" -q -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS ore_timing CASCADE" \
-    -c "CREATE SCHEMA ore_timing" \
+psql "$DATABASE_URL" -q -v ON_ERROR_STOP=1 -c "CREATE SCHEMA ore_timing" >/dev/null
+created=1
+psql "$DATABASE_URL" -q -v ON_ERROR_STOP=1 \
     -c "CREATE TABLE ore_timing.staging (kind text, label text, a_hex text, b_hex text)" \
     -c "\\copy ore_timing.staging FROM '$tmp/ct.tsv'" >/dev/null
 psql "$DATABASE_URL" -q -v ON_ERROR_STOP=1 -f "$here/harness.sql" >/dev/null
@@ -38,14 +49,20 @@ wrong="$(psql "$DATABASE_URL" -tA -c "
 echo "   wrong: $wrong"
 [ "$wrong" = "0" ] || { echo "comparator disagrees with plaintext order; not timing"; exit 1; }
 
-echo "== timing (two runs per kind; classes: values first differ early vs late)"
+echo "== timing (two runs per kind; classes: see README.md)"
 for run in 1 2; do
     psql "$DATABASE_URL" -q -v ON_ERROR_STOP=1 -c "
       CREATE TABLE ore_timing.single_$run AS SELECT * FROM ore_timing.bench('timing1', $samples, 16);
-      CREATE TABLE ore_timing.six_$run AS SELECT * FROM ore_timing.bench('timing6', $((samples / 4)), 8);"
+      CREATE TABLE ore_timing.six_$run AS SELECT * FROM ore_timing.bench('timing6', $((samples / 4)), 8);
+      CREATE TABLE ore_timing.prefix_$run AS SELECT * FROM ore_timing.bench('prefix', $((samples / 4)), 8);
+      CREATE TABLE ore_timing.null_$run AS SELECT * FROM ore_timing.bench('null', $((samples / 4)), 8);"
 done
 psql "$DATABASE_URL" -c "
   SELECT * FROM ore_timing.welch('single term, 16/sample #1', 'ore_timing.single_1')
   UNION ALL SELECT * FROM ore_timing.welch('single term, 16/sample #2', 'ore_timing.single_2')
   UNION ALL SELECT * FROM ore_timing.welch('six terms, 8/sample #1', 'ore_timing.six_1')
-  UNION ALL SELECT * FROM ore_timing.welch('six terms, 8/sample #2', 'ore_timing.six_2');"
+  UNION ALL SELECT * FROM ore_timing.welch('six terms, 8/sample #2', 'ore_timing.six_2')
+  UNION ALL SELECT * FROM ore_timing.welch('prefix, 8/sample #1', 'ore_timing.prefix_1')
+  UNION ALL SELECT * FROM ore_timing.welch('prefix, 8/sample #2', 'ore_timing.prefix_2')
+  UNION ALL SELECT * FROM ore_timing.welch('NULL element, 8/sample #1', 'ore_timing.null_1')
+  UNION ALL SELECT * FROM ore_timing.welch('NULL element, 8/sample #2', 'ore_timing.null_2');"
