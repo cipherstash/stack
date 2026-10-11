@@ -9,7 +9,7 @@ Previously its run time depended on where two values first differ, so a party
 able to time queries could learn how long a prefix their query value shares with
 stored values. For text the effect was large: a comparison took about 11 µs when
 the first term differs and 47 µs when only the sixth does. Results are unchanged.
-Single-term comparisons cost about 3-8% more; text comparisons now take about
-31 µs whatever the operands. Multi-term (text) values now length-check every
-paired term, so a malformed term after the first difference raises instead of
-being skipped. A timing harness is in `packages/eql/tests/timing/ore_block_256/`.
+Single-term comparisons cost about 6% more; text comparisons now take about
+18 µs whatever the operands. Multi-term (text) values now check every paired
+term, so a malformed term after the first difference, or one paired with a NULL
+element, raises instead of being skipped. A timing harness is in `packages/eql/tests/timing/ore_block_256/`.

@@ -75,7 +75,7 @@ samples of 16 comparisons and 50,000 six-term samples of 8, two runs each:
 | comparator | single term: t | six terms: t | cost |
 |---|---:|---:|---|
 | before | +4.9, +13.9 | −1552, −2575 | 155 µs per 16 single-term (median); 11 µs (first term differs) to 47 µs (sixth differs) per six-term comparison |
-| after | +1.8, +1.1 | +4.5, +2.7 | about 3–8% more single-term; 31 µs per six-term comparison, either way |
+| after | −0.78, +0.48 | +1.10, −1.00 | about 6% more single-term; 18 µs per six-term comparison, either way |
 
 The "before" single-term figures are small only by coincidence. Each block
 after the first difference ran extra statements, and the `OR` short-circuit

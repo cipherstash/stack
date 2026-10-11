@@ -123,26 +123,24 @@ $$ LANGUAGE plpgsql;
 --!   the NULL-handling branches below are load-bearing for the array overload.
 --! @note Constant operation count. Past the NULL and length checks (public
 --!   properties), every comparison executes the same statements whatever the
---!   operands: each block evaluates both of its comparisons (integer `|`, which
---!   unlike `OR` does not short-circuit), the first differing block is latched
---!   with arithmetic rather than an `IF`, and exactly one `encrypt()` and one
---!   `get_bit()` run on every path, including for equal terms. An earlier form
---!   ran extra statements on every block after the first difference and skipped
---!   a comparison on each of them, so its time depended on where the operands
---!   first differ, which is the information the constant-time comparator in
---!   ore.rs keeps from anyone timing a query. Measured on PostgreSQL 17
---!   (aarch64) through `compare_ore_block_256_terms`, 200 k samples of 16
---!   comparisons, operands differing in the first block against operands
---!   differing only in the last: the old form gave t = +4.9 and +13.9 (its
---!   extra statements and its skipped comparisons mostly cancel on that
---!   machine, which no platform guarantees; with the short-circuit removed it
---!   gave t = +388, about 0.7 µs per comparison). This form: t = +1.8 and
---!   +1.1, at about 3-8% more time per comparison. The blocks' results are
---!   collected one statement per block into a bitmask whose lowest set bit is
---!   the first difference. PL/pgSQL is not a constant-time environment, so
---!   C-level effects remain (`memcmp` within 16 bytes, the offset `substr`
---!   reads at), orders of magnitude below one statement. See
---!   `tests/timing/ore_block_256/`.
+--!   operands: one statement per block, which evaluates both of the block's
+--!   comparisons (integer `|`, which unlike `OR` does not short-circuit) and
+--!   latches the first differing block with arithmetic rather than an `IF`;
+--!   then one `encrypt()`, two `get_bit()` and one `get_byte()`, on every
+--!   path including for equal terms. An earlier form ran extra statements on
+--!   every block after the first difference and skipped a comparison on each
+--!   of them, so its time depended on where the operands first differ, which
+--!   is the information the constant-time comparator in ore.rs keeps from
+--!   anyone timing a query. Measured on PostgreSQL 17 (aarch64) through
+--!   `compare_ore_block_256_terms`, 200 k samples of 16 comparisons, operands
+--!   differing in the first block against operands differing only in the
+--!   last: the old form gave t = +4.9 and +13.9 (its extra statements and its
+--!   skipped comparisons mostly cancel on that machine, which no platform
+--!   guarantees; with the short-circuit removed it gave t = +388, about
+--!   0.7 µs per comparison). See `tests/timing/ore_block_256/` for this
+--!   form's figures. PL/pgSQL is not a constant-time environment, so C-level
+--!   effects remain (`memcmp` within 16 bytes, the offset `substr` reads at),
+--!   orders of magnitude below one statement.
 CREATE FUNCTION eql_v3_internal.compare_ore_block_256_term(a eql_v3_internal.ore_block_256_term, b eql_v3_internal.ore_block_256_term)
   RETURNS integer
   IMMUTABLE
@@ -165,8 +163,7 @@ AS $$
     left_offset  integer;  -- ordinal offset of the first left block (1 + N PRP bytes)
     right_offset integer;  -- ordinal start of the right CT (= total left CT length = 17*N)
 
-    diff_mask  integer := 0; -- bit k set iff block k differs (N <= 14 fits)
-    still_eq   integer;      -- 1 if no block differs
+    latch      integer := 0; -- 1 + the first differing block, 0 while none differs
     first_diff integer;      -- first differing block (0 if the terms are equal)
     indicator  integer;
   BEGIN
@@ -201,20 +198,17 @@ AS $$
     right_offset := 17 * n;   -- right CT begins right after the 17*N-byte left CT
 
     -- One statement per block, the same for every block: both comparisons
-    -- always evaluated, the result recorded as a bit of diff_mask.
+    -- always evaluated, and the first differing block latched as block + 1
+    -- while the latch is still 0.
     FOR block IN 0..n-1 LOOP
-      diff_mask := diff_mask | ((
+      latch := latch + (latch = 0)::int * (block + 1) * (
           (substr(ab, 1 + block, 1) <> substr(bb, 1 + block, 1))::int
         | (substr(ab, left_offset + left_block_size * block, left_block_size)
-           <> substr(bb, left_offset + left_block_size * block, left_block_size))::int
-        ) << block);
+           <> substr(bb, left_offset + left_block_size * block, left_block_size))::int);
     END LOOP;
 
-    -- The first differing block is the lowest set bit: isolate it
-    -- (mask & -mask, a power of two) and take its exact base-2 logarithm,
-    -- with no loop or branch. An empty mask reads block 0.
-    still_eq := (diff_mask = 0)::int;
-    first_diff := round(ln(greatest(diff_mask & -diff_mask, 1)) / ln(2))::int;
+    -- Equal terms read block 0.
+    first_diff := greatest(latch - 1, 0);
 
     -- One hash and one bit read on every path. For equal terms this reads
     -- block 0 and the result is discarded below. The hash key is the IV at
@@ -231,7 +225,7 @@ AS $$
           get_byte(ab, first_diff))) % 2;
 
     -- 0 when equal, otherwise +1 / -1 from the indicator; no branch on the data.
-    RETURN (1 - still_eq) * (2 * indicator - 1);
+    RETURN sign(latch) * (2 * indicator - 1);
   END;
 $$ LANGUAGE plpgsql;
 
@@ -241,21 +235,28 @@ $$ LANGUAGE plpgsql;
 --! @param a eql_v3_internal.ore_block_256_term[] First array
 --! @param b eql_v3_internal.ore_block_256_term[] Second array
 --! @return integer -1/0/1, or NULL if either array is NULL
---! @throws Exception if paired terms are different lengths or malformed
+--! @throws Exception if paired terms are different lengths, or any paired
+--!   term is malformed
 --! @note Single-term values (every type but text) go straight to
 --!   `compare_ore_block_256_term`. Multi-term values (text, up to six terms)
---!   are compared with a constant operation count across the terms: every
---!   paired term is scanned, the first unequal term and its first differing
---!   block are latched with arithmetic, and one `encrypt()` resolves the
---!   order. A term-by-term comparison that stops at the first unequal term
---!   takes time proportional to how many leading terms are equal, which
---!   reveals the length of the shared prefix: measured on PostgreSQL 17,
---!   six-term values took about 11 µs when the first terms differ and 47 µs
---!   when only the sixth does (t below -1500). This form takes about 31 µs
---!   either way (t = +4.5 and +2.7). Term counts and NULL elements
---!   are public structure and may branch. If every paired term is equal, the
---!   shorter array sorts first. Every paired term is length-checked, including
---!   those after the first unequal one.
+--!   are compared with a constant operation count across the terms. A
+--!   term-by-term comparison that stops at the first unequal term takes time
+--!   proportional to how many leading terms are equal, which reveals the
+--!   length of the shared prefix: measured on PostgreSQL 17, six-term values
+--!   took about 11 µs when the first terms differ and 47 µs when only the
+--!   sixth does (t below -1500). Instead, every paired term is compared whole
+--!   in one statement (its PRP bytes and left blocks, which are deterministic)
+--!   and the first unequal one is latched with arithmetic. Then exactly one
+--!   call to `compare_ore_block_256_term` runs on every path: on the latched
+--!   pair, or, when every paired term is equal or the latched pair has a NULL
+--!   element, on a pair whose result is discarded. The result is selected
+--!   with arithmetic, so neither a shared prefix of different-length arrays
+--!   nor a NULL element after equal terms skips the hash. Term counts and the
+--!   positions of NULL elements are public structure and may branch. If every
+--!   paired term is equal, the shorter array sorts first. C-level effects
+--!   remain: the whole-term `memcmp` stops at the first differing byte, a
+--!   few nanoseconds over at most a few hundred bytes. See
+--!   `tests/timing/ore_block_256/`.
 CREATE FUNCTION eql_v3_internal.compare_ore_block_256_terms(a eql_v3_internal.ore_block_256_term[], b eql_v3_internal.ore_block_256_term[])
 RETURNS integer
   IMMUTABLE
@@ -286,96 +287,62 @@ AS $$
     -- the top: PL/pgSQL evaluates every initialised declaration on each call,
     -- and the single-term path above is the operator-class hot path.
     DECLARE
-      left_block_size CONSTANT smallint := 16;
-      right_block_size CONSTANT smallint := 32;
-
-      m integer;              -- paired terms: least(cardinality(a), cardinality(b))
       ab bytea;
       bb bytea;
-      n integer;
-      left_offset integer;
-      right_offset integer;
+      differs integer;         -- 1 if the current pair differs
+      null_order integer;      -- the current pair's order if it has a NULL element, else 0
 
-      differs integer;        -- 1 if the current term differs
-      diff_mask integer;      -- bit k set iff block k of the current term differs
-      term_diff integer;      -- first differing block within the current term
-      null_order integer;     -- for a pair with a NULL element: -1 / 1
-
-      still_eq integer := 1;   -- 1 until the first unequal term
-      first_term integer := 1;
-      first_block integer := 0;
-      first_null integer := 0; -- the latched pair's NULL ordering, 0 if none
-      indicator integer;
+      latch integer := 0;      -- the first unequal pair's index, 0 while every pair is equal
+      first_null integer := 0; -- the latched pair's NULL ordering, 0 if it has none
+      spare integer := 0;      -- the first pair with no NULL element (structure), 0 if none
+      h integer;               -- the pair compare_ore_block_256_term runs on
+      r integer;
     BEGIN
-      m := least(cardinality(a), cardinality(b));
+      FOR t IN 1..least(cardinality(a), cardinality(b)) LOOP
+        ab := a[t].bytes;
+        bb := b[t].bytes;
 
-      FOR t IN 1..m LOOP
+        IF ab IS NOT NULL AND (octet_length(ab) <= 16 OR (octet_length(ab) - 16) % 49 != 0) THEN
+          RAISE EXCEPTION 'Malformed ORE term: % bytes', octet_length(ab);
+        END IF;
+        IF bb IS NOT NULL AND (octet_length(bb) <= 16 OR (octet_length(bb) - 16) % 49 != 0) THEN
+          RAISE EXCEPTION 'Malformed ORE term: % bytes', octet_length(bb);
+        END IF;
+
         -- NULL elements are structure, not data: they may branch.
-        IF a[t] IS NULL OR b[t] IS NULL THEN
-          differs := ((a[t] IS NULL) <> (b[t] IS NULL))::int;
-          null_order := CASE WHEN a[t] IS NULL THEN -1 ELSE 1 END;
-          term_diff := 0;
+        IF ab IS NULL OR bb IS NULL THEN
+          differs := ((ab IS NULL) <> (bb IS NULL))::int;
+          null_order := (bb IS NULL)::int - (ab IS NULL)::int;
         ELSE
-          IF bit_length(a[t].bytes) != bit_length(b[t].bytes) THEN
+          IF octet_length(ab) != octet_length(bb) THEN
             RAISE EXCEPTION 'Ciphertexts are different lengths';
           END IF;
-          IF octet_length(a[t].bytes) <= 16 OR (octet_length(a[t].bytes) - 16) % 49 != 0 THEN
-            RAISE EXCEPTION 'Malformed ORE term: % bytes', octet_length(a[t].bytes);
-          END IF;
-
-          ab := a[t].bytes;
-          bb := b[t].bytes;
-          n := (octet_length(ab) - 16) / 49;
-          left_offset := 1 + n;
-
-          diff_mask := 0;
-          FOR block IN 0..n-1 LOOP
-            diff_mask := diff_mask | ((
-                (substr(ab, 1 + block, 1) <> substr(bb, 1 + block, 1))::int
-              | (substr(ab, left_offset + left_block_size * block, left_block_size)
-                 <> substr(bb, left_offset + left_block_size * block, left_block_size))::int
-              ) << block);
-          END LOOP;
-          differs := (diff_mask <> 0)::int;
-          term_diff := round(ln(greatest(diff_mask & -diff_mask, 1)) / ln(2))::int;
+          -- The PRP bytes and left blocks: the first 17*N bytes.
+          differs := (substr(ab, 1, 17 * ((octet_length(ab) - 16) / 49))
+                      <> substr(bb, 1, 17 * ((octet_length(ab) - 16) / 49)))::int;
           null_order := 0;
+          IF spare = 0 THEN
+            spare := t;
+          END IF;
         END IF;
 
         -- Latch the first unequal pair without a branch.
-        first_term := first_term + still_eq * differs * (t - 1);
-        first_block := first_block + still_eq * differs * term_diff;
-        first_null := first_null + still_eq * differs * null_order;
-        still_eq := still_eq * (1 - differs);
+        first_null := first_null + (latch = 0)::int * differs * null_order;
+        latch := latch + (latch = 0)::int * differs * t;
       END LOOP;
 
-      -- Every paired term equal: the shorter array sorts first.
-      IF still_eq = 1 THEN
-        RETURN sign(cardinality(a) - cardinality(b))::integer;
-      END IF;
+      -- One term comparison on every path. It runs on the latched pair, or on
+      -- pair 1 when every pair is equal; if that pair has a NULL element, on
+      -- the first pair with none. Only when no pair is free of NULLs (which
+      -- is structure) does it take its NULL branch.
+      h := greatest(latch, 1);
+      h := h + ((a[h] IS NULL)::int | (b[h] IS NULL)::int) * (spare - h);
+      r := eql_v3_internal.compare_ore_block_256_term(a[h], b[h]);
 
-      -- The first unequal pair had a NULL element: its order is structural.
-      IF first_null <> 0 THEN
-        RETURN first_null;
-      END IF;
-
-      -- One hash and one bit read, on the latched term and block.
-      ab := a[first_term].bytes;
-      bb := b[first_term].bytes;
-      n := (octet_length(ab) - 16) / 49;
-      left_offset := 1 + n;
-      right_offset := 17 * n;
-      indicator := (
-        get_bit(
-          encrypt(
-            substr(ab, left_offset + left_block_size * first_block, left_block_size),
-            substr(bb, right_offset + 1, 16),
-            'aes-ecb'),
-          0)
-        + get_bit(
-            substr(bb, right_offset + 17 + right_block_size * first_block, right_block_size),
-            get_byte(ab, first_block))) % 2;
-
-      RETURN 2 * indicator - 1;
+      -- Every pair equal: the shorter array sorts first. Otherwise the
+      -- latched pair's NULL ordering, or the term comparison.
+      RETURN (latch = 0)::int * sign(cardinality(a) - cardinality(b))::integer
+           + (latch > 0)::int * (first_null + (first_null = 0)::int * r);
     END;
   END
 $$ LANGUAGE plpgsql;
