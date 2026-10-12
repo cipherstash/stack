@@ -36,6 +36,10 @@ on:
       # The eql guest build links eql-bindings.
       - packages/eql/crates/eql-bindings/**
       - packages/eql/crates/eql-domains/**
+      # The Go tests read the cross-language fixtures the EQL suite writes,
+      # which are derived under EQL's lockfile.
+      - packages/eql/tests/encryption/fixtures/**
+      - packages/eql/Cargo.lock
       - languages/golang/**
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh
@@ -61,6 +65,10 @@ on:
       # The eql guest build links eql-bindings.
       - packages/eql/crates/eql-bindings/**
       - packages/eql/crates/eql-domains/**
+      # The Go tests read the cross-language fixtures the EQL suite writes,
+      # which are derived under EQL's lockfile.
+      - packages/eql/tests/encryption/fixtures/**
+      - packages/eql/Cargo.lock
       - languages/golang/**
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh

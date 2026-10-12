@@ -291,14 +291,16 @@ The EQL types the engine produces, and the Go field types each takes:
 | `TextEq` | `string` | `=`, `<>` |
 | `TextMatch` | `string` | `@@` (substring match, 3-grams, case-insensitive) |
 | `Text` | `string` | none: stored and read only |
-| `IntegerEq` | `int32` | `=`, `<>` |
 | `Integer` | `int32` | none |
-| `BigintEq` | `int64` | `=`, `<>` |
+| `Bigint` | `int64` | none |
 | `Boolean` | `bool` | none |
 | `Real` | `float32` | none |
 | `Double` | `float64` | none |
 
-The rest of the catalog (ordering, dates, decimals, JSON) is listed in
+A `TextMatch` value must be at least three characters long: shorter text has
+no 3-grams to index and is refused. `IntegerEq` and `BigintEq` are held back
+until the engine's integer equality term settles in vitaminc 0.6. The rest of
+the catalog (ordering, dates, decimals, JSON) is listed in
 `eql.Types` with the reason it is not produced yet, and `stashgen` refuses it
 with that reason. The guest builds the value: the generated code
 imports `encrypt/eql`, which embeds the build of the engine that holds the
