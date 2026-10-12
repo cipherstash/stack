@@ -208,7 +208,7 @@ where
 
 /// Derive the EQL query value of one target field: a codec-encoded
 /// plaintext, the codec-encoded plan and the field's name (UTF-8) in, the
-/// query value's JSON bytes out — the operand `eql_v3.query_<name>` takes.
+/// query value's JSON bytes out — the operand `eql_v4.query_<name>` takes.
 /// Runs the EQL type's own query plan through this build's resolver
 /// ([`crate::targets`]); a build without EQL types refuses the plan before
 /// this is reached. No data key is minted: under the local backend the
@@ -731,7 +731,7 @@ mod tests {
         validate::record(&source, &plan).expect("the source fits");
         let sealed = block_on(encrypt_record(&keyset, &source, &plan)).expect("seals");
 
-        // The stored tree carries the EQL JSON under "eql": the v3 envelope
+        // The stored tree carries the EQL JSON under "eql": the v4 envelope
         // with the column as its i and a stack-encrypt ciphertext.
         let tree = decode_tree(&sealed).expect("a tree");
         let CipherText::Map(mut fields) = tree else {
@@ -753,7 +753,7 @@ mod tests {
             panic!("bytes")
         };
         let eql: serde_json::Value = serde_json::from_slice(bytes.risky_ref()).expect("JSON");
-        assert_eq!(eql["v"], 3);
+        assert_eq!(eql["v"], 4, "Stack Encrypt writes EQL v4");
         assert_eq!(eql["i"], serde_json::json!({"t": "users", "c": "email"}));
         assert!(eql["c"].as_str().unwrap().starts_with("stack-encrypt:1:"));
         assert_eq!(eql["hm"].as_str().unwrap().len(), 64);
