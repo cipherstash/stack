@@ -40,6 +40,9 @@ impl DomainType for Date {
     fn schema(&self) -> Schema {
         schema_for!(Date)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -78,6 +81,9 @@ impl DomainType for DateEq {
     }
     fn schema(&self) -> Schema {
         schema_for!(DateEq)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
@@ -118,6 +124,9 @@ impl DomainType for DateOrdOre {
     fn schema(&self) -> Schema {
         schema_for!(DateOrdOre)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -156,6 +165,9 @@ impl DomainType for DateOrd {
     }
     fn schema(&self) -> Schema {
         schema_for!(DateOrd)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
@@ -196,6 +208,9 @@ impl DomainType for DateOrdOpe {
     fn schema(&self) -> Schema {
         schema_for!(DateOrdOpe)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -233,6 +248,9 @@ impl DomainType for DateEqQuery {
     }
     fn schema(&self) -> Schema {
         schema_for!(DateEqQuery)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
@@ -272,6 +290,9 @@ impl DomainType for DateOrdOreQuery {
     fn schema(&self) -> Schema {
         schema_for!(DateOrdOreQuery)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -310,6 +331,9 @@ impl DomainType for DateOrdQuery {
     fn schema(&self) -> Schema {
         schema_for!(DateOrdQuery)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -347,6 +371,9 @@ impl DomainType for DateOrdOpeQuery {
     }
     fn schema(&self) -> Schema {
         schema_for!(DateOrdOpeQuery)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())

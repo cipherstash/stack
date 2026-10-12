@@ -284,6 +284,36 @@ mod given_text_eq {
         }
     }
 
+    /// Earlier builds wrote Stack Encrypt payloads with `"v": 3` and the same
+    /// ciphertext prefix. A real, well-formed v4 payload with only its version
+    /// changed is refused, so the version alone is what refuses it.
+    #[tokio::test]
+    async fn refuses_a_stored_payload_of_the_other_version() {
+        let (cipher, _) = common::cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored = targets::encrypt("TextEq", &keyset, &email(), text("secret"))
+            .unwrap()
+            .await
+            .unwrap();
+        let mut payload: serde_json::Value = serde_json::from_slice(&stored).unwrap();
+        assert_eq!(payload["v"], 4);
+        payload["v"] = 3.into();
+        let as_v3 = serde_json::to_vec(&payload).unwrap();
+
+        let error = refused(targets::decrypt("TextEq", &cipher, &email(), &as_v3));
+        assert!(
+            matches!(
+                error,
+                TargetError::Stored {
+                    target: "TextEq",
+                    ..
+                }
+            ),
+            "{error}"
+        );
+        assert!(error.to_string().contains("version 3"), "{error}");
+    }
+
     #[tokio::test]
     async fn refuses_a_label_that_is_not_a_column() {
         let (cipher, _) = common::cipher().await;
