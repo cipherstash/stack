@@ -66,6 +66,8 @@ description = "Clean release"
 run = """
   rm -f release/cipherstash-encrypt-uninstall.sql
   rm -f release/cipherstash-encrypt.sql
+  rm -f release/cipherstash-encrypt-v4-uninstall.sql
+  rm -f release/cipherstash-encrypt-v4.sql
 """
 
 [tasks."release:prepare_bindings_assets"]
@@ -245,6 +247,15 @@ dir = "{{config_root}}"
 run = """
 bash tasks/test/symbol_order_selftest.sh
 bash tasks/test/verify_symbol_order_v3.sh build/render/eql_v3/deps-ordered.txt
+"""
+
+[tasks."test:v4_isolation"]
+description = "Assert the eql_v4 bundle names nothing from eql_v3, and self-test that check (DB-free)"
+depends = ["build"]
+dir = "{{config_root}}"
+run = """
+bash tasks/test/v4_isolation_selftest.sh
+bash tasks/test/verify_no_v3_in_v4.sh
 """
 
 [tasks."test:installer_complete"]

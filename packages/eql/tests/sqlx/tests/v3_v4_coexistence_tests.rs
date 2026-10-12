@@ -5,16 +5,20 @@
 //! tests pin what the separate names do and do not enforce when both are
 //! installed:
 //!
-//! - both install without clashing, and each owns its own domains;
+//! - both install without clashing, each owns its own domains, and each
+//!   version's `lints()` stays clean with the other installed;
 //! - a payload of the wrong version fails the domain CHECK on insert;
 //! - the function form across versions (`eql_v3.eq(v3col, v4term)`) is
-//!   ambiguous, so it errors;
+//!   ambiguous, so it errors, and so is `OPERATOR(public.=)` between a v3 and
+//!   a v4 column;
 //! - the operator form across versions (`v3col = v4term`) does NOT error.
 //!   With no operator defined for the exact pair, Postgres treats both domains
 //!   as `jsonb` and uses the built-in `jsonb = jsonb`, which returns no rows.
 //!   That is pinned here so it cannot change unnoticed. ADR-0002 defers the
 //!   cross-version blocker operators that would make it an error; when they
 //!   land, those assertions flip to expecting one.
+//! - `eql_v3.eq_term(v3col) = eql_v4.eq_term(v4col)` does not error either: it
+//!   compares two text terms.
 //!
 //! The payloads are real cipherstash-client ciphertexts from the
 //! `eql_v3_integer` fixture. A v4 payload is the same row with its envelope
@@ -103,6 +107,22 @@ async fn v3_and_v4_install_side_by_side(pool: PgPool) -> Result<()> {
         .fetch_one(&pool)
         .await?;
     assert_eq!(a, b, "both bundles come from one build");
+
+    // Each lint judges only its own version's public domains. Before that was
+    // scoped, each version reported thousands of errors about the other's
+    // blocker operators.
+    for schema in ["eql_v3", "eql_v4"] {
+        let errors: Vec<String> = sqlx::query_scalar(&format!(
+            "SELECT category || ': ' || object_name FROM {schema}.lints() \
+             WHERE severity = 'error' ORDER BY 1 LIMIT 5"
+        ))
+        .fetch_all(&pool)
+        .await?;
+        assert!(
+            errors.is_empty(),
+            "{schema}.lints() reports errors with both versions installed: {errors:#?}"
+        );
+    }
     Ok(())
 }
 
@@ -204,5 +224,43 @@ async fn operator_across_versions_returns_no_rows(pool: PgPool) -> Result<()> {
         .fetch_one(&pool)
         .await?;
     assert_eq!(joined, 0, "a v3 column joined to a v4 column finds nothing");
+    Ok(())
+}
+
+#[sqlx::test(fixtures(path = "../fixtures", scripts("eql_v3_integer")))]
+async fn qualified_operator_across_versions_is_ambiguous(pool: PgPool) -> Result<()> {
+    install_v4(&pool).await?;
+    tables_with_one_row(&pool).await?;
+
+    let err = sqlx::query("SELECT count(*) FROM t3 JOIN t4 ON t3.c OPERATOR(public.=) t4.c")
+        .execute(&pool)
+        .await
+        .expect_err("OPERATOR(public.=) between a v3 and a v4 column must not resolve");
+    assert_eq!(
+        sqlstate(&err).as_deref(),
+        Some(AMBIGUOUS_FUNCTION),
+        "t3.c OPERATOR(public.=) t4.c: {err}"
+    );
+    Ok(())
+}
+
+/// Pins a second silent path: see the module docs. The terms are text, so
+/// comparing them across versions is ordinary text equality. The fixture's v4
+/// row reuses the v3 row's terms, so here it even matches; with real Stack
+/// Encrypt terms it finds nothing. Either way nothing refuses it.
+#[sqlx::test(fixtures(path = "../fixtures", scripts("eql_v3_integer")))]
+async fn eq_term_across_versions_compares_text(pool: PgPool) -> Result<()> {
+    install_v4(&pool).await?;
+    tables_with_one_row(&pool).await?;
+
+    let n: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM t3 JOIN t4 ON eql_v3.eq_term(t3.c) = eql_v4.eq_term(t4.c)",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(
+        n, 1,
+        "the cross-version term comparison runs as text equality"
+    );
     Ok(())
 }
