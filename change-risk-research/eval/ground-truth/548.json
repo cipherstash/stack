@@ -1,0 +1,14 @@
+{
+  "pr": 548,
+  "repository": "cipherstash/stack",
+  "annotator": "claude (single annotator; second human review pending)",
+  "written_on": "2026-10-12",
+  "written_before_any_evaluator_run": true,
+  "outcome": "no_known_defect",
+  "expert_impact": "medium",
+  "attention_warranted": false,
+  "impact_confidence": "low",
+  "rationale": "Fix to bulk model id parsing; changes how encrypted results are mapped back onto fields. Small, with regression tests.",
+  "known_defects": [],
+  "notes": "No known defect does not mean risk-free; reported scenarios on this case are adjudicated individually (valid / unsupported / incorrect)."
+}

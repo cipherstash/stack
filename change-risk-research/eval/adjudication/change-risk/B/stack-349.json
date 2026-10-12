@@ -1,0 +1,69 @@
+{
+  "case": "stack-349",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "critical",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Wizard rewrites encryption migration into DROP COLUMN and runs it, destroying existing plaintext data",
+      "impact": "critical",
+      "basis": "observed_defect",
+      "label": null,
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Changed Drizzle type string turns existing encrypted columns into ALTERs that the rewrite converts to DROP of ciphertext",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "label": null,
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "`db install` in Drizzle projects silently stops installing EQL and edits migration files instead",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": null,
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "New .env.local precedence points db commands at a different database",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": null,
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": ""
+    },
+    {
+      "id": "FS-5",
+      "title": "Shipped skills and the stack README still instruct the removed `db setup`",
+      "impact": "low",
+      "basis": "observed_defect",
+      "label": null,
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": ""
+    }
+  ],
+  "cost_usd": 1.7075736,
+  "wall_seconds": 215.890377
+}

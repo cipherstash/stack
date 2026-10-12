@@ -1,0 +1,47 @@
+{
+  "case": "stack-1088",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Build-toolchain devDependency bump in auth/package.json merges without an auth release",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "True: devDependency-only toolchain bumps (e.g. @napi-rs/cli) now pass the gate. Low."
+    },
+    {
+      "id": "FS-2",
+      "title": "Manifest compared against base tip rather than merge-base causes spurious changeset demands",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Fails closed; friction only."
+    },
+    {
+      "id": "FS-3",
+      "title": "vitest 4 major upgrade changes auth/profile test behaviour",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": false,
+      "note": "Generic major-bump caution."
+    }
+  ],
+  "cost_usd": 0.9064787000000001,
+  "wall_seconds": 152.619272
+}

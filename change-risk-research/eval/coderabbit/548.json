@@ -1,0 +1,19 @@
+{
+  "pr": 548,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "source": "review_body",
+      "url": "https://github.com/cipherstash/stack/pull/548#pullrequestreview-4628776507",
+      "path": "packages/stack/__tests__/bulk-model-hyphen-fields.test.ts",
+      "line": 78,
+      "severity_label": "nitpick | 📐 Maintainability & Code Quality | 🔵 Trivial | ⚡ Quick win",
+      "claim": "Missing coverage for lock-context variants. Only bulkEncryptModels/bulkDecryptModels are tested; the same fieldsForModelIndex fix also applies to bulkEncryptModelsWithLockContext/bulkDecryptModelsWithLockContext, which remain untested by this regression suite.",
+      "is_nitpick": true
+    }
+  ],
+  "notes": "One CodeRabbit review (COMMENTED) with 1 nitpick and no inline comments; walkthrough summary comment present. Release-notes summary removed from PR body."
+}

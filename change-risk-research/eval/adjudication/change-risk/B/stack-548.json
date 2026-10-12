@@ -1,0 +1,14 @@
+{
+  "case": "stack-548",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [],
+  "cost_usd": 0.9706009999999999,
+  "wall_seconds": 110.809002,
+  "case_note": "No failure scenarios; rated low/ready_for_review against expert medium."
+}

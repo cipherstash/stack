@@ -1,0 +1,545 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "17c9fadd51c748eb4e0b0d67db01bae5d39d04b0",
+  "head_sha": "c034508d747e75548878a8af166f83a1a25fd99b",
+  "merge_base_sha": "17c9fadd51c748eb4e0b0d67db01bae5d39d04b0",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "17c9fadd51c748eb4e0b0d67db01bae5d39d04b0",
+    "cutoff_date": "2026-09-02T14:35:25+10:00",
+    "commits_read": 4014,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 17,
+    "additions": 412,
+    "deletions": 276,
+    "binary_files": 0,
+    "by_status": {
+      "added": 2,
+      "modified": 14,
+      "deleted": 1
+    }
+  },
+  "dispersion": {
+    "components": {
+      ".": 6,
+      "packages/stack": 6,
+      "packages/stack-supabase": 5
+    },
+    "component_count": 3,
+    "top_level_dirs": {
+      "packages": 11,
+      "skills": 4,
+      ".changeset": 1,
+      "scripts": 1
+    },
+    "languages": {
+      "TypeScript": 11,
+      "Markdown": 5,
+      "JavaScript": 1
+    }
+  },
+  "path_classes": {
+    "docs": 5,
+    "test": 5,
+    "agent_instructions": 4,
+    "serialization_or_protocol": 2,
+    "build_config": 1,
+    "security_sensitive": 1
+  },
+  "files": [
+    {
+      "path": ".changeset/wasm-inline-type-identity.md",
+      "status": "added",
+      "previous_path": null,
+      "additions": 18,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "packages/stack-supabase/__tests__/helpers/supabase-mock.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 7,
+      "deletions": 4,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/stack-supabase",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-supabase/__tests__/supabase-schema-builder.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 12,
+      "deletions": 9,
+      "binary": false,
+      "classes": ["serialization_or_protocol", "test"],
+      "component": "packages/stack-supabase",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-supabase/__tests__/supabase-v3-factory.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 9,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/stack-supabase",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-supabase/src/column-map.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 21,
+      "deletions": 10,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack-supabase",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack-supabase/src/create.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 1,
+      "deletions": 1,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack-supabase",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/__tests__/logger-edge-safety.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 19,
+      "deletions": 5,
+      "binary": false,
+      "classes": ["test"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/dist-types/node16/wasm-inline.mts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 48,
+      "deletions": 7,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/dist-types/wasm-inline-type-identity.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 114,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/src/adapter-kit.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 10,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/src/utils/logger/index.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 12,
+      "deletions": 5,
+      "binary": false,
+      "classes": [],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "packages/stack/tsup.config.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 45,
+      "deletions": 14,
+      "binary": false,
+      "classes": ["build_config"],
+      "component": "packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "scripts/__tests__/skills-supabase-edge-schema-entry.test.mjs",
+      "status": "deleted",
+      "previous_path": null,
+      "additions": 0,
+      "deletions": 159,
+      "binary": false,
+      "classes": ["serialization_or_protocol", "test"],
+      "component": ".",
+      "language": "JavaScript"
+    },
+    {
+      "path": "skills/stash-edge/SKILL.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 54,
+      "deletions": 51,
+      "binary": false,
+      "classes": ["agent_instructions", "docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "skills/stash-encryption/SKILL.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 4,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["agent_instructions", "docs", "security_sensitive"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "skills/stash-managed-platforms/SKILL.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 5,
+      "deletions": 5,
+      "binary": false,
+      "classes": ["agent_instructions", "docs"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "skills/stash-supabase/SKILL.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 33,
+      "deletions": 3,
+      "binary": false,
+      "classes": ["agent_instructions", "docs"],
+      "component": ".",
+      "language": "Markdown"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "skills/stash-encryption/SKILL.md",
+        "commits": 70,
+        "commits_last_90d": 51,
+        "distinct_authors": 5
+      },
+      {
+        "path": "skills/stash-supabase/SKILL.md",
+        "commits": 59,
+        "commits_last_90d": 52,
+        "distinct_authors": 6
+      },
+      {
+        "path": "packages/stack/tsup.config.ts",
+        "commits": 25,
+        "commits_last_90d": 16,
+        "distinct_authors": 3
+      },
+      {
+        "path": "skills/stash-edge/SKILL.md",
+        "commits": 12,
+        "commits_last_90d": 12,
+        "distinct_authors": 3
+      },
+      {
+        "path": "packages/stack-supabase/__tests__/supabase-v3-factory.test.ts",
+        "commits": 9,
+        "commits_last_90d": 9,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/stack-supabase/__tests__/supabase-schema-builder.test.ts",
+        "commits": 8,
+        "commits_last_90d": 8,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/stack/src/utils/logger/index.ts",
+        "commits": 7,
+        "commits_last_90d": 2,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/stack-supabase/src/column-map.ts",
+        "commits": 6,
+        "commits_last_90d": 6,
+        "distinct_authors": 1
+      },
+      {
+        "path": "skills/stash-managed-platforms/SKILL.md",
+        "commits": 6,
+        "commits_last_90d": 6,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/stack/src/adapter-kit.ts",
+        "commits": 5,
+        "commits_last_90d": 5,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/stack-supabase/__tests__/helpers/supabase-mock.ts",
+        "commits": 3,
+        "commits_last_90d": 3,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/stack/__tests__/logger-edge-safety.test.ts",
+        "commits": 3,
+        "commits_last_90d": 3,
+        "distinct_authors": 2
+      },
+      {
+        "path": "packages/stack/dist-types/node16/wasm-inline.mts",
+        "commits": 3,
+        "commits_last_90d": 3,
+        "distinct_authors": 1
+      },
+      {
+        "path": "packages/stack-supabase/src/create.ts",
+        "commits": 2,
+        "commits_last_90d": 2,
+        "distinct_authors": 2
+      },
+      {
+        "path": "scripts/__tests__/skills-supabase-edge-schema-entry.test.mjs",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [
+      {
+        "changed_file": "packages/stack/tsup.config.ts",
+        "usually_changes_with": "packages/stack/package.json",
+        "co_commits": 17,
+        "confidence": 0.85,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack-supabase/__tests__/supabase-schema-builder.test.ts",
+        "usually_changes_with": "packages/stack-supabase/__tests__/supabase-v3-wire.test.ts",
+        "co_commits": 4,
+        "confidence": 0.8,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack-supabase/__tests__/supabase-v3-factory.test.ts",
+        "usually_changes_with": "packages/stack-supabase/__tests__/supabase-v3-builder.test.ts",
+        "co_commits": 3,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "packages/stack-supabase/__tests__/supabase-v3-factory.test.ts",
+        "usually_changes_with": "packages/stack-supabase/src/index.ts",
+        "co_commits": 3,
+        "confidence": 0.6,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "skills/stash-edge/SKILL.md",
+        "usually_changes_with": "AGENTS.md",
+        "co_commits": 4,
+        "confidence": 0.5,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "skills/stash-edge/SKILL.md",
+        "usually_changes_with": "skills/stash-cli/SKILL.md",
+        "co_commits": 4,
+        "confidence": 0.5,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "skills/stash-managed-platforms/SKILL.md",
+        "usually_changes_with": ".changeset/supabase-docs-wasm-inline-entry.md",
+        "co_commits": 3,
+        "confidence": 0.5,
+        "exists_at_head": true
+      },
+      {
+        "changed_file": "skills/stash-managed-platforms/SKILL.md",
+        "usually_changes_with": "packages/stack-supabase/src/wasm-inline.ts",
+        "co_commits": 3,
+        "confidence": 0.5,
+        "exists_at_head": true
+      }
+    ],
+    "bulk_commits_ignored": 93
+  },
+  "ownership": {
+    "codeowners_found": true,
+    "owners_by_file": {
+      ".changeset/wasm-inline-type-identity.md": ["@cipherstash/developers"],
+      "packages/stack-supabase/__tests__/helpers/supabase-mock.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-supabase/__tests__/supabase-schema-builder.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-supabase/__tests__/supabase-v3-factory.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack-supabase/src/column-map.ts": ["@cipherstash/developers"],
+      "packages/stack-supabase/src/create.ts": ["@cipherstash/developers"],
+      "packages/stack/__tests__/logger-edge-safety.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack/dist-types/node16/wasm-inline.mts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack/dist-types/wasm-inline-type-identity.ts": [
+        "@cipherstash/developers"
+      ],
+      "packages/stack/src/adapter-kit.ts": ["@cipherstash/developers"],
+      "packages/stack/src/utils/logger/index.ts": ["@cipherstash/developers"],
+      "packages/stack/tsup.config.ts": ["@cipherstash/developers"],
+      "scripts/__tests__/skills-supabase-edge-schema-entry.test.mjs": [
+        "@cipherstash/developers"
+      ],
+      "skills/stash-edge/SKILL.md": ["@cipherstash/developers"],
+      "skills/stash-encryption/SKILL.md": ["@cipherstash/developers"],
+      "skills/stash-managed-platforms/SKILL.md": ["@cipherstash/developers"],
+      "skills/stash-supabase/SKILL.md": ["@cipherstash/developers"]
+    },
+    "pr_commit_authors": 1,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 69
+      }
+    }
+  },
+  "dependencies": [],
+  "tests": {
+    "test_files_changed": 5,
+    "source_files_changed": 7,
+    "source_without_related_test": [
+      "packages/stack/dist-types/wasm-inline-type-identity.ts",
+      "packages/stack/src/utils/logger/index.ts"
+    ],
+    "source_with_related_test_unchanged": [
+      "packages/stack-supabase/src/create.ts",
+      "packages/stack/dist-types/node16/wasm-inline.mts",
+      "packages/stack/tsup.config.ts"
+    ],
+    "mapping": [
+      {
+        "source": "packages/stack-supabase/src/column-map.ts",
+        "related_tests_at_head": [
+          "packages/stack-supabase/__tests__/column-map-predicate.test.ts",
+          "packages/stack-supabase/__tests__/helpers/supabase-mock.ts",
+          "packages/stack-supabase/__tests__/supabase-schema-builder.test.ts",
+          "packages/stack-supabase/__tests__/supabase-v3-builder.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/stack-supabase/src/create.ts",
+        "related_tests_at_head": [
+          "packages/stack-supabase/__tests__/supabase-declared-mode.test.ts",
+          "packages/stack-supabase/__tests__/supabase-v3-builder.test.ts",
+          "packages/stack-supabase/__tests__/supabase-wasm-config.test-d.ts",
+          "packages/stack-supabase/__tests__/wasm-client-adapter.test.ts",
+          "packages/stack-supabase/__tests__/wasm-entry-edge-safety.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/stack/dist-types/node16/wasm-inline.mts",
+        "related_tests_at_head": [
+          "packages/stack/__tests__/browser-export-condition.test.ts",
+          "packages/stack/__tests__/helpers/expect-result.ts",
+          "packages/stack/__tests__/helpers/stub-auth-wasm-inline.ts",
+          "packages/stack/__tests__/helpers/stub-protect-ffi-wasm-inline.ts",
+          "packages/stack/__tests__/wasm-inline-auth-failure.test.ts",
+          "packages/stack/__tests__/wasm-inline-bulk.test.ts",
+          "packages/stack/__tests__/wasm-inline-bundle-isolation.test.ts",
+          "packages/stack/__tests__/wasm-inline-column-name.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/stack/dist-types/wasm-inline-type-identity.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/stack/src/adapter-kit.ts",
+        "related_tests_at_head": [
+          "packages/stack/__tests__/logger-edge-safety.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "packages/stack/src/utils/logger/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "packages/stack/tsup.config.ts",
+        "related_tests_at_head": [
+          "packages/stack/__tests__/cjs-require.test.ts",
+          "packages/stack/__tests__/helpers/process-free-realm.mjs"
+        ],
+        "match": "reference",
+        "related_test_changed": false
+      }
+    ],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

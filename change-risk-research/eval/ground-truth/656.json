@@ -1,0 +1,14 @@
+{
+  "pr": 656,
+  "repository": "cipherstash/stack",
+  "annotator": "claude (single annotator; second human review pending)",
+  "written_on": "2026-10-12",
+  "written_before_any_evaluator_run": true,
+  "outcome": "no_known_defect",
+  "expert_impact": "low",
+  "attention_warranted": false,
+  "impact_confidence": "medium",
+  "rationale": "One-line docs fix in AGENTS.md.",
+  "known_defects": [],
+  "notes": "No known defect does not mean risk-free; reported scenarios on this case are adjudicated individually (valid / unsupported / incorrect)."
+}

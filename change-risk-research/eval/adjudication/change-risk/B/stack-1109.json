@@ -1,0 +1,25 @@
+{
+  "case": "stack-1109",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "low",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Unannounced transitive upgrades in the agent-SDK/MCP stack break wizard dev or test runs",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": false,
+      "note": "Speculative; names no mechanism in the bumped packages."
+    }
+  ],
+  "cost_usd": 0.8906687,
+  "wall_seconds": 102.278807
+}

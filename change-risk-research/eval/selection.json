@@ -1,0 +1,321 @@
+{
+  "description": "Hand-selected PRs for the change-risk evaluation. Fixed before any evaluator was run. 'split' is dev (may be used to tune the skill) or holdout (never used for tuning). Ground truth lives in eval/ground-truth/<pr>.json and is never shown to an evaluator.",
+  "repository": "cipherstash/stack",
+  "selected_on": "2026-10-12",
+  "cases": [
+    {
+      "pr": 301,
+      "split": "dev",
+      "subsystem": "stack encryption operations",
+      "categories": ["encryption", "public_api"],
+      "outcome": "defect"
+    },
+    {
+      "pr": 878,
+      "split": "dev",
+      "subsystem": "protect-ffi release pipeline",
+      "categories": ["release", "ci"],
+      "outcome": "defect"
+    },
+    {
+      "pr": 336,
+      "split": "dev",
+      "subsystem": "cli auth and consolidation",
+      "categories": ["authentication", "cli"],
+      "outcome": "defect"
+    },
+    {
+      "pr": 119,
+      "split": "dev",
+      "subsystem": "protect model operations",
+      "categories": ["encryption", "public_api"],
+      "outcome": "defect"
+    },
+    {
+      "pr": 548,
+      "split": "dev",
+      "subsystem": "stack bulk model helpers",
+      "categories": ["encryption", "serialization"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 1109,
+      "split": "dev",
+      "subsystem": "lockfile",
+      "categories": ["dependency"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 975,
+      "split": "dev",
+      "subsystem": "shipped skill docs",
+      "categories": ["documentation"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 1088,
+      "split": "dev",
+      "subsystem": "dev dependency + workflow",
+      "categories": ["dependency", "ci"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 1022,
+      "split": "dev",
+      "subsystem": "Go encrypt context",
+      "categories": ["encryption", "serialization"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 659,
+      "split": "dev",
+      "subsystem": "supabase adapter, lock context types",
+      "categories": ["encryption", "public_api", "authorization"],
+      "outcome": "no_known_defect"
+    },
+
+    {
+      "pr": 314,
+      "split": "holdout",
+      "subsystem": "stash-forge CLI config loading",
+      "categories": ["cli", "configuration"],
+      "outcome": "defect"
+    },
+    {
+      "pr": 349,
+      "split": "holdout",
+      "subsystem": "drizzle integration + migration rewriter",
+      "categories": ["database_migration", "public_api"],
+      "outcome": "defect"
+    },
+    {
+      "pr": 496,
+      "split": "holdout",
+      "subsystem": "stack wasm-inline entry",
+      "categories": ["public_api", "build"],
+      "outcome": "defect"
+    },
+    {
+      "pr": 547,
+      "split": "holdout",
+      "subsystem": "supabase v3 adapter",
+      "categories": ["encryption", "plaintext_exposure", "public_api"],
+      "outcome": "defect"
+    },
+    {
+      "pr": 666,
+      "split": "holdout",
+      "subsystem": "cli init version pinning",
+      "categories": ["cli", "release"],
+      "outcome": "defect"
+    },
+    {
+      "pr": 823,
+      "split": "holdout",
+      "subsystem": "drizzle migration rewriter",
+      "categories": ["database_migration"],
+      "outcome": "defect"
+    },
+    {
+      "pr": 941,
+      "split": "holdout",
+      "subsystem": "EQL release pipeline",
+      "categories": ["release", "ci", "retry_idempotency"],
+      "outcome": "defect"
+    },
+    {
+      "pr": 1002,
+      "split": "holdout",
+      "subsystem": "auth native binding release pipeline",
+      "categories": ["release", "ci"],
+      "outcome": "defect"
+    },
+    {
+      "pr": 996,
+      "split": "holdout",
+      "subsystem": "stack encryption client types",
+      "categories": ["encryption", "public_api", "refactor"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 860,
+      "split": "holdout",
+      "subsystem": "protect-ffi upgrade in stack",
+      "categories": ["encryption", "dependency"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 502,
+      "split": "holdout",
+      "subsystem": "stack exports",
+      "categories": ["public_api"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 562,
+      "split": "holdout",
+      "subsystem": "stack auth config key rename",
+      "categories": ["authentication", "public_api"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 676,
+      "split": "holdout",
+      "subsystem": "wasm-inline encryptQuery",
+      "categories": ["encryption", "public_api"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 964,
+      "split": "holdout",
+      "subsystem": "stack type emission",
+      "categories": ["public_api", "build"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 1090,
+      "split": "holdout",
+      "subsystem": "stack-auth OIDC token caching",
+      "categories": ["authentication", "tenant_isolation", "rust", "go"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 568,
+      "split": "holdout",
+      "subsystem": "auth dependency + Result API",
+      "categories": ["authentication", "dependency"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 330,
+      "split": "holdout",
+      "subsystem": "stack auth in CLI",
+      "categories": ["authentication", "cli"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 728,
+      "split": "holdout",
+      "subsystem": "migration rewriter v3",
+      "categories": ["database_migration"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 961,
+      "split": "holdout",
+      "subsystem": "EQL reinstall",
+      "categories": ["database_migration", "cli"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 1006,
+      "split": "holdout",
+      "subsystem": "prisma migrations bake EQL",
+      "categories": ["database_migration", "release"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 998,
+      "split": "holdout",
+      "subsystem": "release version script",
+      "categories": ["release"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 1026,
+      "split": "holdout",
+      "subsystem": "release workflow publish ordering",
+      "categories": ["release", "ci", "retry_idempotency"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 1111,
+      "split": "holdout",
+      "subsystem": "CI cache keys",
+      "categories": ["ci"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 503,
+      "split": "holdout",
+      "subsystem": "npm trusted publishing",
+      "categories": ["release", "ci"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 1072,
+      "split": "holdout",
+      "subsystem": "CI path filtering",
+      "categories": ["ci"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 982,
+      "split": "holdout",
+      "subsystem": "example dependency",
+      "categories": ["dependency"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 981,
+      "split": "holdout",
+      "subsystem": "EQL Cargo.lock",
+      "categories": ["dependency", "rust"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 905,
+      "split": "holdout",
+      "subsystem": "protect-ffi Cargo dependency",
+      "categories": ["dependency", "rust"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 656,
+      "split": "holdout",
+      "subsystem": "agent docs",
+      "categories": ["documentation"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 840,
+      "split": "holdout",
+      "subsystem": "stack docs and comments",
+      "categories": ["documentation"],
+      "outcome": "no_known_defect"
+    },
+    {
+      "pr": 371,
+      "split": "holdout",
+      "subsystem": "cli message refactor",
+      "categories": ["refactor", "cli"],
+      "outcome": "no_known_defect"
+    }
+  ],
+  "excluded": [
+    {
+      "pr": 43,
+      "reason": "SZZ blamed it for #58, but #43 moved existing lock-context code rather than introducing it; attribution not supported."
+    },
+    {
+      "pr": 885,
+      "reason": "Introduced the #998 defect, but 1057 files / 369k lines (subtree import); not assessable within the per-case budget."
+    },
+    {
+      "pr": 286,
+      "reason": "Introduced the #548 defect, but 183 files / 30k lines (new package import)."
+    },
+    {
+      "pr": 1001,
+      "reason": "Blamed for #1090 and #1022, but imported crates whose defects predate this repository."
+    },
+    {
+      "pr": 535,
+      "reason": "276 files; blamed for #705/#659 but the defects are feature gaps across a large migration."
+    },
+    {
+      "pr": 412,
+      "reason": "Blamed for #446 by SZZ; the causal lines could not be confirmed."
+    }
+  ]
+}

@@ -1,0 +1,530 @@
+{
+  "tool": {
+    "name": "change-risk/collect-evidence",
+    "version": "1.0.0"
+  },
+  "repository": "cipherstash/stack",
+  "base_sha": "e4a814b0266b714abca19b8583fe14f4f1061841",
+  "head_sha": "6ad6c76e7d7dccb2ecde472a20bda8e51cea9f56",
+  "merge_base_sha": "e4a814b0266b714abca19b8583fe14f4f1061841",
+  "base_is_merge_base": true,
+  "history_scope": {
+    "rule": "ancestors of base_sha only; no commit after the base is read",
+    "cutoff_commit": "e4a814b0266b714abca19b8583fe14f4f1061841",
+    "cutoff_date": "2026-10-04T13:06:28-07:00",
+    "commits_read": 4809,
+    "max_commits": 5000,
+    "merges_excluded": true
+  },
+  "change_size": {
+    "files": 17,
+    "additions": 812,
+    "deletions": 210,
+    "binary_files": 0,
+    "by_status": {
+      "added": 3,
+      "modified": 14
+    }
+  },
+  "dispersion": {
+    "components": {
+      "languages/typescript/packages/stack": 12,
+      ".": 3,
+      "languages/typescript/packages/stack-supabase": 2
+    },
+    "component_count": 3,
+    "top_level_dirs": {
+      "languages": 14,
+      ".changeset": 2,
+      "skills": 1
+    },
+    "languages": {
+      "TypeScript": 14,
+      "Markdown": 3
+    }
+  },
+  "path_classes": {
+    "security_sensitive": 13,
+    "test": 4,
+    "docs": 3,
+    "agent_instructions": 1
+  },
+  "files": [
+    {
+      "path": ".changeset/stack-encrypt-json-null-result.md",
+      "status": "added",
+      "previous_path": null,
+      "additions": 11,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs", "security_sensitive"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": ".changeset/stack-encrypt-ops-json-plaintext.md",
+      "status": "added",
+      "previous_path": null,
+      "additions": 5,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["docs", "security_sensitive"],
+      "component": ".",
+      "language": "Markdown"
+    },
+    {
+      "path": "languages/typescript/packages/stack-supabase/__tests__/supabase-v3-builder.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 24,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["test"],
+      "component": "languages/typescript/packages/stack-supabase",
+      "language": "TypeScript"
+    },
+    {
+      "path": "languages/typescript/packages/stack-supabase/src/query-encrypt.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 11,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "languages/typescript/packages/stack-supabase",
+      "language": "TypeScript"
+    },
+    {
+      "path": "languages/typescript/packages/stack/__tests__/typed-client-v3.test-d.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 249,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["test"],
+      "component": "languages/typescript/packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "languages/typescript/packages/stack/__tests__/typed-client-v3.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 102,
+      "deletions": 1,
+      "binary": false,
+      "classes": ["test"],
+      "component": "languages/typescript/packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "languages/typescript/packages/stack/integration/shared/json-crypto.integration.test.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 57,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive", "test"],
+      "component": "languages/typescript/packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "languages/typescript/packages/stack/src/encryption/client-v3.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 113,
+      "deletions": 54,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "languages/typescript/packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "languages/typescript/packages/stack/src/encryption/helpers/infer-index-type.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 5,
+      "deletions": 3,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "languages/typescript/packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "languages/typescript/packages/stack/src/encryption/helpers/js-plaintext.ts",
+      "status": "added",
+      "previous_path": null,
+      "additions": 26,
+      "deletions": 0,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "languages/typescript/packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "languages/typescript/packages/stack/src/encryption/index.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 53,
+      "deletions": 71,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "languages/typescript/packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "languages/typescript/packages/stack/src/encryption/operations/batch-encrypt-query.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 23,
+      "deletions": 11,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "languages/typescript/packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "languages/typescript/packages/stack/src/encryption/operations/bulk-encrypt.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 17,
+      "deletions": 11,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "languages/typescript/packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "languages/typescript/packages/stack/src/encryption/operations/encrypt-query.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 9,
+      "deletions": 17,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "languages/typescript/packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "languages/typescript/packages/stack/src/encryption/operations/encrypt.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 70,
+      "deletions": 37,
+      "binary": false,
+      "classes": ["security_sensitive"],
+      "component": "languages/typescript/packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "languages/typescript/packages/stack/src/types.ts",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 35,
+      "deletions": 0,
+      "binary": false,
+      "classes": [],
+      "component": "languages/typescript/packages/stack",
+      "language": "TypeScript"
+    },
+    {
+      "path": "skills/stash-encryption/SKILL.md",
+      "status": "modified",
+      "previous_path": null,
+      "additions": 2,
+      "deletions": 2,
+      "binary": false,
+      "classes": ["agent_instructions", "docs", "security_sensitive"],
+      "component": ".",
+      "language": "Markdown"
+    }
+  ],
+  "churn": {
+    "recent_window_days": 90,
+    "hotspots": [
+      {
+        "path": "skills/stash-encryption/SKILL.md",
+        "commits": 71,
+        "commits_last_90d": 52,
+        "distinct_authors": 5
+      },
+      {
+        "path": "languages/typescript/packages/stack-supabase/__tests__/supabase-v3-builder.test.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "languages/typescript/packages/stack-supabase/src/query-encrypt.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "languages/typescript/packages/stack/__tests__/typed-client-v3.test-d.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "languages/typescript/packages/stack/__tests__/typed-client-v3.test.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "languages/typescript/packages/stack/integration/shared/json-crypto.integration.test.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "languages/typescript/packages/stack/src/encryption/client-v3.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "languages/typescript/packages/stack/src/encryption/helpers/infer-index-type.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "languages/typescript/packages/stack/src/encryption/index.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "languages/typescript/packages/stack/src/encryption/operations/batch-encrypt-query.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "languages/typescript/packages/stack/src/encryption/operations/bulk-encrypt.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "languages/typescript/packages/stack/src/encryption/operations/encrypt-query.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "languages/typescript/packages/stack/src/encryption/operations/encrypt.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      },
+      {
+        "path": "languages/typescript/packages/stack/src/types.ts",
+        "commits": 1,
+        "commits_last_90d": 1,
+        "distinct_authors": 1
+      }
+    ]
+  },
+  "co_change": {
+    "min_support": 3,
+    "min_confidence": 0.5,
+    "max_files_per_commit": 40,
+    "omitted_co_changes": [],
+    "bulk_commits_ignored": 101
+  },
+  "ownership": {
+    "codeowners_found": true,
+    "owners_by_file": {
+      ".changeset/stack-encrypt-json-null-result.md": [
+        "@cipherstash/developers"
+      ],
+      ".changeset/stack-encrypt-ops-json-plaintext.md": [
+        "@cipherstash/developers"
+      ],
+      "languages/typescript/packages/stack-supabase/__tests__/supabase-v3-builder.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "languages/typescript/packages/stack-supabase/src/query-encrypt.ts": [
+        "@cipherstash/developers"
+      ],
+      "languages/typescript/packages/stack/__tests__/typed-client-v3.test-d.ts": [
+        "@cipherstash/developers"
+      ],
+      "languages/typescript/packages/stack/__tests__/typed-client-v3.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "languages/typescript/packages/stack/integration/shared/json-crypto.integration.test.ts": [
+        "@cipherstash/developers"
+      ],
+      "languages/typescript/packages/stack/src/encryption/client-v3.ts": [
+        "@cipherstash/developers"
+      ],
+      "languages/typescript/packages/stack/src/encryption/helpers/infer-index-type.ts": [
+        "@cipherstash/developers"
+      ],
+      "languages/typescript/packages/stack/src/encryption/helpers/js-plaintext.ts": [
+        "@cipherstash/developers"
+      ],
+      "languages/typescript/packages/stack/src/encryption/index.ts": [
+        "@cipherstash/developers"
+      ],
+      "languages/typescript/packages/stack/src/encryption/operations/batch-encrypt-query.ts": [
+        "@cipherstash/developers"
+      ],
+      "languages/typescript/packages/stack/src/encryption/operations/bulk-encrypt.ts": [
+        "@cipherstash/developers"
+      ],
+      "languages/typescript/packages/stack/src/encryption/operations/encrypt-query.ts": [
+        "@cipherstash/developers"
+      ],
+      "languages/typescript/packages/stack/src/encryption/operations/encrypt.ts": [
+        "@cipherstash/developers"
+      ],
+      "languages/typescript/packages/stack/src/types.ts": [
+        "@cipherstash/developers"
+      ],
+      "skills/stash-encryption/SKILL.md": ["@cipherstash/developers"]
+    },
+    "pr_commit_authors": 2,
+    "author_familiarity": {
+      "author_1": {
+        "prior_commits_touching_changed_files": 3
+      },
+      "author_2": {
+        "prior_commits_touching_changed_files": 26
+      }
+    }
+  },
+  "dependencies": [],
+  "tests": {
+    "test_files_changed": 4,
+    "source_files_changed": 10,
+    "source_without_related_test": [
+      "languages/typescript/packages/stack/src/encryption/index.ts",
+      "languages/typescript/packages/stack/src/types.ts"
+    ],
+    "source_with_related_test_unchanged": [
+      "languages/typescript/packages/stack/src/encryption/helpers/infer-index-type.ts",
+      "languages/typescript/packages/stack/src/encryption/operations/batch-encrypt-query.ts",
+      "languages/typescript/packages/stack/src/encryption/operations/bulk-encrypt.ts",
+      "languages/typescript/packages/stack/src/encryption/operations/encrypt-query.ts",
+      "languages/typescript/packages/stack/src/encryption/operations/encrypt.ts"
+    ],
+    "mapping": [
+      {
+        "source": "languages/typescript/packages/stack-supabase/src/query-encrypt.ts",
+        "related_tests_at_head": [
+          "languages/typescript/packages/stack-supabase/__tests__/supabase-v3-builder.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "languages/typescript/packages/stack/src/encryption/client-v3.ts",
+        "related_tests_at_head": [
+          "languages/typescript/packages/stack/__tests__/client-get-schemas.test.ts",
+          "languages/typescript/packages/stack/__tests__/dynamodb/v2-grouped-date.test.ts",
+          "languages/typescript/packages/stack/__tests__/dynamodb/v2-type-coverage.test.ts",
+          "languages/typescript/packages/stack/__tests__/encrypt-lock-context-guards.test.ts",
+          "languages/typescript/packages/stack/__tests__/typed-client-v3.test.ts",
+          "languages/typescript/packages/stack/__tests__/v3-only-public-surface.test.ts",
+          "languages/typescript/packages/stack/integration/shared/v2-decrypt-compat.integration.test.ts",
+          "languages/typescript/packages/stack/integration/wasm/v2-decrypt-compat.integration.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "languages/typescript/packages/stack/src/encryption/helpers/infer-index-type.ts",
+        "related_tests_at_head": [
+          "languages/typescript/packages/stack/__tests__/infer-index-type.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "languages/typescript/packages/stack/src/encryption/helpers/js-plaintext.ts",
+        "related_tests_at_head": [
+          "languages/typescript/packages/stack/integration/shared/json-crypto.integration.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": true
+      },
+      {
+        "source": "languages/typescript/packages/stack/src/encryption/index.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      },
+      {
+        "source": "languages/typescript/packages/stack/src/encryption/operations/batch-encrypt-query.ts",
+        "related_tests_at_head": [
+          "languages/typescript/packages/stack/__tests__/null-guards.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": false
+      },
+      {
+        "source": "languages/typescript/packages/stack/src/encryption/operations/bulk-encrypt.ts",
+        "related_tests_at_head": [
+          "languages/typescript/packages/stack/__tests__/audit.test.ts",
+          "languages/typescript/packages/stack/__tests__/bulk-encrypt-validation.test.ts",
+          "languages/typescript/packages/stack/__tests__/bulk-model-hyphen-fields.test.ts",
+          "languages/typescript/packages/stack/__tests__/bulk-protect.test.ts",
+          "languages/typescript/packages/stack/__tests__/dynamodb/construct-guard.test.ts",
+          "languages/typescript/packages/stack/__tests__/dynamodb/encrypted-dynamodb-v3.test.ts",
+          "languages/typescript/packages/stack/__tests__/dynamodb/resolve-decrypt.test.ts",
+          "languages/typescript/packages/stack/__tests__/dynamodb/v2-grouped-date.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": false
+      },
+      {
+        "source": "languages/typescript/packages/stack/src/encryption/operations/encrypt-query.ts",
+        "related_tests_at_head": [
+          "languages/typescript/packages/stack/__tests__/encrypt-query.test.ts"
+        ],
+        "match": "name",
+        "related_test_changed": false
+      },
+      {
+        "source": "languages/typescript/packages/stack/src/encryption/operations/encrypt.ts",
+        "related_tests_at_head": [
+          "languages/typescript/packages/stack/__tests__/audit.test.ts",
+          "languages/typescript/packages/stack/__tests__/auth-failure-propagation.test.ts",
+          "languages/typescript/packages/stack/__tests__/basic-protect.test.ts",
+          "languages/typescript/packages/stack/__tests__/bulk-decrypt-item-failure.test.ts",
+          "languages/typescript/packages/stack/__tests__/bulk-encrypt-validation.test.ts",
+          "languages/typescript/packages/stack/__tests__/bulk-model-hyphen-fields.test.ts",
+          "languages/typescript/packages/stack/__tests__/bulk-protect.test.ts",
+          "languages/typescript/packages/stack/__tests__/cjs-require.test.ts"
+        ],
+        "match": "reference",
+        "related_test_changed": false
+      },
+      {
+        "source": "languages/typescript/packages/stack/src/types.ts",
+        "related_tests_at_head": [],
+        "match": "none",
+        "related_test_changed": false
+      }
+    ],
+    "note": "Mapping by file name, Go package, or a test in the same component naming the module path. A related test existing or changing says nothing about whether it ran or passed."
+  },
+  "ci": {
+    "available": false,
+    "note": "No CI results supplied (--ci). Do not infer that checks passed."
+  },
+  "signal_meanings": {
+    "change_size": "Lines and files changed. Large diffs are harder to review; size alone does not indicate impact.",
+    "dispersion": "Components = nearest directory with a package manifest. Several components means the change crosses package boundaries.",
+    "path_classes": "Regex classification of paths. A class is a prompt to look, not evidence of a contract change.",
+    "churn": "Commit counts per changed file over base ancestry. High churn marks a frequently-modified area; it is not a defect predictor on its own.",
+    "co_change": "Files that historically changed together with a changed file but are absent here. Can indicate an incomplete change, or nothing.",
+    "ownership": "CODEOWNERS at base and how often the PR's authors previously committed to these files. Contextual only; not a judgement of the author.",
+    "dependencies": "Manifest entries whose version spec changed. Lockfile-only resolution changes appear in files, not here.",
+    "tests": "Name-based mapping from source files to test files. Existence of a test is not evidence it covers the change or that it passed."
+  }
+}

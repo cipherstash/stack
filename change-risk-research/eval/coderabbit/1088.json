@@ -1,0 +1,19 @@
+{
+  "pr": 1088,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "source": "review_comment",
+      "url": "https://github.com/cipherstash/stack/pull/1088#discussion_r4190308227",
+      "path": ".github/workflows/require-auth-npm-changeset.yml",
+      "line": 89,
+      "severity_label": "🎯 Functional Correctness | 🟡 Minor | ⚡ Quick win",
+      "claim": "Disable rename detection before filtering changed paths. When a shipped file moves into examples/, git's default rename detection makes --name-only report only the destination, so --shipped drops it and the workflow passes without requiring a changeset; add --no-renames.",
+      "is_nitpick": false
+    }
+  ],
+  "notes": "One CodeRabbit review (COMMENTED, 1 actionable, no nitpicks); thread resolved, marked 'Addressed in commit 983cd54'. Summary comment's latest review: 'No actionable comments were generated in the recent review'; Merge Risk: Minimal. Release-notes summary removed from PR body. Codex review summary comment also present (not CodeRabbit)."
+}

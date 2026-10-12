@@ -1,0 +1,8 @@
+{
+  "pr": 860,
+  "coderabbit_present": true,
+  "collected_via": "github mcp",
+  "summary_comment_present": true,
+  "findings": [],
+  "notes": "CodeRabbit summary/walkthrough comment present stating 'No actionable comments were generated in the recent review.' No CodeRabbit reviews or review comments. CodeRabbit commit status success ('Review completed'). Human reviews by freshtonic (2 approvals with non-blocking test nits) not counted. Release-notes block removed from description."
+}

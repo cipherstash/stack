@@ -1,0 +1,69 @@
+{
+  "case": "stack-314",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "push leaves the database with no active (and a discarded pending/encrypting) EQL configuration when the INSERT fails",
+      "impact": "high",
+      "basis": "observed_defect",
+      "label": null,
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "push always fails for schemas with number, bigint or json columns because stack's cast_as values are rejected by the EQL CHECK constraint",
+      "impact": "high",
+      "basis": "observed_defect",
+      "label": null,
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "install executes an unpinned, unverified 'latest' EQL SQL bundle against customer databases",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": null,
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "--supabase grants ALL on the eql_v2 schema and future objects to the anon role",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": null,
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": ""
+    },
+    {
+      "id": "FS-5",
+      "title": "Experimental changesets option can stop peer-dependent packages from being re-released alongside their peers",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": null,
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": ""
+    }
+  ],
+  "cost_usd": 1.5676871000000006,
+  "wall_seconds": 223.887106
+}
