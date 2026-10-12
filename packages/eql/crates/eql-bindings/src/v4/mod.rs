@@ -9,7 +9,8 @@
 //! `DecryptInto`, behind the `stack-encrypt` feature). Stack Encrypt's output
 //! is not byte-for-byte compatible with cipherstash-client's, so no `eql_v3`
 //! struct claims it. Which v4 types derive them is
-//! `eql-codegen`'s `ENCRYPTION_DOMAINS`; the rest say why in [`targets`].
+//! `eql-codegen`'s `ENCRYPTION_DOMAINS`; the rest say why in
+//! `crate::encryption::targets`.
 //!
 //! v4 has no SteVec bindings, payload enums, TypeScript export or
 //! published JSON Schema yet; those follow in `@cipherstash/eql` 4.0. The

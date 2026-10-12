@@ -44,7 +44,7 @@ Your program calls those functions, and it never builds or names a plan.
    ```
 
 6. Store the encrypted type.
-   Each `encrypt_into` field is one EQL column: `eql.TextEq` implements `driver.Valuer` and `sql.Scanner`, so a database library binds and scans it as the JSON a `public.eql_v3_text_eq` column holds.
+   Each `encrypt_into` field is one EQL column: `eql.TextEq` implements `driver.Valuer` and `sql.Scanner`, so a database library binds and scans it as the JSON a `public.eql_v4_text_eq` column holds. Stack Encrypt writes EQL v4; see the `encrypt` package README.
 
 7. Run the generator again after each change to the struct or to a tag.
    A change to the fields of the struct stops the build until you do.

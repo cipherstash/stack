@@ -40,6 +40,9 @@ impl DomainType for Text {
     fn schema(&self) -> Schema {
         schema_for!(Text)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -97,6 +100,9 @@ impl DomainType for TextEq {
     fn schema(&self) -> Schema {
         schema_for!(TextEq)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -135,6 +141,9 @@ impl DomainType for TextMatch {
     }
     fn schema(&self) -> Schema {
         schema_for!(TextMatch)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
@@ -176,6 +185,9 @@ impl DomainType for TextOrdOre {
     fn schema(&self) -> Schema {
         schema_for!(TextOrdOre)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -216,6 +228,9 @@ impl DomainType for TextOrd {
     fn schema(&self) -> Schema {
         schema_for!(TextOrd)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -255,6 +270,9 @@ impl DomainType for TextOrdOpe {
     }
     fn schema(&self) -> Schema {
         schema_for!(TextOrdOpe)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
@@ -297,6 +315,9 @@ impl DomainType for TextSearchOre {
     fn schema(&self) -> Schema {
         schema_for!(TextSearchOre)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -337,6 +358,9 @@ impl DomainType for TextSearch {
     }
     fn schema(&self) -> Schema {
         schema_for!(TextSearch)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
@@ -393,6 +417,9 @@ impl DomainType for TextEqQuery {
     fn schema(&self) -> Schema {
         schema_for!(TextEqQuery)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -430,6 +457,9 @@ impl DomainType for TextMatchQuery {
     }
     fn schema(&self) -> Schema {
         schema_for!(TextMatchQuery)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
@@ -470,6 +500,9 @@ impl DomainType for TextOrdOreQuery {
     fn schema(&self) -> Schema {
         schema_for!(TextOrdOreQuery)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -509,6 +542,9 @@ impl DomainType for TextOrdQuery {
     fn schema(&self) -> Schema {
         schema_for!(TextOrdQuery)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -547,6 +583,9 @@ impl DomainType for TextOrdOpeQuery {
     }
     fn schema(&self) -> Schema {
         schema_for!(TextOrdOpeQuery)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
@@ -588,6 +627,9 @@ impl DomainType for TextSearchOreQuery {
     fn schema(&self) -> Schema {
         schema_for!(TextSearchOreQuery)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -627,6 +669,9 @@ impl DomainType for TextSearchQuery {
     }
     fn schema(&self) -> Schema {
         schema_for!(TextSearchQuery)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
