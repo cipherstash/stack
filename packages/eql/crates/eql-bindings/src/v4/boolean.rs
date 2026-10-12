@@ -40,6 +40,9 @@ impl DomainType for Boolean {
     fn schema(&self) -> Schema {
         schema_for!(Boolean)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }

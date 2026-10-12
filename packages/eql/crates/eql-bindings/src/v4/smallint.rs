@@ -40,6 +40,9 @@ impl DomainType for Smallint {
     fn schema(&self) -> Schema {
         schema_for!(Smallint)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -78,6 +81,9 @@ impl DomainType for SmallintEq {
     }
     fn schema(&self) -> Schema {
         schema_for!(SmallintEq)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
@@ -118,6 +124,9 @@ impl DomainType for SmallintOrdOre {
     fn schema(&self) -> Schema {
         schema_for!(SmallintOrdOre)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -156,6 +165,9 @@ impl DomainType for SmallintOrd {
     }
     fn schema(&self) -> Schema {
         schema_for!(SmallintOrd)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
@@ -196,6 +208,9 @@ impl DomainType for SmallintOrdOpe {
     fn schema(&self) -> Schema {
         schema_for!(SmallintOrdOpe)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -233,6 +248,9 @@ impl DomainType for SmallintEqQuery {
     }
     fn schema(&self) -> Schema {
         schema_for!(SmallintEqQuery)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
@@ -272,6 +290,9 @@ impl DomainType for SmallintOrdOreQuery {
     fn schema(&self) -> Schema {
         schema_for!(SmallintOrdOreQuery)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -310,6 +331,9 @@ impl DomainType for SmallintOrdQuery {
     fn schema(&self) -> Schema {
         schema_for!(SmallintOrdQuery)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -347,6 +371,9 @@ impl DomainType for SmallintOrdOpeQuery {
     }
     fn schema(&self) -> Schema {
         schema_for!(SmallintOrdOpeQuery)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())

@@ -415,12 +415,16 @@ fn encryption_attrs(
     )
 }
 
-/// A v4 struct's `DomainType::schema_id` override: the trait's default names
-/// the v3 schema base.
+/// A v4 struct's `DomainType::schema_id` overrides: the trait's defaults name
+/// the v3 schema base. Both forms, since the inventory's `PhantomData` handles
+/// reach the type-level one.
 fn schema_id_override(version: EqlVersion) -> TokenStream {
     match version {
         EqlVersion::V3 => quote!(),
         EqlVersion::V4 => quote! {
+            fn schema_id_base_static() -> &'static str {
+                super::SCHEMA_ID_BASE
+            }
             fn schema_id(&self) -> String {
                 format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
             }

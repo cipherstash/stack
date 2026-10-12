@@ -15,7 +15,7 @@ set -euo pipefail
 
 staged=$(git diff --cached --name-only --diff-filter=ACMRD)
 
-if echo "$staged" | grep -Eq '^(crates/eql-domains/|crates/eql-codegen/|src/v3/scalars/|crates/eql-bindings/src/v3/|crates/eql-bindings/bindings/|crates/eql-bindings/schema/)'; then
+if echo "$staged" | grep -Eq '^(crates/eql-domains/|crates/eql-codegen/|src/v3/scalars/|crates/eql-bindings/src/v3/|crates/eql-bindings/src/v4/|crates/eql-bindings/bindings/|crates/eql-bindings/schema/)'; then
   echo "pre-commit: catalog/generator/generated surface touched — verifying freshness…"
   mise run codegen:parity
   mise run types:check

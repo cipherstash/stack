@@ -276,12 +276,14 @@ package documentation for the full account.
 ## EQL columns
 
 A field tagged `encrypt_into=TextEq` is stored as one EQL value, the JSON
-PostgreSQL holds in a `public.eql_v3_text_eq` column, as an `eql.TextEq`
-from package `encrypt/eql`. The guest builds the value: the generated code
+PostgreSQL holds in a `public.eql_v4_text_eq` column, as an `eql.TextEq`
+from package `encrypt/eql`. Stack Encrypt writes EQL v4, the `eql_v4` install
+of EQL's SQL; the `eql_v3` columns the TypeScript SDK writes hold
+cipherstash-client's terms, which these never match. The guest builds the value: the generated code
 imports `encrypt/eql`, which embeds the build of the engine that holds the
 EQL types and registers it on import, so the program runs that build and
 stores what it returns. `Fields.Email.Query` returns the `eql.TextEqQuery`
-the column's `eql_v3.query_text_eq` operand takes. `mise run
+the column's `eql_v4.query_text_eq` operand takes. `mise run
 wasm:guest:build:eql` builds that guest beside the other. A cipher extended
 with a tenant part refuses a struct with an `encrypt_into` field: an EQL
 value is stored under a table and a column, and the extended label has no

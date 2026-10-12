@@ -40,6 +40,9 @@ impl DomainType for Real {
     fn schema(&self) -> Schema {
         schema_for!(Real)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -78,6 +81,9 @@ impl DomainType for RealEq {
     }
     fn schema(&self) -> Schema {
         schema_for!(RealEq)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
@@ -118,6 +124,9 @@ impl DomainType for RealOrdOre {
     fn schema(&self) -> Schema {
         schema_for!(RealOrdOre)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -156,6 +165,9 @@ impl DomainType for RealOrd {
     }
     fn schema(&self) -> Schema {
         schema_for!(RealOrd)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
@@ -196,6 +208,9 @@ impl DomainType for RealOrdOpe {
     fn schema(&self) -> Schema {
         schema_for!(RealOrdOpe)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -233,6 +248,9 @@ impl DomainType for RealEqQuery {
     }
     fn schema(&self) -> Schema {
         schema_for!(RealEqQuery)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
@@ -272,6 +290,9 @@ impl DomainType for RealOrdOreQuery {
     fn schema(&self) -> Schema {
         schema_for!(RealOrdOreQuery)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -310,6 +331,9 @@ impl DomainType for RealOrdQuery {
     fn schema(&self) -> Schema {
         schema_for!(RealOrdQuery)
     }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
@@ -347,6 +371,9 @@ impl DomainType for RealOrdOpeQuery {
     }
     fn schema(&self) -> Schema {
         schema_for!(RealOrdOpeQuery)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
     }
     fn schema_id(&self) -> String {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
