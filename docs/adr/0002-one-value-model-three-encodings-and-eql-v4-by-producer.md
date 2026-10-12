@@ -76,9 +76,10 @@ the producer of the terms differs.
    hand-written SQL.
 3. **One SQL source, emitted under two names.** The build writes the same
    source out as `eql_v3` (cipherstash-client terms) and `eql_v4` (Stack
-   Encrypt terms). A column's domain names its producer, and Postgres refuses
-   to compare an `eql_v4_*` query term with an `eql_v3_*` column at plan time.
-   Chosen.
+   Encrypt terms). A column's domain names its producer: a payload written
+   to the other producer's domain fails its check on insert, and a typed
+   client sees two different types. Names alone do not stop a cross-producer
+   `=` in SQL; see Consequences. Chosen.
 
 **How v3 and v4 ship.** Bumping `main` to v4 and patching v3 from a branch
 needs a maintenance release path for five lockstep artefacts that does not
@@ -219,7 +220,7 @@ without an entry.
   check constraints test it, as the `eql_v3_*` ones test `3`. The version is
   one more build-time placeholder. A payload written to the other producer's
   domain then fails on insert, rather than only matching nothing when it is
-  queried.
+  queried. Queries are a different matter; see Consequences.
 - **New EQL targets are v4-only.** In v3 they stay refused, with a reason
   that points to v4.
 - **`@cipherstash/eql` 4.x ships both bundles** from `main`. A SQL fix lands in
@@ -254,6 +255,17 @@ Dan Draper signs it off in writing before the `vitaminc-prf` change lands.
 - **cipherstash-client's terms do not change.** Its fixed-length
   `orderable-bytes` output, cllw-ore's typed impls and its block ORE padding
   are all kept, so every stored v3 payload stays queryable.
+- **Separate names do not stop a cross-producer comparison in SQL.** EQL's
+  domains are over `jsonb`, and when no operator is defined for an exact pair
+  of types, Postgres treats a domain as its base type. `v3col = v4term` then
+  runs as the built-in `jsonb = jsonb` and returns no rows, silently, as
+  `eql_v3_text_eq = eql_v3.query_integer_eq` already does within v3. A join
+  between a v3 and a v4 column does the same, and
+  `eql_v3.eq_term(v3col) = eql_v4.eq_term(v4term)` compares the two terms as
+  text. Three things do fail loudly: an insert of the wrong version (the
+  domain check), the function form `eql_v3.eq(v3col, v4term)` ("not unique"),
+  and `OPERATOR(public.=)` between a v3 and a v4 column ("not unique").
+  Verified on Postgres 17 with both bundles installed in one database.
 - **Moving a column from v3 to v4 means re-encrypting it.** The ciphertext and
   every term change. How that migration runs belongs to the decision that
   moves the TypeScript stack onto Stack Encrypt.
@@ -272,6 +284,12 @@ Dan Draper signs it off in writing before the `vitaminc-prf` change lands.
   fully randomised and semantically secure, so a two-value domain leaks
   nothing through it. `Bool` could support that scheme alone, enforced by a
   marker trait on schemes. Not built until needed.
+- **Cross-version blocker operators.** Blockers for every v3/v4 pair of the
+  same type family and capability, created by whichever bundle is installed
+  second, would turn the silent cross-producer `=` into an error. About 2,300
+  operators, generated from the catalog like the existing blockers. Not built
+  yet. Until then, a cross-producer query is caught only by typed clients and
+  the function form.
 - **Locale-aware collation**, as its own domain with the collation version in
   its name.
 - **ASCII-packed text domains**, until a customer's column sizes make the
