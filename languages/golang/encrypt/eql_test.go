@@ -41,8 +41,8 @@ var contacts = []testusers.Contact{
 	{ID: 3, Email: "bob@example.com"},
 }
 
-// eqlEnvelope is the EQL v3 envelope of a TextEq value, as PostgreSQL's
-// public.eql_v3_text_eq domain checks it.
+// eqlEnvelope is the EQL v4 envelope of a TextEq value, as PostgreSQL's
+// public.eql_v4_text_eq domain checks it.
 type eqlEnvelope struct {
 	V  int `json:"v"`
 	I  struct{ T, C string }
@@ -91,8 +91,8 @@ func TestTextEqFieldSealsToTheEQLEnvelope(t *testing.T) {
 			t.Errorf("row %d: passthrough id %d, want %d", i, e.ID, contacts[i].ID)
 		}
 		env := decodeEnvelope(t, e.Email)
-		if env.V != 3 {
-			t.Errorf("row %d: v = %d, want 3", i, env.V)
+		if env.V != 4 {
+			t.Errorf("row %d: v = %d, want 4", i, env.V)
 		}
 		if env.I.T != "users" || env.I.C != "email" {
 			t.Errorf("row %d: i = %+v, want users/email", i, env.I)
@@ -217,7 +217,7 @@ func TestATamperedEQLValueDoesNotOpen(t *testing.T) {
 	for name, value := range map[string]eql.TextEq{
 		"an empty object": eql.TextEq(`{}`),
 		"not JSON":        eql.TextEq(`not json`),
-		"a query value":   eql.TextEq(`{"v":3,"i":{"t":"users","c":"email"},"hm":"00"}`),
+		"a query value":   eql.TextEq(`{"v":4,"i":{"t":"users","c":"email"},"hm":"00"}`),
 	} {
 		junk[0].Email = value
 		if _, err := testusers.DecryptContact(ctx, cipher, junk); !errors.Is(err, encrypt.ErrEncoding) {

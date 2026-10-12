@@ -1,9 +1,11 @@
 //! The target-dispatch emitter: renders `eql_domains::CATALOG` to the
-//! committed `crates/eql-bindings/src/v3/targets.rs` — the table of EQL
+//! committed `crates/eql-bindings/src/v4/targets.rs` — the table of EQL
 //! types a Stack Encrypt data plan may name as a field target, and the
 //! by-name dispatch that runs a named type's own Rust plan. Generated beside
-//! `inventory.rs` by the same mechanism ([`crate::bindings`]), and gated to
-//! the `stack-encrypt` feature by the hand-written `v3/mod.rs`.
+//! the v4 family modules by the same mechanism ([`crate::bindings`]), and
+//! gated to the `stack-encrypt` feature by the hand-written `v4/mod.rs`.
+//! Stack Encrypt produces EQL v4 only (ADR-0002), so every target is an
+//! `eql_v4_*` domain.
 //!
 //! The table is the stack-encrypt view of the catalog: for every stored
 //! domain, the type's name in every language (`TextEq`), its family and
@@ -28,6 +30,10 @@ use quote::{format_ident, quote};
 use eql_domains::{Domain, DomainFamily, Shape, Term};
 
 use crate::bindings::{encryption_gap, format_rs, stored_payload_domains};
+use crate::render::EqlVersion;
+
+/// The version every target is produced into.
+const TARGET_VERSION: EqlVersion = EqlVersion::V4;
 
 /// The `IndexSpec::key()` a catalog term rides under in a plan — the
 /// `"eq"` / `"match"` / `"ore"` / `"ope"` strings of stack-encrypt's data
@@ -68,7 +74,7 @@ fn plaintext_of(family: &str) -> Option<(&'static str, &'static str)> {
 /// the derived plan; the reasons are the plan's, keyed on catalog facts so
 /// a domain added tomorrow gets an answer.
 pub fn target_gap(family: &DomainFamily, domain: &Domain) -> Option<&'static str> {
-    encryption_gap(family, domain)?;
+    encryption_gap(TARGET_VERSION, family, domain)?;
     Some(if matches!(domain.shape, Shape::SteVec) {
         "the JSON index is a new operation in the engine"
     } else if family.name != "text" {
@@ -148,7 +154,11 @@ fn row(family: &'static DomainFamily, domain: &'static Domain) -> Row {
             .map(|needle| {
                 (
                     needle.rust_struct_name(family.name),
-                    format!("eql_v3.{}", needle.full_name(family.name)),
+                    format!(
+                        "{}.{}",
+                        TARGET_VERSION.prefix(),
+                        needle.full_name(family.name)
+                    ),
                 )
             })
     } else if domain.terms.is_empty() {
@@ -156,7 +166,11 @@ fn row(family: &'static DomainFamily, domain: &'static Domain) -> Row {
     } else {
         Some((
             format!("{}Query", domain.struct_ident(family.name)),
-            format!("eql_v3.{}", domain.query_name(family.name)),
+            format!(
+                "{}.{}",
+                TARGET_VERSION.prefix(),
+                domain.query_name(family.name)
+            ),
         ))
     };
     Row {
@@ -164,7 +178,11 @@ fn row(family: &'static DomainFamily, domain: &'static Domain) -> Row {
         family: family.name,
         suffix: suffix(domain),
         plaintext: plaintext(family).map(|(kind, _)| kind),
-        sql_domain: format!("public.{}", domain.sql_typname(family.name)),
+        sql_domain: format!(
+            "public.{}_{}",
+            TARGET_VERSION.prefix(),
+            domain.full_name(family.name)
+        ),
         indexes,
         query,
         reason: target_gap(family, domain),
@@ -178,7 +196,7 @@ fn option_str(value: Option<&str>) -> TokenStream {
     }
 }
 
-/// Render the generated `crates/eql-bindings/src/v3/targets.rs`.
+/// Render the generated `crates/eql-bindings/src/v4/targets.rs`.
 pub fn render_targets_rs() -> String {
     render_targets_from(&rows())
 }
@@ -260,7 +278,7 @@ fn render_targets_from(rows: &[Row]) -> String {
     };
 
     let mod_doc = " The EQL types a Stack Encrypt data plan may name as a field target — \
-                   every stored v3 domain type in eql-domains::CATALOG order, as data a \
+                   every stored EQL v4 domain type in eql-domains::CATALOG order, as data a \
                    guest serializes (`TARGETS`), with the by-name dispatch that runs a \
                    producible type's own Rust plan. Generated from the catalog; the \
                    descriptor type, the errors and the public entry points stay \
@@ -347,7 +365,7 @@ mod tests {
             let full = domain.full_name(family.name);
             assert_eq!(
                 target_gap(family, domain).is_none(),
-                encryption_gap(family, domain).is_none(),
+                encryption_gap(TARGET_VERSION, family, domain).is_none(),
                 "{full}: producible and derived must agree"
             );
             if target_gap(family, domain).is_none() {
@@ -466,9 +484,10 @@ mod tests {
         assert!(out.contains("name: \"SteVecDocument\""));
         assert!(out.contains("indexes: &[\"json\"]"));
         assert!(out.contains("query: Some(\"SteVecQuery\")"));
-        assert!(out.contains("query_sql_domain: Some(\"eql_v3.query_json\")"));
-        assert!(out.contains("sql_domain: \"public.eql_v3_text_eq\""));
-        assert!(out.contains("query_sql_domain: Some(\"eql_v3.query_text_eq\")"));
+        assert!(out.contains("query_sql_domain: Some(\"eql_v4.query_json\")"));
+        assert!(out.contains("sql_domain: \"public.eql_v4_text_eq\""));
+        assert!(out.contains("query_sql_domain: Some(\"eql_v4.query_text_eq\")"));
+        assert!(!out.contains("eql_v3"), "every target is an eql_v4 domain");
         // Exactly the producible types have dispatch arms, in all three
         // dispatches, and the query dispatch names the query twin.
         for (family, domain) in ENCRYPTION_DOMAINS.iter().map(|(f, d)| {

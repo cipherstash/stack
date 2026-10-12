@@ -23,7 +23,7 @@ func TestTypesTableNamesTextEqAsTheOneProducibleType(t *testing.T) {
 		t.Fatalf("producible = %v, want [TextEq]", producible)
 	}
 	textEq, ok := eql.Lookup("TextEq")
-	if !ok || textEq.GoName != "TextEq" || textEq.Plaintext != "string" || textEq.Query != "TextEqQuery" || textEq.SQLDomain != "public.eql_v3_text_eq" || len(textEq.Indexes) != 1 || textEq.Indexes[0] != "eq" {
+	if !ok || textEq.GoName != "TextEq" || textEq.Plaintext != "string" || textEq.Query != "TextEqQuery" || textEq.SQLDomain != "public.eql_v4_text_eq" || len(textEq.Indexes) != 1 || textEq.Indexes[0] != "eq" {
 		t.Fatalf("TextEq = %+v", textEq)
 	}
 	if j, ok := eql.Lookup("Json"); !ok || j.GoName != "JSON" {
@@ -35,7 +35,7 @@ func TestTypesTableNamesTextEqAsTheOneProducibleType(t *testing.T) {
 }
 
 func TestValuesRoundTripThroughTheDriverAndJSON(t *testing.T) {
-	doc := []byte(`{"v":3,"i":{"t":"users","c":"email"},"c":"stack-encrypt:1:AA==","hm":"00"}`)
+	doc := []byte(`{"v":4,"i":{"t":"users","c":"email"},"c":"stack-encrypt:1:AA==","hm":"00"}`)
 	v := eql.TextEq(doc)
 	value, err := v.Value()
 	if err != nil || value != string(doc) {

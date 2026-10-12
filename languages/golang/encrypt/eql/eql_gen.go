@@ -9,60 +9,60 @@ import "database/sql/driver"
 // engine produces the type today; stashgen refuses encrypt_into for one
 // it does not, with the Reason.
 var Types = []Type{
-	{Name: "Integer", GoName: "Integer", Family: "integer", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v3_integer", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "IntegerEq", GoName: "IntegerEq", Family: "integer", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v3_integer_eq", Indexes: []string{"eq"}, Query: "IntegerEqQuery", QuerySQLDomain: "eql_v3.query_integer_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "IntegerOrdOre", GoName: "IntegerOrdOre", Family: "integer", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v3_integer_ord_ore", Indexes: []string{"ore"}, Query: "IntegerOrdOreQuery", QuerySQLDomain: "eql_v3.query_integer_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "IntegerOrd", GoName: "IntegerOrd", Family: "integer", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v3_integer_ord", Indexes: []string{"ope"}, Query: "IntegerOrdQuery", QuerySQLDomain: "eql_v3.query_integer_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "IntegerOrdOpe", GoName: "IntegerOrdOpe", Family: "integer", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v3_integer_ord_ope", Indexes: []string{"ope"}, Query: "IntegerOrdOpeQuery", QuerySQLDomain: "eql_v3.query_integer_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "Smallint", GoName: "Smallint", Family: "smallint", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v3_smallint", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "SmallintEq", GoName: "SmallintEq", Family: "smallint", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v3_smallint_eq", Indexes: []string{"eq"}, Query: "SmallintEqQuery", QuerySQLDomain: "eql_v3.query_smallint_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "SmallintOrdOre", GoName: "SmallintOrdOre", Family: "smallint", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v3_smallint_ord_ore", Indexes: []string{"ore"}, Query: "SmallintOrdOreQuery", QuerySQLDomain: "eql_v3.query_smallint_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "SmallintOrd", GoName: "SmallintOrd", Family: "smallint", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v3_smallint_ord", Indexes: []string{"ope"}, Query: "SmallintOrdQuery", QuerySQLDomain: "eql_v3.query_smallint_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "SmallintOrdOpe", GoName: "SmallintOrdOpe", Family: "smallint", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v3_smallint_ord_ope", Indexes: []string{"ope"}, Query: "SmallintOrdOpeQuery", QuerySQLDomain: "eql_v3.query_smallint_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "Bigint", GoName: "Bigint", Family: "bigint", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v3_bigint", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "BigintEq", GoName: "BigintEq", Family: "bigint", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v3_bigint_eq", Indexes: []string{"eq"}, Query: "BigintEqQuery", QuerySQLDomain: "eql_v3.query_bigint_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "BigintOrdOre", GoName: "BigintOrdOre", Family: "bigint", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v3_bigint_ord_ore", Indexes: []string{"ore"}, Query: "BigintOrdOreQuery", QuerySQLDomain: "eql_v3.query_bigint_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "BigintOrd", GoName: "BigintOrd", Family: "bigint", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v3_bigint_ord", Indexes: []string{"ope"}, Query: "BigintOrdQuery", QuerySQLDomain: "eql_v3.query_bigint_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "BigintOrdOpe", GoName: "BigintOrdOpe", Family: "bigint", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v3_bigint_ord_ope", Indexes: []string{"ope"}, Query: "BigintOrdOpeQuery", QuerySQLDomain: "eql_v3.query_bigint_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "Date", GoName: "Date", Family: "date", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v3_date", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "DateEq", GoName: "DateEq", Family: "date", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v3_date_eq", Indexes: []string{"eq"}, Query: "DateEqQuery", QuerySQLDomain: "eql_v3.query_date_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "DateOrdOre", GoName: "DateOrdOre", Family: "date", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v3_date_ord_ore", Indexes: []string{"ore"}, Query: "DateOrdOreQuery", QuerySQLDomain: "eql_v3.query_date_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "DateOrd", GoName: "DateOrd", Family: "date", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v3_date_ord", Indexes: []string{"ope"}, Query: "DateOrdQuery", QuerySQLDomain: "eql_v3.query_date_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "DateOrdOpe", GoName: "DateOrdOpe", Family: "date", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v3_date_ord_ope", Indexes: []string{"ope"}, Query: "DateOrdOpeQuery", QuerySQLDomain: "eql_v3.query_date_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "Timestamp", GoName: "Timestamp", Family: "timestamp", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v3_timestamp", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "TimestampEq", GoName: "TimestampEq", Family: "timestamp", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v3_timestamp_eq", Indexes: []string{"eq"}, Query: "TimestampEqQuery", QuerySQLDomain: "eql_v3.query_timestamp_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "TimestampOrdOre", GoName: "TimestampOrdOre", Family: "timestamp", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v3_timestamp_ord_ore", Indexes: []string{"ore"}, Query: "TimestampOrdOreQuery", QuerySQLDomain: "eql_v3.query_timestamp_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "TimestampOrd", GoName: "TimestampOrd", Family: "timestamp", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v3_timestamp_ord", Indexes: []string{"ope"}, Query: "TimestampOrdQuery", QuerySQLDomain: "eql_v3.query_timestamp_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "TimestampOrdOpe", GoName: "TimestampOrdOpe", Family: "timestamp", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v3_timestamp_ord_ope", Indexes: []string{"ope"}, Query: "TimestampOrdOpeQuery", QuerySQLDomain: "eql_v3.query_timestamp_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "Numeric", GoName: "Numeric", Family: "numeric", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v3_numeric", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "NumericEq", GoName: "NumericEq", Family: "numeric", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v3_numeric_eq", Indexes: []string{"eq"}, Query: "NumericEqQuery", QuerySQLDomain: "eql_v3.query_numeric_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "NumericOrdOre", GoName: "NumericOrdOre", Family: "numeric", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v3_numeric_ord_ore", Indexes: []string{"ore"}, Query: "NumericOrdOreQuery", QuerySQLDomain: "eql_v3.query_numeric_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "NumericOrd", GoName: "NumericOrd", Family: "numeric", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v3_numeric_ord", Indexes: []string{"ope"}, Query: "NumericOrdQuery", QuerySQLDomain: "eql_v3.query_numeric_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "NumericOrdOpe", GoName: "NumericOrdOpe", Family: "numeric", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v3_numeric_ord_ope", Indexes: []string{"ope"}, Query: "NumericOrdOpeQuery", QuerySQLDomain: "eql_v3.query_numeric_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "Text", GoName: "Text", Family: "text", Suffix: "", Plaintext: "string", SQLDomain: "public.eql_v3_text", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "the storage-only text domain follows once TextEq is proven end to end in PostgreSQL"},
-	{Name: "TextEq", GoName: "TextEq", Family: "text", Suffix: "Eq", Plaintext: "string", SQLDomain: "public.eql_v3_text_eq", Indexes: []string{"eq"}, Query: "TextEqQuery", QuerySQLDomain: "eql_v3.query_text_eq", Producible: true, Reason: ""},
-	{Name: "TextMatch", GoName: "TextMatch", Family: "text", Suffix: "Match", Plaintext: "string", SQLDomain: "public.eql_v3_text_match", Indexes: []string{"match"}, Query: "TextMatchQuery", QuerySQLDomain: "eql_v3.query_text_match", Producible: false, Reason: "the engine derives match and OPE terms, but no EQL type is built from them yet"},
-	{Name: "TextOrdOre", GoName: "TextOrdOre", Family: "text", Suffix: "OrdOre", Plaintext: "string", SQLDomain: "public.eql_v3_text_ord_ore", Indexes: []string{"eq", "ore"}, Query: "TextOrdOreQuery", QuerySQLDomain: "eql_v3.query_text_ord_ore", Producible: false, Reason: "EQL stores a block ORE term and the engine derives a CLLW ORE term; the two are different algorithms"},
-	{Name: "TextOrd", GoName: "TextOrd", Family: "text", Suffix: "Ord", Plaintext: "string", SQLDomain: "public.eql_v3_text_ord", Indexes: []string{"eq", "ope"}, Query: "TextOrdQuery", QuerySQLDomain: "eql_v3.query_text_ord", Producible: false, Reason: "the engine derives match and OPE terms, but no EQL type is built from them yet"},
-	{Name: "TextOrdOpe", GoName: "TextOrdOpe", Family: "text", Suffix: "OrdOpe", Plaintext: "string", SQLDomain: "public.eql_v3_text_ord_ope", Indexes: []string{"eq", "ope"}, Query: "TextOrdOpeQuery", QuerySQLDomain: "eql_v3.query_text_ord_ope", Producible: false, Reason: "the engine derives match and OPE terms, but no EQL type is built from them yet"},
-	{Name: "TextSearchOre", GoName: "TextSearchOre", Family: "text", Suffix: "SearchOre", Plaintext: "string", SQLDomain: "public.eql_v3_text_search_ore", Indexes: []string{"eq", "ore", "match"}, Query: "TextSearchOreQuery", QuerySQLDomain: "eql_v3.query_text_search_ore", Producible: false, Reason: "EQL stores a block ORE term and the engine derives a CLLW ORE term; the two are different algorithms"},
-	{Name: "TextSearch", GoName: "TextSearch", Family: "text", Suffix: "Search", Plaintext: "string", SQLDomain: "public.eql_v3_text_search", Indexes: []string{"eq", "ope", "match"}, Query: "TextSearchQuery", QuerySQLDomain: "eql_v3.query_text_search", Producible: false, Reason: "the engine derives match and OPE terms, but no EQL type is built from them yet"},
-	{Name: "Boolean", GoName: "Boolean", Family: "boolean", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v3_boolean", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "Real", GoName: "Real", Family: "real", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v3_real", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "RealEq", GoName: "RealEq", Family: "real", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v3_real_eq", Indexes: []string{"eq"}, Query: "RealEqQuery", QuerySQLDomain: "eql_v3.query_real_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "RealOrdOre", GoName: "RealOrdOre", Family: "real", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v3_real_ord_ore", Indexes: []string{"ore"}, Query: "RealOrdOreQuery", QuerySQLDomain: "eql_v3.query_real_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "RealOrd", GoName: "RealOrd", Family: "real", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v3_real_ord", Indexes: []string{"ope"}, Query: "RealOrdQuery", QuerySQLDomain: "eql_v3.query_real_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "RealOrdOpe", GoName: "RealOrdOpe", Family: "real", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v3_real_ord_ope", Indexes: []string{"ope"}, Query: "RealOrdOpeQuery", QuerySQLDomain: "eql_v3.query_real_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "Double", GoName: "Double", Family: "double", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v3_double", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "DoubleEq", GoName: "DoubleEq", Family: "double", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v3_double_eq", Indexes: []string{"eq"}, Query: "DoubleEqQuery", QuerySQLDomain: "eql_v3.query_double_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "DoubleOrdOre", GoName: "DoubleOrdOre", Family: "double", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v3_double_ord_ore", Indexes: []string{"ore"}, Query: "DoubleOrdOreQuery", QuerySQLDomain: "eql_v3.query_double_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "DoubleOrd", GoName: "DoubleOrd", Family: "double", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v3_double_ord", Indexes: []string{"ope"}, Query: "DoubleOrdQuery", QuerySQLDomain: "eql_v3.query_double_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "DoubleOrdOpe", GoName: "DoubleOrdOpe", Family: "double", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v3_double_ord_ope", Indexes: []string{"ope"}, Query: "DoubleOrdOpeQuery", QuerySQLDomain: "eql_v3.query_double_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "SteVecDocument", GoName: "SteVecDocument", Family: "json", Suffix: "Search", Plaintext: "", SQLDomain: "public.eql_v3_json_search", Indexes: []string{"json"}, Query: "SteVecQuery", QuerySQLDomain: "eql_v3.query_json", Producible: false, Reason: "the JSON index is a new operation in the engine"},
-	{Name: "Json", GoName: "JSON", Family: "json", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v3_json", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "Integer", GoName: "Integer", Family: "integer", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_integer", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "IntegerEq", GoName: "IntegerEq", Family: "integer", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_integer_eq", Indexes: []string{"eq"}, Query: "IntegerEqQuery", QuerySQLDomain: "eql_v4.query_integer_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "IntegerOrdOre", GoName: "IntegerOrdOre", Family: "integer", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_integer_ord_ore", Indexes: []string{"ore"}, Query: "IntegerOrdOreQuery", QuerySQLDomain: "eql_v4.query_integer_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "IntegerOrd", GoName: "IntegerOrd", Family: "integer", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_integer_ord", Indexes: []string{"ope"}, Query: "IntegerOrdQuery", QuerySQLDomain: "eql_v4.query_integer_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "IntegerOrdOpe", GoName: "IntegerOrdOpe", Family: "integer", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_integer_ord_ope", Indexes: []string{"ope"}, Query: "IntegerOrdOpeQuery", QuerySQLDomain: "eql_v4.query_integer_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "Smallint", GoName: "Smallint", Family: "smallint", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_smallint", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "SmallintEq", GoName: "SmallintEq", Family: "smallint", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_smallint_eq", Indexes: []string{"eq"}, Query: "SmallintEqQuery", QuerySQLDomain: "eql_v4.query_smallint_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "SmallintOrdOre", GoName: "SmallintOrdOre", Family: "smallint", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_smallint_ord_ore", Indexes: []string{"ore"}, Query: "SmallintOrdOreQuery", QuerySQLDomain: "eql_v4.query_smallint_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "SmallintOrd", GoName: "SmallintOrd", Family: "smallint", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_smallint_ord", Indexes: []string{"ope"}, Query: "SmallintOrdQuery", QuerySQLDomain: "eql_v4.query_smallint_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "SmallintOrdOpe", GoName: "SmallintOrdOpe", Family: "smallint", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_smallint_ord_ope", Indexes: []string{"ope"}, Query: "SmallintOrdOpeQuery", QuerySQLDomain: "eql_v4.query_smallint_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "Bigint", GoName: "Bigint", Family: "bigint", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_bigint", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "BigintEq", GoName: "BigintEq", Family: "bigint", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_bigint_eq", Indexes: []string{"eq"}, Query: "BigintEqQuery", QuerySQLDomain: "eql_v4.query_bigint_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "BigintOrdOre", GoName: "BigintOrdOre", Family: "bigint", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_bigint_ord_ore", Indexes: []string{"ore"}, Query: "BigintOrdOreQuery", QuerySQLDomain: "eql_v4.query_bigint_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "BigintOrd", GoName: "BigintOrd", Family: "bigint", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_bigint_ord", Indexes: []string{"ope"}, Query: "BigintOrdQuery", QuerySQLDomain: "eql_v4.query_bigint_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "BigintOrdOpe", GoName: "BigintOrdOpe", Family: "bigint", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_bigint_ord_ope", Indexes: []string{"ope"}, Query: "BigintOrdOpeQuery", QuerySQLDomain: "eql_v4.query_bigint_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "Date", GoName: "Date", Family: "date", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_date", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "DateEq", GoName: "DateEq", Family: "date", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_date_eq", Indexes: []string{"eq"}, Query: "DateEqQuery", QuerySQLDomain: "eql_v4.query_date_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "DateOrdOre", GoName: "DateOrdOre", Family: "date", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_date_ord_ore", Indexes: []string{"ore"}, Query: "DateOrdOreQuery", QuerySQLDomain: "eql_v4.query_date_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "DateOrd", GoName: "DateOrd", Family: "date", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_date_ord", Indexes: []string{"ope"}, Query: "DateOrdQuery", QuerySQLDomain: "eql_v4.query_date_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "DateOrdOpe", GoName: "DateOrdOpe", Family: "date", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_date_ord_ope", Indexes: []string{"ope"}, Query: "DateOrdOpeQuery", QuerySQLDomain: "eql_v4.query_date_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "Timestamp", GoName: "Timestamp", Family: "timestamp", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_timestamp", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "TimestampEq", GoName: "TimestampEq", Family: "timestamp", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_eq", Indexes: []string{"eq"}, Query: "TimestampEqQuery", QuerySQLDomain: "eql_v4.query_timestamp_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "TimestampOrdOre", GoName: "TimestampOrdOre", Family: "timestamp", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_ord_ore", Indexes: []string{"ore"}, Query: "TimestampOrdOreQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "TimestampOrd", GoName: "TimestampOrd", Family: "timestamp", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_ord", Indexes: []string{"ope"}, Query: "TimestampOrdQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "TimestampOrdOpe", GoName: "TimestampOrdOpe", Family: "timestamp", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_ord_ope", Indexes: []string{"ope"}, Query: "TimestampOrdOpeQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "Numeric", GoName: "Numeric", Family: "numeric", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_numeric", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "NumericEq", GoName: "NumericEq", Family: "numeric", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_numeric_eq", Indexes: []string{"eq"}, Query: "NumericEqQuery", QuerySQLDomain: "eql_v4.query_numeric_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "NumericOrdOre", GoName: "NumericOrdOre", Family: "numeric", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_numeric_ord_ore", Indexes: []string{"ore"}, Query: "NumericOrdOreQuery", QuerySQLDomain: "eql_v4.query_numeric_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "NumericOrd", GoName: "NumericOrd", Family: "numeric", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_numeric_ord", Indexes: []string{"ope"}, Query: "NumericOrdQuery", QuerySQLDomain: "eql_v4.query_numeric_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "NumericOrdOpe", GoName: "NumericOrdOpe", Family: "numeric", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_numeric_ord_ope", Indexes: []string{"ope"}, Query: "NumericOrdOpeQuery", QuerySQLDomain: "eql_v4.query_numeric_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "Text", GoName: "Text", Family: "text", Suffix: "", Plaintext: "string", SQLDomain: "public.eql_v4_text", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "the storage-only text domain follows once TextEq is proven end to end in PostgreSQL"},
+	{Name: "TextEq", GoName: "TextEq", Family: "text", Suffix: "Eq", Plaintext: "string", SQLDomain: "public.eql_v4_text_eq", Indexes: []string{"eq"}, Query: "TextEqQuery", QuerySQLDomain: "eql_v4.query_text_eq", Producible: true, Reason: ""},
+	{Name: "TextMatch", GoName: "TextMatch", Family: "text", Suffix: "Match", Plaintext: "string", SQLDomain: "public.eql_v4_text_match", Indexes: []string{"match"}, Query: "TextMatchQuery", QuerySQLDomain: "eql_v4.query_text_match", Producible: false, Reason: "the engine derives match and OPE terms, but no EQL type is built from them yet"},
+	{Name: "TextOrdOre", GoName: "TextOrdOre", Family: "text", Suffix: "OrdOre", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord_ore", Indexes: []string{"eq", "ore"}, Query: "TextOrdOreQuery", QuerySQLDomain: "eql_v4.query_text_ord_ore", Producible: false, Reason: "EQL stores a block ORE term and the engine derives a CLLW ORE term; the two are different algorithms"},
+	{Name: "TextOrd", GoName: "TextOrd", Family: "text", Suffix: "Ord", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord", Indexes: []string{"eq", "ope"}, Query: "TextOrdQuery", QuerySQLDomain: "eql_v4.query_text_ord", Producible: false, Reason: "the engine derives match and OPE terms, but no EQL type is built from them yet"},
+	{Name: "TextOrdOpe", GoName: "TextOrdOpe", Family: "text", Suffix: "OrdOpe", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord_ope", Indexes: []string{"eq", "ope"}, Query: "TextOrdOpeQuery", QuerySQLDomain: "eql_v4.query_text_ord_ope", Producible: false, Reason: "the engine derives match and OPE terms, but no EQL type is built from them yet"},
+	{Name: "TextSearchOre", GoName: "TextSearchOre", Family: "text", Suffix: "SearchOre", Plaintext: "string", SQLDomain: "public.eql_v4_text_search_ore", Indexes: []string{"eq", "ore", "match"}, Query: "TextSearchOreQuery", QuerySQLDomain: "eql_v4.query_text_search_ore", Producible: false, Reason: "EQL stores a block ORE term and the engine derives a CLLW ORE term; the two are different algorithms"},
+	{Name: "TextSearch", GoName: "TextSearch", Family: "text", Suffix: "Search", Plaintext: "string", SQLDomain: "public.eql_v4_text_search", Indexes: []string{"eq", "ope", "match"}, Query: "TextSearchQuery", QuerySQLDomain: "eql_v4.query_text_search", Producible: false, Reason: "the engine derives match and OPE terms, but no EQL type is built from them yet"},
+	{Name: "Boolean", GoName: "Boolean", Family: "boolean", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_boolean", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "Real", GoName: "Real", Family: "real", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_real", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "RealEq", GoName: "RealEq", Family: "real", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_real_eq", Indexes: []string{"eq"}, Query: "RealEqQuery", QuerySQLDomain: "eql_v4.query_real_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "RealOrdOre", GoName: "RealOrdOre", Family: "real", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_real_ord_ore", Indexes: []string{"ore"}, Query: "RealOrdOreQuery", QuerySQLDomain: "eql_v4.query_real_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "RealOrd", GoName: "RealOrd", Family: "real", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_real_ord", Indexes: []string{"ope"}, Query: "RealOrdQuery", QuerySQLDomain: "eql_v4.query_real_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "RealOrdOpe", GoName: "RealOrdOpe", Family: "real", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_real_ord_ope", Indexes: []string{"ope"}, Query: "RealOrdOpeQuery", QuerySQLDomain: "eql_v4.query_real_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "Double", GoName: "Double", Family: "double", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_double", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "DoubleEq", GoName: "DoubleEq", Family: "double", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_double_eq", Indexes: []string{"eq"}, Query: "DoubleEqQuery", QuerySQLDomain: "eql_v4.query_double_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "DoubleOrdOre", GoName: "DoubleOrdOre", Family: "double", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_double_ord_ore", Indexes: []string{"ore"}, Query: "DoubleOrdOreQuery", QuerySQLDomain: "eql_v4.query_double_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "DoubleOrd", GoName: "DoubleOrd", Family: "double", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_double_ord", Indexes: []string{"ope"}, Query: "DoubleOrdQuery", QuerySQLDomain: "eql_v4.query_double_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "DoubleOrdOpe", GoName: "DoubleOrdOpe", Family: "double", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_double_ord_ope", Indexes: []string{"ope"}, Query: "DoubleOrdOpeQuery", QuerySQLDomain: "eql_v4.query_double_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "SteVecDocument", GoName: "SteVecDocument", Family: "json", Suffix: "Search", Plaintext: "", SQLDomain: "public.eql_v4_json_search", Indexes: []string{"json"}, Query: "SteVecQuery", QuerySQLDomain: "eql_v4.query_json", Producible: false, Reason: "the JSON index is a new operation in the engine"},
+	{Name: "Json", GoName: "JSON", Family: "json", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_json", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
 }
 
-// Integer is the EQL type stored in public.eql_v3_integer: the integer family with no index.
+// Integer is the EQL type stored in public.eql_v4_integer: the integer family with no index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type Integer []byte
 
@@ -71,7 +71,7 @@ func (v Integer) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_integer column.
+// Scan reads a public.eql_v4_integer column.
 func (v *Integer) Scan(src any) error {
 	return scan((*[]byte)(v), src, "Integer")
 }
@@ -86,7 +86,7 @@ func (v *Integer) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// IntegerEq is the EQL type stored in public.eql_v3_integer_eq: the integer family with the eq index.
+// IntegerEq is the EQL type stored in public.eql_v4_integer_eq: the integer family with the eq index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type IntegerEq []byte
 
@@ -95,7 +95,7 @@ func (v IntegerEq) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_integer_eq column.
+// Scan reads a public.eql_v4_integer_eq column.
 func (v *IntegerEq) Scan(src any) error {
 	return scan((*[]byte)(v), src, "IntegerEq")
 }
@@ -110,7 +110,7 @@ func (v *IntegerEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// IntegerEqQuery is the query value for IntegerEq: the operand eql_v3.query_integer_eq takes.
+// IntegerEqQuery is the query value for IntegerEq: the operand eql_v4.query_integer_eq takes.
 type IntegerEqQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -118,7 +118,7 @@ func (v IntegerEqQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_integer_eq column.
+// Scan reads a eql_v4.query_integer_eq column.
 func (v *IntegerEqQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "IntegerEqQuery")
 }
@@ -133,7 +133,7 @@ func (v *IntegerEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// IntegerOrdOre is the EQL type stored in public.eql_v3_integer_ord_ore: the integer family with the ore index.
+// IntegerOrdOre is the EQL type stored in public.eql_v4_integer_ord_ore: the integer family with the ore index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type IntegerOrdOre []byte
 
@@ -142,7 +142,7 @@ func (v IntegerOrdOre) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_integer_ord_ore column.
+// Scan reads a public.eql_v4_integer_ord_ore column.
 func (v *IntegerOrdOre) Scan(src any) error {
 	return scan((*[]byte)(v), src, "IntegerOrdOre")
 }
@@ -157,7 +157,7 @@ func (v *IntegerOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// IntegerOrdOreQuery is the query value for IntegerOrdOre: the operand eql_v3.query_integer_ord_ore takes.
+// IntegerOrdOreQuery is the query value for IntegerOrdOre: the operand eql_v4.query_integer_ord_ore takes.
 type IntegerOrdOreQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -165,7 +165,7 @@ func (v IntegerOrdOreQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_integer_ord_ore column.
+// Scan reads a eql_v4.query_integer_ord_ore column.
 func (v *IntegerOrdOreQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "IntegerOrdOreQuery")
 }
@@ -180,7 +180,7 @@ func (v *IntegerOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// IntegerOrd is the EQL type stored in public.eql_v3_integer_ord: the integer family with the ope index.
+// IntegerOrd is the EQL type stored in public.eql_v4_integer_ord: the integer family with the ope index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type IntegerOrd []byte
 
@@ -189,7 +189,7 @@ func (v IntegerOrd) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_integer_ord column.
+// Scan reads a public.eql_v4_integer_ord column.
 func (v *IntegerOrd) Scan(src any) error {
 	return scan((*[]byte)(v), src, "IntegerOrd")
 }
@@ -204,7 +204,7 @@ func (v *IntegerOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// IntegerOrdQuery is the query value for IntegerOrd: the operand eql_v3.query_integer_ord takes.
+// IntegerOrdQuery is the query value for IntegerOrd: the operand eql_v4.query_integer_ord takes.
 type IntegerOrdQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -212,7 +212,7 @@ func (v IntegerOrdQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_integer_ord column.
+// Scan reads a eql_v4.query_integer_ord column.
 func (v *IntegerOrdQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "IntegerOrdQuery")
 }
@@ -227,7 +227,7 @@ func (v *IntegerOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// IntegerOrdOpe is the EQL type stored in public.eql_v3_integer_ord_ope: the integer family with the ope index.
+// IntegerOrdOpe is the EQL type stored in public.eql_v4_integer_ord_ope: the integer family with the ope index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type IntegerOrdOpe []byte
 
@@ -236,7 +236,7 @@ func (v IntegerOrdOpe) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_integer_ord_ope column.
+// Scan reads a public.eql_v4_integer_ord_ope column.
 func (v *IntegerOrdOpe) Scan(src any) error {
 	return scan((*[]byte)(v), src, "IntegerOrdOpe")
 }
@@ -251,7 +251,7 @@ func (v *IntegerOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// IntegerOrdOpeQuery is the query value for IntegerOrdOpe: the operand eql_v3.query_integer_ord_ope takes.
+// IntegerOrdOpeQuery is the query value for IntegerOrdOpe: the operand eql_v4.query_integer_ord_ope takes.
 type IntegerOrdOpeQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -259,7 +259,7 @@ func (v IntegerOrdOpeQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_integer_ord_ope column.
+// Scan reads a eql_v4.query_integer_ord_ope column.
 func (v *IntegerOrdOpeQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "IntegerOrdOpeQuery")
 }
@@ -274,7 +274,7 @@ func (v *IntegerOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// Smallint is the EQL type stored in public.eql_v3_smallint: the smallint family with no index.
+// Smallint is the EQL type stored in public.eql_v4_smallint: the smallint family with no index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type Smallint []byte
 
@@ -283,7 +283,7 @@ func (v Smallint) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_smallint column.
+// Scan reads a public.eql_v4_smallint column.
 func (v *Smallint) Scan(src any) error {
 	return scan((*[]byte)(v), src, "Smallint")
 }
@@ -298,7 +298,7 @@ func (v *Smallint) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// SmallintEq is the EQL type stored in public.eql_v3_smallint_eq: the smallint family with the eq index.
+// SmallintEq is the EQL type stored in public.eql_v4_smallint_eq: the smallint family with the eq index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type SmallintEq []byte
 
@@ -307,7 +307,7 @@ func (v SmallintEq) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_smallint_eq column.
+// Scan reads a public.eql_v4_smallint_eq column.
 func (v *SmallintEq) Scan(src any) error {
 	return scan((*[]byte)(v), src, "SmallintEq")
 }
@@ -322,7 +322,7 @@ func (v *SmallintEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// SmallintEqQuery is the query value for SmallintEq: the operand eql_v3.query_smallint_eq takes.
+// SmallintEqQuery is the query value for SmallintEq: the operand eql_v4.query_smallint_eq takes.
 type SmallintEqQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -330,7 +330,7 @@ func (v SmallintEqQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_smallint_eq column.
+// Scan reads a eql_v4.query_smallint_eq column.
 func (v *SmallintEqQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "SmallintEqQuery")
 }
@@ -345,7 +345,7 @@ func (v *SmallintEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// SmallintOrdOre is the EQL type stored in public.eql_v3_smallint_ord_ore: the smallint family with the ore index.
+// SmallintOrdOre is the EQL type stored in public.eql_v4_smallint_ord_ore: the smallint family with the ore index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type SmallintOrdOre []byte
 
@@ -354,7 +354,7 @@ func (v SmallintOrdOre) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_smallint_ord_ore column.
+// Scan reads a public.eql_v4_smallint_ord_ore column.
 func (v *SmallintOrdOre) Scan(src any) error {
 	return scan((*[]byte)(v), src, "SmallintOrdOre")
 }
@@ -369,7 +369,7 @@ func (v *SmallintOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// SmallintOrdOreQuery is the query value for SmallintOrdOre: the operand eql_v3.query_smallint_ord_ore takes.
+// SmallintOrdOreQuery is the query value for SmallintOrdOre: the operand eql_v4.query_smallint_ord_ore takes.
 type SmallintOrdOreQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -377,7 +377,7 @@ func (v SmallintOrdOreQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_smallint_ord_ore column.
+// Scan reads a eql_v4.query_smallint_ord_ore column.
 func (v *SmallintOrdOreQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "SmallintOrdOreQuery")
 }
@@ -392,7 +392,7 @@ func (v *SmallintOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// SmallintOrd is the EQL type stored in public.eql_v3_smallint_ord: the smallint family with the ope index.
+// SmallintOrd is the EQL type stored in public.eql_v4_smallint_ord: the smallint family with the ope index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type SmallintOrd []byte
 
@@ -401,7 +401,7 @@ func (v SmallintOrd) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_smallint_ord column.
+// Scan reads a public.eql_v4_smallint_ord column.
 func (v *SmallintOrd) Scan(src any) error {
 	return scan((*[]byte)(v), src, "SmallintOrd")
 }
@@ -416,7 +416,7 @@ func (v *SmallintOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// SmallintOrdQuery is the query value for SmallintOrd: the operand eql_v3.query_smallint_ord takes.
+// SmallintOrdQuery is the query value for SmallintOrd: the operand eql_v4.query_smallint_ord takes.
 type SmallintOrdQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -424,7 +424,7 @@ func (v SmallintOrdQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_smallint_ord column.
+// Scan reads a eql_v4.query_smallint_ord column.
 func (v *SmallintOrdQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "SmallintOrdQuery")
 }
@@ -439,7 +439,7 @@ func (v *SmallintOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// SmallintOrdOpe is the EQL type stored in public.eql_v3_smallint_ord_ope: the smallint family with the ope index.
+// SmallintOrdOpe is the EQL type stored in public.eql_v4_smallint_ord_ope: the smallint family with the ope index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type SmallintOrdOpe []byte
 
@@ -448,7 +448,7 @@ func (v SmallintOrdOpe) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_smallint_ord_ope column.
+// Scan reads a public.eql_v4_smallint_ord_ope column.
 func (v *SmallintOrdOpe) Scan(src any) error {
 	return scan((*[]byte)(v), src, "SmallintOrdOpe")
 }
@@ -463,7 +463,7 @@ func (v *SmallintOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// SmallintOrdOpeQuery is the query value for SmallintOrdOpe: the operand eql_v3.query_smallint_ord_ope takes.
+// SmallintOrdOpeQuery is the query value for SmallintOrdOpe: the operand eql_v4.query_smallint_ord_ope takes.
 type SmallintOrdOpeQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -471,7 +471,7 @@ func (v SmallintOrdOpeQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_smallint_ord_ope column.
+// Scan reads a eql_v4.query_smallint_ord_ope column.
 func (v *SmallintOrdOpeQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "SmallintOrdOpeQuery")
 }
@@ -486,7 +486,7 @@ func (v *SmallintOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// Bigint is the EQL type stored in public.eql_v3_bigint: the bigint family with no index.
+// Bigint is the EQL type stored in public.eql_v4_bigint: the bigint family with no index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type Bigint []byte
 
@@ -495,7 +495,7 @@ func (v Bigint) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_bigint column.
+// Scan reads a public.eql_v4_bigint column.
 func (v *Bigint) Scan(src any) error {
 	return scan((*[]byte)(v), src, "Bigint")
 }
@@ -510,7 +510,7 @@ func (v *Bigint) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// BigintEq is the EQL type stored in public.eql_v3_bigint_eq: the bigint family with the eq index.
+// BigintEq is the EQL type stored in public.eql_v4_bigint_eq: the bigint family with the eq index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type BigintEq []byte
 
@@ -519,7 +519,7 @@ func (v BigintEq) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_bigint_eq column.
+// Scan reads a public.eql_v4_bigint_eq column.
 func (v *BigintEq) Scan(src any) error {
 	return scan((*[]byte)(v), src, "BigintEq")
 }
@@ -534,7 +534,7 @@ func (v *BigintEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// BigintEqQuery is the query value for BigintEq: the operand eql_v3.query_bigint_eq takes.
+// BigintEqQuery is the query value for BigintEq: the operand eql_v4.query_bigint_eq takes.
 type BigintEqQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -542,7 +542,7 @@ func (v BigintEqQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_bigint_eq column.
+// Scan reads a eql_v4.query_bigint_eq column.
 func (v *BigintEqQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "BigintEqQuery")
 }
@@ -557,7 +557,7 @@ func (v *BigintEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// BigintOrdOre is the EQL type stored in public.eql_v3_bigint_ord_ore: the bigint family with the ore index.
+// BigintOrdOre is the EQL type stored in public.eql_v4_bigint_ord_ore: the bigint family with the ore index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type BigintOrdOre []byte
 
@@ -566,7 +566,7 @@ func (v BigintOrdOre) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_bigint_ord_ore column.
+// Scan reads a public.eql_v4_bigint_ord_ore column.
 func (v *BigintOrdOre) Scan(src any) error {
 	return scan((*[]byte)(v), src, "BigintOrdOre")
 }
@@ -581,7 +581,7 @@ func (v *BigintOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// BigintOrdOreQuery is the query value for BigintOrdOre: the operand eql_v3.query_bigint_ord_ore takes.
+// BigintOrdOreQuery is the query value for BigintOrdOre: the operand eql_v4.query_bigint_ord_ore takes.
 type BigintOrdOreQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -589,7 +589,7 @@ func (v BigintOrdOreQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_bigint_ord_ore column.
+// Scan reads a eql_v4.query_bigint_ord_ore column.
 func (v *BigintOrdOreQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "BigintOrdOreQuery")
 }
@@ -604,7 +604,7 @@ func (v *BigintOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// BigintOrd is the EQL type stored in public.eql_v3_bigint_ord: the bigint family with the ope index.
+// BigintOrd is the EQL type stored in public.eql_v4_bigint_ord: the bigint family with the ope index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type BigintOrd []byte
 
@@ -613,7 +613,7 @@ func (v BigintOrd) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_bigint_ord column.
+// Scan reads a public.eql_v4_bigint_ord column.
 func (v *BigintOrd) Scan(src any) error {
 	return scan((*[]byte)(v), src, "BigintOrd")
 }
@@ -628,7 +628,7 @@ func (v *BigintOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// BigintOrdQuery is the query value for BigintOrd: the operand eql_v3.query_bigint_ord takes.
+// BigintOrdQuery is the query value for BigintOrd: the operand eql_v4.query_bigint_ord takes.
 type BigintOrdQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -636,7 +636,7 @@ func (v BigintOrdQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_bigint_ord column.
+// Scan reads a eql_v4.query_bigint_ord column.
 func (v *BigintOrdQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "BigintOrdQuery")
 }
@@ -651,7 +651,7 @@ func (v *BigintOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// BigintOrdOpe is the EQL type stored in public.eql_v3_bigint_ord_ope: the bigint family with the ope index.
+// BigintOrdOpe is the EQL type stored in public.eql_v4_bigint_ord_ope: the bigint family with the ope index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type BigintOrdOpe []byte
 
@@ -660,7 +660,7 @@ func (v BigintOrdOpe) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_bigint_ord_ope column.
+// Scan reads a public.eql_v4_bigint_ord_ope column.
 func (v *BigintOrdOpe) Scan(src any) error {
 	return scan((*[]byte)(v), src, "BigintOrdOpe")
 }
@@ -675,7 +675,7 @@ func (v *BigintOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// BigintOrdOpeQuery is the query value for BigintOrdOpe: the operand eql_v3.query_bigint_ord_ope takes.
+// BigintOrdOpeQuery is the query value for BigintOrdOpe: the operand eql_v4.query_bigint_ord_ope takes.
 type BigintOrdOpeQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -683,7 +683,7 @@ func (v BigintOrdOpeQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_bigint_ord_ope column.
+// Scan reads a eql_v4.query_bigint_ord_ope column.
 func (v *BigintOrdOpeQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "BigintOrdOpeQuery")
 }
@@ -698,7 +698,7 @@ func (v *BigintOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// Date is the EQL type stored in public.eql_v3_date: the date family with no index.
+// Date is the EQL type stored in public.eql_v4_date: the date family with no index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type Date []byte
 
@@ -707,7 +707,7 @@ func (v Date) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_date column.
+// Scan reads a public.eql_v4_date column.
 func (v *Date) Scan(src any) error {
 	return scan((*[]byte)(v), src, "Date")
 }
@@ -722,7 +722,7 @@ func (v *Date) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// DateEq is the EQL type stored in public.eql_v3_date_eq: the date family with the eq index.
+// DateEq is the EQL type stored in public.eql_v4_date_eq: the date family with the eq index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type DateEq []byte
 
@@ -731,7 +731,7 @@ func (v DateEq) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_date_eq column.
+// Scan reads a public.eql_v4_date_eq column.
 func (v *DateEq) Scan(src any) error {
 	return scan((*[]byte)(v), src, "DateEq")
 }
@@ -746,7 +746,7 @@ func (v *DateEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// DateEqQuery is the query value for DateEq: the operand eql_v3.query_date_eq takes.
+// DateEqQuery is the query value for DateEq: the operand eql_v4.query_date_eq takes.
 type DateEqQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -754,7 +754,7 @@ func (v DateEqQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_date_eq column.
+// Scan reads a eql_v4.query_date_eq column.
 func (v *DateEqQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "DateEqQuery")
 }
@@ -769,7 +769,7 @@ func (v *DateEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// DateOrdOre is the EQL type stored in public.eql_v3_date_ord_ore: the date family with the ore index.
+// DateOrdOre is the EQL type stored in public.eql_v4_date_ord_ore: the date family with the ore index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type DateOrdOre []byte
 
@@ -778,7 +778,7 @@ func (v DateOrdOre) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_date_ord_ore column.
+// Scan reads a public.eql_v4_date_ord_ore column.
 func (v *DateOrdOre) Scan(src any) error {
 	return scan((*[]byte)(v), src, "DateOrdOre")
 }
@@ -793,7 +793,7 @@ func (v *DateOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// DateOrdOreQuery is the query value for DateOrdOre: the operand eql_v3.query_date_ord_ore takes.
+// DateOrdOreQuery is the query value for DateOrdOre: the operand eql_v4.query_date_ord_ore takes.
 type DateOrdOreQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -801,7 +801,7 @@ func (v DateOrdOreQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_date_ord_ore column.
+// Scan reads a eql_v4.query_date_ord_ore column.
 func (v *DateOrdOreQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "DateOrdOreQuery")
 }
@@ -816,7 +816,7 @@ func (v *DateOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// DateOrd is the EQL type stored in public.eql_v3_date_ord: the date family with the ope index.
+// DateOrd is the EQL type stored in public.eql_v4_date_ord: the date family with the ope index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type DateOrd []byte
 
@@ -825,7 +825,7 @@ func (v DateOrd) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_date_ord column.
+// Scan reads a public.eql_v4_date_ord column.
 func (v *DateOrd) Scan(src any) error {
 	return scan((*[]byte)(v), src, "DateOrd")
 }
@@ -840,7 +840,7 @@ func (v *DateOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// DateOrdQuery is the query value for DateOrd: the operand eql_v3.query_date_ord takes.
+// DateOrdQuery is the query value for DateOrd: the operand eql_v4.query_date_ord takes.
 type DateOrdQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -848,7 +848,7 @@ func (v DateOrdQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_date_ord column.
+// Scan reads a eql_v4.query_date_ord column.
 func (v *DateOrdQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "DateOrdQuery")
 }
@@ -863,7 +863,7 @@ func (v *DateOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// DateOrdOpe is the EQL type stored in public.eql_v3_date_ord_ope: the date family with the ope index.
+// DateOrdOpe is the EQL type stored in public.eql_v4_date_ord_ope: the date family with the ope index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type DateOrdOpe []byte
 
@@ -872,7 +872,7 @@ func (v DateOrdOpe) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_date_ord_ope column.
+// Scan reads a public.eql_v4_date_ord_ope column.
 func (v *DateOrdOpe) Scan(src any) error {
 	return scan((*[]byte)(v), src, "DateOrdOpe")
 }
@@ -887,7 +887,7 @@ func (v *DateOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// DateOrdOpeQuery is the query value for DateOrdOpe: the operand eql_v3.query_date_ord_ope takes.
+// DateOrdOpeQuery is the query value for DateOrdOpe: the operand eql_v4.query_date_ord_ope takes.
 type DateOrdOpeQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -895,7 +895,7 @@ func (v DateOrdOpeQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_date_ord_ope column.
+// Scan reads a eql_v4.query_date_ord_ope column.
 func (v *DateOrdOpeQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "DateOrdOpeQuery")
 }
@@ -910,7 +910,7 @@ func (v *DateOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// Timestamp is the EQL type stored in public.eql_v3_timestamp: the timestamp family with no index.
+// Timestamp is the EQL type stored in public.eql_v4_timestamp: the timestamp family with no index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type Timestamp []byte
 
@@ -919,7 +919,7 @@ func (v Timestamp) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_timestamp column.
+// Scan reads a public.eql_v4_timestamp column.
 func (v *Timestamp) Scan(src any) error {
 	return scan((*[]byte)(v), src, "Timestamp")
 }
@@ -934,7 +934,7 @@ func (v *Timestamp) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TimestampEq is the EQL type stored in public.eql_v3_timestamp_eq: the timestamp family with the eq index.
+// TimestampEq is the EQL type stored in public.eql_v4_timestamp_eq: the timestamp family with the eq index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type TimestampEq []byte
 
@@ -943,7 +943,7 @@ func (v TimestampEq) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_timestamp_eq column.
+// Scan reads a public.eql_v4_timestamp_eq column.
 func (v *TimestampEq) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TimestampEq")
 }
@@ -958,7 +958,7 @@ func (v *TimestampEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TimestampEqQuery is the query value for TimestampEq: the operand eql_v3.query_timestamp_eq takes.
+// TimestampEqQuery is the query value for TimestampEq: the operand eql_v4.query_timestamp_eq takes.
 type TimestampEqQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -966,7 +966,7 @@ func (v TimestampEqQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_timestamp_eq column.
+// Scan reads a eql_v4.query_timestamp_eq column.
 func (v *TimestampEqQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TimestampEqQuery")
 }
@@ -981,7 +981,7 @@ func (v *TimestampEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TimestampOrdOre is the EQL type stored in public.eql_v3_timestamp_ord_ore: the timestamp family with the ore index.
+// TimestampOrdOre is the EQL type stored in public.eql_v4_timestamp_ord_ore: the timestamp family with the ore index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type TimestampOrdOre []byte
 
@@ -990,7 +990,7 @@ func (v TimestampOrdOre) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_timestamp_ord_ore column.
+// Scan reads a public.eql_v4_timestamp_ord_ore column.
 func (v *TimestampOrdOre) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TimestampOrdOre")
 }
@@ -1005,7 +1005,7 @@ func (v *TimestampOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TimestampOrdOreQuery is the query value for TimestampOrdOre: the operand eql_v3.query_timestamp_ord_ore takes.
+// TimestampOrdOreQuery is the query value for TimestampOrdOre: the operand eql_v4.query_timestamp_ord_ore takes.
 type TimestampOrdOreQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1013,7 +1013,7 @@ func (v TimestampOrdOreQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_timestamp_ord_ore column.
+// Scan reads a eql_v4.query_timestamp_ord_ore column.
 func (v *TimestampOrdOreQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TimestampOrdOreQuery")
 }
@@ -1028,7 +1028,7 @@ func (v *TimestampOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TimestampOrd is the EQL type stored in public.eql_v3_timestamp_ord: the timestamp family with the ope index.
+// TimestampOrd is the EQL type stored in public.eql_v4_timestamp_ord: the timestamp family with the ope index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type TimestampOrd []byte
 
@@ -1037,7 +1037,7 @@ func (v TimestampOrd) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_timestamp_ord column.
+// Scan reads a public.eql_v4_timestamp_ord column.
 func (v *TimestampOrd) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TimestampOrd")
 }
@@ -1052,7 +1052,7 @@ func (v *TimestampOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TimestampOrdQuery is the query value for TimestampOrd: the operand eql_v3.query_timestamp_ord takes.
+// TimestampOrdQuery is the query value for TimestampOrd: the operand eql_v4.query_timestamp_ord takes.
 type TimestampOrdQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1060,7 +1060,7 @@ func (v TimestampOrdQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_timestamp_ord column.
+// Scan reads a eql_v4.query_timestamp_ord column.
 func (v *TimestampOrdQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TimestampOrdQuery")
 }
@@ -1075,7 +1075,7 @@ func (v *TimestampOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TimestampOrdOpe is the EQL type stored in public.eql_v3_timestamp_ord_ope: the timestamp family with the ope index.
+// TimestampOrdOpe is the EQL type stored in public.eql_v4_timestamp_ord_ope: the timestamp family with the ope index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type TimestampOrdOpe []byte
 
@@ -1084,7 +1084,7 @@ func (v TimestampOrdOpe) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_timestamp_ord_ope column.
+// Scan reads a public.eql_v4_timestamp_ord_ope column.
 func (v *TimestampOrdOpe) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TimestampOrdOpe")
 }
@@ -1099,7 +1099,7 @@ func (v *TimestampOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TimestampOrdOpeQuery is the query value for TimestampOrdOpe: the operand eql_v3.query_timestamp_ord_ope takes.
+// TimestampOrdOpeQuery is the query value for TimestampOrdOpe: the operand eql_v4.query_timestamp_ord_ope takes.
 type TimestampOrdOpeQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1107,7 +1107,7 @@ func (v TimestampOrdOpeQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_timestamp_ord_ope column.
+// Scan reads a eql_v4.query_timestamp_ord_ope column.
 func (v *TimestampOrdOpeQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TimestampOrdOpeQuery")
 }
@@ -1122,7 +1122,7 @@ func (v *TimestampOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// Numeric is the EQL type stored in public.eql_v3_numeric: the numeric family with no index.
+// Numeric is the EQL type stored in public.eql_v4_numeric: the numeric family with no index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type Numeric []byte
 
@@ -1131,7 +1131,7 @@ func (v Numeric) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_numeric column.
+// Scan reads a public.eql_v4_numeric column.
 func (v *Numeric) Scan(src any) error {
 	return scan((*[]byte)(v), src, "Numeric")
 }
@@ -1146,7 +1146,7 @@ func (v *Numeric) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// NumericEq is the EQL type stored in public.eql_v3_numeric_eq: the numeric family with the eq index.
+// NumericEq is the EQL type stored in public.eql_v4_numeric_eq: the numeric family with the eq index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type NumericEq []byte
 
@@ -1155,7 +1155,7 @@ func (v NumericEq) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_numeric_eq column.
+// Scan reads a public.eql_v4_numeric_eq column.
 func (v *NumericEq) Scan(src any) error {
 	return scan((*[]byte)(v), src, "NumericEq")
 }
@@ -1170,7 +1170,7 @@ func (v *NumericEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// NumericEqQuery is the query value for NumericEq: the operand eql_v3.query_numeric_eq takes.
+// NumericEqQuery is the query value for NumericEq: the operand eql_v4.query_numeric_eq takes.
 type NumericEqQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1178,7 +1178,7 @@ func (v NumericEqQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_numeric_eq column.
+// Scan reads a eql_v4.query_numeric_eq column.
 func (v *NumericEqQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "NumericEqQuery")
 }
@@ -1193,7 +1193,7 @@ func (v *NumericEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// NumericOrdOre is the EQL type stored in public.eql_v3_numeric_ord_ore: the numeric family with the ore index.
+// NumericOrdOre is the EQL type stored in public.eql_v4_numeric_ord_ore: the numeric family with the ore index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type NumericOrdOre []byte
 
@@ -1202,7 +1202,7 @@ func (v NumericOrdOre) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_numeric_ord_ore column.
+// Scan reads a public.eql_v4_numeric_ord_ore column.
 func (v *NumericOrdOre) Scan(src any) error {
 	return scan((*[]byte)(v), src, "NumericOrdOre")
 }
@@ -1217,7 +1217,7 @@ func (v *NumericOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// NumericOrdOreQuery is the query value for NumericOrdOre: the operand eql_v3.query_numeric_ord_ore takes.
+// NumericOrdOreQuery is the query value for NumericOrdOre: the operand eql_v4.query_numeric_ord_ore takes.
 type NumericOrdOreQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1225,7 +1225,7 @@ func (v NumericOrdOreQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_numeric_ord_ore column.
+// Scan reads a eql_v4.query_numeric_ord_ore column.
 func (v *NumericOrdOreQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "NumericOrdOreQuery")
 }
@@ -1240,7 +1240,7 @@ func (v *NumericOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// NumericOrd is the EQL type stored in public.eql_v3_numeric_ord: the numeric family with the ope index.
+// NumericOrd is the EQL type stored in public.eql_v4_numeric_ord: the numeric family with the ope index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type NumericOrd []byte
 
@@ -1249,7 +1249,7 @@ func (v NumericOrd) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_numeric_ord column.
+// Scan reads a public.eql_v4_numeric_ord column.
 func (v *NumericOrd) Scan(src any) error {
 	return scan((*[]byte)(v), src, "NumericOrd")
 }
@@ -1264,7 +1264,7 @@ func (v *NumericOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// NumericOrdQuery is the query value for NumericOrd: the operand eql_v3.query_numeric_ord takes.
+// NumericOrdQuery is the query value for NumericOrd: the operand eql_v4.query_numeric_ord takes.
 type NumericOrdQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1272,7 +1272,7 @@ func (v NumericOrdQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_numeric_ord column.
+// Scan reads a eql_v4.query_numeric_ord column.
 func (v *NumericOrdQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "NumericOrdQuery")
 }
@@ -1287,7 +1287,7 @@ func (v *NumericOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// NumericOrdOpe is the EQL type stored in public.eql_v3_numeric_ord_ope: the numeric family with the ope index.
+// NumericOrdOpe is the EQL type stored in public.eql_v4_numeric_ord_ope: the numeric family with the ope index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type NumericOrdOpe []byte
 
@@ -1296,7 +1296,7 @@ func (v NumericOrdOpe) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_numeric_ord_ope column.
+// Scan reads a public.eql_v4_numeric_ord_ope column.
 func (v *NumericOrdOpe) Scan(src any) error {
 	return scan((*[]byte)(v), src, "NumericOrdOpe")
 }
@@ -1311,7 +1311,7 @@ func (v *NumericOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// NumericOrdOpeQuery is the query value for NumericOrdOpe: the operand eql_v3.query_numeric_ord_ope takes.
+// NumericOrdOpeQuery is the query value for NumericOrdOpe: the operand eql_v4.query_numeric_ord_ope takes.
 type NumericOrdOpeQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1319,7 +1319,7 @@ func (v NumericOrdOpeQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_numeric_ord_ope column.
+// Scan reads a eql_v4.query_numeric_ord_ope column.
 func (v *NumericOrdOpeQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "NumericOrdOpeQuery")
 }
@@ -1334,7 +1334,7 @@ func (v *NumericOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// Text is the EQL type stored in public.eql_v3_text: the text family with no index.
+// Text is the EQL type stored in public.eql_v4_text: the text family with no index.
 // The engine cannot produce it yet: the storage-only text domain follows once TextEq is proven end to end in PostgreSQL.
 type Text []byte
 
@@ -1343,7 +1343,7 @@ func (v Text) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_text column.
+// Scan reads a public.eql_v4_text column.
 func (v *Text) Scan(src any) error {
 	return scan((*[]byte)(v), src, "Text")
 }
@@ -1358,7 +1358,7 @@ func (v *Text) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TextEq is the EQL type stored in public.eql_v3_text_eq: the text family with the eq index.
+// TextEq is the EQL type stored in public.eql_v4_text_eq: the text family with the eq index.
 // The engine produces it from a string.
 type TextEq []byte
 
@@ -1367,7 +1367,7 @@ func (v TextEq) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_text_eq column.
+// Scan reads a public.eql_v4_text_eq column.
 func (v *TextEq) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TextEq")
 }
@@ -1382,7 +1382,7 @@ func (v *TextEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TextEqQuery is the query value for TextEq: the operand eql_v3.query_text_eq takes.
+// TextEqQuery is the query value for TextEq: the operand eql_v4.query_text_eq takes.
 type TextEqQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1390,7 +1390,7 @@ func (v TextEqQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_text_eq column.
+// Scan reads a eql_v4.query_text_eq column.
 func (v *TextEqQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TextEqQuery")
 }
@@ -1405,7 +1405,7 @@ func (v *TextEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TextMatch is the EQL type stored in public.eql_v3_text_match: the text family with the match index.
+// TextMatch is the EQL type stored in public.eql_v4_text_match: the text family with the match index.
 // The engine cannot produce it yet: the engine derives match and OPE terms, but no EQL type is built from them yet.
 type TextMatch []byte
 
@@ -1414,7 +1414,7 @@ func (v TextMatch) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_text_match column.
+// Scan reads a public.eql_v4_text_match column.
 func (v *TextMatch) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TextMatch")
 }
@@ -1429,7 +1429,7 @@ func (v *TextMatch) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TextMatchQuery is the query value for TextMatch: the operand eql_v3.query_text_match takes.
+// TextMatchQuery is the query value for TextMatch: the operand eql_v4.query_text_match takes.
 type TextMatchQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1437,7 +1437,7 @@ func (v TextMatchQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_text_match column.
+// Scan reads a eql_v4.query_text_match column.
 func (v *TextMatchQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TextMatchQuery")
 }
@@ -1452,7 +1452,7 @@ func (v *TextMatchQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TextOrdOre is the EQL type stored in public.eql_v3_text_ord_ore: the text family with the eq and ore indexes.
+// TextOrdOre is the EQL type stored in public.eql_v4_text_ord_ore: the text family with the eq and ore indexes.
 // The engine cannot produce it yet: EQL stores a block ORE term and the engine derives a CLLW ORE term; the two are different algorithms.
 type TextOrdOre []byte
 
@@ -1461,7 +1461,7 @@ func (v TextOrdOre) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_text_ord_ore column.
+// Scan reads a public.eql_v4_text_ord_ore column.
 func (v *TextOrdOre) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TextOrdOre")
 }
@@ -1476,7 +1476,7 @@ func (v *TextOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TextOrdOreQuery is the query value for TextOrdOre: the operand eql_v3.query_text_ord_ore takes.
+// TextOrdOreQuery is the query value for TextOrdOre: the operand eql_v4.query_text_ord_ore takes.
 type TextOrdOreQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1484,7 +1484,7 @@ func (v TextOrdOreQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_text_ord_ore column.
+// Scan reads a eql_v4.query_text_ord_ore column.
 func (v *TextOrdOreQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TextOrdOreQuery")
 }
@@ -1499,7 +1499,7 @@ func (v *TextOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TextOrd is the EQL type stored in public.eql_v3_text_ord: the text family with the eq and ope indexes.
+// TextOrd is the EQL type stored in public.eql_v4_text_ord: the text family with the eq and ope indexes.
 // The engine cannot produce it yet: the engine derives match and OPE terms, but no EQL type is built from them yet.
 type TextOrd []byte
 
@@ -1508,7 +1508,7 @@ func (v TextOrd) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_text_ord column.
+// Scan reads a public.eql_v4_text_ord column.
 func (v *TextOrd) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TextOrd")
 }
@@ -1523,7 +1523,7 @@ func (v *TextOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TextOrdQuery is the query value for TextOrd: the operand eql_v3.query_text_ord takes.
+// TextOrdQuery is the query value for TextOrd: the operand eql_v4.query_text_ord takes.
 type TextOrdQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1531,7 +1531,7 @@ func (v TextOrdQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_text_ord column.
+// Scan reads a eql_v4.query_text_ord column.
 func (v *TextOrdQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TextOrdQuery")
 }
@@ -1546,7 +1546,7 @@ func (v *TextOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TextOrdOpe is the EQL type stored in public.eql_v3_text_ord_ope: the text family with the eq and ope indexes.
+// TextOrdOpe is the EQL type stored in public.eql_v4_text_ord_ope: the text family with the eq and ope indexes.
 // The engine cannot produce it yet: the engine derives match and OPE terms, but no EQL type is built from them yet.
 type TextOrdOpe []byte
 
@@ -1555,7 +1555,7 @@ func (v TextOrdOpe) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_text_ord_ope column.
+// Scan reads a public.eql_v4_text_ord_ope column.
 func (v *TextOrdOpe) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TextOrdOpe")
 }
@@ -1570,7 +1570,7 @@ func (v *TextOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TextOrdOpeQuery is the query value for TextOrdOpe: the operand eql_v3.query_text_ord_ope takes.
+// TextOrdOpeQuery is the query value for TextOrdOpe: the operand eql_v4.query_text_ord_ope takes.
 type TextOrdOpeQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1578,7 +1578,7 @@ func (v TextOrdOpeQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_text_ord_ope column.
+// Scan reads a eql_v4.query_text_ord_ope column.
 func (v *TextOrdOpeQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TextOrdOpeQuery")
 }
@@ -1593,7 +1593,7 @@ func (v *TextOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TextSearchOre is the EQL type stored in public.eql_v3_text_search_ore: the text family with the eq and ore and match indexes.
+// TextSearchOre is the EQL type stored in public.eql_v4_text_search_ore: the text family with the eq and ore and match indexes.
 // The engine cannot produce it yet: EQL stores a block ORE term and the engine derives a CLLW ORE term; the two are different algorithms.
 type TextSearchOre []byte
 
@@ -1602,7 +1602,7 @@ func (v TextSearchOre) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_text_search_ore column.
+// Scan reads a public.eql_v4_text_search_ore column.
 func (v *TextSearchOre) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TextSearchOre")
 }
@@ -1617,7 +1617,7 @@ func (v *TextSearchOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TextSearchOreQuery is the query value for TextSearchOre: the operand eql_v3.query_text_search_ore takes.
+// TextSearchOreQuery is the query value for TextSearchOre: the operand eql_v4.query_text_search_ore takes.
 type TextSearchOreQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1625,7 +1625,7 @@ func (v TextSearchOreQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_text_search_ore column.
+// Scan reads a eql_v4.query_text_search_ore column.
 func (v *TextSearchOreQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TextSearchOreQuery")
 }
@@ -1640,7 +1640,7 @@ func (v *TextSearchOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TextSearch is the EQL type stored in public.eql_v3_text_search: the text family with the eq and ope and match indexes.
+// TextSearch is the EQL type stored in public.eql_v4_text_search: the text family with the eq and ope and match indexes.
 // The engine cannot produce it yet: the engine derives match and OPE terms, but no EQL type is built from them yet.
 type TextSearch []byte
 
@@ -1649,7 +1649,7 @@ func (v TextSearch) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_text_search column.
+// Scan reads a public.eql_v4_text_search column.
 func (v *TextSearch) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TextSearch")
 }
@@ -1664,7 +1664,7 @@ func (v *TextSearch) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// TextSearchQuery is the query value for TextSearch: the operand eql_v3.query_text_search takes.
+// TextSearchQuery is the query value for TextSearch: the operand eql_v4.query_text_search takes.
 type TextSearchQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1672,7 +1672,7 @@ func (v TextSearchQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_text_search column.
+// Scan reads a eql_v4.query_text_search column.
 func (v *TextSearchQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "TextSearchQuery")
 }
@@ -1687,7 +1687,7 @@ func (v *TextSearchQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// Boolean is the EQL type stored in public.eql_v3_boolean: the boolean family with no index.
+// Boolean is the EQL type stored in public.eql_v4_boolean: the boolean family with no index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type Boolean []byte
 
@@ -1696,7 +1696,7 @@ func (v Boolean) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_boolean column.
+// Scan reads a public.eql_v4_boolean column.
 func (v *Boolean) Scan(src any) error {
 	return scan((*[]byte)(v), src, "Boolean")
 }
@@ -1711,7 +1711,7 @@ func (v *Boolean) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// Real is the EQL type stored in public.eql_v3_real: the real family with no index.
+// Real is the EQL type stored in public.eql_v4_real: the real family with no index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type Real []byte
 
@@ -1720,7 +1720,7 @@ func (v Real) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_real column.
+// Scan reads a public.eql_v4_real column.
 func (v *Real) Scan(src any) error {
 	return scan((*[]byte)(v), src, "Real")
 }
@@ -1735,7 +1735,7 @@ func (v *Real) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// RealEq is the EQL type stored in public.eql_v3_real_eq: the real family with the eq index.
+// RealEq is the EQL type stored in public.eql_v4_real_eq: the real family with the eq index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type RealEq []byte
 
@@ -1744,7 +1744,7 @@ func (v RealEq) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_real_eq column.
+// Scan reads a public.eql_v4_real_eq column.
 func (v *RealEq) Scan(src any) error {
 	return scan((*[]byte)(v), src, "RealEq")
 }
@@ -1759,7 +1759,7 @@ func (v *RealEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// RealEqQuery is the query value for RealEq: the operand eql_v3.query_real_eq takes.
+// RealEqQuery is the query value for RealEq: the operand eql_v4.query_real_eq takes.
 type RealEqQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1767,7 +1767,7 @@ func (v RealEqQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_real_eq column.
+// Scan reads a eql_v4.query_real_eq column.
 func (v *RealEqQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "RealEqQuery")
 }
@@ -1782,7 +1782,7 @@ func (v *RealEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// RealOrdOre is the EQL type stored in public.eql_v3_real_ord_ore: the real family with the ore index.
+// RealOrdOre is the EQL type stored in public.eql_v4_real_ord_ore: the real family with the ore index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type RealOrdOre []byte
 
@@ -1791,7 +1791,7 @@ func (v RealOrdOre) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_real_ord_ore column.
+// Scan reads a public.eql_v4_real_ord_ore column.
 func (v *RealOrdOre) Scan(src any) error {
 	return scan((*[]byte)(v), src, "RealOrdOre")
 }
@@ -1806,7 +1806,7 @@ func (v *RealOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// RealOrdOreQuery is the query value for RealOrdOre: the operand eql_v3.query_real_ord_ore takes.
+// RealOrdOreQuery is the query value for RealOrdOre: the operand eql_v4.query_real_ord_ore takes.
 type RealOrdOreQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1814,7 +1814,7 @@ func (v RealOrdOreQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_real_ord_ore column.
+// Scan reads a eql_v4.query_real_ord_ore column.
 func (v *RealOrdOreQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "RealOrdOreQuery")
 }
@@ -1829,7 +1829,7 @@ func (v *RealOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// RealOrd is the EQL type stored in public.eql_v3_real_ord: the real family with the ope index.
+// RealOrd is the EQL type stored in public.eql_v4_real_ord: the real family with the ope index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type RealOrd []byte
 
@@ -1838,7 +1838,7 @@ func (v RealOrd) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_real_ord column.
+// Scan reads a public.eql_v4_real_ord column.
 func (v *RealOrd) Scan(src any) error {
 	return scan((*[]byte)(v), src, "RealOrd")
 }
@@ -1853,7 +1853,7 @@ func (v *RealOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// RealOrdQuery is the query value for RealOrd: the operand eql_v3.query_real_ord takes.
+// RealOrdQuery is the query value for RealOrd: the operand eql_v4.query_real_ord takes.
 type RealOrdQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1861,7 +1861,7 @@ func (v RealOrdQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_real_ord column.
+// Scan reads a eql_v4.query_real_ord column.
 func (v *RealOrdQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "RealOrdQuery")
 }
@@ -1876,7 +1876,7 @@ func (v *RealOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// RealOrdOpe is the EQL type stored in public.eql_v3_real_ord_ope: the real family with the ope index.
+// RealOrdOpe is the EQL type stored in public.eql_v4_real_ord_ope: the real family with the ope index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type RealOrdOpe []byte
 
@@ -1885,7 +1885,7 @@ func (v RealOrdOpe) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_real_ord_ope column.
+// Scan reads a public.eql_v4_real_ord_ope column.
 func (v *RealOrdOpe) Scan(src any) error {
 	return scan((*[]byte)(v), src, "RealOrdOpe")
 }
@@ -1900,7 +1900,7 @@ func (v *RealOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// RealOrdOpeQuery is the query value for RealOrdOpe: the operand eql_v3.query_real_ord_ope takes.
+// RealOrdOpeQuery is the query value for RealOrdOpe: the operand eql_v4.query_real_ord_ope takes.
 type RealOrdOpeQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1908,7 +1908,7 @@ func (v RealOrdOpeQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_real_ord_ope column.
+// Scan reads a eql_v4.query_real_ord_ope column.
 func (v *RealOrdOpeQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "RealOrdOpeQuery")
 }
@@ -1923,7 +1923,7 @@ func (v *RealOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// Double is the EQL type stored in public.eql_v3_double: the double family with no index.
+// Double is the EQL type stored in public.eql_v4_double: the double family with no index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type Double []byte
 
@@ -1932,7 +1932,7 @@ func (v Double) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_double column.
+// Scan reads a public.eql_v4_double column.
 func (v *Double) Scan(src any) error {
 	return scan((*[]byte)(v), src, "Double")
 }
@@ -1947,7 +1947,7 @@ func (v *Double) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// DoubleEq is the EQL type stored in public.eql_v3_double_eq: the double family with the eq index.
+// DoubleEq is the EQL type stored in public.eql_v4_double_eq: the double family with the eq index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type DoubleEq []byte
 
@@ -1956,7 +1956,7 @@ func (v DoubleEq) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_double_eq column.
+// Scan reads a public.eql_v4_double_eq column.
 func (v *DoubleEq) Scan(src any) error {
 	return scan((*[]byte)(v), src, "DoubleEq")
 }
@@ -1971,7 +1971,7 @@ func (v *DoubleEq) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// DoubleEqQuery is the query value for DoubleEq: the operand eql_v3.query_double_eq takes.
+// DoubleEqQuery is the query value for DoubleEq: the operand eql_v4.query_double_eq takes.
 type DoubleEqQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1979,7 +1979,7 @@ func (v DoubleEqQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_double_eq column.
+// Scan reads a eql_v4.query_double_eq column.
 func (v *DoubleEqQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "DoubleEqQuery")
 }
@@ -1994,7 +1994,7 @@ func (v *DoubleEqQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// DoubleOrdOre is the EQL type stored in public.eql_v3_double_ord_ore: the double family with the ore index.
+// DoubleOrdOre is the EQL type stored in public.eql_v4_double_ord_ore: the double family with the ore index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type DoubleOrdOre []byte
 
@@ -2003,7 +2003,7 @@ func (v DoubleOrdOre) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_double_ord_ore column.
+// Scan reads a public.eql_v4_double_ord_ore column.
 func (v *DoubleOrdOre) Scan(src any) error {
 	return scan((*[]byte)(v), src, "DoubleOrdOre")
 }
@@ -2018,7 +2018,7 @@ func (v *DoubleOrdOre) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// DoubleOrdOreQuery is the query value for DoubleOrdOre: the operand eql_v3.query_double_ord_ore takes.
+// DoubleOrdOreQuery is the query value for DoubleOrdOre: the operand eql_v4.query_double_ord_ore takes.
 type DoubleOrdOreQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -2026,7 +2026,7 @@ func (v DoubleOrdOreQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_double_ord_ore column.
+// Scan reads a eql_v4.query_double_ord_ore column.
 func (v *DoubleOrdOreQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "DoubleOrdOreQuery")
 }
@@ -2041,7 +2041,7 @@ func (v *DoubleOrdOreQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// DoubleOrd is the EQL type stored in public.eql_v3_double_ord: the double family with the ope index.
+// DoubleOrd is the EQL type stored in public.eql_v4_double_ord: the double family with the ope index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type DoubleOrd []byte
 
@@ -2050,7 +2050,7 @@ func (v DoubleOrd) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_double_ord column.
+// Scan reads a public.eql_v4_double_ord column.
 func (v *DoubleOrd) Scan(src any) error {
 	return scan((*[]byte)(v), src, "DoubleOrd")
 }
@@ -2065,7 +2065,7 @@ func (v *DoubleOrd) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// DoubleOrdQuery is the query value for DoubleOrd: the operand eql_v3.query_double_ord takes.
+// DoubleOrdQuery is the query value for DoubleOrd: the operand eql_v4.query_double_ord takes.
 type DoubleOrdQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -2073,7 +2073,7 @@ func (v DoubleOrdQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_double_ord column.
+// Scan reads a eql_v4.query_double_ord column.
 func (v *DoubleOrdQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "DoubleOrdQuery")
 }
@@ -2088,7 +2088,7 @@ func (v *DoubleOrdQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// DoubleOrdOpe is the EQL type stored in public.eql_v3_double_ord_ope: the double family with the ope index.
+// DoubleOrdOpe is the EQL type stored in public.eql_v4_double_ord_ope: the double family with the ope index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type DoubleOrdOpe []byte
 
@@ -2097,7 +2097,7 @@ func (v DoubleOrdOpe) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_double_ord_ope column.
+// Scan reads a public.eql_v4_double_ord_ope column.
 func (v *DoubleOrdOpe) Scan(src any) error {
 	return scan((*[]byte)(v), src, "DoubleOrdOpe")
 }
@@ -2112,7 +2112,7 @@ func (v *DoubleOrdOpe) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// DoubleOrdOpeQuery is the query value for DoubleOrdOpe: the operand eql_v3.query_double_ord_ope takes.
+// DoubleOrdOpeQuery is the query value for DoubleOrdOpe: the operand eql_v4.query_double_ord_ope takes.
 type DoubleOrdOpeQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -2120,7 +2120,7 @@ func (v DoubleOrdOpeQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_double_ord_ope column.
+// Scan reads a eql_v4.query_double_ord_ope column.
 func (v *DoubleOrdOpeQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "DoubleOrdOpeQuery")
 }
@@ -2135,7 +2135,7 @@ func (v *DoubleOrdOpeQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// SteVecDocument is the EQL type stored in public.eql_v3_json_search: the json family with the json index.
+// SteVecDocument is the EQL type stored in public.eql_v4_json_search: the json family with the json index.
 // The engine cannot produce it yet: the JSON index is a new operation in the engine.
 type SteVecDocument []byte
 
@@ -2144,7 +2144,7 @@ func (v SteVecDocument) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_json_search column.
+// Scan reads a public.eql_v4_json_search column.
 func (v *SteVecDocument) Scan(src any) error {
 	return scan((*[]byte)(v), src, "SteVecDocument")
 }
@@ -2159,7 +2159,7 @@ func (v *SteVecDocument) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// SteVecQuery is the query value for SteVecDocument: the operand eql_v3.query_json takes.
+// SteVecQuery is the query value for SteVecDocument: the operand eql_v4.query_json takes.
 type SteVecQuery []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -2167,7 +2167,7 @@ func (v SteVecQuery) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a eql_v3.query_json column.
+// Scan reads a eql_v4.query_json column.
 func (v *SteVecQuery) Scan(src any) error {
 	return scan((*[]byte)(v), src, "SteVecQuery")
 }
@@ -2182,7 +2182,7 @@ func (v *SteVecQuery) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
 
-// JSON is the EQL type stored in public.eql_v3_json: the json family with no index.
+// JSON is the EQL type stored in public.eql_v4_json: the json family with no index.
 // The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
 type JSON []byte
 
@@ -2191,7 +2191,7 @@ func (v JSON) Value() (driver.Value, error) {
 	return value(v)
 }
 
-// Scan reads a public.eql_v3_json column.
+// Scan reads a public.eql_v4_json column.
 func (v *JSON) Scan(src any) error {
 	return scan((*[]byte)(v), src, "JSON")
 }
