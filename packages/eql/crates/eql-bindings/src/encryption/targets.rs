@@ -86,6 +86,7 @@ use stack_encrypt::{
 };
 use vitaminc_aead_value::{FfiValue, ValueKind};
 
+use super::plaintext;
 use crate::v4::targets::{decrypt_named, encrypt_named, query_named, TARGETS};
 use crate::Identifier;
 
@@ -383,8 +384,15 @@ pub(crate) fn refuse(name: &str) -> TargetError {
 }
 
 mod sealed {
+    use super::plaintext::{Bool, Float32, Float64, Int32, Int64};
+
     pub trait Sealed {}
     impl Sealed for String {}
+    impl Sealed for Int32 {}
+    impl Sealed for Int64 {}
+    impl Sealed for Bool {}
+    impl Sealed for Float32 {}
+    impl Sealed for Float64 {}
 }
 
 /// A Rust plaintext an EQL type is produced from, read out of and written
@@ -392,7 +400,7 @@ mod sealed {
 /// plaintext types the catalog's producible families name, and the generated
 /// dispatch picks one per type. `Zeroize`, because [`from_value`](Self::from_value)
 /// copies the plaintext out of the runtime value's `Protected` buffer and
-/// the copy is wiped when it is dropped (the dispatch holds it in
+/// the copy is wiped when it is dropped (`run_target` holds it in
 /// [`zeroize::Zeroizing`]), as the original is.
 pub trait Plaintext: sealed::Sealed + Sized + MaybeSend + zeroize::Zeroize + 'static {
     /// The kind of value this plaintext is.
@@ -428,6 +436,39 @@ impl Plaintext for String {
         FfiValue::String(self.into())
     }
 }
+
+/// The scalar plaintexts read exactly their own kind: a JSON number is not
+/// narrowed or widened into another width, because the stored bytes must be
+/// the declared kind's.
+macro_rules! scalar_plaintext {
+    ($($ty:ident => $variant:ident),+ $(,)?) => {$(
+        impl Plaintext for plaintext::$ty {
+            const KIND: ValueKind = ValueKind::$variant;
+
+            fn from_value(target: &'static str, value: FfiValue) -> Result<Self, TargetError> {
+                match value {
+                    FfiValue::$variant(v) => Ok(plaintext::$ty(v)),
+                    other => Err(TargetError::Plaintext {
+                        target,
+                        expected: Self::KIND,
+                        found: other.kind(),
+                    }),
+                }
+            }
+
+            fn into_value(self) -> FfiValue {
+                FfiValue::$variant(self.0)
+            }
+        }
+    )+};
+}
+scalar_plaintext!(
+    Int32 => Int32,
+    Int64 => Int64,
+    Bool => Bool,
+    Float32 => Float32,
+    Float64 => Float64,
+);
 
 /// Run a target's own plan over one runtime value and resolve to the EQL
 /// value's JSON bytes. The generated dispatch calls this with the type and

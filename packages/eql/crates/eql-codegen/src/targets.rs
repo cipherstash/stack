@@ -29,7 +29,7 @@ use quote::{format_ident, quote};
 
 use eql_domains::{Domain, DomainFamily, Shape, Term};
 
-use crate::bindings::{encryption_gap, format_rs, stored_payload_domains};
+use crate::bindings::{encryption_gap, format_rs, plaintext_of, stored_payload_domains};
 use crate::render::EqlVersion;
 
 /// The version every target is produced into.
@@ -54,47 +54,18 @@ pub fn index_key(term: Term) -> &'static str {
 /// payload keys.
 const JSON_INDEX_KEY: &str = "json";
 
-/// The plaintext a family's domains are produced from, as a vitaminc
-/// `ValueKind` name (what a plan field's `"type"` key spells) and the Rust
-/// type the generated dispatch names. `None` while the family's plaintext
-/// encoding for the stack-encrypt producer profile is unspecified, which is
-/// every family but text today.
+/// The plaintext a family's domains are produced from: see
+/// [`bindings::plaintext_of`](crate::bindings::plaintext_of).
 pub fn plaintext(family: &DomainFamily) -> Option<(&'static str, &'static str)> {
     plaintext_of(family.name)
 }
 
-/// [`plaintext`], by family name: what a rendered row carries.
-fn plaintext_of(family: &str) -> Option<(&'static str, &'static str)> {
-    (family == "text").then_some(("string", "String"))
-}
-
 /// Why the engine cannot produce a stored domain's EQL type today, or
-/// `None` when it can. `None` exactly when the domain carries the
-/// `stack-encrypt` derives ([`encryption_gap`]), because the dispatch runs
-/// the derived plan; the reasons are the plan's, keyed on catalog facts so
-/// a domain added tomorrow gets an answer.
+/// `None` when it can: exactly when the v4 domain carries the
+/// `stack-encrypt` derives, because the dispatch runs the derived plan, so
+/// the one source of reasons is [`encryption_gap`].
 pub fn target_gap(family: &DomainFamily, domain: &Domain) -> Option<&'static str> {
-    encryption_gap(TARGET_VERSION, family, domain)?;
-    Some(if matches!(domain.shape, Shape::SteVec) {
-        "the JSON index is a new operation in the engine"
-    } else if family.name != "text" {
-        "how this family encodes a plaintext for the stack-encrypt producer profile is not \
-         specified; only the text family's encoding is"
-    } else if domain.terms.contains(&Term::Ore) {
-        "EQL stores a block ORE term and the engine derives a CLLW ORE term; the two are \
-         different algorithms"
-    } else if domain
-        .terms
-        .iter()
-        .any(|t| matches!(t, Term::Bloom | Term::Ope))
-    {
-        "the engine derives match and OPE terms, but no EQL type is built from them yet"
-    } else if domain.terms.is_empty() {
-        "the storage-only text domain follows once TextEq is proven end to end in PostgreSQL"
-    } else {
-        "an equality-only text domain derives the same way TextEq does; it is not listed in \
-         ENCRYPTION_DOMAINS yet"
-    })
+    encryption_gap(TARGET_VERSION, family, domain)
 }
 
 /// One row of the generated table, computed from the catalog: what both
@@ -245,7 +216,8 @@ fn render_targets_from(rows: &[Row]) -> String {
         let ty = format_ident!("{strukt}");
         let (_, rust) =
             plaintext_of(r.family).expect("a producible family has a specified plaintext");
-        let source = format_ident!("{rust}");
+        // Named by its last segment: the file imports every plaintext path.
+        let source = format_ident!("{}", rust.rsplit("::").next().unwrap_or(rust));
         (name.clone(), quote!(super::#module::#ty), quote!(#source))
     };
     let encrypt_arms: TokenStream = producible
@@ -272,6 +244,22 @@ fn render_targets_from(rows: &[Row]) -> String {
             Some(quote! { #name => run_target::<#ty, #source, K>(#name, keyset, column, plaintext), })
         })
         .collect();
+    // One `use` per plaintext a producible type names by path (`String` is
+    // in the prelude), so the arms stay short enough to read.
+    let mut imports: Vec<&str> = producible
+        .iter()
+        .filter_map(|r| plaintext_of(r.family).map(|(_, rust)| rust))
+        .filter(|rust| rust.contains("::"))
+        .collect();
+    imports.sort_unstable();
+    imports.dedup();
+    let imports: TokenStream = imports
+        .iter()
+        .map(|rust| {
+            let path: syn::Path = syn::parse_str(rust).expect("plaintext is a type path");
+            quote!(use #path;)
+        })
+        .collect();
     let helpers = if producible.is_empty() {
         quote!()
     } else {
@@ -291,6 +279,7 @@ fn render_targets_from(rows: &[Row]) -> String {
 
         use vitaminc_aead_value::FfiValue;
 
+        #imports
         use crate::encryption::targets::{#helpers refuse, refuse_query, Opener, Target, TargetError};
         use crate::Identifier;
         use stack_encrypt::{KeysetCipher, NonEmpty, Pending};
@@ -384,63 +373,49 @@ mod tests {
         );
     }
 
-    /// Every reason is the plan's reason for that domain, selected by the
-    /// catalog fact that applies: a wrong branch order would hand the ORE
-    /// reason to `text_search` or the encoding reason to a text domain.
+    /// A target's reason is its v4 domain's derive reason: one source, so
+    /// the table and the derives cannot disagree about why.
     #[test]
-    fn every_unproducible_target_has_the_plan_reason_for_its_domain() {
+    fn every_unproducible_target_has_its_derive_reason() {
         for (family, domain) in stored_payload_domains() {
-            let full = domain.full_name(family.name);
-            let Some(reason) = target_gap(family, domain) else {
-                continue;
-            };
-            let expected = if matches!(domain.shape, Shape::SteVec) {
-                "JSON index"
-            } else if family.name != "text" {
-                "encodes a plaintext"
-            } else if domain.terms.contains(&Term::Ore) {
-                "block ORE"
-            } else if domain
-                .terms
-                .iter()
-                .any(|t| matches!(t, Term::Bloom | Term::Ope))
-            {
-                "match and OPE terms"
-            } else {
-                assert!(
-                    domain.terms.is_empty(),
-                    "{full}: an hm-only text domain other than eq is not in the catalog"
-                );
-                "storage-only text domain"
-            };
-            assert!(reason.contains(expected), "{full}: {reason}");
+            assert_eq!(
+                target_gap(family, domain),
+                encryption_gap(TARGET_VERSION, family, domain),
+                "{}",
+                domain.full_name(family.name)
+            );
         }
-        // Spelled out for the four plan rows, so the table reads without
-        // the derivation above.
+        // Spelled out, so the table reads without the derivation.
+        let gap = |family: &eql_domains::DomainFamily, name: &str| {
+            target_gap(family, family.domain_by_name(name).expect("domain"))
+        };
         let text = eql_domains::TEXT;
-        let by_name = |name: &str| text.domain_by_name(name).expect("text domain");
-        assert!(target_gap(&text, by_name("ord_ore"))
+        for producible in ["", "eq"] {
+            assert!(gap(&text, producible).is_none(), "text {producible:?}");
+        }
+        for ordered in ["ord", "ord_ore", "ord_ope", "search", "search_ore"] {
+            assert!(
+                gap(&text, ordered).unwrap().contains("ordering terms"),
+                "{ordered}"
+            );
+        }
+        assert!(gap(&text, "match").unwrap().contains("match terms"));
+        let family = |name: &str| {
+            eql_domains::CATALOG
+                .iter()
+                .find(|f| f.name == name)
+                .expect("family")
+        };
+        assert!(gap(family("integer"), "eq").is_none());
+        assert!(gap(family("integer"), "ord_ore")
             .unwrap()
-            .contains("CLLW"));
-        assert!(target_gap(&text, by_name("search_ore"))
+            .contains("ordering terms"));
+        assert!(gap(family("real"), "eq").unwrap().contains("float"));
+        assert!(gap(family("date"), "").unwrap().contains("has no kind"));
+        assert!(gap(family("smallint"), "eq")
             .unwrap()
-            .contains("CLLW"));
-        assert!(target_gap(&text, by_name("match"))
-            .unwrap()
-            .contains("no EQL type"));
-        assert!(target_gap(&text, by_name("ord"))
-            .unwrap()
-            .contains("no EQL type"));
-        assert!(target_gap(&text, by_name("ord_ope"))
-            .unwrap()
-            .contains("no EQL type"));
-        assert!(target_gap(&text, by_name("search"))
-            .unwrap()
-            .contains("no EQL type"));
-        assert!(
-            target_gap(&text, by_name("eq")).is_none(),
-            "TextEq is producible"
-        );
+            .contains("has no kind"));
+        assert!(gap(family("json"), "").unwrap().contains("tree of leaves"));
     }
 
     #[test]
@@ -500,47 +475,64 @@ mod tests {
         }) {
             let name = domain.rust_struct_name(family.name);
             let module = family.name;
+            let (_, plaintext) = plaintext_of(family.name).expect("a derived family's plaintext");
+            let plaintext = plaintext.rsplit("::").next().unwrap();
             let arm = |helper: &str, ty: &str| {
                 format!(
-                    "\"{name}\" => {{ {helper}::<super::{module}::{ty}, String, K>(\"{name}\", "
+                    "\"{name}\" => {{ {helper}::<super::{module}::{ty}, {plaintext}, K>(\"{name}\", "
                 )
             };
             let flat_arm = |helper: &str, ty: &str| {
-                format!("\"{name}\" => {helper}::<super::{module}::{ty}, String, K>(\"{name}\", ")
+                format!(
+                    "\"{name}\" => {helper}::<super::{module}::{ty}, {plaintext}, K>(\"{name}\", "
+                )
             };
+            // rustfmt breaks long arms at different points, so compare with
+            // all whitespace gone.
+            let tight: String = out.split_whitespace().collect();
             let count = |helper: &str, ty: &str| {
-                out.matches(&arm(helper, ty)).count() + out.matches(&flat_arm(helper, ty)).count()
+                let strip = |p: String| p.split_whitespace().collect::<String>();
+                tight.matches(&strip(arm(helper, ty))).count()
+                    + tight.matches(&strip(flat_arm(helper, ty))).count()
             };
             assert_eq!(count("run_target", &name), 1, "{name}: one encrypt arm");
             assert_eq!(count("open_target", &name), 1, "{name}: one decrypt arm");
             assert_eq!(
                 count("run_target", &format!("{name}Query")),
-                1,
-                "{name}: one query arm"
+                usize::from(!domain.terms.is_empty()),
+                "{name}: a query arm exactly when it has a query twin"
             );
         }
         // No unproducible type has an arm: the only `=>` arms are the
         // producible ones and the three fall-throughs.
+        let with_twin = ENCRYPTION_DOMAINS
+            .iter()
+            .filter(|(f, d)| {
+                let family = eql_domains::CATALOG.iter().find(|x| x.name == *f).unwrap();
+                !family.domain_by_name(d).unwrap().terms.is_empty()
+            })
+            .count();
         let arms = out.matches("\" => ").count();
-        assert_eq!(arms, ENCRYPTION_DOMAINS.len() * 3, "arms: {out}");
+        assert_eq!(
+            arms,
+            ENCRYPTION_DOMAINS.len() * 2 + with_twin,
+            "arms: {out}"
+        );
         assert_eq!(out.matches("_ => Err(refuse(name))").count(), 2);
         assert_eq!(out.matches("_ => Err(refuse_query(name))").count(), 1);
     }
 
-    /// A producible type with no query twin — a storage-only domain, once
-    /// its derive lands — renders encrypt and decrypt arms and no query arm,
-    /// rather than aborting the generator: the query dispatch's fall-through
-    /// refuses it as answering no query. Not in the catalog today, so the
-    /// row is flipped by hand.
+    /// A producible type with no query twin — the storage-only `Text` —
+    /// renders encrypt and decrypt arms and no query arm: the query
+    /// dispatch's fall-through refuses it as answering no query.
     #[test]
     fn a_producible_type_without_a_query_twin_gets_no_query_arm() {
-        let mut rows = rows();
+        let rows = rows();
         let text = rows
-            .iter_mut()
+            .iter()
             .find(|r| r.name == "Text")
             .expect("the storage-only text domain");
-        assert!(text.query.is_none() && text.reason.is_some());
-        text.reason = None;
+        assert!(text.query.is_none() && text.reason.is_none());
         let out: String = render_targets_from(&rows)
             .split_whitespace()
             .collect::<Vec<_>>()
@@ -561,11 +553,6 @@ mod tests {
         assert!(
             !out.contains("TextQuery"),
             "no query arm for a type with no twin: {out}"
-        );
-        assert_eq!(
-            out.matches("\" => ").count(),
-            (ENCRYPTION_DOMAINS.len() + 1) * 3 - 1,
-            "every producible type has three arms but the twinless one, which has two"
         );
     }
 }

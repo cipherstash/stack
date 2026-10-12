@@ -359,8 +359,8 @@ mod given_a_name_the_engine_cannot_produce {
         let error = refused(targets::encrypt("TextOrdOre", &keyset, &email(), text("x")));
         assert_eq!(
             error.to_string(),
-            "the engine cannot produce TextOrdOre yet: EQL stores a block ORE term and the engine \
-             derives a CLLW ORE term; the two are different algorithms"
+            "the engine cannot produce TextOrdOre yet: ordering terms wait for vitaminc-ore, the \
+             order encodings in vitaminc 0.6 (ADR-0002)"
         );
         // Refused by name before the label or the value is looked at.
         let error = refused(targets::encrypt(
@@ -472,14 +472,24 @@ mod the_table {
                 })
                 .collect();
             assert_eq!(row.suffix, suffix, "{name}: suffix");
+            let kind = match family.name {
+                "text" => Some(ValueKind::String),
+                "integer" => Some(ValueKind::Int32),
+                "bigint" => Some(ValueKind::Int64),
+                "boolean" => Some(ValueKind::Bool),
+                "real" => Some(ValueKind::Float32),
+                "double" => Some(ValueKind::Float64),
+                // The rest have no scalar kind in vitaminc 0.5's value enum.
+                _ => None,
+            };
             assert_eq!(
                 row.plaintext,
-                (family.name == "text").then_some("string"),
-                "{name}: only text's plaintext encoding is specified"
+                kind.map(ValueKind::name),
+                "{name}: the family's plaintext kind"
             );
             assert_eq!(
                 row.plaintext_kind(),
-                (family.name == "text").then_some(ValueKind::String),
+                kind,
                 "{name}: the plaintext name is a vitaminc kind"
             );
             if matches!(domain.shape, Shape::SteVec) {
@@ -543,8 +553,11 @@ mod the_table {
         }
     }
 
+    /// The types the engine produces in EQL v4 today: every storage-only
+    /// and equality-only domain whose plaintext vitaminc 0.5 encodes and,
+    /// for equality, derives a term for.
     #[test]
-    fn text_eq_is_the_one_producible_type_today() {
+    fn the_producible_types_are_the_unordered_ones_vitaminc_0_5_encodes() {
         let producible: Vec<&str> = targets::targets()
             .iter()
             .filter(|t| t.producible)
@@ -552,18 +565,28 @@ mod the_table {
             .collect();
         assert_eq!(
             producible,
-            ["TextEq"],
-            "the plan's list: the engine produces TextEq only"
+            [
+                "Integer",
+                "IntegerEq",
+                "Bigint",
+                "BigintEq",
+                "Text",
+                "TextEq",
+                "Boolean",
+                "Real",
+                "Double"
+            ],
         );
         for row in targets::targets().iter().filter(|t| !t.producible) {
             let reason = row.reason.expect("an unproducible type has a reason");
             let expected = match (row.family, row.suffix) {
                 ("json", "Search") => "JSON index",
-                (family, _) if family != "text" => "encodes a plaintext",
-                (_, "OrdOre" | "SearchOre") => "CLLW",
-                (_, "Match" | "Ord" | "OrdOpe" | "Search") => "no EQL type is built",
-                (_, "") => "storage-only",
-                (_, suffix) => panic!("{}: unexpected text suffix {suffix}", row.name),
+                ("json", "") => "tree of leaves",
+                ("smallint" | "date" | "timestamp" | "numeric", _) => "has no kind",
+                (_, "Ord" | "OrdOre" | "OrdOpe" | "Search" | "SearchOre") => "ordering terms",
+                ("text", "Match") => "match terms",
+                ("real" | "double", "Eq") => "float",
+                (family, suffix) => panic!("{}: unexpected {family} {suffix}", row.name),
             };
             assert!(reason.contains(expected), "{}: {reason}", row.name);
         }
@@ -589,7 +612,7 @@ mod the_table {
                 "reason": null
             })
         );
-        let row = targets::target("Integer").unwrap();
+        let row = targets::target("Date").unwrap();
         let json = serde_json::to_value(row).unwrap();
         assert_eq!(
             json["plaintext"],

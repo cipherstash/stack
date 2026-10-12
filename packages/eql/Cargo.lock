@@ -1204,8 +1204,10 @@ dependencies = [
  "stack-encrypt",
  "thiserror 2.0.20",
  "ts-rs",
+ "vitaminc-aead 0.5.1",
  "vitaminc-aead-value",
  "vitaminc-prf",
+ "vitaminc-protected 0.5.1",
  "zeroize",
 ]
 
