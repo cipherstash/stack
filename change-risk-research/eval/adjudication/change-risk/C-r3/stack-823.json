@@ -1,0 +1,36 @@
+{
+  "case": "stack-823",
+  "evaluator": "change-risk/C-r3",
+  "run": 3,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Rewritten migration leaves the Drizzle schema pointing at a still-plaintext column",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-2"],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "stash init reports the new fail-closed sweep exit as a drizzle-kit installation failure",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    }
+  ],
+  "cost_usd": 1.9670827000000002,
+  "wall_seconds": 244.507693
+}

@@ -1,0 +1,36 @@
+{
+  "case": "stack-905",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "jsonwebtoken 10 handles service-token claims differently, so auth fails or token refresh breaks",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Major bump named; no behaviour difference shown. Over-rates a CVE lockfile bump as high."
+    },
+    {
+      "id": "FS-2",
+      "title": "Release-time platform build of the new graph fails or misbehaves on a target PR CI does not build",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Platform matrix not built on PRs; plausible."
+    }
+  ],
+  "cost_usd": 1.3775586999999998,
+  "wall_seconds": 203.034025
+}

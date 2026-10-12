@@ -1,0 +1,47 @@
+{
+  "case": "stack-666",
+  "evaluator": "change-risk/C-r3",
+  "run": 3,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Published CLI's pins go stale when a sibling releases alone; init installs, and offers to downgrade to, an older release",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "A pinned version that is not on npm turns init and `stash wizard` into hard install failures",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Turbo build cache can reuse a CLI bundle with stale embedded adapter/wizard versions",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    }
+  ],
+  "cost_usd": 1.3970035,
+  "wall_seconds": 194.192882
+}

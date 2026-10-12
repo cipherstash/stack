@@ -1,0 +1,58 @@
+{
+  "case": "stack-314",
+  "evaluator": "change-risk/C-r3",
+  "run": 3,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "push deactivates the active EQL configuration and then fails to insert the new one, leaving no active config",
+      "impact": "high",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "install applies an unpinned, unverified releases/latest EQL SQL bundle that may not match the SDK version",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "install --drizzle silently drops --supabase and --exclude-operator-family",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "Experimental changesets option changes peer-dependent version bumps for every package",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Low."
+    }
+  ],
+  "cost_usd": 1.3081185,
+  "wall_seconds": 187.753999
+}

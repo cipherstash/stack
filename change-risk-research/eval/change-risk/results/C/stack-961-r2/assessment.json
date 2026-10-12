@@ -1,0 +1,450 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "ec590a08cd62e538c380e0ac9935dc78fc4e8b28",
+  "head_sha": "386792876d402f36645c6724a58b7a9f4a371e78",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "C"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff / git diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": { "status": "available", "source": "pr-description.md" },
+    "ci_results": {
+      "status": "available",
+      "source": "ci.json",
+      "note": "31 check runs, all success. Conclusions only, with no logs, so I cannot see whether individual tests in a job ran or skipped themselves."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "I read only the docs the change touches: ADR 0001, packages/cli/README.md and packages/eql/CONTEXT.md."
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "available",
+      "source": "collect-evidence ownership (all files @cipherstash/developers)"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0 (evidence.json)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No information on customer table sizes, managed-Postgres timeouts or how customers schedule `stash eql upgrade`."
+    }
+  },
+  "summary": "Before this change, `stash eql install` and `stash eql upgrade` ran the bundle as BEGIN/bundle/COMMIT. Its DROP SCHEMA ... CASCADE silently deleted anything that depended on EQL, including indexes, views, policies and columns. The new protocol takes a time-limited advisory lock and walks pg_depend from the EQL schemas. If any customer object other than an index depends on EQL, it refuses before changing anything. Otherwise it runs the bundle, rebuilds the captured functional indexes, runs ANALYZE and checks the result, all in one transaction. This is a large safety improvement, and new live-Postgres tests cover it; they passed in CI on PG16 and PG17. The remaining release risks are operational. (1) Dropping the indexes takes ACCESS EXCLUSIVE locks on customer tables, and those locks are now held through every rebuild and ANALYZE. Upgrading large encrypted tables therefore blocks reads and writes until the rebuild finishes. This is documented as maintenance-window only but not tested at realistic sizes. (2) Databases with views, policies, constraints or triggers that use EQL functions can no longer upgrade through the CLI, and there is no override. (3) Any operator in `public`, and any cast, whose function is in an EQL schema is treated as part of the bundle, so a customer-created one is still dropped without warning. Impact is high (availability), but the high-impact scenario is a documented, accepted trade-off, so I rate this as needing focused review rather than as blocking.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "state_or_persistence",
+      "description": "Reinstall and upgrade now capture standalone functional indexes that depend on EQL, run the bundle, recreate the indexes from pg_get_indexdef, restore clustering, replica identity, comments and statistics targets, run ANALYZE on the affected tables and check definitions, validity and owner. All of this happens in the same transaction as DROP SCHEMA ... CASCADE.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "public_contract",
+      "description": "`stash eql install --force` and `stash eql upgrade` now refuse (exit 1, nothing changed) when any of these depend on EQL: views, materialized views, RLS policies, constraints, generated columns, triggers, customer operators outside `public`, partitioned index trees, or columns typed with eql_v3 types. At base the same commands succeeded and CASCADE silently dropped those objects. No flag bypasses the refusal.",
+      "certainty": "observed",
+      "evidence": ["E-4", "E-5", "E-6", "E-11"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "concurrency_or_ordering",
+      "description": "Lifecycle commands take a transaction-scoped advisory lock (`cipherstash.eql.lifecycle`). They retry every 250ms for up to 300s, then fail with EqlLifecycleLockTimeoutError. `SET LOCAL jit = off` applies for the lifecycle transaction.",
+      "certainty": "observed",
+      "evidence": ["E-7"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "other",
+      "description": "Installation detection, version reading, preflight capability checks and ORE/surface verification are merged into `assessEqlInstallation`, which reads inside a READ ONLY transaction with savepoints. The install, upgrade, status and verify commands use it. Presence detection switches from information_schema.schemata to to_regnamespace.",
+      "certainty": "observed",
+      "evidence": ["E-8"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "configuration",
+      "description": "The CI test matrix now pairs Node 22 with postgres-eql:16 and Node 24 with postgres-eql:17. Turbo forwards STASH_TEST_DATABASE_URL, and the live vitest project runs in a single fork. New devDependencies: @cipherstash/eql-upgrade-baseline (npm:@cipherstash/eql@3.0.2) and @cipherstash/protect-ffi.",
+      "certainty": "observed",
+      "evidence": ["E-9", "E-10"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "medium",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "packages/cli installer (derived-search-index-restoration.ts, index.ts)",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "New reinstall protocol and dependency classification.",
+      "evidence": ["E-1", "E-11"]
+    },
+    {
+      "id": "AC-2",
+      "name": "`stash eql install` / `stash eql upgrade` commands",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Call EQLInstaller.install() and report EqlReinstallRefusalError as an expected exit 1.",
+      "evidence": ["E-5", "E-6"]
+    },
+    {
+      "id": "AC-3",
+      "name": "Customer PostgreSQL databases with EQL v3 installed",
+      "kind": "database",
+      "relationship": "confirmed",
+      "how": "The install transaction runs DROP SCHEMA eql_v3/eql_v3_internal CASCADE and rebuilds indexes on customer tables.",
+      "evidence": ["E-11", "E-2"]
+    },
+    {
+      "id": "AC-4",
+      "name": "`stash eql status` / `stash eql verify` / `stash eql validate`",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Now built on assessEqlInstallation / assessDeclaredSchema.",
+      "evidence": ["E-8", "E-15"]
+    },
+    {
+      "id": "AC-5",
+      "name": "Published `stash` npm package (changeset minor)",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "Ships the new behaviour to customers in the next release.",
+      "evidence": ["E-12"]
+    },
+    {
+      "id": "AC-6",
+      "name": "CI tests workflow",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "Postgres version matrix and live-suite environment.",
+      "evidence": ["E-9"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Upgrade blocks all reads and writes on large encrypted tables for the whole index rebuild",
+      "trigger": "`stash eql upgrade` (or `install --force`) on a database with EQL functional indexes on large, live tables.",
+      "affected_components": ["AC-1", "AC-3"],
+      "mechanism": "The bundle's DROP SCHEMA ... CASCADE drops every dependent index. In PostgreSQL that takes ACCESS EXCLUSIVE on each indexed table. The change keeps the transaction open through a non-concurrent CREATE INDEX for every captured index, the ALTER/COMMENT/statistics statements, and ANALYZE of every affected table, and only then commits (derived-search-index-restoration.ts:571-598, 679-686). At base the transaction committed right after the bundle, so the locks were held only while the bundle ran.",
+      "consequence": "Application queries on encrypted tables wait for the full rebuild and ANALYZE, which can take minutes to hours on large tables. In effect the encrypted data path is down. If a statement_timeout or connection limit on a managed Postgres kills the transaction, everything rolls back, and the upgrade cannot finish without the operator changing settings.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-2", "E-11", "E-13"],
+      "existing_verification": [
+        {
+          "description": "reinstall.live and upgrade-encrypted-indexes.live rebuild indexes on small tables; the CI Run Tests jobs that run them passed.",
+          "status": "ran_passed",
+          "evidence": ["E-14", "E-16"]
+        }
+      ],
+      "missing_verification": [
+        "No measurement of lock duration or rebuild time on a realistically sized table.",
+        "No test with a statement_timeout typical of managed Postgres."
+      ],
+      "mitigation": "The README (lines 220-222) and the ADR consequences say to run it in a maintenance window. Also consider a pre-flight warning or `--dry-run` that lists the indexes and table sizes to be rebuilt, and statement_timeout/lock_timeout guidance in the release notes.",
+      "domain_tags": ["persistence_migration", "concurrency"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Databases with EQL-dependent views, policies or constraints can no longer upgrade via the CLI",
+      "trigger": "A customer has a view, RLS policy (common on Supabase), CHECK constraint, generated column or trigger condition that calls an eql_v3 function, upgrades the CLI, then runs `stash eql upgrade`.",
+      "affected_components": ["AC-1", "AC-2", "AC-5"],
+      "mechanism": "inspectReinstallDependencies throws EqlReinstallRefusalError for any dependent object that is not an index (derived-search-index-restoration.ts:552-556). install and upgrade report it as exit 1 (install.ts:210, upgrade.ts:59). `--force` goes through the same install() call (index.ts:196), so there is no way around the refusal.",
+      "consequence": "The upgrade is blocked loudly, and nothing is changed. The customer must drop and recreate the dependent objects by hand around the upgrade. Otherwise they stay on the old SQL bundle while the CLI and client expect a newer EQL, leaving the two out of step. This is not data loss: at base the same command silently destroyed those objects.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-4", "E-5", "E-6", "E-11", "E-12"],
+      "existing_verification": [
+        {
+          "description": "reinstall.live it.each covers refusal before any change for an RLS policy, view, check constraint, generated column, trigger and customer operators; the CI Run Tests jobs passed.",
+          "status": "ran_passed",
+          "evidence": ["E-4", "E-16"]
+        }
+      ],
+      "missing_verification": [
+        "No documented procedure for recreating refused objects. The refusal message lists them but gives no remedy."
+      ],
+      "mitigation": "Add a release note that describes the new refusal and gives a manual drop/upgrade/recreate procedure. Consider printing the definitions of refused objects so they can be recreated.",
+      "domain_tags": ["persistence_migration", "public_api"]
+    },
+    {
+      "id": "FS-3",
+      "title": "Customer operator in `public` or customer cast backed by an EQL function is classed as bundle-owned and silently dropped",
+      "trigger": "A customer created an operator in schema `public`, or a cast, whose function lives in eql_v3/eql_v3_internal, then reinstalls or upgrades.",
+      "affected_components": ["AC-1", "AC-3"],
+      "mechanism": "The exemption filter excludes every pg_operator in `public` whose oprcode is in an EQL schema (derived-search-index-restoration.ts:242-257), and every pg_cast whose castfunc is in an EQL schema (261-273), regardless of who created it. CASCADE then drops the object without reporting it. The tests cover customer operators only in a schema other than public, and the cast test expects the exemption.",
+      "consequence": "The customer's object disappears after an upgrade that appears to succeed, and queries that use it then fail. This is the kind of silent loss the change says it prevents. It is not a regression, because base dropped these objects too.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-4"],
+      "existing_verification": [
+        {
+          "description": "Live tests: a customer operator in schema stash_reinstall_test is refused, and a cast whose function is in an EQL schema is exempted.",
+          "status": "ran_passed",
+          "evidence": ["E-4", "E-16"]
+        }
+      ],
+      "missing_verification": [
+        "No test for a customer-created operator in `public` implemented by an EQL function."
+      ],
+      "mitigation": "Decide whether an object belongs to the bundle by checking it against the installed bundle's expected surface (or an ownership marker), not by schema alone. Otherwise, document the limitation.",
+      "domain_tags": ["persistence_migration"]
+    },
+    {
+      "id": "FS-4",
+      "title": "Objects created by non-stash sessions between inspection and DROP are silently dropped",
+      "trigger": "Application migrations or other DDL create an object that depends on EQL while an upgrade is running.",
+      "affected_components": ["AC-1", "AC-3"],
+      "mechanism": "The advisory lock only serialises stash lifecycle commands (derived-search-index-restoration.ts:467-492). The dependency check takes no catalog locks before `client.query(bundledSql)` (683-684), so an object committed between the check and the bundle is dropped by CASCADE without being captured.",
+      "consequence": "Silent loss of that index, view or policy. The docs already require a maintenance window to avoid this.",
+      "impact": "medium",
+      "basis": "speculative",
+      "evidence": ["E-1", "E-13"],
+      "existing_verification": [],
+      "missing_verification": ["No test; this is a timing race."],
+      "mitigation": "Already documented in the README maintenance-window note and the changeset. Optionally re-run the dependency check after the bundle and compare, or lock the dependent tables first.",
+      "domain_tags": ["concurrency", "persistence_migration"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No evidence on lock duration or rebuild cost for realistic table sizes, or under a managed-Postgres statement_timeout.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-14"]
+    },
+    {
+      "id": "VG-2",
+      "description": "The operator/cast exemption is not tested for customer objects in `public`.",
+      "scenarios": ["FS-3"],
+      "evidence": ["E-4"]
+    },
+    {
+      "id": "VG-3",
+      "description": "CI results are per job. It is not visible whether the encrypted-index upgrade suite, which needs credentials, actually ran or skipped itself.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-16", "E-14"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Review the exemption rules in LIFECYCLE_DEPENDENCIES_SQL (derived-search-index-restoration.ts:170-291), especially those for operators in `public` and for casts.",
+      "addresses": ["FS-3", "VG-2"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "test",
+      "description": "Add live tests for a customer operator in `public` and a customer cast implemented by an EQL function, and expect both to be refused.",
+      "addresses": ["FS-3", "VG-2"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "documentation",
+      "description": "Release notes: say that an upgrade holds exclusive locks on tables with EQL indexes for the whole rebuild, and give a manual procedure for refused objects.",
+      "addresses": ["FS-1", "FS-2"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "test",
+      "description": "Time an upgrade on PG16/17 against a table with a realistic row count (for example 1-10M rows) and record how long the locks are held. Also check behaviour with a statement_timeout set.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-5",
+      "kind": "other",
+      "description": "Confirm from CI logs that upgrade-encrypted-indexes.live.test.ts ran, not skipped, on both PG legs.",
+      "addresses": ["VG-3"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "I read derived-search-index-restoration.ts, installation-state.ts, installer/index.ts, install.ts, upgrade.ts and the CI/turbo/vitest changes closely. I skimmed verify.ts, status.ts, validate.ts and the EQL sqlx uninstall tests, and did not read the unit tests in detail.",
+      "effect": "Regressions from the status/verify/validate refactors (BC-4) were assessed only by skimming."
+    },
+    {
+      "id": "CL-2",
+      "description": "No access to CI logs, customer deployment data or managed-Postgres settings.",
+      "effect": "How bad FS-1 is depends on table sizes and timeouts I cannot see. I assume the individual live tests ran inside the passing jobs."
+    },
+    {
+      "id": "CL-3",
+      "description": "That dropping an index through CASCADE holds ACCESS EXCLUSIVE on the parent table until commit comes from general PostgreSQL knowledge. I did not confirm it by running anything.",
+      "effect": "That step of the FS-1 mechanism is inferred."
+    },
+    {
+      "id": "CL-4",
+      "description": "I ran no tests and did not use the network or GitHub.",
+      "effect": "Test results come only from the job conclusions in ci.json."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/cli/src/installer/derived-search-index-restoration.ts",
+      "rev": "head",
+      "line_start": 84,
+      "line_end": 429,
+      "claim": "LIFECYCLE_DEPENDENCIES_SQL walks pg_depend from the EQL roots. It exempts bundle objects, including any public operator or cast whose function is in an EQL schema (242-273), and classes every dependent object other than a standalone index as unsafe.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/cli/src/installer/derived-search-index-restoration.ts",
+      "rev": "head",
+      "line_start": 571,
+      "line_end": 651,
+      "claim": "rebuildIndexes recreates each index non-concurrently, restores its properties, runs ANALYZE on each table, and checks the result before returning.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/cli/src/installer/derived-search-index-restoration.ts",
+      "rev": "head",
+      "line_start": 659,
+      "line_end": 695,
+      "claim": "BEGIN, lock, SET LOCAL jit = off, inspect, bundle, rebuild, COMMIT, all in one transaction, with ROLLBACK on any error.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "test",
+      "path": "packages/cli/src/installer/__tests__/reinstall.live.test.ts",
+      "rev": "head",
+      "line_start": 249,
+      "line_end": 606,
+      "claim": "Live tests (run only when STASH_TEST_DATABASE_URL is set) cover the operator/cast exemptions, customer operators outside public, rollback after a failure following DROP SCHEMA, and refusal for a policy, view, constraint, generated column and trigger.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/cli/src/commands/db/install.ts",
+      "rev": "head",
+      "line_start": 204,
+      "line_end": 216,
+      "claim": "The install command reports EqlReinstallRefusalError as an error and exits with CliExit(1).",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/cli/src/commands/db/upgrade.ts",
+      "rev": "head",
+      "line_start": 53,
+      "line_end": 65,
+      "claim": "The upgrade command reports EqlReinstallRefusalError as 'Upgrade aborted.' and exits with CliExit(1).",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/cli/src/installer/derived-search-index-restoration.ts",
+      "rev": "head",
+      "line_start": 467,
+      "line_end": 492,
+      "claim": "The advisory lock is retried with pg_try_advisory_xact_lock for up to 300s.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "packages/cli/src/installer/installation-state.ts",
+      "rev": "head",
+      "line_start": 78,
+      "line_end": 186,
+      "claim": "assessEqlInstallation reads presence, version, ORE, surface and capabilities in a READ ONLY transaction with savepoints.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": ".github/workflows/tests.yml",
+      "rev": "head",
+      "line_start": 52,
+      "line_end": 71,
+      "claim": "The matrix pairs Node 22 with PG16 and Node 24 with PG17, using postgres-eql images.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "diff",
+      "path": "packages/cli/package.json",
+      "rev": "head",
+      "claim": "Adds devDependencies @cipherstash/eql-upgrade-baseline (npm:@cipherstash/eql@3.0.2) and @cipherstash/protect-ffi.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": "packages/cli/src/installer/index.ts",
+      "rev": "head",
+      "line_start": 194,
+      "line_end": 214,
+      "claim": "EQLInstaller.install() always sends the pinned bundle through restoreDerivedSearchIndexesAroundEqlReplacement, including with --force.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "documentation",
+      "path": ".changeset/safe-eql-reinstall.md",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 20,
+      "claim": "Minor release of `stash`. Unsupported dependent objects are refused, and reinstall is still a maintenance-window operation.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "documentation",
+      "path": "packages/cli/README.md",
+      "rev": "head",
+      "line_start": 213,
+      "line_end": 222,
+      "claim": "The README requires a maintenance window and says other sessions must not change EQL-backed indexes during an upgrade.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "test",
+      "path": "packages/cli/src/installer/__tests__/upgrade-encrypted-indexes.live.test.ts",
+      "rev": "head",
+      "line_start": 23,
+      "line_end": 103,
+      "claim": "Upgrade test from a released version using real ciphertext. It needs STASH_TEST_DATABASE_URL and the CS_CLIENT_* credentials, so it can skip itself.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "history_signal",
+      "signal": "co_change.omitted_co_changes[1]",
+      "claim": "validate.ts usually changes together with validate.test.ts, but here only validate.ts changed. Reading the diff, it is a refactor into assessDeclaredSchema with no change to the validation rules.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "ci_result",
+      "claim": "ci.json: all 31 check runs succeeded on head, including 'Run Tests (Node 22)' (PG16 leg) and 'Run Tests (Node 24)' (PG17 leg). Both run `pnpm run test` with STASH_TEST_DATABASE_URL set (tests.yml:356-359).",
+      "status": "verified"
+    }
+  ]
+}
