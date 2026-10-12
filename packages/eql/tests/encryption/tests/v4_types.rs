@@ -688,3 +688,53 @@ mod erased {
         }
     }
 }
+
+/// `fixtures/v4_queries.json`: the query operands the Rust dispatch derives
+/// for one value of each v4 type that answers a query, under the key source
+/// every test in the repository derives terms under (`FakeDataKeySource`'s
+/// index key, keyset nil). The Go SDK's hermetic test derives the same
+/// queries through generated code over the deterministic guest build, whose
+/// index key is the same, and asserts the bytes are equal: a Go field typed
+/// `encrypt_into=IntegerEq` runs this plan and no other. Regenerate with
+/// `EQL_UPDATE_FIXTURES=1`; the bytes must not change otherwise.
+#[tokio::test]
+async fn the_v4_query_fixture_is_what_the_dispatch_derives() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let query = |name: &'static str, column: &'static str, value: FfiValue| {
+        let keyset = &keyset;
+        async move {
+            let label = Label::new(["profiles", column]).unwrap();
+            let bytes = targets::query(name, keyset, &label, value)
+                .unwrap()
+                .await
+                .unwrap();
+            String::from_utf8(bytes).unwrap()
+        }
+    };
+    let fixture = serde_json::json!({
+        "_comment": "The v4 query operands eql-bindings derives for each plaintext under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit.",
+        "table": "profiles",
+        "age": { "plaintext": 42, "query": query("IntegerEq", "age", FfiValue::Int32(42)).await },
+        "balance": {
+            "plaintext": 1_234_567_890_123i64,
+            "query": query("BigintEq", "balance", FfiValue::Int64(1_234_567_890_123)).await,
+        },
+        "name": {
+            "plaintext": "alice",
+            "query": query("TextMatch", "name", FfiValue::String("alice".into())).await,
+        },
+    });
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/v4_queries.json");
+    let rendered = serde_json::to_string_pretty(&fixture).unwrap() + "\n";
+    if std::env::var_os("EQL_UPDATE_FIXTURES").is_some() {
+        std::fs::write(&path, &rendered).unwrap();
+    }
+    let committed = std::fs::read_to_string(&path)
+        .expect("fixtures/v4_queries.json is committed; EQL_UPDATE_FIXTURES=1 writes it");
+    assert_eq!(
+        committed, rendered,
+        "the committed fixture is what the dispatch derives today"
+    );
+}

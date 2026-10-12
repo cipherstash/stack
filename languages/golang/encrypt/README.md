@@ -282,7 +282,25 @@ of EQL's SQL; the `eql_v3` columns the TypeScript SDK writes hold
 cipherstash-client's terms, which these never match. Install EQL v4 into
 PostgreSQL first, with the `eql-v4-install.sql` attached to each Go release
 (`psql -f eql-v4-install.sql`); `stash eql install` installs EQL v3 only, and
-an `eql_v4_*` column needs the v4 domains. The guest builds the value: the generated code
+an `eql_v4_*` column needs the v4 domains.
+
+The EQL types the engine produces, and the Go field types each takes:
+
+| EQL type | Go field | Queries |
+|---|---|---|
+| `TextEq` | `string` | `=`, `<>` |
+| `TextMatch` | `string` | `@@` (substring match, 3-grams, case-insensitive) |
+| `Text` | `string` | none: stored and read only |
+| `IntegerEq` | `int32` | `=`, `<>` |
+| `Integer` | `int32` | none |
+| `BigintEq` | `int64` | `=`, `<>` |
+| `Boolean` | `bool` | none |
+| `Real` | `float32` | none |
+| `Double` | `float64` | none |
+
+The rest of the catalog (ordering, dates, decimals, JSON) is listed in
+`eql.Types` with the reason it is not produced yet, and `stashgen` refuses it
+with that reason. The guest builds the value: the generated code
 imports `encrypt/eql`, which embeds the build of the engine that holds the
 EQL types and registers it on import, so the program runs that build and
 stores what it returns. `Fields.Email.Query` returns the `eql.TextEqQuery`
