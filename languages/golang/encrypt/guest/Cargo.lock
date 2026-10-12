@@ -709,8 +709,10 @@ dependencies = [
  "stack-encrypt",
  "thiserror 2.0.20",
  "ts-rs",
+ "vitaminc-aead",
  "vitaminc-aead-value",
  "vitaminc-prf",
+ "vitaminc-protected",
  "zeroize",
 ]
 
