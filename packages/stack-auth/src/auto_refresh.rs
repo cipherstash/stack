@@ -1936,6 +1936,55 @@ mod expiry_crossing_regression {
         }
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn initiating_caller_returns_the_old_token_only_before_its_expiry() {
+        for (elapsed, expected) in [
+            (9, "expiring-soon"),
+            (10, "refreshed-token"),
+            (11, "refreshed-token"),
+        ] {
+            let clock = TestClock::new(1_000_000);
+            let started = Arc::new(Notify::new());
+            let gate = Arc::new(Notify::new());
+            let calls = Arc::new(AtomicUsize::new(0));
+            let strategy = Arc::new(AutoRefresh::with_token_and_clock(
+                GatedRefresher {
+                    started: Arc::clone(&started),
+                    gate: Arc::clone(&gate),
+                    calls: Arc::clone(&calls),
+                    refreshed_expires_at: clock.now() + 3600,
+                },
+                make_token("expiring-soon", clock.now() + 10),
+                clock.shared(),
+            ));
+            let caller = tokio::spawn({
+                let strategy = Arc::clone(&strategy);
+                async move { strategy.get_token().await }
+            });
+            tokio::time::timeout(std::time::Duration::from_secs(1), started.notified())
+                .await
+                .expect("the usable token must start a refresh");
+
+            // Finish the exchange one second before, exactly at, and one
+            // second after the old token's expiry. Only the first case may
+            // return the old token to the caller that initiated the refresh.
+            clock.advance(elapsed);
+            gate.notify_one();
+            let returned = tokio::time::timeout(std::time::Duration::from_secs(1), caller)
+                .await
+                .expect("the initiating caller must finish")
+                .unwrap()
+                .unwrap();
+            assert_eq!(returned.as_str(), expected, "elapsed={elapsed}");
+            assert_eq!(
+                strategy.get_token().await.unwrap().as_str(),
+                "refreshed-token",
+                "the refreshed token must be cached in every case"
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
+    }
+
     #[tokio::test]
     async fn waiters_wait_for_refresh_when_token_crosses_expiry() {
         let clock = TestClock::new(1_000_000);
@@ -2357,10 +2406,14 @@ mod expiry_crossing_regression {
     }
 }
 
-#[cfg(all(test, feature = "http", not(target_arch = "wasm32")))]
+// Keep `test` as a standalone cfg so cargo-mutants recognises these modules
+// as test harnesses and mutates the refresh engine they exercise instead.
+#[cfg(test)]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 #[path = "auto_refresh/tests/cancellation.rs"]
 mod cancellation_tests;
 
-#[cfg(all(test, feature = "http", not(target_arch = "wasm32")))]
+#[cfg(test)]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 #[path = "auto_refresh/tests/soak.rs"]
 mod cancellation_soak;
