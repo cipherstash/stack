@@ -1,0 +1,70 @@
+{
+  "case": "stack-547",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "critical",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "v3 upgrade/reinstall drops customer columns that use eql_v3 domains",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Supabase v3 filters put decryptable ciphertext and all index terms into request URLs",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Encrypted like/ilike on default-configured v3 text columns silently returns no rows",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "wasm-inline client accepts v3 schemas but emits v2-wire envelopes",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "wasm-inline Encryption() does not pass eqlVersion."
+    },
+    {
+      "id": "FS-5",
+      "title": "protect-ffi 0.27 bump changes v2 behaviour for existing users",
+      "impact": "high",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Speculative."
+    }
+  ],
+  "cost_usd": 2.4099875000000006,
+  "wall_seconds": 262.125678,
+  "case_note": "Missed KD-1."
+}

@@ -17,7 +17,7 @@
       "matches": [],
       "evidence_ok": null,
       "actionable": false,
-      "note": "Its own evidence says the alias survives, in which case nothing happens."
+      "note": "Its own evidence says the alias survives; the native call still passes strategy on main today with no later fix."
     },
     {
       "id": "FS-2",
