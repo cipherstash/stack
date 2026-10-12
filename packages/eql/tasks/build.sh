@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #MISE description="Build SQL into single release file"
 #MISE alias="b"
-#MISE sources=["src/v3/**/*.sql", "src/v3/version.template", "tasks/pin_search_path_v3.sql", "tasks/uninstall-v3.sql", "crates/eql-domains/src/**/*.rs", "crates/eql-codegen/src/**/*.rs", "crates/eql-codegen/templates/**", "Cargo.toml", "Cargo.lock", "crates/eql-codegen/Cargo.toml", "crates/eql-domains/Cargo.toml", "tasks/build/ordering.sh", "tasks/test/verify_symbol_order_v3.sh", "tasks/test/verify_installer_complete.sh", "tasks/test/symbol_order_allowlist.txt"]
-#MISE outputs=["release/cipherstash-encrypt.sql","release/cipherstash-encrypt-uninstall.sql","src/deps-ordered-v3.txt","build/render/eql_v3/deps-ordered.txt"]
+#MISE sources=["src/v3/**/*.sql", "src/v3/version.template", "tasks/pin_search_path_v3.sql", "tasks/uninstall-v3.sql", "crates/eql-domains/src/**/*.rs", "crates/eql-codegen/src/**/*.rs", "crates/eql-codegen/templates/**", "Cargo.toml", "Cargo.lock", "crates/eql-codegen/Cargo.toml", "crates/eql-domains/Cargo.toml", "tasks/build/ordering.sh", "tasks/test/verify_symbol_order_v3.sh", "tasks/test/verify_installer_complete.sh", "tasks/test/verify_no_v3_in_v4.sh", "tasks/test/symbol_order_allowlist.txt"]
+#MISE outputs=["release/cipherstash-encrypt.sql","release/cipherstash-encrypt-uninstall.sql","release/cipherstash-encrypt-v4.sql","release/cipherstash-encrypt-v4-uninstall.sql","src/deps-ordered-v3.txt","build/render/eql_v3/deps-ordered.txt","build/render/eql_v4/deps-ordered.txt"]
 #USAGE flag "--version <version>" help="Specify release version of EQL" default="DEV"
 
 #!/bin/bash
@@ -82,9 +82,9 @@ mv src/deps-ordered-v3.txt.tmp src/deps-ordered-v3.txt
 
 # The source names its schemas and payload version by placeholder
 # ({{prefix}}, {{eql_version}}; ADR-0002), so it is not installable SQL until it
-# is rendered. Render the ordered files, the pin script and the uninstaller as
-# EQL v3 into build/render/eql_v3/ (same relative paths), then run every gate
-# and assemble the installer from the rendered tree. `eql-codegen render` fails
+# is rendered. Render the ordered files, the pin script and the uninstaller once
+# per EQL version into build/render/eql_v<N>/ (same relative paths), then run
+# the gates and assemble that version's installer from the rendered tree. `eql-codegen render` fails
 # on an unknown placeholder and on a literal eql_v3/eql_v4 in the source, and
 # writes nothing unless every file renders.
 assemble() {
@@ -98,7 +98,13 @@ assemble() {
     $(cat src/deps-ordered-v3.txt) tasks/pin_search_path_v3.sql tasks/uninstall-v3.sql
   sed "s|^|$root/|" src/deps-ordered-v3.txt > "$ordered"
 
-  bash tasks/test/verify_symbol_order_v3.sh "$ordered"
+  # The symbol-order checker parses eql_v3 names. One run covers both
+  # versions: eql_v4 is the same files in the same order, every name renamed
+  # alike, so define-before-use holds for one exactly when it holds for the
+  # other.
+  if [[ "$version" == 3 ]]; then
+    bash tasks/test/verify_symbol_order_v3.sh "$ordered"
+  fi
 
   : > "$installer"
   while IFS= read -r f; do
@@ -118,14 +124,22 @@ assemble() {
 }
 
 assemble 3 release/cipherstash-encrypt.sql release/cipherstash-encrypt-uninstall.sql
+assemble 4 release/cipherstash-encrypt-v4.sql release/cipherstash-encrypt-v4-uninstall.sql
+
+# Nothing in the v4 bundle may name v3: a stray eql_v3 reference would install
+# cleanly and then compare v4 data with v3 terms. The renderer already rejects
+# literal names in the source; this checks the artefact itself.
+bash tasks/test/verify_no_v3_in_v4.sh release/cipherstash-encrypt-v4.sql release/cipherstash-encrypt-v4-uninstall.sql
 
 echo
 echo '###############################################'
 echo "# ✅Build succeeded"
 echo '###############################################'
 echo
-echo 'Installer:'
-echo '    release/cipherstash-encrypt.sql'
+echo 'Installers:'
+echo '    release/cipherstash-encrypt.sql      (eql_v3)'
+echo '    release/cipherstash-encrypt-v4.sql   (eql_v4)'
 echo
-echo 'Uninstaller:'
+echo 'Uninstallers:'
 echo '    release/cipherstash-encrypt-uninstall.sql'
+echo '    release/cipherstash-encrypt-v4-uninstall.sql'
