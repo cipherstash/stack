@@ -483,7 +483,7 @@ impl DomainType for TextEqQuery {
 #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = "")]
 #[cfg_attr(
     all(doc, feature = "stack-encrypt"),
-    doc = " Plaintext input: [`String`](String). With the `stack-encrypt` feature, implements `EncryptFrom<String>` to build equality query terms. Query operands do not decrypt."
+    doc = " Plaintext input: [`String`](String). With the `stack-encrypt` feature, implements `EncryptFrom<String>` to build match query terms. Query operands do not decrypt."
 )]
 #[cfg_attr(
     all(doc, feature = "stack-encrypt"),

@@ -441,9 +441,14 @@ fn encryption_attrs(
     // not exist without it and the link would not resolve.
     let plaintext_doc = |named: &str| {
         if query {
+            let terms = if domain.terms.contains(&Term::Bloom) {
+                "match"
+            } else {
+                "equality"
+            };
             format!(
                 " Plaintext input: {named}. With the `stack-encrypt` feature, \
-                 implements `EncryptFrom<{shown}>` to build equality query terms. Query operands \
+                 implements `EncryptFrom<{shown}>` to build {terms} query terms. Query operands \
                  do not decrypt."
             )
         } else {
