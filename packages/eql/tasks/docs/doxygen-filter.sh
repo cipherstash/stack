@@ -43,7 +43,11 @@ fi
 #
 #     Reducing each to a single `CREATE AGGREGATE name(argtype);` declaration
 #     recovers the name in both cases and leaves a clean argument list.
-awk '
+#
+# A real pipe, not `awk … < <(sed …)`: pipefail covers a pipe, so a `sed` that
+# cannot read its input fails the filter, and docs_v3_grep.sh relies on that
+# status. A process substitution's exit status is lost.
+sed -e 's/{{prefix}}/eql_v3/g' -e 's/{{eql_version}}/3/g' "$1" | awk '
   /^--![[:space:]]+@cond[[:space:]]+deprecated_compatibility[[:space:]]*$/ {
     inhidden = 1
     print ""
@@ -104,4 +108,4 @@ awk '
     gsub(/--/, "//", out)
     print out
   }
-' < <(sed -e 's/{{prefix}}/eql_v3/g' -e 's/{{eql_version}}/3/g' "$1")
+'
