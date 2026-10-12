@@ -149,7 +149,19 @@ The same input always gives the same file: fields keep their declared order, and
 `stashgen` checks each declaration with the engine, and holds no copy of the engine's rules: it runs the WASI guest the SDK embeds and asks it, one field at a time, so the error names the field.
 It asks the engine for the EQL types it holds: each name, its plaintext type, its indexes, its query form, and whether the engine produces it today.
 The command links the build of the engine that holds the EQL types (`encrypt/eql`), so it can answer for every type; a generated file imports `encrypt/eql` only when it names one.
-The engine produces `TextEq` today; `encrypt_into` with any other type is refused with the type's name.
+The engine produces these EQL types today, each from one Go field type:
+
+| `encrypt_into` | Go field |
+|---|---|
+| `TextEq`, `Text` | `string` |
+| `Integer` | `int32` |
+| `Bigint` | `int64` |
+| `Boolean` | `bool` |
+| `Real` | `float32` |
+| `Double` | `float64` |
+
+The width must match: an `int` or `int64` field is not an `Integer`, and a `float64` field is not a `Real`.
+`encrypt_into` with any other type is refused with the type's name and the reason it is not produced yet.
 Separate columns work today for four indexes: `equality`, `match`, `ore` and `ope`.
 
 A field with `encrypt_into` is stored under its table and column, which is what an EQL value records in its `i`.
