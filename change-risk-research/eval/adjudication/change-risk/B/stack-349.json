@@ -13,32 +13,32 @@
       "title": "Wizard rewrites encryption migration into DROP COLUMN and runs it, destroying existing plaintext data",
       "impact": "critical",
       "basis": "observed_defect",
-      "label": null,
+      "label": "valid",
       "matches": [],
       "evidence_ok": null,
-      "actionable": null,
-      "note": ""
+      "actionable": true,
+      "note": "Rewrite drops the original column with the UPDATE commented out; real data-loss path."
     },
     {
       "id": "FS-2",
       "title": "Changed Drizzle type string turns existing encrypted columns into ALTERs that the rewrite converts to DROP of ciphertext",
       "impact": "critical",
       "basis": "plausible_failure",
-      "label": null,
+      "label": "valid",
       "matches": [],
       "evidence_ok": null,
-      "actionable": null,
-      "note": ""
+      "actionable": true,
+      "note": "Adjacent to KD-1 (same quoted type string, drizzle-kit behaviour) but predicts a spurious ALTER and data loss, not the mis-rendered SQL KD-1 describes. Not counted as a match."
     },
     {
       "id": "FS-3",
       "title": "`db install` in Drizzle projects silently stops installing EQL and edits migration files instead",
       "impact": "medium",
       "basis": "plausible_failure",
-      "label": null,
+      "label": "valid",
       "matches": [],
       "evidence_ok": null,
-      "actionable": null,
+      "actionable": true,
       "note": ""
     },
     {
@@ -46,10 +46,10 @@
       "title": "New .env.local precedence points db commands at a different database",
       "impact": "medium",
       "basis": "plausible_failure",
-      "label": null,
+      "label": "valid",
       "matches": [],
       "evidence_ok": null,
-      "actionable": null,
+      "actionable": true,
       "note": ""
     },
     {
@@ -57,13 +57,14 @@
       "title": "Shipped skills and the stack README still instruct the removed `db setup`",
       "impact": "low",
       "basis": "observed_defect",
-      "label": null,
+      "label": "valid",
       "matches": [],
       "evidence_ok": null,
-      "actionable": null,
-      "note": ""
+      "actionable": true,
+      "note": "Shipped skill references a removed command."
     }
   ],
   "cost_usd": 1.7075736,
-  "wall_seconds": 215.890377
+  "wall_seconds": 215.890377,
+  "case_note": "KD-1 not matched; FS-2 is adjacent."
 }

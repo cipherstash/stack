@@ -1,0 +1,47 @@
+{
+  "case": "stack-728",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Encrypted-to-encrypted v3 domain change is rewritten into DROP+ADD, losing ciphertext",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Loud migrate failure on populated v3 tables becomes silent plaintext loss",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Loud failure turned into silent data loss."
+    },
+    {
+      "id": "FS-3",
+      "title": "Sweep rewrites historical, already-applied migrations in the out directory",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    }
+  ],
+  "cost_usd": 1.5333256000000004,
+  "wall_seconds": 201.132176
+}

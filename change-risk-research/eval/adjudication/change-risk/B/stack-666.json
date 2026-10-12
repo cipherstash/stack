@@ -1,0 +1,36 @@
+{
+  "case": "stack-666",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "After a stack- or adapter-only release, init and the stash-cli skill steer users and agents to downgrade @cipherstash/stack",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Skew check has no direction and steers users to downgrade."
+    },
+    {
+      "id": "FS-2",
+      "title": "An embedded version missing from npm breaks init installs and `stash wizard` for that CLI release",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    }
+  ],
+  "cost_usd": 1.3758231,
+  "wall_seconds": 185.65075
+}

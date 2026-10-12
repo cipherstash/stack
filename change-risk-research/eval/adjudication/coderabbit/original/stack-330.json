@@ -1,0 +1,51 @@
+{
+  "case": "stack-330",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Avoid logging raw subcommand input. `subcommand` is user-provided; echoing it directly can leak plaintext if sensitive data is pasted by mistake.",
+      "nitpick": false,
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "generic plaintext-in-logs claim for a subcommand name"
+    },
+    {
+      "id": "CR-2",
+      "title": "Add error handling and fix variable shadowing in `login()`. Lines 8 and 20 can reject without a catch block. If line 20 rejects, the spinner started at line 19 ",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "unhandled rejection leaves spinner running; minor"
+    },
+    {
+      "id": "CR-3",
+      "title": "Avoid `process.exit()` in helper and avoid raw error-message logging. Line 38 hard-exits from a reusable helper, which makes orchestration brittle. Line 37 logs",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "style of exit handling in a CLI helper"
+    },
+    {
+      "id": "CR-4",
+      "title": "Use one CLI invocation style consistently. Line 497 switches to `npx `@cipherstash/stack` auth login` while the rest of the doc uses `npx stash ...`.",
+      "nitpick": true,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "nitpick"
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null
+}

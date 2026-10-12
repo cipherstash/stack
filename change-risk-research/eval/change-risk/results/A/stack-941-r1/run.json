@@ -1,0 +1,158 @@
+{
+  "case": "stack-941",
+  "pr": 941,
+  "condition": "A",
+  "run": 1,
+  "model_requested": "claude-opus-5-5",
+  "exit_code": 0,
+  "started": "2026-10-12T01:23:11.333107+00:00",
+  "wall_seconds": 328.389447,
+  "isolation": {
+    "hidden_paths": [
+      "/home/claude/stack",
+      "/tmp/claude-0",
+      "/root/.claude/projects"
+    ],
+    "git_protocols": "file",
+    "mcp": "none"
+  },
+  "claude_code_version": "2.1.296",
+  "model_reported": "claude-opus-5-5",
+  "skills_loaded": [
+    "session-start-hook",
+    "change-risk",
+    "deep-research",
+    "design",
+    "slides",
+    "design-sync",
+    "dataviz",
+    "artifact-diagramming",
+    "artifact-capabilities",
+    "update-config",
+    "verify",
+    "debug",
+    "code-review",
+    "simplify",
+    "batch",
+    "fewer-permission-prompts",
+    "doctor",
+    "loop",
+    "claude-api",
+    "workflow-authoring",
+    "run",
+    "run-skill-generator",
+    "plugin-authoring",
+    "anthropic-skills:built-in-browser",
+    "anthropic-skills:chrome-browser",
+    "anthropic-skills:computer-use",
+    "anthropic-skills:deep-research",
+    "anthropic-skills:docs",
+    "anthropic-skills:docx",
+    "anthropic-skills:google-workspace",
+    "anthropic-skills:import-memory",
+    "anthropic-skills:morning",
+    "anthropic-skills:pdf",
+    "anthropic-skills:pptx",
+    "anthropic-skills:skill-creator",
+    "anthropic-skills:xlsx"
+  ],
+  "total_cost_usd": 2.4004656,
+  "duration_ms": 326952,
+  "duration_api_ms": 322229,
+  "num_turns": 39,
+  "is_error": false,
+  "subtype": "success",
+  "usage": {
+    "input_tokens": 66,
+    "cache_creation_input_tokens": 137754,
+    "cache_read_input_tokens": 3123556,
+    "output_tokens": 33665,
+    "output_tokens_details": {
+      "thinking_tokens": 13559
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 137754,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 1010,
+        "cache_read_input_tokens": 161721,
+        "cache_creation_input_tokens": 3480,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 3480
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "modelUsage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 1469,
+      "outputTokens": 23,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.00015840000000000003,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 66,
+      "outputTokens": 33665,
+      "cacheReadInputTokens": 3123556,
+      "cacheCreationInputTokens": 137754,
+      "webSearchRequests": 0,
+      "costUSD": 2.4003072000000003,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 13559,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "tool_calls": 37,
+  "tool_counts": {
+    "Skill": 1,
+    "Bash": 29,
+    "Grep": 4,
+    "Read": 2,
+    "Write": 1
+  },
+  "skill_invoked": true,
+  "audit": {
+    "flags": [
+      {
+        "tool": "Bash",
+        "why": "network-looking",
+        "input": "{\"command\": \"cd /srv/cr/stack-941-A-r1/repo && grep -n \\\"PERMISSIVE_NEEDS = {\\\\|'publish-ffi': { result\\\\|gate: { result\\\" scripts/__tests__/workflow-dispatch-job-conditions.test.mjs; grep -n \\\"PRE_GA_LATEST = \\\\|const tag\\\" packages/eql/packages/eql/scripts/npm-publish.mjs; git grep -n DOCS_WEBHOOK"
+      },
+      {
+        "tool": "Grep",
+        "why": "network-looking",
+        "input": "{\"pattern\": \"PRE_GA_LATEST = |gh workflow run release-plz|refs/heads/\\\\$\\\\{branch\\\\}|DOCS_WEBHOOK_URL|COMMENT ON SCHEMA eql_v3 IS `\", \"path\": \"/srv/cr/stack-941-A-r1/repo\", \"output_mode\": \"content\", \"glob\": \"{.github/workflows/*.yml,packages/eql/packages/eql/scripts/*.mjs}\"}"
+      }
+    ],
+    "clean": false
+  },
+  "validation": {
+    "valid": true,
+    "errors": [],
+    "warnings": []
+  }
+}

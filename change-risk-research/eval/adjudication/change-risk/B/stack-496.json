@@ -13,21 +13,21 @@
       "title": "protect-ffi 0.24 bump in the main Node entry ships without EQL lockstep or payload-compatibility evidence",
       "impact": "high",
       "basis": "plausible_failure",
-      "label": null,
+      "label": "valid",
       "matches": [],
       "evidence_ok": null,
-      "actionable": null,
-      "note": ""
+      "actionable": true,
+      "note": "Dependency bump without the lockstep EQL move the repo comments require; outcome unknown."
     },
     {
       "id": "FS-2",
       "title": "Hand-set 0.18.0 plus a pending minor changeset publishes an unexpected version and drops the CHANGELOG entry",
       "impact": "medium",
       "basis": "plausible_failure",
-      "label": null,
+      "label": "valid",
       "matches": [],
       "evidence_ok": null,
-      "actionable": null,
+      "actionable": true,
       "note": ""
     },
     {
@@ -35,21 +35,21 @@
       "title": "WASM client reuses the Node API names with a different contract: it throws instead of returning a Result, and encrypts null",
       "impact": "medium",
       "basis": "plausible_failure",
-      "label": null,
+      "label": "valid",
       "matches": [],
       "evidence_ok": null,
-      "actionable": null,
-      "note": ""
+      "actionable": true,
+      "note": "Contract differs from the Node entry under the same names."
     },
     {
       "id": "FS-4",
       "title": "Consumers using moduleResolution 'bundler' get protect-ffi's WASM typings behind stack's public types",
       "impact": "medium",
       "basis": "plausible_failure",
-      "label": null,
+      "label": "valid",
       "matches": [],
       "evidence_ok": null,
-      "actionable": null,
+      "actionable": true,
       "note": ""
     },
     {
@@ -57,13 +57,14 @@
       "title": "CLI and wizard login depend on a new auth 0.38 native-binding layout",
       "impact": "medium",
       "basis": "speculative",
-      "label": null,
+      "label": "valid",
       "matches": [],
       "evidence_ok": null,
-      "actionable": null,
-      "note": ""
+      "actionable": true,
+      "note": "Low."
     }
   ],
   "cost_usd": 2.2611126999999995,
-  "wall_seconds": 320.366164
+  "wall_seconds": 320.366164,
+  "case_note": "Missed KD-1 (duplicated classes across separate declaration builds)."
 }

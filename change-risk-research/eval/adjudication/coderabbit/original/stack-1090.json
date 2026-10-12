@@ -1,0 +1,51 @@
+{
+  "case": "stack-1090",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": true,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Do not let failed JWT engines consume successful-user cache slots. `engine_for` inserts each new engine before `get_token` performs the federation. A failed exc",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "failed engines occupy cache slots"
+    },
+    {
+      "id": "CR-2",
+      "title": "Remove the pending engine when `get_token` is cancelled. `engine_for` inserts a new engine into `engines.pending` at Line 225. Only `settle` removes it.",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "pending engine leaks on cancellation"
+    },
+    {
+      "id": "CR-3",
+      "title": "Bump `@cipherstash/auth` to a major version. The previous contract called `getJwt` for federation and re-federation, while reusing the cached CTS token between ",
+      "nitpick": false,
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "getJwt contract change under a minor bump"
+    },
+    {
+      "id": "CR-4",
+      "title": "Qualify the one-exchange guarantee. Line 8 says each JWT is exchanged once while its CTS token is valid. The LRU can evict that JWT before expiry, and `cacheCap",
+      "nitpick": false,
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": null,
+      "note": "changeset wording"
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null
+}

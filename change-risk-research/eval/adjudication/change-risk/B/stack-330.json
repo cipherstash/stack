@@ -1,0 +1,58 @@
+{
+  "case": "stack-330",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Docs and init promise credential-free local dev, but secrets CLI/API and LockContext still require CS_* env vars",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Native @cipherstash/auth loaded eagerly breaks every stash command on platforms without a prebuilt binary",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Mandatory interactive device-code auth makes `stash init` unusable non-interactively or offline",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "Exact-pin downgrades of @byteslice/result and evlog change library runtime for all consumers",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Speculative; says no difference was found."
+    }
+  ],
+  "cost_usd": 1.4470523000000002,
+  "wall_seconds": 209.951526
+}
