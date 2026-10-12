@@ -582,28 +582,13 @@ mod tests {
 
     #[test]
     fn a_producible_type_without_a_query_twin_answers_no_query() {
-        // No such type in the catalog today (`Text` is not producible), so
-        // the rule is pinned on a synthetic row; `refuse_query` on the live
-        // table falls through to `refuse`.
-        let storage_only = Target {
-            name: "Text",
-            family: "text",
-            suffix: "",
-            plaintext: Some("string"),
-            sql_domain: "public.eql_v4_text",
-            indexes: &[],
-            query: None,
-            query_sql_domain: None,
-            producible: true,
-            reason: None,
-        };
-        let leaked: &'static Target = Box::leak(Box::new(storage_only));
+        // `Text` is producible and storage-only, so it has no query twin.
         assert!(matches!(
-            no_query(Some(leaked)),
+            no_query(target("Text")),
             Some(TargetError::NoQuery { name: "Text" })
         ));
         assert_eq!(
-            no_query(Some(leaked)).unwrap().to_string(),
+            refuse_query("Text").to_string(),
             "Text answers no query: it is a storage-only type"
         );
         assert!(
@@ -611,11 +596,11 @@ mod tests {
             "TextEq answers a query"
         );
         assert!(
-            no_query(target("Text")).is_none(),
+            no_query(target("TextOrdOre")).is_none(),
             "an unproducible type is refused as that"
         );
         assert!(matches!(
-            refuse_query("Text"),
+            refuse_query("TextOrdOre"),
             TargetError::Unproducible { .. }
         ));
         assert!(matches!(refuse_query("Nope"), TargetError::Unknown { .. }));
@@ -626,7 +611,7 @@ mod tests {
         assert!(matches!(refuse("Nope"), TargetError::Unknown { name } if name == "Nope"));
         assert!(matches!(
             refuse("TextOrdOre"),
-            TargetError::Unproducible { name: "TextOrdOre", reason } if reason.contains("CLLW")
+            TargetError::Unproducible { name: "TextOrdOre", reason } if reason.contains("vitaminc-ore")
         ));
         assert!(producible("TextEq").is_ok());
     }
