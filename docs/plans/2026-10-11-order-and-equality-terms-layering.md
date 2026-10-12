@@ -11,7 +11,8 @@
 under "Open decision".
 **Date:** 2026-10-11
 **Amends:** ADR-0002 (`docs/adr/0002-one-value-model-three-encodings-and-eql-v4-by-producer.md`).
-Where the two disagree, this document wins.
+The decisions below were folded into the ADR on 2026-10-12, and the ADR is
+now the reference for them. This plan keeps the steps.
 **Issues:** cipherstash/vitaminc#374 (`vitaminc-ore`), #1063 (index crates)
 
 ## Why
@@ -83,11 +84,20 @@ Starting on cipherstash/vitaminc#374 under ADR-0002 turned up four problems.
   text folding (removing combining marks, case folding, with the Unicode
   version pinned) and prefix truncation.
 - Each transform is named in its term's domain label, for example
-  `…/timestamp/day/v1`, so terms built with different transforms can never
-  be compared.
+  `…/timestamp/day/v1`, so terms built with different transforms are
+  domain-separated: a probe built with one matches nothing built with the
+  other. A stored term does not record its label, so they are not made
+  incomparable. Keeping a query on the column's transforms is the index
+  spec's job.
 - Equality and order can be **independent** (an exact timestamp for
   equality, the day for order) or **locked** (the same transform value
   passed to both). Stack's index spec (#1063) carries the choice per column.
+- A **lossy order transform needs an equality term beside it.** EQL's
+  numeric, date and timestamp `_ord` domains store no `hm` and answer `=`
+  with the order term, so a day-resolution order term there would make `=`
+  match every row from that day. A non-injective order transform is allowed
+  only on a domain that stores an equality term and answers `=` through it,
+  as `text_ord` does. Those domains are new, v4-only EQL targets.
 - The semantic baseline lives in each term crate: `vitaminc-prf` and
   `vitaminc-ore` each apply it. A conformance test checks that values equal
   under `Value` semantics produce equal terms in both. There is no shared
@@ -258,6 +268,8 @@ flowchart TB
 - `orderable-bytes` doesn't appear. It stays frozen for cipherstash-client.
 
 ## Changes to ADR-0002
+
+These have been made in the ADR itself.
 
 | ADR-0002 says | Now |
 |---|---|
