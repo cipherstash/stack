@@ -44,6 +44,7 @@ use ts_rs::TS;
 pub mod from_v2;
 pub mod sql;
 pub mod v3;
+pub mod v4;
 
 #[cfg(feature = "stack-encrypt")]
 pub mod encryption;

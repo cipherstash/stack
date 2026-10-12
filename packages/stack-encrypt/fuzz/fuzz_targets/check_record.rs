@@ -50,10 +50,10 @@ impl TargetResolver for Fixed {
             "text",
             "Eq",
             Some(ValueKind::String),
-            "public.eql_v3_text_eq",
+            "public.eql_v4_text_eq",
             vec!["eq".to_string()],
             Some("TextEqQuery".to_string()),
-            Some("eql_v3.query_text_eq".to_string()),
+            Some("eql_v4.query_text_eq".to_string()),
             true,
             None,
         )]

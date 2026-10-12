@@ -101,9 +101,11 @@ evolution plan.
 
 ## Rust text equality with Stack Encrypt
 
-The optional `stack-encrypt` feature enables `EncryptFrom<String>` for `TextEq`
-and `TextEqQuery`, and `DecryptInto<String>` for `TextEq`. Other domains do not
-yet expose these conversions. The derives are emitted by `eql-codegen`.
+The optional `stack-encrypt` feature enables `EncryptFrom<String>` for
+`v4::text::TextEq` and `v4::text::TextEqQuery`, and `DecryptInto<String>` for
+`v4::text::TextEq`. Stack Encrypt writes EQL v4 only, so no `v3` type
+implements these traits. Other v4 domains do not yet expose these conversions.
+The derives are emitted by `eql-codegen`.
 
 The generated API docs include a complete, executable example in the
 `eql_bindings::encryption` module, from cipher setup through decryption. Its
@@ -117,7 +119,7 @@ cargo test -p eql-encryption-tests --test text_eq_example
 With an initialized cipher, the essential calls are:
 
 ```rust,ignore
-use eql_bindings::{Identifier, v3::text::{TextEq, TextEqQuery}};
+use eql_bindings::{Identifier, v4::text::{TextEq, TextEqQuery}};
 
 let column = Identifier::for_column("users", "email")?;
 let keyset = cipher.default_keyset();
@@ -144,8 +146,8 @@ This is a **new producer profile**, independent of existing cipherstash-client
 ciphertext and terms. `c` is `stack-encrypt:1:` followed by padded standard base64 of Stack
 Encrypt's native `SealedValue` bytes; `hm` is the native 32-byte equality term
 encoded as hex. Serde handles the final EQL JSON envelope only. SQL consumes
-these payloads through the existing `public.eql_v3_text_eq` and
-`eql_v3.query_text_eq` domains and their equality extractor index. Writers and
+these payloads through the `public.eql_v4_text_eq` and
+`eql_v4.query_text_eq` domains and their equality extractor index. Writers and
 query producers for these values must use this same profile.
 
 The `Identifier` stored in `i` is Stack Encrypt's `Describe`: its ZeroKMS
@@ -165,12 +167,13 @@ assumed. Outcomes against today's sources:
 | Rust (`stack-encrypt` profile) | JS / FFI | **Not supported.** The JS reader does not know the `stack-encrypt:1:` prefix and the two profiles' equality terms never match. |
 
 Rows 2 and 3 need compatible encryption, decryption and index derivation on
-both sides before they can change; that is upstream work, not a flag. This
-profile is an interim step on EQL v3: nothing in a `v: 3` payload marks which
-producer made an equality term, so a new-profile probe against an old-producer
-column returns zero rows with no error. The separation will come from the EQL
-version itself (v4), not from a marker inside v3. Until then, one profile per
-column, and record which.
+both sides before they can change; that is upstream work, not a flag. The
+profiles are separated by EQL version (ADR-0002): Stack Encrypt writes the
+`eql_v4` domains and only the [`v4`](src/v4/mod.rs) types derive its traits,
+while cipherstash-client writes `eql_v3`. A payload of the wrong version fails
+the domain check on insert. A plain `=` between a v3 column and a v4 query
+term still returns zero rows with no error, so keep each column to one
+version.
 
 ### EQL types as plan field targets
 
@@ -200,8 +203,8 @@ let probe: Vec<u8> = targets::query("TextEq", &keyset, &column, FfiValue::String
 let opened: FfiValue = targets::decrypt("TextEq", &cipher, &column, &stored)?.await?;
 ```
 
-The table and the dispatch are generated into `src/v3/targets.rs` beside
-`inventory.rs` (`mise run types:generate`), gated to the `stack-encrypt`
+The table and the dispatch are generated into `src/v4/targets.rs` beside
+the v4 family modules (`mise run types:generate`), gated to the `stack-encrypt`
 feature, and drift-gated by the same parity tests. The same generator writes
 the Go package `languages/golang/encrypt/eql` from the same rows
 (`eql-codegen go-eql`, also under `types:generate` / `types:check`). The

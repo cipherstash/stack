@@ -16,13 +16,13 @@ func TestParseTargetsReadsEachEntry(t *testing.T) {
 	entry := func(fields ...vcvalue.Field) vcvalue.Object { return vcvalue.Object(fields) }
 	textEq := entry(
 		vcvalue.Field{Key: "name", Value: "TextEq"}, vcvalue.Field{Key: "family", Value: "Text"}, vcvalue.Field{Key: "suffix", Value: "Eq"},
-		vcvalue.Field{Key: "plaintext", Value: "string"}, vcvalue.Field{Key: "sql_domain", Value: "eql_v3_text_eq"},
+		vcvalue.Field{Key: "plaintext", Value: "string"}, vcvalue.Field{Key: "sql_domain", Value: "eql_v4_text_eq"},
 		vcvalue.Field{Key: "indexes", Value: []any{"eq"}}, vcvalue.Field{Key: "query", Value: "TextEqQuery"},
-		vcvalue.Field{Key: "query_sql_domain", Value: "eql_v3.query_text_eq"}, vcvalue.Field{Key: "producible", Value: true}, vcvalue.Field{Key: "reason", Value: nil},
+		vcvalue.Field{Key: "query_sql_domain", Value: "eql_v4.query_text_eq"}, vcvalue.Field{Key: "producible", Value: true}, vcvalue.Field{Key: "reason", Value: nil},
 	)
 	notYet := entry(
 		vcvalue.Field{Key: "name", Value: "JSON"}, vcvalue.Field{Key: "family", Value: "JSON"}, vcvalue.Field{Key: "suffix", Value: ""},
-		vcvalue.Field{Key: "plaintext", Value: nil}, vcvalue.Field{Key: "sql_domain", Value: "eql_v3_json"},
+		vcvalue.Field{Key: "plaintext", Value: nil}, vcvalue.Field{Key: "sql_domain", Value: "eql_v4_json"},
 		vcvalue.Field{Key: "indexes", Value: []any{"json"}}, vcvalue.Field{Key: "query", Value: nil}, vcvalue.Field{Key: "query_sql_domain", Value: nil},
 		vcvalue.Field{Key: "producible", Value: false}, vcvalue.Field{Key: "reason", Value: "the JSON index is a new operation in the engine"},
 	)
@@ -31,8 +31,8 @@ func TestParseTargetsReadsEachEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []record.Target{
-		{Name: "TextEq", Family: "Text", Suffix: "Eq", Plaintext: record.String, SQLDomain: "eql_v3_text_eq", Indexes: []record.Output{record.Equality}, Query: "TextEqQuery", QuerySQLDomain: "eql_v3.query_text_eq", Producible: true},
-		{Name: "JSON", Family: "JSON", Plaintext: record.Untyped, SQLDomain: "eql_v3_json", Indexes: []record.Output{"json"}, Reason: "the JSON index is a new operation in the engine"},
+		{Name: "TextEq", Family: "Text", Suffix: "Eq", Plaintext: record.String, SQLDomain: "eql_v4_text_eq", Indexes: []record.Output{record.Equality}, Query: "TextEqQuery", QuerySQLDomain: "eql_v4.query_text_eq", Producible: true},
+		{Name: "JSON", Family: "JSON", Plaintext: record.Untyped, SQLDomain: "eql_v4_json", Indexes: []record.Output{"json"}, Reason: "the JSON index is a new operation in the engine"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("parseTargets =\n%+v\nwant\n%+v", got, want)
