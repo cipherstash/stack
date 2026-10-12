@@ -18,9 +18,9 @@
 //
 // The types and the [Types] table are generated from the EQL catalog by
 // eql-codegen (`mise run types:generate` in packages/eql); eql_gen.go is
-// committed and drift-gated. The engine produces [TextEq] today; every
-// other type is listed with the reason it cannot be produced yet, and
-// stashgen refuses it.
+// committed and drift-gated. [Types] says which types the engine produces
+// today; every other type is listed with the reason it cannot be produced
+// yet, and stashgen refuses it.
 package eql
 
 import (

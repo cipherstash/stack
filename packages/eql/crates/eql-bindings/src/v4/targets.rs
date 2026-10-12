@@ -37,8 +37,10 @@ pub const TARGETS: &[Target] = &[
         indexes: &["eq"],
         query: Some("IntegerEqQuery"),
         query_sql_domain: Some("eql_v4.query_integer_eq"),
-        producible: true,
-        reason: None,
+        producible: false,
+        reason: Some(
+            "the integer equality term moves to vitaminc 0.6's shared integer-orderable/v1 PRF domain; producing it before that release would leave stored terms unmatchable after the upgrade",
+        ),
     },
     Target {
         name: "IntegerOrdOre",
@@ -173,8 +175,10 @@ pub const TARGETS: &[Target] = &[
         indexes: &["eq"],
         query: Some("BigintEqQuery"),
         query_sql_domain: Some("eql_v4.query_bigint_eq"),
-        producible: true,
-        reason: None,
+        producible: false,
+        reason: Some(
+            "the integer equality term moves to vitaminc 0.6's shared integer-orderable/v1 PRF domain; producing it before that release would leave stored terms unmatchable after the upgrade",
+        ),
     },
     Target {
         name: "BigintOrdOre",
@@ -724,17 +728,8 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
         "Integer" => {
             run_target::<super::integer::Integer, Int32, K>("Integer", keyset, column, plaintext)
         }
-        "IntegerEq" => run_target::<super::integer::IntegerEq, Int32, K>(
-            "IntegerEq",
-            keyset,
-            column,
-            plaintext,
-        ),
         "Bigint" => {
             run_target::<super::bigint::Bigint, Int64, K>("Bigint", keyset, column, plaintext)
-        }
-        "BigintEq" => {
-            run_target::<super::bigint::BigintEq, Int64, K>("BigintEq", keyset, column, plaintext)
         }
         "Text" => run_target::<super::text::Text, String, K>("Text", keyset, column, plaintext),
         "TextEq" => {
@@ -762,14 +757,8 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
         "Integer" => {
             open_target::<super::integer::Integer, Int32, K>("Integer", opener, column, stored)
         }
-        "IntegerEq" => {
-            open_target::<super::integer::IntegerEq, Int32, K>("IntegerEq", opener, column, stored)
-        }
         "Bigint" => {
             open_target::<super::bigint::Bigint, Int64, K>("Bigint", opener, column, stored)
-        }
-        "BigintEq" => {
-            open_target::<super::bigint::BigintEq, Int64, K>("BigintEq", opener, column, stored)
         }
         "Text" => open_target::<super::text::Text, String, K>("Text", opener, column, stored),
         "TextEq" => open_target::<super::text::TextEq, String, K>("TextEq", opener, column, stored),
@@ -793,15 +782,6 @@ pub(crate) fn query_named<'a, K: 'static>(
     plaintext: FfiValue,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     match name {
-        "IntegerEq" => run_target::<super::integer::IntegerEqQuery, Int32, K>(
-            "IntegerEq",
-            keyset,
-            column,
-            plaintext,
-        ),
-        "BigintEq" => run_target::<super::bigint::BigintEqQuery, Int64, K>(
-            "BigintEq", keyset, column, plaintext,
-        ),
         "TextEq" => {
             run_target::<super::text::TextEqQuery, String, K>("TextEq", keyset, column, plaintext)
         }

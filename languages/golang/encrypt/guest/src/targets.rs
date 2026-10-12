@@ -179,7 +179,11 @@ mod tests {
             .filter(|t| t.producible)
             .map(|t| t.name.as_str())
             .collect();
-        assert_eq!(producible, ["TextEq"], "the engine produces TextEq only");
+        assert_eq!(
+            producible,
+            ["Integer", "Bigint", "Text", "TextEq", "Boolean", "Real", "Double"],
+            "the engine's producible types, in catalog order"
+        );
         assert!(matches!(
             resolver().resolve("TextOrdOre"),
             Err(TargetError::Unproducible { .. })

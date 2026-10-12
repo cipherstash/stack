@@ -596,11 +596,11 @@ mod tests {
             "TextEq answers a query"
         );
         assert!(
-            no_query(target("TextOrdOre")).is_none(),
-            "an unproducible type is refused as that"
+            no_query(target("Json")).is_none(),
+            "an unproducible type without a query twin is refused as unproducible"
         );
         assert!(matches!(
-            refuse_query("TextOrdOre"),
+            refuse_query("Json"),
             TargetError::Unproducible { .. }
         ));
         assert!(matches!(refuse_query("Nope"), TargetError::Unknown { .. }));

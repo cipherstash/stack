@@ -1,24 +1,28 @@
 //! Scalar plaintexts for the v4 number and boolean types.
 //!
 //! A Stack Encrypt target encrypts a plaintext through Vitamin C's
-//! `Encrypt`, `Decrypt` and `PrfValue` traits, and vitaminc 0.5 implements
+//! `Encrypt` and `Decrypt` traits, and vitaminc 0.5 implements
 //! `Encrypt` for `String` but not for `i32`, `i64`, `bool`, `f32` or `f64`.
-//! These newtypes fill that gap for the EQL v4 types: [`Int32`] for
-//! `Integer` and `IntegerEq`, [`Int64`] for `Bigint` and `BigintEq`, [`Bool`]
-//! for `Boolean`, and [`Float32`] / [`Float64`] for `Real` and `Double`.
+//! These newtypes fill that gap for the storage-only EQL v4 types: [`Int32`]
+//! for `Integer`, [`Int64`] for `Bigint`, [`Bool`] for `Boolean`, and
+//! [`Float32`] / [`Float64`] for `Real` and `Double`.
 //!
 //! Each seals as vitaminc's tagged leaf, `[tag] ++ payload` from the frozen
 //! table in `vitaminc_aead_value::tags`, which is exactly what the value enum
 //! (`FfiValue`) seals for the same value. So a value written through these
 //! types and one written by the Go SDK as a plain `int32` field open each
-//! other, and an equality term derived from [`Int32`] is the one derived from
-//! the `i32` inside it.
+//! other.
+//!
+//! None of them derives an equality term. `IntegerEq` and `BigintEq` are held
+//! back until vitaminc 0.6, whose integer equality term uses one PRF domain
+//! for every width; a term derived here under vitaminc 0.5's per-width
+//! domains would stop matching after that upgrade.
 //!
 //! ```rust,ignore
 //! use eql_bindings::encryption::plaintext::Int32;
-//! use eql_bindings::v4::integer::IntegerEq;
+//! use eql_bindings::v4::integer::Integer;
 //!
-//! let stored: IntegerEq = keyset.encrypt_as(&Int32(42), column).await?;
+//! let stored: Integer = keyset.encrypt_as(&Int32(42), column).await?;
 //! let opened: Int32 = cipher.decrypt_as(stored, expected).await?;
 //! ```
 //!
@@ -31,7 +35,6 @@ use vitaminc_aead_value::tagged::{
     TaggedBoolFalse, TaggedBoolTrue, TaggedFloat32, TaggedFloat64, TaggedInt32, TaggedInt64,
 };
 use vitaminc_aead_value::tags;
-use vitaminc_prf::{IntoPrfContext, Prf, PrfValue, PrfVisitor};
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroize;
 
@@ -103,11 +106,11 @@ macro_rules! fixed_scalar {
 }
 
 fixed_scalar!(
-    /// The plaintext of `Integer` and `IntegerEq`: a 32-bit signed integer.
+    /// The plaintext of `Integer`: a 32-bit signed integer.
     Int32(i32), TaggedInt32, tags::INT32, 4, |b| i32::from_le_bytes(b)
 );
 fixed_scalar!(
-    /// The plaintext of `Bigint` and `BigintEq`: a 64-bit signed integer.
+    /// The plaintext of `Bigint`: a 64-bit signed integer.
     Int64(i64), TaggedInt64, tags::INT64, 8, |b| i64::from_le_bytes(b)
 );
 fixed_scalar!(
@@ -119,29 +122,6 @@ fixed_scalar!(
     /// The plaintext of `Double`: a 64-bit float, sealed by its bit pattern.
     Float64(f64), TaggedFloat64, tags::FLOAT64, 8, |b| f64::from_bits(u64::from_le_bytes(b))
 );
-
-/// The equality term of an integer is the term of the integer inside it, so
-/// `IntegerEq` and a plain `int32` field with an equality index agree.
-macro_rules! prf_by_inner {
-    ($($name:ident),+) => {$(
-        impl PrfValue for $name {
-            fn prf_visit_with_context<'a, P, V, C>(
-                self,
-                prf: &P,
-                context: C,
-                visitor: V,
-            ) -> P::Ok<V::Value>
-            where
-                P: Prf,
-                V: PrfVisitor<P::Block, P::Passthrough>,
-                C: IntoPrfContext<'a>,
-            {
-                self.0.prf_visit_with_context(prf, context, visitor)
-            }
-        }
-    )+};
-}
-prf_by_inner!(Int32, Int64);
 
 /// The plaintext of `Boolean`. A boolean is the tag itself: no payload.
 #[derive(Clone, Copy, PartialEq, Zeroize)]
