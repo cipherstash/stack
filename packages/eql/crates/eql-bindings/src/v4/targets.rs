@@ -465,10 +465,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["match"],
         query: Some("TextMatchQuery"),
         query_sql_domain: Some("eql_v4.query_text_match"),
-        producible: false,
-        reason: Some(
-            "the engine derives match terms, but no EQL type is built from them yet",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "TextOrdOre",
@@ -735,6 +733,9 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
         "TextEq" => {
             run_target::<super::text::TextEq, String, K>("TextEq", keyset, column, plaintext)
         }
+        "TextMatch" => {
+            run_target::<super::text::TextMatch, String, K>("TextMatch", keyset, column, plaintext)
+        }
         "Boolean" => {
             run_target::<super::boolean::Boolean, Bool, K>("Boolean", keyset, column, plaintext)
         }
@@ -762,6 +763,9 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
         }
         "Text" => open_target::<super::text::Text, String, K>("Text", opener, column, stored),
         "TextEq" => open_target::<super::text::TextEq, String, K>("TextEq", opener, column, stored),
+        "TextMatch" => {
+            open_target::<super::text::TextMatch, String, K>("TextMatch", opener, column, stored)
+        }
         "Boolean" => {
             open_target::<super::boolean::Boolean, Bool, K>("Boolean", opener, column, stored)
         }
@@ -785,6 +789,12 @@ pub(crate) fn query_named<'a, K: 'static>(
         "TextEq" => {
             run_target::<super::text::TextEqQuery, String, K>("TextEq", keyset, column, plaintext)
         }
+        "TextMatch" => run_target::<super::text::TextMatchQuery, String, K>(
+            "TextMatch",
+            keyset,
+            column,
+            plaintext,
+        ),
         _ => Err(refuse_query(name)),
     }
 }

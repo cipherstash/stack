@@ -390,7 +390,7 @@ mod tests {
             target_gap(family, family.domain_by_name(name).expect("domain"))
         };
         let text = eql_domains::TEXT;
-        for producible in ["", "eq"] {
+        for producible in ["", "eq", "match"] {
             assert!(gap(&text, producible).is_none(), "text {producible:?}");
         }
         for ordered in ["ord", "ord_ore", "ord_ope", "search", "search_ore"] {
@@ -399,7 +399,7 @@ mod tests {
                 "{ordered}"
             );
         }
-        assert!(gap(&text, "match").unwrap().contains("match terms"));
+        assert!(gap(&text, "match").is_none(), "TextMatch is producible");
         let family = |name: &str| {
             eql_domains::CATALOG
                 .iter()

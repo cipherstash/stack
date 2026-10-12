@@ -141,10 +141,28 @@ impl DomainType for TextEq {
     doc,
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
+#[cfg_attr(all(doc, feature = "stack-encrypt"), doc = "")]
+#[cfg_attr(
+    all(doc, feature = "stack-encrypt"),
+    doc = " Plaintext input and decrypted output: [`String`](String). With the `stack-encrypt` feature, implements `EncryptFrom<String>` and `DecryptInto<String>`."
+)]
+#[cfg_attr(
+    all(doc, feature = "stack-encrypt"),
+    doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`."
+)]
+#[cfg_attr(
+    all(doc, feature = "stack-encrypt"),
+    doc = " See the [complete encryption example](crate::encryption#example)."
+)]
+#[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::EncryptFrom))]
+#[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::DecryptInto))]
+#[cfg_attr(feature = "stack-encrypt", stash(plaintext = String))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextMatch {
+    #[cfg_attr(feature = "stack-encrypt", stash(default))]
     pub v: SchemaVersion,
+    #[cfg_attr(feature = "stack-encrypt", stash(context_field))]
     pub i: Identifier,
     pub c: Ciphertext,
     pub bf: BloomFilter,
@@ -462,10 +480,27 @@ impl DomainType for TextEqQuery {
     doc,
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
+#[cfg_attr(all(doc, feature = "stack-encrypt"), doc = "")]
+#[cfg_attr(
+    all(doc, feature = "stack-encrypt"),
+    doc = " Plaintext input: [`String`](String). With the `stack-encrypt` feature, implements `EncryptFrom<String>` to build equality query terms. Query operands do not decrypt."
+)]
+#[cfg_attr(
+    all(doc, feature = "stack-encrypt"),
+    doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`."
+)]
+#[cfg_attr(
+    all(doc, feature = "stack-encrypt"),
+    doc = " See the [complete encryption example](crate::encryption#example)."
+)]
+#[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::EncryptFrom))]
+#[cfg_attr(feature = "stack-encrypt", stash(plaintext = String))]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextMatchQuery {
+    #[cfg_attr(feature = "stack-encrypt", stash(default))]
     pub v: SchemaVersion,
+    #[cfg_attr(feature = "stack-encrypt", stash(context_field))]
     pub i: Identifier,
     pub bf: BloomFilter,
 }
