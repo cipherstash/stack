@@ -83,6 +83,13 @@ fn capability_label(domain_name: &str) -> &'static str {
     }
 }
 
+/// The schema-qualified `eql_v3` domain a payload struct binds, e.g.
+/// `public.eql_v3_integer_eq`. The bindings describe v3 payloads only, so they
+/// name it literally, where the SQL surface writes the `{{prefix}}` placeholder.
+fn v3_domain_name(full: &str) -> String {
+    format!("public.{}{full}", eql_domains::PUBLIC_TYPNAME_PREFIX)
+}
+
 /// Render the catalog-derived struct doc lines for a domain: a summary line
 /// (`` `public.<name>` — <label>. ``) and a detail line listing the supported
 /// SQL operators and the required payload keys. Every part is derived from data
@@ -91,13 +98,6 @@ fn capability_label(domain_name: &str) -> &'static str {
 /// `Term::term_json_keys`) — so it stays deterministic and cannot drift from the
 /// payload shape. No free-form prose and no field docs: per-field semantics live
 /// on the shared term newtypes (`terms.rs`) and per-family caveats in `mod.rs`.
-/// The schema-qualified `eql_v3` domain a payload struct binds, e.g.
-/// `public.eql_v3_integer_eq`. The bindings describe v3 payloads only, so they
-/// name it literally, where the SQL surface writes the `{{prefix}}` placeholder.
-fn v3_domain_name(full: &str) -> String {
-    format!("public.{}{full}", eql_domains::PUBLIC_TYPNAME_PREFIX)
-}
-
 fn struct_doc_lines(full: &str, domain: &Domain) -> [String; 3] {
     // Leading space matches the `///` doc-comment convention (`#[doc = " …"]`):
     // rustfmt renders it as `/// …` and ts-rs as ` * …`. Without it the emitted

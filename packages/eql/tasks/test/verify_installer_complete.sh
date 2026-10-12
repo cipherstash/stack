@@ -76,7 +76,11 @@ fail=0
 echo "==> Non-vacuity gate: the order names every src/v3 SQL file"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-find "$ROOT/src/v3" -type f -name '*.sql' ! -name '*_test.sql' | LC_ALL=C sort > "$work/disk"
+# The disk side reads the SOURCE tree, not the rendered one: build.sh renders
+# exactly the files the order names, so the rendered tree always agrees with the
+# order and a comparison against it could never fail. Map the source paths into
+# the rendered namespace the order uses.
+find src/v3 -type f -name '*.sql' ! -name '*_test.sql' | sed "s|^|$ROOT/|" | LC_ALL=C sort > "$work/disk"
 grep -v '^[[:space:]]*$' "$ORDERED" | LC_ALL=C sort > "$work/order" || true
 n_disk=$(count_lines "$work/disk")
 

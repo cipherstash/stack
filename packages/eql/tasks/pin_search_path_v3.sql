@@ -1,7 +1,7 @@
 --! @file pin_search_path_v3.sql
 --! @brief Post-install: pin search_path on every {{prefix}}.* function.
 --!
---! Appended verbatim by `tasks/build.sh` to the end of the v3-only release
+--! Appended verbatim by `tasks/build.sh` to the end of the v{{eql_version}}-only release
 --! artifact, AFTER all src/v3/**/*.sql files have been concatenated. It lives
 --! outside src/ so it stays out of the dependency graph.
 --!
