@@ -70,11 +70,14 @@ use crate::Token;
 /// always validates freshness via [`Token::is_usable`] / [`Token::is_expired`]
 /// before returning a loaded token, so implementations don't need to.
 ///
-/// On native targets the trait carries `Send + Sync` bounds so the store can
-/// be shared across `tokio::spawn` background work. On wasm32 the bounds are
-/// dropped — edge runtimes are single-threaded.
+/// On native targets the store must be `Send + Sync + 'static`: refresh tasks
+/// retain it until persistence finishes, even if their caller is cancelled.
+/// Own captured state (for example with `Arc` and `move` closures) instead of
+/// borrowing a request handler's stack. Save callbacks run in the refresh
+/// task, so they must not depend on the initiating task's local context.
+/// On wasm32 these bounds are dropped and refreshes run inline.
 #[cfg(not(target_arch = "wasm32"))]
-pub trait TokenStore: Send + Sync {
+pub trait TokenStore: Send + Sync + 'static {
     /// Load the most recently saved token, or `None` if none has been stored
     /// (or the load failed). Errors are swallowed — the calling state machine
     /// falls back to fresh authentication when this returns `None`.
@@ -224,9 +227,9 @@ impl<L, S> TokenStoreFn<L, S> {
 #[cfg(not(target_arch = "wasm32"))]
 impl<L, LF, S, SF> TokenStore for TokenStoreFn<L, S>
 where
-    L: Fn() -> LF + Send + Sync,
+    L: Fn() -> LF + Send + Sync + 'static,
     LF: Future<Output = Option<String>> + Send,
-    S: Fn(String) -> SF + Send + Sync,
+    S: Fn(String) -> SF + Send + Sync + 'static,
     SF: Future<Output = ()> + Send,
 {
     async fn load(&self) -> Option<Token> {
