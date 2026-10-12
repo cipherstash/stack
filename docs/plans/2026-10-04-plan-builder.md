@@ -662,7 +662,7 @@ In the `Text` family, the three `Ord` suffixes carry equality too.
 Each type has a query type, with `Query` after its name: `TextEqQuery`.
 The value of `encrypt_into` is the Go type name.
 
-An EQL value from the engine is an EQL v4 value: its version field is `4`, and Postgres stores it in an `eql_v4_*` domain.
+Once EQL v4 lands, an EQL value from the engine is an EQL v4 value: its version field is `4`, and Postgres stores it in an `eql_v4_*` domain.
 The ciphertext inside it is a Stack Encrypt ciphertext, which starts with `stack-encrypt:1:`.
 EQL v4 is the v3 SQL, emitted from the same source under a second name, so that a column written by Stack Encrypt and one written by cipherstash-client are different Postgres types ([ADR-0002](../adr/0002-one-value-model-three-encodings-and-eql-v4-by-producer.md)).
 This replaces this plan's first definition, under which "EQL v4" named a Stack Encrypt payload in the v3 envelope and an `eql_v3` domain; Postgres could not tell the two producers apart, and a query from one against a column written by the other matched nothing.
