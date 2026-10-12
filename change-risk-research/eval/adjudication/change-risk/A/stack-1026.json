@@ -1,0 +1,47 @@
+{
+  "case": "stack-1026",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "A failed `changeset publish` leaves neither publishedPackages nor the changesets tag, so eql-assets throws on every push instead of repairing",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "The npm listing wait times out or does not match what changesets reads, which blocks or still fails the JS release",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Repair builds publish SQL and docs built from an older commit with today's toolchain under an already-released version",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    }
+  ],
+  "cost_usd": 1.9054083000000002,
+  "wall_seconds": 240.770249
+}

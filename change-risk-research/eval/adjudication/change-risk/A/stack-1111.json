@@ -1,0 +1,36 @@
+{
+  "case": "stack-1111",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Pinned mise-action version ignores cache_key_prefix, so the guard passes while the shared key remains",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Speculative."
+    },
+    {
+      "id": "FS-2",
+      "title": "Cold mise caches after merge slow every job and may hit job timeouts",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": "Low."
+    }
+  ],
+  "cost_usd": 0.9354803,
+  "wall_seconds": 133.369983
+}

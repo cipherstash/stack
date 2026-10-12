@@ -1,0 +1,424 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "c82c59d2069747d3c30c56b915940a5ac8ae225a",
+  "head_sha": "415ab2d43bddd7eb78517676788408041d6d1c73",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "A"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the PR title in CASE.md and the three commit messages in base..head were read."
+    },
+    "ci_results": {
+      "status": "unavailable",
+      "note": "No CI results supplied; collect-evidence reports ci.available=false."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md and packages/protect-ffi/README.md at head, plus workflow and dependabot comments."
+    },
+    "dependency_graph": {
+      "status": "partial",
+      "note": "Cargo.lock at base and head only. Upstream crate sources (stack-auth, cipherstash-client 0.42.0 vs 0.42.2, jsonwebtoken 10 feature selection) unavailable offline."
+    },
+    "codeowners": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0: all three files owned by @cipherstash/developers"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Dependency-only change to the protect-ffi native/WASM binding: the four exact-pinned CipherStash crates (cipherstash-client, cts-common, stack-auth, stack-profile) move from =0.42.0 to =0.42.2, which pulls zerokms-protocol 0.12.26 -> 0.12.28 and, via stack-auth, jsonwebtoken 9.3.1 -> 10.4.0 (CVE-2026-25537 fix). No protect-ffi Rust or TypeScript source changes. The material risk is a major-version swap of the JWT library underneath the authentication path every encrypt/decrypt depends on: jsonwebtoken 10 switches its crypto backend from ring to aws-lc-rs and tightens claim validation, and stack-auth is compiled into both the native and the wasm32 builds. Upstream sources could not be read offline, so whether token handling is behaviour-identical is unknown. CI exists that would catch both failure modes (tests-rust.yml clippy on host+wasm32; integration-protect-ffi.yml live ZeroKMS round-trips for native and WASM, both path-triggered by Cargo.lock), but no results were supplied. The changeset is parked as .md.deferred per the documented publishing-cutover process, so this fix does not reach npm consumers until the cutover PR renames it. Minor: dependabot.yml still documents the crates as =0.42.0 'in step with' the npm @cipherstash/auth catalog, which stays at 0.42.0.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "dependency",
+      "description": "Exact pins for cipherstash-client, cts-common, stack-auth (all targets) and stack-profile (non-wasm) move from =0.42.0 to =0.42.2; cipherstash-config, cipherstash-core and zerokms-protocol (0.12.26 -> 0.12.28) move with them in the lockfile. What changed inside these upstream patch releases beyond the jsonwebtoken bump is not visible here.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-14"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "security_boundary",
+      "description": "stack-auth's JWT library moves across a major version, jsonwebtoken 9.3.1 -> 10.4.0. Token claim validation (nbf/exp type handling) changes by design to fix CVE-2026-25537, and the crypto backend changes from ring to aws-lc-rs (new deps signature, zeroize, getrandom; ring dropped from jsonwebtoken's dependency list).",
+      "certainty": "observed",
+      "evidence": ["E-2", "E-3", "E-4"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "build_or_release",
+      "description": "The wasm32-unknown-unknown build now compiles jsonwebtoken 10 because stack-auth is an unconditional dependency. Whether stack-auth selects a wasm-compatible jsonwebtoken backend on wasm32 cannot be determined from the lockfile, which records the feature-unified set across targets.",
+      "certainty": "inferred",
+      "evidence": ["E-5", "E-6", "E-2"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "build_or_release",
+      "description": "A patch changeset for @cipherstash/protect-ffi is added as .changeset/protect-ffi-jsonwebtoken-cve.md.deferred, which Changesets ignores, so no version bump or publish happens from this change. This follows the documented publishing-cutover process.",
+      "certainty": "observed",
+      "evidence": ["E-11", "E-12"]
+    }
+  ],
+  "impact": "high",
+  "verification_confidence": "medium",
+  "release_readiness": "changes_or_verification_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "packages/protect-ffi Cargo workspace (Cargo.toml, Cargo.lock)",
+      "kind": "package",
+      "relationship": "changed",
+      "how": "Pins and lockfile changed.",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "AC-2",
+      "name": "@cipherstash/protect-ffi native binding (index.node, six @cipherstash/protect-ffi-<platform> packages)",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "The protect-ffi cdylib links stack-auth, so every per-platform binary built from this lock includes jsonwebtoken 10 in its authentication path.",
+      "evidence": ["E-1", "E-3"]
+    },
+    {
+      "id": "AC-3",
+      "name": "@cipherstash/protect-ffi WASM build (dist/wasm, ./wasm-inline) and @cipherstash/stack/wasm-inline",
+      "kind": "published_artifact",
+      "relationship": "confirmed",
+      "how": "stack-auth is compiled for wasm32 (AutoStrategy access-key path in client_options.rs), so jsonwebtoken 10 and its backend must build and work on wasm32-unknown-unknown; stack's wasm-inline entry consumes this build.",
+      "evidence": ["E-5", "E-6", "E-8"]
+    },
+    {
+      "id": "AC-4",
+      "name": "@cipherstash/stack and other JS consumers of protect-ffi",
+      "kind": "package",
+      "relationship": "likely",
+      "how": "AGENTS.md describes protect-ffi as the Rust core stack encrypts and decrypts through; an auth regression in the binding surfaces as failures in every stack encryption operation. No call site was read.",
+      "evidence": ["E-13"]
+    },
+    {
+      "id": "AC-5",
+      "name": "CI: tests-rust.yml and integration-protect-ffi.yml",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "Both are path-triggered by packages/protect-ffi/Cargo.lock and are the checks that would catch a wasm32 build break or a live auth failure.",
+      "evidence": ["E-7", "E-8"]
+    },
+    {
+      "id": "AC-6",
+      "name": ".github/dependabot.yml lockstep guidance and the @cipherstash/auth npm catalog",
+      "kind": "documentation",
+      "relationship": "confirmed",
+      "how": "The ignore-list comment states the crates sit at =0.42.0 matching the catalog's 0.42.0; after this change the crates are 0.42.2 while the catalog stays 0.42.0.",
+      "evidence": ["E-9", "E-10"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "jsonwebtoken 10 inside stack-auth rejects or mishandles service-issued tokens, breaking auth for every encrypt/decrypt",
+      "trigger": "stack-auth 0.42.2 decodes or validates a CTS/ZeroKMS access token whose claims or algorithm were accepted by jsonwebtoken 9.3.1 but are handled differently by 10.4.0 (stricter claim-type validation, changed decode/validation defaults, or a crypto-provider selection that differs at runtime).",
+      "affected_components": ["AC-2", "AC-3", "AC-4"],
+      "mechanism": "stack-auth depends on jsonwebtoken (Cargo.lock head 3384-3408), which jumps a major version with a new crypto backend (aws-lc-rs instead of ring) and the CVE-2026-25537 validation fix (Cargo.lock head 1908-1923 vs base 1908-1920). protect-ffi itself has no source change, so any behavioural difference in token handling flows straight into the auth strategy every client builds (client_options.rs build_strategy).",
+      "consequence": "Published native and WASM bindings fail to obtain or refresh credentials, so every encryption and decryption call returns an auth failure for all users of the new binding. Loud, not silent, but publishing is irreversible and needs a new release to fix.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-2", "E-3", "E-6", "E-15"],
+      "existing_verification": [
+        {
+          "description": "integration-protect-ffi.yml runs the live encrypt/decrypt/lock-context suite against real ZeroKMS for native and WASM on PRs touching Cargo.lock; this exercises token acquisition end to end.",
+          "status": "exists_not_run",
+          "evidence": ["E-8"]
+        }
+      ],
+      "missing_verification": [
+        "Result of integration-protect-ffi.yml on this PR (requires CipherStash secrets; would not run on a fork PR).",
+        "A token-refresh / expiry path test: the live suite likely completes within one token lifetime, so exp/nbf handling after refresh is probably not exercised.",
+        "Upstream stack-auth 0.42.0..0.42.2 changelog or diff confirming no behavioural change beyond the dependency bump."
+      ],
+      "mitigation": "Require a green credentialed integration-protect-ffi run (native and WASM) before merging; read the stack-auth 0.42.2 release notes; publish through the deferred changeset only after a smoke test of a long-running client across a token refresh.",
+      "domain_tags": ["authorization", "dependency", "key_management"]
+    },
+    {
+      "id": "FS-2",
+      "title": "jsonwebtoken 10's aws-lc-rs backend breaks the wasm32 build or panics at first token use on wasm",
+      "trigger": "The wasm32-unknown-unknown build (wasm-pack / clippy) resolves jsonwebtoken 10 with the aws_lc_rs backend, or with no backend enabled on that target.",
+      "affected_components": ["AC-3", "AC-5"],
+      "mechanism": "jsonwebtoken 9 used ring, which builds for wasm32; 10.4.0 now lists aws-lc-rs (Cargo.lock head 1908-1923). stack-auth is an unconditional dependency compiled for wasm32 (Cargo.toml head 20-26, 48-56; client_options.rs 128-135). aws-lc-rs was already in the tree at base via rustls/quinn (base Cargo.lock 2973-2978), but those are network-stack crates that may not be compiled for wasm32, so the backend is new to the wasm graph. If no usable backend is enabled on wasm, jsonwebtoken 10 compiles but fails at runtime when it first needs a crypto provider.",
+      "consequence": "Either the WASM build fails (loud; blocks the wasm-inline entry and release build), or the shipped WASM binding compiles but cannot authenticate at runtime on edge runtimes.",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "evidence": ["E-2", "E-4", "E-5", "E-6"],
+      "existing_verification": [
+        {
+          "description": "tests-rust.yml runs clippy against wasm32-unknown-unknown on PRs touching Cargo.lock (catches a compile failure only).",
+          "status": "exists_not_run",
+          "evidence": ["E-7"]
+        },
+        {
+          "description": "integration-protect-ffi.yml builds dist/wasm with wasm-pack and runs the WASM round-trip against live ZeroKMS (would catch a runtime backend panic).",
+          "status": "exists_not_run",
+          "evidence": ["E-8"]
+        }
+      ],
+      "missing_verification": [
+        "CI results for the wasm32 clippy job and the WASM round-trip test on this PR.",
+        "Confirmation of which jsonwebtoken features stack-auth 0.42.2 enables on wasm32 (e.g. `cargo tree -e features --target wasm32-unknown-unknown -i jsonwebtoken`)."
+      ],
+      "mitigation": "Run `cargo tree --target wasm32-unknown-unknown -e features -i jsonwebtoken` and `mise run lint:rust` locally or confirm CI; confirm the WASM round-trip test passed before publishing.",
+      "domain_tags": ["build_release", "dependency"]
+    },
+    {
+      "id": "FS-3",
+      "title": "Rust crates move to 0.42.2 while the documented-lockstep npm @cipherstash/auth catalog stays at 0.42.0",
+      "trigger": "A maintainer follows dependabot.yml guidance, or a later bump assumes crates and catalog share a version.",
+      "affected_components": ["AC-6"],
+      "mechanism": "dependabot.yml (head 127-135) says the four crates 'all sit at =0.42.0, matching the catalog's 0.42.0' and should be bumped 'in step with the npm catalog'; this change bumps only the crates and leaves both the comment and pnpm-workspace.yaml (line 24, @cipherstash/auth 0.42.0) unchanged.",
+      "consequence": "Stale guidance and a version skew between the JS auth package and the Rust auth crate. No runtime coupling between the two binaries was found, so the effect is mainly misleading maintenance guidance; any CVE exposure in @cipherstash/auth's own jsonwebtoken is outside this change.",
+      "impact": "low",
+      "basis": "observed_defect",
+      "evidence": ["E-9", "E-10"],
+      "existing_verification": [],
+      "missing_verification": [
+        "Check whether @cipherstash/auth 0.42.0 bundles the vulnerable jsonwebtoken and needs the matching 0.42.2 catalog bump."
+      ],
+      "mitigation": "Update the dependabot.yml comment to =0.42.2, and either bump the @cipherstash/auth catalog entries together or record why the two release trains diverge.",
+      "domain_tags": ["dependency", "configuration"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No CI results supplied. The checks that target this change (tests-rust.yml host+wasm32 clippy and cargo test; integration-protect-ffi.yml live native and WASM round-trips) exist and are path-triggered by Cargo.lock, but their outcome on this head is unknown. The integration suite needs CipherStash secrets.",
+      "scenarios": ["FS-1", "FS-2"],
+      "evidence": ["E-7", "E-8", "E-15"]
+    },
+    {
+      "id": "VG-2",
+      "description": "No visible test exercises token expiry/refresh, the area the jsonwebtoken claim-validation change touches.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-8"]
+    },
+    {
+      "id": "VG-3",
+      "description": "Upstream crate diffs (stack-auth, cipherstash-client, zerokms-protocol) and jsonwebtoken feature selection per target were not inspectable offline.",
+      "scenarios": ["FS-1", "FS-2"],
+      "evidence": ["E-3", "E-14"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "test",
+      "description": "Confirm green runs of tests-rust.yml (including the wasm32 clippy arm) and a credentialed integration-protect-ffi.yml run (native + WASM round-trip) on this head before merge.",
+      "addresses": ["FS-1", "FS-2", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "compatibility_check",
+      "description": "Run `cargo tree -e features -i jsonwebtoken` for the host and for wasm32-unknown-unknown to confirm which backend is enabled per target; read the stack-auth 0.42.2 release notes for behavioural changes.",
+      "addresses": ["FS-2", "VG-3"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "staged_rollout",
+      "description": "Because the changeset is deferred, publish happens at the cutover. Before that publish, smoke-test a long-lived client across a token refresh on one native platform and on the WASM entry.",
+      "addresses": ["FS-1", "VG-2"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "documentation",
+      "description": "Update the dependabot.yml crate-pin comment to 0.42.2 and decide whether the @cipherstash/auth catalog moves with it.",
+      "addresses": ["FS-3"]
+    },
+    {
+      "id": "RC-5",
+      "kind": "review_focus",
+      "description": "Track the deferred changeset so the CVE fix actually ships at the publishing cutover; until then published @cipherstash/protect-ffi binaries keep jsonwebtoken 9.3.1.",
+      "addresses": ["FS-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "Upstream crate sources and changelogs (stack-auth, cipherstash-client, cts-common, stack-profile 0.42.0 -> 0.42.2; zerokms-protocol 0.12.26 -> 0.12.28; jsonwebtoken 10) were not available offline.",
+      "effect": "The behaviour of the upgraded auth path, and any non-jsonwebtoken change in these patch releases, is unknown; FS-1 and FS-2 stay plausible_failure rather than confirmed or ruled out."
+    },
+    {
+      "id": "CL-2",
+      "description": "No CI results and no build or test run by the assessor (cargo would need the registry cache outside the working directory or network).",
+      "effect": "All verification is exists_not_run; verification confidence is capped at medium."
+    },
+    {
+      "id": "CL-3",
+      "description": "No PR description; intent was taken from the PR title, the deferred changeset text and the commit messages.",
+      "effect": "Any testing the author reports doing is not reflected."
+    },
+    {
+      "id": "CL-4",
+      "description": "Cargo.lock records the feature-unified dependency set across all targets, so it cannot show which jsonwebtoken backend is enabled for wasm32 specifically.",
+      "effect": "FS-2's trigger cannot be confirmed or excluded from the inputs."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": "packages/protect-ffi/crates/protect-ffi/Cargo.toml",
+      "rev": "head",
+      "line_start": 23,
+      "line_end": 26,
+      "claim": "cipherstash-client, cts-common and stack-auth are exact-pinned to =0.42.2 (were =0.42.0); stack-profile likewise in the non-wasm target section.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "diff",
+      "path": "packages/protect-ffi/Cargo.lock",
+      "rev": "head",
+      "line_start": 1908,
+      "line_end": 1923,
+      "claim": "jsonwebtoken is now 10.4.0 depending on aws-lc-rs, signature, getrandom and zeroize, with ring no longer listed.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/protect-ffi/Cargo.lock",
+      "rev": "head",
+      "line_start": 3384,
+      "line_end": 3408,
+      "claim": "stack-auth 0.42.2 depends on jsonwebtoken (and reqwest, zerokms-protocol, stack-profile).",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/protect-ffi/Cargo.lock",
+      "rev": "base",
+      "line_start": 1908,
+      "line_end": 1920,
+      "claim": "At base jsonwebtoken 9.3.1 used ring as its crypto backend.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/protect-ffi/crates/protect-ffi/Cargo.toml",
+      "rev": "head",
+      "line_start": 20,
+      "line_end": 56,
+      "claim": "stack-auth is in the unconditional [dependencies] table, so it is compiled for wasm32 as well as native; wasm32 has its own target dependency section.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/protect-ffi/crates/protect-ffi/src/client_options.rs",
+      "rev": "head",
+      "line_start": 128,
+      "line_end": 135,
+      "claim": "build_strategy uses stack-auth's AutoStrategy on wasm too (access-key-only there), confirming stack-auth runs in the WASM binding's auth path.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": ".github/workflows/tests-rust.yml",
+      "rev": "head",
+      "line_start": 16,
+      "line_end": 114,
+      "claim": "Path-triggered by packages/protect-ffi/Cargo.lock; runs cargo test, rustfmt and clippy on host and wasm32.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": ".github/workflows/integration-protect-ffi.yml",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 80,
+      "claim": "Live encrypt/decrypt/lock-context/WASM round-trip suite against real ZeroKMS, path-triggered on PRs by Cargo.lock; needs CipherStash credentials.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": ".github/dependabot.yml",
+      "rev": "head",
+      "line_start": 127,
+      "line_end": 135,
+      "claim": "Comment states the four crates sit at =0.42.0 matching the @cipherstash/auth catalog and must be bumped in step with it; not updated by this change.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "pnpm-workspace.yaml",
+      "rev": "head",
+      "line_start": 24,
+      "line_end": 24,
+      "claim": "@cipherstash/auth catalog entry remains 0.42.0.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "diff",
+      "path": ".changeset/protect-ffi-jsonwebtoken-cve.md.deferred",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 5,
+      "claim": "Patch changeset for @cipherstash/protect-ffi describing the CVE-2026-25537 fix, parked with a .deferred extension.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "documentation",
+      "path": "packages/protect-ffi/README.md",
+      "rev": "head",
+      "line_start": 382,
+      "line_end": 393,
+      "claim": "During the publishing cutover protect-ffi changesets are parked as .md.deferred, invisible to changeset version/publish, and renamed back by the cutover PR.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "documentation",
+      "path": "AGENTS.md",
+      "rev": "head",
+      "line_start": 85,
+      "line_end": 85,
+      "claim": "protect-ffi is the Rust core that packages/stack encrypts and decrypts through, shipped as six per-platform packages.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "diff",
+      "path": "packages/protect-ffi/Cargo.lock",
+      "rev": "head",
+      "line_start": 4986,
+      "line_end": 4987,
+      "claim": "zerokms-protocol moves 0.12.26 -> 0.12.28 as part of the same resolve.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "history_signal",
+      "signal": "ci.available",
+      "claim": "collect-evidence reports no CI results were supplied; nothing shows the checks ran or passed.",
+      "status": "verified"
+    }
+  ]
+}

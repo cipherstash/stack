@@ -2,44 +2,59 @@
   "split": "holdout",
   "cases": [
     "stack-1002",
+    "stack-1006",
+    "stack-1026",
+    "stack-1072",
     "stack-1090",
+    "stack-1111",
     "stack-314",
+    "stack-330",
     "stack-349",
+    "stack-371",
     "stack-496",
     "stack-502",
+    "stack-503",
     "stack-547",
     "stack-562",
     "stack-568",
+    "stack-656",
     "stack-666",
     "stack-676",
+    "stack-728",
     "stack-823",
+    "stack-840",
     "stack-860",
+    "stack-905",
     "stack-941",
+    "stack-961",
     "stack-964",
-    "stack-996"
+    "stack-981",
+    "stack-982",
+    "stack-996",
+    "stack-998"
   ],
   "evaluators": {
     "change-risk/C": {
-      "cases": 16,
-      "findings": 54,
-      "findings_per_case": 3.38,
+      "cases": 31,
+      "findings": 84,
+      "findings_per_case": 2.71,
       "labels": {
-        "valid": 42,
+        "valid": 63,
         "match": 5,
-        "unsupported": 5,
-        "trivial": 2
+        "unsupported": 10,
+        "trivial": 6
       },
       "scenario_precision_all": {
-        "k": 47,
-        "n": 54,
-        "value": 0.87,
-        "ci95": [0.756, 0.936]
+        "k": 68,
+        "n": 84,
+        "value": 0.81,
+        "ci95": [0.713, 0.879]
       },
       "scenario_precision_material": {
-        "k": 47,
-        "n": 52,
-        "value": 0.904,
-        "ci95": [0.794, 0.958]
+        "k": 68,
+        "n": 78,
+        "value": 0.872,
+        "ci95": [0.78, 0.929]
       },
       "known_defect_recall": {
         "k": 4,
@@ -54,49 +69,49 @@
         "ci95": [0.215, 0.785]
       },
       "high_impact_attention": {
-        "k": 6,
-        "n": 7,
-        "value": 0.857,
-        "ci95": [0.487, 0.974]
+        "k": 8,
+        "n": 10,
+        "value": 0.8,
+        "ci95": [0.49, 0.943]
       },
-      "false_positive_burden_per_case": 0.31,
+      "false_positive_burden_per_case": 0.32,
       "low_impact_overflag": {
-        "k": 0,
-        "n": 1,
-        "value": 0.0,
-        "ci95": [0.0, 0.793]
+        "k": 1,
+        "n": 9,
+        "value": 0.111,
+        "ci95": [0.02, 0.435]
       },
       "low_impact_attention": {
-        "k": 0,
-        "n": 1,
-        "value": 0.0,
-        "ci95": [0.0, 0.793]
+        "k": 1,
+        "n": 9,
+        "value": 0.111,
+        "ci95": [0.02, 0.435]
       },
       "attention_recall": {
-        "k": 14,
-        "n": 15,
-        "value": 0.933,
-        "ci95": [0.702, 0.988]
+        "k": 21,
+        "n": 22,
+        "value": 0.955,
+        "ci95": [0.782, 0.992]
       },
       "attention_rate": {
-        "k": 14,
-        "n": 16,
-        "value": 0.875,
-        "ci95": [0.64, 0.965]
+        "k": 22,
+        "n": 31,
+        "value": 0.71,
+        "ci95": [0.534, 0.839]
       },
       "impact_exact_agreement": {
-        "k": 10,
-        "n": 16,
-        "value": 0.625,
-        "ci95": [0.386, 0.815]
+        "k": 20,
+        "n": 31,
+        "value": 0.645,
+        "ci95": [0.469, 0.789]
       },
       "impact_within_one": {
-        "k": 16,
-        "n": 16,
-        "value": 1.0,
-        "ci95": [0.806, 1.0]
+        "k": 30,
+        "n": 31,
+        "value": 0.968,
+        "ci95": [0.838, 0.994]
       },
-      "impact_weighted_kappa": 0.702,
+      "impact_weighted_kappa": 0.716,
       "evidence_quality": {
         "k": 1,
         "n": 1,
@@ -104,42 +119,42 @@
         "ci95": [0.207, 1.0]
       },
       "actionability": {
-        "k": 45,
-        "n": 47,
-        "value": 0.957,
-        "ci95": [0.858, 0.988]
+        "k": 65,
+        "n": 68,
+        "value": 0.956,
+        "ci95": [0.878, 0.985]
       },
       "cost_usd": {
-        "mean": 1.81,
-        "total": 28.98,
-        "n": 16
+        "mean": 1.51,
+        "total": 46.96,
+        "n": 31
       },
       "wall_seconds": {
-        "mean": 225.8,
-        "n": 16
+        "mean": 194.9,
+        "n": 31
       }
     },
     "change-risk/B": {
-      "cases": 16,
-      "findings": 54,
-      "findings_per_case": 3.38,
+      "cases": 31,
+      "findings": 87,
+      "findings_per_case": 2.81,
       "labels": {
-        "valid": 45,
-        "trivial": 3,
-        "unsupported": 3,
+        "valid": 68,
+        "trivial": 8,
+        "unsupported": 8,
         "match": 3
       },
       "scenario_precision_all": {
-        "k": 48,
-        "n": 54,
-        "value": 0.889,
-        "ci95": [0.778, 0.948]
+        "k": 71,
+        "n": 87,
+        "value": 0.816,
+        "ci95": [0.722, 0.884]
       },
       "scenario_precision_material": {
-        "k": 48,
-        "n": 51,
-        "value": 0.941,
-        "ci95": [0.841, 0.98]
+        "k": 71,
+        "n": 79,
+        "value": 0.899,
+        "ci95": [0.813, 0.948]
       },
       "known_defect_recall": {
         "k": 3,
@@ -154,49 +169,49 @@
         "ci95": [0.137, 0.694]
       },
       "high_impact_attention": {
-        "k": 7,
-        "n": 7,
-        "value": 1.0,
-        "ci95": [0.646, 1.0]
+        "k": 9,
+        "n": 10,
+        "value": 0.9,
+        "ci95": [0.596, 0.982]
       },
-      "false_positive_burden_per_case": 0.19,
+      "false_positive_burden_per_case": 0.26,
       "low_impact_overflag": {
-        "k": 0,
-        "n": 1,
-        "value": 0.0,
-        "ci95": [0.0, 0.793]
+        "k": 1,
+        "n": 9,
+        "value": 0.111,
+        "ci95": [0.02, 0.435]
       },
       "low_impact_attention": {
-        "k": 0,
-        "n": 1,
-        "value": 0.0,
-        "ci95": [0.0, 0.793]
+        "k": 1,
+        "n": 9,
+        "value": 0.111,
+        "ci95": [0.02, 0.435]
       },
       "attention_recall": {
-        "k": 15,
-        "n": 15,
-        "value": 1.0,
-        "ci95": [0.796, 1.0]
+        "k": 21,
+        "n": 22,
+        "value": 0.955,
+        "ci95": [0.782, 0.992]
       },
       "attention_rate": {
-        "k": 15,
-        "n": 16,
-        "value": 0.938,
-        "ci95": [0.717, 0.989]
+        "k": 22,
+        "n": 31,
+        "value": 0.71,
+        "ci95": [0.534, 0.839]
       },
       "impact_exact_agreement": {
-        "k": 12,
-        "n": 16,
-        "value": 0.75,
-        "ci95": [0.505, 0.898]
+        "k": 23,
+        "n": 31,
+        "value": 0.742,
+        "ci95": [0.568, 0.863]
       },
       "impact_within_one": {
-        "k": 16,
-        "n": 16,
-        "value": 1.0,
-        "ci95": [0.806, 1.0]
+        "k": 30,
+        "n": 31,
+        "value": 0.968,
+        "ci95": [0.838, 0.994]
       },
-      "impact_weighted_kappa": 0.782,
+      "impact_weighted_kappa": 0.78,
       "evidence_quality": {
         "k": 2,
         "n": 2,
@@ -204,42 +219,42 @@
         "ci95": [0.342, 1.0]
       },
       "actionability": {
-        "k": 46,
-        "n": 48,
+        "k": 68,
+        "n": 71,
         "value": 0.958,
-        "ci95": [0.86, 0.988]
+        "ci95": [0.883, 0.986]
       },
       "cost_usd": {
-        "mean": 1.71,
-        "total": 27.38,
-        "n": 16
+        "mean": 1.48,
+        "total": 46.01,
+        "n": 31
       },
       "wall_seconds": {
-        "mean": 219.9,
-        "n": 16
+        "mean": 189.3,
+        "n": 31
       }
     },
     "change-risk/A": {
-      "cases": 16,
-      "findings": 55,
-      "findings_per_case": 3.44,
+      "cases": 31,
+      "findings": 86,
+      "findings_per_case": 2.77,
       "labels": {
         "match": 4,
-        "valid": 43,
-        "trivial": 3,
-        "unsupported": 5
+        "valid": 65,
+        "trivial": 7,
+        "unsupported": 10
       },
       "scenario_precision_all": {
-        "k": 47,
-        "n": 55,
-        "value": 0.855,
-        "ci95": [0.738, 0.924]
+        "k": 69,
+        "n": 86,
+        "value": 0.802,
+        "ci95": [0.706, 0.873]
       },
       "scenario_precision_material": {
-        "k": 47,
-        "n": 52,
-        "value": 0.904,
-        "ci95": [0.794, 0.958]
+        "k": 69,
+        "n": 79,
+        "value": 0.873,
+        "ci95": [0.782, 0.93]
       },
       "known_defect_recall": {
         "k": 4,
@@ -254,49 +269,49 @@
         "ci95": [0.215, 0.785]
       },
       "high_impact_attention": {
-        "k": 6,
-        "n": 7,
-        "value": 0.857,
-        "ci95": [0.487, 0.974]
+        "k": 9,
+        "n": 10,
+        "value": 0.9,
+        "ci95": [0.596, 0.982]
       },
-      "false_positive_burden_per_case": 0.31,
+      "false_positive_burden_per_case": 0.32,
       "low_impact_overflag": {
-        "k": 0,
-        "n": 1,
-        "value": 0.0,
-        "ci95": [0.0, 0.793]
+        "k": 1,
+        "n": 9,
+        "value": 0.111,
+        "ci95": [0.02, 0.435]
       },
       "low_impact_attention": {
-        "k": 0,
-        "n": 1,
-        "value": 0.0,
-        "ci95": [0.0, 0.793]
+        "k": 1,
+        "n": 9,
+        "value": 0.111,
+        "ci95": [0.02, 0.435]
       },
       "attention_recall": {
-        "k": 15,
-        "n": 15,
-        "value": 1.0,
-        "ci95": [0.796, 1.0]
+        "k": 21,
+        "n": 22,
+        "value": 0.955,
+        "ci95": [0.782, 0.992]
       },
       "attention_rate": {
-        "k": 15,
-        "n": 16,
-        "value": 0.938,
-        "ci95": [0.717, 0.989]
+        "k": 22,
+        "n": 31,
+        "value": 0.71,
+        "ci95": [0.534, 0.839]
       },
       "impact_exact_agreement": {
-        "k": 9,
-        "n": 16,
-        "value": 0.562,
-        "ci95": [0.332, 0.769]
+        "k": 21,
+        "n": 31,
+        "value": 0.677,
+        "ci95": [0.501, 0.814]
       },
       "impact_within_one": {
-        "k": 16,
-        "n": 16,
-        "value": 1.0,
-        "ci95": [0.806, 1.0]
+        "k": 29,
+        "n": 31,
+        "value": 0.935,
+        "ci95": [0.793, 0.982]
       },
-      "impact_weighted_kappa": 0.659,
+      "impact_weighted_kappa": 0.718,
       "evidence_quality": {
         "k": 1,
         "n": 1,
@@ -304,43 +319,43 @@
         "ci95": [0.207, 1.0]
       },
       "actionability": {
-        "k": 46,
-        "n": 47,
-        "value": 0.979,
-        "ci95": [0.889, 0.996]
+        "k": 67,
+        "n": 69,
+        "value": 0.971,
+        "ci95": [0.9, 0.992]
       },
       "cost_usd": {
-        "mean": 1.73,
-        "total": 27.76,
-        "n": 16
+        "mean": 1.5,
+        "total": 46.51,
+        "n": 31
       },
       "wall_seconds": {
-        "mean": 220.7,
-        "n": 16
+        "mean": 197.1,
+        "n": 31
       }
     },
     "coderabbit/original": {
-      "cases": 13,
-      "findings": 105,
-      "findings_per_case": 8.08,
+      "cases": 19,
+      "findings": 119,
+      "findings_per_case": 6.26,
       "labels": {
-        "valid": 39,
-        "trivial": 59,
-        "unsupported": 3,
+        "valid": 40,
+        "trivial": 71,
+        "unsupported": 4,
         "incorrect": 2,
         "match": 2
       },
       "scenario_precision_all": {
-        "k": 41,
-        "n": 105,
-        "value": 0.39,
-        "ci95": [0.303, 0.486]
+        "k": 42,
+        "n": 119,
+        "value": 0.353,
+        "ci95": [0.273, 0.442]
       },
       "scenario_precision_material": {
-        "k": 41,
-        "n": 46,
-        "value": 0.891,
-        "ci95": [0.77, 0.953]
+        "k": 42,
+        "n": 48,
+        "value": 0.875,
+        "ci95": [0.753, 0.941]
       },
       "known_defect_recall": {
         "k": 1,
@@ -356,34 +371,34 @@
       },
       "high_impact_attention": {
         "k": 4,
-        "n": 5,
-        "value": 0.8,
-        "ci95": [0.376, 0.964]
+        "n": 6,
+        "value": 0.667,
+        "ci95": [0.3, 0.903]
       },
-      "false_positive_burden_per_case": 0.38,
+      "false_positive_burden_per_case": 0.32,
       "low_impact_overflag": {
         "k": 0,
-        "n": 1,
+        "n": 4,
         "value": 0.0,
-        "ci95": [0.0, 0.793]
+        "ci95": [0.0, 0.49]
       },
       "low_impact_attention": {
         "k": 0,
-        "n": 1,
+        "n": 4,
         "value": 0.0,
-        "ci95": [0.0, 0.793]
+        "ci95": [0.0, 0.49]
       },
       "attention_recall": {
-        "k": 10,
-        "n": 12,
-        "value": 0.833,
-        "ci95": [0.552, 0.953]
+        "k": 11,
+        "n": 15,
+        "value": 0.733,
+        "ci95": [0.48, 0.891]
       },
       "attention_rate": {
-        "k": 10,
-        "n": 13,
-        "value": 0.769,
-        "ci95": [0.497, 0.918]
+        "k": 11,
+        "n": 19,
+        "value": 0.579,
+        "ci95": [0.363, 0.769]
       },
       "impact_exact_agreement": {
         "k": 0,
@@ -405,10 +420,10 @@
         "ci95": [0.0, 0.658]
       },
       "actionability": {
-        "k": 41,
-        "n": 41,
+        "k": 42,
+        "n": 42,
         "value": 1.0,
-        "ci95": [0.914, 1.0]
+        "ci95": [0.916, 1.0]
       },
       "cost_usd": {
         "mean": null,
@@ -421,7 +436,7 @@
       }
     },
     "deterministic/rule-v1": {
-      "cases": 16,
+      "cases": 31,
       "findings": 0,
       "findings_per_case": 0.0,
       "labels": {},
@@ -450,35 +465,35 @@
         "ci95": [0.0, 0.324]
       },
       "high_impact_attention": {
-        "k": 7,
-        "n": 7,
+        "k": 10,
+        "n": 10,
         "value": 1.0,
-        "ci95": [0.646, 1.0]
+        "ci95": [0.722, 1.0]
       },
       "false_positive_burden_per_case": 0.0,
       "low_impact_overflag": {
         "k": 0,
-        "n": 1,
+        "n": 9,
         "value": 0.0,
-        "ci95": [0.0, 0.793]
+        "ci95": [0.0, 0.299]
       },
       "low_impact_attention": {
-        "k": 1,
-        "n": 1,
-        "value": 1.0,
-        "ci95": [0.207, 1.0]
+        "k": 6,
+        "n": 9,
+        "value": 0.667,
+        "ci95": [0.354, 0.879]
       },
       "attention_recall": {
-        "k": 15,
-        "n": 15,
+        "k": 22,
+        "n": 22,
         "value": 1.0,
-        "ci95": [0.796, 1.0]
+        "ci95": [0.851, 1.0]
       },
       "attention_rate": {
-        "k": 16,
-        "n": 16,
-        "value": 1.0,
-        "ci95": [0.806, 1.0]
+        "k": 28,
+        "n": 31,
+        "value": 0.903,
+        "ci95": [0.751, 0.967]
       },
       "impact_exact_agreement": {
         "k": 0,
@@ -508,7 +523,7 @@
       "cost_usd": {
         "mean": 0.0,
         "total": 0.0,
-        "n": 16
+        "n": 31
       },
       "wall_seconds": {
         "mean": null,

@@ -1,0 +1,292 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "5dd37db087698d38e4824e6a50414fb03d56bb8f",
+  "head_sha": "063530d063163196e181e1f142e4f89a0a28b5e8",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "A",
+    "generated_at": "2026-10-12"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the title is given in CASE.md."
+    },
+    "ci_results": {
+      "status": "unavailable",
+      "note": "No CI output provided; no network access."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "Explanatory comments in the workflows and in the new test file at head; no separate architecture docs read."
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "partial",
+      "note": ".github/CODEOWNERS exists at head; not used to judge risk (CI-only change)."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0 (base ancestry only)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No access to the GitHub Actions cache state or to the jdx/mise-action source at the pinned SHAs."
+    }
+  },
+  "summary": "CI-only change. Every cached jdx/mise-action step in 12 workflows gains `cache_key_prefix: mise-v1-<ubuntu image>` matching its job's runs-on, so jobs on blacksmith ubuntu-2204 (glibc 2.35) and ubuntu-2404 (glibc 2.39) no longer share one mise cache entry holding source-built cargo tools. A new vitest guard (run by tests.yml's lint job via `pnpm run test:scripts`) enforces the rule for every workflow and limits composite actions to image-independent tools. An independent re-implementation of the guard over all workflows at head found all 29 cached steps keyed to the correct image and every publish/release path still `cache: false`. No shipped artefact, library code or release workflow is altered. Residual risk is low: the change relies on both pinned mise-action versions (v3.6.3 and v4) honouring `cache_key_prefix`, which could not be checked offline, and the first run after merge will be a cold cache for every job.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "build_or_release",
+      "description": "Cached mise-action steps now restore/save under an image-specific key prefix (mise-v1-ubuntu-2204 or mise-v1-ubuntu-2404) instead of mise-action's default prefix, separating cache entries between runner images with different glibc versions.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-3", "E-4", "E-5", "E-10", "E-11"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "test_only",
+      "description": "New discovery test scripts/__tests__/workflow-mise-cache-image.test.mjs fails CI if any cached mise step lacks the image prefix matching runs-on, sets cache_key, sets a prefix with caching off, or if a composite action caches non-image-independent tools.",
+      "certainty": "observed",
+      "evidence": ["E-2", "E-6"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "build_or_release",
+      "description": "All existing mise cache entries become unreachable for workflow steps (new keys), so each job cold-installs its mise toolset, including source-built cargo tools, on the first run per key/scope after merge.",
+      "certainty": "inferred",
+      "evidence": ["E-11"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "medium",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "CI test/lint workflows using a cached mise-action (bench-eql, crap-crates, fuzz, integration-protect-ffi, macro-expand-eql, miri, mutants, test-eql, tests-crates, tests-golang, tests-rust, udeps)",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "Each cached mise-action step gains cache_key_prefix.",
+      "evidence": ["E-1", "E-3"]
+    },
+    {
+      "id": "AC-2",
+      "name": "tests.yml lint job (test:scripts)",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "Runs `pnpm run test:scripts`, which picks up the new scripts/__tests__/*.test.mjs guard.",
+      "evidence": ["E-6"]
+    },
+    {
+      "id": "AC-3",
+      "name": "Composite actions build-ffi-binding / build-auth-binding",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "Not changed; keep mise-action's default key and cache only wasm-pack. The new test asserts they stay that way.",
+      "evidence": ["E-7", "E-2"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Release / publish workflows (release.yml, _build-*, release-postgres-eql-image)",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "Not changed; their mise steps remain cache: false, which the new test requires to carry no prefix.",
+      "evidence": ["E-8", "E-3"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Pinned mise-action version ignores cache_key_prefix, so the guard passes while the shared key remains",
+      "trigger": "A pinned mise-action revision (v3.6.3 at 5228313e, or v4 at 1648a781) does not declare or honour the cache_key_prefix input.",
+      "affected_components": ["AC-1"],
+      "mechanism": "GitHub Actions only warns on an undeclared `with:` input. The new test checks the YAML statically (E-2) and cannot tell whether the action uses the value, so an ignored input would leave the default distro-agnostic key in place with a green check.",
+      "consequence": "The GLIBC_2.38 cross-image cache poisoning the change targets could recur on the next mise config change: CI jobs fail before tests run. No shipped artefact is affected; a loud CI failure, not a silent one.",
+      "impact": "low",
+      "basis": "speculative",
+      "evidence": ["E-2", "E-4", "E-5"],
+      "existing_verification": [
+        {
+          "description": "Static guard asserting the prefix is set per runs-on image.",
+          "status": "exists_not_run",
+          "evidence": ["E-2", "E-6"]
+        }
+      ],
+      "missing_verification": [
+        "Confirmation, from the action's action.yml at each pinned SHA or from a CI log line showing the restored key, that cache_key_prefix is honoured."
+      ],
+      "mitigation": "On the PR's CI run, check a mise-action step log for a cache key starting `mise-v1-ubuntu-2204`/`mise-v1-ubuntu-2404` for one v3.6.3 job (tests-rust) and one v4 job (tests-crates).",
+      "domain_tags": ["build_release", "configuration", "dependency"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Cold mise caches after merge slow every job and may hit job timeouts",
+      "trigger": "First run of each workflow on main and on each PR branch after merge, before the new keys are saved.",
+      "affected_components": ["AC-1"],
+      "mechanism": "New prefixes mean no existing entry matches; jobs install the whole mise toolset, including cargo: tools that build from source (E-11), uncached.",
+      "consequence": "Longer CI runs and runner cost; a job with a tight timeout-minutes could fail once. Self-heals once each key is saved.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-11"],
+      "existing_verification": [],
+      "missing_verification": ["CI timings for the PR run were not available."],
+      "mitigation": "Accept a one-off slow run; re-run any timed-out job once the cache is populated.",
+      "domain_tags": ["build_release"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No evidence that either pinned mise-action version uses cache_key_prefix in the cache key; the guard is static only and its CI result was not available.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-2", "E-4"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "In the PR's CI logs, confirm the mise cache key printed by a v3.6.3 step (tests-rust / integration-protect-ffi) and a v4 step carries the image prefix, and that test:scripts passed in tests.yml's lint job.",
+      "addresses": ["FS-1", "VG-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "The jdx/mise-action source at the pinned SHAs was not available offline, so the semantics of cache_key_prefix (and that the default key omits the distro) are taken from the test file's comment.",
+      "effect": "FS-1 cannot be ruled out or confirmed."
+    },
+    {
+      "id": "CL-2",
+      "description": "The new vitest test was not run (no node_modules, no network). An equivalent Python check was run instead over all workflows at head.",
+      "effect": "The JS test's own pass/fail is unknown; the workflow state it asserts was checked independently."
+    },
+    {
+      "id": "CL-3",
+      "description": "Pre-existing, not introduced here: composite actions still use the default key, and entries previously saved under that key by full-toolset workflow jobs may persist until eviction. Whether a composite step restoring such an entry exposes those tools to later steps was not investigated.",
+      "effect": "Possible residual cross-image cache reuse via composite actions until old entries expire; outside this change's scope."
+    },
+    {
+      "id": "CL-4",
+      "description": "No CI results, PR description, or GitHub cache state were available.",
+      "effect": "Verification confidence capped at medium."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": ".github/workflows/test-eql.yml",
+      "rev": "head",
+      "line_start": 351,
+      "line_end": 352,
+      "command": "git -C repo diff 5dd37db087..063530d063 (changes.diff)",
+      "claim": "12 workflow files only add a comment and cache_key_prefix under existing mise-action steps; one new test file is added; nothing is removed.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "test",
+      "path": "scripts/__tests__/workflow-mise-cache-image.test.mjs",
+      "rev": "head",
+      "line_start": 71,
+      "line_end": 179,
+      "claim": "Static guard: derives image from runs-on, requires cache_key_prefix mise-v1-<image> on cached steps, forbids cache_key, and limits composite actions to image-independent tools.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "command_output",
+      "command": "python3 -I scratchpad/check.py repo (re-implementation of cacheKeyFinding over .github/workflows at head)",
+      "claim": "29 cached mise-action steps, all with the prefix matching their runs-on image and no cache_key; all release/_build/publish mise steps are cache: false with no prefix; 0 findings.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": ".github/workflows/tests-rust.yml",
+      "rev": "head",
+      "line_start": 84,
+      "line_end": 89,
+      "claim": "tests-rust uses jdx/mise-action pinned at v3.6.3 (not v4) with the new prefix and default cache.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": ".github/workflows/integration-protect-ffi.yml",
+      "rev": "head",
+      "line_start": 337,
+      "line_end": 342,
+      "claim": "integration-protect-ffi also uses mise-action v3.6.3 with the new prefix.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": ".github/workflows/tests.yml",
+      "rev": "head",
+      "line_start": 344,
+      "line_end": 345,
+      "claim": "tests.yml runs `pnpm run test:scripts` (vitest over scripts/__tests__/**/*.test.mjs) on every pull request.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": ".github/actions/build-ffi-binding/action.yml",
+      "rev": "head",
+      "line_start": 209,
+      "line_end": 213,
+      "claim": "Composite action mise step has no cache setting (default on) and installs only aqua:wasm-bindgen/wasm-pack.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 599,
+      "line_end": 603,
+      "claim": "Release workflow mise step remains cache: false and is untouched by the change.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": ".github/workflows/fuzz.yml",
+      "rev": "head",
+      "line_start": 86,
+      "line_end": 93,
+      "claim": "fuzz (runs-on blacksmith-4vcpu-ubuntu-2404) now uses prefix mise-v1-ubuntu-2404.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": ".github/workflows/tests-crates.yml",
+      "rev": "head",
+      "line_start": 99,
+      "line_end": 109,
+      "claim": "tests-crates (ubuntu-2204) installs and caches the whole test toolset; cargo: tools build from source; prefix mise-v1-ubuntu-2204.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "history_signal",
+      "path": ".github/workflows/test-eql.yml",
+      "signal": "churn.hotspots[0]",
+      "claim": "test-eql.yml is a hotspot (94 commits before base); the change there is additive only.",
+      "status": "verified"
+    }
+  ]
+}

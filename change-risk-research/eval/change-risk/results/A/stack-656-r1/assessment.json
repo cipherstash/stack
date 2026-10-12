@@ -1,0 +1,154 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "9bf2a56778aabe32e03cfc08f9456ed99e52f6a1",
+  "head_sha": "7744caf8fef3234fca7dd28cb59c9a2516a5fdd3",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "A"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the title in CASE.md was provided."
+    },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": {
+      "status": "partial",
+      "source": "AGENTS.md and CLAUDE.md at head",
+      "note": "Repository docs in the checkout only."
+    },
+    "dependency_graph": { "status": "unavailable" },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "No CODEOWNERS signal reported by the collector."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "scripts/collect-evidence (history before base only)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "A one-line documentation fix in the repository-root AGENTS.md (imported by CLAUDE.md) that changes the documented auth-strategy config key from `config.strategy` to `config.authStrategy`. The new text matches the code at head: `ClientConfig.authStrategy` is the current field and `strategy` is a deprecated alias that still works but logs a warning. AGENTS.md is agent guidance for contributors to this monorepo; the root package is private and nothing found packages or ships this file. No runtime, contract or release behaviour changes. No material failure scenario was found; the change reduces drift between agent guidance and the API.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "documentation",
+      "description": "Agent instructions now point to `config.authStrategy` instead of the deprecated `config.strategy` for passing `OidcFederationStrategy`. Agents following the old text would have produced code that works but logs a deprecation warning; agents following the new text use the documented, non-deprecated field.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3", "E-4"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "high",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "AGENTS.md (repository agent instructions)",
+      "kind": "documentation",
+      "relationship": "changed",
+      "how": "Line 160 changed: the config key name in the identity-aware encryption bullet.",
+      "evidence": ["E-1"]
+    },
+    {
+      "id": "AC-2",
+      "name": "CLAUDE.md",
+      "kind": "documentation",
+      "relationship": "confirmed",
+      "how": "CLAUDE.md states the project instructions live in AGENTS.md and imports it, so Claude Code sessions in this repo read the corrected text.",
+      "evidence": ["E-5"]
+    }
+  ],
+  "failure_scenarios": [],
+  "verification_gaps": [],
+  "recommended_controls": [],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "No CI results or PR description were available, and no tests were run. The documentation claim was checked by reading the type definition, the alias resolution code and the existing tests at head.",
+      "effect": "Confidence rests on reading the source, not on executed checks. For a one-line doc change this does not change the conclusion."
+    },
+    {
+      "id": "CL-2",
+      "description": "Packaging was checked by confirming the root package.json is private and that no package.json or workflow under .github references AGENTS.md. Publish tooling outside these paths was not examined.",
+      "effect": "If some unexamined process copies the root AGENTS.md into a published artefact, the change would reach customers. It would still be a correction, so the risk does not go up."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": "AGENTS.md",
+      "rev": "head",
+      "line_start": 160,
+      "line_end": 160,
+      "claim": "The only change replaces `config.strategy` with `config.authStrategy` in the identity-aware encryption bullet.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/stack/src/types.ts",
+      "rev": "head",
+      "line_start": 166,
+      "line_end": 173,
+      "claim": "`ClientConfig.authStrategy` is the current field; `strategy` is marked @deprecated as an alias that is still honoured.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/index.ts",
+      "rev": "head",
+      "line_start": 860,
+      "line_end": 867,
+      "claim": "Encryption() resolves `authStrategy ?? strategy` and warns when the deprecated `strategy` is present, so the old documented key still works and only adds a warning.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "test",
+      "path": "packages/stack/__tests__/init-strategy.test.ts",
+      "rev": "head",
+      "line_start": 48,
+      "line_end": 48,
+      "claim": "Existing tests cover `config.authStrategy` and the deprecated `config.strategy` alias. They were not run.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "documentation",
+      "path": "CLAUDE.md",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 5,
+      "claim": "CLAUDE.md imports AGENTS.md as the single source of project instructions.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "package.json",
+      "rev": "head",
+      "line_start": 1,
+      "line_end": 4,
+      "claim": "The root package is `private: true`, so the root AGENTS.md is not published as part of an npm package from the root.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "history_signal",
+      "signal": "hotspots",
+      "claim": "AGENTS.md has 19 commits before base (14 recent, 4 authors). It is frequently edited guidance, not a sign of risk.",
+      "status": "verified"
+    }
+  ]
+}

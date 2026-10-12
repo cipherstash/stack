@@ -1,0 +1,446 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "b1b5157c326ce1ebd4e89942e71279e8dc5450d5",
+  "head_sha": "07f5c4c1ece4b77589eb746efb00da88b0704dfe",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "A"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "unavailable",
+      "note": "Only the title is given in CASE.md; the changeset text was read from the diff."
+    },
+    "ci_results": { "status": "unavailable" },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "AGENTS.md and packages/stack/README.md at head only"
+    },
+    "dependency_graph": {
+      "status": "unavailable",
+      "note": "No node_modules installed; @cipherstash/auth and protect-ffi package contents could not be inspected"
+    },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "Collector found no CODEOWNERS data"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence (history before base only)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Adds a `stash auth login` command (region select, OAuth device-code flow and device-to-keyset binding through the new native dependency @cipherstash/auth 0.34.2) and makes the same flow the first, mandatory step of `stash init`. It also rewrites the shipped README and the init 'next steps' to say local development needs no CS_* environment variables, pins three existing runtime dependencies to exact versions (evlog 1.11.0 to 1.9.0 and @byteslice/result 0.2.2 to 0.2.0 in the lockfile), and is released as a minor bump. Library encryption paths, payloads and exports are not touched. The material risks are in the CLI and its guidance. `stash init` can no longer complete without network access, an interactive region prompt, a browser confirmation and a successful device binding. There is no skip or 'already authenticated' check, and a failure aborts before any scaffolding. The new guidance that no env vars are needed contradicts code that is unchanged at head: `stash secrets` still exits unless CS_WORKSPACE_CRN, CS_CLIENT_ID and CS_CLIENT_KEY are set, and LockContext still requires CS_WORKSPACE_CRN or cipherstash.toml. No test covers any CLI code, and no CI results were provided. Failures are loud onboarding failures with no data or encryption effect, so the impact is medium.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "public_contract",
+      "description": "New CLI command `stash auth login`: an interactive region selection, then the device-code flow (opens a browser, polls for a token that @cipherstash/auth persists to ~/.cipherstash/auth.json per the CLI message), then binding the device to the default keyset. Unknown subcommands exit 1.",
+      "certainty": "observed",
+      "evidence": ["E-3", "E-4", "E-5", "E-6"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "public_contract",
+      "description": "`stash init` now runs authenticateStep before every other step, unconditionally. It has no flag to skip it and does not check for an existing token. A rejected token poll propagates to main() as a fatal exit 1. A failed bind calls process.exit(1). Both happen before connection selection, schema generation or forge install.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3", "E-4", "E-6"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "external_side_effect",
+      "description": "Running init or auth login now creates or overwrites a user-level token file (~/.cipherstash/auth.json, written by @cipherstash/auth) and registers or binds the device with the default keyset in the selected region on the CipherStash service.",
+      "certainty": "inferred",
+      "evidence": ["E-3", "E-4"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "documentation",
+      "description": "The shipped README and the init next-steps output no longer tell users to create an account and set CS_* credentials. The README says local development needs no environment variables or credential files, and that the SDK and CLI use the saved token. The TOML config documentation was removed.",
+      "certainty": "observed",
+      "evidence": ["E-7", "E-8", "E-11", "E-12"]
+    },
+    {
+      "id": "BC-5",
+      "kind": "dependency",
+      "description": "New runtime dependency @cipherstash/auth 0.34.2 with per-platform native optional packages (same six platforms as protect-ffi 0.21.0). @byteslice/result, evlog and uuid are changed from caret ranges to exact pins. The lockfile resolution for packages/stack moves evlog 1.11.0 to 1.9.0 and @byteslice/result 0.2.2 to 0.2.0.",
+      "certainty": "observed",
+      "evidence": ["E-13", "E-14", "E-15"]
+    }
+  ],
+  "impact": "medium",
+  "verification_confidence": "low",
+  "release_readiness": "focused_review_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "stash CLI: init command",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "authenticateStep was added as the first, mandatory init step.",
+      "evidence": ["E-1", "E-2"]
+    },
+    {
+      "id": "AC-2",
+      "name": "stash CLI: auth command (new)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "New command wired into the stash.ts dispatcher.",
+      "evidence": ["E-3", "E-6"]
+    },
+    {
+      "id": "AC-3",
+      "name": "stash CLI: secrets commands",
+      "kind": "public_api",
+      "relationship": "confirmed",
+      "how": "Unchanged, but getConfig still requires CS_* env vars, which contradicts the new README guidance that local development needs none.",
+      "evidence": ["E-9"]
+    },
+    {
+      "id": "AC-4",
+      "name": "@cipherstash/stack identity (LockContext)",
+      "kind": "public_api",
+      "relationship": "confirmed",
+      "how": "Unchanged. LockContext calls loadWorkSpaceId(), which throws without CS_WORKSPACE_CRN or cipherstash.toml. The README no longer documents cipherstash.toml.",
+      "evidence": ["E-10", "E-12"]
+    },
+    {
+      "id": "AC-5",
+      "name": "@cipherstash/stack Encryption client initialisation",
+      "kind": "public_api",
+      "relationship": "likely",
+      "how": "The README now says the SDK uses the device token. Credential resolution is delegated to protect-ffi newClient (not changed or bumped here), and whether it reads auth.json could not be checked.",
+      "evidence": ["E-16"]
+    },
+    {
+      "id": "AC-6",
+      "name": "@cipherstash/stack published npm package (README, dependency set)",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "README, dependencies and changeset (minor) ship to all consumers. Publishing cannot be undone.",
+      "evidence": ["E-7", "E-13", "E-17"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "`stash init` cannot complete without interactive, networked device login and a successful keyset bind",
+      "trigger": "A user runs `npx stash init` offline, behind a proxy, in a non-interactive or CI shell, in a region not in the hard-coded list, lets the device code expire, or the bind call fails (e.g. the account has no default keyset). Re-running init also forces a new login and bind every time.",
+      "affected_components": ["AC-1", "AC-6"],
+      "mechanism": "STEPS now starts with authenticateStep (init/index.ts:16-22). It always calls selectRegion, login and bindDevice (steps/authenticate.ts:7-11) and does not check for an existing token. Rejections from beginDeviceCodeFlow or pollForToken are not caught in login() (auth/login.ts:30-51) or in initCommand, which only handles CancelledError (init/index.ts:46-52). They reach main()'s catch and exit 1 (stash.ts:93-97). A failed bindClientDevice calls process.exit(1) (auth/login.ts:57-64).",
+      "consequence": "Init exits before connection selection, schema generation and forge install. At base, init worked with no account or network. Users get no scaffolding and no fallback path. Onboarding is blocked for any user who cannot complete the device flow or bind.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-2", "E-3", "E-4", "E-5", "E-6"],
+      "existing_verification": [
+        {
+          "description": "No unit or integration test covers src/bin (collector name mapping, plus a listing of packages/stack/__tests__).",
+          "status": "unknown",
+          "evidence": ["E-18"]
+        }
+      ],
+      "missing_verification": [
+        "A test of initCommand with the auth step mocked to reject (expired code, bind failure) asserting the user-facing outcome",
+        "A manual run of `stash init` against the real service in each listed region, plus a re-run when already authenticated"
+      ],
+      "mitigation": "Skip the auth step when a valid token already exists. Add a `--skip-auth` flag or let the step fail soft and continue scaffolding with a warning. Catch device-flow errors with a clear message.",
+      "domain_tags": ["authorization", "configuration", "public_api"]
+    },
+    {
+      "id": "FS-2",
+      "title": "New guidance says no env vars are needed for local development, but `stash secrets` and LockContext still require them",
+      "trigger": "A user follows the updated README or init next-steps: they run `stash auth login`, set no CS_* variables and no cipherstash.toml, then use `stash secrets ...` or `LockContext`.",
+      "affected_components": ["AC-3", "AC-4", "AC-6"],
+      "mechanism": "The README now says no environment variables or credential files are needed and that the CLI uses ~/.cipherstash/auth.json (README.md:451, 495-497). Init next-steps dropped the instruction to set CS_* (providers/base.ts:13-14 head vs base). At head, secrets/helpers.ts getConfig still exits 1 when CS_WORKSPACE_CRN, CS_CLIENT_ID or CS_CLIENT_KEY is missing (helpers.ts:33-51). LockContext calls loadWorkSpaceId(), which throws without CS_WORKSPACE_CRN or cipherstash.toml (identity/index.ts:62, utils/config/index.ts:59-71). This change removed the TOML documentation.",
+      "consequence": "Shipped docs and CLI output tell users something the code does not support. The secrets CLI and identity-aware encryption fail on first use with 'missing environment variables' or 'workspace CRN' errors. No data effect, but onboarding guidance is wrong in a published README.",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "evidence": ["E-7", "E-8", "E-9", "E-10", "E-11", "E-12"],
+      "existing_verification": [],
+      "missing_verification": [
+        "An end-to-end run of the documented local-dev path (auth login, then secrets set, then LockContext) with no CS_* variables set"
+      ],
+      "mitigation": "Make the secrets CLI and loadWorkSpaceId fall back to the device token or profile, or scope the README claim to what actually works and keep the CS_* and cipherstash.toml instructions for the secrets CLI and identity.",
+      "domain_tags": ["configuration", "authorization", "public_api"]
+    },
+    {
+      "id": "FS-3",
+      "title": "Encryption() may fail after following the new 'no credentials' quick start if protect-ffi 0.21.0 does not read the device token",
+      "trigger": "A user completes `stash init` (device login) and calls `Encryption({ schemas })` with no CS_* variables set, as the README now says is enough.",
+      "affected_components": ["AC-5", "AC-6"],
+      "mechanism": "Encryption.init passes only the explicit config to protect-ffi newClient and relies on its internal env fallback (encryption/index.ts:79-90). This change does not bump protect-ffi (still 0.21.0). The repository contains nothing showing that newClient reads ~/.cipherstash/auth.json, and the package contents were not available to check.",
+      "consequence": "If newClient does not support the token, every new user following the quick start gets a ClientInitError when creating the client. The README examples would fail at the first step of the documented path.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-7", "E-16", "E-13"],
+      "existing_verification": [],
+      "missing_verification": [
+        "Confirm that protect-ffi 0.21.0 newClient resolves credentials from the @cipherstash/auth token store",
+        "A smoke test: device login, then Encryption() with an empty env"
+      ],
+      "mitigation": "Verify the protect-ffi credential chain before publishing. If it does not support the token, bump protect-ffi or keep the CS_* instructions for SDK use.",
+      "domain_tags": ["configuration", "dependency", "key_management"]
+    },
+    {
+      "id": "FS-4",
+      "title": "Library consumers silently get older evlog and @byteslice/result versions with exact pins",
+      "trigger": "A consumer installs the new @cipherstash/stack minor release.",
+      "affected_components": ["AC-6"],
+      "mechanism": "The dependency ranges become exact pins (package.json:208-215). The lockfile resolution moves evlog 1.11.0 to 1.9.0 and @byteslice/result 0.2.2 to 0.2.0. The logger only imports initLogger and createRequestLogger (utils/logger/index.ts:1). evlog was introduced at 1.9.0 in commit ac17968, which lowers the chance of a missing API.",
+      "consequence": "Probably benign. At worst, logging behaviour differs from the version CI previously resolved, and consumers get duplicate copies of these packages. The repository's tests at head will now run against 1.9.0.",
+      "impact": "low",
+      "basis": "speculative",
+      "evidence": ["E-13", "E-14", "E-15"],
+      "existing_verification": [
+        {
+          "description": "Library tests in packages/stack/__tests__ exercise code paths that use the logger and Result helpers; not run here.",
+          "status": "exists_not_run",
+          "evidence": ["E-18"]
+        }
+      ],
+      "missing_verification": [
+        "A CI run of the packages/stack test suite against the new lockfile"
+      ],
+      "mitigation": "Confirm whether the pins and downgrade are intentional. If not, restore the caret ranges.",
+      "domain_tags": ["dependency"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "No test exists for any file under packages/stack/src/bin. The init flow, auth command and their failure paths have no automated coverage, and no CI results were provided.",
+      "scenarios": ["FS-1", "FS-2"],
+      "evidence": ["E-18"]
+    },
+    {
+      "id": "VG-2",
+      "description": "Nothing shows that the device token produced by @cipherstash/auth is consumed by protect-ffi newClient, the secrets CLI or LockContext.",
+      "scenarios": ["FS-2", "FS-3"],
+      "evidence": ["E-9", "E-10", "E-16"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Review init/steps/authenticate.ts and auth/login.ts error handling. Decide whether init should hard-require auth, add a skip or 'already logged in' path, and catch device-flow and bind errors.",
+      "addresses": ["FS-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "documentation",
+      "description": "Reconcile the README 'Local Development' and `stash auth` sections and the init next-steps with what the secrets CLI, LockContext and Encryption() actually accept. Keep or restore the CS_* and cipherstash.toml guidance where it is still required.",
+      "addresses": ["FS-2", "FS-3"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "compatibility_check",
+      "description": "Before publishing, do a manual smoke run on a clean machine: `stash auth login`, `stash init`, Encryption() and `stash secrets list` with no CS_* variables set.",
+      "addresses": ["FS-1", "FS-2", "FS-3", "VG-2"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "test",
+      "description": "Add unit tests for the init step runner and auth command with @cipherstash/auth mocked, covering rejection paths. Run the packages/stack suite in CI against the new lockfile.",
+      "addresses": ["VG-1", "FS-4"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "@cipherstash/auth and @cipherstash/protect-ffi are not installed in the checkout and no network access was allowed. Their APIs (beginDeviceCodeFlow, pollForToken, bindClientDevice, newClient credential resolution) and the default-import interop of `import auth from '@cipherstash/auth'` in the ESM bin bundle could not be verified.",
+      "effect": "FS-3 remains plausible rather than confirmed. A load-time failure of the auth import would affect every stash command and was not assessed."
+    },
+    {
+      "id": "CL-2",
+      "description": "No CI results, PR description, CODEOWNERS or deployment context were available. No build or test was run.",
+      "effect": "Verification confidence is low by default. Nothing is claimed as passing."
+    },
+    {
+      "id": "CL-3",
+      "description": "The collector's name-based mapping links providers/supabase.ts to a library supabase test. That test covers the Supabase SDK integration, not the CLI provider.",
+      "effect": "Not counted as coverage of the CLI change."
+    },
+    {
+      "id": "CL-4",
+      "description": "The CLI already loaded the protect-ffi native module at startup through the secrets command import chain. Adding a second native module (same platform set) was judged not to widen platform exposure materially, but this was not tested.",
+      "effect": "No scenario was raised for eager native loading."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/stack/src/bin/commands/init/steps/authenticate.ts",
+      "rev": "head",
+      "line_start": 4,
+      "line_end": 13,
+      "claim": "authenticateStep always runs selectRegion, login and bindDevice, with no token-exists check or skip.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/stack/src/bin/commands/init/index.ts",
+      "rev": "head",
+      "line_start": 16,
+      "line_end": 52,
+      "claim": "authenticateStep is first in STEPS. initCommand only handles CancelledError and rethrows everything else.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/stack/src/bin/commands/auth/login.ts",
+      "rev": "head",
+      "line_start": 30,
+      "line_end": 51,
+      "claim": "login() awaits beginDeviceCodeFlow and pollForToken with no error handling. The success message says the token is saved to ~/.cipherstash/auth.json.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "packages/stack/src/bin/commands/auth/login.ts",
+      "rev": "head",
+      "line_start": 53,
+      "line_end": 65,
+      "claim": "bindDevice calls process.exit(1) when bindClientDevice fails.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": "packages/stack/src/bin/commands/auth/login.ts",
+      "rev": "head",
+      "line_start": 4,
+      "line_end": 28,
+      "claim": "Regions are a hard-coded list (TODO to pull from the API). Region selection is an interactive prompt, and cancelling exits 0.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/stack/src/bin/stash.ts",
+      "rev": "head",
+      "line_start": 76,
+      "line_end": 97,
+      "claim": "The auth command is dispatched from main(). Uncaught errors print 'Fatal error' and exit 1.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "documentation",
+      "path": "packages/stack/README.md",
+      "rev": "head",
+      "line_start": 495,
+      "line_end": 510,
+      "claim": "The README says no environment variables or credentials are needed for local development and that the SDK and CLI use ~/.cipherstash/auth.json. CS_* is only for production.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "documentation",
+      "path": "packages/stack/README.md",
+      "rev": "head",
+      "line_start": 443,
+      "line_end": 451,
+      "claim": "The `stash auth` section says no environment variables or credential files are needed for local development.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": "packages/stack/src/bin/commands/secrets/helpers.ts",
+      "rev": "head",
+      "line_start": 33,
+      "line_end": 51,
+      "claim": "The secrets CLI getConfig still requires CS_WORKSPACE_CRN, CS_CLIENT_ID and CS_CLIENT_KEY and exits 1 if any is missing.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": "packages/stack/src/utils/config/index.ts",
+      "rev": "head",
+      "line_start": 59,
+      "line_end": 71,
+      "claim": "loadWorkSpaceId throws without CS_WORKSPACE_CRN or cipherstash.toml. LockContext calls it (identity/index.ts:62).",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "code",
+      "path": "packages/stack/src/bin/commands/init/providers/base.ts",
+      "rev": "base",
+      "line_start": 13,
+      "line_end": 17,
+      "claim": "At base, init next-steps told users to create an account and set the CS_* variables. At head, this was replaced by the forge setup step only.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "diff",
+      "path": "packages/stack/README.md",
+      "claim": "The diff removes the TOML config section (cipherstash.toml / cipherstash.secret.toml) and the note that the CLI reads CS_* variables.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "code",
+      "path": "packages/stack/package.json",
+      "rev": "head",
+      "line_start": 208,
+      "line_end": 215,
+      "claim": "Adds @cipherstash/auth 0.34.2, pins @byteslice/result, evlog and uuid exactly, and leaves protect-ffi at 0.21.0.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "history_signal",
+      "signal": "dependencies",
+      "claim": "The collector reports the dependency changes: @cipherstash/auth added and three caret ranges replaced by exact versions.",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "command_output",
+      "command": "git -C repo show ac17968 -- pnpm-lock.yaml | grep -A2 evlog",
+      "claim": "evlog was introduced at version 1.9.0 (commit ac17968, before base). The logger imports only initLogger and createRequestLogger.",
+      "status": "verified"
+    },
+    {
+      "id": "E-16",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/index.ts",
+      "rev": "head",
+      "line_start": 79,
+      "line_end": 90,
+      "claim": "Credential fallback is delegated to protect-ffi newClient. Whether it reads the auth.json token is not shown in the repository.",
+      "status": "inferred"
+    },
+    {
+      "id": "E-17",
+      "kind": "diff",
+      "path": ".changeset/warm-wasps-joke.md",
+      "rev": "head",
+      "claim": "The change is released as a minor version of @cipherstash/stack.",
+      "status": "verified"
+    },
+    {
+      "id": "E-18",
+      "kind": "command_output",
+      "command": "ls repo/packages/stack/__tests__; collect-evidence tests.source_without_related_test",
+      "claim": "No test file targets src/bin. Seven of eight changed source files have no related test, and no test files changed.",
+      "status": "verified"
+    }
+  ]
+}
