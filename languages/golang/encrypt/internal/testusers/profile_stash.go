@@ -19,9 +19,8 @@ const _ = gensupport.GeneratedVersion1
 
 type EncryptedProfile struct {
 	ID      int64
-	Age     eql.IntegerEq
 	Visits  eql.Integer
-	Balance eql.BigintEq
+	Balance eql.Bigint
 	Active  eql.Boolean
 	Ratio   eql.Real
 	Score   eql.Double
@@ -30,11 +29,11 @@ type EncryptedProfile struct {
 }
 
 func (e EncryptedProfile) String() string {
-	return gensupport.Redacted("EncryptedProfile", map[string]any{"ID": e.ID}, "Age", "Visits", "Balance", "Active", "Ratio", "Score", "Note", "Name")
+	return gensupport.Redacted("EncryptedProfile", map[string]any{"ID": e.ID}, "Visits", "Balance", "Active", "Ratio", "Score", "Note", "Name")
 }
 
 func (e EncryptedProfile) LogValue() slog.Value {
-	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Age", "Visits", "Balance", "Active", "Ratio", "Score", "Note", "Name")
+	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Visits", "Balance", "Active", "Ratio", "Score", "Note", "Name")
 }
 
 // Stops compiling when Profile gains, loses, reorders or retypes a field.
@@ -43,7 +42,6 @@ var _ = profileShape(Profile{})
 type profileShape struct {
 	_       struct{}
 	ID      int64
-	Age     int32
 	Visits  int32
 	Balance int64
 	Active  bool
@@ -55,9 +53,8 @@ type profileShape struct {
 
 var profileDeclaration = gensupport.Declare("profiles").
 	Passthrough("id").
-	EncryptInto("age", gensupport.Int32, "IntegerEq").
 	EncryptInto("visits", gensupport.Int32, "Integer").
-	EncryptInto("balance", gensupport.Int64, "BigintEq").
+	EncryptInto("balance", gensupport.Int64, "Bigint").
 	EncryptInto("active", gensupport.Bool, "Boolean").
 	EncryptInto("ratio", gensupport.Float32, "Real").
 	EncryptInto("score", gensupport.Float64, "Double").
@@ -71,7 +68,6 @@ var profileCodec = gensupport.New(gensupport.Generated[Profile, EncryptedProfile
 	Source: func(v Profile) gensupport.Values {
 		return gensupport.Values{
 			"id":      v.ID,
-			"age":     v.Age,
 			"visits":  v.Visits,
 			"balance": v.Balance,
 			"active":  v.Active,
@@ -87,9 +83,8 @@ var profileCodec = gensupport.New(gensupport.Generated[Profile, EncryptedProfile
 		if e.ID, err = gensupport.Passthrough[int64](rec, "id"); err != nil {
 			return EncryptedProfile{}, err
 		}
-		e.Age = eql.IntegerEq(rec["age"].EQL)
 		e.Visits = eql.Integer(rec["visits"].EQL)
-		e.Balance = eql.BigintEq(rec["balance"].EQL)
+		e.Balance = eql.Bigint(rec["balance"].EQL)
 		e.Active = eql.Boolean(rec["active"].EQL)
 		e.Ratio = eql.Real(rec["ratio"].EQL)
 		e.Score = eql.Double(rec["score"].EQL)
@@ -100,7 +95,6 @@ var profileCodec = gensupport.New(gensupport.Generated[Profile, EncryptedProfile
 	Open: func(e EncryptedProfile) gensupport.Record {
 		return gensupport.Record{
 			"id":      {Value: e.ID},
-			"age":     {EQL: e.Age},
 			"visits":  {EQL: e.Visits},
 			"balance": {EQL: e.Balance},
 			"active":  {EQL: e.Active},
@@ -114,9 +108,6 @@ var profileCodec = gensupport.New(gensupport.Generated[Profile, EncryptedProfile
 		var v Profile
 		var err error
 		if v.ID, err = gensupport.Get[int64](vals, "id"); err != nil {
-			return Profile{}, err
-		}
-		if v.Age, err = gensupport.Get[int32](vals, "age"); err != nil {
 			return Profile{}, err
 		}
 		if v.Visits, err = gensupport.Get[int32](vals, "visits"); err != nil {
@@ -158,7 +149,6 @@ func DecryptProfile(ctx context.Context, d encrypt.Decrypter, encrypted []Encryp
 }
 
 var ProfileFields = struct {
-	Age     ProfileAgeField
 	Visits  ProfileVisitsField
 	Balance ProfileBalanceField
 	Active  ProfileActiveField
@@ -167,7 +157,6 @@ var ProfileFields = struct {
 	Note    ProfileNoteField
 	Name    ProfileNameField
 }{
-	Age:     ProfileAgeField{gensupport.NewField[int32](profileDeclaration, "age")},
 	Visits:  ProfileVisitsField{gensupport.NewField[int32](profileDeclaration, "visits")},
 	Balance: ProfileBalanceField{gensupport.NewField[int64](profileDeclaration, "balance")},
 	Active:  ProfileActiveField{gensupport.NewField[bool](profileDeclaration, "active")},
@@ -175,20 +164,6 @@ var ProfileFields = struct {
 	Score:   ProfileScoreField{gensupport.NewField[float64](profileDeclaration, "score")},
 	Note:    ProfileNoteField{gensupport.NewField[string](profileDeclaration, "note")},
 	Name:    ProfileNameField{gensupport.NewField[string](profileDeclaration, "name")},
-}
-
-type ProfileAgeField struct {
-	field gensupport.Field[int32]
-}
-
-func (f ProfileAgeField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int32) (eql.IntegerEq, error) {
-	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.IntegerEq(out.EQL), err
-}
-
-func (f ProfileAgeField) Query(ctx context.Context, c *encrypt.Cipher, v int32) (eql.IntegerEqQuery, error) {
-	out, err := f.field.Query(ctx, c, v)
-	return eql.IntegerEqQuery(out.EQL), err
 }
 
 type ProfileVisitsField struct {
@@ -204,14 +179,9 @@ type ProfileBalanceField struct {
 	field gensupport.Field[int64]
 }
 
-func (f ProfileBalanceField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int64) (eql.BigintEq, error) {
+func (f ProfileBalanceField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int64) (eql.Bigint, error) {
 	out, err := f.field.Encrypt(ctx, c, v)
-	return eql.BigintEq(out.EQL), err
-}
-
-func (f ProfileBalanceField) Query(ctx context.Context, c *encrypt.Cipher, v int64) (eql.BigintEqQuery, error) {
-	out, err := f.field.Query(ctx, c, v)
-	return eql.BigintEqQuery(out.EQL), err
+	return eql.Bigint(out.EQL), err
 }
 
 type ProfileActiveField struct {

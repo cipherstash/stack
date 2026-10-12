@@ -1,0 +1,211 @@
+{
+  "_comment": "Profile rows sealed by the Go SDK's generated code over the deterministic EQL guest with the seed below; the Rust suite opens and queries them. Regenerate with EQL_UPDATE_FIXTURES=1 go test ./encrypt -run TestV4Rows, do not edit.",
+  "seed": "encrypt round-trip tests seed v1",
+  "table": "profiles",
+  "rows": [
+    {
+      "id": 1,
+      "plaintext": {
+        "visits": 3,
+        "balance": 1234567890123,
+        "active": true,
+        "ratio": 0.5,
+        "score": 2.25,
+        "note": "a private note",
+        "name": "alice"
+      },
+      "stored": {
+        "active": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "active"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAA7z71FqWkCCWSkyPiBK7IQIAD0ug/nDu5R6UBEM9vJjtvDMBTuommRH359HgY7qUe5cAGqLPvdkpm6yw99+ZyvZ/D0GwxwF7jiS0n79tWSkg=="
+        },
+        "balance": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "balance"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAZJDEBcfVqv/o1B2CASJrAIAA9a/qD4wfv0t6fGVxDhKQOlQDIuYj5si13wnlmGENABAF7hMm8/oFuh1IxWGO3alDB86saK1iUeiWeC+NH10iDJzaWG8JP"
+        },
+        "name": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "name"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAASxNA10KeHfMqSIglat8/GIADzC2+uswJkz9HL6DqUBBNDtGODBX5yNHLKryZ0Lgc24AHLdWoZqUFokOA4X/RHwY8HLX/T8ltWVZz/heIAOGxpuGY=",
+          "bf": [
+            59,
+            96,
+            167,
+            214,
+            554,
+            603,
+            889,
+            1061,
+            1127,
+            1148,
+            1467,
+            1479,
+            1574,
+            1675,
+            1778,
+            1781,
+            1925,
+            2008
+          ]
+        },
+        "note": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "note"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACaWtPMkbUZL3WUSHDD8aD7IADB6CfVElii+gglc1gys6JmpNlLoIFn47AvStPnpJb63wEGdkbtSd+MIQURFj5j9R0iQpEA9zXGHSnKKTDGDBmveJjSwGn2r0NA2cM="
+        },
+        "ratio": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "ratio"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAuHszuxtkGGxdJ+yeeEgrtIACJ8iRTZnq+2wD3LmxdAqmDDHzDzzH5th5lG8EQq4qujQEsYLgPsjMiNaL8ePzWTx0zmDmQKF7VtItuQqEFLJUguIE="
+        },
+        "score": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "score"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAbQulFdQ7itXP4biDOHDhxIAA4jkCscZEzyZymEuOdqFk34IZ2lMPnDiYFZgGjl+Qh0gEDR8u18kphPu/+f4858qnbijVEzqzfHPJGCXD5w1l5bXR99M8f"
+        },
+        "visits": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "visits"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAFDIc6s4iXDM+dzEA4ntTLIACXLoQBRqkNqM7yC8syykzCq7A4M32xA4/pWvh7C8atkgGTGrJ9dKvtm/a2fJWaHbrmXpEgNIWno718QRpijgZ/hYA="
+        }
+      }
+    },
+    {
+      "id": 2,
+      "plaintext": {
+        "visits": 0,
+        "balance": -1,
+        "active": false,
+        "ratio": -1.5,
+        "score": 0,
+        "note": "",
+        "name": "bob smith"
+      },
+      "stored": {
+        "active": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "active"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABGXg/rWzFqWgcCw0KVmlV7IADK5ojyhDsQsCNphHB+3xjIrvP/87lbuOrEITfr0CumXgHI4YSxjlcPwyOXHLayGQAGvwWuAFlpYrH5X+d9Vg=="
+        },
+        "balance": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "balance"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAACHOuVBG9X5O4D9ApUC1DpIADAVYvyCPRFFVrNaWA5vGxA5PF75NkyEagzyfXSd1UIKwHr8BV896CyFbYSClca7yamexnn0aL1nH9V0jpHrTkTj1DFD5MC"
+        },
+        "name": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "name"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAlsDmtaCz7PVYXLYbtkdYiIADMhjWHFWFQffW6FoF5Kd0/vSO5UX+T+vZyisdueEEtugFjeI9b2b8JAmPZVA1YwGnWAQvTk/NzycoZCSO93CEGlPqUfS99",
+          "bf": [
+            3,
+            15,
+            23,
+            50,
+            91,
+            140,
+            162,
+            308,
+            382,
+            441,
+            455,
+            505,
+            532,
+            575,
+            760,
+            770,
+            863,
+            957,
+            979,
+            1083,
+            1109,
+            1126,
+            1166,
+            1187,
+            1196,
+            1252,
+            1266,
+            1293,
+            1328,
+            1331,
+            1337,
+            1344,
+            1364,
+            1371,
+            1426,
+            1702,
+            1730,
+            1738,
+            1881,
+            1890,
+            1925,
+            1981
+          ]
+        },
+        "note": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "note"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABtkZKQt8AupdgAkSYhBWuLIABushFe05tB4gQmcP9j+7VPX95cAW65PgvtgFajKobc6gFRQvqrq/jE0/A6z/h1wkJaprHCR2rzks2dQO0T"
+        },
+        "ratio": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "ratio"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAADJpOTT8kFqPHwznhWnYNgQIAC3GPCNDOMGBnh6gPSa5KTDr+VBQDNZAZr7kqKF16sx0QGRhJu9MKyPnOHlPvMXoeAJaiwDz/4FFzW39/K6QYHakms="
+        },
+        "score": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "score"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABAfBAgu3xTGBg6oVcxVdCnIADQvBhh5sMdxmdosyrWjFQngkmQ+312sbVAFpgs2UBpcQFVAT9+lg/ey6n6zeWVQydtF2UVswD18AhJnGMs3DGhMVnxU7Ow"
+        },
+        "visits": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "visits"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABi/myUaRsBCFbuVTRBJLPiIADSnhrChMGg0gQaL8/2ghirKHXXC41P2aq5DghRI2FtWgHdF0NP0QUsZgASmJF0gwN1v4RdsYU6LW96F5S3NrNBBe0="
+        }
+      }
+    }
+  ]
+}
