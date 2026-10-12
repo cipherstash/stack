@@ -38,9 +38,10 @@ This project uses `mise` for task management. Common commands:
 
 ### Build System
 - Dependencies are resolved using `-- REQUIRE:` comments in SQL files
-- Build outputs to `release/` directory (a single installer + uninstaller, assembled from `src/v3` alone):
-  - `cipherstash-encrypt.sql` - The sole installer: the self-contained `eql_v3` surface, globbed from `src/v3` only (no `eql_v2`; installable into a DB with no `eql_v2` present)
+- Build outputs to `release/` directory (one installer + uninstaller per EQL version, both rendered from `src/v3` alone):
+  - `cipherstash-encrypt.sql` - The `eql_v3` installer: the self-contained surface, globbed from `src/v3` only (no `eql_v2`; installable into a DB with no `eql_v2` present)
   - `cipherstash-encrypt-uninstall.sql` - Matching uninstaller
+  - `cipherstash-encrypt-v4.sql` / `cipherstash-encrypt-v4-uninstall.sql` - The same SQL as `eql_v4` (ADR-0002). `tasks/test/verify_no_v3_in_v4.sh` fails the build if either names `eql_v3` or checks for payload version 3. Both versions install side by side; `tests/sqlx/tests/v3_v4_coexistence_tests.rs` pins what that enforces, including the gap that a plain `=` across versions falls back to `jsonb = jsonb` and returns no rows
 
 #### Schema and version placeholders
 
@@ -53,7 +54,7 @@ The SQL source never names its schemas or its payload version literally. It writ
 
 `{{prefix}}` is the schema and the start of every other name: `{{prefix}}.eq_term`, `{{prefix}}_internal.hmac_256`, `public.{{prefix}}_text_eq`. `{{eql_version}}` appears in every domain CHECK: `VALUE->>'v' = '{{eql_version}}'`. This covers every file under `src/v3/` (hand-written and generated), `src/v3/version.template`, `tasks/pin_search_path_v3.sql` and `tasks/uninstall-v3.sql`. The generator emits the placeholders too: `SCHEMA`, `INTERNAL_SCHEMA`, `PUBLIC_TYPNAME_PREFIX` and `EQL_VERSION` in `crates/eql-codegen/src/consts.rs` are placeholder strings. The Rust bindings are the exception. They describe v3 payloads and keep `eql_domains::PUBLIC_TYPNAME_PREFIX`, the literal `eql_v3_`.
 
-`tasks/build.sh` renders the ordered source into `build/render/eql_v3/` (gitignored, same relative paths) with `eql-codegen render`, runs the symbol-order and installer-completeness gates on the rendered files, and assembles `release/` from them. The renderer refuses three things: an unknown placeholder, an unterminated `{{`, and a **literal `eql_v3` or `eql_v4`** anywhere in the source, comments included. A literal name renders identically for both versions, so the v4 bundle would reach into v3. Write the placeholder in prose too.
+`tasks/build.sh` renders the ordered source into `build/render/eql_v3/` and `build/render/eql_v4/` (gitignored, same relative paths) with `eql-codegen render`, runs the symbol-order and installer-completeness gates on the rendered files, and assembles `release/` from them. The renderer refuses three things: an unknown placeholder, an unterminated `{{`, and a **literal `eql_v3` or `eql_v4`** anywhere in the source, comments included. A literal name renders identically for both versions, so the v4 bundle would reach into v3. Write the placeholder in prose too.
 
 Anything that needs the source as real SQL reads the rendered tree, not `src/`: `docs:validate:documented-sql` runs psql over `build/render/eql_v3/src`, and the Doxygen input filter (`tasks/docs/doxygen-filter.sh`) reads each file's rendered copy from `build/render/eql_v3/`. A new tool that parses `src/v3` must do the same, and depend on `build`; do not substitute the placeholders a second way.
 
