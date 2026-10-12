@@ -112,7 +112,7 @@ encryption for the scalar types:
 
 | v4 type | Plaintext |
 | --- | --- |
-| `Text` | `String` |
+| `Text`, `TextMatch` | `String` |
 | `Integer` | `Int32` |
 | `Bigint` | `Int64` |
 | `Boolean` | `Bool` |
@@ -124,7 +124,10 @@ seals for the same value, so values written here and by the Go SDK open each
 other. `IntegerEq` and `BigintEq` wait for vitaminc 0.6, whose integer
 equality term uses one PRF domain for every width; terms derived under
 vitaminc 0.5's per-width domains would stop matching after that upgrade.
-Ordering types wait for vitaminc 0.6's order encodings, float
+`TextMatch` uses Stack Encrypt's default match configuration
+(3-grams, lower-cased, `k = 3`, a 256-bit filter) for stored values and
+queries alike, and refuses text too short to make a 3-gram. Ordering types
+wait for vitaminc 0.6's order encodings, float
 equality for its canonical float form, and `Json` for a decision on sealing a
 document as one leaf.
 

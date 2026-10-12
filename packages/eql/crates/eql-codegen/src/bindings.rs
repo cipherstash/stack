@@ -344,6 +344,7 @@ pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
     ("bigint", ""),
     ("text", ""),
     ("text", "eq"),
+    ("text", "match"),
     ("boolean", ""),
     ("real", ""),
     ("double", ""),
@@ -1723,8 +1724,6 @@ mod tests {
                         .any(|t| matches!(t, Term::Ore | Term::Ope))
                     {
                         "ordering terms"
-                    } else if domain.terms.contains(&Term::Bloom) {
-                        "match terms"
                     } else if matches!(family.name, "integer" | "bigint") {
                         "integer-orderable/v1"
                     } else {

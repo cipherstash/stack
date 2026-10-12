@@ -41,7 +41,7 @@ var Types = []Type{
 	{Name: "NumericOrdOpe", GoName: "NumericOrdOpe", Family: "numeric", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_numeric_ord_ope", Indexes: []string{"ope"}, Query: "NumericOrdOpeQuery", QuerySQLDomain: "eql_v4.query_numeric_ord_ope", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
 	{Name: "Text", GoName: "Text", Family: "text", Suffix: "", Plaintext: "string", SQLDomain: "public.eql_v4_text", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "TextEq", GoName: "TextEq", Family: "text", Suffix: "Eq", Plaintext: "string", SQLDomain: "public.eql_v4_text_eq", Indexes: []string{"eq"}, Query: "TextEqQuery", QuerySQLDomain: "eql_v4.query_text_eq", Producible: true, Reason: ""},
-	{Name: "TextMatch", GoName: "TextMatch", Family: "text", Suffix: "Match", Plaintext: "string", SQLDomain: "public.eql_v4_text_match", Indexes: []string{"match"}, Query: "TextMatchQuery", QuerySQLDomain: "eql_v4.query_text_match", Producible: false, Reason: "the engine derives match terms, but no EQL type is built from them yet"},
+	{Name: "TextMatch", GoName: "TextMatch", Family: "text", Suffix: "Match", Plaintext: "string", SQLDomain: "public.eql_v4_text_match", Indexes: []string{"match"}, Query: "TextMatchQuery", QuerySQLDomain: "eql_v4.query_text_match", Producible: true, Reason: ""},
 	{Name: "TextOrdOre", GoName: "TextOrdOre", Family: "text", Suffix: "OrdOre", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord_ore", Indexes: []string{"eq", "ore"}, Query: "TextOrdOreQuery", QuerySQLDomain: "eql_v4.query_text_ord_ore", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
 	{Name: "TextOrd", GoName: "TextOrd", Family: "text", Suffix: "Ord", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord", Indexes: []string{"eq", "ope"}, Query: "TextOrdQuery", QuerySQLDomain: "eql_v4.query_text_ord", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
 	{Name: "TextOrdOpe", GoName: "TextOrdOpe", Family: "text", Suffix: "OrdOpe", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord_ope", Indexes: []string{"eq", "ope"}, Query: "TextOrdOpeQuery", QuerySQLDomain: "eql_v4.query_text_ord_ope", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
@@ -1406,7 +1406,7 @@ func (v *TextEqQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TextMatch is the EQL type stored in public.eql_v4_text_match: the text family with the match index.
-// The engine cannot produce it yet: the engine derives match terms, but no EQL type is built from them yet.
+// The engine produces it from a string.
 type TextMatch []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
