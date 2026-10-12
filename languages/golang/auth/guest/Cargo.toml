@@ -51,6 +51,8 @@ zeroize = { version = "1", features = ["derive"] }
 [dev-dependencies]
 serde_json = "1"
 tempfile = "3"
+# Native stack-auth refreshes run in a Tokio task, including with a mock transport.
+tokio = { version = "1.47.1", default-features = false, features = ["macros", "rt"] }
 # `Controlled::risky_ref`, to read a codec value back in the tests.
 vitaminc-protected = "0.5.0"
 
