@@ -1,25 +1,27 @@
-//! The EQL v4 types Stack Encrypt produces besides `TextEq`: the integer,
-//! bigint, boolean, float and storage-only text types. `Json` is not
-//! producible yet: a JSON value seals as a tree of leaves and EQL's `c`
-//! holds one.
+//! The EQL v4 types Stack Encrypt produces besides `TextEq`: the
+//! storage-only integer, bigint, boolean, float and text types. `Json` is not
+//! producible yet: a JSON value seals as a tree of leaves and EQL's `c` holds
+//! one. `IntegerEq` and `BigintEq` are held back: their equality term moves to
+//! vitaminc 0.6's shared integer PRF domain, and terms stored before that
+//! would stop matching.
 //!
-//! Each must round-trip through both entry points (the typed `encrypt_as`
-//! and the by-name dispatch a Go plan reaches), seal exactly the leaf
-//! vitaminc's value enum seals for the same value (what the Go SDK writes for
-//! a plain field of that kind), derive the equality term a plain `i32` or
-//! `i64` derives, and refuse a value of another kind.
+//! Each type must round-trip through both entry points (the typed
+//! `encrypt_as` and the by-name dispatch a Go plan reaches), seal exactly the
+//! leaf vitaminc's value enum seals for the same value (what the Go SDK writes
+//! for a plain field of that kind) and open the leaf the value enum sealed,
+//! and refuse a value of another kind.
 
 mod common;
 
 use eql_bindings::encryption::plaintext::{Bool, Float32, Float64, Int32, Int64};
 use eql_bindings::encryption::targets::{self as targets, TargetError};
-use eql_bindings::encryption::NativeCiphertextVisitor as NativeLeaf;
-use eql_bindings::v3::terms::Hmac256;
+use eql_bindings::encryption::{CiphertextVisitor, NativeCiphertextVisitor as NativeLeaf};
+use eql_bindings::v3::terms::Ciphertext;
 use eql_bindings::v4::{bigint, boolean, double, integer, real, text};
 use eql_bindings::Identifier;
 use serde::{de::DeserializeOwned, Serialize};
-use stack_encrypt::target::transcode::{Reader, Transcode};
-use stack_encrypt::{Label, NonEmpty};
+use stack_encrypt::target::transcode::{Reader, Visitor};
+use stack_encrypt::{CipherText, Label, NonEmpty};
 use vitaminc_aead_value::{FfiValue, ValueKind};
 
 fn column() -> NonEmpty<Identifier> {
@@ -61,10 +63,32 @@ fn assert_v4_envelope<T: Serialize>(stored: &T, keys: &[&str]) {
 /// the leaf the Go SDK would have sealed for the same value.
 async fn as_value_enum(
     cipher: &stack_encrypt::StackCipher<common::Observed>,
-    c: eql_bindings::v3::terms::Ciphertext,
+    c: Ciphertext,
 ) -> FfiValue {
     let native = c.read(NativeLeaf).unwrap();
     cipher.decrypt(native, column()).await.unwrap()
+}
+
+/// The other direction: the `c` a plain field of `value`'s kind gets when the
+/// value enum seals it, as a Go SDK field without an EQL type does.
+async fn sealed_by_value_enum(
+    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    value: FfiValue,
+) -> Ciphertext {
+    match keyset.encrypt(value, column()).await.unwrap() {
+        CipherText::Single(leaf) => CiphertextVisitor.sealed(leaf).unwrap(),
+        _ => panic!("a scalar seals as one leaf"),
+    }
+}
+
+/// A storage-only v4 value of type `T` around `c`, for this test's column.
+fn stored_as<T: DeserializeOwned>(c: Ciphertext) -> T {
+    serde_json::from_value(serde_json::json!({
+        "v": 4,
+        "i": {"t": "users", "c": "age"},
+        "c": c,
+    }))
+    .unwrap()
 }
 
 /// Run one named target over `value` and read the stored JSON back as `T`.
@@ -80,13 +104,39 @@ async fn by_name<T: DeserializeOwned>(
     serde_json::from_slice(&bytes).unwrap()
 }
 
+/// Whether two scalar values are the same value, bit for bit for floats.
+fn same(a: &FfiValue, b: &FfiValue) -> bool {
+    match (a, b) {
+        (FfiValue::Int32(a), FfiValue::Int32(b)) => a == b,
+        (FfiValue::Int64(a), FfiValue::Int64(b)) => a == b,
+        (FfiValue::Bool(a), FfiValue::Bool(b)) => a == b,
+        (FfiValue::Float32(a), FfiValue::Float32(b)) => a.to_bits() == b.to_bits(),
+        (FfiValue::Float64(a), FfiValue::Float64(b)) => a.to_bits() == b.to_bits(),
+        (FfiValue::String(a), FfiValue::String(b)) => a.risky_ref() == b.risky_ref(),
+        _ => false,
+    }
+}
+
+/// A sample plaintext of each kind a producible type takes.
+fn sample(kind: ValueKind) -> FfiValue {
+    match kind {
+        ValueKind::Int32 => FfiValue::Int32(-42),
+        ValueKind::Int64 => FfiValue::Int64(i64::MIN + 1),
+        ValueKind::Bool => FfiValue::Bool(true),
+        ValueKind::Float32 => FfiValue::Float32(-0.0),
+        ValueKind::Float64 => FfiValue::Float64(f64::NAN),
+        ValueKind::String => FfiValue::String("a private note".into()),
+        other => panic!("no sample for {other:?}: add one with the type that takes it"),
+    }
+}
+
 #[tokio::test]
 async fn integers_round_trip_and_seal_the_value_enum_leaf() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     for value in [0, 42, -7, i32::MIN, i32::MAX] {
-        let stored: integer::IntegerEq = keyset.encrypt_as(&Int32(value), column()).await.unwrap();
-        assert_v4_envelope(&stored, &["v", "i", "c", "hm"]);
+        let stored: integer::Integer = keyset.encrypt_as(&Int32(value), column()).await.unwrap();
+        assert_v4_envelope(&stored, &["v", "i", "c"]);
 
         let opened: Int32 = cipher
             .decrypt_as(stored.clone(), column().into())
@@ -98,42 +148,23 @@ async fn integers_round_trip_and_seal_the_value_enum_leaf() {
             FfiValue::Int32(v) if v == value
         ));
 
-        // The term is a plain i32's, so it matches an `int32` field with an
-        // equality index written by the Go SDK.
-        let plain: Hmac256 = keyset
-            .equality_term(value, column())
-            .await
-            .unwrap()
-            .read(Hmac256::visitor())
-            .unwrap();
-        assert_eq!(stored.hm, plain, "{value}: the equality term of the i32");
-
-        // The query twin derives the same term and carries no ciphertext.
-        let query: integer::IntegerEqQuery =
-            keyset.encrypt_as(&Int32(value), column()).await.unwrap();
-        assert_eq!(query.hm, stored.hm);
-
         // The by-name dispatch runs the same plan.
-        let named: integer::IntegerEq = by_name(&keyset, "IntegerEq", FfiValue::Int32(value)).await;
-        assert_eq!(named.hm, stored.hm);
+        let named: integer::Integer = by_name(&keyset, "Integer", FfiValue::Int32(value)).await;
         let opened = targets::decrypt(
-            "IntegerEq",
+            "Integer",
             &cipher,
             &label(),
-            &serde_json::to_vec(&stored).unwrap(),
+            &serde_json::to_vec(&named).unwrap(),
         )
         .unwrap()
         .await
         .unwrap();
         assert!(matches!(opened, FfiValue::Int32(v) if v == value));
-
-        let storage: integer::Integer = keyset.encrypt_as(&Int32(value), column()).await.unwrap();
-        assert_v4_envelope(&storage, &["v", "i", "c"]);
     }
 
     for value in [0i64, -1, i64::MIN, i64::MAX] {
-        let stored: bigint::BigintEq = keyset.encrypt_as(&Int64(value), column()).await.unwrap();
-        assert_v4_envelope(&stored, &["v", "i", "c", "hm"]);
+        let stored: bigint::Bigint = keyset.encrypt_as(&Int64(value), column()).await.unwrap();
+        assert_v4_envelope(&stored, &["v", "i", "c"]);
         let opened: Int64 = cipher
             .decrypt_as(stored.clone(), column().into())
             .await
@@ -143,26 +174,27 @@ async fn integers_round_trip_and_seal_the_value_enum_leaf() {
             as_value_enum(&cipher, stored.c.clone()).await,
             FfiValue::Int64(v) if v == value
         ));
-        let plain: Hmac256 = keyset
-            .equality_term(value, column())
-            .await
-            .unwrap()
-            .read(Hmac256::visitor())
-            .unwrap();
-        assert_eq!(stored.hm, plain, "{value}: the equality term of the i64");
     }
 }
 
+/// Withdrawn until vitaminc 0.6: a later re-enable is a deliberate change to
+/// this test, not a side effect of a regenerated table.
 #[tokio::test]
-async fn equal_values_of_different_widths_have_different_terms() {
+async fn integer_equality_types_are_held_back_with_their_reason() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    let narrow: integer::IntegerEq = keyset.encrypt_as(&Int32(42), column()).await.unwrap();
-    let wide: bigint::BigintEq = keyset.encrypt_as(&Int64(42), column()).await.unwrap();
-    assert_ne!(
-        narrow.hm, wide.hm,
-        "the term binds the width, as the separate domains do"
-    );
+    for (name, value) in [
+        ("IntegerEq", FfiValue::Int32(1)),
+        ("BigintEq", FfiValue::Int64(1)),
+    ] {
+        let target = targets::target(name).expect("in the table");
+        assert!(!target.producible, "{name}");
+        let error = refused(targets::encrypt(name, &keyset, &label(), value));
+        assert!(
+            matches!(&error, TargetError::Unproducible { reason, .. } if reason.contains("integer-orderable/v1")),
+            "{name}: {error}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -202,6 +234,106 @@ async fn booleans_and_floats_round_trip_as_storage_only_types() {
             .await
             .unwrap();
         assert_eq!(opened.0.to_bits(), value.to_bits());
+        assert!(matches!(
+            as_value_enum(&cipher, stored.c).await,
+            FfiValue::Float64(v) if v.to_bits() == value.to_bits()
+        ));
+    }
+}
+
+/// The direction `LeafVisitor` and `BoolVisitor` implement: a leaf the value
+/// enum sealed, as a plain Go field writes it, opens as the typed plaintext.
+#[tokio::test]
+async fn a_leaf_the_value_enum_sealed_opens_as_the_typed_plaintext() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let c = sealed_by_value_enum(&keyset, FfiValue::Int32(-7)).await;
+    let opened: Int32 = cipher
+        .decrypt_as(stored_as::<integer::Integer>(c), column().into())
+        .await
+        .unwrap();
+    assert_eq!(opened.0, -7);
+
+    let c = sealed_by_value_enum(&keyset, FfiValue::Int64(i64::MAX)).await;
+    let opened: Int64 = cipher
+        .decrypt_as(stored_as::<bigint::Bigint>(c), column().into())
+        .await
+        .unwrap();
+    assert_eq!(opened.0, i64::MAX);
+
+    let c = sealed_by_value_enum(&keyset, FfiValue::Bool(true)).await;
+    let opened: Bool = cipher
+        .decrypt_as(stored_as::<boolean::Boolean>(c), column().into())
+        .await
+        .unwrap();
+    assert!(opened.0);
+
+    let c = sealed_by_value_enum(&keyset, FfiValue::Float32(-0.0)).await;
+    let opened: Float32 = cipher
+        .decrypt_as(stored_as::<real::Real>(c), column().into())
+        .await
+        .unwrap();
+    assert_eq!(opened.0.to_bits(), (-0.0f32).to_bits());
+
+    let c = sealed_by_value_enum(&keyset, FfiValue::Float64(f64::NAN)).await;
+    let opened: Float64 = cipher
+        .decrypt_as(stored_as::<double::Double>(c), column().into())
+        .await
+        .unwrap();
+    assert_eq!(opened.0.to_bits(), f64::NAN.to_bits());
+}
+
+/// Every producible row of the generated table, through all three by-name
+/// entry points: a swapped type or plaintext in the generator fails here.
+#[tokio::test]
+async fn every_producible_type_dispatches_by_name() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let producible: Vec<_> = targets::targets().iter().filter(|t| t.producible).collect();
+    assert!(!producible.is_empty());
+    for target in producible {
+        let name = target.name;
+        let kind = target
+            .plaintext_kind()
+            .expect("a producible type names its kind");
+        let stored = targets::encrypt(name, &keyset, &label(), sample(kind))
+            .unwrap()
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&stored).unwrap();
+        assert_eq!(json["v"], 4, "{name}");
+        let opened = targets::decrypt(name, &cipher, &label(), &stored)
+            .unwrap()
+            .await
+            .unwrap();
+        assert!(same(&opened, &sample(kind)), "{name}: opened another value");
+
+        match target.query {
+            None => {
+                let error = refused(targets::query(name, &keyset, &label(), sample(kind)));
+                assert!(
+                    matches!(error, TargetError::NoQuery { .. }),
+                    "{name}: {error}"
+                );
+            }
+            Some(_) => {
+                let query = targets::query(name, &keyset, &label(), sample(kind))
+                    .unwrap()
+                    .await
+                    .unwrap();
+                let query: serde_json::Value = serde_json::from_slice(&query).unwrap();
+                assert!(
+                    query.get("c").is_none(),
+                    "{name}: a query carries no ciphertext"
+                );
+                if target.indexes.contains(&"eq") {
+                    assert_eq!(
+                        query["hm"], json["hm"],
+                        "{name}: the query probes the stored term"
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -238,8 +370,8 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
     for (name, value, expected) in [
-        ("IntegerEq", FfiValue::Int64(1), ValueKind::Int32),
-        ("BigintEq", FfiValue::Int32(1), ValueKind::Int64),
+        ("Integer", FfiValue::Int64(1), ValueKind::Int32),
+        ("Bigint", FfiValue::Int32(1), ValueKind::Int64),
         ("Boolean", FfiValue::Int32(1), ValueKind::Bool),
         ("Real", FfiValue::Float64(1.0), ValueKind::Float32),
         ("Text", FfiValue::Int32(1), ValueKind::String),
@@ -282,15 +414,13 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
     db.batch_execute(
         "CREATE TEMP TABLE v4_types (
             id int PRIMARY KEY,
-            age public.eql_v4_integer_eq,
-            balance public.eql_v4_bigint_eq,
-            age_only public.eql_v4_integer,
+            age public.eql_v4_integer,
+            balance public.eql_v4_bigint,
             active public.eql_v4_boolean,
             ratio public.eql_v4_real,
             score public.eql_v4_double,
             note public.eql_v4_text
-        );
-        CREATE INDEX v4_types_age_idx ON v4_types (eql_v4.eq_term(age));",
+        );",
     )
     .unwrap();
 
@@ -299,15 +429,11 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
         let row = runtime.block_on(async {
             (
                 keyset
-                    .encrypt_as::<_, integer::IntegerEq>(&Int32(age), column())
-                    .await
-                    .unwrap(),
-                keyset
-                    .encrypt_as::<_, bigint::BigintEq>(&Int64(balance), column())
-                    .await
-                    .unwrap(),
-                keyset
                     .encrypt_as::<_, integer::Integer>(&Int32(age), column())
+                    .await
+                    .unwrap(),
+                keyset
+                    .encrypt_as::<_, bigint::Bigint>(&Int64(balance), column())
                     .await
                     .unwrap(),
                 keyset
@@ -330,13 +456,12 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
         });
         db.execute(
             "INSERT INTO v4_types VALUES ($1,
-                $2::text::jsonb::public.eql_v4_integer_eq,
-                $3::text::jsonb::public.eql_v4_bigint_eq,
-                $4::text::jsonb::public.eql_v4_integer,
-                $5::text::jsonb::public.eql_v4_boolean,
-                $6::text::jsonb::public.eql_v4_real,
-                $7::text::jsonb::public.eql_v4_double,
-                $8::text::jsonb::public.eql_v4_text)",
+                $2::text::jsonb::public.eql_v4_integer,
+                $3::text::jsonb::public.eql_v4_bigint,
+                $4::text::jsonb::public.eql_v4_boolean,
+                $5::text::jsonb::public.eql_v4_real,
+                $6::text::jsonb::public.eql_v4_double,
+                $7::text::jsonb::public.eql_v4_text)",
             &[
                 &id,
                 &json(&row.0),
@@ -345,95 +470,75 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
                 &json(&row.3),
                 &json(&row.4),
                 &json(&row.5),
-                &json(&row.6),
             ],
         )
         .unwrap();
     }
 
-    let probe: integer::IntegerEqQuery = runtime
-        .block_on(async { keyset.encrypt_as(&Int32(42), column()).await })
-        .unwrap();
-    let ids: Vec<i32> = db
-        .query(
-            "SELECT id FROM v4_types WHERE age = $1::text::jsonb::eql_v4.query_integer_eq ORDER BY id",
-            &[&json(&probe)],
-        )
-        .unwrap()
-        .iter()
-        .map(|r| r.get(0))
-        .collect();
-    assert_eq!(ids, [1, 3], "IntegerEq equality finds both 42s");
-
-    let probe: bigint::BigintEqQuery = runtime
-        .block_on(async { keyset.encrypt_as(&Int64(20), column()).await })
-        .unwrap();
-    let ids: Vec<i32> = db
-        .query(
-            "SELECT id FROM v4_types WHERE balance = $1::text::jsonb::eql_v4.query_bigint_eq",
-            &[&json(&probe)],
-        )
-        .unwrap()
-        .iter()
-        .map(|r| r.get(0))
-        .collect();
-    assert_eq!(ids, [2], "BigintEq equality");
-
-    // Every stored value reads back and opens.
+    // Every stored value reads back from its domain and opens.
     let row = db
         .query_one(
-            "SELECT age::text, active::text, score::text, note::text FROM v4_types WHERE id = 2",
+            "SELECT age::text, balance::text, active::text, ratio::text, score::text, note::text
+             FROM v4_types WHERE id = 2",
             &[],
         )
         .unwrap();
-    let opened: Int32 = runtime
-        .block_on(async {
-            cipher
-                .decrypt_as(
-                    serde_json::from_str::<integer::IntegerEq>(row.get(0)).unwrap(),
-                    column().into(),
-                )
-                .await
-        })
-        .unwrap();
-    assert_eq!(opened.0, 7);
-    let opened: Bool = runtime
-        .block_on(async {
-            cipher
-                .decrypt_as(
-                    serde_json::from_str::<boolean::Boolean>(row.get(1)).unwrap(),
-                    column().into(),
-                )
-                .await
-        })
-        .unwrap();
-    assert!(opened.0);
-    let opened: Float64 = runtime
-        .block_on(async {
-            cipher
-                .decrypt_as(
-                    serde_json::from_str::<double::Double>(row.get(2)).unwrap(),
-                    column().into(),
-                )
-                .await
-        })
-        .unwrap();
-    assert_eq!(opened.0, 0.25);
-    let opened: String = runtime
-        .block_on(async {
-            cipher
-                .decrypt_as(
-                    serde_json::from_str::<text::Text>(row.get(3)).unwrap(),
-                    column().into(),
-                )
-                .await
-        })
-        .unwrap();
-    assert_eq!(opened, "note");
+    let open = |i: usize| -> String { row.get(i) };
+    runtime.block_on(async {
+        let opened: Int32 = cipher
+            .decrypt_as(
+                serde_json::from_str::<integer::Integer>(&open(0)).unwrap(),
+                column().into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(opened.0, 7);
+        let opened: Int64 = cipher
+            .decrypt_as(
+                serde_json::from_str::<bigint::Bigint>(&open(1)).unwrap(),
+                column().into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(opened.0, 20);
+        let opened: Bool = cipher
+            .decrypt_as(
+                serde_json::from_str::<boolean::Boolean>(&open(2)).unwrap(),
+                column().into(),
+            )
+            .await
+            .unwrap();
+        assert!(opened.0);
+        let opened: Float32 = cipher
+            .decrypt_as(
+                serde_json::from_str::<real::Real>(&open(3)).unwrap(),
+                column().into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(opened.0, 0.5);
+        let opened: Float64 = cipher
+            .decrypt_as(
+                serde_json::from_str::<double::Double>(&open(4)).unwrap(),
+                column().into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(opened.0, 0.25);
+        let opened: String = cipher
+            .decrypt_as(
+                serde_json::from_str::<text::Text>(&open(5)).unwrap(),
+                column().into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(opened, "note");
+    });
+
     // A storage-only column has no equality operator: it is blocked, not
     // silently compared as jsonb.
     let err = db
-        .query("SELECT id FROM v4_types WHERE age_only = age_only", &[])
+        .query("SELECT id FROM v4_types WHERE age = age", &[])
         .unwrap_err();
     let message = err.as_db_error().map(|e| e.message()).unwrap_or_default();
     assert!(

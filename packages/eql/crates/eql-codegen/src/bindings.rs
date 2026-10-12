@@ -334,16 +334,14 @@ fn render_query_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) 
 }
 
 /// The `(family, domain)` pairs whose generated v4 structs carry the opt-in
-/// `stack-encrypt` derives: every storage-only domain and every
-/// equality-only domain whose plaintext vitaminc 0.5 encodes and, for
-/// equality, derives a term for. Every other stored domain has a reason in
+/// `stack-encrypt` derives: every storage-only domain whose plaintext
+/// vitaminc 0.5 encodes, and the text equality domain. Integer equality is
+/// held back until its PRF domain settles (see [`encryption_gap`]). Every other stored domain has a reason in
 /// [`encryption_gap`], and a test holds the two together so a new domain
 /// cannot arrive without either a derive or a reason.
 pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
     ("integer", ""),
-    ("integer", "eq"),
     ("bigint", ""),
-    ("bigint", "eq"),
     ("text", ""),
     ("text", "eq"),
     ("boolean", ""),
@@ -403,6 +401,10 @@ pub fn encryption_gap(
         "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"
     } else if domain.terms.contains(&Term::Bloom) {
         "the engine derives match terms, but no EQL type is built from them yet"
+    } else if matches!(family.name, "integer" | "bigint") && domain.terms == [Term::Hm] {
+        "the integer equality term moves to vitaminc 0.6's shared integer-orderable/v1 PRF \
+         domain; producing it before that release would leave stored terms unmatchable after \
+         the upgrade"
     } else if matches!(family.name, "real" | "double") {
         "vitaminc 0.5 derives no equality term for a float; the canonical float form \
          arrives in vitaminc 0.6 (ADR-0002)"
@@ -1723,6 +1725,8 @@ mod tests {
                         "ordering terms"
                     } else if domain.terms.contains(&Term::Bloom) {
                         "match terms"
+                    } else if matches!(family.name, "integer" | "bigint") {
+                        "integer-orderable/v1"
                     } else {
                         assert!(
                             matches!(family.name, "real" | "double"),

@@ -406,7 +406,15 @@ mod tests {
                 .find(|f| f.name == name)
                 .expect("family")
         };
-        assert!(gap(family("integer"), "eq").is_none());
+        for family_name in ["integer", "bigint"] {
+            assert!(
+                gap(family(family_name), "eq")
+                    .unwrap()
+                    .contains("integer-orderable/v1"),
+                "{family_name}"
+            );
+            assert!(gap(family(family_name), "").is_none(), "{family_name}");
+        }
         assert!(gap(family("integer"), "ord_ore")
             .unwrap()
             .contains("ordering terms"));

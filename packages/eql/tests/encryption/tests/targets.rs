@@ -565,17 +565,7 @@ mod the_table {
             .collect();
         assert_eq!(
             producible,
-            [
-                "Integer",
-                "IntegerEq",
-                "Bigint",
-                "BigintEq",
-                "Text",
-                "TextEq",
-                "Boolean",
-                "Real",
-                "Double"
-            ],
+            ["Integer", "Bigint", "Text", "TextEq", "Boolean", "Real", "Double"],
         );
         for row in targets::targets().iter().filter(|t| !t.producible) {
             let reason = row.reason.expect("an unproducible type has a reason");
@@ -586,6 +576,7 @@ mod the_table {
                 (_, "Ord" | "OrdOre" | "OrdOpe" | "Search" | "SearchOre") => "ordering terms",
                 ("text", "Match") => "match terms",
                 ("real" | "double", "Eq") => "float",
+                ("integer" | "bigint", "Eq") => "integer-orderable/v1",
                 (family, suffix) => panic!("{}: unexpected {family} {suffix}", row.name),
             };
             assert!(reason.contains(expected), "{}: {reason}", row.name);

@@ -113,16 +113,18 @@ encryption for the scalar types:
 | v4 type | Plaintext |
 | --- | --- |
 | `Text` | `String` |
-| `Integer`, `IntegerEq` | `Int32` |
-| `Bigint`, `BigintEq` | `Int64` |
+| `Integer` | `Int32` |
+| `Bigint` | `Int64` |
 | `Boolean` | `Bool` |
 | `Real` | `Float32` |
 | `Double` | `Float64` |
 
 Each seals as vitaminc's tagged leaf, the bytes the value enum (`FfiValue`)
 seals for the same value, so values written here and by the Go SDK open each
-other, and `IntegerEq` / `BigintEq` derive the equality term of the integer
-inside. Ordering types wait for vitaminc 0.6's order encodings, float
+other. `IntegerEq` and `BigintEq` wait for vitaminc 0.6, whose integer
+equality term uses one PRF domain for every width; terms derived under
+vitaminc 0.5's per-width domains would stop matching after that upgrade.
+Ordering types wait for vitaminc 0.6's order encodings, float
 equality for its canonical float form, and `Json` for a decision on sealing a
 document as one leaf.
 
@@ -181,7 +183,7 @@ assumed. Outcomes against today's sources:
 
 | Writer | Reader and query producer | Outcome |
 | --- | --- | --- |
-| Rust (`stack-encrypt` profile) | Rust (`stack-encrypt` profile) | **Proven.** `tests/encryption/tests/text_eq.rs`: JSON round trip, both canonical directions, PostgreSQL insert and equality query. |
+| Rust (`stack-encrypt` profile) | Rust (`stack-encrypt` profile) | **Proven.** `tests/encryption/tests/text_eq.rs`: JSON round trip, both canonical directions, PostgreSQL insert and equality query. `tests/encryption/tests/v4_types.rs`: the same for the other producible v4 types, in both directions between the typed plaintexts and the value enum. |
 | JS / FFI (`cipherstash-client` profile) | Rust | **Not supported.** `c` lacks the `stack-encrypt:1:` prefix and is refused loudly on decryption. A Rust probe against such a column is accepted by SQL and matches nothing. |
 | Rust (`stack-encrypt` profile) | JS / FFI | **Not supported.** The JS reader does not know the `stack-encrypt:1:` prefix and the two profiles' equality terms never match. |
 
