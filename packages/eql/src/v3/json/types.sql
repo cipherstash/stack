@@ -85,7 +85,7 @@ $$;
 --! @internal
 --! @param val jsonb Candidate document payload.
 --! @return boolean True when `val` is an encrypted document envelope with
---!         `v = 3`, `i`, a string key header `h`, an `sv` array, and valid
+--!         `v = {{eql_version}}`, `i`, a string key header `h`, an `sv` array, and valid
 --!         sv entry elements. `h` carries the document's key-retrieval
 --!         material once (every entry encrypts under the document's single
 --!         data key; entry `c` values are raw AEAD output whose nonces are
@@ -117,7 +117,7 @@ $$;
 
 --! @brief Storage/root domain for an encrypted JSONB column.
 --!
---! CHECK: a JSON object carrying the EQL envelope (`v = 3` version, `i` index
+--! CHECK: a JSON object carrying the EQL envelope (`v = {{eql_version}}` version, `i` index
 --! metadata, and the key header `h`). Root `c` is intentionally NOT required —
 --! an sv-array root payload is `{i, v, h, sv}` with no root ciphertext (the
 --! root document ciphertext lives on the root sv entry). The CHECK also

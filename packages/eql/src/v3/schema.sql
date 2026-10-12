@@ -1,5 +1,5 @@
 --! @file v3/schema.sql
---! @brief EQL v3 schema creation
+--! @brief EQL v{{eql_version}} schema creation
 --!
 --! Creates the {{prefix}} and {{prefix}}_internal schemas. User-column encrypted
 --! domains (public.{{prefix}}_integer, public.{{prefix}}_bigint, and future scalar domains) live in
@@ -34,19 +34,19 @@
 --!       reaches an internal object indirectly (a public operator/aggregate
 --!       whose backing state-fn/blocker lives there), grant it deliberately.
 
---! @brief Drop existing EQL v3 schema
+--! @brief Drop existing EQL v{{eql_version}} schema
 --! @warning CASCADE will drop all dependent objects
 DROP SCHEMA IF EXISTS {{prefix}} CASCADE;
 
---! @brief Create EQL v3 schema
+--! @brief Create EQL v{{eql_version}} schema
 --! @note Houses the encrypted-domain type families
 CREATE SCHEMA {{prefix}};
 
---! @brief Drop existing EQL v3 internal schema
+--! @brief Drop existing EQL v{{eql_version}} internal schema
 --! @warning CASCADE will drop all dependent objects
 DROP SCHEMA IF EXISTS {{prefix}}_internal CASCADE;
 
---! @brief Create EQL v3 internal implementation schema
+--! @brief Create EQL v{{eql_version}} internal implementation schema
 --! @note Houses INTERNAL {{prefix}} objects only: SEM index-term TYPES + their
 --!       support/constructor/comparator functions, the unsupported-operator
 --!       blockers (which only raise), the aggregate state functions, and the

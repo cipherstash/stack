@@ -22,7 +22,7 @@
 use std::fmt;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// The schema-and-name prefix placeholder.
 pub const PREFIX: &str = "{{prefix}}";
@@ -142,8 +142,19 @@ pub fn render_str(src: &str, version: EqlVersion) -> Result<String, RenderError>
 /// Why a file could not be rendered.
 #[derive(Debug)]
 pub enum RenderFileError {
-    Io { path: PathBuf, source: io::Error },
-    Render { path: PathBuf, source: RenderError },
+    Io {
+        path: PathBuf,
+        source: io::Error,
+    },
+    Render {
+        path: PathBuf,
+        source: RenderError,
+    },
+    /// A file path that is absolute or climbs out with `..`. `out.join` would
+    /// put its output outside `out`, or over the source itself.
+    NotRelative {
+        path: PathBuf,
+    },
 }
 
 impl fmt::Display for RenderFileError {
@@ -153,6 +164,11 @@ impl fmt::Display for RenderFileError {
             RenderFileError::Render { path, source } => {
                 write!(f, "{}: {source}", path.display())
             }
+            RenderFileError::NotRelative { path } => write!(
+                f,
+                "{}: not a relative path inside the source root",
+                path.display()
+            ),
         }
     }
 }
@@ -161,7 +177,8 @@ impl std::error::Error for RenderFileError {}
 
 /// Render each of `files` (relative to `root`) as `version`, writing it to the
 /// same relative path under `out`. Every file is rendered before any is
-/// written, so a source error leaves `out` as it was.
+/// written, so a source error leaves `out` as it was. A path that is absolute
+/// or contains `..` is refused, since its output would land outside `out`.
 pub fn render_files(
     root: &Path,
     files: &[PathBuf],
@@ -170,6 +187,12 @@ pub fn render_files(
 ) -> Result<(), RenderFileError> {
     let mut rendered = Vec::with_capacity(files.len());
     for rel in files {
+        if !rel
+            .components()
+            .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+        {
+            return Err(RenderFileError::NotRelative { path: rel.clone() });
+        }
         let path = root.join(rel);
         let src = fs::read_to_string(&path).map_err(|source| RenderFileError::Io {
             path: path.clone(),
@@ -285,6 +308,31 @@ mod tests {
             fs::read_to_string(out.join("src/v3/a.sql")).unwrap(),
             "SELECT eql_v4.f();\n"
         );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn render_files_refuses_paths_outside_out() {
+        let dir = std::env::temp_dir().join(format!("eql-render-abs-{}", std::process::id()));
+        let root = dir.join("root");
+        let out = dir.join("out");
+        fs::create_dir_all(root.join("src")).unwrap();
+        let src = root.join("src/a.sql");
+        fs::write(&src, "SELECT {{prefix}}.f();\n").unwrap();
+
+        for rel in [src.clone(), PathBuf::from("src/../src/a.sql")] {
+            let err =
+                render_files(&root, std::slice::from_ref(&rel), &out, EqlVersion::V4).unwrap_err();
+            assert!(
+                matches!(&err, RenderFileError::NotRelative { path } if *path == rel),
+                "{err}"
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(&src).unwrap(),
+            "SELECT {{prefix}}.f();\n"
+        );
+        assert!(!out.exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 }
