@@ -181,7 +181,16 @@ mod tests {
             .collect();
         assert_eq!(
             producible,
-            ["Integer", "Bigint", "Text", "TextEq", "Boolean", "Real", "Double"],
+            [
+                "Integer",
+                "Bigint",
+                "Text",
+                "TextEq",
+                "TextMatch",
+                "Boolean",
+                "Real",
+                "Double"
+            ],
             "the engine's producible types, in catalog order"
         );
         assert!(matches!(

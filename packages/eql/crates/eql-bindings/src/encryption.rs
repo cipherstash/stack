@@ -84,7 +84,7 @@ pub mod targets;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 #[allow(deprecated)]
 use stack_encrypt::sem::MatchTerm;
-use stack_encrypt::sem::{DefaultMatch, EqualityTerm, MatchConfig};
+use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, Tokenizer};
 use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
 use stack_encrypt::target::{self, AeadContext, CallerContext};
 use stack_encrypt::{
@@ -254,14 +254,38 @@ impl<P, Ctx> DecryptField<P, Ctx> for Hmac256 {
     }
 }
 
-/// Builds EQL's bloom filter, the set bit positions as `smallint`s, from the
-/// native match terms.
+/// The match configuration of EQL v4's `TextMatch`: 3-grams of the
+/// lower-cased text, `k = 6` positions per token in a 2048-bit filter.
 ///
-/// The configuration is Stack Encrypt's default (3-grams, lower-cased,
-/// `k = 3`, a 256-bit filter): every position is below 256, so it fits a
-/// `smallint` unchanged. Stored values and queries take it from the same type,
-/// so they always agree; matching cipherstash-client's parameters is not a
-/// goal, because cipherstash-client never writes an `eql_v4` column.
+/// Pinned here rather than taken from Stack Encrypt's default, because it is
+/// part of the stored format: a stored filter and a query filter agree only
+/// when both were built under the same values, and nothing in the payload
+/// records them. Changing any of them is a new domain or payload version,
+/// never an edit in place. Every position is below 2048, so it fits a
+/// `smallint`.
+///
+/// A filter is a set of bits, so `@@` can return rows that do not contain the
+/// query (false positives) and never misses one that does. 2048 bits keeps
+/// that rate low for text of a few hundred characters; re-check matches
+/// after decrypting where it matters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct EqlMatch;
+impl MatchConfig for EqlMatch {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            tokenizer: Tokenizer::Ngram { length: 3 },
+            downcase: true,
+            k: 6,
+            m: 2048,
+        }
+    }
+}
+
+/// Builds EQL's bloom filter, the set bit positions as `smallint`s, from the
+/// native match terms built under [`EqlMatch`]. Stored values and queries
+/// take it from the same type, so they always agree; matching
+/// cipherstash-client's parameters is not a goal, because cipherstash-client
+/// never writes an `eql_v4` column.
 #[doc(hidden)]
 pub struct MatchVisitor;
 impl Visitor for MatchVisitor {
@@ -299,7 +323,13 @@ impl<S: AsRef<str>> EncryptFrom<S> for BloomFilter {
     where
         S: 's,
     {
-        target::matching::<_, _, _, DefaultMatch>().transcode()
+        // The type names the configuration and lets inference fill the rest:
+        // `matching` takes three type parameters in the crates.io
+        // stack-encrypt this crate publishes against and four in the tree,
+        // so a turbofish compiles against only one of them.
+        #[allow(deprecated)]
+        let terms: Encryption<'s, S, MatchTerm<EqlMatch>, K, CallerContext> = target::matching();
+        terms.transcode()
     }
 }
 impl Decryptable for BloomFilter {
@@ -316,6 +346,22 @@ mod tests {
     use stack_encrypt::{nonempty, Descriptor, Label};
 
     use super::*;
+
+    /// The stored format: a change here strands every filter already stored
+    /// under the old values, so it must arrive as a new domain or payload
+    /// version, and this test makes that a deliberate edit.
+    #[test]
+    fn the_match_configuration_is_pinned() {
+        let options = EqlMatch::options();
+        assert!(matches!(options.tokenizer, Tokenizer::Ngram { length: 3 }));
+        assert!(options.downcase);
+        assert_eq!(options.k, 6);
+        assert_eq!(options.m, 2048);
+        assert!(
+            options.m <= 1 << 15,
+            "every position must fit EQL's smallint filter"
+        );
+    }
 
     fn id(t: &str, c: &str) -> Identifier {
         Identifier {

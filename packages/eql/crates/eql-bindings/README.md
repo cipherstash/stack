@@ -124,9 +124,14 @@ seals for the same value, so values written here and by the Go SDK open each
 other. `IntegerEq` and `BigintEq` wait for vitaminc 0.6, whose integer
 equality term uses one PRF domain for every width; terms derived under
 vitaminc 0.5's per-width domains would stop matching after that upgrade.
-`TextMatch` uses Stack Encrypt's default match configuration
-(3-grams, lower-cased, `k = 3`, a 256-bit filter) for stored values and
-queries alike, and refuses text too short to make a 3-gram. Ordering types
+`TextMatch` builds its filter under a configuration pinned in this crate
+(`EqlMatch`: 3-grams of the lower-cased text, `k = 6`, a 2048-bit filter) for
+stored values and queries alike. The configuration is part of the stored
+format, so changing it means a new domain or payload version. A filter can
+match a row that does not contain the query, so re-check after decrypting
+where that matters. Text too short to make a 3-gram (empty strings, two-letter
+codes) cannot be stored in a `TextMatch` column yet: Stack Encrypt 0.2 refuses
+text with no tokens. Ordering types
 wait for vitaminc 0.6's order encodings, float
 equality for its canonical float form, and `Json` for a decision on sealing a
 document as one leaf.

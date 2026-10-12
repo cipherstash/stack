@@ -153,7 +153,7 @@ The engine produces these EQL types today, each from one Go field type:
 
 | `encrypt_into` | Go field |
 |---|---|
-| `TextEq`, `Text` | `string` |
+| `TextEq`, `Text`, `TextMatch` | `string` |
 | `Integer` | `int32` |
 | `Bigint` | `int64` |
 | `Boolean` | `bool` |
@@ -161,6 +161,7 @@ The engine produces these EQL types today, each from one Go field type:
 | `Double` | `float64` |
 
 The width must match: an `int` or `int64` field is not an `Integer`, and a `float64` field is not a `Real`.
+A `TextMatch` field refuses text shorter than three characters, such as an empty string or a two-letter code, because it has no 3-grams to index.
 `encrypt_into` with any other type is refused with the type's name and the reason it is not produced yet.
 Separate columns work today for four indexes: `equality`, `match`, `ore` and `ope`.
 

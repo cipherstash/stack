@@ -436,9 +436,14 @@ fn encryption_attrs(
     let plaintext_ty: syn::Type = syn::parse_str(rust).expect("plaintext is a type path");
     let shown = rust.rsplit("::").next().unwrap_or(rust);
     let plaintext = if query {
+        let terms = if domain.terms.contains(&Term::Bloom) {
+            "match"
+        } else {
+            "equality"
+        };
         format!(
             " Plaintext input: [`{shown}`]({rust}). With the `stack-encrypt` feature, \
-             implements `EncryptFrom<{shown}>` to build equality query terms. Query operands \
+             implements `EncryptFrom<{shown}>` to build {terms} query terms. Query operands \
              do not decrypt."
         )
     } else {
