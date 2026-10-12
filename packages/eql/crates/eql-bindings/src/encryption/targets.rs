@@ -10,7 +10,7 @@
 //! the typed call runs. Nothing here derives a term or seals a byte itself
 //! (ADR-0007: one engine, entered through a plan); the dispatch is generated
 //! from `eql-domains::CATALOG` by `eql-codegen` into
-//! [`crate::v3::targets`], beside the inventory, so a type cannot be in the
+//! [`crate::v4::targets`], beside the v4 family modules, so a type cannot be in the
 //! catalog and missing from the table.
 //!
 //! The guest build that holds the EQL types links this module; the build
@@ -30,10 +30,10 @@
 //!   "family": "text",
 //!   "suffix": "Eq",
 //!   "plaintext": "string",
-//!   "sql_domain": "public.eql_v3_text_eq",
+//!   "sql_domain": "public.eql_v4_text_eq",
 //!   "indexes": ["eq"],
 //!   "query": "TextEqQuery",
-//!   "query_sql_domain": "eql_v3.query_text_eq",
+//!   "query_sql_domain": "eql_v4.query_text_eq",
 //!   "producible": true,
 //!   "reason": null
 //! }
@@ -86,7 +86,7 @@ use stack_encrypt::{
 };
 use vitaminc_aead_value::{FfiValue, ValueKind};
 
-use crate::v3::targets::{decrypt_named, encrypt_named, query_named, TARGETS};
+use crate::v4::targets::{decrypt_named, encrypt_named, query_named, TARGETS};
 use crate::Identifier;
 
 /// One EQL type a plan may name as a field target: a row of [`targets`].
@@ -108,7 +108,7 @@ pub struct Target {
     /// or `None` while the family's encoding is unspecified. See
     /// [`plaintext_kind`](Self::plaintext_kind) for the parsed kind.
     pub plaintext: Option<&'static str>,
-    /// The stored value's PostgreSQL domain: `public.eql_v3_text_eq`.
+    /// The stored value's PostgreSQL domain: `public.eql_v4_text_eq`.
     pub sql_domain: &'static str,
     /// The indexes the type carries, by `IndexSpec::key()` name.
     pub indexes: &'static [&'static str],
@@ -520,7 +520,7 @@ mod tests {
         );
         assert_eq!(
             target("TextEq").map(|t| t.sql_domain),
-            Some("public.eql_v3_text_eq")
+            Some("public.eql_v4_text_eq")
         );
         assert_eq!(target("texteq"), None, "names match exactly");
         for t in targets() {
@@ -549,7 +549,7 @@ mod tests {
             family: "text",
             suffix: "",
             plaintext: Some("string"),
-            sql_domain: "public.eql_v3_text",
+            sql_domain: "public.eql_v4_text",
             indexes: &[],
             query: None,
             query_sql_domain: None,

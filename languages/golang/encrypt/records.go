@@ -174,7 +174,7 @@ func (cph *Cipher) Derive(ctx context.Context, plan *record.Plan, field string, 
 
 // Query derives the EQL query value of a field that names an EQL type, for
 // one value: the operand that matches stored values of the field, as the
-// JSON bytes the field's eql_v3.query_* domain takes. The engine runs the
+// JSON bytes the field's eql_v4.query_* domain takes. The engine runs the
 // EQL type's own query plan; no data key is minted. For generated code.
 func (cph *Cipher) Query(ctx context.Context, plan *record.Plan, field string, value any) ([]byte, error) {
 	p, err := cph.plan(plan)

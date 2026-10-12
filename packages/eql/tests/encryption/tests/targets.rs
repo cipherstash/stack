@@ -6,8 +6,8 @@
 mod common;
 
 use eql_bindings::encryption::targets::{self as targets, Opener, Target, TargetError};
-use eql_bindings::v3::text::{TextEq, TextEqQuery};
-use eql_bindings::{v3, Identifier};
+use eql_bindings::v4::text::{TextEq, TextEqQuery};
+use eql_bindings::{v4, Identifier};
 use eql_domains::{Shape, Term, CATALOG};
 use stack_encrypt::Label;
 use vitaminc_aead_value::{FfiValue, ValueKind};
@@ -420,7 +420,7 @@ mod the_table {
             assert_eq!(row.family, family.name, "{name}: family");
             assert_eq!(
                 row.sql_domain,
-                format!("public.{}", domain.sql_typname(family.name)),
+                format!("public.eql_v4_{}", domain.full_name(family.name)),
                 "{name}: stored domain"
             );
             let indexes: Vec<&str> = if matches!(domain.shape, Shape::SteVec) {
@@ -458,7 +458,7 @@ mod the_table {
                     Some("SteVecQuery"),
                     "{name}: the containment needle"
                 );
-                assert_eq!(row.query_sql_domain, Some("eql_v3.query_json"), "{name}");
+                assert_eq!(row.query_sql_domain, Some("eql_v4.query_json"), "{name}");
             } else if domain.terms.is_empty() {
                 assert_eq!(
                     (row.query, row.query_sql_domain),
@@ -473,7 +473,7 @@ mod the_table {
                 );
                 assert_eq!(
                     row.query_sql_domain.map(str::to_owned),
-                    Some(format!("eql_v3.{}", domain.query_name(family.name))),
+                    Some(format!("eql_v4.{}", domain.query_name(family.name))),
                     "{name}: query domain"
                 );
             }
@@ -482,9 +482,15 @@ mod the_table {
 
     #[test]
     fn every_row_is_a_compiled_domain_type_and_so_is_its_query() {
-        let stored: Vec<&str> = v3::all().iter().map(|d| d.sql_domain()).collect();
-        let queries: Vec<&str> = v3::all_query().iter().map(|d| d.sql_domain()).collect();
-        for row in targets::targets() {
+        let stored: Vec<&str> = v4::all().iter().map(|d| d.sql_domain()).collect();
+        let queries: Vec<&str> = v4::all_query().iter().map(|d| d.sql_domain()).collect();
+        // v4 has no SteVec bindings yet, so the SteVec document (which no
+        // engine produces until the JSON index exists) is the one row with no
+        // compiled type behind it.
+        for row in targets::targets()
+            .iter()
+            .filter(|r| r.family != "json" || r.suffix.is_empty())
+        {
             assert!(
                 stored.contains(&row.sql_domain),
                 "{}: {} is in all()",
@@ -492,10 +498,8 @@ mod the_table {
                 row.sql_domain
             );
             if let Some(query) = row.query_sql_domain {
-                // The SteVec needle is in `all()`, not `all_query()`: it is
-                // a hand-written document shape, not a scalar twin.
                 assert!(
-                    queries.contains(&query) || stored.contains(&query),
+                    queries.contains(&query),
                     "{}: {query} is a compiled domain type",
                     row.name
                 );
@@ -541,10 +545,10 @@ mod the_table {
                 "family": "text",
                 "suffix": "Eq",
                 "plaintext": "string",
-                "sql_domain": "public.eql_v3_text_eq",
+                "sql_domain": "public.eql_v4_text_eq",
                 "indexes": ["eq"],
                 "query": "TextEqQuery",
-                "query_sql_domain": "eql_v3.query_text_eq",
+                "query_sql_domain": "eql_v4.query_text_eq",
                 "producible": true,
                 "reason": null
             })

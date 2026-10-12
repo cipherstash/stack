@@ -1,5 +1,5 @@
 use eql_bindings::{
-    v3::text::{TextEq, TextEqQuery},
+    v4::text::{TextEq, TextEqQuery},
     Identifier,
 };
 use stack_encrypt::StackCipher;

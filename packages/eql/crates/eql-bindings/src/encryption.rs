@@ -6,10 +6,11 @@
 //! folding. The stored identifier supplies context for ciphertext and terms.
 //!
 //! This is a new producer profile, independent of existing cipherstash-client
-//! ciphertext and terms. The EQL envelope and SQL domains remain unchanged.
+//! ciphertext and terms, so it writes the `eql_v4` domains ([`crate::v4`]),
+//! never `eql_v3` (ADR-0002).
 //!
-//! [`TextEq`]: crate::v3::text::TextEq
-//! [`TextEqQuery`]: crate::v3::text::TextEqQuery
+//! [`TextEq`]: crate::v4::text::TextEq
+//! [`TextEqQuery`]: crate::v4::text::TextEqQuery
 //!
 //! # Example
 //!
@@ -55,24 +56,24 @@
 //!
 //! Query terms cannot recover plaintext:
 //! ```compile_fail
-//! use eql_bindings::v3::text::TextEqQuery;
+//! use eql_bindings::v4::text::TextEqQuery;
 //! fn require<T: stack_encrypt::DecryptInto<String>>() {}
 //! require::<TextEqQuery>();
 //! ```
 //! An encrypted EQL record is not a plaintext value:
 //! ```compile_fail
-//! use eql_bindings::v3::text::TextEq;
+//! use eql_bindings::v4::text::TextEq;
 //! fn require<T: stack_encrypt::Encrypt>() {}
 //! require::<TextEq>();
 //! ```
 //! The text domain accepts text, and requires a concrete column identifier:
 //! ```compile_fail
-//! use eql_bindings::v3::text::TextEq;
+//! use eql_bindings::v4::text::TextEq;
 //! fn require<T: stack_encrypt::EncryptFrom<u32>>() {}
 //! require::<TextEq>();
 //! ```
 //! ```compile_fail
-//! use eql_bindings::v3::text::TextEq;
+//! use eql_bindings::v4::text::TextEq;
 //! fn require<T: stack_encrypt::EncryptFrom<String, Context = ()>>() {}
 //! require::<TextEq>();
 //! ```
