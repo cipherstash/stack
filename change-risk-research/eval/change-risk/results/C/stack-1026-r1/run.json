@@ -1,0 +1,157 @@
+{
+  "case": "stack-1026",
+  "pr": 1026,
+  "condition": "C",
+  "run": 1,
+  "model_requested": "claude-opus-5-5",
+  "exit_code": 0,
+  "started": "2026-10-12T03:50:29.268082+00:00",
+  "wall_seconds": 207.954419,
+  "isolation": {
+    "hidden_paths": [
+      "/home/claude/stack",
+      "/tmp/claude-0",
+      "/root/.claude/projects"
+    ],
+    "git_protocols": "file",
+    "mcp": "none"
+  },
+  "claude_code_version": "2.1.296",
+  "model_reported": "claude-opus-5-5",
+  "skills_loaded": [
+    "session-start-hook",
+    "change-risk",
+    "deep-research",
+    "design",
+    "slides",
+    "design-sync",
+    "dataviz",
+    "artifact-diagramming",
+    "artifact-capabilities",
+    "update-config",
+    "verify",
+    "debug",
+    "code-review",
+    "simplify",
+    "batch",
+    "fewer-permission-prompts",
+    "doctor",
+    "loop",
+    "claude-api",
+    "workflow-authoring",
+    "run",
+    "run-skill-generator",
+    "plugin-authoring",
+    "anthropic-skills:built-in-browser",
+    "anthropic-skills:chrome-browser",
+    "anthropic-skills:computer-use",
+    "anthropic-skills:deep-research",
+    "anthropic-skills:docs",
+    "anthropic-skills:docx",
+    "anthropic-skills:google-workspace",
+    "anthropic-skills:import-memory",
+    "anthropic-skills:morning",
+    "anthropic-skills:pdf",
+    "anthropic-skills:pptx",
+    "anthropic-skills:skill-creator",
+    "anthropic-skills:xlsx"
+  ],
+  "total_cost_usd": 1.3559278999999997,
+  "duration_ms": 206273,
+  "duration_api_ms": 202500,
+  "num_turns": 27,
+  "is_error": false,
+  "subtype": "success",
+  "usage": {
+    "input_tokens": 50,
+    "cache_creation_input_tokens": 74533,
+    "cache_read_input_tokens": 1658125,
+    "output_tokens": 21384,
+    "output_tokens_details": {
+      "thinking_tokens": 7227
+    },
+    "server_tool_use": {
+      "web_search_requests": 0,
+      "web_fetch_requests": 0
+    },
+    "service_tier": "standard",
+    "cache_creation": {
+      "ephemeral_1h_input_tokens": 74533,
+      "ephemeral_5m_input_tokens": 0
+    },
+    "inference_geo": "global",
+    "iterations": [
+      {
+        "input_tokens": 2,
+        "output_tokens": 984,
+        "cache_read_input_tokens": 100315,
+        "cache_creation_input_tokens": 1665,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 1665
+        },
+        "type": "message"
+      }
+    ],
+    "speed": "standard",
+    "fallback_credit": null
+  },
+  "modelUsage": {
+    "claude-haiku-5-5": {
+      "inputTokens": 1469,
+      "outputTokens": 24,
+      "cacheReadInputTokens": 0,
+      "cacheCreationInputTokens": 0,
+      "webSearchRequests": 0,
+      "costUSD": 0.0001589,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 0,
+      "canonicalModel": "claude-haiku-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    },
+    "claude-opus-5-5": {
+      "inputTokens": 50,
+      "outputTokens": 21384,
+      "cacheReadInputTokens": 1658125,
+      "cacheCreationInputTokens": 74533,
+      "webSearchRequests": 0,
+      "costUSD": 1.355769,
+      "contextWindow": 1000000,
+      "maxOutputTokens": 128000,
+      "thinkingTokens": 7227,
+      "canonicalModel": "claude-opus-5-5",
+      "provider": "firstParty",
+      "costBasis": "list"
+    }
+  },
+  "tool_calls": 25,
+  "tool_counts": {
+    "Skill": 1,
+    "Read": 1,
+    "Bash": 22,
+    "Write": 1
+  },
+  "skill_invoked": true,
+  "audit": {
+    "flags": [
+      {
+        "tool": "Bash",
+        "why": "network-looking",
+        "input": "{\"command\": \"cd /srv/cr/stack-1026-C-r1/repo; sed -n 17,30p .github/workflows/tests.yml; awk 'NR>=17 && NR<=345 && /if:/' .github/workflows/tests.yml; grep -n \\\"eql_published\\\\|eql_version\\\\|eql_prerelease\\\" -r .github scripts | head; cat .github/workflows/_build-eql-sql.yml | grep -n \\\"tag\\\\|ref\\\\|"
+      },
+      {
+        "tool": "Bash",
+        "why": "network-looking",
+        "input": "{\"command\": \"cd /srv/cr/stack-1026-C-r1; python3 -c \\\"\\nimport json;d=json.load(open('evidence.json'));print(d['tool'],d['ownership'],d['co_change'],d['ci'],sep='\\\\n')\\\"; grep -n \\\"gh release\\\\|softprops\\\\|tag_name\\\\|git tag\\\\|attach\\\" repo/.github/workflows/_build-eql-sql.yml | head; grep -n \\\"skip"
+      }
+    ],
+    "clean": false
+  },
+  "validation": {
+    "valid": true,
+    "errors": [],
+    "warnings": []
+  }
+}

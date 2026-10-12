@@ -1,0 +1,377 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "fcb7e336ded91cbf00318785996c3ea833cc9944",
+  "head_sha": "c28b5e46fd29889667a14eab94e9b6213e553271",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "C"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": { "status": "available", "source": "repo/ at head" },
+    "pr_description": { "status": "available", "source": "pr-description.md" },
+    "ci_results": {
+      "status": "available",
+      "source": "ci.json",
+      "note": "Check runs on the head commit. None of them exercise the Release JS workflow or an npm publish; only the cache lint gate touches release.yml."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "SECURITY.md and skills/stash-supply-chain-security/SKILL.md at head read for release context only."
+    },
+    "dependency_graph": {
+      "status": "partial",
+      "note": "Inter-package dependencies read from package.json files at head; no generated graph."
+    },
+    "codeowners": {
+      "status": "unavailable",
+      "note": "No CODEOWNERS signal was used."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "evidence.json / evidence.md (collect-evidence, already run)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No access to npmjs.com Trusted Publisher configuration, registry state, repository secrets, or Release JS run logs."
+    }
+  },
+  "summary": "Switches the Release JS workflow from NPM_TOKEN to npm OIDC trusted publishing: removes NPM_TOKEN from the changesets/action env, installs npm@^11.5.1 globally before publishing, and points repository.url (with directory) at cipherstash/stack in 9 publishable package.json files so provenance validation can pass. There is no library code change. The risk is all in the release path. Merging to main runs the publish straight away for 7 pending versions, and whether that works depends on npmjs.com Trusted Publisher configuration made outside the repo for every package. CI cannot verify that. If any package is missing that config, the publish succeeds for some packages and fails for others. That can leave published versions such as @cipherstash/protect@12.0.0 depending on unpublished versions (workspace:* on @cipherstash/schema). The job also installs npm with a floating range in a job that has id-token: write and contents: write. All CI checks passed, but none of them exercise publishing. Minor doc drift: SECURITY.md still says the workflow uses an NPM_TOKEN.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "security_boundary",
+      "description": "npm publish authentication changes from a long-lived NPM_TOKEN secret to a short-lived OIDC identity token minted for the release.yml job. Success now depends on npmjs.com Trusted Publisher records per package (org cipherstash, repo stack, workflow release.yml).",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-11"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "build_or_release",
+      "description": "The release job installs npm@^11.5.1 globally from the public registry at run time, before pnpm install and publish. The installed npm version floats within 11.x and is not pinned or locked.",
+      "certainty": "observed",
+      "evidence": ["E-3"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "public_contract",
+      "description": "Published package metadata changes: repository.url/bugs.url move from cipherstash/protectjs to cipherstash/stack, a monorepo directory is added, and repository is added to stash, @cipherstash/migrate and @cipherstash/wizard. These fields are used by npm provenance verification and are shown on npmjs.com.",
+      "certainty": "observed",
+      "evidence": ["E-4", "E-5"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "external_side_effect",
+      "description": "After merge, the push to main runs Release JS, which is expected to publish the versions that are bumped but unpublished (protect@12.0.0, protect-dynamodb@12.0.0, schema@3.0.0, stack@0.18.0, wizard@0.3.0, prisma-next@0.3.1, stash@0.16.0). These are irreversible registry writes.",
+      "certainty": "inferred",
+      "evidence": ["E-6", "E-11"]
+    }
+  ],
+  "impact": "medium",
+  "verification_confidence": "low",
+  "release_readiness": "changes_or_verification_required",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": ".github/workflows/release.yml (Release JS)",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "Auth mechanism, npm version and publish env changed.",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "AC-2",
+      "name": "Published npm packages (@cipherstash/protect, protect-dynamodb, schema, stack, wizard, drizzle, nextjs, migrate, prisma-next, stash)",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "package.json metadata changed for nine of them. All ten are published by `pnpm run release` → `changeset publish` in the changed workflow.",
+      "evidence": ["E-4", "E-5", "E-6"]
+    },
+    {
+      "id": "AC-3",
+      "name": "Downstream consumers installing the pending versions",
+      "kind": "external_consumer",
+      "relationship": "confirmed",
+      "how": "@cipherstash/protect depends on @cipherstash/schema via workspace:* and @cipherstash/prisma-next on @cipherstash/stack via workspace:*. A published dependent pins the exact sibling version.",
+      "evidence": ["E-7", "E-8"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Supply-chain cache gate (tests-supply-chain.yml / lint-no-workflow-caching.mjs)",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "Triggered by changes to release.yml. It checks only caching, not auth, pinning or publish behaviour.",
+      "evidence": ["E-9", "E-10"]
+    },
+    {
+      "id": "AC-5",
+      "name": "SECURITY.md release documentation",
+      "kind": "documentation",
+      "relationship": "confirmed",
+      "how": "Still describes publishing with OIDC and an NPM_TOKEN.",
+      "evidence": ["E-12"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "Partial publish leaves released packages depending on unpublished siblings",
+      "trigger": "PR is merged before a Trusted Publisher is configured (or configured with a mismatched repo/workflow) for one or more pending packages, e.g. @cipherstash/schema.",
+      "affected_components": ["AC-1", "AC-2", "AC-3"],
+      "mechanism": "Merge to main runs Release JS straight away (release.yml:10-13). `changeset publish` publishes each pending package independently, and with NPM_TOKEN gone (base release.yml:59) each package authenticates only through its own Trusted Publisher record. A package without one fails while the others succeed. @cipherstash/protect lists `@cipherstash/schema: workspace:*` as a runtime dependency (packages/protect/package.json:74), which publishes as an exact version pin.",
+      "consequence": "Versions such as @cipherstash/protect@12.0.0 or @cipherstash/prisma-next@0.3.1 can reach the registry while the sibling versions they pin (schema@3.0.0, stack@0.18.0) do not exist, so installs of those versions fail for customers. Published versions cannot be withdrawn after 72h. Recovery means configuring the missing publisher and re-running, or cutting new versions.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-1", "E-2", "E-6", "E-7", "E-8", "E-11"],
+      "existing_verification": [
+        {
+          "description": "PR description requires configuring Trusted Publishers for all packages before merge. This is a manual step and cannot be checked from the repo.",
+          "status": "unknown",
+          "evidence": ["E-11"]
+        }
+      ],
+      "missing_verification": [
+        "Confirmation (screenshot or checklist) that all 10 packages have a Trusted Publisher pointing at cipherstash/stack release.yml with a blank environment.",
+        "A dry run or canary publish via OIDC before the real multi-package publish."
+      ],
+      "mitigation": "Have an npm org admin confirm the Trusted Publisher config for every pending package before merge. Watch the first Release JS run and check that each of the 7 pending versions is on the registry. If some failed, fix the config and re-run the publish on the new commit straight away.",
+      "domain_tags": ["build_release", "configuration", "dependency"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Floating npm@^11.5.1 install runs unpinned code in the OIDC-capable release job",
+      "trigger": "A new npm 11.x release that is broken or malicious appears between runs (any 11.x >= 11.5.1 is accepted).",
+      "affected_components": ["AC-1", "AC-2", "AC-4"],
+      "mechanism": "release.yml:52 runs `npm install -g npm@^11.5.1` from the registry with no version pin or integrity lock. The job has id-token: write and contents: write (release.yml:5-8), and the installed npm is the binary that performs the publish. The cache gate does not check version pinning (tests-supply-chain.yml header).",
+      "consequence": "A regression in a new npm minor release breaks publishing for every package (loud). In the worst case, a compromised npm release can mint OIDC tokens and publish trojaned @cipherstash packages with valid provenance. That worst case is a registry-wide supply-chain event, not something this repo controls alone.",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "evidence": ["E-3", "E-1", "E-10"],
+      "existing_verification": [
+        {
+          "description": "'Verify no caching in release workflows' check passed on head. It covers caching only.",
+          "status": "ran_passed",
+          "evidence": ["E-13"]
+        }
+      ],
+      "missing_verification": [
+        "No check enforces exact version pins for tools installed in release.yml."
+      ],
+      "mitigation": "Pin an exact npm version (e.g. npm@11.x.y) and bump it deliberately. Consider pinning node-gyp in the same job, which is already unpinned at base.",
+      "domain_tags": ["build_release", "dependency"]
+    },
+    {
+      "id": "FS-3",
+      "title": "OIDC auth path not actually taken by changeset publish, so every publish still fails",
+      "trigger": "changesets/action v1.8.0 still writes or expects an .npmrc token without NPM_TOKEN, or pnpm publish does not delegate to the upgraded npm 11 on PATH.",
+      "affected_components": ["AC-1", "AC-2"],
+      "mechanism": "The fix depends on two claims this assessment could not check: that changesets/action only writes the token .npmrc when NPM_TOKEN is set, and that `pnpm run release` → `changeset publish` → pnpm publish ends up calling the globally upgraded npm (release.yml:49-52 comment). Neither can be checked offline, and no CI job runs the publish path.",
+      "consequence": "Pending versions stay unpublished, which is the same state as at base. Failures are loud in the Release JS run and nothing wrong is written to the registry.",
+      "impact": "low",
+      "basis": "speculative",
+      "evidence": ["E-2", "E-3", "E-11"],
+      "existing_verification": [],
+      "missing_verification": [
+        "No CI or dry-run exercise of the OIDC publish path."
+      ],
+      "mitigation": "Watch the first post-merge Release JS run. If it fails, the base state is unchanged and a follow-up fix can be made.",
+      "domain_tags": ["build_release", "configuration"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "The publish path (OIDC auth, npm 11, provenance with the new repository.url) is not exercised by any CI check. It runs for the first time against the real registry on merge.",
+      "scenarios": ["FS-1", "FS-3"],
+      "evidence": ["E-13", "E-1"]
+    },
+    {
+      "id": "VG-2",
+      "description": "The Trusted Publisher configuration on npmjs.com is an out-of-repo precondition with no recorded confirmation.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-11"]
+    },
+    {
+      "id": "VG-3",
+      "description": "Nothing gates version pinning of tools installed in the credentialed release job.",
+      "scenarios": ["FS-2"],
+      "evidence": ["E-3", "E-10"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "other",
+      "description": "Before merge, have an npm org admin confirm a Trusted Publisher (cipherstash/stack, release.yml, blank environment) on all 10 publishable packages, and record that in the PR.",
+      "addresses": ["FS-1", "VG-2"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "monitoring",
+      "description": "Watch the first post-merge Release JS run and check `npm view <pkg>@<version>` for each of the 7 pending versions, plus the provenance attestation.",
+      "addresses": ["FS-1", "FS-3", "VG-1"]
+    },
+    {
+      "id": "RC-3",
+      "kind": "rollback_plan",
+      "description": "If only some packages publish, fix the missing publisher config and re-run straight away. Do not leave dependents pinned to missing versions. Keep the NPM_TOKEN secret until a fully green publish, as the PR proposes.",
+      "addresses": ["FS-1"]
+    },
+    {
+      "id": "RC-4",
+      "kind": "review_focus",
+      "description": "Pin npm to an exact version in release.yml (and node-gyp).",
+      "addresses": ["FS-2", "VG-3"]
+    },
+    {
+      "id": "RC-5",
+      "kind": "documentation",
+      "description": "Update SECURITY.md:140-141, which still describes NPM_TOKEN-based publishing.",
+      "addresses": []
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "No access to npmjs.com (Trusted Publisher config, which versions are already published), repository secrets or Release JS run logs.",
+      "effect": "Cannot confirm the PR's diagnosis of the E404, which versions are pending, or whether the publish will succeed."
+    },
+    {
+      "id": "CL-2",
+      "description": "changesets/action v1.8.0 and pnpm 10.33.2 publish internals are not in the checkout, and there is no network access.",
+      "effect": "The claims that no .npmrc is written without NPM_TOKEN and that pnpm publish uses the upgraded npm are taken from the PR description and workflow comments (inferred)."
+    },
+    {
+      "id": "CL-3",
+      "description": "Assumed that provenance validation compares repository.url with the building repo, as the PR states. Not verified against npm documentation.",
+      "effect": "If that assumption is wrong, the package.json changes are cosmetic metadata only. Either way they do not change runtime code."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 5,
+      "line_end": 13,
+      "claim": "Workflow has id-token: write and contents: write and runs on every push to main.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "diff",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 59,
+      "line_end": 68,
+      "claim": "NPM_TOKEN removed from the changesets/action env. Only GITHUB_TOKEN remains.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 46,
+      "line_end": 52,
+      "claim": "node-gyp (unpinned) and npm@^11.5.1 (floating range) installed globally in the release job.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "diff",
+      "path": "packages/protect/package.json",
+      "rev": "head",
+      "line_start": 13,
+      "line_end": 20,
+      "claim": "repository.url changed from cipherstash/protectjs to cipherstash/stack with directory. Same pattern in drizzle, nextjs, protect-dynamodb, schema and stack.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "diff",
+      "path": "packages/wizard/package.json",
+      "rev": "head",
+      "line_start": 5,
+      "line_end": 9,
+      "claim": "repository field added to wizard (also cli, migrate), where it was absent at base.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "package.json",
+      "rev": "head",
+      "line_start": 52,
+      "line_end": 52,
+      "claim": "release script is `pnpm run build && changeset publish`, which publishes all non-private workspace packages.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/protect/package.json",
+      "rev": "head",
+      "line_start": 74,
+      "line_end": 74,
+      "claim": "@cipherstash/protect has a runtime dependency on @cipherstash/schema via workspace:*.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "packages/prisma-next/package.json",
+      "rev": "head",
+      "line_start": 82,
+      "line_end": 82,
+      "claim": "@cipherstash/prisma-next has a runtime dependency on @cipherstash/stack via workspace:*.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "code",
+      "path": ".github/workflows/tests-supply-chain.yml",
+      "rev": "head",
+      "line_start": 21,
+      "line_end": 37,
+      "claim": "Supply-chain gate triggers on changes to release.yml.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": ".github/workflows/tests-supply-chain.yml",
+      "rev": "head",
+      "line_start": 3,
+      "line_end": 13,
+      "claim": "The gate checks only that caching is disabled. It checks nothing about auth or version pinning.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "pr_description",
+      "claim": "PR states all publishes have failed with E404 since 2026-05-04, that 7 versions are pending, that Trusted Publishers must be configured per package before merge, and that changesets/action writes .npmrc only when NPM_TOKEN is set.",
+      "status": "inferred"
+    },
+    {
+      "id": "E-12",
+      "kind": "documentation",
+      "path": "SECURITY.md",
+      "rev": "head",
+      "line_start": 140,
+      "line_end": 141,
+      "claim": "SECURITY.md still says release.yml publishes using OIDC and an NPM_TOKEN.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "ci_result",
+      "claim": "ci.json: all 8 check runs on head succeeded, including 'Verify no caching in release workflows'. None runs the Release JS publish.",
+      "status": "verified"
+    }
+  ]
+}

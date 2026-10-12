@@ -1,0 +1,296 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "5dd37db087698d38e4824e6a50414fb03d56bb8f",
+  "head_sha": "063530d063163196e181e1f142e4f89a0a28b5e8",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "C",
+    "generated_at": "2026-10-12"
+  },
+  "inputs": {
+    "diff": {
+      "status": "available",
+      "source": "changes.diff and git -C repo diff base..head"
+    },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": {
+      "status": "available",
+      "source": "pr-description.md",
+      "note": "Treated as untrusted claims; checked against the tree where possible."
+    },
+    "ci_results": {
+      "status": "available",
+      "source": "ci.json",
+      "note": "52 check runs on head: 49 success, 3 skipped (two 'review', one fuzz campaign matrix). No logs, so cache hit/miss behaviour and which key was used are not visible."
+    },
+    "architecture_docs": {
+      "status": "unavailable",
+      "note": "Not listed in CASE.md; in-tree workflow comments were read as source."
+    },
+    "dependency_graph": {
+      "status": "unavailable"
+    },
+    "codeowners": {
+      "status": "available",
+      "source": "evidence.json ownership",
+      "note": "All changed files owned by @cipherstash/developers."
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "evidence.json (history before base only)"
+    },
+    "deployment_context": {
+      "status": "unavailable",
+      "note": "No GitHub Actions cache state, runner image details or mise-action source available offline."
+    }
+  },
+  "summary": "CI-only change. Each cached jdx/mise-action step in 12 workflows gets a cache_key_prefix (mise-v1-ubuntu-2204 or mise-v1-ubuntu-2404) that matches its job's runs-on image. This stops Ubuntu 22.04 jobs restoring cargo tools that were compiled against glibc 2.38/2.39 on 24.04. A new vitest guard holds every cached mise step to that rule. No library code, published artefact, or release workflow changes. Release workflows already set cache: false and are untouched. I checked every mise step at head with my own script, and each cached step's prefix matches its runs-on. CI on head is green, including the jobs that run the guard. The one thing nothing here proves is that both pinned mise-action versions (v4 and v3.6.3) actually build their cache key from cache_key_prefix. If one ignores it, the fix quietly does nothing for those steps and the loud glibc failure can come back. The worst case is CI-only and recoverable, so impact is low.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "build_or_release",
+      "description": "Each cached mise-action step in bench-eql, crap-crates, fuzz, integration-protect-ffi, macro-expand-eql, miri, mutants, test-eql, tests-crates, tests-golang, tests-rust and udeps now sets cache_key_prefix to mise-v1-ubuntu-2204 or mise-v1-ubuntu-2404, matching its job's runs-on. Jobs on different Ubuntu images no longer share one mise tool-cache entry. Every existing cache entry is abandoned, so the first run per image after merge is a cold install.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "test_only",
+      "description": "Adds the scripts/__tests__/workflow-mise-cache-image.test.mjs guard. It fails when a cached mise step's prefix does not name its job's image, when a step sets cache_key, when a cache-off step sets a prefix, when a job whose runs-on names no image caches, or when a composite action caches tools other than wasm-pack. It reads YAML only; it does not check how mise-action uses the input.",
+      "certainty": "observed",
+      "evidence": ["E-4", "E-5"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "medium",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "CI workflows with cached mise steps (12 workflow files)",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "Cache key prefix added to 29 mise-action steps.",
+      "evidence": ["E-1", "E-3"]
+    },
+    {
+      "id": "AC-2",
+      "name": "scripts/__tests__ guard suite (pnpm test:scripts)",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "New guard test file. It runs in tests.yml's run-tests job and in tests-supply-chain.yml.",
+      "evidence": ["E-4", "E-5"]
+    },
+    {
+      "id": "AC-3",
+      "name": "jdx/mise-action pinned at 1648a78 (v4) and 5228313 (v3.6.3)",
+      "kind": "external_consumer",
+      "relationship": "confirmed",
+      "how": "The third-party action that consumes the new cache_key_prefix input. How it handles the input could not be read offline.",
+      "evidence": ["E-3", "E-6"]
+    },
+    {
+      "id": "AC-4",
+      "name": "Release workflows (release.yml, _build-*-artifacts, _build-eql-*, release-postgres-eql-image)",
+      "kind": "ci_or_release",
+      "relationship": "confirmed",
+      "how": "They use mise-action with cache: false and are not modified, so this change does not affect release build inputs.",
+      "evidence": ["E-3", "E-7"]
+    }
+  ],
+  "failure_scenarios": [
+    {
+      "id": "FS-1",
+      "title": "A pinned mise-action version ignores cache_key_prefix, so the shared key and the glibc failure come back",
+      "trigger": "A PR that changes mise.toml or mise.test.toml (new config hash), where a 24.04 job saves the new entry first.",
+      "affected_components": ["AC-1", "AC-3"],
+      "mechanism": "GitHub Actions only warns on an unexpected `with:` input. If v4 (1648a78) or v3.6.3 (5228313) does not include cache_key_prefix in its key, every step still writes the default per-OS key. The guard checks only the YAML, so it would still pass.",
+      "consequence": "The same failure the PR fixes: 22.04 Rust jobs fail with GLIBC_2.38 not found before any test runs, and re-runs keep failing. CI-only; no shipped artefact is affected.",
+      "impact": "low",
+      "basis": "speculative",
+      "evidence": ["E-6", "E-4", "E-9"],
+      "existing_verification": [
+        {
+          "description": "CI on head: Rust workspace crates, CRAP, fuzz regression, udeps, Mutants gate and Go jobs all passed. This PR does not change the mise config hash, so green CI does not show that entries are separated by image.",
+          "status": "ran_passed",
+          "evidence": ["E-9"]
+        }
+      ],
+      "missing_verification": [
+        "Read the action.yml and key-building code of mise-action at both pinned SHAs to confirm cache_key_prefix is a declared input that is used in the key.",
+        "Check a CI log from head for the restore/save key line showing the mise-v1-ubuntu-NNNN prefix."
+      ],
+      "mitigation": "Before merging, check one head CI log for the cache key line. If v3.6.3 does not support the input, move tests-rust.yml and integration-protect-ffi.yml to the v4 pin or set cache: false on them.",
+      "domain_tags": ["build_release", "configuration", "dependency"]
+    },
+    {
+      "id": "FS-2",
+      "title": "Cold cache after merge makes every job recompile its cargo tools",
+      "trigger": "The first run per image on main (and per PR cache scope) after merge.",
+      "affected_components": ["AC-1"],
+      "mechanism": "The new prefixes match no existing entry, so mise compiles cargo-nextest, llvm-cov, crap, mutants, fuzz and udeps from source on the runner. Some jobs have tight timeouts, such as fuzz.yml at 30 minutes.",
+      "consequence": "Slower CI, or a timeout that needs a re-run, until the entries are saved. Loud and self-healing.",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "evidence": ["E-8", "E-10", "E-9"],
+      "existing_verification": [
+        {
+          "description": "Head CI completed green on what were new keys for this PR, so the cold path probably fits within the timeouts. I could not see whether those runs actually missed the cache.",
+          "status": "ran_passed",
+          "evidence": ["E-9"]
+        }
+      ],
+      "missing_verification": [
+        "Cache hit/miss and step durations from the head CI logs."
+      ],
+      "mitigation": "None needed beyond re-running a job that times out once.",
+      "domain_tags": ["build_release"]
+    }
+  ],
+  "verification_gaps": [
+    {
+      "id": "VG-1",
+      "description": "Nothing available shows that the pinned mise-action versions use cache_key_prefix when they build the key. The guard checks the YAML, not the action's behaviour, and green CI on a PR that does not change the mise config does not exercise the race.",
+      "scenarios": ["FS-1"],
+      "evidence": ["E-6", "E-4"]
+    }
+  ],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Check one head CI log from a v4 step and one from a v3.6.3 step (tests-rust.yml or integration-protect-ffi.yml) for the mise cache key, and confirm it starts with mise-v1-ubuntu-2204 or mise-v1-ubuntu-2404.",
+      "addresses": ["FS-1", "VG-1"]
+    },
+    {
+      "id": "RC-2",
+      "kind": "documentation",
+      "description": "Correct the counts in the PR description. It says 31 steps across 14 workflows; the diff changes 29 steps in 12 workflows. The two composite-action steps are intentionally unchanged.",
+      "addresses": ["VG-1"]
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "mise-action source at the pinned SHAs is not available offline (no network), so its handling of cache_key_prefix is unverified.",
+      "effect": "FS-1 stays speculative rather than ruled out."
+    },
+    {
+      "id": "CL-2",
+      "description": "I could not run the vitest guard locally because the checkout has no node_modules. I replicated its main check with a Python YAML scan instead.",
+      "effect": "The guard's pass rests on CI check names (Run Tests (Node 22/24)) and on my equivalent scan, not on a local run of the test file."
+    },
+    {
+      "id": "CL-3",
+      "description": "ci.json has no logs, so cache keys, hits and misses, and timings are not visible.",
+      "effect": "Green CI shows the jobs pass. It does not show that the cache entries are now separated by image."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "diff",
+      "path": ".github/workflows/tests-crates.yml",
+      "rev": "head",
+      "line_start": 108,
+      "line_end": 109,
+      "claim": "Adds cache_key_prefix: mise-v1-ubuntu-2204 to the rust job's mise step; the job runs on blacksmith-16vcpu-ubuntu-2204 (line 82).",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "diff",
+      "path": ".github/workflows/fuzz.yml",
+      "rev": "head",
+      "line_start": 86,
+      "line_end": 93,
+      "claim": "The fuzz-regression mise step (v4 pin, cache: true) gets prefix mise-v1-ubuntu-2404; the job runs on blacksmith-4vcpu-ubuntu-2404 (line 68).",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "command_output",
+      "command": "python3 -I scratchpad/mise.py repo  # yaml-parse every workflow and composite action, print runs-on, pin, cache, cache_key_prefix, cache_key, install_args per mise step",
+      "claim": "At head, all 29 caching mise steps in workflows have a prefix matching their runs-on image. No step sets cache_key. Release, build and matrix/ubuntu-latest jobs set cache: false with no prefix. The two composite actions cache only aqua:wasm-bindgen/wasm-pack with the default key.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "test",
+      "path": "scripts/__tests__/workflow-mise-cache-image.test.mjs",
+      "rev": "head",
+      "line_start": 71,
+      "line_end": 101,
+      "claim": "The guard compares each cached step's with.cache_key_prefix against `mise-v1-<image of runs-on>` and rejects cache_key. It inspects YAML only.",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "code",
+      "path": ".github/workflows/tests.yml",
+      "rev": "head",
+      "line_start": 344,
+      "line_end": 345,
+      "claim": "The run-tests job (Run Tests (Node N)) runs pnpm run test:scripts, which includes scripts/__tests__/**/*.test.mjs per scripts/vitest.config.mjs.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": ".github/workflows/tests-rust.yml",
+      "rev": "head",
+      "line_start": 84,
+      "line_end": 89,
+      "claim": "This step uses jdx/mise-action pinned at 5228313 (v3.6.3), an older pin than the v4 used elsewhere, with the new cache_key_prefix input. Whether this version honours the input could not be checked offline.",
+      "status": "inferred"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": ".github/workflows/release.yml",
+      "rev": "head",
+      "line_start": 599,
+      "line_end": 603,
+      "claim": "The release job's mise-action step sets cache: false, and release.yml is not modified by this change.",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "code",
+      "path": "mise.test.toml",
+      "rev": "head",
+      "line_start": 14,
+      "line_end": 29,
+      "claim": "cargo:cargo-nextest, llvm-cov, crap, mutants, fuzz and udeps are compiled on the installing runner, so they link that runner's glibc and are slow to install cold.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "ci_result",
+      "claim": "ci.json (supplied input): Head CI: 49 of 52 check runs succeeded and 3 were skipped. Successes include Rust workspace crates, CRAP (stack-auth/stack-encrypt), fuzz regression jobs, Check unused Rust dependencies, Mutants gate, Miri, Go jobs and Run Tests (Node 22/24). There are no failures.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "code",
+      "path": ".github/workflows/fuzz.yml",
+      "rev": "head",
+      "line_start": 69,
+      "line_end": 69,
+      "claim": "The fuzz-regression job has timeout-minutes: 30.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "pr_description",
+      "claim": "pr-description.md (supplied input): PR #1094 failures were caused by 24.04-built cargo tools restored on 22.04 runners. The author reports pnpm test:scripts passing and the guard failing when the workflow edits are reverted. The description cites 31 steps across 14 workflows, but the diff shows 29 steps in 12.",
+      "status": "inferred"
+    }
+  ]
+}
