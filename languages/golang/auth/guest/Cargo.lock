@@ -1857,6 +1857,7 @@ dependencies = [
  "stack-guest-abi",
  "stack-profile",
  "tempfile",
+ "tokio",
  "url",
  "vitaminc-aead-value",
  "vitaminc-protected",
