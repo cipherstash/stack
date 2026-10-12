@@ -78,6 +78,7 @@
 //! require::<TextEq>();
 //! ```
 
+pub mod plaintext;
 pub mod targets;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};

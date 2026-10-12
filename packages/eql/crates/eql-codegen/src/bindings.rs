@@ -333,16 +333,44 @@ fn render_query_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) 
     }
 }
 
-/// The `(family, domain)` pairs whose generated structs carry the opt-in
-/// `stack-encrypt` derives. Text equality is the first; every other stored
-/// domain has a reason in [`encryption_gap`], and a test holds the two
-/// together so a new domain cannot arrive without either a derive or a reason.
-pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[("text", "eq")];
+/// The `(family, domain)` pairs whose generated v4 structs carry the opt-in
+/// `stack-encrypt` derives: every storage-only domain and every
+/// equality-only domain whose plaintext vitaminc 0.5 encodes and, for
+/// equality, derives a term for. Every other stored domain has a reason in
+/// [`encryption_gap`], and a test holds the two together so a new domain
+/// cannot arrive without either a derive or a reason.
+pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
+    ("integer", ""),
+    ("integer", "eq"),
+    ("bigint", ""),
+    ("bigint", "eq"),
+    ("text", ""),
+    ("text", "eq"),
+    ("boolean", ""),
+    ("real", ""),
+    ("double", ""),
+];
 
 /// Why no `eql_v3` struct derives Stack Encrypt's traits.
 pub const V3_ENCRYPTION_GAP: &str =
     "Stack Encrypt produces EQL v4 only: its output is not byte-for-byte compatible with \
      cipherstash-client's, which writes the eql_v3 domains";
+
+/// The plaintext a family's v4 domains are produced from: the vitaminc
+/// `ValueKind` name a plan field's `"type"` key spells, and the Rust type the
+/// derive and the by-name dispatch name. `None` for a family vitaminc 0.5
+/// has no scalar kind for.
+pub fn plaintext_of(family: &str) -> Option<(&'static str, &'static str)> {
+    Some(match family {
+        "text" => ("string", "String"),
+        "integer" => ("int32", "crate::encryption::plaintext::Int32"),
+        "bigint" => ("int64", "crate::encryption::plaintext::Int64"),
+        "boolean" => ("bool", "crate::encryption::plaintext::Bool"),
+        "real" => ("float32", "crate::encryption::plaintext::Float32"),
+        "double" => ("float64", "crate::encryption::plaintext::Float64"),
+        _ => return None,
+    })
+}
 
 /// Why a stored domain carries no `stack-encrypt` derive yet, or `None` when
 /// it does. Derived from the catalog's own facts (family, terms), not from a
@@ -359,22 +387,30 @@ pub fn encryption_gap(
     if ENCRYPTION_DOMAINS.contains(&(family.name, domain.name)) {
         return None;
     }
-    Some(if family.name != "text" {
-        "only the text family's plaintext encoding is specified for the stack-encrypt \
-         producer profile; the numeric, date, boolean and JSON encodings are plan section 2 \
-         and have not been settled"
-    } else if domain.terms.iter().any(|t| !matches!(t, Term::Hm)) {
-        "ordering and match terms need stack-encrypt operations that have not landed \
-         (block-ORE and OPE term derivation, bloom-filter match terms)"
-    } else if domain.terms.is_empty() {
-        "the storage-only text domain follows once TextEq is proven end to end in \
-         PostgreSQL and the interoperability matrix is recorded"
+    Some(if !domain.is_scalar() {
+        "the JSON index is a new operation in the engine"
+    } else if family.name == "json" {
+        "a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document \
+         becomes one sealed leaf is not decided"
+    } else if plaintext_of(family.name).is_none() {
+        "vitaminc 0.5's value enum has no kind for this family; the kind and its \
+         encodings arrive in vitaminc 0.6 (ADR-0002)"
+    } else if domain
+        .terms
+        .iter()
+        .any(|t| matches!(t, Term::Ore | Term::Ope))
+    {
+        "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"
+    } else if domain.terms.contains(&Term::Bloom) {
+        "the engine derives match terms, but no EQL type is built from them yet"
+    } else if matches!(family.name, "real" | "double") {
+        "vitaminc 0.5 derives no equality term for a float; the canonical float form \
+         arrives in vitaminc 0.6 (ADR-0002)"
     } else {
-        // Reached by an equality-only text domain other than `eq`: nothing in
-        // the catalog today, but the branch above would otherwise call it
-        // storage-only, which it is not.
-        "an equality-only text domain carries the same term TextEq does and derives the \
-         same way; it is not listed in ENCRYPTION_DOMAINS yet"
+        // Reached by an equality-only domain of a family whose plaintext is
+        // specified but which is not listed: nothing in the catalog today.
+        "this domain derives the way its family's other domains do; it is not listed in \
+         ENCRYPTION_DOMAINS yet"
     })
 }
 
@@ -393,22 +429,31 @@ fn encryption_attrs(
     let decrypt = (!query).then(
         || quote!(#[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::DecryptInto))]),
     );
+    let (_, rust) = plaintext_of(family.name).expect("a derived family names its plaintext");
+    let plaintext_ty: syn::Type = syn::parse_str(rust).expect("plaintext is a type path");
+    let shown = rust.rsplit("::").next().unwrap_or(rust);
     let plaintext = if query {
-        " Plaintext input: [`String`]. With the `stack-encrypt` feature, implements \
-         `EncryptFrom<String>` to build equality query terms. Query operands do not decrypt."
+        format!(
+            " Plaintext input: [`{shown}`]({rust}). With the `stack-encrypt` feature, \
+             implements `EncryptFrom<{shown}>` to build equality query terms. Query operands \
+             do not decrypt."
+        )
     } else {
-        " Plaintext input and decrypted output: [`String`]. With the `stack-encrypt` \
-         feature, implements `EncryptFrom<String>` and `DecryptInto<String>`."
+        format!(
+            " Plaintext input and decrypted output: [`{shown}`]({rust}). With the \
+             `stack-encrypt` feature, implements `EncryptFrom<{shown}>` and \
+             `DecryptInto<{shown}>`."
+        )
     };
     (
         quote! {
-            #[cfg_attr(doc, doc = "")]
-            #[cfg_attr(doc, doc = #plaintext)]
+            #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = "")]
+            #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = #plaintext)]
             #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.")]
             #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = " See the [complete encryption example](crate::encryption#example).")]
             #[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::EncryptFrom))]
             #decrypt
-            #[cfg_attr(feature = "stack-encrypt", stash(plaintext = String))]
+            #[cfg_attr(feature = "stack-encrypt", stash(plaintext = #plaintext_ty))]
         },
         quote!(#[cfg_attr(feature = "stack-encrypt", stash(default))]),
         quote!(#[cfg_attr(feature = "stack-encrypt", stash(context_field))]),
@@ -1664,16 +1709,26 @@ mod tests {
                 // catalog fact that selects it.
                 Some(reason) => {
                     let full = domain.full_name(family.name);
-                    let expected = if family.name != "text" {
-                        "only the text family"
-                    } else if domain.terms.iter().any(|t| !matches!(t, Term::Hm)) {
-                        "ordering and match terms"
+                    let expected = if !domain.is_scalar() {
+                        "JSON index"
+                    } else if family.name == "json" {
+                        "tree of leaves"
+                    } else if plaintext_of(family.name).is_none() {
+                        "has no kind for this family"
+                    } else if domain
+                        .terms
+                        .iter()
+                        .any(|t| matches!(t, Term::Ore | Term::Ope))
+                    {
+                        "ordering terms"
+                    } else if domain.terms.contains(&Term::Bloom) {
+                        "match terms"
                     } else {
                         assert!(
-                            domain.terms.is_empty(),
-                            "{full}: an hm-only text domain other than eq is not in the catalog"
+                            matches!(family.name, "real" | "double"),
+                            "{full}: every other specified, unordered domain is derived"
                         );
-                        "storage-only text domain"
+                        "equality term for a float"
                     };
                     assert!(reason.contains(expected), "{full}: {reason}");
                 }
@@ -1711,7 +1766,7 @@ mod tests {
     }
 
     #[test]
-    fn an_equality_only_text_domain_is_not_called_storage_only() {
+    fn an_unlisted_equality_only_domain_says_it_is_unlisted() {
         // Not in the catalog, which is why the branch needs a synthetic
         // domain: the only text domain reaching the hm-only branch today has
         // no terms, so a wrong reason there would survive every catalog walk.
@@ -1725,7 +1780,10 @@ mod tests {
             shape: eql_domains::Shape::Scalar,
         };
         let reason = encryption_gap(EqlVersion::V4, &family, &hm_only).unwrap();
-        assert!(reason.contains("equality-only"), "{reason}");
+        assert!(
+            reason.contains("not listed in ENCRYPTION_DOMAINS"),
+            "{reason}"
+        );
         assert!(!reason.contains("storage-only"), "{reason}");
     }
 }

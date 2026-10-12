@@ -7,7 +7,7 @@ import (
 	"github.com/cipherstash/stack/languages/golang/encrypt/eql"
 )
 
-func TestTypesTableNamesTextEqAsTheOneProducibleType(t *testing.T) {
+func TestTypesTableNamesTheProducibleTypes(t *testing.T) {
 	var producible []string
 	for _, typ := range eql.Types {
 		if typ.Producible {
@@ -19,8 +19,19 @@ func TestTypesTableNamesTextEqAsTheOneProducibleType(t *testing.T) {
 			t.Errorf("%s: an unproducible type has a reason", typ.Name)
 		}
 	}
-	if len(producible) != 1 || producible[0] != "TextEq" {
-		t.Fatalf("producible = %v, want [TextEq]", producible)
+	want := []string{"Integer", "IntegerEq", "Bigint", "BigintEq", "Text", "TextEq", "Boolean", "Real", "Double"}
+	if len(producible) != len(want) {
+		t.Fatalf("producible = %v, want %v", producible, want)
+	}
+	for i := range want {
+		if producible[i] != want[i] {
+			t.Fatalf("producible = %v, want %v", producible, want)
+		}
+	}
+	for name, plaintext := range map[string]string{"IntegerEq": "int32", "BigintEq": "int64", "Boolean": "bool", "Real": "float32", "Double": "float64"} {
+		if typ, ok := eql.Lookup(name); !ok || typ.Plaintext != plaintext {
+			t.Errorf("%s: Plaintext = %q, want %q", name, typ.Plaintext, plaintext)
+		}
 	}
 	textEq, ok := eql.Lookup("TextEq")
 	if !ok || textEq.GoName != "TextEq" || textEq.Plaintext != "string" || textEq.Query != "TextEqQuery" || textEq.SQLDomain != "public.eql_v4_text_eq" || len(textEq.Indexes) != 1 || textEq.Indexes[0] != "eq" {

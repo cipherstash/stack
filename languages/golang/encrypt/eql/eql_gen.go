@@ -9,61 +9,61 @@ import "database/sql/driver"
 // engine produces the type today; stashgen refuses encrypt_into for one
 // it does not, with the Reason.
 var Types = []Type{
-	{Name: "Integer", GoName: "Integer", Family: "integer", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_integer", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "IntegerEq", GoName: "IntegerEq", Family: "integer", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_integer_eq", Indexes: []string{"eq"}, Query: "IntegerEqQuery", QuerySQLDomain: "eql_v4.query_integer_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "IntegerOrdOre", GoName: "IntegerOrdOre", Family: "integer", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_integer_ord_ore", Indexes: []string{"ore"}, Query: "IntegerOrdOreQuery", QuerySQLDomain: "eql_v4.query_integer_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "IntegerOrd", GoName: "IntegerOrd", Family: "integer", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_integer_ord", Indexes: []string{"ope"}, Query: "IntegerOrdQuery", QuerySQLDomain: "eql_v4.query_integer_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "IntegerOrdOpe", GoName: "IntegerOrdOpe", Family: "integer", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_integer_ord_ope", Indexes: []string{"ope"}, Query: "IntegerOrdOpeQuery", QuerySQLDomain: "eql_v4.query_integer_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "Smallint", GoName: "Smallint", Family: "smallint", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_smallint", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "SmallintEq", GoName: "SmallintEq", Family: "smallint", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_smallint_eq", Indexes: []string{"eq"}, Query: "SmallintEqQuery", QuerySQLDomain: "eql_v4.query_smallint_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "SmallintOrdOre", GoName: "SmallintOrdOre", Family: "smallint", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_smallint_ord_ore", Indexes: []string{"ore"}, Query: "SmallintOrdOreQuery", QuerySQLDomain: "eql_v4.query_smallint_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "SmallintOrd", GoName: "SmallintOrd", Family: "smallint", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_smallint_ord", Indexes: []string{"ope"}, Query: "SmallintOrdQuery", QuerySQLDomain: "eql_v4.query_smallint_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "SmallintOrdOpe", GoName: "SmallintOrdOpe", Family: "smallint", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_smallint_ord_ope", Indexes: []string{"ope"}, Query: "SmallintOrdOpeQuery", QuerySQLDomain: "eql_v4.query_smallint_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "Bigint", GoName: "Bigint", Family: "bigint", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_bigint", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "BigintEq", GoName: "BigintEq", Family: "bigint", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_bigint_eq", Indexes: []string{"eq"}, Query: "BigintEqQuery", QuerySQLDomain: "eql_v4.query_bigint_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "BigintOrdOre", GoName: "BigintOrdOre", Family: "bigint", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_bigint_ord_ore", Indexes: []string{"ore"}, Query: "BigintOrdOreQuery", QuerySQLDomain: "eql_v4.query_bigint_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "BigintOrd", GoName: "BigintOrd", Family: "bigint", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_bigint_ord", Indexes: []string{"ope"}, Query: "BigintOrdQuery", QuerySQLDomain: "eql_v4.query_bigint_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "BigintOrdOpe", GoName: "BigintOrdOpe", Family: "bigint", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_bigint_ord_ope", Indexes: []string{"ope"}, Query: "BigintOrdOpeQuery", QuerySQLDomain: "eql_v4.query_bigint_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "Date", GoName: "Date", Family: "date", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_date", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "DateEq", GoName: "DateEq", Family: "date", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_date_eq", Indexes: []string{"eq"}, Query: "DateEqQuery", QuerySQLDomain: "eql_v4.query_date_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "DateOrdOre", GoName: "DateOrdOre", Family: "date", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_date_ord_ore", Indexes: []string{"ore"}, Query: "DateOrdOreQuery", QuerySQLDomain: "eql_v4.query_date_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "DateOrd", GoName: "DateOrd", Family: "date", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_date_ord", Indexes: []string{"ope"}, Query: "DateOrdQuery", QuerySQLDomain: "eql_v4.query_date_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "DateOrdOpe", GoName: "DateOrdOpe", Family: "date", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_date_ord_ope", Indexes: []string{"ope"}, Query: "DateOrdOpeQuery", QuerySQLDomain: "eql_v4.query_date_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "Timestamp", GoName: "Timestamp", Family: "timestamp", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_timestamp", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "TimestampEq", GoName: "TimestampEq", Family: "timestamp", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_eq", Indexes: []string{"eq"}, Query: "TimestampEqQuery", QuerySQLDomain: "eql_v4.query_timestamp_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "TimestampOrdOre", GoName: "TimestampOrdOre", Family: "timestamp", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_ord_ore", Indexes: []string{"ore"}, Query: "TimestampOrdOreQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "TimestampOrd", GoName: "TimestampOrd", Family: "timestamp", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_ord", Indexes: []string{"ope"}, Query: "TimestampOrdQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "TimestampOrdOpe", GoName: "TimestampOrdOpe", Family: "timestamp", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_ord_ope", Indexes: []string{"ope"}, Query: "TimestampOrdOpeQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "Numeric", GoName: "Numeric", Family: "numeric", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_numeric", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "NumericEq", GoName: "NumericEq", Family: "numeric", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_numeric_eq", Indexes: []string{"eq"}, Query: "NumericEqQuery", QuerySQLDomain: "eql_v4.query_numeric_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "NumericOrdOre", GoName: "NumericOrdOre", Family: "numeric", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_numeric_ord_ore", Indexes: []string{"ore"}, Query: "NumericOrdOreQuery", QuerySQLDomain: "eql_v4.query_numeric_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "NumericOrd", GoName: "NumericOrd", Family: "numeric", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_numeric_ord", Indexes: []string{"ope"}, Query: "NumericOrdQuery", QuerySQLDomain: "eql_v4.query_numeric_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "NumericOrdOpe", GoName: "NumericOrdOpe", Family: "numeric", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_numeric_ord_ope", Indexes: []string{"ope"}, Query: "NumericOrdOpeQuery", QuerySQLDomain: "eql_v4.query_numeric_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "Text", GoName: "Text", Family: "text", Suffix: "", Plaintext: "string", SQLDomain: "public.eql_v4_text", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "the storage-only text domain follows once TextEq is proven end to end in PostgreSQL"},
+	{Name: "Integer", GoName: "Integer", Family: "integer", Suffix: "", Plaintext: "int32", SQLDomain: "public.eql_v4_integer", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
+	{Name: "IntegerEq", GoName: "IntegerEq", Family: "integer", Suffix: "Eq", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_eq", Indexes: []string{"eq"}, Query: "IntegerEqQuery", QuerySQLDomain: "eql_v4.query_integer_eq", Producible: true, Reason: ""},
+	{Name: "IntegerOrdOre", GoName: "IntegerOrdOre", Family: "integer", Suffix: "OrdOre", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_ord_ore", Indexes: []string{"ore"}, Query: "IntegerOrdOreQuery", QuerySQLDomain: "eql_v4.query_integer_ord_ore", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
+	{Name: "IntegerOrd", GoName: "IntegerOrd", Family: "integer", Suffix: "Ord", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_ord", Indexes: []string{"ope"}, Query: "IntegerOrdQuery", QuerySQLDomain: "eql_v4.query_integer_ord", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
+	{Name: "IntegerOrdOpe", GoName: "IntegerOrdOpe", Family: "integer", Suffix: "OrdOpe", Plaintext: "int32", SQLDomain: "public.eql_v4_integer_ord_ope", Indexes: []string{"ope"}, Query: "IntegerOrdOpeQuery", QuerySQLDomain: "eql_v4.query_integer_ord_ope", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
+	{Name: "Smallint", GoName: "Smallint", Family: "smallint", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_smallint", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "SmallintEq", GoName: "SmallintEq", Family: "smallint", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_smallint_eq", Indexes: []string{"eq"}, Query: "SmallintEqQuery", QuerySQLDomain: "eql_v4.query_smallint_eq", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "SmallintOrdOre", GoName: "SmallintOrdOre", Family: "smallint", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_smallint_ord_ore", Indexes: []string{"ore"}, Query: "SmallintOrdOreQuery", QuerySQLDomain: "eql_v4.query_smallint_ord_ore", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "SmallintOrd", GoName: "SmallintOrd", Family: "smallint", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_smallint_ord", Indexes: []string{"ope"}, Query: "SmallintOrdQuery", QuerySQLDomain: "eql_v4.query_smallint_ord", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "SmallintOrdOpe", GoName: "SmallintOrdOpe", Family: "smallint", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_smallint_ord_ope", Indexes: []string{"ope"}, Query: "SmallintOrdOpeQuery", QuerySQLDomain: "eql_v4.query_smallint_ord_ope", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "Bigint", GoName: "Bigint", Family: "bigint", Suffix: "", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
+	{Name: "BigintEq", GoName: "BigintEq", Family: "bigint", Suffix: "Eq", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_eq", Indexes: []string{"eq"}, Query: "BigintEqQuery", QuerySQLDomain: "eql_v4.query_bigint_eq", Producible: true, Reason: ""},
+	{Name: "BigintOrdOre", GoName: "BigintOrdOre", Family: "bigint", Suffix: "OrdOre", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_ord_ore", Indexes: []string{"ore"}, Query: "BigintOrdOreQuery", QuerySQLDomain: "eql_v4.query_bigint_ord_ore", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
+	{Name: "BigintOrd", GoName: "BigintOrd", Family: "bigint", Suffix: "Ord", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_ord", Indexes: []string{"ope"}, Query: "BigintOrdQuery", QuerySQLDomain: "eql_v4.query_bigint_ord", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
+	{Name: "BigintOrdOpe", GoName: "BigintOrdOpe", Family: "bigint", Suffix: "OrdOpe", Plaintext: "int64", SQLDomain: "public.eql_v4_bigint_ord_ope", Indexes: []string{"ope"}, Query: "BigintOrdOpeQuery", QuerySQLDomain: "eql_v4.query_bigint_ord_ope", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
+	{Name: "Date", GoName: "Date", Family: "date", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_date", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "DateEq", GoName: "DateEq", Family: "date", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_date_eq", Indexes: []string{"eq"}, Query: "DateEqQuery", QuerySQLDomain: "eql_v4.query_date_eq", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "DateOrdOre", GoName: "DateOrdOre", Family: "date", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_date_ord_ore", Indexes: []string{"ore"}, Query: "DateOrdOreQuery", QuerySQLDomain: "eql_v4.query_date_ord_ore", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "DateOrd", GoName: "DateOrd", Family: "date", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_date_ord", Indexes: []string{"ope"}, Query: "DateOrdQuery", QuerySQLDomain: "eql_v4.query_date_ord", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "DateOrdOpe", GoName: "DateOrdOpe", Family: "date", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_date_ord_ope", Indexes: []string{"ope"}, Query: "DateOrdOpeQuery", QuerySQLDomain: "eql_v4.query_date_ord_ope", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "Timestamp", GoName: "Timestamp", Family: "timestamp", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_timestamp", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "TimestampEq", GoName: "TimestampEq", Family: "timestamp", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_eq", Indexes: []string{"eq"}, Query: "TimestampEqQuery", QuerySQLDomain: "eql_v4.query_timestamp_eq", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "TimestampOrdOre", GoName: "TimestampOrdOre", Family: "timestamp", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_ord_ore", Indexes: []string{"ore"}, Query: "TimestampOrdOreQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord_ore", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "TimestampOrd", GoName: "TimestampOrd", Family: "timestamp", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_ord", Indexes: []string{"ope"}, Query: "TimestampOrdQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "TimestampOrdOpe", GoName: "TimestampOrdOpe", Family: "timestamp", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_timestamp_ord_ope", Indexes: []string{"ope"}, Query: "TimestampOrdOpeQuery", QuerySQLDomain: "eql_v4.query_timestamp_ord_ope", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "Numeric", GoName: "Numeric", Family: "numeric", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_numeric", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "NumericEq", GoName: "NumericEq", Family: "numeric", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_numeric_eq", Indexes: []string{"eq"}, Query: "NumericEqQuery", QuerySQLDomain: "eql_v4.query_numeric_eq", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "NumericOrdOre", GoName: "NumericOrdOre", Family: "numeric", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_numeric_ord_ore", Indexes: []string{"ore"}, Query: "NumericOrdOreQuery", QuerySQLDomain: "eql_v4.query_numeric_ord_ore", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "NumericOrd", GoName: "NumericOrd", Family: "numeric", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_numeric_ord", Indexes: []string{"ope"}, Query: "NumericOrdQuery", QuerySQLDomain: "eql_v4.query_numeric_ord", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "NumericOrdOpe", GoName: "NumericOrdOpe", Family: "numeric", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_numeric_ord_ope", Indexes: []string{"ope"}, Query: "NumericOrdOpeQuery", QuerySQLDomain: "eql_v4.query_numeric_ord_ope", Producible: false, Reason: "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)"},
+	{Name: "Text", GoName: "Text", Family: "text", Suffix: "", Plaintext: "string", SQLDomain: "public.eql_v4_text", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
 	{Name: "TextEq", GoName: "TextEq", Family: "text", Suffix: "Eq", Plaintext: "string", SQLDomain: "public.eql_v4_text_eq", Indexes: []string{"eq"}, Query: "TextEqQuery", QuerySQLDomain: "eql_v4.query_text_eq", Producible: true, Reason: ""},
-	{Name: "TextMatch", GoName: "TextMatch", Family: "text", Suffix: "Match", Plaintext: "string", SQLDomain: "public.eql_v4_text_match", Indexes: []string{"match"}, Query: "TextMatchQuery", QuerySQLDomain: "eql_v4.query_text_match", Producible: false, Reason: "the engine derives match and OPE terms, but no EQL type is built from them yet"},
-	{Name: "TextOrdOre", GoName: "TextOrdOre", Family: "text", Suffix: "OrdOre", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord_ore", Indexes: []string{"eq", "ore"}, Query: "TextOrdOreQuery", QuerySQLDomain: "eql_v4.query_text_ord_ore", Producible: false, Reason: "EQL stores a block ORE term and the engine derives a CLLW ORE term; the two are different algorithms"},
-	{Name: "TextOrd", GoName: "TextOrd", Family: "text", Suffix: "Ord", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord", Indexes: []string{"eq", "ope"}, Query: "TextOrdQuery", QuerySQLDomain: "eql_v4.query_text_ord", Producible: false, Reason: "the engine derives match and OPE terms, but no EQL type is built from them yet"},
-	{Name: "TextOrdOpe", GoName: "TextOrdOpe", Family: "text", Suffix: "OrdOpe", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord_ope", Indexes: []string{"eq", "ope"}, Query: "TextOrdOpeQuery", QuerySQLDomain: "eql_v4.query_text_ord_ope", Producible: false, Reason: "the engine derives match and OPE terms, but no EQL type is built from them yet"},
-	{Name: "TextSearchOre", GoName: "TextSearchOre", Family: "text", Suffix: "SearchOre", Plaintext: "string", SQLDomain: "public.eql_v4_text_search_ore", Indexes: []string{"eq", "ore", "match"}, Query: "TextSearchOreQuery", QuerySQLDomain: "eql_v4.query_text_search_ore", Producible: false, Reason: "EQL stores a block ORE term and the engine derives a CLLW ORE term; the two are different algorithms"},
-	{Name: "TextSearch", GoName: "TextSearch", Family: "text", Suffix: "Search", Plaintext: "string", SQLDomain: "public.eql_v4_text_search", Indexes: []string{"eq", "ope", "match"}, Query: "TextSearchQuery", QuerySQLDomain: "eql_v4.query_text_search", Producible: false, Reason: "the engine derives match and OPE terms, but no EQL type is built from them yet"},
-	{Name: "Boolean", GoName: "Boolean", Family: "boolean", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_boolean", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "Real", GoName: "Real", Family: "real", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_real", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "RealEq", GoName: "RealEq", Family: "real", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_real_eq", Indexes: []string{"eq"}, Query: "RealEqQuery", QuerySQLDomain: "eql_v4.query_real_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "RealOrdOre", GoName: "RealOrdOre", Family: "real", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_real_ord_ore", Indexes: []string{"ore"}, Query: "RealOrdOreQuery", QuerySQLDomain: "eql_v4.query_real_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "RealOrd", GoName: "RealOrd", Family: "real", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_real_ord", Indexes: []string{"ope"}, Query: "RealOrdQuery", QuerySQLDomain: "eql_v4.query_real_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "RealOrdOpe", GoName: "RealOrdOpe", Family: "real", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_real_ord_ope", Indexes: []string{"ope"}, Query: "RealOrdOpeQuery", QuerySQLDomain: "eql_v4.query_real_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "Double", GoName: "Double", Family: "double", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_double", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "DoubleEq", GoName: "DoubleEq", Family: "double", Suffix: "Eq", Plaintext: "", SQLDomain: "public.eql_v4_double_eq", Indexes: []string{"eq"}, Query: "DoubleEqQuery", QuerySQLDomain: "eql_v4.query_double_eq", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "DoubleOrdOre", GoName: "DoubleOrdOre", Family: "double", Suffix: "OrdOre", Plaintext: "", SQLDomain: "public.eql_v4_double_ord_ore", Indexes: []string{"ore"}, Query: "DoubleOrdOreQuery", QuerySQLDomain: "eql_v4.query_double_ord_ore", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "DoubleOrd", GoName: "DoubleOrd", Family: "double", Suffix: "Ord", Plaintext: "", SQLDomain: "public.eql_v4_double_ord", Indexes: []string{"ope"}, Query: "DoubleOrdQuery", QuerySQLDomain: "eql_v4.query_double_ord", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
-	{Name: "DoubleOrdOpe", GoName: "DoubleOrdOpe", Family: "double", Suffix: "OrdOpe", Plaintext: "", SQLDomain: "public.eql_v4_double_ord_ope", Indexes: []string{"ope"}, Query: "DoubleOrdOpeQuery", QuerySQLDomain: "eql_v4.query_double_ord_ope", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "TextMatch", GoName: "TextMatch", Family: "text", Suffix: "Match", Plaintext: "string", SQLDomain: "public.eql_v4_text_match", Indexes: []string{"match"}, Query: "TextMatchQuery", QuerySQLDomain: "eql_v4.query_text_match", Producible: false, Reason: "the engine derives match terms, but no EQL type is built from them yet"},
+	{Name: "TextOrdOre", GoName: "TextOrdOre", Family: "text", Suffix: "OrdOre", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord_ore", Indexes: []string{"eq", "ore"}, Query: "TextOrdOreQuery", QuerySQLDomain: "eql_v4.query_text_ord_ore", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
+	{Name: "TextOrd", GoName: "TextOrd", Family: "text", Suffix: "Ord", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord", Indexes: []string{"eq", "ope"}, Query: "TextOrdQuery", QuerySQLDomain: "eql_v4.query_text_ord", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
+	{Name: "TextOrdOpe", GoName: "TextOrdOpe", Family: "text", Suffix: "OrdOpe", Plaintext: "string", SQLDomain: "public.eql_v4_text_ord_ope", Indexes: []string{"eq", "ope"}, Query: "TextOrdOpeQuery", QuerySQLDomain: "eql_v4.query_text_ord_ope", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
+	{Name: "TextSearchOre", GoName: "TextSearchOre", Family: "text", Suffix: "SearchOre", Plaintext: "string", SQLDomain: "public.eql_v4_text_search_ore", Indexes: []string{"eq", "ore", "match"}, Query: "TextSearchOreQuery", QuerySQLDomain: "eql_v4.query_text_search_ore", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
+	{Name: "TextSearch", GoName: "TextSearch", Family: "text", Suffix: "Search", Plaintext: "string", SQLDomain: "public.eql_v4_text_search", Indexes: []string{"eq", "ope", "match"}, Query: "TextSearchQuery", QuerySQLDomain: "eql_v4.query_text_search", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
+	{Name: "Boolean", GoName: "Boolean", Family: "boolean", Suffix: "", Plaintext: "bool", SQLDomain: "public.eql_v4_boolean", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
+	{Name: "Real", GoName: "Real", Family: "real", Suffix: "", Plaintext: "float32", SQLDomain: "public.eql_v4_real", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
+	{Name: "RealEq", GoName: "RealEq", Family: "real", Suffix: "Eq", Plaintext: "float32", SQLDomain: "public.eql_v4_real_eq", Indexes: []string{"eq"}, Query: "RealEqQuery", QuerySQLDomain: "eql_v4.query_real_eq", Producible: false, Reason: "vitaminc 0.5 derives no equality term for a float; the canonical float form arrives in vitaminc 0.6 (ADR-0002)"},
+	{Name: "RealOrdOre", GoName: "RealOrdOre", Family: "real", Suffix: "OrdOre", Plaintext: "float32", SQLDomain: "public.eql_v4_real_ord_ore", Indexes: []string{"ore"}, Query: "RealOrdOreQuery", QuerySQLDomain: "eql_v4.query_real_ord_ore", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
+	{Name: "RealOrd", GoName: "RealOrd", Family: "real", Suffix: "Ord", Plaintext: "float32", SQLDomain: "public.eql_v4_real_ord", Indexes: []string{"ope"}, Query: "RealOrdQuery", QuerySQLDomain: "eql_v4.query_real_ord", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
+	{Name: "RealOrdOpe", GoName: "RealOrdOpe", Family: "real", Suffix: "OrdOpe", Plaintext: "float32", SQLDomain: "public.eql_v4_real_ord_ope", Indexes: []string{"ope"}, Query: "RealOrdOpeQuery", QuerySQLDomain: "eql_v4.query_real_ord_ope", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
+	{Name: "Double", GoName: "Double", Family: "double", Suffix: "", Plaintext: "float64", SQLDomain: "public.eql_v4_double", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: true, Reason: ""},
+	{Name: "DoubleEq", GoName: "DoubleEq", Family: "double", Suffix: "Eq", Plaintext: "float64", SQLDomain: "public.eql_v4_double_eq", Indexes: []string{"eq"}, Query: "DoubleEqQuery", QuerySQLDomain: "eql_v4.query_double_eq", Producible: false, Reason: "vitaminc 0.5 derives no equality term for a float; the canonical float form arrives in vitaminc 0.6 (ADR-0002)"},
+	{Name: "DoubleOrdOre", GoName: "DoubleOrdOre", Family: "double", Suffix: "OrdOre", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord_ore", Indexes: []string{"ore"}, Query: "DoubleOrdOreQuery", QuerySQLDomain: "eql_v4.query_double_ord_ore", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
+	{Name: "DoubleOrd", GoName: "DoubleOrd", Family: "double", Suffix: "Ord", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord", Indexes: []string{"ope"}, Query: "DoubleOrdQuery", QuerySQLDomain: "eql_v4.query_double_ord", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
+	{Name: "DoubleOrdOpe", GoName: "DoubleOrdOpe", Family: "double", Suffix: "OrdOpe", Plaintext: "float64", SQLDomain: "public.eql_v4_double_ord_ope", Indexes: []string{"ope"}, Query: "DoubleOrdOpeQuery", QuerySQLDomain: "eql_v4.query_double_ord_ope", Producible: false, Reason: "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"},
 	{Name: "SteVecDocument", GoName: "SteVecDocument", Family: "json", Suffix: "Search", Plaintext: "", SQLDomain: "public.eql_v4_json_search", Indexes: []string{"json"}, Query: "SteVecQuery", QuerySQLDomain: "eql_v4.query_json", Producible: false, Reason: "the JSON index is a new operation in the engine"},
-	{Name: "Json", GoName: "JSON", Family: "json", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_json", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is"},
+	{Name: "Json", GoName: "JSON", Family: "json", Suffix: "", Plaintext: "", SQLDomain: "public.eql_v4_json", Indexes: nil, Query: "", QuerySQLDomain: "", Producible: false, Reason: "a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document becomes one sealed leaf is not decided"},
 }
 
 // Integer is the EQL type stored in public.eql_v4_integer: the integer family with no index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine produces it from a int32.
 type Integer []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -87,7 +87,7 @@ func (v *Integer) UnmarshalJSON(b []byte) error {
 }
 
 // IntegerEq is the EQL type stored in public.eql_v4_integer_eq: the integer family with the eq index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine produces it from a int32.
 type IntegerEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -134,7 +134,7 @@ func (v *IntegerEqQuery) UnmarshalJSON(b []byte) error {
 }
 
 // IntegerOrdOre is the EQL type stored in public.eql_v4_integer_ord_ore: the integer family with the ore index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002).
 type IntegerOrdOre []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -181,7 +181,7 @@ func (v *IntegerOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // IntegerOrd is the EQL type stored in public.eql_v4_integer_ord: the integer family with the ope index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002).
 type IntegerOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -228,7 +228,7 @@ func (v *IntegerOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // IntegerOrdOpe is the EQL type stored in public.eql_v4_integer_ord_ope: the integer family with the ope index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002).
 type IntegerOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -275,7 +275,7 @@ func (v *IntegerOrdOpeQuery) UnmarshalJSON(b []byte) error {
 }
 
 // Smallint is the EQL type stored in public.eql_v4_smallint: the smallint family with no index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type Smallint []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -299,7 +299,7 @@ func (v *Smallint) UnmarshalJSON(b []byte) error {
 }
 
 // SmallintEq is the EQL type stored in public.eql_v4_smallint_eq: the smallint family with the eq index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type SmallintEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -346,7 +346,7 @@ func (v *SmallintEqQuery) UnmarshalJSON(b []byte) error {
 }
 
 // SmallintOrdOre is the EQL type stored in public.eql_v4_smallint_ord_ore: the smallint family with the ore index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type SmallintOrdOre []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -393,7 +393,7 @@ func (v *SmallintOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // SmallintOrd is the EQL type stored in public.eql_v4_smallint_ord: the smallint family with the ope index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type SmallintOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -440,7 +440,7 @@ func (v *SmallintOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // SmallintOrdOpe is the EQL type stored in public.eql_v4_smallint_ord_ope: the smallint family with the ope index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type SmallintOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -487,7 +487,7 @@ func (v *SmallintOrdOpeQuery) UnmarshalJSON(b []byte) error {
 }
 
 // Bigint is the EQL type stored in public.eql_v4_bigint: the bigint family with no index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine produces it from a int64.
 type Bigint []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -511,7 +511,7 @@ func (v *Bigint) UnmarshalJSON(b []byte) error {
 }
 
 // BigintEq is the EQL type stored in public.eql_v4_bigint_eq: the bigint family with the eq index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine produces it from a int64.
 type BigintEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -558,7 +558,7 @@ func (v *BigintEqQuery) UnmarshalJSON(b []byte) error {
 }
 
 // BigintOrdOre is the EQL type stored in public.eql_v4_bigint_ord_ore: the bigint family with the ore index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002).
 type BigintOrdOre []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -605,7 +605,7 @@ func (v *BigintOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // BigintOrd is the EQL type stored in public.eql_v4_bigint_ord: the bigint family with the ope index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002).
 type BigintOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -652,7 +652,7 @@ func (v *BigintOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // BigintOrdOpe is the EQL type stored in public.eql_v4_bigint_ord_ope: the bigint family with the ope index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002).
 type BigintOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -699,7 +699,7 @@ func (v *BigintOrdOpeQuery) UnmarshalJSON(b []byte) error {
 }
 
 // Date is the EQL type stored in public.eql_v4_date: the date family with no index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type Date []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -723,7 +723,7 @@ func (v *Date) UnmarshalJSON(b []byte) error {
 }
 
 // DateEq is the EQL type stored in public.eql_v4_date_eq: the date family with the eq index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type DateEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -770,7 +770,7 @@ func (v *DateEqQuery) UnmarshalJSON(b []byte) error {
 }
 
 // DateOrdOre is the EQL type stored in public.eql_v4_date_ord_ore: the date family with the ore index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type DateOrdOre []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -817,7 +817,7 @@ func (v *DateOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // DateOrd is the EQL type stored in public.eql_v4_date_ord: the date family with the ope index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type DateOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -864,7 +864,7 @@ func (v *DateOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // DateOrdOpe is the EQL type stored in public.eql_v4_date_ord_ope: the date family with the ope index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type DateOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -911,7 +911,7 @@ func (v *DateOrdOpeQuery) UnmarshalJSON(b []byte) error {
 }
 
 // Timestamp is the EQL type stored in public.eql_v4_timestamp: the timestamp family with no index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type Timestamp []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -935,7 +935,7 @@ func (v *Timestamp) UnmarshalJSON(b []byte) error {
 }
 
 // TimestampEq is the EQL type stored in public.eql_v4_timestamp_eq: the timestamp family with the eq index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type TimestampEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -982,7 +982,7 @@ func (v *TimestampEqQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TimestampOrdOre is the EQL type stored in public.eql_v4_timestamp_ord_ore: the timestamp family with the ore index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type TimestampOrdOre []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1029,7 +1029,7 @@ func (v *TimestampOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TimestampOrd is the EQL type stored in public.eql_v4_timestamp_ord: the timestamp family with the ope index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type TimestampOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1076,7 +1076,7 @@ func (v *TimestampOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TimestampOrdOpe is the EQL type stored in public.eql_v4_timestamp_ord_ope: the timestamp family with the ope index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type TimestampOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1123,7 +1123,7 @@ func (v *TimestampOrdOpeQuery) UnmarshalJSON(b []byte) error {
 }
 
 // Numeric is the EQL type stored in public.eql_v4_numeric: the numeric family with no index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type Numeric []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1147,7 +1147,7 @@ func (v *Numeric) UnmarshalJSON(b []byte) error {
 }
 
 // NumericEq is the EQL type stored in public.eql_v4_numeric_eq: the numeric family with the eq index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type NumericEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1194,7 +1194,7 @@ func (v *NumericEqQuery) UnmarshalJSON(b []byte) error {
 }
 
 // NumericOrdOre is the EQL type stored in public.eql_v4_numeric_ord_ore: the numeric family with the ore index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type NumericOrdOre []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1241,7 +1241,7 @@ func (v *NumericOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // NumericOrd is the EQL type stored in public.eql_v4_numeric_ord: the numeric family with the ope index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type NumericOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1288,7 +1288,7 @@ func (v *NumericOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // NumericOrdOpe is the EQL type stored in public.eql_v4_numeric_ord_ope: the numeric family with the ope index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002).
 type NumericOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1335,7 +1335,7 @@ func (v *NumericOrdOpeQuery) UnmarshalJSON(b []byte) error {
 }
 
 // Text is the EQL type stored in public.eql_v4_text: the text family with no index.
-// The engine cannot produce it yet: the storage-only text domain follows once TextEq is proven end to end in PostgreSQL.
+// The engine produces it from a string.
 type Text []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1406,7 +1406,7 @@ func (v *TextEqQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TextMatch is the EQL type stored in public.eql_v4_text_match: the text family with the match index.
-// The engine cannot produce it yet: the engine derives match and OPE terms, but no EQL type is built from them yet.
+// The engine cannot produce it yet: the engine derives match terms, but no EQL type is built from them yet.
 type TextMatch []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1453,7 +1453,7 @@ func (v *TextMatchQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TextOrdOre is the EQL type stored in public.eql_v4_text_ord_ore: the text family with the eq and ore indexes.
-// The engine cannot produce it yet: EQL stores a block ORE term and the engine derives a CLLW ORE term; the two are different algorithms.
+// The engine cannot produce it yet: ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002).
 type TextOrdOre []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1500,7 +1500,7 @@ func (v *TextOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TextOrd is the EQL type stored in public.eql_v4_text_ord: the text family with the eq and ope indexes.
-// The engine cannot produce it yet: the engine derives match and OPE terms, but no EQL type is built from them yet.
+// The engine cannot produce it yet: ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002).
 type TextOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1547,7 +1547,7 @@ func (v *TextOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TextOrdOpe is the EQL type stored in public.eql_v4_text_ord_ope: the text family with the eq and ope indexes.
-// The engine cannot produce it yet: the engine derives match and OPE terms, but no EQL type is built from them yet.
+// The engine cannot produce it yet: ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002).
 type TextOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1594,7 +1594,7 @@ func (v *TextOrdOpeQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TextSearchOre is the EQL type stored in public.eql_v4_text_search_ore: the text family with the eq and ore and match indexes.
-// The engine cannot produce it yet: EQL stores a block ORE term and the engine derives a CLLW ORE term; the two are different algorithms.
+// The engine cannot produce it yet: ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002).
 type TextSearchOre []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1641,7 +1641,7 @@ func (v *TextSearchOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // TextSearch is the EQL type stored in public.eql_v4_text_search: the text family with the eq and ope and match indexes.
-// The engine cannot produce it yet: the engine derives match and OPE terms, but no EQL type is built from them yet.
+// The engine cannot produce it yet: ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002).
 type TextSearch []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1688,7 +1688,7 @@ func (v *TextSearchQuery) UnmarshalJSON(b []byte) error {
 }
 
 // Boolean is the EQL type stored in public.eql_v4_boolean: the boolean family with no index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine produces it from a bool.
 type Boolean []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1712,7 +1712,7 @@ func (v *Boolean) UnmarshalJSON(b []byte) error {
 }
 
 // Real is the EQL type stored in public.eql_v4_real: the real family with no index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine produces it from a float32.
 type Real []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1736,7 +1736,7 @@ func (v *Real) UnmarshalJSON(b []byte) error {
 }
 
 // RealEq is the EQL type stored in public.eql_v4_real_eq: the real family with the eq index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5 derives no equality term for a float; the canonical float form arrives in vitaminc 0.6 (ADR-0002).
 type RealEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1783,7 +1783,7 @@ func (v *RealEqQuery) UnmarshalJSON(b []byte) error {
 }
 
 // RealOrdOre is the EQL type stored in public.eql_v4_real_ord_ore: the real family with the ore index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002).
 type RealOrdOre []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1830,7 +1830,7 @@ func (v *RealOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // RealOrd is the EQL type stored in public.eql_v4_real_ord: the real family with the ope index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002).
 type RealOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1877,7 +1877,7 @@ func (v *RealOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // RealOrdOpe is the EQL type stored in public.eql_v4_real_ord_ope: the real family with the ope index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002).
 type RealOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1924,7 +1924,7 @@ func (v *RealOrdOpeQuery) UnmarshalJSON(b []byte) error {
 }
 
 // Double is the EQL type stored in public.eql_v4_double: the double family with no index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine produces it from a float64.
 type Double []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1948,7 +1948,7 @@ func (v *Double) UnmarshalJSON(b []byte) error {
 }
 
 // DoubleEq is the EQL type stored in public.eql_v4_double_eq: the double family with the eq index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: vitaminc 0.5 derives no equality term for a float; the canonical float form arrives in vitaminc 0.6 (ADR-0002).
 type DoubleEq []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -1995,7 +1995,7 @@ func (v *DoubleEqQuery) UnmarshalJSON(b []byte) error {
 }
 
 // DoubleOrdOre is the EQL type stored in public.eql_v4_double_ord_ore: the double family with the ore index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002).
 type DoubleOrdOre []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -2042,7 +2042,7 @@ func (v *DoubleOrdOreQuery) UnmarshalJSON(b []byte) error {
 }
 
 // DoubleOrd is the EQL type stored in public.eql_v4_double_ord: the double family with the ope index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002).
 type DoubleOrd []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -2089,7 +2089,7 @@ func (v *DoubleOrdQuery) UnmarshalJSON(b []byte) error {
 }
 
 // DoubleOrdOpe is the EQL type stored in public.eql_v4_double_ord_ope: the double family with the ope index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002).
 type DoubleOrdOpe []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
@@ -2183,7 +2183,7 @@ func (v *SteVecQuery) UnmarshalJSON(b []byte) error {
 }
 
 // JSON is the EQL type stored in public.eql_v4_json: the json family with no index.
-// The engine cannot produce it yet: how this family encodes a plaintext for the stack-encrypt producer profile is not specified; only the text family's encoding is.
+// The engine cannot produce it yet: a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document becomes one sealed leaf is not decided.
 type JSON []byte
 
 // Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
