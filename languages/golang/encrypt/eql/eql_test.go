@@ -19,7 +19,7 @@ func TestTypesTableNamesTheProducibleTypes(t *testing.T) {
 			t.Errorf("%s: an unproducible type has a reason", typ.Name)
 		}
 	}
-	want := []string{"Integer", "Bigint", "Text", "TextEq", "Boolean", "Real", "Double"}
+	want := []string{"Integer", "Bigint", "Text", "TextEq", "TextMatch", "Boolean", "Real", "Double"}
 	if len(producible) != len(want) {
 		t.Fatalf("producible = %v, want %v", producible, want)
 	}

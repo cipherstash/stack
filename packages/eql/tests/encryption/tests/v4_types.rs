@@ -1,9 +1,9 @@
 //! The EQL v4 types Stack Encrypt produces besides `TextEq`: the
-//! storage-only integer, bigint, boolean, float and text types. `Json` is not
-//! producible yet: a JSON value seals as a tree of leaves and EQL's `c` holds
-//! one. `IntegerEq` and `BigintEq` are held back: their equality term moves to
-//! vitaminc 0.6's shared integer PRF domain, and terms stored before that
-//! would stop matching.
+//! storage-only integer, bigint, boolean, float and text types, and
+//! `TextMatch`. `Json` is not producible yet: a JSON value seals as a tree of
+//! leaves and EQL's `c` holds one. `IntegerEq` and `BigintEq` are held back:
+//! their equality term moves to vitaminc 0.6's shared integer PRF domain, and
+//! terms stored before that would stop matching.
 //!
 //! Each type must round-trip through both entry points (the typed
 //! `encrypt_as` and the by-name dispatch a Go plan reaches), seal exactly the
@@ -365,6 +365,63 @@ async fn storage_only_text_round_trips_through_both_entry_points() {
     );
 }
 
+/// A match query's filter positions, which EQL's `@@` tests for containment.
+fn positions(filter: &eql_bindings::v3::terms::BloomFilter) -> std::collections::BTreeSet<i16> {
+    filter.0.iter().copied().collect()
+}
+
+#[tokio::test]
+async fn text_match_filters_contain_their_substrings() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+    let stored: text::TextMatch = keyset
+        .encrypt_as(&"Alice@Example.com".to_owned(), column())
+        .await
+        .unwrap();
+    assert_v4_envelope(&stored, &["v", "i", "c", "bf"]);
+    assert!(
+        stored.bf.0.iter().all(|&p| (0..256).contains(&p)),
+        "a 256-bit filter"
+    );
+    let opened: String = cipher
+        .decrypt_as(stored.clone(), column().into())
+        .await
+        .unwrap();
+    assert_eq!(opened, "Alice@Example.com");
+
+    let all = positions(&stored.bf);
+    for (needle, contained) in [
+        ("alice", true),
+        ("EXAMPLE", true),
+        ("ice@ex", true),
+        ("bob", false),
+    ] {
+        let query: text::TextMatchQuery = keyset
+            .encrypt_as(&needle.to_owned(), column())
+            .await
+            .unwrap();
+        assert_eq!(
+            positions(&query.bf).is_subset(&all),
+            contained,
+            "{needle:?} in Alice@Example.com"
+        );
+    }
+
+    // The dispatch derives the same filter.
+    let named: text::TextMatch = by_name(
+        &keyset,
+        "TextMatch",
+        FfiValue::String("Alice@Example.com".into()),
+    )
+    .await;
+    assert_eq!(named.bf, stored.bf);
+
+    // Text shorter than a 3-gram has no tokens: refused, not stored with an
+    // empty filter that no query could ever match.
+    let short: Result<text::TextMatch, _> = keyset.encrypt_as(&"ab".to_owned(), column()).await;
+    assert!(short.is_err());
+}
+
 #[tokio::test]
 async fn a_value_of_another_kind_is_refused_not_converted() {
     let (cipher, _) = common::cipher().await;
@@ -419,7 +476,8 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
             active public.eql_v4_boolean,
             ratio public.eql_v4_real,
             score public.eql_v4_double,
-            note public.eql_v4_text
+            note public.eql_v4_text,
+            name public.eql_v4_text_match
         );",
     )
     .unwrap();
@@ -452,6 +510,10 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
                     .encrypt_as::<_, text::Text>(&"note".to_owned(), column())
                     .await
                     .unwrap(),
+                keyset
+                    .encrypt_as::<_, text::TextMatch>(&format!("user{id}@example.com"), column())
+                    .await
+                    .unwrap(),
             )
         });
         db.execute(
@@ -461,7 +523,8 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
                 $4::text::jsonb::public.eql_v4_boolean,
                 $5::text::jsonb::public.eql_v4_real,
                 $6::text::jsonb::public.eql_v4_double,
-                $7::text::jsonb::public.eql_v4_text)",
+                $7::text::jsonb::public.eql_v4_text,
+                $8::text::jsonb::public.eql_v4_text_match)",
             &[
                 &id,
                 &json(&row.0),
@@ -470,10 +533,28 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
                 &json(&row.3),
                 &json(&row.4),
                 &json(&row.5),
+                &json(&row.6),
             ],
         )
         .unwrap();
     }
+
+    let mut matching = |needle: &str| -> Vec<i32> {
+        let probe: text::TextMatchQuery = runtime
+            .block_on(async { keyset.encrypt_as(&needle.to_owned(), column()).await })
+            .unwrap();
+        db.query(
+            "SELECT id FROM v4_types WHERE name @@ $1::text::jsonb::eql_v4.query_text_match ORDER BY id",
+            &[&json(&probe)],
+        )
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect()
+    };
+    assert_eq!(matching("example.com"), [1, 2, 3], "TextMatch: every row");
+    assert_eq!(matching("user2"), [2], "TextMatch: one row");
+    assert_eq!(matching("nobody"), Vec::<i32>::new(), "TextMatch: none");
 
     // Every stored value reads back from its domain and opens.
     let row = db

@@ -82,7 +82,9 @@ pub mod plaintext;
 pub mod targets;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use stack_encrypt::sem::EqualityTerm;
+#[allow(deprecated)]
+use stack_encrypt::sem::MatchTerm;
+use stack_encrypt::sem::{DefaultMatch, EqualityTerm, MatchConfig};
 use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
 use stack_encrypt::target::{self, AeadContext, CallerContext};
 use stack_encrypt::{
@@ -93,7 +95,7 @@ use stack_encrypt::{
 use vitaminc_prf::PrfValue;
 
 use crate::{
-    v3::terms::{Ciphertext, Hmac256},
+    v3::terms::{BloomFilter, Ciphertext, Hmac256},
     Identifier,
 };
 
@@ -247,6 +249,63 @@ impl Decryptable for Hmac256 {
     const DECRYPTABLE: bool = false;
 }
 impl<P, Ctx> DecryptField<P, Ctx> for Hmac256 {
+    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
+        None
+    }
+}
+
+/// Builds EQL's bloom filter, the set bit positions as `smallint`s, from the
+/// native match terms.
+///
+/// The configuration is Stack Encrypt's default (3-grams, lower-cased,
+/// `k = 3`, a 256-bit filter): every position is below 256, so it fits a
+/// `smallint` unchanged. Stored values and queries take it from the same type,
+/// so they always agree; matching cipherstash-client's parameters is not a
+/// goal, because cipherstash-client never writes an `eql_v4` column.
+#[doc(hidden)]
+pub struct MatchVisitor;
+impl Visitor for MatchVisitor {
+    type Value = BloomFilter;
+    // `MatchTerm` is the type's name in the crates.io stack-encrypt this
+    // crate publishes against, and a deprecated alias of `MatchTerms` in the
+    // tree: the one spelling that compiles against both.
+    #[allow(deprecated)]
+    fn matching<O: MatchConfig>(self, terms: MatchTerm<O>) -> Result<Self::Value, Error> {
+        terms
+            .positions()
+            .iter()
+            .map(|&position| {
+                i16::try_from(position).map_err(|_| {
+                    Error::Other(
+                        "a match position does not fit a smallint; EQL's bloom filter stores \
+                         filters of at most 32768 bits"
+                            .into(),
+                    )
+                })
+            })
+            .collect::<Result<_, _>>()
+            .map(BloomFilter)
+    }
+}
+impl Transcode for BloomFilter {
+    type Visitor = MatchVisitor;
+    fn visitor() -> Self::Visitor {
+        MatchVisitor
+    }
+}
+impl<S: AsRef<str>> EncryptFrom<S> for BloomFilter {
+    type Context = CallerContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    where
+        S: 's,
+    {
+        target::matching::<_, _, _, DefaultMatch>().transcode()
+    }
+}
+impl Decryptable for BloomFilter {
+    const DECRYPTABLE: bool = false;
+}
+impl<P, Ctx> DecryptField<P, Ctx> for BloomFilter {
     fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
         None
     }
