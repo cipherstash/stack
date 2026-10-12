@@ -1,0 +1,70 @@
+{
+  "case": "stack-941",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "After cutover, npm publishes EQL V but the SQL/docs/image chain does not, and a re-run cannot re-drive it",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-2"],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Asset chain keyed on a flag computed from this run; npm publishes first and a re-run cannot re-drive it."
+    },
+    {
+      "id": "FS-2",
+      "title": "SQL attached to the GitHub release and baked into the image is rebuilt, not the bytes npm and the crate shipped",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "release-plz publishes the crate on a push the release gate refused",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-4",
+      "title": "Production npm half of the EQL switch is held by a different reader than the other four artefacts",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Known and documented in AGENTS.md; still a real gap."
+    },
+    {
+      "id": "FS-5",
+      "title": "Live JS/FFI releases now depend on the new `classify` job",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Low."
+    }
+  ],
+  "cost_usd": 1.8083932999999999,
+  "wall_seconds": 238.977408,
+  "case_note": "KD-2 found; KD-1 missed."
+}

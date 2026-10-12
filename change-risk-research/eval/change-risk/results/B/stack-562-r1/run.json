@@ -136,6 +136,15 @@
   },
   "skill_invoked": true,
   "audit": {
+    "flags": [],
+    "clean": true
+  },
+  "validation": {
+    "valid": true,
+    "errors": [],
+    "warnings": []
+  },
+  "audit_previous": {
     "flags": [
       {
         "tool": "Bash",
@@ -154,10 +163,5 @@
       }
     ],
     "clean": false
-  },
-  "validation": {
-    "valid": true,
-    "errors": [],
-    "warnings": []
   }
 }

@@ -137,6 +137,15 @@
   },
   "skill_invoked": true,
   "audit": {
+    "flags": [],
+    "clean": true
+  },
+  "validation": {
+    "valid": true,
+    "errors": [],
+    "warnings": []
+  },
+  "audit_previous": {
     "flags": [
       {
         "tool": "Read",
@@ -145,10 +154,5 @@
       }
     ],
     "clean": false
-  },
-  "validation": {
-    "valid": true,
-    "errors": [],
-    "warnings": []
   }
 }

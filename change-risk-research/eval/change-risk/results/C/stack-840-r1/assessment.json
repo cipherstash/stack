@@ -1,0 +1,283 @@
+{
+  "schema_version": "1",
+  "repository": "cipherstash/stack",
+  "base_sha": "c8b1325a7e06675ec7c3d70f0af3624fe20e0ce8",
+  "head_sha": "c379d44a1b05074165fe4f8aba68b32f8b1bfa3b",
+  "assessor": {
+    "agent": "claude-code (headless)",
+    "model": "claude-opus-5-5",
+    "skill_version": "1.0.0",
+    "condition": "C"
+  },
+  "inputs": {
+    "diff": { "status": "available", "source": "changes.diff" },
+    "source_checkout": {
+      "status": "available",
+      "source": "repo/ at head; base is an ancestor"
+    },
+    "pr_description": { "status": "available", "source": "pr-description.md" },
+    "ci_results": {
+      "status": "available",
+      "source": "ci.json",
+      "note": "15 check runs on the head commit, all success; CodeRabbit status success. Step-level logs not supplied."
+    },
+    "architecture_docs": {
+      "status": "partial",
+      "note": "Only the in-repo README, SKILL.md, JSDoc and workflow files read at head; no separate architecture docs supplied."
+    },
+    "dependency_graph": {
+      "status": "unavailable",
+      "note": "Not supplied; consumers found by git grep at head."
+    },
+    "codeowners": {
+      "status": "available",
+      "source": "evidence.json ownership (all changed files owned by @cipherstash/developers)"
+    },
+    "history_signals": {
+      "status": "available",
+      "source": "collect-evidence 1.0.0 (evidence.json, evidence.md)"
+    },
+    "deployment_context": { "status": "unavailable" }
+  },
+  "summary": "Documentation and test-only change with no runtime behaviour change. It rewrites the JSDoc on EncryptionClient.decrypt / bulkDecrypt (native and wasm-inline entries), the table-less decryptModel overload and a runtime comment, to state that the raw decrypt paths do not reconstruct Date values and to correct the stated reason. It updates the shipped skills/stash-encryption/SKILL.md and the @cipherstash/stack README to match, adds runtime and type-level tests pinning the boundary, and fixes the stub casts in an existing unit test file. The only executable source lines touched are in tests; the delegations in client-v3.ts and the wasm decrypt bodies are unchanged. The shipped SKILL.md is bundled into the stash and @cipherstash/wizard tarballs, so wrong guidance there would reach customer repositories; the new statements I checked (bulkEncrypt is column-typed, bulkDecrypt/decrypt are bare delegations, bigint is native from the FFI, datePropertyPaths exists on the wasm entry) match the code at head. The changeset bumps stash and @cipherstash/stack as patches, and both are in a fixed group with @cipherstash/wizard, so the skill copy ships consistently. CI on the head commit passed all 15 checks, including the Node 22/24 test jobs that run the stack type tests. No material failure scenario found.",
+  "behaviour_changes": [
+    {
+      "id": "BC-1",
+      "kind": "documentation",
+      "description": "JSDoc on decrypt, bulkDecrypt and the table-less decryptModel overload (client-v3.ts) and on WasmEncryptionClient.decrypt / bulkDecrypt now states that date/timestamp columns come back as stored strings on the raw paths and corrects the reason (static typing, not missing column identity). Shipped in emitted .d.ts files; no signature changes.",
+      "certainty": "observed",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "BC-2",
+      "kind": "documentation",
+      "description": "Shipped agent skill skills/stash-encryption/SKILL.md and packages/stack/README.md gain a raw-path Date-vs-string warning and describe bulkEncrypt as column-typed rather than an untyped passthrough. The skill is copied into the stash and @cipherstash/wizard tarballs and from there into customer repositories.",
+      "certainty": "observed",
+      "evidence": ["E-4", "E-5", "E-6", "E-7"]
+    },
+    {
+      "id": "BC-3",
+      "kind": "test_only",
+      "description": "New runtime tests pin decrypt/bulkDecrypt as bare delegations that return the stored string; new type tests pin the raw paths to JsPlaintext with no Date arm and the model paths to Date/string. Existing stubs are retyped from EncryptionClient to the factory's native-client parameter type; no existing assertion removed or weakened.",
+      "certainty": "observed",
+      "evidence": ["E-8", "E-9", "E-10"]
+    },
+    {
+      "id": "BC-4",
+      "kind": "build_or_release",
+      "description": "Adds a changeset bumping stash and @cipherstash/stack as patch; both are in a changesets fixed group with the other stack packages including @cipherstash/wizard.",
+      "certainty": "observed",
+      "evidence": ["E-11", "E-12"]
+    }
+  ],
+  "impact": "low",
+  "verification_confidence": "high",
+  "release_readiness": "ready_for_review",
+  "affected_components": [
+    {
+      "id": "AC-1",
+      "name": "@cipherstash/stack EncryptionClient (client-v3.ts) and WasmEncryptionClient (wasm-inline.ts)",
+      "kind": "public_api",
+      "relationship": "changed",
+      "how": "Comment and JSDoc edits only; runtime delegations decrypt/bulkDecrypt unchanged.",
+      "evidence": ["E-1", "E-2", "E-3"]
+    },
+    {
+      "id": "AC-2",
+      "name": "skills/stash-encryption (shipped in stash and @cipherstash/wizard tarballs)",
+      "kind": "published_artifact",
+      "relationship": "changed",
+      "how": "Customer-facing agent guidance; copied into dist/skills by both packages' tsup onSuccess hooks.",
+      "evidence": ["E-4", "E-6", "E-7"]
+    },
+    {
+      "id": "AC-3",
+      "name": "packages/stack/README.md",
+      "kind": "documentation",
+      "relationship": "changed",
+      "how": "npm package README text updated.",
+      "evidence": ["E-5"]
+    },
+    {
+      "id": "AC-4",
+      "name": "stack unit and type test suites (typed-client-v3.test.ts, typed-client-v3.test-d.ts)",
+      "kind": "module",
+      "relationship": "changed",
+      "how": "New tests added; type tests run in CI via the Run Tests (Node 22/24) jobs.",
+      "evidence": ["E-8", "E-9", "E-13"]
+    },
+    {
+      "id": "AC-5",
+      "name": "Release versioning (changesets fixed group)",
+      "kind": "ci_or_release",
+      "relationship": "changed",
+      "how": "Patch changeset for stash and @cipherstash/stack; fixed group carries the version across stack, adapters and wizard.",
+      "evidence": ["E-11", "E-12"]
+    }
+  ],
+  "failure_scenarios": [],
+  "verification_gaps": [],
+  "recommended_controls": [
+    {
+      "id": "RC-1",
+      "kind": "review_focus",
+      "description": "Docs-level review of the new SKILL.md raw-path note: it is shipped to customer repositories and is not type-checked, so a reviewer should confirm the wording (e.g. 'stored ISO string' for types.Date, which stores a calendar date) reads correctly for agents.",
+      "addresses": []
+    }
+  ],
+  "coverage_limitations": [
+    {
+      "id": "CL-1",
+      "description": "Only check-run conclusions were supplied for CI; step logs were not, so I cannot confirm which individual tests (e.g. the new typed-client-v3 tests) ran within the Run Tests jobs, beyond the workflow showing a test:types step.",
+      "effect": "Verification relies on job-level success plus the workflow definition."
+    },
+    {
+      "id": "CL-2",
+      "description": "The PR description's claims about protect-ffi 0.30.0 (Identifier shared by every payload) and about other decrypt surfaces (DynamoDB, Supabase, prisma-next) were not independently verified; they only affect the accuracy of explanatory prose, not runtime.",
+      "effect": "A factual error in the rationale text would be a docs-quality issue, not a release risk."
+    },
+    {
+      "id": "CL-3",
+      "description": "I did not run any tests locally.",
+      "effect": "No command_output evidence; CI results are the only execution evidence."
+    }
+  ],
+  "evidence": [
+    {
+      "id": "E-1",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/client-v3.ts",
+      "rev": "head",
+      "line_start": 523,
+      "line_end": 523,
+      "claim": "decrypt remains a bare delegation to the native client; the change edits only the JSDoc above the interface method.",
+      "status": "verified"
+    },
+    {
+      "id": "E-2",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/client-v3.ts",
+      "rev": "head",
+      "line_start": 393,
+      "line_end": 393,
+      "claim": "passthroughRow is unchanged; only the comment above it was rewritten.",
+      "status": "verified"
+    },
+    {
+      "id": "E-3",
+      "kind": "code",
+      "path": "packages/stack/src/wasm-inline.ts",
+      "rev": "head",
+      "line_start": 647,
+      "line_end": 647,
+      "claim": "datePropertyPaths, linked from the new wasm decrypt JSDoc, exists at head; wasm decrypt/bulkDecrypt bodies are unchanged.",
+      "status": "verified"
+    },
+    {
+      "id": "E-4",
+      "kind": "code",
+      "path": "skills/stash-encryption/SKILL.md",
+      "rev": "head",
+      "line_start": 369,
+      "line_end": 369,
+      "claim": "New shipped-skill note: decrypt/bulkDecrypt return date columns as strings; use model helpers or new Date(value).",
+      "status": "verified"
+    },
+    {
+      "id": "E-5",
+      "kind": "diff",
+      "path": "packages/stack/README.md",
+      "rev": "head",
+      "claim": "README describes bulkEncrypt as column-typed and adds the raw-path no-Date note.",
+      "status": "verified"
+    },
+    {
+      "id": "E-6",
+      "kind": "code",
+      "path": "packages/cli/tsup.config.ts",
+      "rev": "head",
+      "line_start": 86,
+      "line_end": 88,
+      "claim": "The stash CLI build copies repo-root skills/ into dist/skills, so SKILL.md ships to customers.",
+      "status": "verified"
+    },
+    {
+      "id": "E-7",
+      "kind": "code",
+      "path": "packages/stack/src/encryption/client-v3.ts",
+      "rev": "head",
+      "line_start": 285,
+      "line_end": 287,
+      "claim": "bulkEncrypt is generic over Table and Col with BulkEncryptPayloadFor<Col>, matching the new docs claim that it is column-typed; bigint needs no reconstruction because protect-ffi returns native bigint (lines 314-315).",
+      "status": "verified"
+    },
+    {
+      "id": "E-8",
+      "kind": "test",
+      "path": "packages/stack/__tests__/typed-client-v3.test.ts",
+      "rev": "head",
+      "line_start": 267,
+      "line_end": 333,
+      "claim": "New tests pin decrypt/bulkDecrypt as bare delegations returning the stored ISO string.",
+      "status": "verified"
+    },
+    {
+      "id": "E-9",
+      "kind": "test",
+      "path": "packages/stack/__tests__/typed-client-v3.test-d.ts",
+      "rev": "head",
+      "line_start": 222,
+      "line_end": 262,
+      "claim": "New type tests pin raw decrypt paths to JsPlaintext (no Date) and model paths to Date / string.",
+      "status": "verified"
+    },
+    {
+      "id": "E-10",
+      "kind": "diff",
+      "path": "packages/stack/__tests__/typed-client-v3.test.ts",
+      "rev": "head",
+      "claim": "Existing stubs retyped from EncryptionClient to Parameters<typeof createEncryptionClient>[0]; no assertions removed.",
+      "status": "verified"
+    },
+    {
+      "id": "E-11",
+      "kind": "diff",
+      "path": ".changeset/raw-decrypt-date-boundary.md",
+      "rev": "head",
+      "claim": "Patch changeset for @cipherstash/stack and stash stating no behaviour change.",
+      "status": "verified"
+    },
+    {
+      "id": "E-12",
+      "kind": "code",
+      "path": ".changeset/config.json",
+      "rev": "head",
+      "line_start": 5,
+      "line_end": 14,
+      "claim": "stash, @cipherstash/stack and @cipherstash/wizard are in one fixed group, so the wizard's skill copy versions with this release.",
+      "status": "verified"
+    },
+    {
+      "id": "E-13",
+      "kind": "code",
+      "path": ".github/workflows/tests.yml",
+      "rev": "head",
+      "line_start": 109,
+      "line_end": 110,
+      "claim": "The Run Tests (Node matrix) job runs pnpm --filter @cipherstash/stack run test:types.",
+      "status": "verified"
+    },
+    {
+      "id": "E-14",
+      "kind": "ci_result",
+      "claim": "All 15 check runs on head succeeded, including Run Tests (Node 22), Run Tests (Node 24), Run Tests (Bun), Lint (Biome), E2E and integration suites (ci.json).",
+      "status": "verified"
+    },
+    {
+      "id": "E-15",
+      "kind": "pr_description",
+      "claim": "Author reports build, test:types (59 tests), typed-client-v3 unit tests (12 passed) and biome passing locally; credential-gated suites not run locally.",
+      "status": "inferred"
+    }
+  ]
+}

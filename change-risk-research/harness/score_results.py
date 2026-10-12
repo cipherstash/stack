@@ -71,7 +71,8 @@ def score(evaluator_dir: Path, gt: dict, cases: dict, split: str | None, post_ho
     kd_total = kd_hit = 0
     defect_cases = defect_cases_hit = 0
     hi_cases = hi_attended = 0
-    low_cases = low_overflag = 0
+    low_cases = low_overflag = low_attention = 0
+    attn_cases = attn_on_attention_warranted = warranted = 0
     impact_pairs = []
     ev_ok = ev_n = act_ok = act_n = 0
     cost = []
@@ -105,6 +106,12 @@ def score(evaluator_dir: Path, gt: dict, cases: dict, split: str | None, post_ho
         if g["expert_impact"] == "low":
             low_cases += 1
             low_overflag += LEVEL.get(a.get("overall_impact") or "", -1) >= 2
+            low_attention += bool(a.get("attention"))
+        if a.get("attention") is not None:
+            attn_cases += 1
+            if g["attention_warranted"]:
+                warranted += 1
+                attn_on_attention_warranted += bool(a["attention"])
         if a.get("overall_impact") in LEVEL:
             impact_pairs.append((LEVEL[g["expert_impact"]], LEVEL[a["overall_impact"]]))
         if a.get("cost_usd") is not None:
@@ -128,6 +135,9 @@ def score(evaluator_dir: Path, gt: dict, cases: dict, split: str | None, post_ho
         "high_impact_attention": prop(hi_attended, hi_cases),
         "false_positive_burden_per_case": round(sum(per_case_unsupported) / len(adj), 2) if adj else None,
         "low_impact_overflag": prop(low_overflag, low_cases),
+        "low_impact_attention": prop(low_attention, low_cases),
+        "attention_recall": prop(attn_on_attention_warranted, warranted),
+        "attention_rate": prop(sum(bool(a.get("attention")) for a in adj), len(adj)),
         "impact_exact_agreement": prop(exact, len(impact_pairs)),
         "impact_within_one": prop(within, len(impact_pairs)),
         "impact_weighted_kappa": weighted_kappa(impact_pairs),

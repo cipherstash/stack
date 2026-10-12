@@ -1,0 +1,47 @@
+{
+  "case": "stack-568",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Node explicit authStrategy path fails every ZeroKMS request if protect-ffi 0.28 native does not unwrap the auth Result (or no longer accepts plain { token })",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "Stack's re-exported auth factories change runtime return shape under a 'minor' changeset, and shipped JSDoc still shows the old usage",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Wizard reports an unexpected error instead of 'missing credentials' if auth 0.41's failure.type strings differ from the hard-coded ones",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": "Low."
+    }
+  ],
+  "cost_usd": 1.7089659,
+  "wall_seconds": 279.336161
+}

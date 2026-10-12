@@ -1,0 +1,47 @@
+{
+  "case": "stack-1006",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "stack-prisma ships baking eql-3.0.6 while its pinned @cipherstash/eql runtime stays 3.0.5",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-2",
+      "title": "A version-stamp-only release re-runs DROP SCHEMA eql_v3 CASCADE on existing databases",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": true,
+      "note": ""
+    },
+    {
+      "id": "FS-3",
+      "title": "Temporarily widened lockstep marker and known-red live check outlive the release cycle",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": null,
+      "actionable": false,
+      "note": ""
+    }
+  ],
+  "cost_usd": 2.0191255,
+  "wall_seconds": 231.619162
+}
