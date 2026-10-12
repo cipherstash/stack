@@ -706,6 +706,11 @@ exact pin would stop the suite sharing one `cts-common` with it.
   `mutants.yml`, `fuzz.yml`, `miri.yml` and `udeps.yml`.
   `scripts/__tests__/crates-ci.test.mjs` fails when a mise task in the root
   `mise.toml` or the five crate `tasks.toml` files loses its last CI caller.
+- **Auth refresh cancellation soak:** `tests-auth-refresh.yml` runs a short,
+  seeded, virtual-time soak on every PR and the long run on auth changes and
+  Version Packages PRs. `release-plz.yml` also requires the long run before
+  `release-crates` can publish. Run it locally with `mise run
+  test:soak:stack-auth`; it needs no credentials or live services.
 
 ### Fuzzing
 
