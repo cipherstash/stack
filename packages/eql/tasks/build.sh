@@ -47,6 +47,8 @@ mkdir -p release
 
 rm -f release/cipherstash-encrypt.sql
 rm -f release/cipherstash-encrypt-uninstall.sql
+rm -f release/cipherstash-encrypt-v4.sql
+rm -f release/cipherstash-encrypt-v4-uninstall.sql
 rm -f src/deps-ordered-v3.txt src/deps-ordered-v3.txt.tmp
 rm -f src/v3/version.sql
 

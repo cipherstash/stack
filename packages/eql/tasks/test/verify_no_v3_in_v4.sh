@@ -23,6 +23,16 @@ if [[ $# -eq 0 ]]; then
   set -- release/cipherstash-encrypt-v4.sql release/cipherstash-encrypt-v4-uninstall.sql
 fi
 
+# Capture matches before printing them. `grep | head -5` under pipefail is
+# false whenever grep has more output than the pipe holds: head exits, grep
+# dies of SIGPIPE, and a wholesale leak read as no leak at all.
+report() {
+  local f=$1 what=$2 hits=$3
+  sed -n "1,5s|^|$f:|p" <<<"$hits"
+  echo "ERROR: $f $what (first 5 shown)" >&2
+  fail=1
+}
+
 fail=0
 for f in "$@"; do
   if [[ ! -s "$f" ]]; then
@@ -34,15 +44,13 @@ for f in "$@"; do
     echo "ERROR: $f never names eql_v4 — not a v4 render" >&2
     fail=1
   fi
-  if grep -n 'eql_v3' "$f" | head -5 | sed "s|^|$f:|" | grep .; then
-    echo "ERROR: $f names eql_v3 (first 5 shown)" >&2
-    fail=1
+  if hits=$(grep -n 'eql_v3' "$f"); then
+    report "$f" "names eql_v3" "$hits"
   fi
   # The domain CHECKs compare the payload version. Any v3 comparison left in
   # the v4 bundle would admit v3 payloads into v4 columns.
-  if grep -nE "'v'[[:space:]]*=[[:space:]]*'3'" "$f" | head -5 | sed "s|^|$f:|" | grep .; then
-    echo "ERROR: $f checks for payload version 3 (first 5 shown)" >&2
-    fail=1
+  if hits=$(grep -nE "'v'[[:space:]]*=[[:space:]]*'3'" "$f"); then
+    report "$f" "checks for payload version 3" "$hits"
   fi
 done
 
