@@ -74,10 +74,23 @@ pub fn resolve(fields: &Bound<'_, PyAny>) -> PyResult<(FfiValue, Vec<Resolved>)>
 }
 
 /// One field's target request as a resolved descriptor.
+///
+/// Three spellings arrive here, and the function is idempotent over them so
+/// a plan can be resolved more than once: `build()` resolves the request
+/// dict to a NAME and stores that in `PlanSpec.fields`, and every engine
+/// call parses those fields again. A bare string is therefore an
+/// already-resolved name, and goes back through the resolver rather than
+/// being trusted — a name that stopped being producible between `build()`
+/// and the call is refused at the call.
 fn target(field: &str, request: &Bound<'_, PyAny>) -> PyResult<TargetDescriptor> {
+    if let Ok(name) = request.extract::<String>() {
+        return crate::targets::named(&name)
+            .map_err(|error| PlanError::new_err(format!("{field}: {error}")));
+    }
     let request = request.cast::<PyDict>().map_err(|_| {
         PlanError::new_err(format!(
-            "{field}: a target is a dict, either {{name}} or {{kind, index}}"
+            "{field}: a target is an EQL type name, or a dict, either {{name}} or \
+             {{kind, index}}"
         ))
     })?;
 

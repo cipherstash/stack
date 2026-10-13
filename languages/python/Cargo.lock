@@ -2972,6 +2972,7 @@ version = "0.0.0"
 dependencies = [
  "eql-bindings",
  "pyo3",
+ "stack-auth",
  "stack-encrypt",
  "tokio",
  "vitaminc-aead-value",

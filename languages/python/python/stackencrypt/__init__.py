@@ -23,6 +23,7 @@ from stackencrypt._markers import (
     UInt32,
     UInt64,
 )
+from stackencrypt.cipher import Cipher
 from stackencrypt.plan import Plan, PlanSpec
 
 __all__ = [
@@ -49,6 +50,8 @@ __all__ = [
     # The declaration itself.
     "Plan",
     "PlanSpec",
+    # The call site.
+    "Cipher",
 ]
 
 

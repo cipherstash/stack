@@ -7,8 +7,10 @@ use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
 
 mod convert;
+mod engine;
 mod errors;
 mod plan;
+mod runtime;
 mod targets;
 
 /// This shell's own version. The one export that needs no engine state, so
@@ -72,6 +74,7 @@ fn _engine(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(version, module)?)?;
     module.add_function(wrap_pyfunction!(roundtrip, module)?)?;
     module.add_function(wrap_pyfunction!(check_plan, module)?)?;
+    module.add_class::<engine::Engine>()?;
     module.add(
         "StackEncryptError",
         py.get_type::<errors::StackEncryptError>(),

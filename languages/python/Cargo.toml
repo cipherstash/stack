@@ -61,6 +61,10 @@ vitaminc-aead-value = "0.5.1"
 # `Utf8String`. Same 0.5.1 line; stack-encrypt re-exports `NonEmpty` and
 # friends from this crate but not `Controlled`.
 vitaminc-protected = "0.5.1"
+# Only to NAME the cipher's type: `StackCipher::new()` returns
+# `StackCipher<StackKms<stack_auth::AutoStrategy>>`, and stack-encrypt does
+# not re-export `AutoStrategy`. By path, as stack-encrypt itself takes it.
+stack-auth = { path = "../../packages/stack-auth" }
 # The engine's `Pending` is `IntoFuture`, so every operation is async even
 # though this shell's surface is sync. `rt-multi-thread` because the ZeroKMS
 # client wants a reactor; `block_on` over it is the sync path.

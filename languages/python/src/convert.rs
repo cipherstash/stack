@@ -15,7 +15,7 @@
 //! match. A field's declared kind is the one kind it takes.
 
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBytes, PyFloat, PyInt, PyString};
+use pyo3::types::{PyBool, PyBytes, PyDict, PyFloat, PyInt, PyList, PyString};
 use stack_encrypt::dynamic::{FfiValue, ValueKind};
 // `risky_ref` is a `Controlled` method, not an inherent one, on both
 // `Protected<Vec<u8>>` and `Utf8String`. The name is vitaminc's warning
@@ -183,6 +183,23 @@ pub fn from_ffi(py: Python<'_>, value: FfiValue) -> PyResult<Py<PyAny>> {
             decoded.into_pyobject(py)?.into_any().unbind()
         }
         FfiValue::Bytes(bytes) => PyBytes::new(py, bytes.risky_ref()).into_any().unbind(),
+        // Containers, recursively. An opened row is an `Object` of field name
+        // to value, and a plan's context may be an `Array`; both are plain
+        // Python structures on the way out.
+        FfiValue::Object(pairs) => {
+            let dict = PyDict::new(py);
+            for (key, inner) in pairs {
+                dict.set_item(key, from_ffi(py, inner)?)?;
+            }
+            dict.into_any().unbind()
+        }
+        FfiValue::Array(items) => {
+            let list = PyList::empty(py);
+            for inner in items {
+                list.append(from_ffi(py, inner)?)?;
+            }
+            list.into_any().unbind()
+        }
         other => {
             return Err(ConvertError::NoPythonMapping {
                 got: describe(&other),
