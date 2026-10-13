@@ -12,15 +12,15 @@ fi
 
 # Prepares SQL for Doxygen's C++ parser. Five transforms:
 #
-#  0. Render the {{prefix}} / {{eql_version}} placeholders (ADR-0002) as EQL v3,
-#     so the reference names `eql_v3.eq_term`, not `{{prefix}}.eq_term`. The
-#     SQL build renders with `eql-codegen render`, which is strict, and
-#     `docs:generate` depends on that build, which renders every file Doxygen
-#     reads; that is what stops a misspelt placeholder reaching the reference.
-#     This is a plain substitution, so any `{{` left after it is refused too,
-#     as the renderer would refuse it. Doxygen ignores a filter's exit status
-#     (it prints the message and carries on), so the refusal fails only a
-#     direct caller such as docs_v3_grep.sh.
+#  0. Read the RENDERED source. The SQL source names its schemas by
+#     placeholder ({{prefix}}, {{eql_version}}; ADR-0002), and `mise run build`
+#     renders it as EQL v3 into build/render/eql_v3/ with `eql-codegen render`,
+#     keeping relative paths. A file under src/ or tasks/ is read from there,
+#     so the reference names `eql_v3.eq_term`, and the renderer stays the one
+#     place placeholders are substituted. `docs:generate` and this filter's
+#     other callers depend on `build`; a missing rendered copy is an error, not
+#     a fallback. Any other file (a test fixture) is read as given, and any
+#     `{{` in what is read is refused.
 #  1. Omit blocks marked `@cond deprecated_compatibility`. These functions
 #     remain callable for backwards compatibility but must not appear in the
 #     generated function reference or source browser.
@@ -50,11 +50,25 @@ fi
 #
 #     Reducing each to a single `CREATE AGGREGATE name(argtype);` declaration
 #     recovers the name in both cases and leaves a clean argument list.
-#
-# A real pipe, not `awk … < <(sed …)`: pipefail covers a pipe, so a `sed` that
-# cannot read its input fails the filter, and docs_v3_grep.sh relies on that
-# status. A process substitution's exit status is lost.
-sed -e 's/{{prefix}}/eql_v3/g' -e 's/{{eql_version}}/3/g' "$1" | awk -v src="$1" '
+
+EQL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# Doxygen passes absolute paths, docs_v3_grep.sh a relative one. Resolving the
+# directory also fails the filter (set -e) on a path that does not exist, and
+# docs_v3_grep.sh relies on that status.
+abs="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+rel="${abs#"$EQL_ROOT/"}"
+input="$1"
+case "$rel" in
+  src/* | tasks/*)
+    input="$EQL_ROOT/build/render/eql_v3/$rel"
+    if [[ ! -f "$input" ]]; then
+      echo "$1: no rendered copy at $input; run 'mise run build' first" >&2
+      exit 1
+    fi
+    ;;
+esac
+
+awk -v src="$1" '
   index($0, "{{") {
     printf "%s:%d: unrendered placeholder (expected {{prefix}} or {{eql_version}})\n", src, NR > "/dev/stderr"
     exit 1
@@ -119,4 +133,4 @@ sed -e 's/{{prefix}}/eql_v3/g' -e 's/{{eql_version}}/3/g' "$1" | awk -v src="$1"
     gsub(/--/, "//", out)
     print out
   }
-'
+' "$input"
