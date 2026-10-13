@@ -1,0 +1,59 @@
+{
+  "case": "stack-961",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Upgrade locks encrypted application tables for the full index rebuild",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The cited single transaction and non-concurrent rebuild are present; the README and SKILL require a maintenance window but never say that tables are locked against reads during the rebuild."
+    },
+    {
+      "id": "FS-2",
+      "title": "Upgrade by a non-owner role now fails and rolls back at index rebuild",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "rebuildIndexes replays CREATE INDEX, which needs table ownership, while preflight (installation-state.ts:205-231) checks only database/public CREATE, pgcrypto and EQL schema ownership, so a non-owner role fails mid-transaction after the drop."
+    },
+    {
+      "id": "FS-3",
+      "title": "Upgrades that previously succeeded are now refused for databases with EQL-dependent views, policies or constraints",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "inspectReinstallDependencies refuses every non-index dependant before mutation and install/upgrade map the refusal to CliExit(1), a real exit-code behaviour change versus base's silent CASCADE, shipped as a minor bump."
+    },
+    {
+      "id": "FS-4",
+      "title": "EQL-backed index created concurrently by another session is dropped and not restored",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Capture and the bundle are separate READ COMMITTED statements and the advisory lock serializes only stash commands, so an EQL index committed in between is dropped by the cascade and never restored or checked; the README documents this only as an operator requirement."
+    }
+  ],
+  "cost_usd": 2.9639041000000006,
+  "wall_seconds": 290.276579,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

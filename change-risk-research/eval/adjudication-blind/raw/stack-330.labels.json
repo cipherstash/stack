@@ -1,0 +1,132 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "The cited line numbers (8, 20, 25) don't match the code in login(). The real points are shadowing of `auth` and a spinner left running when pollForToken rejects. Both are cosmetic, since the rejection reaches main() and the process exits anyway."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The README now says no env vars are needed, and the init next-steps dropped the CS_* instructions. But secrets getConfig still exits without CS_* (helpers.ts:33-51), and LockContext's loadWorkSpaceId still throws without CS_WORKSPACE_CRN or cipherstash.toml."
+    },
+    {
+      "id": "F-03",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Cited code confirmed: the next-steps lost the CS_* instruction, the README claims no credentials are needed, and the secrets CLI, the Secrets constructor and loadWorkSpaceId still require CS_* or TOML. The skill file still documents CS_*."
+    },
+    {
+      "id": "F-04",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "authenticateStep runs first and always runs. login() has no error handling, bindDevice calls process.exit(1), and init only catches CancelledError, so any auth failure stops init before scaffolding."
+    },
+    {
+      "id": "F-05",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The lockfile diff confirms the downgrades (byteslice 0.2.2 to 0.2.0, evlog 1.11.0 to 1.9.0) and the exact pins. This is a plausible consumer-facing runtime change introduced by the PR, though its impact is unproven."
+    },
+    {
+      "id": "F-06",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same confirmed mechanism as F-04: an unconditional auth step plus unhandled errors and process.exit(1) block init."
+    },
+    {
+      "id": "F-07",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Nothing shows that @cipherstash/auth's default-import interop actually fails. The startup crash is conjecture about an unspecified platform or packaging."
+    },
+    {
+      "id": "F-08",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "bindDevice calls process.exit(1) at line 63. The init orchestration can't recover from that and aborts, which is a real brittleness introduced by this change."
+    },
+    {
+      "id": "F-09",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Inconsistent CLI invocation style in the docs. Since the package has a single `stash` bin, both forms work."
+    },
+    {
+      "id": "F-10",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The exact pins and dependency downgrades are confirmed in package.json and the lockfile. The finding itself rates the impact low, and its mitigation (confirm intent) is reasonable."
+    },
+    {
+      "id": "F-11",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The downgrades and exact pins of evlog and @byteslice/result are confirmed in package.json and the lockfile diff."
+    },
+    {
+      "id": "F-12",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The finding concedes that whether protect-ffi newClient reads auth.json is unknown. The failure mechanism is hypothetical and the cited code doesn't support it."
+    },
+    {
+      "id": "F-13",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Confirmed: the README and next-steps now say no credentials are needed, but secrets getConfig and loadWorkSpaceId still require CS_* or TOML."
+    },
+    {
+      "id": "F-14",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "stash.ts statically imports the auth module, and login.ts loads the native @cipherstash/auth at module top level. The lockfile lists only six platform binaries, so platforms without one plausibly break every command."
+    },
+    {
+      "id": "F-15",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Echoing an unknown subcommand back to the user's own terminal is immaterial."
+    },
+    {
+      "id": "F-16",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The confirmed unconditional interactive auth step, with no skip flag and a process.exit on bind failure, blocks non-interactive and offline init."
+    }
+  ]
+}

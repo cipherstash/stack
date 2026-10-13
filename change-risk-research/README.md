@@ -16,6 +16,7 @@ request in `cipherstash/stack`. Nothing here is wired into CI or touches product
 | `eval/ground-truth/` | One file per case, written before any evaluator ran |
 | `eval/change-risk/results/` | Every skill run: assessment, rendered report, full transcript (`transcript.jsonl.gz`), cost and audit |
 | `eval/adjudication/` | Per-finding labels for every evaluator |
+| `eval/adjudication-blind/`, `eval/agreement.json` | Blind second adjudication of every holdout finding and its agreement with the first |
 | `eval/deterministic/` | Collector output and the rule-based baseline |
 | `eval/coderabbit/`, `eval/pr-descriptions/`, `eval/ci/` | Historical CodeRabbit comments, PR text and check runs, collected read-only |
 | `harness/` | Corpus building (SZZ), case isolation, runners, scoring |

@@ -1,0 +1,60 @@
+{
+  "case": "stack-547",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "critical",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "`stash eql upgrade --eql-version 3` (or install --force) drops customer columns typed with eql_v3 domains",
+      "impact": "critical",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Verified: upgrade.ts calls installer.install for v3 with no check for dependent columns, and the v3 bundle drops the eql_v3 schema (which holds the column domains) with CASCADE."
+    },
+    {
+      "id": "FS-2",
+      "title": "v3 Supabase filters put full ciphertext envelopes and all index terms in GET URLs",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "encryptCollectedTerms uses encrypt() and stringifies the full envelope (ciphertext plus all index terms) as PostgREST GET filter values, as the code comments admit."
+    },
+    {
+      "id": "FS-3",
+      "title": "v3 `like`/`ilike` silently return no or partial rows with default match options or `%` patterns",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Encrypted like/ilike become cs on a full envelope and defaultMatchOpts sets include_original:true, which the code itself says makes substring patterns match only exact values."
+    },
+    {
+      "id": "FS-4",
+      "title": "protect-ffi 0.27 bump changes v2 behaviour for existing users",
+      "impact": "high",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Speculative FFI v2-compat concern; the finding itself admits it cannot be checked, and no cited code shows a change in v2 behaviour."
+    }
+  ],
+  "cost_usd": 2.0872557,
+  "wall_seconds": 223.125099,
+  "case_note": "Missed KD-1 (instanceof detection of encrypted columns).",
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

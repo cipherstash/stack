@@ -1,0 +1,37 @@
+{
+  "case": "stack-964",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Published dist/wasm-inline.d.ts differs from the previous surface for edge consumers",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "A surface difference is only hypothesized, no concrete changed export is shown, and dist is shipped whole via package.json files while the CI gates resolve the emitted wasm-inline declarations."
+    },
+    {
+      "id": "FS-2",
+      "title": "Shipped skills promise cross-entry schema sharing where it still fails (version skew, CommonJS projects)",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The version-skew core holds (the skills promise sharing and name no minimum version), though the CommonJS part mostly describes the pre-existing lack of a require branch for wasm-inline."
+    }
+  ],
+  "cost_usd": 1.5901224999999999,
+  "wall_seconds": 215.786247,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

@@ -1,0 +1,15 @@
+{
+  "case": "stack-371",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "high",
+  "attention": false,
+  "valid_output": true,
+  "findings": [],
+  "cost_usd": 0.6694230999999999,
+  "wall_seconds": 95.490243,
+  "case_note": "No scenarios; rated low.",
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

@@ -1,0 +1,59 @@
+{
+  "case": "stack-961",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Exclusion constraint over an EQL term is silently rebuilt as a plain index",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The backing index of an exclusion constraint has relkind 'i' with no pg_inherits row, so it is classified 'index'; the constraint is only reached through an internal dependency that points the other way; pg_get_indexdef replay creates a plain index, and verification never checks indisexclusion or constraints."
+    },
+    {
+      "id": "FS-2",
+      "title": "Customer tables locked for the whole index rebuild during upgrade",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The bundle's DROP SCHEMA CASCADE, the non-concurrent CREATE INDEX replay and ANALYZE all run in one transaction (lines 678-691), so table locks taken at the drop are held for the whole rebuild, and the README only says to use a maintenance window."
+    },
+    {
+      "id": "FS-3",
+      "title": "Upgrades that previously succeeded now exit 1 for databases with views, policies or partitioned indexes on EQL",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Partitioned and attached indexes plus all non-index dependants are classified unsafe and refused, and upgrade.ts maps the refusal to exit 1, a real contract change with no CLI path for partitioned tables."
+    },
+    {
+      "id": "FS-4",
+      "title": "Rebuilt index silently moves to the default tablespace",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "pg_get_indexdef(oid) omits the TABLESPACE clause, and neither the capture query nor VERIFY_REBUILT_INDEXES_SQL reads reltablespace, so rebuilt indexes silently land in default_tablespace."
+    }
+  ],
+  "cost_usd": 1.7699147000000002,
+  "wall_seconds": 226.708471,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

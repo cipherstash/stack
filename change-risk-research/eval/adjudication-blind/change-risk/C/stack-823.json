@@ -1,0 +1,60 @@
+{
+  "case": "stack-823",
+  "evaluator": "change-risk/C",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "changes_or_verification_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Rewritten migration leaves the database out of step with the Drizzle schema that declared the column encrypted",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-2"],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The rewrite changes only SQL, leaving schema.ts and the snapshot declaring the source column encrypted."
+    },
+    {
+      "id": "FS-2",
+      "title": "drizzle-kit snapshot drift makes the next generated migration fail on a duplicate `<col>_encrypted`",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-2"],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Rewriter edits only SQL so the drizzle snapshot diverges, and the next generate re-emits ADD COLUMN for the twin."
+    },
+    {
+      "id": "FS-3",
+      "title": "`stash init` reports the new fail-closed sweep as a drizzle-kit problem and records no pending migration",
+      "impact": "medium",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The same init misreporting of the fail-closed sweep as a drizzle-kit failure, supported by install-eql.ts and index.ts."
+    },
+    {
+      "id": "FS-4",
+      "title": "Wizard aborts after the agent has edited code whenever any statement is skipped",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "post-agent throws on any skip/unswept dir after the agent edited code and run.ts's catch exits 1, skipping finalize."
+    }
+  ],
+  "cost_usd": 2.429672300000001,
+  "wall_seconds": 288.310403,
+  "case_note": "KD-2 found; KD-1 and KD-3 missed.",
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

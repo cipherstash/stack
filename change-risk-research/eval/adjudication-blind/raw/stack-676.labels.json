@@ -1,0 +1,140 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The WASM adapter's SUPPORTED_OPS is scalar-only and the Deno suite only checks JSON term shapes, so the newly documented JSON containment/selector SQL is never row-matched."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "encryptQuery is typed EncryptedQuery|null with no string arm, but the docblock and the e2e test confirm that searchableJson selectors return a bare string."
+    },
+    {
+      "id": "F-03",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Speculative: nothing shows that the pinned protect-ffi 0.29.0 lacks the WASM query exports, a CI e2e job exercises the import, and the finding admits it could not inspect the package."
+    },
+    {
+      "id": "F-04",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "No `null as unknown as string` casts exist in wasm-inline-query.test.ts."
+    },
+    {
+      "id": "F-05",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The new docblock does say terms are safe to log-scrub less aggressively, yet deterministic HMAC/ORE terms leak equality and order relationships."
+    },
+    {
+      "id": "F-06",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "toFfiQueryTerm uses the shared resolveIndexType, which already handles ope (it swaps ope in for orderAndRange and infers ore/ope)."
+    },
+    {
+      "id": "F-07",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The return types of encryptQuery and encryptQueryBulk exclude the bare selector string that the docs and the e2e test show is returned."
+    },
+    {
+      "id": "F-08",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "The new `as never` casts in encryptQuery and encryptQueryBulk already have biome-ignore comments that explain them."
+    },
+    {
+      "id": "F-09",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "JSON queries through WASM are only shape-checked, and no live test confirms that WASM-minted ste_vec needles or selectors match rows in Postgres."
+    },
+    {
+      "id": "F-10",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "expectRejected rethrows any error whose message does not match the capability-rejection patterns, so it does not swallow every failure."
+    },
+    {
+      "id": "F-11",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "assertContainmentNeedle already asserts that `'v' in obj` is false (line 94)."
+    },
+    {
+      "id": "F-12",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The shipped JSDoc encourages laxer logging of deterministic, plaintext-derived query terms, which can be linked to stored index terms."
+    },
+    {
+      "id": "F-13",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The declared return types have no string arm, yet selector queries return a bare string, so narrowing it with `in` would throw at runtime."
+    },
+    {
+      "id": "F-14",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "JSON containment and selector terms from the WASM path are never run against Postgres, so a wire mismatch would go undetected."
+    },
+    {
+      "id": "F-15",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Type-escape casts in a test adapter are a style concern with no release risk."
+    },
+    {
+      "id": "F-16",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "This is a narrowing-style nit in a test assertion and does not matter for release risk."
+    },
+    {
+      "id": "F-17",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The JSDoc invites logging deterministic query terms that reveal equality and order, a plausible leak caused by the documentation."
+    }
+  ]
+}

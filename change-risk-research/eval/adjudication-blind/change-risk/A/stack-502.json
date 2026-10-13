@@ -1,0 +1,37 @@
+{
+  "case": "stack-502",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Operation class constructors become a semver-locked public contract",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The classes are value-exported (not export type), so constructors taking the internal Client become public API under a minor changeset that frames the change as type-only."
+    },
+    {
+      "id": "FS-2",
+      "title": "Same class names exported from two subpaths refer to different classes",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "encryption/index.ts and dynamodb/index.ts both export four same-named but different classes with different constructors, which leads to confusing type mismatches for consumers."
+    }
+  ],
+  "cost_usd": 0.9575656999999999,
+  "wall_seconds": 140.494142,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

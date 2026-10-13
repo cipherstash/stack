@@ -77,6 +77,51 @@ Known defects added after scoring (`added_post_hoc`) are excluded here; `score_r
 
 "–" means the evaluator did not assess that PR (CodeRabbit did not review it).
 
+## Blind second adjudication
+
+After the results above were written, every holdout finding (376: A, B, C and CodeRabbit) was labelled
+again by a second adjudicator: a fresh headless Claude Code session per PR, run with the same isolation
+as the evaluators (`harness/blind_rescore.py`). It saw the diff, the head checkout, the known defects and
+the label rules, with the findings pooled, shuffled and renumbered. It did not see the first labels, the
+evaluator names or the expert impact ratings. Writing style still distinguishes the skill from CodeRabbit,
+so evaluator blinding is partial. Cost: $11.68 for 31 PRs. Agreement: [`agreement.json`](agreement.json)
+(`harness/agreement.py`).
+
+| Evaluator | Agreement | κ (5 labels) | Precision, first | Precision, blind | Known-defect recall, both | Unsupported + incorrect per PR, first → blind |
+|---|---|---|---|---|---|---|
+| change-risk/C | 79% | 0.56 | 68/78 (87%) | 60/78 (77%) | 4/11 | 0.32 → 0.58 |
+| change-risk/B | 79% | 0.51 | 71/79 (90%) | 65/80 (81%) | 3/11 | 0.26 → 0.48 |
+| change-risk/A | 81% | 0.57 | 69/79 (87%) | 65/81 (80%) | 4/11 | 0.32 → 0.52 |
+| CodeRabbit | 59% | 0.38 | 42/48 (88%) | 18/62 (29%) | 1/8 | 0.32 → 2.32 |
+
+Overall agreement was 73% (κ 0.56; 0.61 on sound versus not sound). Rows are the first label, columns the
+blind one:
+
+| first \ blind | match | valid | unsupported | incorrect | trivial |
+|---|---|---|---|---|---|
+| match | 13 | 0 | 1 | 0 | 0 |
+| valid | 1 | 180 | 21 | 15 | 19 |
+| unsupported | 0 | 6 | 25 | 0 | 1 |
+| incorrect | 0 | 0 | 0 | 2 | 0 |
+| trivial | 0 | 8 | 8 | 21 | 55 |
+
+What it changes:
+
+- **The first adjudicator was more lenient.** 55 findings it called `valid` were labelled `unsupported`,
+  `incorrect` or `trivial` blind, against 14 that moved the other way. For the skill, most of the moves were `valid` → `unsupported` on
+  findings that rest on unverified behaviour of a dependency (for example #568, #496, #330). Precision for
+  the skill falls by 8–10 points, to about 80%.
+- **Known-defect recall does not move.** Both adjudicators credit the same defects in every condition.
+- **A, B and C stay within noise of each other.**
+- **CodeRabbit's blind numbers are not comparable.** 30 of the 39 CodeRabbit findings the blind
+  adjudicator called `unsupported` or `incorrect` were judged wrong because the head already handles the
+  issue. CodeRabbit commented on earlier pushes, so many of those were probably fixed in response to it,
+  which is CodeRabbit working, not failing. Its nitpick flag was also removed for blinding. Neither number
+  is a fair measure of CodeRabbit's precision.
+- **One example changes.** On #860 the blind adjudicator called condition C's native-strategy finding
+  (FS-2) `valid`; the first adjudicator called it unsupported. It stays listed as a false positive above,
+  as disputed.
+
 ## What the numbers say
 
 - **The three conditions are indistinguishable.** Adding the deterministic evidence (B) or the PR

@@ -23,7 +23,8 @@ human review of the ground truth and a shadow-mode trial.
 Main condition C (diff, history signals, PR description and CI results), one run per PR:
 
 - **Most findings were sound.** 87% of non-trivial scenarios were a known defect or a plausible,
-  change-caused, code-supported risk (68/78; 95% interval 78–93%). About one unsupported or incorrect
+  change-caused, code-supported risk (68/78; 95% interval 78–93%). A blind second adjudicator was
+  stricter and put it at 77% (60/78); it agreed on every known defect found. About one unsupported or incorrect
   scenario every three PRs (0.32 per case). Scenarios the skill itself marked `speculative` were the weak
   ones: 7 of 12 were unsupported.
 - **The attention verdict was the most useful output.** It asked for more than routine review on 21 of

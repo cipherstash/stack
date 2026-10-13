@@ -1,0 +1,22 @@
+{
+  "case": "stack-728",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": false,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Skipped near-misses aren't re-surfaced at the closing note (inconsistent with `migration.ts`). When `skipped.length > 0`, the warning is logged inline at Line 6",
+      "nitpick": true,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "At head, install.ts sets sweepIncomplete when skipped.length > 0 and logs a warning again right after 'Migration created', before the Next Steps note, so near-misses are re-surfaced."
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

@@ -1,0 +1,26 @@
+{
+  "case": "stack-998",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Non-EQL releases now reach the lock refresh and skew-gated asset steps that they previously never ran",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "It is true that steps 3-4 now run on non-EQL releases, but that is the PR's intent: prepareBindingAssets skips when there is no skew, and by the finding's own account the worst case (a loud failure) is no worse than the base, which failed every such release."
+    }
+  ],
+  "cost_usd": 0.8315880999999999,
+  "wall_seconds": 109.24003,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

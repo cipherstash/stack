@@ -1,0 +1,49 @@
+{
+  "case": "stack-1002",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "high",
+  "verdict": "focused_review_required",
+  "verification_confidence": "low",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Armed auth release publishes gnu binaries with a glibc floor of the build runner",
+      "impact": "high",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Same glibc-floor concern as F-02, supported by plain napi build on recent runners versus the FFI zigbuild .2.28 pin and the preflight's lack of symbol-version checks."
+    },
+    {
+      "id": "FS-2",
+      "title": "musl leg produces no .node and the armed release holds every JS publish on that push",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "Claim that no .node is produced and the build fails loudly rests on unverified rustc behaviour; the cited code does not show the build fails, and the actual risk is a mis-linked binary being produced."
+    },
+    {
+      "id": "FS-3",
+      "title": "Widened release-plz trigger boots the armed EQL crates job on unrelated root Cargo changes",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Widened push filter boots the credentialed EQL release job on root-workspace pushes, contrary to the file's own comment; supported by cited lines."
+    }
+  ],
+  "cost_usd": 2.5503738999999994,
+  "wall_seconds": 305.966086,
+  "case_note": "KD-1 not matched; FS-2 adjacent.",
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

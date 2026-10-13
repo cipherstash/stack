@@ -1,0 +1,37 @@
+{
+  "case": "stack-666",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Pinned version not resolvable on npm breaks init and wizard for a whole CLI release",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "Embed is captured from workspace manifests at build time and used as exact pins with no fallback, so a partially published release would make init/wizard installs fail; this is a different mechanism from KD-1's staleness/direction issue."
+    },
+    {
+      "id": "FS-2",
+      "title": "Skew 'align' offers, defaulted to yes, to downgrade a newer installed runtime to an older CLI's versions",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "versionSkew uses !== with no ordering, so a newer installed runtime is offered a downgrade defaulted to yes, which is KD-1's direction defect."
+    }
+  ],
+  "cost_usd": 1.1765937,
+  "wall_seconds": 161.336536,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

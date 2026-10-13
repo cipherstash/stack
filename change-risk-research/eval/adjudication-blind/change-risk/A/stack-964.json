@@ -1,0 +1,48 @@
+{
+  "case": "stack-964",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Published dist/wasm-inline.d.ts is incomplete or wrong after moving DTS emission into the dual-format config",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "No concrete missing or widened export is identified; the declaration-surface change is hypothetical, and the new dist-types gates typecheck the wasm-inline exports from the built dist in CI."
+    },
+    {
+      "id": "FS-2",
+      "title": "Shipped skills recommend cross-entry schemas to customers whose installed @cipherstash/stack predates the fix",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "stash's optional peer range >=1.0.0-rc.0 lets the new skills sit next to an older stack, and the skills' 'older versions' fallback names no version."
+    },
+    {
+      "id": "FS-3",
+      "title": "Pending changeset contradicts the new guidance in the same release's changelog",
+      "impact": "low",
+      "basis": "observed_defect",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "The pending changeset supabase-docs-wasm-inline-entry.md still states that wasm-inline schemas don't compile with encryptedSupabase and cites the deleted guard, which contradicts the new changeset in the same release."
+    }
+  ],
+  "cost_usd": 1.8241178999999998,
+  "wall_seconds": 233.74533,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

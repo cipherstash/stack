@@ -1,0 +1,68 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "init() now accepts and forwards only config.authStrategy (index.ts:130,166) while the strategy alias is resolved only in Encryption(), so direct init({strategy}) callers of the exported EncryptionClient silently lose their strategy; init is @internal, which limits but does not remove the risk."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same verified mechanism: the init() rename drops a legacy strategy key without warning, and the alias handling exists only in Encryption() at lines 864-867."
+    },
+    {
+      "id": "F-03",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "At head, wasm-inline.ts:450 picks the field name ('authStrategy' vs 'strategy') for the error message, so the message names the deprecated field when only that one was set."
+    },
+    {
+      "id": "F-04",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The test reset hook really is exported from the published ./encryption and ./wasm-inline subpaths, but as the finding admits it is only an API-hygiene issue with no data or security effect."
+    },
+    {
+      "id": "F-05",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "At head the warning fires whenever clientConfig.strategy is set (index.ts:864), even alongside authStrategy; the quoted `&& !authStrategy` condition does not exist."
+    },
+    {
+      "id": "F-06",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Verified that head init() forwards only config.authStrategy and that the alias is resolved only in Encryption(), so a direct init({strategy}) call falls back silently to ambient credentials."
+    },
+    {
+      "id": "F-07",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Exporting the test-only latch reset from public subpaths is accurate but immaterial to release risk; it affects only log-noise state."
+    },
+    {
+      "id": "F-08",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "The once-per-process console.warn is intended deprecation behaviour, and one extra log line is immaterial."
+    }
+  ]
+}

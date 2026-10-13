@@ -1,0 +1,92 @@
+{
+  "labels": [
+    {
+      "id": "F-01",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Embed is captured from workspace manifests at build time and used as exact pins with no fallback, so a partially published release would make init/wizard installs fail; this is a different mechanism from KD-1's staleness/direction issue."
+    },
+    {
+      "id": "F-02",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The post-install re-check only tests presence, so a failed align command leaves the old versions present and still logs 'Stack dependencies installed.' even though skew remains."
+    },
+    {
+      "id": "F-03",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "When missing packages and skew both occur non-interactively, the code takes the install path and never prints alignCommands, which contradicts the docstring's promise to print the exact align commands."
+    },
+    {
+      "id": "F-04",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Identifies that pins go stale after sibling-only releases and that the !== skew check offers to downgrade newer installs, which is KD-1."
+    },
+    {
+      "id": "F-05",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "The build-before-publish embed can name a version that never reached npm, and exact pins then fail to install; plausible, and not KD-1."
+    },
+    {
+      "id": "F-06",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "versionSkew uses !== with no ordering, so a newer installed runtime is offered a downgrade defaulted to yes, which is KD-1's direction defect."
+    },
+    {
+      "id": "F-07",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Same unpublished-pin risk: tsup embeds manifest versions and pinnedSpec/wizard spawn have no fallback, so a partial publish breaks installs."
+    },
+    {
+      "id": "F-08",
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "reason": "There is no warnOnVersionSkew at head; align commands are built through splitProdDev, which puts stash in dev."
+    },
+    {
+      "id": "F-09",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "This is a request for more test coverage of a hint message and points to no defect."
+    },
+    {
+      "id": "F-10",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "reason": "Only a documentation wording suggestion for the skill notes; init itself already checks adapter skew."
+    },
+    {
+      "id": "F-11",
+      "label": "match",
+      "matches": ["KD-1"],
+      "evidence_ok": true,
+      "actionable": true,
+      "reason": "Stack-only releases leave stash's embed stale, and the direction-less skew check then steers users and agents to downgrade, which is exactly KD-1."
+    }
+  ]
+}

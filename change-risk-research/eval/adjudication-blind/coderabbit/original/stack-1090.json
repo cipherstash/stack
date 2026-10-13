@@ -1,0 +1,52 @@
+{
+  "case": "stack-1090",
+  "evaluator": "coderabbit/original",
+  "run": 1,
+  "overall_impact": null,
+  "attention": false,
+  "findings": [
+    {
+      "id": "CR-1",
+      "title": "Do not let failed JWT engines consume successful-user cache slots. `engine_for` inserts each new engine before `get_token` performs the federation. A failed exc",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "New engines go into pending, not the LRU, and settle() on Err removes the engine from pending and from the cache, so failed engines never take cache slots."
+    },
+    {
+      "id": "CR-2",
+      "title": "Remove the pending engine when `get_token` is cancelled. `engine_for` inserts a new engine into `engines.pending` at Line 225. Only `settle` removes it.",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "get_token_for_jwt wraps the engine in an InFlight guard whose Drop removes the pending entry when the future is cancelled, so the cancelled engine is already cleaned up."
+    },
+    {
+      "id": "CR-3",
+      "title": "Bump `@cipherstash/auth` to a major version. The previous contract called `getJwt` for federation and re-federation, while reusing the cached CTS token between ",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "@cipherstash/auth is at 0.44.1, where a minor bump is the semver-breaking bump, so asking for a major version is a misreading."
+    },
+    {
+      "id": "CR-4",
+      "title": "Qualify the one-exchange guarantee. Line 8 says each JWT is exchanged once while its CTS token is valid. The LRU can evict that JWT before expiry, and `cacheCap",
+      "nitpick": false,
+      "label": "incorrect",
+      "matches": [],
+      "evidence_ok": false,
+      "actionable": null,
+      "note": "The changeset sentence already qualifies reuse with 'and the JWT's entry is still in the bounded least-recently-used cache (eviction before expiry, or cacheCapacity: 0, means another exchange)'."
+    }
+  ],
+  "cost_usd": null,
+  "wall_seconds": null,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

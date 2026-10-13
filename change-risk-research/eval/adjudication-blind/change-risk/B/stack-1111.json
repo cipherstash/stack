@@ -1,0 +1,37 @@
+{
+  "case": "stack-1111",
+  "evaluator": "change-risk/B",
+  "run": 1,
+  "overall_impact": "low",
+  "verdict": "ready_for_review",
+  "verification_confidence": "medium",
+  "attention": false,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "cache_key_prefix silently ignored on the v3.6.3 mise-action pin",
+      "impact": "low",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The v3.6.3 pin and prefix lines exist, but nothing cited shows that version ignores cache_key_prefix (an input mise-action has long declared); the mechanism is hypothetical."
+    },
+    {
+      "id": "FS-2",
+      "title": "One-time cold mise cache on every affected job",
+      "impact": "low",
+      "basis": "plausible_failure",
+      "label": "trivial",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "A one-time cold cache after a key change is the expected, self-healing cost of re-keying the cache; it is not material release risk, and head CI passed."
+    }
+  ],
+  "cost_usd": 0.8468530999999999,
+  "wall_seconds": 109.593564,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}

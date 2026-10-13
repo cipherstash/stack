@@ -1,0 +1,37 @@
+{
+  "case": "stack-996",
+  "evaluator": "change-risk/A",
+  "run": 1,
+  "overall_impact": "medium",
+  "verdict": "focused_review_required",
+  "verification_confidence": "medium",
+  "attention": true,
+  "valid_output": true,
+  "findings": [
+    {
+      "id": "FS-1",
+      "title": "Customer builds stop compiling after a minor upgrade when encrypting Json values typed JsonDocument",
+      "impact": "medium",
+      "basis": "plausible_failure",
+      "label": "valid",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": true,
+      "note": "encrypt now returns EncryptOperation<EncryptResult<P>>, where EncryptResult<P> = Encrypted | (null & P), so JsonDocument callers get Encrypted | null and strict-null code stops compiling, yet the changeset ships this as a minor bump."
+    },
+    {
+      "id": "FS-2",
+      "title": "Verbatim ...args forwarding changes native encryptQuery routing for an untyped or adapter caller",
+      "impact": "medium",
+      "basis": "speculative",
+      "label": "unsupported",
+      "matches": [],
+      "evidence_ok": true,
+      "actionable": null,
+      "note": "The finding says itself that every argument shape routes the same as before; index.ts still discriminates on !args[1] exactly like the old opts check, so no defect is shown."
+    }
+  ],
+  "cost_usd": 1.2780245000000003,
+  "wall_seconds": 163.744839,
+  "adjudicator": "blind second adjudicator (harness/blind_rescore.py)"
+}
