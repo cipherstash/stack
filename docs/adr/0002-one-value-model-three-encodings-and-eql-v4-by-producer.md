@@ -316,12 +316,14 @@ without loss, and refuses it otherwise.
 | `Timestamp` | `timestamp` | |
 | `String` | `text` | |
 | `Bool` | `boolean` | |
-| `Int8`, `UInt8`, `UInt16`, `UInt32`, `UInt64`, `Int128`, `UInt128`, `Bytes` | none | ciphertext and terms through Stack Encrypt's own targets; no EQL domain yet |
+| `Int8`, `UInt8`, `UInt16`, `UInt32`, `UInt64`, `Int128`, `UInt128`, `Bytes` | none | no EQL domain and no target name yet; a kind is selectable only once a target names it |
 
 - **Go.** Any Go integer type whose every value fits the target's kind is
   accepted (`int8` into `smallint`, `int32` into `bigint`); a wider one is
   range-checked and refused if the value does not fit. `int8`, `int16`,
-  `uint8` and `uint16` have their own kinds for targets that name them.
+  `uint8` and `uint16` get their own kinds when a target names them; no
+  target does yet, so today they reach `Int16`, `Int32` or `Int64` through
+  the fits-losslessly rule.
   `Int128` and `Uint128` are SDK value types. `time.Time` means `Timestamp`,
   and `encrypt.Date{Year, Month, Day}` is a date. A field whose target is a
   date family also accepts `time.Time` and takes its calendar day **in the
@@ -478,7 +480,8 @@ guarantee coverage under B.
   same type family and capability would turn the silent cross-producer `=`
   into an error. About 2,300 operators, generated from the catalog like the
   existing blockers. Not built yet; until then, a cross-producer query is
-  caught only by typed clients and the function form. When they are built,
+  caught only by typed clients, the function form and `OPERATOR(public.=)`;
+  the plain `=` returns no rows. When they are built,
   **the v4 bundle owns them**: it creates them in `eql_v4_internal`, against
   whichever `public.eql_v3_*` domains exist, on every install. A v4 reinstall
   drops them with its schema and creates them again. A v3 reinstall leaves
