@@ -235,7 +235,8 @@ crate would need stack-encrypt API newer than the crates.io release the
 published crate names, and the guest already depends on both. A type is producible exactly
 when its generated struct carries the `stack-encrypt` derives
 (`ENCRYPTION_DOMAINS` in `eql-codegen`), because the dispatch runs the derived
-plan; `TextEq` is the only one today.
+plan; `targets::targets()` lists them, each with `producible` and, when it is
+`false`, the reason.
 
 ### Developing the `stack-encrypt` feature
 

@@ -14,10 +14,14 @@ use ts_rs::TS;
     doc,
     doc = " See the [EQL integer reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
-#[cfg_attr(all(doc, feature = "stack-encrypt"), doc = "")]
+#[cfg_attr(doc, doc = "")]
 #[cfg_attr(
     all(doc, feature = "stack-encrypt"),
     doc = " Plaintext input and decrypted output: [`Int32`](crate::encryption::plaintext::Int32). With the `stack-encrypt` feature, implements `EncryptFrom<Int32>` and `DecryptInto<Int32>`."
+)]
+#[cfg_attr(
+    all(doc, not(feature = "stack-encrypt")),
+    doc = " Plaintext input and decrypted output: `Int32`. With the `stack-encrypt` feature, implements `EncryptFrom<Int32>` and `DecryptInto<Int32>`."
 )]
 #[cfg_attr(
     all(doc, feature = "stack-encrypt"),

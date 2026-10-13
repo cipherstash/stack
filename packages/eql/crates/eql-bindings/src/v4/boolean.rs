@@ -14,10 +14,14 @@ use ts_rs::TS;
     doc,
     doc = " See the [EQL boolean reference](https://cipherstash.com/docs/reference/eql/booleans) for SQL domain variants, operators, and query examples."
 )]
-#[cfg_attr(all(doc, feature = "stack-encrypt"), doc = "")]
+#[cfg_attr(doc, doc = "")]
 #[cfg_attr(
     all(doc, feature = "stack-encrypt"),
     doc = " Plaintext input and decrypted output: [`Bool`](crate::encryption::plaintext::Bool). With the `stack-encrypt` feature, implements `EncryptFrom<Bool>` and `DecryptInto<Bool>`."
+)]
+#[cfg_attr(
+    all(doc, not(feature = "stack-encrypt")),
+    doc = " Plaintext input and decrypted output: `Bool`. With the `stack-encrypt` feature, implements `EncryptFrom<Bool>` and `DecryptInto<Bool>`."
 )]
 #[cfg_attr(
     all(doc, feature = "stack-encrypt"),

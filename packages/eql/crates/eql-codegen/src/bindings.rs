@@ -434,23 +434,32 @@ fn encryption_attrs(
     let (_, rust) = plaintext_of(family.name).expect("a derived family names its plaintext");
     let plaintext_ty: syn::Type = syn::parse_str(rust).expect("plaintext is a type path");
     let shown = rust.rsplit("::").next().unwrap_or(rust);
-    let plaintext = if query {
-        format!(
-            " Plaintext input: [`{shown}`]({rust}). With the `stack-encrypt` feature, \
-             implements `EncryptFrom<{shown}>` to build equality query terms. Query operands \
-             do not decrypt."
-        )
-    } else {
-        format!(
-            " Plaintext input and decrypted output: [`{shown}`]({rust}). With the \
-             `stack-encrypt` feature, implements `EncryptFrom<{shown}>` and \
-             `DecryptInto<{shown}>`."
-        )
+    // The plaintext line shows with or without the feature: it says what the
+    // type is built from, and the sentence itself names the feature. Only the
+    // link is feature-gated, since a plaintext from `crate::encryption` does
+    // not exist without it and the link would not resolve.
+    let plaintext_doc = |named: &str| {
+        if query {
+            format!(
+                " Plaintext input: {named}. With the `stack-encrypt` feature, \
+                 implements `EncryptFrom<{shown}>` to build equality query terms. Query operands \
+                 do not decrypt."
+            )
+        } else {
+            format!(
+                " Plaintext input and decrypted output: {named}. With the \
+                 `stack-encrypt` feature, implements `EncryptFrom<{shown}>` and \
+                 `DecryptInto<{shown}>`."
+            )
+        }
     };
+    let plaintext = plaintext_doc(&format!("[`{shown}`]({rust})"));
+    let plaintext_unlinked = plaintext_doc(&format!("`{shown}`"));
     (
         quote! {
-            #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = "")]
+            #[cfg_attr(doc, doc = "")]
             #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = #plaintext)]
+            #[cfg_attr(all(doc, not(feature = "stack-encrypt")), doc = #plaintext_unlinked)]
             #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.")]
             #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = " See the [complete encryption example](crate::encryption#example).")]
             #[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::EncryptFrom))]

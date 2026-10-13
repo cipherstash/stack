@@ -41,6 +41,11 @@ type EQLType struct {
 	// Reason says why not when it does not.
 	Producible bool
 	Reason     string
+
+	// wire is the engine's exact plaintext kind (int32, not just an
+	// integer), when the engine named it. Plaintext is the coarse kind a
+	// field's Go type is compared with first; wire then holds the width.
+	wire record.Kind
 }
 
 // GuestEngine is the engine the SDK embeds: the WASI guest in package
@@ -70,7 +75,7 @@ func (e *guestEngine) EQLTypes(ctx context.Context) ([]EQLType, error) {
 	}
 	out := make([]EQLType, 0, len(targets))
 	for _, t := range targets {
-		eqlType := EQLType{Name: t.Name, Plaintext: kindOfWire(t.Plaintext), Query: t.Query, Producible: t.Producible, Reason: t.Reason}
+		eqlType := EQLType{Name: t.Name, Plaintext: kindOfWire(t.Plaintext), Query: t.Query, Producible: t.Producible, Reason: t.Reason, wire: t.Plaintext}
 		for _, term := range t.Indexes {
 			if name, ok := indexOfOutput[term]; ok {
 				eqlType.Indexes = append(eqlType.Indexes, name)
@@ -160,6 +165,13 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 			// names the two kinds.
 			if eqlType.Plaintext != KindOther && eqlType.Plaintext != f.GoType.Kind {
 				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals a %s, and %s is %s", f.EQLType, eqlType.Plaintext, f.GoType, f.GoType.Kind)}
+			}
+			// The width too: Integer seals an int32 and Bigint an int64, Real
+			// a float32 and Double a float64. A narrower Go integer widens
+			// to the kind the generated code seals it as (int8 and int16
+			// seal as int32), so the comparison is on that kind.
+			if eqlType.wire != record.Untyped && rf.Kind != eqlType.wire {
+				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals %s, and %s seals as %s", f.EQLType, eqlType.wire, f.GoType, rf.Kind)}
 			}
 			// An EQL value is stored under a table and a column: the struct's
 			// context is the table and the field's name the column, so a

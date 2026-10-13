@@ -1,6 +1,7 @@
 // Package enginetest is a static stand-in for the Rust engine in the
-// generator's tests. It knows what the engine produces today: the EQL type
-// TextEq, and the four indexes with the Go kinds each applies to.
+// generator's tests. It knows what the engine produces today: the EQL types
+// in eqlTypes, each with the width of value it seals, and the four indexes
+// with the Go kinds each applies to.
 //
 // It is a test double, not a copy of the rules the SDK ships: the SDK's
 // generator asks the embedded guest. When the engine learns a type or an
@@ -10,6 +11,7 @@ package enginetest
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/cipherstash/stack/languages/golang/stashgen"
 )
@@ -19,16 +21,47 @@ type Static struct{}
 
 var _ stashgen.Engine = Static{}
 
-// EQLTypes returns TextEq, the one EQL type the engine produces today.
+// eqlTypes are the EQL types the engine produces today, with the width of
+// value each seals ("" when the kind has no width), mirroring the producible
+// rows of encrypt/eql's Types.
+var eqlTypes = []struct {
+	stashgen.EQLType
+	seals string
+}{
+	{stashgen.EQLType{Name: "Integer", Plaintext: stashgen.KindInt, Producible: true}, "int32"},
+	{stashgen.EQLType{Name: "Bigint", Plaintext: stashgen.KindInt, Producible: true}, "int64"},
+	{stashgen.EQLType{Name: "Text", Plaintext: stashgen.KindString, Producible: true}, ""},
+	{stashgen.EQLType{Name: "TextEq", Plaintext: stashgen.KindString, Indexes: []stashgen.IndexName{stashgen.IndexEquality}, Query: "TextEqQuery", Producible: true}, ""},
+	{stashgen.EQLType{Name: "Boolean", Plaintext: stashgen.KindBool, Producible: true}, ""},
+	{stashgen.EQLType{Name: "Real", Plaintext: stashgen.KindFloat, Producible: true}, "float32"},
+	{stashgen.EQLType{Name: "Double", Plaintext: stashgen.KindFloat, Producible: true}, "float64"},
+}
+
+// EQLTypes returns the EQL types the engine produces today.
 func (Static) EQLTypes(context.Context) ([]stashgen.EQLType, error) {
-	return []stashgen.EQLType{
-		{Name: "TextEq", Plaintext: stashgen.KindString, Indexes: []stashgen.IndexName{stashgen.IndexEquality}, Query: "TextEqQuery", Producible: true},
-	}, nil
+	out := make([]stashgen.EQLType, len(eqlTypes))
+	for i, t := range eqlTypes {
+		out[i] = t.EQLType
+	}
+	return out, nil
+}
+
+// sealsAs is the width the generated code seals a Go integer or float as:
+// int8, int16 and int32 as int32, int and int64 as int64.
+func sealsAs(t stashgen.GoType) string {
+	switch t.Basic {
+	case "int8", "int16", "int32":
+		return "int32"
+	case "int", "int64":
+		return "int64"
+	case "float32", "float64":
+		return t.Basic
+	}
+	return ""
 }
 
 // Check applies the engine's rules as they stand today.
 func (e Static) Check(ctx context.Context, d stashgen.Declaration) error {
-	eqlTypes, _ := e.EQLTypes(ctx)
 	for _, f := range d.Fields {
 		if f.Verb == stashgen.VerbOmit {
 			continue
@@ -39,17 +72,23 @@ func (e Static) Check(ctx context.Context, d stashgen.Declaration) error {
 			}
 		}
 		if f.Verb == stashgen.VerbEncryptInto {
-			var found *stashgen.EQLType
-			for i := range eqlTypes {
-				if eqlTypes[i].Name == f.EQLType {
-					found = &eqlTypes[i]
+			var names []string
+			found := -1
+			for i, t := range eqlTypes {
+				names = append(names, t.Name)
+				if t.Name == f.EQLType {
+					found = i
 				}
 			}
-			if found == nil {
-				return &stashgen.FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("the engine cannot produce the EQL type %s yet; it produces TextEq", f.EQLType)}
+			if found < 0 {
+				return &stashgen.FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("the engine cannot produce the EQL type %s yet; it produces %s", f.EQLType, strings.Join(names, ", "))}
 			}
-			if found.Plaintext != f.GoType.Kind {
-				return &stashgen.FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals a %s, and %s is %s", f.EQLType, found.Plaintext, f.GoType, f.GoType.Kind)}
+			t := eqlTypes[found]
+			if t.Plaintext != f.GoType.Kind {
+				return &stashgen.FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals a %s, and %s is %s", f.EQLType, t.Plaintext, f.GoType, f.GoType.Kind)}
+			}
+			if t.seals != "" && sealsAs(f.GoType) != t.seals {
+				return &stashgen.FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals %s, and %s seals as %s", f.EQLType, t.seals, f.GoType, sealsAs(f.GoType))}
 			}
 		}
 		for _, idx := range f.Indexes {

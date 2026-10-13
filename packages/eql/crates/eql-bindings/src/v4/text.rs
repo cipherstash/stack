@@ -14,10 +14,14 @@ use ts_rs::TS;
     doc,
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
-#[cfg_attr(all(doc, feature = "stack-encrypt"), doc = "")]
+#[cfg_attr(doc, doc = "")]
 #[cfg_attr(
     all(doc, feature = "stack-encrypt"),
     doc = " Plaintext input and decrypted output: [`String`](String). With the `stack-encrypt` feature, implements `EncryptFrom<String>` and `DecryptInto<String>`."
+)]
+#[cfg_attr(
+    all(doc, not(feature = "stack-encrypt")),
+    doc = " Plaintext input and decrypted output: `String`. With the `stack-encrypt` feature, implements `EncryptFrom<String>` and `DecryptInto<String>`."
 )]
 #[cfg_attr(
     all(doc, feature = "stack-encrypt"),
@@ -73,10 +77,14 @@ impl DomainType for Text {
     doc,
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
-#[cfg_attr(all(doc, feature = "stack-encrypt"), doc = "")]
+#[cfg_attr(doc, doc = "")]
 #[cfg_attr(
     all(doc, feature = "stack-encrypt"),
     doc = " Plaintext input and decrypted output: [`String`](String). With the `stack-encrypt` feature, implements `EncryptFrom<String>` and `DecryptInto<String>`."
+)]
+#[cfg_attr(
+    all(doc, not(feature = "stack-encrypt")),
+    doc = " Plaintext input and decrypted output: `String`. With the `stack-encrypt` feature, implements `EncryptFrom<String>` and `DecryptInto<String>`."
 )]
 #[cfg_attr(
     all(doc, feature = "stack-encrypt"),
@@ -392,10 +400,14 @@ impl DomainType for TextSearch {
     doc,
     doc = " See the [EQL text reference](https://cipherstash.com/docs/reference/eql/text) for SQL domain variants, operators, and query examples."
 )]
-#[cfg_attr(all(doc, feature = "stack-encrypt"), doc = "")]
+#[cfg_attr(doc, doc = "")]
 #[cfg_attr(
     all(doc, feature = "stack-encrypt"),
     doc = " Plaintext input: [`String`](String). With the `stack-encrypt` feature, implements `EncryptFrom<String>` to build equality query terms. Query operands do not decrypt."
+)]
+#[cfg_attr(
+    all(doc, not(feature = "stack-encrypt")),
+    doc = " Plaintext input: `String`. With the `stack-encrypt` feature, implements `EncryptFrom<String>` to build equality query terms. Query operands do not decrypt."
 )]
 #[cfg_attr(
     all(doc, feature = "stack-encrypt"),
