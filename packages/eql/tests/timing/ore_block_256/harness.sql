@@ -24,17 +24,21 @@ CREATE TABLE pairs AS
          (label = 'last')::int AS cls, terms_of(a_hex) AS a, terms_of(b_hex) AS b
   FROM staging WHERE kind LIKE 'timing%';
 
--- Two shapes built from the six-term pairs, where a and b differ in term 1.
--- Class 1 in both is a's first five terms against b (term 1 differs). Class 0:
+-- Three shapes built from the pairs that differ in the first block (single
+-- terms) or the first term (six terms). Class 1 is such a difference in all
+-- three. Class 0:
+--   equal:  a single term against itself: no block differs;
 --   prefix: a's first five terms against all six of a: every paired term is
 --           equal and the term counts differ;
 --   null:   a's first five terms and a NULL against a: the first unequal pair
 --           is the NULL one, after five equal terms.
--- A comparator that skips its hash once the order is settled by structure
--- shows a difference here.
+-- A comparator that skips its hash for equal terms, or once the order is
+-- settled by structure, shows a difference here.
 INSERT INTO pairs
   SELECT kind, row_number() OVER (PARTITION BY kind ORDER BY random()), cls, a, b FROM (
-    SELECT 'prefix' AS kind, 0 AS cls, a[1:5] AS a, a AS b FROM pairs WHERE kind = 'timing6' AND cls = 0
+    SELECT 'equal' AS kind, 0 AS cls, a, a AS b FROM pairs WHERE kind = 'timing1' AND cls = 0
+    UNION ALL SELECT 'equal', 1, a, b FROM pairs WHERE kind = 'timing1' AND cls = 0
+    UNION ALL SELECT 'prefix', 0, a[1:5], a FROM pairs WHERE kind = 'timing6' AND cls = 0
     UNION ALL SELECT 'prefix', 1, a[1:5], b FROM pairs WHERE kind = 'timing6' AND cls = 0
     UNION ALL SELECT 'null', 0, a[1:5] || NULL::eql_v3_internal.ore_block_256_term, a
       FROM pairs WHERE kind = 'timing6' AND cls = 0
@@ -91,8 +95,8 @@ $$ LANGUAGE plpgsql;
 -- Report this, not a percentile-cropped maximum: cropping turns a difference
 -- in spread into a large t with no difference in mean.
 CREATE FUNCTION welch(label text, tbl regclass)
-  RETURNS TABLE (run text, n bigint, mean_first numeric, mean_last numeric,
-                 median_first numeric, median_last numeric, t numeric)
+  RETURNS TABLE (run text, n bigint, mean_0 numeric, mean_1 numeric,
+                 median_0 numeric, median_1 numeric, t numeric)
 AS $$
 BEGIN
   RETURN QUERY EXECUTE format($q$

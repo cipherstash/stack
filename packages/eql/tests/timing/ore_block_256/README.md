@@ -2,13 +2,14 @@
 
 Checks that `eql_v3_internal.compare_ore_block_256_terms`, the comparator
 behind every ordered ORE operator and the ORE operator class, takes the same
-time wherever its operands first differ.
+time wherever its operands first differ, and whether they differ at all.
 
 ## Why it matters
 
-The comparator's inputs are ciphertexts, so the database operator learns
-nothing from its timing: they can run the comparison themselves. The party
-who gains is someone who can issue queries and time them without reading the
+The database operator gains nothing from the comparator's timing. They hold
+the stored ciphertexts and can run the comparator on any two of them
+directly, which tells them everything its timing could. The party who gains
+is someone who can issue queries and time them without reading the
 stored ciphertexts, such as an application user. Query results already tell
 them the order of their value relative to stored ones. If the comparison time
 depends on where the two values first differ, timing also tells them how long
@@ -17,9 +18,12 @@ comparison when the first of six terms differs, 47 µs when only the sixth
 does.
 
 PL/pgSQL is not a constant-time environment. What it can give is a constant
-*operation count*: the same statements and function calls on every path, so
-nothing at the scale of a statement (fractions of a microsecond) depends on
-the data. C-level effects inside those statements (`memcmp` stopping early
+*operation count*: for operands of the same shape, the same statements and
+function calls whatever their contents, so nothing at the scale of a
+statement (fractions of a microsecond) depends on where or whether they
+differ. The shape is the term count, the term width and the position of any
+NULL element. It is public structure, and the comparator may branch on it:
+a single term and a six-term value take different paths. C-level effects inside those statements (`memcmp` stopping early
 within 16 bytes, the offset a `substr` reads at) remain, orders of magnitude
 smaller. The Rust comparator in ore.rs is constant-time at the instruction
 level; this is the PL/pgSQL counterpart.
@@ -51,6 +55,8 @@ plus a correctness set:
 
 - **single term**: pairs differing in the first block against pairs differing
   only in the last (block 7);
+- **equal term**: a single term against itself, against pairs differing in
+  the first block;
 - **six terms** (text-shaped values): pairs differing in the first term
   against pairs differing only in the sixth;
 - **prefix**: five terms against six, where the five equal the first five of
@@ -81,21 +87,38 @@ difference.
 ## Results
 
 PostgreSQL 17.11, aarch64 (Docker on an Apple M1 Max). Welch t for two runs
-each; the current comparator at 200,000 single-term samples of 16 comparisons
-and 50,000 multi-term samples of 8 per class:
+each; the current comparator at 200,000 samples of 16 comparisons for the
+single-term kind and 50,000 samples of 8 for each multi-term kind, each split
+at random between the kind's two classes:
 
-| comparator | single term | six terms | prefix | NULL element |
-|---|---:|---:|---:|---:|
-| original (term by term) | +4.9, +13.9 | −1552, −2575 | +517, +459 ¹ | +520, +682 ¹ |
-| first constant-count version ² | +1.8, +1.1 | +4.5, +2.7 | −62, −69 ³ | −60, −70 ³ |
-| current | +2.24, +0.15 | +1.03, −0.27 | −0.68, +0.18 | −0.57, +0.14 |
+| comparator | single term | equal term | six terms | prefix | NULL element |
+|---|---:|---:|---:|---:|---:|
+| original (term by term) | +4.9, +13.9 | | −1552, −2575 | +517, +459 ¹ | +520, +682 ¹ |
+| first constant-count version ² | +1.8, +1.1 | | +4.5, +2.7 | −62, −69 ³ | −60, −70 ³ |
+| current | +2.24, +0.15 | | +1.03, −0.27 | −0.68, +0.18 | −0.57, +0.14 |
+| current, second machine ⁴ | +1.60, +0.71 | −2.49, −1.99 | −2.58, +1.33 | −4.96, −1.19, −2.56, −7.42, −5.14 | −3.82, −9.63, −2.23, −3.88, −2.88 |
 
 ¹ 5,000 samples per run. ² It scanned every block of every term, and skipped
 its hash when the term counts or a NULL settled the order. ³ 10,000 samples
-per run.
+per run. ⁴ PostgreSQL 17.5 run natively on macOS, Apple silicon, at the same
+sample counts, with three more runs of the prefix and NULL kinds.
+
+On the second machine the prefix and NULL-element kinds come out negative on
+every run, and three runs pass |t| = 5. Class 0, where the structure settles
+the order, is faster by 0.1 to 0.2 µs per sample of eight comparisons: about
+20 ns a comparison, or 0.2% of one. That is below the cost of a single
+statement, so it is a C-level effect of the kind described above, not a
+skipped statement; a skipped hash showed up as t = −60 to −70 at a tenth of
+the samples. The equal-term class shows the same sign at about 6 ns a
+comparison.
 
 Cost: the current comparator takes about 6% more than the original per
-single-term comparison, and about 18 µs per six-term comparison whatever the
+single-term comparison when the terms differ, and about 36% more when they are
+equal (3.6 µs against 2.7 µs on the second machine, calling
+`compare_ore_block_256_term` directly), because equal terms now run the hash
+too. Duplicates are common in index builds, `ORDER BY` ties and equality
+probes on ORE columns, so expect ordered workloads with many ties to see the
+larger figure. It takes about 18 µs per six-term comparison whatever the
 operands. The original took 11 µs when the first term differs and 47 µs when
 only the sixth does; the first constant-count version took 31 µs.
 
