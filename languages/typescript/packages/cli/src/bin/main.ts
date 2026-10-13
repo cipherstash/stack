@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as p from '@clack/prompts'
+import { InvalidChunkSizeError, parseChunkSize } from '../cli/chunk-size.js'
 import { CliExit } from '../cli/exit.js'
 import { renderCommandHelp } from '../cli/help.js'
 import { validateInstallFlags } from '../commands/db/install.js'
@@ -429,9 +430,7 @@ async function runEncryptCommand(
         table,
         column,
         pkColumn: values['pk-column'],
-        chunkSize: values['chunk-size']
-          ? Number(values['chunk-size'])
-          : undefined,
+        chunkSize: parseChunkSizeFlag(values['chunk-size']),
         encryptedColumn: values['encrypted-column'],
         schemaColumnKey: values['schema-column-key'],
         confirmDualWritesDeployed: flags['confirm-dual-writes-deployed'],
@@ -473,6 +472,24 @@ function requireValue(values: Record<string, string>, key: string): string {
     throw new CliExit(1)
   }
   return v
+}
+
+/**
+ * Parse `--chunk-size` at the argv boundary, where the raw text is still in
+ * hand, so the error can quote exactly what was typed. The handler validates
+ * the number again through the same helper, for callers that bypass argv.
+ * Returns `undefined` when the flag is absent so the handler applies its
+ * own default.
+ */
+function parseChunkSizeFlag(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined
+  try {
+    return parseChunkSize(raw)
+  } catch (error) {
+    if (!(error instanceof InvalidChunkSizeError)) throw error
+    p.log.error(error.message)
+    throw new CliExit(1)
+  }
 }
 
 async function runSchemaCommand(
