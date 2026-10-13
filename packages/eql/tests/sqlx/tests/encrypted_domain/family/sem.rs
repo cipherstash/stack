@@ -140,9 +140,12 @@ async fn ore_terms_array_null_and_empty_base_cases(pool: PgPool) -> Result<()> {
 /// term by term. Pins the structural results that path must keep: an equal
 /// prefix sorts the shorter array first; NULL elements order before
 /// non-NULL ones and equal each other; and every paired term is
-/// length-checked, including one after the first unequal pair (the
-/// term-by-term form stopped before reaching it). `t` and `u` are real
-/// ore-rs terms; `short` is malformed on purpose, one byte short of N = 8.
+/// checked, including one after the first unequal pair or paired with a NULL
+/// element (the term-by-term form stopped before reaching it). The length
+/// check comes before the well-formedness check, as in the term comparator.
+/// `t` and `u` are real ore-rs terms; `short` is malformed on purpose, one
+/// byte short of N = 8; `wide` is well formed at N = 12 (604 bytes), the
+/// width of a timestamp term.
 #[sqlx::test]
 async fn ore_terms_array_multi_term_structure(pool: PgPool) -> Result<()> {
     let ore = ore_cipher()?;
@@ -150,7 +153,8 @@ async fn ore_terms_array_multi_term_structure(pool: PgPool) -> Result<()> {
     let u = term(&ore_hex(&ore, 2)?);
     let n = "NULL::eql_v3_internal.ore_block_256_term";
     let short = term(&ore_hex(&ore, 1)?[2..]);
-    let (t, u, short) = (t.as_str(), u.as_str(), short.as_str());
+    let wide = term(&"00".repeat(604));
+    let (t, u, short, wide) = (t.as_str(), u.as_str(), short.as_str(), wide.as_str());
     let cmp = |x: String, y: String| {
         format!("SELECT eql_v3_internal.compare_ore_block_256_terms({x}, {y})")
     };
@@ -194,10 +198,30 @@ async fn ore_terms_array_multi_term_structure(pool: PgPool) -> Result<()> {
         assert_eq!(got, expected, "{what}: {sql}");
     }
 
-    // The first pair differs; the second is malformed. Every paired term is
-    // checked, so this raises rather than returning on the first pair.
-    let sql = cmp(arr(&[t, short]), arr(&[u, short]));
-    assert_raises(&pool, &sql, &[], "Malformed ORE term").await?;
+    // The first pair differs and a later pair is bad. Every paired term is
+    // checked, so each of these raises rather than returning on the first
+    // pair.
+    let raises = [
+        (
+            cmp(arr(&[t, short]), arr(&[u, short])),
+            "Malformed ORE term",
+        ),
+        (cmp(arr(&[t, n]), arr(&[u, short])), "Malformed ORE term"),
+        (cmp(arr(&[t, short]), arr(&[u, n])), "Malformed ORE term"),
+        (
+            cmp(arr(&[t, t]), arr(&[u, wide])),
+            "Ciphertexts are different lengths",
+        ),
+        // Malformed and a different length: the length is reported, as
+        // compare_ore_block_256_term reports it.
+        (
+            cmp(arr(&[t, short]), arr(&[u, t])),
+            "Ciphertexts are different lengths",
+        ),
+    ];
+    for (sql, error) in raises {
+        assert_raises(&pool, &sql, &[], error).await?;
+    }
     Ok(())
 }
 

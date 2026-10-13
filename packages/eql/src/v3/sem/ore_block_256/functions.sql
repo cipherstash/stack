@@ -302,6 +302,11 @@ AS $$
         ab := a[t].bytes;
         bb := b[t].bytes;
 
+        -- The length check comes first, as in compare_ore_block_256_term, so
+        -- both paths report the same error for the same pair.
+        IF octet_length(ab) != octet_length(bb) THEN
+          RAISE EXCEPTION 'Ciphertexts are different lengths';
+        END IF;
         IF ab IS NOT NULL AND (octet_length(ab) <= 16 OR (octet_length(ab) - 16) % 49 != 0) THEN
           RAISE EXCEPTION 'Malformed ORE term: % bytes', octet_length(ab);
         END IF;
@@ -314,9 +319,6 @@ AS $$
           differs := ((ab IS NULL) <> (bb IS NULL))::int;
           null_order := (bb IS NULL)::int - (ab IS NULL)::int;
         ELSE
-          IF octet_length(ab) != octet_length(bb) THEN
-            RAISE EXCEPTION 'Ciphertexts are different lengths';
-          END IF;
           -- The PRP bytes and left blocks: the first 17*N bytes.
           differs := (substr(ab, 1, 17 * ((octet_length(ab) - 16) / 49))
                       <> substr(bb, 1, 17 * ((octet_length(ab) - 16) / 49)))::int;
