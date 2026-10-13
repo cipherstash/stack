@@ -2970,8 +2970,10 @@ dependencies = [
 name = "stackencrypt-python"
 version = "0.0.0"
 dependencies = [
+ "base64 0.22.1",
  "eql-bindings",
  "pyo3",
+ "serde_json",
  "stack-auth",
  "stack-encrypt",
  "tokio",

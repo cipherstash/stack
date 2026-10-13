@@ -8,38 +8,22 @@
 //! zips every target field of every row into one ZeroKMS request
 //! (principle G5).
 //!
-//! # What a stored record is, from here
-//!
-//! The engine's result is a tree, `CipherText::Map` per row, and inside it
-//! one `Map` per field keyed by output: a target field's EQL JSON rides as a
-//! passthrough byte node under `"eql"`, a passthrough field's value under
-//! `"passthrough"`, and a ciphertext under `"c"`. The first two are
-//! `FfiValue`s in a box and come straight out; the third is a sealed
-//! subtree with no byte form this shell knows, so a plan that produces one
-//! is refused here with the field named. The tracer's path has no such
-//! field — EQL targets and passthroughs only — and the refusal is what keeps
-//! that a decision rather than a surprise.
-//!
-//! So `encrypt` returns, per row, a dict of field name to column value, and
-//! `decrypt` takes the same dicts back and rebuilds the tree. That is the
-//! shape SQL wants, and it means no record ever needs a serialised form.
+//! `encrypt` returns, per row, a dict of field name to column value, and
+//! `decrypt` takes the same dicts back. The tree walk behind both lives in
+//! [`crate::tree`], shared with the `parity` bin; see there for what a
+//! stored record is and which fields this shell can turn into a column.
 
-use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBytes, PyDict, PyList};
-use stack_encrypt::dynamic::record::{self, Plan, EQL_KEY};
+use stack_encrypt::dynamic::record::{self, Plan};
 use stack_encrypt::dynamic::{FfiValue, Scope};
 use stack_encrypt::kms::StackKms;
-use stack_encrypt::{CipherText, StackCipher, StackCipherText};
+use stack_encrypt::{CipherText, StackCipher};
 
 use crate::errors::EngineError;
-use crate::{convert, plan as wire, runtime, targets};
-
-/// The passthrough output key, as `dynamic::record` spells it. `EQL_KEY` is
-/// exported; this one is not, and the module docs fix both as wire format.
-const PASSTHROUGH_KEY: &str = "passthrough";
+use crate::{convert, plan as wire, runtime, targets, tree};
 
 /// A handle on the engine, with its credentials already discovered.
 ///
@@ -94,12 +78,13 @@ impl Engine {
         let keyset = self.cipher.default_keyset();
         let pending =
             record::encrypt_with(&keyset, source, &plan, &targets::Resolver).map_err(engine)?;
-        let tree = runtime::block_on(py, pending).map_err(engine)?;
+        let sealed = runtime::block_on(py, pending).map_err(engine)?;
         self.key_requests.fetch_add(1, Ordering::Relaxed);
 
         let out = PyList::empty(py);
-        for row in rows_of(tree)? {
-            out.append(stored_row(py, row, &plan)?)?;
+        for row in tree::rows_of(sealed).map_err(engine)? {
+            let columns = tree::stored_row(row, &plan).map_err(engine)?;
+            out.append(convert::from_ffi(py, FfiValue::Object(columns))?)?;
         }
         Ok(out.into_any().unbind())
     }
@@ -115,10 +100,13 @@ impl Engine {
             return Ok(PyList::empty(py).into_any().unbind());
         }
         let plan = parse(fields)?;
-        let tree = CipherText::Sequence(
+        let batch = CipherText::Sequence(
             records
                 .iter()
-                .map(|record| record_tree(record, &plan))
+                .map(|record| {
+                    let values = record_values(record, &plan)?;
+                    tree::record_tree(values, &plan).map_err(engine)
+                })
                 .collect::<PyResult<Vec<_>>>()?,
         );
         let scope = Scope::Keyset(self.cipher.default_keyset());
@@ -127,7 +115,7 @@ impl Engine {
         // the opener checks the stored one against it. This plan declares
         // its context, so there is nothing to expect.
         let pending =
-            record::decrypt_with(scope, tree, &plan, None, &targets::Resolver).map_err(engine)?;
+            record::decrypt_with(scope, batch, &plan, None, &targets::Resolver).map_err(engine)?;
         let opened = runtime::block_on(py, pending).map_err(engine)?;
         self.key_requests.fetch_add(1, Ordering::Relaxed);
 
@@ -202,89 +190,10 @@ fn source_row(row: &Bound<'_, PyDict>, plan: &Plan) -> PyResult<FfiValue> {
     Ok(FfiValue::Object(pairs))
 }
 
-/// The rows of an encrypted batch. One row in gives `Map`, a batch gives
-/// `Sequence`; `encrypt` always sends a batch, so `Map` here is a defect.
-fn rows_of(tree: StackCipherText) -> PyResult<Vec<Vec<(String, StackCipherText)>>> {
-    let CipherText::Sequence(rows) = tree else {
-        return Err(EngineError::new_err(
-            "the engine sealed a batch to something other than a sequence",
-        ));
-    };
-    rows.into_iter()
-        .map(|row| match row {
-            CipherText::Map(fields) => Ok(fields),
-            _ => Err(EngineError::new_err(
-                "the engine sealed a row to something other than a map",
-            )),
-        })
-        .collect()
-}
-
-/// One stored row as a Python dict: field name to the value its column
-/// takes. A target field's EQL JSON comes out as `bytes`; a passthrough's
-/// value comes out as itself.
-fn stored_row(
-    py: Python<'_>,
-    row: Vec<(String, StackCipherText)>,
-    plan: &Plan,
-) -> PyResult<Py<PyAny>> {
-    let out = PyDict::new(py);
-    for (name, node) in row {
-        let CipherText::Map(outputs) = node else {
-            return Err(EngineError::new_err(format!(
-                "{name}: the engine's output for the field is not an output map"
-            )));
-        };
-        let field = plan
-            .fields()
-            .iter()
-            .find(|field| field.name() == name)
-            .ok_or_else(|| EngineError::new_err(format!("{name}: not a field of the plan")))?;
-        let key = if field.target().is_some() {
-            EQL_KEY
-        } else if field.has_ciphertext() {
-            return Err(EngineError::new_err(format!(
-                "{name}: a field with a bare ciphertext output has no column form \
-                 in this shell; declare an EQL target or a passthrough"
-            )));
-        } else {
-            PASSTHROUGH_KEY
-        };
-        let value = passthrough_value(&name, key, outputs)?;
-        out.set_item(name, convert::from_ffi(py, value)?)?;
-    }
-    Ok(out.into_any().unbind())
-}
-
-/// The `FfiValue` a passthrough node under `key` carries.
-fn passthrough_value(
-    field: &str,
-    key: &str,
-    outputs: Vec<(String, StackCipherText)>,
-) -> PyResult<FfiValue> {
-    let node = outputs
-        .into_iter()
-        .find(|(candidate, _)| candidate == key)
-        .map(|(_, node)| node)
-        .ok_or_else(|| EngineError::new_err(format!("{field}: no {key} node in the output")))?;
-    let CipherText::Passthrough(payload) = node else {
-        return Err(EngineError::new_err(format!(
-            "{field}: the {key} node is not a passthrough"
-        )));
-    };
-    let payload: Box<dyn Any + Send> = payload;
-    payload
-        .downcast::<FfiValue>()
-        .map(|value| *value)
-        .map_err(|_| EngineError::new_err(format!("{field}: the {key} node holds no value")))
-}
-
-/// A Python record dict back as the engine's row tree, the inverse of
-/// `stored_row`. A target field's bytes go back under `"eql"`, a
-/// passthrough's value under `"passthrough"`, each as the boxed `FfiValue`
-/// the engine's own opener downcasts to.
-fn record_tree(record: &Bound<'_, PyDict>, plan: &Plan) -> PyResult<StackCipherText> {
-    let mut row = Vec::with_capacity(plan.fields().len());
+/// A Python record dict as column values: a target field's `bytes` as
+/// `Bytes`, a passthrough's value checked against its declared kind.
+fn record_values(record: &Bound<'_, PyDict>, plan: &Plan) -> PyResult<Vec<(String, FfiValue)>> {
+    let mut values = Vec::with_capacity(plan.fields().len());
     for field in plan.fields() {
         let name = field.name();
         let Some(value) = record.get_item(name)? else {
@@ -292,28 +201,18 @@ fn record_tree(record: &Bound<'_, PyDict>, plan: &Plan) -> PyResult<StackCipherT
                 "{name}: the record has no such field"
             )));
         };
-        let (key, value) = if field.target().is_some() {
+        let value = if field.target().is_some() {
             let bytes = value.extract::<Vec<u8>>().map_err(|_| {
                 EngineError::new_err(format!("{name}: a stored EQL value is bytes"))
             })?;
-            (EQL_KEY, FfiValue::Bytes(bytes.into()))
-        } else if field.has_ciphertext() {
-            return Err(EngineError::new_err(format!(
-                "{name}: a field with a bare ciphertext output has no column form \
-                 in this shell; declare an EQL target or a passthrough"
-            )));
+            FfiValue::Bytes(bytes.into())
         } else {
-            let value = convert::to_ffi(&value, field.field_type())
-                .map_err(|error| in_field(name, error.into()))?;
-            (PASSTHROUGH_KEY, value)
+            convert::to_ffi(&value, field.field_type())
+                .map_err(|error| in_field(name, error.into()))?
         };
-        let payload: Box<dyn Any + Send> = Box::new(value);
-        row.push((
-            name.to_owned(),
-            CipherText::Map(vec![(key.to_owned(), CipherText::Passthrough(payload))]),
-        ));
+        values.push((name.to_owned(), value));
     }
-    Ok(CipherText::Map(row))
+    Ok(values)
 }
 
 /// An engine error as `EngineError`, message only. The engine's messages

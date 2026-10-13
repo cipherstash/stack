@@ -20,6 +20,14 @@ publish = false
 name = "_engine"
 crate-type = ["cdylib"]
 
+# The Rust side of the byte-parity test (`tests/test_bytes.py`): the engine
+# with nothing in front of it, run AT TEST TIME under the same credentials
+# as the Python side. It shares `src/tree.rs` and `src/targets.rs` with the
+# lib by `#[path]`, so there is one tree walk and one resolver.
+[[bin]]
+name = "parity"
+path = "src/bin/parity.rs"
+
 [dependencies]
 # abi3 is what makes one wheel per platform serve every Python 3.9+, instead
 # of one per platform per interpreter minor. It is also what lets this build
@@ -65,7 +73,11 @@ vitaminc-protected = "0.5.1"
 # `StackCipher<StackKms<stack_auth::AutoStrategy>>`, and stack-encrypt does
 # not re-export `AutoStrategy`. By path, as stack-encrypt itself takes it.
 stack-auth = { path = "../../packages/stack-auth" }
+# The `parity` bin only: it speaks JSON to the test and base64 for bytes.
+serde_json = "1"
+base64 = "0.22"
 # The engine's `Pending` is `IntoFuture`, so every operation is async even
 # though this shell's surface is sync. `rt-multi-thread` because the ZeroKMS
 # client wants a reactor; `block_on` over it is the sync path.
-tokio = { version = "1", features = ["rt-multi-thread"] }
+# `macros` is for the `parity` bin's `#[tokio::main]` only.
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

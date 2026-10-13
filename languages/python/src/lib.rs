@@ -12,6 +12,7 @@ mod errors;
 mod plan;
 mod runtime;
 mod targets;
+mod tree;
 
 /// This shell's own version. The one export that needs no engine state, so
 /// it is what proves the wheel loads.

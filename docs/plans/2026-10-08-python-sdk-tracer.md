@@ -1694,181 +1694,61 @@ git commit -m "feat(python): a batch encrypts and decrypts in one key request, s
 
 ---
 
-### Task 6: Python and Rust agree on the bytes
+### Task 6: The shell and Rust agree on the bytes
 
 **Files:**
-- Create: `languages/python/tests/fixtures/record.json`
-- Create: `languages/python/tests/fixtures/make_fixture.rs`
+- Create: `languages/python/src/bin/parity.rs`
+- Create: `languages/python/src/tree.rs` (the record-tree walk, shared by the lib and the bin)
+- Modify: `languages/python/Cargo.toml` (a `[[bin]]`)
+- Modify: `languages/python/src/engine.rs` (use `tree`)
 - Create: `languages/python/tests/test_bytes.py`
 
 **Interfaces:**
 - Consumes: Task 5's `Cipher`.
-- Produces: `tests/fixtures/record.json` — one record encrypted by Rust under
-  a fixed plan, plus the plan itself and the expected term bytes, all
-  base64-encoded.
+- Produces: the `parity` binary — `parity seal` prints
+  `{"plan", "plaintext", "record", "term"}` as JSON (EQL bytes and term
+  base64); `parity open` reads a record JSON on stdin and prints the
+  plaintext.
 
-The shared cross-language record fixture is **not on the base branch** (only
-Go plan goldens, in `languages/golang/.../plantest/testdata`). This task
-writes a local one, which the spec's risk table allows. When the shared
-fixture lands, replace the file and keep the test.
+**Revised 2026-10-13.** The first version committed a Rust-made
+`tests/fixtures/record.json`. Its equality term is an HMAC under the
+workspace keyset, so the committed bytes passed only in the workspace that
+generated them — the same hazard as the EQL SQLx selector constants.
+Producing the Rust side **at test time** dissolves that: both halves run
+under the same credentials in one run, so the comparison holds in every
+workspace and in CI, and nothing keyed to a keyset is committed.
 
-- [ ] **Step 1: Write the failing test**
+What the check proves, stated carefully: Python never encrypts (G1). Both
+sides run ONE engine; what differs is everything in front of it. So this is
+the one test that catches the shell drifting from the engine's grammar —
+`convert.rs` tagging `34` as the wrong width, `plan.rs` dropping `"type"`,
+`engine.rs` rebuilding the record tree wrongly — while every other test
+stays green. Ciphertexts are never byte-equal (fresh IV per seal), so the
+bit-for-bit comparison is the deterministic **term**; the ciphertext is
+checked by cross-opening instead.
 
-`languages/python/tests/test_bytes.py`:
+- [ ] **Step 1: Write the failing test** — `tests/test_bytes.py`, four
+  tests: both sides build the same plan; the shell opens a record Rust
+  sealed; Rust opens a record the shell sealed; the equality term is
+  byte-identical. The Rust side runs via `subprocess` as
+  `cargo run --quiet --bin parity -- <mode>`; `cargo run` compiles once and
+  caches.
 
-```python
-"""The byte check: Python decrypts what Rust encrypted, Rust decrypts what
-Python encrypted, and the term bytes are equal.
+- [ ] **Step 2: Run it** — Expected: FAIL, `cargo run` exits non-zero: no
+  bin named `parity`.
 
-This is the check that says the two halves run one engine. Everything else
-could pass with Python quietly doing its own encryption.
-"""
+- [ ] **Step 3: Write the binary.** It builds the SAME data plan the Python
+  test builds, as an `FfiValue` literal, parses it with `record::plan_with`
+  under `targets::Resolver`, and: `seal` runs `encrypt_with` over one row
+  and `query` for `email`, printing plan, plaintext, record and term;
+  `open` reads a record from stdin, rebuilds the tree, runs `decrypt_with`,
+  prints the plaintext. The tree walk lives ONCE, in `src/tree.rs`, used by
+  both `engine.rs` and the bin — a copy is how the two sides stop agreeing.
 
-import base64
-import json
-import pathlib
-from dataclasses import dataclass
-from typing import Annotated
+- [ ] **Step 4: Run the tests** — Expected: PASS, 4/4, live.
 
-import pytest
-
-from stackencrypt import EQL, Cipher, Equality, Int64, Passthrough, Plan, Text
-
-FIXTURE = pathlib.Path(__file__).parent / "fixtures" / "record.json"
-
-
-@dataclass
-class User:
-    email: Annotated[str, Text, EQL(Equality)]
-    age: Annotated[int, Int64, Passthrough()]
-
-
-@pytest.fixture(scope="module")
-def fixture():
-    return json.loads(FIXTURE.read_text())
-
-
-@pytest.fixture(scope="module")
-def cipher(live):
-    return Cipher(Plan.of(User).context("users").build())
-
-
-def test_the_fixture_plan_matches_this_models_plan(fixture):
-    # If the plans differ the byte comparison below is meaningless: two
-    # different declarations legitimately produce different bytes.
-    spec = Plan.of(User).context("users").build()
-    assert spec.fields == fixture["plan"]
-
-
-def test_python_decrypts_a_record_rust_encrypted(fixture, cipher):
-    record = base64.b64decode(fixture["record"])
-
-    [user] = cipher.decrypt([record])
-
-    assert user.email == fixture["plaintext"]["email"]
-    assert user.age == fixture["plaintext"]["age"]
-
-
-def test_rust_decrypts_a_record_python_encrypted(fixture, cipher, tmp_path):
-    # The Rust side runs through the fixture generator in --verify mode,
-    # which decrypts a record on stdin under the fixture's plan.
-    import subprocess
-
-    [record] = cipher.encrypt([User(**fixture["plaintext"])])
-    written = tmp_path / "record.bin"
-    written.write_bytes(record)
-
-    result = subprocess.run(
-        [
-            "cargo",
-            "run",
-            "--quiet",
-            "--bin",
-            "make_fixture",
-            "--",
-            "--verify",
-            str(written),
-        ],
-        cwd=pathlib.Path(__file__).parents[1],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    assert json.loads(result.stdout) == fixture["plaintext"]
-
-
-def test_the_query_term_equals_rusts(fixture, cipher):
-    term = cipher.query("email", fixture["plaintext"]["email"])
-
-    assert term == base64.b64decode(fixture["term"]["email"]["eq"])
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-```bash
-cd languages/python && python -m pytest tests/test_bytes.py -v
-```
-
-Expected: FAIL — `FileNotFoundError` on `fixtures/record.json`.
-
-- [ ] **Step 3: Write the fixture generator**
-
-`languages/python/tests/fixtures/make_fixture.rs`, registered as a
-`[[bin]]` in `languages/python/Cargo.toml`:
-
-```toml
-[[bin]]
-name = "make_fixture"
-path = "tests/fixtures/make_fixture.rs"
-```
-
-It has two modes. With no argument it builds the same plan the Python test
-builds — `{"email": {context: ["users","email"], target: "TextEq", type:
-"Utf8Str"}, "age": {context: ["users","age"], outputs: ["passthrough"],
-type: "Int64"}}` — encrypts `{"email": "fixture@example.com", "age": 41}`
-through `record::encrypt_with` under `targets::Resolver`, derives the
-equality term through `record::query`, and writes `record.json` with the
-plan, the plaintext, the base64 record and the base64 term. With `--verify
-<path>` it reads a record from that path, decrypts it under the same plan,
-and prints the plaintext as JSON on stdout.
-
-Both modes need live credentials, so the generator is run by hand and its
-output committed. Say so in a comment at the top of the file, and say which
-workspace CRN produced it — the term bytes are keyed to a workspace, exactly
-as the two SQLx selector constants are
-(`packages/eql/tests/sqlx/src/fixtures/`), so a different workspace produces
-different terms and the test will fail for a reason that is not a bug.
-
-- [ ] **Step 4: Generate the fixture**
-
-```bash
-cd languages/python && cargo run --quiet --bin make_fixture
-git diff --stat tests/fixtures/record.json
-```
-
-- [ ] **Step 5: Run the tests**
-
-```bash
-cd languages/python && python -m pytest tests/test_bytes.py -v
-```
-
-Expected: PASS, all four.
-
-- [ ] **Step 6: Document the workspace coupling**
-
-Add to `languages/python/README.md`, under a "The byte fixture is keyed to a
-workspace" heading: the term bytes in `tests/fixtures/record.json` are MACs
-under a workspace keyset, so running the suite against your own
-`CS_WORKSPACE_CRN` fails `test_the_query_term_equals_rusts`. Regenerate
-locally if you need to, and **do not commit your own value** — the same rule
-the EQL SQLx fixtures carry.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add languages/python
-git commit -m "test(python): the byte check, against a local Rust fixture"
-```
+- [ ] **Step 5: Commit** — `test(python): byte parity with Rust, produced
+  at test time under one keyset`.
 
 ---
 
