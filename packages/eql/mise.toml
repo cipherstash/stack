@@ -231,7 +231,9 @@ run = "bash tasks/schemas-parity.sh"
 [tasks."install-hooks"]
 description = "Point git at the committed hooks in tasks/githooks (run once per clone) so commits touching the catalog/generated surfaces are drift-gated locally"
 dir = "{{config_root}}"
-run = "git config core.hooksPath tasks/githooks"
+# Git resolves a relative core.hooksPath against the root of the working tree,
+# not this directory, so prefix the path from the root to this package.
+run = 'git config core.hooksPath "$(git rev-parse --show-prefix)tasks/githooks"'
 
 [tasks."test:codegen"]
 description = "Run the encrypted-domain catalog + generator tests (no database required)"
