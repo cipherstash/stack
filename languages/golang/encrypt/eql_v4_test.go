@@ -163,6 +163,10 @@ func TestV4QueriesMatchTheRustFixture(t *testing.T) {
 
 	// And a stored value holds every filter bit of a query for text it
 	// contains, which is what `@@` tests, and not those of text it lacks.
+	// The first is a property of the filter. The second is not: a Bloom
+	// filter can cover an absent needle's bits by chance, and "zzz" and
+	// "bob" are clear of it under testSeed and the pinned configuration
+	// only, so a change to either can flip them with no bug behind it.
 	encrypted, err := testusers.EncryptProfile(ctx, cipher, profiles[:1])
 	if err != nil {
 		t.Fatal(err)
@@ -175,6 +179,14 @@ func TestV4QueriesMatchTheRustFixture(t *testing.T) {
 		}
 		if got := subset(bloom(t, q), all); got != contained {
 			t.Errorf("%q in %q: %v, want %v", needle, profiles[0].Name, got, contained)
+		}
+	}
+
+	// A needle too short for a 3-gram has no filter bits, and an empty
+	// filter would be a subset of every row's: the engine refuses it.
+	for _, short := range []string{"", "al"} {
+		if q, err := testusers.ProfileFields.Name.Query(ctx, cipher, short); err == nil {
+			t.Errorf("Name.Query(%q) = %s, want a refusal", short, q)
 		}
 	}
 }
@@ -206,13 +218,18 @@ type fixturePlain struct {
 	Name    string  `json:"name"`
 }
 
-// TestV4RowsMatchTheCommittedFixture writes v4_rows.json when
-// EQL_UPDATE_FIXTURES is set, and otherwise checks the committed file
+// TestV4RowsMatchTheCommittedFixture checks the committed v4_rows.json
 // against what the generated code seals today. The deterministic guest
 // derives every data key from the seed, so the envelopes and the terms
 // (`bf`) are the same every run; the AEAD nonce inside each `c` is random,
 // so `c` is not. The test therefore compares everything but `c`, and opens
 // the committed `c` values with today's code.
+//
+// EQL_UPDATE_FIXTURES rewrites the file only when something other than the
+// ciphertexts moved, so a regeneration that changes nothing leaves no diff.
+// EQL_V4_ROWS_OUT names a file to write today's rows to, ciphertexts and
+// all: CI hands it to the Rust suite (EQL_V4_ROWS), so the ciphertexts the
+// Go SDK seals now are opened by Rust, not only the committed ones.
 func TestV4RowsMatchTheCommittedFixture(t *testing.T) {
 	c := deterministicEQLClient(t)
 	encrypted, err := testusers.EncryptProfile(context.Background(), c.DefaultKeyset(), profiles)
@@ -241,21 +258,33 @@ func TestV4RowsMatchTheCommittedFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	rendered = append(rendered, '\n')
-	path := fixturePath("v4_rows.json")
-	if os.Getenv("EQL_UPDATE_FIXTURES") != "" {
-		if err := os.WriteFile(path, rendered, 0o644); err != nil {
+	if out := os.Getenv("EQL_V4_ROWS_OUT"); out != "" {
+		if err := os.WriteFile(out, rendered, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
+	path := fixturePath("v4_rows.json")
+	var committed rowsFixture
 	committedBytes, err := os.ReadFile(path)
-	if err != nil {
+	if err == nil {
+		err = json.Unmarshal(committedBytes, &committed)
+	}
+	same := err == nil && bytes.Equal(withoutCiphertexts(t, committed), withoutCiphertexts(t, fixture))
+	if os.Getenv("EQL_UPDATE_FIXTURES") != "" {
+		if same {
+			t.Logf("%s: unchanged beyond the ciphertexts; left as it is", path)
+		} else {
+			if err := os.WriteFile(path, rendered, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("%s: rewritten", path)
+			committed, same = fixture, true
+		}
+	}
+	if err != nil && !same {
 		t.Fatalf("%v: run with EQL_UPDATE_FIXTURES=1 to write it", err)
 	}
-	var committed rowsFixture
-	if err := json.Unmarshal(committedBytes, &committed); err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(withoutCiphertexts(t, committed), withoutCiphertexts(t, fixture)) {
+	if !same {
 		t.Errorf("%s differs from what the generated code seals today beyond the ciphertexts; regenerate it with EQL_UPDATE_FIXTURES=1", path)
 	}
 

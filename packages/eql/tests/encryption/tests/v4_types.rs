@@ -766,9 +766,14 @@ mod go_rows {
         pub name: String,
     }
 
+    /// The committed rows, or the file `EQL_V4_ROWS` names: CI points it at
+    /// rows the Go SDK sealed in the same job, so today's Go ciphertexts
+    /// reach Rust, not only the committed ones.
     pub fn fixture() -> Fixture {
-        let path =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/v4_rows.json");
+        let path = std::env::var_os("EQL_V4_ROWS").map_or_else(
+            || std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/v4_rows.json"),
+            std::path::PathBuf::from,
+        );
         let raw = std::fs::read_to_string(path).expect(
             "fixtures/v4_rows.json is written by the Go SDK's TestV4RowsMatchTheCommittedFixture",
         );
@@ -940,10 +945,15 @@ fn postgres_stores_and_queries_rows_the_go_sdk_sealed() {
         .iter()
         .map(|r| r.get(0))
         .collect();
+    // `@@` folds case, so the expectation does too. It is exact only because
+    // no committed row's filter covers the needle's bits by chance: a Bloom
+    // filter may, and a regenerated fixture that turns one up fails here
+    // against a correct database.
+    let needle_folded = needle.to_lowercase();
     let expected: Vec<i32> = fixture
         .rows
         .iter()
-        .filter(|r| r.plaintext.name.contains(needle))
+        .filter(|r| r.plaintext.name.to_lowercase().contains(&needle_folded))
         .map(|r| r.id)
         .collect();
     assert!(!expected.is_empty());

@@ -38,7 +38,7 @@ on:
       - packages/eql/crates/eql-domains/**
       # The Go tests read the cross-language fixtures the EQL suite writes,
       # which are derived under EQL's lockfile.
-      - packages/eql/tests/encryption/fixtures/**
+      - packages/eql/tests/encryption/**
       - packages/eql/Cargo.lock
       - languages/golang/**
       - scripts/check-wasm-imports.py
@@ -67,7 +67,7 @@ on:
       - packages/eql/crates/eql-domains/**
       # The Go tests read the cross-language fixtures the EQL suite writes,
       # which are derived under EQL's lockfile.
-      - packages/eql/tests/encryption/fixtures/**
+      - packages/eql/tests/encryption/**
       - packages/eql/Cargo.lock
       - languages/golang/**
       - scripts/check-wasm-imports.py
@@ -141,6 +141,7 @@ jobs:
             .
             languages/golang/encrypt/guest
             languages/golang/auth/guest
+            packages/eql
 
       # The HTTP-free core compiles for wasm32-wasip1 with no JS-host backend
       # and no native HTTP/TLS stack in its graph: the invariant the wazero
@@ -227,6 +228,18 @@ jobs:
           ulimit -l "$(ulimit -H -l)"
           echo "RLIMIT_MEMLOCK: $(ulimit -l) KiB"
           mise run go:test
+
+      # The Rust suite opens the committed v4_rows.json, whose ciphertexts the
+      # Go SDK sealed when the file was last regenerated. This also hands it
+      # the rows the Go SDK seals in this run, so a Go guest and a native
+      # Rust build that stop agreeing on today's ciphertexts fail here rather
+      # than when someone next regenerates the file. The toolchain is the
+      # root's pin, as for the guests.
+      - name: Rows the Go SDK seals today open in Rust
+        run: |
+          rows="$RUNNER_TEMP/v4_rows.json"
+          (cd languages/golang && CGO_ENABLED=0 EQL_V4_ROWS_OUT="$rows" go test -count=1 -run TestV4RowsMatchTheCommittedFixture ./encrypt)
+          EQL_V4_ROWS="$rows" cargo test --locked --manifest-path packages/eql/Cargo.toml -p eql-encryption-tests --test v4_types rows_the_go_sdk_sealed_open_in_rust
 
       # What is encrypted is fixed before the program ships: every generated
       # file is committed, and this fails when `go generate` would change
