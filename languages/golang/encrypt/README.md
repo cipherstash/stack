@@ -279,7 +279,10 @@ A field tagged `encrypt_into=TextEq` is stored as one EQL value, the JSON
 PostgreSQL holds in a `public.eql_v4_text_eq` column, as an `eql.TextEq`
 from package `encrypt/eql`. Stack Encrypt writes EQL v4, the `eql_v4` install
 of EQL's SQL; the `eql_v3` columns the TypeScript SDK writes hold
-cipherstash-client's terms, which these never match. The guest builds the value: the generated code
+cipherstash-client's terms, which these never match. Install EQL v4 into
+PostgreSQL first, with the `eql-v4-install.sql` attached to each Go release
+(`psql -f eql-v4-install.sql`); `stash eql install` installs EQL v3 only, and
+an `eql_v4_*` column needs the v4 domains. The guest builds the value: the generated code
 imports `encrypt/eql`, which embeds the build of the engine that holds the
 EQL types and registers it on import, so the program runs that build and
 stores what it returns. `Fields.Email.Query` returns the `eql.TextEqQuery`

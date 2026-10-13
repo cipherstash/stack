@@ -514,13 +514,19 @@ mod the_table {
     fn every_row_is_a_compiled_domain_type_and_so_is_its_query() {
         let stored: Vec<&str> = v4::all().iter().map(|d| d.sql_domain()).collect();
         let queries: Vec<&str> = v4::all_query().iter().map(|d| d.sql_domain()).collect();
-        // v4 has no SteVec bindings yet, so the SteVec document (which no
-        // engine produces until the JSON index exists) is the one row with no
-        // compiled type behind it.
-        for row in targets::targets()
-            .iter()
-            .filter(|r| r.family != "json" || r.suffix.is_empty())
-        {
+        // v4 has no SteVec bindings yet, so the SteVec rows (the document
+        // and its `SteVecQuery` needle) have no compiled type behind them.
+        // They must stay unproducible, so neither Rust's `encrypt`/`query`
+        // nor a generator such as Go's can select them.
+        for row in targets::targets() {
+            if row.query == Some("SteVecQuery") {
+                assert!(
+                    !row.producible,
+                    "{}: a SteVec row has no v4 type and must not be producible",
+                    row.name
+                );
+                continue;
+            }
             assert!(
                 stored.contains(&row.sql_domain),
                 "{}: {} is in all()",

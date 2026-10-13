@@ -146,7 +146,8 @@ pub mod terms;
 pub mod text;
 pub mod timestamp;
 
-pub use crate::SchemaVersion;
+/// The envelope version field of a v3 payload: always `3`.
+pub type SchemaVersion = crate::SchemaVersion<{ crate::EQL_SCHEMA_VERSION }>;
 pub use domain_type::{DomainType, SCHEMA_ID_BASE, SQL_SCHEMA};
 pub use inventory::{all, all_query};
 pub use payload::DomainPayload;

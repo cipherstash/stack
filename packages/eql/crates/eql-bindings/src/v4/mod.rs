@@ -14,11 +14,10 @@
 //!
 //! v4 has no SteVec bindings, payload enums, TypeScript export or
 //! published JSON Schema yet; those follow in `@cipherstash/eql` 4.0. The
-//! term newtypes and the [`DomainType`] trait are shared with v3.
-
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use ts_rs::TS;
+//! term newtypes and the [`DomainType`] trait are shared with v3: a v4
+//! `Ciphertext` or `Hmac256` is v3's type, so a change to a term's validation
+//! in `v3::terms` changes v4 too. What separates the two on the wire is the
+//! envelope's [`SchemaVersion`], which refuses the other generation's `v`.
 
 pub mod bigint;
 pub mod boolean;
@@ -61,54 +60,6 @@ pub const EQL_SCHEMA_VERSION: u16 = 4;
 /// [`EQL_SCHEMA_VERSION`] on the wire.
 ///
 /// Deserialization rejects any other value, so a v3 payload fails at the type
-/// boundary instead of at INSERT. The inner value is private; the only
-/// constructible instance is `4`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, TS)]
-pub struct SchemaVersion(#[ts(type = "4")] u16);
-
-impl SchemaVersion {
-    /// The v4 wire version, `4`.
-    pub const CURRENT: Self = Self(EQL_SCHEMA_VERSION);
-
-    /// The wire value.
-    pub const fn get(self) -> u16 {
-        self.0
-    }
-}
-
-impl Default for SchemaVersion {
-    fn default() -> Self {
-        Self::CURRENT
-    }
-}
-
-impl<'de> Deserialize<'de> for SchemaVersion {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let v = u16::deserialize(deserializer)?;
-        if v == EQL_SCHEMA_VERSION {
-            Ok(Self(v))
-        } else {
-            Err(serde::de::Error::custom(format!(
-                "unsupported EQL schema version {v} (expected {EQL_SCHEMA_VERSION})"
-            )))
-        }
-    }
-}
-
-/// Manual schema: pins `v` to the literal `4`, mirroring the domain CHECK.
-impl JsonSchema for SchemaVersion {
-    fn schema_name() -> std::borrow::Cow<'static, str> {
-        "SchemaVersionV4".into()
-    }
-
-    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        schemars::json_schema!({
-            "type": "integer",
-            "const": EQL_SCHEMA_VERSION,
-            "description": "The envelope version field (`v`) of a v4 payload — always exactly `4` on the wire.",
-        })
-    }
-}
+/// boundary instead of at INSERT. The same type as v3's, at version `4`: see
+/// [`crate::SchemaVersion`].
+pub type SchemaVersion = crate::SchemaVersion<EQL_SCHEMA_VERSION>;

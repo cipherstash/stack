@@ -145,8 +145,9 @@ fn row(family: &'static DomainFamily, domain: &'static Domain) -> Row {
     let query = if is_stevec {
         // The containment needle is the document's query form. Its struct
         // is the hand-written `SteVecQuery`; its domain is the family's
-        // `query` domain (`eql_v3.query_json`), read from the catalog so
-        // the name is spelled once.
+        // `query` domain (`eql_v4.query_json`), read from the catalog so
+        // the name is spelled once. v4 has no compiled SteVec types yet, so
+        // these rows are never producible.
         family
             .domains
             .iter()

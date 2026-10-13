@@ -392,7 +392,7 @@ mod sealed {
 /// plaintext types the catalog's producible families name, and the generated
 /// dispatch picks one per type. `Zeroize`, because [`from_value`](Self::from_value)
 /// copies the plaintext out of the runtime value's `Protected` buffer and
-/// the copy is wiped when it is dropped ([`run_target`] holds it in
+/// the copy is wiped when it is dropped (the dispatch holds it in
 /// [`zeroize::Zeroizing`]), as the original is.
 pub trait Plaintext: sealed::Sealed + Sized + MaybeSend + zeroize::Zeroize + 'static {
     /// The kind of value this plaintext is.
