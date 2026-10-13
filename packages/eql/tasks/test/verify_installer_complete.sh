@@ -27,8 +27,10 @@ cd "$REPO_ROOT"
 ORDERED="${1:-build/render/eql_v3/deps-ordered.txt}"
 INSTALLER="${2:-release/cipherstash-encrypt.sql}"
 # The rendered tree the ordered paths point into (build.sh renders the
-# placeholder source into build/render/eql_v<N>/, keeping relative paths).
-ROOT="${3:-build/render/eql_v3}"
+# placeholder source into build/render/eql_v<N>/, keeping relative paths, and
+# writes deps-ordered.txt at its root). Defaults to the order file's directory,
+# so overriding only $1 cannot pair one tree's order with another's files.
+ROOT="${3:-$(dirname "$ORDERED")}"
 PIN="$ROOT/tasks/pin_search_path_v3.sql"
 
 for f in "$ORDERED" "$INSTALLER" "$PIN"; do

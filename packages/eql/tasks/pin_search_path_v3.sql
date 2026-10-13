@@ -1,9 +1,11 @@
 --! @file pin_search_path_v3.sql
 --! @brief Post-install: pin search_path on every {{prefix}}.* function.
 --!
---! Appended verbatim by `tasks/build.sh` to the end of the v{{eql_version}}-only release
---! artifact, AFTER all src/v3/**/*.sql files have been concatenated. It lives
---! outside src/ so it stays out of the dependency graph.
+--! Rendered by `tasks/build.sh` like the src/ files, so it uses the
+--! placeholders and may not name a schema literally, then appended to the end
+--! of the v{{eql_version}}-only release artifact, AFTER all src/v3/**/*.sql
+--! files have been concatenated. It lives outside src/ so it stays out of the
+--! dependency graph.
 --!
 --! Iterates over functions in the `{{prefix}}` and `{{prefix}}_internal` schemas and
 --! applies a fixed `search_path` via `ALTER FUNCTION ... SET search_path = ...`,

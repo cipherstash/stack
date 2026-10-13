@@ -32,7 +32,11 @@ pub fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// The schemas the eql_v3 surface owns, public first: `[SCHEMA, INTERNAL_SCHEMA]`.
+/// The schemas the SQL surface owns, public first: `[SCHEMA, INTERNAL_SCHEMA]`.
+///
+/// These are placeholder source (`{{prefix}}`, `{{prefix}}_internal`), like the
+/// SQL they are compared with; render them with [`render::render_str`] for one
+/// EQL version's real names, as `list-schemas` does.
 ///
 /// Public accessor over the crate-private `consts::SCHEMA` / `INTERNAL_SCHEMA`
 /// so the binary (`list-schemas`) and the `test:schemas:parity` gate can read

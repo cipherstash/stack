@@ -65,25 +65,32 @@ fn bindings_subcommand_succeeds_and_reports_count() {
     );
 }
 
-/// `list-schemas` exits 0 and prints the owned schemas, public first, one per
-/// line. This is the Rust side of the schema-split parity gate
-/// (`mise run test:schemas:parity`), so the exact stdout is pinned here.
+/// `list-schemas` exits 0 and prints the owned schemas, rendered, public first,
+/// one per line (v3 by default). This is the Rust side of the schema-split
+/// parity gate (`mise run test:schemas:parity`), so the exact stdout is pinned
+/// here.
 #[test]
 fn list_schemas_subcommand_prints_owned_schemas() {
-    let out = Command::new(bin())
-        .arg("list-schemas")
-        .output()
-        .expect("run eql-codegen list-schemas");
-    assert!(
-        out.status.success(),
-        "list-schemas should exit 0; stderr: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(
-        stdout, "{{prefix}}\n{{prefix}}_internal\n",
-        "list-schemas must print the public schema first, then the internal schema"
-    );
+    for (args, expected) in [
+        (&["list-schemas"][..], "eql_v3\neql_v3_internal\n"),
+        (&["list-schemas", "3"][..], "eql_v3\neql_v3_internal\n"),
+        (&["list-schemas", "4"][..], "eql_v4\neql_v4_internal\n"),
+    ] {
+        let out = Command::new(bin())
+            .args(args)
+            .output()
+            .expect("run eql-codegen list-schemas");
+        assert!(
+            out.status.success(),
+            "{args:?} should exit 0; stderr: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            expected,
+            "{args:?} must print the public schema first, then the internal schema"
+        );
+    }
 }
 
 /// `order` exits 0 and prints the real surface's install order, one repo-relative

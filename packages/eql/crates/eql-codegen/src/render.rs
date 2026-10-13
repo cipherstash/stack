@@ -94,7 +94,9 @@ impl fmt::Display for RenderError {
             }
             RenderError::LiteralName { line, literal } => write!(
                 f,
-                "line {line}: literal `{literal}`; write {PREFIX} so the name follows the EQL version"
+                "line {line}: literal `{literal}`; write {PREFIX} in its place, in comments too, \
+                 so the name follows the EQL version (`{literal}_internal` is \
+                 `{PREFIX}_internal`)"
             ),
         }
     }
@@ -108,7 +110,7 @@ pub fn render_str(src: &str, version: EqlVersion) -> Result<String, RenderError>
     for (i, line) in src.split_inclusive('\n').enumerate() {
         let lineno = i + 1;
         for v in EqlVersion::ALL {
-            if line.contains(v.prefix()) {
+            if contains_name(line, v.prefix()) {
                 return Err(RenderError::LiteralName {
                     line: lineno,
                     literal: v.prefix(),
@@ -137,6 +139,18 @@ pub fn render_str(src: &str, version: EqlVersion) -> Result<String, RenderError>
         out.push_str(rest);
     }
     Ok(out)
+}
+
+/// Whether `line` names `prefix` as a name, rather than as the start of a
+/// longer version (`eql_v30`). Comments count: they are rendered into both
+/// bundles and into the docs, so a literal there is wrong in one of them.
+fn contains_name(line: &str, prefix: &str) -> bool {
+    line.match_indices(prefix).any(|(at, _)| {
+        !line[at + prefix.len()..]
+            .bytes()
+            .next()
+            .is_some_and(|b| b.is_ascii_digit())
+    })
 }
 
 /// Why a file could not be rendered.
@@ -264,6 +278,19 @@ mod tests {
     }
 
     #[test]
+    fn a_longer_version_is_not_a_literal_name() {
+        let src = "SELECT eql_v30_foo, eql_v41;\n";
+        assert_eq!(render_str(src, EqlVersion::V3).unwrap(), src);
+        assert_eq!(
+            render_str("eql_v30 eql_v3\n", EqlVersion::V3),
+            Err(RenderError::LiteralName {
+                line: 1,
+                literal: "eql_v3"
+            })
+        );
+    }
+
+    #[test]
     fn rejects_unknown_placeholder() {
         assert_eq!(
             render_str("{{prefix}}\n{{ prefix }}\n", EqlVersion::V3),
@@ -289,9 +316,28 @@ mod tests {
         assert!("2".parse::<EqlVersion>().is_err());
     }
 
+    /// A scratch directory removed on drop, so a failed assertion does not
+    /// leave it behind for a later run with the same pid to find.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            Scratch(dir)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
     #[test]
     fn render_files_writes_nothing_when_any_file_fails() {
-        let dir = std::env::temp_dir().join(format!("eql-render-{}", std::process::id()));
+        let scratch = Scratch::new("eql-render");
+        let dir = &scratch.0;
         let root = dir.join("root");
         let out = dir.join("out");
         fs::create_dir_all(root.join("src/v3")).unwrap();
@@ -308,12 +354,12 @@ mod tests {
             fs::read_to_string(out.join("src/v3/a.sql")).unwrap(),
             "SELECT eql_v4.f();\n"
         );
-        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn render_files_refuses_paths_outside_out() {
-        let dir = std::env::temp_dir().join(format!("eql-render-abs-{}", std::process::id()));
+        let scratch = Scratch::new("eql-render-abs");
+        let dir = &scratch.0;
         let root = dir.join("root");
         let out = dir.join("out");
         fs::create_dir_all(root.join("src")).unwrap();
@@ -333,6 +379,5 @@ mod tests {
             "SELECT {{prefix}}.f();\n"
         );
         assert!(!out.exists());
-        fs::remove_dir_all(&dir).unwrap();
     }
 }

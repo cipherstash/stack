@@ -13,7 +13,14 @@ fi
 # Prepares SQL for Doxygen's C++ parser. Five transforms:
 #
 #  0. Render the {{prefix}} / {{eql_version}} placeholders (ADR-0002) as EQL v3,
-#     so the reference names `eql_v3.eq_term`, not `{{prefix}}.eq_term`.
+#     so the reference names `eql_v3.eq_term`, not `{{prefix}}.eq_term`. The
+#     SQL build renders with `eql-codegen render`, which is strict, and
+#     `docs:generate` depends on that build, which renders every file Doxygen
+#     reads; that is what stops a misspelt placeholder reaching the reference.
+#     This is a plain substitution, so any `{{` left after it is refused too,
+#     as the renderer would refuse it. Doxygen ignores a filter's exit status
+#     (it prints the message and carries on), so the refusal fails only a
+#     direct caller such as docs_v3_grep.sh.
 #  1. Omit blocks marked `@cond deprecated_compatibility`. These functions
 #     remain callable for backwards compatibility but must not appear in the
 #     generated function reference or source browser.
@@ -47,7 +54,11 @@ fi
 # A real pipe, not `awk … < <(sed …)`: pipefail covers a pipe, so a `sed` that
 # cannot read its input fails the filter, and docs_v3_grep.sh relies on that
 # status. A process substitution's exit status is lost.
-sed -e 's/{{prefix}}/eql_v3/g' -e 's/{{eql_version}}/3/g' "$1" | awk '
+sed -e 's/{{prefix}}/eql_v3/g' -e 's/{{eql_version}}/3/g' "$1" | awk -v src="$1" '
+  index($0, "{{") {
+    printf "%s:%d: unrendered placeholder (expected {{prefix}} or {{eql_version}})\n", src, NR > "/dev/stderr"
+    exit 1
+  }
   /^--![[:space:]]+@cond[[:space:]]+deprecated_compatibility[[:space:]]*$/ {
     inhidden = 1
     print ""
