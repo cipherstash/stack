@@ -400,8 +400,6 @@ pub fn encryption_gap(
         .any(|t| matches!(t, Term::Ore | Term::Ope))
     {
         "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"
-    } else if domain.terms.contains(&Term::Bloom) {
-        "the engine derives match terms, but no EQL type is built from them yet"
     } else if matches!(family.name, "integer" | "bigint") && domain.terms == [Term::Hm] {
         "the integer equality term moves to vitaminc 0.6's shared integer-orderable/v1 PRF \
          domain; producing it before that release would leave stored terms unmatchable after \

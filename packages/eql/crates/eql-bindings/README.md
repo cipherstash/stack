@@ -129,9 +129,11 @@ vitaminc 0.5's per-width domains would stop matching after that upgrade.
 stored values and queries alike. The configuration is part of the stored
 format, so changing it means a new domain or payload version. A filter can
 match a row that does not contain the query, so re-check after decrypting
-where that matters. Text too short to make a 3-gram (empty strings, two-letter
-codes) cannot be stored in a `TextMatch` column yet: Stack Encrypt 0.2 refuses
-text with no tokens. Ordering types
+where that matters. Write the stored column on the left, `col @@ query`: the
+other order finds nothing until #1171 is fixed. Text too short to make a
+3-gram (empty strings, two-letter codes) cannot be stored in a `TextMatch`
+column yet, and a `TextMatchQuery` for it is refused too: Stack Encrypt 0.2
+refuses text with no tokens, on both sides. Ordering types
 wait for vitaminc 0.6's order encodings, float
 equality for its canonical float form, and `Json` for a decision on sealing a
 document as one leaf.

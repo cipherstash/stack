@@ -161,7 +161,8 @@ The engine produces these EQL types today, each from one Go field type:
 | `Double` | `float64` |
 
 The width must match: an `int` or `int64` field is not an `Integer`, and a `float64` field is not a `Real`.
-A `TextMatch` field refuses text shorter than three characters, such as an empty string or a two-letter code, because it has no 3-grams to index.
+A `TextMatch` field refuses text shorter than three characters, such as an empty string or a two-letter code, because it has no 3-grams to index; its query refuses such text too.
+Put the column on the left of `@@` (`WHERE name @@ $1::eql_v4.query_text_match`): the other operand order finds nothing until #1171 is fixed.
 `encrypt_into` with any other type is refused with the type's name and the reason it is not produced yet.
 Separate columns work today for four indexes: `equality`, `match`, `ore` and `ope`.
 

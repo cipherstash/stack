@@ -389,6 +389,11 @@ async fn text_match_filters_contain_their_substrings() {
         .unwrap();
     assert_eq!(opened, "Alice@Example.com");
 
+    // `true` is a property of the filter: every bit a contained needle sets
+    // is set in the stored value's. `false` is not: a Bloom filter can cover
+    // an absent needle's bits by chance. "bob" is clear of it under the
+    // test key source and the pinned configuration, so a change to either
+    // can flip that case with no bug behind it.
     let all = positions(&stored.bf);
     for (needle, contained) in [
         ("alice", true),
@@ -578,9 +583,10 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
     assert_eq!(matching("user2"), [2], "TextMatch: one row");
     assert_eq!(matching("nobody"), Vec::<i32>::new(), "TextMatch: none");
 
-    // Known gap in the SQL, pinned so its fix shows here: with the query on
-    // the left, `@@` asks whether the query's filter contains the stored
-    // value's, so the operand order users reach for finds nothing.
+    // Known gap in the SQL (#1171), pinned so its fix shows here: with the
+    // query on the left, `@@` asks whether the query's filter contains the
+    // stored value's, so that operand order finds nothing. Only
+    // `stored @@ query` works until then; the README says so.
     let probe: text::TextMatchQuery = runtime
         .block_on(async { keyset.encrypt_as(&"user2".to_owned(), column()).await })
         .unwrap();
@@ -596,7 +602,7 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
     assert_eq!(
         reversed,
         Vec::<i32>::new(),
-        "query @@ stored still finds nothing; when the SQL is fixed this becomes [2]"
+        "query @@ stored still finds nothing (#1171); when the SQL is fixed this becomes [2]"
     );
 
     // Every stored value reads back from its domain and opens.
