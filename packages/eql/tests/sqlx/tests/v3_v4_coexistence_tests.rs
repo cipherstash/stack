@@ -72,6 +72,49 @@ fn query_term(version: u8) -> String {
     )
 }
 
+/// Which equality `{table}.c = <v{term} query term>` binds, read from the
+/// catalog rather than from EXPLAIN text, whose deparse can change between
+/// Postgres majors. The comparison is stored as a view: a user-defined operator
+/// it binds is recorded in `pg_depend`, and a built-in one, which is pinned and
+/// so has no dependency row, is the `opno` in the view's stored query tree.
+/// Returns the EQL (non-built-in) operators bound, and whether `jsonb = jsonb`
+/// is.
+async fn bound_equality(pool: &PgPool, table: &str, term: u8) -> Result<(Vec<String>, bool)> {
+    let term_json: String =
+        sqlx::query_scalar(&format!("SELECT ({})::jsonb::text", query_term(term)))
+            .fetch_one(pool)
+            .await?;
+    let view = format!("{table}_v{term}_probe");
+    sqlx::raw_sql(&format!(
+        "CREATE OR REPLACE VIEW {view} AS SELECT * FROM {table} \
+         WHERE c = '{}'::eql_v{term}.query_integer_eq",
+        term_json.replace('\'', "''")
+    ))
+    .execute(pool)
+    .await?;
+    let eql_operators: Vec<String> = sqlx::query_scalar(
+        "SELECT d.refobjid::regoperator::text
+           FROM pg_depend d
+           JOIN pg_rewrite r ON r.oid = d.objid
+          WHERE d.classid = 'pg_rewrite'::regclass
+            AND d.refclassid = 'pg_operator'::regclass
+            AND r.ev_class = $1::regclass
+          ORDER BY 1",
+    )
+    .bind(&view)
+    .fetch_all(pool)
+    .await?;
+    let jsonb_eq: bool = sqlx::query_scalar(
+        "SELECT ev_action::text ~ (':opno ' || '=(jsonb,jsonb)'::regoperator::oid || ' ')
+           FROM pg_rewrite
+          WHERE ev_class = $1::regclass",
+    )
+    .bind(&view)
+    .fetch_one(pool)
+    .await?;
+    Ok((eql_operators, jsonb_eq))
+}
+
 fn sqlstate(err: &sqlx::Error) -> Option<String> {
     match err {
         sqlx::Error::Database(e) => e.code().map(|c| c.into_owned()),
@@ -205,18 +248,33 @@ async fn operator_across_versions_returns_no_rows(pool: PgPool) -> Result<()> {
         .await?;
         assert_eq!(n, 0, "{table}.c = v{term} term runs, and finds nothing");
 
-        // Why: no EQL operator takes this pair, so the planner chose the
+        // Why: no EQL operator takes this pair, so the parser bound the
         // built-in jsonb equality on the two domains' base type.
-        let plan: Vec<String> = sqlx::query_scalar(&format!(
-            "EXPLAIN (COSTS OFF) SELECT * FROM {table} WHERE c = {}",
-            query_term(term)
-        ))
-        .fetch_all(&pool)
-        .await?;
-        let plan = plan.join("\n");
+        let (eql_operators, jsonb_eq) = bound_equality(&pool, table, term).await?;
         assert!(
-            plan.contains("(c)::jsonb = "),
-            "{table}.c = v{term} term should fall back to jsonb = jsonb:\n{plan}"
+            eql_operators.is_empty(),
+            "{table}.c = v{term} term should bind no EQL operator, got {eql_operators:?}"
+        );
+        assert!(
+            jsonb_eq,
+            "{table}.c = v{term} term should fall back to jsonb = jsonb"
+        );
+    }
+
+    // Control: the same-version comparison binds the EQL operator, so the
+    // empty list above is a finding, not a probe that sees nothing.
+    for (table, version) in [("t3", 3), ("t4", 4)] {
+        let (eql_operators, jsonb_eq) = bound_equality(&pool, table, version).await?;
+        assert_eq!(
+            eql_operators,
+            [format!(
+                "=(eql_v{version}_integer_eq,eql_v{version}.query_integer_eq)"
+            )],
+            "{table}.c = v{version} term"
+        );
+        assert!(
+            !jsonb_eq,
+            "{table}.c = v{version} term does not use jsonb = jsonb"
         );
     }
 
