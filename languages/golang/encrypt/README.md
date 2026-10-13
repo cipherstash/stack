@@ -31,10 +31,14 @@ The package reference is on [pkg.go.dev]; the generator's reference is
    type User struct {
    	_     struct{} `stash:"context=users"`
    	ID    int64    `stash:"id,passthrough"`
-   	Email string   `stash:"email,encrypt,index=equality;match"`
-   	Age   uint32   `stash:"age,encrypt,index=equality;ore"`
+   	Email string   `stash:"email,encrypt_into=TextEq"`
+   	Name  string   `stash:"name,encrypt_into=TextMatch"`
+   	Age   int32    `stash:"age,encrypt_into=Integer"`
    }
    ```
+
+   `encrypt_into=` names the EQL type the field is stored as. The Go field
+   type must match it; see [EQL columns](#eql-columns).
 
 3. Run the generator. It writes `user_stash.go` beside the struct.
 
@@ -56,17 +60,25 @@ The package reference is on [pkg.go.dev]; the generator's reference is
 
    encrypted, err := users.Encrypt(ctx, cipher, people)
    opened, err := users.Decrypt(ctx, cipher, encrypted)
-   term, err := users.Fields.Email.Equality(ctx, cipher, "bob@example.com")
+   query, err := users.Fields.Email.Query(ctx, cipher, "bob@example.com")
    ```
 
    `Encrypt` and `Decrypt` send one ZeroKMS request for each 500 sealed
    values in the batch, plus one request the first time a keyset is used.
 
-6. Store the encrypted type. Each sealed field is one or more byte columns:
-   `e.Email.Ciphertext`, `e.Email.Equality`, `e.Email.Match`. `Ciphertext`
-   and each term type implement `driver.Valuer` and `sql.Scanner`, so a
-   database library binds and scans each column as bytes; map each one to
-   its own column.
+6. Store the encrypted type. Each `encrypt_into` field is one EQL v4 column:
+   `eql.TextEq` implements `driver.Valuer` and `sql.Scanner`, so a database
+   library binds and scans it as the JSON a `public.eql_v4_text_eq` column
+   holds. Install EQL v4 into PostgreSQL first, with the
+   `eql-v4-install.sql` attached to the release. A query casts its parameter
+   to the column's query type:
+
+   ```sql
+   SELECT id, email, name, age FROM users WHERE email = $1::eql_v4.query_text_eq
+   ```
+
+   A field tagged `encrypt` or `index=` stores its ciphertext and each term
+   as separate byte columns instead; see [What is stored](#what-is-stored).
 
 7. Run the generator again after each change to the struct or to a tag. A
    change to the fields of the struct stops the build until you do.
@@ -80,8 +92,8 @@ The package reference is on [pkg.go.dev]; the generator's reference is
    `git diff` sees only files git already tracks; the `git status` check
    also fails on a generated file that was never committed.
 
-The rest of this file is the reference. [`example/`](example/) is the eight
-steps as a program.
+The rest of this file is the reference. [`example/`](example/) is a program
+that stores separate byte columns (`index=`) against real ZeroKMS.
 
 ## Connect
 

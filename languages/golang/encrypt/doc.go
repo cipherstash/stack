@@ -15,9 +15,14 @@
 //	type User struct {
 //		_     struct{} `stash:"context=users"`
 //		ID    int64    `stash:"id,passthrough"`
-//		Email string   `stash:"email,encrypt,index=equality;match"`
-//		Age   uint32   `stash:"age,encrypt,index=equality;ore"`
+//		Email string   `stash:"email,encrypt_into=TextEq"`
+//		Name  string   `stash:"name,encrypt_into=TextMatch"`
+//		Age   int32    `stash:"age,encrypt_into=Integer"`
 //	}
+//
+// encrypt_into names the EQL type the field is stored as. The Go field type
+// must match it: TextEq, TextMatch and Text take a string, Integer an int32,
+// Bigint an int64, Boolean a bool, Real a float32 and Double a float64.
 //
 // 3. Run the generator. It writes user_stash.go beside the struct:
 //
@@ -35,15 +40,22 @@
 //	cipher := client.Keyset(encrypt.KeysetName("tenant-42"))
 //	encrypted, err := users.Encrypt(ctx, cipher, people) // []users.EncryptedUser
 //	opened, err := users.Decrypt(ctx, cipher, encrypted) // []users.User
-//	term, err := users.Fields.Email.Equality(ctx, cipher, "bob@example.com")
+//	query, err := users.Fields.Email.Query(ctx, cipher, "bob@example.com")
 //
 // Encrypt and Decrypt send one ZeroKMS request for each 500 sealed values in
 // the batch, plus one the first time a keyset is used.
 //
-// 6. Store the encrypted type. Each sealed field is one or more columns of
-// bytes ([Ciphertext] and the term types), each implementing driver.Valuer
-// and sql.Scanner, so a database library binds and scans each one as bytes;
-// map each one to its own column.
+// 6. Store the encrypted type. Each encrypt_into field is one EQL v4 column
+// (an eql.TextEq goes in a public.eql_v4_text_eq column), implementing
+// driver.Valuer and sql.Scanner, so a database library binds and scans it
+// like any other value. Install EQL v4 into PostgreSQL first, with the
+// eql-v4-install.sql attached to the release. A query casts its parameter to
+// the column's query type:
+//
+//	SELECT id, email, name, age FROM users WHERE email = $1::eql_v4.query_text_eq
+//
+// A field tagged encrypt or index= stores its ciphertext ([Ciphertext]) and
+// each term as separate byte columns instead; see Terms below.
 //
 // 7. Run the generator again after each change to the struct or to a tag. A
 // change to the fields of the struct stops the build until you do.
