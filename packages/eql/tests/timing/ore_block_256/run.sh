@@ -6,8 +6,9 @@
 #
 # DATABASE_URL must point at a database with EQL installed (e.g. the release
 # installer from `mise run build`). Needs psql and cargo. samples defaults to
-# 200000 single-term samples (and a quarter as many six-term ones), a few
-# minutes in all. See README.md for the method and how to read the output.
+# 200000 samples per single-term kind (and a quarter as many per multi-term
+# kind), a few minutes in all. See README.md for the method and how to read
+# the output.
 set -euo pipefail
 
 samples="${1:-200000}"
@@ -16,8 +17,13 @@ here="$(cd "$(dirname "$0")" && pwd)"
 
 # Everything lives in the ore_timing schema, which is dropped on exit. Refuse
 # to start if it already exists, so a run never drops a schema it did not make.
-if [ "$(psql "$DATABASE_URL" -tA -c "SELECT to_regnamespace('ore_timing') IS NOT NULL")" != "f" ]; then
-    echo "schema ore_timing already exists (or the database is unreachable); not touching it" >&2
+# A failed psql is reported as itself, not as an existing schema.
+if ! exists="$(psql "$DATABASE_URL" -tA -c "SELECT to_regnamespace('ore_timing') IS NOT NULL")"; then
+    echo "could not query the database at DATABASE_URL (see the psql error above)" >&2
+    exit 1
+fi
+if [ "$exists" != "f" ]; then
+    echo "schema ore_timing already exists; not touching it" >&2
     exit 1
 fi
 
@@ -53,6 +59,7 @@ echo "== timing (two runs per kind; classes: see README.md)"
 for run in 1 2; do
     psql "$DATABASE_URL" -q -v ON_ERROR_STOP=1 -c "
       CREATE TABLE ore_timing.single_$run AS SELECT * FROM ore_timing.bench('timing1', $samples, 16);
+      CREATE TABLE ore_timing.equal_$run AS SELECT * FROM ore_timing.bench('equal', $samples, 16);
       CREATE TABLE ore_timing.six_$run AS SELECT * FROM ore_timing.bench('timing6', $((samples / 4)), 8);
       CREATE TABLE ore_timing.prefix_$run AS SELECT * FROM ore_timing.bench('prefix', $((samples / 4)), 8);
       CREATE TABLE ore_timing.null_$run AS SELECT * FROM ore_timing.bench('null', $((samples / 4)), 8);"
@@ -60,6 +67,8 @@ done
 psql "$DATABASE_URL" -c "
   SELECT * FROM ore_timing.welch('single term, 16/sample #1', 'ore_timing.single_1')
   UNION ALL SELECT * FROM ore_timing.welch('single term, 16/sample #2', 'ore_timing.single_2')
+  UNION ALL SELECT * FROM ore_timing.welch('equal term, 16/sample #1', 'ore_timing.equal_1')
+  UNION ALL SELECT * FROM ore_timing.welch('equal term, 16/sample #2', 'ore_timing.equal_2')
   UNION ALL SELECT * FROM ore_timing.welch('six terms, 8/sample #1', 'ore_timing.six_1')
   UNION ALL SELECT * FROM ore_timing.welch('six terms, 8/sample #2', 'ore_timing.six_2')
   UNION ALL SELECT * FROM ore_timing.welch('prefix, 8/sample #1', 'ore_timing.prefix_1')
