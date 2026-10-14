@@ -891,6 +891,45 @@ mod tests {
     }
 
     #[test]
+    fn nested_maps_are_handed_up_to_their_container() {
+        let mut row = BTreeMap::new();
+        row.insert(String::from("a"), 1u32);
+        let rows = vec![row.clone(), row.clone()];
+        assert_eq!(
+            round_trip::<Vec<BTreeMap<String, u32>>>(rows.clone()).expect("decodes"),
+            rows
+        );
+        assert_eq!(
+            round_trip::<Option<BTreeMap<String, u32>>>(Some(row.clone())).expect("decodes"),
+            Some(row)
+        );
+    }
+
+    #[test]
+    fn a_list_target_refuses_a_passthrough() {
+        struct Clear;
+        impl Plaintext for Clear {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                sink.passthrough(vec![1u16])
+            }
+        }
+        assert_eq!(expected(round_trip::<Vec<u16>>(Clear)), "sequence");
+    }
+
+    #[test]
+    fn f32_reads_only_an_f32() {
+        assert_eq!(round_trip::<f32>(1.5f32).expect("decodes"), 1.5);
+        assert_eq!(expected(round_trip::<f32>(1.5f64)), "f32");
+    }
+
+    #[test]
+    fn a_slot_holds_what_is_put() {
+        let mut held = None;
+        Slot(&mut held).put(3u8);
+        assert_eq!(held, Some(3));
+    }
+
+    #[test]
     fn some_none_reads_back_as_none() {
         assert_eq!(
             round_trip::<Option<Option<u32>>>(Some(None::<u32>)).expect("decodes"),
@@ -906,6 +945,9 @@ mod tests {
     fn decode_errors_are_std_errors() {
         let e: Box<dyn std::error::Error> = Box::new(DecodeError::Expected("u32"));
         assert_eq!(e.to_string(), "expected u32");
+        assert!(std::error::Error::source(&DecodeError::Expected("u32")).is_none());
+        let source = DecodeError::Source(SourceError::new(fmt::Error));
+        assert!(std::error::Error::source(&source).is_some());
     }
 
     #[cfg(feature = "chrono")]
