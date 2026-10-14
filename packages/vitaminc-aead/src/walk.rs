@@ -14,9 +14,10 @@
 //! must be empty, a container must have something sealed in it, and map
 //! keys must be distinct.
 
+use core::convert::Infallible;
 use std::collections::HashSet;
 
-use vitaminc_protected::Controlled;
+use vitaminc_protected::{Controlled, Protected};
 
 use crate::leaf;
 use crate::plaintext::{Error, MapSink, Physical, SeqSink, Sink, SourceError};
@@ -24,9 +25,17 @@ use crate::seal::{open_all, open_all_async, AsyncCipher, Cipher, Node, OpenError
 use crate::{CipherText, IntoAad};
 
 /// Why decryption failed.
+///
+/// `E` is the sink's error, `C` the cipher's. [`walk`] involves no cipher,
+/// so its `C` is [`Infallible`].
 #[derive(Debug)]
-pub enum DecryptError<E> {
-    /// Wrong key, wrong AAD, or tampered ciphertext.
+pub enum DecryptError<E, C = Infallible> {
+    /// The cipher refused a leaf. For an AEAD that is a wrong key, a wrong
+    /// AAD or a tampered leaf; a remote provider's error type also tells an
+    /// outage apart.
+    Cipher(C),
+    /// An authenticated empty marker carried a payload: tampering the
+    /// cipher could not see.
     Auth,
     /// The tree or a leaf's plaintext is not well formed, or the cipher
     /// returned the wrong number of leaves.
@@ -36,21 +45,34 @@ pub enum DecryptError<E> {
     Sink(E),
 }
 
-impl<E> From<E> for DecryptError<E> {
+impl<E, C> From<E> for DecryptError<E, C> {
     fn from(e: E) -> Self {
         Self::Sink(e)
     }
 }
 
-fn opening<E>(e: OpenError) -> DecryptError<E> {
+impl<E> DecryptError<E> {
+    /// The same failure, under any cipher error type: a walk's error, as
+    /// one step of a decryption.
+    pub fn with_cipher<C>(self) -> DecryptError<E, C> {
+        match self {
+            Self::Cipher(never) => match never {},
+            Self::Auth => DecryptError::Auth,
+            Self::Malformed => DecryptError::Malformed,
+            Self::Sink(e) => DecryptError::Sink(e),
+        }
+    }
+}
+
+fn opening<E, C>(e: OpenError<C>) -> DecryptError<E, C> {
     match e {
-        OpenError::Auth => DecryptError::Auth,
-        OpenError::Count(_) => DecryptError::Malformed,
+        OpenError::Cipher(c) => DecryptError::Cipher(c),
+        OpenError::Malformed | OpenError::Count(_) => DecryptError::Malformed,
     }
 }
 
 /// Lets a `?` on a sink error inside `walk` also accept source errors.
-impl<E: Error> Error for DecryptError<E> {
+impl<E: Error, C> Error for DecryptError<E, C> {
     fn source(error: SourceError) -> Self {
         Self::Sink(E::source(error))
     }
@@ -62,7 +84,7 @@ pub fn decrypt_into<'a, C, S, A>(
     node: Node<C::Leaf>,
     aad: A,
     sink: S,
-) -> Result<S::Ok, DecryptError<S::Error>>
+) -> Result<S::Ok, DecryptError<S::Error, C::Error>>
 where
     C: Cipher,
     S: Sink,
@@ -72,27 +94,30 @@ where
         open_all(cipher, node, &aad.into_aad()).map_err(opening)?,
         sink,
     )
+    .map_err(DecryptError::with_cipher)
 }
 
 /// Decrypt through an async cipher. Every leaf is opened before the sink
 /// sees anything, so the sink itself is never awaited.
+///
+/// The sink is held across the await, so the future is `Send` only if the
+/// sink is. A caller with a sink that is not (a builder of JavaScript
+/// values) awaits [`open_all_async`] and then calls [`walk`] itself.
 pub async fn decrypt_into_async<'a, C, S, A>(
     cipher: &C,
     node: Node<C::Leaf>,
     aad: A,
     sink: S,
-) -> Result<S::Ok, DecryptError<S::Error>>
+) -> Result<S::Ok, DecryptError<S::Error, C::Error>>
 where
     C: AsyncCipher,
     S: Sink,
     A: IntoAad<'a>,
 {
-    walk(
-        open_all_async(cipher, node, &aad.into_aad())
-            .await
-            .map_err(opening)?,
-        sink,
-    )
+    let opened = open_all_async(cipher, node, &aad.into_aad())
+        .await
+        .map_err(opening)?;
+    walk(opened, sink).map_err(DecryptError::with_cipher)
 }
 
 fn sealed_any<L>(nodes: &[&Node<L>]) -> bool {
@@ -159,17 +184,25 @@ pub fn walk<S: Sink>(node: Node<Opened>, sink: S) -> Result<S::Ok, DecryptError<
 }
 
 /// Decrypt into a frame: the Go guest's whole `decrypt`.
+///
+/// The frame is plaintext, so it is built and returned inside `Protected`
+/// and wiped on every error path.
 pub fn decrypt_to_frame<'a, C, A>(
     cipher: &C,
     node: Node<C::Leaf>,
     aad: A,
-) -> Result<Vec<u8>, DecryptError<crate::frame::FrameWriteError>>
+) -> Result<Protected<Vec<u8>>, DecryptError<crate::frame::FrameWriteError, C::Error>>
 where
     C: Cipher,
     A: IntoAad<'a>,
 {
-    let mut out = Vec::new();
-    decrypt_into(cipher, node, aad, crate::frame::FrameWriter::new(&mut out))?;
+    let mut out = Protected::new(Vec::new());
+    decrypt_into(
+        cipher,
+        node,
+        aad,
+        crate::frame::FrameWriter::new(out.risky_inner_mut()),
+    )?;
     Ok(out)
 }
 
@@ -304,7 +337,7 @@ mod tests {
         let moved: Node<Leaf> = CipherText::Single(leaf);
         assert!(matches!(
             decrypt_into(&Mock, moved, "ctx", Record(&mut Vec::new())),
-            Err(DecryptError::Auth)
+            Err(DecryptError::Cipher(_))
         ));
     }
 
@@ -313,11 +346,8 @@ mod tests {
         let sealed = encrypt(sample(), &Mock, "ctx").expect("encrypts");
         let frame = decrypt_to_frame(&Mock, sealed, "ctx").expect("decrypts");
         assert_eq!(
-            frame,
-            crate::to_frame(sample())
-                .expect("frames")
-                .risky_ref()
-                .clone()
+            frame.risky_ref(),
+            crate::to_frame(sample()).expect("frames").risky_ref()
         );
     }
 

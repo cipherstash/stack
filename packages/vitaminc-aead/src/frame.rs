@@ -2,7 +2,7 @@
 //! and for carrying a passthrough subtree in the clear.
 //!
 //! A frame is a transport encoding, not a storage format. Scalars use the
-//! leaf codec in [`leaf`](crate::leaf) in its frame form (text and bytes
+//! leaf codec in [`leaf`] in its frame form (text and bytes
 //! carry a `u32` length). Containers are framed with the tags here: an
 //! [`ARRAY`] or [`OBJECT`] byte, a `u32` little-endian count, then the
 //! children; object keys are a `u32` length and UTF-8 bytes. A
@@ -19,6 +19,7 @@
 use std::collections::HashSet;
 
 use vitaminc_protected::{Controlled, Protected};
+use zeroize::Zeroize;
 
 use crate::leaf::{self, Form, ScalarError};
 use crate::plaintext::{Error, Logical, MapSink, Physical, Plaintext, SeqSink, Sink, SourceError};
@@ -166,38 +167,47 @@ const VALIDATED: &str = "frame was validated by Frame::parse";
 /// straight to the sink.
 impl Plaintext for Frame<'_> {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        let mut c = Cursor {
-            buf: self.bytes,
-            pos: 0,
-        };
-        match c.peek().expect(VALIDATED) {
-            ARRAY => {
-                c.byte().expect(VALIDATED);
-                let count = c.count().expect(VALIDATED);
-                let mut seq = sink.seq(Some(count))?;
-                for _ in 0..count {
-                    c.node(0).expect(VALIDATED).visit(seq.element()?)?;
-                }
-                seq.end()
+        visit_node(
+            &mut Cursor {
+                buf: self.bytes,
+                pos: 0,
+            },
+            sink,
+        )
+    }
+}
+
+/// Walk the node at the cursor into `sink`, leaving the cursor after it.
+/// One pass: each byte is read once, except that a passthrough subtree is
+/// stepped over to find its end before the sink walks it.
+fn visit_node<S: Sink>(c: &mut Cursor<'_>, sink: S) -> Result<S::Ok, S::Error> {
+    match c.peek().expect(VALIDATED) {
+        ARRAY => {
+            c.byte().expect(VALIDATED);
+            let count = c.count().expect(VALIDATED);
+            let mut seq = sink.seq(Some(count))?;
+            for _ in 0..count {
+                visit_node(c, seq.element()?)?;
             }
-            OBJECT => {
-                c.byte().expect(VALIDATED);
-                let count = c.count().expect(VALIDATED);
-                let mut map = sink.map(Some(count))?;
-                for _ in 0..count {
-                    let key = c.key().expect(VALIDATED);
-                    c.node(0).expect(VALIDATED).visit(map.entry(key)?)?;
-                }
-                map.end()
+            seq.end()
+        }
+        OBJECT => {
+            c.byte().expect(VALIDATED);
+            let count = c.count().expect(VALIDATED);
+            let mut map = sink.map(Some(count))?;
+            for _ in 0..count {
+                let key = c.key().expect(VALIDATED);
+                visit_node(c, map.entry(key)?)?;
             }
-            PASSTHROUGH => {
-                c.byte().expect(VALIDATED);
-                sink.passthrough(c.node(0).expect(VALIDATED))
-            }
-            _ => {
-                let (ty, v) = c.scalar().expect(VALIDATED);
-                sink.scalar(ty, v)
-            }
+            map.end()
+        }
+        PASSTHROUGH => {
+            c.byte().expect(VALIDATED);
+            sink.passthrough(c.node(0).expect(VALIDATED))
+        }
+        _ => {
+            let (ty, v) = c.scalar().expect(VALIDATED);
+            sink.scalar(ty, v)
         }
     }
 }
@@ -243,6 +253,9 @@ pub enum FrameWriteError {
     CountMismatch,
     /// A map wrote the same key twice.
     DuplicateKey,
+    /// A child sink was dropped without a value written into it, which
+    /// would leave the container's count ahead of its children.
+    Unwritten,
     /// The source stopped the walk.
     Source(SourceError),
 }
@@ -254,7 +267,7 @@ impl Error for FrameWriteError {
 }
 
 /// Write any source as a frame. The buffer is `Protected`, since a frame
-/// of plaintext is plaintext.
+/// of plaintext is plaintext, and it grows without leaving copies behind.
 pub fn to_frame<P: Plaintext>(p: P) -> Result<Protected<Vec<u8>>, FrameWriteError> {
     let mut out = Protected::new(Vec::new());
     p.visit(FrameWriter {
@@ -280,12 +293,14 @@ impl<'o> FrameWriter<'o> {
         if self.depth > MAX_DEPTH {
             return Err(FrameWriteError::TooDeep);
         }
+        reserve(self.out, 1);
         self.out.push(tag);
         Ok(self.out)
     }
 
     fn container(self, tag: u8) -> Result<Count<'o>, FrameWriteError> {
         let depth = self.depth;
+        reserve(self.out, 5);
         let out = self.node(tag)?;
         let at = out.len();
         out.extend_from_slice(&[0; 4]);
@@ -294,8 +309,27 @@ impl<'o> FrameWriter<'o> {
             depth,
             at,
             n: 0,
+            open: None,
         })
     }
+}
+
+/// Make room for `additional` more bytes. A `Vec` that regrows frees its
+/// old allocation without wiping it, and a frame is plaintext, so grow into
+/// a fresh allocation and wipe the old one instead.
+pub(crate) fn reserve(out: &mut Vec<u8>, additional: usize) {
+    if out.capacity() - out.len() >= additional {
+        return;
+    }
+    let capacity = out
+        .len()
+        .saturating_add(additional)
+        .max(out.capacity().saturating_mul(2))
+        .max(64);
+    let mut grown = Vec::with_capacity(capacity);
+    grown.extend_from_slice(out);
+    out.zeroize();
+    *out = grown;
 }
 
 fn write_len(out: &mut Vec<u8>, len: usize) -> Result<(), FrameWriteError> {
@@ -310,18 +344,31 @@ struct Count<'o> {
     depth: usize,
     at: usize,
     n: usize,
+    /// Where the last child sink handed out would start writing. Every
+    /// node writes at least its tag, so if the buffer has not grown past
+    /// it by the next child or the end, that sink was dropped unused.
+    open: Option<usize>,
 }
 
 impl Count<'_> {
+    fn settle(&mut self) -> Result<(), FrameWriteError> {
+        match self.open.take() {
+            Some(start) if self.out.len() == start => Err(FrameWriteError::Unwritten),
+            _ => Ok(()),
+        }
+    }
+
     fn child(&mut self) -> FrameWriter<'_> {
         self.n += 1;
+        self.open = Some(self.out.len());
         FrameWriter {
             out: &mut *self.out,
             depth: self.depth + 1,
         }
     }
 
-    fn end(self, expected: Option<usize>) -> Result<(), FrameWriteError> {
+    fn end(mut self, expected: Option<usize>) -> Result<(), FrameWriteError> {
+        self.settle()?;
         if expected.is_some_and(|e| e != self.n) {
             return Err(FrameWriteError::CountMismatch);
         }
@@ -341,6 +388,7 @@ impl<'o> Sink for FrameWriter<'o> {
         if self.depth > MAX_DEPTH {
             return Err(FrameWriteError::TooDeep);
         }
+        reserve(self.out, leaf::max_len(&v));
         leaf::write(ty, v, Form::Frame, self.out).map_err(|e| match e {
             ScalarError::Invalid => FrameWriteError::Invalid,
             ScalarError::TooLong | ScalarError::Malformed => FrameWriteError::TooLong,
@@ -386,6 +434,7 @@ impl SeqSink for FrameSeq<'_> {
         Self: 's;
 
     fn element(&mut self) -> Result<FrameWriter<'_>, FrameWriteError> {
+        self.count.settle()?;
         Ok(self.count.child())
     }
 
@@ -409,9 +458,11 @@ impl MapSink for FrameMap<'_> {
         Self: 's;
 
     fn entry(&mut self, key: &str) -> Result<FrameWriter<'_>, FrameWriteError> {
+        self.count.settle()?;
         if !self.seen.insert(key.to_owned()) {
             return Err(FrameWriteError::DuplicateKey);
         }
+        reserve(self.count.out, key.len().saturating_add(4));
         write_len(self.count.out, key.len())?;
         self.count.out.extend_from_slice(key.as_bytes());
         Ok(self.count.child())
@@ -454,6 +505,65 @@ mod tests {
         let mut map = BTreeMap::new();
         map.insert("k", true);
         assert_eq!(frame_of(map), [OBJECT, 1, 0, 0, 0, 1, 0, 0, 0, b'k', 0x03]);
+    }
+
+    /// A source that asks for a child sink and drops it unused.
+    #[derive(Clone)]
+    struct DropsAChild {
+        map: bool,
+    }
+
+    impl Plaintext for DropsAChild {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            if self.map {
+                let mut map = sink.map(None)?;
+                let _ = map.entry("a")?;
+                1u16.visit(map.entry("b")?)?;
+                map.end()
+            } else {
+                let mut seq = sink.seq(None)?;
+                1u16.visit(seq.element()?)?;
+                let _ = seq.element()?;
+                seq.end()
+            }
+        }
+    }
+
+    #[test]
+    fn a_dropped_child_sink_is_refused_not_framed() {
+        for map in [false, true] {
+            assert!(matches!(
+                to_frame(DropsAChild { map }),
+                Err(FrameWriteError::Unwritten)
+            ));
+        }
+        // And so a passthrough that drops one cannot be sealed into a
+        // document that would never decrypt.
+        struct Doc;
+        impl Plaintext for Doc {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                let mut seq = sink.seq(Some(2))?;
+                1u16.visit(seq.element()?)?;
+                seq.element()?.passthrough(DropsAChild { map: false })?;
+                seq.end()
+            }
+        }
+        assert!(matches!(
+            crate::plan::<_, (), _>(Doc, "ctx"),
+            Err(crate::EncryptError::Shape(_))
+        ));
+    }
+
+    #[test]
+    fn reserve_moves_to_a_bigger_buffer_and_keeps_the_bytes() {
+        let mut out = vec![1u8, 2, 3];
+        out.shrink_to_fit();
+        reserve(&mut out, 10);
+        assert_eq!(out, [1, 2, 3]);
+        assert!(out.capacity() >= 13);
+        let before = out.as_ptr();
+        reserve(&mut out, 10);
+        assert_eq!(out.as_ptr(), before, "enough room already: no move");
     }
 
     #[test]

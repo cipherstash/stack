@@ -20,6 +20,7 @@
 //! is synchronous whatever the cipher is, and terms collected by a sink
 //! teed with this one are complete before the first await.
 
+use core::future::Future;
 use core::marker::PhantomData;
 use std::collections::HashSet;
 
@@ -96,20 +97,24 @@ where
     Ok(seal_all(cipher, plan(value, aad)?)?)
 }
 
-/// Encrypt any source through an async cipher. The walk happens before the
-/// first await; a cipher with a batch API seals the document in one round
-/// trip.
-pub async fn encrypt_async<'a, P, C, A>(
+/// Encrypt any source through an async cipher. A cipher with a batch API
+/// seals the document in one round trip.
+///
+/// The walk happens here, before this returns, and the future holds only
+/// the planned leaves. So the future is `Send` even when the source is not
+/// (a JavaScript object behind a host binding).
+pub fn encrypt_async<'a, 'c, P, C, A>(
     value: P,
-    cipher: &C,
+    cipher: &'c C,
     aad: A,
-) -> Result<Node<C::Leaf>, EncryptError<C::Error>>
+) -> impl Future<Output = Result<Node<C::Leaf>, EncryptError<C::Error>>> + Send + 'c
 where
     P: Plaintext,
     C: AsyncCipher,
     A: IntoAad<'a>,
 {
-    Ok(seal_all_async(cipher, plan(value, aad)?).await?)
+    let planned = plan(value, aad);
+    async move { Ok(seal_all_async(cipher, planned?).await?) }
 }
 
 /// Where a finished node goes: back to the caller, or into a parent.
@@ -173,7 +178,8 @@ impl<E> EncryptSink<E, Root> {
 impl<E, O: Slot> EncryptSink<E, O> {
     /// Plan one scalar as one leaf: its tag, then its payload.
     fn leaf(self, ty: Option<Logical>, v: Physical<'_>) -> Result<O::Ok, EncryptError<E>> {
-        let mut plaintext = Protected::new(Vec::new());
+        // Sized once, so the buffer never regrows and leaves a copy behind.
+        let mut plaintext = Protected::new(Vec::with_capacity(leaf::max_len(&v)));
         leaf::write_leaf(ty, v, plaintext.risky_inner_mut()).map_err(|e| match e {
             ScalarError::Invalid => EncryptError::Shape("value is not valid for its logical type"),
             ScalarError::TooLong | ScalarError::Malformed => {

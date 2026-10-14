@@ -167,6 +167,20 @@ pub fn write_leaf(
     write(ty, v, Form::Leaf, out)
 }
 
+/// An upper bound on the bytes [`write()`] appends for `v` in either form:
+/// an envelope, a tag, a length and the payload. Lets a caller size a
+/// `Protected` buffer once rather than let it regrow, since a regrowing
+/// `Vec` frees its old allocation without wiping it.
+pub fn max_len(v: &Physical<'_>) -> usize {
+    const HEADER: usize = 3 + 1 + 4;
+    let payload = match v {
+        Physical::Text(s) => s.len(),
+        Physical::Bytes(b) => b.len(),
+        _ => 16,
+    };
+    HEADER.saturating_add(payload)
+}
+
 /// Whether `ty` is written with one of today's tags rather than the
 /// envelope.
 fn has_shorthand(ty: Logical) -> bool {

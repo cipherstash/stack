@@ -19,8 +19,9 @@
 //! through this module rather than the crate root.
 
 use core::future::Future;
+use std::collections::HashSet;
 
-use futures_util::future::try_join_all;
+use futures_util::stream::{self, StreamExt, TryStreamExt};
 use vitaminc_protected::Protected;
 
 use crate::frame::PassthroughFrame;
@@ -62,8 +63,9 @@ pub trait Cipher {
 /// Seal and open leaves through something that has to be awaited.
 ///
 /// `seal_many` and `open_many` take every leaf of one document in walk
-/// order. The defaults seal each leaf concurrently; a provider with a batch
-/// API overrides them to make one round trip per document. Either way the
+/// order. The defaults seal each leaf concurrently, at most
+/// [`DEFAULT_CONCURRENCY`] at a time; a provider with a batch API
+/// overrides them to make one round trip per document. Either way the
 /// cipher must return exactly one leaf per leaf it was given, in the same
 /// order, or the document is refused.
 ///
@@ -89,7 +91,10 @@ pub trait AsyncCipher: Sync {
         &self,
         leaves: Vec<Pending>,
     ) -> impl Future<Output = Result<Vec<Self::Leaf>, Self::Error>> + Send {
-        async move { try_join_all(leaves.into_iter().map(|p| self.seal(p.plaintext, p.aad))).await }
+        stream::iter(leaves)
+            .map(|p| self.seal(p.plaintext, p.aad))
+            .buffered(DEFAULT_CONCURRENCY)
+            .try_collect()
     }
 
     /// Every sealed leaf of one document with the AAD its position derives,
@@ -98,9 +103,17 @@ pub trait AsyncCipher: Sync {
         &self,
         leaves: Vec<(Self::Leaf, Context<'static>)>,
     ) -> impl Future<Output = Result<Vec<Protected<Vec<u8>>>, Self::Error>> + Send {
-        async move { try_join_all(leaves.into_iter().map(|(leaf, aad)| self.open(leaf, aad))).await }
+        stream::iter(leaves)
+            .map(|(leaf, aad)| self.open(leaf, aad))
+            .buffered(DEFAULT_CONCURRENCY)
+            .try_collect()
     }
 }
+
+/// How many leaves the default `seal_many` and `open_many` have in flight
+/// at once, so a large document does not send every leaf to a remote
+/// provider at the same moment.
+pub const DEFAULT_CONCURRENCY: usize = 32;
 
 /// A cipher returned a different number of leaves than it was given.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,44 +155,88 @@ pub enum SealError<E> {
     Count(LeafCount),
 }
 
-/// Open every leaf, one at a time. Any cipher failure is an authentication
-/// failure; a leaf count mismatch is a cipher bug.
+/// Open every leaf, one at a time.
+///
+/// The tree's structure is checked before any leaf is opened, so a
+/// malformed tree costs no cipher calls. A cipher's failure is returned as
+/// it is: for an AEAD that is wrong key, wrong AAD or tampering, for a
+/// remote provider it may also be an outage, and the cipher's error type
+/// says which. A leaf count mismatch is a cipher bug.
 pub fn open_all<'a, C: Cipher>(
     cipher: &C,
     node: Node<C::Leaf>,
     aad: &Context<'a>,
-) -> Result<Node<Opened>, OpenError> {
+) -> Result<Node<Opened>, OpenError<C::Error>> {
+    check_shape(&node)?;
     let mut sealed = Vec::new();
     let shape = split_with_aad(node, aad, &mut sealed);
     let opened = sealed
         .into_iter()
         .map(|(leaf, aad)| cipher.open(leaf, &aad))
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| OpenError::Auth)?;
+        .map_err(OpenError::Cipher)?;
     fill(shape, opened).map_err(OpenError::Count)
 }
 
-/// Open every leaf in one `open_many` call.
+/// Open every leaf in one `open_many` call, after the same structural
+/// check as [`open_all`].
 pub async fn open_all_async<'a, C: AsyncCipher>(
     cipher: &C,
     node: Node<C::Leaf>,
     aad: &Context<'a>,
-) -> Result<Node<Opened>, OpenError> {
+) -> Result<Node<Opened>, OpenError<C::Error>> {
+    check_shape(&node)?;
     let mut sealed = Vec::new();
     let shape = split_with_aad(node, aad, &mut sealed);
-    let opened = cipher
-        .open_many(sealed)
-        .await
-        .map_err(|_| OpenError::Auth)?;
+    let opened = cipher.open_many(sealed).await.map_err(OpenError::Cipher)?;
     fill(shape, opened).map_err(OpenError::Count)
 }
 
 /// Why opening failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OpenError {
-    /// Wrong key, wrong AAD, or tampered ciphertext.
-    Auth,
+pub enum OpenError<E> {
+    /// The cipher refused a leaf.
+    Cipher(E),
+    /// The tree breaks a container rule: a container with nothing sealed
+    /// in it, a repeated map key, or a passthrough that is not a frame.
+    Malformed,
+    /// The cipher returned the wrong number of leaves.
     Count(LeafCount),
+}
+
+/// The container rules `EncryptSink` enforced, checked on the sealed tree
+/// so a malformed one is refused before any leaf is opened. `walk`
+/// checks them again, since it accepts opened trees from anywhere.
+fn check_shape<L, E>(node: &Node<L>) -> Result<(), OpenError<E>> {
+    let sealed_any = |mut nodes: core::slice::Iter<'_, Node<L>>| {
+        nodes.any(|n| !matches!(n, CipherText::Passthrough(_)))
+    };
+    match node {
+        CipherText::Sequence(items) => {
+            if !sealed_any(items.iter()) {
+                return Err(OpenError::Malformed);
+            }
+            items.iter().try_for_each(check_shape)
+        }
+        CipherText::Map(entries) => {
+            let mut seen = HashSet::new();
+            if !entries.iter().all(|(k, _)| seen.insert(k.as_str()))
+                || !entries
+                    .iter()
+                    .any(|(_, n)| !matches!(n, CipherText::Passthrough(_)))
+            {
+                return Err(OpenError::Malformed);
+            }
+            entries.iter().try_for_each(|(_, n)| check_shape(n))
+        }
+        CipherText::Passthrough(frame) => {
+            frame.parse().map(|_| ()).map_err(|_| OpenError::Malformed)
+        }
+        CipherText::Single(_)
+        | CipherText::EmptySequence(_)
+        | CipherText::EmptyMap(_)
+        | CipherText::None(_) => Ok(()),
+    }
 }
 
 /// A tree's shape with its leaves taken out, in walk order.
@@ -308,6 +365,7 @@ pub fn leaves_with_aad<L>(node: Node<L>, aad: &Context<'_>) -> Vec<(L, Context<'
 pub(crate) mod mock {
     use super::*;
     use core::sync::atomic::{AtomicUsize, Ordering};
+    use futures_util::future::try_join_all;
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct Leaf {
@@ -414,8 +472,10 @@ pub(crate) mod mock {
 mod tests {
     use super::mock::{Leaf, Mock, Refused, Remote};
     use super::*;
+    use crate::frame::PassthroughFrame;
     use crate::plaintext::record::{record, Event, Owned};
     use crate::{decrypt_into, encrypt, encrypt_async, plan, walk, EncryptError, Int, IntoAad};
+    use core::sync::atomic::{AtomicUsize, Ordering};
     use futures_executor::block_on;
     use std::collections::BTreeMap;
     use vitaminc_protected::Controlled;
@@ -469,8 +529,180 @@ mod tests {
         let sealed = encrypt(sample(), &Mock, "ctx").expect("encrypts");
         assert_eq!(
             open_all(&Mock, sealed, &"other".into_aad()).err(),
-            Some(OpenError::Auth)
+            Some(OpenError::Cipher(Refused))
         );
+    }
+
+    /// Counts opens, so a test can see that a malformed tree costs none.
+    struct Counting(core::cell::Cell<usize>);
+
+    impl Cipher for Counting {
+        type Leaf = Leaf;
+        type Error = Refused;
+        fn seal(&self, plaintext: Protected<Vec<u8>>, aad: &Context<'_>) -> Result<Leaf, Refused> {
+            Mock.seal(plaintext, aad)
+        }
+        fn open(&self, leaf: Leaf, aad: &Context<'_>) -> Result<Protected<Vec<u8>>, Refused> {
+            self.0.set(self.0.get() + 1);
+            Mock.open(leaf, aad)
+        }
+    }
+
+    #[test]
+    fn a_malformed_tree_is_refused_before_any_leaf_is_opened() {
+        let leaf = || match encrypt(1u16, &Mock, "ctx").expect("encrypts") {
+            CipherText::Single(leaf) => leaf,
+            _ => unreachable!(),
+        };
+        let passthrough = || CipherText::Passthrough(PassthroughFrame(vec![0x00]));
+        let malformed: [Node<Leaf>; 4] = [
+            CipherText::Map(vec![
+                ("k".into(), CipherText::Single(leaf())),
+                ("k".into(), CipherText::Single(leaf())),
+            ]),
+            CipherText::Sequence(vec![passthrough(), passthrough()]),
+            CipherText::Sequence(vec![]),
+            CipherText::Sequence(vec![
+                CipherText::Single(leaf()),
+                CipherText::Passthrough(PassthroughFrame(vec![0xEF])),
+            ]),
+        ];
+        for node in malformed {
+            let cipher = Counting(core::cell::Cell::new(0));
+            assert_eq!(
+                open_all(&cipher, node, &"ctx".into_aad()).err(),
+                Some(OpenError::Malformed)
+            );
+            assert_eq!(cipher.0.get(), 0);
+        }
+    }
+
+    #[test]
+    fn a_provider_error_on_open_is_not_reported_as_tampering() {
+        struct Down;
+        impl AsyncCipher for Down {
+            type Leaf = Leaf;
+            type Error = &'static str;
+            async fn seal(
+                &self,
+                p: Protected<Vec<u8>>,
+                aad: Context<'static>,
+            ) -> Result<Leaf, &'static str> {
+                Mock.seal(p, &aad).map_err(|_| "refused")
+            }
+            async fn open(
+                &self,
+                _: Leaf,
+                _: Context<'static>,
+            ) -> Result<Protected<Vec<u8>>, &'static str> {
+                Err("kms unavailable")
+            }
+        }
+        let sealed = encrypt(34u32, &Mock, ()).expect("encrypts");
+        let mut log = Vec::new();
+        assert!(matches!(
+            block_on(crate::decrypt_into_async(
+                &Down,
+                sealed,
+                (),
+                crate::plaintext::record::Record(&mut log)
+            )),
+            Err(crate::DecryptError::Cipher("kms unavailable"))
+        ));
+    }
+
+    /// Tracks how many leaves are in flight at once through the default
+    /// `seal_many`/`open_many`. Each call yields once, so the stream has to
+    /// hold several open to make progress.
+    #[derive(Default)]
+    struct Concurrency {
+        now: AtomicUsize,
+        max: AtomicUsize,
+    }
+
+    struct YieldOnce(bool);
+
+    impl Future for YieldOnce {
+        type Output = ();
+        fn poll(
+            mut self: core::pin::Pin<&mut Self>,
+            cx: &mut core::task::Context<'_>,
+        ) -> core::task::Poll<()> {
+            if self.0 {
+                return core::task::Poll::Ready(());
+            }
+            self.0 = true;
+            cx.waker().wake_by_ref();
+            core::task::Poll::Pending
+        }
+    }
+
+    impl Concurrency {
+        async fn one<T>(&self, f: impl FnOnce() -> T) -> T {
+            let now = self.now.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max.fetch_max(now, Ordering::SeqCst);
+            YieldOnce(false).await;
+            self.now.fetch_sub(1, Ordering::SeqCst);
+            f()
+        }
+    }
+
+    impl AsyncCipher for Concurrency {
+        type Leaf = Leaf;
+        type Error = Refused;
+        async fn seal(
+            &self,
+            p: Protected<Vec<u8>>,
+            aad: Context<'static>,
+        ) -> Result<Leaf, Refused> {
+            self.one(|| Mock.seal(p, &aad)).await
+        }
+        async fn open(
+            &self,
+            l: Leaf,
+            aad: Context<'static>,
+        ) -> Result<Protected<Vec<u8>>, Refused> {
+            self.one(|| Mock.open(l, &aad)).await
+        }
+    }
+
+    #[test]
+    fn the_default_batch_bounds_how_many_leaves_are_in_flight() {
+        let cipher = Concurrency::default();
+        let many: Vec<u32> = (0..200).collect();
+        let sealed = block_on(encrypt_async(many.clone(), &cipher, "ctx")).expect("encrypts");
+        let max = cipher.max.load(Ordering::SeqCst);
+        assert!(max > 1 && max <= DEFAULT_CONCURRENCY, "{max}");
+        let mut log = Vec::new();
+        block_on(crate::decrypt_into_async(
+            &cipher,
+            sealed,
+            "ctx",
+            crate::plaintext::record::Record(&mut log),
+        ))
+        .expect("decrypts");
+        assert!(cipher.max.load(Ordering::SeqCst) <= DEFAULT_CONCURRENCY);
+        assert_eq!(log, record(many).expect("records"));
+    }
+
+    #[test]
+    fn encrypt_async_walks_before_returning_a_send_future() {
+        // A source a JavaScript binding might hand over: not `Send`.
+        #[derive(Clone)]
+        struct Local(std::rc::Rc<u32>);
+        impl crate::Plaintext for Local {
+            fn visit<S: crate::Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                (*self.0).visit(sink)
+            }
+        }
+        fn assert_send<T: Send>(t: T) -> T {
+            t
+        }
+        let remote = Remote::new(true);
+        let future = assert_send(encrypt_async(Local(std::rc::Rc::new(34)), &remote, "ctx"));
+        assert_eq!(remote.calls(), 0);
+        block_on(future).expect("encrypts");
+        assert_eq!(remote.calls(), 1);
     }
 
     #[test]
@@ -529,7 +761,7 @@ mod tests {
         let sealed = encrypt(sample(), &DropsOne, "ctx").expect("encrypts");
         assert_eq!(
             block_on(open_all_async(&extra, sealed, &"ctx".into_aad())).err(),
-            Some(OpenError::Count(LeafCount::TooFew))
+            Some(OpenError::<Refused>::Count(LeafCount::TooFew))
         );
     }
 

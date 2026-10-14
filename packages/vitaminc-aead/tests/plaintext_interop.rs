@@ -100,7 +100,50 @@ fn corpus() -> Vec<Vector> {
         name: "nested-sample".into(),
         bytes: encode(sample()),
     });
+    all.push(Vector {
+        name: "nested-edges".into(),
+        bytes: encode(edges()),
+    });
+    all.push(Vector {
+        name: "top-level-passthrough".into(),
+        bytes: encode(Value::Passthrough(Box::new(Value::Array(vec![
+            Value::Int32(1),
+        ])))),
+    });
     all
+}
+
+/// The shapes most likely to diverge: empty containers below the top,
+/// passthrough beside sealed values in an array, and keys that need care.
+fn edges() -> Value {
+    Value::Object(vec![
+        ("".into(), Value::Bool(false)),
+        ("ключ".into(), Value::String("значение".into())),
+        ("a.b\"c".into(), Value::Null),
+        (
+            "empties".into(),
+            Value::Array(vec![
+                Value::Array(vec![]),
+                Value::Object(vec![]),
+                Value::Array(vec![Value::Array(vec![])]),
+            ]),
+        ),
+        (
+            "mixed".into(),
+            Value::Array(vec![
+                Value::Passthrough(Box::new(Value::String("public".into()))),
+                Value::UInt8(7),
+                Value::Passthrough(Box::new(Value::Object(vec![(
+                    "k".into(),
+                    Value::Array(vec![]),
+                )]))),
+            ]),
+        ),
+        (
+            "nested".into(),
+            Value::Object(vec![("inner".into(), Value::Object(vec![]))]),
+        ),
+    ])
 }
 
 fn encode(value: Value) -> Vec<u8> {
@@ -188,19 +231,34 @@ fn the_model_interoperates_with_today_both_ways() {
             v.name
         );
         assert_eq!(
-            decrypt_to_frame(&aes, to_model(old_ct), Context::from_encoded(AAD)).expect(&v.name),
-            v.bytes,
+            decrypt_to_frame(&aes, to_model(old_ct), Context::from_encoded(AAD))
+                .expect(&v.name)
+                .risky_ref(),
+            &v.bytes,
             "old to new: {}",
             v.name
         );
         let new_ct = encrypt(frame, &aes, Context::from_encoded(AAD)).expect(&v.name);
         assert_eq!(
-            decrypt_to_frame(&aes, new_ct, Context::from_encoded(AAD)).expect(&v.name),
-            v.bytes,
+            decrypt_to_frame(&aes, new_ct, Context::from_encoded(AAD))
+                .expect(&v.name)
+                .risky_ref(),
+            &v.bytes,
             "new to new: {}",
             v.name
         );
     }
+}
+
+#[test]
+fn a_none_sealed_on_todays_path_reads_as_null() {
+    let aes = Aes(cipher());
+    let ct = None::<u32>
+        .encrypt_with_aad(&aes.0, Context::from_encoded(AAD))
+        .expect("encrypts");
+    assert!(matches!(ct, CipherText::None(_)));
+    let frame = decrypt_to_frame(&aes, to_model(ct), Context::from_encoded(AAD)).expect("decrypts");
+    assert_eq!(frame.risky_ref(), &[vitaminc_aead::tags::NULL]);
 }
 
 #[test]
@@ -218,7 +276,7 @@ fn a_wrong_aad_is_an_auth_failure() {
         if v.bytes.first() == Some(&vitaminc_aead::frame::PASSTHROUGH) {
             assert!(wrong.is_ok(), "{}", v.name);
         } else {
-            assert!(matches!(wrong, Err(DecryptError::Auth)), "{}", v.name);
+            assert!(matches!(wrong, Err(DecryptError::Cipher(_))), "{}", v.name);
         }
     }
 }
