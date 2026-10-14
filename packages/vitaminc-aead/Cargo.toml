@@ -22,6 +22,8 @@ bytes = { version = "^1", features = ["serde"] }
 serde = { workspace = true }
 thiserror = { workspace = true }
 zeroize = { workspace = true }
+# `try_join_all` for the per-leaf defaults of `AsyncCipher`. No runtime.
+futures-util = { version = "0.3.31", default-features = false, features = ["alloc"] }
 
 # Optional `Plaintext` sources for logical types: a date and a timestamp,
 # a decimal, and a uuid. Each is a few lines over the core model.
@@ -66,4 +68,10 @@ quickcheck = "1.1.0"
 quickcheck_macros = "1.2.0"
 # Compile-fail tests for the derive macros' guards — see tests/derive_ui.rs.
 trybuild = "1.0.118"
+# Path-only: the plaintext model's interop tests seal with real AES-256-GCM
+# and check the new path against the `Value` path, byte for byte.
+vitaminc-encrypt = { path = "../encrypt" }
+vitaminc-aead-value = { path = "../aead-value", features = ["chrono", "rust_decimal"] }
+futures-executor = "0.3.31"
 serde_json = "1"
+chrono = { version = "0.4.44", default-features = false, features = ["std"] }

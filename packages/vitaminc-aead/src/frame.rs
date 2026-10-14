@@ -1,0 +1,579 @@
+//! The transport frame: one value, as bytes, for crossing an FFI boundary
+//! and for carrying a passthrough subtree in the clear.
+//!
+//! A frame is a transport encoding, not a storage format. Scalars use the
+//! leaf codec in [`leaf`](crate::leaf) in its frame form (text and bytes
+//! carry a `u32` length). Containers are framed with the tags here: an
+//! [`ARRAY`] or [`OBJECT`] byte, a `u32` little-endian count, then the
+//! children; object keys are a `u32` length and UTF-8 bytes. A
+//! [`PASSTHROUGH`] byte marks the next node as a subtree that travels in
+//! the clear.
+//!
+//! [`Frame`] is a validated, borrowed frame that implements [`Plaintext`]
+//! by walking its own bytes in place, so a host that ships frames (Go) is
+//! a source with no intermediate value. [`FrameWriter`] is a [`Sink`] that
+//! writes frame bytes, so the same host decrypts straight into a frame.
+//! [`PassthroughFrame`] is the owned frame a ciphertext carries for a
+//! passthrough subtree.
+
+use std::collections::HashSet;
+
+use vitaminc_protected::{Controlled, Protected};
+
+use crate::leaf::{self, Form, ScalarError};
+use crate::plaintext::{Error, Logical, MapSink, Physical, Plaintext, SeqSink, Sink, SourceError};
+
+/// Framing tag for a sequence: `ARRAY`, `u32` count, then the elements.
+pub const ARRAY: u8 = 0xF0;
+/// Framing tag for a map: `OBJECT`, `u32` count, then `u32` key length,
+/// key bytes and value for each entry.
+pub const OBJECT: u8 = 0xF1;
+/// Framing tag for a passthrough subtree: `PASSTHROUGH`, then one node
+/// that travels in the clear.
+pub const PASSTHROUGH: u8 = 0xF2;
+
+/// Maximum nesting depth of a frame. Bounds recursion so a deeply nested
+/// input cannot overflow the stack. The same limit, counted the same way,
+/// as the host bindings', so any frame they accept parses here.
+pub const MAX_DEPTH: usize = 128;
+
+/// Exactly one validated value node, borrowed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Frame<'a> {
+    bytes: &'a [u8],
+}
+
+/// The bytes are not a well-formed frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameError;
+
+impl core::fmt::Display for FrameError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("malformed frame")
+    }
+}
+
+impl std::error::Error for FrameError {}
+
+impl<'a> Frame<'a> {
+    /// Validate `bytes` as exactly one value node.
+    ///
+    /// The whole frame is checked up front, so [`visit`](Plaintext::visit)
+    /// never has to report a malformed frame part way through a walk.
+    pub fn parse(bytes: &'a [u8]) -> Result<Self, FrameError> {
+        let mut cursor = Cursor { buf: bytes, pos: 0 };
+        skip(&mut cursor, 0)?;
+        if cursor.pos != bytes.len() {
+            return Err(FrameError);
+        }
+        Ok(Self { bytes })
+    }
+
+    pub fn as_bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+}
+
+struct Cursor<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Cursor<'a> {
+    fn peek(&self) -> Result<u8, FrameError> {
+        self.buf.get(self.pos).copied().ok_or(FrameError)
+    }
+
+    fn byte(&mut self) -> Result<u8, FrameError> {
+        let b = self.peek()?;
+        self.pos += 1;
+        Ok(b)
+    }
+
+    fn take(&mut self, n: usize) -> Result<&'a [u8], FrameError> {
+        let end = self.pos.checked_add(n).ok_or(FrameError)?;
+        let s = self.buf.get(self.pos..end).ok_or(FrameError)?;
+        self.pos = end;
+        Ok(s)
+    }
+
+    fn count(&mut self) -> Result<usize, FrameError> {
+        let b = self.take(4)?;
+        Ok(u32::from_le_bytes(b.try_into().map_err(|_| FrameError)?) as usize)
+    }
+
+    fn key(&mut self) -> Result<&'a str, FrameError> {
+        let len = self.count()?;
+        core::str::from_utf8(self.take(len)?).map_err(|_| FrameError)
+    }
+
+    fn scalar(&mut self) -> Result<(Option<Logical>, Physical<'a>), FrameError> {
+        let (scalar, used) =
+            leaf::read(&self.buf[self.pos..], Form::Frame).map_err(|_| FrameError)?;
+        self.pos += used;
+        Ok(scalar)
+    }
+
+    /// The next whole value node, as its own frame.
+    fn node(&mut self, depth: usize) -> Result<Frame<'a>, FrameError> {
+        let start = self.pos;
+        skip(self, depth)?;
+        Ok(Frame {
+            bytes: &self.buf[start..self.pos],
+        })
+    }
+}
+
+/// Step over one value node, validating it.
+fn skip(c: &mut Cursor<'_>, depth: usize) -> Result<(), FrameError> {
+    if depth > MAX_DEPTH {
+        return Err(FrameError);
+    }
+    match c.peek()? {
+        ARRAY => {
+            c.byte()?;
+            for _ in 0..c.count()? {
+                skip(c, depth + 1)?;
+            }
+        }
+        OBJECT => {
+            c.byte()?;
+            let count = c.count()?;
+            let mut seen = HashSet::new();
+            for _ in 0..count {
+                let key = c.key()?;
+                if !seen.insert(key) {
+                    return Err(FrameError);
+                }
+                skip(c, depth + 1)?;
+            }
+        }
+        PASSTHROUGH => {
+            c.byte()?;
+            skip(c, depth + 1)?;
+        }
+        _ => {
+            c.scalar()?;
+        }
+    }
+    Ok(())
+}
+
+// Everything below runs on a frame `parse` accepted, so a read cannot fail.
+const VALIDATED: &str = "frame was validated by Frame::parse";
+
+/// A frame walked in place: no scalar leaves the buffer except to go
+/// straight to the sink.
+impl Plaintext for Frame<'_> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        let mut c = Cursor {
+            buf: self.bytes,
+            pos: 0,
+        };
+        match c.peek().expect(VALIDATED) {
+            ARRAY => {
+                c.byte().expect(VALIDATED);
+                let count = c.count().expect(VALIDATED);
+                let mut seq = sink.seq(Some(count))?;
+                for _ in 0..count {
+                    c.node(0).expect(VALIDATED).visit(seq.element()?)?;
+                }
+                seq.end()
+            }
+            OBJECT => {
+                c.byte().expect(VALIDATED);
+                let count = c.count().expect(VALIDATED);
+                let mut map = sink.map(Some(count))?;
+                for _ in 0..count {
+                    let key = c.key().expect(VALIDATED);
+                    c.node(0).expect(VALIDATED).visit(map.entry(key)?)?;
+                }
+                map.end()
+            }
+            PASSTHROUGH => {
+                c.byte().expect(VALIDATED);
+                sink.passthrough(c.node(0).expect(VALIDATED))
+            }
+            _ => {
+                let (ty, v) = c.scalar().expect(VALIDATED);
+                sink.scalar(ty, v)
+            }
+        }
+    }
+}
+
+/// An owned frame: the payload a ciphertext carries for a passthrough
+/// subtree. Non-sensitive by contract; neither sealed nor authenticated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PassthroughFrame(pub Vec<u8>);
+
+impl PassthroughFrame {
+    /// The frame, validated.
+    pub fn parse(&self) -> Result<Frame<'_>, FrameError> {
+        Frame::parse(&self.0)
+    }
+}
+
+impl Plaintext for PassthroughFrame {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.parse()
+            .map_err(|e| S::Error::source(SourceError::new(e)))?
+            .visit(sink)
+    }
+}
+
+impl Plaintext for &PassthroughFrame {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.parse()
+            .map_err(|e| S::Error::source(SourceError::new(e)))?
+            .visit(sink)
+    }
+}
+
+/// Why a value could not be written as a frame.
+#[derive(Debug)]
+pub enum FrameWriteError {
+    /// Nested deeper than [`MAX_DEPTH`].
+    TooDeep,
+    /// Text, bytes, a key or a count longer than a `u32`.
+    TooLong,
+    /// A value that is not valid for its logical type.
+    Invalid,
+    /// A container's declared length did not match the children written.
+    CountMismatch,
+    /// A map wrote the same key twice.
+    DuplicateKey,
+    /// The source stopped the walk.
+    Source(SourceError),
+}
+
+impl Error for FrameWriteError {
+    fn source(error: SourceError) -> Self {
+        Self::Source(error)
+    }
+}
+
+/// Write any source as a frame. The buffer is `Protected`, since a frame
+/// of plaintext is plaintext.
+pub fn to_frame<P: Plaintext>(p: P) -> Result<Protected<Vec<u8>>, FrameWriteError> {
+    let mut out = Protected::new(Vec::new());
+    p.visit(FrameWriter {
+        out: out.risky_inner_mut(),
+        depth: 0,
+    })?;
+    Ok(out)
+}
+
+/// A sink that writes one value node onto the end of a buffer. Unknown
+/// container lengths are patched in at `end`.
+pub struct FrameWriter<'o> {
+    out: &'o mut Vec<u8>,
+    depth: usize,
+}
+
+impl<'o> FrameWriter<'o> {
+    pub fn new(out: &'o mut Vec<u8>) -> Self {
+        Self { out, depth: 0 }
+    }
+
+    fn node(self, tag: u8) -> Result<&'o mut Vec<u8>, FrameWriteError> {
+        if self.depth > MAX_DEPTH {
+            return Err(FrameWriteError::TooDeep);
+        }
+        self.out.push(tag);
+        Ok(self.out)
+    }
+
+    fn container(self, tag: u8) -> Result<Count<'o>, FrameWriteError> {
+        let depth = self.depth;
+        let out = self.node(tag)?;
+        let at = out.len();
+        out.extend_from_slice(&[0; 4]);
+        Ok(Count {
+            out,
+            depth,
+            at,
+            n: 0,
+        })
+    }
+}
+
+fn write_len(out: &mut Vec<u8>, len: usize) -> Result<(), FrameWriteError> {
+    let len = u32::try_from(len).map_err(|_| FrameWriteError::TooLong)?;
+    out.extend_from_slice(&len.to_le_bytes());
+    Ok(())
+}
+
+/// A container whose count is written once the children are known.
+struct Count<'o> {
+    out: &'o mut Vec<u8>,
+    depth: usize,
+    at: usize,
+    n: usize,
+}
+
+impl Count<'_> {
+    fn child(&mut self) -> FrameWriter<'_> {
+        self.n += 1;
+        FrameWriter {
+            out: &mut *self.out,
+            depth: self.depth + 1,
+        }
+    }
+
+    fn end(self, expected: Option<usize>) -> Result<(), FrameWriteError> {
+        if expected.is_some_and(|e| e != self.n) {
+            return Err(FrameWriteError::CountMismatch);
+        }
+        let n = u32::try_from(self.n).map_err(|_| FrameWriteError::TooLong)?;
+        self.out[self.at..self.at + 4].copy_from_slice(&n.to_le_bytes());
+        Ok(())
+    }
+}
+
+impl<'o> Sink for FrameWriter<'o> {
+    type Ok = ();
+    type Error = FrameWriteError;
+    type Seq = FrameSeq<'o>;
+    type Map = FrameMap<'o>;
+
+    fn scalar(self, ty: Option<Logical>, v: Physical<'_>) -> Result<(), FrameWriteError> {
+        if self.depth > MAX_DEPTH {
+            return Err(FrameWriteError::TooDeep);
+        }
+        leaf::write(ty, v, Form::Frame, self.out).map_err(|e| match e {
+            ScalarError::Invalid => FrameWriteError::Invalid,
+            ScalarError::TooLong | ScalarError::Malformed => FrameWriteError::TooLong,
+        })
+    }
+
+    fn seq(self, len: Option<usize>) -> Result<FrameSeq<'o>, FrameWriteError> {
+        Ok(FrameSeq {
+            count: self.container(ARRAY)?,
+            expected: len,
+        })
+    }
+
+    fn map(self, len: Option<usize>) -> Result<FrameMap<'o>, FrameWriteError> {
+        Ok(FrameMap {
+            count: self.container(OBJECT)?,
+            expected: len,
+            seen: HashSet::new(),
+        })
+    }
+
+    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<(), FrameWriteError> {
+        let depth = self.depth;
+        let out = self.node(PASSTHROUGH)?;
+        value.visit(FrameWriter {
+            out,
+            depth: depth + 1,
+        })
+    }
+}
+
+pub struct FrameSeq<'o> {
+    count: Count<'o>,
+    expected: Option<usize>,
+}
+
+impl SeqSink for FrameSeq<'_> {
+    type Ok = ();
+    type Error = FrameWriteError;
+    type Element<'s>
+        = FrameWriter<'s>
+    where
+        Self: 's;
+
+    fn element(&mut self) -> Result<FrameWriter<'_>, FrameWriteError> {
+        Ok(self.count.child())
+    }
+
+    fn end(self) -> Result<(), FrameWriteError> {
+        self.count.end(self.expected)
+    }
+}
+
+pub struct FrameMap<'o> {
+    count: Count<'o>,
+    expected: Option<usize>,
+    seen: HashSet<String>,
+}
+
+impl MapSink for FrameMap<'_> {
+    type Ok = ();
+    type Error = FrameWriteError;
+    type Entry<'s>
+        = FrameWriter<'s>
+    where
+        Self: 's;
+
+    fn entry(&mut self, key: &str) -> Result<FrameWriter<'_>, FrameWriteError> {
+        if !self.seen.insert(key.to_owned()) {
+            return Err(FrameWriteError::DuplicateKey);
+        }
+        write_len(self.count.out, key.len())?;
+        self.count.out.extend_from_slice(key.as_bytes());
+        Ok(self.count.child())
+    }
+
+    fn end(self) -> Result<(), FrameWriteError> {
+        self.count.end(self.expected)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plaintext::record::{record, Event, Owned};
+    use crate::plaintext::{visit_seq, Int};
+    use std::collections::BTreeMap;
+
+    fn frame_of<P: Plaintext>(p: P) -> Vec<u8> {
+        to_frame(p).expect("frames").risky_ref().clone()
+    }
+
+    #[test]
+    fn a_frame_round_trips_through_write_and_walk() {
+        let mut value = BTreeMap::new();
+        value.insert("name", vec![Some("Ada"), None]);
+        value.insert("empty", vec![]);
+        let bytes = frame_of(value.clone());
+        let frame = Frame::parse(&bytes).expect("parses");
+        assert_eq!(record(frame).expect("walks"), record(value).expect("walks"));
+        // Writing the walk of a frame gives the same frame.
+        assert_eq!(frame_of(frame), bytes);
+    }
+
+    #[test]
+    fn container_framing_is_tag_count_children() {
+        assert_eq!(
+            frame_of(vec![1u16, 2]),
+            [ARRAY, 2, 0, 0, 0, 0x0F, 1, 0, 0x0F, 2, 0]
+        );
+        let mut map = BTreeMap::new();
+        map.insert("k", true);
+        assert_eq!(frame_of(map), [OBJECT, 1, 0, 0, 0, 1, 0, 0, 0, b'k', 0x03]);
+    }
+
+    #[test]
+    fn passthrough_is_framed_in_the_clear() {
+        struct Pass;
+        impl Plaintext for Pass {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                sink.passthrough("public")
+            }
+        }
+        let bytes = frame_of(Pass);
+        assert_eq!(
+            bytes,
+            [
+                PASSTHROUGH,
+                0x0A,
+                6,
+                0,
+                0,
+                0,
+                b'p',
+                b'u',
+                b'b',
+                b'l',
+                b'i',
+                b'c'
+            ]
+        );
+        assert_eq!(
+            record(Frame::parse(&bytes).expect("parses")).expect("walks"),
+            [
+                Event::Passthrough,
+                Event::Scalar(None, Owned::Text("public".into()))
+            ]
+        );
+        let owned = PassthroughFrame(bytes.clone());
+        assert_eq!(frame_of(owned.clone()), bytes);
+        assert_eq!(frame_of(&owned), bytes);
+    }
+
+    #[test]
+    fn unknown_lengths_are_patched_in() {
+        struct Unsized(Vec<u32>);
+        impl Plaintext for Unsized {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                visit_seq(sink, None, self.0)
+            }
+        }
+        assert_eq!(frame_of(Unsized(vec![1, 2, 3])), frame_of(vec![1u32, 2, 3]));
+    }
+
+    #[test]
+    fn a_wrong_length_hint_is_refused() {
+        struct Lies;
+        impl Plaintext for Lies {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                visit_seq(sink, Some(5), vec![1u32])
+            }
+        }
+        assert!(matches!(
+            to_frame(Lies),
+            Err(FrameWriteError::CountMismatch)
+        ));
+    }
+
+    #[test]
+    fn duplicate_keys_are_refused_both_ways() {
+        struct Dup;
+        impl Plaintext for Dup {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                let mut map = sink.map(None)?;
+                1u32.visit(map.entry("k")?)?;
+                2u32.visit(map.entry("k")?)?;
+                map.end()
+            }
+        }
+        assert!(matches!(to_frame(Dup), Err(FrameWriteError::DuplicateKey)));
+        let bytes = [
+            OBJECT, 2, 0, 0, 0, 1, 0, 0, 0, b'k', 0x00, 1, 0, 0, 0, b'k', 0x00,
+        ];
+        assert_eq!(Frame::parse(&bytes), Err(FrameError));
+    }
+
+    #[test]
+    fn malformed_frames_are_refused() {
+        assert_eq!(Frame::parse(&[]), Err(FrameError));
+        assert_eq!(Frame::parse(&[0x00, 0x00]), Err(FrameError));
+        assert_eq!(Frame::parse(&[ARRAY, 1, 0, 0, 0]), Err(FrameError));
+        assert_eq!(
+            Frame::parse(&[OBJECT, 1, 0, 0, 0, 1, 0, 0, 0, 0xFF, 0x00]),
+            Err(FrameError)
+        );
+        assert_eq!(Frame::parse(&[PASSTHROUGH]), Err(FrameError));
+        assert_eq!(Frame::parse(&[0x0A, 2, 0, 0, 0, b'a']), Err(FrameError));
+    }
+
+    #[test]
+    fn depth_is_bounded_both_ways() {
+        let mut bytes = Vec::new();
+        for _ in 0..(MAX_DEPTH + 2) {
+            bytes.extend_from_slice(&[ARRAY, 1, 0, 0, 0]);
+        }
+        bytes.push(0x00);
+        assert_eq!(Frame::parse(&bytes), Err(FrameError));
+
+        struct Deep(usize);
+        impl Plaintext for Deep {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                if self.0 == 0 {
+                    return sink.scalar(None, Physical::Int(Int::U8(0)));
+                }
+                let mut seq = sink.seq(Some(1))?;
+                Deep(self.0 - 1).visit(seq.element()?)?;
+                seq.end()
+            }
+        }
+        assert!(to_frame(Deep(MAX_DEPTH)).is_ok());
+        assert!(matches!(
+            to_frame(Deep(MAX_DEPTH + 1)),
+            Err(FrameWriteError::TooDeep)
+        ));
+    }
+}
