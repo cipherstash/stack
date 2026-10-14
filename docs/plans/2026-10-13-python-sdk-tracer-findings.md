@@ -16,8 +16,10 @@ EQL v3.0.6 applied — 53 tests green, 3 Rust unit tests green:
 1. `import stackencrypt` from an `abi3-py39` wheel built by maturin over
    `stack-encrypt`, in a fourth Cargo workspace at `languages/python`.
 2. `Plan.of(User).context("users").build()` reads `Annotated` hints into the
-   engine's data plan, fails closed at import on an undeclared field, and
-   the engine's own `plan_with` validates the rest with no credentials.
+   engine's data plan, fails closed at `build()` on an undeclared field
+   (import time when that call sits at module level — by convention, not by
+   construction; see "Gaps against CIP-4340's wording"), and the engine's
+   own `plan_with` validates the rest with no credentials.
 3. `Cipher(plan).encrypt(models)` seals a batch in **one** ZeroKMS request;
    an empty batch makes none; `decrypt` returns the model type; `query`
    returns a term.
@@ -57,8 +59,10 @@ design choice.
   both wait on the engine. Amend the ticket before anyone builds against it.
 - **The engine-side design for that gap already exists:** "Value encodings
   for new EQL kinds" (7 Oct 2026, the same day as CIP-4340's decisions;
-  `eql-kinds.txt` at the repo root, a draft for team review — "nothing is
-  built or ticketed yet"). Read it before planning anything past `TextEq`.
+  https://claude.ai/artifact/9JQR2Zwn7ft5QkyzrMurbh — a Claude
+  Docs draft for team review, "nothing is built or ticketed yet"; it is a
+  living document, so open the link rather than trusting a copy). Read it
+  before planning anything past `TextEq`.
   What it establishes:
   - The 42 non-text families are tracked in **#1130** and are "blocked on
     encoding, not on code". A kind must exist in **three** encodings owned
@@ -117,6 +121,20 @@ design choice.
   logged-in developer machine needs nothing set. **Any committed bytes
   keyed to a workspace keyset (equality terms) pass only in that
   workspace.** Produce the Rust side of a parity check at test time instead.
+- **`TextEq` needs nothing from Postgres that does not already exist**, which
+  is part of why it could ship first. Equality lives entirely in `hm`, the
+  HMAC; the ciphertext `c` is sealed with a fresh IV, so two stored values
+  for the same plaintext are *different* JSON and an index on the column
+  itself never matches. The index EQL v3 is built for is a functional one on
+  the extracted term —
+  `create index … using hash (eql_v3_internal.eq_term(col))` (or `btree`:
+  the term's type rides on `bytea`'s default operator classes, so both work
+  and only `=` means anything) — and the bundle marks the extractor
+  `IMMUTABLE` and inlinable so the domain's `=` operator folds into the
+  query and the planner engages that index "structurally". The tracer
+  created **no** index on the encrypted column; its equality queries were
+  sequential scans. The ORE / OPE domains are the ones that need EQL's own
+  operator classes, because their terms do not sort as bytes.
 
 ## Findings about Python and the toolchain
 
@@ -171,6 +189,44 @@ design choice.
   shipping unit, so this is unowned.
 - The live-test gate is "does the engine construct", not "are `CS_*` set".
 
+## Gaps against CIP-4340's wording, found on re-reading
+
+Two places where what was built is narrower than what the ticket says, and
+the findings above would otherwise imply the ticket was met.
+
+- **"The engine checks the declaration when Python defines the class"
+  (week-1 step 2) — not quite.** The check runs at `build()`, one call
+  later, wherever the caller puts that call.
+  `Plan.of(User).context(…).build()` at module top level makes it import
+  time **by convention**; nothing fires when the `class` statement
+  finishes. A class decorator — `@stash.model("users")` above `@dataclass`
+  — would run `build()` at class definition **by construction**, hold the
+  `PlanSpec` on the class, and let the call site be `Cipher(User)`. It is a
+  second way in (G6), so it has to earn its place: it carries the context,
+  which is per-model and which `Annotated` cannot express, and it reaches
+  the moment the ticket names. The stronger form makes it *the* way and
+  retires `Plan.of` from the public surface. Costs: decorator order
+  (`@dataclass(slots=True)` returns a new class, so a plan set below it is
+  lost; a transforming base such as Pydantic's or SQLAlchemy's declarative
+  may rewrite the class after it was read), and committing to "the model
+  class owns its plan". A plain `@dataclass` below the decorator is
+  **fine** — a class's annotations exist before `@dataclass` runs, so an
+  earlier claim that the wrong order "sees no fields" was mistaken. Backlog
+  item 1.
+- **The model contract is not "a dataclass", and should not become one.**
+  psycopg imposes nothing — it sees tuples and parameters. The shell relies
+  on exactly three things: annotated fields readable through
+  `get_type_hints(cls, include_extras=True)`; attribute access (`getattr`)
+  on the way in; and a **keyword-argument constructor** matching the field
+  names on the way out (`model(**row)` in `decrypt`). Dataclasses meet that
+  with the least ceremony, which is the only reason the tracer used them.
+  So do `attrs`, Pydantic, `NamedTuple`, and SQLAlchemy declarative models
+  (default constructor takes kwargs) — the first user's actual classes.
+  Restricting to `@dataclass` would exclude them while enforcing more than
+  the code needs. State the contract explicitly (a `Protocol`), and let the
+  SQLAlchemy layer supply a base that meets it. `is_dataclass` is the cheap
+  guard for decorator order, not the right one.
+
 ## Defects found in the plan (`2026-10-08-python-sdk-tracer.md`)
 
 All ruled on and ledgered; listed so the restart's plan does not repeat them:
@@ -186,7 +242,7 @@ the engine *through the shell* against the engine bare); the record as
 
 1. Amend CIP-4340 decision 9 and backlog item 5 for the catalog gap, with
    the dependencies named precisely: `ore` → #1132 and the `vitaminc-ore`
-   proposal in `eql-kinds.txt`; the non-text kinds → #1130 and the same
+   proposal (link above); the non-text kinds → #1130 and the same
    proposal; `match` → a TextMatch EQL type over the existing term, not yet
    ticketed.
 2. Which of those lands first, and does the week-1 restart wait for any of
@@ -197,6 +253,16 @@ the engine *through the shell* against the engine bare); the record as
 4. Should `targets.rs` be pyo3-free, so a parity binary does not link the
    interpreter? Relevant to the FFI comparison (backlog item 3).
 5. Packaging of the SQLAlchemy layer (above) — put it on the ticket.
+6. Declaration entry point: keep `Plan.of(cls).context(…).build()`, add a
+   class decorator beside it, or make the decorator the one way? This
+   decides whether "checked when the class is defined" holds by
+   construction.
+7. The model contract: write it down as a `Protocol` (annotated fields,
+   attribute access, kwargs constructor), and check SQLAlchemy declarative
+   models against it before the layer is designed.
+8. Indexing guidance for the SDK docs: the functional hash index on
+   `eql_v3_internal.eq_term(col)` is the one a `TextEq` column wants; the
+   tracer never created one, and a user copying its SQL would not either.
 
 ## Where the record is
 
