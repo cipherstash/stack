@@ -1,0 +1,471 @@
+//! Rust types as [`Plaintext`] sources.
+//!
+//! Byte strings (`Vec<u8>`, `[u8; N]`, `&[u8]`, `String`, `&str`) are byte
+//! and text leaves, as they are for `Encrypt` today. For the same reason as
+//! today, `u8` on its own is not a source: if it were, the generic `Vec<T>`
+//! sequence impl would overlap the `Vec<u8>` byte leaf. An 8-bit value from
+//! a host still arrives as [`Int::U8`]; a Rust caller that needs one uses
+//! [`Raw`].
+
+use std::collections::{BTreeMap, HashMap};
+
+use vitaminc_protected::{Controlled, Protected};
+use zeroize::Zeroize;
+
+use super::kinds::{Float, Logical, Physical};
+use super::{visit_seq, MapSink, Plaintext, Sink};
+
+macro_rules! int {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl Plaintext for $ty {
+                fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                    sink.scalar(None, Physical::Int(self.into()))
+                }
+            }
+        )*
+    };
+}
+
+int!(i8, i16, i32, i64, i128, u16, u32, u64, u128);
+
+impl Plaintext for bool {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Bool(self))
+    }
+}
+
+impl Plaintext for f32 {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Float(Float::F32(self)))
+    }
+}
+
+impl Plaintext for f64 {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Float(Float::F64(self)))
+    }
+}
+
+impl Plaintext for &str {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Text(self))
+    }
+}
+
+impl Plaintext for String {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Text(&self))
+    }
+
+    fn visit_protected<S: Sink>(this: Protected<Self>, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Text(this.risky_ref()))
+        // `this` drops and wipes here.
+    }
+}
+
+impl Plaintext for &String {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Text(self))
+    }
+}
+
+impl Plaintext for &[u8] {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Bytes(self))
+    }
+}
+
+/// `Vec<u8>` is a byte leaf, not a sequence of `u8` elements: the same
+/// shape `String` describes, and the shape `Vec<u8>` will read back.
+impl Plaintext for Vec<u8> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Bytes(&self))
+    }
+
+    fn visit_protected<S: Sink>(this: Protected<Self>, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Bytes(this.risky_ref()))
+    }
+}
+
+impl<const N: usize> Plaintext for [u8; N] {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Bytes(&self))
+    }
+
+    fn visit_protected<S: Sink>(this: Protected<Self>, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Bytes(this.risky_ref()))
+    }
+}
+
+/// A byte string borrowed from anywhere, for callers holding a slice whose
+/// element type would otherwise read as a sequence.
+#[derive(Clone, Copy, Debug)]
+pub struct Bytes<'a>(pub &'a [u8]);
+
+impl Plaintext for Bytes<'_> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Bytes(self.0))
+    }
+}
+
+/// Any scalar, as given: a logical type and a physical value.
+#[derive(Clone, Copy, Debug)]
+pub struct Raw<'a>(pub Option<Logical>, pub Physical<'a>);
+
+impl Plaintext for Raw<'_> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(self.0, self.1)
+    }
+}
+
+/// `None` is a null. There is no separate "absent" in the data model, so a
+/// host null and a Rust `None` are the same leaf.
+impl<T: Plaintext> Plaintext for Option<T> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Some(v) => v.visit(sink),
+            None => sink.scalar(None, Physical::Null),
+        }
+    }
+}
+
+/// Goes through [`Plaintext::visit_protected`], so a byte leaf stays
+/// wrapped until the sink has seen it.
+impl<T: Plaintext + Zeroize> Plaintext for Protected<T> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        T::visit_protected(self, sink)
+    }
+}
+
+impl<T: Plaintext> Plaintext for Vec<T> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        let len = Some(self.len());
+        visit_seq(sink, len, self)
+    }
+}
+
+impl<'a, T> Plaintext for &'a Vec<T>
+where
+    &'a T: Plaintext,
+{
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        visit_seq(sink, Some(self.len()), self.iter())
+    }
+}
+
+impl<'a, T> Plaintext for &'a [T]
+where
+    &'a T: Plaintext,
+{
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        visit_seq(sink, Some(self.len()), self.iter())
+    }
+}
+
+/// One impl covers compile-time keys (`&'static str`) and runtime keys
+/// (`String`), as the `Encrypt` impl does today.
+impl<K: AsRef<str>, V: Plaintext> Plaintext for HashMap<K, V> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        let mut map = sink.map(Some(self.len()))?;
+        for (key, value) in self {
+            value.visit(map.entry(key.as_ref())?)?;
+        }
+        map.end()
+    }
+}
+
+impl<K: AsRef<str>, V: Plaintext> Plaintext for BTreeMap<K, V> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        let mut map = sink.map(Some(self.len()))?;
+        for (key, value) in self {
+            value.visit(map.entry(key.as_ref())?)?;
+        }
+        map.end()
+    }
+}
+
+impl<'a, K: AsRef<str>, V> Plaintext for &'a BTreeMap<K, V>
+where
+    &'a V: Plaintext,
+{
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        let mut map = sink.map(Some(self.len()))?;
+        for (key, value) in self {
+            value.visit(map.entry(key.as_ref())?)?;
+        }
+        map.end()
+    }
+}
+
+// The chrono and rust_decimal types are logical types over an int. Each
+// source says which, and the int it stands for.
+
+#[cfg(feature = "chrono")]
+mod chrono_sources {
+    use super::*;
+    use crate::plaintext::kinds::{chrono as conv, Int, TimeUnit};
+    use crate::plaintext::{Error, SourceError};
+    use ::chrono::{DateTime, NaiveDate, Utc};
+
+    impl Plaintext for NaiveDate {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            sink.scalar(
+                Some(Logical::Date),
+                Physical::Int(Int::I32(conv::date_days(self))),
+            )
+        }
+    }
+
+    /// Stored as nanoseconds, the unit of today's `TIMESTAMP` tag. A leap
+    /// second has no count and stops the walk.
+    impl Plaintext for DateTime<Utc> {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            let nanos = conv::timestamp_nanos(self).ok_or_else(|| {
+                S::Error::source(SourceError::msg(
+                    "a leap second has no count of nanoseconds",
+                ))
+            })?;
+            sink.scalar(
+                Some(Logical::Timestamp(TimeUnit::Nanos)),
+                Physical::Int(Int::I128(nanos)),
+            )
+        }
+    }
+}
+
+#[cfg(feature = "rust_decimal")]
+impl Plaintext for rust_decimal::Decimal {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        let (scale, mantissa) = super::kinds::decimal::parts(self);
+        sink.scalar(
+            Some(Logical::Decimal { scale }),
+            Physical::Int(super::kinds::Int::I128(mantissa)),
+        )
+    }
+}
+
+#[cfg(feature = "uuid")]
+impl Plaintext for uuid::Uuid {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(Some(Logical::Uuid), Physical::Bytes(self.as_bytes()))
+    }
+}
+
+#[cfg(feature = "uuid")]
+impl Plaintext for &uuid::Uuid {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(Some(Logical::Uuid), Physical::Bytes(self.as_bytes()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plaintext::kinds::Int;
+    use crate::plaintext::record::{record, Event, Owned};
+    use crate::plaintext::{Error, SeqSink, SourceError};
+
+    fn scalar(v: Owned) -> Event {
+        Event::Scalar(None, v)
+    }
+
+    #[test]
+    fn primitives_are_scalars() {
+        assert_eq!(
+            record(34u32).expect("ok"),
+            [scalar(Owned::Int(Int::U32(34)))]
+        );
+        assert_eq!(record(-1i8).expect("ok"), [scalar(Owned::Int(Int::I8(-1)))]);
+        assert_eq!(record(true).expect("ok"), [scalar(Owned::Bool(true))]);
+        assert_eq!(
+            record(1.5f64).expect("ok"),
+            [scalar(Owned::Float(Float::F64(1.5)))]
+        );
+        assert_eq!(
+            record("hi").expect("ok"),
+            [scalar(Owned::Text("hi".into()))]
+        );
+        assert_eq!(
+            record(String::from("hi")).expect("ok"),
+            [scalar(Owned::Text("hi".into()))]
+        );
+    }
+
+    #[test]
+    fn byte_strings_are_byte_leaves_not_sequences() {
+        assert_eq!(
+            record(vec![1u8, 2]).expect("ok"),
+            [scalar(Owned::Bytes(vec![1, 2]))]
+        );
+        assert_eq!(
+            record([1u8, 2]).expect("ok"),
+            [scalar(Owned::Bytes(vec![1, 2]))]
+        );
+        assert_eq!(
+            record(&[1u8, 2][..]).expect("ok"),
+            [scalar(Owned::Bytes(vec![1, 2]))]
+        );
+        assert_eq!(
+            record(Bytes(&[9])).expect("ok"),
+            [scalar(Owned::Bytes(vec![9]))]
+        );
+    }
+
+    #[test]
+    fn protected_leaves_reach_the_sink_still_wrapped() {
+        // The sink sees the bytes; the only copy is inside `Protected`.
+        assert_eq!(
+            record(Protected::new(vec![1u8, 2])).expect("ok"),
+            [scalar(Owned::Bytes(vec![1, 2]))]
+        );
+        assert_eq!(
+            record(Protected::new(String::from("pw"))).expect("ok"),
+            [scalar(Owned::Text("pw".into()))]
+        );
+        assert_eq!(
+            record(Protected::new([7u8; 4])).expect("ok"),
+            [scalar(Owned::Bytes(vec![7; 4]))]
+        );
+        // A composite takes the default path: unwrap, then walk.
+        assert_eq!(
+            record(Protected::new(vec![1u16, 2])).expect("ok"),
+            [
+                Event::Seq(Some(2)),
+                Event::Element,
+                scalar(Owned::Int(Int::U16(1))),
+                Event::Element,
+                scalar(Owned::Int(Int::U16(2))),
+                Event::EndSeq,
+            ]
+        );
+    }
+
+    #[test]
+    fn option_none_is_null() {
+        assert_eq!(record(None::<u32>).expect("ok"), [scalar(Owned::Null)]);
+        assert_eq!(
+            record(Some(1u32)).expect("ok"),
+            [scalar(Owned::Int(Int::U32(1)))]
+        );
+    }
+
+    #[test]
+    fn containers_push_each_child_into_its_own_sink() {
+        let mut map = BTreeMap::new();
+        map.insert("a", vec![1i32]);
+        map.insert("b", vec![]);
+        assert_eq!(
+            record(map).expect("ok"),
+            [
+                Event::Map(Some(2)),
+                Event::Entry("a".into()),
+                Event::Seq(Some(1)),
+                Event::Element,
+                scalar(Owned::Int(Int::I32(1))),
+                Event::EndSeq,
+                Event::Entry("b".into()),
+                Event::Seq(Some(0)),
+                Event::EndSeq,
+                Event::EndMap,
+            ]
+        );
+        let mut hash = HashMap::new();
+        hash.insert(String::from("k"), 2u64);
+        assert_eq!(
+            record(hash).expect("ok"),
+            [
+                Event::Map(Some(1)),
+                Event::Entry("k".into()),
+                scalar(Owned::Int(Int::U64(2))),
+                Event::EndMap,
+            ]
+        );
+    }
+
+    #[test]
+    fn raw_passes_the_logical_type_through() {
+        assert_eq!(
+            record(Raw(Some(Logical::Uuid), Physical::Bytes(&[0; 16]))).expect("ok"),
+            [Event::Scalar(
+                Some(Logical::Uuid),
+                Owned::Bytes(vec![0; 16])
+            )]
+        );
+    }
+
+    /// A source that fails part way through, as a host getter might.
+    struct Failing;
+
+    impl Plaintext for Failing {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            let mut seq = sink.seq(None)?;
+            1u32.visit(seq.element()?)?;
+            Err(S::Error::source(SourceError::msg("getter threw")))
+        }
+    }
+
+    #[test]
+    fn a_source_can_stop_the_walk_with_its_own_error() {
+        let err = record(Failing).expect_err("should fail");
+        assert_eq!(err.0, "getter threw");
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn chrono_types_are_logical_types_over_an_int() {
+        use crate::plaintext::kinds::TimeUnit;
+        use ::chrono::{DateTime, NaiveDate};
+        let date = NaiveDate::from_ymd_opt(2000, 3, 1).expect("ok");
+        assert_eq!(
+            record(date).expect("ok"),
+            [Event::Scalar(
+                Some(Logical::Date),
+                Owned::Int(Int::I32(11_017))
+            )]
+        );
+        let ts = DateTime::from_timestamp(1, 5).expect("ok");
+        assert_eq!(
+            record(ts).expect("ok"),
+            [Event::Scalar(
+                Some(Logical::Timestamp(TimeUnit::Nanos)),
+                Owned::Int(Int::I128(1_000_000_005))
+            )]
+        );
+        let leap = NaiveDate::from_ymd_opt(2016, 12, 31)
+            .expect("ok")
+            .and_hms_nano_opt(23, 59, 59, 1_500_000_000)
+            .expect("ok")
+            .and_utc();
+        assert_eq!(
+            record(leap).expect_err("should fail").0,
+            "a leap second has no count of nanoseconds"
+        );
+    }
+
+    #[cfg(feature = "rust_decimal")]
+    #[test]
+    fn decimal_is_a_scale_and_a_mantissa() {
+        let d: rust_decimal::Decimal = "1.50".parse().expect("ok");
+        assert_eq!(
+            record(d).expect("ok"),
+            [Event::Scalar(
+                Some(Logical::Decimal { scale: 2 }),
+                Owned::Int(Int::I128(150))
+            )]
+        );
+    }
+
+    #[cfg(feature = "uuid")]
+    #[test]
+    fn uuid_is_sixteen_bytes() {
+        let id = uuid::Uuid::from_bytes([3; 16]);
+        assert_eq!(
+            record(id).expect("ok"),
+            [Event::Scalar(
+                Some(Logical::Uuid),
+                Owned::Bytes(vec![3; 16])
+            )]
+        );
+    }
+}

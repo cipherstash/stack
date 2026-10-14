@@ -13,8 +13,15 @@ mod encrypt;
 pub mod hlist;
 mod nonce;
 mod passthrough;
+pub mod plaintext;
 #[cfg(test)]
 mod test_util;
+
+#[doc(inline)]
+pub use plaintext::{
+    Bytes, Float, Int, Logical, MapSink, Physical, Plaintext, Raw, SeqSink, Sink, SourceError, Tee,
+    TimeUnit, UnknownLogical,
+};
 
 #[doc(inline)]
 #[allow(deprecated)]
