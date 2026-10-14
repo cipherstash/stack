@@ -512,18 +512,51 @@ value: an envelope is refused where a shorthand tag exists, so two
 ciphertexts of the same value are never byte-different for a reason the
 AEAD cannot see.
 
-Two values in today's corpus have no physical-plus-logical form and are
-refused: a timestamp at a leap second (chrono's representation, nanoseconds
-above 999,999,999) and a decimal negative zero. Both are format changes and
-are listed under consequences.
+The parameter is one byte and stays one byte. Nothing in view needs more:
+a Postgres `timestamptz` is stored in UTC, so a timezone is not part of the
+value, and a decimal's precision is a constraint on the column rather than
+something needed to read the value. If a logical type ever needs a longer
+parameter, it gets a second envelope byte, `0xF4`, with a length-prefixed
+parameter. The length is fixed per envelope byte rather than per id, so a
+reader that does not know an id can still skip its parameter.
+
+**`Option::None` is null.** Today a static Rust `None` seals an empty
+marker under `for_none` as `CipherText::None`, while a host `null` seals a
+`NULL`-tagged leaf as `CipherText::Single`, so a JavaScript `null` cannot
+decrypt into a Rust `Option`. Here `None` is `scalar(None, Null)`: one
+`NULL`-tagged leaf, the same as a host null. The tag is inside the AEAD, so
+a `Some` leaf can no longer be re-labelled as an absence, and the separate
+`for_none` derivation is not needed. `CipherText::None` and the transport's
+`CT_NONE` are removed. An `Option<T>` target reads null and `undefined` as
+`None` and defers anything else to `T`.
+
+**Two values in today's corpus have no physical-plus-logical form.** A
+timestamp at a leap second (chrono's representation, nanoseconds above
+999,999,999) is a real instant with no count in any unit, and is refused. A
+decimal negative zero (`rust_decimal`'s sign bit set over a zero mantissa)
+is equal to zero by `rust_decimal`'s own comparison, and is normalized to
+zero with its scale kept: `-0.00` reads back as `0.00`. Refusing it would
+surprise any caller that negates a value that happens to be zero.
+
+**Binding an expected type into the AAD.** Today's `LeafTypeAad` is an
+opt-in for schema-aware callers: the expected tag goes into the AAD at both
+ends, so a wrong-type ciphertext fails authentication before any plaintext
+is released. The self-describing path never binds it, and that stays the
+same. What changes is what "type" means. The expectation a schema holds is
+"this column is a date", not "this column is an int", so the binding is the
+physical tag plus the logical id, as the PAE list `(domain, base, tag, id)`
+with id 0 for no logical type, under a new domain label. The parameter is
+not bound: a decimal's scale varies from value to value within one column,
+and binding it would refuse `1.50` next to `1.5`. The parameter is still
+validated after opening by `Logical::admits`.
 
 ### 4. Encryption is a sink, and the cipher is bytes-only and may be async
 
 `EncryptSink` turns each scalar into tagged leaf plaintext and owns every
 container rule in one place: element AAD (`for_sequence_element`), entry AAD
-(`for_map_entry(key)`), the authenticated empty markers (`for_empty_sequence`,
-`for_empty_map`, `for_none`), duplicate keys, and the rule that a container
-must seal at least one leaf. It never calls a cipher. Its output is a tree
+(`for_map_entry(key)`), the authenticated empty markers (`for_empty_sequence`
+and `for_empty_map`), duplicate keys, and the rule that a container must
+seal at least one leaf. It never calls a cipher. Its output is a tree
 of pending leaves, each carrying its plaintext and the AAD its position
 derives:
 
@@ -667,7 +700,8 @@ pub trait FromScalar: Sized {
 Every `FromScalar` type gets `Decrypt` through a shared `ScalarSink<T>`,
 which refuses sequences, maps and passthrough. `NaiveDate` accepts
 `(Some(Date), Int)` and nothing else; `u32` accepts `(None, Int)` whose
-value fits; `Option<T>` accepts null and otherwise defers to `T`. A struct's
+value fits; `Option<T>` reads null and `undefined` as `None` and otherwise
+defers to `T`. A struct's
 sink is what `#[derive(Decrypt)]` generates: a `MapSink` that routes each
 entry to the field's own sink and refuses unknown keys and missing fields.
 Nothing in a `Decrypt` implementation knows whether the cipher was sync or
@@ -746,14 +780,25 @@ where P: Plaintext, C: Cipher;
 cryptography in it and never imports PAE, which stays in `vitaminc-context`
 beneath everything.
 
+Today's domain labels are kept. `Uuid` gets one of its own,
+`vitaminc/prf/value/uuid/v1`, over its sixteen raw bytes. It is a separate
+domain from bytes for the same reason a date's domain is separate from an
+int's: a value's logical type is part of what it is, so a uuid written as
+plain bytes by one client and as a uuid by another does not match, and that
+is the rule rather than an accident.
+
 ### 8. Four crates
 
 | Crate                  | Today                                                                                                                      | After                                                                                                                                                                                                  |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `vitaminc-aead`        | `Encrypt`, `Cipher`, `SeqCipher`, `MapCipher`, `Decrypt`, `Decipher`, `DecipherVisitor`, `SeqAccess`, `MapAccess`, `CipherText`, `Context` | `Plaintext`, `Sink`, `SeqSink`, `MapSink`, `Physical`, `Logical`, the leaf codec and tag table, `Cipher`, `AsyncCipher`, `Pending`, `EncryptSink`, `encrypt`/`decrypt` and their async and `_into` forms, `Decrypt`, `FromScalar`, `Tee`, `CipherText`, `Context`. chrono, `rust_decimal` and `uuid` sources behind features |
 | `vitaminc-encrypt`     | `Aes256Cipher` with its `SeqCipher`, `MapCipher` and `AesDecipher`, `Key`, static cipher                                     | `impl Cipher for Aes256Cipher` (`seal` and `open`) and `Key`. Container logic moves up into `EncryptSink`                                                                                             |
-| `vitaminc-aead-value`  | `Value`, `ValueKind`, tags, transport codec for values and ciphertexts, `canonical` feature                                 | Renamed. `Frame`, `FrameWriter`, the ciphertext codec and `PassthroughFrame` only. `Value`, `ValueKind` and the tag table leave (tags go to `vitaminc-aead` with the leaf codec)                        |
+| `vitaminc-aead-frame`  | `vitaminc-aead-value`: `Value`, `ValueKind`, tags, transport codec for values and ciphertexts, `canonical` feature          | Renamed. `Frame`, `FrameWriter`, the ciphertext codec and `PassthroughFrame` only. `Value`, `ValueKind` and the tag table leave (tags go to `vitaminc-aead` with the leaf codec)                        |
 | `vitaminc-normalize`   | the `canonical` feature of `vitaminc-aead-value`                                                                           | New crate. Public per-scalar encoders, frozen domain labels, the logical-type opt-in table, `Terms`, `encrypt_with_terms`, `Normalized { domain, bytes }`. No cryptography, no PAE                       |
+
+The transport crate's new name follows the `vitaminc-aead-*` family it
+already belongs to with `vitaminc-aead-napi` and `vitaminc-aead-derive`,
+and names what it holds.
 
 Around them: `vitaminc-context` is unchanged and keeps PAE and
 `ContextPiece`; `vitaminc-prf` takes `Normalized` instead of `&Value`;
@@ -791,8 +836,15 @@ removed.
 - Every leaf's plaintext exists at once before sealing, inside `Protected`,
   instead of streaming leaf by leaf. Memory is of the order of the plaintext
   itself.
-- A timestamp at a leap second and a decimal negative zero are refused. Both
-  are in the conformance corpus today, so this is a small format change.
+- A timestamp at a leap second is refused and a decimal negative zero reads
+  back as zero. Both are in the conformance corpus today, so this is a small
+  format change.
+- `Option::None` and a host null are the same leaf. `CipherText::None`,
+  `CT_NONE` and `Context::for_none` go away, and a JavaScript `null`
+  decrypts into a Rust `Option` as `None`.
+- `LeafTypeAad` binds the physical tag and the logical id under a new
+  domain label. Ciphertexts bound under today's label do not open under it;
+  nothing that uses it has shipped.
 - Under a logical type the int's width is not kept: `DATE` reads back as an
   `i32` day count however it was written. Width is a hint end to end;
   equality never sees it and typed decoding reads the value.
@@ -800,28 +852,14 @@ removed.
   self-describing.
 - Passthrough payloads are frames, not `Box<dyn Any + Send>`. A Rust
   passthrough value must implement `Plaintext`.
-- `Aes256Cipher` is not `Sync` today, because its nonce generator is a
-  `RefCell`. `AsyncCipher: Sync` is required so a cipher can be shared across
-  tasks; a local cipher used asynchronously needs a `Sync` nonce generator.
+- `AsyncCipher: Sync`, because an async cipher is shared across tasks.
+  `Aes256Cipher` is not `Sync` (its nonce generator is a `RefCell`) and is
+  not made so: it is the synchronous `Cipher`. A local cipher that has to
+  sit behind an async API goes behind a mutex or uses a `Sync` nonce
+  generator of its own.
 - The model is core and runtime-free. `AsyncCipher` needs no executor, and
   the batching defaults use `futures-util` only. The optional sources sit
   behind features, in line with the minimal and compatible goals.
 - `Value`, `ValueKind`, `Encrypt`, `Decrypt` in its current form, `Cipher`'s
   container methods, `Decipher`, `DecipherVisitor`, `SeqAccess` and
   `MapAccess` are removed. Nothing that depends on them has shipped.
-
-## Open questions
-
-- Whether `Option::None` keeps a node of its own (`CipherText::None`) or
-  reads as null, possibly as another logical type over null like
-  `undefined`.
-- Whether the leaf type bound into the AAD is the physical tag alone or the
-  physical tag plus the logical id and parameter. PAE makes either
-  unambiguous; it is a protocol choice.
-- Whether uuid gets an equality domain, which would be the bytes encoding
-  under its own label.
-- Whether logical parameters ever need more than one byte (a timezone, a
-  precision and scale pair).
-- Whether to normalize decimal negative zero to zero or refuse it as leap
-  seconds are refused.
-- The transport crate's new name.
