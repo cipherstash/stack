@@ -132,7 +132,8 @@ pub trait Sink: Sized {
     fn seq(self, len: Option<usize>) -> Result<Self::Seq, Self::Error>;
     fn map(self, len: Option<usize>) -> Result<Self::Map, Self::Error>;
     /// A subtree that travels in the clear. Walked like anything else.
-    fn passthrough<P: Plaintext>(self, value: P) -> Result<Self::Ok, Self::Error>;
+    /// `Clone`, so a sink that is really several sinks can give it to each.
+    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<Self::Ok, Self::Error>;
 }
 
 pub trait SeqSink: Sized {
@@ -290,7 +291,9 @@ impl<A: Sink, B: Sink<Error = A::Error>> Sink for Tee<A, B> {
     fn map(self, len: Option<usize>) -> Result<Self::Map, Self::Error> {
         Ok(Tee(self.0.map(len)?, self.1.map(len)?))
     }
-    fn passthrough<P: Plaintext>(self, value: P) -> Result<Self::Ok, Self::Error> { /* see below */ }
+    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<Self::Ok, Self::Error> {
+        Ok((self.0.passthrough(value.clone())?, self.1.passthrough(value)?))
+    }
 }
 
 impl<A: SeqSink, B: SeqSink<Error = A::Error>> SeqSink for Tee<A, B> {
@@ -334,9 +337,10 @@ let ct = seal_all(cipher, pending)?;   // terms are complete before this line
 ```
 
 The one call a tee cannot share is `passthrough`, which hands a whole
-subtree to each sink to walk for itself. The tee frames the subtree once
-and gives both sides the frame. Passthrough is cleartext by contract, so the
-copy is harmless.
+subtree to each sink to walk for itself. That is why the value is `Clone`:
+the tee gives each side its own copy. Passthrough is cleartext by contract,
+so the copy carries no secret. A borrowed frame and a live host value are
+both `Copy`; a Rust value in a passthrough field has to be `Clone`.
 
 A struct's `Plaintext` is what `#[derive(Plaintext)]` generates:
 
@@ -717,7 +721,9 @@ between.
 `Frame<'a>` is a validated, borrowed frame that implements `Plaintext` by
 walking its own bytes in place: no `Value` tree is built, and no scalar
 leaves the buffer except to go straight to a sink. `FrameWriter` is a `Sink`
-that writes frame bytes. The guest's `encrypt` becomes
+that writes frame bytes. Both live in `vitaminc-aead`, next to the leaf
+codec they share, because the encrypt sink frames passthrough subtrees
+itself. The guest's `encrypt` becomes
 `encrypt(Frame::parse(bytes)?, &cipher, aad)` and its `decrypt` becomes
 `decrypt_into(&cipher, ct, aad, FrameWriter::new(&mut out))`. The Go side,
 `vcvalue` and `vcencrypt`, does not change: the bytes in and out are the
@@ -791,9 +797,9 @@ is the rule rather than an accident.
 
 | Crate                  | Today                                                                                                                      | After                                                                                                                                                                                                  |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `vitaminc-aead`        | `Encrypt`, `Cipher`, `SeqCipher`, `MapCipher`, `Decrypt`, `Decipher`, `DecipherVisitor`, `SeqAccess`, `MapAccess`, `CipherText`, `Context` | `Plaintext`, `Sink`, `SeqSink`, `MapSink`, `Physical`, `Logical`, the leaf codec and tag table, `Cipher`, `AsyncCipher`, `Pending`, `EncryptSink`, `encrypt`/`decrypt` and their async and `_into` forms, `Decrypt`, `FromScalar`, `Tee`, `CipherText`, `Context`. chrono, `rust_decimal` and `uuid` sources behind features |
+| `vitaminc-aead`        | `Encrypt`, `Cipher`, `SeqCipher`, `MapCipher`, `Decrypt`, `Decipher`, `DecipherVisitor`, `SeqAccess`, `MapAccess`, `CipherText`, `Context` | `Plaintext`, `Sink`, `SeqSink`, `MapSink`, `Physical`, `Logical`, the leaf codec and tag table, the frame (`Frame`, `FrameWriter`, `PassthroughFrame`), `Cipher`, `AsyncCipher`, `Pending`, `EncryptSink`, `encrypt`/`decrypt` and their async and `_into` forms, `Decrypt`, `FromScalar`, `Tee`, `CipherText`, `Context`. chrono, `rust_decimal` and `uuid` sources behind features |
 | `vitaminc-encrypt`     | `Aes256Cipher` with its `SeqCipher`, `MapCipher` and `AesDecipher`, `Key`, static cipher                                     | `impl Cipher for Aes256Cipher` (`seal` and `open`) and `Key`. Container logic moves up into `EncryptSink`                                                                                             |
-| `vitaminc-aead-frame`  | `vitaminc-aead-value`: `Value`, `ValueKind`, tags, transport codec for values and ciphertexts, `canonical` feature          | Renamed. `Frame`, `FrameWriter`, the ciphertext codec and `PassthroughFrame` only. `Value`, `ValueKind` and the tag table leave (tags go to `vitaminc-aead` with the leaf codec)                        |
+| `vitaminc-aead-frame`  | `vitaminc-aead-value`: `Value`, `ValueKind`, tags, transport codec for values and ciphertexts, `canonical` feature          | Renamed. The ciphertext codec (a `CipherText<Leaf, PassthroughFrame>` as bytes and back) only. `Value` and `ValueKind` are deleted; the tag table and the frame move down into `vitaminc-aead`         |
 | `vitaminc-normalize`   | the `canonical` feature of `vitaminc-aead-value`                                                                           | New crate. Public per-scalar encoders, frozen domain labels, the logical-type opt-in table, `Terms`, `encrypt_with_terms`, `Normalized { domain, bytes }`. No cryptography, no PAE                       |
 
 The transport crate's new name follows the `vitaminc-aead-*` family it
