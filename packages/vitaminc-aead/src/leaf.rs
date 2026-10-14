@@ -63,6 +63,10 @@ const NANOS_PER_SECOND: i128 = 1_000_000_000;
 const DECIMAL_SIGN: u32 = 1 << 31;
 const DECIMAL_SCALE_SHIFT: u32 = 16;
 const DECIMAL_SCALE_MASK: u32 = 0xFF << DECIMAL_SCALE_SHIFT;
+/// Every flag bit that is neither the sign nor the scale. Written out
+/// rather than derived, so it reads as the wire constant it is; a test
+/// pins it to the two masks.
+const DECIMAL_RESERVED: u32 = 0x7F00_FFFF;
 
 /// Write one scalar in `form` onto `out`. Fails if the value is not valid
 /// for its logical type, or (in a frame) too long.
@@ -74,13 +78,11 @@ pub fn write(
 ) -> Result<(), ScalarError> {
     // Check everything that can fail before writing anything, so an error
     // never leaves a dangling tag in `out`.
-    if form == Form::Frame {
-        if let Physical::Text(s) = v {
-            frame_len(s.len())?;
-        }
-        if let Physical::Bytes(b) = v {
-            frame_len(b.len())?;
-        }
+    if let Physical::Text(s) = v {
+        length_prefix(form, s.len())?;
+    }
+    if let Physical::Bytes(b) = v {
+        length_prefix(form, b.len())?;
     }
     let Some(ty) = ty else {
         return write_physical(v, form, out);
@@ -153,16 +155,22 @@ fn has_shorthand(ty: Logical) -> bool {
     )
 }
 
-/// A text or bytes length as a frame's `u32` length prefix.
-fn frame_len(len: usize) -> Result<u32, ScalarError> {
-    u32::try_from(len).map_err(|_| ScalarError::TooLong)
+/// The `u32` length prefix a text or bytes payload of `len` carries in
+/// `form`. A leaf has none: its payload runs to the end of the plaintext.
+fn length_prefix(form: Form, len: usize) -> Result<Option<u32>, ScalarError> {
+    match form {
+        Form::Frame => u32::try_from(len)
+            .map(Some)
+            .map_err(|_| ScalarError::TooLong),
+        Form::Leaf => Ok(None),
+    }
 }
 
 fn write_physical(v: Physical<'_>, form: Form, out: &mut Vec<u8>) -> Result<(), ScalarError> {
     let mut variable = |tag, bytes: &[u8]| {
         out.push(tag);
-        if form == Form::Frame {
-            out.extend_from_slice(&frame_len(bytes.len())?.to_le_bytes());
+        if let Some(len) = length_prefix(form, bytes.len())? {
+            out.extend_from_slice(&len.to_le_bytes());
         }
         out.extend_from_slice(bytes);
         Ok(())
@@ -270,75 +278,87 @@ impl<'a> Cursor<'a> {
 fn read_at<'a>(c: &mut Cursor<'a>, form: Form) -> Result<Scalar<'a>, ScalarError> {
     let tag = c.byte()?;
     if tag == tags::LOGICAL {
-        let ty = Logical::from_wire(c.byte()?, c.byte()?).ok_or(ScalarError::Malformed)?;
-        let tag = c.byte()?;
-        let v = read_physical(tag, c, form)?.ok_or(ScalarError::Malformed)?;
-        if has_shorthand(ty) {
-            return Err(ScalarError::Malformed);
-        }
-        if !ty.admits(&v) {
-            return Err(ScalarError::Invalid);
-        }
-        return Ok((Some(ty), v));
+        return read_envelope(c, form);
     }
     if let Some(v) = read_physical(tag, c, form)? {
         return Ok((None, v));
     }
-    Ok(match tag {
-        tags::UNDEFINED => (Some(Logical::Undefined), Physical::Null),
-        tags::DATE => {
-            let from_ce = i32::from_le_bytes(c.fixed()?);
-            let days = from_ce
-                .checked_sub(EPOCH_DAYS_FROM_CE)
-                .ok_or(ScalarError::Invalid)?;
-            let v = Physical::Int(Int::I32(days));
-            if !Logical::Date.admits(&v) {
-                return Err(ScalarError::Invalid);
-            }
-            (Some(Logical::Date), v)
-        }
-        tags::TIMESTAMP => {
-            let seconds = i64::from_le_bytes(c.fixed()?);
-            let sub = u32::from_le_bytes(c.fixed()?);
-            // A leap second (nanos past 999,999,999) has no count.
-            if i128::from(sub) >= NANOS_PER_SECOND {
-                return Err(ScalarError::Invalid);
-            }
-            let v = Physical::Int(Int::I128(
-                i128::from(seconds) * NANOS_PER_SECOND + i128::from(sub),
-            ));
-            if !Logical::Timestamp(TimeUnit::Nanos).admits(&v) {
-                return Err(ScalarError::Invalid);
-            }
-            (Some(Logical::Timestamp(TimeUnit::Nanos)), v)
-        }
-        tags::DECIMAL => {
-            let flags = u32::from_le_bytes(c.fixed()?);
-            let lo = u32::from_le_bytes(c.fixed()?);
-            let mid = u32::from_le_bytes(c.fixed()?);
-            let hi = u32::from_le_bytes(c.fixed()?);
-            if flags & !(DECIMAL_SIGN | DECIMAL_SCALE_MASK) != 0 {
-                return Err(ScalarError::Malformed);
-            }
-            let scale = ((flags & DECIMAL_SCALE_MASK) >> DECIMAL_SCALE_SHIFT) as u8;
-            if scale > MAX_DECIMAL_SCALE {
-                return Err(ScalarError::Invalid);
-            }
-            let magnitude = i128::from(lo) | (i128::from(mid) << 32) | (i128::from(hi) << 64);
-            // A negative zero reads as zero: the sign is meaningless and
-            // `(scale, mantissa)` has no way to carry it.
-            let mantissa = if flags & DECIMAL_SIGN != 0 {
-                -magnitude
-            } else {
-                magnitude
-            };
-            (
-                Some(Logical::Decimal { scale }),
-                Physical::Int(Int::I128(mantissa)),
-            )
-        }
-        _ => return Err(ScalarError::Malformed),
-    })
+    match tag {
+        tags::UNDEFINED => Ok((Some(Logical::Undefined), Physical::Null)),
+        tags::DATE => read_date(c),
+        tags::TIMESTAMP => read_timestamp(c),
+        tags::DECIMAL => read_decimal(c),
+        _ => Err(ScalarError::Malformed),
+    }
+}
+
+/// The `0xF3` envelope: a logical type with no shorthand tag, over a
+/// physical scalar.
+fn read_envelope<'a>(c: &mut Cursor<'a>, form: Form) -> Result<Scalar<'a>, ScalarError> {
+    let ty = Logical::from_wire(c.byte()?, c.byte()?).ok_or(ScalarError::Malformed)?;
+    let tag = c.byte()?;
+    let v = read_physical(tag, c, form)?.ok_or(ScalarError::Malformed)?;
+    if has_shorthand(ty) {
+        return Err(ScalarError::Malformed);
+    }
+    if !ty.admits(&v) {
+        return Err(ScalarError::Invalid);
+    }
+    Ok((Some(ty), v))
+}
+
+fn read_date<'a>(c: &mut Cursor<'a>) -> Result<Scalar<'a>, ScalarError> {
+    let from_ce = i32::from_le_bytes(c.fixed()?);
+    let days = from_ce
+        .checked_sub(EPOCH_DAYS_FROM_CE)
+        .ok_or(ScalarError::Invalid)?;
+    let v = Physical::Int(Int::I32(days));
+    if !Logical::Date.admits(&v) {
+        return Err(ScalarError::Invalid);
+    }
+    Ok((Some(Logical::Date), v))
+}
+
+fn read_timestamp<'a>(c: &mut Cursor<'a>) -> Result<Scalar<'a>, ScalarError> {
+    let seconds = i64::from_le_bytes(c.fixed()?);
+    let sub = u32::from_le_bytes(c.fixed()?);
+    // A leap second (nanos past 999,999,999) has no count.
+    if i128::from(sub) >= NANOS_PER_SECOND {
+        return Err(ScalarError::Invalid);
+    }
+    let v = Physical::Int(Int::I128(
+        i128::from(seconds) * NANOS_PER_SECOND + i128::from(sub),
+    ));
+    if !Logical::Timestamp(TimeUnit::Nanos).admits(&v) {
+        return Err(ScalarError::Invalid);
+    }
+    Ok((Some(Logical::Timestamp(TimeUnit::Nanos)), v))
+}
+
+fn read_decimal<'a>(c: &mut Cursor<'a>) -> Result<Scalar<'a>, ScalarError> {
+    let flags = u32::from_le_bytes(c.fixed()?);
+    // The 96-bit magnitude, little-endian `lo`, `mid`, `hi`, widened.
+    let mut word = [0u8; 16];
+    word[..12].copy_from_slice(&c.fixed::<12>()?);
+    let magnitude = i128::from_le_bytes(word);
+    if flags & DECIMAL_RESERVED != 0 {
+        return Err(ScalarError::Malformed);
+    }
+    let scale = ((flags & DECIMAL_SCALE_MASK) >> DECIMAL_SCALE_SHIFT) as u8;
+    if scale > MAX_DECIMAL_SCALE {
+        return Err(ScalarError::Invalid);
+    }
+    // A negative zero reads as zero: the sign is meaningless and
+    // `(scale, mantissa)` has no way to carry it.
+    let mantissa = if flags & DECIMAL_SIGN != 0 {
+        -magnitude
+    } else {
+        magnitude
+    };
+    Ok((
+        Some(Logical::Decimal { scale }),
+        Physical::Int(Int::I128(mantissa)),
+    ))
 }
 
 /// `None` for a tag that is not a plain physical scalar.
@@ -347,20 +367,13 @@ fn read_physical<'a>(
     c: &mut Cursor<'a>,
     form: Form,
 ) -> Result<Option<Physical<'a>>, ScalarError> {
+    if let Some(i) = read_int(tag, c)? {
+        return Ok(Some(Physical::Int(i)));
+    }
     Ok(Some(match tag {
         tags::NULL => Physical::Null,
         tags::BOOL_FALSE => Physical::Bool(false),
         tags::BOOL_TRUE => Physical::Bool(true),
-        tags::INT8 => Physical::Int(Int::I8(i8::from_le_bytes(c.fixed()?))),
-        tags::INT16 => Physical::Int(Int::I16(i16::from_le_bytes(c.fixed()?))),
-        tags::INT32 => Physical::Int(Int::I32(i32::from_le_bytes(c.fixed()?))),
-        tags::INT64 => Physical::Int(Int::I64(i64::from_le_bytes(c.fixed()?))),
-        tags::INT128 => Physical::Int(Int::I128(i128::from_le_bytes(c.fixed()?))),
-        tags::UINT8 => Physical::Int(Int::U8(u8::from_le_bytes(c.fixed()?))),
-        tags::UINT16 => Physical::Int(Int::U16(u16::from_le_bytes(c.fixed()?))),
-        tags::UINT32 => Physical::Int(Int::U32(u32::from_le_bytes(c.fixed()?))),
-        tags::UINT64 => Physical::Int(Int::U64(u64::from_le_bytes(c.fixed()?))),
-        tags::UINT128 => Physical::Int(Int::U128(u128::from_le_bytes(c.fixed()?))),
         // Raw bit patterns, so signalling NaNs survive.
         tags::FLOAT32 => {
             Physical::Float(Float::F32(f32::from_bits(u32::from_le_bytes(c.fixed()?))))
@@ -372,6 +385,23 @@ fn read_physical<'a>(
             core::str::from_utf8(c.variable(form)?).map_err(|_| ScalarError::Malformed)?,
         ),
         tags::BYTES => Physical::Bytes(c.variable(form)?),
+        _ => return Ok(None),
+    }))
+}
+
+/// `None` for a tag that is not an int.
+fn read_int(tag: u8, c: &mut Cursor<'_>) -> Result<Option<Int>, ScalarError> {
+    Ok(Some(match tag {
+        tags::INT8 => Int::I8(i8::from_le_bytes(c.fixed()?)),
+        tags::INT16 => Int::I16(i16::from_le_bytes(c.fixed()?)),
+        tags::INT32 => Int::I32(i32::from_le_bytes(c.fixed()?)),
+        tags::INT64 => Int::I64(i64::from_le_bytes(c.fixed()?)),
+        tags::INT128 => Int::I128(i128::from_le_bytes(c.fixed()?)),
+        tags::UINT8 => Int::U8(u8::from_le_bytes(c.fixed()?)),
+        tags::UINT16 => Int::U16(u16::from_le_bytes(c.fixed()?)),
+        tags::UINT32 => Int::U32(u32::from_le_bytes(c.fixed()?)),
+        tags::UINT64 => Int::U64(u64::from_le_bytes(c.fixed()?)),
+        tags::UINT128 => Int::U128(u128::from_le_bytes(c.fixed()?)),
         _ => return Ok(None),
     }))
 }
@@ -634,13 +664,28 @@ mod tests {
     fn a_frame_length_must_fit_in_u32() {
         // A 4 GiB slice can't be built in a test, so the length check is a
         // helper, checked at its edges; `write` calls it before writing.
-        assert_eq!(frame_len(0), Ok(0));
-        assert_eq!(frame_len(u32::MAX as usize), Ok(u32::MAX));
+        assert_eq!(length_prefix(Form::Frame, 0), Ok(Some(0)));
+        assert_eq!(
+            length_prefix(Form::Frame, u32::MAX as usize),
+            Ok(Some(u32::MAX))
+        );
         #[cfg(target_pointer_width = "64")]
-        assert_eq!(frame_len(u32::MAX as usize + 1), Err(ScalarError::TooLong));
+        {
+            assert_eq!(
+                length_prefix(Form::Frame, u32::MAX as usize + 1),
+                Err(ScalarError::TooLong)
+            );
+            // A leaf has no prefix, so no limit.
+            assert_eq!(length_prefix(Form::Leaf, u32::MAX as usize + 1), Ok(None));
+        }
         let mut out = Vec::new();
         assert!(write(None, Physical::Text(""), Form::Frame, &mut out).is_ok());
         assert_eq!(out, [0x0A, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn the_reserved_decimal_flags_are_every_other_bit() {
+        assert_eq!(DECIMAL_RESERVED, !(DECIMAL_SIGN | DECIMAL_SCALE_MASK));
     }
 
     #[test]
