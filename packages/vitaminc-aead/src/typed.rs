@@ -11,7 +11,9 @@
 //! Integer targets read the value, not the width: a `u32` accepts an `i8`
 //! leaf holding 34 and refuses one holding -1. The width is a host-fidelity
 //! hint. `Option<T>` reads null and `undefined` as `None` and defers
-//! anything else to `T`.
+//! anything else to `T`. `HashMap<String, T>` and `BTreeMap<String, T>`
+//! read a map, each value through `T`'s sink. Any scalar target that can
+//! be wiped can also be read straight into `Protected`.
 //!
 //! Nothing here knows whether the cipher was sync or async: the opened tree
 //! is walked after every await has completed.
@@ -19,9 +21,12 @@
 //! This trait will replace [`Decrypt`](crate::Decrypt). Until that is
 //! removed it is reached through this module rather than the crate root.
 
+use core::fmt;
 use core::marker::PhantomData;
+use std::collections::{BTreeMap, HashMap};
 
-use vitaminc_protected::Protected;
+use vitaminc_protected::{Controlled, Protected};
+use zeroize::Zeroize;
 
 use crate::plaintext::{
     Error, Float, Logical, MapSink, Physical, Plaintext, SeqSink, Sink, SourceError,
@@ -31,7 +36,11 @@ use crate::walk::{decrypt_into, decrypt_into_async, DecryptError};
 use crate::IntoAad;
 
 /// Why a typed target refused what it was given.
+///
+/// Non-exhaustive, so a derived struct target can add refusals (an
+/// unknown key, a missing field) without a breaking change.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum DecodeError {
     /// The ciphertext holds something other than the named kind.
     Expected(&'static str),
@@ -42,6 +51,24 @@ pub enum DecodeError {
 impl Error for DecodeError {
     fn source(error: SourceError) -> Self {
         Self::Source(error)
+    }
+}
+
+impl fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Expected(what) => write!(f, "expected {what}"),
+            Self::Source(e) => write!(f, "source failed: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for DecodeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Expected(_) => None,
+            Self::Source(e) => Some(e),
+        }
     }
 }
 
@@ -56,7 +83,7 @@ pub fn decrypt<'a, T, C, A>(
     cipher: &C,
     node: Node<C::Leaf>,
     aad: A,
-) -> Result<T, DecryptError<DecodeError>>
+) -> Result<T, DecryptError<DecodeError, C::Error>>
 where
     T: Decrypt,
     C: Cipher,
@@ -65,12 +92,13 @@ where
     decrypt_into(cipher, node, aad, T::sink())
 }
 
-/// Decrypt into `T` through an async cipher.
+/// Decrypt into `T` through an async cipher. Gives the same result as
+/// [`decrypt`] for the same ciphertext.
 pub async fn decrypt_async<'a, T, C, A>(
     cipher: &C,
     node: Node<C::Leaf>,
     aad: A,
-) -> Result<T, DecryptError<DecodeError>>
+) -> Result<T, DecryptError<DecodeError, C::Error>>
 where
     T: Decrypt,
     C: AsyncCipher,
@@ -84,6 +112,18 @@ pub trait FromScalar: Sized {
     /// What the type is called in a refusal.
     const EXPECTED: &'static str;
     fn from_scalar(ty: Option<Logical>, value: Physical<'_>) -> Option<Self>;
+
+    /// Decode straight into `Protected`: the seam `Protected<T>`'s target
+    /// goes through. The default decodes, then wraps, which leaves no bare
+    /// copy for a type that moves by pointer (`String`, `Vec<u8>`) and only
+    /// a stack copy of a small scalar. A type that would otherwise pass
+    /// through a bare temporary (`[u8; N]`) overrides it to build in place.
+    fn from_scalar_protected(ty: Option<Logical>, value: Physical<'_>) -> Option<Protected<Self>>
+    where
+        Self: Zeroize,
+    {
+        Self::from_scalar(ty, value).map(Protected::new)
+    }
 }
 
 /// The sink for any [`FromScalar`] type. Refuses containers and passthrough.
@@ -251,28 +291,28 @@ impl<const N: usize> FromScalar for [u8; N] {
             _ => None,
         }
     }
-}
 
-/// Byte and text leaves into `Protected`: the only copy made is the one
-/// inside the wrapper, from the borrow the opened leaf handed over.
-impl FromScalar for Protected<Vec<u8>> {
-    const EXPECTED: &'static str = "bytes";
-    fn from_scalar(ty: Option<Logical>, v: Physical<'_>) -> Option<Self> {
-        <Vec<u8>>::from_scalar(ty, v).map(Protected::new)
+    /// Filled inside the wrapper, so no bare copy of the array sits on the
+    /// stack, as today's `Decrypt` for `Protected<[u8; N]>` does.
+    fn from_scalar_protected(ty: Option<Logical>, v: Physical<'_>) -> Option<Protected<Self>> {
+        match (ty, v) {
+            (None, Physical::Bytes(b)) if b.len() == N => {
+                let mut out = Protected::new([0u8; N]);
+                out.risky_inner_mut().copy_from_slice(b);
+                Some(out)
+            }
+            _ => None,
+        }
     }
 }
 
-impl FromScalar for Protected<String> {
-    const EXPECTED: &'static str = "string";
+/// Any scalar target that can be wiped, read into `Protected`. The only
+/// copy is the one inside the wrapper, from the borrow the opened leaf
+/// handed over, and the leaf's own buffer is wiped when it drops.
+impl<T: FromScalar + Zeroize> FromScalar for Protected<T> {
+    const EXPECTED: &'static str = T::EXPECTED;
     fn from_scalar(ty: Option<Logical>, v: Physical<'_>) -> Option<Self> {
-        String::from_scalar(ty, v).map(Protected::new)
-    }
-}
-
-impl<const N: usize> FromScalar for Protected<[u8; N]> {
-    const EXPECTED: &'static str = "byte array";
-    fn from_scalar(ty: Option<Logical>, v: Physical<'_>) -> Option<Self> {
-        <[u8; N]>::from_scalar(ty, v).map(Protected::new)
+        T::from_scalar_protected(ty, v)
     }
 }
 
@@ -342,6 +382,21 @@ pub struct Push<'s, T>(pub &'s mut Vec<T>);
 impl<T> Put<T> for Push<'_, T> {
     fn put(self, value: T) {
         self.0.push(value);
+    }
+}
+
+/// A map entry: the key it arrived under.
+pub struct Insert<'s, M>(pub &'s mut M, pub String);
+
+impl<T> Put<T> for Insert<'_, HashMap<String, T>> {
+    fn put(self, value: T) {
+        self.0.insert(self.1, value);
+    }
+}
+
+impl<T> Put<T> for Insert<'_, BTreeMap<String, T>> {
+    fn put(self, value: T) {
+        self.0.insert(self.1, value);
     }
 }
 
@@ -474,7 +529,72 @@ impl<T: Decrypt> Decrypt for Vec<T> {
     }
 }
 
+/// `HashMap<String, T>` and `BTreeMap<String, T>`: a map, each value
+/// decoded by `T`'s sink. The walk has already refused repeated keys.
+pub struct Dict<M>(PhantomData<M>);
+
+/// The entries of a [`Dict`].
+pub struct DictEntries<M>(M);
+
+macro_rules! dict_target {
+    ($($map:ident),*) => {
+        $(
+            impl<T: Decrypt> Sink for Dict<$map<String, T>> {
+                type Ok = $map<String, T>;
+                type Error = DecodeError;
+                type Seq = Never<$map<String, T>>;
+                type Map = DictEntries<$map<String, T>>;
+
+                fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<Self::Ok, DecodeError> {
+                    Err(DecodeError::Expected("map"))
+                }
+
+                fn seq(self, _: Option<usize>) -> Result<Self::Seq, DecodeError> {
+                    Err(DecodeError::Expected("map"))
+                }
+
+                fn map(self, _: Option<usize>) -> Result<Self::Map, DecodeError> {
+                    Ok(DictEntries($map::new()))
+                }
+
+                fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<Self::Ok, DecodeError> {
+                    Err(DecodeError::Expected("map"))
+                }
+            }
+
+            impl<T: Decrypt> MapSink for DictEntries<$map<String, T>> {
+                type Ok = $map<String, T>;
+                type Error = DecodeError;
+                type Entry<'s>
+                    = Forward<T, Insert<'s, $map<String, T>>>
+                where
+                    Self: 's;
+
+                fn entry(&mut self, key: &str) -> Result<Self::Entry<'_>, DecodeError> {
+                    Ok(Forward(T::sink(), Insert(&mut self.0, key.to_owned())))
+                }
+
+                fn end(self) -> Result<Self::Ok, DecodeError> {
+                    Ok(self.0)
+                }
+            }
+
+            impl<T: Decrypt> Decrypt for $map<String, T> {
+                type Sink = Dict<$map<String, T>>;
+                fn sink() -> Self::Sink {
+                    Dict(PhantomData)
+                }
+            }
+        )*
+    };
+}
+
+dict_target!(HashMap, BTreeMap);
+
 /// `Option<T>`: null and `undefined` are `None`; anything else is `T`.
+///
+/// Since `None` is written as null, `Option<Option<T>>` cannot tell
+/// `Some(None)` from `None`: both read back as `None`.
 pub struct Optional<T: Decrypt>(T::Sink);
 
 impl<T: Decrypt> Sink for Optional<T> {
@@ -554,13 +674,16 @@ mod tests {
     use crate::seal::mock::{Mock, Remote};
     use crate::{encrypt, encrypt_async};
     use futures_executor::block_on;
-    use vitaminc_protected::Controlled;
 
-    fn round_trip<T: Decrypt>(p: impl Plaintext) -> Result<T, DecryptError<DecodeError>> {
+    fn round_trip<T: Decrypt>(
+        p: impl Plaintext,
+    ) -> Result<T, DecryptError<DecodeError, crate::seal::mock::Refused>> {
         decrypt(&Mock, encrypt(p, &Mock, "ctx").expect("encrypts"), "ctx")
     }
 
-    fn expected<T>(r: Result<T, DecryptError<DecodeError>>) -> &'static str {
+    fn expected<T>(
+        r: Result<T, DecryptError<DecodeError, crate::seal::mock::Refused>>,
+    ) -> &'static str {
         match r {
             Err(DecryptError::Sink(DecodeError::Expected(what))) => what,
             Err(other) => panic!("{other:?}"),
@@ -675,6 +798,114 @@ mod tests {
         let out: Vec<u32> = block_on(decrypt_async(&remote, sealed, ())).expect("decrypts");
         assert_eq!(out, [1, 2]);
         assert_eq!(remote.calls(), 2);
+    }
+
+    #[test]
+    fn sync_and_async_decrypt_agree() {
+        let mut value = BTreeMap::new();
+        value.insert(String::from("a"), vec![Some(1u32), None]);
+        value.insert(String::from("b"), vec![]);
+        // The mock is deterministic, so both are the same ciphertext.
+        let sealed = || encrypt(value.clone(), &Mock, "ctx").expect("encrypts");
+        let sync: BTreeMap<String, Vec<Option<u32>>> =
+            decrypt(&Mock, sealed(), "ctx").expect("sync");
+        let remote = Remote::new(true);
+        let async_: BTreeMap<String, Vec<Option<u32>>> =
+            block_on(decrypt_async(&remote, sealed(), "ctx")).expect("async");
+        assert_eq!(sync, async_);
+        assert_eq!(sync, value);
+    }
+
+    #[test]
+    fn maps_round_trip() {
+        let mut hash = HashMap::new();
+        hash.insert(String::from("a"), 1u32);
+        hash.insert(String::from("b"), 2u32);
+        assert_eq!(
+            round_trip::<HashMap<String, u32>>(hash.clone()).expect("hash"),
+            hash
+        );
+        let mut tree = BTreeMap::new();
+        tree.insert("xs", vec![String::from("Ada")]);
+        tree.insert("ys", vec![]);
+        let back = round_trip::<BTreeMap<String, Vec<String>>>(tree).expect("tree");
+        assert_eq!(back["xs"], ["Ada"]);
+        assert!(back["ys"].is_empty());
+        assert!(
+            round_trip::<HashMap<String, u32>>(HashMap::<String, u32>::new())
+                .expect("empty")
+                .is_empty()
+        );
+        assert_eq!(
+            expected(round_trip::<HashMap<String, u32>>(vec![1u32])),
+            "map"
+        );
+        assert_eq!(expected(round_trip::<BTreeMap<String, u32>>(1u32)), "map");
+        // A map's value of the wrong kind is refused by the value's name.
+        let mut bad = BTreeMap::new();
+        bad.insert("a", "x");
+        assert_eq!(expected(round_trip::<BTreeMap<String, u32>>(bad)), "u32");
+    }
+
+    #[test]
+    fn any_wipeable_scalar_reads_into_protected() {
+        assert_eq!(
+            *round_trip::<Protected<u64>>(34u64)
+                .expect("u64")
+                .risky_ref(),
+            34
+        );
+        assert_eq!(
+            round_trip::<Protected<[u8; 32]>>([7u8; 32])
+                .expect("array")
+                .risky_ref(),
+            &[7; 32]
+        );
+        assert_eq!(
+            expected(round_trip::<Protected<[u8; 4]>>(vec![1u8, 2])),
+            "byte array"
+        );
+        assert_eq!(expected(round_trip::<Protected<u64>>("x")), "u64");
+    }
+
+    #[test]
+    fn a_scalar_target_refuses_a_map_and_a_passthrough() {
+        let mut map = BTreeMap::new();
+        map.insert("a", 1u32);
+        assert_eq!(expected(round_trip::<u32>(map)), "u32");
+
+        // A passthrough is unauthenticated, so it must never stand in for a
+        // sealed leaf.
+        #[derive(Clone)]
+        struct Clear;
+        impl Plaintext for Clear {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                let mut seq = sink.seq(Some(2))?;
+                seq.element()?.passthrough(7u16)?;
+                8u16.visit(seq.element()?)?;
+                seq.end()
+            }
+        }
+        assert_eq!(expected(round_trip::<Vec<u16>>(Clear)), "u16");
+        assert_eq!(expected(round_trip::<Vec<Option<u16>>>(Clear)), "u16");
+    }
+
+    #[test]
+    fn some_none_reads_back_as_none() {
+        assert_eq!(
+            round_trip::<Option<Option<u32>>>(Some(None::<u32>)).expect("decodes"),
+            None
+        );
+        assert_eq!(
+            round_trip::<Option<Option<u32>>>(Some(Some(1u32))).expect("decodes"),
+            Some(Some(1))
+        );
+    }
+
+    #[test]
+    fn decode_errors_are_std_errors() {
+        let e: Box<dyn std::error::Error> = Box::new(DecodeError::Expected("u32"));
+        assert_eq!(e.to_string(), "expected u32");
     }
 
     #[cfg(feature = "chrono")]
