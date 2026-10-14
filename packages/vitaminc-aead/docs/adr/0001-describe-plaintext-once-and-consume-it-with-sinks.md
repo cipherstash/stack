@@ -595,12 +595,12 @@ pub trait AsyncCipher: Sync {
         -> impl Future<Output = Result<Protected<Vec<u8>>, Self::Error>> + Send;
 
     /// Every leaf of one document, in walk order. The default seals each
-    /// leaf concurrently; a provider with a batch API overrides it to make
-    /// one round trip per document.
+    /// leaf concurrently, a bounded number at a time; a provider with a
+    /// batch API overrides it to make one round trip per document.
     fn seal_many(&self, leaves: Vec<Pending>)
-        -> impl Future<Output = Result<Vec<Self::Leaf>, Self::Error>> + Send { /* try_join_all */ }
+        -> impl Future<Output = Result<Vec<Self::Leaf>, Self::Error>> + Send { /* bounded per-leaf calls */ }
     fn open_many(&self, leaves: Vec<(Self::Leaf, Context<'static>)>)
-        -> impl Future<Output = Result<Vec<Protected<Vec<u8>>>, Self::Error>> + Send { /* try_join_all */ }
+        -> impl Future<Output = Result<Vec<Protected<Vec<u8>>>, Self::Error>> + Send { /* bounded per-leaf calls */ }
 }
 ```
 
@@ -611,19 +611,21 @@ pub fn encrypt<P, C>(value: P, cipher: &C, aad: impl IntoAad<'_>)
     -> Result<CipherText<C::Leaf>, EncryptError<C::Error>>
 where P: Plaintext, C: Cipher;
 
-pub async fn encrypt_async<P, C>(value: P, cipher: &C, aad: impl IntoAad<'_>)
-    -> Result<CipherText<C::Leaf>, EncryptError<C::Error>>
+/// Walks `value` before returning, so the future holds only the planned
+/// leaves and is `Send` even when the source is not.
+pub fn encrypt_async<'c, P, C>(value: P, cipher: &'c C, aad: impl IntoAad<'_>)
+    -> impl Future<Output = Result<CipherText<C::Leaf>, EncryptError<C::Error>>> + Send + 'c
 where P: Plaintext, C: AsyncCipher;
 
 pub fn decrypt<T, C>(cipher: &C, ct: CipherText<C::Leaf>, aad: impl IntoAad<'_>)
-    -> Result<T, DecryptError<DecodeError>>
+    -> Result<T, DecryptError<DecodeError, C::Error>>
 where T: Decrypt, C: Cipher;
 
 pub async fn decrypt_async<T, C>(...) where T: Decrypt, C: AsyncCipher;
 
 /// Decrypt into any sink: a host builder, a frame writer.
 pub fn decrypt_into<S, C>(cipher: &C, ct: CipherText<C::Leaf>, aad: impl IntoAad<'_>, sink: S)
-    -> Result<S::Ok, DecryptError<S::Error>>
+    -> Result<S::Ok, DecryptError<S::Error, C::Error>>
 where S: Sink, C: Cipher;
 
 pub async fn decrypt_into_async<S, C>(...) where S: Sink, C: AsyncCipher;
@@ -633,10 +635,19 @@ pub async fn decrypt_into_async<S, C>(...) where S: Sink, C: AsyncCipher;
 `CipherText<Pending>`, then seal. Sealing splits the tree into its shape and
 a vector of leaves in walk order, calls `seal` per leaf or `seal_many` once,
 and puts the sealed leaves back into the shape. A cipher that returns the
-wrong number of leaves is refused. Decryption mirrors it: derive each
+wrong number of leaves is refused. Decryption mirrors it: check the
+container rules on the sealed tree (something sealed in every container,
+no repeated keys) so a malformed tree costs no cipher calls, derive each
 leaf's AAD from its position, open every leaf (one `open_many` call for an
 async cipher), put the plaintexts back, then walk the opened tree into the
 sink. The walk itself is always synchronous, whichever cipher is in use.
+
+A cipher's failure is returned as `DecryptError::Cipher` with the cipher's
+own error, as `EncryptError::Cipher` is on the way in. For an AEAD that
+means a wrong key, a wrong AAD or tampering. For a remote provider it may
+also be an outage, which a caller must be able to retry rather than treat
+as tampering. `DecryptError::Auth` is left for the one failure the cipher
+cannot see: an authenticated empty marker that carries a payload.
 
 Why this shape:
 
@@ -646,7 +657,8 @@ Why this shape:
   `map_ok` are gone.
 - **One round trip per document.** 0KMS seals every leaf of a document in
   one `seal_many` call. A provider without a batch API gets the default,
-  which is one concurrent call per leaf and still correct.
+  which is one call per leaf, a bounded number in flight at a time, and
+  still correct.
 - **Terms are complete before the first await.** `Tee(EncryptSink, Terms)`
   runs during the walk, so a caller holds the equality terms before any
   network call is made.
@@ -705,7 +717,11 @@ Every `FromScalar` type gets `Decrypt` through a shared `ScalarSink<T>`,
 which refuses sequences, maps and passthrough. `NaiveDate` accepts
 `(Some(Date), Int)` and nothing else; `u32` accepts `(None, Int)` whose
 value fits; `Option<T>` reads null and `undefined` as `None` and otherwise
-defers to `T`. A struct's
+defers to `T`, so `Some(None)` reads back as `None`. `HashMap<String, T>`
+and `BTreeMap<String, T>` read a map through each value's sink. Any
+`FromScalar` type that is `Zeroize` is also a `Protected<T>` target, as
+today's `Decrypt` for `Protected<T>` is; a fixed-size array is filled
+inside the wrapper so no bare copy sits on the stack. A struct's
 sink is what `#[derive(Decrypt)]` generates: a `MapSink` that routes each
 entry to the field's own sink and refuses unknown keys and missing fields.
 Nothing in a `Decrypt` implementation knows whether the cipher was sync or
@@ -752,7 +768,11 @@ The mapping:
 | plain object                        | `map`, then `entry(key)` per own property         |
 
 A JavaScript `Date` is a count of milliseconds, so it is stored as one,
-rather than converted to seconds and nanoseconds and back. How the binding
+rather than converted to seconds and nanoseconds and back. `Timestamp`
+admits chrono's range (years -262143 to 262142), which is narrower than a
+`Date`'s (about ±275,000 years). It stays the bound because today's
+`TIMESTAMP` decoder is chrono-bound: a wider timestamp could be sealed but
+not read back there. The binding refuses a `Date` outside it. How the binding
 represents a calendar date or a decimal in JavaScript (today, the reserved
 `{ date }` and `{ decimal }` wrapper objects) is the binding's decision and
 is not changed by this document.
