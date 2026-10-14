@@ -139,33 +139,12 @@ pub fn walk<S: Sink>(node: Node<Opened>, sink: S) -> Result<S::Ok, DecryptError<
             Ok(sink.scalar(ty, v)?)
             // `plaintext` drops and wipes here.
         }
-        CipherText::Sequence(items) => {
-            if !sealed_any(&items.iter().collect::<Vec<_>>()) {
-                return Err(DecryptError::Malformed);
-            }
-            let mut seq = sink.seq(Some(items.len()))?;
-            for item in items {
-                walk(item, seq.element()?)?;
-            }
-            Ok(seq.end()?)
-        }
+        CipherText::Sequence(items) => walk_seq(items, sink),
         CipherText::EmptySequence(plaintext) => {
             empty_marker(plaintext)?;
             Ok(sink.seq(Some(0))?.end()?)
         }
-        CipherText::Map(entries) => {
-            let mut seen = HashSet::new();
-            if !entries.iter().all(|(k, _)| seen.insert(k.clone()))
-                || !sealed_any(&entries.iter().map(|(_, v)| v).collect::<Vec<_>>())
-            {
-                return Err(DecryptError::Malformed);
-            }
-            let mut map = sink.map(Some(entries.len()))?;
-            for (key, value) in entries {
-                walk(value, map.entry(&key)?)?;
-            }
-            Ok(map.end()?)
-        }
+        CipherText::Map(entries) => walk_map(entries, sink),
         CipherText::EmptyMap(plaintext) => {
             empty_marker(plaintext)?;
             Ok(sink.map(Some(0))?.end()?)
@@ -181,6 +160,34 @@ pub fn walk<S: Sink>(node: Node<Opened>, sink: S) -> Result<S::Ok, DecryptError<
             Ok(sink.passthrough(frame)?)
         }
     }
+}
+
+fn walk_seq<S: Sink>(items: Vec<Node<Opened>>, sink: S) -> Result<S::Ok, DecryptError<S::Error>> {
+    if !sealed_any(&items.iter().collect::<Vec<_>>()) {
+        return Err(DecryptError::Malformed);
+    }
+    let mut seq = sink.seq(Some(items.len()))?;
+    for item in items {
+        walk(item, seq.element()?)?;
+    }
+    Ok(seq.end()?)
+}
+
+fn walk_map<S: Sink>(
+    entries: Vec<(String, Node<Opened>)>,
+    sink: S,
+) -> Result<S::Ok, DecryptError<S::Error>> {
+    let mut seen = HashSet::new();
+    if !entries.iter().all(|(k, _)| seen.insert(k.clone()))
+        || !sealed_any(&entries.iter().map(|(_, v)| v).collect::<Vec<_>>())
+    {
+        return Err(DecryptError::Malformed);
+    }
+    let mut map = sink.map(Some(entries.len()))?;
+    for (key, value) in entries {
+        walk(value, map.entry(&key)?)?;
+    }
+    Ok(map.end()?)
 }
 
 /// Decrypt into a frame: the Go guest's whole `decrypt`.
@@ -286,6 +293,20 @@ mod tests {
         let mut log = Vec::new();
         decrypt_into(&Mock, node, "ctx", Record(&mut log)).expect("decrypts");
         assert_eq!(log, [Event::Scalar(None, Owned::Null)]);
+    }
+
+    #[test]
+    fn a_walk_error_keeps_its_kind_under_any_cipher_error() {
+        let widen = |e: DecryptError<u8>| e.with_cipher::<&str>();
+        assert!(matches!(widen(DecryptError::Auth), DecryptError::Auth));
+        assert!(matches!(
+            widen(DecryptError::Malformed),
+            DecryptError::Malformed
+        ));
+        assert!(matches!(
+            widen(DecryptError::Sink(7)),
+            DecryptError::Sink(7)
+        ));
     }
 
     #[test]
