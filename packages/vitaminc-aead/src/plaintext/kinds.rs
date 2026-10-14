@@ -25,7 +25,11 @@ use core::fmt;
 
 /// One scalar value, as stored. Borrowed, so a source can hand over text
 /// and bytes without copying.
-#[derive(Clone, Copy, Debug, PartialEq)]
+///
+/// Equality is structural: an int's width and a float's bit pattern both
+/// count. It is for tests and sinks that compare what a source said, not
+/// for comparing values across widths (see [`Int::sign_and_word`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Physical<'a> {
     Null,
     Bool(bool),
@@ -36,6 +40,14 @@ pub enum Physical<'a> {
 }
 
 /// An integer, with the width it came from.
+///
+/// `==` compares the width as well as the value, so `I8(34) != U64(34)`.
+/// Code that compares values across widths goes through [`to_i128`],
+/// [`to_u128`] or [`sign_and_word`].
+///
+/// [`to_i128`]: Int::to_i128
+/// [`to_u128`]: Int::to_u128
+/// [`sign_and_word`]: Int::sign_and_word
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Int {
     I8(i8),
@@ -103,12 +115,24 @@ int_from! {
 }
 
 /// A float, with the width it came from. Compared and carried by bit
-/// pattern, so `NaN` payloads and `-0.0` survive.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// pattern, so `NaN` payloads and `-0.0` survive, and `-0.0 != 0.0`.
+#[derive(Clone, Copy, Debug)]
 pub enum Float {
     F32(f32),
     F64(f64),
 }
+
+impl PartialEq for Float {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Float::F32(a), Float::F32(b)) => a.to_bits() == b.to_bits(),
+            (Float::F64(a), Float::F64(b)) => a.to_bits() == b.to_bits(),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Float {}
 
 /// What a physical value means. Carried per value, so a parameter such as
 /// a decimal's scale can differ from one value to the next.
@@ -124,6 +148,12 @@ pub enum Logical {
     Date,
     /// A count of `TimeUnit`s since the Unix epoch, UTC, with no leap
     /// seconds, within chrono's range. Over int.
+    ///
+    /// chrono's range (years -262143 to 262142) is narrower than a
+    /// JavaScript `Date`'s (about ±275,000 years). It stays the bound
+    /// because today's `TIMESTAMP` decoder is chrono-bound, so a wider
+    /// timestamp could be sealed but not read back there. A host refuses
+    /// a `Date` outside it.
     Timestamp(TimeUnit),
     /// `int × 10^-scale`, scale at most 28 and `|int| < 2^96`. Over int.
     Decimal { scale: u8 },
@@ -520,6 +550,22 @@ mod tests {
         assert!(Logical::Decimal { scale: 28 }.admits(&Physical::Int(Int::I128((1 << 96) - 1))));
         assert!(!Logical::Decimal { scale: 28 }.admits(&Physical::Int(Int::I128(1 << 96))));
         assert!(!Logical::Decimal { scale: 29 }.admits(&Physical::Int(Int::I8(1))));
+    }
+
+    #[test]
+    fn floats_compare_by_bit_pattern() {
+        assert_ne!(Float::F64(-0.0), Float::F64(0.0));
+        assert_eq!(Float::F64(f64::NAN), Float::F64(f64::NAN));
+        assert_ne!(Float::F32(1.0), Float::F64(1.0));
+        assert_ne!(Physical::Int(Int::I8(34)), Physical::Int(Int::U64(34)));
+    }
+
+    #[test]
+    fn a_javascript_date_beyond_chrono_is_refused() {
+        // `new Date(8.64e15)`: valid in JavaScript, past chrono's range.
+        let millis = Logical::Timestamp(TimeUnit::Millis);
+        assert!(!millis.admits(&Physical::Int(Int::I64(8_640_000_000_000_000))));
+        assert!(millis.admits(&Physical::Int(Int::I64(8_000_000_000_000_000))));
     }
 
     #[test]

@@ -23,6 +23,12 @@ macro_rules! int {
                     sink.scalar(None, Physical::Int(self.into()))
                 }
             }
+
+            impl Plaintext for &$ty {
+                fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                    (*self).visit(sink)
+                }
+            }
         )*
     };
 }
@@ -47,15 +53,35 @@ impl Plaintext for f64 {
     }
 }
 
+/// A borrowed copy scalar is the same scalar, so a borrowed container of
+/// them (`&Vec<u32>`, `&[bool]`, `&Option<f64>`) is a source too.
+macro_rules! by_ref {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl Plaintext for &$ty {
+                fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                    (*self).visit(sink)
+                }
+            }
+        )*
+    };
+}
+
+by_ref!(bool, f32, f64);
+
 impl Plaintext for &str {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(None, Physical::Text(self))
     }
 }
 
+/// An owned byte or text leaf wraps itself before the sink sees it, as its
+/// `Encrypt` impl does today. So a bare leaf inside a `Protected` container,
+/// which the container's default [`Plaintext::visit_protected`] hands over
+/// unwrapped, still has its buffer wiped when the walk is done with it.
 impl Plaintext for String {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        sink.scalar(None, Physical::Text(&self))
+        Self::visit_protected(Protected::new(self), sink)
     }
 
     fn visit_protected<S: Sink>(this: Protected<Self>, sink: S) -> Result<S::Ok, S::Error> {
@@ -80,7 +106,7 @@ impl Plaintext for &[u8] {
 /// shape `String` describes, and the shape `Vec<u8>` will read back.
 impl Plaintext for Vec<u8> {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        sink.scalar(None, Physical::Bytes(&self))
+        Self::visit_protected(Protected::new(self), sink)
     }
 
     fn visit_protected<S: Sink>(this: Protected<Self>, sink: S) -> Result<S::Ok, S::Error> {
@@ -90,11 +116,24 @@ impl Plaintext for Vec<u8> {
 
 impl<const N: usize> Plaintext for [u8; N] {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        sink.scalar(None, Physical::Bytes(&self))
+        Self::visit_protected(Protected::new(self), sink)
     }
 
     fn visit_protected<S: Sink>(this: Protected<Self>, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(None, Physical::Bytes(this.risky_ref()))
+    }
+}
+
+/// Borrowed byte leaves: the caller owns the buffer and its wiping.
+impl Plaintext for &Vec<u8> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Bytes(self))
+    }
+}
+
+impl<const N: usize> Plaintext for &[u8; N] {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        sink.scalar(None, Physical::Bytes(self))
     }
 }
 
@@ -122,6 +161,18 @@ impl Plaintext for Raw<'_> {
 /// `None` is a null. There is no separate "absent" in the data model, so a
 /// host null and a Rust `None` are the same leaf.
 impl<T: Plaintext> Plaintext for Option<T> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Some(v) => v.visit(sink),
+            None => sink.scalar(None, Physical::Null),
+        }
+    }
+}
+
+impl<'a, T> Plaintext for &'a Option<T>
+where
+    &'a T: Plaintext,
+{
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         match self {
             Some(v) => v.visit(sink),
@@ -185,6 +236,19 @@ impl<K: AsRef<str>, V: Plaintext> Plaintext for BTreeMap<K, V> {
     }
 }
 
+impl<'a, K: AsRef<str>, V> Plaintext for &'a HashMap<K, V>
+where
+    &'a V: Plaintext,
+{
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        let mut map = sink.map(Some(self.len()))?;
+        for (key, value) in self {
+            value.visit(map.entry(key.as_ref())?)?;
+        }
+        map.end()
+    }
+}
+
 impl<'a, K: AsRef<str>, V> Plaintext for &'a BTreeMap<K, V>
 where
     &'a V: Plaintext,
@@ -232,6 +296,18 @@ mod chrono_sources {
             )
         }
     }
+
+    impl Plaintext for &NaiveDate {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            (*self).visit(sink)
+        }
+    }
+
+    impl Plaintext for &DateTime<Utc> {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            (*self).visit(sink)
+        }
+    }
 }
 
 #[cfg(feature = "rust_decimal")]
@@ -242,6 +318,13 @@ impl Plaintext for rust_decimal::Decimal {
             Some(Logical::Decimal { scale }),
             Physical::Int(super::kinds::Int::I128(mantissa)),
         )
+    }
+}
+
+#[cfg(feature = "rust_decimal")]
+impl Plaintext for &rust_decimal::Decimal {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (*self).visit(sink)
     }
 }
 
@@ -339,6 +422,73 @@ mod tests {
                 Event::EndSeq,
             ]
         );
+    }
+
+    /// A leaf that wraps itself the way the byte leaves do, and counts
+    /// its wipes, so a test can see whether a container's protected path
+    /// reaches it.
+    #[derive(Clone, Default)]
+    struct Counted(std::rc::Rc<std::cell::Cell<usize>>);
+
+    impl Zeroize for Counted {
+        fn zeroize(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    impl Plaintext for Counted {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            Self::visit_protected(Protected::new(self), sink)
+        }
+
+        fn visit_protected<S: Sink>(_this: Protected<Self>, sink: S) -> Result<S::Ok, S::Error> {
+            sink.scalar(None, Physical::Null)
+        }
+    }
+
+    #[test]
+    fn a_protected_container_wipes_each_leaf() {
+        let wipes = Counted::default();
+        record(Protected::new(vec![wipes.clone(), wipes.clone()])).expect("ok");
+        assert_eq!(wipes.0.get(), 2);
+
+        let wipes = Counted::default();
+        record(Protected::new(Some(wipes.clone()))).expect("ok");
+        assert_eq!(wipes.0.get(), 1);
+    }
+
+    // The borrows are the point: each one picks the reference impl.
+    #[allow(clippy::needless_borrows_for_generic_args)]
+    #[test]
+    fn borrowed_containers_are_sources() {
+        let ints = vec![1u32, 2];
+        assert_eq!(
+            record(&ints).expect("ok"),
+            record(ints.clone()).expect("ok")
+        );
+        assert_eq!(record(&ints[..]).expect("ok"), record(ints).expect("ok"));
+        assert_eq!(
+            record(&vec![true]).expect("ok"),
+            record(vec![true]).expect("ok")
+        );
+        assert_eq!(
+            record(&Some(1.5f64)).expect("ok"),
+            record(Some(1.5f64)).expect("ok")
+        );
+        assert_eq!(record(&None::<i8>).expect("ok"), [scalar(Owned::Null)]);
+        // A borrowed `Vec<u8>` is still a byte leaf, not a sequence.
+        assert_eq!(
+            record(&vec![1u8, 2]).expect("ok"),
+            [scalar(Owned::Bytes(vec![1, 2]))]
+        );
+        assert_eq!(
+            record(&[1u8, 2]).expect("ok"),
+            [scalar(Owned::Bytes(vec![1, 2]))]
+        );
+        let mut hash = HashMap::new();
+        hash.insert(String::from("k"), vec![String::from("v")]);
+        let borrowed = record(&hash).expect("ok");
+        assert_eq!(borrowed, record(hash).expect("ok"));
     }
 
     #[test]

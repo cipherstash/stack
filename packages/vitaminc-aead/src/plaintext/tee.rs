@@ -107,4 +107,50 @@ mod tests {
         // Seq, then for each inner vec: Element, Seq, (Element, Scalar)*, EndSeq; then EndSeq.
         assert_eq!(a.len(), 14);
     }
+
+    #[test]
+    fn both_sides_see_a_byte_leaf_as_one_scalar() {
+        use crate::plaintext::record::{Event, Owned};
+        let (mut left, mut right) = (Vec::new(), Vec::new());
+        vec![1u8, 2]
+            .visit(Tee(Record(&mut left), Record(&mut right)))
+            .expect("ok");
+        assert_eq!(left, right);
+        assert_eq!(left, [Event::Scalar(None, Owned::Bytes(vec![1, 2]))]);
+    }
+
+    #[test]
+    fn an_unknown_logical_type_reaches_both_sides_unchanged() {
+        use crate::plaintext::kinds::{Logical, Physical};
+        use crate::plaintext::record::{Event, Owned};
+        use crate::plaintext::Raw;
+        let ty = Logical::from_wire(200, 9).expect("unknown");
+        let (mut left, mut right) = (Vec::new(), Vec::new());
+        Raw(Some(ty), Physical::Text("x"))
+            .visit(Tee(Record(&mut left), Record(&mut right)))
+            .expect("ok");
+        assert_eq!(left, right);
+        assert_eq!(left, [Event::Scalar(Some(ty), Owned::Text("x".into()))]);
+        assert!(matches!(left[0], Event::Scalar(Some(t), _) if t.to_wire() == (200, 9)));
+    }
+
+    #[test]
+    fn visit_map_walks_each_entry_into_its_own_sink() {
+        use crate::plaintext::record::{Event, Owned};
+        use crate::plaintext::visit_map;
+        let mut log = Vec::new();
+        visit_map(Record(&mut log), Some(2), [("a", 1u16), ("b", 2u16)]).expect("ok");
+        let int = |v| Event::Scalar(None, Owned::Int(crate::plaintext::Int::U16(v)));
+        assert_eq!(
+            log,
+            [
+                Event::Map(Some(2)),
+                Event::Entry("a".into()),
+                int(1),
+                Event::Entry("b".into()),
+                int(2),
+                Event::EndMap,
+            ]
+        );
+    }
 }

@@ -46,11 +46,13 @@ pub trait Plaintext {
     ///
     /// This is the seam the blanket `impl Plaintext for Protected<T>` goes
     /// through. The default unwraps `this` and defers to [`visit`], which is
-    /// right for composite types: each field re-wraps itself before it
-    /// reaches a sink, so the only bare value is the container being taken
-    /// apart. Byte leaves (`Vec<u8>`, `[u8; N]`, `String`) override it to
-    /// hand the sink a borrow of the still-wrapped value, so the bytes are
-    /// wiped when `this` drops.
+    /// right for composite types as long as every owned leaf wraps itself:
+    /// the only bare value is then the container being taken apart. Owned
+    /// byte leaves (`Vec<u8>`, `[u8; N]`, `String`) override it to hand the
+    /// sink a borrow of the still-wrapped value, and their bare [`visit`]
+    /// wraps `self` and comes back through here, so their bytes are wiped
+    /// however they arrive. A hand-written leaf that owns a secret buffer
+    /// should do the same.
     ///
     /// [`visit`]: Plaintext::visit
     fn visit_protected<S: Sink>(this: Protected<Self>, sink: S) -> Result<S::Ok, S::Error>
