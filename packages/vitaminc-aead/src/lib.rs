@@ -21,6 +21,7 @@ pub mod seal;
 pub mod tags;
 #[cfg(test)]
 mod test_util;
+pub mod typed;
 mod walk;
 
 #[doc(inline)]
@@ -34,6 +35,8 @@ pub use plaintext::{
 };
 #[doc(inline)]
 pub use seal::{Node, Opened, Pending};
+#[doc(inline)]
+pub use typed::{decrypt, decrypt_async, DecodeError, FromScalar};
 #[doc(inline)]
 pub use walk::{decrypt_into, decrypt_into_async, decrypt_to_frame, walk, DecryptError};
 
