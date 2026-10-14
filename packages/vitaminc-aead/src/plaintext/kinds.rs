@@ -379,6 +379,31 @@ pub mod chrono {
                 .expect("leap second")
                 .and_utc();
             assert!(timestamp_nanos(leap).is_none());
+
+            let first_leap_nano = NaiveDate::from_ymd_opt(2016, 12, 31)
+                .and_then(|d| d.and_hms_nano_opt(23, 59, 59, 1_000_000_000))
+                .expect("leap second")
+                .and_utc();
+            assert!(timestamp_nanos(first_leap_nano).is_none());
+
+            let last_ordinary_nano = NaiveDate::from_ymd_opt(2016, 12, 31)
+                .and_then(|d| d.and_hms_nano_opt(23, 59, 59, 999_999_999))
+                .expect("instant")
+                .and_utc();
+            assert_eq!(
+                timestamp_nanos(last_ordinary_nano),
+                Some(1_483_228_799_999_999_999)
+            );
+        }
+
+        #[test]
+        fn a_count_is_reduced_only_when_exact() {
+            assert_eq!(timestamp_count(TimeUnit::Nanos, 7), Some(7));
+            assert_eq!(timestamp_count(TimeUnit::Millis, 3_000_000), Some(3));
+            assert_eq!(timestamp_count(TimeUnit::Millis, -3_000_000), Some(-3));
+            assert_eq!(timestamp_count(TimeUnit::Seconds, 2_000_000_000), Some(2));
+            assert_eq!(timestamp_count(TimeUnit::Millis, 3_000_001), None);
+            assert_eq!(timestamp_count(TimeUnit::Seconds, 1_500_000_000), None);
         }
     }
 }
@@ -556,6 +581,8 @@ mod tests {
     fn floats_compare_by_bit_pattern() {
         assert_ne!(Float::F64(-0.0), Float::F64(0.0));
         assert_eq!(Float::F64(f64::NAN), Float::F64(f64::NAN));
+        assert_eq!(Float::F32(1.5), Float::F32(1.5));
+        assert_ne!(Float::F32(-0.0), Float::F32(0.0));
         assert_ne!(Float::F32(1.0), Float::F64(1.0));
         assert_ne!(Physical::Int(Int::I8(34)), Physical::Int(Int::U64(34)));
     }
@@ -575,5 +602,64 @@ mod tests {
         assert_eq!(Int::I8(-1).sign_and_word(), (true, u128::MAX));
         assert_eq!(Int::U128(u128::MAX).sign_and_word(), (false, u128::MAX));
         assert_eq!(Int::U64(34).sign_and_word(), (false, 34));
+        assert_eq!(Int::I8(0).sign_and_word(), (false, 0));
+    }
+
+    #[test]
+    fn a_decimal_mantissa_is_bounded_on_both_sides() {
+        let ty = Logical::Decimal { scale: 0 };
+        assert!(ty.admits(&Physical::Int(Int::I128(1 - (1 << 96)))));
+        assert!(!ty.admits(&Physical::Int(Int::I128(-(1 << 96)))));
+    }
+
+    #[test]
+    fn display_names_the_width_and_the_type() {
+        let ints = [
+            (Int::I8(-1), "i8 -1"),
+            (Int::I16(2), "i16 2"),
+            (Int::I32(3), "i32 3"),
+            (Int::I64(4), "i64 4"),
+            (Int::I128(5), "i128 5"),
+            (Int::U8(6), "u8 6"),
+            (Int::U16(7), "u16 7"),
+            (Int::U32(8), "u32 8"),
+            (Int::U64(9), "u64 9"),
+            (Int::U128(10), "u128 10"),
+        ];
+        for (v, s) in ints {
+            assert_eq!(v.to_string(), s);
+        }
+
+        let physical = [
+            (Physical::Null, "null"),
+            (Physical::Bool(true), "true"),
+            (Physical::Int(Int::U8(1)), "u8 1"),
+            (Physical::Float(Float::F32(1.5)), "f32 1.5"),
+            (Physical::Float(Float::F64(-2.5)), "f64 -2.5"),
+            (Physical::Text("a\"b"), "\"a\\\"b\""),
+            (Physical::Bytes(&[0x0f, 0xa0]), "0x0fa0"),
+            (Physical::Bytes(&[]), "0x"),
+        ];
+        for (v, s) in physical {
+            assert_eq!(v.to_string(), s);
+        }
+
+        let logical = [
+            (Logical::Undefined, "undefined"),
+            (Logical::Date, "date"),
+            (Logical::Timestamp(TimeUnit::Seconds), "timestamp(s)"),
+            (Logical::Timestamp(TimeUnit::Millis), "timestamp(ms)"),
+            (Logical::Timestamp(TimeUnit::Micros), "timestamp(us)"),
+            (Logical::Timestamp(TimeUnit::Nanos), "timestamp(ns)"),
+            (Logical::Decimal { scale: 4 }, "decimal(4)"),
+            (Logical::Uuid, "uuid"),
+            (
+                Logical::from_wire(200, 9).expect("unknown"),
+                "logical(200, 9)",
+            ),
+        ];
+        for (v, s) in logical {
+            assert_eq!(v.to_string(), s);
+        }
     }
 }

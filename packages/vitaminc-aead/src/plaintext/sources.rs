@@ -489,6 +489,11 @@ mod tests {
         hash.insert(String::from("k"), vec![String::from("v")]);
         let borrowed = record(&hash).expect("ok");
         assert_eq!(borrowed, record(hash).expect("ok"));
+        let mut tree = BTreeMap::new();
+        tree.insert("a", 1i64);
+        tree.insert("b", 2i64);
+        let borrowed = record(&tree).expect("ok");
+        assert_eq!(borrowed, record(tree).expect("ok"));
     }
 
     #[test]
