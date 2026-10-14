@@ -80,8 +80,8 @@ stack-profile = { path = "./packages/stack-profile", version = "0.43.0" }
 # feed only unpublished crates, so they stay exact.
 cts-common = { version = "0.43.0", default-features = false }
 zerokms-protocol = "0.12.31"
-recipher = "=0.3.1"
-cllw-ore = { version = "=0.5.0", default-features = false }
+recipher = "=0.3.2"
+cllw-ore = { version = "=0.5.1", default-features = false }
 
 # External dependencies, with the suite's feature lists.
 base64 = "0.22.0"
