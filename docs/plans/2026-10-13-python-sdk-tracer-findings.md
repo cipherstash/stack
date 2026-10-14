@@ -55,6 +55,37 @@ design choice.
   `equality`, `match`, `ore` as the engine features the four tasks need, and
   backlog item 5 is "`match` and `ore` queries". Neither is a Python change;
   both wait on the engine. Amend the ticket before anyone builds against it.
+- **The engine-side design for that gap already exists:** "Value encodings
+  for new EQL kinds" (7 Oct 2026, the same day as CIP-4340's decisions;
+  `eql-kinds.txt` at the repo root, a draft for team review — "nothing is
+  built or ticketed yet"). Read it before planning anything past `TextEq`.
+  What it establishes:
+  - The 42 non-text families are tracked in **#1130** and are "blocked on
+    encoding, not on code". A kind must exist in **three** encodings owned
+    by three crates — the ciphertext tag (`vitaminc-aead-value`), the
+    equality domain (`vitaminc-prf`), the order encoding (`cllw-ore` /
+    `ore-rs`) — and today they disagree about which types exist (`i16` is in
+    two of three, so it cannot be a kind).
+  - The ORE refusal is **#1132**: EQL v3 stores **block ORE** for the
+    `_ord_ore` domains and **CLLW OPE** for `_ord` / `_ord_ope`; Stack
+    Encrypt derives CLLW ORE and CLLW OPE and no block ORE. That is why
+    `TextOrdOre` is refused although text is a kind.
+  - The proposal: a `vitaminc-ore` crate with one order-preserving plaintext
+    encoding (adopting `orderable-bytes`) and pluggable schemes (block ORE,
+    CLLW ORE, CLLW OPE); new kinds `Int16`, `Date`, `Timestamp`, `Decimal`
+    with new frozen tags from `0x0C`; a conformance test that fails unless
+    every kind has all three encodings.
+  - It does **not** cover `TextMatch`, whose blocker is different ("the
+    engine derives match terms, but no EQL type is built from them yet").
+    So `match` is a smaller, separate, unticketed piece of work; `ore` is
+    this proposal.
+  - **It reaches Python directly.** The kind table is "a cross-language
+    commitment", and every new kind means a codec "in each binding": when
+    `Int16` / `Date` / `Timestamp` / `Decimal` land, the shell's
+    `convert.rs` grows an arm each, the width markers gain four names, and
+    `Date` versus `Timestamp` is the same declaration ambiguity it already
+    flags for Go's `time.Time`. The restart's declaration shape should
+    leave room for that rather than hard-code today's nine scalar kinds.
 - **The engine core does more than the catalog.** Through the bare-outputs
   path (`"outputs": ["c", "match"]`) it seals any kind and derives `eq`,
   `match`, `ore`, `ope`. What is `TextEq`-only is the *framing* into an EQL
@@ -153,9 +184,14 @@ the engine *through the shell* against the engine bare); the record as
 
 ## Open questions for the restart
 
-1. Amend CIP-4340 decision 9 and backlog item 5 for the catalog gap.
-2. Which engine work unblocks `match` (an EQL type over the existing term)
-   and `ore` (an algorithm mismatch — larger)?
+1. Amend CIP-4340 decision 9 and backlog item 5 for the catalog gap, with
+   the dependencies named precisely: `ore` → #1132 and the `vitaminc-ore`
+   proposal in `eql-kinds.txt`; the non-text kinds → #1130 and the same
+   proposal; `match` → a TextMatch EQL type over the existing term, not yet
+   ticketed.
+2. Which of those lands first, and does the week-1 restart wait for any of
+   them? (Nothing in the six-step path needs them; `TextEq` is enough to
+   prove the path, which it did.)
 3. Width markers in annotations: `Annotated[int, Int64, ...]` works; is it
    acceptable to Python developers? (Backlog item 1's user test.)
 4. Should `targets.rs` be pyo3-free, so a parity binary does not link the
