@@ -174,6 +174,170 @@ Three properties of this shape do the work:
   unpaired surrogate) without snapshotting it first.
 - **Lengths are optional,** for host iterables that do not know their size.
 
+#### Push-style containers: what `SeqSink::element` does
+
+Today a container hands each child to the cipher as a value, and the cipher
+walks it:
+
+```rust
+// Today. The cipher receives the element and drives its walk.
+pub trait SeqCipher: Sized {
+    fn encrypt_next<T: Encrypt>(self, value: T) -> Result<Self, Self::Error>;
+    fn end(self) -> Result<Self::Ok, Self::Error>;
+}
+
+impl<T: Encrypt> Encrypt for Vec<T> {
+    fn encrypt_with_aad<'a, C: Cipher, A: IntoAad<'a>>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error> {
+        let mut seq = cipher.encrypt_seq(Some(self.len()), aad);
+        for item in self {
+            seq = seq.encrypt_next(item)?;   // `item` is moved into the cipher, which walks it
+        }
+        seq.end()
+    }
+}
+```
+
+`encrypt_next` consumes the element, so exactly one cipher ever sees it.
+Inside `encrypt_next` the cipher calls `item.encrypt_with_aad(inner, aad)`
+with a sub-cipher of its own making. The walk of the child happens inside
+the consumer.
+
+In the new model the container asks the sink for somewhere to put the next
+child, and then walks the child into it itself:
+
+```rust
+// After. The source keeps driving; the sink only says where the child goes.
+impl<T: Plaintext> Plaintext for Vec<T> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        let mut seq = sink.seq(Some(self.len()))?;
+        for item in self {
+            item.visit(seq.element()?)?;   // `element()` returns a Sink; the item walks itself into it
+        }
+        seq.end()
+    }
+}
+```
+
+`element(&mut self)` returns a fresh `Sink` that borrows the parent for as
+long as it lives (`Element<'s>` is tied to `&'s mut self`). Whatever the
+child is, a scalar or a nested container, its `visit` runs against that
+element sink, and when the child's walk finishes the element sink writes
+one finished child into the parent. The element sink's `Ok` is `()` because
+its result goes into the parent, not back to the caller. The borrow means
+only one element sink exists at a time, so children land in order, and the
+parent's `end` runs only after the last child is done.
+
+This is what the encrypting sink does with it. Its sequence sink is a
+vector of finished child nodes plus the AAD every element is sealed under;
+`element` hands out a sink whose output slot is that vector:
+
+```rust
+pub struct EncryptSeq<'p> {
+    aad: Context<'static>,           // the container's own AAD, for the empty marker
+    element_aad: Context<'static>,   // aad.for_sequence_element(), shared by every child
+    items: Vec<CipherText<Pending>>,
+    out: Slot<'p>,                   // where the finished sequence node goes
+}
+
+impl SeqSink for EncryptSeq<'_> {
+    type Element<'s> = EncryptSink<Push<'s>> where Self: 's;
+
+    fn element(&mut self) -> Result<Self::Element<'_>, Self::Error> {
+        Ok(EncryptSink { aad: self.element_aad.clone(), out: Push(&mut self.items) })
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        let node = match self.items.len() {
+            0 => CipherText::EmptySequence(marker(self.aad.for_empty_sequence())),
+            _ if nothing_sealed(&self.items) => return Err(EncryptError::Shape("sequence has nothing sealed")),
+            _ => CipherText::Sequence(self.items),
+        };
+        Ok(self.out.put(node))
+    }
+}
+```
+
+`Push(&mut items)` is the output slot: when the element sink receives a
+scalar it plans one `Pending` leaf and pushes `CipherText::Single(leaf)`
+onto `items`; when it receives a nested sequence it returns another
+`EncryptSeq` whose slot is the same vector, so the nested node is pushed
+when that inner `end` runs. The map sink is the same with `(key, node)`
+pairs, `for_map_entry(key)` as the child AAD and a `HashSet` for duplicate
+keys. These few lines are the whole of the container logic that today is
+spread across `Aes256Cipher`'s `SeqCipher`, `MapCipher` and `AesDecipher`.
+
+#### `Tee`: two sinks, one walk
+
+Because the source drives the walk and the sink only answers "where does
+the next child go", a sink can answer with two places at once. `Tee<A, B>`
+is a pair of sinks that forwards every call to both and pairs the results:
+
+```rust
+pub struct Tee<A, B>(pub A, pub B);
+
+impl<A: Sink, B: Sink<Error = A::Error>> Sink for Tee<A, B> {
+    type Ok = (A::Ok, B::Ok);
+    type Error = A::Error;
+    type Seq = Tee<A::Seq, B::Seq>;
+    type Map = Tee<A::Map, B::Map>;
+
+    fn scalar(self, ty: Option<Logical>, v: Physical<'_>) -> Result<Self::Ok, Self::Error> {
+        Ok((self.0.scalar(ty, v)?, self.1.scalar(ty, v)?))   // `v` is borrowed: no copy
+    }
+    fn seq(self, len: Option<usize>) -> Result<Self::Seq, Self::Error> {
+        Ok(Tee(self.0.seq(len)?, self.1.seq(len)?))
+    }
+    fn map(self, len: Option<usize>) -> Result<Self::Map, Self::Error> {
+        Ok(Tee(self.0.map(len)?, self.1.map(len)?))
+    }
+    fn passthrough<P: Plaintext>(self, value: P) -> Result<Self::Ok, Self::Error> { /* see below */ }
+}
+
+impl<A: SeqSink, B: SeqSink<Error = A::Error>> SeqSink for Tee<A, B> {
+    type Ok = (A::Ok, B::Ok);
+    type Error = A::Error;
+    type Element<'s> = Tee<A::Element<'s>, B::Element<'s>> where Self: 's;
+
+    fn element(&mut self) -> Result<Self::Element<'_>, Self::Error> {
+        Ok(Tee(self.0.element()?, self.1.element()?))   // one element sink that is itself a tee
+    }
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        Ok((self.0.end()?, self.1.end()?))
+    }
+}
+```
+
+A tee of two sequence sinks returns, from `element`, a tee of two element
+sinks. So the nesting composes by itself: at every depth the source sees one
+sink, and both consumers receive the same calls in the same order. For
+`vec![1u8, 2u8]` walked into `Tee(EncryptSink, Terms)`:
+
+| Source call                        | `EncryptSink` receives                | `Terms` receives                     |
+| ---------------------------------- | ------------------------------------- | ------------------------------------ |
+| `sink.seq(Some(2))`                | `seq(Some(2))`: start a node list     | `seq(Some(2))`: push path index 0    |
+| `seq.element()`                    | `element()`: sink into the list       | `element()`: sink at path `[0]`      |
+| `1u8.visit(element)` → `scalar`    | plan leaf `INT8 1` under element AAD  | term `(int domain, encoded 1)` at `[0]` |
+| `seq.element()`                    | `element()`                           | `element()`: path `[1]`              |
+| `2u8.visit(element)` → `scalar`    | plan leaf `INT8 2`                    | term at `[1]`                        |
+| `seq.end()`                        | `end()`: `CipherText::Sequence`       | `end()`: pop path                    |
+
+Nothing is copied: `Physical<'_>` borrows the scalar's text or bytes, and
+both sides read the same borrow. The two sides must share an error type,
+which is why `Error` is a trait the tee can bound on; a sink meant for
+teeing, such as `Terms`, is generic over its error type and adopts its
+partner's. `encrypt_with_terms` is then one line:
+
+```rust
+let mut terms = Vec::new();
+let (pending, ()) = value.visit(Tee(EncryptSink::root(aad), Terms::new(&mut terms)))?;
+let ct = seal_all(cipher, pending)?;   // terms are complete before this line
+```
+
+The one call a tee cannot share is `passthrough`, which hands a whole
+subtree to each sink to walk for itself. The tee frames the subtree once
+and gives both sides the frame. Passthrough is cleartext by contract, so the
+copy is harmless.
+
 A struct's `Plaintext` is what `#[derive(Plaintext)]` generates:
 
 ```rust
