@@ -471,6 +471,27 @@ mod tests {
     use super::*;
     use crate::plaintext::kinds::{MAX_DATE_DAYS, MAX_TIMESTAMP_NANOS};
 
+    #[test]
+    fn max_len_is_a_header_plus_the_payload() {
+        assert_eq!(max_len(&Physical::Text("abc")), 11);
+        assert_eq!(max_len(&Physical::Bytes(&[1, 2, 3, 4])), 12);
+        assert_eq!(max_len(&Physical::Int(Int::U128(1))), 24);
+        // And it bounds what either form writes, envelope included.
+        let ty = Logical::from_wire(200, 0);
+        for v in [
+            Physical::Text("abc"),
+            Physical::Bytes(&[1, 2, 3, 4]),
+            Physical::Int(Int::U128(u128::MAX)),
+            Physical::Float(Float::F64(1.5)),
+        ] {
+            for form in [Form::Leaf, Form::Frame] {
+                let mut out = Vec::new();
+                write(ty, v, form, &mut out).expect("writes");
+                assert!(out.len() <= max_len(&v), "{v}");
+            }
+        }
+    }
+
     fn leaf(ty: Option<Logical>, v: Physical<'_>) -> Vec<u8> {
         let mut out = Vec::new();
         write_leaf(ty, v, &mut out).expect("writes");

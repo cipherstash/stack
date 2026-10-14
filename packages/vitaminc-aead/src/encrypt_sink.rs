@@ -329,6 +329,27 @@ mod tests {
     use crate::Tee;
     use std::collections::BTreeMap;
 
+    #[test]
+    fn a_source_error_inside_a_passthrough_stays_a_source_error() {
+        #[derive(Clone)]
+        struct Throws;
+        impl Plaintext for Throws {
+            fn visit<S: Sink>(self, _: S) -> Result<S::Ok, S::Error> {
+                Err(S::Error::source(SourceError::new(core::fmt::Error)))
+            }
+        }
+        struct Doc;
+        impl Plaintext for Doc {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                sink.passthrough(Throws)
+            }
+        }
+        assert!(matches!(
+            plan::<_, (), _>(Doc, "ctx"),
+            Err(EncryptError::Source(_))
+        ));
+    }
+
     fn planned<P: Plaintext>(p: P) -> Result<Node<Pending>, EncryptError<Refused>> {
         plan(p, "ctx")
     }

@@ -321,10 +321,12 @@ pub(crate) fn reserve(out: &mut Vec<u8>, additional: usize) {
     if out.capacity() - out.len() >= additional {
         return;
     }
+    // Doubling the length, not the capacity, still amortises a full
+    // buffer's growth, and never balloons a buffer that had room.
     let capacity = out
         .len()
         .saturating_add(additional)
-        .max(out.capacity().saturating_mul(2))
+        .max(out.len().saturating_mul(2))
         .max(64);
     let mut grown = Vec::with_capacity(capacity);
     grown.extend_from_slice(out);
@@ -564,6 +566,21 @@ mod tests {
         let before = out.as_ptr();
         reserve(&mut out, 10);
         assert_eq!(out.as_ptr(), before, "enough room already: no move");
+
+        // A full buffer grows, even by one byte.
+        let mut full = vec![7u8; 100];
+        full.shrink_to_fit();
+        reserve(&mut full, 1);
+        assert!(full.capacity() >= 101);
+        assert_eq!(full, [7u8; 100]);
+    }
+
+    #[test]
+    fn a_parsed_frame_is_its_bytes() {
+        let bytes = frame_of(vec![1u8, 2]);
+        let frame = Frame::parse(&bytes).expect("parses");
+        assert_eq!(frame.as_bytes(), &bytes[..]);
+        assert_eq!(FrameError.to_string(), "malformed frame");
     }
 
     #[test]
@@ -660,14 +677,61 @@ mod tests {
         assert_eq!(Frame::parse(&[0x0A, 2, 0, 0, 0, b'a']), Err(FrameError));
     }
 
+    #[derive(Clone, Copy)]
+    enum Kind {
+        Seq,
+        Map,
+        Pass,
+    }
+
+    /// `n` levels of one kind of container around an empty sequence, so
+    /// the innermost value is itself a container at depth `n`.
+    #[derive(Clone, Copy)]
+    struct Nest(Kind, usize);
+
+    impl Plaintext for Nest {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            let Nest(kind, n) = self;
+            if n == 0 {
+                return sink.seq(Some(0))?.end();
+            }
+            let inner = Nest(kind, n - 1);
+            match kind {
+                Kind::Seq => {
+                    let mut seq = sink.seq(Some(1))?;
+                    inner.visit(seq.element()?)?;
+                    seq.end()
+                }
+                Kind::Map => {
+                    let mut map = sink.map(Some(1))?;
+                    inner.visit(map.entry("k")?)?;
+                    map.end()
+                }
+                Kind::Pass => sink.passthrough(inner),
+            }
+        }
+    }
+
     #[test]
     fn depth_is_bounded_both_ways() {
-        let mut bytes = Vec::new();
-        for _ in 0..(MAX_DEPTH + 2) {
-            bytes.extend_from_slice(&[ARRAY, 1, 0, 0, 0]);
+        for kind in [Kind::Seq, Kind::Map, Kind::Pass] {
+            // A container at exactly `MAX_DEPTH` is written and parsed.
+            let bytes = frame_of(Nest(kind, MAX_DEPTH));
+            assert!(Frame::parse(&bytes).is_ok());
+
+            // One more level is refused by both.
+            assert!(matches!(
+                to_frame(Nest(kind, MAX_DEPTH + 1)),
+                Err(FrameWriteError::TooDeep)
+            ));
+            let mut deeper = match kind {
+                Kind::Seq => vec![ARRAY, 1, 0, 0, 0],
+                Kind::Map => vec![OBJECT, 1, 0, 0, 0, 1, 0, 0, 0, b'k'],
+                Kind::Pass => vec![PASSTHROUGH],
+            };
+            deeper.extend_from_slice(&bytes);
+            assert_eq!(Frame::parse(&deeper), Err(FrameError));
         }
-        bytes.push(0x00);
-        assert_eq!(Frame::parse(&bytes), Err(FrameError));
 
         struct Deep(usize);
         impl Plaintext for Deep {
