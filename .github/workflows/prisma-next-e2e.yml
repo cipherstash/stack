@@ -97,6 +97,8 @@ jobs:
 
     env:
       CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CTS_HOST: ${{ vars.CS_CTS_HOST }}
+      CS_ZEROKMS_HOST: ${{ vars.CS_ZEROKMS_HOST }}
       CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
@@ -164,6 +166,8 @@ jobs:
           touch ./languages/typescript/examples/prisma/.env
           echo "DATABASE_URL=postgres://cipherstash:cipherstash@localhost:54329/cipherstash_e2e" >> ./languages/typescript/examples/prisma/.env
           echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./languages/typescript/examples/prisma/.env
+          echo "CS_CTS_HOST=${{ vars.CS_CTS_HOST }}" >> ./languages/typescript/examples/prisma/.env
+          echo "CS_ZEROKMS_HOST=${{ vars.CS_ZEROKMS_HOST }}" >> ./languages/typescript/examples/prisma/.env
           echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./languages/typescript/examples/prisma/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./languages/typescript/examples/prisma/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./languages/typescript/examples/prisma/.env

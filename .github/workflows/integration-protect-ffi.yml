@@ -187,16 +187,21 @@ jobs:
       # Same split as the other integration workflows: the workspace CRN and
       # client id are repo `vars`, the two keys are `secrets`.
       CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CTS_HOST: ${{ vars.CS_CTS_HOST }}
+      CS_ZEROKMS_HOST: ${{ vars.CS_ZEROKMS_HOST }}
       CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
       #
-      # CS_ZEROKMS_HOST / CS_CTS_HOST are deliberately NOT set. Upstream's
-      # workflow pinned both to `ap-southeast-2`, which was right for the
-      # workspace whose credentials it held and is not portable: the client
-      # derives both hosts from the workspace CRN, so hardcoding a region here
-      # would silently point this repo's shared credentials at the wrong
-      # deployment. No other credentialed workflow in this repo sets them.
+      # CS_CTS_HOST / CS_ZEROKMS_HOST come from repo `vars`, like the CRN,
+      # and every credentialed workflow sets them. Without them the client
+      # derives both hosts from the CRN's region, and that is wrong for the
+      # CI workspace: it is a us-east-1 workspace whose access key was issued
+      # by the ap-southeast-2 CTS, so the derived us-east-1 CTS answers
+      # `Unknown credential`. They are variables rather than literals so a
+      # workspace move changes them in one place alongside the CRN.
+      # Upstream's workflow hardcoded both to ap-southeast-2, which suited the
+      # workspace it held and pointed ZeroKMS at the wrong region for this one.
       #
       # The PG* block is how `tests/postgres*.test.ts` reach the database:
       # they construct `new Client()` with no arguments, so libpq's environment

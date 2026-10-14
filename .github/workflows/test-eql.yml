@@ -325,6 +325,8 @@ jobs:
       POSTGRES_VERSION: "17"
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
       CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CTS_HOST: ${{ vars.CS_CTS_HOST }}
+      CS_ZEROKMS_HOST: ${{ vars.CS_ZEROKMS_HOST }}
       CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
     steps:
@@ -960,6 +962,8 @@ jobs:
       POSTGRES_VERSION: "17"
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
       CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CTS_HOST: ${{ vars.CS_CTS_HOST }}
+      CS_ZEROKMS_HOST: ${{ vars.CS_ZEROKMS_HOST }}
       CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
     steps:

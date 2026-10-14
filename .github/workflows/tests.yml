@@ -348,6 +348,8 @@ jobs:
         run: |
           touch ./languages/typescript/packages/stack/.env
           echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./languages/typescript/packages/stack/.env
+          echo "CS_CTS_HOST=${{ vars.CS_CTS_HOST }}" >> ./languages/typescript/packages/stack/.env
+          echo "CS_ZEROKMS_HOST=${{ vars.CS_ZEROKMS_HOST }}" >> ./languages/typescript/packages/stack/.env
           echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./languages/typescript/packages/stack/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./languages/typescript/packages/stack/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./languages/typescript/packages/stack/.env
@@ -393,11 +395,11 @@ jobs:
     # picks them up via `process.env`.
     env:
       CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CTS_HOST: ${{ vars.CS_CTS_HOST }}
+      CS_ZEROKMS_HOST: ${{ vars.CS_ZEROKMS_HOST }}
       CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
-      CS_ZEROKMS_HOST: https://ap-southeast-2.aws.zerokms.cipherstashmanaged.net
-      CS_CTS_HOST: https://ap-southeast-2.aws.cts.cipherstashmanaged.net
 
     steps:
       - name: Checkout Repo
@@ -477,6 +479,8 @@ jobs:
     # derives the AccessKeyStrategy region from it.
     env:
       CS_WORKSPACE_CRN: ${{ vars.CS_WORKSPACE_CRN }}
+      CS_CTS_HOST: ${{ vars.CS_CTS_HOST }}
+      CS_ZEROKMS_HOST: ${{ vars.CS_ZEROKMS_HOST }}
       CS_CLIENT_ID: ${{ vars.CS_CLIENT_ID }}
       CS_CLIENT_KEY: ${{ secrets.CS_CLIENT_KEY }}
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}
@@ -685,6 +689,8 @@ jobs:
         run: |
           touch ./languages/typescript/packages/stack/.env
           echo "CS_WORKSPACE_CRN=${{ vars.CS_WORKSPACE_CRN }}" >> ./languages/typescript/packages/stack/.env
+          echo "CS_CTS_HOST=${{ vars.CS_CTS_HOST }}" >> ./languages/typescript/packages/stack/.env
+          echo "CS_ZEROKMS_HOST=${{ vars.CS_ZEROKMS_HOST }}" >> ./languages/typescript/packages/stack/.env
           echo "CS_CLIENT_ID=${{ vars.CS_CLIENT_ID }}" >> ./languages/typescript/packages/stack/.env
           echo "CS_CLIENT_KEY=${{ secrets.CS_CLIENT_KEY }}" >> ./languages/typescript/packages/stack/.env
           echo "CS_CLIENT_ACCESS_KEY=${{ secrets.CS_CLIENT_ACCESS_KEY }}" >> ./languages/typescript/packages/stack/.env
