@@ -75,17 +75,19 @@ pub const UINT128: u8 = 0x11;
 /// 1970-01-01.
 pub const DATE: u8 = 0x12;
 /// UTC timestamp: `i64` Unix seconds, then `u32` nanoseconds, little-endian.
-/// Read as [`Logical::Timestamp`](crate::Logical) in nanoseconds. The
-/// nanoseconds must be below 1,000,000,000: chrono's leap-second
-/// representation (nanoseconds of 1,000,000,000 and above) has no count
-/// in any unit and is refused.
+/// The nanoseconds are below 2,000,000,000; values of 1,000,000,000 and
+/// above are chrono's leap-second representation. `vitaminc-aead-value`
+/// writes and reads those; `vitaminc-aead`'s codec reads this tag as
+/// [`Logical::Timestamp`](crate::Logical) in nanoseconds and refuses a leap
+/// second, which has no count in any unit (see [`crate::leaf`]).
 pub const TIMESTAMP: u8 = 0x13;
 /// Decimal: rust_decimal's 16-byte `serialize()` layout, preserving scale.
 /// Little-endian flags (sign bit 31, scale in bits 16–23, at most 28), then
 /// low, middle and high `u32` words of the 96-bit mantissa. Other flag bits
-/// must be zero. This finite format has no NaN or infinity. Read as
-/// [`Logical::Decimal`](crate::Logical) over an int holding the mantissa;
-/// a negative zero reads as zero.
+/// must be zero. This finite format has no NaN or infinity. The sign bit
+/// may be set on a zero mantissa. `vitaminc-aead`'s codec reads this tag as
+/// [`Logical::Decimal`](crate::Logical) over an int holding the mantissa,
+/// so a negative zero reads as zero (see [`crate::leaf`]).
 pub const DECIMAL: u8 = 0x14;
 
 /// The generic logical-type envelope: `LOGICAL, id, param`, then the plain

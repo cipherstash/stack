@@ -21,6 +21,14 @@
 //! The codec has no dependency on chrono or `rust_decimal`: the `DATE`,
 //! `TIMESTAMP` and `DECIMAL` payloads are written from, and read into, the
 //! int they are logical types over.
+//!
+//! Two encodings that `vitaminc-aead-value` accepts have no
+//! physical-plus-logical form, so this codec does not round-trip them:
+//!
+//! - A `TIMESTAMP` with nanoseconds of 1,000,000,000 or more is chrono's
+//!   leap second. It has no count in any unit and is refused.
+//! - A `DECIMAL` with the sign bit set on a zero mantissa reads as zero,
+//!   and zero is always written without the sign.
 
 use crate::plaintext::kinds::{Float, Int, Logical, Physical, TimeUnit, MAX_DECIMAL_SCALE};
 use crate::tags;
@@ -64,6 +72,16 @@ pub fn write(
     form: Form,
     out: &mut Vec<u8>,
 ) -> Result<(), ScalarError> {
+    // Check everything that can fail before writing anything, so an error
+    // never leaves a dangling tag in `out`.
+    if form == Form::Frame {
+        if let Physical::Text(s) = v {
+            frame_len(s.len())?;
+        }
+        if let Physical::Bytes(b) = v {
+            frame_len(b.len())?;
+        }
+    }
     let Some(ty) = ty else {
         return write_physical(v, form, out);
     };
@@ -135,12 +153,16 @@ fn has_shorthand(ty: Logical) -> bool {
     )
 }
 
+/// A text or bytes length as a frame's `u32` length prefix.
+fn frame_len(len: usize) -> Result<u32, ScalarError> {
+    u32::try_from(len).map_err(|_| ScalarError::TooLong)
+}
+
 fn write_physical(v: Physical<'_>, form: Form, out: &mut Vec<u8>) -> Result<(), ScalarError> {
     let mut variable = |tag, bytes: &[u8]| {
         out.push(tag);
         if form == Form::Frame {
-            let len = u32::try_from(bytes.len()).map_err(|_| ScalarError::TooLong)?;
-            out.extend_from_slice(&len.to_le_bytes());
+            out.extend_from_slice(&frame_len(bytes.len())?.to_le_bytes());
         }
         out.extend_from_slice(bytes);
         Ok(())
@@ -609,12 +631,92 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_refuses_text_longer_than_u32() {
-        // Only reachable on 64-bit; a `u32::MAX + 1` slice can't be built in
-        // a test, so check the arithmetic path with the smallest witness.
+    fn a_frame_length_must_fit_in_u32() {
+        // A 4 GiB slice can't be built in a test, so the length check is a
+        // helper, checked at its edges; `write` calls it before writing.
+        assert_eq!(frame_len(0), Ok(0));
+        assert_eq!(frame_len(u32::MAX as usize), Ok(u32::MAX));
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(frame_len(u32::MAX as usize + 1), Err(ScalarError::TooLong));
         let mut out = Vec::new();
         assert!(write(None, Physical::Text(""), Form::Frame, &mut out).is_ok());
         assert_eq!(out, [0x0A, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn an_invalid_value_writes_nothing() {
+        let mut out = vec![0xAB];
+        assert_eq!(
+            write(
+                Some(Logical::Uuid),
+                Physical::Bytes(&[0; 15]),
+                Form::Frame,
+                &mut out
+            ),
+            Err(ScalarError::Invalid)
+        );
+        assert_eq!(out, [0xAB]);
+    }
+
+    /// The scalar vectors of the cross-language corpus, read by this codec
+    /// in frame form and written back. Container vectors (`0xF0`–`0xF2`)
+    /// belong to the frame, not the codec.
+    #[test]
+    fn the_conformance_corpus_round_trips_through_the_codec() {
+        let corpus: serde_json::Value =
+            serde_json::from_str(include_str!("../../../testdata/value-conformance.json"))
+                .expect("corpus");
+        let hex = |s: &str| -> Vec<u8> {
+            (0..s.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&s[i..i + 2], 16).expect("hex"))
+                .collect()
+        };
+        let is_scalar = |b: &[u8]| b.first().is_some_and(|t| !(0xF0..=0xF2).contains(t));
+
+        let mut checked = 0;
+        for v in corpus["vectors"].as_array().expect("vectors") {
+            let name = v["name"].as_str().expect("name");
+            let bytes = hex(v["transport"].as_str().expect("transport"));
+            if !is_scalar(&bytes) {
+                continue;
+            }
+            let read = read(&bytes, Form::Frame);
+            match name {
+                // Decided: a leap second has no count, so it is refused.
+                "timestamp-leap" => assert_eq!(read, Err(ScalarError::Invalid), "{name}"),
+                // Decided: a negative zero reads as zero, written unsigned.
+                "decimal-negative-zero" => {
+                    let ((ty, value), _) = read.expect(name);
+                    assert_eq!(value, Physical::Int(Int::I128(0)), "{name}");
+                    let mut out = Vec::new();
+                    write(ty, value, Form::Frame, &mut out).expect(name);
+                    assert_ne!(out, bytes, "{name}");
+                }
+                _ => {
+                    let ((ty, value), used) = read.expect(name);
+                    assert_eq!(used, bytes.len(), "{name}");
+                    let mut out = Vec::new();
+                    write(ty, value, Form::Frame, &mut out).expect(name);
+                    assert_eq!(out, bytes, "{name}");
+                }
+            }
+            checked += 1;
+        }
+        assert!(checked > 20, "only {checked} scalar vectors");
+
+        for v in corpus["malformed"].as_array().expect("malformed") {
+            let name = v["name"].as_str().expect("name");
+            let bytes = hex(v["transport"].as_str().expect("transport"));
+            if !is_scalar(&bytes) {
+                continue;
+            }
+            // Refused outright, or a valid scalar followed by trailing bytes.
+            match read(&bytes, Form::Frame) {
+                Err(_) => {}
+                Ok((_, used)) => assert!(used < bytes.len(), "{name}"),
+            }
+        }
     }
 
     #[test]
