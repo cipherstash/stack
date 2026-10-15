@@ -11,9 +11,11 @@ mod element;
 mod encrypt;
 #[cfg(feature = "hlist")]
 pub mod hlist;
+pub mod leaf;
 mod nonce;
 mod passthrough;
 pub mod plaintext;
+pub mod tags;
 #[cfg(test)]
 mod test_util;
 
