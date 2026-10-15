@@ -192,8 +192,9 @@ fn decode_key(reader: &mut Reader<'_>) -> Result<String, CodecError> {
 /// Encode a ciphertext tree. A `Passthrough` node carries its payload as one
 /// embedded frame. The tree is held to the decoder's rules, so what is
 /// written always decodes: a tree nested deeper than [`MAX_DEPTH`], a map
-/// with a duplicate key, a passthrough payload that is not one frame node
-/// and the retired `None` marker are refused, and `out` is left as it was.
+/// with a duplicate key and a passthrough payload that is not one frame
+/// node are refused, and `out` is left as it was. The retired `None`
+/// marker has no node to be written from: a `None` is a null leaf.
 pub fn encode_ciphertext<Leaf>(ct: &Node<Leaf>, out: &mut Vec<u8>) -> Result<(), CodecError>
 where
     Leaf: AsRef<[u8]>,
@@ -218,7 +219,6 @@ where
             out.push(CT_SINGLE);
             write_bytes(out, leaf.as_ref())?;
         }
-        CipherText::None(_) => return Err(CodecError),
         CipherText::EmptySequence(leaf) => {
             out.push(CT_EMPTY_SEQ);
             write_bytes(out, leaf.as_ref())?;
@@ -419,22 +419,23 @@ mod tests {
     }
 
     #[test]
-    fn the_retired_none_marker_is_never_written_and_refused_when_read() {
-        let mut out = Vec::new();
-        assert_eq!(
-            encode_ciphertext(&CipherText::None(leaf(1, 4)) as &Ct, &mut out),
-            Err(CodecError)
-        );
-        assert!(out.is_empty(), "nothing is written for a refused tree");
+    fn a_refused_tree_leaves_the_output_untouched() {
         // Nested below a sibling that was already written, the output is
         // put back as it was, including what the caller had in it.
         let mut out = vec![0xEE];
         let nested: Ct = CipherText::Sequence(vec![
             CipherText::Single(leaf(1, 2)),
-            CipherText::None(leaf(9, 1)),
+            CipherText::Map(vec![
+                ("k".into(), CipherText::Single(leaf(1, 1))),
+                ("k".into(), CipherText::Single(leaf(2, 1))),
+            ]),
         ]);
         assert_eq!(encode_ciphertext(&nested, &mut out), Err(CodecError));
         assert_eq!(out, [0xEE], "a refused tree leaves the output untouched");
+    }
+
+    #[test]
+    fn the_retired_none_marker_is_refused_when_read() {
         let mut bytes = vec![CT_NONE_RETIRED];
         bytes.extend_from_slice(&4u32.to_le_bytes());
         bytes.extend_from_slice(&[1; 4]);

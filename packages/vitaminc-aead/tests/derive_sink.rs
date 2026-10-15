@@ -5,10 +5,9 @@
 
 use std::collections::BTreeMap;
 
-use vitaminc_aead::typed::Decrypt;
 use vitaminc_aead::{
-    decrypt, encrypt, Bytes, Context, DecodeError, DecryptError, Int, IntoAad, Logical, MapSink,
-    Physical, Plaintext, Raw, SeqSink, Sink, SourceError,
+    decrypt, encrypt, Bytes, Context, DecodeError, Decrypt, DecryptError, Int, IntoAad, Logical,
+    MapSink, Physical, Plaintext, Raw, SeqSink, Sink, SourceError,
 };
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::ZeroizeOnDrop;
@@ -713,7 +712,7 @@ mod umbrella {
     }
 }
 
-#[derive(umbrella::aead::Plaintext, umbrella::aead::typed::Decrypt, Debug, PartialEq)]
+#[derive(umbrella::aead::Plaintext, umbrella::aead::Decrypt, Debug, PartialEq)]
 #[aead(crate = "crate::umbrella::aead")]
 struct Renamed {
     value: u32,

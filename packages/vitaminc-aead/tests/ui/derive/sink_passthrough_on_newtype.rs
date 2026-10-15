@@ -1,8 +1,8 @@
 // A newtype is transparent — no map is opened — so there is no entry for a
 // passthrough to occupy. Honouring it would leave the whole value unencrypted.
-use vitaminc_aead::{Decrypt, Encrypt};
+use vitaminc_aead::{Decrypt, Plaintext};
 
-#[derive(Encrypt, Decrypt)]
+#[derive(Plaintext, Decrypt)]
 struct Token(#[aead(passthrough)] String);
 
 fn main() {}

@@ -14,9 +14,7 @@
 //! never awaited: encryption plans a tree of [`Pending`] leaves first, and
 //! decryption opens every leaf before the sink sees anything.
 //!
-//! These traits will replace [`Cipher`](crate::Cipher) and
-//! [`Decipher`](crate::Decipher). Until those are removed they are reached
-//! through this module rather than the crate root.
+//! Both traits are re-exported from the crate root.
 
 use core::future::Future;
 use std::collections::HashSet;
@@ -254,10 +252,7 @@ fn check_shape<L, E>(node: &Node<L>) -> Result<(), OpenError<E>> {
         CipherText::Passthrough(frame) => {
             frame.parse().map(|_| ()).map_err(|_| OpenError::Malformed)
         }
-        CipherText::Single(_)
-        | CipherText::EmptySequence(_)
-        | CipherText::EmptyMap(_)
-        | CipherText::None(_) => Ok(()),
+        CipherText::Single(_) | CipherText::EmptySequence(_) | CipherText::EmptyMap(_) => Ok(()),
     }
 }
 
@@ -284,10 +279,6 @@ fn split<L>(node: Node<L>, leaves: &mut Vec<L>) -> Node<()> {
         CipherText::EmptyMap(leaf) => {
             leaves.push(leaf);
             CipherText::EmptyMap(())
-        }
-        CipherText::None(leaf) => {
-            leaves.push(leaf);
-            CipherText::None(())
         }
         CipherText::Passthrough(p) => CipherText::Passthrough(p),
     }
@@ -331,12 +322,6 @@ fn split_with_aad<L>(
             leaves.push((leaf, aad.for_empty_map()));
             CipherText::EmptyMap(())
         }
-        // Only a ciphertext written by the `Encrypt` path has this node;
-        // the sink writes `None` as a null leaf.
-        CipherText::None(leaf) => {
-            leaves.push((leaf, aad.for_none()));
-            CipherText::None(())
-        }
         CipherText::Passthrough(p) => CipherText::Passthrough(p),
     }
 }
@@ -368,7 +353,6 @@ fn fill_from<L>(shape: Node<()>, leaves: &mut impl Iterator<Item = L>) -> Option
                 .collect::<Option<_>>()?,
         ),
         CipherText::EmptyMap(()) => CipherText::EmptyMap(leaves.next()?),
-        CipherText::None(()) => CipherText::None(leaves.next()?),
         CipherText::Passthrough(p) => CipherText::Passthrough(p),
     })
 }

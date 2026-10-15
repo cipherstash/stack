@@ -30,10 +30,8 @@ pub trait StaticCipher: Sized + Copy {
     /// it from the null leaf [`encrypt_none`](Self::encrypt_none) seals.
     ///
     /// The plaintext is taken as `Protected<Vec<u8>>` so the chain of custody
-    /// survives the trait boundary, matching
-    /// [`Cipher::encrypt_bytes_vec`](crate::Cipher::encrypt_bytes_vec). The
-    /// zeroize-on-drop guarantee is not yet in effect — `Protected<T>` has no
-    /// `Drop` impl today; that is tracked in #181.
+    /// survives the trait boundary, as [`Cipher::seal`](crate::Cipher::seal)
+    /// takes it. `Protected` wipes the buffer on drop.
     fn encrypt_bytes<'a, A>(
         self,
         data: Protected<Vec<u8>>,
@@ -78,7 +76,7 @@ where
     ///
     /// The value is sealed against [`Context::for_map_entry`](crate::Context::for_map_entry)
     /// of the caller's AAD and `key` — the same contract as the dynamic
-    /// [`MapCipher`](crate::MapCipher) — so a stored entry's cleartext key
+    /// encrypting walk ([`crate::encrypt`]) — so a stored entry's cleartext key
     /// cannot be swapped or renamed undetected. Open with a counterpart that
     /// derives the same binding (e.g. `Aes256Cipher::open_encrypted_entry`).
     pub fn encrypt_entry<'a, A>(
@@ -147,8 +145,8 @@ where
     /// `key` can only be authenticated *through* its entries: `build`
     /// receives [`Context::for_map_entry`](crate::Context::for_map_entry) of the
     /// caller's AAD and `key`, and every inner entry must be sealed against
-    /// (a derivation of) it — the same chain the dynamic
-    /// [`MapCipher`](crate::MapCipher) composes when it encrypts a nested
+    /// (a derivation of) it — the same chain the dynamic encrypting walk
+    /// ([`crate::encrypt`]) composes when it encrypts a nested
     /// map inside an entry. Renaming the outer key, or splicing in a nested
     /// map sealed under another record's AAD, then fails at every inner
     /// open. Open with the counterpart derivation
