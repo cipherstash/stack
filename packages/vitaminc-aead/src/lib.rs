@@ -30,8 +30,8 @@ pub use encrypt_sink::{encrypt, encrypt_async, plan, EncryptError, EncryptSink, 
 pub use frame::{to_frame, Frame, FrameWriter, PassthroughFrame};
 #[doc(inline)]
 pub use plaintext::{
-    Bytes, Float, Int, Logical, MapSink, Physical, Plaintext, Raw, SeqSink, Sink, SourceError, Tee,
-    TimeUnit, UnknownLogical,
+    Bytes, Float, Int, Kind, Logical, MapSink, Physical, Plaintext, Raw, SeqSink, Sink,
+    SourceError, Tee, TimeUnit, UnknownLogical,
 };
 #[doc(inline)]
 pub use seal::{Node, Opened, Pending};
@@ -43,7 +43,7 @@ pub use walk::{decrypt_into, decrypt_into_async, decrypt_to_frame, walk, Decrypt
 #[doc(inline)]
 #[allow(deprecated)]
 pub use aad::{Aad, AadPiece};
-pub use aad::{Context, ContextPiece, IntoAad, IntoContext};
+pub use aad::{Context, ContextPiece, IntoAad, IntoContext, LeafTypeAad};
 #[doc(inline)]
 pub use cipher::{Cipher, MapCipher, SeqCipher, Unspecified};
 #[doc(inline)]

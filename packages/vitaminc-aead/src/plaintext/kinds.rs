@@ -93,6 +93,48 @@ pub enum Physical<'a> {
     Bytes(&'a [u8]),
 }
 
+/// A physical kind, named without a value: what a schema expects a column
+/// to hold. Closed, like [`Physical`], and with a wire byte of its own for
+/// the places a kind is bound rather than carried, such as
+/// [`LeafTypeAad`](crate::LeafTypeAad).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    Null,
+    Bool,
+    Int,
+    Float,
+    Text,
+    Bytes,
+}
+
+impl Kind {
+    /// The kind's wire byte. A cross-language commitment: never renumber.
+    pub const fn to_wire(self) -> u8 {
+        match self {
+            Kind::Null => 0,
+            Kind::Bool => 1,
+            Kind::Int => 2,
+            Kind::Float => 3,
+            Kind::Text => 4,
+            Kind::Bytes => 5,
+        }
+    }
+}
+
+impl Physical<'_> {
+    /// The kind of this value.
+    pub fn kind(&self) -> Kind {
+        match self {
+            Physical::Null => Kind::Null,
+            Physical::Bool(_) => Kind::Bool,
+            Physical::Int(_) => Kind::Int,
+            Physical::Float(_) => Kind::Float,
+            Physical::Text(_) => Kind::Text,
+            Physical::Bytes(_) => Kind::Bytes,
+        }
+    }
+}
+
 /// An integer, with the width it came from.
 ///
 /// `==` compares the width as well as the value, so `I8(34) != U64(34)`.
@@ -845,6 +887,22 @@ mod tests {
         ];
         for (v, s) in logical {
             assert_eq!(v.to_string(), s);
+        }
+    }
+
+    #[test]
+    fn every_physical_value_names_its_kind_and_kinds_have_fixed_wire_bytes() {
+        let pairs = [
+            (Physical::Null, Kind::Null, 0),
+            (Physical::Bool(true), Kind::Bool, 1),
+            (Physical::Int(Int::I8(1)), Kind::Int, 2),
+            (Physical::Float(Float::F32(1.0)), Kind::Float, 3),
+            (Physical::Text("a"), Kind::Text, 4),
+            (Physical::Bytes(&[1]), Kind::Bytes, 5),
+        ];
+        for (value, kind, wire) in pairs {
+            assert_eq!(value.kind(), kind);
+            assert_eq!(kind.to_wire(), wire, "{kind:?}");
         }
     }
 }
