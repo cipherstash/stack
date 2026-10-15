@@ -6,6 +6,9 @@
 //! implements `IntoContext` once and gets `IntoAad` (and the PRF crate's
 //! `IntoPrfContext`) for free, with byte-identical results on both sides.
 
+mod leaf_type;
+
+pub use leaf_type::LeafTypeAad;
 pub use vitaminc_context::{Context, ContextPiece, IntoContext};
 
 /// The associated data a context is authenticated as. Kept as a name for

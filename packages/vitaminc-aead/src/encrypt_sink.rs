@@ -8,16 +8,19 @@
 //!   [`Context::for_map_entry`] of its key;
 //! - an empty sequence or map is an authenticated empty marker under
 //!   [`Context::for_empty_sequence`] or [`Context::for_empty_map`];
-//! - duplicate keys are refused;
-//! - a container must seal at least one leaf, because a passthrough
-//!   authenticates nothing and an all-passthrough container would decrypt
-//!   under any AAD;
 //! - a passthrough subtree is framed, in the clear;
-//! - a child sink a source drops without a value is refused, as
+//! - the value keeps the [`shape`](crate::shape) rules: no duplicate keys,
+//!   at least one leaf sealed in every container with children, no child
+//!   sink dropped without a value (as
 //!   [`FrameWriter`](crate::frame::FrameWriter) refuses it, so a tee of the
-//!   two agrees on every walk;
-//! - nothing may nest deeper than [`MAX_DEPTH`], counted as the transport
+//!   two agrees on every walk), and nothing deeper than
+//!   [`MAX_DEPTH`](crate::frame::MAX_DEPTH), counted as the transport
 //!   decoder counts it, so every ciphertext planned here can be read back.
+//!
+//! A refusal is a [`Refusal`]: the rule, and the
+//! [`Path`](crate::plaintext::Path) to the node that broke it. Each child
+//! sink holds only a borrow of its parent's place and its own index or
+//! key, so the path is built only when a value is refused.
 //!
 //! The sink never calls a cipher. It plans a tree of [`Pending`] leaves,
 //! each with its plaintext and the AAD its position derives, and
@@ -27,15 +30,19 @@
 
 use core::future::Future;
 use core::marker::PhantomData;
-use std::collections::HashSet;
 
 use vitaminc_protected::{Controlled, Protected};
 
-use crate::frame::{to_frame_at, FrameWriteError, PassthroughFrame, MAX_DEPTH};
+use crate::frame::PassthroughFrame;
 use crate::leaf::{self, ScalarError};
-use crate::plaintext::{Error, Logical, MapSink, Physical, Plaintext, SeqSink, Sink, SourceError};
+use crate::plaintext::{
+    Error, Logical, MapSink, Physical, Plaintext, SeqSink, Sink, SourceError, Step,
+};
 use crate::seal::{
     seal_all, seal_all_async, AsyncCipher, Cipher, LeafCount, Node, Pending, SealError,
+};
+use crate::shape::{
+    self, refuse, Locate, MapRules, Refusal, Root, SeqRules, Settle, Unencryptable,
 };
 use crate::{CipherText, Context, IntoAad};
 
@@ -48,51 +55,18 @@ pub enum EncryptError<E> {
     /// The cipher refused to seal a leaf.
     #[error("cipher failed: {0}")]
     Cipher(E),
-    /// The source stopped the walk.
+    /// The source stopped the walk, or a sink teed beside this one did
+    /// (an index sink refusing a value, say); the error inside says which.
     #[error("source failed: {0}")]
     Source(#[source] SourceError),
-    /// The value cannot be encrypted as given. See [`Unencryptable`].
+    /// The value cannot be encrypted as given: why, and where in the
+    /// value. See [`Refusal`].
     #[error("cannot encrypt: {0}")]
-    Shape(Unencryptable),
+    Shape(Refusal),
     /// The cipher returned the wrong number of leaves: a cipher bug, not a
     /// problem with the value.
     #[error("cipher returned {0}")]
     Count(LeafCount),
-}
-
-/// Why a value cannot be encrypted as given.
-///
-/// `#[non_exhaustive]`, so a rule can be added without breaking a caller.
-/// No reason carries any part of the value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum Unencryptable {
-    /// A map gave the same key twice.
-    #[error("duplicate key")]
-    DuplicateKey,
-    /// A sequence has elements but seals none of them: every element is a
-    /// passthrough, which authenticates nothing.
-    #[error("sequence has nothing sealed")]
-    SequenceHasNothingSealed,
-    /// A map has entries but seals none of them.
-    #[error("map has nothing sealed")]
-    MapHasNothingSealed,
-    /// A scalar is not a valid value of its logical type.
-    #[error("value is not valid for its logical type")]
-    InvalidValue,
-    /// A scalar cannot be written as a leaf.
-    #[error("value cannot be written as a leaf")]
-    Unwritable,
-    /// A passthrough subtree cannot be framed.
-    #[error("passthrough subtree cannot be framed")]
-    UnframablePassthrough,
-    /// The source took an element or entry sink and dropped it without
-    /// writing a value into it.
-    #[error("a child sink was dropped without a value")]
-    DroppedChild,
-    /// The value nests deeper than [`MAX_DEPTH`].
-    #[error("value nests deeper than {MAX_DEPTH} levels")]
-    TooDeep,
 }
 
 impl<E> Error for EncryptError<E> {
@@ -101,13 +75,9 @@ impl<E> Error for EncryptError<E> {
     }
 }
 
-impl<E> From<FrameWriteError> for EncryptError<E> {
-    fn from(error: FrameWriteError) -> Self {
-        match error {
-            FrameWriteError::Source(e) => Self::Source(e),
-            FrameWriteError::TooDeep => Self::Shape(Unencryptable::TooDeep),
-            _ => Self::Shape(Unencryptable::UnframablePassthrough),
-        }
+impl<E> From<Refusal> for EncryptError<E> {
+    fn from(refusal: Refusal) -> Self {
+        Self::Shape(refusal)
     }
 }
 
@@ -164,14 +134,12 @@ where
     async move { Ok(seal_all_async(cipher, planned?).await?) }
 }
 
-/// Where a finished node goes: back to the caller, or into a parent.
-pub trait Slot {
+/// Where a finished node goes: back to the caller, or into a parent. It
+/// also knows where the node sits, for a refusal.
+pub trait Slot: Locate {
     type Ok;
     fn put(self, node: Node<Pending>) -> Self::Ok;
 }
-
-/// The top of the tree: the node is the result.
-pub struct Root;
 
 impl Slot for Root {
     type Ok = Node<Pending>;
@@ -180,23 +148,59 @@ impl Slot for Root {
     }
 }
 
-/// An element slot in a parent sequence.
-pub struct Push<'s>(&'s mut Vec<Node<Pending>>);
+/// Tell a container's rules how its child ended.
+fn settle(settle: Settle<'_>, node: &Node<Pending>) {
+    if matches!(node, CipherText::Passthrough(_)) {
+        settle.passthrough();
+    } else {
+        settle.sealed();
+    }
+}
+
+/// An element slot in a parent sequence: the parent's items, this
+/// element's hold on the parent's rules, and the parent's place.
+pub struct Push<'s> {
+    items: &'s mut Vec<Node<Pending>>,
+    settle: Settle<'s>,
+    parent: &'s dyn Locate,
+}
+
+impl Locate for Push<'_> {
+    fn locate(&self, steps: &mut Vec<Step>) {
+        self.settle.locate_under(self.parent, steps);
+    }
+}
 
 impl Slot for Push<'_> {
     type Ok = ();
     fn put(self, node: Node<Pending>) {
-        self.0.push(node);
+        settle(self.settle, &node);
+        self.items.push(node);
     }
 }
 
-/// An entry slot in a parent map.
-pub struct Entry<'s>(&'s mut Vec<(String, Node<Pending>)>, String);
+/// An entry slot in a parent map: the parent's entries, this entry's hold
+/// on the parent's rules, which also lends it the key, and the parent's
+/// place.
+pub struct Entry<'s> {
+    entries: &'s mut Vec<(String, Node<Pending>)>,
+    settle: Settle<'s>,
+    parent: &'s dyn Locate,
+}
+
+impl Locate for Entry<'_> {
+    fn locate(&self, steps: &mut Vec<Step>) {
+        self.settle.locate_under(self.parent, steps);
+    }
+}
 
 impl Slot for Entry<'_> {
     type Ok = ();
+    /// The key stays in the parent's rules until the map ends, and the
+    /// entry holds an empty string in its place, which does not allocate.
     fn put(self, node: Node<Pending>) {
-        self.0.push((self.1, node));
+        settle(self.settle, &node);
+        self.entries.push((String::new(), node));
     }
 }
 
@@ -226,24 +230,19 @@ impl<E> EncryptSink<E, Root> {
 }
 
 impl<E, O: Slot> EncryptSink<E, O> {
-    /// Refuse a node below [`MAX_DEPTH`], as the transport decoder does.
-    fn check_depth(&self) -> Result<(), EncryptError<E>> {
-        if self.depth > MAX_DEPTH {
-            return Err(EncryptError::Shape(Unencryptable::TooDeep));
-        }
-        Ok(())
-    }
-
     /// Plan one scalar as one leaf: its tag, then its payload.
     fn leaf(self, ty: Option<Logical>, v: Physical<'_>) -> Result<O::Ok, EncryptError<E>> {
-        self.check_depth()?;
+        shape::scalar(self.depth, ty, &v, &self.out)?;
         // Sized once, so the buffer never regrows and leaves a copy behind.
         let mut plaintext = Protected::new(Vec::with_capacity(leaf::max_len(&v)));
-        leaf::write_leaf(ty, v, plaintext.risky_inner_mut()).map_err(|e| match e {
-            ScalarError::Invalid => EncryptError::Shape(Unencryptable::InvalidValue),
-            ScalarError::TooLong | ScalarError::Malformed => {
-                EncryptError::Shape(Unencryptable::Unwritable)
-            }
+        leaf::write_leaf(ty, v, plaintext.risky_inner_mut()).map_err(|e| {
+            refuse(
+                &self.out,
+                match e {
+                    ScalarError::Invalid => Unencryptable::InvalidValue,
+                    ScalarError::TooLong | ScalarError::Malformed => Unencryptable::Unwritable,
+                },
+            )
         })?;
         Ok(self.out.put(CipherText::Single(Pending {
             plaintext,
@@ -259,12 +258,6 @@ fn marker(aad: Context<'static>) -> Pending {
     }
 }
 
-fn sealed_any<L>(nodes: impl IntoIterator<Item = impl core::borrow::Borrow<Node<L>>>) -> bool {
-    nodes
-        .into_iter()
-        .any(|n| !matches!(n.borrow(), CipherText::Passthrough(_)))
-}
-
 impl<E, O: Slot> Sink for EncryptSink<E, O> {
     type Ok = O::Ok;
     type Error = EncryptError<E>;
@@ -276,12 +269,12 @@ impl<E, O: Slot> Sink for EncryptSink<E, O> {
     }
 
     fn seq(self, len: Option<usize>) -> Result<Self::Seq, Self::Error> {
-        self.check_depth()?;
+        shape::container(self.depth, &self.out)?;
         Ok(EncryptSeq {
             element_aad: self.aad.for_sequence_element(),
             aad: self.aad,
             items: Vec::with_capacity(len.unwrap_or(0).min(1024)),
-            handed: 0,
+            rules: SeqRules::new(),
             out: self.out,
             depth: self.depth,
             _error: PhantomData,
@@ -289,11 +282,11 @@ impl<E, O: Slot> Sink for EncryptSink<E, O> {
     }
 
     fn map(self, _len: Option<usize>) -> Result<Self::Map, Self::Error> {
-        self.check_depth()?;
+        shape::container(self.depth, &self.out)?;
         Ok(EncryptMap {
             aad: self.aad,
             entries: Vec::new(),
-            seen: HashSet::new(),
+            rules: MapRules::new(),
             out: self.out,
             depth: self.depth,
             _error: PhantomData,
@@ -301,11 +294,8 @@ impl<E, O: Slot> Sink for EncryptSink<E, O> {
     }
 
     /// Passthrough is non-sensitive by design: it is framed, not sealed.
-    /// The frame's root sits one level below this node, as the transport
-    /// decoder counts it.
     fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<O::Ok, Self::Error> {
-        self.check_depth()?;
-        let frame = to_frame_at(value, self.depth + 1)?;
+        let frame = shape::frame_passthrough(value, self.depth, &self.out, EncryptError::Shape)?;
         Ok(self.out.put(CipherText::Passthrough(PassthroughFrame(
             frame.risky_ref().to_vec(),
         ))))
@@ -316,21 +306,10 @@ pub struct EncryptSeq<E, O> {
     aad: Context<'static>,
     element_aad: Context<'static>,
     items: Vec<Node<Pending>>,
-    /// How many element sinks have been handed out. Each must have put a
-    /// node in `items` by the next `element` or the `end`.
-    handed: usize,
+    rules: SeqRules,
     out: O,
     depth: usize,
     _error: PhantomData<E>,
-}
-
-impl<E, O> EncryptSeq<E, O> {
-    fn settled(&self) -> Result<(), EncryptError<E>> {
-        if self.items.len() != self.handed {
-            return Err(EncryptError::Shape(Unencryptable::DroppedChild));
-        }
-        Ok(())
-    }
 }
 
 impl<E, O: Slot> SeqSink for EncryptSeq<E, O> {
@@ -342,22 +321,22 @@ impl<E, O: Slot> SeqSink for EncryptSeq<E, O> {
         Self: 's;
 
     fn element(&mut self) -> Result<Self::Element<'_>, Self::Error> {
-        self.settled()?;
-        self.handed += 1;
         Ok(EncryptSink {
             aad: self.element_aad.clone(),
-            out: Push(&mut self.items),
+            out: Push {
+                settle: self.rules.element(&self.out)?,
+                items: &mut self.items,
+                parent: &self.out,
+            },
             depth: self.depth + 1,
             _error: PhantomData,
         })
     }
 
     fn end(self) -> Result<O::Ok, Self::Error> {
-        self.settled()?;
+        self.rules.end(&self.out)?;
         let node = if self.items.is_empty() {
             CipherText::EmptySequence(marker(self.aad.for_empty_sequence()))
-        } else if !sealed_any(&self.items) {
-            return Err(EncryptError::Shape(Unencryptable::SequenceHasNothingSealed));
         } else {
             CipherText::Sequence(self.items)
         };
@@ -367,22 +346,13 @@ impl<E, O: Slot> SeqSink for EncryptSeq<E, O> {
 
 pub struct EncryptMap<E, O> {
     aad: Context<'static>,
+    /// Each entry's node, in order, with an empty key until the map ends.
     entries: Vec<(String, Node<Pending>)>,
-    /// Every key handed an entry sink. Each such sink must have put an
-    /// entry in `entries` by the next `entry` or the `end`.
-    seen: HashSet<String>,
+    /// The only copy of each key, which `end` moves into `entries`.
+    rules: MapRules,
     out: O,
     depth: usize,
     _error: PhantomData<E>,
-}
-
-impl<E, O> EncryptMap<E, O> {
-    fn settled(&self) -> Result<(), EncryptError<E>> {
-        if self.entries.len() != self.seen.len() {
-            return Err(EncryptError::Shape(Unencryptable::DroppedChild));
-        }
-        Ok(())
-    }
 }
 
 impl<E, O: Slot> MapSink for EncryptMap<E, O> {
@@ -394,24 +364,27 @@ impl<E, O: Slot> MapSink for EncryptMap<E, O> {
         Self: 's;
 
     fn entry(&mut self, key: &str) -> Result<Self::Entry<'_>, Self::Error> {
-        self.settled()?;
-        if !self.seen.insert(key.to_owned()) {
-            return Err(EncryptError::Shape(Unencryptable::DuplicateKey));
-        }
         Ok(EncryptSink {
             aad: self.aad.for_map_entry(key),
-            out: Entry(&mut self.entries, key.to_owned()),
+            out: Entry {
+                settle: self.rules.entry(key, &self.out)?,
+                entries: &mut self.entries,
+                parent: &self.out,
+            },
             depth: self.depth + 1,
             _error: PhantomData,
         })
     }
 
-    fn end(self) -> Result<O::Ok, Self::Error> {
-        self.settled()?;
+    fn end(mut self) -> Result<O::Ok, Self::Error> {
+        self.rules.end(&self.out)?;
+        for (key, at) in self.rules.into_keys() {
+            if let Some((slot, _)) = self.entries.get_mut(at) {
+                *slot = key;
+            }
+        }
         let node = if self.entries.is_empty() {
             CipherText::EmptyMap(marker(self.aad.for_empty_map()))
-        } else if !sealed_any(self.entries.iter().map(|(_, n)| n)) {
-            return Err(EncryptError::Shape(Unencryptable::MapHasNothingSealed));
         } else {
             CipherText::Map(self.entries)
         };
@@ -422,7 +395,8 @@ impl<E, O: Slot> MapSink for EncryptMap<E, O> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plaintext::{visit_seq, Int, Raw};
+    use crate::frame::{FrameWriteError, MAX_DEPTH};
+    use crate::plaintext::{render, visit_seq, Int, Raw};
     use crate::seal::leaves_with_aad;
     use crate::seal::mock::{Mock, Refused};
     use crate::Tee;
@@ -453,6 +427,19 @@ mod tests {
         plan(p, "ctx")
     }
 
+    /// Why a plan was refused and where, the path written out by
+    /// [`render`], or `None` if it was not refused for its shape.
+    fn refusal<T, E>(planned: Result<T, EncryptError<E>>) -> Option<(Unencryptable, String)> {
+        match planned {
+            Err(EncryptError::Shape(refusal)) => Some((refusal.reason(), render(refusal.path()))),
+            _ => None,
+        }
+    }
+
+    fn refused(reason: Unencryptable, at: &str) -> Option<(Unencryptable, String)> {
+        Some((reason, at.to_owned()))
+    }
+
     #[test]
     fn a_scalar_is_one_tagged_leaf_under_the_bare_aad() {
         let node = planned(34u32).expect("plans");
@@ -481,19 +468,11 @@ mod tests {
 
     #[test]
     fn duplicate_keys_are_refused() {
-        struct Dup;
-        impl Plaintext for Dup {
-            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-                let mut map = sink.map(None)?;
-                1u32.visit(map.entry("k")?)?;
-                2u32.visit(map.entry("k")?)?;
-                map.end()
-            }
-        }
-        assert!(matches!(
-            planned(Dup),
-            Err(EncryptError::Shape(Unencryptable::DuplicateKey))
-        ));
+        // The path names the entry under the repeated key.
+        assert_eq!(
+            refusal(planned(Dup)),
+            refused(Unencryptable::DuplicateKey, ".k")
+        );
     }
 
     #[test]
@@ -504,16 +483,16 @@ mod tests {
                 sink.passthrough("public")
             }
         }
-        assert!(matches!(
-            planned(vec![Pass]),
-            Err(EncryptError::Shape(Unencryptable::SequenceHasNothingSealed))
-        ));
+        assert_eq!(
+            refusal(planned(vec![Pass])),
+            refused(Unencryptable::SequenceHasNothingSealed, "")
+        );
         let mut map = BTreeMap::new();
         map.insert("note", Pass);
-        assert!(matches!(
-            planned(map),
-            Err(EncryptError::Shape(Unencryptable::MapHasNothingSealed))
-        ));
+        assert_eq!(
+            refusal(planned(map)),
+            refused(Unencryptable::MapHasNothingSealed, "")
+        );
         // One sealed sibling is enough.
         struct Mixed;
         impl Plaintext for Mixed {
@@ -539,10 +518,10 @@ mod tests {
     #[test]
     fn an_invalid_logical_value_is_refused() {
         let bad = Raw(Some(Logical::Uuid), Physical::Bytes(&[0; 3]));
-        assert!(matches!(
-            planned(bad),
-            Err(EncryptError::Shape(Unencryptable::InvalidValue))
-        ));
+        assert_eq!(
+            refusal(planned(bad)),
+            refused(Unencryptable::InvalidValue, "")
+        );
     }
 
     #[test]
@@ -671,10 +650,10 @@ mod tests {
     #[test]
     fn a_dropped_child_sink_is_refused_as_the_frame_writer_refuses_it() {
         for map in [false, true] {
-            assert!(matches!(
-                planned(DropsAChild { map }),
-                Err(EncryptError::Shape(Unencryptable::DroppedChild))
-            ));
+            assert_eq!(
+                refusal(planned(DropsAChild { map })),
+                refused(Unencryptable::DroppedChild, "")
+            );
             assert!(matches!(
                 crate::frame::to_frame(DropsAChild { map }),
                 Err(FrameWriteError::Unwritten)
@@ -690,10 +669,10 @@ mod tests {
                 seq.end()
             }
         }
-        assert!(matches!(
-            planned(DropsThenWrites),
-            Err(EncryptError::Shape(Unencryptable::DroppedChild))
-        ));
+        assert_eq!(
+            refusal(planned(DropsThenWrites)),
+            refused(Unencryptable::DroppedChild, "")
+        );
     }
 
     /// A passthrough that opens a container and never ends it.
@@ -726,10 +705,11 @@ mod tests {
             crate::frame::to_frame(Unclosed),
             Err(FrameWriteError::Unfinished)
         ));
-        assert!(matches!(
-            planned(Doc),
-            Err(EncryptError::Shape(Unencryptable::UnframablePassthrough))
-        ));
+        // The path names the passthrough, not a node inside it.
+        assert_eq!(
+            refusal(planned(Doc)),
+            refused(Unencryptable::UnframablePassthrough, "[1]")
+        );
     }
 
     #[derive(Clone, Copy)]
@@ -774,12 +754,19 @@ mod tests {
 
     #[test]
     fn depth_is_bounded_as_the_transport_decoder_bounds_it() {
-        for kind in [Kind::Seq, Kind::Map, Kind::Pass, Kind::Scalar] {
+        // The path names the node one level too deep; a passthrough that
+        // nests too deep is refused as a whole, at its own place.
+        for (kind, step) in [
+            (Kind::Seq, "[0]"),
+            (Kind::Map, ".k"),
+            (Kind::Pass, ""),
+            (Kind::Scalar, "[0]"),
+        ] {
             assert!(planned(Nest(kind, MAX_DEPTH)).is_ok());
-            assert!(matches!(
-                planned(Nest(kind, MAX_DEPTH + 1)),
-                Err(EncryptError::Shape(Unencryptable::TooDeep))
-            ));
+            assert_eq!(
+                refusal(planned(Nest(kind, MAX_DEPTH + 1))),
+                refused(Unencryptable::TooDeep, &step.repeat(MAX_DEPTH + 1))
+            );
         }
         // A passthrough below the top counts from the top: one level of
         // sequence around a frame that is itself `MAX_DEPTH` deep is one
@@ -794,15 +781,140 @@ mod tests {
             }
         }
         assert!(planned(Wrapped(MAX_DEPTH - 2)).is_ok());
-        assert!(matches!(
-            planned(Wrapped(MAX_DEPTH - 1)),
-            Err(EncryptError::Shape(Unencryptable::TooDeep))
+        assert_eq!(
+            refusal(planned(Wrapped(MAX_DEPTH - 1))),
+            refused(Unencryptable::TooDeep, "[1]")
+        );
+    }
+
+    /// A document whose `users` entry is a sequence of two values, the
+    /// second of them `bad`, beside a well-formed `id`.
+    struct Users<P>(P);
+
+    impl<P: Plaintext> Plaintext for Users<P> {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            let mut map = sink.map(Some(2))?;
+            1u32.visit(map.entry("id")?)?;
+            let mut users = map.entry("users")?.seq(Some(2))?;
+            "ada".visit(users.element()?)?;
+            self.0.visit(users.element()?)?;
+            users.end()?;
+            map.end()
+        }
+    }
+
+    /// A map that gives `k` twice.
+    struct Dup;
+
+    impl Plaintext for Dup {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            let mut map = sink.map(None)?;
+            1u32.visit(map.entry("k")?)?;
+            2u32.visit(map.entry("k")?)?;
+            map.end()
+        }
+    }
+
+    /// A container with one passthrough in it and nothing sealed.
+    #[derive(Clone)]
+    struct OnlyPass {
+        map: bool,
+    }
+
+    impl Plaintext for OnlyPass {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            if self.map {
+                let mut map = sink.map(Some(1))?;
+                map.entry("note")?.passthrough("public")?;
+                map.end()
+            } else {
+                let mut seq = sink.seq(Some(1))?;
+                seq.element()?.passthrough("public")?;
+                seq.end()
+            }
+        }
+    }
+
+    #[test]
+    fn a_refusal_names_the_node_below_the_root() {
+        let invalid = Raw(Some(Logical::Uuid), Physical::Bytes(&[0; 3]));
+        assert_eq!(
+            refusal(planned(Users(invalid))),
+            refused(Unencryptable::InvalidValue, ".users[1]")
+        );
+        assert_eq!(
+            refusal(planned(Users(Dup))),
+            refused(Unencryptable::DuplicateKey, ".users[1].k")
+        );
+        assert_eq!(
+            refusal(planned(Users(OnlyPass { map: false }))),
+            refused(Unencryptable::SequenceHasNothingSealed, ".users[1]")
+        );
+        assert_eq!(
+            refusal(planned(Users(OnlyPass { map: true }))),
+            refused(Unencryptable::MapHasNothingSealed, ".users[1]")
+        );
+        for map in [false, true] {
+            assert_eq!(
+                refusal(planned(Users(DropsAChild { map }))),
+                refused(Unencryptable::DroppedChild, ".users[1]")
+            );
+        }
+        assert_eq!(
+            refusal(planned(Users(Nest(Kind::Seq, MAX_DEPTH - 1)))),
+            refused(
+                Unencryptable::TooDeep,
+                &format!(".users[1]{}", "[0]".repeat(MAX_DEPTH - 1))
+            )
+        );
+        // Teed with another sink, the refusal and its path are the same.
+        let mut scalars = 0;
+        let invalid = Raw(Some(Logical::Uuid), Physical::Bytes(&[0; 3]));
+        let teed = Users(invalid).visit(Tee(
+            EncryptSink::<Refused>::root("ctx"),
+            Count(&mut scalars, PhantomData),
         ));
+        assert_eq!(
+            refusal(teed),
+            refused(Unencryptable::InvalidValue, ".users[1]")
+        );
+    }
+
+    #[test]
+    fn a_refusal_shows_its_path_only_on_request() {
+        let err = plan::<_, &str, _>(Users(Dup), "ctx")
+            .err()
+            .expect("refused");
+        // Neither the message nor `Debug` names a key; `Debug` keeps the
+        // path's shape.
+        assert_eq!(err.to_string(), "cannot encrypt: duplicate key");
+        let debug = format!("{err:?}");
+        assert!(!debug.contains("users"), "{debug}");
+        assert!(debug.contains("DuplicateKey"), "{debug}");
+        assert!(debug.contains("Index(1)"), "{debug}");
+        assert!(debug.contains("Key(\"***\")"), "{debug}");
+        let EncryptError::Shape(refusal) = err else {
+            panic!("{err:?}")
+        };
+        assert_eq!(
+            refusal.path().steps(),
+            [
+                Step::Key("users".into()),
+                Step::Index(1),
+                Step::Key("k".into())
+            ]
+        );
     }
 
     #[test]
     fn errors_say_what_failed_without_the_value() {
-        let shape = |s| EncryptError::<&str>::Shape(s).to_string();
+        struct Secret;
+        impl Locate for Secret {
+            fn locate(&self, steps: &mut Vec<Step>) {
+                steps.push(Step::Key("secret".into()));
+            }
+        }
+        let shape = |reason| EncryptError::<&str>::Shape(refuse(&Secret, reason)).to_string();
         assert_eq!(
             shape(Unencryptable::DuplicateKey),
             "cannot encrypt: duplicate key"

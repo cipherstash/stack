@@ -6,13 +6,13 @@ use syn::{parse_quote, DeriveInput, Result};
 
 use crate::{
     attrs::ContainerAttrs,
-    shape::{FieldInfo, Shape},
+    shape::{Dialect, FieldInfo, Shape},
 };
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let attrs = ContainerAttrs::parse(&input.attrs)?;
     let krate = &attrs.krate;
-    let shape = Shape::parse(&input)?;
+    let shape = Shape::parse(&input, Dialect::Legacy)?;
     let name = &input.ident;
 
     // Bound every type parameter, serde-style: a field of type `Vec<T>` then
@@ -27,6 +27,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         Shape::Newtype(field) => newtype_body(krate, field),
         Shape::Map(fields) => map_body(krate, fields),
         Shape::Empty => empty_body(krate),
+        Shape::Enum(_) => unreachable!("the legacy dialect refuses enums"),
     };
 
     Ok(quote! {

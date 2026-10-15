@@ -76,17 +76,12 @@ impl Plaintext for &str {
 }
 
 /// An owned byte or text leaf wraps itself before the sink sees it, as its
-/// `Encrypt` impl does today. So a bare leaf inside a `Protected` container,
-/// which the container's default [`Plaintext::visit_protected`] hands over
-/// unwrapped, still has its buffer wiped when the walk is done with it.
+/// `Encrypt` impl does today, and walks as a borrow of the wrapped value.
+/// So a bare leaf that a container moved out, or that a caller handed over
+/// bare, still has its buffer wiped when the walk is done with it.
 impl Plaintext for String {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        Self::visit_protected(Protected::new(self), sink)
-    }
-
-    fn visit_protected<S: Sink>(this: Protected<Self>, sink: S) -> Result<S::Ok, S::Error> {
-        sink.scalar(None, Physical::Text(this.risky_ref()))
-        // `this` drops and wipes here.
+        Protected::new(self).visit(sink)
     }
 }
 
@@ -106,21 +101,13 @@ impl Plaintext for &[u8] {
 /// shape `String` describes, and the shape `Vec<u8>` will read back.
 impl Plaintext for Vec<u8> {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        Self::visit_protected(Protected::new(self), sink)
-    }
-
-    fn visit_protected<S: Sink>(this: Protected<Self>, sink: S) -> Result<S::Ok, S::Error> {
-        sink.scalar(None, Physical::Bytes(this.risky_ref()))
+        Protected::new(self).visit(sink)
     }
 }
 
 impl<const N: usize> Plaintext for [u8; N] {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        Self::visit_protected(Protected::new(self), sink)
-    }
-
-    fn visit_protected<S: Sink>(this: Protected<Self>, sink: S) -> Result<S::Ok, S::Error> {
-        sink.scalar(None, Physical::Bytes(this.risky_ref()))
+        Protected::new(self).visit(sink)
     }
 }
 
@@ -149,6 +136,12 @@ impl Plaintext for Bytes<'_> {
     }
 }
 
+impl Plaintext for &Bytes<'_> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (*self).visit(sink)
+    }
+}
+
 /// Any scalar, as given: a logical type and a physical value.
 ///
 /// `Debug` is redacted, as for every plaintext scalar.
@@ -158,6 +151,25 @@ pub struct Raw<'a>(pub Option<Logical>, pub Physical<'a>);
 impl Plaintext for Raw<'_> {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(self.0, self.1)
+    }
+}
+
+impl Plaintext for &Raw<'_> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (*self).visit(sink)
+    }
+}
+
+/// A borrow of a borrowed source is the same source. This is what a
+/// derived struct with a borrowed field (`&'a str`, `&'a [u8]`,
+/// `Option<&'a str>`) needs when it is walked by reference, as it is from
+/// inside a `Protected`: each field is then visited as `&&'a str`.
+impl<'b, T: ?Sized> Plaintext for &&'b T
+where
+    &'b T: Plaintext,
+{
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (*self).visit(sink)
     }
 }
 
@@ -184,35 +196,41 @@ where
     }
 }
 
-/// Goes through [`Plaintext::visit_protected`], so a byte leaf stays
-/// wrapped until the sink has seen it.
-impl<T: Plaintext + Zeroize> Plaintext for Protected<T> {
+/// A protected value walks as a borrow of what it wraps, so nothing leaves
+/// the wrapper during the walk, and everything in it, visited or not, is
+/// zeroized when the wrapper drops at the end of it.
+impl<T: Zeroize> Plaintext for Protected<T>
+where
+    for<'a> &'a T: Plaintext,
+{
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        T::visit_protected(self, sink)
+        self.risky_ref().visit(sink)
+        // `self` drops here and zeroizes the whole value.
+    }
+}
+
+/// A borrowed protected value is the same borrow; the caller's wrapper
+/// does the wiping.
+impl<'a, T: Zeroize> Plaintext for &'a Protected<T>
+where
+    &'a T: Plaintext,
+{
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.risky_ref().visit(sink)
     }
 }
 
 /// An owned sequence takes its elements out one at a time, so a walk that
-/// stops part way never drops an unvisited element bare.
-///
-/// Bare, the elements the walk did not reach are walked into a sink that
-/// discards them before they drop, which wipes every owned leaf among them
-/// the way a completed walk would. Inside a `Protected`, they stay in the
-/// protected vector and are zeroized with it, along with the slots the
-/// visited elements were moved out of.
+/// stops part way never drops an unvisited element bare: the elements the
+/// walk did not reach are walked into a sink that discards them before they
+/// drop, which wipes every owned leaf among them the way a completed walk
+/// would. (Inside a `Protected`, a sequence is walked as a borrow instead,
+/// and is zeroized whole with its wrapper.)
 impl<T: Plaintext> Plaintext for Vec<T> {
     fn visit<S: Sink>(mut self, sink: S) -> Result<S::Ok, S::Error> {
         let result = visit_popping(sink, &mut self);
         discard(self);
         result
-    }
-
-    fn visit_protected<S: Sink>(mut this: Protected<Self>, sink: S) -> Result<S::Ok, S::Error>
-    where
-        Self: Sized + Zeroize,
-    {
-        visit_popping(sink, this.risky_inner_mut())
-        // `this` drops here and zeroizes what is left, and the whole buffer.
     }
 }
 
@@ -234,10 +252,20 @@ fn visit_popping<S: Sink, T: Plaintext>(sink: S, items: &mut Vec<T>) -> Result<S
 /// wrap themselves and are wiped as they drop.
 fn discard<T: Plaintext>(items: Vec<T>) {
     for item in items {
-        // `Discard` never fails, and a source error is no longer anyone's
-        // concern once the walk has already failed.
-        let _ = item.visit(Discard);
+        discard_one(item);
     }
+}
+
+/// Walk `value` into a sink that keeps nothing, so every owned leaf in it
+/// wraps itself and is wiped as it drops, the way a completed walk would
+/// have wiped it. For a source that has to give up part way: a derived
+/// struct walks the fields it has not reached through here when an entry
+/// fails, as a bare `Vec<T>` does its leftover elements.
+#[doc(hidden)]
+pub fn discard_one<P: Plaintext>(value: P) {
+    // `Discard` never fails, and a source error is no longer anyone's
+    // concern once the walk has already failed.
+    let _ = value.visit(Discard);
 }
 
 /// A sink that keeps nothing. Walking a value into it runs the value's own
@@ -593,10 +621,12 @@ mod tests {
 
     impl Plaintext for Counted {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-            Self::visit_protected(Protected::new(self), sink)
+            Protected::new(self).visit(sink)
         }
+    }
 
-        fn visit_protected<S: Sink>(_this: Protected<Self>, sink: S) -> Result<S::Ok, S::Error> {
+    impl Plaintext for &Counted {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             sink.scalar(None, Physical::Null)
         }
     }
@@ -612,6 +642,23 @@ mod tests {
         assert_eq!(wipes.0.get(), 1);
     }
 
+    /// A borrowed protected value is walked as a borrow of what it wraps,
+    /// so nothing leaves the wrapper.
+    #[test]
+    fn a_borrowed_protected_value_walks_as_its_borrow() {
+        let secret = Protected::new(String::from("pw"));
+        assert_eq!(
+            record(&secret).expect("records"),
+            [scalar(Owned::Text("pw".into()))]
+        );
+        let key = Protected::new([7u8; 4]);
+        assert_eq!(
+            record(&key).expect("records"),
+            [scalar(Owned::Bytes(vec![7; 4]))]
+        );
+        assert_eq!(secret.risky_ref(), "pw");
+    }
+
     /// A leaf that counts its wipes but does not wrap itself when visited,
     /// so only zeroizing the container it sits in can wipe it.
     #[derive(Clone, Default)]
@@ -624,6 +671,12 @@ mod tests {
     }
 
     impl Plaintext for Tracked {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            sink.scalar(None, Physical::Null)
+        }
+    }
+
+    impl Plaintext for &Tracked {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             sink.scalar(None, Physical::Null)
         }
@@ -698,12 +751,13 @@ mod tests {
 
     #[test]
     fn a_protected_vec_zeroizes_what_a_failed_walk_did_not_reach() {
-        // One element is visited, then the sink fails. The two left over
-        // are still inside the `Protected` and are zeroized with it.
+        // One element is visited, then the sink fails. The walk borrowed,
+        // so all three are still inside the `Protected` and are zeroized
+        // with it.
         let wipes = Tracked::default();
         let items = Protected::new(vec![wipes.clone(), wipes.clone(), wipes.clone()]);
         items.visit(StopAfter::new(1)).expect_err("should stop");
-        assert_eq!(wipes.0.get(), 2);
+        assert_eq!(wipes.0.get(), 3);
 
         // A failure before the first element leaves everything protected.
         let wipes = Tracked::default();
@@ -714,8 +768,8 @@ mod tests {
 
     #[test]
     fn a_protected_vec_wipes_every_leaf_when_the_walk_fails() {
-        // The first leaf wipes itself as it is visited; the other two are
-        // zeroized with the vector.
+        // Nothing leaves the vector during the walk, so all three are
+        // zeroized with it, visited or not.
         let wipes = Counted::default();
         let items = Protected::new(vec![wipes.clone(), wipes.clone(), wipes.clone()]);
         items.visit(StopAfter::new(1)).expect_err("should stop");

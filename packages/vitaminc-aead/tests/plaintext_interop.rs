@@ -355,3 +355,37 @@ fn a_failing_source_stops_the_walk_with_its_own_error() {
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn a_typed_target_reads_what_today_sealed_and_the_reverse() {
+    use vitaminc_aead::decrypt;
+    let aes = Aes(cipher());
+
+    // Sealed on today's path as a `Value`, read as a Rust `u32`.
+    let ct = Value::UInt32(34)
+        .encrypt_with_aad(&aes.0, Context::from_encoded(AAD))
+        .expect("encrypts");
+    let n: u32 = decrypt(&aes, to_model(ct), Context::from_encoded(AAD)).expect("decrypts");
+    assert_eq!(n, 34);
+
+    // Sealed from Rust, read on today's path as a `Value`, and back.
+    let ct = encrypt(vec!["Ada", "Grace"], &aes, Context::from_encoded(AAD)).expect("encrypts");
+    let frame = today_decrypt(&aes.0, to_today(ct)).expect("decrypts");
+    let value = decode_value(&mut Reader::new(&frame)).expect("decodes");
+    assert!(matches!(value, Value::Array(ref items) if items.len() == 2));
+    let ct = value
+        .encrypt_with_aad(&aes.0, Context::from_encoded(AAD))
+        .expect("encrypts");
+    let names: Vec<String> =
+        decrypt(&aes, to_model(ct), Context::from_encoded(AAD)).expect("decrypts");
+    assert_eq!(names, ["Ada", "Grace"]);
+
+    // The wrong kind is refused after authentication, by name.
+    let ct = encrypt(34u32, &aes, ()).expect("encrypts");
+    assert!(matches!(
+        decrypt::<String, _, _>(&aes, ct, ()),
+        Err(DecryptError::Sink(vitaminc_aead::DecodeError::Expected(
+            "string"
+        )))
+    ));
+}

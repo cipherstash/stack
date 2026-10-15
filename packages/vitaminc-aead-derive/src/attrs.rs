@@ -39,12 +39,21 @@ pub(crate) struct FieldAttrs {
     /// `#[aead(passthrough)]`. The value is neither encrypted nor
     /// authenticated — see the crate docs.
     pub(crate) passthrough: bool,
+    /// Leave this field out of the ciphertext altogether, from
+    /// `#[aead(skip)]`. It is rebuilt with `Default` on decrypt.
+    pub(crate) skip: bool,
+    /// Take the value out with `core::mem::take` rather than moving it, from
+    /// `#[aead(take)]`, for a struct that cannot be destructured because it
+    /// implements `Drop` (a `ZeroizeOnDrop` type, typically).
+    pub(crate) take: bool,
 }
 
 impl FieldAttrs {
     pub(crate) fn parse(attrs: &[Attribute]) -> Result<Self> {
         let mut rename: Option<String> = None;
         let mut passthrough = false;
+        let mut skip = false;
+        let mut take = false;
 
         for attr in attrs.iter().filter(|a| a.path().is_ident("aead")) {
             attr.parse_nested_meta(|meta| {
@@ -57,8 +66,17 @@ impl FieldAttrs {
                     passthrough = true;
                     return Ok(());
                 }
+                if meta.path.is_ident("skip") {
+                    skip = true;
+                    return Ok(());
+                }
+                if meta.path.is_ident("take") {
+                    take = true;
+                    return Ok(());
+                }
                 Err(meta.error(
-                    "unsupported field attribute; expected `rename = \"...\"` or `passthrough`",
+                    "unsupported field attribute; expected `rename = \"...\"`, `passthrough`, \
+                     `skip` or `take`",
                 ))
             })?;
         }
@@ -66,6 +84,8 @@ impl FieldAttrs {
         Ok(Self {
             rename,
             passthrough,
+            skip,
+            take,
         })
     }
 }

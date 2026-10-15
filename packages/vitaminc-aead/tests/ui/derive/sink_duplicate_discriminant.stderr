@@ -1,0 +1,17 @@
+error: duplicate discriminant `1`: two variants would be stored as the same value
+ --> tests/ui/derive/sink_duplicate_discriminant.rs:9:5
+  |
+9 |     Closed,
+  |     ^^^^^^
+
+error[E0081]: discriminant value `1` assigned more than once
+ --> tests/ui/derive/sink_duplicate_discriminant.rs:6:1
+  |
+6 | enum Status {
+  | ^^^^^^^^^^^
+7 |     Active = 1,
+  |              - `1` assigned here
+8 |     Suspended = 0,
+  |     --------- discriminant for `Closed` incremented from this startpoint (`Suspended` + 1 variant later => `Closed` = 1)
+9 |     Closed,
+  |     ------ `1` assigned here

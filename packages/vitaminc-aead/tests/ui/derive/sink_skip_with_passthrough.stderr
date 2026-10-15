@@ -1,0 +1,5 @@
+error: field `id` is `#[aead(skip)]`, so it has no entry to pass through or take: remove the other attribute
+ --> tests/ui/derive/sink_skip_with_passthrough.rs:6:8
+  |
+6 | struct Row {
+  |        ^^^

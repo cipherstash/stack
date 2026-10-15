@@ -18,29 +18,35 @@ mod nonce;
 mod passthrough;
 pub mod plaintext;
 pub mod seal;
+pub mod shape;
 pub mod tags;
 #[cfg(test)]
 mod test_util;
+pub mod typed;
 mod walk;
 
 #[doc(inline)]
-pub use encrypt_sink::{encrypt, encrypt_async, plan, EncryptError, EncryptSink, Unencryptable};
+pub use encrypt_sink::{encrypt, encrypt_async, plan, EncryptError, EncryptSink};
 #[doc(inline)]
 pub use frame::{to_frame, Frame, FrameWriter, PassthroughFrame};
 #[doc(inline)]
 pub use plaintext::{
-    Bytes, Float, Int, Logical, MapSink, Physical, Plaintext, Raw, SeqSink, Sink, SourceError, Tee,
-    TimeUnit, UnknownLogical,
+    Bytes, Float, Int, Kind, KnownLogical, Logical, MapSink, Physical, Plaintext, Raw, SeqSink,
+    Sink, SourceError, Tee, TimeUnit, UnknownLogical, UnknownLogicalId,
 };
 #[doc(inline)]
 pub use seal::{Node, Opened, Pending};
+#[doc(inline)]
+pub use shape::{Refusal, Unencryptable};
+#[doc(inline)]
+pub use typed::{decrypt, decrypt_async, DecodeError, DecryptProtected, FromScalar};
 #[doc(inline)]
 pub use walk::{decrypt_into, decrypt_into_async, decrypt_to_frame, walk, DecryptError};
 
 #[doc(inline)]
 #[allow(deprecated)]
 pub use aad::{Aad, AadPiece};
-pub use aad::{Context, ContextPiece, IntoAad, IntoContext};
+pub use aad::{Context, ContextPiece, IntoAad, IntoContext, LeafTypeAad};
 #[doc(inline)]
 pub use cipher::{Cipher, MapCipher, SeqCipher, Unspecified};
 #[doc(inline)]
@@ -62,6 +68,12 @@ pub use nonce::{Nonce, NonceGenerator, RandomNonceGenerator};
 // Inlined rather than linked, so the macros' own documentation — the
 // `#[aead(...)]` reference in particular — renders here instead of sending the
 // reader to another crate. There is still only one copy of that text.
+/// Derive [`Plaintext`] for a struct or a fieldless enum. The sink-based
+/// [`Decrypt`](typed::Decrypt) derive sits beside its trait in [`typed`]:
+/// `use vitaminc_aead::Decrypt` is still the legacy derive until #406, so
+/// pair `Plaintext` with `vitaminc_aead::typed::Decrypt`.
+#[doc(inline)]
+pub use vitaminc_aead_derive::Plaintext;
 #[doc(inline)]
 pub use vitaminc_aead_derive::{Decrypt, Encrypt};
 
