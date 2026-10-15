@@ -58,12 +58,25 @@ impl<'a> Frame<'a> {
     /// The whole frame is checked up front, so [`visit`](Plaintext::visit)
     /// never has to report a malformed frame part way through a walk.
     pub fn parse(bytes: &'a [u8]) -> Result<Self, FrameError> {
-        let mut cursor = Cursor { buf: bytes, pos: 0 };
-        skip(&mut cursor, 0)?;
-        if cursor.pos != bytes.len() {
+        let (frame, rest) = Self::parse_nested(bytes, 0)?;
+        if !rest.is_empty() {
             return Err(FrameError);
         }
-        Ok(Self { bytes })
+        Ok(frame)
+    }
+
+    /// Validate the value node at the start of `bytes`, and return it with
+    /// the bytes after it.
+    ///
+    /// For a frame embedded in a larger structure, such as the passthrough
+    /// payload of a ciphertext node. `depth` is how many levels the carrier
+    /// already nests the node, so the [`MAX_DEPTH`] bound counts the whole
+    /// structure and not the frame alone.
+    pub fn parse_nested(bytes: &'a [u8], depth: usize) -> Result<(Self, &'a [u8]), FrameError> {
+        let mut cursor = Cursor { buf: bytes, pos: 0 };
+        skip(&mut cursor, depth)?;
+        let (frame, rest) = bytes.split_at(cursor.pos);
+        Ok((Self { bytes: frame }, rest))
     }
 
     pub fn as_bytes(&self) -> &'a [u8] {
@@ -789,6 +802,40 @@ mod tests {
             to_frame(Deep(MAX_DEPTH + 1)),
             Err(FrameWriteError::TooDeep)
         ));
+    }
+
+    #[test]
+    fn parse_nested_takes_one_node_and_returns_the_rest() {
+        let mut bytes = frame_of(vec![1u16, 2]);
+        let trailing = frame_of("after");
+        bytes.extend_from_slice(&trailing);
+
+        // `parse` wants exactly one node; `parse_nested` hands back the rest.
+        assert_eq!(Frame::parse(&bytes), Err(FrameError));
+        let (frame, rest) = Frame::parse_nested(&bytes, 0).expect("parses the prefix");
+        assert_eq!(frame.as_bytes(), &frame_of(vec![1u16, 2])[..]);
+        assert_eq!(rest, &trailing[..]);
+
+        // The rest is itself one node, and after it nothing is left.
+        let (frame, rest) = Frame::parse_nested(rest, 0).expect("parses the rest");
+        assert_eq!(frame.as_bytes(), &trailing[..]);
+        assert!(rest.is_empty());
+
+        // An empty buffer holds no node.
+        assert_eq!(Frame::parse_nested(&[], 0), Err(FrameError));
+    }
+
+    #[test]
+    fn parse_nested_counts_the_carrier_in_the_depth_bound() {
+        // A node at exactly `MAX_DEPTH` parses at depth 0, but not when its
+        // carrier already nests it one level.
+        let bytes = frame_of(Nest(Kind::Seq, MAX_DEPTH));
+        assert!(Frame::parse_nested(&bytes, 0).is_ok());
+        assert_eq!(Frame::parse_nested(&bytes, 1), Err(FrameError));
+        // A scalar sits at the bound too.
+        let scalar = frame_of(1u16);
+        assert!(Frame::parse_nested(&scalar, MAX_DEPTH).is_ok());
+        assert_eq!(Frame::parse_nested(&scalar, MAX_DEPTH + 1), Err(FrameError));
     }
 
     #[test]
