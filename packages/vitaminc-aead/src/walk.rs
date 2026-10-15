@@ -120,10 +120,8 @@ where
     walk(opened, sink).map_err(DecryptError::with_cipher)
 }
 
-fn sealed_any<L>(nodes: &[&Node<L>]) -> bool {
-    nodes
-        .iter()
-        .any(|n| !matches!(n, CipherText::Passthrough(_)))
+fn sealed_any<'n, L: 'n>(mut nodes: impl Iterator<Item = &'n Node<L>>) -> bool {
+    nodes.any(|n| !matches!(n, CipherText::Passthrough(_)))
 }
 
 /// Feed an opened tree to a sink.
@@ -163,7 +161,7 @@ pub fn walk<S: Sink>(node: Node<Opened>, sink: S) -> Result<S::Ok, DecryptError<
 }
 
 fn walk_seq<S: Sink>(items: Vec<Node<Opened>>, sink: S) -> Result<S::Ok, DecryptError<S::Error>> {
-    if !sealed_any(&items.iter().collect::<Vec<_>>()) {
+    if !sealed_any(items.iter()) {
         return Err(DecryptError::Malformed);
     }
     let mut seq = sink.seq(Some(items.len()))?;
@@ -177,9 +175,9 @@ fn walk_map<S: Sink>(
     entries: Vec<(String, Node<Opened>)>,
     sink: S,
 ) -> Result<S::Ok, DecryptError<S::Error>> {
-    let mut seen = HashSet::new();
-    if !entries.iter().all(|(k, _)| seen.insert(k.clone()))
-        || !sealed_any(&entries.iter().map(|(_, v)| v).collect::<Vec<_>>())
+    let mut seen = HashSet::with_capacity(entries.len());
+    if !entries.iter().all(|(k, _)| seen.insert(k.as_str()))
+        || !sealed_any(entries.iter().map(|(_, v)| v))
     {
         return Err(DecryptError::Malformed);
     }

@@ -22,7 +22,8 @@ bytes = { version = "^1", features = ["serde"] }
 serde = { workspace = true }
 thiserror = { workspace = true }
 zeroize = { workspace = true }
-# `try_join_all` for the per-leaf defaults of `AsyncCipher`. No runtime.
+# `stream::iter(..).buffered(..)` for the bounded per-leaf defaults of
+# `AsyncCipher`'s `seal_many` and `open_many`. No runtime.
 futures-util = { version = "0.3.31", default-features = false, features = ["alloc"] }
 
 # Optional `Plaintext` sources for logical types: a date and a timestamp,
