@@ -745,6 +745,11 @@ mod tests {
         }
         assert!(format!("{:?}", crate::plaintext::Bytes(b"secret")).contains("***"));
         assert!(!format!("{:?}", crate::plaintext::Bytes(b"secret")).contains("secret"));
+        let raw = format!(
+            "{:?}",
+            crate::plaintext::Raw(None, Physical::Text("secret"))
+        );
+        assert!(raw.contains("***") && !raw.contains("secret"), "{raw}");
         // Only the variant name is the derive's; the type path `type_name`
         // prints before it differs between compiler versions.
         let null = format!("{:?}", Physical::Null);

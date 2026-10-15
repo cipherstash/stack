@@ -150,7 +150,9 @@ impl Plaintext for Bytes<'_> {
 }
 
 /// Any scalar, as given: a logical type and a physical value.
-#[derive(Clone, Copy, Debug)]
+///
+/// `Debug` is redacted, as for every plaintext scalar.
+#[derive(Clone, Copy, OpaqueDebug)]
 pub struct Raw<'a>(pub Option<Logical>, pub Physical<'a>);
 
 impl Plaintext for Raw<'_> {
