@@ -527,6 +527,21 @@ parameter, it gets a second envelope byte, `0xF4`, with a length-prefixed
 parameter. The length is fixed per envelope byte rather than per id, so a
 reader that does not know an id can still skip its parameter.
 
+**Tagged leaves are sealed under wire version 2.** The tags inside the
+AEAD stay byte for byte, but the version byte in front of the envelope
+moves from 1 to 2. `vitaminc-encrypt` 0.5's `Encrypt` path sealed raw,
+untagged bytes under version 1, the same version the `Value` path used for
+its tagged leaves, and nothing in a version 1 leaf tells the two apart.
+Read as tagged, a raw leaf can decode to a different value with no error:
+a string that starts with `\n` loses its first character. So
+`Aes256Cipher`, and with it the typed `decrypt` and the hlist openers,
+refuses every version 1 leaf. Only the frame path still reads tagged
+version 1 leaves from the `Value` path, through the explicit
+`Aes256Cipher::opening_version_1` view that the Go binding and the legacy
+fixtures use. The cost is that 0.5 `Encrypt` data has no in-place upgrade:
+it must be decrypted with 0.5 and encrypted again. A reader of `Value`-path
+data opts in to version 1 knowing where its leaves came from.
+
 **`Option::None` is null.** Today a static Rust `None` seals an empty
 marker under `for_none` as `CipherText::None`, while a host `null` seals a
 `NULL`-tagged leaf as `CipherText::Single`, so a JavaScript `null` cannot
@@ -886,6 +901,10 @@ removed.
   equality never sees it and typed decoding reads the value.
 - Static Rust leaves gain one tag byte each, and every ciphertext is
   self-describing.
+- Tagged leaves are sealed as wire version 2, so 0.5 `Encrypt` ciphertext
+  is refused rather than misread, and has to be decrypted with 0.5 and
+  encrypted again. `Value`-path version 1 leaves open only through
+  `Aes256Cipher::opening_version_1`.
 - Passthrough payloads are frames, not `Box<dyn Any + Send>`. A Rust
   passthrough value must implement `Plaintext`.
 - `AsyncCipher: Sync`, because an async cipher is shared across tasks.
