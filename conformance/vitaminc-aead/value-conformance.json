@@ -205,6 +205,27 @@
       "rule": "ADR 0001 section 3: Timestamp(Millis) over an i64 count travels in the 0xF3 envelope; Go reads it as time.Time and writes nanoseconds"
     },
     {
+      "name": "timestamp-seconds",
+      "kind": "timestamp",
+      "unit": "seconds",
+      "value": "1970-01-01T00:00:10Z",
+      "transport": "f30300050a00000000000000",
+      "js_date": true,
+      "go_reencode": "130a0000000000000000000000",
+      "js_reencode": "f30301051027000000000000",
+      "rule": "ADR 0001 section 3: Timestamp(Seconds) travels in the 0xF3 envelope; Go writes it back in nanoseconds and Node writes a Date back in milliseconds"
+    },
+    {
+      "name": "timestamp-micros",
+      "kind": "timestamp",
+      "unit": "micros",
+      "value": "1970-01-01T00:00:00.000001000Z",
+      "transport": "f30302050100000000000000",
+      "go_reencode": "130000000000000000e8030000",
+      "js_reencode": "130000000000000000e8030000",
+      "rule": "ADR 0001 section 3: Timestamp(Micros) travels in the 0xF3 envelope; Go and Node write it back in nanoseconds"
+    },
+    {
       "name": "unknown-logical",
       "kind": "unknown",
       "value": {
@@ -340,7 +361,7 @@
     },
     {
       "name": "envelope-known-id-bad-param",
-      "transport": "f305010b00000000",
+      "transport": "f305010b10000000123e4567e89b12d3a456426614174000",
       "rule": "ADR 0001 section 3: a known id with a parameter it cannot take is refused"
     },
     {
@@ -352,6 +373,21 @@
       "name": "envelope-nested",
       "transport": "f3c800f3c80000",
       "rule": "ADR 0001 section 3: the envelope carries a physical scalar, not another envelope"
+    },
+    {
+      "name": "envelope-unknown-over-undefined",
+      "transport": "f3c80001",
+      "rule": "ADR 0001 section 3: the envelope carries a physical scalar; Undefined has a shorthand tag and is refused"
+    },
+    {
+      "name": "envelope-unknown-over-date",
+      "transport": "f3c8001200000000",
+      "rule": "ADR 0001 section 3: the envelope carries a physical scalar; Date has a shorthand tag and is refused"
+    },
+    {
+      "name": "envelope-unknown-over-array",
+      "transport": "f3c800f000000000",
+      "rule": "ADR 0001 section 3: the envelope carries a physical scalar, not a container"
     },
     {
       "name": "leaf-0xf4",

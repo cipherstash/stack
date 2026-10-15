@@ -127,8 +127,12 @@ fn expected(row: &serde_json::Value) -> Vec<u8> {
             scalar(Some(Logical::Uuid), Physical::Bytes(&bytes))
         }
         "unknown" => {
-            let id = value["id"].as_u64().expect("id") as u8;
-            let param = value["param"].as_u64().expect("param") as u8;
+            let byte = |field: &str| {
+                let n = value[field].as_u64().expect(field);
+                u8::try_from(n).unwrap_or_else(|_| panic!("{field} {n} is not one byte"))
+            };
+            let id = byte("id");
+            let param = byte("param");
             let ty = Logical::from_wire(id, param).expect("an unknown id");
             assert!(matches!(ty, Logical::Unknown(_)), "{id} is a known id");
             physical(
@@ -240,7 +244,9 @@ fn every_leaf_type_aad_vector_has_its_context_bytes() {
     let mut seen_kinds = std::collections::BTreeSet::new();
     // (base, kind, id) -> context: the parameter is not bound, so two
     // vectors that differ only in it must share one context.
-    let mut by_binding: BTreeMap<(String, String, u64), Vec<u8>> = BTreeMap::new();
+    let mut by_binding: BTreeMap<(String, String, u64), (Vec<u8>, u64)> = BTreeMap::new();
+    // Bindings shared by two vectors with different parameters.
+    let mut shared_across_params = 0;
     for row in rows {
         let name = &row["name"];
         let base = row["base"].as_str().expect("base");
@@ -283,11 +289,15 @@ fn every_leaf_type_aad_vector_has_its_context_bytes() {
             row["kind"].as_str().expect("kind").to_owned(),
             id,
         );
-        if let Some(other) = by_binding.insert(binding, expected.clone()) {
+        let param = row["logical"]["param"].as_u64().unwrap_or(0);
+        if let Some((other, other_param)) = by_binding.insert(binding, (expected.clone(), param)) {
             assert_eq!(
                 other, expected,
                 "{name}: the parameter must not change the context"
             );
+            if other_param != param {
+                shared_across_params += 1;
+            }
         }
     }
     assert!(seen_without);
@@ -297,12 +307,7 @@ fn every_leaf_type_aad_vector_has_its_context_bytes() {
         ["bool", "bytes", "float", "int", "null", "text"]
     );
     assert!(
-        rows.iter()
-            .filter(|r| r["name"]
-                .as_str()
-                .is_some_and(|n| n.starts_with("int-decimal-scale-")))
-            .count()
-            >= 2,
-        "a pair that differs only in the parameter"
+        shared_across_params >= 1,
+        "at least one pair of vectors that differ only in the parameter"
     );
 }
