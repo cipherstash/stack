@@ -237,6 +237,10 @@ fn every_leaf_type_aad_vector_has_its_context_bytes() {
     let rows = section["vectors"].as_array().expect("vectors");
     assert!(rows.len() >= 2, "with and without a logical id");
     let mut seen_without = false;
+    let mut seen_kinds = std::collections::BTreeSet::new();
+    // (base, kind, id) -> context: the parameter is not bound, so two
+    // vectors that differ only in it must share one context.
+    let mut by_binding: BTreeMap<(String, String, u64), Vec<u8>> = BTreeMap::new();
     for row in rows {
         let name = &row["name"];
         let base = row["base"].as_str().expect("base");
@@ -270,11 +274,35 @@ fn every_leaf_type_aad_vector_has_its_context_bytes() {
             },
         }
         .into_aad();
-        assert_eq!(
-            context.as_bytes(),
-            unhex(row["context"].as_str().expect("context")),
-            "{name}"
+        let expected = unhex(row["context"].as_str().expect("context"));
+        assert_eq!(context.as_bytes(), expected, "{name}");
+        seen_kinds.insert(row["kind"].as_str().expect("kind").to_owned());
+        let id = row["logical"]["id"].as_u64().unwrap_or(0);
+        let binding = (
+            base.to_owned(),
+            row["kind"].as_str().expect("kind").to_owned(),
+            id,
         );
+        if let Some(other) = by_binding.insert(binding, expected.clone()) {
+            assert_eq!(
+                other, expected,
+                "{name}: the parameter must not change the context"
+            );
+        }
     }
     assert!(seen_without);
+    // Every kind byte of the cross-language commitment is pinned.
+    assert_eq!(
+        seen_kinds.into_iter().collect::<Vec<_>>(),
+        ["bool", "bytes", "float", "int", "null", "text"]
+    );
+    assert!(
+        rows.iter()
+            .filter(|r| r["name"]
+                .as_str()
+                .is_some_and(|n| n.starts_with("int-decimal-scale-")))
+            .count()
+            >= 2,
+        "a pair that differs only in the parameter"
+    );
 }
