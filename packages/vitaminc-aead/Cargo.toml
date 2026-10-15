@@ -20,9 +20,32 @@ vitaminc-random = { version = "0.5.1", path = "../random" }
 
 bytes = { version = "^1", features = ["serde"] }
 serde = { workspace = true }
+thiserror = { workspace = true }
 zeroize = { workspace = true }
 
+# Optional `Plaintext` sources for logical types: a date and a timestamp,
+# a decimal, and a uuid. Each is a few lines over the core model.
+[dependencies.chrono]
+version = "0.4.44"
+default-features = false
+features = ["std"]
+optional = true
+
+[dependencies.rust_decimal]
+version = "1.41"
+default-features = false
+features = ["std"]
+optional = true
+
+[dependencies.uuid]
+version = "1"
+default-features = false
+optional = true
+
 [features]
+chrono = ["dep:chrono"]
+rust_decimal = ["dep:rust_decimal"]
+uuid = ["dep:uuid"]
 # Opt-in HList-based ciphertext shape. Trades the dynamic `Cipher::Ok` enum
 # (heap-allocated `Vec`s, `Box<dyn Any>` passthrough) for a per-call typed
 # builder where the full structural shape is encoded in the type system —
