@@ -17,20 +17,29 @@ impl CipherTextReader {
     /// Rejects an empty buffer and any version other than
     /// [`WIRE_VERSION`](super::WIRE_VERSION): an unknown version means the
     /// layout of everything after this byte is unknown, so there is nothing
-    /// safe to read. (When a future version lands, this is where the reader
-    /// grows a per-version dispatch.) The byte is *also* bound into the
+    /// safe to read. The byte is *also* bound into the
     /// leaf AAD ([`Context::for_leaf`](crate::Context::for_leaf)), so a relabeled
     /// version that happens to parse still fails tag verification.
     pub fn read_version(self) -> Result<VersionedReader, Unspecified> {
+        self.read_version_in(&[super::WIRE_VERSION])
+            .map(|(_, reader)| reader)
+    }
+
+    /// Like [`read_version`](Self::read_version), but accepts any version in
+    /// `accepted` and returns the one it read, so the caller can bind that
+    /// version into the leaf AAD. Only a reader that knows where its older
+    /// leaves came from should pass a version other than
+    /// [`WIRE_VERSION`](super::WIRE_VERSION); see that constant for why.
+    pub fn read_version_in(self, accepted: &[u8]) -> Result<(u8, VersionedReader), Unspecified> {
         let mut buf = self.0;
         if buf.is_empty() {
             return Err(Unspecified);
         }
         let version = buf.get_u8();
-        if version != super::WIRE_VERSION {
+        if !accepted.contains(&version) {
             return Err(Unspecified);
         }
-        Ok(VersionedReader(buf))
+        Ok((version, VersionedReader(buf)))
     }
 }
 
@@ -129,8 +138,9 @@ mod tests {
 
     #[test]
     fn read_version_unknown_version_errors() {
-        // Exhaustive over every byte value except the known version: a
-        // future v2 must arrive with reader support, never by accident.
+        // Exhaustive over every byte value except the current version,
+        // version 1 included: an older or newer version is read only where
+        // a caller asks for it, never by accident.
         for version in 0..=u8::MAX {
             if version == WIRE_VERSION {
                 continue;
@@ -141,6 +151,22 @@ mod tests {
                 "version {version} must be rejected"
             );
         }
+    }
+
+    #[test]
+    fn read_version_in_accepts_only_the_listed_versions() {
+        for version in 0..=u8::MAX {
+            let read = CipherTextReader::new(Bytes::from(vec![version, 9]))
+                .read_version_in(&[1, WIRE_VERSION])
+                .map(|(read, rest)| (read, rest.0));
+            if version == 1 || version == WIRE_VERSION {
+                assert_eq!(read, Ok((version, Bytes::from_static(&[9]))));
+            } else {
+                assert!(read.is_err(), "version {version} must be rejected");
+            }
+        }
+        let empty = CipherTextReader::new(Bytes::new()).read_version_in(&[1, WIRE_VERSION]);
+        assert!(empty.is_err());
     }
 
     #[test]

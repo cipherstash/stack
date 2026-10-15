@@ -29,7 +29,8 @@ impl Encrypted {
     }
 }
 
-/// An authenticated "no value" marker — empty plaintext sealed under AAD.
+/// An authenticated "no value" marker: the null leaf (`[tags::NULL]`)
+/// sealed under the slot's AAD, the same leaf the sink path seals for `None`.
 ///
 /// Inner field is private for the same reason as [`Encrypted`].
 #[derive(Debug)]

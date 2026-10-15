@@ -22,6 +22,11 @@
 //! pins the leaf format, the AAD derivations and the container rules
 //! against what shipped.
 //!
+//! Every leaf here is wire version 1. New leaves are version 2, and
+//! `Aes256Cipher` on its own refuses version 1, because `vitaminc-encrypt`
+//! 0.5's `Encrypt` path sealed raw, untagged bytes under that version. These
+//! leaves are tagged, so they open through `Aes256Cipher::opening_version_1`.
+//!
 //! Cross-language layout (all lengths u32 LE):
 //! `"VCGO1" ++ key[32] ++ len(aad) ++ aad ++ len(ct) ++ ct ++ len(val) ++ val`.
 //! Corpus layout: `"VCLEG1" ++ key[32] ++ len(aad) ++ aad ++ u32 count ++
@@ -148,12 +153,18 @@ fn released() -> Fixture {
 
 type Opened = Result<Vec<u8>, DecryptError<FrameWriteError, Unspecified>>;
 
+fn node(vector: &Vector) -> Node<LocalCipherText> {
+    decode_ciphertext(&vector.ciphertext).unwrap_or_else(|_| panic!("{} decodes", vector.name))
+}
+
 fn open(fixture: &Fixture, vector: &Vector, aad: &[u8]) -> Opened {
     let cipher = Aes256Cipher::new(&Key::from(fixture.key)).expect("cipher");
-    let node: Node<LocalCipherText> =
-        decode_ciphertext(&vector.ciphertext).unwrap_or_else(|_| panic!("{} decodes", vector.name));
-    decrypt_to_frame(&cipher, node, Context::from_encoded(aad))
-        .map(|frame| frame.risky_ref().clone())
+    decrypt_to_frame(
+        &cipher.opening_version_1(),
+        node(vector),
+        Context::from_encoded(aad),
+    )
+    .map(|frame| frame.risky_ref().clone())
 }
 
 fn opens_into_its_frame(fixture: &Fixture) {
@@ -237,6 +248,26 @@ fn the_fixtures_do_not_open_under_another_key() {
                     vector.name
                 );
             }
+        }
+    }
+}
+
+#[test]
+fn the_cipher_on_its_own_refuses_the_version_1_leaves() {
+    for fixture in [released(), cross_language(PRE_ADR), corpus()] {
+        let cipher = Aes256Cipher::new(&Key::from(fixture.key)).expect("cipher");
+        for vector in &fixture.vectors {
+            // A passthrough-only value has no leaf to refuse.
+            if vector.frame.first() == Some(&PASSTHROUGH) {
+                continue;
+            }
+            let opened =
+                decrypt_to_frame(&cipher, node(vector), Context::from_encoded(&fixture.aad));
+            assert!(
+                matches!(opened, Err(DecryptError::Cipher(_))),
+                "{}: {opened:?}",
+                vector.name
+            );
         }
     }
 }

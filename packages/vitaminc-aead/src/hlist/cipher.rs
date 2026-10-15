@@ -25,6 +25,10 @@ pub trait StaticCipher: Sized + Copy {
 
     /// Seal `data` under the supplied AAD.
     ///
+    /// The leaf holds the tagged bytes scalar, `[tags::BYTES] ++ data`, the
+    /// same leaf the sink path seals for a `Vec<u8>`, so an opener can tell
+    /// it from the null leaf [`encrypt_none`](Self::encrypt_none) seals.
+    ///
     /// The plaintext is taken as `Protected<Vec<u8>>` so the chain of custody
     /// survives the trait boundary, matching
     /// [`Cipher::encrypt_bytes_vec`](crate::Cipher::encrypt_bytes_vec). The
@@ -38,7 +42,8 @@ pub trait StaticCipher: Sized + Copy {
     where
         A: IntoAad<'a>;
 
-    /// Produce an authenticated "no value" marker bound to `aad`.
+    /// Produce an authenticated "no value" marker bound to `aad`: the null
+    /// leaf, `[tags::NULL]`, the same leaf the sink path seals for `None`.
     fn encrypt_none<'a, A>(self, aad: A) -> Result<Absent, Self::Error>
     where
         A: IntoAad<'a>;
