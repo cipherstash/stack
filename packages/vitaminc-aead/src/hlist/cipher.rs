@@ -75,7 +75,7 @@ where
     /// of the caller's AAD and `key` — the same contract as the dynamic
     /// [`MapCipher`](crate::MapCipher) — so a stored entry's cleartext key
     /// cannot be swapped or renamed undetected. Open with a counterpart that
-    /// derives the same binding (e.g. `Aes256Cipher::open_entry`).
+    /// derives the same binding (e.g. `Aes256Cipher::open_encrypted_entry`).
     pub fn encrypt_entry<'a, A>(
         self,
         key: &'static str,

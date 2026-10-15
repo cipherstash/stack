@@ -72,14 +72,19 @@ impl CiphertextAndTagReader {
     /// Provides a closure that takes the ciphertext and tag and to which the plaintext must be written.
     /// The closure must return a `Result<Vec<u8>, E>`.
     /// The result is kept inside a `Protected` to avoid leaking the plaintext.
+    ///
+    /// A backend decrypts in place and checks the tag afterwards, so when
+    /// it refuses the leaf the buffer may hold the plaintext of a genuine
+    /// ciphertext with a tampered tag. It is wiped on that path too.
     pub fn accepts_plaintext_ok<E>(
         self,
         f: impl FnOnce(&mut [u8]) -> Result<usize, E>,
     ) -> Plaintext<E> {
-        Plaintext(self.0.map_ok(|mut raw| {
+        Plaintext(self.0.map_ok(|raw| {
+            let mut raw = zeroize::Zeroizing::new(raw);
             let len = f(&mut raw)?;
             raw.truncate(len);
-            Ok(raw)
+            Ok(core::mem::take(&mut *raw))
         }))
     }
 }
