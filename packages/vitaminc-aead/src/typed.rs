@@ -26,7 +26,6 @@
 //! This trait will replace [`Decrypt`](crate::Decrypt). Until that is
 //! removed it is reached through this module rather than the crate root.
 
-use core::fmt;
 use core::marker::PhantomData;
 use std::collections::{BTreeMap, HashMap};
 
@@ -44,36 +43,20 @@ use crate::IntoAad;
 ///
 /// Non-exhaustive, so a derived struct target can add refusals (an
 /// unknown key, a missing field) without a breaking change.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum DecodeError {
     /// The ciphertext holds something other than the named kind.
+    #[error("expected {0}")]
     Expected(&'static str),
     /// The source stopped the walk (only reachable through a passthrough).
-    Source(SourceError),
+    #[error("source failed: {0}")]
+    Source(#[source] SourceError),
 }
 
 impl Error for DecodeError {
     fn source(error: SourceError) -> Self {
         Self::Source(error)
-    }
-}
-
-impl fmt::Display for DecodeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Expected(what) => write!(f, "expected {what}"),
-            Self::Source(e) => write!(f, "source failed: {e}"),
-        }
-    }
-}
-
-impl core::error::Error for DecodeError {
-    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
-        match self {
-            Self::Expected(_) => None,
-            Self::Source(e) => Some(e),
-        }
     }
 }
 
@@ -1253,7 +1236,7 @@ mod tests {
         let e: Box<dyn core::error::Error> = Box::new(DecodeError::Expected("u32"));
         assert_eq!(e.to_string(), "expected u32");
         assert!(core::error::Error::source(&DecodeError::Expected("u32")).is_none());
-        let source = DecodeError::Source(SourceError::new(fmt::Error));
+        let source = DecodeError::Source(SourceError::new(core::fmt::Error));
         assert!(core::error::Error::source(&source).is_some());
     }
 
