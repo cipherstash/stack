@@ -152,6 +152,23 @@ pub fn write(
 }
 
 /// Write one sealed leaf's plaintext.
+///
+/// # Examples
+///
+/// A date, 11,017 days after 1970-01-01, under today's `DATE` tag. The
+/// payload is chrono's day count from the common era, little-endian.
+///
+/// ```
+/// use vitaminc_aead::leaf::{read_leaf, write_leaf, ScalarError};
+/// use vitaminc_aead::plaintext::{Int, Logical, Physical};
+///
+/// let date = (Some(Logical::Date), Physical::Int(Int::I32(11_017)));
+/// let mut out = Vec::new();
+/// write_leaf(date.0, date.1, &mut out)?;
+/// assert_eq!(out, [0x12, 0x44, 0x24, 0x0B, 0x00]);
+/// assert_eq!(read_leaf(&out)?, date);
+/// # Ok::<(), ScalarError>(())
+/// ```
 pub fn write_leaf(
     ty: Option<Logical>,
     v: Physical<'_>,
@@ -237,6 +254,25 @@ pub type Scalar<'a> = (Option<Logical>, Physical<'a>);
 
 /// Read one scalar in `form` from the front of `bytes`, validating it.
 /// Returns the scalar and how many bytes it occupied.
+///
+/// # Examples
+///
+/// In a frame, text carries a length, so the reader stops where the next
+/// node starts.
+///
+/// ```
+/// use vitaminc_aead::leaf::{read, write, Form, ScalarError};
+/// use vitaminc_aead::plaintext::Physical;
+/// use vitaminc_aead::tags;
+///
+/// let mut frame = Vec::new();
+/// write(None, Physical::Text("hi"), Form::Frame, &mut frame)?;
+/// let written = frame.len();
+/// frame.push(tags::NULL); // the next node
+/// let ((ty, value), used) = read(&frame, Form::Frame)?;
+/// assert_eq!((ty, value, used), (None, Physical::Text("hi"), written));
+/// # Ok::<(), ScalarError>(())
+/// ```
 pub fn read(bytes: &[u8], form: Form) -> Result<(Scalar<'_>, usize), ScalarError> {
     let mut c = Cursor { buf: bytes, pos: 0 };
     let scalar = read_at(&mut c, form)?;
