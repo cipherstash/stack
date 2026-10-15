@@ -959,33 +959,32 @@ mod tests {
 
     #[test]
     fn a_refusal_names_the_node_below_the_root() {
-        let at = |reason, path: &str| refused(reason, path);
         let invalid = Raw(Some(Logical::Uuid), Physical::Bytes(&[0; 3]));
         assert_eq!(
             refusal(planned(Users(invalid))),
-            at(Unencryptable::InvalidValue, ".users[1]")
+            refused(Unencryptable::InvalidValue, ".users[1]")
         );
         assert_eq!(
             refusal(planned(Users(Dup))),
-            at(Unencryptable::DuplicateKey, ".users[1].k")
+            refused(Unencryptable::DuplicateKey, ".users[1].k")
         );
         assert_eq!(
             refusal(planned(Users(OnlyPass { map: false }))),
-            at(Unencryptable::SequenceHasNothingSealed, ".users[1]")
+            refused(Unencryptable::SequenceHasNothingSealed, ".users[1]")
         );
         assert_eq!(
             refusal(planned(Users(OnlyPass { map: true }))),
-            at(Unencryptable::MapHasNothingSealed, ".users[1]")
+            refused(Unencryptable::MapHasNothingSealed, ".users[1]")
         );
         for map in [false, true] {
             assert_eq!(
                 refusal(planned(Users(DropsAChild { map }))),
-                at(Unencryptable::DroppedChild, ".users[1]")
+                refused(Unencryptable::DroppedChild, ".users[1]")
             );
         }
         assert_eq!(
             refusal(planned(Users(Nest(Kind::Seq, MAX_DEPTH - 1)))),
-            at(
+            refused(
                 Unencryptable::TooDeep,
                 &format!(".users[1]{}", "[0]".repeat(MAX_DEPTH - 1))
             )
@@ -997,7 +996,10 @@ mod tests {
             EncryptSink::<Refused>::root("ctx"),
             Count(&mut scalars, PhantomData),
         ));
-        assert_eq!(refusal(teed), at(Unencryptable::InvalidValue, ".users[1]"));
+        assert_eq!(
+            refusal(teed),
+            refused(Unencryptable::InvalidValue, ".users[1]")
+        );
     }
 
     #[test]
