@@ -548,11 +548,17 @@ ends, so a wrong-type ciphertext fails authentication before any plaintext
 is released. The self-describing path never binds it, and that stays the
 same. What changes is what "type" means. The expectation a schema holds is
 "this column is a date", not "this column is an int", so the binding is the
-physical tag plus the logical id, as the PAE list `(domain, base, tag, id)`
-with id 0 for no logical type, under a new domain label. The parameter is
-not bound: a decimal's scale varies from value to value within one column,
-and binding it would refuse `1.50` next to `1.5`. The parameter is still
-validated after opening by `Logical::admits`.
+physical kind plus the logical id, as the PAE list `(domain, base, kind, id)`
+with id 0 for no logical type, under a new domain label. It is the kind,
+not the leaf tag: a date leaf carries `DATE` and an `i64` leaf `INT64`, so
+binding the tag would give one column several possible bindings and make
+the int's width part of the commitment, when width is a hint. Neither the
+width nor the parameter is bound: a decimal's scale varies from value to
+value within one column, and binding it would refuse `1.50` next to `1.5`.
+The parameter is still validated after opening by `Logical::admits`. The
+binding is a declaration, not a check: nothing compares it with the value
+being sealed, so what it authenticates is that writer and reader agree on
+the type.
 
 ### 4. Encryption is a sink, and the cipher is bytes-only and may be async
 
@@ -868,9 +874,10 @@ removed.
 - `Option::None` and a host null are the same leaf. `CipherText::None`,
   `CT_NONE` and `Context::for_none` go away, and a JavaScript `null`
   decrypts into a Rust `Option` as `None`.
-- `LeafTypeAad` binds the physical tag and the logical id under a new
-  domain label. Ciphertexts bound under today's label do not open under it;
-  nothing that uses it has shipped.
+- `LeafTypeAad` binds the physical kind and the logical id under a new
+  domain label. Ciphertexts bound under today's label do not open under it.
+  `vitaminc_aead_value::LeafTypeAad` shipped in 0.3.0 through 0.5.1, so its
+  removal is a breaking change to that crate.
 - Under a logical type the int's width is not kept: `DATE` reads back as an
   `i32` day count however it was written. Width is a hint end to end;
   equality never sees it and typed decoding reads the value.
