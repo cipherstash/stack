@@ -54,6 +54,13 @@ pub trait Plaintext {
     /// however they arrive. A hand-written leaf that owns a secret buffer
     /// should do the same.
     ///
+    /// A walk can stop part way, when a sink or a source fails. `Vec<T>`
+    /// overrides this so that the elements it had not reached stay in the
+    /// `Protected` and are zeroized with it, and its bare [`visit`] walks
+    /// them into a sink that discards them, which wipes their owned leaves.
+    /// A hand-written container that owns secrets should not drop its
+    /// unvisited children bare either.
+    ///
     /// [`visit`]: Plaintext::visit
     fn visit_protected<S: Sink>(this: Protected<Self>, sink: S) -> Result<S::Ok, S::Error>
     where

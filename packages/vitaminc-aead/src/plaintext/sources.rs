@@ -13,7 +13,7 @@ use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroize;
 
 use super::kinds::{Float, Logical, Physical};
-use super::{visit_seq, MapSink, Plaintext, Sink};
+use super::{visit_seq, MapSink, Plaintext, SeqSink, Sink};
 
 macro_rules! int {
     ($($ty:ty),* $(,)?) => {
@@ -189,10 +189,116 @@ impl<T: Plaintext + Zeroize> Plaintext for Protected<T> {
     }
 }
 
+/// An owned sequence takes its elements out one at a time, so a walk that
+/// stops part way never drops an unvisited element bare.
+///
+/// Bare, the elements the walk did not reach are walked into a sink that
+/// discards them before they drop, which wipes every owned leaf among them
+/// the way a completed walk would. Inside a `Protected`, they stay in the
+/// protected vector and are zeroized with it, along with the slots the
+/// visited elements were moved out of.
 impl<T: Plaintext> Plaintext for Vec<T> {
-    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        let len = Some(self.len());
-        visit_seq(sink, len, self)
+    fn visit<S: Sink>(mut self, sink: S) -> Result<S::Ok, S::Error> {
+        let result = visit_popping(sink, &mut self);
+        discard(self);
+        result
+    }
+
+    fn visit_protected<S: Sink>(mut this: Protected<Self>, sink: S) -> Result<S::Ok, S::Error>
+    where
+        Self: Sized + Zeroize,
+    {
+        visit_popping(sink, this.risky_inner_mut())
+        // `this` drops here and zeroizes what is left, and the whole buffer.
+    }
+}
+
+/// Walk `items` in order, popping each element only once its sink exists,
+/// so on an error every element not yet visited is still in `items`.
+fn visit_popping<S: Sink, T: Plaintext>(sink: S, items: &mut Vec<T>) -> Result<S::Ok, S::Error> {
+    items.reverse();
+    let mut seq = sink.seq(Some(items.len()))?;
+    for _ in 0..items.len() {
+        let element = seq.element()?;
+        if let Some(item) = items.pop() {
+            item.visit(element)?;
+        }
+    }
+    seq.end()
+}
+
+/// Visit each of `items` into [`Discard`], so the owned leaves among them
+/// wrap themselves and are wiped as they drop.
+fn discard<T: Plaintext>(items: Vec<T>) {
+    for item in items {
+        // `Discard` never fails, and a source error is no longer anyone's
+        // concern once the walk has already failed.
+        let _ = item.visit(Discard);
+    }
+}
+
+/// A sink that keeps nothing. Walking a value into it runs the value's own
+/// wiping without sending its contents anywhere.
+struct Discard;
+
+/// [`Discard`] never fails on its own; this only carries a source's error.
+struct Discarded;
+
+impl super::Error for Discarded {
+    fn source(_: super::SourceError) -> Self {
+        Discarded
+    }
+}
+
+impl Sink for Discard {
+    type Ok = ();
+    type Error = Discarded;
+    type Seq = Discard;
+    type Map = Discard;
+
+    fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), Discarded> {
+        Ok(())
+    }
+
+    fn seq(self, _: Option<usize>) -> Result<Discard, Discarded> {
+        Ok(Discard)
+    }
+
+    fn map(self, _: Option<usize>) -> Result<Discard, Discarded> {
+        Ok(Discard)
+    }
+
+    /// Passthrough is cleartext by contract, so it is not walked.
+    fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<(), Discarded> {
+        Ok(())
+    }
+}
+
+impl SeqSink for Discard {
+    type Ok = ();
+    type Error = Discarded;
+    type Element<'s> = Discard;
+
+    fn element(&mut self) -> Result<Discard, Discarded> {
+        Ok(Discard)
+    }
+
+    fn end(self) -> Result<(), Discarded> {
+        Ok(())
+    }
+}
+
+impl MapSink for Discard {
+    type Ok = ();
+    type Error = Discarded;
+    type Entry<'s> = Discard;
+
+    fn entry(&mut self, _: &str) -> Result<Discard, Discarded> {
+        Ok(Discard)
+    }
+
+    fn end(self) -> Result<(), Discarded> {
+        Ok(())
     }
 }
 
@@ -346,7 +452,7 @@ impl Plaintext for &uuid::Uuid {
 mod tests {
     use super::*;
     use crate::plaintext::kinds::Int;
-    use crate::plaintext::record::{record, Event, Owned};
+    use crate::plaintext::record::{record, Event, Owned, RecordError};
     use crate::plaintext::{Error, SeqSink, SourceError};
 
     fn scalar(v: Owned) -> Event {
@@ -455,6 +561,145 @@ mod tests {
         let wipes = Counted::default();
         record(Protected::new(Some(wipes.clone()))).expect("ok");
         assert_eq!(wipes.0.get(), 1);
+    }
+
+    /// A leaf that counts its wipes but does not wrap itself when visited,
+    /// so only zeroizing the container it sits in can wipe it.
+    #[derive(Clone, Default)]
+    struct Tracked(std::rc::Rc<std::cell::Cell<usize>>);
+
+    impl Zeroize for Tracked {
+        fn zeroize(&mut self) {
+            self.0.set(self.0.get() + 1);
+        }
+    }
+
+    impl Plaintext for Tracked {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            sink.scalar(None, Physical::Null)
+        }
+    }
+
+    /// A sink that hands out `elements` element sinks in all, across every
+    /// sequence in the walk, and fails on the next one.
+    struct StopAfter(std::rc::Rc<std::cell::Cell<usize>>);
+
+    impl StopAfter {
+        fn new(elements: usize) -> Self {
+            Self(std::rc::Rc::new(std::cell::Cell::new(elements)))
+        }
+    }
+
+    impl Sink for StopAfter {
+        type Ok = ();
+        type Error = RecordError;
+        type Seq = Self;
+        type Map = Self;
+
+        fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), RecordError> {
+            Ok(())
+        }
+
+        fn seq(self, _: Option<usize>) -> Result<Self, RecordError> {
+            Ok(self)
+        }
+
+        fn map(self, _: Option<usize>) -> Result<Self, RecordError> {
+            Ok(self)
+        }
+
+        fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<(), RecordError> {
+            Ok(())
+        }
+    }
+
+    impl SeqSink for StopAfter {
+        type Ok = ();
+        type Error = RecordError;
+        type Element<'s> = Self;
+
+        fn element(&mut self) -> Result<Self, RecordError> {
+            match self.0.get() {
+                0 => Err(RecordError("stopped".into())),
+                left => {
+                    self.0.set(left - 1);
+                    Ok(Self(self.0.clone()))
+                }
+            }
+        }
+
+        fn end(self) -> Result<(), RecordError> {
+            Ok(())
+        }
+    }
+
+    impl MapSink for StopAfter {
+        type Ok = ();
+        type Error = RecordError;
+        type Entry<'s> = Self;
+
+        fn entry(&mut self, _: &str) -> Result<Self, RecordError> {
+            Ok(Self(self.0.clone()))
+        }
+
+        fn end(self) -> Result<(), RecordError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_protected_vec_zeroizes_what_a_failed_walk_did_not_reach() {
+        // One element is visited, then the sink fails. The two left over
+        // are still inside the `Protected` and are zeroized with it.
+        let wipes = Tracked::default();
+        let items = Protected::new(vec![wipes.clone(), wipes.clone(), wipes.clone()]);
+        items.visit(StopAfter::new(1)).expect_err("should stop");
+        assert_eq!(wipes.0.get(), 2);
+
+        // A failure before the first element leaves everything protected.
+        let wipes = Tracked::default();
+        let items = Protected::new(vec![wipes.clone(), wipes.clone()]);
+        items.visit(StopAfter::new(0)).expect_err("should stop");
+        assert_eq!(wipes.0.get(), 2);
+    }
+
+    #[test]
+    fn a_protected_vec_wipes_every_leaf_when_the_walk_fails() {
+        // The first leaf wipes itself as it is visited; the other two are
+        // zeroized with the vector.
+        let wipes = Counted::default();
+        let items = Protected::new(vec![wipes.clone(), wipes.clone(), wipes.clone()]);
+        items.visit(StopAfter::new(1)).expect_err("should stop");
+        assert_eq!(wipes.0.get(), 3);
+    }
+
+    #[test]
+    fn a_failed_walk_still_wipes_the_owned_leaves_it_did_not_reach() {
+        // Bare, the leaves the walk did not reach are walked into a
+        // discarding sink, which wipes them as a finished walk would.
+        let wipes = Counted::default();
+        let items = vec![wipes.clone(), wipes.clone(), wipes.clone()];
+        items.visit(StopAfter::new(1)).expect_err("should stop");
+        assert_eq!(wipes.0.get(), 3);
+
+        // Nested in a protected vector, the inner vector is walked bare
+        // once taken out, and fails after its first element.
+        let wipes = Counted::default();
+        let items = Protected::new(vec![vec![wipes.clone(), wipes.clone(), wipes.clone()]]);
+        items.visit(StopAfter::new(2)).expect_err("should stop");
+        assert_eq!(wipes.0.get(), 3);
+    }
+
+    #[test]
+    fn discarding_walks_every_kind_of_node() {
+        // Containers, scalars and passthrough all go to the discarding
+        // sink without failing.
+        let mut map = BTreeMap::new();
+        map.insert("k", vec![String::from("v")]);
+        assert!(map.visit(Discard).is_ok());
+        assert!(Failing.visit(Discard).is_err());
+        assert!(Discard.passthrough(1u32).is_ok());
+        assert!(Discard.map(None).and_then(MapSink::end).is_ok());
     }
 
     // The borrows are the point: each one picks the reference impl.
