@@ -20,7 +20,7 @@ This crate provides the data model and the traversals for encrypting structured 
 ## Key Features
 
 - **One data model**: a value is described once, as a [`Plaintext`] that walks itself into a [`Sink`]. Encryption, decryption, the transport frame, index terms and host bindings are all sinks or sources of the same model, so there is no intermediate value type to convert through.
-- **A cipher is `seal` and `open`**: the [`Cipher`] trait seals and opens one leaf; every rule about the *shape* of a value (how elements and entries are bound to their positions, how empty containers are authenticated, the refusal of a container with nothing sealed) lives once in the encrypting sink and the opening walk. [`AsyncCipher`] is the same for a cipher that has to be awaited, with batching hooks for a remote key service.
+- **A cipher is `seal` and `open`**: the [`Cipher`] trait seals and opens one leaf; every rule about the *shape* of a value (how map entries are bound to their keys, how sequence elements are bound to their sequence but not to their index or count, how empty containers are authenticated, the refusal of a container with nothing sealed) lives once in the encrypting sink and the opening walk. [`AsyncCipher`] is the same for a cipher that has to be awaited, with batching hooks for a remote key service.
 - **Typed decryption names a sink**: a [`Decrypt`] target is any type that names the sink that builds it, so a ciphertext is decoded straight into a struct, a `Vec`, an `Option`, a `Protected<T>`, or a host value. Decoding is strict.
 - **Self-describing leaves**: every scalar seals as a tagged leaf (`[tag] ++ payload`), with an optional logical type (a date, a timestamp, a decimal, a UUID) over its physical kind, so a value encrypted from Rust, Go or JavaScript opens from any of them.
 - **Flexible AAD handling**: the [`IntoAad`] trait lets strings, byte slices, integers, tuples, and `()` all be used as additional authenticated data, and [`ContextTag`] moves the obligation to supply it into the type system.
@@ -97,7 +97,7 @@ A cipher that has to be awaited implements [`AsyncCipher`] instead, and drives [
 
 ### Encrypting data
 
-[`encrypt`] takes any [`Plaintext`] source. Built in: strings, bytes (`Vec<u8>`, `&[u8]`, `[u8; N]`), every integer and float width, `bool`, `Option<T>`, `Vec<T>`, `HashMap<String, T>` and `BTreeMap<String, T>`, `Protected<T>` (walked by reference inside the wrapper), and, behind features, `chrono`, `rust_decimal` and `uuid` scalars. The result is a [`CipherText`] tree mirroring the value's shape: one sealed leaf per scalar, with the containers around them.
+[`encrypt`] takes any [`Plaintext`] source. Built in: strings, bytes (`Vec<u8>`, `&[u8]`, `[u8; N]`), the integers `i8`, `i16`, `i32`, `i64`, `i128`, `u16`, `u32`, `u64` and `u128`, `f32` and `f64`, `bool`, `Option<T>`, `Vec<T>`, `HashMap<String, T>` and `BTreeMap<String, T>`, `Protected<T>` (walked by reference inside the wrapper), and, behind features, `chrono`, `rust_decimal` and `uuid` scalars. The result is a [`CipherText`] tree mirroring the value's shape: one sealed leaf per scalar, with the containers around them.
 
 ```rust
 # use vitaminc_aead::{Cipher, Context, Unspecified};
@@ -137,7 +137,7 @@ assert!(matches!(encrypt(None::<u32>, &cipher, ())?, CipherText::Single(_)));
 
 ### Decrypting data
 
-[`decrypt`] opens a ciphertext into any [`Decrypt`] target, named at the call site. A target names the sink that builds it, so the walk hands each opened leaf straight to the type: there is no intermediate tree, and a leaf that was wiped stays wiped. `String`, `Vec<u8>`, `[u8; N]`, every int and float width, `bool`, `Option<T>`, `Vec<T>`, `HashMap<String, T>`, `BTreeMap<String, T>` and `Protected<T>` are targets out of the box, and the derive below adds your own types.
+[`decrypt`] opens a ciphertext into any [`Decrypt`] target, named at the call site. A target names the sink that builds it, so the walk hands each opened leaf straight to the type: there is no intermediate tree, and a leaf that was wiped stays wiped. `String`, `Vec<u8>`, `[u8; N]`, the same integer and float widths as above, `bool`, `Option<T>`, `Vec<T>`, `HashMap<String, T>`, `BTreeMap<String, T>` and `Protected<T>` are targets out of the box, and the derive below adds your own types. There is no `u8` source or target on its own, because `Vec<u8>` is a bytes leaf and a `Vec<T>` of `u8` scalars would overlap with it; seal a single byte as a `u16` or a `[u8; 1]`.
 
 For a value whose shape is not known at compile time, [`decrypt_into`] takes any [`Sink`]: a [`FrameWriter`] to get the transport frame a host binding reads, or a sink of your own.
 
@@ -257,8 +257,9 @@ same rule the static types use, so a tree can be wrapped in `NonEmpty`.
 value that must always be sealed against its context (a user id, a column name) cannot be
 encrypted without it; `ContextTag::context(tag).decrypt(..)` mirrors it on the way out.
 
-[`LeafTypeAad`] binds a column's physical kind and logical type into the AAD, so a leaf sealed as
-a date cannot be opened as a plain int and vice versa.
+[`LeafTypeAad`] binds the column type a schema expects, its physical kind and logical type, into
+the AAD at both ends, so a ciphertext written under one column type fails to open under another.
+The binding is a declaration, not a check of the value, and it only works when both ends supply it.
 
 ### Working with Protected Types
 
@@ -411,6 +412,7 @@ let nonce = generator.generate()?;
 - The [`Unspecified`] error type is used to prevent side-channel attacks by not revealing information about failures
 - When decrypting, always verify authentication before processing the plaintext: the walk opens every leaf before a typed target sees any of them
 - Map keys and passthrough subtrees travel in the clear; keys are bound into the AAD of their values, passthrough is not bound at all
+- A sequence's order and length are not authenticated: each element is bound to its sequence, not to its index, so elements can be reordered or dropped without a cipher failure. A caller who needs them should put them in a map or in the AAD
 
 ## CipherStash
 

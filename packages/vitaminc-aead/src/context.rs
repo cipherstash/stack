@@ -41,14 +41,17 @@
 //!   ──► final_aad = PAE(extra_aad, PAE("a", "b"))
 //! ```
 //!
-//! The context keeps its parts intact: `into_context()` on the value the
-//! wrapper builds is `List([extra_aad, List(["a", "b"])])` for the example, so
-//! a cipher that names the parts (a key-management service logging which
-//! field a key was issued for) reads them directly rather than from
-//! pre-encoded bytes. The leaf derivations the walk adds on top
-//! ([`Context::for_map_entry`] and the rest) apply as for any AAD.
+//! The context keeps its parts intact until it is encoded: `into_context()`
+//! on the value the wrapper builds is `List([extra_aad, List(["a", "b"])])`
+//! for the example, so a caller that names the parts (a key-management
+//! service logging which field a key was issued for) reads them from the
+//! tag or the AAD value before encrypting. The cipher itself sees only the
+//! encoded bytes of each leaf's derived context ([`Context::for_map_entry`]
+//! and the rest apply on top, as for any AAD), not the parts.
 
-use crate::seal::{Cipher, Node};
+use core::future::Future;
+
+use crate::seal::{AsyncCipher, Cipher, Node};
 use crate::typed::{DecodeError, Decrypt};
 use crate::walk::DecryptError;
 use crate::{Context, ContextPiece, EncryptError, IntoAad, IntoContext, Plaintext};
@@ -117,9 +120,28 @@ where
 ///
 /// # Nesting versus refining
 ///
-/// Wrapping a `ContextTag` *inside another* folds the AAD twice, into
+/// Layer contexts with [`refine`](ContextTag::refine). Wrapping a
+/// `ContextTag` *inside another* would fold the AAD twice, into
 /// `((extra, "a"), "b")`, which is not the layout `context("a").refine("b")`
-/// decrypts against. Layer contexts with [`refine`](ContextTag::refine).
+/// decrypts against; it does not compile, because a `ContextTag` is not a
+/// [`Plaintext`]:
+///
+/// ```rust,compile_fail,E0277
+/// use vitaminc_aead::{Cipher, ContextTag};
+///
+/// fn seal<C: Cipher>(cipher: &C) {
+///     let _ = ContextTag::new(ContextTag::new("secret", "a"), "b").encrypt(cipher);
+/// }
+/// ```
+///
+/// # Async ciphers
+///
+/// [`encrypt_async`](ContextTag::encrypt_async),
+/// [`encrypt_with_aad_async`](ContextTag::encrypt_with_aad_async),
+/// [`decrypt_async`](ContextTag::decrypt_async) and
+/// [`decrypt_with_aad_async`](ContextTag::decrypt_with_aad_async) are the
+/// same methods over an [`AsyncCipher`], binding the same AAD, for a key
+/// service that has to be awaited.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextTag<Tag, T> {
     inner: T,
@@ -202,6 +224,40 @@ where
     {
         let ContextTag { inner, tag } = self;
         crate::encrypt(inner, cipher, fold_tag_aad(tag, extra_aad))
+    }
+
+    /// [`encrypt`](ContextTag::encrypt) through an async cipher: the same
+    /// AAD, `((), tag)`. The value is walked before this returns, so the
+    /// future holds only the planned leaves and is `Send`.
+    pub fn encrypt_async<'c, C>(
+        self,
+        cipher: &'c C,
+    ) -> impl Future<Output = Result<Node<C::Leaf>, EncryptError<C::Error>>>
+           + Send
+           + 'c
+           + use<'c, Tag, T, C>
+    where
+        C: AsyncCipher,
+    {
+        self.encrypt_with_aad_async(cipher, Context::empty())
+    }
+
+    /// [`encrypt_with_aad`](ContextTag::encrypt_with_aad) through an async
+    /// cipher: the same AAD, `(extra_aad, tag)`.
+    pub fn encrypt_with_aad_async<'a, 'c, C, A>(
+        self,
+        cipher: &'c C,
+        extra_aad: A,
+    ) -> impl Future<Output = Result<Node<C::Leaf>, EncryptError<C::Error>>>
+           + Send
+           + 'c
+           + use<'a, 'c, Tag, T, C, A>
+    where
+        C: AsyncCipher,
+        A: IntoAad<'a>,
+    {
+        let ContextTag { inner, tag } = self;
+        crate::encrypt_async(inner, cipher, fold_tag_aad(tag, extra_aad))
     }
 }
 
@@ -314,6 +370,36 @@ where
         A: IntoAad<'a>,
     {
         crate::decrypt(cipher, node, fold_tag_aad(self.tag, extra_aad))
+    }
+
+    /// [`decrypt`](ContextTag::decrypt) through an async cipher.
+    pub async fn decrypt_async<T, C>(
+        self,
+        cipher: &C,
+        node: Node<C::Leaf>,
+    ) -> Result<T, DecryptError<DecodeError, C::Error>>
+    where
+        T: Decrypt,
+        C: AsyncCipher,
+    {
+        self.decrypt_with_aad_async(cipher, node, Context::empty())
+            .await
+    }
+
+    /// [`decrypt_with_aad`](ContextTag::decrypt_with_aad) through an async
+    /// cipher: the bound AAD is `(extra_aad, tag)`, as on the sync path.
+    pub async fn decrypt_with_aad_async<'a, T, C, A>(
+        self,
+        cipher: &C,
+        node: Node<C::Leaf>,
+        extra_aad: A,
+    ) -> Result<T, DecryptError<DecodeError, C::Error>>
+    where
+        T: Decrypt,
+        C: AsyncCipher,
+        A: IntoAad<'a>,
+    {
+        crate::typed::decrypt_async(cipher, node, fold_tag_aad(self.tag, extra_aad)).await
     }
 }
 
@@ -515,14 +601,40 @@ mod tests {
     }
 
     #[test]
-    fn nested_context_tag_folds_aad_twice() {
-        // The documented footgun: wrapping a `ContextTag` *inside another*
-        // rather than layering with `refine`. The inner wrapper is not a
-        // `Plaintext`, so this does not compile; the two layouts differ.
-        assert_ne!(
-            bytes_of((((), "a"), "b")),
-            bytes_of(((), ("a", "b"))),
-            "nesting and refining are different layouts"
+    fn the_async_methods_bind_the_same_aad_as_the_sync_ones() {
+        use crate::seal::mock::Remote;
+        use futures_executor::block_on;
+
+        let remote = Remote::new(false);
+        let sync_leaf = sealed_with(ContextTag::new("secret", "user:42"), "row:7");
+        let async_node =
+            block_on(ContextTag::new("secret", "user:42").encrypt_with_aad_async(&remote, "row:7"))
+                .expect("the mock cannot fail");
+        let CipherText::Single(async_leaf) = async_node else {
+            panic!("a scalar seals as one leaf");
+        };
+        assert_eq!(async_leaf.aad, sync_leaf.aad);
+        assert_eq!(async_leaf.plaintext, sync_leaf.plaintext);
+
+        // And the async decrypt mirrors it, with and without extra AAD.
+        let back: String = block_on(ContextTag::context("user:42").decrypt_with_aad_async(
+            &remote,
+            CipherText::Single(async_leaf),
+            "row:7",
+        ))
+        .expect("decrypts");
+        assert_eq!(back, "secret");
+        let node = block_on(ContextTag::new("secret", "user:42").encrypt_async(&remote))
+            .expect("the mock cannot fail");
+        let back: String = block_on(ContextTag::context("user:42").decrypt_async(&remote, node))
+            .expect("decrypts");
+        assert_eq!(back, "secret");
+        let node = block_on(ContextTag::new("secret", "user:42").encrypt_async(&remote))
+            .expect("the mock cannot fail");
+        assert!(
+            block_on(ContextTag::context("other").decrypt_async::<String, _>(&remote, node))
+                .is_err(),
+            "a different tag is a different AAD"
         );
     }
 }

@@ -219,9 +219,6 @@ fn explicit_discriminant(expr: &syn::Expr) -> Result<u32> {
     ))
 }
 
-/// `skip` and `take` mean nothing to the `Encrypt`/`Decrypt` derives, and
-/// silently ignoring either would leave the author believing a field was
-/// left out, or a `Drop` type handled, when it was not.
 /// A skipped field has no entry to pass through, and a passthrough entry
 /// is never taken out of `self`, so these combinations describe nothing.
 fn reject_conflicting_attrs(fields: &[FieldInfo], input: &DeriveInput) -> Result<()> {
@@ -321,10 +318,6 @@ mod tests {
     use super::*;
     use syn::parse_quote;
 
-    fn sink(input: &DeriveInput) -> Result<Shape> {
-        Shape::parse(input)
-    }
-
     /// A fieldless enum is one int leaf, so the sink derives accept it,
     /// with the discriminants Rust would assign.
     #[test]
@@ -337,7 +330,7 @@ mod tests {
                 Last = 4294967295,
             }
         };
-        match sink(&input).expect("fieldless enum") {
+        match Shape::parse(&input).expect("fieldless enum") {
             Shape::Enum(variants) => {
                 assert_eq!(variants[0].discriminant, 0);
                 assert_eq!(variants[1].discriminant, 5);
@@ -371,7 +364,7 @@ mod tests {
             },
         ] {
             let input: DeriveInput = input;
-            let err = sink(&input).expect_err("should be rejected");
+            let err = Shape::parse(&input).expect_err("should be rejected");
             assert!(err.to_string().contains("unsigned integer literal"));
         }
         let input: DeriveInput = parse_quote! {
@@ -380,7 +373,7 @@ mod tests {
                 B,
             }
         };
-        assert!(sink(&input)
+        assert!(Shape::parse(&input)
             .expect_err("overflow")
             .to_string()
             .contains("does not fit"));
@@ -394,7 +387,7 @@ mod tests {
                 Active,
             }
         };
-        let err = sink(&input).expect_err("attribute should be rejected");
+        let err = Shape::parse(&input).expect_err("attribute should be rejected");
         assert!(err.to_string().contains("variants take no"));
     }
 
@@ -408,7 +401,7 @@ mod tests {
                 B,
             }
         };
-        let err = sink(&input).expect_err("data enum should be rejected");
+        let err = Shape::parse(&input).expect_err("data enum should be rejected");
         assert!(err.to_string().contains("only fieldless enums"));
     }
 
@@ -417,7 +410,7 @@ mod tests {
         let input: DeriveInput = parse_quote! {
             enum Never {}
         };
-        assert!(sink(&input)
+        assert!(Shape::parse(&input)
             .expect_err("empty enum")
             .to_string()
             .contains("no variants"));
@@ -428,7 +421,7 @@ mod tests {
                 C,
             }
         };
-        assert!(sink(&input)
+        assert!(Shape::parse(&input)
             .expect_err("duplicate discriminant")
             .to_string()
             .contains("duplicate discriminant `1`"));
@@ -442,8 +435,7 @@ mod tests {
                 b: u32,
             }
         };
-        assert!(sink(&input).is_err());
-        assert!(sink(&input).is_err());
+        assert!(Shape::parse(&input).is_err());
     }
 
     /// Two fields renamed onto one key would overwrite each other on encrypt
@@ -457,7 +449,7 @@ mod tests {
                 b: String,
             }
         };
-        let err = sink(&input).expect_err("duplicate key should be rejected");
+        let err = Shape::parse(&input).expect_err("duplicate key should be rejected");
         assert!(err.to_string().contains("duplicate map key `a`"));
     }
 
@@ -472,7 +464,7 @@ mod tests {
                 b: String,
             }
         };
-        assert!(matches!(sink(&input), Ok(Shape::Map(_))));
+        assert!(matches!(Shape::parse(&input), Ok(Shape::Map(_))));
     }
 
     /// A map with no sealed entries carries no tag at all, and the map sink
@@ -487,7 +479,7 @@ mod tests {
                 tenant: String,
             }
         };
-        let err = sink(&input).expect_err("all-passthrough struct should be rejected");
+        let err = Shape::parse(&input).expect_err("all-passthrough struct should be rejected");
         assert!(err.to_string().contains("no field would be encrypted"));
         let input: DeriveInput = parse_quote! {
             struct Row {
@@ -497,7 +489,7 @@ mod tests {
                 tenant: String,
             }
         };
-        let err = sink(&input).expect_err("nothing-sealed struct should be rejected");
+        let err = Shape::parse(&input).expect_err("nothing-sealed struct should be rejected");
         assert!(err.to_string().contains("no field would be encrypted"));
     }
 
@@ -512,7 +504,7 @@ mod tests {
                     b: String,
                 }
             };
-            let err = sink(&input).expect_err("conflict should be rejected");
+            let err = Shape::parse(&input).expect_err("conflict should be rejected");
             assert!(err
                 .to_string()
                 .contains("has no entry to pass through or take"));
@@ -527,7 +519,7 @@ mod tests {
         let input: DeriveInput = parse_quote!(
             struct Token(#[aead(rename = "token")] String);
         );
-        let err = sink(&input).expect_err("renamed newtype should be rejected");
+        let err = Shape::parse(&input).expect_err("renamed newtype should be rejected");
         assert!(err.to_string().contains("no effect on a newtype"));
     }
 
@@ -539,7 +531,7 @@ mod tests {
         let input: DeriveInput = parse_quote!(
             struct Wrapper(#[aead(passthrough)] String);
         );
-        let err = sink(&input).expect_err("passthrough newtype should be rejected");
+        let err = Shape::parse(&input).expect_err("passthrough newtype should be rejected");
         assert!(err.to_string().contains("meaningless on a newtype"));
     }
 
@@ -548,12 +540,12 @@ mod tests {
         let input: DeriveInput = parse_quote!(
             struct Wrapper(#[aead(skip)] String);
         );
-        let err = sink(&input).expect_err("skipped newtype should be rejected");
+        let err = Shape::parse(&input).expect_err("skipped newtype should be rejected");
         assert!(err.to_string().contains("meaningless on a newtype"));
         let input: DeriveInput = parse_quote!(
             struct Wrapper(#[aead(take)] String);
         );
-        match sink(&input).expect("taken newtype") {
+        match Shape::parse(&input).expect("taken newtype") {
             Shape::Newtype(field) => assert!(field.take),
             other => panic!("expected a newtype, got {other:?}"),
         }
@@ -570,7 +562,7 @@ mod tests {
                 ssn: String,
             }
         };
-        match sink(&input) {
+        match Shape::parse(&input) {
             Ok(Shape::Map(fields)) => {
                 assert!(fields[0].passthrough);
                 assert!(!fields[1].passthrough);
@@ -584,7 +576,7 @@ mod tests {
         let input: DeriveInput = parse_quote!(
             struct Wrapper(String);
         );
-        assert!(matches!(sink(&input), Ok(Shape::Newtype(_))));
+        assert!(matches!(Shape::parse(&input), Ok(Shape::Newtype(_))));
     }
 
     /// A *named* single-field struct is not transparent: its field name is
@@ -596,7 +588,7 @@ mod tests {
                 inner: String,
             }
         };
-        match sink(&input) {
+        match Shape::parse(&input) {
             Ok(Shape::Map(fields)) => assert_eq!(fields[0].key, "inner"),
             _ => panic!("expected a map shape"),
         }
@@ -607,7 +599,7 @@ mod tests {
         let input: DeriveInput = parse_quote!(
             struct Pair(String, u32);
         );
-        match sink(&input) {
+        match Shape::parse(&input) {
             Ok(Shape::Map(fields)) => {
                 assert_eq!(fields[0].key, "0");
                 assert_eq!(fields[1].key, "1");
@@ -630,8 +622,7 @@ mod tests {
             ),
         ];
         for input in inputs {
-            assert!(matches!(sink(&input), Ok(Shape::Empty)));
-            assert!(matches!(sink(&input), Ok(Shape::Empty)));
+            assert!(matches!(Shape::parse(&input), Ok(Shape::Empty)));
         }
     }
 }

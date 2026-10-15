@@ -964,3 +964,20 @@ fn protected_fields_stay_wrapped() {
     assert_eq!(back.key.risky_ref(), &[1, 2, 3, 4]);
     assert_eq!(back.label, "k");
 }
+
+// A const generic of any type, not only `usize`, passes through the derive
+// unchanged: the generated sink repeats the struct's generics as written.
+
+#[derive(Plaintext, Decrypt, Debug, PartialEq, Clone)]
+struct Window<const N: u32> {
+    start: i64,
+}
+
+#[test]
+fn a_const_generic_of_a_non_usize_type_round_trips() {
+    let window = Window::<7> { start: -3 };
+    assert_eq!(
+        round_trip::<Window<7>>(window.clone()).expect("decodes"),
+        window
+    );
+}

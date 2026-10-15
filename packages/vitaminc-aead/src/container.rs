@@ -1,5 +1,3 @@
-use crate::seal::Cipher;
-
 /// The ciphertext tree [`encrypt`](crate::encrypt) produces and
 /// [`decrypt`](crate::decrypt) consumes.
 ///
@@ -16,7 +14,7 @@ use crate::seal::Cipher;
 /// The two parameters:
 ///
 /// - `Leaf` is the sealed leaf the cipher produces
-///   ([`Cipher::Leaf`]) — e.g. [`LocalCipherText`](crate::LocalCipherText)
+///   ([`Cipher::Leaf`](crate::Cipher::Leaf)) — e.g. [`LocalCipherText`](crate::LocalCipherText)
 ///   for a local AES cipher, or an envelope leaf that additionally carries
 ///   a wrapped data key.
 /// - `P` is the passthrough payload. For the sink-based path it is a
@@ -53,7 +51,3 @@ pub enum CipherText<Leaf, P> {
     /// [`Sink::passthrough`](crate::Sink::passthrough).
     Passthrough(P),
 }
-
-// `Cipher` is named in the docs above.
-#[allow(dead_code)]
-type _Cipher<C> = <C as Cipher>::Leaf;
