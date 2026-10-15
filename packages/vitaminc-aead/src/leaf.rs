@@ -500,8 +500,12 @@ mod tests {
             ),
         ];
         for (ty, v, expected) in cases {
-            assert_eq!(leaf(ty, v), expected, "{ty:?} {v}");
-            assert_eq!(read_leaf(&expected).expect("reads"), (ty, v), "{ty:?} {v}");
+            assert_eq!(leaf(ty, v), expected, "{ty:?} {v:?}");
+            assert_eq!(
+                read_leaf(&expected).expect("reads"),
+                (ty, v),
+                "{ty:?} {v:?}"
+            );
         }
     }
 
