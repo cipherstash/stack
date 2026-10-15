@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use vitaminc_protected::{Controlled, Protected};
+use vitaminc_protected::{Controlled, OpaqueDebug, Protected};
 use zeroize::Zeroize;
 
 use super::kinds::{Float, Logical, Physical};
@@ -139,7 +139,8 @@ impl<const N: usize> Plaintext for &[u8; N] {
 
 /// A byte string borrowed from anywhere, for callers holding a slice whose
 /// element type would otherwise read as a sequence.
-#[derive(Clone, Copy, Debug)]
+/// `Debug` is redacted, as for every plaintext scalar.
+#[derive(Clone, Copy, OpaqueDebug)]
 pub struct Bytes<'a>(pub &'a [u8]);
 
 impl Plaintext for Bytes<'_> {
@@ -444,7 +445,7 @@ impl Plaintext for uuid::Uuid {
 #[cfg(feature = "uuid")]
 impl Plaintext for &uuid::Uuid {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        sink.scalar(Some(Logical::Uuid), Physical::Bytes(self.as_bytes()))
+        (*self).visit(sink)
     }
 }
 

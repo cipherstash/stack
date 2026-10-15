@@ -45,21 +45,28 @@ pub trait Plaintext {
     /// Describe a `Protected<Self>` without exposing the inner value.
     ///
     /// This is the seam the blanket `impl Plaintext for Protected<T>` goes
-    /// through. The default unwraps `this` and defers to [`visit`], which is
-    /// right for composite types as long as every owned leaf wraps itself:
-    /// the only bare value is then the container being taken apart. Owned
-    /// byte leaves (`Vec<u8>`, `[u8; N]`, `String`) override it to hand the
-    /// sink a borrow of the still-wrapped value, and their bare [`visit`]
-    /// wraps `self` and comes back through here, so their bytes are wiped
-    /// however they arrive. A hand-written leaf that owns a secret buffer
-    /// should do the same.
+    /// through. The default unwraps `this` and defers to [`visit`]. That
+    /// exposes the container being taken apart, which is only safe when the
+    /// container's own memory holds no secret and every owned leaf wraps
+    /// itself. A container whose buffer holds its elements inline (a
+    /// `Vec<u64>` or `Vec<[u8; 32]>`) does not qualify: its buffer *is* the
+    /// secret, and taking elements out of it leaves their bytes behind.
     ///
-    /// A walk can stop part way, when a sink or a source fails. `Vec<T>`
-    /// overrides this so that the elements it had not reached stay in the
-    /// `Protected` and are zeroized with it, and its bare [`visit`] walks
-    /// them into a sink that discards them, which wipes their owned leaves.
-    /// A hand-written container that owns secrets should not drop its
-    /// unvisited children bare either.
+    /// So `Vec<T>` overrides this. It keeps the vector inside the
+    /// `Protected` for the whole walk and takes each element out only when
+    /// its sink is ready, and the vector's drop zeroizes its full capacity:
+    /// the elements the walk did not reach (when a sink or a source fails
+    /// part way) and the slots the visited ones were moved out of. Its bare
+    /// [`visit`] walks any elements it did not reach into a sink that
+    /// discards them, which wipes their owned leaves.
+    ///
+    /// Owned byte leaves (`Vec<u8>`, `[u8; N]`, `String`) override it to
+    /// hand the sink a borrow of the still-wrapped value, and their bare
+    /// [`visit`] wraps `self` and comes back through here, so their bytes
+    /// are wiped however they arrive. A hand-written leaf that owns a secret
+    /// buffer should do the same, and a hand-written container that owns
+    /// secrets should neither leave them in its own memory nor drop its
+    /// unvisited children bare.
     ///
     /// [`visit`]: Plaintext::visit
     fn visit_protected<S: Sink>(this: Protected<Self>, sink: S) -> Result<S::Ok, S::Error>
@@ -99,8 +106,8 @@ impl SourceError {
         Self(msg.into().into())
     }
 
-    /// The underlying error.
-    pub fn inner(&self) -> &(dyn core::error::Error + Send + Sync) {
+    /// The underlying error, which can be downcast to its concrete type.
+    pub fn inner(&self) -> &(dyn core::error::Error + Send + Sync + 'static) {
         &*self.0
     }
 }
@@ -111,7 +118,13 @@ impl fmt::Display for SourceError {
     }
 }
 
-impl core::error::Error for SourceError {}
+/// Transparent: the cause chain is the wrapped error's, so a reporter that
+/// walks `source()` sees what lies behind a failed getter.
+impl core::error::Error for SourceError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+        self.0.source()
+    }
+}
 
 /// A consumer of one value's description.
 ///
