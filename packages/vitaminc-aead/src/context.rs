@@ -51,6 +51,8 @@
 
 use core::future::Future;
 
+use vitaminc_protected::OpaqueDebug;
+
 use crate::seal::{AsyncCipher, Cipher, Node};
 use crate::typed::{DecodeError, Decrypt};
 use crate::walk::DecryptError;
@@ -96,26 +98,52 @@ where
 /// (Non-`'static` borrowed tags such as a short-lived `&str` are intentionally
 /// excluded; promote them to an owned `String` or a `&'static str`.)
 ///
-/// # Encrypting
+/// # Encrypting and decrypting
 ///
-/// ```rust,ignore
+/// Encrypt with [`ContextTag::new`]. To decrypt, mirror the encrypt side:
+/// rebuild the context with [`ContextTag::context`] (and the same
+/// [`refine`](ContextTag::refine) chain, if any), then recover the value with
+/// [`decrypt`](ContextTag::decrypt) /
+/// [`decrypt_with_aad`](ContextTag::decrypt_with_aad). The cipher below keeps
+/// the plaintext in the clear so the example runs without a key; a real one
+/// is `vitaminc_encrypt::Aes256Cipher`.
+///
+/// ```rust
+/// # use vitaminc_aead::{Cipher, Context, Unspecified};
+/// # use vitaminc_protected::Protected;
+/// # struct Clear;
+/// # impl Cipher for Clear {
+/// #     type Leaf = (Vec<u8>, Vec<u8>);
+/// #     type Error = Unspecified;
+/// #     fn seal(&self, plaintext: Protected<Vec<u8>>, aad: &Context<'_>) -> Result<Self::Leaf, Unspecified> {
+/// #         Ok((aad.as_bytes().to_vec(), vitaminc_protected::Controlled::risky_unwrap(plaintext)))
+/// #     }
+/// #     fn open(&self, leaf: Self::Leaf, aad: &Context<'_>) -> Result<Protected<Vec<u8>>, Unspecified> {
+/// #         if leaf.0 != aad.as_bytes() { return Err(Unspecified); }
+/// #         Ok(Protected::new(leaf.1))
+/// #     }
+/// # }
+/// # let cipher = Clear;
 /// use vitaminc_aead::ContextTag;
 ///
-/// // `cipher` implements `Cipher` (see `vitaminc_encrypt::Aes256Cipher`).
 /// let ciphertext = ContextTag::new("secret message", "user:42").encrypt(&cipher)?;
+/// let plaintext: String = ContextTag::context("user:42").decrypt(&cipher, ciphertext)?;
+/// assert_eq!(plaintext, "secret message");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
-/// # Decrypting
+/// # Debug output
 ///
-/// Mirror the encrypt side: rebuild the context with [`ContextTag::context`]
-/// (and the same [`refine`](ContextTag::refine) chain, if any), then recover
-/// the value with [`decrypt`](ContextTag::decrypt) /
-/// [`decrypt_with_aad`](ContextTag::decrypt_with_aad):
+/// `Debug` shows the tag, which is authenticated but not secret, and masks
+/// the value. There is no `PartialEq`: comparing plaintexts with `==` is not
+/// constant-time.
 ///
-/// ```rust,ignore
+/// ```rust
 /// use vitaminc_aead::ContextTag;
 ///
-/// let plaintext: String = ContextTag::context("user:42").decrypt(&cipher, ciphertext)?;
+/// let tagged = ContextTag::new("secret message", "user:42");
+/// let shown = format!("{tagged:?}");
+/// assert!(shown.ends_with(r#"{ inner: "***", tag: "user:42" }"#));
 /// ```
 ///
 /// # Nesting versus refining
@@ -142,9 +170,10 @@ where
 /// [`decrypt_with_aad_async`](ContextTag::decrypt_with_aad_async) are the
 /// same methods over an [`AsyncCipher`], binding the same AAD, for a key
 /// service that has to be awaited.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, OpaqueDebug)]
 pub struct ContextTag<Tag, T> {
     inner: T,
+    #[non_sensitive]
     tag: Tag,
 }
 
@@ -439,8 +468,10 @@ mod tests {
 
     #[test]
     fn the_context_keeps_its_parts() {
-        // The motivating consumer: a cipher that names the parts must find
-        // them intact — the tag as a nested list of its refinements, not as
+        // The motivating consumer: a caller that names the parts (a key
+        // service logging which field a key was issued for) reads them from
+        // the folded value before encrypting. The cipher itself sees only the
+        // encoded bytes. The tag stays a nested list of its refinements, not
         // pre-encoded bytes.
         let folded = fold_tag_aad(("table:users", "column:email"), "row:99");
         let piece = folded.into_context();
@@ -636,5 +667,44 @@ mod tests {
                 .is_err(),
             "a different tag is a different AAD"
         );
+    }
+
+    #[test]
+    fn the_async_decrypt_futures_are_send() {
+        use crate::seal::mock::Remote;
+        use futures_executor::block_on;
+
+        fn assert_send<F: Send>(future: F) -> F {
+            future
+        }
+        let remote = Remote::new(false);
+        let node =
+            block_on(ContextTag::new("secret", "user:42").encrypt_with_aad_async(&remote, "row:7"))
+                .expect("the mock cannot fail");
+        let future = assert_send(
+            ContextTag::context("user:42")
+                .decrypt_with_aad_async::<String, _, _>(&remote, node, "row:7"),
+        );
+        assert_eq!(block_on(future).expect("decrypts"), "secret");
+
+        let node = block_on(ContextTag::new("secret", "user:42").encrypt_async(&remote))
+            .expect("the mock cannot fail");
+        let future =
+            assert_send(ContextTag::context("user:42").decrypt_async::<String, _>(&remote, node));
+        assert_eq!(block_on(future).expect("decrypts"), "secret");
+
+        let node = block_on(crate::encrypt_async("secret", &remote, "user:42"))
+            .expect("the mock cannot fail");
+        let future = assert_send(crate::decrypt_async::<String, _, _>(
+            &remote, node, "user:42",
+        ));
+        assert_eq!(block_on(future).expect("decrypts"), "secret");
+    }
+
+    #[test]
+    fn debug_shows_the_tag_and_masks_the_value() {
+        let shown = format!("{:?}", ContextTag::new("secret message", "user:42"));
+        assert!(!shown.contains("secret message"), "got {shown}");
+        assert!(shown.contains("user:42"), "got {shown}");
     }
 }

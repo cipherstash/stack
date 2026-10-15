@@ -71,9 +71,11 @@ A cipher seals and opens one leaf. The `aad` it receives is the context the walk
 use vitaminc_aead::{Cipher, Context, Unspecified};
 use vitaminc_protected::{Controlled, Protected};
 
-struct MyCipher;
+/// Not a cipher: it stores the plaintext as it is, to show the trait
+/// shape only. For real data, use `vitaminc_encrypt::Aes256Cipher`.
+struct ClearTextForExamplesOnly;
 
-impl Cipher for MyCipher {
+impl Cipher for ClearTextForExamplesOnly {
     /// The sealed leaf: here the AAD it was sealed under and the plaintext,
     /// which a real cipher replaces with `nonce ‖ ciphertext ‖ tag`.
     type Leaf = (Vec<u8>, Vec<u8>);
