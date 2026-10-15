@@ -20,12 +20,16 @@
 //! code implements `Plaintext`, usually by derive.
 
 pub mod kinds;
+mod path;
 mod sources;
 mod tee;
 
 pub use kinds::{
     Float, Int, Kind, KnownLogical, Logical, Physical, TimeUnit, UnknownLogical, UnknownLogicalId,
 };
+#[cfg(test)]
+pub(crate) use path::render;
+pub use path::{Path, Step};
 pub use sources::{Bytes, Raw};
 
 /// What `#[derive(Plaintext)]`'s expansion needs by path. Not an API.

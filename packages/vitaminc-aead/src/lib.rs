@@ -25,7 +25,9 @@ pub mod typed;
 mod walk;
 
 #[doc(inline)]
-pub use encrypt_sink::{encrypt, encrypt_async, plan, EncryptError, EncryptSink, Unencryptable};
+pub use encrypt_sink::{
+    encrypt, encrypt_async, plan, EncryptError, EncryptSink, Refusal, Unencryptable,
+};
 #[doc(inline)]
 pub use frame::{to_frame, Frame, FrameWriter, PassthroughFrame};
 #[doc(inline)]
