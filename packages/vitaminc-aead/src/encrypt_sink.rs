@@ -32,7 +32,7 @@
 
 use core::future::Future;
 use core::marker::PhantomData;
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use vitaminc_protected::{Controlled, OpaqueDebug, Protected};
 
@@ -257,24 +257,27 @@ impl Slot for Push<'_> {
 }
 
 /// An entry slot in a parent map: the parent's entries, this entry's key,
-/// and the parent's place.
+/// borrowed from the parent's set of keys, and the parent's place.
 pub struct Entry<'s> {
     entries: &'s mut Vec<(String, Node<Pending>)>,
-    key: String,
+    /// Always there: the parent inserts the key before it lends it.
+    key: Option<&'s str>,
     parent: &'s dyn Locate,
 }
 
 impl Locate for Entry<'_> {
     fn locate(&self, steps: &mut Vec<Step>) {
         self.parent.locate(steps);
-        steps.push(Step::Key(self.key.clone()));
+        steps.extend(self.key.map(|key| Step::Key(key.to_owned())));
     }
 }
 
 impl Slot for Entry<'_> {
     type Ok = ();
+    /// The key stays in the parent's set until the map ends, and the
+    /// entry holds an empty string in its place, which does not allocate.
     fn put(self, node: Node<Pending>) {
-        self.entries.push((self.key, node));
+        self.entries.push((String::new(), node));
     }
 }
 
@@ -375,7 +378,7 @@ impl<E, O: Slot> Sink for EncryptSink<E, O> {
         Ok(EncryptMap {
             aad: self.aad,
             entries: Vec::new(),
-            seen: HashSet::new(),
+            seen: HashMap::new(),
             out: self.out,
             depth: self.depth,
             _error: PhantomData,
@@ -458,10 +461,13 @@ impl<E, O: Slot> SeqSink for EncryptSeq<E, O> {
 
 pub struct EncryptMap<E, O> {
     aad: Context<'static>,
+    /// Each entry's node, in order, with an empty key until the map ends.
     entries: Vec<(String, Node<Pending>)>,
-    /// Every key handed an entry sink. Each such sink must have put an
-    /// entry in `entries` by the next `entry` or the `end`.
-    seen: HashSet<String>,
+    /// Every key handed an entry sink, and its entry's position. Each such
+    /// sink must have put an entry in `entries` by the next `entry` or the
+    /// `end`. This is the only copy of each key: `end` moves them into
+    /// `entries`.
+    seen: HashMap<String, usize>,
     out: O,
     depth: usize,
     _error: PhantomData<E>,
@@ -486,24 +492,36 @@ impl<E, O: Slot> MapSink for EncryptMap<E, O> {
 
     fn entry(&mut self, key: &str) -> Result<Self::Entry<'_>, Self::Error> {
         self.settled()?;
-        let entry = Entry {
-            entries: &mut self.entries,
-            key: key.to_owned(),
-            parent: &self.out,
-        };
-        if !self.seen.insert(key.to_owned()) {
-            return Err(refuse(&entry, Unencryptable::DuplicateKey));
+        if self.seen.contains_key(key) {
+            // The path names the entry under the repeated key.
+            let mut steps = Vec::new();
+            self.out.locate(&mut steps);
+            steps.push(Step::Key(key.to_owned()));
+            return Err(EncryptError::Shape(Refusal {
+                reason: Unencryptable::DuplicateKey,
+                path: Path::new(steps),
+            }));
         }
+        self.seen.insert(key.to_owned(), self.entries.len());
         Ok(EncryptSink {
             aad: self.aad.for_map_entry(key),
-            out: entry,
+            out: Entry {
+                entries: &mut self.entries,
+                key: self.seen.get_key_value(key).map(|(key, _)| key.as_str()),
+                parent: &self.out,
+            },
             depth: self.depth + 1,
             _error: PhantomData,
         })
     }
 
-    fn end(self) -> Result<O::Ok, Self::Error> {
+    fn end(mut self) -> Result<O::Ok, Self::Error> {
         self.settled()?;
+        for (key, at) in self.seen {
+            if let Some((slot, _)) = self.entries.get_mut(at) {
+                *slot = key;
+            }
+        }
         let node = if self.entries.is_empty() {
             CipherText::EmptyMap(marker(self.aad.for_empty_map()))
         } else if !sealed_any(self.entries.iter().map(|(_, n)| n)) {
