@@ -43,7 +43,11 @@ pub enum Form {
 }
 
 /// Why a scalar could not be written or read.
+///
+/// `#[non_exhaustive]`, so a reason can be added (for example when
+/// [`tags::LOGICAL_LONG`] gets a meaning) without breaking a caller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ScalarError {
     /// The value is not a valid value of its logical type.
     Invalid,
@@ -54,6 +58,19 @@ pub enum ScalarError {
     /// where a shorthand tag exists.
     Malformed,
 }
+
+impl core::fmt::Display for ScalarError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Self::Invalid => "value is not valid for its logical type",
+            Self::TooLong => "text or bytes too long for a u32 length",
+            Self::Malformed => "malformed scalar",
+        })
+    }
+}
+
+/// Built on [`core::error::Error`], so the codec needs nothing from `std`.
+impl core::error::Error for ScalarError {}
 
 /// Days from 0001-01-01 (day 1, chrono's "days from CE") to 1970-01-01.
 const EPOCH_DAYS_FROM_CE: i32 = 719_163;
@@ -267,7 +284,10 @@ impl<'a> Cursor<'a> {
     fn variable(&mut self, form: Form) -> Result<&'a [u8], ScalarError> {
         match form {
             Form::Frame => {
-                let n = u32::from_le_bytes(self.fixed()?) as usize;
+                // On a 16-bit target a length above `usize::MAX` cannot
+                // fit in any buffer, so it is malformed, not truncated.
+                let n = usize::try_from(u32::from_le_bytes(self.fixed()?))
+                    .map_err(|_| ScalarError::Malformed)?;
                 self.take(n)
             }
             Form::Leaf => Ok(self.rest()),
