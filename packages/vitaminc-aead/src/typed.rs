@@ -12,8 +12,13 @@
 //! leaf holding 34 and refuses one holding -1. The width is a host-fidelity
 //! hint. `Option<T>` reads null and `undefined` as `None` and defers
 //! anything else to `T`. `HashMap<String, T>` and `BTreeMap<String, T>`
-//! read a map, each value through `T`'s sink. Any scalar target that can
-//! be wiped can also be read straight into `Protected`.
+//! read a map, each value through `T`'s sink.
+//!
+//! `Protected<T>` is a target for every `T` that implements
+//! [`DecryptProtected`]: any scalar target that can be wiped, and a
+//! `Vec<T>` or `Option<T>` of such targets, nested to any depth. A
+//! protected target is built inside its wrapper from the start, so a walk
+//! that fails part way wipes whatever it had already decoded.
 //!
 //! Nothing here knows whether the cipher was sync or async: the opened tree
 //! is walked after every await has completed.
@@ -292,8 +297,8 @@ impl<const N: usize> FromScalar for [u8; N] {
         }
     }
 
-    /// Filled inside the wrapper, so no bare copy of the array sits on the
-    /// stack, as today's `Decrypt` for `Protected<[u8; N]>` does.
+    /// Built in place inside the wrapper, so the array never passes through a bare temporary.
+    /// The wrapper holds the bytes inline, so a later move can still leave an unwiped copy on the stack.
     fn from_scalar_protected(ty: Option<Logical>, v: Physical<'_>) -> Option<Protected<Self>> {
         match (ty, v) {
             (None, Physical::Bytes(b)) if b.len() == N => {
@@ -303,16 +308,6 @@ impl<const N: usize> FromScalar for [u8; N] {
             }
             _ => None,
         }
-    }
-}
-
-/// Any scalar target that can be wiped, read into `Protected`. The only
-/// copy is the one inside the wrapper, from the borrow the opened leaf
-/// handed over, and the leaf's own buffer is wiped when it drops.
-impl<T: FromScalar + Zeroize> FromScalar for Protected<T> {
-    const EXPECTED: &'static str = T::EXPECTED;
-    fn from_scalar(ty: Option<Logical>, v: Physical<'_>) -> Option<Self> {
-        T::from_scalar_protected(ty, v)
     }
 }
 
@@ -664,6 +659,318 @@ impl<T: Decrypt> Decrypt for Option<T> {
     type Sink = Optional<T>;
     fn sink() -> Optional<T> {
         Optional(T::sink())
+    }
+}
+
+/// A type that can be decrypted straight into `Protected<Self>`: it names
+/// the sink that builds the wrapped value.
+///
+/// This is what makes `Protected<T>` a target. Scalars build in place
+/// through [`FromScalar::from_scalar_protected`]; `Vec<T>` and `Option<T>`
+/// build inside the wrapper from the first element, so a failure part way
+/// wipes what was already decoded. A struct target opts in with its own
+/// impl (the orphan rule lets the crate that defines the struct write it).
+pub trait DecryptProtected: Decrypt + Zeroize {
+    type ProtectedSink: Sink<Ok = Protected<Self>, Error = DecodeError>;
+    fn protected_sink() -> Self::ProtectedSink;
+}
+
+impl<T: DecryptProtected> Decrypt for Protected<T> {
+    type Sink = T::ProtectedSink;
+    fn sink() -> T::ProtectedSink {
+        T::protected_sink()
+    }
+}
+
+/// Any scalar target that can be wiped, read into `Protected`. A heap
+/// type (`String`, `Vec<u8>`) is copied once, into the wrapper's buffer.
+/// An inline type (an integer, `[u8; N]`) moves by value, so a move can
+/// leave an unwiped copy on the stack. The opened leaf's buffer is wiped
+/// when it drops.
+impl<T: FromScalar + Zeroize> DecryptProtected for T {
+    type ProtectedSink = ScalarProtected<T>;
+    fn protected_sink() -> ScalarProtected<T> {
+        ScalarProtected(PhantomData)
+    }
+}
+
+/// The sink for `Protected<T>` of a [`FromScalar`] type. Refuses
+/// containers and passthrough, as [`ScalarSink`] does.
+pub struct ScalarProtected<T>(PhantomData<T>);
+
+impl<T: FromScalar + Zeroize> Sink for ScalarProtected<T> {
+    type Ok = Protected<T>;
+    type Error = DecodeError;
+    type Seq = Never<Protected<T>>;
+    type Map = Never<Protected<T>>;
+
+    fn scalar(self, ty: Option<Logical>, v: Physical<'_>) -> Result<Protected<T>, DecodeError> {
+        T::from_scalar_protected(ty, v).ok_or(DecodeError::Expected(T::EXPECTED))
+    }
+
+    fn seq(self, _: Option<usize>) -> Result<Self::Seq, DecodeError> {
+        Err(DecodeError::Expected(T::EXPECTED))
+    }
+
+    fn map(self, _: Option<usize>) -> Result<Self::Map, DecodeError> {
+        Err(DecodeError::Expected(T::EXPECTED))
+    }
+
+    fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<Protected<T>, DecodeError> {
+        Err(DecodeError::Expected(T::EXPECTED))
+    }
+}
+
+/// `Protected<Vec<T>>`: a sequence built inside the wrapper, each element
+/// decoded by `Protected<T>`'s sink, so nested containers are protected
+/// too.
+///
+/// `T` needs [`DecryptProtected`], as `Vec<T>` needs [`Decrypt`]; neither
+/// covers `u8`, so this does not overlap `Vec<u8>`, the byte leaf.
+impl<T: DecryptProtected> DecryptProtected for Vec<T> {
+    type ProtectedSink = ProtectedList<T>;
+    fn protected_sink() -> ProtectedList<T> {
+        ProtectedList(PhantomData)
+    }
+}
+
+/// The sink for `Protected<Vec<T>>`.
+pub struct ProtectedList<T>(PhantomData<T>);
+
+impl<T: DecryptProtected> Sink for ProtectedList<T> {
+    type Ok = Protected<Vec<T>>;
+    type Error = DecodeError;
+    type Seq = ProtectedListSeq<T>;
+    type Map = Never<Protected<Vec<T>>>;
+
+    fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<Self::Ok, DecodeError> {
+        Err(DecodeError::Expected("sequence"))
+    }
+
+    fn seq(self, len: Option<usize>) -> Result<ProtectedListSeq<T>, DecodeError> {
+        let items = Vec::with_capacity(len.unwrap_or(0).min(1024));
+        Ok(ProtectedListSeq(Protected::new(items)))
+    }
+
+    fn map(self, _: Option<usize>) -> Result<Self::Map, DecodeError> {
+        Err(DecodeError::Expected("sequence"))
+    }
+
+    fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<Self::Ok, DecodeError> {
+        Err(DecodeError::Expected("sequence"))
+    }
+}
+
+/// The elements of a [`ProtectedList`], kept inside the wrapper. Dropped
+/// part way, it zeroizes every element decoded so far.
+pub struct ProtectedListSeq<T: Zeroize>(Protected<Vec<T>>);
+
+impl<T: DecryptProtected> SeqSink for ProtectedListSeq<T> {
+    type Ok = Protected<Vec<T>>;
+    type Error = DecodeError;
+    type Element<'s>
+        = Forward<Protected<T>, ProtectedPush<'s, T>>
+    where
+        Self: 's;
+
+    fn element(&mut self) -> Result<Self::Element<'_>, DecodeError> {
+        Ok(Forward(
+            T::protected_sink(),
+            ProtectedPush(self.0.risky_inner_mut()),
+        ))
+    }
+
+    fn end(self) -> Result<Protected<Vec<T>>, DecodeError> {
+        Ok(self.0)
+    }
+}
+
+/// The next slot of a protected sequence. A full vector grows into a new
+/// buffer and wipes the old one, since a `Vec` that regrows by itself
+/// frees its old buffer with the elements' bytes still in it.
+pub struct ProtectedPush<'s, T: Zeroize>(&'s mut Vec<T>);
+
+impl<T: Zeroize> Put<Protected<T>> for ProtectedPush<'_, T> {
+    fn put(self, value: Protected<T>) {
+        if self.0.len() == self.0.capacity() {
+            let mut grown = Vec::with_capacity(self.0.capacity().max(4) * 2);
+            grown.append(self.0);
+            // `append` moved the elements out; wipe the bytes they left.
+            self.0.zeroize();
+            *self.0 = grown;
+        }
+        self.0.push(value.risky_unwrap());
+    }
+}
+
+/// `Protected<Option<T>>`: null and `undefined` are `None`; anything else
+/// is built by `Protected<T>`'s sink and moved into the wrapper's `Some`.
+impl<T: DecryptProtected> DecryptProtected for Option<T> {
+    type ProtectedSink = ProtectedOptional<T>;
+    fn protected_sink() -> ProtectedOptional<T> {
+        ProtectedOptional(T::protected_sink())
+    }
+}
+
+/// The sink for `Protected<Option<T>>`.
+pub struct ProtectedOptional<T: DecryptProtected>(T::ProtectedSink);
+
+impl<T: DecryptProtected> Sink for ProtectedOptional<T> {
+    type Ok = Protected<Option<T>>;
+    type Error = DecodeError;
+    type Seq = SomeProtected<T, <T::ProtectedSink as Sink>::Seq>;
+    type Map = SomeProtected<T, <T::ProtectedSink as Sink>::Map>;
+
+    fn scalar(self, ty: Option<Logical>, v: Physical<'_>) -> Result<Self::Ok, DecodeError> {
+        match (ty, v) {
+            (None | Some(Logical::Undefined), Physical::Null) => Ok(Protected::new(None)),
+            _ => self.0.scalar(ty, v).map(some),
+        }
+    }
+
+    fn seq(self, len: Option<usize>) -> Result<Self::Seq, DecodeError> {
+        Ok(SomeProtected(self.0.seq(len)?, PhantomData))
+    }
+
+    fn map(self, len: Option<usize>) -> Result<Self::Map, DecodeError> {
+        Ok(SomeProtected(self.0.map(len)?, PhantomData))
+    }
+
+    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<Self::Ok, DecodeError> {
+        self.0.passthrough(value).map(some)
+    }
+}
+
+/// Move a protected value into a protected `Some`.
+fn some<T: Zeroize>(value: Protected<T>) -> Protected<Option<T>> {
+    value.map(Some)
+}
+
+/// Any sink, with its result moved into `Protected` when it is done: the
+/// simplest [`DecryptProtected`] sink for a struct target, as
+/// `Wrap(MyStruct::sink())`.
+///
+/// The value is built bare and wrapped at the end, so a walk that fails
+/// part way drops what it had built without wiping it. A target that holds
+/// secrets in its own fields can do better by building each field inside
+/// its own wrapper, as [`ProtectedList`] does.
+pub struct Wrap<S>(pub S);
+
+impl<S> Sink for Wrap<S>
+where
+    S: Sink<Error = DecodeError>,
+    S::Ok: Zeroize,
+{
+    type Ok = Protected<S::Ok>;
+    type Error = DecodeError;
+    type Seq = WrapEnd<S::Seq>;
+    type Map = WrapEnd<S::Map>;
+
+    fn scalar(self, ty: Option<Logical>, v: Physical<'_>) -> Result<Self::Ok, DecodeError> {
+        self.0.scalar(ty, v).map(Protected::new)
+    }
+
+    fn seq(self, len: Option<usize>) -> Result<Self::Seq, DecodeError> {
+        Ok(WrapEnd(self.0.seq(len)?))
+    }
+
+    fn map(self, len: Option<usize>) -> Result<Self::Map, DecodeError> {
+        Ok(WrapEnd(self.0.map(len)?))
+    }
+
+    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<Self::Ok, DecodeError> {
+        self.0.passthrough(value).map(Protected::new)
+    }
+}
+
+/// A container sink whose result is moved into `Protected` at its end.
+pub struct WrapEnd<Q>(Q);
+
+impl<Q> SeqSink for WrapEnd<Q>
+where
+    Q: SeqSink<Error = DecodeError>,
+    Q::Ok: Zeroize,
+{
+    type Ok = Protected<Q::Ok>;
+    type Error = DecodeError;
+    type Element<'e>
+        = Q::Element<'e>
+    where
+        Self: 'e;
+
+    fn element(&mut self) -> Result<Self::Element<'_>, DecodeError> {
+        self.0.element()
+    }
+
+    fn end(self) -> Result<Self::Ok, DecodeError> {
+        self.0.end().map(Protected::new)
+    }
+}
+
+impl<Q> MapSink for WrapEnd<Q>
+where
+    Q: MapSink<Error = DecodeError>,
+    Q::Ok: Zeroize,
+{
+    type Ok = Protected<Q::Ok>;
+    type Error = DecodeError;
+    type Entry<'e>
+        = Q::Entry<'e>
+    where
+        Self: 'e;
+
+    fn entry(&mut self, key: &str) -> Result<Self::Entry<'_>, DecodeError> {
+        self.0.entry(key)
+    }
+
+    fn end(self) -> Result<Self::Ok, DecodeError> {
+        self.0.end().map(Protected::new)
+    }
+}
+
+/// A container sink whose protected result is moved into a protected
+/// `Some`.
+pub struct SomeProtected<T, Q>(Q, PhantomData<T>);
+
+impl<T, Q> SeqSink for SomeProtected<T, Q>
+where
+    T: Zeroize,
+    Q: SeqSink<Ok = Protected<T>, Error = DecodeError>,
+{
+    type Ok = Protected<Option<T>>;
+    type Error = DecodeError;
+    type Element<'e>
+        = Q::Element<'e>
+    where
+        Self: 'e;
+
+    fn element(&mut self) -> Result<Self::Element<'_>, DecodeError> {
+        self.0.element()
+    }
+
+    fn end(self) -> Result<Protected<Option<T>>, DecodeError> {
+        self.0.end().map(some)
+    }
+}
+
+impl<T, Q> MapSink for SomeProtected<T, Q>
+where
+    T: Zeroize,
+    Q: MapSink<Ok = Protected<T>, Error = DecodeError>,
+{
+    type Ok = Protected<Option<T>>;
+    type Error = DecodeError;
+    type Entry<'e>
+        = Q::Entry<'e>
+    where
+        Self: 'e;
+
+    fn entry(&mut self, key: &str) -> Result<Self::Entry<'_>, DecodeError> {
+        self.0.entry(key)
+    }
+
+    fn end(self) -> Result<Protected<Option<T>>, DecodeError> {
+        self.0.end().map(some)
     }
 }
 

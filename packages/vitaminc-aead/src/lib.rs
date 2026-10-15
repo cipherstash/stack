@@ -36,7 +36,7 @@ pub use plaintext::{
 #[doc(inline)]
 pub use seal::{Node, Opened, Pending};
 #[doc(inline)]
-pub use typed::{decrypt, decrypt_async, DecodeError, FromScalar};
+pub use typed::{decrypt, decrypt_async, DecodeError, DecryptProtected, FromScalar};
 #[doc(inline)]
 pub use walk::{decrypt_into, decrypt_into_async, decrypt_to_frame, walk, DecryptError};
 
