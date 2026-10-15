@@ -268,6 +268,9 @@ pub enum FrameWriteError {
     /// A child sink was dropped without a value written into it, which
     /// would leave the container's count ahead of its children.
     Unwritten,
+    /// A container was never ended, so its count was never written and
+    /// the bytes are not a frame.
+    Unfinished,
     /// The source stopped the walk.
     Source(SourceError),
 }
@@ -278,14 +281,46 @@ impl Error for FrameWriteError {
     }
 }
 
+impl core::fmt::Display for FrameWriteError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::TooDeep => write!(f, "value nests deeper than {MAX_DEPTH} levels"),
+            Self::TooLong => f.write_str("text, bytes, a key or a count is too long for a u32"),
+            Self::Invalid => f.write_str("value is not valid for its logical type"),
+            Self::CountMismatch => f.write_str("container length does not match its children"),
+            Self::DuplicateKey => f.write_str("duplicate key"),
+            Self::Unwritten => f.write_str("a child sink was dropped without a value"),
+            Self::Unfinished => f.write_str("a container was never ended"),
+            Self::Source(e) => write!(f, "source failed: {e}"),
+        }
+    }
+}
+
+impl core::error::Error for FrameWriteError {}
+
 /// Write any source as a frame. The buffer is `Protected`, since a frame
 /// of plaintext is plaintext, and it grows without leaving copies behind.
+///
+/// The result is checked with [`Frame::parse`] before it is returned, so a
+/// source that opens a container and never ends it is refused here, not by
+/// every later reader of the frame.
 pub fn to_frame<P: Plaintext>(p: P) -> Result<Protected<Vec<u8>>, FrameWriteError> {
+    to_frame_at(p, 0)
+}
+
+/// [`to_frame`] for a subtree whose root sits `depth` levels below the top
+/// of a document, so [`MAX_DEPTH`] counts from the top, as the transport
+/// decoder counts it.
+pub(crate) fn to_frame_at<P: Plaintext>(
+    p: P,
+    depth: usize,
+) -> Result<Protected<Vec<u8>>, FrameWriteError> {
     let mut out = Protected::new(Vec::new());
     p.visit(FrameWriter {
         out: out.risky_inner_mut(),
-        depth: 0,
+        depth,
     })?;
+    Frame::parse(out.risky_ref()).map_err(|_| FrameWriteError::Unfinished)?;
     Ok(out)
 }
 

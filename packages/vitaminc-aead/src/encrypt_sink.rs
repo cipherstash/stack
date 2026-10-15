@@ -12,7 +12,12 @@
 //! - a container must seal at least one leaf, because a passthrough
 //!   authenticates nothing and an all-passthrough container would decrypt
 //!   under any AAD;
-//! - a passthrough subtree is framed, in the clear.
+//! - a passthrough subtree is framed, in the clear;
+//! - a child sink a source drops without a value is refused, as
+//!   [`FrameWriter`](crate::frame::FrameWriter) refuses it, so a tee of the
+//!   two agrees on every walk;
+//! - nothing may nest deeper than [`MAX_DEPTH`], counted as the transport
+//!   decoder counts it, so every ciphertext planned here can be read back.
 //!
 //! The sink never calls a cipher. It plans a tree of [`Pending`] leaves,
 //! each with its plaintext and the AAD its position derives, and
@@ -26,7 +31,7 @@ use std::collections::HashSet;
 
 use vitaminc_protected::{Controlled, Protected};
 
-use crate::frame::{to_frame, FrameWriteError, PassthroughFrame};
+use crate::frame::{to_frame_at, FrameWriteError, PassthroughFrame, MAX_DEPTH};
 use crate::leaf::{self, ScalarError};
 use crate::plaintext::{Error, Logical, MapSink, Physical, Plaintext, SeqSink, Sink, SourceError};
 use crate::seal::{
@@ -41,12 +46,67 @@ pub enum EncryptError<E> {
     Cipher(E),
     /// The source stopped the walk.
     Source(SourceError),
-    /// The value cannot be encrypted: a duplicate key, a container with
-    /// nothing sealed in it, a value that is not valid for its logical type,
-    /// a passthrough subtree that cannot be framed, or a cipher that
-    /// returned the wrong number of leaves.
-    Shape(&'static str),
+    /// The value cannot be encrypted as given. See [`Unencryptable`].
+    Shape(Unencryptable),
+    /// The cipher returned the wrong number of leaves: a cipher bug, not a
+    /// problem with the value.
+    Count(LeafCount),
 }
+
+/// Why a value cannot be encrypted as given.
+///
+/// `#[non_exhaustive]`, so a rule can be added without breaking a caller.
+/// No reason carries any part of the value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Unencryptable {
+    /// A map gave the same key twice.
+    DuplicateKey,
+    /// A sequence has elements but seals none of them: every element is a
+    /// passthrough, which authenticates nothing.
+    SequenceHasNothingSealed,
+    /// A map has entries but seals none of them.
+    MapHasNothingSealed,
+    /// A scalar is not a valid value of its logical type.
+    InvalidValue,
+    /// A scalar cannot be written as a leaf.
+    Unwritable,
+    /// A passthrough subtree cannot be framed.
+    UnframablePassthrough,
+    /// The source took an element or entry sink and dropped it without
+    /// writing a value into it.
+    DroppedChild,
+    /// The value nests deeper than [`MAX_DEPTH`].
+    TooDeep,
+}
+
+impl core::fmt::Display for Unencryptable {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::DuplicateKey => f.write_str("duplicate key"),
+            Self::SequenceHasNothingSealed => f.write_str("sequence has nothing sealed"),
+            Self::MapHasNothingSealed => f.write_str("map has nothing sealed"),
+            Self::InvalidValue => f.write_str("value is not valid for its logical type"),
+            Self::Unwritable => f.write_str("value cannot be written as a leaf"),
+            Self::UnframablePassthrough => f.write_str("passthrough subtree cannot be framed"),
+            Self::DroppedChild => f.write_str("a child sink was dropped without a value"),
+            Self::TooDeep => write!(f, "value nests deeper than {MAX_DEPTH} levels"),
+        }
+    }
+}
+
+impl<E: core::fmt::Display> core::fmt::Display for EncryptError<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Cipher(e) => write!(f, "cipher failed: {e}"),
+            Self::Source(e) => write!(f, "source failed: {e}"),
+            Self::Shape(why) => write!(f, "cannot encrypt: {why}"),
+            Self::Count(count) => write!(f, "cipher returned {count}"),
+        }
+    }
+}
+
+impl<E: core::fmt::Debug + core::fmt::Display> core::error::Error for EncryptError<E> {}
 
 impl<E> Error for EncryptError<E> {
     fn source(error: SourceError) -> Self {
@@ -58,7 +118,8 @@ impl<E> From<FrameWriteError> for EncryptError<E> {
     fn from(error: FrameWriteError) -> Self {
         match error {
             FrameWriteError::Source(e) => Self::Source(e),
-            _ => Self::Shape("passthrough subtree cannot be framed"),
+            FrameWriteError::TooDeep => Self::Shape(Unencryptable::TooDeep),
+            _ => Self::Shape(Unencryptable::UnframablePassthrough),
         }
     }
 }
@@ -67,8 +128,7 @@ impl<E> From<SealError<E>> for EncryptError<E> {
     fn from(error: SealError<E>) -> Self {
         match error {
             SealError::Cipher(e) => Self::Cipher(e),
-            SealError::Count(LeafCount::TooFew) => Self::Shape("cipher returned too few leaves"),
-            SealError::Count(LeafCount::TooMany) => Self::Shape("cipher returned too many leaves"),
+            SealError::Count(count) => Self::Count(count),
         }
     }
 }
@@ -161,6 +221,8 @@ impl Slot for Entry<'_> {
 pub struct EncryptSink<E, O = Root> {
     aad: Context<'static>,
     out: O,
+    /// How far below the root this node sits.
+    depth: usize,
     _error: PhantomData<E>,
 }
 
@@ -170,20 +232,30 @@ impl<E> EncryptSink<E, Root> {
         Self {
             aad: aad.into_aad().into_owned(),
             out: Root,
+            depth: 0,
             _error: PhantomData,
         }
     }
 }
 
 impl<E, O: Slot> EncryptSink<E, O> {
+    /// Refuse a node below [`MAX_DEPTH`], as the transport decoder does.
+    fn check_depth(&self) -> Result<(), EncryptError<E>> {
+        if self.depth > MAX_DEPTH {
+            return Err(EncryptError::Shape(Unencryptable::TooDeep));
+        }
+        Ok(())
+    }
+
     /// Plan one scalar as one leaf: its tag, then its payload.
     fn leaf(self, ty: Option<Logical>, v: Physical<'_>) -> Result<O::Ok, EncryptError<E>> {
+        self.check_depth()?;
         // Sized once, so the buffer never regrows and leaves a copy behind.
         let mut plaintext = Protected::new(Vec::with_capacity(leaf::max_len(&v)));
         leaf::write_leaf(ty, v, plaintext.risky_inner_mut()).map_err(|e| match e {
-            ScalarError::Invalid => EncryptError::Shape("value is not valid for its logical type"),
+            ScalarError::Invalid => EncryptError::Shape(Unencryptable::InvalidValue),
             ScalarError::TooLong | ScalarError::Malformed => {
-                EncryptError::Shape("value cannot be written as a leaf")
+                EncryptError::Shape(Unencryptable::Unwritable)
             }
         })?;
         Ok(self.out.put(CipherText::Single(Pending {
@@ -217,28 +289,36 @@ impl<E, O: Slot> Sink for EncryptSink<E, O> {
     }
 
     fn seq(self, len: Option<usize>) -> Result<Self::Seq, Self::Error> {
+        self.check_depth()?;
         Ok(EncryptSeq {
             element_aad: self.aad.for_sequence_element(),
             aad: self.aad,
             items: Vec::with_capacity(len.unwrap_or(0).min(1024)),
+            handed: 0,
             out: self.out,
+            depth: self.depth,
             _error: PhantomData,
         })
     }
 
     fn map(self, _len: Option<usize>) -> Result<Self::Map, Self::Error> {
+        self.check_depth()?;
         Ok(EncryptMap {
             aad: self.aad,
             entries: Vec::new(),
             seen: HashSet::new(),
             out: self.out,
+            depth: self.depth,
             _error: PhantomData,
         })
     }
 
     /// Passthrough is non-sensitive by design: it is framed, not sealed.
+    /// The frame's root sits one level below this node, as the transport
+    /// decoder counts it.
     fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<O::Ok, Self::Error> {
-        let frame = to_frame(value)?;
+        self.check_depth()?;
+        let frame = to_frame_at(value, self.depth + 1)?;
         Ok(self.out.put(CipherText::Passthrough(PassthroughFrame(
             frame.risky_ref().to_vec(),
         ))))
@@ -249,8 +329,21 @@ pub struct EncryptSeq<E, O> {
     aad: Context<'static>,
     element_aad: Context<'static>,
     items: Vec<Node<Pending>>,
+    /// How many element sinks have been handed out. Each must have put a
+    /// node in `items` by the next `element` or the `end`.
+    handed: usize,
     out: O,
+    depth: usize,
     _error: PhantomData<E>,
+}
+
+impl<E, O> EncryptSeq<E, O> {
+    fn settled(&self) -> Result<(), EncryptError<E>> {
+        if self.items.len() != self.handed {
+            return Err(EncryptError::Shape(Unencryptable::DroppedChild));
+        }
+        Ok(())
+    }
 }
 
 impl<E, O: Slot> SeqSink for EncryptSeq<E, O> {
@@ -262,18 +355,22 @@ impl<E, O: Slot> SeqSink for EncryptSeq<E, O> {
         Self: 's;
 
     fn element(&mut self) -> Result<Self::Element<'_>, Self::Error> {
+        self.settled()?;
+        self.handed += 1;
         Ok(EncryptSink {
             aad: self.element_aad.clone(),
             out: Push(&mut self.items),
+            depth: self.depth + 1,
             _error: PhantomData,
         })
     }
 
     fn end(self) -> Result<O::Ok, Self::Error> {
+        self.settled()?;
         let node = if self.items.is_empty() {
             CipherText::EmptySequence(marker(self.aad.for_empty_sequence()))
         } else if !sealed_any(&self.items) {
-            return Err(EncryptError::Shape("sequence has nothing sealed"));
+            return Err(EncryptError::Shape(Unencryptable::SequenceHasNothingSealed));
         } else {
             CipherText::Sequence(self.items)
         };
@@ -284,9 +381,21 @@ impl<E, O: Slot> SeqSink for EncryptSeq<E, O> {
 pub struct EncryptMap<E, O> {
     aad: Context<'static>,
     entries: Vec<(String, Node<Pending>)>,
+    /// Every key handed an entry sink. Each such sink must have put an
+    /// entry in `entries` by the next `entry` or the `end`.
     seen: HashSet<String>,
     out: O,
+    depth: usize,
     _error: PhantomData<E>,
+}
+
+impl<E, O> EncryptMap<E, O> {
+    fn settled(&self) -> Result<(), EncryptError<E>> {
+        if self.entries.len() != self.seen.len() {
+            return Err(EncryptError::Shape(Unencryptable::DroppedChild));
+        }
+        Ok(())
+    }
 }
 
 impl<E, O: Slot> MapSink for EncryptMap<E, O> {
@@ -298,21 +407,24 @@ impl<E, O: Slot> MapSink for EncryptMap<E, O> {
         Self: 's;
 
     fn entry(&mut self, key: &str) -> Result<Self::Entry<'_>, Self::Error> {
+        self.settled()?;
         if !self.seen.insert(key.to_owned()) {
-            return Err(EncryptError::Shape("duplicate key"));
+            return Err(EncryptError::Shape(Unencryptable::DuplicateKey));
         }
         Ok(EncryptSink {
             aad: self.aad.for_map_entry(key),
             out: Entry(&mut self.entries, key.to_owned()),
+            depth: self.depth + 1,
             _error: PhantomData,
         })
     }
 
     fn end(self) -> Result<O::Ok, Self::Error> {
+        self.settled()?;
         let node = if self.entries.is_empty() {
             CipherText::EmptyMap(marker(self.aad.for_empty_map()))
         } else if !sealed_any(self.entries.iter().map(|(_, n)| n)) {
-            return Err(EncryptError::Shape("map has nothing sealed"));
+            return Err(EncryptError::Shape(Unencryptable::MapHasNothingSealed));
         } else {
             CipherText::Map(self.entries)
         };
@@ -393,7 +505,7 @@ mod tests {
         }
         assert!(matches!(
             planned(Dup),
-            Err(EncryptError::Shape("duplicate key"))
+            Err(EncryptError::Shape(Unencryptable::DuplicateKey))
         ));
     }
 
@@ -407,13 +519,13 @@ mod tests {
         }
         assert!(matches!(
             planned(vec![Pass]),
-            Err(EncryptError::Shape("sequence has nothing sealed"))
+            Err(EncryptError::Shape(Unencryptable::SequenceHasNothingSealed))
         ));
         let mut map = BTreeMap::new();
         map.insert("note", Pass);
         assert!(matches!(
             planned(map),
-            Err(EncryptError::Shape("map has nothing sealed"))
+            Err(EncryptError::Shape(Unencryptable::MapHasNothingSealed))
         ));
         // One sealed sibling is enough.
         struct Mixed;
@@ -442,9 +554,7 @@ mod tests {
         let bad = Raw(Some(Logical::Uuid), Physical::Bytes(&[0; 3]));
         assert!(matches!(
             planned(bad),
-            Err(EncryptError::Shape(
-                "value is not valid for its logical type"
-            ))
+            Err(EncryptError::Shape(Unencryptable::InvalidValue))
         ));
     }
 

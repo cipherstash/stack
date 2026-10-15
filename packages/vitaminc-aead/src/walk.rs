@@ -45,6 +45,24 @@ pub enum DecryptError<E, C = Infallible> {
     Sink(E),
 }
 
+impl<E: core::fmt::Display, C: core::fmt::Display> core::fmt::Display for DecryptError<E, C> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Cipher(e) => write!(f, "cipher failed: {e}"),
+            Self::Auth => f.write_str("an authenticated empty marker carried a payload"),
+            Self::Malformed => f.write_str("malformed ciphertext"),
+            Self::Sink(e) => write!(f, "sink refused the value: {e}"),
+        }
+    }
+}
+
+impl<E, C> core::error::Error for DecryptError<E, C>
+where
+    E: core::fmt::Debug + core::fmt::Display,
+    C: core::fmt::Debug + core::fmt::Display,
+{
+}
+
 impl<E, C> From<E> for DecryptError<E, C> {
     fn from(e: E) -> Self {
         Self::Sink(e)

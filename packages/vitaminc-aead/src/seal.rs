@@ -122,6 +122,15 @@ pub enum LeafCount {
     TooMany,
 }
 
+impl core::fmt::Display for LeafCount {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            Self::TooFew => "too few leaves",
+            Self::TooMany => "too many leaves",
+        })
+    }
+}
+
 /// Seal every pending leaf, one at a time.
 pub fn seal_all<C: Cipher>(
     cipher: &C,
@@ -162,6 +171,17 @@ pub enum SealError<E> {
     Cipher(E),
     Count(LeafCount),
 }
+
+impl<E: core::fmt::Display> core::fmt::Display for SealError<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Cipher(e) => write!(f, "cipher failed: {e}"),
+            Self::Count(count) => write!(f, "cipher returned {count}"),
+        }
+    }
+}
+
+impl<E: core::fmt::Debug + core::fmt::Display> core::error::Error for SealError<E> {}
 
 /// Open every leaf, one at a time.
 ///
@@ -215,6 +235,18 @@ pub enum OpenError<E> {
     /// The cipher returned the wrong number of leaves.
     Count(LeafCount),
 }
+
+impl<E: core::fmt::Display> core::fmt::Display for OpenError<E> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Cipher(e) => write!(f, "cipher failed: {e}"),
+            Self::Malformed => f.write_str("malformed ciphertext"),
+            Self::Count(count) => write!(f, "cipher returned {count}"),
+        }
+    }
+}
+
+impl<E: core::fmt::Debug + core::fmt::Display> core::error::Error for OpenError<E> {}
 
 /// The container rules `EncryptSink` enforced, checked on the sealed tree
 /// so a malformed one is refused before any leaf is opened. `walk`
@@ -768,7 +800,7 @@ mod tests {
         let extra = Extra(Remote::new(true));
         assert!(matches!(
             block_on(encrypt_async(sample(), &extra, "ctx")),
-            Err(EncryptError::Shape("cipher returned too many leaves"))
+            Err(EncryptError::Count(LeafCount::TooMany))
         ));
         let sealed = encrypt(sample(), &DropsOne, "ctx").expect("encrypts");
         assert_eq!(
