@@ -1,18 +1,25 @@
-//! The shared binding corpus against the frame: every vector parses as one
-//! frame and writes back byte for byte from its own walk, and from a scalar
-//! built independently with std, chrono and rust_decimal, so a bug that
-//! reads and writes symmetrically wrong cannot pass. Every malformed vector
-//! is refused.
+//! The shared binding corpus against the frame and the ciphertext codec:
+//! every vector parses as one frame and writes back byte for byte, from its
+//! own walk and from a scalar built independently with std, chrono and
+//! rust_decimal, so a bug that reads and writes symmetrically wrong cannot
+//! pass. Every malformed vector is refused, every normalized vector reads
+//! and writes back as its canonical bytes, every malformed ciphertext is
+//! refused by the ciphertext codec, and every leaf-type AAD vector has the
+//! context bytes it pins.
 //!
-//! Two vectors carry transitional fields until #414 rewrites the corpus to
-//! ADR 0001's rules: `frame: refused` (a leap second, which has no count)
-//! and `frame_reencode` (a decimal negative zero, which reads as zero).
+//! ADR 0001 section 3 decides the cases the corpus carries beyond the
+//! original tag table: the `0xF3` envelope, no `CT_NONE`, a leap second
+//! refused, a decimal negative zero read as zero, and `LeafTypeAad` under
+//! its new label. Each such vector states its rule.
 
 use std::collections::BTreeMap;
 
 use vitaminc_aead::plaintext::kinds::chrono as conv;
-use vitaminc_aead::{Float, Int, Logical, Physical, Plaintext, Raw, TimeUnit};
-use vitaminc_aead_frame::{to_frame, Frame};
+use vitaminc_aead::{
+    Float, Int, IntoAad, Kind, KnownLogical, LeafTypeAad, Logical, Physical, Plaintext, Raw,
+    TimeUnit, UnknownLogicalId,
+};
+use vitaminc_aead_frame::{decode_ciphertext, to_frame, Frame};
 use vitaminc_protected::Controlled;
 
 fn unhex(text: &str) -> Vec<u8> {
@@ -32,38 +39,53 @@ fn scalar(ty: Option<Logical>, v: Physical<'_>) -> Vec<u8> {
     framed(Raw(ty, v))
 }
 
-/// The frame of the value a vector's `kind` and `value` fields describe,
-/// built without the frame reader.
-fn expected(kind: &str, value: &serde_json::Value) -> Vec<u8> {
-    fn int<T: std::str::FromStr>(value: &serde_json::Value) -> T {
-        let text = value.as_str().expect("integers are JSON strings");
-        text.parse()
-            .unwrap_or_else(|_| panic!("{text} is out of range"))
-    }
+fn int<T: std::str::FromStr>(value: &serde_json::Value) -> T {
+    let text = value.as_str().expect("integers are JSON strings");
+    text.parse()
+        .unwrap_or_else(|_| panic!("{text} is out of range"))
+}
+
+/// A physical scalar from a vector's `kind` and `value`, for the kinds that
+/// are physical, written through `f` so the borrow it needs lives here.
+fn physical(
+    kind: &str,
+    value: &serde_json::Value,
+    f: impl FnOnce(Physical<'_>) -> Vec<u8>,
+) -> Vec<u8> {
     let text = || value.as_str().expect("JSON string");
-    let plain = |v: Physical<'_>| scalar(None, v);
     match kind {
-        "null" => plain(Physical::Null),
-        "undefined" => scalar(Some(Logical::Undefined), Physical::Null),
-        "bool" => plain(Physical::Bool(value.as_bool().expect("JSON bool"))),
-        "int8" => plain(Physical::Int(Int::I8(int(value)))),
-        "uint8" => plain(Physical::Int(Int::U8(int(value)))),
-        "int16" => plain(Physical::Int(Int::I16(int(value)))),
-        "uint16" => plain(Physical::Int(Int::U16(int(value)))),
-        "int32" => plain(Physical::Int(Int::I32(int(value)))),
-        "uint32" => plain(Physical::Int(Int::U32(int(value)))),
-        "int64" => plain(Physical::Int(Int::I64(int(value)))),
-        "uint64" => plain(Physical::Int(Int::U64(int(value)))),
-        "int128" => plain(Physical::Int(Int::I128(int(value)))),
-        "uint128" => plain(Physical::Int(Int::U128(int(value)))),
-        "float32" => plain(Physical::Float(Float::F32(
+        "null" => f(Physical::Null),
+        "bool" => f(Physical::Bool(value.as_bool().expect("JSON bool"))),
+        "int8" => f(Physical::Int(Int::I8(int(value)))),
+        "uint8" => f(Physical::Int(Int::U8(int(value)))),
+        "int16" => f(Physical::Int(Int::I16(int(value)))),
+        "uint16" => f(Physical::Int(Int::U16(int(value)))),
+        "int32" => f(Physical::Int(Int::I32(int(value)))),
+        "uint32" => f(Physical::Int(Int::U32(int(value)))),
+        "int64" => f(Physical::Int(Int::I64(int(value)))),
+        "uint64" => f(Physical::Int(Int::U64(int(value)))),
+        "int128" => f(Physical::Int(Int::I128(int(value)))),
+        "uint128" => f(Physical::Int(Int::U128(int(value)))),
+        "float32" => f(Physical::Float(Float::F32(
             value.as_f64().expect("JSON number") as f32,
         ))),
-        "float64" => plain(Physical::Float(Float::F64(
+        "float64" => f(Physical::Float(Float::F64(
             value.as_f64().expect("JSON number"),
         ))),
-        "string" => plain(Physical::Text(text())),
-        "bytes" => plain(Physical::Bytes(&unhex(text()))),
+        "string" => f(Physical::Text(text())),
+        "bytes" => f(Physical::Bytes(&unhex(text()))),
+        _ => panic!("{kind} is not a physical kind"),
+    }
+}
+
+/// The frame of the value a vector's `kind` and `value` fields describe,
+/// built without the frame reader.
+fn expected(row: &serde_json::Value) -> Vec<u8> {
+    let kind = row["kind"].as_str().expect("kind");
+    let value = &row["value"];
+    let text = || value.as_str().expect("JSON string");
+    match kind {
+        "undefined" => scalar(Some(Logical::Undefined), Physical::Null),
         "date" => {
             let date = chrono::NaiveDate::parse_from_str(text(), "%Y-%m-%d").expect("valid date");
             scalar(
@@ -74,10 +96,20 @@ fn expected(kind: &str, value: &serde_json::Value) -> Vec<u8> {
         "timestamp" => {
             let instant: chrono::DateTime<chrono::Utc> = text().parse().expect("valid timestamp");
             let nanos = conv::timestamp_nanos(instant).expect("not a leap second");
-            scalar(
-                Some(Logical::Timestamp(TimeUnit::Nanos)),
-                Physical::Int(Int::I128(nanos)),
-            )
+            let unit = match row["unit"].as_str() {
+                None | Some("nanos") => TimeUnit::Nanos,
+                Some("micros") => TimeUnit::Micros,
+                Some("millis") => TimeUnit::Millis,
+                Some("seconds") => TimeUnit::Seconds,
+                Some(other) => panic!("unknown unit {other}"),
+            };
+            let count = conv::timestamp_count(unit, nanos).expect("exact in its unit");
+            // The narrowest int the count fits, as a host would write it.
+            let count = match i64::try_from(count) {
+                Ok(v) => Int::I64(v),
+                Err(_) => Int::I128(count),
+            };
+            scalar(Some(Logical::Timestamp(unit)), Physical::Int(count))
         }
         "decimal" => {
             // A negative zero parses as zero, which is what the leaf codec
@@ -90,47 +122,159 @@ fn expected(kind: &str, value: &serde_json::Value) -> Vec<u8> {
                 Physical::Int(Int::I128(decimal.mantissa())),
             )
         }
+        "uuid" => {
+            let bytes = unhex(&text().replace('-', ""));
+            scalar(Some(Logical::Uuid), Physical::Bytes(&bytes))
+        }
+        "unknown" => {
+            let id = value["id"].as_u64().expect("id") as u8;
+            let param = value["param"].as_u64().expect("param") as u8;
+            let ty = Logical::from_wire(id, param).expect("an unknown id");
+            assert!(matches!(ty, Logical::Unknown(_)), "{id} is a known id");
+            physical(
+                value["kind"].as_str().expect("physical kind"),
+                &value["value"],
+                |v| scalar(Some(ty), v),
+            )
+        }
         "array" if value.as_array().is_some_and(Vec::is_empty) => framed(Vec::<bool>::new()),
         "object" if value.as_object().is_some_and(|map| map.is_empty()) => {
             framed(BTreeMap::<String, bool>::new())
         }
-        _ => panic!("teach expected() the {kind} vector {value}"),
+        _ => physical(kind, value, |v| scalar(None, v)),
     }
 }
 
+fn corpus() -> serde_json::Value {
+    serde_json::from_str(include_str!("../../../testdata/value-conformance.json"))
+        .expect("corpus JSON")
+}
+
 #[test]
-fn shared_binding_corpus_covers_every_tag() {
-    let corpus: serde_json::Value =
-        serde_json::from_str(include_str!("../../../testdata/value-conformance.json"))
-            .expect("corpus JSON");
+fn every_vector_round_trips_through_the_frame() {
+    let corpus = corpus();
     let mut tags = Vec::new();
     for row in corpus["vectors"].as_array().expect("vectors") {
         let name = &row["name"];
         let bytes = unhex(row["transport"].as_str().expect("transport"));
         tags.push(bytes[0]);
-        if row["frame"] == "refused" {
-            assert!(
-                Frame::parse(&bytes).is_err(),
-                "{name}: the frame refuses it"
-            );
-            continue;
-        }
-        let want = row["frame_reencode"]
-            .as_str()
-            .map_or_else(|| bytes.clone(), unhex);
         let frame = Frame::parse(&bytes).expect("valid vector");
-        assert_eq!(framed(frame), want, "{name}: written from its own walk");
+        assert_eq!(framed(frame), bytes, "{name}: written from its own walk");
         assert_eq!(
-            expected(row["kind"].as_str().expect("kind"), &row["value"]),
-            want,
+            expected(row),
+            bytes,
             "{name}: written from an independently built value"
         );
     }
-    for tag in 0x00..=0x14 {
+    for tag in (0x00..=0x14).chain([0xF3]) {
         assert!(tags.contains(&tag), "missing scalar tag {tag:02x}");
     }
+}
+
+#[test]
+fn every_normalized_vector_reads_and_writes_as_its_canonical_bytes() {
+    let corpus = corpus();
+    let rows = corpus["normalized"].as_array().expect("normalized");
+    assert!(!rows.is_empty());
+    for row in rows {
+        let name = &row["name"];
+        assert!(row["rule"].is_string(), "{name}: states its rule");
+        let bytes = unhex(row["transport"].as_str().expect("transport"));
+        let canonical = unhex(row["reencode"].as_str().expect("reencode"));
+        assert_ne!(
+            bytes, canonical,
+            "{name}: the vector is not already canonical"
+        );
+        let frame = Frame::parse(&bytes).expect("reads");
+        assert_eq!(
+            framed(frame),
+            canonical,
+            "{name}: written from its own walk"
+        );
+        // Both spellings build the canonical bytes.
+        assert_eq!(expected(row), canonical, "{name}: from `value`");
+        let mut canonical_row = row.clone();
+        canonical_row["value"] = row["reencode_value"].clone();
+        assert_eq!(
+            expected(&canonical_row),
+            canonical,
+            "{name}: from `reencode_value`"
+        );
+    }
+}
+
+#[test]
+fn every_malformed_vector_is_refused() {
+    let corpus = corpus();
     for row in corpus["malformed"].as_array().expect("malformed") {
         let bytes = unhex(row["transport"].as_str().expect("transport"));
         assert!(Frame::parse(&bytes).is_err(), "{}", row["name"]);
     }
+}
+
+#[test]
+fn every_malformed_ciphertext_is_refused() {
+    let corpus = corpus();
+    let rows = corpus["ciphertext_malformed"]
+        .as_array()
+        .expect("ciphertext_malformed");
+    assert!(!rows.is_empty());
+    for row in rows {
+        let bytes = unhex(row["transport"].as_str().expect("transport"));
+        assert!(
+            decode_ciphertext::<Vec<u8>>(&bytes).is_err(),
+            "{}",
+            row["name"]
+        );
+    }
+}
+
+#[test]
+fn every_leaf_type_aad_vector_has_its_context_bytes() {
+    let corpus = corpus();
+    let section = &corpus["leaf_type_aad"];
+    assert!(section["rule"].is_string());
+    let rows = section["vectors"].as_array().expect("vectors");
+    assert!(rows.len() >= 2, "with and without a logical id");
+    let mut seen_without = false;
+    for row in rows {
+        let name = &row["name"];
+        let base = row["base"].as_str().expect("base");
+        let kind = match row["kind"].as_str().expect("kind") {
+            "null" => Kind::Null,
+            "bool" => Kind::Bool,
+            "int" => Kind::Int,
+            "float" => Kind::Float,
+            "text" => Kind::Text,
+            "bytes" => Kind::Bytes,
+            other => panic!("{name}: unknown kind {other}"),
+        };
+        // The context binds the logical id and not its parameter, so the
+        // row's `param` plays no part here (see the rule on each row).
+        let id = row["logical"]["id"]
+            .as_u64()
+            .map(|id| u8::try_from(id).expect("a one-byte id"));
+        seen_without |= id.is_none();
+        let context = match id {
+            None => LeafTypeAad::physical(base, kind),
+            Some(id) => match KnownLogical::from_id(id) {
+                Some(known) => {
+                    assert_eq!(known.kind(), kind, "{name}: a known id over the wrong kind");
+                    LeafTypeAad::logical(base, known)
+                }
+                None => {
+                    let unknown = UnknownLogicalId::new(id)
+                        .unwrap_or_else(|| panic!("{name}: {id} is a known id"));
+                    LeafTypeAad::unknown(base, kind, unknown)
+                }
+            },
+        }
+        .into_aad();
+        assert_eq!(
+            context.as_bytes(),
+            unhex(row["context"].as_str().expect("context")),
+            "{name}"
+        );
+    }
+    assert!(seen_without);
 }
