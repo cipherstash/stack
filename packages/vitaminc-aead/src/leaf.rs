@@ -848,4 +848,187 @@ mod tests {
             assert_eq!(v, Physical::Int(Int::I128(mantissa)));
         }
     }
+
+    use quickcheck_macros::quickcheck;
+
+    /// A decimal negative zero: the one decided case that reads back as a
+    /// different encoding (zero, written without the sign).
+    fn is_negative_zero_decimal(b: &[u8]) -> bool {
+        b.len() == 17 && b[0] == tags::DECIMAL && b[4] & 0x80 != 0 && b[5..].iter().all(|&x| x == 0)
+    }
+
+    /// Whatever `read` accepts in either form writes back to the bytes it
+    /// read, so no value has a second encoding.
+    fn reads_then_writes_back(bytes: &[u8]) -> bool {
+        [Form::Leaf, Form::Frame]
+            .into_iter()
+            .all(|form| match read(bytes, form) {
+                Err(_) => true,
+                Ok(((ty, v), used)) => {
+                    let mut out = Vec::new();
+                    write(ty, v, form, &mut out).is_ok()
+                        && (out == bytes[..used] || is_negative_zero_decimal(&bytes[..used]))
+                }
+            })
+    }
+
+    #[quickcheck]
+    fn any_tagged_input_reads_without_panic_and_has_one_encoding(
+        tag: u8,
+        id: u8,
+        param: u8,
+        rest: Vec<u8>,
+    ) -> bool {
+        let tag = tag % 0x15; // the shorthand table, 0x00..=0x14
+        let plain = [&[tag][..], &rest[..]].concat();
+        let envelope = [&[tags::LOGICAL, id % 8, param % 32, tag][..], &rest[..]].concat();
+        reads_then_writes_back(&plain) && reads_then_writes_back(&envelope)
+    }
+
+    /// The sign and word of an int scalar, so values compare across the
+    /// width the reader returns.
+    fn int_value(v: Physical<'_>) -> Option<(bool, u128)> {
+        match v {
+            Physical::Int(i) => Some(i.sign_and_word()),
+            _ => None,
+        }
+    }
+
+    #[quickcheck]
+    fn generated_logical_values_round_trip_and_refuse_every_prefix(n: i64, scale: u8) -> bool {
+        let cases = [
+            // Within chrono's date range either way.
+            (Logical::Date, Int::I64(n % i64::from(MAX_DATE_DAYS))),
+            (Logical::Timestamp(TimeUnit::Nanos), Int::I64(n)),
+            // Within chrono's range in milliseconds, through the envelope.
+            (
+                Logical::Timestamp(TimeUnit::Millis),
+                Int::I64(n % 8_000_000_000_000_000),
+            ),
+            (Logical::Decimal { scale: scale % 29 }, Int::I64(n)),
+        ];
+        cases.into_iter().all(|(ty, int)| {
+            [Form::Frame, Form::Leaf].into_iter().all(|form| {
+                let mut bytes = Vec::new();
+                write(Some(ty), Physical::Int(int), form, &mut bytes).expect("writes");
+                let read_back = read(&bytes, form).is_ok_and(|((t, v), used)| {
+                    t == Some(ty)
+                        && int_value(v) == Some(int.sign_and_word())
+                        && used == bytes.len()
+                });
+                let prefixes_refused = (0..bytes.len()).all(|k| read(&bytes[..k], form).is_err());
+                read_back && prefixes_refused
+            })
+        })
+    }
+
+    #[test]
+    fn an_envelope_in_a_frame_reads_back_with_its_length() {
+        let id = [0xAB; 16];
+        let mut f = frame(Some(Logical::Uuid), Physical::Bytes(&id));
+        let written = f.len();
+        f.push(tags::NULL); // the next node in the frame
+        let (scalar, used) = read(&f, Form::Frame).expect("reads");
+        assert_eq!(scalar, (Some(Logical::Uuid), Physical::Bytes(&id)));
+        assert_eq!(used, written);
+
+        let unknown = Logical::from_wire(200, 9);
+        let mut f = frame(unknown, Physical::Text("hi"));
+        let written = f.len();
+        f.push(tags::NULL);
+        let (scalar, used) = read(&f, Form::Frame).expect("reads");
+        assert_eq!(scalar, (unknown, Physical::Text("hi")));
+        assert_eq!(used, written);
+    }
+
+    #[test]
+    fn a_shorthand_type_uses_its_tag_at_any_int_width() {
+        let date = Some(Logical::Date);
+        let wide = leaf(date, Physical::Int(Int::I64(11_017)));
+        assert_eq!(wide, leaf(date, Physical::Int(Int::I32(11_017))));
+        assert_eq!(
+            read_leaf(&wide).expect("reads"),
+            (date, Physical::Int(Int::I32(11_017)))
+        );
+
+        let ns = Some(Logical::Timestamp(TimeUnit::Nanos));
+        assert_eq!(leaf(ns, Physical::Int(Int::U64(5)))[0], tags::TIMESTAMP);
+
+        let dec = Some(Logical::Decimal { scale: 2 });
+        let bytes = leaf(dec, Physical::Int(Int::I16(-150)));
+        assert_eq!(bytes[0], tags::DECIMAL);
+        assert_eq!(
+            read_leaf(&bytes).expect("reads"),
+            (dec, Physical::Int(Int::I128(-150)))
+        );
+    }
+
+    #[test]
+    fn every_shorthand_type_is_refused_in_an_envelope() {
+        let zero = [0u8; 16];
+        // Timestamp in nanoseconds (param 3) over INT128.
+        let ns = [&[0xF3, 3, 3, 0x10][..], &zero].concat();
+        assert_eq!(read_leaf(&ns), Err(ScalarError::Malformed));
+        // Decimal with scale 2 over INT128.
+        let dec = [&[0xF3, 4, 2, 0x10][..], &zero].concat();
+        assert_eq!(read_leaf(&dec), Err(ScalarError::Malformed));
+        // Timestamp in milliseconds (param 1) has no shorthand, so the
+        // same shape reads.
+        let ms = [&[0xF3, 3, 1, 0x10][..], &zero].concat();
+        assert!(read_leaf(&ms).is_ok());
+    }
+
+    #[test]
+    fn an_envelope_holds_only_a_plain_physical_scalar() {
+        // Another envelope inside an envelope.
+        assert_eq!(
+            read_leaf(&[0xF3, 200, 0, 0xF3, 200, 0, 0x00]),
+            Err(ScalarError::Malformed)
+        );
+        // A shorthand tag inside an envelope.
+        assert_eq!(
+            read_leaf(&[0xF3, 200, 0, 0x01]),
+            Err(ScalarError::Malformed)
+        );
+        assert_eq!(
+            read_leaf(&[0xF3, 200, 0, 0x12, 0x44, 0x24, 0x0B, 0x00]),
+            Err(ScalarError::Malformed)
+        );
+        // An unknown tag, and no tag at all.
+        assert_eq!(
+            read_leaf(&[0xF3, 200, 0, 0x15]),
+            Err(ScalarError::Malformed)
+        );
+        assert_eq!(read_leaf(&[0xF3, 200, 0]), Err(ScalarError::Malformed));
+    }
+
+    #[test]
+    fn a_date_far_below_the_epoch_is_refused_not_overflowed() {
+        // `i32::MIN` days from the common era.
+        assert_eq!(
+            read_leaf(&[0x12, 0x00, 0x00, 0x00, 0x80]),
+            Err(ScalarError::Invalid)
+        );
+    }
+
+    #[test]
+    fn a_leaf_of_only_the_text_or_bytes_tag_is_empty() {
+        assert_eq!(read_leaf(&[tags::STRING]), Ok((None, Physical::Text(""))));
+        assert_eq!(read_leaf(&[tags::BYTES]), Ok((None, Physical::Bytes(&[]))));
+    }
+
+    #[test]
+    fn scalar_errors_display_and_are_errors() {
+        fn is_error<E: core::error::Error>(_: &E) {}
+        is_error(&ScalarError::Malformed);
+        assert_eq!(
+            ScalarError::Invalid.to_string(),
+            "value is not valid for its logical type"
+        );
+        assert_eq!(
+            ScalarError::TooLong.to_string(),
+            "text or bytes too long for a u32 length"
+        );
+        assert_eq!(ScalarError::Malformed.to_string(), "malformed scalar");
+    }
 }
