@@ -672,7 +672,12 @@ impl zeroize::Zeroize for Counted {
 
 impl Plaintext for Counted {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
-        let _wrapped = Protected::new(self);
+        Protected::new(self).visit(sink)
+    }
+}
+
+impl Plaintext for &Counted {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(None, Physical::Null)
     }
 }
@@ -773,9 +778,10 @@ fn a_failed_walk_wipes_the_fields_it_did_not_reach() {
 }
 
 #[test]
-fn a_struct_inside_protected_wipes_the_same_way() {
-    // The default `visit_protected` unwraps and runs the same walk, so the
-    // fields a failed walk did not reach are wiped through their own walks.
+fn a_struct_inside_protected_stays_wrapped_and_is_wiped_whole() {
+    // Walked by reference from inside the wrapper, so nothing leaves it
+    // during the walk; the wrapper wipes all three when it drops, whether
+    // the walk completed or not.
     let (value, wipes) = three();
     assert!(Protected::new(value).visit(StopAt("b")).is_err());
     assert_eq!(wipes.get(), 3);

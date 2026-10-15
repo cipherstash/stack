@@ -23,9 +23,6 @@ pub mod kinds;
 mod sources;
 mod tee;
 
-use vitaminc_protected::{Controlled, Protected};
-use zeroize::Zeroize;
-
 pub use kinds::{
     Float, Int, Kind, KnownLogical, Logical, Physical, TimeUnit, UnknownLogical, UnknownLogicalId,
 };
@@ -44,43 +41,28 @@ pub use tee::Tee;
 /// `rust_decimal` and uuid types, and by host bindings for their own values.
 /// A struct implements it by walking its fields into a map, which is what
 /// `#[derive(Plaintext)]` generates.
+///
+/// # Owned values and `Protected`
+///
+/// A source implements `Plaintext` for `T` and for `&T`. The by-value walk
+/// consumes the value; the borrowed walk hands the sink borrows of what
+/// the value holds and leaves it where it is. `Protected<T>` walks as a
+/// borrow of what it wraps, so nothing leaves the wrapper during the walk
+/// and everything in it, visited or not, is zeroized when it drops. That
+/// is why a type that is to sit inside a `Protected`, a derived struct
+/// included, needs the borrowed impl; the derive generates it.
+///
+/// An owned byte or text leaf (`String`, `Vec<u8>`, `[u8; N]`) wraps itself
+/// in a `Protected` before the sink sees it, so its buffer is wiped however
+/// it arrives. A bare container that is walked by value and stops part way
+/// discards the children it did not reach through their own walks, so
+/// their owned leaves are wiped too rather than dropped bare. A
+/// hand-written leaf that owns a secret buffer should wrap itself the same
+/// way, and a hand-written container should not drop unvisited children
+/// bare.
 pub trait Plaintext {
     /// Describe `self` to `sink`, consuming it.
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error>;
-
-    /// Describe a `Protected<Self>` without exposing the inner value.
-    ///
-    /// This is the seam the blanket `impl Plaintext for Protected<T>` goes
-    /// through. The default unwraps `this` and defers to [`visit`]. That
-    /// exposes the container being taken apart, which is only safe when the
-    /// container's own memory holds no secret and every owned leaf wraps
-    /// itself. A container whose buffer holds its elements inline (a
-    /// `Vec<u64>` or `Vec<[u8; 32]>`) does not qualify: its buffer *is* the
-    /// secret, and taking elements out of it leaves their bytes behind.
-    ///
-    /// So `Vec<T>` overrides this. It keeps the vector inside the
-    /// `Protected` for the whole walk and takes each element out only when
-    /// its sink is ready, and the vector's drop zeroizes its full capacity:
-    /// the elements the walk did not reach (when a sink or a source fails
-    /// part way) and the slots the visited ones were moved out of. Its bare
-    /// [`visit`] walks any elements it did not reach into a sink that
-    /// discards them, which wipes their owned leaves.
-    ///
-    /// Owned byte leaves (`Vec<u8>`, `[u8; N]`, `String`) override it to
-    /// hand the sink a borrow of the still-wrapped value, and their bare
-    /// [`visit`] wraps `self` and comes back through here, so their bytes
-    /// are wiped however they arrive. A hand-written leaf that owns a secret
-    /// buffer should do the same, and a hand-written container that owns
-    /// secrets should neither leave them in its own memory nor drop its
-    /// unvisited children bare.
-    ///
-    /// [`visit`]: Plaintext::visit
-    fn visit_protected<S: Sink>(this: Protected<Self>, sink: S) -> Result<S::Ok, S::Error>
-    where
-        Self: Sized + Zeroize,
-    {
-        this.risky_unwrap().visit(sink)
-    }
 }
 
 /// Every sink's error type.

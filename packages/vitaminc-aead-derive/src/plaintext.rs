@@ -1,17 +1,12 @@
 //! Expansion of `#[derive(Plaintext)]`.
 //!
-//! The by-value `visit` moves each field out and walks it; when the sink or
-//! a field refuses part way, the fields not yet reached are walked into a
-//! discarding sink first, so every owned leaf among them wraps itself and is
-//! wiped rather than dropped bare, as a bare `Vec<T>` does its leftover
-//! elements. A struct inside a `Protected` takes the default
-//! `visit_protected`, which unwraps and runs that same walk, so its
-//! unvisited fields are wiped the same way.
-//!
-//! The derive does not override `visit_protected` to keep the struct
-//! wrapped: that override's signature names `Protected<Self>`, which only
-//! exists for a `Zeroize` type, and a derive cannot tell whether the struct
-//! is one; for a struct that is not, the override is a compile error.
+//! Two impls are generated. The by-value `visit` moves each field out and
+//! walks it; when the sink or a field refuses part way, the fields not yet
+//! reached are walked into a discarding sink first, so every owned leaf
+//! among them wraps itself and is wiped rather than dropped bare, as a bare
+//! `Vec<T>` does its leftover elements. The impl for `&Name` walks the
+//! fields by reference and moves nothing; it is what a `Protected<Name>`
+//! walks through, so the struct stays wrapped and is zeroized whole.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -36,6 +31,27 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     }
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
+    // The by-reference impl, for `&'__r Name<..>`: every type parameter is
+    // bound by reference, and every lifetime outlives the borrow.
+    let mut ref_generics = input.generics.clone();
+    for lifetime in ref_generics.lifetimes_mut() {
+        lifetime.bounds.push(parse_quote!('__r));
+    }
+    let ref_predicates: Vec<syn::WherePredicate> = input
+        .generics
+        .type_params()
+        .map(|param| {
+            let ident = &param.ident;
+            parse_quote!(&'__r #ident: #krate::Plaintext)
+        })
+        .collect();
+    ref_generics
+        .make_where_clause()
+        .predicates
+        .extend(ref_predicates);
+    ref_generics.params.insert(0, parse_quote!('__r));
+    let (ref_impl_generics, _, ref_where_clause) = ref_generics.split_for_impl();
+
     // `take` writes an empty value back into `self`, so the receiver has to
     // be mutable; it is left alone otherwise so the expansion does not
     // trigger `unused_mut` in the deriving crate.
@@ -45,11 +61,14 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         quote!(self)
     };
 
-    let body = match &shape {
-        Shape::Newtype(field) => newtype_body(krate, field),
-        Shape::Map(fields) => map_body(krate, fields),
-        Shape::Empty => empty_body(krate),
-        Shape::Enum(variants) => enum_body(krate, name, variants),
+    let (body, ref_body) = match &shape {
+        Shape::Newtype(field) => (newtype_body(krate, field), newtype_ref_body(krate, field)),
+        Shape::Map(fields) => (map_body(krate, fields), map_ref_body(krate, fields)),
+        Shape::Empty => (empty_body(krate), empty_body(krate)),
+        Shape::Enum(variants) => {
+            let body = enum_body(krate, name, variants);
+            (body.clone(), body)
+        }
     };
 
     Ok(quote! {
@@ -60,6 +79,16 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                 __S: #krate::Sink,
             {
                 #body
+            }
+        }
+
+        #[automatically_derived]
+        impl #ref_impl_generics #krate::Plaintext for &'__r #name #ty_generics #ref_where_clause {
+            fn visit<__S>(self, __sink: __S) -> ::core::result::Result<__S::Ok, __S::Error>
+            where
+                __S: #krate::Sink,
+            {
+                #ref_body
             }
         }
     })
@@ -90,6 +119,13 @@ fn newtype_body(krate: &syn::Path, field: &FieldInfo) -> TokenStream {
     let value = value(field);
     quote! {
         #krate::Plaintext::visit(#value, __sink)
+    }
+}
+
+fn newtype_ref_body(krate: &syn::Path, field: &FieldInfo) -> TokenStream {
+    let member = &field.member;
+    quote! {
+        #krate::Plaintext::visit(&self.#member, __sink)
     }
 }
 
@@ -150,6 +186,30 @@ fn map_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
                 return ::core::result::Result::Err(__err);
             }
         };
+        #(#entries)*
+        #krate::MapSink::end(__map)
+    }
+}
+
+/// The by-reference walk: nothing is moved, so nothing needs discarding.
+fn map_ref_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
+    let stored: Vec<&FieldInfo> = fields.iter().filter(|field| field.stored()).collect();
+    let len = stored.len();
+    let entries = stored.iter().map(|field| {
+        let key = &field.key;
+        let member = &field.member;
+        if field.passthrough {
+            quote! {
+                #krate::Sink::passthrough(#krate::MapSink::entry(&mut __map, #key)?, &self.#member)?;
+            }
+        } else {
+            quote! {
+                #krate::Plaintext::visit(&self.#member, #krate::MapSink::entry(&mut __map, #key)?)?;
+            }
+        }
+    });
+    quote! {
+        let mut __map = #krate::Sink::map(__sink, ::core::option::Option::Some(#len))?;
         #(#entries)*
         #krate::MapSink::end(__map)
     }
@@ -261,6 +321,45 @@ mod tests {
             {
                 return ::core::result::Result::Err(__err);
             }),
+        );
+    }
+
+    /// The by-reference impl walks the same entries without moving anything;
+    /// it is what a `Protected<Name>` walks through.
+    #[test]
+    fn a_struct_also_walks_by_reference() {
+        let out = expand(parse_quote! {
+            struct Row {
+                #[aead(passthrough)]
+                tenant: String,
+                name: String,
+            }
+        });
+
+        assert_contains(
+            &out,
+            quote!(impl<'__r> ::vitaminc_aead::Plaintext for &'__r Row),
+        );
+        assert_contains(
+            &out,
+            quote!(::vitaminc_aead::Plaintext::visit(
+                &self.name,
+                ::vitaminc_aead::MapSink::entry(&mut __map, "name")?
+            )),
+        );
+        assert_contains(
+            &out,
+            quote!(::vitaminc_aead::Sink::passthrough(
+                ::vitaminc_aead::MapSink::entry(&mut __map, "tenant")?,
+                &self.tenant
+            )),
+        );
+        let out = expand(parse_quote!(
+            struct Wrapper(String);
+        ));
+        assert_contains(
+            &out,
+            quote!(::vitaminc_aead::Plaintext::visit(&self.0, __sink)),
         );
     }
 
@@ -455,17 +554,23 @@ mod tests {
     }
 
     /// Serde-style: bounding the parameter rather than each field's type lets a
-    /// field of type `Vec<T>` pick up `Vec<T>: Plaintext` from the blanket impl.
+    /// field of type `Vec<T>` pick up `Vec<T>: Plaintext` from the blanket
+    /// impl. The by-reference impl bounds the parameter by reference, and its
+    /// lifetimes outlive the borrow.
     #[test]
-    fn type_parameters_gain_a_plaintext_bound() {
+    fn type_parameters_gain_a_plaintext_bound_by_value_and_by_reference() {
         let out = expand(parse_quote! {
-            struct Holder<T> {
+            struct Holder<'a, T> {
                 value: T,
+                label: &'a str,
             }
         });
 
-        assert_contains(&out, quote!(impl<T: ::vitaminc_aead::Plaintext>));
-        assert_contains(&out, quote!(for Holder<T>));
+        assert_contains(&out, quote!(impl<'a, T: ::vitaminc_aead::Plaintext>));
+        assert_contains(&out, quote!(for Holder<'a, T>));
+        assert_contains(&out, quote!(impl<'__r, 'a: '__r, T>));
+        assert_contains(&out, quote!(&'__r T: ::vitaminc_aead::Plaintext));
+        assert_contains(&out, quote!(for &'__r Holder<'a, T>));
     }
 
     /// The `crate` attribute has to redirect *every* generated path, or the
