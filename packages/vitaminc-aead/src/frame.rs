@@ -39,9 +39,21 @@ pub const PASSTHROUGH: u8 = 0xF2;
 pub const MAX_DEPTH: usize = 128;
 
 /// Exactly one validated value node, borrowed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+///
+/// A frame of plaintext is plaintext, so `Debug` shows only its length and
+/// there is no `==`: comparing frames would compare plaintext in variable
+/// time.
+#[derive(Clone, Copy)]
 pub struct Frame<'a> {
     bytes: &'a [u8],
+}
+
+impl core::fmt::Debug for Frame<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Frame")
+            .field("len", &self.bytes.len())
+            .finish_non_exhaustive()
+    }
 }
 
 /// The bytes are not a well-formed frame.
@@ -661,20 +673,23 @@ mod tests {
         let bytes = [
             OBJECT, 2, 0, 0, 0, 1, 0, 0, 0, b'k', 0x00, 1, 0, 0, 0, b'k', 0x00,
         ];
-        assert_eq!(Frame::parse(&bytes), Err(FrameError));
+        assert_eq!(Frame::parse(&bytes).err(), Some(FrameError));
     }
 
     #[test]
     fn malformed_frames_are_refused() {
-        assert_eq!(Frame::parse(&[]), Err(FrameError));
-        assert_eq!(Frame::parse(&[0x00, 0x00]), Err(FrameError));
-        assert_eq!(Frame::parse(&[ARRAY, 1, 0, 0, 0]), Err(FrameError));
+        assert_eq!(Frame::parse(&[]).err(), Some(FrameError));
+        assert_eq!(Frame::parse(&[0x00, 0x00]).err(), Some(FrameError));
+        assert_eq!(Frame::parse(&[ARRAY, 1, 0, 0, 0]).err(), Some(FrameError));
         assert_eq!(
-            Frame::parse(&[OBJECT, 1, 0, 0, 0, 1, 0, 0, 0, 0xFF, 0x00]),
-            Err(FrameError)
+            Frame::parse(&[OBJECT, 1, 0, 0, 0, 1, 0, 0, 0, 0xFF, 0x00]).err(),
+            Some(FrameError)
         );
-        assert_eq!(Frame::parse(&[PASSTHROUGH]), Err(FrameError));
-        assert_eq!(Frame::parse(&[0x0A, 2, 0, 0, 0, b'a']), Err(FrameError));
+        assert_eq!(Frame::parse(&[PASSTHROUGH]).err(), Some(FrameError));
+        assert_eq!(
+            Frame::parse(&[0x0A, 2, 0, 0, 0, b'a']).err(),
+            Some(FrameError)
+        );
     }
 
     #[derive(Clone, Copy)]
@@ -730,7 +745,7 @@ mod tests {
                 Kind::Pass => vec![PASSTHROUGH],
             };
             deeper.extend_from_slice(&bytes);
-            assert_eq!(Frame::parse(&deeper), Err(FrameError));
+            assert_eq!(Frame::parse(&deeper).err(), Some(FrameError));
         }
 
         struct Deep(usize);
