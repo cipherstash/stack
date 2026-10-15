@@ -289,6 +289,42 @@ fn an_unknown_key_and_a_missing_field_are_refused_by_name() {
     ));
 }
 
+/// A missing entry is refused even when the field could hold nothing: an
+/// absent entry is not authenticated, so it is never read as a default.
+#[test]
+fn a_missing_option_or_passthrough_field_is_refused() {
+    struct NoNickname;
+    impl Plaintext for NoNickname {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            let mut map = sink.map(Some(4))?;
+            ada().visit(map.entry("owner")?)?;
+            vec!["ada"].visit(map.entry("aliases")?)?;
+            vec![Some(1u32)].visit(map.entry("scores")?)?;
+            vec![vec![1u8]].visit(map.entry("nested")?)?;
+            map.end()
+        }
+    }
+    assert!(matches!(
+        refusal(round_trip::<Account>(NoNickname)),
+        DecodeError::MissingField("nickname")
+    ));
+
+    struct NoTenant;
+    impl Plaintext for NoTenant {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            let mut map = sink.map(Some(3))?;
+            map.entry("tags")?.passthrough(vec![1u32])?;
+            "123".visit(map.entry("ssn")?)?;
+            "hi".visit(map.entry("n")?)?;
+            map.end()
+        }
+    }
+    assert!(matches!(
+        refusal(round_trip::<Row>(NoTenant)),
+        DecodeError::MissingField("tenant")
+    ));
+}
+
 #[test]
 fn a_field_of_the_wrong_kind_is_refused_by_the_fields_name() {
     let mut wrong = BTreeMap::new();
@@ -424,6 +460,29 @@ fn a_passthrough_field_refuses_a_sealed_value_and_a_sealed_field_refuses_a_passt
     ));
 }
 
+/// A skipped field is never looked for, so an entry under its key is
+/// refused as unknown: turning a sealed field into a skipped one is a wire
+/// change, not a silent drop of what was sealed before.
+#[test]
+fn an_entry_under_a_skipped_key_is_refused() {
+    struct WithCached;
+    impl Plaintext for WithCached {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            let mut map = sink.map(Some(5))?;
+            map.entry("tenant")?.passthrough("acme")?;
+            map.entry("tags")?.passthrough(vec![1u32])?;
+            "123".visit(map.entry("ssn")?)?;
+            9u64.visit(map.entry("cached")?)?;
+            "hi".visit(map.entry("n")?)?;
+            map.end()
+        }
+    }
+    assert!(matches!(
+        refusal(round_trip::<Row>(WithCached)),
+        DecodeError::UnknownKey(key) if key == "cached"
+    ));
+}
+
 /// A `ZeroizeOnDrop` type has a `Drop` impl, so its fields cannot be moved
 /// out; `take` swaps each for its default instead, and the empty value is
 /// wiped harmlessly when `self` drops.
@@ -532,6 +591,19 @@ fn a_fieldless_enum_is_a_fixed_width_leaf_holding_its_discriminant() {
     ));
     assert!(matches!(
         refusal(round_trip::<Status>("Active")),
+        DecodeError::Expected("Status")
+    ));
+    // An int with a logical type is not a plain int, and a wide value whose
+    // low 32 bits are a variant's is not that variant.
+    assert!(matches!(
+        refusal(round_trip::<Status>(Raw(
+            Some(Logical::Date),
+            Physical::Int(Int::I32(7))
+        ))),
+        DecodeError::Expected("Status")
+    ));
+    assert!(matches!(
+        refusal(round_trip::<Status>((1u64 << 32) | 7)),
         DecodeError::Expected("Status")
     ));
     assert_eq!(
@@ -834,6 +906,18 @@ fn a_failed_walk_wipes_the_fields_it_did_not_reach() {
     // A completed walk wipes each field once, through its own walk.
     let (value, wipes) = three();
     value.visit(StopAt("none")).expect("walks");
+    assert_eq!(wipes.get(), 3);
+}
+
+#[test]
+fn a_walk_refused_at_the_map_or_at_a_value_wipes_every_field() {
+    // The sink refuses the map: all three fields are discarded.
+    let (value, wipes) = three();
+    assert!(value.visit(u32::sink()).is_err());
+    assert_eq!(wipes.get(), 3);
+    // `a`'s value is refused: `a` wipes itself; `b` and `c` are discarded.
+    let (value, wipes) = three();
+    assert!(value.visit(BTreeMap::<String, u32>::sink()).is_err());
     assert_eq!(wipes.get(), 3);
 }
 
