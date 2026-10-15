@@ -737,6 +737,8 @@ mod tests {
     fn int_conversions() {
         assert_eq!(Int::U128(u128::MAX).to_i128(), None);
         assert_eq!(Int::I8(-1).to_u128(), None);
+        assert_eq!(Int::U128(u128::MAX).to_u128(), Some(u128::MAX));
+        assert_eq!(Int::I8(5).to_u128(), Some(5));
         assert_eq!(Int::I8(-1).sign_and_word(), (true, u128::MAX));
         assert_eq!(Int::U128(u128::MAX).sign_and_word(), (false, u128::MAX));
         assert_eq!(Int::U64(34).sign_and_word(), (false, 34));
