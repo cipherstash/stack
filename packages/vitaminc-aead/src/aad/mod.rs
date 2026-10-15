@@ -8,7 +8,7 @@
 
 mod leaf_type;
 
-pub use leaf_type::{KindMismatch, LeafTypeAad};
+pub use leaf_type::LeafTypeAad;
 pub use vitaminc_context::{Context, ContextPiece, IntoContext};
 
 /// The associated data a context is authenticated as. Kept as a name for

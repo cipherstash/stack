@@ -26,7 +26,9 @@ mod tee;
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroize;
 
-pub use kinds::{Float, Int, Kind, Logical, Physical, TimeUnit, UnknownLogical};
+pub use kinds::{
+    Float, Int, Kind, KnownLogical, Logical, Physical, TimeUnit, UnknownLogical, UnknownLogicalId,
+};
 pub use sources::{Bytes, Raw};
 pub use tee::Tee;
 

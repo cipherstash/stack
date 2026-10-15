@@ -35,21 +35,28 @@
 //! 2. **Add the variant** to [`Logical`] and a constant to [`id`], the next
 //!    value after [`id::LAST_KNOWN`], then move `LAST_KNOWN` up to it. Ids
 //!    are a cross-language commitment: never renumber or reuse one.
-//! 3. **Map it on the wire** in [`Logical::to_wire`] and
+//! 3. **Name it without its parameter**: add the matching variant to
+//!    [`KnownLogical`], with its id and the one kind it is stored as in
+//!    [`KnownLogical::id`], [`KnownLogical::kind`] and
+//!    [`KnownLogical::from_id`]. This is what a schema binds for a column
+//!    (see [`LeafTypeAad`](crate::LeafTypeAad)), so the kind is part of the
+//!    cross-language commitment too.
+//! 4. **Map it on the wire** in [`Logical::to_wire`] and
 //!    [`Logical::from_wire`]. `from_wire` must return `None` for a
 //!    parameter the type cannot take, so a malformed envelope is refused
 //!    rather than read as some other value.
-//! 4. **State its validity rule** in [`Logical::admits`]: which physical
+//! 5. **State its validity rule** in [`Logical::admits`]: which physical
 //!    kind it accepts, and the range. Keep the rule self-contained, as the
 //!    date and timestamp ranges are (constants pinned by a test, not a
 //!    dependency), so the core model stays dependency-free.
-//! 5. **Name it** in the `Display` impl.
-//! 6. **Add a source**: a `Plaintext` impl for the Rust type that calls
+//! 6. **Name it** in the `Display` impl.
+//! 7. **Add a source**: a `Plaintext` impl for the Rust type that calls
 //!    `sink.scalar(Some(Logical::YourType), Physical::...)`. If the type
 //!    comes from another crate, put the impl behind a feature named after
 //!    that crate, as the chrono, `rust_decimal` and uuid sources are.
-//! 7. **Extend the tests here**: the variant goes into
-//!    `every_known_logical_type_round_trips_through_the_wire`, a parameter
+//! 8. **Extend the tests here**: the variant goes into
+//!    `every_known_logical_type_round_trips_through_the_wire`, its pairing
+//!    with the [`KnownLogical`] variant into the `known` helper, a parameter
 //!    it refuses into `a_known_id_with_a_bad_parameter_is_refused`, and its
 //!    range edges into `admits_checks_the_range`.
 //!
@@ -61,10 +68,13 @@
 //! a new type gets no tag of its own, and a sink built before the type
 //! existed still passes it through as [`Logical::Unknown`].
 //!
-//! The compiler finds most of a missed step: `to_wire` and `Display` match
-//! exhaustively, so a new variant fails to build until they are updated.
-//! `from_wire` and `admits` have fallbacks, so a type missed there is
-//! refused rather than reported; the round-trip test is what catches it.
+//! The compiler finds most of a missed step: `to_wire`, `Display` and the
+//! tests' `known` helper match exhaustively, so a new variant fails to
+//! build until they are updated, and `KnownLogical::id` and
+//! `KnownLogical::kind` do the same for a new `KnownLogical` variant.
+//! `from_wire`, `KnownLogical::from_id` and `admits` have fallbacks, so a
+//! type missed there is refused rather than reported; the round-trip tests
+//! are what catch it.
 
 use core::fmt;
 
@@ -379,6 +389,92 @@ pub mod id {
     pub const LAST_KNOWN: u8 = UUID;
 }
 
+/// A logical type this build knows, named without its parameter: what a
+/// schema says a column holds. A [`Logical`] says "a decimal of scale 2"
+/// about one value; a `KnownLogical` says "decimals" about a column, whose
+/// values may each have a scale of their own.
+///
+/// Each one is stored as exactly one [`Kind`], named by
+/// [`kind`](KnownLogical::kind), so
+/// [`LeafTypeAad::logical`](crate::LeafTypeAad::logical) derives the kind
+/// from it and a column with a logical type has one binding. A logical
+/// type this build does not know is an [`UnknownLogicalId`] instead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum KnownLogical {
+    /// [`Logical::Undefined`]. Over null.
+    Undefined,
+    /// [`Logical::Date`]. Over int.
+    Date,
+    /// [`Logical::Timestamp`], of any unit. Over int.
+    Timestamp,
+    /// [`Logical::Decimal`], of any scale. Over int.
+    Decimal,
+    /// [`Logical::Uuid`]. Over bytes.
+    Uuid,
+}
+
+impl KnownLogical {
+    /// The logical type's wire id, one of the constants in [`id`].
+    pub const fn id(self) -> u8 {
+        match self {
+            KnownLogical::Undefined => id::UNDEFINED,
+            KnownLogical::Date => id::DATE,
+            KnownLogical::Timestamp => id::TIMESTAMP,
+            KnownLogical::Decimal => id::DECIMAL,
+            KnownLogical::Uuid => id::UUID,
+        }
+    }
+
+    /// The physical kind the logical type is stored as, the one kind
+    /// [`Logical::admits`] accepts it over. A cross-language commitment,
+    /// since a schema binds it: never change one.
+    pub const fn kind(self) -> Kind {
+        match self {
+            KnownLogical::Undefined => Kind::Null,
+            KnownLogical::Date | KnownLogical::Timestamp | KnownLogical::Decimal => Kind::Int,
+            KnownLogical::Uuid => Kind::Bytes,
+        }
+    }
+
+    /// The known logical type with wire id `id`, or `None` for
+    /// [`id::NONE`] and for an id above [`id::LAST_KNOWN`]. For a schema
+    /// that stores a column's logical type as its id.
+    pub const fn from_id(id: u8) -> Option<Self> {
+        match id {
+            id::UNDEFINED => Some(KnownLogical::Undefined),
+            id::DATE => Some(KnownLogical::Date),
+            id::TIMESTAMP => Some(KnownLogical::Timestamp),
+            id::DECIMAL => Some(KnownLogical::Decimal),
+            id::UUID => Some(KnownLogical::Uuid),
+            _ => None,
+        }
+    }
+}
+
+/// A logical id above [`id::LAST_KNOWN`]: a logical type from a newer
+/// build, which this one has no meaning for and so cannot say what kind it
+/// is stored as. See [`LeafTypeAad::unknown`](crate::LeafTypeAad::unknown).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UnknownLogicalId(u8);
+
+impl UnknownLogicalId {
+    /// `id` as an unknown logical id, or `None` for [`id::NONE`] and for an
+    /// id this build knows, which is a [`KnownLogical`].
+    pub const fn new(id: u8) -> Option<Self> {
+        if id > id::LAST_KNOWN {
+            Some(Self(id))
+        } else {
+            None
+        }
+    }
+
+    /// The wire id.
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
 impl Logical {
     /// The wire id and parameter, for the generic logical envelope.
     pub fn to_wire(self) -> (u8, u8) {
@@ -407,17 +503,6 @@ impl Logical {
             (id::UUID, 0) => Some(Logical::Uuid),
             (id::UNDEFINED..=id::LAST_KNOWN, _) => None,
             (id, param) => Some(Logical::Unknown(UnknownLogical { id, param })),
-        }
-    }
-
-    /// The physical kind a known logical type is stored as, or `None` for
-    /// [`Logical::Unknown`], whose kind this build cannot know.
-    pub const fn kind(self) -> Option<Kind> {
-        match self {
-            Logical::Undefined => Some(Kind::Null),
-            Logical::Date | Logical::Timestamp(_) | Logical::Decimal { .. } => Some(Kind::Int),
-            Logical::Uuid => Some(Kind::Bytes),
-            Logical::Unknown(_) => None,
         }
     }
 
@@ -705,6 +790,46 @@ mod tests {
         assert!(ty.admits(&Physical::Text("anything")));
     }
 
+    /// The `KnownLogical` a logical type is named by. Matches exhaustively,
+    /// so a new `Logical` variant fails to build until it is paired here.
+    fn known(logical: Logical) -> Option<KnownLogical> {
+        match logical {
+            Logical::Undefined => Some(KnownLogical::Undefined),
+            Logical::Date => Some(KnownLogical::Date),
+            Logical::Timestamp(_) => Some(KnownLogical::Timestamp),
+            Logical::Decimal { .. } => Some(KnownLogical::Decimal),
+            Logical::Uuid => Some(KnownLogical::Uuid),
+            Logical::Unknown(_) => None,
+        }
+    }
+
+    /// `KnownLogical` and `Logical` name the same types by the same ids,
+    /// and every id this build knows is a `KnownLogical`, so the two cannot
+    /// drift apart.
+    #[test]
+    fn known_logical_agrees_with_logical_on_every_id() {
+        for id in 0..=u8::MAX {
+            let known_id = KnownLogical::from_id(id);
+            assert_eq!(
+                known_id.is_some(),
+                (id::UNDEFINED..=id::LAST_KNOWN).contains(&id),
+                "id {id}"
+            );
+            assert_eq!(known_id.map(KnownLogical::id), known_id.map(|_| id));
+            // Every logical type with this id, whatever its parameter, is
+            // named by the same `KnownLogical`.
+            for param in 0..=u8::MAX {
+                if let Some(logical) = Logical::from_wire(id, param) {
+                    assert_eq!(known(logical), known_id, "{logical:?}");
+                }
+            }
+            let unknown = UnknownLogicalId::new(id);
+            assert_eq!(unknown.is_some(), id > id::LAST_KNOWN, "id {id}");
+            assert_eq!(unknown.map(UnknownLogicalId::get), unknown.map(|_| id));
+        }
+        assert_eq!(known(Logical::from_wire(200, 0).expect("unknown")), None);
+    }
+
     /// `kind` names the one kind `admits` accepts a known logical type
     /// over, so a binding built from it agrees with what opens.
     #[test]
@@ -717,25 +842,24 @@ mod tests {
             Physical::Text(""),
             Physical::Bytes(&[0; 16]),
         ];
-        let known = [
+        let logicals = [
             Logical::Undefined,
             Logical::Date,
             Logical::Timestamp(TimeUnit::Millis),
             Logical::Decimal { scale: 2 },
             Logical::Uuid,
         ];
-        for logical in known {
+        for logical in logicals {
             for sample in &samples {
+                let kind = known(logical).expect("known").kind();
                 assert_eq!(
                     logical.admits(sample),
-                    logical.kind() == Some(sample.kind()),
+                    kind == sample.kind(),
                     "{logical:?} over {:?}",
                     sample.kind()
                 );
             }
         }
-        let unknown = Logical::from_wire(200, 0).expect("unknown");
-        assert_eq!(unknown.kind(), None);
     }
 
     #[test]
