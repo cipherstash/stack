@@ -16,6 +16,8 @@ rust-version.workspace = true
 vitaminc-aead = { version = "0.5.1", path = "../aead" }
 
 [dev-dependencies]
+quickcheck = "1.1.0"
+quickcheck_macros = "1.2.0"
 serde_json = "1"
 # Path-only, so publish order does not matter: the conformance test builds
 # each vector's scalar independently through the chrono and rust_decimal

@@ -25,6 +25,20 @@ The ciphertext codec, [`encode_ciphertext`] and [`decode_ciphertext`],
 carries a [`CipherText`] tree whose passthrough payloads are frames. The
 Go guest uses it in both directions.
 
+```rust
+use vitaminc_aead::{CipherText, Node};
+use vitaminc_aead_frame::{decode_ciphertext, encode_ciphertext};
+
+let tree: Node<Vec<u8>> = CipherText::Single(vec![0xAB; 16]);
+let mut bytes = Vec::new();
+encode_ciphertext(&tree, &mut bytes).expect("encodes");
+
+let back: Node<Vec<u8>> = decode_ciphertext(&bytes).expect("decodes");
+let mut again = Vec::new();
+encode_ciphertext(&back, &mut again).expect("encodes");
+assert_eq!(again, bytes);
+```
+
 ## Transport, not storage
 
 Nothing here is a compatibility commitment. The only frozen byte format

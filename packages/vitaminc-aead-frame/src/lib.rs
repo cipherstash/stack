@@ -2,7 +2,7 @@
 #![doc = include_str!("../README.md")]
 pub mod transport;
 
-pub use transport::{decode_ciphertext, encode_ciphertext, CodecError, Reader};
+pub use transport::{decode_ciphertext, encode_ciphertext, CodecError};
 /// The frame: a value as transport bytes, and back. These live in
 /// `vitaminc-aead` next to the leaf codec they share, and are re-exported
 /// here so a binding that depends on this crate has the whole transport.

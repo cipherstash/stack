@@ -85,18 +85,26 @@ fn decode_passthrough(
 /// Opaque codec error. Like the trait-layer `Unspecified`, it carries no
 /// detail: malformed transport bytes on the decrypt path are
 /// attacker-reachable input.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CodecError;
 
+impl core::fmt::Display for CodecError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Fixed, so the message carries no detail about the bytes.
+        f.write_str("malformed ciphertext transport")
+    }
+}
+
+impl std::error::Error for CodecError {}
+
 /// Cursor over a transport buffer.
-pub struct Reader<'a> {
+struct Reader<'a> {
     buf: &'a [u8],
     pos: usize,
 }
 
 impl<'a> Reader<'a> {
-    /// Wrap a buffer for decoding.
-    pub fn new(buf: &'a [u8]) -> Self {
+    fn new(buf: &'a [u8]) -> Self {
         Reader { buf, pos: 0 }
     }
 
@@ -248,12 +256,14 @@ where
     Ok(())
 }
 
-/// Decode a ciphertext tree, requiring the reader to be fully consumed.
-pub fn decode_ciphertext<Leaf>(reader: &mut Reader<'_>) -> Result<Node<Leaf>, CodecError>
+/// Decode a ciphertext tree. The tree must use every byte: trailing bytes
+/// are refused.
+pub fn decode_ciphertext<Leaf>(bytes: &[u8]) -> Result<Node<Leaf>, CodecError>
 where
     Leaf: From<Vec<u8>>,
 {
-    let ct = decode_ciphertext_inner(reader, 0)?;
+    let mut reader = Reader::new(bytes);
+    let ct = decode_ciphertext_inner(&mut reader, 0)?;
     if !reader.finished() {
         return Err(CodecError);
     }
@@ -328,6 +338,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quickcheck_macros::quickcheck;
     use vitaminc_aead::tags;
 
     type Ct = Node<Vec<u8>>;
@@ -354,7 +365,7 @@ mod tests {
     }
 
     fn decode(bytes: &[u8]) -> Result<Ct, CodecError> {
-        decode_ciphertext(&mut Reader::new(bytes))
+        decode_ciphertext(bytes)
     }
 
     /// Round-trip a ciphertext tree and return the decoded tree, asserting
@@ -617,6 +628,29 @@ mod tests {
     }
 
     #[test]
+    fn the_encoder_counts_the_containers_above_a_passthrough() {
+        // Mirror of the decoder check in
+        // `a_frame_payload_shares_the_depth_budget`: below 60 sequences,
+        // the payload has `MAX_DEPTH - 61` levels left.
+        let below_60 = |payload: PassthroughFrame| -> Ct {
+            let mut ct: Ct = CipherText::Passthrough(payload);
+            for _ in 0..60 {
+                ct = CipherText::Sequence(vec![ct]);
+            }
+            ct
+        };
+        let mut out = Vec::new();
+        assert!(encode_ciphertext(&below_60(frame(MAX_DEPTH - 61)), &mut out).is_ok());
+        assert!(decode(&out).is_ok());
+        let mut out = Vec::new();
+        assert_eq!(
+            encode_ciphertext(&below_60(frame(MAX_DEPTH - 60)), &mut out),
+            Err(CodecError)
+        );
+        assert!(out.is_empty());
+    }
+
+    #[test]
     fn a_hand_built_frame_payload_is_validated_before_it_is_written() {
         // The field is public, so a caller can build a payload that is not
         // one node: empty, two nodes, or truncated. Each would misframe the
@@ -706,5 +740,46 @@ mod tests {
         let mut out = Vec::new();
         assert!(write_len(&mut out, u32::MAX as usize).is_ok());
         assert_eq!(out, [0xFF; 4]);
+    }
+
+    #[test]
+    fn the_error_message_is_fixed() {
+        assert_eq!(CodecError.to_string(), "malformed ciphertext transport");
+        let boxed: Box<dyn std::error::Error> = Box::new(CodecError);
+        assert!(boxed.source().is_none());
+    }
+
+    /// Refused, or decoded and written back as the same bytes. `encode`
+    /// panics if the encoder refuses a tree the decoder accepted.
+    fn refused_or_canonical(bytes: &[u8]) -> bool {
+        match decode(bytes) {
+            Ok(ct) => encode(&ct) == bytes,
+            Err(_) => true,
+        }
+    }
+
+    #[quickcheck]
+    fn accepted_bytes_re_encode_exactly(bytes: Vec<u8>) -> bool {
+        refused_or_canonical(&bytes)
+    }
+
+    /// Random bytes rarely get past the first kind byte, so start from a
+    /// valid encoding of every node kind and overwrite one byte.
+    #[quickcheck]
+    fn a_corrupted_encoding_is_refused_or_canonical(at: usize, byte: u8) -> bool {
+        let mut bytes = encode(&CipherText::Map(vec![
+            ("id".into(), CipherText::Passthrough(frame(2))),
+            (
+                "b".into(),
+                CipherText::Sequence(vec![
+                    CipherText::Single(leaf(9, 4)),
+                    CipherText::EmptySequence(leaf(1, 2)),
+                    CipherText::EmptyMap(leaf(2, 3)),
+                ]),
+            ),
+        ]));
+        let at = at % bytes.len();
+        bytes[at] = byte;
+        refused_or_canonical(&bytes)
     }
 }

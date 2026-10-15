@@ -29,7 +29,7 @@
 
 use vitaminc_aead::frame::{FrameWriteError, ARRAY, OBJECT, PASSTHROUGH};
 use vitaminc_aead::{decrypt_to_frame, Context, DecryptError, Frame, Node, Unspecified};
-use vitaminc_aead_frame::{decode_ciphertext, Reader};
+use vitaminc_aead_frame::decode_ciphertext;
 use vitaminc_encrypt::{Aes256Cipher, Key, LocalCipherText};
 use vitaminc_protected::Controlled;
 
@@ -150,8 +150,8 @@ type Opened = Result<Vec<u8>, DecryptError<FrameWriteError, Unspecified>>;
 
 fn open(fixture: &Fixture, vector: &Vector, aad: &[u8]) -> Opened {
     let cipher = Aes256Cipher::new(&Key::from(fixture.key)).expect("cipher");
-    let node: Node<LocalCipherText> = decode_ciphertext(&mut Reader::new(&vector.ciphertext))
-        .unwrap_or_else(|_| panic!("{} decodes", vector.name));
+    let node: Node<LocalCipherText> =
+        decode_ciphertext(&vector.ciphertext).unwrap_or_else(|_| panic!("{} decodes", vector.name));
     decrypt_to_frame(&cipher, node, Context::from_encoded(aad))
         .map(|frame| frame.risky_ref().clone())
 }
@@ -207,6 +207,33 @@ fn the_fixtures_still_authenticate_their_aad() {
                 assert!(
                     matches!(wrong, Err(DecryptError::Cipher(_))),
                     "{}: {wrong:?}",
+                    vector.name
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn the_fixtures_do_not_open_under_another_key() {
+    for fixture in [released(), cross_language(PRE_ADR), corpus()] {
+        // Flip one bit, so the key always differs.
+        let mut key = fixture.key;
+        key[0] ^= 1;
+        let wrong = Fixture {
+            key,
+            aad: fixture.aad.clone(),
+            vectors: Vec::new(),
+        };
+        for vector in &fixture.vectors {
+            let opened = open(&wrong, vector, &fixture.aad);
+            // A passthrough-only value is not encrypted, by design.
+            if vector.frame.first() == Some(&PASSTHROUGH) {
+                assert!(opened.is_ok(), "{}", vector.name);
+            } else {
+                assert!(
+                    matches!(opened, Err(DecryptError::Cipher(_))),
+                    "{}: {opened:?}",
                     vector.name
                 );
             }
