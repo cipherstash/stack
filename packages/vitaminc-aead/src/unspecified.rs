@@ -14,3 +14,13 @@ impl std::fmt::Display for Unspecified {
 }
 
 impl std::error::Error for Unspecified {}
+
+#[cfg(test)]
+mod tests {
+    use super::Unspecified;
+
+    #[test]
+    fn the_message_says_only_that_something_failed() {
+        assert_eq!(Unspecified.to_string(), "Unspecified error");
+    }
+}
