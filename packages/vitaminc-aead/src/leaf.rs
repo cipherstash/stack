@@ -46,31 +46,21 @@ pub enum Form {
 ///
 /// `#[non_exhaustive]`, so a reason can be added (for example when
 /// [`tags::LOGICAL_LONG`] gets a meaning) without breaking a caller.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ScalarError {
     /// The value is not a valid value of its logical type.
+    #[error("value is not valid for its logical type")]
     Invalid,
     /// Text or bytes longer than a `u32` length (frame form only).
+    #[error("text or bytes too long for a u32 length")]
     TooLong,
     /// The bytes are not a well-formed scalar: an unknown tag, a short
     /// payload, invalid UTF-8, trailing bytes in a leaf, or an envelope
     /// where a shorthand tag exists.
+    #[error("malformed scalar")]
     Malformed,
 }
-
-impl core::fmt::Display for ScalarError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(match self {
-            Self::Invalid => "value is not valid for its logical type",
-            Self::TooLong => "text or bytes too long for a u32 length",
-            Self::Malformed => "malformed scalar",
-        })
-    }
-}
-
-/// Built on [`core::error::Error`], so the codec needs nothing from `std`.
-impl core::error::Error for ScalarError {}
 
 /// Days from 0001-01-01 (day 1, chrono's "days from CE") to 1970-01-01.
 const EPOCH_DAYS_FROM_CE: i32 = 719_163;
