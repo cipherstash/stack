@@ -30,14 +30,20 @@ pub use kinds::{
     Float, Int, Kind, KnownLogical, Logical, Physical, TimeUnit, UnknownLogical, UnknownLogicalId,
 };
 pub use sources::{Bytes, Raw};
+
+/// What `#[derive(Plaintext)]`'s expansion needs by path. Not an API.
+#[doc(hidden)]
+pub mod __private {
+    pub use super::sources::discard_one;
+}
 pub use tee::Tee;
 
 /// A value that can describe itself to a [`Sink`].
 ///
 /// Implemented by Rust primitives and containers, by the optional chrono,
 /// `rust_decimal` and uuid types, and by host bindings for their own values.
-/// A struct implements it by walking its fields into a map; that is what
-/// `#[derive(Plaintext)]` will generate.
+/// A struct implements it by walking its fields into a map, which is what
+/// `#[derive(Plaintext)]` generates.
 pub trait Plaintext {
     /// Describe `self` to `sink`, consuming it.
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error>;

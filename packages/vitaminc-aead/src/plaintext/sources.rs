@@ -192,6 +192,18 @@ impl<T: Plaintext + Zeroize> Plaintext for Protected<T> {
     }
 }
 
+/// A borrowed protected value hands the sink a borrow of the still-wrapped
+/// value, so nothing leaves the wrapper. This is how a derived struct walks
+/// a `Protected` field from inside its own `Protected`.
+impl<'a, T: Zeroize> Plaintext for &'a Protected<T>
+where
+    &'a T: Plaintext,
+{
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        self.risky_ref().visit(sink)
+    }
+}
+
 /// An owned sequence takes its elements out one at a time, so a walk that
 /// stops part way never drops an unvisited element bare.
 ///
@@ -234,10 +246,20 @@ fn visit_popping<S: Sink, T: Plaintext>(sink: S, items: &mut Vec<T>) -> Result<S
 /// wrap themselves and are wiped as they drop.
 fn discard<T: Plaintext>(items: Vec<T>) {
     for item in items {
-        // `Discard` never fails, and a source error is no longer anyone's
-        // concern once the walk has already failed.
-        let _ = item.visit(Discard);
+        discard_one(item);
     }
+}
+
+/// Walk `value` into a sink that keeps nothing, so every owned leaf in it
+/// wraps itself and is wiped as it drops, the way a completed walk would
+/// have wiped it. For a source that has to give up part way: a derived
+/// struct walks the fields it has not reached through here when an entry
+/// fails, as a bare `Vec<T>` does its leftover elements.
+#[doc(hidden)]
+pub fn discard_one<P: Plaintext>(value: P) {
+    // `Discard` never fails, and a source error is no longer anyone's
+    // concern once the walk has already failed.
+    let _ = value.visit(Discard);
 }
 
 /// A sink that keeps nothing. Walking a value into it runs the value's own
@@ -610,6 +632,23 @@ mod tests {
         let wipes = Counted::default();
         record(Protected::new(Some(wipes.clone()))).expect("ok");
         assert_eq!(wipes.0.get(), 1);
+    }
+
+    /// A borrowed protected value is walked as a borrow of what it wraps,
+    /// so nothing leaves the wrapper.
+    #[test]
+    fn a_borrowed_protected_value_walks_as_its_borrow() {
+        let secret = Protected::new(String::from("pw"));
+        assert_eq!(
+            record(&secret).expect("records"),
+            [scalar(Owned::Text("pw".into()))]
+        );
+        let key = Protected::new([7u8; 4]);
+        assert_eq!(
+            record(&key).expect("records"),
+            [scalar(Owned::Bytes(vec![7; 4]))]
+        );
+        assert_eq!(secret.risky_ref(), "pw");
     }
 
     /// A leaf that counts its wipes but does not wrap itself when visited,

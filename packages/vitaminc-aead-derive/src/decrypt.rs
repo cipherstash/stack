@@ -6,13 +6,13 @@ use syn::{parse_quote, DeriveInput, Result};
 
 use crate::{
     attrs::ContainerAttrs,
-    shape::{FieldInfo, Shape},
+    shape::{Dialect, FieldInfo, Shape},
 };
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let attrs = ContainerAttrs::parse(&input.attrs)?;
     let krate = &attrs.krate;
-    let shape = Shape::parse(&input)?;
+    let shape = Shape::parse(&input, Dialect::Legacy)?;
     let name = &input.ident;
 
     // `'__c` is the decipher lifetime the trait is generic over. Every type
@@ -38,6 +38,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let turbofish = ty_generics.as_turbofish();
 
     let body = match &shape {
+        Shape::Enum(_) => unreachable!("the legacy dialect refuses enums"),
         Shape::Newtype(field) => {
             let inner = &field.ty;
             quote! {

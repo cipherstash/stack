@@ -1,28 +1,37 @@
-//! Derive macros for the [`Encrypt`] and [`Decrypt`] traits of
-//! [`vitaminc-aead`](https://docs.rs/vitaminc-aead).
+//! Derive macros for [`vitaminc-aead`](https://docs.rs/vitaminc-aead):
+//! [`Plaintext`] and the sink-based [`Decrypt`], and the [`Encrypt`] and
+//! legacy `Decrypt` pair they replace.
 //!
-//! Both macros are re-exported from `vitaminc_aead`, so depend on that crate
+//! All of them are re-exported from `vitaminc_aead`, so depend on that crate
 //! rather than this one:
 //!
 //! ```ignore
-//! use vitaminc_aead::{Decrypt, Encrypt};
+//! use vitaminc_aead::typed::Decrypt;
+//! use vitaminc_aead::Plaintext;
 //!
-//! #[derive(Encrypt, Decrypt)]
+//! #[derive(Plaintext, Decrypt)]
 //! struct User {
 //!     name: String,
 //!     age: u32,
 //! }
 //! ```
 //!
+//! `#[derive(Plaintext)]` walks the struct into a sink as a map with one
+//! entry per field. `#[derive(Decrypt)]` generates the map sink that builds
+//! the struct back, routing each entry to the field's own sink. The legacy
+//! `#[derive(Encrypt, Decrypt)]` pair produces the same wire shape through
+//! the `Cipher`/`Decipher` traits, and goes when those do.
+//!
 //! # Wire shape
 //!
 //! A struct is encrypted as a **map**, keyed by field name. This is the
-//! deliberate choice over a sequence: [`MapCipher`] binds each entry's key
-//! into the AAD its value is sealed against (`Context::for_map_entry`), so a
-//! stored ciphertext cannot have its fields renamed or swapped without
-//! decryption failing. Sequence elements carry no such binding — their AAD
-//! has no positional component — so two same-typed fields encoded as a
-//! sequence would be freely interchangeable.
+//! deliberate choice over a sequence: the encrypting sink (and [`MapCipher`]
+//! before it) binds each entry's key into the AAD its value is sealed
+//! against (`Context::for_map_entry`), so a stored ciphertext cannot have
+//! its fields renamed or swapped without decryption failing. Sequence
+//! elements carry no such binding — their AAD has no positional component —
+//! so two same-typed fields encoded as a sequence would be freely
+//! interchangeable.
 //!
 //! The consequences of the map shape:
 //!
@@ -45,13 +54,24 @@
 //!
 //! # Enums
 //!
-//! Enums are not supported. The ciphertext carries no authenticated variant
-//! discriminator, so any encoding this macro could pick would either leak the
-//! variant in the clear or leave it forgeable. Model the choice explicitly
-//! (e.g. as a struct with `Option` fields) instead.
+//! `Plaintext` and the sink-based `Decrypt` accept a **fieldless** enum as
+//! one `u32` leaf holding the variant's discriminant: an explicit `= n`, or
+//! one more than the previous variant's, as Rust assigns them. The leaf is
+//! sealed and authenticated like any other, and it is fixed-width, so the
+//! ciphertext's length does not give the variant away either. Decoding is
+//! strict: an int that is no variant's discriminant is refused. Pin the
+//! discriminants with `= n` before storing anything, since reordering
+//! variants otherwise changes them. Variants take no `#[aead(...)]`
+//! attributes.
 //!
+//! Enums with fields are not supported. Their payload has no agreed layout
+//! (internally or externally tagged, per-variant AAD), so model the choice
+//! explicitly, as a struct with a fieldless discriminant and `Option`
+//! fields. The legacy derives reject every enum.
+//!
+//! [`Plaintext`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Plaintext.html
 //! [`Encrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Encrypt.html
-//! [`Decrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Decrypt.html
+//! [`Decrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/typed/trait.Decrypt.html
 //! [`MapCipher`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.MapCipher.html
 #![doc = include_str!("../docs/attributes.md")]
 #![deny(unsafe_code)]
@@ -62,9 +82,11 @@ use syn::{parse_macro_input, DeriveInput};
 mod attrs;
 mod decrypt;
 mod encrypt;
+mod plaintext;
 mod shape;
 #[cfg(test)]
 mod test_support;
+mod typed_decrypt;
 
 /// Derive [`Encrypt`](https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Encrypt.html)
 /// for a struct. See the [crate documentation](crate) for the wire shape this
@@ -86,6 +108,34 @@ pub fn derive_encrypt(input: TokenStream) -> TokenStream {
 pub fn derive_decrypt(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     decrypt::derive(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Derive [`Plaintext`](https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Plaintext.html)
+/// for a struct or a fieldless enum. See the [crate documentation](crate) for
+/// the wire shape this produces; the attributes it accepts are reproduced
+/// below.
+#[doc = include_str!("../docs/attributes.md")]
+#[proc_macro_derive(Plaintext, attributes(aead))]
+pub fn derive_plaintext(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    plaintext::derive(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Derive the sink-based
+/// [`Decrypt`](https://docs.rs/vitaminc-aead/latest/vitaminc_aead/typed/trait.Decrypt.html)
+/// for a struct or a fieldless enum. Reached as `vitaminc_aead::typed::Decrypt`
+/// until the legacy `Decrypt` is removed, when it takes that name. See the
+/// [crate documentation](crate) for the wire shape this consumes; the
+/// attributes it accepts are reproduced below.
+#[doc = include_str!("../docs/attributes.md")]
+#[proc_macro_derive(TypedDecrypt, attributes(aead))]
+pub fn derive_typed_decrypt(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    typed_decrypt::derive(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

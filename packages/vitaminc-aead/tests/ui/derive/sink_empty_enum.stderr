@@ -1,0 +1,5 @@
+error: cannot be derived for an enum with no variants: there is no value to seal
+ --> tests/ui/derive/sink_empty_enum.rs:6:6
+  |
+6 | enum Never {}
+  |      ^^^^^

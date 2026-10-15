@@ -4,9 +4,7 @@
 //! ([`Decrypt`]). A scalar target is one function from a scalar, logical
 //! plus physical, to the type, or `None` to refuse it ([`FromScalar`]);
 //! every such type gets its sink for free. Containers push each child into
-//! the parent through the child's own sink. A `#[derive(Decrypt)]` will
-//! generate the struct case: a map sink that routes each entry to the
-//! field's sink.
+//! the parent through the child's own sink.
 //!
 //! Integer targets read the value, not the width: a `u32` accepts an `i8`
 //! leaf holding 34 and refuses one holding -1. The width is a host-fidelity
@@ -19,6 +17,15 @@
 //! `Vec<T>` or `Option<T>` of such targets, nested to any depth. A
 //! protected target is built inside its wrapper from the start, so a walk
 //! that fails part way wipes whatever it had already decoded.
+//!
+//! A struct's sink is what `#[derive(Decrypt)]` generates, out of the
+//! pieces here: a map sink with one slot per field, whose `entry` hands
+//! back [`Either`] of the fields' own sinks ([`Forward`] for a sealed
+//! field, [`Clear`] for a passthrough one). A newtype's sink is its inner
+//! type's, [`Wrapped`] so the result is rewrapped. A field decoded before
+//! a later entry is refused is dropped as an ordinary value, so a secret
+//! field should be a `Protected<T>`, which wipes itself, whatever the
+//! struct around it does.
 //!
 //! Nothing here knows whether the cipher was sync or async: the opened tree
 //! is walked after every await has completed.
@@ -39,19 +46,46 @@ use crate::seal::{AsyncCipher, Cipher, Node};
 use crate::walk::{decrypt_into, decrypt_into_async, DecryptError};
 use crate::IntoAad;
 
+/// Derive the sink-based [`Decrypt`] for a struct or a fieldless enum. A
+/// struct reads a map keyed by field name; a fieldless enum reads a text
+/// leaf naming the variant. Takes the same `#[aead(...)]` attributes as
+/// [`Plaintext`](macro@crate::Plaintext).
+#[doc(inline)]
+pub use vitaminc_aead_derive::TypedDecrypt as Decrypt;
+
 /// Why a typed target refused what it was given.
 ///
-/// Non-exhaustive, so a derived struct target can add refusals (an
-/// unknown key, a missing field) without a breaking change.
+/// Non-exhaustive, so a target can add refusals without a breaking change.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum DecodeError {
     /// The ciphertext holds something other than the named kind.
     #[error("expected {0}")]
     Expected(&'static str),
+    /// A map holds a key the target has no field for.
+    #[error("unknown key {0:?}")]
+    UnknownKey(String),
+    /// A map holds the same key twice.
+    #[error("duplicate key {0:?}")]
+    DuplicateKey(String),
+    /// A map is missing the named field.
+    #[error("missing field {0:?}")]
+    MissingField(&'static str),
     /// The source stopped the walk (only reachable through a passthrough).
     #[error("source failed: {0}")]
     Source(#[source] SourceError),
+}
+
+impl DecodeError {
+    /// A map holds `key`, which the target has no field for.
+    pub fn unknown_key(key: &str) -> Self {
+        Self::UnknownKey(key.to_owned())
+    }
+
+    /// A map holds `key` twice.
+    pub fn duplicate_key(key: &str) -> Self {
+        Self::DuplicateKey(key.to_owned())
+    }
 }
 
 impl Error for DecodeError {
@@ -147,6 +181,34 @@ impl<T: FromScalar> Decrypt for T {
     }
 }
 
+/// A sink nothing is ever walked into: the element and entry type of a
+/// container sink that hands out none, such as [`Never`] and the map sink
+/// of a derived struct with no fields. Uninhabited, so it cannot be built.
+pub enum Nothing {}
+
+impl Sink for Nothing {
+    type Ok = ();
+    type Error = DecodeError;
+    type Seq = Never<()>;
+    type Map = Never<()>;
+
+    fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), DecodeError> {
+        match self {}
+    }
+
+    fn seq(self, _: Option<usize>) -> Result<Never<()>, DecodeError> {
+        match self {}
+    }
+
+    fn map(self, _: Option<usize>) -> Result<Never<()>, DecodeError> {
+        match self {}
+    }
+
+    fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<(), DecodeError> {
+        match self {}
+    }
+}
+
 /// Container sinks for a target that has none. Never built.
 pub enum Never<T> {
     #[doc(hidden)]
@@ -165,11 +227,11 @@ impl<T> SeqSink for Never<T> {
     type Ok = T;
     type Error = DecodeError;
     type Element<'s>
-        = ScalarSink<i32>
+        = Nothing
     where
         Self: 's;
 
-    fn element(&mut self) -> Result<ScalarSink<i32>, DecodeError> {
+    fn element(&mut self) -> Result<Nothing, DecodeError> {
         self.absurd()
     }
 
@@ -182,11 +244,11 @@ impl<T> MapSink for Never<T> {
     type Ok = T;
     type Error = DecodeError;
     type Entry<'s>
-        = ScalarSink<i32>
+        = Nothing
     where
         Self: 's;
 
-    fn entry(&mut self, _: &str) -> Result<ScalarSink<i32>, DecodeError> {
+    fn entry(&mut self, _: &str) -> Result<Nothing, DecodeError> {
         self.absurd()
     }
 
@@ -452,6 +514,216 @@ impl<T, Q: MapSink<Ok = T, Error = DecodeError>, O: Put<T>> MapSink for ForwardE
     fn end(self) -> Result<(), DecodeError> {
         self.1.put(self.0.end()?);
         Ok(())
+    }
+}
+
+/// One of two sinks. The sink a derived struct hands out for an entry is
+/// one of its fields' sinks, which have different types, so `entry`
+/// returns them as a chain of `Either`s. The two sides share an error;
+/// the result is whichever side ran, which nobody reads, since an entry
+/// sink writes into its parent. The chain composes through containers:
+/// the `Seq` of an `Either` is an `Either` of the two `Seq`s, and so on
+/// down.
+pub enum Either<L, R> {
+    Left(L),
+    Right(R),
+}
+
+impl<L: Sink, R: Sink<Error = L::Error>> Sink for Either<L, R> {
+    type Ok = Either<L::Ok, R::Ok>;
+    type Error = L::Error;
+    type Seq = Either<L::Seq, R::Seq>;
+    type Map = Either<L::Map, R::Map>;
+
+    fn scalar(self, ty: Option<Logical>, v: Physical<'_>) -> Result<Self::Ok, Self::Error> {
+        match self {
+            Either::Left(l) => l.scalar(ty, v).map(Either::Left),
+            Either::Right(r) => r.scalar(ty, v).map(Either::Right),
+        }
+    }
+
+    fn seq(self, len: Option<usize>) -> Result<Self::Seq, Self::Error> {
+        match self {
+            Either::Left(l) => l.seq(len).map(Either::Left),
+            Either::Right(r) => r.seq(len).map(Either::Right),
+        }
+    }
+
+    fn map(self, len: Option<usize>) -> Result<Self::Map, Self::Error> {
+        match self {
+            Either::Left(l) => l.map(len).map(Either::Left),
+            Either::Right(r) => r.map(len).map(Either::Right),
+        }
+    }
+
+    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<Self::Ok, Self::Error> {
+        match self {
+            Either::Left(l) => l.passthrough(value).map(Either::Left),
+            Either::Right(r) => r.passthrough(value).map(Either::Right),
+        }
+    }
+}
+
+impl<L: SeqSink, R: SeqSink<Error = L::Error>> SeqSink for Either<L, R> {
+    type Ok = Either<L::Ok, R::Ok>;
+    type Error = L::Error;
+    type Element<'s>
+        = Either<L::Element<'s>, R::Element<'s>>
+    where
+        Self: 's;
+
+    fn element(&mut self) -> Result<Self::Element<'_>, Self::Error> {
+        match self {
+            Either::Left(l) => l.element().map(Either::Left),
+            Either::Right(r) => r.element().map(Either::Right),
+        }
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        match self {
+            Either::Left(l) => l.end().map(Either::Left),
+            Either::Right(r) => r.end().map(Either::Right),
+        }
+    }
+}
+
+impl<L: MapSink, R: MapSink<Error = L::Error>> MapSink for Either<L, R> {
+    type Ok = Either<L::Ok, R::Ok>;
+    type Error = L::Error;
+    type Entry<'s>
+        = Either<L::Entry<'s>, R::Entry<'s>>
+    where
+        Self: 's;
+
+    fn entry(&mut self, key: &str) -> Result<Self::Entry<'_>, Self::Error> {
+        match self {
+            Either::Left(l) => l.entry(key).map(Either::Left),
+            Either::Right(r) => r.entry(key).map(Either::Right),
+        }
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        match self {
+            Either::Left(l) => l.end().map(Either::Left),
+            Either::Right(r) => r.end().map(Either::Right),
+        }
+    }
+}
+
+/// A passthrough target: `T` built from a subtree that travelled in the
+/// clear, with the result handed to `O`. A derived struct uses it for a
+/// `#[aead(passthrough)]` field. The subtree is walked into `T`'s own sink,
+/// so it decodes exactly as a sealed `T` would; what it refuses is a
+/// sealed value where a passthrough was expected, since the two are not
+/// interchangeable. Nothing here is authenticated.
+pub struct Clear<T: Decrypt, O>(O, PhantomData<T>);
+
+impl<T: Decrypt, O: Put<T>> Clear<T, O> {
+    pub fn new(out: O) -> Self {
+        Self(out, PhantomData)
+    }
+}
+
+impl<T: Decrypt, O: Put<T>> Sink for Clear<T, O> {
+    type Ok = ();
+    type Error = DecodeError;
+    type Seq = Never<()>;
+    type Map = Never<()>;
+
+    fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), DecodeError> {
+        Err(DecodeError::Expected("passthrough"))
+    }
+
+    fn seq(self, _: Option<usize>) -> Result<Never<()>, DecodeError> {
+        Err(DecodeError::Expected("passthrough"))
+    }
+
+    fn map(self, _: Option<usize>) -> Result<Never<()>, DecodeError> {
+        Err(DecodeError::Expected("passthrough"))
+    }
+
+    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<(), DecodeError> {
+        self.0.put(value.visit(T::sink())?);
+        Ok(())
+    }
+}
+
+/// A conversion applied to a sink's result: what a newtype's sink does to
+/// its inner type's result. Fallible, so a newtype whose conversion can
+/// refuse a value (a length-checked string, say) is one `Rewrap` impl, with
+/// the refusal reported as a [`DecodeError`].
+pub trait Rewrap<T> {
+    type Output;
+    fn rewrap(value: T) -> Result<Self::Output, DecodeError>;
+}
+
+/// `S` with its result passed through `W`. A derived newtype's sink is
+/// `Wrapped<Inner::Sink, W>` for a `W` that rewraps the inner value.
+pub struct Wrapped<S, W>(S, PhantomData<W>);
+
+impl<S, W> Wrapped<S, W> {
+    pub fn new(sink: S) -> Self {
+        Self(sink, PhantomData)
+    }
+}
+
+impl<S: Sink<Error = DecodeError>, W: Rewrap<S::Ok>> Sink for Wrapped<S, W> {
+    type Ok = W::Output;
+    type Error = DecodeError;
+    type Seq = WrappedEnd<S::Seq, W>;
+    type Map = WrappedEnd<S::Map, W>;
+
+    fn scalar(self, ty: Option<Logical>, v: Physical<'_>) -> Result<W::Output, DecodeError> {
+        self.0.scalar(ty, v).and_then(W::rewrap)
+    }
+
+    fn seq(self, len: Option<usize>) -> Result<Self::Seq, DecodeError> {
+        Ok(WrappedEnd(self.0.seq(len)?, PhantomData))
+    }
+
+    fn map(self, len: Option<usize>) -> Result<Self::Map, DecodeError> {
+        Ok(WrappedEnd(self.0.map(len)?, PhantomData))
+    }
+
+    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<W::Output, DecodeError> {
+        self.0.passthrough(value).and_then(W::rewrap)
+    }
+}
+
+/// A container sink whose `end` passes its result through `W`.
+pub struct WrappedEnd<Q, W>(Q, PhantomData<W>);
+
+impl<Q: SeqSink<Error = DecodeError>, W: Rewrap<Q::Ok>> SeqSink for WrappedEnd<Q, W> {
+    type Ok = W::Output;
+    type Error = DecodeError;
+    type Element<'e>
+        = Q::Element<'e>
+    where
+        Self: 'e;
+
+    fn element(&mut self) -> Result<Self::Element<'_>, DecodeError> {
+        self.0.element()
+    }
+
+    fn end(self) -> Result<W::Output, DecodeError> {
+        self.0.end().and_then(W::rewrap)
+    }
+}
+
+impl<Q: MapSink<Error = DecodeError>, W: Rewrap<Q::Ok>> MapSink for WrappedEnd<Q, W> {
+    type Ok = W::Output;
+    type Error = DecodeError;
+    type Entry<'e>
+        = Q::Entry<'e>
+    where
+        Self: 'e;
+
+    fn entry(&mut self, key: &str) -> Result<Self::Entry<'_>, DecodeError> {
+        self.0.entry(key)
+    }
+
+    fn end(self) -> Result<W::Output, DecodeError> {
+        self.0.end().and_then(W::rewrap)
     }
 }
 
@@ -1210,6 +1482,74 @@ mod tests {
     fn f32_reads_only_an_f32() {
         assert_eq!(round_trip::<f32>(1.5f32).expect("decodes"), 1.5);
         assert_eq!(expected(round_trip::<f32>(1.5f64)), "f32");
+    }
+
+    /// `Clear` only accepts a passthrough, and decodes it through the
+    /// target's own sink.
+    #[test]
+    fn clear_decodes_a_passthrough_and_nothing_else() {
+        let mut held = None;
+        Clear::<Vec<u16>, _>::new(Slot(&mut held))
+            .passthrough(vec![1u16, 2])
+            .expect("decodes");
+        assert_eq!(held, Some(vec![1, 2]));
+        let refused = |r: Result<(), DecodeError>| {
+            assert!(matches!(r, Err(DecodeError::Expected("passthrough"))))
+        };
+        let mut held: Option<u16> = None;
+        refused(Clear::<u16, _>::new(Slot(&mut held)).scalar(None, Physical::Null));
+        refused(Clear::<u16, _>::new(Slot(&mut held)).seq(None).map(|_| ()));
+        refused(Clear::<u16, _>::new(Slot(&mut held)).map(None).map(|_| ()));
+        assert!(matches!(
+            Clear::<u16, _>::new(Slot(&mut held)).passthrough("x"),
+            Err(DecodeError::Expected("u16"))
+        ));
+    }
+
+    /// A newtype's conversion can refuse a value, and the refusal comes
+    /// out as the sink's error wherever it happens: on a scalar, or at the
+    /// end of a container.
+    #[test]
+    fn a_wrap_can_refuse_what_it_is_handed() {
+        struct AtMostTwo;
+        impl Rewrap<Vec<u16>> for AtMostTwo {
+            type Output = Vec<u16>;
+            fn rewrap(v: Vec<u16>) -> Result<Vec<u16>, DecodeError> {
+                (v.len() <= 2)
+                    .then_some(v)
+                    .ok_or(DecodeError::Expected("at most two"))
+            }
+        }
+        struct Even;
+        impl Rewrap<u16> for Even {
+            type Output = u16;
+            fn rewrap(v: u16) -> Result<u16, DecodeError> {
+                v.is_multiple_of(2)
+                    .then_some(v)
+                    .ok_or(DecodeError::Expected("even"))
+            }
+        }
+        let short = vec![1u16, 2].visit(Wrapped::<_, AtMostTwo>::new(Vec::<u16>::sink()));
+        assert_eq!(short.expect("two"), [1, 2]);
+        let long = vec![1u16, 2, 3].visit(Wrapped::<_, AtMostTwo>::new(Vec::<u16>::sink()));
+        assert!(matches!(long, Err(DecodeError::Expected("at most two"))));
+        assert_eq!(
+            4u16.visit(Wrapped::<_, Even>::new(u16::sink()))
+                .expect("even"),
+            4
+        );
+        assert!(matches!(
+            5u16.visit(Wrapped::<_, Even>::new(u16::sink())),
+            Err(DecodeError::Expected("even"))
+        ));
+        assert!(matches!(
+            DecodeError::unknown_key("k"),
+            DecodeError::UnknownKey(k) if k == "k"
+        ));
+        assert!(matches!(
+            DecodeError::duplicate_key("k"),
+            DecodeError::DuplicateKey(k) if k == "k"
+        ));
     }
 
     #[test]

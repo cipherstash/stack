@@ -1,0 +1,5 @@
+error: only fieldless enums can be derived: a variant with fields has no agreed layout for its payload. Model it as a struct with an enum discriminant and `Option` fields instead.
+ --> tests/ui/derive/sink_data_enum.rs:9:5
+  |
+9 |     Text(String),
+  |     ^^^^

@@ -1,0 +1,5 @@
+error: `#[aead(skip)]` and `#[aead(take)]` are only supported by `#[derive(Plaintext)]` and the sink-based `#[derive(Decrypt)]`
+ --> tests/ui/derive/legacy_skip.rs:7:8
+  |
+7 | struct Row {
+  |        ^^^

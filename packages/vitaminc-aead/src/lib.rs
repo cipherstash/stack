@@ -65,6 +65,12 @@ pub use nonce::{Nonce, NonceGenerator, RandomNonceGenerator};
 // Inlined rather than linked, so the macros' own documentation — the
 // `#[aead(...)]` reference in particular — renders here instead of sending the
 // reader to another crate. There is still only one copy of that text.
+/// Derive [`Plaintext`] for a struct or a fieldless enum. The sink-based
+/// [`Decrypt`](typed::Decrypt) derive sits beside its trait in [`typed`]:
+/// `use vitaminc_aead::Decrypt` is still the legacy derive until #406, so
+/// pair `Plaintext` with `vitaminc_aead::typed::Decrypt`.
+#[doc(inline)]
+pub use vitaminc_aead_derive::Plaintext;
 #[doc(inline)]
 pub use vitaminc_aead_derive::{Decrypt, Encrypt};
 
