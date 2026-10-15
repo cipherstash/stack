@@ -164,7 +164,7 @@ fn parse_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<Shape> {
             "cannot be derived for an enum with no variants: there is no value to seal",
         ));
     }
-    let mut next = 0u32;
+    let mut next = Some(0u32);
     let mut variants = Vec::with_capacity(data.variants.len());
     for variant in &data.variants {
         if !matches!(variant.fields, Fields::Unit) {
@@ -184,16 +184,8 @@ fn parse_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<Shape> {
                  discriminant, so give it an explicit `= n` to pin the value instead",
             ));
         }
-        let discriminant = match &variant.discriminant {
-            Some((_, expr)) => explicit_discriminant(expr)?,
-            None => next,
-        };
-        next = discriminant.checked_add(1).ok_or_else(|| {
-            syn::Error::new_spanned(
-                &variant.ident,
-                "the next discriminant does not fit in 32 bits",
-            )
-        })?;
+        let discriminant = variant_discriminant(variant, next)?;
+        next = discriminant.checked_add(1);
         variants.push(VariantInfo {
             ident: variant.ident.clone(),
             discriminant,
@@ -212,6 +204,22 @@ fn parse_enum(data: &syn::DataEnum, input: &DeriveInput) -> Result<Shape> {
         }
     }
     Ok(Shape::Enum(variants))
+}
+
+/// A variant's discriminant: its explicit `= n`, or else the one after the
+/// previous variant's. `next` is `None` once the previous variant was
+/// `u32::MAX`, which is refused only if a variant actually needs the value
+/// after it, so a last variant of `= 4294967295` is fine.
+fn variant_discriminant(variant: &syn::Variant, next: Option<u32>) -> Result<u32> {
+    match &variant.discriminant {
+        Some((_, expr)) => explicit_discriminant(expr),
+        None => next.ok_or_else(|| {
+            syn::Error::new_spanned(
+                &variant.ident,
+                "this variant's implicit discriminant does not fit in 32 bits",
+            )
+        }),
+    }
 }
 
 /// The wire holds a `u32`, so an explicit discriminant has to be an
@@ -384,6 +392,7 @@ mod tests {
                 Active,
                 Suspended = 5,
                 Closed,
+                Last = 4294967295,
             }
         };
         match sink(&input).expect("fieldless enum") {
@@ -391,6 +400,8 @@ mod tests {
                 assert_eq!(variants[0].discriminant, 0);
                 assert_eq!(variants[1].discriminant, 5);
                 assert_eq!(variants[2].discriminant, 6);
+                // `u32::MAX` fits; only a variant after it would not.
+                assert_eq!(variants[3].discriminant, u32::MAX);
             }
             other => panic!("expected an enum shape, got {other:?}"),
         }
