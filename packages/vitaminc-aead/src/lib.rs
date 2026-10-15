@@ -18,6 +18,7 @@ mod nonce;
 mod passthrough;
 pub mod plaintext;
 pub mod seal;
+pub mod shape;
 pub mod tags;
 #[cfg(test)]
 mod test_util;
@@ -25,7 +26,7 @@ pub mod typed;
 mod walk;
 
 #[doc(inline)]
-pub use encrypt_sink::{encrypt, encrypt_async, plan, EncryptError, EncryptSink, Unencryptable};
+pub use encrypt_sink::{encrypt, encrypt_async, plan, EncryptError, EncryptSink};
 #[doc(inline)]
 pub use frame::{to_frame, Frame, FrameWriter, PassthroughFrame};
 #[doc(inline)]
@@ -35,6 +36,8 @@ pub use plaintext::{
 };
 #[doc(inline)]
 pub use seal::{Node, Opened, Pending};
+#[doc(inline)]
+pub use shape::{Refusal, Unencryptable};
 #[doc(inline)]
 pub use typed::{decrypt, decrypt_async, DecodeError, DecryptProtected, FromScalar};
 #[doc(inline)]

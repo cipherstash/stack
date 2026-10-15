@@ -58,6 +58,10 @@ uuid = ["dep:uuid"]
 # default remains preferable for wasm32 / JS bindings where bundle size
 # and runtime-determined shapes matter more.
 hlist = []
+# Not an API. Makes `plaintext::render`, the path notation tests assert
+# against, reachable from sibling crates' tests. Only path-only
+# dev-dependencies turn it on, so no published build has it.
+test-support = []
 
 
 [dev-dependencies]
