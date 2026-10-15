@@ -47,8 +47,8 @@ use crate::walk::{decrypt_into, decrypt_into_async, DecryptError};
 use crate::IntoAad;
 
 /// Derive the sink-based [`Decrypt`] for a struct or a fieldless enum. A
-/// struct reads a map keyed by field name; a fieldless enum reads a text
-/// leaf naming the variant. Takes the same `#[aead(...)]` attributes as
+/// struct reads a map keyed by field name; a fieldless enum reads one int
+/// leaf holding the variant's discriminant. Takes the same `#[aead(...)]` attributes as
 /// [`Plaintext`](macro@crate::Plaintext).
 #[doc(inline)]
 pub use vitaminc_aead_derive::TypedDecrypt as Decrypt;
