@@ -1018,10 +1018,14 @@ mod tests {
         let EncryptError::Shape(refusal) = err else {
             panic!("{err:?}")
         };
-        assert!(matches!(
+        assert_eq!(
             refusal.path().steps(),
-            [Step::Key(users), Step::Index(1), Step::Key(k)] if users == "users" && k == "k"
-        ));
+            [
+                Step::Key("users".into()),
+                Step::Index(1),
+                Step::Key("k".into())
+            ]
+        );
     }
 
     #[test]

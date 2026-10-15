@@ -6,7 +6,11 @@ use vitaminc_protected::OpaqueDebug;
 ///
 /// A map key can be user data, so `Debug` masks it; an index is structure
 /// and is shown. Read a key by matching on the step.
-#[derive(Clone, OpaqueDebug)]
+///
+/// Steps compare by value, keys included. A key is not secret from the
+/// ciphertext, which carries every map key in the clear; only logs are
+/// kept free of it.
+#[derive(Clone, PartialEq, Eq, OpaqueDebug)]
 pub enum Step {
     /// The element at this index of a sequence.
     Index(#[non_sensitive] usize),
@@ -20,8 +24,8 @@ pub enum Step {
 /// Refusals carry one to say where the value was refused, and their
 /// `Display` never shows it, because map keys can be user data. `Debug`
 /// shows its shape, with every key masked (see [`Step`]). Read the steps
-/// with [`steps`](Path::steps).
-#[derive(Clone, Default, OpaqueDebug)]
+/// with [`steps`](Path::steps). Paths compare step by step.
+#[derive(Clone, Default, PartialEq, Eq, OpaqueDebug)]
 pub struct Path(#[non_sensitive] Vec<Step>);
 
 impl Path {
@@ -68,8 +72,20 @@ mod tests {
     #[test]
     fn steps_are_kept_root_first() {
         let path = Path::new(vec![Step::Key("a".into()), Step::Index(2)]);
-        assert!(matches!(path.steps(), [Step::Key(k), Step::Index(2)] if k == "a"));
+        assert_eq!(path.steps(), [Step::Key("a".into()), Step::Index(2)]);
         assert!(Path::default().steps().is_empty());
+    }
+
+    #[test]
+    fn paths_compare_step_by_step() {
+        let path = |steps: Vec<Step>| Path::new(steps);
+        let a = path(vec![Step::Key("a".into()), Step::Index(2)]);
+        assert_eq!(a, a.clone());
+        assert_ne!(a, path(vec![Step::Key("b".into()), Step::Index(2)]));
+        assert_ne!(a, path(vec![Step::Key("a".into()), Step::Index(3)]));
+        assert_ne!(a, path(vec![Step::Key("a".into())]));
+        assert_ne!(Step::Index(0), Step::Key("0".into()));
+        assert_eq!(Path::default(), path(Vec::new()));
     }
 
     #[test]
