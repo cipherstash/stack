@@ -599,7 +599,7 @@ mod tests {
             _ => unreachable!(),
         };
         let passthrough = || CipherText::Passthrough(PassthroughFrame(vec![0x00]));
-        let malformed: [Node<Leaf>; 4] = [
+        let malformed: [Node<Leaf>; 5] = [
             CipherText::Map(vec![
                 ("k".into(), CipherText::Single(leaf())),
                 ("k".into(), CipherText::Single(leaf())),
@@ -609,6 +609,11 @@ mod tests {
             CipherText::Sequence(vec![
                 CipherText::Single(leaf()),
                 CipherText::Passthrough(PassthroughFrame(vec![0xEF])),
+            ]),
+            // A map whose value is a sequence with nothing sealed in it.
+            CipherText::Map(vec![
+                ("a".into(), CipherText::Single(leaf())),
+                ("b".into(), CipherText::Sequence(vec![passthrough()])),
             ]),
         ];
         for node in malformed {
@@ -708,6 +713,108 @@ mod tests {
         ) -> Result<Protected<Vec<u8>>, Refused> {
             self.one(|| Mock.open(l, &aad)).await
         }
+    }
+
+    /// Each call waits longer than the one after it, so leaves finish in
+    /// the reverse of the order they started.
+    struct LastFirst(AtomicUsize);
+
+    impl LastFirst {
+        async fn one<T>(&self, f: impl FnOnce() -> T) -> T {
+            let wait = 64usize.saturating_sub(self.0.fetch_add(1, Ordering::SeqCst));
+            for _ in 0..wait {
+                YieldOnce(false).await;
+            }
+            f()
+        }
+    }
+
+    impl AsyncCipher for LastFirst {
+        type Leaf = Leaf;
+        type Error = Refused;
+        async fn seal(
+            &self,
+            p: Protected<Vec<u8>>,
+            aad: Context<'static>,
+        ) -> Result<Leaf, Refused> {
+            self.one(|| Mock.seal(p, &aad)).await
+        }
+        async fn open(
+            &self,
+            l: Leaf,
+            aad: Context<'static>,
+        ) -> Result<Protected<Vec<u8>>, Refused> {
+            self.one(|| Mock.open(l, &aad)).await
+        }
+    }
+
+    #[test]
+    fn the_default_batch_keeps_walk_order_when_leaves_finish_out_of_order() {
+        let values = vec![1u32, 2, 3, 4];
+        let cipher = LastFirst(AtomicUsize::new(0));
+        let sealed = block_on(encrypt_async(values.clone(), &cipher, "ctx")).expect("encrypts");
+        let opened = open_all(&Mock, sealed, &"ctx".into_aad()).expect("opens");
+        let mut log = Vec::new();
+        walk(opened, crate::plaintext::record::Record(&mut log)).expect("walks");
+        assert_eq!(log, record(values.clone()).expect("records"));
+
+        let sealed = encrypt(values.clone(), &Mock, "ctx").expect("encrypts");
+        let mut log = Vec::new();
+        block_on(crate::decrypt_into_async(
+            &cipher,
+            sealed,
+            "ctx",
+            crate::plaintext::record::Record(&mut log),
+        ))
+        .expect("decrypts");
+        assert_eq!(log, record(values).expect("records"));
+    }
+
+    #[test]
+    fn a_malformed_tree_costs_an_async_cipher_no_round_trip() {
+        let leaf = || match encrypt(1u16, &Mock, "ctx").expect("encrypts") {
+            CipherText::Single(leaf) => leaf,
+            _ => unreachable!(),
+        };
+        let duplicate_keys: Node<Leaf> = CipherText::Map(vec![
+            ("k".into(), CipherText::Single(leaf())),
+            ("k".into(), CipherText::Single(leaf())),
+        ]);
+        let remote = Remote::new(true);
+        assert_eq!(
+            block_on(open_all_async(&remote, duplicate_keys, &"ctx".into_aad())).err(),
+            Some(OpenError::Malformed)
+        );
+        assert_eq!(remote.calls(), 0);
+    }
+
+    #[test]
+    fn seal_and_open_errors_say_what_failed() {
+        assert_eq!(LeafCount::TooFew.to_string(), "too few leaves");
+        assert_eq!(LeafCount::TooMany.to_string(), "too many leaves");
+        assert_eq!(
+            SealError::<&str>::Cipher("down").to_string(),
+            "cipher failed: down"
+        );
+        assert_eq!(
+            SealError::<&str>::Count(LeafCount::TooMany).to_string(),
+            "cipher returned too many leaves"
+        );
+        assert_eq!(
+            OpenError::<&str>::Cipher("down").to_string(),
+            "cipher failed: down"
+        );
+        assert_eq!(
+            OpenError::<&str>::Malformed.to_string(),
+            "malformed ciphertext"
+        );
+        assert_eq!(
+            OpenError::<&str>::Count(LeafCount::TooFew).to_string(),
+            "cipher returned too few leaves"
+        );
+        fn is_error<E: core::error::Error>(_: &E) {}
+        is_error(&SealError::<&str>::Cipher("down"));
+        is_error(&OpenError::<&str>::Malformed);
     }
 
     #[test]

@@ -800,4 +800,48 @@ mod tests {
             Err(FrameWriteError::TooDeep)
         ));
     }
+
+    #[test]
+    fn a_frame_debugs_as_its_length_only() {
+        let bytes = frame_of("secret");
+        let shown = format!("{:?}", Frame::parse(&bytes).expect("parses"));
+        assert_eq!(shown, format!("Frame {{ len: {}, .. }}", bytes.len()));
+    }
+
+    #[test]
+    fn frame_write_errors_say_what_failed() {
+        let cases = [
+            (
+                FrameWriteError::TooDeep,
+                "value nests deeper than 128 levels",
+            ),
+            (
+                FrameWriteError::TooLong,
+                "text, bytes, a key or a count is too long for a u32",
+            ),
+            (
+                FrameWriteError::Invalid,
+                "value is not valid for its logical type",
+            ),
+            (
+                FrameWriteError::CountMismatch,
+                "container length does not match its children",
+            ),
+            (FrameWriteError::DuplicateKey, "duplicate key"),
+            (
+                FrameWriteError::Unwritten,
+                "a child sink was dropped without a value",
+            ),
+            (FrameWriteError::Unfinished, "a container was never ended"),
+            (
+                FrameWriteError::Source(SourceError::msg("getter threw")),
+                "source failed: getter threw",
+            ),
+        ];
+        for (error, message) in cases {
+            assert_eq!(error.to_string(), message);
+        }
+        fn is_error<E: core::error::Error>(_: &E) {}
+        is_error(&FrameWriteError::TooDeep);
+    }
 }

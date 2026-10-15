@@ -326,12 +326,36 @@ mod tests {
     }
 
     #[test]
-    fn a_marker_that_is_not_empty_is_an_auth_failure() {
-        let node: Node<Opened> = CipherText::EmptySequence(Protected::new(vec![1]));
-        assert!(matches!(
-            walk(node, Record(&mut Vec::new())),
-            Err(DecryptError::Auth)
-        ));
+    fn every_marker_that_is_not_empty_is_an_auth_failure() {
+        let tampered = || Protected::new(vec![1]);
+        let nodes: [Node<Opened>; 3] = [
+            CipherText::EmptySequence(tampered()),
+            CipherText::EmptyMap(tampered()),
+            CipherText::None(tampered()),
+        ];
+        for node in nodes {
+            assert!(matches!(
+                walk(node, Record(&mut Vec::new())),
+                Err(DecryptError::Auth)
+            ));
+        }
+    }
+
+    #[test]
+    fn decrypt_errors_say_what_failed() {
+        type E = DecryptError<&'static str, &'static str>;
+        assert_eq!(E::Cipher("down").to_string(), "cipher failed: down");
+        assert_eq!(
+            E::Auth.to_string(),
+            "an authenticated empty marker carried a payload"
+        );
+        assert_eq!(E::Malformed.to_string(), "malformed ciphertext");
+        assert_eq!(
+            E::Sink("expected u32").to_string(),
+            "sink refused the value: expected u32"
+        );
+        fn is_error<E: core::error::Error>(_: &E) {}
+        is_error(&DecryptError::<&str>::Malformed);
     }
 
     #[test]

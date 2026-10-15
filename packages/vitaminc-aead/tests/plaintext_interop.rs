@@ -282,6 +282,27 @@ fn a_wrong_aad_is_an_auth_failure() {
 }
 
 #[test]
+fn a_wrong_key_is_a_cipher_failure() {
+    let aes = Aes(cipher());
+    let other = Aes(Aes256Cipher::new(&Key::from([8u8; 32])).expect("cipher"));
+    for v in corpus() {
+        let ct = encrypt(
+            Frame::parse(&v.bytes).expect(&v.name),
+            &aes,
+            Context::from_encoded(AAD),
+        )
+        .expect(&v.name);
+        let wrong = decrypt_to_frame(&other, ct, Context::from_encoded(AAD));
+        // A passthrough-only value is not encrypted at all, by design.
+        if v.bytes.first() == Some(&vitaminc_aead::frame::PASSTHROUGH) {
+            assert!(wrong.is_ok(), "{}", v.name);
+        } else {
+            assert!(matches!(wrong, Err(DecryptError::Cipher(_))), "{}", v.name);
+        }
+    }
+}
+
+#[test]
 fn a_rust_value_seals_to_the_same_leaf_as_its_frame() {
     // Go's uint32(34): version byte + 12-byte nonce + 5-byte tagged
     // plaintext + 16-byte tag. A Rust `u32` is the same leaf.

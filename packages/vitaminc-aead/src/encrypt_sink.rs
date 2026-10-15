@@ -658,4 +658,209 @@ mod tests {
         let node = planned(Unsized).expect("plans");
         assert_eq!(leaves_with_aad(node, &"ctx".into_aad()).len(), 2);
     }
+
+    /// A source that asks for a child sink and drops it unused.
+    #[derive(Clone)]
+    struct DropsAChild {
+        map: bool,
+    }
+
+    impl Plaintext for DropsAChild {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            if self.map {
+                let mut map = sink.map(None)?;
+                let _ = map.entry("a")?;
+                1u16.visit(map.entry("b")?)?;
+                map.end()
+            } else {
+                let mut seq = sink.seq(None)?;
+                1u16.visit(seq.element()?)?;
+                let _ = seq.element()?;
+                seq.end()
+            }
+        }
+    }
+
+    #[test]
+    fn a_dropped_child_sink_is_refused_as_the_frame_writer_refuses_it() {
+        for map in [false, true] {
+            assert!(matches!(
+                planned(DropsAChild { map }),
+                Err(EncryptError::Shape(Unencryptable::DroppedChild))
+            ));
+            assert!(matches!(
+                crate::frame::to_frame(DropsAChild { map }),
+                Err(FrameWriteError::Unwritten)
+            ));
+        }
+        // A dropped element is caught at the next element too.
+        struct DropsThenWrites;
+        impl Plaintext for DropsThenWrites {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                let mut seq = sink.seq(None)?;
+                let _ = seq.element()?;
+                1u16.visit(seq.element()?)?;
+                seq.end()
+            }
+        }
+        assert!(matches!(
+            planned(DropsThenWrites),
+            Err(EncryptError::Shape(Unencryptable::DroppedChild))
+        ));
+    }
+
+    /// A passthrough that opens a container and never ends it.
+    #[derive(Clone)]
+    struct Unclosed;
+
+    impl Plaintext for Unclosed {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            let mut outer = sink.seq(None)?;
+            let mut inner = outer.element()?.seq(None)?;
+            1u32.visit(inner.element()?)?;
+            // Dropped without `end`, so its count is never written.
+            drop(inner);
+            outer.end()
+        }
+    }
+
+    #[test]
+    fn a_passthrough_that_does_not_frame_is_refused_at_encryption() {
+        struct Doc;
+        impl Plaintext for Doc {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                let mut seq = sink.seq(Some(2))?;
+                1u32.visit(seq.element()?)?;
+                seq.element()?.passthrough(Unclosed)?;
+                seq.end()
+            }
+        }
+        assert!(matches!(
+            crate::frame::to_frame(Unclosed),
+            Err(FrameWriteError::Unfinished)
+        ));
+        assert!(matches!(
+            planned(Doc),
+            Err(EncryptError::Shape(Unencryptable::UnframablePassthrough))
+        ));
+    }
+
+    #[derive(Clone, Copy)]
+    enum Kind {
+        Seq,
+        Map,
+        Pass,
+        Scalar,
+    }
+
+    /// `n` levels of one kind of nesting around an innermost value at
+    /// depth `n`: an empty sequence, or for `Scalar`, an int inside
+    /// sequences.
+    #[derive(Clone, Copy)]
+    struct Nest(Kind, usize);
+
+    impl Plaintext for Nest {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            let Nest(kind, n) = self;
+            if n == 0 {
+                return match kind {
+                    Kind::Scalar => 1u16.visit(sink),
+                    _ => sink.seq(Some(0))?.end(),
+                };
+            }
+            let inner = Nest(kind, n - 1);
+            match kind {
+                Kind::Seq | Kind::Scalar => {
+                    let mut seq = sink.seq(Some(1))?;
+                    inner.visit(seq.element()?)?;
+                    seq.end()
+                }
+                Kind::Map => {
+                    let mut map = sink.map(Some(1))?;
+                    inner.visit(map.entry("k")?)?;
+                    map.end()
+                }
+                Kind::Pass => sink.passthrough(inner),
+            }
+        }
+    }
+
+    #[test]
+    fn depth_is_bounded_as_the_transport_decoder_bounds_it() {
+        for kind in [Kind::Seq, Kind::Map, Kind::Pass, Kind::Scalar] {
+            assert!(planned(Nest(kind, MAX_DEPTH)).is_ok());
+            assert!(matches!(
+                planned(Nest(kind, MAX_DEPTH + 1)),
+                Err(EncryptError::Shape(Unencryptable::TooDeep))
+            ));
+        }
+        // A passthrough below the top counts from the top: one level of
+        // sequence around a frame that is itself `MAX_DEPTH` deep is one
+        // too many.
+        struct Wrapped(usize);
+        impl Plaintext for Wrapped {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                let mut seq = sink.seq(Some(2))?;
+                1u16.visit(seq.element()?)?;
+                seq.element()?.passthrough(Nest(Kind::Seq, self.0))?;
+                seq.end()
+            }
+        }
+        assert!(planned(Wrapped(MAX_DEPTH - 2)).is_ok());
+        assert!(matches!(
+            planned(Wrapped(MAX_DEPTH - 1)),
+            Err(EncryptError::Shape(Unencryptable::TooDeep))
+        ));
+    }
+
+    #[test]
+    fn errors_say_what_failed_without_the_value() {
+        let shape = |s| EncryptError::<&str>::Shape(s).to_string();
+        assert_eq!(
+            shape(Unencryptable::DuplicateKey),
+            "cannot encrypt: duplicate key"
+        );
+        assert_eq!(
+            shape(Unencryptable::SequenceHasNothingSealed),
+            "cannot encrypt: sequence has nothing sealed"
+        );
+        assert_eq!(
+            shape(Unencryptable::MapHasNothingSealed),
+            "cannot encrypt: map has nothing sealed"
+        );
+        assert_eq!(
+            shape(Unencryptable::InvalidValue),
+            "cannot encrypt: value is not valid for its logical type"
+        );
+        assert_eq!(
+            shape(Unencryptable::Unwritable),
+            "cannot encrypt: value cannot be written as a leaf"
+        );
+        assert_eq!(
+            shape(Unencryptable::UnframablePassthrough),
+            "cannot encrypt: passthrough subtree cannot be framed"
+        );
+        assert_eq!(
+            shape(Unencryptable::DroppedChild),
+            "cannot encrypt: a child sink was dropped without a value"
+        );
+        assert_eq!(
+            shape(Unencryptable::TooDeep),
+            "cannot encrypt: value nests deeper than 128 levels"
+        );
+        assert_eq!(
+            EncryptError::<&str>::Count(LeafCount::TooFew).to_string(),
+            "cipher returned too few leaves"
+        );
+        assert_eq!(
+            EncryptError::<&str>::Cipher("down").to_string(),
+            "cipher failed: down"
+        );
+        assert_eq!(
+            EncryptError::<&str>::Source(SourceError::msg("getter threw")).to_string(),
+            "source failed: getter threw"
+        );
+        fn is_error<E: core::error::Error>(_: &E) {}
+        is_error(&EncryptError::<&str>::Cipher("down"));
+    }
 }
