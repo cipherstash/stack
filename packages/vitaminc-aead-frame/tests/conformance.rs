@@ -16,8 +16,10 @@ use vitaminc_aead_frame::{to_frame, Frame};
 use vitaminc_protected::Controlled;
 
 fn unhex(text: &str) -> Vec<u8> {
-    text.as_bytes()
-        .chunks(2)
+    let (pairs, rest) = text.as_bytes().as_chunks::<2>();
+    assert!(rest.is_empty(), "odd-length hex: {text}");
+    pairs
+        .iter()
         .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).expect("ASCII"), 16).expect("hex"))
         .collect()
 }

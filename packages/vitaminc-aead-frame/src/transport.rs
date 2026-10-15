@@ -20,10 +20,16 @@
 //! now), so it is never written and refused when read.
 //!
 //! All lengths and counts are `u32` little-endian. Map keys are UTF-8.
+//!
+//! Both directions are attacker-reachable input, and both enforce the same
+//! rules: the encoder refuses what the decoder would refuse (a tree deeper
+//! than [`MAX_DEPTH`], a duplicate map key, a passthrough payload that is
+//! not exactly one frame node, the retired marker), so anything it writes
+//! decodes, and it writes nothing for a refused tree.
 
 use std::collections::HashSet;
 
-use vitaminc_aead::{CipherText, Frame, PassthroughFrame};
+use vitaminc_aead::{CipherText, Frame, Node, PassthroughFrame};
 
 // The framing tags and the depth bound live with the frame in
 // `vitaminc_aead::frame`, so this codec and the frame cannot drift apart.
@@ -43,37 +49,37 @@ pub const CT_EMPTY_SEQ: u8 = 0x06;
 pub const CT_EMPTY_MAP: u8 = 0x07;
 
 /// The retired absence marker. Kept out of the public table so nothing can
-/// write it; the decoder refuses it like any unknown kind.
+/// write it; the decoder refuses it like any unknown kind. Named here only
+/// so the tests can say which byte they are refusing.
+#[cfg(test)]
 const CT_NONE_RETIRED: u8 = 0x02;
 
-/// A passthrough payload the ciphertext transport can carry as an embedded
-/// frame.
-///
-/// The generic [`CipherText<Leaf, P>`] passthrough payload type `P` is
-/// opaque, but to cross this transport a passthrough value must be one
-/// value node. This trait supplies that, implemented for
-/// [`PassthroughFrame`], the payload of the sink-based tree
-/// ([`Node`](vitaminc_aead::Node)).
-pub trait TransportPassthrough: Sized {
-    /// Encode this payload as one value node.
-    fn encode_node(&self, out: &mut Vec<u8>) -> Result<(), CodecError>;
-    /// Decode one value node into this payload, honouring the recursion bound.
-    fn decode_node(reader: &mut Reader<'_>, depth: usize) -> Result<Self, CodecError>;
+/// A passthrough payload is a [`PassthroughFrame`], already one value node,
+/// so it crosses the transport as its own bytes. The field is public, so a
+/// hand-built payload could hold no node, two, or a truncated one, and
+/// would misframe the siblings after it; the encoder validates it as one
+/// frame at the ciphertext's depth, with nothing left over, before writing.
+fn encode_passthrough(
+    payload: &PassthroughFrame,
+    out: &mut Vec<u8>,
+    depth: usize,
+) -> Result<(), CodecError> {
+    let (_, rest) = Frame::parse_nested(&payload.0, depth).map_err(|_| CodecError)?;
+    if !rest.is_empty() {
+        return Err(CodecError);
+    }
+    out.extend_from_slice(&payload.0);
+    Ok(())
 }
 
-/// A frame is already one value node, so it crosses the transport as its
-/// own bytes: written as they are, and read back by validating one node at
-/// the ciphertext's depth and taking exactly it.
-impl TransportPassthrough for PassthroughFrame {
-    fn encode_node(&self, out: &mut Vec<u8>) -> Result<(), CodecError> {
-        out.extend_from_slice(&self.0);
-        Ok(())
-    }
-    fn decode_node(reader: &mut Reader<'_>, depth: usize) -> Result<Self, CodecError> {
-        let (frame, _) = Frame::parse_nested(reader.remaining(), depth).map_err(|_| CodecError)?;
-        let len = frame.as_bytes().len();
-        Ok(PassthroughFrame(reader.take(len)?.to_vec()))
-    }
+/// Read one frame node at the ciphertext's depth and take exactly it.
+fn decode_passthrough(
+    reader: &mut Reader<'_>,
+    depth: usize,
+) -> Result<PassthroughFrame, CodecError> {
+    let (frame, _) = Frame::parse_nested(reader.remaining(), depth).map_err(|_| CodecError)?;
+    let len = frame.as_bytes().len();
+    Ok(PassthroughFrame(reader.take(len)?.to_vec()))
 }
 
 /// Opaque codec error. Like the trait-layer `Unspecified`, it carries no
@@ -176,17 +182,29 @@ fn decode_key(reader: &mut Reader<'_>) -> Result<String, CodecError> {
 }
 
 /// Encode a ciphertext tree. A `Passthrough` node carries its payload as one
-/// embedded frame, so the payload type `P` must be serializable via
-/// [`TransportPassthrough`]. The retired `None` marker is refused: it is
-/// never written.
-pub fn encode_ciphertext<Leaf, P>(
-    ct: &CipherText<Leaf, P>,
+/// embedded frame. The tree is held to the decoder's rules, so what is
+/// written always decodes: a tree nested deeper than [`MAX_DEPTH`], a map
+/// with a duplicate key, a passthrough payload that is not one frame node
+/// and the retired `None` marker are refused, and `out` is left as it was.
+pub fn encode_ciphertext<Leaf>(ct: &Node<Leaf>, out: &mut Vec<u8>) -> Result<(), CodecError>
+where
+    Leaf: AsRef<[u8]>,
+{
+    let start = out.len();
+    encode_ciphertext_inner(ct, out, 0).inspect_err(|_| out.truncate(start))
+}
+
+fn encode_ciphertext_inner<Leaf>(
+    ct: &Node<Leaf>,
     out: &mut Vec<u8>,
+    depth: usize,
 ) -> Result<(), CodecError>
 where
     Leaf: AsRef<[u8]>,
-    P: TransportPassthrough,
 {
+    if depth > MAX_DEPTH {
+        return Err(CodecError);
+    }
     match ct {
         CipherText::Single(leaf) => {
             out.push(CT_SINGLE);
@@ -205,32 +223,35 @@ where
             out.push(CT_SEQ);
             write_len(out, items.len())?;
             for item in items {
-                encode_ciphertext(item, out)?;
+                encode_ciphertext_inner(item, out, depth + 1)?;
             }
         }
         CipherText::Map(entries) => {
             out.push(CT_MAP);
             write_len(out, entries.len())?;
+            let mut seen: HashSet<&str> = HashSet::with_capacity(eager_capacity(entries.len()));
             for (key, value) in entries {
+                // Mirror of the decoder's duplicate-key rejection.
+                if !seen.insert(key.as_str()) {
+                    return Err(CodecError);
+                }
                 write_bytes(out, key.as_bytes())?;
-                encode_ciphertext(value, out)?;
+                encode_ciphertext_inner(value, out, depth + 1)?;
             }
         }
         CipherText::Passthrough(payload) => {
             out.push(CT_PASSTHROUGH);
-            payload.encode_node(out)?;
+            // One level deeper, as the decoder reads it.
+            encode_passthrough(payload, out, depth + 1)?;
         }
     }
     Ok(())
 }
 
 /// Decode a ciphertext tree, requiring the reader to be fully consumed.
-pub fn decode_ciphertext<Leaf, P>(
-    reader: &mut Reader<'_>,
-) -> Result<CipherText<Leaf, P>, CodecError>
+pub fn decode_ciphertext<Leaf>(reader: &mut Reader<'_>) -> Result<Node<Leaf>, CodecError>
 where
     Leaf: From<Vec<u8>>,
-    P: TransportPassthrough,
 {
     let ct = decode_ciphertext_inner(reader, 0)?;
     if !reader.finished() {
@@ -239,13 +260,12 @@ where
     Ok(ct)
 }
 
-fn decode_ciphertext_inner<Leaf, P>(
+fn decode_ciphertext_inner<Leaf>(
     reader: &mut Reader<'_>,
     depth: usize,
-) -> Result<CipherText<Leaf, P>, CodecError>
+) -> Result<Node<Leaf>, CodecError>
 where
     Leaf: From<Vec<u8>>,
-    P: TransportPassthrough,
 {
     if depth > MAX_DEPTH {
         return Err(CodecError);
@@ -276,7 +296,10 @@ where
         CT_PASSTHROUGH => {
             // The payload is one frame, decoded one level deeper so a
             // hostile nesting through passthrough stays bounded.
-            Ok(CipherText::Passthrough(P::decode_node(reader, depth + 1)?))
+            Ok(CipherText::Passthrough(decode_passthrough(
+                reader,
+                depth + 1,
+            )?))
         }
         tag => decode_ciphertext_leaf(tag, reader),
     }
@@ -285,20 +308,17 @@ where
 /// Decode a leaf-shaped ciphertext node — the three variants that carry one
 /// sealed byte string and no children. Split out of
 /// [`decode_ciphertext_inner`] so neither function carries every branch.
-fn decode_ciphertext_leaf<Leaf, P>(
-    tag: u8,
-    reader: &mut Reader<'_>,
-) -> Result<CipherText<Leaf, P>, CodecError>
+fn decode_ciphertext_leaf<Leaf>(tag: u8, reader: &mut Reader<'_>) -> Result<Node<Leaf>, CodecError>
 where
     Leaf: From<Vec<u8>>,
 {
     // Every leaf variant is framed identically; only the variant differs.
-    let wrap: fn(Leaf) -> CipherText<Leaf, P> = match tag {
+    let wrap: fn(Leaf) -> Node<Leaf> = match tag {
         CT_SINGLE => CipherText::Single,
         CT_EMPTY_SEQ => CipherText::EmptySequence,
         CT_EMPTY_MAP => CipherText::EmptyMap,
-        // The retired absence marker: a `None` is a null leaf now.
-        CT_NONE_RETIRED => return Err(CodecError),
+        // Unknown kinds, including the retired absence marker `0x02`
+        // (`CT_NONE`): a `None` is a null leaf now.
         _ => return Err(CodecError),
     };
     let len = reader.count()?;
@@ -310,7 +330,7 @@ mod tests {
     use super::*;
     use vitaminc_aead::tags;
 
-    type Ct = CipherText<Vec<u8>, PassthroughFrame>;
+    type Ct = Node<Vec<u8>>;
 
     fn leaf(byte: u8, len: usize) -> Vec<u8> {
         vec![byte; len]
@@ -395,6 +415,15 @@ mod tests {
             Err(CodecError)
         );
         assert!(out.is_empty(), "nothing is written for a refused tree");
+        // Nested below a sibling that was already written, the output is
+        // put back as it was, including what the caller had in it.
+        let mut out = vec![0xEE];
+        let nested: Ct = CipherText::Sequence(vec![
+            CipherText::Single(leaf(1, 2)),
+            CipherText::None(leaf(9, 1)),
+        ]);
+        assert_eq!(encode_ciphertext(&nested, &mut out), Err(CodecError));
+        assert_eq!(out, [0xEE], "a refused tree leaves the output untouched");
         let mut bytes = vec![CT_NONE_RETIRED];
         bytes.extend_from_slice(&4u32.to_le_bytes());
         bytes.extend_from_slice(&[1; 4]);
@@ -537,6 +566,78 @@ mod tests {
         assert!(decode(&nested_seq(MAX_DEPTH + 1)).is_err());
         assert!(decode(&nested_map(MAX_DEPTH)).is_ok());
         assert!(decode(&nested_map(MAX_DEPTH + 1)).is_err());
+    }
+
+    /// A leaf under `n` nested single-child containers, as a tree: a
+    /// sequence or a map at each level.
+    fn nested_tree(n: usize, map: bool) -> Ct {
+        let mut ct: Ct = CipherText::Single(leaf(0xAB, 1));
+        for _ in 0..n {
+            ct = if map {
+                CipherText::Map(vec![("k".into(), ct)])
+            } else {
+                CipherText::Sequence(vec![ct])
+            };
+        }
+        ct
+    }
+
+    #[test]
+    fn the_encoder_refuses_what_the_decoder_would() {
+        // Depth: the bound counts the same way in both directions, for
+        // every container kind.
+        for map in [false, true] {
+            let mut out = Vec::new();
+            assert!(encode_ciphertext(&nested_tree(MAX_DEPTH, map), &mut out).is_ok());
+            assert!(decode(&out).is_ok());
+            let mut out = Vec::new();
+            assert_eq!(
+                encode_ciphertext(&nested_tree(MAX_DEPTH + 1, map), &mut out),
+                Err(CodecError)
+            );
+            assert!(out.is_empty());
+        }
+        // A passthrough payload shares the budget on the way in too.
+        let mut out = Vec::new();
+        let ok: Ct = CipherText::Passthrough(frame(MAX_DEPTH - 1));
+        assert!(encode_ciphertext(&ok, &mut out).is_ok());
+        assert!(decode(&out).is_ok());
+        let mut out = Vec::new();
+        let too_deep: Ct = CipherText::Passthrough(frame(MAX_DEPTH));
+        assert_eq!(encode_ciphertext(&too_deep, &mut out), Err(CodecError));
+        assert!(out.is_empty());
+        // Duplicate map keys.
+        let dup: Ct = CipherText::Map(vec![
+            ("k".into(), CipherText::Single(leaf(1, 1))),
+            ("k".into(), CipherText::Single(leaf(2, 1))),
+        ]);
+        let mut out = Vec::new();
+        assert_eq!(encode_ciphertext(&dup, &mut out), Err(CodecError));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn a_hand_built_frame_payload_is_validated_before_it_is_written() {
+        // The field is public, so a caller can build a payload that is not
+        // one node: empty, two nodes, or truncated. Each would misframe the
+        // sibling after it (a sealed leaf read as another kind, with other
+        // bytes), so the encoder refuses it instead of writing it.
+        let two = vec![tags::NULL, tags::NULL];
+        let mut truncated = frame(1).0;
+        truncated.pop();
+        for payload in [Vec::new(), two, truncated] {
+            let ct: Ct = CipherText::Sequence(vec![
+                CipherText::Passthrough(PassthroughFrame(payload)),
+                CipherText::Single(leaf(9, 40)),
+            ]);
+            let mut out = Vec::new();
+            assert_eq!(
+                encode_ciphertext(&ct, &mut out),
+                Err(CodecError),
+                "a payload that is not one frame must not reach the wire"
+            );
+            assert!(out.is_empty());
+        }
     }
 
     #[test]

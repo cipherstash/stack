@@ -2,7 +2,7 @@
 
 `value-conformance.json` contains shared value-level transport vectors for
 Rust, Node, the Go codec and the Go WASM encryption guest. Payload bytes are
-frozen by `aead-value`'s scalar tag table: fixed-width integers and float bits
+frozen by `vitaminc-aead`'s scalar tag table: fixed-width integers and float bits
 are little-endian, dates count days from CE, timestamps carry seconds plus
 nanoseconds, and decimals retain their flags and 96-bit coefficient.
 
