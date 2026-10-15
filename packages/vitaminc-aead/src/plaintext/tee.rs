@@ -178,4 +178,92 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn passthrough_reaches_both_sides() {
+        use crate::plaintext::record::{Event, Owned};
+
+        let (mut left, mut right) = (Vec::new(), Vec::new());
+        Tee(Record(&mut left), Record(&mut right))
+            .passthrough(vec![1u16, 2])
+            .expect("ok");
+
+        assert_eq!(left, right);
+        assert_eq!(
+            left,
+            [
+                Event::Passthrough,
+                Event::Seq(Some(2)),
+                Event::Element,
+                Event::Scalar(None, Owned::Int(crate::plaintext::Int::U16(1))),
+                Event::Element,
+                Event::Scalar(None, Owned::Int(crate::plaintext::Int::U16(2))),
+                Event::EndSeq,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tee_stops_at_the_first_side_that_fails() {
+        use crate::plaintext::record::{Event, RecordError};
+
+        /// Accepts every container and refuses every scalar.
+        struct Refuse;
+        impl Sink for Refuse {
+            type Ok = ();
+            type Error = RecordError;
+            type Seq = Self;
+            type Map = Self;
+            fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), RecordError> {
+                Err(RecordError("refused".into()))
+            }
+            fn seq(self, _: Option<usize>) -> Result<Self, RecordError> {
+                Ok(self)
+            }
+            fn map(self, _: Option<usize>) -> Result<Self, RecordError> {
+                Ok(self)
+            }
+            fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<(), RecordError> {
+                Ok(())
+            }
+        }
+        impl SeqSink for Refuse {
+            type Ok = ();
+            type Error = RecordError;
+            type Element<'s> = Refuse;
+            fn element(&mut self) -> Result<Refuse, RecordError> {
+                Ok(Refuse)
+            }
+            fn end(self) -> Result<(), RecordError> {
+                Ok(())
+            }
+        }
+        impl MapSink for Refuse {
+            type Ok = ();
+            type Error = RecordError;
+            type Entry<'s> = Refuse;
+            fn entry(&mut self, _: &str) -> Result<Refuse, RecordError> {
+                Ok(Refuse)
+            }
+            fn end(self) -> Result<(), RecordError> {
+                Ok(())
+            }
+        }
+
+        // Left refuses first: the right side never sees the scalar or the end.
+        let mut right = Vec::new();
+        let err = vec![1u32, 2]
+            .visit(Tee(Refuse, Record(&mut right)))
+            .expect_err("refused");
+        assert_eq!(err.0, "refused");
+        assert_eq!(right, [Event::Seq(Some(2)), Event::Element]);
+
+        // Right refuses: the walk still stops after the first element.
+        let mut left = Vec::new();
+        let err = vec![1u32, 2]
+            .visit(Tee(Record(&mut left), Refuse))
+            .expect_err("refused");
+        assert_eq!(err.0, "refused");
+        assert_eq!(left.len(), 3, "{left:?}");
+    }
 }

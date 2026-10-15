@@ -505,6 +505,23 @@ pub mod chrono {
         }
 
         #[test]
+        fn a_count_before_the_epoch_is_the_right_instant() {
+            let one_ns_before = timestamp(TimeUnit::Nanos, Int::I128(-1)).expect("instant");
+            assert_eq!(
+                one_ns_before,
+                DateTime::from_timestamp(-1, 999_999_999).expect("instant")
+            );
+            assert_eq!(timestamp_nanos(one_ns_before), Some(-1));
+
+            let ms = timestamp(TimeUnit::Millis, Int::I64(-1_500)).expect("instant");
+            assert_eq!(
+                ms,
+                DateTime::from_timestamp(-2, 500_000_000).expect("instant")
+            );
+            assert_eq!(timestamp_nanos(ms), Some(-1_500_000_000));
+        }
+
+        #[test]
         fn a_count_is_reduced_only_when_exact() {
             assert_eq!(timestamp_count(TimeUnit::Nanos, 7), Some(7));
             assert_eq!(timestamp_count(TimeUnit::Millis, 3_000_000), Some(3));
@@ -555,6 +572,15 @@ pub mod decimal {
             let (scale, mantissa) = parts(d);
             assert_eq!((scale, mantissa), (4, -12_345_678));
             assert_eq!(decimal(scale, Int::I128(mantissa)), Some(d));
+        }
+
+        #[test]
+        fn what_rust_decimal_cannot_hold_has_no_decimal() {
+            assert_eq!(decimal(28, Int::I128(1)).map(|d| d.scale()), Some(28));
+            assert_eq!(decimal(29, Int::I128(1)), None);
+            assert_eq!(decimal(0, Int::I128(1 << 96)), None);
+            assert_eq!(decimal(0, Int::I128(-(1 << 96))), None);
+            assert_eq!(decimal(0, Int::U128(u128::MAX)), None);
         }
     }
 }
@@ -649,6 +675,11 @@ mod tests {
         assert!(Logical::Decimal { scale: 28 }.admits(&Physical::Int(Int::I128((1 << 96) - 1))));
         assert!(!Logical::Decimal { scale: 28 }.admits(&Physical::Int(Int::I128(1 << 96))));
         assert!(!Logical::Decimal { scale: 29 }.admits(&Physical::Int(Int::I8(1))));
+        // The other two edges of the chrono ranges.
+        assert!(Logical::Date.admits(&Physical::Int(Int::I32(MAX_DATE_DAYS))));
+        assert!(!Logical::Date.admits(&Physical::Int(Int::I64(i64::from(MAX_DATE_DAYS) + 1))));
+        assert!(ns.admits(&Physical::Int(Int::I128(MIN_TIMESTAMP_NANOS))));
+        assert!(!ns.admits(&Physical::Int(Int::I128(MIN_TIMESTAMP_NANOS - 1))));
     }
 
     #[test]
@@ -712,7 +743,12 @@ mod tests {
             );
             assert!(v.contains("***"), "{v}");
         }
-        assert!(format!("{:?}", Physical::Null).ends_with("Physical<'_>::Null"));
+        assert!(format!("{:?}", crate::plaintext::Bytes(b"secret")).contains("***"));
+        assert!(!format!("{:?}", crate::plaintext::Bytes(b"secret")).contains("secret"));
+        // Only the variant name is the derive's; the type path `type_name`
+        // prints before it differs between compiler versions.
+        let null = format!("{:?}", Physical::Null);
+        assert!(null.ends_with("::Null"), "{null}");
     }
 
     #[test]

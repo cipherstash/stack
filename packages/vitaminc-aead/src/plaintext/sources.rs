@@ -482,6 +482,52 @@ mod tests {
         );
     }
 
+    // The borrows are the point: each one picks the reference impl.
+    #[allow(clippy::needless_borrows_for_generic_args, clippy::op_ref)]
+    #[test]
+    fn floats_and_borrowed_scalars_are_scalars() {
+        assert_eq!(
+            record(1.5f32).expect("ok"),
+            [scalar(Owned::Float(Float::F32(1.5)))]
+        );
+        assert_eq!(record(&1.5f32).expect("ok"), record(1.5f32).expect("ok"));
+        assert_eq!(record(&1.5f64).expect("ok"), record(1.5f64).expect("ok"));
+        assert_eq!(record(&true).expect("ok"), record(true).expect("ok"));
+        assert_eq!(record(&7u64).expect("ok"), record(7u64).expect("ok"));
+        let owned = String::from("hi");
+        assert_eq!(
+            record(&owned).expect("ok"),
+            [scalar(Owned::Text("hi".into()))]
+        );
+    }
+
+    #[test]
+    fn a_source_error_keeps_its_cause() {
+        use core::error::Error as _;
+
+        #[derive(Debug)]
+        struct Getter(std::io::Error);
+        impl core::fmt::Display for Getter {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str("getter threw")
+            }
+        }
+        impl core::error::Error for Getter {
+            fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        let err = SourceError::new(Getter(std::io::Error::other("disk gone")));
+        assert_eq!(err.to_string(), "getter threw");
+        assert!(err.inner().is::<Getter>());
+        assert_eq!(
+            err.source().map(|cause| cause.to_string()),
+            Some("disk gone".into())
+        );
+        assert!(SourceError::msg("plain").source().is_none());
+    }
+
     #[test]
     fn byte_strings_are_byte_leaves_not_sequences() {
         assert_eq!(
@@ -842,6 +888,21 @@ mod tests {
             record(leap).expect_err("should fail").0,
             "a leap second has no count of nanoseconds"
         );
+    }
+
+    // The borrows are the point: each one picks the reference impl.
+    #[allow(clippy::needless_borrows_for_generic_args)]
+    #[cfg(all(feature = "chrono", feature = "rust_decimal", feature = "uuid"))]
+    #[test]
+    fn borrowed_logical_sources_walk_as_the_owned_ones() {
+        let date = ::chrono::NaiveDate::from_ymd_opt(2000, 3, 1).expect("ok");
+        assert_eq!(record(&date).expect("ok"), record(date).expect("ok"));
+        let ts = ::chrono::DateTime::from_timestamp(1, 5).expect("ok");
+        assert_eq!(record(&ts).expect("ok"), record(ts).expect("ok"));
+        let d: rust_decimal::Decimal = "-1.50".parse().expect("ok");
+        assert_eq!(record(&d).expect("ok"), record(d).expect("ok"));
+        let id = uuid::Uuid::from_bytes([3; 16]);
+        assert_eq!(record(&id).expect("ok"), record(id).expect("ok"));
     }
 
     #[cfg(feature = "rust_decimal")]
