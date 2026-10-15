@@ -20,6 +20,51 @@
 //! The validity rules here ([`Logical::admits`]) are self-contained, so the
 //! core model has no dependency on chrono or `rust_decimal`. The conversions
 //! to and from those crates' types sit behind their features.
+//!
+//! # Adding a logical type
+//!
+//! A logical type is a meaning layered on a physical kind that already
+//! exists. Never add a physical kind for one. The steps, in this module
+//! unless said otherwise:
+//!
+//! 1. **Choose the physical kind** it rides on (an int, sixteen bytes, a
+//!    string) and its parameter, if it has one. The parameter is a single
+//!    byte carried with every value, like a decimal's scale. A type that
+//!    needs more than a byte needs a different design; the `0xF4` tag is
+//!    reserved for a length-prefixed envelope for that day.
+//! 2. **Add the variant** to [`Logical`] and a constant to [`id`], the next
+//!    value after [`id::LAST_KNOWN`], then move `LAST_KNOWN` up to it. Ids
+//!    are a cross-language commitment: never renumber or reuse one.
+//! 3. **Map it on the wire** in [`Logical::to_wire`] and
+//!    [`Logical::from_wire`]. `from_wire` must return `None` for a
+//!    parameter the type cannot take, so a malformed envelope is refused
+//!    rather than read as some other value.
+//! 4. **State its validity rule** in [`Logical::admits`]: which physical
+//!    kind it accepts, and the range. Keep the rule self-contained, as the
+//!    date and timestamp ranges are (constants pinned by a test, not a
+//!    dependency), so the core model stays dependency-free.
+//! 5. **Name it** in the `Display` impl.
+//! 6. **Add a source**: a `Plaintext` impl for the Rust type that calls
+//!    `sink.scalar(Some(Logical::YourType), Physical::...)`. If the type
+//!    comes from another crate, put the impl behind a feature named after
+//!    that crate, as the chrono, `rust_decimal` and uuid sources are.
+//! 7. **Extend the tests here**: the variant goes into
+//!    `every_known_logical_type_round_trips_through_the_wire`, a parameter
+//!    it refuses into `a_known_id_with_a_bad_parameter_is_refused`, and its
+//!    range edges into `admits_checks_the_range`.
+//!
+//! Outside this module, each consumer that interprets logical types opts
+//! in on its own: a typed decode target for the Rust type, an equality
+//! domain and normalization in the index layer, and a conversion in each
+//! host binding. Structural sinks need nothing. Encryption, the frame and
+//! the leaf codec carry any logical type through the generic envelope, so
+//! a new type gets no tag of its own, and a sink built before the type
+//! existed still passes it through as [`Logical::Unknown`].
+//!
+//! The compiler finds most of a missed step: `to_wire` and `Display` match
+//! exhaustively, so a new variant fails to build until they are updated.
+//! `from_wire` and `admits` have fallbacks, so a type missed there is
+//! refused rather than reported; the round-trip test is what catches it.
 
 use core::fmt;
 
