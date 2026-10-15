@@ -1,0 +1,20 @@
+# Ciphertext generator for the ORE comparator timing harness (../run.sh).
+#
+# A DETACHED crate: the empty `[workspace]` table makes it its own workspace
+# root, so it never joins the main workspace or its CI. It encrypts with ore-rs
+# directly under a random throwaway key; the harness needs real ciphertexts but
+# no CipherStash credentials, and nothing it produces is a test fixture.
+[package]
+name = "ore-timing-ctgen"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# The legacy (8-bit block) scheme behind `ore_block_256`; same version as the
+# root Cargo.lock.
+ore-rs = "=0.8.3"
+rand = "0.8"
+hex = "0.4"
+
+[workspace]
