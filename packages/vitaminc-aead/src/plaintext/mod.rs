@@ -27,8 +27,9 @@ mod tee;
 pub use kinds::{
     Float, Int, Kind, KnownLogical, Logical, Physical, TimeUnit, UnknownLogical, UnknownLogicalId,
 };
-#[cfg(test)]
-pub(crate) use path::render;
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub use path::render;
 pub use path::{Path, Step};
 pub use sources::{Bytes, Raw};
 

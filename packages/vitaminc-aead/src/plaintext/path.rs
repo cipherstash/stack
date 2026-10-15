@@ -43,8 +43,13 @@ impl Path {
 /// A path written out for a test's assertion: `.key` for an entry and
 /// `[i]` for an element, so `.m[0].k` is the entry `k` of the first
 /// element of the entry `m`.
-#[cfg(test)]
-pub(crate) fn render(path: &Path) -> String {
+///
+/// Not an API: it shows every key, which is what a test wants and a log
+/// must not have. This crate's tests and, through the `test-support`
+/// feature, its sibling crates' tests share this one copy.
+#[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
+pub fn render(path: &Path) -> String {
     path.steps()
         .iter()
         .map(|step| match step {
