@@ -43,7 +43,7 @@ pub use walk::{decrypt_into, decrypt_into_async, decrypt_to_frame, walk, Decrypt
 #[doc(inline)]
 #[allow(deprecated)]
 pub use aad::{Aad, AadPiece};
-pub use aad::{Context, ContextPiece, IntoAad, IntoContext, LeafTypeAad};
+pub use aad::{Context, ContextPiece, IntoAad, IntoContext, KindMismatch, LeafTypeAad};
 #[doc(inline)]
 pub use cipher::{Cipher, MapCipher, SeqCipher, Unspecified};
 #[doc(inline)]

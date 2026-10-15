@@ -410,6 +410,17 @@ impl Logical {
         }
     }
 
+    /// The physical kind a known logical type is stored as, or `None` for
+    /// [`Logical::Unknown`], whose kind this build cannot know.
+    pub const fn kind(self) -> Option<Kind> {
+        match self {
+            Logical::Undefined => Some(Kind::Null),
+            Logical::Date | Logical::Timestamp(_) | Logical::Decimal { .. } => Some(Kind::Int),
+            Logical::Uuid => Some(Kind::Bytes),
+            Logical::Unknown(_) => None,
+        }
+    }
+
     /// Whether `v` is a valid value of this logical type: the right physical
     /// kind, and in range.
     pub fn admits(self, v: &Physical<'_>) -> bool {
@@ -692,6 +703,39 @@ mod tests {
         assert!(matches!(ty, Logical::Unknown(u) if u.id() == 200 && u.param() == 9));
         assert_eq!(ty.to_wire(), (200, 9));
         assert!(ty.admits(&Physical::Text("anything")));
+    }
+
+    /// `kind` names the one kind `admits` accepts a known logical type
+    /// over, so a binding built from it agrees with what opens.
+    #[test]
+    fn kind_is_the_kind_admits_accepts() {
+        let samples = [
+            Physical::Null,
+            Physical::Bool(true),
+            Physical::Int(Int::I64(0)),
+            Physical::Float(Float::F64(0.0)),
+            Physical::Text(""),
+            Physical::Bytes(&[0; 16]),
+        ];
+        let known = [
+            Logical::Undefined,
+            Logical::Date,
+            Logical::Timestamp(TimeUnit::Millis),
+            Logical::Decimal { scale: 2 },
+            Logical::Uuid,
+        ];
+        for logical in known {
+            for sample in &samples {
+                assert_eq!(
+                    logical.admits(sample),
+                    logical.kind() == Some(sample.kind()),
+                    "{logical:?} over {:?}",
+                    sample.kind()
+                );
+            }
+        }
+        let unknown = Logical::from_wire(200, 0).expect("unknown");
+        assert_eq!(unknown.kind(), None);
     }
 
     #[test]

@@ -21,6 +21,11 @@
 //! refuse `1.50` next to `1.5`. The parameter is still validated after
 //! opening, by [`Logical::admits`].
 //!
+//! A known logical type is stored as exactly one kind, so
+//! [`LeafTypeAad::new`] refuses a pair that disagrees, such as text bound as
+//! a date: a column with a logical type has one binding, not one per kind a
+//! caller might pick.
+//!
 //! The binding is a declaration, not a check. Nothing compares it with the
 //! value being sealed, so a writer that binds a date and seals text has
 //! made a ciphertext that opens, as text, under the date binding and under
@@ -52,15 +57,24 @@ const LEAF_TYPE_DOMAIN: &[u8] = b"vitaminc/aead/leaf-type/v2";
 /// be supplied on decrypt or authentication fails.
 ///
 /// ```
-/// use vitaminc_aead::{Kind, LeafTypeAad, Logical};
+/// use vitaminc_aead::{Kind, KindMismatch, LeafTypeAad, Logical};
 ///
+/// # fn main() -> Result<(), KindMismatch> {
 /// // A column of dates: a date is an int, its day count.
-/// let signed_up = LeafTypeAad::new(("users", "signed_up"), Kind::Int, Some(Logical::Date));
+/// let signed_up = LeafTypeAad::new(("users", "signed_up"), Kind::Int, Some(Logical::Date))?;
 /// // A column of plain integers, of any width.
-/// let age = LeafTypeAad::new(("users", "age"), Kind::Int, None);
+/// let age = LeafTypeAad::new(("users", "age"), Kind::Int, None)?;
 /// // A column of decimals, of any scale.
-/// let price = LeafTypeAad::new(("orders", "price"), Kind::Int, Some(Logical::Decimal { scale: 0 }));
+/// let price = LeafTypeAad::new(("orders", "price"), Kind::Int, Some(Logical::Decimal { scale: 0 }))?;
+/// // A date is never text, so this pair is refused.
+/// assert!(LeafTypeAad::new(("users", "born"), Kind::Text, Some(Logical::Date)).is_err());
+/// # Ok(())
+/// # }
 /// ```
+///
+/// The binding is associated data, not a secret, so it is `Debug` and
+/// `Clone`: a caller can keep one per column and clone it for each row.
+#[derive(Clone, Debug)]
 pub struct LeafTypeAad<'a> {
     base: ContextPiece<'a>,
     kind: Kind,
@@ -71,13 +85,40 @@ impl<'a> LeafTypeAad<'a> {
     /// Bind `kind` and the id of `logical` as the expected leaf type onto
     /// `base`. The parameter of `logical`, such as a decimal's scale or a
     /// timestamp's unit, is not bound.
-    pub fn new(base: impl IntoContext<'a>, kind: Kind, logical: Option<Logical>) -> Self {
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// [`KindMismatch`] if `logical` is a known logical type stored as a
+    /// different kind (see [`Logical::kind`]). A [`Logical::Unknown`] is
+    /// taken with any kind, since this build cannot know its kind.
+    pub fn new(
+        base: impl IntoContext<'a>,
+        kind: Kind,
+        logical: Option<Logical>,
+    ) -> Result<Self, KindMismatch> {
+        if let Some(expected) = logical.and_then(Logical::kind).filter(|&k| k != kind) {
+            return Err(KindMismatch {
+                expected,
+                found: kind,
+            });
+        }
+        Ok(Self {
             base: base.into_context(),
             kind,
             id: logical.map_or(id::NONE, |l| l.to_wire().0),
-        }
+        })
     }
+}
+
+/// A [`LeafTypeAad`] asked to bind a logical type over a kind it is never
+/// stored as, such as a date over text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("the logical type is stored as {expected:?}, not {found:?}")]
+pub struct KindMismatch {
+    /// The kind the logical type is stored as.
+    pub expected: Kind,
+    /// The kind the caller gave.
+    pub found: Kind,
 }
 
 impl<'a> IntoContext<'a> for LeafTypeAad<'a> {
@@ -108,7 +149,9 @@ mod tests {
     /// decryption of every schema-bound ciphertext.
     #[test]
     fn pins_the_context_bytes_with_no_logical_type() {
-        let bound = LeafTypeAad::new("ctx", Kind::Int, None).into_aad();
+        let bound = LeafTypeAad::new("ctx", Kind::Int, None)
+            .expect("binds")
+            .into_aad();
         let expected = Context::pae(&[
             LEAF_TYPE_DOMAIN.into_aad().as_bytes(),
             "ctx".into_aad().as_bytes(),
@@ -151,7 +194,9 @@ mod tests {
 
     #[test]
     fn pins_the_context_bytes_with_a_logical_type() {
-        let bound = LeafTypeAad::new("ctx", Kind::Int, Some(Logical::Date)).into_aad();
+        let bound = LeafTypeAad::new("ctx", Kind::Int, Some(Logical::Date))
+            .expect("binds")
+            .into_aad();
         let expected = Context::pae(&[
             LEAF_TYPE_DOMAIN.into_aad().as_bytes(),
             "ctx".into_aad().as_bytes(),
@@ -190,7 +235,9 @@ mod tests {
 
     #[test]
     fn keeps_the_base_parts_intact() {
-        let parts = LeafTypeAad::new(("schema", 7u64), Kind::Text, None).into_context();
+        let parts = LeafTypeAad::new(("schema", 7u64), Kind::Text, None)
+            .expect("binds")
+            .into_context();
         assert_eq!(
             parts.to_string(),
             "(0x766974616d696e632f616561642f6c6561662d747970652f7632, (\"schema\", 7u64), 4u8, 0u8)"
@@ -203,7 +250,9 @@ mod tests {
         // The domain label keeps the binding disjoint from the map-entry
         // derivation and from a caller binding `(base, kind, id)` as a list
         // of their own.
-        let leaf = LeafTypeAad::new("ctx", Kind::Int, None).into_aad();
+        let leaf = LeafTypeAad::new("ctx", Kind::Int, None)
+            .expect("binds")
+            .into_aad();
         assert_ne!(leaf, "ctx".into_aad().for_map_entry("\x02"));
         let bare = ContextPiece::List(vec![
             "ctx".into_context(),
@@ -215,24 +264,43 @@ mod tests {
 
     #[test]
     fn is_sensitive_to_the_kind_and_the_id_but_not_the_parameter() {
-        let int = LeafTypeAad::new("ctx", Kind::Int, None).into_aad();
-        assert_ne!(int, LeafTypeAad::new("ctx", Kind::Text, None).into_aad());
+        let int = LeafTypeAad::new("ctx", Kind::Int, None)
+            .expect("binds")
+            .into_aad();
         assert_ne!(
             int,
-            LeafTypeAad::new("ctx", Kind::Int, Some(Logical::Date)).into_aad()
+            LeafTypeAad::new("ctx", Kind::Text, None)
+                .expect("binds")
+                .into_aad()
         );
         assert_ne!(
-            LeafTypeAad::new("ctx", Kind::Int, Some(Logical::Date)).into_aad(),
-            LeafTypeAad::new("ctx", Kind::Int, Some(Logical::Decimal { scale: 0 })).into_aad()
+            int,
+            LeafTypeAad::new("ctx", Kind::Int, Some(Logical::Date))
+                .expect("binds")
+                .into_aad()
+        );
+        assert_ne!(
+            LeafTypeAad::new("ctx", Kind::Int, Some(Logical::Date))
+                .expect("binds")
+                .into_aad(),
+            LeafTypeAad::new("ctx", Kind::Int, Some(Logical::Decimal { scale: 0 }))
+                .expect("binds")
+                .into_aad()
         );
         assert_eq!(
-            LeafTypeAad::new("ctx", Kind::Int, Some(Logical::Decimal { scale: 1 })).into_aad(),
-            LeafTypeAad::new("ctx", Kind::Int, Some(Logical::Decimal { scale: 2 })).into_aad()
+            LeafTypeAad::new("ctx", Kind::Int, Some(Logical::Decimal { scale: 1 }))
+                .expect("binds")
+                .into_aad(),
+            LeafTypeAad::new("ctx", Kind::Int, Some(Logical::Decimal { scale: 2 }))
+                .expect("binds")
+                .into_aad()
         );
         assert_eq!(
             LeafTypeAad::new("ctx", Kind::Int, Some(Logical::Timestamp(TimeUnit::Millis)))
+                .expect("binds")
                 .into_aad(),
             LeafTypeAad::new("ctx", Kind::Int, Some(Logical::Timestamp(TimeUnit::Nanos)))
+                .expect("binds")
                 .into_aad()
         );
     }
@@ -252,23 +320,57 @@ mod tests {
         for (i, a) in all.iter().enumerate() {
             for b in &all[i + 1..] {
                 assert_ne!(
-                    LeafTypeAad::new("ctx", *a, None).into_aad(),
-                    LeafTypeAad::new("ctx", *b, None).into_aad(),
+                    LeafTypeAad::new("ctx", *a, None).expect("binds").into_aad(),
+                    LeafTypeAad::new("ctx", *b, None).expect("binds").into_aad(),
                     "{a:?} and {b:?} bind the same"
                 );
             }
         }
-        let flag = || LeafTypeAad::new("flags", Kind::Bool, None);
-        let sealed = encrypt(true, &Mock, flag()).expect("seals");
-        assert!(decrypt::<bool, _, _>(&Mock, sealed, flag()).expect("opens"));
+        // One binding per column, cloned for each use.
+        let flag = LeafTypeAad::new("flags", Kind::Bool, None).expect("binds");
+        let sealed = encrypt(true, &Mock, flag.clone()).expect("seals");
+        assert!(decrypt::<bool, _, _>(&Mock, sealed, flag).expect("opens"));
+    }
+
+    /// A known logical type binds over the one kind it is stored as and no
+    /// other, so a column with a logical type has a single binding.
+    #[test]
+    fn a_logical_type_binds_only_over_its_own_kind() {
+        let refused = LeafTypeAad::new("ctx", Kind::Text, Some(Logical::Date)).err();
+        assert_eq!(
+            refused,
+            Some(KindMismatch {
+                expected: Kind::Int,
+                found: Kind::Text
+            })
+        );
+        assert_eq!(
+            refused.expect("refused").to_string(),
+            "the logical type is stored as Int, not Text"
+        );
+        assert!(LeafTypeAad::new("ctx", Kind::Text, Some(Logical::Uuid)).is_err());
+        assert!(LeafTypeAad::new("ctx", Kind::Bytes, Some(Logical::Uuid)).is_ok());
+        assert!(LeafTypeAad::new("ctx", Kind::Null, Some(Logical::Undefined)).is_ok());
+        // An unknown logical type's kind cannot be known, so any is taken.
+        let unknown = Logical::from_wire(200, 0).expect("unknown");
+        assert!(LeafTypeAad::new("ctx", Kind::Text, Some(unknown)).is_ok());
+        assert!(LeafTypeAad::new("ctx", Kind::Float, Some(unknown)).is_ok());
+    }
+
+    /// The binding is associated data, so its `Debug` shows the parts.
+    #[test]
+    fn debug_shows_the_binding() {
+        let bound = LeafTypeAad::new("ctx", Kind::Int, Some(Logical::Date)).expect("binds");
+        let shown = format!("{bound:?}");
+        assert!(shown.contains("Int") && shown.contains("id: 2"), "{shown}");
     }
 
     fn date() -> LeafTypeAad<'static> {
-        LeafTypeAad::new("schema", Kind::Int, Some(Logical::Date))
+        LeafTypeAad::new("schema", Kind::Int, Some(Logical::Date)).expect("binds")
     }
 
     fn int() -> LeafTypeAad<'static> {
-        LeafTypeAad::new("schema", Kind::Int, None)
+        LeafTypeAad::new("schema", Kind::Int, None).expect("binds")
     }
 
     fn opens<T: crate::typed::Decrypt>(
@@ -322,7 +424,10 @@ mod tests {
     /// and each opens with the scale it was sealed with.
     #[test]
     fn decimals_of_different_scales_open_under_one_binding() {
-        let column = || LeafTypeAad::new("price", Kind::Int, Some(Logical::Decimal { scale: 2 }));
+        let column = || {
+            LeafTypeAad::new("price", Kind::Int, Some(Logical::Decimal { scale: 2 }))
+                .expect("binds")
+        };
         for (scale, mantissa) in [(2u8, 150i128), (1, 15), (0, 2)] {
             let value = || {
                 Raw(
@@ -349,7 +454,10 @@ mod tests {
     /// binding it was sealed under.
     #[test]
     fn the_parameter_is_still_validated_after_opening() {
-        let column = || LeafTypeAad::new("price", Kind::Int, Some(Logical::Decimal { scale: 2 }));
+        let column = || {
+            LeafTypeAad::new("price", Kind::Int, Some(Logical::Decimal { scale: 2 }))
+                .expect("binds")
+        };
         // A leaf plaintext hand-built with a scale of 29, which the sink
         // would never write.
         let mut plaintext = vec![crate::tags::DECIMAL];
