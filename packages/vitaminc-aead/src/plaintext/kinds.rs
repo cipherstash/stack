@@ -83,7 +83,7 @@ use zeroize::Zeroize;
 /// `Physical` is a view: the text and bytes it borrows are owned, and
 /// wiped, by the source. It therefore does not implement `Zeroize`
 /// itself; [`Int`] and [`Float`], which are owned, do.
-#[derive(Clone, Copy, Eq)]
+#[derive(Clone, Copy, OpaqueDebug, TimingSafeEq)]
 pub enum Physical<'a> {
     Null,
     Bool(bool),
@@ -170,34 +170,21 @@ int_from! {
 
 /// A float, with the width it came from. Compared and carried by bit
 /// pattern, so `NaN` payloads and `-0.0` survive, and `-0.0 != 0.0`.
-#[derive(Clone, Copy, OpaqueDebug, Zeroize)]
+#[derive(Clone, Copy, OpaqueDebug, TimingSafeEq, Zeroize)]
 pub enum Float {
     F32(f32),
     F64(f64),
 }
 
-impl Eq for Float {}
-
-// Written by hand because the `OpaqueDebug` derive does not carry an
-// enum's lifetime onto its impl. Same output shape as the derive: the kind
-// and width, never the value.
-impl fmt::Debug for Physical<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Physical::Null => f.write_str("Physical::Null"),
-            Physical::Bool(_) => f.write_str("Physical::Bool(\"***\")"),
-            Physical::Int(i) => write!(f, "Physical::Int({i:?})"),
-            Physical::Float(x) => write!(f, "Physical::Float({x:?})"),
-            Physical::Text(_) => f.write_str("Physical::Text(\"***\")"),
-            Physical::Bytes(_) => f.write_str("Physical::Bytes(\"***\")"),
-        }
-    }
-}
-
-impl OpaqueDebug for Physical<'_> {}
-
-// Equality is constant time in the value. The width (the variant) is a
-// host-fidelity hint, not a secret, so it may be compared by branch.
+// `Physical` and `Float` derive their constant-time equality: the derive
+// compares same-variant payloads with `ts_eq` and treats different
+// variants as unequal, which is the structural equality wanted here. The
+// float impls in `vitaminc_protected` compare by bit pattern.
+//
+// `Int` is written by hand so its equality is one comparison over the
+// sign and the 128-bit word rather than a ten-arm match. The width (the
+// variant) is a host-fidelity hint, not a secret, so it may be compared
+// by branch.
 
 impl TimingSafeEq for Int {
     fn ts_eq(&self, other: &Self) -> Choice {
@@ -211,42 +198,6 @@ impl TimingSafeEq for Int {
 }
 
 impl PartialEq for Int {
-    fn eq(&self, other: &Self) -> bool {
-        self.ts_eq(other).into()
-    }
-}
-
-impl TimingSafeEq for Float {
-    fn ts_eq(&self, other: &Self) -> Choice {
-        match (self, other) {
-            (Float::F32(a), Float::F32(b)) => a.to_bits().ts_eq(&b.to_bits()),
-            (Float::F64(a), Float::F64(b)) => a.to_bits().ts_eq(&b.to_bits()),
-            _ => Choice::from(0),
-        }
-    }
-}
-
-impl PartialEq for Float {
-    fn eq(&self, other: &Self) -> bool {
-        self.ts_eq(other).into()
-    }
-}
-
-impl TimingSafeEq for Physical<'_> {
-    fn ts_eq(&self, other: &Self) -> Choice {
-        match (self, other) {
-            (Physical::Null, Physical::Null) => Choice::from(1),
-            (Physical::Bool(a), Physical::Bool(b)) => u8::from(*a).ts_eq(&u8::from(*b)),
-            (Physical::Int(a), Physical::Int(b)) => a.ts_eq(b),
-            (Physical::Float(a), Physical::Float(b)) => a.ts_eq(b),
-            (Physical::Text(a), Physical::Text(b)) => a.ts_eq(b),
-            (Physical::Bytes(a), Physical::Bytes(b)) => TimingSafeEq::ts_eq(*a, *b),
-            _ => Choice::from(0),
-        }
-    }
-}
-
-impl PartialEq for Physical<'_> {
     fn eq(&self, other: &Self) -> bool {
         self.ts_eq(other).into()
     }
@@ -740,7 +691,7 @@ mod tests {
             );
             assert!(v.contains("***"), "{v}");
         }
-        assert_eq!(format!("{:?}", Physical::Null), "Physical::Null");
+        assert!(format!("{:?}", Physical::Null).ends_with("Physical<'_>::Null"));
     }
 
     #[test]
