@@ -155,7 +155,7 @@ impl<'c> MapCipher for MyMapCipher<'c> {
 }
 ```
 
-For a complete reference implementation see `vitaminc_encrypt::Aes256Cipher`.
+For a complete reference implementation of the sink-based `Cipher` (`seal::Cipher`) see `vitaminc_encrypt::Aes256Cipher`; the container-level traits here are the legacy model and go with #406.
 
 ### Encrypting data
 
@@ -187,10 +187,10 @@ Decryption uses a visitor pattern modelled on `serde::Deserialize`:
 
 - A type that knows how to decrypt itself implements [`Decrypt`].
 - A cipher provides a [`Decipher`] (typically wrapping a ciphertext + cipher state) that drives the decryption.
-- Concrete cipher implementations expose ergonomic decrypt entry points — for example, `Aes256Cipher` provides `cipher.decrypt::<T>(ciphertext)` and `cipher.decrypt_with_aad::<T, _>(ciphertext, aad)`.
+- Concrete cipher implementations expose ergonomic decrypt entry points.
 
 ```rust,ignore
-// Using a concrete cipher (see `vitaminc_encrypt::Aes256Cipher`):
+// Using a concrete cipher of the legacy model:
 let plaintext: String = cipher.decrypt(ciphertext)?;
 let plaintext: String = cipher.decrypt_with_aad(ciphertext, "context data")?;
 ```
