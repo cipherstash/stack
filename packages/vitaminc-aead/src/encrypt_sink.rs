@@ -48,7 +48,8 @@ pub enum EncryptError<E> {
     /// The cipher refused to seal a leaf.
     #[error("cipher failed: {0}")]
     Cipher(E),
-    /// The source stopped the walk.
+    /// The source stopped the walk, or a sink teed beside this one did
+    /// (an index sink refusing a value, say); the error inside says which.
     #[error("source failed: {0}")]
     Source(#[source] SourceError),
     /// The value cannot be encrypted as given. See [`Unencryptable`].
