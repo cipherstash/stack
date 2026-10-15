@@ -20,6 +20,7 @@ vitaminc-random = { version = "0.5.1", path = "../random" }
 
 bytes = { version = "^1", features = ["serde"] }
 serde = { workspace = true }
+thiserror = { workspace = true }
 zeroize = { workspace = true }
 
 # Optional `Plaintext` sources for logical types: a date and a timestamp,

@@ -23,8 +23,6 @@ pub mod kinds;
 mod sources;
 mod tee;
 
-use core::fmt;
-
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroize;
 
@@ -90,9 +88,11 @@ pub trait Error: Sized {
 /// unpaired surrogate, a big integer was out of range, a timestamp was a
 /// leap second.
 ///
-/// Built on [`core::error::Error`], not `std`'s, so it has no dependency
-/// on the standard library beyond `alloc`.
-#[derive(Debug)]
+/// Transparent: it displays as the wrapped error, and its `source()` is the
+/// wrapped error's, so a reporter that walks the chain sees what lies behind
+/// a failed getter.
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
 pub struct SourceError(Box<dyn core::error::Error + Send + Sync>);
 
 impl SourceError {
@@ -109,20 +109,6 @@ impl SourceError {
     /// The underlying error, which can be downcast to its concrete type.
     pub fn inner(&self) -> &(dyn core::error::Error + Send + Sync + 'static) {
         &*self.0
-    }
-}
-
-impl fmt::Display for SourceError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-/// Transparent: the cause chain is the wrapped error's, so a reporter that
-/// walks `source()` sees what lies behind a failed getter.
-impl core::error::Error for SourceError {
-    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
-        self.0.source()
     }
 }
 
