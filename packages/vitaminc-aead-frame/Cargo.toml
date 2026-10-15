@@ -1,0 +1,28 @@
+[package]
+name = "vitaminc-aead-frame"
+description = "Transport frame and ciphertext codec for carrying Vitamin-C AEAD values and ciphertexts across an FFI boundary. Part of the Vitamin-C cryptographic suite."
+documentation = "https://docs.rs/vitaminc-aead-frame"
+version.workspace = true
+repository.workspace = true
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+vitaminc-aead = { version = "0.5.1", path = "../aead" }
+
+[dev-dependencies]
+serde_json = "1"
+# Path-only, so publish order does not matter: the conformance test builds
+# each vector's scalar independently through the chrono and rust_decimal
+# conversions, and the fixture test opens a pre-ADR-0001 ciphertext with
+# real AES-256-GCM.
+vitaminc-aead = { path = "../aead", features = ["chrono", "rust_decimal"] }
+vitaminc-encrypt = { path = "../encrypt" }
+vitaminc-protected = { path = "../protected" }
+chrono = { version = "0.4.44", default-features = false, features = ["std"] }
+rust_decimal = { version = "1.41", default-features = false, features = ["std"] }
