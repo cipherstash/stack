@@ -167,6 +167,20 @@ pub fn write_leaf(
     write(ty, v, Form::Leaf, out)
 }
 
+/// An upper bound on the bytes [`write()`] appends for `v` in either form:
+/// an envelope, a tag, a length and the payload. Lets a caller size a
+/// `Protected` buffer once rather than let it regrow, since a regrowing
+/// `Vec` frees its old allocation without wiping it.
+pub fn max_len(v: &Physical<'_>) -> usize {
+    const HEADER: usize = 3 + 1 + 4;
+    let payload = match v {
+        Physical::Text(s) => s.len(),
+        Physical::Bytes(b) => b.len(),
+        _ => 16,
+    };
+    HEADER.saturating_add(payload)
+}
+
 /// Whether `ty` is written with one of today's tags rather than the
 /// envelope.
 fn has_shorthand(ty: Logical) -> bool {
@@ -456,6 +470,27 @@ fn read_int(tag: u8, c: &mut Cursor<'_>) -> Result<Option<Int>, ScalarError> {
 mod tests {
     use super::*;
     use crate::plaintext::kinds::{MAX_DATE_DAYS, MAX_TIMESTAMP_NANOS};
+
+    #[test]
+    fn max_len_is_a_header_plus_the_payload() {
+        assert_eq!(max_len(&Physical::Text("abc")), 11);
+        assert_eq!(max_len(&Physical::Bytes(&[1, 2, 3, 4])), 12);
+        assert_eq!(max_len(&Physical::Int(Int::U128(1))), 24);
+        // And it bounds what either form writes, envelope included.
+        let ty = Logical::from_wire(200, 0);
+        for v in [
+            Physical::Text("abc"),
+            Physical::Bytes(&[1, 2, 3, 4]),
+            Physical::Int(Int::U128(u128::MAX)),
+            Physical::Float(Float::F64(1.5)),
+        ] {
+            for form in [Form::Leaf, Form::Frame] {
+                let mut out = Vec::new();
+                write(ty, v, form, &mut out).expect("writes");
+                assert!(out.len() <= max_len(&v), "{v:?}");
+            }
+        }
+    }
 
     fn leaf(ty: Option<Logical>, v: Physical<'_>) -> Vec<u8> {
         let mut out = Vec::new();

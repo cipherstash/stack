@@ -9,21 +9,33 @@ mod decipher;
 mod decrypt;
 mod element;
 mod encrypt;
+mod encrypt_sink;
+pub mod frame;
 #[cfg(feature = "hlist")]
 pub mod hlist;
 pub mod leaf;
 mod nonce;
 mod passthrough;
 pub mod plaintext;
+pub mod seal;
 pub mod tags;
 #[cfg(test)]
 mod test_util;
+mod walk;
 
+#[doc(inline)]
+pub use encrypt_sink::{encrypt, encrypt_async, plan, EncryptError, EncryptSink, Unencryptable};
+#[doc(inline)]
+pub use frame::{to_frame, Frame, FrameWriter, PassthroughFrame};
 #[doc(inline)]
 pub use plaintext::{
     Bytes, Float, Int, Logical, MapSink, Physical, Plaintext, Raw, SeqSink, Sink, SourceError, Tee,
     TimeUnit, UnknownLogical,
 };
+#[doc(inline)]
+pub use seal::{Node, Opened, Pending};
+#[doc(inline)]
+pub use walk::{decrypt_into, decrypt_into_async, decrypt_to_frame, walk, DecryptError};
 
 #[doc(inline)]
 #[allow(deprecated)]
