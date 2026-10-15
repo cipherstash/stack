@@ -18,7 +18,7 @@
 
 use std::collections::HashSet;
 
-use vitaminc_protected::{Controlled, Protected};
+use vitaminc_protected::{Controlled, OpaqueDebug, Protected, TimingSafeEq};
 use zeroize::Zeroize;
 
 use crate::leaf::{self, Form, ScalarError};
@@ -40,20 +40,11 @@ pub const MAX_DEPTH: usize = 128;
 
 /// Exactly one validated value node, borrowed.
 ///
-/// A frame of plaintext is plaintext, so `Debug` shows only its length and
-/// there is no `==`: comparing frames would compare plaintext in variable
-/// time.
-#[derive(Clone, Copy)]
+/// A frame of plaintext is plaintext, so `Debug` is redacted and `==` is
+/// constant time.
+#[derive(Clone, Copy, OpaqueDebug, TimingSafeEq)]
 pub struct Frame<'a> {
     bytes: &'a [u8],
-}
-
-impl core::fmt::Debug for Frame<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Frame")
-            .field("len", &self.bytes.len())
-            .finish_non_exhaustive()
-    }
 }
 
 /// The bytes are not a well-formed frame.
@@ -225,8 +216,10 @@ fn visit_node<S: Sink>(c: &mut Cursor<'_>, sink: S) -> Result<S::Ok, S::Error> {
 }
 
 /// An owned frame: the payload a ciphertext carries for a passthrough
-/// subtree. Non-sensitive by contract; neither sealed nor authenticated.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// subtree. Non-sensitive by contract; neither sealed nor authenticated,
+/// and never wiped. `Debug` and `==` match [`Frame`]'s all the same, so a
+/// frame prints and compares one way whichever form it is in.
+#[derive(Clone, OpaqueDebug, TimingSafeEq)]
 pub struct PassthroughFrame(pub Vec<u8>);
 
 impl PassthroughFrame {
@@ -708,19 +701,19 @@ mod tests {
         let bytes = [
             OBJECT, 2, 0, 0, 0, 1, 0, 0, 0, b'k', 0x00, 1, 0, 0, 0, b'k', 0x00,
         ];
-        assert_eq!(Frame::parse(&bytes).err(), Some(FrameError));
+        assert_eq!(Frame::parse(&bytes), Err(FrameError));
     }
 
     #[test]
     fn malformed_frames_are_refused() {
-        assert_eq!(Frame::parse(&[]).err(), Some(FrameError));
-        assert_eq!(Frame::parse(&[0x00, 0x00]).err(), Some(FrameError));
-        assert_eq!(Frame::parse(&[ARRAY, 1, 0, 0, 0]).err(), Some(FrameError));
+        assert_eq!(Frame::parse(&[]), Err(FrameError));
+        assert_eq!(Frame::parse(&[0x00, 0x00]), Err(FrameError));
+        assert_eq!(Frame::parse(&[ARRAY, 1, 0, 0, 0]), Err(FrameError));
         assert_eq!(
-            Frame::parse(&[OBJECT, 1, 0, 0, 0, 1, 0, 0, 0, 0xFF, 0x00]).err(),
-            Some(FrameError)
+            Frame::parse(&[OBJECT, 1, 0, 0, 0, 1, 0, 0, 0, 0xFF, 0x00]),
+            Err(FrameError)
         );
-        assert_eq!(Frame::parse(&[PASSTHROUGH]).err(), Some(FrameError));
+        assert_eq!(Frame::parse(&[PASSTHROUGH]), Err(FrameError));
         assert_eq!(
             Frame::parse(&[0x0A, 2, 0, 0, 0, b'a']).err(),
             Some(FrameError)
@@ -780,7 +773,7 @@ mod tests {
                 Kind::Pass => vec![PASSTHROUGH],
             };
             deeper.extend_from_slice(&bytes);
-            assert_eq!(Frame::parse(&deeper).err(), Some(FrameError));
+            assert_eq!(Frame::parse(&deeper), Err(FrameError));
         }
 
         struct Deep(usize);
@@ -802,10 +795,24 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_debugs_as_its_length_only() {
+    fn a_frame_debugs_redacted_and_compares_by_value() {
         let bytes = frame_of("secret");
-        let shown = format!("{:?}", Frame::parse(&bytes).expect("parses"));
-        assert_eq!(shown, format!("Frame {{ len: {}, .. }}", bytes.len()));
+        let frame = Frame::parse(&bytes).expect("parses");
+        let shown = format!("{frame:?}");
+        assert!(
+            shown.contains("***") && !shown.contains("secret"),
+            "{shown}"
+        );
+        assert!(!shown.contains(&bytes.len().to_string()), "{shown}");
+        let pass = format!("{:?}", PassthroughFrame(bytes.clone()));
+        assert!(pass.contains("***") && !pass.contains("secret"), "{pass}");
+
+        let same = bytes.clone();
+        let other = frame_of("public");
+        assert_eq!(frame, Frame::parse(&same).expect("parses"));
+        assert_ne!(frame, Frame::parse(&other).expect("parses"));
+        assert_eq!(PassthroughFrame(bytes.clone()), PassthroughFrame(same));
+        assert_ne!(PassthroughFrame(bytes), PassthroughFrame(other));
     }
 
     #[test]
