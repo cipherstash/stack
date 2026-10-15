@@ -75,12 +75,15 @@ pub trait Error: Sized {
 /// A failure reading the source: a host getter threw, a string had an
 /// unpaired surrogate, a big integer was out of range, a timestamp was a
 /// leap second.
+///
+/// Built on [`core::error::Error`], not `std`'s, so it has no dependency
+/// on the standard library beyond `alloc`.
 #[derive(Debug)]
-pub struct SourceError(Box<dyn std::error::Error + Send + Sync>);
+pub struct SourceError(Box<dyn core::error::Error + Send + Sync>);
 
 impl SourceError {
     /// A source error from any error type.
-    pub fn new(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+    pub fn new(error: impl core::error::Error + Send + Sync + 'static) -> Self {
         Self(Box::new(error))
     }
 
@@ -90,7 +93,7 @@ impl SourceError {
     }
 
     /// The underlying error.
-    pub fn inner(&self) -> &(dyn std::error::Error + Send + Sync) {
+    pub fn inner(&self) -> &(dyn core::error::Error + Send + Sync) {
         &*self.0
     }
 }
@@ -101,7 +104,7 @@ impl fmt::Display for SourceError {
     }
 }
 
-impl std::error::Error for SourceError {}
+impl core::error::Error for SourceError {}
 
 /// A consumer of one value's description.
 ///
@@ -120,6 +123,33 @@ pub trait Sink: Sized {
 
     /// One scalar: a physical value, and the logical type it represents,
     /// if any. See [`kinds`].
+    ///
+    /// # Examples
+    ///
+    /// A plain value has no logical type. A value that means something
+    /// more names the type it is stored as, and the sink checks that the
+    /// physical value fits it ([`Logical::admits`]).
+    ///
+    /// ```
+    /// use vitaminc_aead::plaintext::{Int, Logical, Physical, Plaintext, Sink};
+    ///
+    /// struct Celsius(i32);
+    ///
+    /// impl Plaintext for Celsius {
+    ///     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+    ///         sink.scalar(None, Physical::Int(Int::I32(self.0)))
+    ///     }
+    /// }
+    ///
+    /// /// Days since 1970-01-01.
+    /// struct Day(i32);
+    ///
+    /// impl Plaintext for Day {
+    ///     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+    ///         sink.scalar(Some(Logical::Date), Physical::Int(Int::I32(self.0)))
+    ///     }
+    /// }
+    /// ```
     fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<Self::Ok, Self::Error>;
 
     /// Start a sequence. `len` is a hint; a source that does not know its
@@ -188,6 +218,22 @@ where
 
 /// Walk each `(key, value)` into its own entry sink: the loop every map
 /// source writes.
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::BTreeMap;
+/// use vitaminc_aead::plaintext::{visit_map, Plaintext, Sink};
+///
+/// struct Scores(BTreeMap<String, u32>);
+///
+/// impl Plaintext for Scores {
+///     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+///         let len = Some(self.0.len());
+///         visit_map(sink, len, self.0.iter().map(|(name, score)| (name.as_str(), *score)))
+///     }
+/// }
+/// ```
 pub fn visit_map<'k, S, I, P>(sink: S, len: Option<usize>, entries: I) -> Result<S::Ok, S::Error>
 where
     S: Sink,

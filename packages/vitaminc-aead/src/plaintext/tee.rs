@@ -8,6 +8,24 @@ use super::kinds::{Logical, Physical};
 use super::{MapSink, Plaintext, SeqSink, Sink};
 
 /// A pair of sinks that forwards every call to both and pairs the results.
+///
+/// # Examples
+///
+/// One walk of a value, consumed by two sinks that share an error type:
+///
+/// ```
+/// use vitaminc_aead::plaintext::{Plaintext, Sink, Tee};
+///
+/// fn both<A, B>(value: impl Plaintext, a: A, b: B) -> Result<(A::Ok, B::Ok), A::Error>
+/// where
+///     A: Sink,
+///     B: Sink<Error = A::Error>,
+/// {
+///     value.visit(Tee(a, b))
+/// }
+/// ```
+///
+/// Tees nest, so any number of sinks can share the walk: `Tee(Tee(a, b), c)`.
 pub struct Tee<A, B>(pub A, pub B);
 
 impl<A: Sink, B: Sink<Error = A::Error>> Sink for Tee<A, B> {
@@ -18,24 +36,27 @@ impl<A: Sink, B: Sink<Error = A::Error>> Sink for Tee<A, B> {
 
     fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<Self::Ok, A::Error> {
         // `value` is borrowed, so both sides read the same bytes.
-        Ok((self.0.scalar(ty, value)?, self.1.scalar(ty, value)?))
+        let (a, b) = (self.0, self.1);
+        a.scalar(ty, value)
+            .and_then(|a| b.scalar(ty, value).map(|b| (a, b)))
     }
 
     fn seq(self, len: Option<usize>) -> Result<Self::Seq, A::Error> {
-        Ok(Tee(self.0.seq(len)?, self.1.seq(len)?))
+        let (a, b) = (self.0, self.1);
+        a.seq(len).and_then(|a| b.seq(len).map(|b| Tee(a, b)))
     }
 
     fn map(self, len: Option<usize>) -> Result<Self::Map, A::Error> {
-        Ok(Tee(self.0.map(len)?, self.1.map(len)?))
+        let (a, b) = (self.0, self.1);
+        a.map(len).and_then(|a| b.map(len).map(|b| Tee(a, b)))
     }
 
     /// The one call a tee cannot share: each side walks the subtree for
     /// itself, so it is cloned. Passthrough is cleartext by contract.
     fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<Self::Ok, A::Error> {
-        Ok((
-            self.0.passthrough(value.clone())?,
-            self.1.passthrough(value)?,
-        ))
+        let (a, b) = (self.0, self.1);
+        a.passthrough(value.clone())
+            .and_then(|a| b.passthrough(value).map(|b| (a, b)))
     }
 }
 
@@ -48,11 +69,13 @@ impl<A: SeqSink, B: SeqSink<Error = A::Error>> SeqSink for Tee<A, B> {
         Self: 's;
 
     fn element(&mut self) -> Result<Self::Element<'_>, A::Error> {
-        Ok(Tee(self.0.element()?, self.1.element()?))
+        let Tee(a, b) = self;
+        a.element().and_then(|a| b.element().map(|b| Tee(a, b)))
     }
 
     fn end(self) -> Result<Self::Ok, A::Error> {
-        Ok((self.0.end()?, self.1.end()?))
+        let (a, b) = (self.0, self.1);
+        a.end().and_then(|a| b.end().map(|b| (a, b)))
     }
 }
 
@@ -65,11 +88,13 @@ impl<A: MapSink, B: MapSink<Error = A::Error>> MapSink for Tee<A, B> {
         Self: 's;
 
     fn entry(&mut self, key: &str) -> Result<Self::Entry<'_>, A::Error> {
-        Ok(Tee(self.0.entry(key)?, self.1.entry(key)?))
+        let Tee(a, b) = self;
+        a.entry(key).and_then(|a| b.entry(key).map(|b| Tee(a, b)))
     }
 
     fn end(self) -> Result<Self::Ok, A::Error> {
-        Ok((self.0.end()?, self.1.end()?))
+        let (a, b) = (self.0, self.1);
+        a.end().and_then(|a| b.end().map(|b| (a, b)))
     }
 }
 

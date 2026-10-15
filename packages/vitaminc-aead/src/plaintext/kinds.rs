@@ -23,13 +23,22 @@
 
 use core::fmt;
 
+use vitaminc_protected::{Choice, OpaqueDebug, TimingSafeEq};
+use zeroize::Zeroize;
+
 /// One scalar value, as stored. Borrowed, so a source can hand over text
 /// and bytes without copying.
 ///
-/// Equality is structural: an int's width and a float's bit pattern both
-/// count. It is for tests and sinks that compare what a source said, not
-/// for comparing values across widths (see [`Int::sign_and_word`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A scalar is plaintext, so `Debug` redacts the value and `==` compares
+/// in constant time (see [`TimingSafeEq`]). Equality is structural: an
+/// int's width and a float's bit pattern both count. It is for tests and
+/// sinks that compare what a source said, not for comparing values across
+/// widths (see [`Int::sign_and_word`]).
+///
+/// `Physical` is a view: the text and bytes it borrows are owned, and
+/// wiped, by the source. It therefore does not implement `Zeroize`
+/// itself; [`Int`] and [`Float`], which are owned, do.
+#[derive(Clone, Copy, Eq)]
 pub enum Physical<'a> {
     Null,
     Bool(bool),
@@ -48,7 +57,7 @@ pub enum Physical<'a> {
 /// [`to_i128`]: Int::to_i128
 /// [`to_u128`]: Int::to_u128
 /// [`sign_and_word`]: Int::sign_and_word
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, OpaqueDebug, Eq, Zeroize)]
 pub enum Int {
     I8(i8),
     I16(i16),
@@ -116,23 +125,87 @@ int_from! {
 
 /// A float, with the width it came from. Compared and carried by bit
 /// pattern, so `NaN` payloads and `-0.0` survive, and `-0.0 != 0.0`.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, OpaqueDebug, Zeroize)]
 pub enum Float {
     F32(f32),
     F64(f64),
 }
 
-impl PartialEq for Float {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Float::F32(a), Float::F32(b)) => a.to_bits() == b.to_bits(),
-            (Float::F64(a), Float::F64(b)) => a.to_bits() == b.to_bits(),
-            _ => false,
+impl Eq for Float {}
+
+// Written by hand because the `OpaqueDebug` derive does not carry an
+// enum's lifetime onto its impl. Same output shape as the derive: the kind
+// and width, never the value.
+impl fmt::Debug for Physical<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Physical::Null => f.write_str("Physical::Null"),
+            Physical::Bool(_) => f.write_str("Physical::Bool(\"***\")"),
+            Physical::Int(i) => write!(f, "Physical::Int({i:?})"),
+            Physical::Float(x) => write!(f, "Physical::Float({x:?})"),
+            Physical::Text(_) => f.write_str("Physical::Text(\"***\")"),
+            Physical::Bytes(_) => f.write_str("Physical::Bytes(\"***\")"),
         }
     }
 }
 
-impl Eq for Float {}
+impl OpaqueDebug for Physical<'_> {}
+
+// Equality is constant time in the value. The width (the variant) is a
+// host-fidelity hint, not a secret, so it may be compared by branch.
+
+impl TimingSafeEq for Int {
+    fn ts_eq(&self, other: &Self) -> Choice {
+        let (sign_a, word_a) = self.sign_and_word();
+        let (sign_b, word_b) = other.sign_and_word();
+        let same_width = core::mem::discriminant(self) == core::mem::discriminant(other);
+        Choice::from(u8::from(same_width))
+            & u8::from(sign_a).ts_eq(&u8::from(sign_b))
+            & word_a.ts_eq(&word_b)
+    }
+}
+
+impl PartialEq for Int {
+    fn eq(&self, other: &Self) -> bool {
+        self.ts_eq(other).into()
+    }
+}
+
+impl TimingSafeEq for Float {
+    fn ts_eq(&self, other: &Self) -> Choice {
+        match (self, other) {
+            (Float::F32(a), Float::F32(b)) => a.to_bits().ts_eq(&b.to_bits()),
+            (Float::F64(a), Float::F64(b)) => a.to_bits().ts_eq(&b.to_bits()),
+            _ => Choice::from(0),
+        }
+    }
+}
+
+impl PartialEq for Float {
+    fn eq(&self, other: &Self) -> bool {
+        self.ts_eq(other).into()
+    }
+}
+
+impl TimingSafeEq for Physical<'_> {
+    fn ts_eq(&self, other: &Self) -> Choice {
+        match (self, other) {
+            (Physical::Null, Physical::Null) => Choice::from(1),
+            (Physical::Bool(a), Physical::Bool(b)) => u8::from(*a).ts_eq(&u8::from(*b)),
+            (Physical::Int(a), Physical::Int(b)) => a.ts_eq(b),
+            (Physical::Float(a), Physical::Float(b)) => a.ts_eq(b),
+            (Physical::Text(a), Physical::Text(b)) => a.ts_eq(b),
+            (Physical::Bytes(a), Physical::Bytes(b)) => TimingSafeEq::ts_eq(*a, *b),
+            _ => Choice::from(0),
+        }
+    }
+}
+
+impl PartialEq for Physical<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.ts_eq(other).into()
+    }
+}
 
 /// What a physical value means. Carried per value, so a parameter such as
 /// a decimal's scale can differ from one value to the next.
@@ -231,31 +304,49 @@ pub const MAX_TIMESTAMP_NANOS: i128 = (MAX_DATE_DAYS as i128 + 1) * NANOS_PER_DA
 
 const NANOS_PER_DAY: i128 = 86_400 * 1_000_000_000;
 
+/// The wire ids of the logical types. These are the cross-language
+/// commitment for the logical envelope and must never change; a new type
+/// takes the next free id.
+pub mod id {
+    /// No logical type.
+    pub const NONE: u8 = 0;
+    pub const UNDEFINED: u8 = 1;
+    pub const DATE: u8 = 2;
+    pub const TIMESTAMP: u8 = 3;
+    pub const DECIMAL: u8 = 4;
+    pub const UUID: u8 = 5;
+    /// The highest id this build knows. Any id above it is
+    /// [`Logical::Unknown`](super::Logical::Unknown).
+    pub const LAST_KNOWN: u8 = UUID;
+}
+
 impl Logical {
     /// The wire id and parameter, for the generic logical envelope.
     pub fn to_wire(self) -> (u8, u8) {
         match self {
-            Logical::Undefined => (1, 0),
-            Logical::Date => (2, 0),
-            Logical::Timestamp(unit) => (3, unit as u8),
-            Logical::Decimal { scale } => (4, scale),
-            Logical::Uuid => (5, 0),
+            Logical::Undefined => (id::UNDEFINED, 0),
+            Logical::Date => (id::DATE, 0),
+            Logical::Timestamp(unit) => (id::TIMESTAMP, unit as u8),
+            Logical::Decimal { scale } => (id::DECIMAL, scale),
+            Logical::Uuid => (id::UUID, 0),
             Logical::Unknown(u) => (u.id, u.param),
         }
     }
 
-    /// The logical type for a wire id and parameter. `None` for id 0, which
-    /// means "no logical type", and for a known id with a parameter it
-    /// cannot take.
+    /// The logical type for a wire id and parameter. `None` for
+    /// [`id::NONE`], which means "no logical type", and for a known id with
+    /// a parameter it cannot take.
     pub fn from_wire(id: u8, param: u8) -> Option<Self> {
         match (id, param) {
-            (0, _) => None,
-            (1, 0) => Some(Logical::Undefined),
-            (2, 0) => Some(Logical::Date),
-            (3, p) => TimeUnit::from_wire(p).map(Logical::Timestamp),
-            (4, scale) => (scale <= MAX_DECIMAL_SCALE).then_some(Logical::Decimal { scale }),
-            (5, 0) => Some(Logical::Uuid),
-            (1..=5, _) => None,
+            (id::NONE, _) => None,
+            (id::UNDEFINED, 0) => Some(Logical::Undefined),
+            (id::DATE, 0) => Some(Logical::Date),
+            (id::TIMESTAMP, p) => TimeUnit::from_wire(p).map(Logical::Timestamp),
+            (id::DECIMAL, scale) => {
+                (scale <= MAX_DECIMAL_SCALE).then_some(Logical::Decimal { scale })
+            }
+            (id::UUID, 0) => Some(Logical::Uuid),
+            (id::UNDEFINED..=id::LAST_KNOWN, _) => None,
             (id, param) => Some(Logical::Unknown(UnknownLogical { id, param })),
         }
     }
@@ -451,40 +542,6 @@ pub mod decimal {
     }
 }
 
-impl fmt::Display for Int {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Int::I8(v) => write!(f, "i8 {v}"),
-            Int::I16(v) => write!(f, "i16 {v}"),
-            Int::I32(v) => write!(f, "i32 {v}"),
-            Int::I64(v) => write!(f, "i64 {v}"),
-            Int::I128(v) => write!(f, "i128 {v}"),
-            Int::U8(v) => write!(f, "u8 {v}"),
-            Int::U16(v) => write!(f, "u16 {v}"),
-            Int::U32(v) => write!(f, "u32 {v}"),
-            Int::U64(v) => write!(f, "u64 {v}"),
-            Int::U128(v) => write!(f, "u128 {v}"),
-        }
-    }
-}
-
-impl fmt::Display for Physical<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Physical::Null => f.write_str("null"),
-            Physical::Bool(v) => write!(f, "{v}"),
-            Physical::Int(v) => write!(f, "{v}"),
-            Physical::Float(Float::F32(v)) => write!(f, "f32 {v}"),
-            Physical::Float(Float::F64(v)) => write!(f, "f64 {v}"),
-            Physical::Text(v) => write!(f, "{v:?}"),
-            Physical::Bytes(v) => {
-                f.write_str("0x")?;
-                v.iter().try_for_each(|b| write!(f, "{b:02x}"))
-            }
-        }
-    }
-}
-
 impl fmt::Display for Logical {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -588,6 +645,70 @@ mod tests {
     }
 
     #[test]
+    fn ints_compare_by_width_sign_and_value() {
+        assert_eq!(Int::I8(-1), Int::I8(-1));
+        assert_ne!(Int::I8(-1), Int::I8(1));
+        assert_ne!(Int::I8(-1), Int::I128(-1));
+        assert_ne!(Int::I8(-1), Int::U8(255));
+        assert_eq!(Int::U128(u128::MAX), Int::U128(u128::MAX));
+        assert_ne!(Int::U128(u128::MAX), Int::I128(-1));
+    }
+
+    #[test]
+    fn every_physical_kind_compares_to_itself_and_nothing_else() {
+        let kinds = [
+            Physical::Null,
+            Physical::Bool(true),
+            Physical::Int(Int::I32(1)),
+            Physical::Float(Float::F64(1.0)),
+            Physical::Text("a"),
+            Physical::Bytes(b"a"),
+        ];
+        for (i, a) in kinds.iter().enumerate() {
+            for (j, b) in kinds.iter().enumerate() {
+                assert_eq!(a == b, i == j, "{a:?} {b:?}");
+            }
+        }
+        assert_ne!(Physical::Bool(true), Physical::Bool(false));
+        assert_ne!(Physical::Text("a"), Physical::Text("b"));
+        assert_ne!(Physical::Text("a"), Physical::Text("ab"));
+        assert_ne!(Physical::Bytes(b"a"), Physical::Bytes(b"b"));
+        assert_ne!(Physical::Bytes(b"a"), Physical::Bytes(b"ab"));
+    }
+
+    #[test]
+    fn debug_output_is_redacted() {
+        for v in [
+            format!("{:?}", Physical::Text("secret")),
+            format!("{:?}", Physical::Bytes(b"secret")),
+            format!("{:?}", Physical::Int(Int::I64(1_234_567))),
+            format!("{:?}", Physical::Float(Float::F64(1_234_567.0))),
+            format!("{:?}", Physical::Bool(true)),
+            format!("{:?}", Int::U8(123)),
+        ] {
+            assert!(
+                !v.contains("secret")
+                    && !v.contains("1234567")
+                    && !v.contains("true")
+                    && !v.contains("123"),
+                "{v}"
+            );
+            assert!(v.contains("***"), "{v}");
+        }
+        assert_eq!(format!("{:?}", Physical::Null), "Physical::Null");
+    }
+
+    #[test]
+    fn ints_and_floats_zeroize_in_place() {
+        let mut i = Int::I64(7);
+        i.zeroize();
+        assert_eq!(i, Int::I64(0));
+        let mut f = Float::F32(1.5);
+        f.zeroize();
+        assert_eq!(f, Float::F32(0.0));
+    }
+
+    #[test]
     fn a_javascript_date_beyond_chrono_is_refused() {
         // `new Date(8.64e15)`: valid in JavaScript, past chrono's range.
         let millis = Logical::Timestamp(TimeUnit::Millis);
@@ -613,37 +734,7 @@ mod tests {
     }
 
     #[test]
-    fn display_names_the_width_and_the_type() {
-        let ints = [
-            (Int::I8(-1), "i8 -1"),
-            (Int::I16(2), "i16 2"),
-            (Int::I32(3), "i32 3"),
-            (Int::I64(4), "i64 4"),
-            (Int::I128(5), "i128 5"),
-            (Int::U8(6), "u8 6"),
-            (Int::U16(7), "u16 7"),
-            (Int::U32(8), "u32 8"),
-            (Int::U64(9), "u64 9"),
-            (Int::U128(10), "u128 10"),
-        ];
-        for (v, s) in ints {
-            assert_eq!(v.to_string(), s);
-        }
-
-        let physical = [
-            (Physical::Null, "null"),
-            (Physical::Bool(true), "true"),
-            (Physical::Int(Int::U8(1)), "u8 1"),
-            (Physical::Float(Float::F32(1.5)), "f32 1.5"),
-            (Physical::Float(Float::F64(-2.5)), "f64 -2.5"),
-            (Physical::Text("a\"b"), "\"a\\\"b\""),
-            (Physical::Bytes(&[0x0f, 0xa0]), "0x0fa0"),
-            (Physical::Bytes(&[]), "0x"),
-        ];
-        for (v, s) in physical {
-            assert_eq!(v.to_string(), s);
-        }
-
+    fn logical_displays_its_type() {
         let logical = [
             (Logical::Undefined, "undefined"),
             (Logical::Date, "date"),
