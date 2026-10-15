@@ -54,7 +54,7 @@ impl core::fmt::Display for FrameError {
     }
 }
 
-impl std::error::Error for FrameError {}
+impl core::error::Error for FrameError {}
 
 impl<'a> Frame<'a> {
     /// Validate `bytes` as exactly one value node.

@@ -487,7 +487,7 @@ mod tests {
             for form in [Form::Leaf, Form::Frame] {
                 let mut out = Vec::new();
                 write(ty, v, form, &mut out).expect("writes");
-                assert!(out.len() <= max_len(&v), "{v}");
+                assert!(out.len() <= max_len(&v), "{v:?}");
             }
         }
     }
