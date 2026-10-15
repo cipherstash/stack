@@ -1298,4 +1298,380 @@ mod tests {
         assert_eq!(round_trip::<uuid::Uuid>(id).expect("uuid"), id);
         assert_eq!(expected(round_trip::<uuid::Uuid>(vec![5u8; 16])), "uuid");
     }
+
+    #[test]
+    fn a_map_target_refuses_a_passthrough() {
+        struct Clear;
+        impl Plaintext for Clear {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                let mut map = BTreeMap::new();
+                map.insert("a", 1u16);
+                sink.passthrough(map)
+            }
+        }
+        assert_eq!(expected(round_trip::<HashMap<String, u16>>(Clear)), "map");
+        assert_eq!(expected(round_trip::<BTreeMap<String, u16>>(Clear)), "map");
+    }
+
+    #[test]
+    fn byte_targets_refuse_a_uuid_leaf() {
+        let uuid = || Raw(Some(Logical::Uuid), Physical::Bytes(&[5; 16]));
+        assert_eq!(expected(round_trip::<Vec<u8>>(uuid())), "bytes");
+        assert_eq!(expected(round_trip::<[u8; 16]>(uuid())), "byte array");
+        assert_eq!(
+            expected(round_trip::<Protected<[u8; 16]>>(uuid())),
+            "byte array"
+        );
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn chrono_targets_refuse_the_other_logical_types() {
+        use crate::plaintext::TimeUnit;
+        use ::chrono::{DateTime, NaiveDate, Utc};
+        let date = NaiveDate::from_ymd_opt(2024, 2, 29).expect("date");
+        let ts = DateTime::from_timestamp(1_700_000_000, 0).expect("ts");
+        assert_eq!(expected(round_trip::<DateTime<Utc>>(date)), "timestamp");
+        assert_eq!(
+            expected(round_trip::<DateTime<Utc>>(1_700_000_000i64)),
+            "timestamp"
+        );
+        assert_eq!(expected(round_trip::<NaiveDate>(ts)), "date");
+
+        let instant = DateTime::from_timestamp(2, 0).expect("timestamp");
+        for (unit, count) in [
+            (TimeUnit::Seconds, 2),
+            (TimeUnit::Millis, 2_000),
+            (TimeUnit::Micros, 2_000_000),
+            (TimeUnit::Nanos, 2_000_000_000),
+        ] {
+            let raw = Raw(
+                Some(Logical::Timestamp(unit)),
+                Physical::Int(Int::I64(count)),
+            );
+            assert_eq!(round_trip::<DateTime<Utc>>(raw).expect("unit"), instant);
+        }
+    }
+
+    #[test]
+    fn a_wrong_aad_fails_before_the_target_is_checked() {
+        let sealed = || encrypt(34u32, &Mock, "ctx").expect("encrypts");
+        assert!(matches!(
+            decrypt::<String, _, _>(&Mock, sealed(), "other"),
+            Err(DecryptError::Cipher(_))
+        ));
+        assert!(matches!(
+            decrypt::<Vec<u32>, _, _>(&Mock, sealed(), "other"),
+            Err(DecryptError::Cipher(_))
+        ));
+        let remote = Remote::new(true);
+        // With the right AAD the async path decrypts, so the next
+        // assertion is about the AAD and nothing else.
+        assert_eq!(
+            block_on(decrypt_async::<u32, _, _>(&remote, sealed(), "ctx")).expect("decrypts"),
+            34
+        );
+        assert!(matches!(
+            block_on(decrypt_async::<String, _, _>(&remote, sealed(), "other")),
+            Err(DecryptError::Cipher(_))
+        ));
+    }
+
+    #[test]
+    fn a_null_is_refused_where_no_option_is_expected() {
+        assert_eq!(expected(round_trip::<u32>(None::<u32>)), "u32");
+        assert_eq!(expected(round_trip::<String>(None::<String>)), "string");
+        assert_eq!(
+            expected(round_trip::<Vec<u32>>(None::<Vec<u32>>)),
+            "sequence"
+        );
+        assert_eq!(
+            expected(round_trip::<Vec<u32>>(vec![Some(1u32), None])),
+            "u32"
+        );
+        assert_eq!(
+            expected(round_trip::<u32>(Raw(
+                Some(Logical::Undefined),
+                Physical::Null
+            ))),
+            "u32"
+        );
+    }
+
+    #[test]
+    fn a_list_target_refuses_a_map() {
+        let mut map = BTreeMap::new();
+        map.insert("a", 1u32);
+        assert_eq!(expected(round_trip::<Vec<u32>>(map)), "sequence");
+    }
+
+    #[test]
+    fn number_targets_refuse_the_other_number_kinds() {
+        assert_eq!(expected(round_trip::<u32>(true)), "u32");
+        assert_eq!(expected(round_trip::<i64>(1.0f64)), "i64");
+        assert_eq!(expected(round_trip::<i64>(1.0f32)), "i64");
+        assert_eq!(expected(round_trip::<f64>(1i64)), "f64");
+        assert_eq!(expected(round_trip::<f32>(1u32)), "f32");
+    }
+
+    #[test]
+    fn integer_targets_accept_their_limits_and_nothing_past_them() {
+        assert_eq!(round_trip::<i8>(i8::MIN).expect("i8"), i8::MIN);
+        assert_eq!(round_trip::<i8>(127i32).expect("i8"), i8::MAX);
+        assert_eq!(expected(round_trip::<i8>(-129i32)), "i8");
+        assert_eq!(expected(round_trip::<i8>(128i32)), "i8");
+        assert_eq!(round_trip::<u64>(u64::MAX).expect("u64"), u64::MAX);
+        assert_eq!(expected(round_trip::<u64>(u128::from(u64::MAX) + 1)), "u64");
+        assert_eq!(round_trip::<u128>(u128::MAX).expect("u128"), u128::MAX);
+        assert_eq!(expected(round_trip::<u128>(-1i8)), "u128");
+        assert_eq!(round_trip::<i128>(i128::MIN).expect("i128"), i128::MIN);
+        assert_eq!(expected(round_trip::<i128>(u128::MAX)), "i128");
+    }
+
+    #[test]
+    fn a_source_error_displays_its_message() {
+        assert_eq!(
+            DecodeError::Source(SourceError::msg("getter threw")).to_string(),
+            "source failed: getter threw"
+        );
+        assert_eq!(DecodeError::Expected("u32").to_string(), "expected u32");
+    }
+
+    #[test]
+    fn protected_containers_round_trip() {
+        let ints = round_trip::<Protected<Vec<u32>>>(vec![1u32, 2, 3]).expect("decrypts");
+        assert_eq!(ints.risky_ref(), &[1, 2, 3]);
+        let some = round_trip::<Protected<Option<String>>>(Some("pw")).expect("decrypts");
+        assert_eq!(some.risky_ref().as_deref(), Some("pw"));
+        let none = round_trip::<Protected<Option<String>>>(None::<&str>).expect("decrypts");
+        assert_eq!(none.risky_ref(), &None);
+        let undefined =
+            round_trip::<Protected<Option<u32>>>(Raw(Some(Logical::Undefined), Physical::Null))
+                .expect("decrypts");
+        assert_eq!(undefined.risky_ref(), &None);
+        // Nested to any depth, containers inside options and the reverse.
+        let nested = round_trip::<Protected<Vec<Vec<String>>>>(vec![vec!["a", "b"], vec![]])
+            .expect("decrypts");
+        assert_eq!(
+            nested.risky_ref(),
+            &[vec![String::from("a"), String::from("b")], vec![]]
+        );
+        let list = round_trip::<Protected<Option<Vec<u32>>>>(Some(vec![7u32])).expect("decrypts");
+        assert_eq!(list.risky_ref(), &Some(vec![7]));
+        let arrays = round_trip::<Protected<Vec<Option<[u8; 2]>>>>(vec![Some([1u8, 2]), None])
+            .expect("decrypts");
+        assert_eq!(arrays.risky_ref(), &[Some([1, 2]), None]);
+        // `Vec<u8>` is still the byte leaf, not a sequence of `u8`.
+        let bytes = round_trip::<Protected<Vec<u8>>>(vec![9u8, 8]).expect("decrypts");
+        assert_eq!(bytes.risky_ref(), &[9, 8]);
+    }
+
+    #[test]
+    fn protected_containers_refuse_what_their_bare_forms_refuse() {
+        let mut map = BTreeMap::new();
+        map.insert("a", 1u32);
+        assert_eq!(expected(round_trip::<Protected<Vec<u32>>>(map)), "sequence");
+        assert_eq!(
+            expected(round_trip::<Protected<Vec<u32>>>(1u32)),
+            "sequence"
+        );
+        assert_eq!(
+            expected(round_trip::<Protected<Vec<u32>>>(vec!["x"])),
+            "u32"
+        );
+        assert_eq!(expected(round_trip::<Protected<Option<u32>>>("x")), "u32");
+        assert_eq!(
+            expected(round_trip::<Protected<Option<Vec<u32>>>>(1u32)),
+            "sequence"
+        );
+        struct Clear;
+        impl Plaintext for Clear {
+            fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                sink.passthrough(vec![1u32])
+            }
+        }
+        assert_eq!(
+            expected(round_trip::<Protected<Vec<u32>>>(Clear)),
+            "sequence"
+        );
+        assert_eq!(expected(round_trip::<Protected<Option<u32>>>(Clear)), "u32");
+        assert_eq!(expected(round_trip::<Protected<u32>>(Clear)), "u32");
+        assert_eq!(expected(round_trip::<Protected<u32>>(vec![1u32])), "u32");
+        let mut map = BTreeMap::new();
+        map.insert("a", 1u32);
+        assert_eq!(expected(round_trip::<Protected<u32>>(map)), "u32");
+    }
+
+    std::thread_local! {
+        static WIPES: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+    }
+
+    /// A scalar target that counts its wipes.
+    struct Wiped(u32);
+
+    impl Zeroize for Wiped {
+        fn zeroize(&mut self) {
+            self.0 = 0;
+            WIPES.with(|w| w.set(w.get() + 1));
+        }
+    }
+
+    impl FromScalar for Wiped {
+        const EXPECTED: &'static str = "wiped";
+        fn from_scalar(ty: Option<Logical>, v: Physical<'_>) -> Option<Self> {
+            u32::from_scalar(ty, v).map(Wiped)
+        }
+    }
+
+    #[test]
+    fn a_protected_list_that_fails_part_way_wipes_what_it_decoded() {
+        let source = vec![
+            Raw(None, Physical::Int(Int::U32(1))),
+            Raw(None, Physical::Int(Int::U32(2))),
+            Raw(None, Physical::Text("x")),
+        ];
+        WIPES.with(|w| w.set(0));
+        let result = round_trip::<Protected<Vec<Wiped>>>(source);
+        assert_eq!(expected(result), "wiped");
+        assert_eq!(WIPES.with(|w| w.get()), 2);
+    }
+
+    /// A sequence that does not say how long it is.
+    struct Unsized(u32);
+
+    impl Plaintext for Unsized {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            let mut seq = sink.seq(None)?;
+            for i in 0..self.0 {
+                i.visit(seq.element()?)?;
+            }
+            seq.end()
+        }
+    }
+
+    #[test]
+    fn a_protected_list_grows_by_doubling_into_a_fresh_buffer() {
+        let decode = |n| {
+            Unsized(n)
+                .visit(<Protected<Vec<u32>> as Decrypt>::sink())
+                .expect("decodes")
+        };
+        let five = decode(5);
+        assert_eq!(five.risky_ref(), &[0, 1, 2, 3, 4]);
+        assert_eq!(five.risky_ref().capacity(), 8);
+        let nine = decode(9);
+        assert_eq!(nine.risky_ref(), &(0..9).collect::<Vec<_>>());
+        assert_eq!(nine.risky_ref().capacity(), 16);
+    }
+
+    /// A struct target written by hand, as `#[derive(Decrypt)]` will write
+    /// one: a map with one field, opted into `Protected` through `Wrap`.
+    #[derive(Debug, PartialEq)]
+    struct Point {
+        x: u32,
+    }
+
+    impl Zeroize for Point {
+        fn zeroize(&mut self) {
+            self.x.zeroize();
+        }
+    }
+
+    struct PointSink;
+    struct PointFields(Option<u32>);
+
+    impl Sink for PointSink {
+        type Ok = Point;
+        type Error = DecodeError;
+        type Seq = Never<Point>;
+        type Map = PointFields;
+
+        fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<Point, DecodeError> {
+            Err(DecodeError::Expected("point"))
+        }
+
+        fn seq(self, _: Option<usize>) -> Result<Never<Point>, DecodeError> {
+            Err(DecodeError::Expected("point"))
+        }
+
+        fn map(self, _: Option<usize>) -> Result<PointFields, DecodeError> {
+            Ok(PointFields(None))
+        }
+
+        fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<Point, DecodeError> {
+            Err(DecodeError::Expected("point"))
+        }
+    }
+
+    impl MapSink for PointFields {
+        type Ok = Point;
+        type Error = DecodeError;
+        type Entry<'s> = Forward<u32, Slot<'s, u32>>;
+
+        fn entry(&mut self, key: &str) -> Result<Self::Entry<'_>, DecodeError> {
+            match key {
+                "x" => Ok(Forward(u32::sink(), Slot(&mut self.0))),
+                _ => Err(DecodeError::Expected("point")),
+            }
+        }
+
+        fn end(self) -> Result<Point, DecodeError> {
+            self.0
+                .map(|x| Point { x })
+                .ok_or(DecodeError::Expected("point"))
+        }
+    }
+
+    impl Decrypt for Point {
+        type Sink = PointSink;
+        fn sink() -> PointSink {
+            PointSink
+        }
+    }
+
+    impl DecryptProtected for Point {
+        type ProtectedSink = Wrap<PointSink>;
+        fn protected_sink() -> Wrap<PointSink> {
+            Wrap(PointSink)
+        }
+    }
+
+    #[test]
+    fn a_struct_target_opts_into_protected_through_wrap() {
+        let point = || {
+            let mut map = BTreeMap::new();
+            map.insert("x", 3u32);
+            map
+        };
+        let p = round_trip::<Protected<Point>>(point()).expect("decrypts");
+        assert_eq!(p.risky_ref(), &Point { x: 3 });
+        let some = round_trip::<Protected<Option<Point>>>(Some(point())).expect("decrypts");
+        assert_eq!(some.risky_ref(), &Some(Point { x: 3 }));
+        let list = round_trip::<Protected<Vec<Point>>>(vec![point()]).expect("decrypts");
+        assert_eq!(list.risky_ref(), &[Point { x: 3 }]);
+        assert_eq!(expected(round_trip::<Protected<Point>>(1u32)), "point");
+        assert_eq!(
+            expected(round_trip::<Protected<Point>>(vec![1u32])),
+            "point"
+        );
+        let mut extra = point();
+        extra.insert("y", 4u32);
+        assert_eq!(expected(round_trip::<Protected<Point>>(extra)), "point");
+    }
+
+    #[test]
+    fn wrap_moves_any_sink_result_into_protected() {
+        let n = Wrap(u32::sink())
+            .scalar(None, Physical::Int(Int::U32(5)))
+            .expect("decodes");
+        assert_eq!(n.risky_ref(), &5);
+        assert!(matches!(
+            Wrap(u32::sink()).passthrough(5u32),
+            Err(DecodeError::Expected("u32"))
+        ));
+        let list = vec![1u32, 2]
+            .visit(Wrap(<Vec<u32>>::sink()))
+            .expect("decodes");
+        assert_eq!(list.risky_ref(), &[1, 2]);
+    }
 }
