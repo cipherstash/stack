@@ -138,13 +138,21 @@ pub fn seal_all<C: Cipher>(
 }
 
 /// Seal every pending leaf in one `seal_many` call.
+///
+/// A tree with no leaves (a top-level passthrough) makes no call at all,
+/// as the sync path and the per-leaf defaults would not, so a batching
+/// provider is never asked for an empty batch.
 pub async fn seal_all_async<C: AsyncCipher>(
     cipher: &C,
     node: Node<Pending>,
 ) -> Result<Node<C::Leaf>, SealError<C::Error>> {
     let mut pending = Vec::new();
     let shape = split(node, &mut pending);
-    let leaves = cipher.seal_many(pending).await.map_err(SealError::Cipher)?;
+    let leaves = if pending.is_empty() {
+        Vec::new()
+    } else {
+        cipher.seal_many(pending).await.map_err(SealError::Cipher)?
+    };
     fill(shape, leaves).map_err(SealError::Count)
 }
 
@@ -179,7 +187,7 @@ pub fn open_all<'a, C: Cipher>(
 }
 
 /// Open every leaf in one `open_many` call, after the same structural
-/// check as [`open_all`].
+/// check as [`open_all`]. A tree with no leaves makes no call.
 pub async fn open_all_async<'a, C: AsyncCipher>(
     cipher: &C,
     node: Node<C::Leaf>,
@@ -188,7 +196,11 @@ pub async fn open_all_async<'a, C: AsyncCipher>(
     check_shape(&node)?;
     let mut sealed = Vec::new();
     let shape = split_with_aad(node, aad, &mut sealed);
-    let opened = cipher.open_many(sealed).await.map_err(OpenError::Cipher)?;
+    let opened = if sealed.is_empty() {
+        Vec::new()
+    } else {
+        cipher.open_many(sealed).await.map_err(OpenError::Cipher)?
+    };
     fill(shape, opened).map_err(OpenError::Count)
 }
 
@@ -780,6 +792,31 @@ mod tests {
         .expect("decrypts");
         assert_eq!(remote.calls(), 2);
         assert_eq!(log, record(sample()).expect("records"));
+    }
+
+    #[test]
+    fn a_document_with_no_leaves_makes_no_cipher_call() {
+        // A top-level passthrough seals nothing, so a batching provider is
+        // not asked for an empty batch either way.
+        struct Pass;
+        impl crate::Plaintext for Pass {
+            fn visit<S: crate::Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+                sink.passthrough("public")
+            }
+        }
+        let remote = Remote::new(true);
+        let sealed = block_on(encrypt_async(Pass, &remote, "ctx")).expect("encrypts");
+        assert!(matches!(sealed, CipherText::Passthrough(_)));
+        let mut log = Vec::new();
+        block_on(crate::decrypt_into_async(
+            &remote,
+            sealed,
+            "ctx",
+            crate::plaintext::record::Record(&mut log),
+        ))
+        .expect("decrypts");
+        assert_eq!(remote.calls(), 0);
+        assert_eq!(log, record(Pass).expect("records"));
     }
 
     #[test]
