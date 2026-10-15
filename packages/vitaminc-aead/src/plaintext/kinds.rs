@@ -144,10 +144,32 @@ impl Int {
     /// The value as a sign and a two's-complement 128-bit word: one layout
     /// covering `i128::MIN` to `u128::MAX`, for equality encodings.
     pub fn sign_and_word(self) -> (bool, u128) {
-        match self.to_i128() {
-            Some(v) => (v < 0, v as u128),
-            None => (false, self.to_u128().unwrap_or_default()),
-        }
+        let (sign, word) = self.sign_bit_and_word();
+        (sign == 1, word)
+    }
+
+    /// [`sign_and_word`](Int::sign_and_word) with the sign as a bit, for
+    /// constant-time equality.
+    ///
+    /// Only the width is branched on. The word is the value sign-extended
+    /// (or zero-extended) to 128 bits, and a signed value's sign is that
+    /// word's top bit, taken by shift rather than by comparing the value
+    /// with zero, so no branch depends on the value. This also covers a
+    /// `u128` above `i128::MAX` without a second path.
+    fn sign_bit_and_word(self) -> (u8, u128) {
+        let (word, signed) = match self {
+            Int::I8(v) => (i128::from(v) as u128, 1),
+            Int::I16(v) => (i128::from(v) as u128, 1),
+            Int::I32(v) => (i128::from(v) as u128, 1),
+            Int::I64(v) => (i128::from(v) as u128, 1),
+            Int::I128(v) => (v as u128, 1),
+            Int::U8(v) => (u128::from(v), 0),
+            Int::U16(v) => (u128::from(v), 0),
+            Int::U32(v) => (u128::from(v), 0),
+            Int::U64(v) => (u128::from(v), 0),
+            Int::U128(v) => (v, 0),
+        };
+        (((word >> 127) as u8) & signed, word)
     }
 }
 
@@ -184,16 +206,15 @@ pub enum Float {
 // `Int` is written by hand so its equality is one comparison over the
 // sign and the 128-bit word rather than a ten-arm match. The width (the
 // variant) is a host-fidelity hint, not a secret, so it may be compared
-// by branch.
+// by branch; the sign and the word are derived without branching on the
+// value (see `Int::sign_bit_and_word`).
 
 impl TimingSafeEq for Int {
     fn ts_eq(&self, other: &Self) -> Choice {
-        let (sign_a, word_a) = self.sign_and_word();
-        let (sign_b, word_b) = other.sign_and_word();
+        let (sign_a, word_a) = self.sign_bit_and_word();
+        let (sign_b, word_b) = other.sign_bit_and_word();
         let same_width = core::mem::discriminant(self) == core::mem::discriminant(other);
-        Choice::from(u8::from(same_width))
-            & u8::from(sign_a).ts_eq(&u8::from(sign_b))
-            & word_a.ts_eq(&word_b)
+        Choice::from(u8::from(same_width)) & sign_a.ts_eq(&sign_b) & word_a.ts_eq(&word_b)
     }
 }
 
@@ -720,6 +741,40 @@ mod tests {
         assert_eq!(Int::U128(u128::MAX).sign_and_word(), (false, u128::MAX));
         assert_eq!(Int::U64(34).sign_and_word(), (false, 34));
         assert_eq!(Int::I8(0).sign_and_word(), (false, 0));
+    }
+
+    #[test]
+    fn every_width_has_one_sign_and_word() {
+        // A signed -1 sign-extends to every bit set; an unsigned maximum
+        // zero-extends. Either way only a signed value can be negative.
+        for v in [
+            Int::I8(-1),
+            Int::I16(-1),
+            Int::I32(-1),
+            Int::I64(-1),
+            Int::I128(-1),
+        ] {
+            assert_eq!(v.sign_and_word(), (true, u128::MAX));
+        }
+        let unsigned = [
+            (Int::U8(u8::MAX), u128::from(u8::MAX)),
+            (Int::U16(u16::MAX), u128::from(u16::MAX)),
+            (Int::U32(u32::MAX), u128::from(u32::MAX)),
+            (Int::U64(u64::MAX), u128::from(u64::MAX)),
+            (Int::U128(u128::MAX), u128::MAX),
+        ];
+        for (v, word) in unsigned {
+            assert_eq!(v.sign_and_word(), (false, word));
+        }
+        // The top bit is the sign only for a signed value.
+        assert_eq!(Int::I128(i128::MIN).sign_and_word(), (true, 1 << 127));
+        assert_eq!(Int::U128(1 << 127).sign_and_word(), (false, 1 << 127));
+        assert_eq!(
+            Int::I64(i64::MAX).sign_and_word(),
+            (false, i64::MAX as u128)
+        );
+        // Same word, different sign: never equal.
+        assert_ne!(Int::I128(i128::MIN), Int::I128(i128::MAX));
     }
 
     #[test]
