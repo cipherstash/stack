@@ -116,19 +116,12 @@ pub trait AsyncCipher: Sync {
 pub const DEFAULT_CONCURRENCY: usize = 32;
 
 /// A cipher returned a different number of leaves than it was given.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum LeafCount {
+    #[error("too few leaves")]
     TooFew,
+    #[error("too many leaves")]
     TooMany,
-}
-
-impl core::fmt::Display for LeafCount {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str(match self {
-            Self::TooFew => "too few leaves",
-            Self::TooMany => "too many leaves",
-        })
-    }
 }
 
 /// Seal every pending leaf, one at a time.
@@ -166,22 +159,16 @@ pub async fn seal_all_async<C: AsyncCipher>(
 }
 
 /// Why sealing failed.
-#[derive(Debug)]
+///
+/// A cipher's own error is printed in the message rather than chained as
+/// the `source()`, so a cipher error type need not implement `Error`.
+#[derive(Debug, thiserror::Error)]
 pub enum SealError<E> {
+    #[error("cipher failed: {0}")]
     Cipher(E),
+    #[error("cipher returned {0}")]
     Count(LeafCount),
 }
-
-impl<E: core::fmt::Display> core::fmt::Display for SealError<E> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Cipher(e) => write!(f, "cipher failed: {e}"),
-            Self::Count(count) => write!(f, "cipher returned {count}"),
-        }
-    }
-}
-
-impl<E: core::fmt::Debug + core::fmt::Display> core::error::Error for SealError<E> {}
 
 /// Open every leaf, one at a time.
 ///
@@ -225,28 +212,19 @@ pub async fn open_all_async<'a, C: AsyncCipher>(
 }
 
 /// Why opening failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum OpenError<E> {
     /// The cipher refused a leaf.
+    #[error("cipher failed: {0}")]
     Cipher(E),
     /// The tree breaks a container rule: a container with nothing sealed
     /// in it, a repeated map key, or a passthrough that is not a frame.
+    #[error("malformed ciphertext")]
     Malformed,
     /// The cipher returned the wrong number of leaves.
+    #[error("cipher returned {0}")]
     Count(LeafCount),
 }
-
-impl<E: core::fmt::Display> core::fmt::Display for OpenError<E> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Cipher(e) => write!(f, "cipher failed: {e}"),
-            Self::Malformed => f.write_str("malformed ciphertext"),
-            Self::Count(count) => write!(f, "cipher returned {count}"),
-        }
-    }
-}
-
-impl<E: core::fmt::Debug + core::fmt::Display> core::error::Error for OpenError<E> {}
 
 /// The container rules `EncryptSink` enforced, checked on the sealed tree
 /// so a malformed one is refused before any leaf is opened. `walk`

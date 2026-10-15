@@ -40,16 +40,23 @@ use crate::seal::{
 use crate::{CipherText, Context, IntoAad};
 
 /// Why encryption failed.
-#[derive(Debug)]
+///
+/// A cipher's own error is printed in the message rather than chained as
+/// the `source()`, so a cipher error type need not implement `Error`.
+#[derive(Debug, thiserror::Error)]
 pub enum EncryptError<E> {
     /// The cipher refused to seal a leaf.
+    #[error("cipher failed: {0}")]
     Cipher(E),
     /// The source stopped the walk.
-    Source(SourceError),
+    #[error("source failed: {0}")]
+    Source(#[source] SourceError),
     /// The value cannot be encrypted as given. See [`Unencryptable`].
+    #[error("cannot encrypt: {0}")]
     Shape(Unencryptable),
     /// The cipher returned the wrong number of leaves: a cipher bug, not a
     /// problem with the value.
+    #[error("cipher returned {0}")]
     Count(LeafCount),
 }
 
@@ -57,56 +64,36 @@ pub enum EncryptError<E> {
 ///
 /// `#[non_exhaustive]`, so a rule can be added without breaking a caller.
 /// No reason carries any part of the value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum Unencryptable {
     /// A map gave the same key twice.
+    #[error("duplicate key")]
     DuplicateKey,
     /// A sequence has elements but seals none of them: every element is a
     /// passthrough, which authenticates nothing.
+    #[error("sequence has nothing sealed")]
     SequenceHasNothingSealed,
     /// A map has entries but seals none of them.
+    #[error("map has nothing sealed")]
     MapHasNothingSealed,
     /// A scalar is not a valid value of its logical type.
+    #[error("value is not valid for its logical type")]
     InvalidValue,
     /// A scalar cannot be written as a leaf.
+    #[error("value cannot be written as a leaf")]
     Unwritable,
     /// A passthrough subtree cannot be framed.
+    #[error("passthrough subtree cannot be framed")]
     UnframablePassthrough,
     /// The source took an element or entry sink and dropped it without
     /// writing a value into it.
+    #[error("a child sink was dropped without a value")]
     DroppedChild,
     /// The value nests deeper than [`MAX_DEPTH`].
+    #[error("value nests deeper than {MAX_DEPTH} levels")]
     TooDeep,
 }
-
-impl core::fmt::Display for Unencryptable {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::DuplicateKey => f.write_str("duplicate key"),
-            Self::SequenceHasNothingSealed => f.write_str("sequence has nothing sealed"),
-            Self::MapHasNothingSealed => f.write_str("map has nothing sealed"),
-            Self::InvalidValue => f.write_str("value is not valid for its logical type"),
-            Self::Unwritable => f.write_str("value cannot be written as a leaf"),
-            Self::UnframablePassthrough => f.write_str("passthrough subtree cannot be framed"),
-            Self::DroppedChild => f.write_str("a child sink was dropped without a value"),
-            Self::TooDeep => write!(f, "value nests deeper than {MAX_DEPTH} levels"),
-        }
-    }
-}
-
-impl<E: core::fmt::Display> core::fmt::Display for EncryptError<E> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Cipher(e) => write!(f, "cipher failed: {e}"),
-            Self::Source(e) => write!(f, "source failed: {e}"),
-            Self::Shape(why) => write!(f, "cannot encrypt: {why}"),
-            Self::Count(count) => write!(f, "cipher returned {count}"),
-        }
-    }
-}
-
-impl<E: core::fmt::Debug + core::fmt::Display> core::error::Error for EncryptError<E> {}
 
 impl<E> Error for EncryptError<E> {
     fn source(error: SourceError) -> Self {
@@ -862,5 +849,14 @@ mod tests {
         );
         fn is_error<E: core::error::Error>(_: &E) {}
         is_error(&EncryptError::<&str>::Cipher("down"));
+        // A source's failure is the chained cause; a cipher's is only in
+        // the message, so its type need not be an error.
+        use core::error::Error as _;
+        let sourced = EncryptError::<&str>::Source(SourceError::msg("getter threw"));
+        assert_eq!(
+            sourced.source().map(|cause| cause.to_string()),
+            Some("getter threw".into())
+        );
+        assert!(EncryptError::<&str>::Cipher("down").source().is_none());
     }
 }

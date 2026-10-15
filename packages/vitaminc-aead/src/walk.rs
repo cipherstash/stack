@@ -28,39 +28,28 @@ use crate::{CipherText, IntoAad};
 ///
 /// `E` is the sink's error, `C` the cipher's. [`walk`] involves no cipher,
 /// so its `C` is [`Infallible`].
-#[derive(Debug)]
+///
+/// The cipher's and the sink's errors are printed in the message rather
+/// than chained as the `source()`, so neither type need implement `Error`.
+#[derive(Debug, thiserror::Error)]
 pub enum DecryptError<E, C = Infallible> {
     /// The cipher refused a leaf. For an AEAD that is a wrong key, a wrong
     /// AAD or a tampered leaf; a remote provider's error type also tells an
     /// outage apart.
+    #[error("cipher failed: {0}")]
     Cipher(C),
     /// An authenticated empty marker carried a payload: tampering the
     /// cipher could not see.
+    #[error("an authenticated empty marker carried a payload")]
     Auth,
     /// The tree or a leaf's plaintext is not well formed, or the cipher
     /// returned the wrong number of leaves.
+    #[error("malformed ciphertext")]
     Malformed,
     /// The sink refused what it was given (a typed sink got the wrong kind,
     /// a host builder failed).
+    #[error("sink refused the value: {0}")]
     Sink(E),
-}
-
-impl<E: core::fmt::Display, C: core::fmt::Display> core::fmt::Display for DecryptError<E, C> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Cipher(e) => write!(f, "cipher failed: {e}"),
-            Self::Auth => f.write_str("an authenticated empty marker carried a payload"),
-            Self::Malformed => f.write_str("malformed ciphertext"),
-            Self::Sink(e) => write!(f, "sink refused the value: {e}"),
-        }
-    }
-}
-
-impl<E, C> core::error::Error for DecryptError<E, C>
-where
-    E: core::fmt::Debug + core::fmt::Display,
-    C: core::fmt::Debug + core::fmt::Display,
-{
 }
 
 impl<E, C> From<E> for DecryptError<E, C> {

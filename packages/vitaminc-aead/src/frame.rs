@@ -48,16 +48,9 @@ pub struct Frame<'a> {
 }
 
 /// The bytes are not a well-formed frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("malformed frame")]
 pub struct FrameError;
-
-impl core::fmt::Display for FrameError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("malformed frame")
-    }
-}
-
-impl core::error::Error for FrameError {}
 
 impl<'a> Frame<'a> {
     /// Validate `bytes` as exactly one value node.
@@ -246,26 +239,34 @@ impl Plaintext for &PassthroughFrame {
 }
 
 /// Why a value could not be written as a frame.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum FrameWriteError {
     /// Nested deeper than [`MAX_DEPTH`].
+    #[error("value nests deeper than {MAX_DEPTH} levels")]
     TooDeep,
     /// Text, bytes, a key or a count longer than a `u32`.
+    #[error("text, bytes, a key or a count is too long for a u32")]
     TooLong,
     /// A value that is not valid for its logical type.
+    #[error("value is not valid for its logical type")]
     Invalid,
     /// A container's declared length did not match the children written.
+    #[error("container length does not match its children")]
     CountMismatch,
     /// A map wrote the same key twice.
+    #[error("duplicate key")]
     DuplicateKey,
     /// A child sink was dropped without a value written into it, which
     /// would leave the container's count ahead of its children.
+    #[error("a child sink was dropped without a value")]
     Unwritten,
     /// A container was never ended, so its count was never written and
     /// the bytes are not a frame.
+    #[error("a container was never ended")]
     Unfinished,
     /// The source stopped the walk.
-    Source(SourceError),
+    #[error("source failed: {0}")]
+    Source(#[source] SourceError),
 }
 
 impl Error for FrameWriteError {
@@ -273,23 +274,6 @@ impl Error for FrameWriteError {
         Self::Source(error)
     }
 }
-
-impl core::fmt::Display for FrameWriteError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::TooDeep => write!(f, "value nests deeper than {MAX_DEPTH} levels"),
-            Self::TooLong => f.write_str("text, bytes, a key or a count is too long for a u32"),
-            Self::Invalid => f.write_str("value is not valid for its logical type"),
-            Self::CountMismatch => f.write_str("container length does not match its children"),
-            Self::DuplicateKey => f.write_str("duplicate key"),
-            Self::Unwritten => f.write_str("a child sink was dropped without a value"),
-            Self::Unfinished => f.write_str("a container was never ended"),
-            Self::Source(e) => write!(f, "source failed: {e}"),
-        }
-    }
-}
-
-impl core::error::Error for FrameWriteError {}
 
 /// Write any source as a frame. The buffer is `Protected`, since a frame
 /// of plaintext is plaintext, and it grows without leaving copies behind.
@@ -850,5 +834,12 @@ mod tests {
         }
         fn is_error<E: core::error::Error>(_: &E) {}
         is_error(&FrameWriteError::TooDeep);
+        use core::error::Error as _;
+        let sourced = FrameWriteError::Source(SourceError::msg("getter threw"));
+        assert_eq!(
+            sourced.source().map(|cause| cause.to_string()),
+            Some("getter threw".into())
+        );
+        assert!(FrameWriteError::TooDeep.source().is_none());
     }
 }
