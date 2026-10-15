@@ -10,6 +10,7 @@ homepage.workspace = true
 license.workspace = true
 keywords.workspace = true
 categories.workspace = true
+rust-version.workspace = true
 
 [dependencies]
 vitaminc-aead-derive = { version = "0.5.1", path = "../aead-derive" }
