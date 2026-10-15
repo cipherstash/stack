@@ -173,6 +173,13 @@ impl Plaintext for Frame<'_> {
     }
 }
 
+/// A borrowed frame is the same frame: it is a view, and `Copy`.
+impl Plaintext for &Frame<'_> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (*self).visit(sink)
+    }
+}
+
 /// Walk the node at the cursor into `sink`, leaving the cursor after it.
 /// One pass: each byte is read once, except that a passthrough subtree is
 /// stepped over to find its end before the sink walks it.
@@ -518,6 +525,12 @@ mod tests {
         let bytes = frame_of(value.clone());
         let frame = Frame::parse(&bytes).expect("parses");
         assert_eq!(record(frame).expect("walks"), record(value).expect("walks"));
+        // A borrowed frame walks as the frame itself.
+        let borrowed: &Frame<'_> = &frame;
+        assert_eq!(
+            record(borrowed).expect("walks"),
+            record(frame).expect("walks")
+        );
         // Writing the walk of a frame gives the same frame.
         assert_eq!(frame_of(frame), bytes);
     }

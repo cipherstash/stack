@@ -136,6 +136,12 @@ impl Plaintext for Bytes<'_> {
     }
 }
 
+impl Plaintext for &Bytes<'_> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (*self).visit(sink)
+    }
+}
+
 /// Any scalar, as given: a logical type and a physical value.
 ///
 /// `Debug` is redacted, as for every plaintext scalar.
@@ -145,6 +151,25 @@ pub struct Raw<'a>(pub Option<Logical>, pub Physical<'a>);
 impl Plaintext for Raw<'_> {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(self.0, self.1)
+    }
+}
+
+impl Plaintext for &Raw<'_> {
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (*self).visit(sink)
+    }
+}
+
+/// A borrow of a borrowed source is the same source. This is what a
+/// derived struct with a borrowed field (`&'a str`, `&'a [u8]`,
+/// `Option<&'a str>`) needs when it is walked by reference, as it is from
+/// inside a `Protected`: each field is then visited as `&&'a str`.
+impl<'b, T: ?Sized> Plaintext for &&'b T
+where
+    &'b T: Plaintext,
+{
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        (*self).visit(sink)
     }
 }
 

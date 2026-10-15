@@ -7,8 +7,8 @@ use std::collections::BTreeMap;
 
 use vitaminc_aead::typed::Decrypt;
 use vitaminc_aead::{
-    decrypt, encrypt, Context, DecodeError, DecryptError, IntoAad, Logical, MapSink, Physical,
-    Plaintext, SeqSink, Sink, SourceError,
+    decrypt, encrypt, Bytes, Context, DecodeError, DecryptError, Int, IntoAad, Logical, MapSink,
+    Physical, Plaintext, Raw, SeqSink, Sink, SourceError,
 };
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::ZeroizeOnDrop;
@@ -653,6 +653,66 @@ fn the_crate_attribute_reaches_every_path() {
         round_trip::<Renamed>(Renamed { value: 1 }).expect("decodes"),
         Renamed { value: 1 }
     );
+}
+
+/// `Protected<Name>` walks through the by-reference impl, so it must make
+/// the same calls as the by-value impl for every shape the derive accepts.
+#[test]
+fn the_by_reference_walk_makes_the_same_calls_as_the_by_value_walk() {
+    let row = Row {
+        tenant: "acme".into(),
+        tags: vec![1, 2],
+        ssn: "123".into(),
+        cached: Some(9),
+        note: "hi".into(),
+    };
+    assert_eq!(record(&row), record(row.clone()));
+    let wrapper = Wrapper(vec![1, 2]);
+    assert_eq!(record(&wrapper), record(wrapper));
+    let pair = Pair("a".into(), 1);
+    assert_eq!(record(&pair), record(pair));
+    assert_eq!(record(&Marker), record(Marker));
+    assert_eq!(record(&Braced {}), record(Braced {}));
+    // `Status` is `Copy`, so name the reference to walk the by-reference
+    // impl rather than the by-value one.
+    let status: &Status = &Status::Suspended;
+    assert_eq!(record(status), record(Status::Suspended));
+}
+
+/// A struct that borrows what it encrypts, such as request data, derives
+/// too, and walks the same by reference as by value: a borrowed field is
+/// then visited as `&&'a str`, `&Option<&'a str>` and so on.
+#[derive(Plaintext, Clone)]
+struct NewUser<'a> {
+    email: &'a str,
+    nickname: Option<&'a str>,
+    aliases: Vec<&'a str>,
+    avatar: &'a [u8],
+    #[aead(passthrough)]
+    tenant: &'a str,
+    joined: Raw<'a>,
+    salt: Bytes<'a>,
+}
+
+#[test]
+fn a_struct_with_borrowed_fields_walks_the_same_by_reference() {
+    let avatar = [1u8, 2, 3];
+    let user = NewUser {
+        email: "ada@example.com",
+        nickname: Some("ada"),
+        aliases: vec!["a", "l"],
+        avatar: &avatar,
+        tenant: "acme",
+        joined: Raw(Some(Logical::Date), Physical::Int(Int::I32(19_000))),
+        salt: Bytes(&avatar),
+    };
+    let by_value = record(user.clone());
+    assert_eq!(by_value[0], Event::Map(Some(7)));
+    assert_eq!(record(&user), by_value);
+    let sealed = encrypt(&user, &Mock, "ctx").expect("encrypts");
+    let leaves = vitaminc_aead::seal::leaves_with_aad(sealed, &"ctx".into_aad());
+    // Every scalar but the passthrough tenant is a leaf.
+    assert_eq!(leaves.len(), 7);
 }
 
 // Custody: a walk that fails part way wipes the fields it did not reach,
