@@ -63,8 +63,8 @@ impl fmt::Display for DecodeError {
     }
 }
 
-impl std::error::Error for DecodeError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl core::error::Error for DecodeError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
             Self::Expected(_) => None,
             Self::Source(e) => Some(e),
@@ -943,11 +943,11 @@ mod tests {
 
     #[test]
     fn decode_errors_are_std_errors() {
-        let e: Box<dyn std::error::Error> = Box::new(DecodeError::Expected("u32"));
+        let e: Box<dyn core::error::Error> = Box::new(DecodeError::Expected("u32"));
         assert_eq!(e.to_string(), "expected u32");
-        assert!(std::error::Error::source(&DecodeError::Expected("u32")).is_none());
+        assert!(core::error::Error::source(&DecodeError::Expected("u32")).is_none());
         let source = DecodeError::Source(SourceError::new(fmt::Error));
-        assert!(std::error::Error::source(&source).is_some());
+        assert!(core::error::Error::source(&source).is_some());
     }
 
     #[cfg(feature = "chrono")]
