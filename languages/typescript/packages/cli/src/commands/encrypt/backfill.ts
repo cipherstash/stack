@@ -15,10 +15,17 @@ import {
 } from '@cipherstash/stack/schema'
 import * as p from '@clack/prompts'
 import pg from 'pg'
+import { InvalidChunkSizeError, resolveChunkSize } from '@/cli/chunk-size.js'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
 import { buildPgClientConfig, explainTlsError } from '@/db/client.js'
 import { loadEncryptionContext, requireTable } from './context.js'
+
+/**
+ * Default rows per chunk/transaction. Mirrors `runBackfill`'s own default so
+ * the number the CLI prints is the number the engine uses.
+ */
+export const DEFAULT_BACKFILL_CHUNK_SIZE = 1000
 
 /**
  * Options accepted by `stash encrypt backfill`. Each field maps 1:1 to a
@@ -70,9 +77,12 @@ export interface BackfillCommandOptions {
    */
   pkColumn?: string
   /**
-   * Rows per chunk/transaction. Default `1000`. Lower for lock-sensitive
-   * tables or very wide rows; higher for tables with tiny encrypted
-   * payloads. Also bounds the most work lost to a `Ctrl-C` mid-chunk.
+   * Rows per chunk/transaction. Default {@link DEFAULT_BACKFILL_CHUNK_SIZE}.
+   * Lower for lock-sensitive tables or very wide rows; higher for tables
+   * with tiny encrypted payloads. Also bounds the most work lost to a
+   * `Ctrl-C` mid-chunk. Must be a positive whole number — anything else
+   * (including the `NaN` that `Number('abc')` yields) is rejected before
+   * the database is touched.
    */
   chunkSize?: number
   /**
@@ -111,6 +121,19 @@ export interface BackfillCommandOptions {
  */
 export async function backfillCommand(options: BackfillCommandOptions) {
   p.intro(runnerCommand(detectPackageManager(), 'stash encrypt backfill'))
+
+  // Validated before anything is loaded or opened: a bad chunk size is a
+  // typo at the prompt, and the right time to say so is before the config,
+  // the encryption client and a database connection have been paid for —
+  // and well before the dual-write gate records anything.
+  let chunkSize: number
+  try {
+    chunkSize = resolveChunkSize(options.chunkSize, DEFAULT_BACKFILL_CHUNK_SIZE)
+  } catch (error) {
+    if (!(error instanceof InvalidChunkSizeError)) throw error
+    p.log.error(error.message)
+    process.exit(1)
+  }
 
   const stashConfig = await loadStashConfig()
   const ctx = await loadEncryptionContext()
@@ -263,7 +286,7 @@ export async function backfillCommand(options: BackfillCommandOptions) {
     }
 
     p.log.info(
-      `Backfilling ${options.table}.${plaintextColumn} → ${encryptedColumn} (pk: ${pkColumn}, chunk: ${options.chunkSize ?? 1000}, schema cast_as: ${detectedCastAs ?? '(unknown, passing through)'}).`,
+      `Backfilling ${options.table}.${plaintextColumn} → ${encryptedColumn} (pk: ${pkColumn}, chunk: ${chunkSize}, schema cast_as: ${detectedCastAs ?? '(unknown, passing through)'}).`,
     )
 
     let lastLogged = 0
@@ -278,7 +301,7 @@ export async function backfillCommand(options: BackfillCommandOptions) {
       plaintextColumn,
       encryptedColumn,
       pkColumn,
-      chunkSize: options.chunkSize,
+      chunkSize,
       signal: controller.signal,
       transformPlaintext,
       force: options.force,
