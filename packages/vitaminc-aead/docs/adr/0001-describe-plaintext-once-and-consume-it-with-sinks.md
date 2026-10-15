@@ -511,10 +511,13 @@ A logical type that has no tag of its own, such as `Uuid`, a timestamp in
 milliseconds or a type from a newer build, travels in one generic envelope:
 the byte `0xF3`, the logical id, the one-byte parameter, then the plain
 physical scalar. A reader that does not know the id still reads the
-physical value and keeps the annotation. There is exactly one encoding per
-value: an envelope is refused where a shorthand tag exists, so two
-ciphertexts of the same value are never byte-different for a reason the
-AEAD cannot see.
+physical value and keeps the annotation. A host builder that has no value
+of its own to keep it in must refuse the leaf rather than hand back the
+physical value with the annotation dropped; the Go binding carries it in
+`Tagged`, and the Node binding refuses it until #446 gives it a carrier.
+There is exactly one encoding per value: an envelope is refused where a
+shorthand tag exists, so two ciphertexts of the same value are never
+byte-different for a reason the AEAD cannot see.
 
 The parameter is one byte and stays one byte. Nothing in view needs more:
 a Postgres `timestamptz` is stored in UTC, so a timezone is not part of the
