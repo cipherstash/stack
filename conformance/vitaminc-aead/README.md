@@ -52,8 +52,13 @@ Rust re-encodes every valid vector byte for byte. A host language whose
 value model cannot hold a vector as it is says so in an explicit field rather
 than skipping the row:
 
-- `js_reencode`: JavaScript Float32 becomes a Number and re-encodes as
-  Float64.
+- `js_reencode`: Node has two projections. A Float32 becomes a Number and
+  re-encodes as Float64. A timestamp that is a whole number of milliseconds
+  is read as a `Date` and re-encodes as the `Timestamp(Millis)` envelope; a
+  finer one is read as a `VcTimestamp` and re-encodes in the nanosecond
+  shorthand. As for Go, this is safe because `LeafTypeAad` binds the kind and
+  the logical id but not the unit, and the equality terms put every unit in
+  one timestamp domain.
 - `go_reencode`: Go has two projections. `undefined` becomes nil and
   re-encodes as null. A timestamp in the envelope (seconds, milliseconds or
   microseconds) is read as a `time.Time` and re-encodes in the nanosecond
