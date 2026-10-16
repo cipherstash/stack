@@ -986,7 +986,7 @@ fn a_const_generic_of_a_non_usize_type_round_trips() {
 // encrypts, and it is stored as the same leaf a `DateTime<Utc>` field is.
 
 #[cfg(feature = "chrono")]
-#[derive(Encrypt, Decrypt, Debug, PartialEq, Clone)]
+#[derive(Encrypt, Decrypt, Debug, PartialEq)]
 struct Stamped {
     at: vitaminc_aead::Timestamp,
 }
@@ -1001,15 +1001,12 @@ struct EventAsDateTime {
 #[test]
 fn a_timestamp_field_round_trips_and_reads_as_a_datetime() {
     let instant = chrono::DateTime::from_timestamp(1_700_000_000, 123_456_789).expect("ok");
-    let event = Stamped {
+    let event = || Stamped {
         at: vitaminc_aead::Timestamp::new(instant).expect("not a leap second"),
     };
+    assert_eq!(round_trip::<Stamped>(event()).expect("decodes"), event());
     assert_eq!(
-        round_trip::<Stamped>(event.clone()).expect("decodes"),
-        event
-    );
-    assert_eq!(
-        round_trip::<EventAsDateTime>(event).expect("decodes"),
+        round_trip::<EventAsDateTime>(event()).expect("decodes"),
         EventAsDateTime { at: instant }
     );
 }
