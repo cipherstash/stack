@@ -161,7 +161,9 @@ mod tests {
         );
 
         assert_eq!(frame(ts), frame(instant));
-        assert_eq!(frame(&ts), frame(instant));
+        // The borrowed impl frames the same bytes as the owned one.
+        let borrowed: &Timestamp = &ts;
+        assert_eq!(frame(borrowed), frame(instant));
 
         assert!(matches!(
             plan::<_, (), _>(leap(), "aad"),
