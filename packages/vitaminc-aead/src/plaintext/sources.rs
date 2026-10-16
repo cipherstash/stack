@@ -1,8 +1,8 @@
-//! Rust types as [`Plaintext`] sources.
+//! Rust types as [`Encrypt`] sources.
 //!
 //! Byte strings (`Vec<u8>`, `[u8; N]`, `&[u8]`, `String`, `&str`) are byte
-//! and text leaves, as they are for `Encrypt` today. For the same reason as
-//! today, `u8` on its own is not a source: if it were, the generic `Vec<T>`
+//! and text leaves, as they were for 0.5's `Encrypt` trait. For the same reason
+//! as then, `u8` on its own is not a source: if it were, the generic `Vec<T>`
 //! sequence impl would overlap the `Vec<u8>` byte leaf. An 8-bit value from
 //! a host still arrives as [`Int::U8`]; a Rust caller that needs one uses
 //! [`Raw`].
@@ -13,18 +13,21 @@ use vitaminc_protected::{Controlled, OpaqueDebug, Protected};
 use zeroize::Zeroize;
 
 use super::kinds::{Float, Logical, Physical};
-use super::{visit_seq, MapSink, Plaintext, SeqSink, Sink};
+use super::{depth, visit_seq, Encrypt, MapSink, SeqSink, Sink};
 
 macro_rules! int {
     ($($ty:ty),* $(,)?) => {
         $(
-            impl Plaintext for $ty {
+            impl Encrypt for $ty {
+                const DEPTH: Option<usize> = depth::SCALAR;
                 fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                     sink.scalar(None, Physical::Int(self.into()))
                 }
             }
 
-            impl Plaintext for &$ty {
+            impl Encrypt for &$ty {
+
+                const DEPTH: Option<usize> = depth::SCALAR;
                 fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                     (*self).visit(sink)
                 }
@@ -35,19 +38,22 @@ macro_rules! int {
 
 int!(i8, i16, i32, i64, i128, u16, u32, u64, u128);
 
-impl Plaintext for bool {
+impl Encrypt for bool {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(None, Physical::Bool(self))
     }
 }
 
-impl Plaintext for f32 {
+impl Encrypt for f32 {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(None, Physical::Float(Float::F32(self)))
     }
 }
 
-impl Plaintext for f64 {
+impl Encrypt for f64 {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(None, Physical::Float(Float::F64(self)))
     }
@@ -58,7 +64,8 @@ impl Plaintext for f64 {
 macro_rules! by_ref {
     ($($ty:ty),* $(,)?) => {
         $(
-            impl Plaintext for &$ty {
+            impl Encrypt for &$ty {
+                const DEPTH: Option<usize> = depth::SCALAR;
                 fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                     (*self).visit(sink)
                 }
@@ -69,29 +76,33 @@ macro_rules! by_ref {
 
 by_ref!(bool, f32, f64);
 
-impl Plaintext for &str {
+impl Encrypt for &str {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(None, Physical::Text(self))
     }
 }
 
-/// An owned byte or text leaf wraps itself before the sink sees it, as its
-/// `Encrypt` impl does today, and walks as a borrow of the wrapped value.
+/// An owned byte or text leaf wraps itself before the sink sees it, as 0.5's
+/// `Encrypt` impl did, and walks as a borrow of the wrapped value.
 /// So a bare leaf that a container moved out, or that a caller handed over
 /// bare, still has its buffer wiped when the walk is done with it.
-impl Plaintext for String {
+impl Encrypt for String {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         Protected::new(self).visit(sink)
     }
 }
 
-impl Plaintext for &String {
+impl Encrypt for &String {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(None, Physical::Text(self))
     }
 }
 
-impl Plaintext for &[u8] {
+impl Encrypt for &[u8] {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(None, Physical::Bytes(self))
     }
@@ -99,26 +110,30 @@ impl Plaintext for &[u8] {
 
 /// `Vec<u8>` is a byte leaf, not a sequence of `u8` elements: the same
 /// shape `String` describes, and the shape `Vec<u8>` will read back.
-impl Plaintext for Vec<u8> {
+impl Encrypt for Vec<u8> {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         Protected::new(self).visit(sink)
     }
 }
 
-impl<const N: usize> Plaintext for [u8; N] {
+impl<const N: usize> Encrypt for [u8; N] {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         Protected::new(self).visit(sink)
     }
 }
 
 /// Borrowed byte leaves: the caller owns the buffer and its wiping.
-impl Plaintext for &Vec<u8> {
+impl Encrypt for &Vec<u8> {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(None, Physical::Bytes(self))
     }
 }
 
-impl<const N: usize> Plaintext for &[u8; N] {
+impl<const N: usize> Encrypt for &[u8; N] {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(None, Physical::Bytes(self))
     }
@@ -130,13 +145,15 @@ impl<const N: usize> Plaintext for &[u8; N] {
 #[derive(Clone, Copy, OpaqueDebug)]
 pub struct Bytes<'a>(pub &'a [u8]);
 
-impl Plaintext for Bytes<'_> {
+impl Encrypt for Bytes<'_> {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(None, Physical::Bytes(self.0))
     }
 }
 
-impl Plaintext for &Bytes<'_> {
+impl Encrypt for &Bytes<'_> {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         (*self).visit(sink)
     }
@@ -148,13 +165,15 @@ impl Plaintext for &Bytes<'_> {
 #[derive(Clone, Copy, OpaqueDebug)]
 pub struct Raw<'a>(pub Option<Logical>, pub Physical<'a>);
 
-impl Plaintext for Raw<'_> {
+impl Encrypt for Raw<'_> {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(self.0, self.1)
     }
 }
 
-impl Plaintext for &Raw<'_> {
+impl Encrypt for &Raw<'_> {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         (*self).visit(sink)
     }
@@ -164,10 +183,11 @@ impl Plaintext for &Raw<'_> {
 /// derived struct with a borrowed field (`&'a str`, `&'a [u8]`,
 /// `Option<&'a str>`) needs when it is walked by reference, as it is from
 /// inside a `Protected`: each field is then visited as `&&'a str`.
-impl<'b, T: ?Sized> Plaintext for &&'b T
+impl<'b, T: ?Sized> Encrypt for &&'b T
 where
-    &'b T: Plaintext,
+    &'b T: Encrypt,
 {
+    const DEPTH: Option<usize> = <&'b T as Encrypt>::DEPTH;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         (*self).visit(sink)
     }
@@ -175,7 +195,8 @@ where
 
 /// `None` is a null. There is no separate "absent" in the data model, so a
 /// host null and a Rust `None` are the same leaf.
-impl<T: Plaintext> Plaintext for Option<T> {
+impl<T: Encrypt> Encrypt for Option<T> {
+    const DEPTH: Option<usize> = T::DEPTH;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         match self {
             Some(v) => v.visit(sink),
@@ -184,10 +205,11 @@ impl<T: Plaintext> Plaintext for Option<T> {
     }
 }
 
-impl<'a, T> Plaintext for &'a Option<T>
+impl<'a, T> Encrypt for &'a Option<T>
 where
-    &'a T: Plaintext,
+    &'a T: Encrypt,
 {
+    const DEPTH: Option<usize> = <&'a T as Encrypt>::DEPTH;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         match self {
             Some(v) => v.visit(sink),
@@ -199,10 +221,11 @@ where
 /// A protected value walks as a borrow of what it wraps, so nothing leaves
 /// the wrapper during the walk, and everything in it, visited or not, is
 /// zeroized when the wrapper drops at the end of it.
-impl<T: Zeroize> Plaintext for Protected<T>
+impl<T: Zeroize> Encrypt for Protected<T>
 where
-    for<'a> &'a T: Plaintext,
+    for<'a> &'a T: Encrypt,
 {
+    const DEPTH: Option<usize> = <&T as Encrypt>::DEPTH;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         self.risky_ref().visit(sink)
         // `self` drops here and zeroizes the whole value.
@@ -211,10 +234,11 @@ where
 
 /// A borrowed protected value is the same borrow; the caller's wrapper
 /// does the wiping.
-impl<'a, T: Zeroize> Plaintext for &'a Protected<T>
+impl<'a, T: Zeroize> Encrypt for &'a Protected<T>
 where
-    &'a T: Plaintext,
+    &'a T: Encrypt,
 {
+    const DEPTH: Option<usize> = <&'a T as Encrypt>::DEPTH;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         self.risky_ref().visit(sink)
     }
@@ -226,7 +250,8 @@ where
 /// drop, which wipes every owned leaf among them the way a completed walk
 /// would. (Inside a `Protected`, a sequence is walked as a borrow instead,
 /// and is zeroized whole with its wrapper.)
-impl<T: Plaintext> Plaintext for Vec<T> {
+impl<T: Encrypt> Encrypt for Vec<T> {
+    const DEPTH: Option<usize> = depth::container(T::DEPTH);
     fn visit<S: Sink>(mut self, sink: S) -> Result<S::Ok, S::Error> {
         let result = visit_popping(sink, &mut self);
         discard(self);
@@ -236,7 +261,7 @@ impl<T: Plaintext> Plaintext for Vec<T> {
 
 /// Walk `items` in order, popping each element only once its sink exists,
 /// so on an error every element not yet visited is still in `items`.
-fn visit_popping<S: Sink, T: Plaintext>(sink: S, items: &mut Vec<T>) -> Result<S::Ok, S::Error> {
+fn visit_popping<S: Sink, T: Encrypt>(sink: S, items: &mut Vec<T>) -> Result<S::Ok, S::Error> {
     items.reverse();
     let mut seq = sink.seq(Some(items.len()))?;
     for _ in 0..items.len() {
@@ -250,7 +275,7 @@ fn visit_popping<S: Sink, T: Plaintext>(sink: S, items: &mut Vec<T>) -> Result<S
 
 /// Visit each of `items` into [`Discard`], so the owned leaves among them
 /// wrap themselves and are wiped as they drop.
-fn discard<T: Plaintext>(items: Vec<T>) {
+fn discard<T: Encrypt>(items: Vec<T>) {
     for item in items {
         discard_one(item);
     }
@@ -262,7 +287,7 @@ fn discard<T: Plaintext>(items: Vec<T>) {
 /// struct walks the fields it has not reached through here when an entry
 /// fails, as a bare `Vec<T>` does its leftover elements.
 #[doc(hidden)]
-pub fn discard_one<P: Plaintext>(value: P) {
+pub fn discard_one<P: Encrypt>(value: P) {
     // `Discard` never fails, and a source error is no longer anyone's
     // concern once the walk has already failed.
     let _ = value.visit(Discard);
@@ -300,7 +325,7 @@ impl Sink for Discard {
     }
 
     /// Passthrough is cleartext by contract, so it is not walked.
-    fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<(), Discarded> {
+    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<(), Discarded> {
         Ok(())
     }
 }
@@ -333,27 +358,30 @@ impl MapSink for Discard {
     }
 }
 
-impl<'a, T> Plaintext for &'a Vec<T>
+impl<'a, T> Encrypt for &'a Vec<T>
 where
-    &'a T: Plaintext,
+    &'a T: Encrypt,
 {
+    const DEPTH: Option<usize> = depth::container(<&'a T as Encrypt>::DEPTH);
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         visit_seq(sink, Some(self.len()), self.iter())
     }
 }
 
-impl<'a, T> Plaintext for &'a [T]
+impl<'a, T> Encrypt for &'a [T]
 where
-    &'a T: Plaintext,
+    &'a T: Encrypt,
 {
+    const DEPTH: Option<usize> = depth::container(<&'a T as Encrypt>::DEPTH);
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         visit_seq(sink, Some(self.len()), self.iter())
     }
 }
 
 /// One impl covers compile-time keys (`&'static str`) and runtime keys
-/// (`String`), as the `Encrypt` impl does today.
-impl<K: AsRef<str>, V: Plaintext> Plaintext for HashMap<K, V> {
+/// (`String`), as 0.5's `Encrypt` impl did.
+impl<K: AsRef<str>, V: Encrypt> Encrypt for HashMap<K, V> {
+    const DEPTH: Option<usize> = depth::container(V::DEPTH);
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         let mut map = sink.map(Some(self.len()))?;
         for (key, value) in self {
@@ -363,7 +391,8 @@ impl<K: AsRef<str>, V: Plaintext> Plaintext for HashMap<K, V> {
     }
 }
 
-impl<K: AsRef<str>, V: Plaintext> Plaintext for BTreeMap<K, V> {
+impl<K: AsRef<str>, V: Encrypt> Encrypt for BTreeMap<K, V> {
+    const DEPTH: Option<usize> = depth::container(V::DEPTH);
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         let mut map = sink.map(Some(self.len()))?;
         for (key, value) in self {
@@ -373,10 +402,11 @@ impl<K: AsRef<str>, V: Plaintext> Plaintext for BTreeMap<K, V> {
     }
 }
 
-impl<'a, K: AsRef<str>, V> Plaintext for &'a HashMap<K, V>
+impl<'a, K: AsRef<str>, V> Encrypt for &'a HashMap<K, V>
 where
-    &'a V: Plaintext,
+    &'a V: Encrypt,
 {
+    const DEPTH: Option<usize> = depth::container(<&'a V as Encrypt>::DEPTH);
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         let mut map = sink.map(Some(self.len()))?;
         for (key, value) in self {
@@ -386,10 +416,11 @@ where
     }
 }
 
-impl<'a, K: AsRef<str>, V> Plaintext for &'a BTreeMap<K, V>
+impl<'a, K: AsRef<str>, V> Encrypt for &'a BTreeMap<K, V>
 where
-    &'a V: Plaintext,
+    &'a V: Encrypt,
 {
+    const DEPTH: Option<usize> = depth::container(<&'a V as Encrypt>::DEPTH);
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         let mut map = sink.map(Some(self.len()))?;
         for (key, value) in self {
@@ -409,7 +440,8 @@ mod chrono_sources {
     use crate::plaintext::{Error, SourceError};
     use ::chrono::{DateTime, NaiveDate, Utc};
 
-    impl Plaintext for NaiveDate {
+    impl Encrypt for NaiveDate {
+        const DEPTH: Option<usize> = depth::SCALAR;
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             sink.scalar(
                 Some(Logical::Date),
@@ -418,9 +450,11 @@ mod chrono_sources {
         }
     }
 
-    /// Stored as nanoseconds, the unit of today's `TIMESTAMP` tag. A leap
-    /// second has no count and stops the walk.
-    impl Plaintext for DateTime<Utc> {
+    /// Stored as nanoseconds, the unit of the `TIMESTAMP` tag. A leap second
+    /// has no count and stops the walk; a [`Timestamp`](crate::Timestamp)
+    /// field refuses it when the value is built instead.
+    impl Encrypt for DateTime<Utc> {
+        const DEPTH: Option<usize> = depth::SCALAR;
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let nanos = conv::timestamp_nanos(self).ok_or_else(|| {
                 S::Error::source(SourceError::msg(
@@ -434,13 +468,15 @@ mod chrono_sources {
         }
     }
 
-    impl Plaintext for &NaiveDate {
+    impl Encrypt for &NaiveDate {
+        const DEPTH: Option<usize> = depth::SCALAR;
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             (*self).visit(sink)
         }
     }
 
-    impl Plaintext for &DateTime<Utc> {
+    impl Encrypt for &DateTime<Utc> {
+        const DEPTH: Option<usize> = depth::SCALAR;
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             (*self).visit(sink)
         }
@@ -448,7 +484,8 @@ mod chrono_sources {
 }
 
 #[cfg(feature = "rust_decimal")]
-impl Plaintext for rust_decimal::Decimal {
+impl Encrypt for rust_decimal::Decimal {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         let (scale, mantissa) = super::kinds::decimal::parts(self);
         sink.scalar(
@@ -459,21 +496,24 @@ impl Plaintext for rust_decimal::Decimal {
 }
 
 #[cfg(feature = "rust_decimal")]
-impl Plaintext for &rust_decimal::Decimal {
+impl Encrypt for &rust_decimal::Decimal {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         (*self).visit(sink)
     }
 }
 
 #[cfg(feature = "uuid")]
-impl Plaintext for uuid::Uuid {
+impl Encrypt for uuid::Uuid {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(Some(Logical::Uuid), Physical::Bytes(self.as_bytes()))
     }
 }
 
 #[cfg(feature = "uuid")]
-impl Plaintext for &uuid::Uuid {
+impl Encrypt for &uuid::Uuid {
+    const DEPTH: Option<usize> = depth::SCALAR;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         (*self).visit(sink)
     }
@@ -619,13 +659,13 @@ mod tests {
         }
     }
 
-    impl Plaintext for Counted {
+    impl Encrypt for Counted {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             Protected::new(self).visit(sink)
         }
     }
 
-    impl Plaintext for &Counted {
+    impl Encrypt for &Counted {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             sink.scalar(None, Physical::Null)
         }
@@ -670,13 +710,13 @@ mod tests {
         }
     }
 
-    impl Plaintext for Tracked {
+    impl Encrypt for Tracked {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             sink.scalar(None, Physical::Null)
         }
     }
 
-    impl Plaintext for &Tracked {
+    impl Encrypt for &Tracked {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             sink.scalar(None, Physical::Null)
         }
@@ -710,7 +750,7 @@ mod tests {
             Ok(self)
         }
 
-        fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<(), RecordError> {
+        fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<(), RecordError> {
             Ok(())
         }
     }
@@ -900,7 +940,7 @@ mod tests {
     /// A source that fails part way through, as a host getter might.
     struct Failing;
 
-    impl Plaintext for Failing {
+    impl Encrypt for Failing {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut seq = sink.seq(None)?;
             1u32.visit(seq.element()?)?;

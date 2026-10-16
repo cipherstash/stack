@@ -50,7 +50,7 @@
 //!    date and timestamp ranges are (constants pinned by a test, not a
 //!    dependency), so the core model stays dependency-free.
 //! 6. **Name it** in the `Display` impl.
-//! 7. **Add a source**: a `Plaintext` impl for the Rust type that calls
+//! 7. **Add a source**: an `Encrypt` impl for the Rust type that calls
 //!    `sink.scalar(Some(Logical::YourType), Physical::...)`. If the type
 //!    comes from another crate, put the impl behind a feature named after
 //!    that crate, as the chrono, `rust_decimal` and uuid sources are.

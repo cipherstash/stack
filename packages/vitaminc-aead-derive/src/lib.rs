@@ -1,20 +1,20 @@
 //! Derive macros for [`vitaminc-aead`](https://docs.rs/vitaminc-aead):
-//! [`Plaintext`] and [`Decrypt`].
+//! [`Encrypt`] and [`Decrypt`].
 //!
 //! Both are re-exported from `vitaminc_aead`, so depend on that crate
 //! rather than this one:
 //!
 //! ```ignore
-//! use vitaminc_aead::{Decrypt, Plaintext};
+//! use vitaminc_aead::{Decrypt, Encrypt};
 //!
-//! #[derive(Plaintext, Decrypt)]
+//! #[derive(Encrypt, Decrypt)]
 //! struct User {
 //!     name: String,
 //!     age: u32,
 //! }
 //! ```
 //!
-//! `#[derive(Plaintext)]` walks the struct into a sink as a map with one
+//! `#[derive(Encrypt)]` walks the struct into a sink as a map with one
 //! entry per field. `#[derive(Decrypt)]` generates the map sink that builds
 //! the struct back, routing each entry to the field's own sink.
 //!
@@ -62,7 +62,7 @@
 //! explicitly, as a struct with a fieldless discriminant and `Option`
 //! fields.
 //!
-//! [`Plaintext`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Plaintext.html
+//! [`Encrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Encrypt.html
 //! [`Decrypt`]: https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Decrypt.html
 #![doc = include_str!("../docs/attributes.md")]
 #![deny(unsafe_code)]
@@ -71,21 +71,21 @@ use proc_macro::TokenStream;
 use syn::{parse_macro_input, DeriveInput};
 
 mod attrs;
-mod plaintext;
+mod encrypt;
 mod shape;
 #[cfg(test)]
 mod test_support;
 mod typed_decrypt;
 
-/// Derive [`Plaintext`](https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Plaintext.html)
+/// Derive [`Encrypt`](https://docs.rs/vitaminc-aead/latest/vitaminc_aead/trait.Encrypt.html)
 /// for a struct or a fieldless enum. See the [crate documentation](crate) for
 /// the wire shape this produces; the attributes it accepts are reproduced
 /// below.
 #[doc = include_str!("../docs/attributes.md")]
-#[proc_macro_derive(Plaintext, attributes(aead))]
-pub fn derive_plaintext(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(Encrypt, attributes(aead))]
+pub fn derive_encrypt(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    plaintext::derive(input)
+    encrypt::derive(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

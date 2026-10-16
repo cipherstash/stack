@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use vitaminc_protected::{OpaqueDebug, Protected};
 
 use crate::frame::{to_frame_at, FrameWriteError, MAX_DEPTH};
-use crate::plaintext::{Error, Logical, Path, Physical, Plaintext, Step};
+use crate::plaintext::{Encrypt, Error, Logical, Path, Physical, Step};
 
 /// Why a value cannot be encrypted as given.
 ///
@@ -184,7 +184,7 @@ pub fn frame_passthrough<P, E>(
     refused: impl FnOnce(Refusal) -> E,
 ) -> Result<Protected<Vec<u8>>, E>
 where
-    P: Plaintext,
+    P: Encrypt,
     E: Error,
 {
     if let Err(refusal) = self::depth(depth, at) {

@@ -803,7 +803,7 @@ mod tests {
         // A source a JavaScript binding might hand over: not `Send`.
         #[derive(Clone)]
         struct Local(std::rc::Rc<u32>);
-        impl crate::Plaintext for Local {
+        impl crate::Encrypt for Local {
             fn visit<S: crate::Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 (*self.0).visit(sink)
             }
@@ -900,7 +900,7 @@ mod tests {
         // A top-level passthrough seals nothing, so a batching provider is
         // not asked for an empty batch either way.
         struct Pass;
-        impl crate::Plaintext for Pass {
+        impl crate::Encrypt for Pass {
             fn visit<S: crate::Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 sink.passthrough("public")
             }

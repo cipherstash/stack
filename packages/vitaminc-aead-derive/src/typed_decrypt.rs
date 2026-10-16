@@ -60,7 +60,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                     }
                 }
 
-                // Transparent, mirroring the `Plaintext` side: the inner
+                // Transparent, mirroring the `Encrypt` side: the inner
                 // type's sink, with its result rewrapped.
                 #[automatically_derived]
                 impl #impl_generics #krate::typed::Decrypt for #name #ty_generics #where_clause {
@@ -232,7 +232,7 @@ fn map_target(
             // for a sealed struct.
             fn passthrough<__P>(self, _: __P) -> ::core::result::Result<Self::Ok, Self::Error>
             where
-                __P: #krate::Plaintext + ::core::clone::Clone,
+                __P: #krate::Encrypt + ::core::clone::Clone,
             {
                 ::core::result::Result::Err(#krate::DecodeError::Expected(#expected))
             }
@@ -464,7 +464,7 @@ mod tests {
         assert_contains(&out, quote!(id: ::core::default::Default::default()));
     }
 
-    /// Mirrors the `Plaintext` side: a newtype decodes as its inner type and
+    /// Mirrors the `Encrypt` side: a newtype decodes as its inner type and
     /// is rewrapped, so no map sink is involved.
     #[test]
     fn newtype_is_transparent() {

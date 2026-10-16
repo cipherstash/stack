@@ -7,6 +7,7 @@ option is one the author believes is in effect.
 | Attribute | Applies to | Effect |
 |---|---|---|
 | `crate = "path"` | container | Name the path to `vitaminc_aead` in the generated code |
+| `recursive` | container | Mark a mutually recursive type, whose depth the derive cannot work out |
 | `rename = "name"` | field | Store the field under `name` instead of its own name |
 | `passthrough` | field | Store the field **in the clear**, unencrypted and unauthenticated |
 | `skip` | field | Leave the field out of the ciphertext; rebuild it with `Default` on decrypt |
@@ -20,7 +21,7 @@ Points the generated code at a re-export of `vitaminc_aead`, for callers who
 depend on it through an umbrella crate rather than directly:
 
 ```ignore
-#[derive(Plaintext, Decrypt)]
+#[derive(Encrypt, Decrypt)]
 #[aead(crate = "::vitaminc::aead")]
 struct User {
     name: String,
@@ -30,12 +31,62 @@ struct User {
 Every path the expansion emits is redirected, so the deriving crate needs no
 direct dependency on `vitaminc_aead` at all.
 
+## `#[aead(recursive)]`
+
+`#[derive(Encrypt)]` works out how deeply a type nests, from its fields, and
+fails to compile a type deeper than `MAX_DEPTH`, whose fully populated values
+the encrypting sink would always refuse:
+
+```text
+error[E0080]: evaluation panicked: `TooDeep` nests deeper than `MAX_DEPTH` levels, so
+              the encrypting sink would refuse its fully populated values
+```
+
+A recursive type has no fixed depth: a tree can be as deep as its data. For a
+type that names itself in a field, directly or as `Self`, the derive sees this
+and leaves the check to the walk, which refuses a value that is too deep when
+it is encrypted:
+
+```ignore
+#[derive(Encrypt, Decrypt)]
+struct Tree {
+    label: String,
+    children: Vec<Tree>, // detected: no attribute needed
+}
+```
+
+The derive looks for the type's bare name. A field that names the type
+through a path, such as `crate::models::Tree`, is read as another type with the
+same name (`db::User` inside a `User` is common), so it is not detected.
+
+Recursion through another type, or through a path, cannot be seen from one
+derive, and fails to compile with `error[E0391]: cycle detected when simplifying constant`, naming
+each type's `DEPTH`. Mark every type in the cycle `recursive`:
+
+```ignore
+#[derive(Encrypt, Decrypt)]
+#[aead(recursive)]
+struct Even {
+    next: Vec<Odd>,
+}
+
+#[derive(Encrypt, Decrypt)]
+#[aead(recursive)]
+struct Odd {
+    next: Vec<Even>,
+}
+```
+
+A type that contains a recursive type is not checked either, since its depth
+depends on the recursive part. A generic type is checked once it is used at a
+concrete type, under `cargo build` rather than `cargo check`.
+
 ## `#[aead(rename = "...")]`
 
 Changes the map key a field is stored under:
 
 ```ignore
-#[derive(Plaintext, Decrypt)]
+#[derive(Encrypt, Decrypt)]
 struct User {
     #[aead(rename = "n")]
     name: String,
@@ -59,7 +110,7 @@ Stores a field as a cleartext map entry, so it can be an ordinary database
 column that other queries select, filter, and update without holding the key:
 
 ```ignore
-#[derive(Plaintext, Decrypt)]
+#[derive(Encrypt, Decrypt)]
 struct Row {
     #[aead(passthrough)]
     tenant: String,   // a plain column
@@ -91,7 +142,7 @@ field beside it. That coupling is precisely what `passthrough` exists to avoid.
 
 ### Requirements
 
-A passthrough field's type implements `Plaintext + Clone` on the way in
+A passthrough field's type implements `Encrypt + Clone` on the way in
 (the subtree is walked into a frame, and a sink that is really several sinks
 gives each a copy) and `Decrypt` on the way out.
 
@@ -112,7 +163,7 @@ somewhere else, such as an ordinary column alongside the ciphertext, or a
 value derived from the others:
 
 ```ignore
-#[derive(Plaintext, Decrypt)]
+#[derive(Encrypt, Decrypt)]
 struct User {
     #[aead(skip)]
     id: u64,          // not in the ciphertext at all
@@ -140,7 +191,7 @@ swaps the field for its default with `core::mem::take` instead, and the empty
 value left behind is dropped, and wiped, with `self`:
 
 ```ignore
-#[derive(Plaintext, Decrypt, ZeroizeOnDrop)]
+#[derive(Encrypt, Decrypt, ZeroizeOnDrop)]
 struct SecretToken(#[aead(take)] String);
 ```
 

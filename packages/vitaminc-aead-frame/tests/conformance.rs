@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 
 use vitaminc_aead::plaintext::kinds::chrono as conv;
 use vitaminc_aead::{
-    Float, Int, IntoAad, Kind, KnownLogical, LeafTypeAad, Logical, Physical, Plaintext, Raw,
+    Encrypt, Float, Int, IntoAad, Kind, KnownLogical, LeafTypeAad, Logical, Physical, Raw,
     TimeUnit, UnknownLogicalId,
 };
 use vitaminc_aead_frame::{decode_ciphertext, to_frame, Frame};
@@ -31,7 +31,7 @@ fn unhex(text: &str) -> Vec<u8> {
         .collect()
 }
 
-fn framed<P: Plaintext>(p: P) -> Vec<u8> {
+fn framed<P: Encrypt>(p: P) -> Vec<u8> {
     to_frame(p).expect("frames").risky_ref().clone()
 }
 

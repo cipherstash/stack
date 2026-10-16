@@ -5,15 +5,15 @@ FFI boundary in one linear-memory copy: the frame for values, and the
 ciphertext codec for the trees `encrypt` produces.
 
 A host binding does not convert its values into a Rust value tree. It
-implements [`Plaintext`] for values coming in and [`Sink`] for values going
+implements [`Encrypt`] for values coming in and [`Sink`] for values going
 out (ADR 0001). The frame is the one binding-neutral shape of a value:
 
 - [`Frame`] is a validated, borrowed frame. `Frame::parse` checks the
-  whole buffer up front, and the frame then implements `Plaintext` by
+  whole buffer up front, and the frame then implements `Encrypt` by
   walking its own bytes in place, so no value tree is built and no scalar
   leaves the buffer except to go straight to a sink.
 - [`FrameWriter`] is a `Sink` that writes frame bytes, and [`to_frame`]
-  walks any `Plaintext` into one. The Node binding snapshots a JavaScript
+  walks any `Encrypt` into one. The Node binding snapshots a JavaScript
   value this way to encrypt it off the JavaScript thread.
 - [`PassthroughFrame`] is an owned frame: the payload a ciphertext carries
   for a passthrough subtree, in every binding and in static Rust.
@@ -81,7 +81,7 @@ rust_decimal, and every malformed vector is refused.
 the new path and gets the frame it was sealed from, so the leaf format,
 the AAD derivations and the container rules stay what shipped.
 
-[`Plaintext`]: vitaminc_aead::Plaintext
+[`Encrypt`]: vitaminc_aead::Encrypt
 [`Sink`]: vitaminc_aead::Sink
 [`CipherText`]: vitaminc_aead::CipherText
 [`Frame`]: crate::Frame

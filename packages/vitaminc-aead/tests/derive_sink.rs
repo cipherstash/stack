@@ -1,4 +1,4 @@
-//! `#[derive(Plaintext)]` and the sink-based `#[derive(Decrypt)]`, end to
+//! `#[derive(Encrypt)]` and the sink-based `#[derive(Decrypt)]`, end to
 //! end: the calls a derived struct makes, and what a derived target accepts
 //! and refuses. Sealing goes through a cipher that keeps the plaintext in
 //! the clear and authenticates the AAD, so the tests need no AES.
@@ -6,13 +6,13 @@
 use std::collections::BTreeMap;
 
 use vitaminc_aead::{
-    decrypt, encrypt, Bytes, Context, DecodeError, Decrypt, DecryptError, Int, IntoAad, Logical,
-    MapSink, Physical, Plaintext, Raw, SeqSink, Sink, SourceError,
+    decrypt, encrypt, Bytes, Context, DecodeError, Decrypt, DecryptError, Encrypt, Int, IntoAad,
+    Logical, MapSink, Physical, Raw, SeqSink, Sink, SourceError,
 };
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::ZeroizeOnDrop;
 
-// A sink that records every call, so a derived `Plaintext` can be compared
+// A sink that records every call, so a derived `Encrypt` can be compared
 // with a hand-written one.
 
 #[derive(Debug, Clone, PartialEq)]
@@ -67,7 +67,7 @@ impl Sink for Record<'_> {
         Ok(self)
     }
 
-    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<(), RecordError> {
+    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<(), RecordError> {
         self.0.push(Event::Passthrough);
         value.visit(Record(self.0))
     }
@@ -111,7 +111,7 @@ impl MapSink for Record<'_> {
     }
 }
 
-fn record<P: Plaintext>(p: P) -> Vec<Event> {
+fn record<P: Encrypt>(p: P) -> Vec<Event> {
     let mut log = Vec::new();
     p.visit(Record(&mut log)).expect("records");
     log
@@ -149,7 +149,7 @@ impl vitaminc_aead::seal::Cipher for Mock {
     }
 }
 
-fn round_trip<T: Decrypt>(p: impl Plaintext) -> Result<T, DecryptError<DecodeError, Refused>> {
+fn round_trip<T: Decrypt>(p: impl Encrypt) -> Result<T, DecryptError<DecodeError, Refused>> {
     decrypt(&Mock, encrypt(p, &Mock, "ctx").expect("encrypts"), "ctx")
 }
 
@@ -163,7 +163,7 @@ fn refusal<T>(r: Result<T, DecryptError<DecodeError, Refused>>) -> DecodeError {
 
 // The ADR's section 1 example, derived and by hand.
 
-#[derive(Plaintext, Decrypt, Debug, PartialEq, Clone, zeroize::Zeroize)]
+#[derive(Encrypt, Decrypt, Debug, PartialEq, Clone, zeroize::Zeroize)]
 struct User {
     email: String,
     age: u32,
@@ -172,7 +172,7 @@ struct User {
 
 struct HandWritten(User);
 
-impl Plaintext for HandWritten {
+impl Encrypt for HandWritten {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         let mut map = sink.map(Some(3))?;
         self.0.email.visit(map.entry("email")?)?;
@@ -214,7 +214,7 @@ fn a_derived_struct_round_trips() {
     // Its ciphertext is the equivalent map's: a map target reads a derived
     // struct, and a map of the same entries reads as the struct.
     struct AsMap;
-    impl Plaintext for AsMap {
+    impl Encrypt for AsMap {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(Some(3))?;
             36u32.visit(map.entry("age")?)?;
@@ -230,7 +230,7 @@ fn a_derived_struct_round_trips() {
     ));
 }
 
-#[derive(Plaintext, Decrypt, Debug, PartialEq, Clone)]
+#[derive(Encrypt, Decrypt, Debug, PartialEq, Clone)]
 struct Account {
     owner: User,
     aliases: Vec<String>,
@@ -265,7 +265,7 @@ fn nested_structs_options_and_vecs_round_trip() {
 #[test]
 fn an_unknown_key_and_a_missing_field_are_refused_by_name() {
     struct Extra;
-    impl Plaintext for Extra {
+    impl Encrypt for Extra {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(Some(4))?;
             "ada@example.com".visit(map.entry("email")?)?;
@@ -293,7 +293,7 @@ fn an_unknown_key_and_a_missing_field_are_refused_by_name() {
 #[test]
 fn a_missing_option_or_passthrough_field_is_refused() {
     struct NoNickname;
-    impl Plaintext for NoNickname {
+    impl Encrypt for NoNickname {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(Some(4))?;
             ada().visit(map.entry("owner")?)?;
@@ -309,7 +309,7 @@ fn a_missing_option_or_passthrough_field_is_refused() {
     ));
 
     struct NoTenant;
-    impl Plaintext for NoTenant {
+    impl Encrypt for NoTenant {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(Some(3))?;
             map.entry("tags")?.passthrough(vec![1u32])?;
@@ -347,7 +347,7 @@ fn a_struct_target_refuses_a_scalar_a_sequence_and_a_passthrough() {
         DecodeError::Expected("User")
     ));
     struct Clear;
-    impl Plaintext for Clear {
+    impl Encrypt for Clear {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             sink.passthrough(ada())
         }
@@ -364,7 +364,7 @@ fn a_struct_target_refuses_a_scalar_a_sequence_and_a_passthrough() {
 #[test]
 fn a_repeated_key_is_refused_by_the_sink_itself() {
     struct Repeats;
-    impl Plaintext for Repeats {
+    impl Encrypt for Repeats {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(None)?;
             "a@b".visit(map.entry("email")?)?;
@@ -380,7 +380,7 @@ fn a_repeated_key_is_refused_by_the_sink_itself() {
 
 // Passthrough, skip and take.
 
-#[derive(Plaintext, Decrypt, Debug, PartialEq, Clone)]
+#[derive(Encrypt, Decrypt, Debug, PartialEq, Clone)]
 struct Row {
     #[aead(passthrough)]
     tenant: String,
@@ -428,7 +428,7 @@ fn passthrough_fields_travel_in_the_clear_and_come_back() {
 #[test]
 fn a_passthrough_field_refuses_a_sealed_value_and_a_sealed_field_refuses_a_passthrough() {
     struct Swapped;
-    impl Plaintext for Swapped {
+    impl Encrypt for Swapped {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(Some(4))?;
             "acme".visit(map.entry("tenant")?)?;
@@ -443,7 +443,7 @@ fn a_passthrough_field_refuses_a_sealed_value_and_a_sealed_field_refuses_a_passt
         DecodeError::Expected("passthrough")
     ));
     struct SealedPassthrough;
-    impl Plaintext for SealedPassthrough {
+    impl Encrypt for SealedPassthrough {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(Some(4))?;
             map.entry("tenant")?.passthrough("acme")?;
@@ -465,7 +465,7 @@ fn a_passthrough_field_refuses_a_sealed_value_and_a_sealed_field_refuses_a_passt
 #[test]
 fn an_entry_under_a_skipped_key_is_refused() {
     struct WithCached;
-    impl Plaintext for WithCached {
+    impl Encrypt for WithCached {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(Some(5))?;
             map.entry("tenant")?.passthrough("acme")?;
@@ -485,7 +485,7 @@ fn an_entry_under_a_skipped_key_is_refused() {
 /// A `ZeroizeOnDrop` type has a `Drop` impl, so its fields cannot be moved
 /// out; `take` swaps each for its default instead, and the empty value is
 /// wiped harmlessly when `self` drops.
-#[derive(Plaintext, Decrypt, ZeroizeOnDrop, Debug, PartialEq)]
+#[derive(Encrypt, Decrypt, ZeroizeOnDrop, Debug, PartialEq)]
 struct Secret {
     #[aead(take)]
     token: String,
@@ -493,7 +493,7 @@ struct Secret {
     salt: Vec<u8>,
 }
 
-#[derive(Plaintext, Decrypt, ZeroizeOnDrop, Debug, PartialEq)]
+#[derive(Encrypt, Decrypt, ZeroizeOnDrop, Debug, PartialEq)]
 struct Token(#[aead(take)] String);
 
 #[test]
@@ -511,19 +511,19 @@ fn take_lets_a_drop_type_derive() {
 
 // Newtypes, tuple structs, empty structs and enums.
 
-#[derive(Plaintext, Decrypt, Debug, PartialEq)]
+#[derive(Encrypt, Decrypt, Debug, PartialEq)]
 struct Wrapper(Vec<u16>);
 
-#[derive(Plaintext, Decrypt, Debug, PartialEq)]
+#[derive(Encrypt, Decrypt, Debug, PartialEq)]
 struct Pair(String, u32);
 
-#[derive(Plaintext, Decrypt, Debug, PartialEq)]
+#[derive(Encrypt, Decrypt, Debug, PartialEq)]
 struct Marker;
 
-#[derive(Plaintext, Decrypt, Debug, PartialEq)]
+#[derive(Encrypt, Decrypt, Debug, PartialEq)]
 struct Braced {}
 
-#[derive(Plaintext, Decrypt, Debug, PartialEq, Clone, Copy)]
+#[derive(Encrypt, Decrypt, Debug, PartialEq, Clone, Copy)]
 enum Status {
     Active,
     Suspended = 7,
@@ -633,7 +633,7 @@ fn every_variant_seals_to_the_same_length() {
 // Later fields reach their sinks through the right-hand side of the
 // `Either` chain, for every kind of child.
 
-#[derive(Plaintext, Decrypt, Debug, PartialEq, Clone)]
+#[derive(Encrypt, Decrypt, Debug, PartialEq, Clone)]
 struct Mixed {
     first: u32,
     second: BTreeMap<String, u32>,
@@ -642,7 +642,7 @@ struct Mixed {
     fourth: Vec<String>,
 }
 
-#[derive(Plaintext, Decrypt, Debug, PartialEq, Clone)]
+#[derive(Encrypt, Decrypt, Debug, PartialEq, Clone)]
 struct Named(BTreeMap<String, Vec<u32>>);
 
 #[test]
@@ -667,7 +667,7 @@ fn a_newtype_over_a_container_is_transparent_and_refuses_a_passthrough() {
         Named(inner)
     );
     struct Clear;
-    impl Plaintext for Clear {
+    impl Encrypt for Clear {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             sink.passthrough(vec![1u16])
         }
@@ -684,7 +684,7 @@ fn a_newtype_over_a_container_is_transparent_and_refuses_a_passthrough() {
 
 // Generics and the crate attribute.
 
-#[derive(Plaintext, Decrypt, Debug, PartialEq)]
+#[derive(Encrypt, Decrypt, Debug, PartialEq)]
 struct Holder<T, const N: usize> {
     value: T,
     bytes: [u8; N],
@@ -712,7 +712,7 @@ mod umbrella {
     }
 }
 
-#[derive(umbrella::aead::Plaintext, umbrella::aead::Decrypt, Debug, PartialEq)]
+#[derive(umbrella::aead::Encrypt, umbrella::aead::Decrypt, Debug, PartialEq)]
 #[aead(crate = "crate::umbrella::aead")]
 struct Renamed {
     value: u32,
@@ -753,7 +753,7 @@ fn the_by_reference_walk_makes_the_same_calls_as_the_by_value_walk() {
 /// A struct that borrows what it encrypts, such as request data, derives
 /// too, and walks the same by reference as by value: a borrowed field is
 /// then visited as `&&'a str`, `&Option<&'a str>` and so on.
-#[derive(Plaintext, Clone)]
+#[derive(Encrypt, Clone)]
 struct NewUser<'a> {
     email: &'a str,
     nickname: Option<&'a str>,
@@ -801,19 +801,19 @@ impl zeroize::Zeroize for Counted {
     }
 }
 
-impl Plaintext for Counted {
+impl Encrypt for Counted {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         Protected::new(self).visit(sink)
     }
 }
 
-impl Plaintext for &Counted {
+impl Encrypt for &Counted {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(None, Physical::Null)
     }
 }
 
-#[derive(Plaintext, zeroize::Zeroize)]
+#[derive(Encrypt, zeroize::Zeroize)]
 struct Three {
     a: Counted,
     b: Counted,
@@ -842,7 +842,7 @@ impl Sink for StopAt {
         Ok(self)
     }
 
-    fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<(), RecordError> {
+    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<(), RecordError> {
         Ok(())
     }
 }
@@ -946,7 +946,7 @@ fn a_struct_inside_protected_stays_wrapped_and_is_wiped_whole() {
 // Custody: a `Protected` field stays wrapped on the way in and is read
 // straight back into `Protected` on the way out.
 
-#[derive(Plaintext, Decrypt)]
+#[derive(Encrypt, Decrypt)]
 struct Keyed {
     key: Protected<[u8; 4]>,
     label: String,
@@ -968,7 +968,7 @@ fn protected_fields_stay_wrapped() {
 // A const generic of any type, not only `usize`, passes through the derive
 // unchanged: the generated sink repeats the struct's generics as written.
 
-#[derive(Plaintext, Decrypt, Debug, PartialEq, Clone)]
+#[derive(Encrypt, Decrypt, Debug, PartialEq, Clone)]
 struct Window<const N: u32> {
     start: i64,
 }
@@ -979,5 +979,34 @@ fn a_const_generic_of_a_non_usize_type_round_trips() {
     assert_eq!(
         round_trip::<Window<7>>(window.clone()).expect("decodes"),
         window
+    );
+}
+
+// A `Timestamp` field cannot hold a leap second, so the struct always
+// encrypts, and it is stored as the same leaf a `DateTime<Utc>` field is.
+
+#[cfg(feature = "chrono")]
+#[derive(Encrypt, Decrypt, Debug, PartialEq)]
+struct Stamped {
+    at: vitaminc_aead::Timestamp,
+}
+
+#[cfg(feature = "chrono")]
+#[derive(Encrypt, Decrypt, Debug, PartialEq, Clone)]
+struct EventAsDateTime {
+    at: chrono::DateTime<chrono::Utc>,
+}
+
+#[cfg(feature = "chrono")]
+#[test]
+fn a_timestamp_field_round_trips_and_reads_as_a_datetime() {
+    let instant = chrono::DateTime::from_timestamp(1_700_000_000, 123_456_789).expect("ok");
+    let event = || Stamped {
+        at: vitaminc_aead::Timestamp::new(instant).expect("not a leap second"),
+    };
+    assert_eq!(round_trip::<Stamped>(event()).expect("decodes"), event());
+    assert_eq!(
+        round_trip::<EventAsDateTime>(event()).expect("decodes"),
+        EventAsDateTime { at: instant }
     );
 }

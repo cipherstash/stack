@@ -14,6 +14,8 @@ pub mod plaintext;
 pub mod seal;
 pub mod shape;
 pub mod tags;
+#[cfg(feature = "chrono")]
+mod timestamp;
 pub mod typed;
 mod unspecified;
 mod walk;
@@ -21,15 +23,15 @@ mod walk;
 // The data model: sources, sinks and the scalar kinds.
 #[doc(inline)]
 pub use plaintext::{
-    Bytes, Float, Int, Kind, KnownLogical, Logical, MapSink, Physical, Plaintext, Raw, SeqSink,
-    Sink, SourceError, Tee, TimeUnit, UnknownLogical, UnknownLogicalId,
+    Bytes, Encrypt, Float, Int, Kind, KnownLogical, Logical, MapSink, Physical, Raw, SeqSink, Sink,
+    SourceError, Tee, TimeUnit, UnknownLogical, UnknownLogicalId,
 };
-/// Derive [`Plaintext`] for a struct or a fieldless enum. A struct walks as
+/// Derive [`Encrypt`] for a struct or a fieldless enum. A struct walks as
 /// a map keyed by field name; a fieldless enum as an int leaf holding the
 /// variant's discriminant. Pair it with [`Decrypt`] to read the value back.
 /// Inlined so the `#[aead(...)]` reference renders here.
 #[doc(inline)]
-pub use vitaminc_aead_derive::Plaintext;
+pub use vitaminc_aead_derive::Encrypt;
 // Encryption: the sink, the ciphers and the entry points.
 #[doc(inline)]
 pub use encrypt_sink::{encrypt, encrypt_async, plan, EncryptError, EncryptSink};
@@ -45,6 +47,10 @@ pub use walk::{decrypt_into, decrypt_into_async, decrypt_to_frame, walk, Decrypt
 // The frame: a value as transport bytes, and back.
 #[doc(inline)]
 pub use frame::{to_frame, Frame, FrameWriter, PassthroughFrame};
+// A UTC instant that always encrypts.
+#[cfg(feature = "chrono")]
+#[doc(inline)]
+pub use timestamp::{LeapSecond, Timestamp};
 
 #[doc(inline)]
 #[allow(deprecated)]

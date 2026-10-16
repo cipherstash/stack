@@ -39,7 +39,7 @@ use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroize;
 
 use crate::plaintext::{
-    Error, Float, Logical, MapSink, Physical, Plaintext, SeqSink, Sink, SourceError,
+    Encrypt, Error, Float, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
 };
 use crate::seal::{AsyncCipher, Cipher, Node};
 use crate::walk::{decrypt_into, decrypt_into_async, DecryptError};
@@ -48,7 +48,7 @@ use crate::IntoAad;
 /// Derive [`Decrypt`] for a struct or a fieldless enum: the sink that builds
 /// it. A struct reads a map keyed by field name; a fieldless enum reads an
 /// int leaf holding the variant's discriminant. Takes the same
-/// `#[aead(...)]` attributes as [`Plaintext`](macro@crate::Plaintext).
+/// `#[aead(...)]` attributes as [`Encrypt`](macro@crate::Encrypt).
 #[doc(inline)]
 pub use vitaminc_aead_derive::Decrypt;
 
@@ -168,7 +168,7 @@ impl<T: FromScalar> Sink for ScalarSink<T> {
         Err(DecodeError::Expected(T::EXPECTED))
     }
 
-    fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<T, DecodeError> {
+    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<T, DecodeError> {
         Err(DecodeError::Expected(T::EXPECTED))
     }
 }
@@ -203,7 +203,7 @@ impl Sink for Nothing {
         match self {}
     }
 
-    fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<(), DecodeError> {
+    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<(), DecodeError> {
         match self {}
     }
 }
@@ -471,7 +471,7 @@ impl<T: Decrypt, O: Put<T>> Sink for Forward<T, O> {
         Ok(ForwardEnd(self.0.map(len)?, self.1, PhantomData))
     }
 
-    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<(), DecodeError> {
+    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<(), DecodeError> {
         self.1.put(self.0.passthrough(value)?);
         Ok(())
     }
@@ -555,7 +555,7 @@ impl<L: Sink, R: Sink<Error = L::Error>> Sink for Either<L, R> {
         }
     }
 
-    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<Self::Ok, Self::Error> {
+    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<Self::Ok, Self::Error> {
         match self {
             Either::Left(l) => l.passthrough(value).map(Either::Left),
             Either::Right(r) => r.passthrough(value).map(Either::Right),
@@ -641,7 +641,7 @@ impl<T: Decrypt, O: Put<T>> Sink for Clear<T, O> {
         Err(DecodeError::Expected("passthrough"))
     }
 
-    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<(), DecodeError> {
+    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<(), DecodeError> {
         self.0.put(value.visit(T::sink())?);
         Ok(())
     }
@@ -684,7 +684,7 @@ impl<S: Sink<Error = DecodeError>, W: Rewrap<S::Ok>> Sink for Wrapped<S, W> {
         Ok(WrappedEnd(self.0.map(len)?, PhantomData))
     }
 
-    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<W::Output, DecodeError> {
+    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<W::Output, DecodeError> {
         self.0.passthrough(value).and_then(W::rewrap)
     }
 }
@@ -747,7 +747,7 @@ impl<T: Decrypt> Sink for List<T> {
         Err(DecodeError::Expected("sequence"))
     }
 
-    fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<Vec<T>, DecodeError> {
+    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<Vec<T>, DecodeError> {
         Err(DecodeError::Expected("sequence"))
     }
 }
@@ -806,7 +806,7 @@ macro_rules! dict_target {
                     Ok(DictEntries($map::new()))
                 }
 
-                fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<Self::Ok, DecodeError> {
+                fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<Self::Ok, DecodeError> {
                     Err(DecodeError::Expected("map"))
                 }
             }
@@ -867,7 +867,7 @@ impl<T: Decrypt> Sink for Optional<T> {
         Ok(Some_(self.0.map(len)?, PhantomData))
     }
 
-    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<Option<T>, DecodeError> {
+    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<Option<T>, DecodeError> {
         self.0.passthrough(value).map(Some)
     }
 }
@@ -970,7 +970,7 @@ impl<T: FromScalar + Zeroize> Sink for ScalarProtected<T> {
         Err(DecodeError::Expected(T::EXPECTED))
     }
 
-    fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<Protected<T>, DecodeError> {
+    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<Protected<T>, DecodeError> {
         Err(DecodeError::Expected(T::EXPECTED))
     }
 }
@@ -1010,7 +1010,7 @@ impl<T: DecryptProtected> Sink for ProtectedList<T> {
         Err(DecodeError::Expected("sequence"))
     }
 
-    fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<Self::Ok, DecodeError> {
+    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<Self::Ok, DecodeError> {
         Err(DecodeError::Expected("sequence"))
     }
 }
@@ -1090,7 +1090,7 @@ impl<T: DecryptProtected> Sink for ProtectedOptional<T> {
         Ok(SomeProtected(self.0.map(len)?, PhantomData))
     }
 
-    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<Self::Ok, DecodeError> {
+    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<Self::Ok, DecodeError> {
         self.0.passthrough(value).map(some)
     }
 }
@@ -1132,7 +1132,7 @@ where
         Ok(WrapEnd(self.0.map(len)?))
     }
 
-    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<Self::Ok, DecodeError> {
+    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<Self::Ok, DecodeError> {
         self.0.passthrough(value).map(Protected::new)
     }
 }
@@ -1237,7 +1237,7 @@ mod tests {
     use futures_executor::block_on;
 
     fn round_trip<T: Decrypt>(
-        p: impl Plaintext,
+        p: impl Encrypt,
     ) -> Result<T, DecryptError<DecodeError, crate::seal::mock::Refused>> {
         decrypt(&Mock, encrypt(p, &Mock, "ctx").expect("encrypts"), "ctx")
     }
@@ -1439,7 +1439,7 @@ mod tests {
         // sealed leaf.
         #[derive(Clone)]
         struct Clear;
-        impl Plaintext for Clear {
+        impl Encrypt for Clear {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 let mut seq = sink.seq(Some(2))?;
                 seq.element()?.passthrough(7u16)?;
@@ -1469,7 +1469,7 @@ mod tests {
     #[test]
     fn a_list_target_refuses_a_passthrough() {
         struct Clear;
-        impl Plaintext for Clear {
+        impl Encrypt for Clear {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 sink.passthrough(vec![1u16])
             }
@@ -1624,7 +1624,7 @@ mod tests {
     #[test]
     fn a_map_target_refuses_a_passthrough() {
         struct Clear;
-        impl Plaintext for Clear {
+        impl Encrypt for Clear {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 let mut map = BTreeMap::new();
                 map.insert("a", 1u16);
@@ -1807,7 +1807,7 @@ mod tests {
             "sequence"
         );
         struct Clear;
-        impl Plaintext for Clear {
+        impl Encrypt for Clear {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 sink.passthrough(vec![1u32])
             }
@@ -1861,7 +1861,7 @@ mod tests {
     /// A sequence that does not say how long it is.
     struct Unsized(u32);
 
-    impl Plaintext for Unsized {
+    impl Encrypt for Unsized {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut seq = sink.seq(None)?;
             for i in 0..self.0 {
@@ -1920,7 +1920,7 @@ mod tests {
             Ok(PointFields(None))
         }
 
-        fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<Point, DecodeError> {
+        fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<Point, DecodeError> {
             Err(DecodeError::Expected("point"))
         }
     }

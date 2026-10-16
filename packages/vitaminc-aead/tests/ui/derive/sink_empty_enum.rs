@@ -1,8 +1,8 @@
 //! An enum with no variants has no value to seal.
 
-use vitaminc_aead::Plaintext;
+use vitaminc_aead::Encrypt;
 
-#[derive(Plaintext)]
+#[derive(Encrypt)]
 enum Never {}
 
 fn main() {}

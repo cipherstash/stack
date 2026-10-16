@@ -26,7 +26,7 @@ zeroize = { workspace = true }
 # `AsyncCipher`'s `seal_many` and `open_many`. No runtime.
 futures-util = { version = "0.3.31", default-features = false, features = ["alloc"] }
 
-# Optional `Plaintext` sources for logical types: a date and a timestamp,
+# Optional `Encrypt` sources for logical types: a date and a timestamp,
 # a decimal, and a uuid. Each is a few lines over the core model.
 [dependencies.chrono]
 version = "0.4.44"

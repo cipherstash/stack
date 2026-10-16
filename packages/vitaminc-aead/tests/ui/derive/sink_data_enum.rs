@@ -2,9 +2,9 @@
 //! accept only fieldless enums and say so.
 
 use vitaminc_aead::Decrypt;
-use vitaminc_aead::Plaintext;
+use vitaminc_aead::Encrypt;
 
-#[derive(Plaintext, Decrypt)]
+#[derive(Encrypt, Decrypt)]
 enum Choice {
     Text(String),
     Number(u32),

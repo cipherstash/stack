@@ -218,7 +218,7 @@ mod tests {
     use crate::plaintext::record::{record, Event, Owned, Record};
     use crate::seal::leaves_with_aad;
     use crate::seal::mock::{Leaf, Mock};
-    use crate::{encrypt, Int, Plaintext};
+    use crate::{encrypt, Encrypt, Int};
     use std::collections::BTreeMap;
     use vitaminc_protected::Protected;
 
@@ -229,7 +229,7 @@ mod tests {
         m
     }
 
-    fn round_trip<P: Plaintext + Clone>(p: P) -> Vec<Event> {
+    fn round_trip<P: Encrypt + Clone>(p: P) -> Vec<Event> {
         let sealed = encrypt(p, &Mock, "ctx").expect("encrypts");
         let mut log = Vec::new();
         decrypt_into(&Mock, sealed, "ctx", Record(&mut log)).expect("decrypts");
@@ -257,7 +257,7 @@ mod tests {
     fn passthrough_comes_back_as_a_walk() {
         #[derive(Clone)]
         struct Doc;
-        impl Plaintext for Doc {
+        impl Encrypt for Doc {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 let mut map = sink.map(Some(2))?;
                 map.entry("id")?.passthrough(vec![7u16])?;

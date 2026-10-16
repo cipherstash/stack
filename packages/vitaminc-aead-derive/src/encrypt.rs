@@ -1,4 +1,4 @@
-//! Expansion of `#[derive(Plaintext)]`.
+//! Expansion of `#[derive(Encrypt)]`.
 //!
 //! Two impls are generated. The by-value `visit` moves each field out and
 //! walks it; when the sink or a field refuses part way, the fields not yet
@@ -24,10 +24,10 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let name = &input.ident;
 
     // Bound every type parameter, serde-style: a field of type `Vec<T>` then
-    // picks up `Vec<T>: Plaintext` from the blanket impl in `vitaminc_aead`.
+    // picks up `Vec<T>: Encrypt` from the blanket impl in `vitaminc_aead`.
     let mut generics = input.generics.clone();
     for param in generics.type_params_mut() {
-        param.bounds.push(parse_quote!(#krate::Plaintext));
+        param.bounds.push(parse_quote!(#krate::Encrypt));
     }
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
@@ -42,7 +42,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         .type_params()
         .map(|param| {
             let ident = &param.ident;
-            parse_quote!(&'__r #ident: #krate::Plaintext)
+            parse_quote!(&'__r #ident: #krate::Encrypt)
         })
         .collect();
     ref_generics
@@ -71,27 +71,183 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         }
     };
 
+    let Depth {
+        owned: depth,
+        by_ref: ref_depth,
+        item_check,
+        visit_check,
+    } = depth(krate, &input, &shape, attrs.recursive);
+
     Ok(quote! {
         #[automatically_derived]
-        impl #impl_generics #krate::Plaintext for #name #ty_generics #where_clause {
+        impl #impl_generics #krate::Encrypt for #name #ty_generics #where_clause {
+            #depth
+
             fn visit<__S>(#receiver, __sink: __S) -> ::core::result::Result<__S::Ok, __S::Error>
             where
                 __S: #krate::Sink,
             {
+                #visit_check
                 #body
             }
         }
 
         #[automatically_derived]
-        impl #ref_impl_generics #krate::Plaintext for &'__r #name #ty_generics #ref_where_clause {
+        impl #ref_impl_generics #krate::Encrypt for &'__r #name #ty_generics #ref_where_clause {
+            #ref_depth
+
             fn visit<__S>(self, __sink: __S) -> ::core::result::Result<__S::Ok, __S::Error>
             where
                 __S: #krate::Sink,
             {
+                #visit_check
                 #ref_body
             }
         }
+
+        #item_check
     })
+}
+
+/// The `DEPTH` constants for both impls, and the check that the type fits
+/// within `MAX_DEPTH`.
+struct Depth {
+    owned: TokenStream,
+    by_ref: TokenStream,
+    /// A named `const` item, for a type with no generic parameters, so
+    /// `cargo check` reports it. trybuild cannot see a post-monomorphization
+    /// error, so this is also what the compile-fail tests exercise.
+    item_check: TokenStream,
+    /// An inline `const` block at the top of `visit`, for a generic type,
+    /// whose depth is known only once its parameters are. It fires when the
+    /// type is used at a concrete type, under `cargo build`.
+    visit_check: TokenStream,
+}
+
+/// Work out the type's depth from its fields' depths, the way the encrypting
+/// sink counts nesting. A recursive type has no fixed depth, and naming its
+/// own `DEPTH` would be a cycle, so it keeps the default `None` and the
+/// walk checks each value instead.
+fn depth(krate: &syn::Path, input: &DeriveInput, shape: &Shape, recursive: bool) -> Depth {
+    let name = &input.ident;
+    let none = Depth {
+        owned: TokenStream::new(),
+        by_ref: TokenStream::new(),
+        item_check: TokenStream::new(),
+        visit_check: TokenStream::new(),
+    };
+    if recursive || names_itself(name, shape) {
+        return none;
+    }
+
+    let depth = quote!(#krate::plaintext::depth);
+    let expr = |by_ref: bool| -> TokenStream {
+        let of = |ty: &syn::Type| {
+            if by_ref {
+                quote!(<&'__r #ty as #krate::Encrypt>::DEPTH)
+            } else {
+                quote!(<#ty as #krate::Encrypt>::DEPTH)
+            }
+        };
+        match shape {
+            Shape::Newtype(field) => of(&field.ty),
+            Shape::Map(fields) => {
+                let deepest = fields
+                    .iter()
+                    .filter(|field| field.stored())
+                    .map(|field| {
+                        let child = of(&field.ty);
+                        if field.passthrough {
+                            quote!(#depth::passthrough(#child))
+                        } else {
+                            child
+                        }
+                    })
+                    .fold(
+                        quote!(#depth::SCALAR),
+                        |deepest, child| quote!(#depth::max(#deepest, #child)),
+                    );
+                quote!(#depth::container(#deepest))
+            }
+            Shape::Empty | Shape::Enum(_) => quote!(#depth::SCALAR),
+        }
+    };
+    let owned = expr(false);
+    let by_ref = expr(true);
+
+    let message = format!(
+        "`{name}` nests deeper than `MAX_DEPTH` levels, so the encrypting sink would refuse \
+         its fully populated values"
+    );
+    let check = |ty: TokenStream| {
+        quote!(::core::assert!(#depth::within_limit(<#ty as #krate::Encrypt>::DEPTH), #message))
+    };
+    // A type with no type or const parameters is checked where it is
+    // defined, so `cargo check` sees the error. Each lifetime becomes
+    // `'static`, which meets any bound a lifetime parameter can have.
+    let lifetimes_only = input.generics.type_params().next().is_none()
+        && input.generics.const_params().next().is_none();
+    let (item_check, visit_check) = if lifetimes_only {
+        let ty = if input.generics.params.is_empty() {
+            quote!(#name)
+        } else {
+            let statics = input.generics.lifetimes().map(|_| quote!('static));
+            quote!(#name<#(#statics),*>)
+        };
+        // The `&Name` impl works its depth out from each field's `&Field`
+        // impl, which may differ from the owned one, so both are checked.
+        let owned = check(ty.clone());
+        let borrowed = check(quote!(&'static #ty));
+        (
+            quote!(const _: () = { #owned; #borrowed; };),
+            TokenStream::new(),
+        )
+    } else {
+        let assertion = check(quote!(Self));
+        (TokenStream::new(), quote!(const { #assertion };))
+    };
+
+    Depth {
+        owned: quote!(const DEPTH: ::core::option::Option<usize> = #owned;),
+        by_ref: quote!(const DEPTH: ::core::option::Option<usize> = #by_ref;),
+        item_check,
+        visit_check,
+    }
+}
+
+/// Whether a walked field's type names the type being derived, directly or
+/// as `Self`: a recursive type, whose depth depends on the value. Mutual
+/// recursion through another type cannot be seen from here; it needs
+/// `#[aead(recursive)]`.
+fn names_itself(name: &syn::Ident, shape: &Shape) -> bool {
+    // The type's name counts only where it does not follow `::`, so a
+    // field of another module's type with the same name (`db::User`) is not
+    // taken for recursion. A self-reference through a full path, such as
+    // `crate::models::Tree`, is then a cycle error, and the attribute docs
+    // send the author to `#[aead(recursive)]`.
+    fn mentions(tokens: TokenStream, name: &syn::Ident) -> bool {
+        let mut after_path_sep = false;
+        tokens.into_iter().any(|token| {
+            let hit = match &token {
+                proc_macro2::TokenTree::Ident(ident) => {
+                    ident == "Self" || (!after_path_sep && ident == name)
+                }
+                proc_macro2::TokenTree::Group(group) => mentions(group.stream(), name),
+                _ => false,
+            };
+            after_path_sep =
+                matches!(&token, proc_macro2::TokenTree::Punct(p) if p.as_char() == ':');
+            hit
+        })
+    }
+    let walked: Vec<&FieldInfo> = match shape {
+        Shape::Newtype(field) => vec![field],
+        Shape::Map(fields) => fields.iter().filter(|field| field.stored()).collect(),
+        Shape::Empty | Shape::Enum(_) => Vec::new(),
+    };
+    walked
+        .iter()
+        .any(|field| mentions(quote::ToTokens::to_token_stream(&field.ty), name))
 }
 
 fn shape_takes(shape: &Shape) -> bool {
@@ -118,14 +274,14 @@ fn value(field: &FieldInfo) -> TokenStream {
 fn newtype_body(krate: &syn::Path, field: &FieldInfo) -> TokenStream {
     let value = value(field);
     quote! {
-        #krate::Plaintext::visit(#value, __sink)
+        #krate::Encrypt::visit(#value, __sink)
     }
 }
 
 fn newtype_ref_body(krate: &syn::Path, field: &FieldInfo) -> TokenStream {
     let member = &field.member;
     quote! {
-        #krate::Plaintext::visit(&self.#member, __sink)
+        #krate::Encrypt::visit(&self.#member, __sink)
     }
 }
 
@@ -158,7 +314,7 @@ fn map_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
             // the encrypted ones.
             quote!(#krate::Sink::passthrough(__entry, #value))
         } else {
-            quote!(#krate::Plaintext::visit(#value, __entry))
+            quote!(#krate::Encrypt::visit(#value, __entry))
         };
         quote! {
             let __entry = match #krate::MapSink::entry(&mut __map, #key) {
@@ -204,7 +360,7 @@ fn map_ref_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
             }
         } else {
             quote! {
-                #krate::Plaintext::visit(&self.#member, #krate::MapSink::entry(&mut __map, #key)?)?;
+                #krate::Encrypt::visit(&self.#member, #krate::MapSink::entry(&mut __map, #key)?)?;
             }
         }
     });
@@ -281,7 +437,7 @@ mod tests {
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Plaintext::visit(self.name, __entry)),
+            quote!(::vitaminc_aead::Encrypt::visit(self.name, __entry)),
         );
         assert_contains(
             &out,
@@ -289,7 +445,7 @@ mod tests {
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Plaintext::visit(self.age, __entry)),
+            quote!(::vitaminc_aead::Encrypt::visit(self.age, __entry)),
         );
         assert_contains(&out, quote!(::vitaminc_aead::MapSink::end(__map)));
     }
@@ -317,7 +473,7 @@ mod tests {
         assert_contains(
             &out,
             quote!(if let ::core::result::Result::Err(__err) =
-                ::vitaminc_aead::Plaintext::visit(self.age, __entry)
+                ::vitaminc_aead::Encrypt::visit(self.age, __entry)
             {
                 return ::core::result::Result::Err(__err);
             }),
@@ -338,11 +494,11 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(impl<'__r> ::vitaminc_aead::Plaintext for &'__r Row),
+            quote!(impl<'__r> ::vitaminc_aead::Encrypt for &'__r Row),
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Plaintext::visit(
+            quote!(::vitaminc_aead::Encrypt::visit(
                 &self.name,
                 ::vitaminc_aead::MapSink::entry(&mut __map, "name")?
             )),
@@ -359,7 +515,7 @@ mod tests {
         ));
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Plaintext::visit(&self.0, __sink)),
+            quote!(::vitaminc_aead::Encrypt::visit(&self.0, __sink)),
         );
     }
 
@@ -415,7 +571,7 @@ mod tests {
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Plaintext::visit(self.ssn, __entry)),
+            quote!(::vitaminc_aead::Encrypt::visit(self.ssn, __entry)),
         );
     }
 
@@ -458,7 +614,7 @@ mod tests {
         assert_contains(&out, quote!(mut self, __sink: __S));
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Plaintext::visit(
+            quote!(::vitaminc_aead::Encrypt::visit(
                 ::core::mem::take(&mut self.token),
                 __entry
             )),
@@ -491,7 +647,7 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Plaintext::visit(self.0, __sink)),
+            quote!(::vitaminc_aead::Encrypt::visit(self.0, __sink)),
         );
         assert_lacks(&out, quote!(::vitaminc_aead::Sink::map));
 
@@ -500,7 +656,7 @@ mod tests {
         ));
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Plaintext::visit(
+            quote!(::vitaminc_aead::Encrypt::visit(
                 ::core::mem::take(&mut self.0),
                 __sink
             )),
@@ -554,7 +710,7 @@ mod tests {
     }
 
     /// Serde-style: bounding the parameter rather than each field's type lets a
-    /// field of type `Vec<T>` pick up `Vec<T>: Plaintext` from the blanket
+    /// field of type `Vec<T>` pick up `Vec<T>: Encrypt` from the blanket
     /// impl. The by-reference impl bounds the parameter by reference, and its
     /// lifetimes outlive the borrow.
     #[test]
@@ -566,10 +722,10 @@ mod tests {
             }
         });
 
-        assert_contains(&out, quote!(impl<'a, T: ::vitaminc_aead::Plaintext>));
+        assert_contains(&out, quote!(impl<'a, T: ::vitaminc_aead::Encrypt>));
         assert_contains(&out, quote!(for Holder<'a, T>));
         assert_contains(&out, quote!(impl<'__r, 'a: '__r, T>));
-        assert_contains(&out, quote!(&'__r T: ::vitaminc_aead::Plaintext));
+        assert_contains(&out, quote!(&'__r T: ::vitaminc_aead::Encrypt));
         assert_contains(&out, quote!(for &'__r Holder<'a, T>));
     }
 
@@ -584,7 +740,7 @@ mod tests {
             }
         });
 
-        assert_contains(&out, quote!(::vitaminc::aead::Plaintext for User));
+        assert_contains(&out, quote!(::vitaminc::aead::Encrypt for User));
         assert_contains(&out, quote!(::vitaminc::aead::MapSink::entry));
         assert_contains(
             &out,
@@ -594,6 +750,158 @@ mod tests {
             !out.contains("vitaminc_aead"),
             "expansion still references the default crate path:\n{out}"
         );
+    }
+
+    /// A struct's depth is one more than its deepest walked field's, and a
+    /// type with no generic parameters is checked by a named `const` item,
+    /// which `cargo check` evaluates.
+    #[test]
+    fn a_struct_declares_its_depth_and_checks_it_at_compile_time() {
+        let out = expand(parse_quote! {
+            struct User {
+                name: String,
+                #[aead(passthrough)]
+                tenant: Vec<u32>,
+                #[aead(skip)]
+                cached: Vec<Vec<u32>>,
+            }
+        });
+
+        let depth = quote!(::vitaminc_aead::plaintext::depth);
+        assert_contains(
+            &out,
+            quote!(const DEPTH: ::core::option::Option<usize> = #depth::container(
+                #depth::max(
+                    #depth::max(#depth::SCALAR, <String as ::vitaminc_aead::Encrypt>::DEPTH),
+                    #depth::passthrough(<Vec<u32> as ::vitaminc_aead::Encrypt>::DEPTH)
+                )
+            );),
+        );
+        assert_contains(
+            &out,
+            quote!(<&'__r String as ::vitaminc_aead::Encrypt>::DEPTH),
+        );
+        assert_lacks(&out, quote!(Vec<Vec<u32>>));
+        assert_contains(
+            &out,
+            quote!(#depth::within_limit(<User as ::vitaminc_aead::Encrypt>::DEPTH)),
+        );
+        assert_contains(
+            &out,
+            quote!(#depth::within_limit(<&'static User as ::vitaminc_aead::Encrypt>::DEPTH)),
+        );
+        assert!(
+            out.contains("const _ : () = { :: core :: assert !"),
+            "{out}"
+        );
+        assert!(!out.contains("const {"), "{out}");
+
+        // A type with only lifetime parameters is checked where it is
+        // defined too, at `'static`.
+        let out = expand(parse_quote! {
+            struct Row<'a, 'b: 'a> {
+                name: &'a str,
+                tags: Vec<&'b str>,
+            }
+        });
+        assert_contains(
+            &out,
+            quote!(#depth::within_limit(<Row<'static, 'static> as ::vitaminc_aead::Encrypt>::DEPTH)),
+        );
+        assert_contains(
+            &out,
+            quote!(#depth::within_limit(<&'static Row<'static, 'static> as ::vitaminc_aead::Encrypt>::DEPTH)),
+        );
+        assert!(!out.contains("const {"), "{out}");
+    }
+
+    /// A generic type's depth is known only at a concrete type, so it is
+    /// checked inside `visit`, where it is monomorphized.
+    #[test]
+    fn a_generic_type_is_checked_where_it_is_used() {
+        let out = expand(parse_quote! {
+            struct Holder<T> {
+                value: T,
+            }
+        });
+
+        assert!(out.contains("const {"), "{out}");
+        assert_contains(
+            &out,
+            quote!(::vitaminc_aead::plaintext::depth::within_limit(
+                <Self as ::vitaminc_aead::Encrypt>::DEPTH
+            )),
+        );
+        assert_lacks(&out, quote!(const _: ()));
+    }
+
+    /// A type that names itself, directly or as `Self`, has no fixed depth,
+    /// and naming its own `DEPTH` would be a cycle, so it declares none.
+    /// `#[aead(recursive)]` says the same for mutual recursion.
+    #[test]
+    fn a_recursive_type_declares_no_depth() {
+        for input in [
+            parse_quote!(
+                struct Tree {
+                    children: Vec<Tree>,
+                }
+            ),
+            parse_quote!(
+                struct List {
+                    tail: Option<Vec<Self>>,
+                }
+            ),
+            parse_quote!(
+                struct Wrapped(Vec<Wrapped>);
+            ),
+            // Named inside a tuple or an array, the type sits in a
+            // delimited group of tokens, which is searched too.
+            parse_quote!(
+                struct Pair {
+                    pair: (u32, Vec<Pair>),
+                }
+            ),
+            parse_quote!(
+                struct Fixed {
+                    items: [Option<Box<Self>>; 2],
+                }
+            ),
+            parse_quote!(
+                #[aead(recursive)]
+                struct Even {
+                    next: Vec<Odd>,
+                }
+            ),
+        ] {
+            let out = expand(input);
+            assert_lacks(&out, quote!(const DEPTH));
+            assert_lacks(&out, quote!(within_limit));
+        }
+
+        // Another type with the same name, reached through a path, is not
+        // recursion: its depth is fixed and checked as any other.
+        let out = expand(parse_quote! {
+            struct User {
+                id: u32,
+                inner: legacy::User,
+            }
+        });
+        assert_contains(
+            &out,
+            quote!(<legacy::User as ::vitaminc_aead::Encrypt>::DEPTH),
+        );
+        assert_contains(&out, quote!(within_limit));
+
+        // A skipped field is not walked, so naming the type there is no
+        // recursion.
+        let out = expand(parse_quote! {
+            struct Cached {
+                value: u32,
+                #[aead(skip)]
+                previous: Option<Box<Cached>>,
+            }
+        });
+        assert_contains(&out, quote!(const DEPTH));
     }
 
     #[test]
