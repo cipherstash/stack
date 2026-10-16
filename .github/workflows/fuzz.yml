@@ -189,3 +189,25 @@ jobs:
           name: fuzz-artifacts-${{ matrix.slug }}
           path: ${{ matrix.dir }}/fuzz/artifacts/**
           if-no-files-found: ignore
+
+  # Every run but a pull request or a manual dispatch is one nobody is
+  # watching, with no PR to turn red, so record its failure on an issue. See
+  # _report-unattended-failure.yml; `needs` must name every other job.
+  report:
+    needs:
+      - fuzz-regression
+      - fuzz-campaign
+    if: >-
+      failure() && github.event_name != 'pull_request' &&
+      github.event_name != 'workflow_dispatch'
+    permissions:
+      issues: write
+    uses: ./.github/workflows/_report-unattended-failure.yml
+    with:
+      guidance: >-
+        A fuzz campaign found an input that crashes one of the targets. The
+        reproducer is attached to the run as a `fuzz-artifacts-<target>`
+        artifact. Replay it with `cargo +nightly fuzz run <target>
+        <path-to-reproducer>` (docs/fuzzing.md), fix the bug, add the input to
+        that target's seed corpus so every PR replays it, then close this
+        issue.
