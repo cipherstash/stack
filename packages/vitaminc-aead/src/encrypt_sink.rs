@@ -65,8 +65,13 @@ use crate::{CipherText, Context, IntoAad};
 /// refuses a duplicate key, a struct that seals nothing and a type too deep
 /// for [`MAX_DEPTH`](crate::frame::MAX_DEPTH) at compile time, and
 /// `Timestamp` (with the `chrono` feature) is a time
-/// that cannot be a leap second. What remains is recursion deeper than
-/// `MAX_DEPTH`, a value too long for the frame, and the cipher's own errors.
+/// that cannot be a leap second. What remains is a value deeper than
+/// `MAX_DEPTH` through a field whose type does not fix its depth (a
+/// recursive type, a frame, a hand-written source), a value too long for
+/// the frame, a source's own error (such as a leap second in a
+/// `DateTime<Utc>` field, or a passthrough frame that does not parse), a
+/// `Raw` leaf whose value does not fit its logical type, and the cipher's
+/// own errors.
 #[derive(Debug, thiserror::Error)]
 pub enum EncryptError<E> {
     /// The cipher refused to seal a leaf.

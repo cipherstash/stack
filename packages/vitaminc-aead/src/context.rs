@@ -151,7 +151,7 @@ where
 /// Layer contexts with [`refine`](ContextTag::refine). Wrapping a
 /// `ContextTag` *inside another* would fold the AAD twice, into
 /// `((extra, "a"), "b")`, which is not the layout `context("a").refine("b")`
-/// decrypts against; it does not compile, because a `ContextTag` is not a
+/// decrypts against; it does not compile, because a `ContextTag` is not an
 /// [`Encrypt`]:
 ///
 /// ```rust,compile_fail,E0277

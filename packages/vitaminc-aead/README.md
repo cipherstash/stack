@@ -19,7 +19,7 @@ This crate provides the data model and the traversals for encrypting structured 
 
 ## Key Features
 
-- **One data model**: a value is described once, as a [`Encrypt`] that walks itself into a [`Sink`]. Encryption, decryption, the transport frame, index terms and host bindings are all sinks or sources of the same model, so there is no intermediate value type to convert through.
+- **One data model**: a value is described once, as an [`Encrypt`] that walks itself into a [`Sink`]. Encryption, decryption, the transport frame, index terms and host bindings are all sinks or sources of the same model, so there is no intermediate value type to convert through.
 - **A cipher is `seal` and `open`**: the [`Cipher`] trait seals and opens one leaf; every rule about the *shape* of a value (how map entries are bound to their keys, how sequence elements are bound to their sequence but not to their index or count, how empty containers are authenticated, the refusal of a container with nothing sealed) lives once in the encrypting sink and the opening walk. [`AsyncCipher`] is the same for a cipher that has to be awaited, with batching hooks for a remote key service.
 - **Typed decryption names a sink**: a [`Decrypt`] target is any type that names the sink that builds it, so a ciphertext is decoded straight into a struct, a `Vec`, an `Option`, a `Protected<T>`, or a host value. Decoding is strict.
 - **Self-describing leaves**: every scalar seals as a tagged leaf (`[tag] ++ payload`), with an optional logical type (a date, a timestamp, a decimal, a UUID) over its physical kind, so a value encrypted from Rust, Go or JavaScript opens from any of them.
@@ -266,7 +266,7 @@ The binding is a declaration, not a check of the value, and it only works when b
 ### Working with Protected Types
 
 The crate integrates with `vitaminc-protected` so sensitive plaintext stays wrapped. A `Protected<T>`
-is a [`Encrypt`] whenever `&T` is: it is walked *by reference inside the wrapper*, so the secret
+is an [`Encrypt`] whenever `&T` is: it is walked *by reference inside the wrapper*, so the secret
 never leaves it on the way in. On the way out, `Protected<T>` is a [`Decrypt`] target that builds in
 place: scalars are read straight into the wrapper, and a `Vec` or an `Option` builds inside it from
 the first element, so a failure part way wipes what was already decoded.
