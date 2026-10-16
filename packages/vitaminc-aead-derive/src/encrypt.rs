@@ -71,27 +71,153 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         }
     };
 
+    let Depth {
+        owned: depth,
+        by_ref: ref_depth,
+        item_check,
+        visit_check,
+    } = depth(krate, &input, &shape, attrs.recursive);
+
     Ok(quote! {
         #[automatically_derived]
         impl #impl_generics #krate::Encrypt for #name #ty_generics #where_clause {
+            #depth
+
             fn visit<__S>(#receiver, __sink: __S) -> ::core::result::Result<__S::Ok, __S::Error>
             where
                 __S: #krate::Sink,
             {
+                #visit_check
                 #body
             }
         }
 
         #[automatically_derived]
         impl #ref_impl_generics #krate::Encrypt for &'__r #name #ty_generics #ref_where_clause {
+            #ref_depth
+
             fn visit<__S>(self, __sink: __S) -> ::core::result::Result<__S::Ok, __S::Error>
             where
                 __S: #krate::Sink,
             {
+                #visit_check
                 #ref_body
             }
         }
+
+        #item_check
     })
+}
+
+/// The `DEPTH` constants for both impls, and the check that the type fits
+/// within `MAX_DEPTH`.
+struct Depth {
+    owned: TokenStream,
+    by_ref: TokenStream,
+    /// A named `const` item, for a type with no generic parameters, so
+    /// `cargo check` reports it. trybuild cannot see a post-monomorphization
+    /// error, so this is also what the compile-fail tests exercise.
+    item_check: TokenStream,
+    /// An inline `const` block at the top of `visit`, for a generic type,
+    /// whose depth is known only once its parameters are. It fires when the
+    /// type is used at a concrete type, under `cargo build`.
+    visit_check: TokenStream,
+}
+
+/// Work out the type's depth from its fields' depths, the way the encrypting
+/// sink counts nesting. A recursive type has no fixed depth, and naming its
+/// own `DEPTH` would be a cycle, so it keeps the default `None` and the
+/// walk checks each value instead.
+fn depth(krate: &syn::Path, input: &DeriveInput, shape: &Shape, recursive: bool) -> Depth {
+    let name = &input.ident;
+    let none = Depth {
+        owned: TokenStream::new(),
+        by_ref: TokenStream::new(),
+        item_check: TokenStream::new(),
+        visit_check: TokenStream::new(),
+    };
+    if recursive || names_itself(name, shape) {
+        return none;
+    }
+
+    let depth = quote!(#krate::plaintext::depth);
+    let expr = |by_ref: bool| -> TokenStream {
+        let of = |ty: &syn::Type| {
+            if by_ref {
+                quote!(<&'__r #ty as #krate::Encrypt>::DEPTH)
+            } else {
+                quote!(<#ty as #krate::Encrypt>::DEPTH)
+            }
+        };
+        match shape {
+            Shape::Newtype(field) => of(&field.ty),
+            Shape::Map(fields) => {
+                let deepest = fields
+                    .iter()
+                    .filter(|field| field.stored())
+                    .map(|field| {
+                        let child = of(&field.ty);
+                        if field.passthrough {
+                            quote!(#depth::passthrough(#child))
+                        } else {
+                            child
+                        }
+                    })
+                    .fold(
+                        quote!(#depth::SCALAR),
+                        |deepest, child| quote!(#depth::max(#deepest, #child)),
+                    );
+                quote!(#depth::container(#deepest))
+            }
+            Shape::Empty | Shape::Enum(_) => quote!(#depth::SCALAR),
+        }
+    };
+    let owned = expr(false);
+    let by_ref = expr(true);
+
+    let message = format!(
+        "`{name}` nests deeper than `MAX_DEPTH` levels, so the encrypting sink would refuse \
+         its fully populated values"
+    );
+    let check = |ty: TokenStream| {
+        quote!(::core::assert!(#depth::within_limit(<#ty as #krate::Encrypt>::DEPTH), #message))
+    };
+    let (item_check, visit_check) = if input.generics.params.is_empty() {
+        let assertion = check(quote!(#name));
+        (quote!(const _: () = #assertion;), TokenStream::new())
+    } else {
+        let assertion = check(quote!(Self));
+        (TokenStream::new(), quote!(const { #assertion };))
+    };
+
+    Depth {
+        owned: quote!(const DEPTH: ::core::option::Option<usize> = #owned;),
+        by_ref: quote!(const DEPTH: ::core::option::Option<usize> = #by_ref;),
+        item_check,
+        visit_check,
+    }
+}
+
+/// Whether a walked field's type names the type being derived, directly or
+/// as `Self`: a recursive type, whose depth depends on the value. Mutual
+/// recursion through another type cannot be seen from here; it needs
+/// `#[aead(recursive)]`.
+fn names_itself(name: &syn::Ident, shape: &Shape) -> bool {
+    fn mentions(tokens: TokenStream, name: &syn::Ident) -> bool {
+        tokens.into_iter().any(|token| match token {
+            proc_macro2::TokenTree::Ident(ident) => ident == *name || ident == "Self",
+            proc_macro2::TokenTree::Group(group) => mentions(group.stream(), name),
+            _ => false,
+        })
+    }
+    let walked: Vec<&FieldInfo> = match shape {
+        Shape::Newtype(field) => vec![field],
+        Shape::Map(fields) => fields.iter().filter(|field| field.stored()).collect(),
+        Shape::Empty | Shape::Enum(_) => Vec::new(),
+    };
+    walked
+        .iter()
+        .any(|field| mentions(quote::ToTokens::to_token_stream(&field.ty), name))
 }
 
 fn shape_takes(shape: &Shape) -> bool {
@@ -594,6 +720,107 @@ mod tests {
             !out.contains("vitaminc_aead"),
             "expansion still references the default crate path:\n{out}"
         );
+    }
+
+    /// A struct's depth is one more than its deepest walked field's, and a
+    /// type with no generic parameters is checked by a named `const` item,
+    /// which `cargo check` evaluates.
+    #[test]
+    fn a_struct_declares_its_depth_and_checks_it_at_compile_time() {
+        let out = expand(parse_quote! {
+            struct User {
+                name: String,
+                #[aead(passthrough)]
+                tenant: Vec<u32>,
+                #[aead(skip)]
+                cached: Vec<Vec<u32>>,
+            }
+        });
+
+        let depth = quote!(::vitaminc_aead::plaintext::depth);
+        assert_contains(
+            &out,
+            quote!(const DEPTH: ::core::option::Option<usize> = #depth::container(
+                #depth::max(
+                    #depth::max(#depth::SCALAR, <String as ::vitaminc_aead::Encrypt>::DEPTH),
+                    #depth::passthrough(<Vec<u32> as ::vitaminc_aead::Encrypt>::DEPTH)
+                )
+            );),
+        );
+        assert_contains(
+            &out,
+            quote!(<&'__r String as ::vitaminc_aead::Encrypt>::DEPTH),
+        );
+        assert_lacks(&out, quote!(Vec<Vec<u32>>));
+        assert_contains(
+            &out,
+            quote!(#depth::within_limit(<User as ::vitaminc_aead::Encrypt>::DEPTH)),
+        );
+        assert!(out.contains("const _ : () = :: core :: assert !"), "{out}");
+        assert!(!out.contains("const {"), "{out}");
+    }
+
+    /// A generic type's depth is known only at a concrete type, so it is
+    /// checked inside `visit`, where it is monomorphized.
+    #[test]
+    fn a_generic_type_is_checked_where_it_is_used() {
+        let out = expand(parse_quote! {
+            struct Holder<T> {
+                value: T,
+            }
+        });
+
+        assert!(out.contains("const {"), "{out}");
+        assert_contains(
+            &out,
+            quote!(::vitaminc_aead::plaintext::depth::within_limit(
+                <Self as ::vitaminc_aead::Encrypt>::DEPTH
+            )),
+        );
+        assert_lacks(&out, quote!(const _: ()));
+    }
+
+    /// A type that names itself, directly or as `Self`, has no fixed depth,
+    /// and naming its own `DEPTH` would be a cycle, so it declares none.
+    /// `#[aead(recursive)]` says the same for mutual recursion.
+    #[test]
+    fn a_recursive_type_declares_no_depth() {
+        for input in [
+            parse_quote!(
+                struct Tree {
+                    children: Vec<Tree>,
+                }
+            ),
+            parse_quote!(
+                struct List {
+                    tail: Option<Vec<Self>>,
+                }
+            ),
+            parse_quote!(
+                struct Wrapped(Vec<Wrapped>);
+            ),
+            parse_quote!(
+                #[aead(recursive)]
+                struct Even {
+                    next: Vec<Odd>,
+                }
+            ),
+        ] {
+            let out = expand(input);
+            assert_lacks(&out, quote!(const DEPTH));
+            assert_lacks(&out, quote!(within_limit));
+        }
+
+        // A skipped field is not walked, so naming the type there is no
+        // recursion.
+        let out = expand(parse_quote! {
+            struct Cached {
+                value: u32,
+                #[aead(skip)]
+                previous: Option<Box<Cached>>,
+            }
+        });
+        assert_contains(&out, quote!(const DEPTH));
     }
 
     #[test]

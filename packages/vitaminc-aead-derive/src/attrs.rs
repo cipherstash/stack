@@ -8,11 +8,17 @@ pub(crate) struct ContainerAttrs {
     /// `::vitaminc_aead`; overridden by `#[aead(crate = "...")]` so the macros
     /// work through a re-export such as `::vitaminc::aead`.
     pub(crate) krate: Path,
+    /// The type is recursive, from `#[aead(recursive)]`: its depth depends on
+    /// the value, so it is checked by the walk rather than at compile time.
+    /// Needed only for mutual recursion; a type that names itself in a field
+    /// is detected without it.
+    pub(crate) recursive: bool,
 }
 
 impl ContainerAttrs {
     pub(crate) fn parse(attrs: &[Attribute]) -> Result<Self> {
         let mut krate: Option<Path> = None;
+        let mut recursive = false;
 
         for attr in attrs.iter().filter(|a| a.path().is_ident("aead")) {
             attr.parse_nested_meta(|meta| {
@@ -21,12 +27,19 @@ impl ContainerAttrs {
                     krate = Some(lit.parse()?);
                     return Ok(());
                 }
-                Err(meta.error("unsupported container attribute; expected `crate = \"...\"`"))
+                if meta.path.is_ident("recursive") {
+                    recursive = true;
+                    return Ok(());
+                }
+                Err(meta.error(
+                    "unsupported container attribute; expected `crate = \"...\"` or `recursive`",
+                ))
             })?;
         }
 
         Ok(Self {
             krate: krate.unwrap_or_else(|| syn::parse_quote!(::vitaminc_aead)),
+            recursive,
         })
     }
 }

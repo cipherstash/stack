@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: `TooDeep` nests deeper than `MAX_DEPTH` levels, so the encrypting sink would refuse its fully populated values
+  --> tests/ui/derive/sink_too_deep.rs:19:10
+   |
+19 | #[derive(Encrypt)]
+   |          ^^^^^^^ evaluation of `_` failed here

@@ -19,6 +19,7 @@
 //! `Sink` is implemented inside vitaminc and its host bindings. Application
 //! code implements `Encrypt`, usually by derive.
 
+pub mod depth;
 pub mod kinds;
 mod path;
 mod sources;
@@ -73,6 +74,21 @@ pub use tee::Tee;
 /// way, and a hand-written container should not drop unvisited children
 /// bare.
 pub trait Encrypt {
+    /// How deep a value of this type can nest below its own root, when the
+    /// type alone fixes it: `Some(0)` for a scalar, one more than its
+    /// deepest child for a sequence or map (see [`depth`]). `None`, the
+    /// default, when it depends on the value: a recursive type, a frame, a
+    /// live host value.
+    ///
+    /// `#[derive(Encrypt)]` works this out from the fields' depths and fails
+    /// to compile a type deeper than [`MAX_DEPTH`](crate::frame::MAX_DEPTH),
+    /// whose fully populated values the encrypting sink would always
+    /// refuse. A hand-written impl may leave it `None`, which skips the
+    /// check for every type that contains it; the walk still refuses a
+    /// value that is too deep. It must never be more than the deepest a
+    /// value of the type can nest, or a type that is fine fails to compile.
+    const DEPTH: Option<usize> = None;
+
     /// Describe `self` to `sink`, consuming it.
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error>;
 }
