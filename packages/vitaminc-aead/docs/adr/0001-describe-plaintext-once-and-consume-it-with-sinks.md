@@ -566,11 +566,23 @@ Every `Value` variant has one call in the new model:
 | `Passthrough(v)`                   | `passthrough(v)`                                                |
 | (no variant)                       | `scalar(Some(Uuid), Bytes(&id))`                                |
 
-### 3. The wire format does not change for anything that existed before
+### 3. Scalar tags keep their encodings; the envelope version and the none node change
 
 The sealed leaf is `[tag] ++ payload` inside the AEAD envelope, and the
-transport frame uses the same tags. Both stay byte for byte. The existing
-tags are read as shorthand for a physical kind plus a logical type:
+transport frame uses the same tags. Every existing scalar tag keeps its
+encoding byte for byte. The ciphertext around those tags does change,
+and 0.5 ciphertext is not interoperable by default:
+
+- The envelope's version byte moves from 1 to 2, and `Aes256Cipher`
+  refuses version 1 leaves unless the reader opts in (see "Tagged leaves
+  are sealed under wire version 2" below).
+- `CipherText::None` and the transport's `CT_NONE` node are removed,
+  because `None` becomes a `NULL` leaf.
+- `LeafTypeAad` moves to a new domain label, so bindings made under the old
+  label do not open.
+
+The existing tags are read as shorthand for a physical kind plus a logical
+type:
 
 | Tag                          | Reads as                                     |
 | ---------------------------- | -------------------------------------------- |
