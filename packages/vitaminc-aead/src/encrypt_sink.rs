@@ -50,6 +50,23 @@ use crate::{CipherText, Context, IntoAad};
 ///
 /// A cipher's own error is printed in the message rather than chained as
 /// the `source()`, so a cipher error type need not implement `Error`.
+///
+/// Every failure is an error, never a panic, including the ones that look
+/// like contract violations: a value too long for the frame's `u32` length
+/// prefixes ([`Unencryptable::Unwritable`],
+/// [`Unencryptable::UnframablePassthrough`]) and a cipher that returns the
+/// wrong number of leaves ([`EncryptError::Count`]). The value often comes
+/// from a host (a JavaScript object, a Go frame) and the cipher may be a
+/// remote key provider, so neither is under the caller's control. A panic
+/// there would let hostile input or a bad response abort the process: in
+/// the Node binding, a panic aborts Node.
+///
+/// A type that derives `Encrypt` cannot hit most of these. The derive
+/// refuses a duplicate key, a struct that seals nothing and a type too deep
+/// for [`MAX_DEPTH`](crate::frame::MAX_DEPTH) at compile time, and
+/// `Timestamp` (with the `chrono` feature) is a time
+/// that cannot be a leap second. What remains is recursion deeper than
+/// `MAX_DEPTH`, a value too long for the frame, and the cipher's own errors.
 #[derive(Debug, thiserror::Error)]
 pub enum EncryptError<E> {
     /// The cipher refused to seal a leaf.

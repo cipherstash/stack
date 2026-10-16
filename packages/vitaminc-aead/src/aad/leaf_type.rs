@@ -6,6 +6,13 @@
 //! any plaintext is released. A type confusion becomes an ordinary AEAD
 //! failure.
 //!
+//! Binding is opt-in, and stays so. If every leaf's type were bound by
+//! default, a reader would need the type to open the data: a JavaScript or
+//! Go reader with no schema, which decodes whatever the leaf's tag says,
+//! could no longer open rows a Rust writer sealed. Self-describing data
+//! that any binding can read is the default; a caller that holds a schema
+//! on both sides adds this binding on top.
+//!
 //! The self-describing path never binds it. A sealed leaf carries its own
 //! tag inside the AEAD, which is knowable only *after* decryption; AAD must
 //! be known *before*, so it can only carry an expectation the caller
