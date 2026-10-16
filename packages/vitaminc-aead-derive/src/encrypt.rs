@@ -183,8 +183,14 @@ fn depth(krate: &syn::Path, input: &DeriveInput, shape: &Shape, recursive: bool)
         quote!(::core::assert!(#depth::within_limit(<#ty as #krate::Encrypt>::DEPTH), #message))
     };
     let (item_check, visit_check) = if input.generics.params.is_empty() {
-        let assertion = check(quote!(#name));
-        (quote!(const _: () = #assertion;), TokenStream::new())
+        // The `&Name` impl works its depth out from each field's `&Field`
+        // impl, which may differ from the owned one, so both are checked.
+        let owned = check(quote!(#name));
+        let borrowed = check(quote!(&'static #name));
+        (
+            quote!(const _: () = { #owned; #borrowed; };),
+            TokenStream::new(),
+        )
     } else {
         let assertion = check(quote!(Self));
         (TokenStream::new(), quote!(const { #assertion };))
@@ -756,7 +762,14 @@ mod tests {
             &out,
             quote!(#depth::within_limit(<User as ::vitaminc_aead::Encrypt>::DEPTH)),
         );
-        assert!(out.contains("const _ : () = :: core :: assert !"), "{out}");
+        assert_contains(
+            &out,
+            quote!(#depth::within_limit(<&'static User as ::vitaminc_aead::Encrypt>::DEPTH)),
+        );
+        assert!(
+            out.contains("const _ : () = { :: core :: assert !"),
+            "{out}"
+        );
         assert!(!out.contains("const {"), "{out}");
     }
 
@@ -798,6 +811,18 @@ mod tests {
             ),
             parse_quote!(
                 struct Wrapped(Vec<Wrapped>);
+            ),
+            // Named inside a tuple or an array, the type sits in a
+            // delimited group of tokens, which is searched too.
+            parse_quote!(
+                struct Pair {
+                    pair: (u32, Vec<Pair>),
+                }
+            ),
+            parse_quote!(
+                struct Fixed {
+                    items: [Option<Box<Self>>; 2],
+                }
             ),
             parse_quote!(
                 #[aead(recursive)]
