@@ -1,5 +1,68 @@
 # Changelog
 
+## 1.0.0
+
+### Minor Changes
+
+- fd0ee91: `OidcFederationStrategy` now keeps one CTS token per distinct provider JWT
+  instead of one token for everyone. `getJwt` is called on every `getToken()`
+  and must return the JWT of the user the current request is for; a JWT is
+  exchanged once and its CTS token reused while that token is valid _and_ the
+  JWT's entry is still in the bounded least-recently-used cache (eviction before
+  expiry, or `cacheCapacity: 0`, means another exchange; see below). Previously
+  the strategy cached the first user's token and handed it to
+  every caller until it expired, so on a server serving many users through one
+  client a value one user encrypted under a lock context could be bound to
+  another user's identity (cipherstash/stack#1045).
+
+  `getToken()` now calls `getJwt` in the caller's own async context and hands the
+  JWT to a new `getTokenForJwt(jwt)` method, on both the Node and `wasm-inline`
+  entries. Previously the Node binding ran `getJwt` through a napi threadsafe
+  function, in the async context of `create()`, so a callback that read the
+  request from `AsyncLocalStorage` (Clerk's `auth()`, Next.js `headers()`) saw
+  no request from a module-level strategy, or the creating request from one
+  created inside a request. One long-lived strategy now serves every user from
+  such a callback. `getTokenForJwt` is also public, for a caller that already
+  holds the user's JWT; it shares the strategy's cache with `getToken()`.
+
+  A token persisted through `createWithStore` (for example a cookie) is now
+  served only to the JWT it was federated from, so a store shared across users,
+  or a cookie left over from a previous sign-in, is a cache miss rather than
+  another user's token. The store is still one slot, so a store shared by
+  several users caches only the most recent of them; give each user their own
+  (a per-browser cookie already is). The stored JSON carries a new
+  `federated_from` field; tokens stored by earlier releases have none and are
+  re-federated once.
+
+  Because the cache is keyed on the whole JWT, an identity provider that rotates
+  JWTs faster than the CTS token lifetime (about 15 minutes) re-federates on each
+  rotation, where earlier releases reused the stored token.
+
+  The cache holds 1024 JWTs unless told otherwise. `create` and `createWithStore`
+  take an optional `cacheCapacity` after `baseUrl` (the `cacheCapacity` option on
+  `@cipherstash/auth/wasm-inline`); when the cache is full the least recently
+  used JWT's token is dropped, that user is exchanged again on their next call,
+  and the eviction is logged at `debug`. `0` caches nothing. Existing calls are
+  unchanged.
+
+### Patch Changes
+
+- fb75f40: Auth failures carry more help, and their messages never quote a credential or another library's text. A failure's `type` (`NOT_AUTHENTICATED`, `INVALID_CRN`, ...) is unchanged.
+
+  - `REQUEST_ERROR`'s message no longer repeats the transport's own error, which can carry a URL with its query string. It gains `help` saying what to check.
+  - `INVALID_TOKEN` for a token whose claims do not decode no longer quotes the decoder's message, which could carry a byte or a claim of the token.
+  - A failed device binding reports ZeroKMS's status, not its response body.
+  - `SERVER_ERROR` for a refused token exchange names the HTTP status and the auth server's `error_description`, not the response body, which from the edge in front of it is an HTML page and can echo the access key. A body that is not JSON is reported by where it broke, not by the parser's message.
+  - A profile file that is not valid JSON is reported by error kind, line and column, not by the parser's message, which could quote the file.
+  - `INVALID_GRANT`, `INVALID_WORKSPACE_ID` and `ALREADY_CONSUMED` gain `help`, and `NOT_AUTHENTICATED`'s help names `stash auth login`.
+  - A `STORE_ERROR` carries the help of the profile failure underneath it, such as logging in again when the profile file is missing.
+  - @cipherstash/auth-darwin-x64@1.0.0
+  - @cipherstash/auth-darwin-arm64@1.0.0
+  - @cipherstash/auth-win32-x64-msvc@1.0.0
+  - @cipherstash/auth-linux-x64-gnu@1.0.0
+  - @cipherstash/auth-linux-arm64-gnu@1.0.0
+  - @cipherstash/auth-linux-x64-musl@1.0.0
+
 ## 0.44.1
 
 ### Patch Changes

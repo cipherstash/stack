@@ -1,5 +1,16 @@
 # @cipherstash/prisma-next-example
 
+## 0.1.5
+
+### Patch Changes
+
+- Updated dependencies [ae63dcd]
+- Updated dependencies [fd0ee91]
+- Updated dependencies [bbb1bfa]
+- Updated dependencies [20ccab3]
+  - @cipherstash/stack-prisma@1.3.0
+  - @cipherstash/stack@1.3.0
+
 ## 0.1.4
 
 ### Patch Changes

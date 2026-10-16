@@ -1,3 +1,5 @@
 # @cipherstash/auth-linux-x64-gnu
 
+## 1.0.0
+
 ## 0.44.1
