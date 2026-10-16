@@ -1,24 +1,29 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # Describe plaintext once and consume it with sinks
 
-Stack Encrypt is unreleased, so vitaminc's encryption data model is still
-open to change. This decision replaces the `Encrypt`/`Cipher` and
-`Decrypt`/`Decipher` trait pairs and the `Value` enum with a serde-style
-split between a type that describes itself (`Plaintext`) and the things
-that consume that description (`Sink`). Encryption, index terms, transport
-frames, host-language builders and typed decoding are all sinks over one
-walk. Ciphers shrink to sealing and opening bytes, synchronously or
-asynchronously, and a remote key provider seals a whole document in one
-round trip.
+> **Implemented** in #416–#448. This document describes what landed. The
+> source trait is called `Plaintext` here and in the code at the time of
+> writing; it ships as `Encrypt` (#449), and `Plaintext` is its interim
+> name. See [Names](#9-names).
+
+When this was decided, Stack Encrypt was unreleased, so vitaminc's
+encryption data model was still open to change. This decision replaced the
+`Encrypt`/`Cipher` and `Decrypt`/`Decipher` trait pairs and the `Value`
+enum with a serde-style split between a type that describes itself
+(`Plaintext`) and the things that consume that description (`Sink`).
+Encryption, index terms, transport frames, host-language builders and typed
+decoding are all sinks over one walk. Ciphers shrink to sealing and opening
+bytes, synchronously or asynchronously, and a remote key provider seals a
+whole document in one round trip.
 
 ## Context
 
-### What exists today
+### Before this decision (vitaminc 0.5.1)
 
-`vitaminc-aead` has four traits and two sub-protocols on each side:
+`vitaminc-aead` had four traits and two sub-protocols on each side:
 
 ```rust
 // Encrypt side: the type drives the cipher.
@@ -66,14 +71,14 @@ pub trait Decipher<'c>: Sized {
 ```
 
 `DecipherVisitor` (with `visit_bytes_vec`, `visit_seq`, `visit_map`,
-`visit_none`, `visit_passthrough`), `SeqAccess` and `MapAccess` complete the
-decrypt side. `vitaminc-aead-value` adds `Value`, a twenty-three-variant enum
+`visit_none`, `visit_passthrough`), `SeqAccess` and `MapAccess` completed the
+decrypt side. `vitaminc-aead-value` added `Value`, a twenty-three-variant enum
 (twenty scalars, array, object and passthrough) that host languages convert
 into and out of, with a frozen one-byte tag per scalar variant, a `ValueKind` inventory, a transport codec for the wasm
 boundary, and a `canonical` feature that produces equality inputs from a
 `Value`.
 
-### What is wrong with it
+### What was wrong with it
 
 **The scalar type is erased at the cipher.** `Encrypt` describes a value and
 targets the cipher's bytes-only data model in the same step. Once a scalar
@@ -151,12 +156,13 @@ pub trait MapSink: Sized {
     type Error: Error;
     type Entry<'s>: Sink<Error = Self::Error> where Self: 's;
 
-    /// A sink for the value under `key`. Keys travel in the clear, as today.
+    /// A sink for the value under `key`. Keys travel in the clear, as before.
     fn entry(&mut self, key: &str) -> Result<Self::Entry<'_>, Self::Error>;
     fn end(self) -> Result<Self::Ok, Self::Error>;
 }
 
 /// Every sink's error type can carry a failure from the source.
+/// (`vitaminc_aead::plaintext::Error`; not re-exported at the crate root.)
 pub trait Error: Sized {
     fn source(error: SourceError) -> Self;
 }
@@ -177,11 +183,11 @@ Three properties of this shape do the work:
 
 #### Push-style containers: what `SeqSink::element` does
 
-Today a container hands each child to the cipher as a value, and the cipher
-walks it:
+Before, a container handed each child to the cipher as a value, and the
+cipher walked it:
 
 ```rust
-// Today. The cipher receives the element and drives its walk.
+// Before. The cipher receives the element and drives its walk.
 pub trait SeqCipher: Sized {
     fn encrypt_next<T: Encrypt>(self, value: T) -> Result<Self, Self::Error>;
     fn end(self) -> Result<Self::Ok, Self::Error>;
@@ -223,8 +229,9 @@ impl<T: Plaintext> Plaintext for Vec<T> {
 long as it lives (`Element<'s>` is tied to `&'s mut self`). Whatever the
 child is, a scalar or a nested container, its `visit` runs against that
 element sink, and when the child's walk finishes the element sink writes
-one finished child into the parent. The element sink's `Ok` is `()` because
-its result goes into the parent, not back to the caller. The borrow means
+one finished child into the parent. The element sink's `Ok` is incidental
+(usually `()`) because its result goes into the parent, not back to the
+caller. The borrow means
 only one element sink exists at a time, so children land in order, and the
 parent's `end` runs only after the last child is done.
 
@@ -233,39 +240,67 @@ vector of finished child nodes plus the AAD every element is sealed under;
 `element` hands out a sink whose output slot is that vector:
 
 ```rust
-pub struct EncryptSeq<'p> {
+/// `E` is the cipher's error type; `O` is where the finished node goes.
+pub struct EncryptSeq<E, O> {
     aad: Context<'static>,           // the container's own AAD, for the empty marker
     element_aad: Context<'static>,   // aad.for_sequence_element(), shared by every child
-    items: Vec<CipherText<Pending>>,
-    out: Slot<'p>,                   // where the finished sequence node goes
+    items: Vec<Node<Pending>>,
+    rules: SeqRules,                 // the shared shape rules, from `vitaminc_aead::shape`
+    out: O,                          // a `Slot`: the root, or a parent's `Push` or `Entry`
+    depth: usize,
+    _error: PhantomData<E>,
 }
 
-impl SeqSink for EncryptSeq<'_> {
-    type Element<'s> = EncryptSink<Push<'s>> where Self: 's;
+impl<E, O: Slot> SeqSink for EncryptSeq<E, O> {
+    type Ok = O::Ok;
+    type Error = EncryptError<E>;
+    type Element<'s> = EncryptSink<E, Push<'s>> where Self: 's;
 
     fn element(&mut self) -> Result<Self::Element<'_>, Self::Error> {
-        Ok(EncryptSink { aad: self.element_aad.clone(), out: Push(&mut self.items) })
+        Ok(EncryptSink {
+            aad: self.element_aad.clone(),
+            out: Push {
+                settle: self.rules.element(&self.out)?,   // refuses nesting past MAX_DEPTH
+                items: &mut self.items,
+                parent: &self.out,
+            },
+            depth: self.depth + 1,
+            _error: PhantomData,
+        })
     }
 
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        let node = match self.items.len() {
-            0 => CipherText::EmptySequence(marker(self.aad.for_empty_sequence())),
-            _ if nothing_sealed(&self.items) => return Err(EncryptError::Shape("sequence has nothing sealed")),
-            _ => CipherText::Sequence(self.items),
+    fn end(self) -> Result<O::Ok, Self::Error> {
+        self.rules.end(&self.out)?;   // a `Refusal`: nothing sealed, or a child sink dropped
+        let node = if self.items.is_empty() {
+            CipherText::EmptySequence(marker(self.aad.for_empty_sequence()))
+        } else {
+            CipherText::Sequence(self.items)
         };
         Ok(self.out.put(node))
     }
 }
 ```
 
-`Push(&mut items)` is the output slot: when the element sink receives a
-scalar it plans one `Pending` leaf and pushes `CipherText::Single(leaf)`
-onto `items`; when it receives a nested sequence it returns another
-`EncryptSeq` whose slot is the same vector, so the nested node is pushed
-when that inner `end` runs. The map sink is the same with `(key, node)`
-pairs, `for_map_entry(key)` as the child AAD and a `HashSet` for duplicate
-keys. These few lines are the whole of the container logic that today is
-spread across `Aes256Cipher`'s `SeqCipher`, `MapCipher` and `AesDecipher`.
+`Push` is the output slot: when the element sink receives a scalar it plans
+one `Pending` leaf and pushes `CipherText::Single(leaf)` onto `items`; when
+it receives a nested sequence it returns another `EncryptSeq` whose slot is
+the same vector, so the nested node is pushed when that inner `end` runs.
+The map sink is the same with `(key, node)` pairs and `for_map_entry(key)`
+as the child AAD.
+
+The rules every container keeps (no repeated key, something sealed in a
+container that has children, no child sink dropped without a value, no
+nesting deeper than `MAX_DEPTH`) are not written into `EncryptSink`. They
+live in the public `vitaminc_aead::shape` module (`SeqRules`, `MapRules`,
+`Settle`, `Locate`), so another sink keeps the same rules through the same
+code: `Terms` (section 7) refuses exactly the values `EncryptSink` refuses.
+A broken rule is a `Refusal { reason: Unencryptable, path: Path }`, where a
+`Path` is a list of `Step::Index(usize)` and `Step::Key(String)` from the
+root. Each child sink links to its parent's place, so the path is built only
+when a refusal is. A refusal's `Display` shows only the reason, and its
+`Debug` masks every map key, because keys can be user data. That module is
+the whole of the container logic that before this decision was spread
+across `Aes256Cipher`'s `SeqCipher`, `MapCipher` and `AesDecipher`.
 
 #### `Tee`: two sinks, one walk
 
@@ -313,22 +348,26 @@ impl<A: SeqSink, B: SeqSink<Error = A::Error>> SeqSink for Tee<A, B> {
 A tee of two sequence sinks returns, from `element`, a tee of two element
 sinks. So the nesting composes by itself: at every depth the source sees one
 sink, and both consumers receive the same calls in the same order. For
-`vec![1u8, 2u8]` walked into `Tee(EncryptSink, Terms)`:
+`vec![1u32, 2u32]` walked into `Tee(EncryptSink, Terms)`:
 
 | Source call                        | `EncryptSink` receives                | `Terms` receives                     |
 | ---------------------------------- | ------------------------------------- | ------------------------------------ |
-| `sink.seq(Some(2))`                | `seq(Some(2))`: start a node list     | `seq(Some(2))`: push path index 0    |
+| `sink.seq(Some(2))`                | `seq(Some(2))`: start a node list     | `seq(Some(2))`: start a container    |
 | `seq.element()`                    | `element()`: sink into the list       | `element()`: sink at path `[0]`      |
-| `1u8.visit(element)` → `scalar`    | plan leaf `INT8 1` under element AAD  | term `(int domain, encoded 1)` at `[0]` |
+| `1u32.visit(element)` → `scalar`   | plan leaf `UINT32 1` under element AAD | term `(int domain, encoded 1)` at `[0]` |
 | `seq.element()`                    | `element()`                           | `element()`: path `[1]`              |
-| `2u8.visit(element)` → `scalar`    | plan leaf `INT8 2`                    | term at `[1]`                        |
-| `seq.end()`                        | `end()`: `CipherText::Sequence`       | `end()`: pop path                    |
+| `2u32.visit(element)` → `scalar`   | plan leaf `UINT32 2`                  | term at `[1]`                        |
+| `seq.end()`                        | `end()`: `CipherText::Sequence`       | `end()`: close the container         |
+
+(`u8` is deliberately not a source or a target, so that `Vec<u8>`, `[u8; N]`
+and `&[u8]` can be byte leaves. A lone 8-bit integer comes from a host, or
+from `Raw`.)
 
 Nothing is copied: `Physical<'_>` borrows the scalar's text or bytes, and
 both sides read the same borrow. The two sides must share an error type,
 which is why `Error` is a trait the tee can bound on; a sink meant for
 teeing, such as `Terms`, is generic over its error type and adopts its
-partner's. `encrypt_with_terms` is then one line:
+partner's. Encrypting with terms is then one walk:
 
 ```rust
 let mut terms = Vec::new();
@@ -336,11 +375,18 @@ let (pending, ()) = value.visit(Tee(EncryptSink::root(aad), Terms::new(&mut term
 let ct = seal_all(cipher, pending)?;   // terms are complete before this line
 ```
 
+`vitaminc-normalize` packages this as `plan_with_terms` and
+`encrypt_with_terms`. Those tee `EncryptSink` with a `Terms` that leaves the
+shape rules to its partner, so the rules are kept and paid for once; a
+caller who tees `Terms::new` by hand, as above, has both sides keep them.
+
 The one call a tee cannot share is `passthrough`, which hands a whole
 subtree to each sink to walk for itself. That is why the value is `Clone`:
 the tee gives each side its own copy. Passthrough is cleartext by contract,
-so the copy carries no secret. A borrowed frame and a live host value are
-both `Copy`; a Rust value in a passthrough field has to be `Clone`.
+so the copy carries no secret. A borrowed `Frame` is `Copy`, and a Rust
+value in a passthrough field has to be `Clone` (the derive passes a
+reference). The Node binding never produces a passthrough from a live
+object, so `JsRef` needs neither.
 
 A struct's `Plaintext` is what `#[derive(Plaintext)]` generates:
 
@@ -362,17 +408,34 @@ impl Plaintext for User {
 }
 ```
 
-The leaf implementations are one line each: `String` calls
-`sink.scalar(None, Physical::Text(&self))`, `u32` calls
+The leaf implementations are short: `u32` calls
 `sink.scalar(None, Physical::Int(Int::U32(self)))`, and `NaiveDate` calls
-`sink.scalar(Some(Logical::Date), Physical::Int(Int::I32(days)))`.
-`Vec<T>`, slices, `Option<T>`, `Protected<T>` and the chrono, `rust_decimal`
-and `uuid` types get implementations in `vitaminc-aead`, the last three
-behind features.
+`sink.scalar(Some(Logical::Date), Physical::Int(Int::I32(days)))`. `String`
+first wraps itself in `Protected`, then walks as
+`sink.scalar(None, Physical::Text(&s))`; `Vec<u8>` and `[u8; N]` do the same
+as bytes.
 
-How the pieces map onto what exists today:
+Every source also implements `Plaintext for &T`, and `Protected<T>` walks
+the borrowed form (`Protected<T>: Plaintext` requires
+`for<'a> &'a T: Plaintext`), so the value is never moved out of its
+wrapper. A hand-written type therefore implements both forms to sit inside
+a `Protected`, and `#[derive(Plaintext)]` emits both. The example above is
+the borrowed shape; the by-value impl also drops the fields it has not
+visited when the walk fails.
 
-| Today                                                 | After                                         |
+`vitaminc-aead` implements `Plaintext` for `bool`, every integer except
+`u8`, `f32`, `f64`, `String`, `Vec<T>`, `&[T]`, `Vec<u8>`, `[u8; N]` and
+`&[u8]` (bytes), `Option<T>`, `Protected<T>`, and `HashMap<K, V>` and
+`BTreeMap<K, V>` with `K: AsRef<str>`. Behind the `chrono`, `rust_decimal`
+and `uuid` features of the same names it implements `NaiveDate`,
+`DateTime<Utc>` (`Timestamp(Nanos)` over `Int::I128`), `Decimal` and `Uuid`.
+For hand-written sources there are `Raw(Option<Logical>, Physical)`, which
+sends one scalar as given, `Bytes(&[u8])`, and the `visit_seq` and
+`visit_map` helpers.
+
+How the pieces map onto what existed before:
+
+| Before                                                | After                                         |
 | ----------------------------------------------------- | --------------------------------------------- |
 | `Encrypt::encrypt_with_aad(self, cipher, aad)`        | `Plaintext::visit(self, sink)`                |
 | `Cipher` (bytes, seq, map, none, passthrough)         | `Sink` (scalar, seq, map, passthrough)        |
@@ -430,13 +493,26 @@ pub enum Logical {
 }
 ```
 
-**Integers are one physical kind, not ten.** Today `Int8` through `UInt128`
-are ten `Value` variants, ten tags, ten `ValueKind`s and ten cipher paths,
-and nothing says they are the same thing. Here they are one kind whose
-width is a hint for host fidelity: Go's `int32` comes back as `int32`, a
-JavaScript BigInt keeps the narrowest width that fits. Nothing else looks at
-the width. Every width shares one equality domain, so `Int::I8(34)` and
-`Int::U64(34)` produce the same term. A typed target reads the value, not
+A schema names a column's type without a value or a parameter. `Kind` is
+the physical kind on its own (`Physical::kind()` gives a value's), and
+`KnownLogical` is a logical type without its parameter. `UnknownLogicalId`
+is an id from a newer build. A `KnownLogical` says the one `Kind` it is
+stored as, so a mismatched pair cannot be built. The wire ids live in
+`kinds::id` (`NONE` = 0, `UNDEFINED` = 1, `DATE` = 2, `TIMESTAMP` = 3,
+`DECIMAL` = 4, `UUID` = 5). The validity bounds are public constants:
+`MAX_DECIMAL_SCALE`, `MIN_DATE_DAYS`/`MAX_DATE_DAYS` and the timestamp
+nanosecond bounds.
+
+**Integers are one physical kind, not ten.** Before, `Int8` through
+`UInt128` were ten `Value` variants, ten tags, ten `ValueKind`s and ten
+cipher paths, and nothing said they were the same thing. Here they are one
+kind whose width is a hint for host fidelity: Go's `int32` comes back as
+`int32`, a JavaScript BigInt keeps the narrowest width that fits. Nothing
+that interprets a value looks at the width. `Int`'s own `==` is structural
+and includes the width (`Int::I8(34) != Int::U64(34)`), but equality terms
+and typed targets compare values through `sign_and_word` and `to_i128`.
+Every width shares one equality domain, so `Int::I8(34)` and `Int::U64(34)`
+produce the same term. A typed target reads the value, not
 the width: a `u32` accepts an `i8` leaf holding 34 and refuses one holding
 -1.
 
@@ -457,11 +533,13 @@ split:
 - **Structural sinks pass logical types through.** Encryption, the
   transport frame, the ciphertext codec, `Tee` and the host builders carry
   the annotation and the parameter without interpreting them. A logical type
-  this build does not know arrives as `Logical::Unknown(id, param)` and
-  leaves the same way.
+  this build does not know arrives as `Logical::Unknown(UnknownLogical)`, an
+  opaque value built by `Logical::from_wire(id, param)` and read back with
+  `.id()`, `.param()` and `to_wire`, and it leaves the same way.
 - **Index sinks opt in.** The equality sink has a table of the logical types
   it understands, each with its domain label and normalization, and refuses
-  the rest with `NoDomain`. A date's day count never collides with the
+  any other logical type with `NoDomain`. The exception is `undefined`,
+  which, like null and booleans, simply has no term. A date's day count never collides with the
   integer it equals, because the date is indexed under the date domain.
 
 Adding a logical type is a variant, a wire id, a validity rule, a `Plaintext`
@@ -471,7 +549,7 @@ handle.
 
 Every `Value` variant has one call in the new model:
 
-| `Value` today                      | `Sink` call                                                     |
+| `Value` (before)                   | `Sink` call                                                     |
 | ---------------------------------- | --------------------------------------------------------------- |
 | `Null`                             | `scalar(None, Null)`                                            |
 | `Undefined`                        | `scalar(Some(Undefined), Null)`                                 |
@@ -488,11 +566,11 @@ Every `Value` variant has one call in the new model:
 | `Passthrough(v)`                   | `passthrough(v)`                                                |
 | (no variant)                       | `scalar(Some(Uuid), Bytes(&id))`                                |
 
-### 3. The wire format does not change for anything that exists today
+### 3. The wire format does not change for anything that existed before
 
 The sealed leaf is `[tag] ++ payload` inside the AEAD envelope, and the
-transport frame uses the same tags. Both stay byte for byte. Today's tags
-are read as shorthand for a physical kind plus a logical type:
+transport frame uses the same tags. Both stay byte for byte. The existing
+tags are read as shorthand for a physical kind plus a logical type:
 
 | Tag                          | Reads as                                     |
 | ---------------------------- | -------------------------------------------- |
@@ -509,8 +587,9 @@ are read as shorthand for a physical kind plus a logical type:
 
 A logical type that has no tag of its own, such as `Uuid`, a timestamp in
 milliseconds or a type from a newer build, travels in one generic envelope:
-the byte `0xF3`, the logical id, the one-byte parameter, then the plain
-physical scalar. A reader that does not know the id still reads the
+the byte `0xF3`, the one-byte logical id, the one-byte parameter, then the
+plain physical scalar. A known id with a parameter it cannot take is refused
+as malformed. A reader that does not know the id still reads the
 physical value and keeps the annotation. A host builder that has no value
 of its own to keep it in must refuse the leaf rather than hand back the
 physical value with the annotation dropped; the Go binding carries it in
@@ -525,7 +604,8 @@ value, and a decimal's precision is a constraint on the column rather than
 something needed to read the value. If a logical type ever needs a longer
 parameter, it gets a second envelope byte, `0xF4`, with a length-prefixed
 parameter. The length is fixed per envelope byte rather than per id, so a
-reader that does not know an id can still skip its parameter.
+reader that does not know an id can still skip its parameter. `0xF4` is
+reserved now as `tags::LOGICAL_LONG`: never written, and refused on read.
 
 **Tagged leaves are sealed under wire version 2.** The tags inside the
 AEAD stay byte for byte, but the version byte in front of the envelope
@@ -535,39 +615,52 @@ its tagged leaves, and nothing in a version 1 leaf tells the two apart.
 Read as tagged, a raw leaf can decode to a different value with no error:
 a string that starts with `\n` loses its first character. So
 `Aes256Cipher`, and with it the typed `decrypt` and the hlist openers,
-refuses every version 1 leaf. Only the frame path still reads tagged
-version 1 leaves from the `Value` path, through the explicit
-`Aes256Cipher::opening_version_1` view that the Go binding and the legacy
-fixtures use. The cost is that 0.5 `Encrypt` data has no in-place upgrade:
+refuses every version 1 leaf, as `DecryptError::Cipher`. Tagged version 1
+leaves from the `Value` path open only through the explicit
+`Aes256Cipher::opening_version_1()` view. That view is an `OpensVersion1`,
+a full `Cipher` that works with typed `decrypt` as well as `decrypt_into`,
+and it still seals version 2. Its callers are the Go binding, through
+`decrypt_to_frame`, and the legacy fixtures. The cost is that 0.5 `Encrypt` data has no in-place upgrade:
 it must be decrypted with 0.5 and encrypted again. A reader of `Value`-path
 data opts in to version 1 knowing where its leaves came from.
 
-**`Option::None` is null.** Today a static Rust `None` seals an empty
-marker under `for_none` as `CipherText::None`, while a host `null` seals a
-`NULL`-tagged leaf as `CipherText::Single`, so a JavaScript `null` cannot
+**`Option::None` is null.** Before, a static Rust `None` sealed an empty
+marker under `for_none` as `CipherText::None`, while a host `null` sealed a
+`NULL`-tagged leaf as `CipherText::Single`, so a JavaScript `null` could not
 decrypt into a Rust `Option`. Here `None` is `scalar(None, Null)`: one
 `NULL`-tagged leaf, the same as a host null. The tag is inside the AEAD, so
 a `Some` leaf can no longer be re-labelled as an absence, and the separate
 `for_none` derivation is not needed. `CipherText::None` and the transport's
-`CT_NONE` are removed. An `Option<T>` target reads null and `undefined` as
+`CT_NONE` are removed; the transport keeps the byte as `CT_NONE_RETIRED`
+(`0x02`) and refuses it on read. An `Option<T>` target reads null and `undefined` as
 `None` and defers anything else to `T`.
 
-**Two values in today's corpus have no physical-plus-logical form.** A
+**Two values in the 0.5 corpus have no physical-plus-logical form.** A
 timestamp at a leap second (chrono's representation, nanoseconds above
-999,999,999) is a real instant with no count in any unit, and is refused. A
+999,999,999) is a real instant with no count in any unit, and is refused:
+by the chrono source on the way in (`EncryptError::Source`), and as a
+malformed leaf on the way out (`DecryptError::Malformed`). A
 decimal negative zero (`rust_decimal`'s sign bit set over a zero mantissa)
 is equal to zero by `rust_decimal`'s own comparison, and is normalized to
 zero with its scale kept: `-0.00` reads back as `0.00`. Refusing it would
 surprise any caller that negates a value that happens to be zero.
 
-**Binding an expected type into the AAD.** Today's `LeafTypeAad` is an
-opt-in for schema-aware callers: the expected tag goes into the AAD at both
+**Binding an expected type into the AAD.** `LeafTypeAad` was, and is, an
+opt-in for schema-aware callers: the expected type goes into the AAD at both
 ends, so a wrong-type ciphertext fails authentication before any plaintext
 is released. The self-describing path never binds it, and that stays the
 same. What changes is what "type" means. The expectation a schema holds is
 "this column is a date", not "this column is an int", so the binding is the
 physical kind plus the logical id, as the PAE list `(domain, base, kind, id)`
-with id 0 for no logical type, under a new domain label. It is the kind,
+with id 0 for no logical type. The domain label moves from
+`vitaminc/aead-value/leaf-type/v1` to `vitaminc/aead/leaf-type/v2`, and the
+type moves with it to `vitaminc_aead::LeafTypeAad`. The kind is bound as its
+`Kind::to_wire` byte (`Null` 0, `Bool` 1, `Int` 2, `Float` 3, `Text` 4,
+`Bytes` 5), which is a new cross-language commitment. There are three
+constructors: `physical(base, Kind)`; `logical(base, KnownLogical)`, which
+takes the kind from the logical type so a mismatched pair cannot be built;
+and `unknown(base, Kind, UnknownLogicalId)` for an id from a newer build. It
+is the kind,
 not the leaf tag: a date leaf carries `DATE` and an `i64` leaf `INT64`, so
 binding the tag would give one column several possible bindings and make
 the int's width part of the commitment, when width is a hint. Neither the
@@ -580,11 +673,18 @@ the type.
 
 ### 4. Encryption is a sink, and the cipher is bytes-only and may be async
 
-`EncryptSink` turns each scalar into tagged leaf plaintext and owns every
-container rule in one place: element AAD (`for_sequence_element`), entry AAD
-(`for_map_entry(key)`), the authenticated empty markers (`for_empty_sequence`
-and `for_empty_map`), duplicate keys, and the rule that a container must
-seal at least one leaf. It never calls a cipher. Its output is a tree
+`EncryptSink<E, O = Root>`, built with `EncryptSink::root(aad)`, turns each
+scalar into tagged leaf plaintext and applies every container rule:
+element AAD (`for_sequence_element`), entry AAD (`for_map_entry(key)`), the
+authenticated empty markers (`for_empty_sequence` and `for_empty_map`), and
+the shared shape rules from section 1. Those rules are: no duplicate keys;
+at least one sealed child in every container that has children (an empty
+container becomes a marker, and one holding only passthrough is refused);
+no child sink dropped without a value; no nesting deeper than `MAX_DEPTH`;
+every scalar valid for its logical type (`Logical::admits`) and writable as
+a leaf; and every passthrough framable. Each refusal is an
+`EncryptError::Shape(Refusal)` that names the rule and the `Path`. The sink
+never calls a cipher. Its output is a tree
 of pending leaves, each carrying its plaintext and the AAD its position
 derives:
 
@@ -619,8 +719,9 @@ pub trait AsyncCipher: Sync {
         -> impl Future<Output = Result<Protected<Vec<u8>>, Self::Error>> + Send;
 
     /// Every leaf of one document, in walk order. The default seals each
-    /// leaf concurrently, a bounded number at a time; a provider with a
-    /// batch API overrides it to make one round trip per document.
+    /// leaf concurrently, at most `seal::DEFAULT_CONCURRENCY` (32) at a
+    /// time, with results in order; a provider with a batch API overrides
+    /// it to make one round trip per document.
     fn seal_many(&self, leaves: Vec<Pending>)
         -> impl Future<Output = Result<Vec<Self::Leaf>, Self::Error>> + Send { /* bounded per-leaf calls */ }
     fn open_many(&self, leaves: Vec<(Self::Leaf, Context<'static>)>)
@@ -628,43 +729,94 @@ pub trait AsyncCipher: Sync {
 }
 ```
 
+A ciphertext tree is `CipherText<Leaf, P>`, generic over the leaf and the
+passthrough payload. Every entry point uses the alias for a tree whose
+passthrough is a frame:
+
+```rust
+pub type Node<L> = CipherText<L, PassthroughFrame>;
+```
+
 The entry points:
 
 ```rust
-pub fn encrypt<P, C>(value: P, cipher: &C, aad: impl IntoAad<'_>)
-    -> Result<CipherText<C::Leaf>, EncryptError<C::Error>>
-where P: Plaintext, C: Cipher;
+pub fn encrypt<'a, P, C, A>(value: P, cipher: &C, aad: A)
+    -> Result<Node<C::Leaf>, EncryptError<C::Error>>
+where P: Plaintext, C: Cipher, A: IntoAad<'a>;
 
 /// Walks `value` before returning, so the future holds only the planned
 /// leaves and is `Send` even when the source is not.
-pub fn encrypt_async<'c, P, C>(value: P, cipher: &'c C, aad: impl IntoAad<'_>)
-    -> impl Future<Output = Result<CipherText<C::Leaf>, EncryptError<C::Error>>> + Send + 'c
-where P: Plaintext, C: AsyncCipher;
+pub fn encrypt_async<'a, 'c, P, C, A>(value: P, cipher: &'c C, aad: A)
+    -> impl Future<Output = Result<Node<C::Leaf>, EncryptError<C::Error>>> + Send + 'c
+where P: Plaintext, C: AsyncCipher, A: IntoAad<'a>;
 
-pub fn decrypt<T, C>(cipher: &C, ct: CipherText<C::Leaf>, aad: impl IntoAad<'_>)
+pub fn decrypt<'a, T, C, A>(cipher: &C, node: Node<C::Leaf>, aad: A)
     -> Result<T, DecryptError<DecodeError, C::Error>>
-where T: Decrypt, C: Cipher;
+where T: Decrypt, C: Cipher, A: IntoAad<'a>;
 
-pub async fn decrypt_async<T, C>(...) where T: Decrypt, C: AsyncCipher;
+pub async fn decrypt_async<'a, T, C, A>(cipher: &C, node: Node<C::Leaf>, aad: A)
+    -> Result<T, DecryptError<DecodeError, C::Error>>
+where T: Decrypt, C: AsyncCipher, A: IntoAad<'a>;
 
 /// Decrypt into any sink: a host builder, a frame writer.
-pub fn decrypt_into<S, C>(cipher: &C, ct: CipherText<C::Leaf>, aad: impl IntoAad<'_>, sink: S)
+pub fn decrypt_into<'a, C, S, A>(cipher: &C, node: Node<C::Leaf>, aad: A, sink: S)
     -> Result<S::Ok, DecryptError<S::Error, C::Error>>
-where S: Sink, C: Cipher;
+where C: Cipher, S: Sink, A: IntoAad<'a>;
 
-pub async fn decrypt_into_async<S, C>(...) where S: Sink, C: AsyncCipher;
+/// The sink is held across the await, so this future is `Send` only if the
+/// sink is.
+pub async fn decrypt_into_async<'a, C, S, A>(cipher: &C, node: Node<C::Leaf>, aad: A, sink: S)
+    -> Result<S::Ok, DecryptError<S::Error, C::Error>>
+where C: AsyncCipher, S: Sink, A: IntoAad<'a>;
 ```
 
-`encrypt` is two steps: walk the plaintext into `EncryptSink` to get a
-`CipherText<Pending>`, then seal. Sealing splits the tree into its shape and
-a vector of leaves in walk order, calls `seal` per leaf or `seal_many` once,
-and puts the sealed leaves back into the shape. A cipher that returns the
-wrong number of leaves is refused. Decryption mirrors it: check the
-container rules on the sealed tree (something sealed in every container,
-no repeated keys) so a malformed tree costs no cipher calls, derive each
-leaf's AAD from its position, open every leaf (one `open_many` call for an
-async cipher), put the plaintexts back, then walk the opened tree into the
-sink. The walk itself is always synchronous, whichever cipher is in use.
+Because `aad` is a named generic, a typed decrypt is written
+`decrypt::<T, _, _>(…)`.
+
+`encrypt` is two public steps, `seal_all(cipher, plan(value, aad)?)`.
+`plan` walks the plaintext into `EncryptSink` to get a `Node<Pending>`.
+`seal::seal_all` (or `seal_all_async`) splits the tree into its shape and a
+vector of leaves in walk order, calls `seal` per leaf or `seal_many` once,
+and puts the sealed leaves back into the shape. A tree with no leaves, such
+as a top-level passthrough, makes no cipher call. Decryption mirrors it:
+`decrypt_into` is `walk(open_all(cipher, node, aad)?, sink)`.
+`seal::open_all` (or `open_all_async`) checks the container rules on the
+sealed tree (something sealed in every container, no repeated keys, every
+passthrough a valid frame), so a malformed tree costs no cipher calls. It
+then derives each leaf's AAD from its position, opens every leaf (one
+`open_many` call for an async cipher) and puts the plaintexts back. `walk`
+feeds the opened tree (`Node<Opened>`) to the sink and checks every rule
+again, because it accepts opened trees from anywhere. The walk itself is
+always synchronous, whichever cipher is in use. All of these steps are
+public, so a caller can plan or open on its own. A host whose builder is not
+`Send` awaits `open_all_async` and then calls `walk` itself.
+`decrypt_to_frame(cipher, node, aad)` is `decrypt_into` with a `FrameWriter`
+over a `Protected` buffer, so the frame is wiped on every error path.
+
+The errors:
+
+```rust
+pub enum EncryptError<E> {
+    Cipher(E),              // the cipher refused to seal a leaf
+    Source(SourceError),    // the source, or a sink teed beside this one, stopped the walk
+    Shape(Refusal),         // the value cannot be encrypted as given: why, and where
+    Count(LeafCount),       // the cipher returned too few or too many leaves
+}
+
+pub enum DecryptError<E, C = Infallible> {
+    Cipher(C),              // the cipher refused a leaf
+    Auth,                   // an authenticated empty marker carried a payload
+    Malformed,              // a bad tree, a bad leaf plaintext, or a wrong leaf count
+    Sink(E),                // the sink refused what it was given
+}
+```
+
+A cipher that returns the wrong number of leaves is refused:
+`EncryptError::Count` on the way in, and `DecryptError::Malformed` on the way
+out. `Unencryptable`, the reason inside a `Refusal`, is `#[non_exhaustive]`:
+`DuplicateKey`, `SequenceHasNothingSealed`, `MapHasNothingSealed`,
+`InvalidValue`, `Unwritable`, `UnframablePassthrough`, `DroppedChild` and
+`TooDeep`.
 
 A cipher's failure is returned as `DecryptError::Cipher` with the cipher's
 own error, as `EncryptError::Cipher` is on the way in. For an AEAD that
@@ -711,18 +863,27 @@ impl AsyncCipher for ZeroKms {
 }
 ```
 
-Compared with today's `Cipher`, which has eight methods and two sub-traits,
-and `Decipher`, which has seven plus a visitor and two access traits, a
+Compared with the old `Cipher`, which had eight methods and two sub-traits,
+and `Decipher`, which had seven plus a visitor and two access traits, a
 cipher is now two methods, or four with batching. `Aes256Cipher` keeps its
 key and nonce generator and loses its container logic. Static Rust callers
 get the same tagged leaves as hosts do, so there is one leaf format and
 every ciphertext is self-describing.
 
+One statically shaped API remains outside this model. Behind the opt-in
+`hlist` feature, `Aes256Cipher` still implements `StaticCipher`
+(`encrypt_bytes`, `encrypt_none`, `open_encrypted`, `verify_absent` and
+their per-entry forms), and `StaticMapBuilder` derives `for_map_entry`
+itself. It seals the same tagged leaves (`BYTES` for a value, a `NULL` leaf
+for an absence) and derives entry AAD the same way. It does not go through
+`EncryptSink`, though, so it has no empty-map marker and no nothing-sealed
+rule.
+
 ### 5. Typed decryption names a sink
 
-Today's `Decrypt<'c>` supplies a `DecipherVisitor` and threads the cipher's
-`Ok<T>` through `map_ok`. The replacement is a type that names the sink that
-builds it:
+The old `Decrypt<'c>` supplied a `DecipherVisitor` and threaded the
+cipher's `Ok<T>` through `map_ok`. The replacement is a type that names the
+sink that builds it:
 
 ```rust
 pub trait Decrypt: Sized {
@@ -734,7 +895,21 @@ pub trait Decrypt: Sized {
 pub trait FromScalar: Sized {
     const EXPECTED: &'static str;
     fn from_scalar(ty: Option<Logical>, value: Physical<'_>) -> Option<Self>;
+
+    /// Decode straight into `Protected`. The default decodes, then wraps;
+    /// a type that would otherwise pass through a bare temporary
+    /// (`[u8; N]`) overrides it to build in place.
+    fn from_scalar_protected(ty: Option<Logical>, value: Physical<'_>) -> Option<Protected<Self>>
+    where Self: Zeroize { /* from_scalar, then Protected::new */ }
 }
+
+/// A type that can be decoded straight into `Protected<Self>`.
+pub trait DecryptProtected: Decrypt + Zeroize {
+    type ProtectedSink: Sink<Ok = Protected<Self>, Error = DecodeError>;
+    fn protected_sink() -> Self::ProtectedSink;
+}
+
+impl<T: DecryptProtected> Decrypt for Protected<T> { /* T::protected_sink() */ }
 ```
 
 Every `FromScalar` type gets `Decrypt` through a shared `ScalarSink<T>`,
@@ -742,12 +917,26 @@ which refuses sequences, maps and passthrough. `NaiveDate` accepts
 `(Some(Date), Int)` and nothing else; `u32` accepts `(None, Int)` whose
 value fits; `Option<T>` reads null and `undefined` as `None` and otherwise
 defers to `T`, so `Some(None)` reads back as `None`. `HashMap<String, T>`
-and `BTreeMap<String, T>` read a map through each value's sink. Any
-`FromScalar` type that is `Zeroize` is also a `Protected<T>` target, as
-today's `Decrypt` for `Protected<T>` is; a fixed-size array is filled
-inside the wrapper so no bare copy sits on the stack. A struct's
-sink is what `#[derive(Decrypt)]` generates: a `MapSink` that routes each
-entry to the field's own sink and refuses unknown keys and missing fields.
+and `BTreeMap<String, T>` read a map through each value's sink.
+
+`Protected<T>` is a target for any `T: DecryptProtected`. That covers every
+`FromScalar` type that is `Zeroize`, decoded through
+`from_scalar_protected` (so a fixed-size array is filled inside the wrapper
+and no bare copy sits on the stack), and `Vec<T>` and `Option<T>` of those,
+nested to any depth. Each is built inside the wrapper, so a failure part
+way through wipes what was already decoded. A struct opts in by hand,
+implementing `DecryptProtected` with `typed::Wrap(Self::sink())`; the
+derive does not emit it.
+
+A struct's sink is what `#[derive(Decrypt)]` generates: a `MapSink` that
+routes each entry to the field's own sink. It refuses unknown keys,
+duplicate keys and missing fields, including a missing `Option<T>` field,
+which is refused rather than read as `None`. It also refuses a passthrough
+standing in for the struct. `#[aead(skip)]` fields are rebuilt with
+`Default`, `#[aead(passthrough)]` fields decode through `typed::Clear`, and
+`rename` and `take` are supported. A newtype is transparent
+(`typed::Wrapped`). A fieldless enum is an integer discriminant: a `u32`
+leaf on the `Plaintext` side, read back through a generated `FromScalar`.
 Nothing in a `Decrypt` implementation knows whether the cipher was sync or
 async, because the opened tree is walked after every await has completed.
 
@@ -757,26 +946,34 @@ The data model is the FFI boundary. Each binding supplies a `Plaintext`
 for values coming in and a `Sink` for values going out, and nothing in
 between.
 
-**Go** already ships values as transport frames across the wasm boundary.
+**Go** already shipped values as transport frames across the wasm boundary.
 `Frame<'a>` is a validated, borrowed frame that implements `Plaintext` by
 walking its own bytes in place: no `Value` tree is built, and no scalar
 leaves the buffer except to go straight to a sink. `FrameWriter` is a `Sink`
 that writes frame bytes. Both live in `vitaminc-aead`, next to the leaf
 codec they share, because the encrypt sink frames passthrough subtrees
 itself. The guest's `encrypt` becomes
-`encrypt(Frame::parse(bytes)?, &cipher, aad)` and its `decrypt` becomes
-`decrypt_into(&cipher, ct, aad, FrameWriter::new(&mut out))`. The Go side,
-`vcvalue` and `vcencrypt`, does not change: the bytes in and out are the
-same, with the `0xF3` envelope appearing only when a value carries a
-logical type that has no shorthand tag.
+`encrypt(Frame::parse(bytes)?, &cipher, aad)`. Its `decrypt` becomes
+`decrypt_to_frame(&cipher.opening_version_1(), codec::decode_ciphertext(ct)?, aad)`,
+which is `decrypt_into` with a `FrameWriter` over a `Protected` buffer. The
+version 1 view lets it read `Value`-path leaves written before the change.
+The Go API keeps its shape, and only the section 3 format changes reach it:
+`vcvalue` gains `UUID` and `Tagged` for the `0xF3` envelope, and timestamps
+in seconds, milliseconds and microseconds decode to `time.Time`. The `vcffi`
+codec reads and writes the envelope, refuses a leap second and normalizes a
+decimal `-0`. The none node (`ctNone`, `LeafNone`, `SealedNone`) is
+retired.
 
-**Node** walks live JavaScript values. `JsRef<'e>(Unknown<'e>)` implements
-`Plaintext` on the JavaScript thread, and `JsBuilder` implements `Sink` and
-builds JavaScript values. A getter that throws or a string with an unpaired
-surrogate stops the walk through `Error::source` and comes back to
-JavaScript as that error. To encrypt off the JavaScript thread, the binding
-snapshots with `to_frame(JsRef(v))` and encrypts the frame on the worker.
-The mapping:
+**Node** walks live JavaScript values. `JsRef<'e>`, built with
+`JsRef::new(value)`, implements `Plaintext` on the JavaScript thread, and
+`JsBuilder` implements `Sink` and builds JavaScript values. Any of the
+following stops the walk through `Error::source` and comes back to
+JavaScript as a `JsFault`: a getter that throws, a string with an unpaired
+surrogate, a BigInt out of range, a `Date` outside chrono's range, a typed
+array that is not bytes, nesting that is too deep, or a forbidden key. To
+encrypt off the JavaScript thread, the binding snapshots with
+`JsRef::new(v).to_frame()` on the JavaScript thread and encrypts the frame
+on the worker. The mapping:
 
 | JavaScript                          | `Sink` call                                       |
 | ----------------------------------- | ------------------------------------------------- |
@@ -786,34 +983,52 @@ The mapping:
 | `number`                            | `scalar(None, Float(F64))`                        |
 | `bigint`                            | `scalar(None, Int(narrowest fitting width))`      |
 | `string`                            | `scalar(None, Text)`                              |
-| `Buffer`, `Uint8Array`              | `scalar(None, Bytes)`                             |
+| `Buffer`, `Uint8Array`              | `scalar(None, Bytes)`; any other typed-array view is refused |
 | `Date`                              | `scalar(Some(Timestamp(Millis)), Int(I64(ms)))`   |
-| `Array`                             | `seq`, then `element()` per index                 |
-| plain object                        | `map`, then `entry(key)` per own property         |
+| `VcDate`                            | `scalar(Some(Date), Int(I32(days)))`              |
+| `VcTimestamp`                       | `scalar(Some(Timestamp(Nanos)), Int(I128(ns)))`   |
+| `VcDecimal`                         | `scalar(Some(Decimal { scale }), Int(mantissa))`  |
+| `VcUuid`                            | `scalar(Some(Uuid), Bytes(16 bytes))`             |
+| `Array`                             | `seq`, then `element()` per index; sparse arrays are refused |
+| plain object                        | `map`, then `entry(key)` per own enumerable string key; forbidden keys and non-plain objects are refused |
 
 A JavaScript `Date` is a count of milliseconds, so it is stored as one,
 rather than converted to seconds and nanoseconds and back. `Timestamp`
 admits chrono's range (years -262143 to 262142), which is narrower than a
-`Date`'s (about ±275,000 years). It stays the bound because today's
-`TIMESTAMP` decoder is chrono-bound: a wider timestamp could be sealed but
-not read back there. The binding refuses a `Date` outside it. How the binding
-represents a calendar date or a decimal in JavaScript (today, the reserved
-`{ date }` and `{ decimal }` wrapper objects) is the binding's decision and
-is not changed by this document.
+`Date`'s (about ±275,000 years). It stays the bound because the `TIMESTAMP`
+decoder is chrono-bound: a wider timestamp could be sealed but not read
+back there. The binding refuses a `Date` outside it.
+
+JavaScript has no type of its own for a calendar date, a timestamp finer
+than a millisecond, a decimal or a uuid. The binding represents each as an
+instance of a wrapper class, `VcDate`, `VcTimestamp`, `VcDecimal` or
+`VcUuid`, recognised with `instanceof` (#382). These classes replace the
+reserved `{ date }` and `{ decimal }` objects of 0.5, so an object like
+`{ date: "…" }` is now ordinary data. `JsBuilder` builds a timestamp as a
+`Date` when it is whole milliseconds inside `Date`'s range, and as a
+`VcTimestamp` otherwise. It refuses a `Logical::Unknown` leaf until #446
+gives it a carrier.
 
 **Passthrough** is a subtree that travels in the clear. On the way in it is
 walked like anything else and the encrypt sink frames it; on the way out
 the frame is parsed and handed to the sink's `passthrough`. The payload is
 therefore a frame in every binding and in static Rust, which replaces the
 `Cipher::Passthrough` associated type and the `Box<dyn Any + Send>`
-downcast. The contract is unchanged: passthrough is unencrypted,
+downcast in the sink-based model. The opt-in `hlist` static shape keeps its
+typed `Passthrough<T>`. The contract is unchanged: passthrough is unencrypted,
 unauthenticated and for non-sensitive fields only.
 
 ### 7. Index terms are a sink, and normalization is its own crate
 
-The equality encoders behind today's `canonical` feature become public and
-move to `vitaminc-normalize`. `Terms` is a `Sink` that produces one term per
-scalar: a frozen domain label and the normalized bytes.
+The equality encoders behind the old `canonical` feature become public and
+move to `vitaminc-normalize`. `Terms` is a `Sink` that produces a `Term` for
+each scalar that has an equality domain: where the scalar sits, its frozen
+domain label and its normalized bytes. Null, booleans and `undefined`
+produce no term and do not stop the walk. A logical type with no domain
+stops it with a `TermError` (`NoDomain`) at its `Path`. Through
+`vitaminc_aead::shape`, `Terms` also refuses every value `EncryptSink` would
+refuse, at the same path, so an index never holds terms for a value that
+cannot be stored.
 
 ```rust
 pub struct Normalized {
@@ -821,16 +1036,44 @@ pub struct Normalized {
     pub bytes: Protected<Vec<u8>>,
 }
 
-pub fn encrypt_with_terms<P, C>(value: P, cipher: &C, aad: impl IntoAad<'_>)
-    -> Result<(CipherText<C::Leaf>, Vec<Term>), EncryptError<C::Error>>
-where P: Plaintext, C: Cipher;
+pub struct Term {
+    pub path: Path,               // from the root; empty for a scalar at the root
+    pub normalized: Normalized,
+}
+
+pub type WithTerms<L> = (Node<L>, Vec<Term>);
+
+/// Terms on their own, with no cipher.
+pub fn terms<P: Plaintext>(value: P) -> Result<Vec<Term>, TermsError>;
+
+/// One walk into `Tee(EncryptSink, Terms)`, without sealing.
+pub fn plan_with_terms<'a, P, E, A>(value: P, aad: A)
+    -> Result<WithTerms<Pending>, EncryptError<E>>
+where P: Plaintext, A: IntoAad<'a>;
+
+pub fn encrypt_with_terms<'a, P, C, A>(value: P, cipher: &C, aad: A)
+    -> Result<WithTerms<C::Leaf>, EncryptError<C::Error>>
+where P: Plaintext, C: Cipher, A: IntoAad<'a>;
 ```
 
-`vitaminc-prf` consumes `Normalized`. `vitaminc-normalize` has no
-cryptography in it and never imports PAE, which stays in `vitaminc-context`
-beneath everything.
+`encrypt_with_terms_async` is the `AsyncCipher` form. `normalize()` and
+`domain_of()` expose the per-scalar encoders, and `NormalizeError` says why
+a scalar has no term. `TermError` (with `path()` and `error()`) is a refused
+scalar. `TermsError` wraps what `terms` refuses: `term()` recovers a
+`TermError`, `refusal()` a shape `Refusal`, and `source_error()` the failure
+as it arrived. Beside encryption, a term refusal arrives as
+`EncryptError::Source`, and `downcast_ref::<TermError>()` recovers it. Each
+`Debug` masks map keys, as a `Refusal` does. `Path` and `Step` are
+re-exported from `vitaminc_aead::plaintext`.
 
-Today's domain labels are kept. `Uuid` gets one of its own,
+`vitaminc-prf`, behind its opt-in `normalize` feature, implements
+`PrfValue` for `Normalized`, and adds `EqualityTerm` for a caller with one
+scalar in hand. `vitaminc-normalize` has no cryptography of its own and
+never imports PAE, which stays in `vitaminc-context` beneath everything. It
+builds on `vitaminc-aead` for the data model, and for sealing in
+`encrypt_with_terms`.
+
+The existing domain labels are kept. `Uuid` gets one of its own,
 `vitaminc/prf/value/uuid/v1`, over its sixteen raw bytes. It is a separate
 domain from bytes for the same reason a date's domain is separate from an
 int's: a value's logical type is part of what it is, so a uuid written as
@@ -839,34 +1082,47 @@ is the rule rather than an accident.
 
 ### 8. Four crates
 
-| Crate                  | Today                                                                                                                      | After                                                                                                                                                                                                  |
+| Crate                  | Before (0.5.1)                                                                                                             | After                                                                                                                                                                                                  |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `vitaminc-aead`        | `Encrypt`, `Cipher`, `SeqCipher`, `MapCipher`, `Decrypt`, `Decipher`, `DecipherVisitor`, `SeqAccess`, `MapAccess`, `CipherText`, `Context` | `Plaintext`, `Sink`, `SeqSink`, `MapSink`, `Physical`, `Logical`, the leaf codec and tag table, the frame (`Frame`, `FrameWriter`, `PassthroughFrame`), `Cipher`, `AsyncCipher`, `Pending`, `EncryptSink`, `encrypt`/`decrypt` and their async and `_into` forms, `Decrypt`, `FromScalar`, `Tee`, `CipherText`, `Context`. chrono, `rust_decimal` and `uuid` sources behind features |
-| `vitaminc-encrypt`     | `Aes256Cipher` with its `SeqCipher`, `MapCipher` and `AesDecipher`, `Key`, static cipher                                     | `impl Cipher for Aes256Cipher` (`seal` and `open`) and `Key`. Container logic moves up into `EncryptSink`                                                                                             |
-| `vitaminc-aead-frame`  | `vitaminc-aead-value`: `Value`, `ValueKind`, tags, transport codec for values and ciphertexts, `canonical` feature          | Renamed. The ciphertext codec (a `CipherText<Leaf, PassthroughFrame>` as bytes and back) only. `Value` and `ValueKind` are deleted; the tag table and the frame move down into `vitaminc-aead`         |
-| `vitaminc-normalize`   | the `canonical` feature of `vitaminc-aead-value`                                                                           | New crate. Public per-scalar encoders, frozen domain labels, the logical-type opt-in table, `Terms`, `encrypt_with_terms`, `Normalized { domain, bytes }`. No cryptography, no PAE                       |
+| `vitaminc-aead`        | `Encrypt`, `Cipher`, `SeqCipher`, `MapCipher`, `Decrypt`, `Decipher`, `DecipherVisitor`, `SeqAccess`, `MapAccess`, `CipherText`, `Context` | `Plaintext`, `Sink`, `SeqSink`, `MapSink`, `SourceError` and `plaintext::Error`, `Physical`, `Logical`, `Kind`, `KnownLogical`, `UnknownLogical`, `UnknownLogicalId`, `TimeUnit`, `Raw`, `Bytes`, `visit_seq`/`visit_map`, `Path`/`Step`; the leaf codec and tag table; the frame (`Frame`, `FrameWriter`, `PassthroughFrame`, `to_frame`); `Cipher`, `AsyncCipher`, `Pending`, `EncryptSink`; `CipherText<Leaf, P>`, `Node`, `Opened`; `plan`, `walk`, `encrypt`/`decrypt` and their async and `_into` forms, `decrypt_to_frame`; the `shape` module (`Refusal`, `Unencryptable`, `SeqRules`, `MapRules`, `Settle`, `Locate`); the `seal` module (`seal_all`, `open_all` and async forms, `LeafCount`, `DEFAULT_CONCURRENCY`); `Decrypt`, `FromScalar`, `DecryptProtected`; `Tee`; `Context`, `ContextTag`, `LeafTypeAad`. chrono, `rust_decimal` and `uuid` sources behind features; `hlist` stays opt-in; a docs-hidden `test-support` feature for sibling crates' tests |
+| `vitaminc-encrypt`     | `Aes256Cipher` with its `SeqCipher`, `MapCipher` and `AesDecipher`, `Key`, static cipher                                     | `impl Cipher for Aes256Cipher` (`seal` and `open`) and `Key`; the `opening_version_1()` view (`OpensVersion1`); `AesCipherText = Node<LocalCipherText>`; the `encrypt_with_key`/`decrypt_with_key` facade; re-exports of `encrypt`, `decrypt`, `decrypt_into`, `Plaintext`, `Decrypt` and others. Container logic moves up into `EncryptSink`. The `hlist` static cipher stays |
+| `vitaminc-aead-frame`  | `vitaminc-aead-value`: `Value`, `ValueKind`, tags, transport codec for values and ciphertexts, `canonical` feature          | Renamed. The ciphertext codec (`encode_ciphertext`/`decode_ciphertext` over `Node<Leaf>`), plus re-exports of the frame and the tag table from `vitaminc-aead` so a binding has the whole transport. `Value` and `ValueKind` are deleted; `CT_NONE` is retired as `CT_NONE_RETIRED` |
+| `vitaminc-normalize`   | the `canonical` feature of `vitaminc-aead-value`                                                                           | New crate. Public per-scalar encoders (`normalize`, `domain_of`, `NormalizeError`), frozen domain labels, the logical-type opt-in table, `Terms`, `Term { path, normalized }`, `terms`, `plan_with_terms`, `encrypt_with_terms` and its async form, `TermError`, `TermsError`, `Normalized { domain, bytes }`, `Path`/`Step` re-exported. No cryptography of its own, no PAE |
 
 The transport crate's new name follows the `vitaminc-aead-*` family it
 already belongs to with `vitaminc-aead-napi` and `vitaminc-aead-derive`,
 and names what it holds.
 
-Around them: `vitaminc-context` is unchanged and keeps PAE and
-`ContextPiece`; `vitaminc-prf` takes `Normalized` instead of `&Value`;
-`vitaminc-aead-napi` replaces its `Value` conversions with `JsRef` and
-`JsBuilder`; the Go guest replaces `decode_value` and `encode_value` with
-`Frame` and `FrameWriter`; `vitaminc-aead-derive` generates `Plaintext`
-and `Decrypt` instead of `Encrypt` and `Decrypt`.
+Around them:
+- `vitaminc-context` keeps PAE and `ContextPiece`, and loses
+  `Context::for_none`.
+- `vitaminc-prf` takes `Normalized` instead of `&Value`, behind its
+  `normalize` feature.
+- `vitaminc-aead-napi` replaces its `Value` conversions with `JsRef` and
+  `JsBuilder`, and its wrapper objects with wrapper classes.
+- The Go guest replaces `decode_value` and `encode_value` with `Frame` and
+  `decrypt_to_frame`.
+- `vitaminc-aead-derive` generates `Plaintext` and `Decrypt` instead of
+  `Encrypt` and `Decrypt`, including for fieldless enums. Under #449 it
+  becomes `#[derive(Encrypt)]`.
 
 ### 9. Names
 
-The trait names stay close to today's, because the design is the same
+The trait names stay close to the old ones, because the design is the same
 design with the type information kept: a cipher is still a `Cipher`, an
 async one is an `AsyncCipher`, a typed decryption target is still
 `Decrypt`, and the functions are `encrypt`, `encrypt_async`, `decrypt` and
-`decrypt_async`. `Plaintext` replaces `Encrypt` because the trait no longer
-encrypts anything, and `Sink` is new because the concept is. `Value`,
+`decrypt_async`. `Sink` is new because the concept is. `Value`,
 `ValueKind`, `Decipher`, `DecipherVisitor`, `SeqAccess` and `MapAccess` are
-removed.
+removed from `vitaminc-aead`. (`vitaminc-prf` has its own, unrelated
+`SeqAccess`, `MapAccess` and `PrfVisitor`.)
+
+As implemented in #416–#448, the source trait is `Plaintext`, named so
+because the trait no longer encrypts anything. Before release it is renamed
+`Encrypt` (#449), so the trait pair a user implements, almost always by
+derive, is `Encrypt` and `Decrypt`. `Plaintext` in this document is the
+interim name. #449 also moves refusals for derived types to compile time;
+this section will be updated with its reasoning when it merges.
 
 ## Consequences
 
@@ -875,10 +1131,19 @@ removed.
   host-side failure during the walk surfaces as that host's error.
 - Adding a logical type is local: a variant, a wire id, a validity rule, a
   `Plaintext` source and a `Decrypt` target. Encryption, decryption, the
-  frame, the codec, `Tee` and the terms sink need no change. Adding a
-  physical kind is deliberately a compile error in every sink.
-- Index sinks never index a logical value as its physical value, and a
-  logical type with no domain gets `NoDomain`, not a term.
+  frame, the codec and `Tee` need no change. The terms sink refuses the new
+  type with `NoDomain`, which stops the walk, until normalize's opt-in table
+  gives it a domain. Node's `JsBuilder` refuses it until the binding has a
+  carrier for it (#446). Adding a physical kind is deliberately a compile
+  error in every sink.
+- Index sinks never index a logical value as its physical value. A logical
+  type with no domain gets a `TermError` (`NoDomain`) at its path, which
+  stops the walk, not a term. A null, a boolean or `undefined` is skipped.
+- `EncryptSink` and `Terms` keep the same shape rules through
+  `vitaminc_aead::shape`, so `terms()` accepts exactly the values
+  `encrypt_with_terms` accepts. Every refusal says where it happened: an
+  `EncryptError::Shape(Refusal)` or a `TermError` carries a `Path`, and
+  `Debug` masks the map keys in it.
 - A cipher is `seal` and `open`. A 0KMS cipher adds a batching `seal_many`
   and makes one round trip per document. Stack Encrypt's async `Decipher`
   implementation becomes an `AsyncCipher` implementation with no container
@@ -887,15 +1152,18 @@ removed.
   instead of streaming leaf by leaf. Memory is of the order of the plaintext
   itself.
 - A timestamp at a leap second is refused and a decimal negative zero reads
-  back as zero. Both are in the conformance corpus today, so this is a small
-  format change.
+  back as zero. Both were in the conformance corpus, so this is a small
+  format change; the corpus now pins the refusal and the normalization
+  (#444).
 - `Option::None` and a host null are the same leaf. `CipherText::None`,
-  `CT_NONE` and `Context::for_none` go away, and a JavaScript `null`
-  decrypts into a Rust `Option` as `None`.
-- `LeafTypeAad` binds the physical kind and the logical id under a new
-  domain label. Ciphertexts bound under today's label do not open under it.
-  `vitaminc_aead_value::LeafTypeAad` shipped in 0.3.0 through 0.5.1, so its
-  removal is a breaking change to that crate.
+  `CT_NONE` and `Context::for_none` (in `vitaminc-context`) go away, and a
+  JavaScript `null` decrypts into a Rust `Option` as `None`.
+- `LeafTypeAad` binds the physical kind and the logical id under the new
+  domain label `vitaminc/aead/leaf-type/v2`. Ciphertexts bound under the old
+  label do not open under it. The type moves from
+  `vitaminc_aead_value::LeafTypeAad`, which shipped in 0.3.0 through 0.5.1,
+  to `vitaminc_aead::LeafTypeAad`. That is a breaking change for users of
+  `vitaminc-aead-value`.
 - Under a logical type the int's width is not kept: `DATE` reads back as an
   `i32` day count however it was written. Width is a hint end to end;
   equality never sees it and typed decoding reads the value.
@@ -904,9 +1172,13 @@ removed.
 - Tagged leaves are sealed as wire version 2, so 0.5 `Encrypt` ciphertext
   is refused rather than misread, and has to be decrypted with 0.5 and
   encrypted again. `Value`-path version 1 leaves open only through
-  `Aes256Cipher::opening_version_1`.
+  `Aes256Cipher::opening_version_1()`.
 - Passthrough payloads are frames, not `Box<dyn Any + Send>`. A Rust
-  passthrough value must implement `Plaintext`.
+  passthrough value must implement `Plaintext + Clone`, and the derive
+  passes it a reference.
+- Node's `{ date }` and `{ decimal }` objects are replaced by the
+  `VcDate`, `VcTimestamp`, `VcDecimal` and `VcUuid` classes, so one-key
+  objects are ordinary data again.
 - `AsyncCipher: Sync`, because an async cipher is shared across tasks.
   `Aes256Cipher` is not `Sync` (its nonce generator is a `RefCell`) and is
   not made so: it is the synchronous `Cipher`. A local cipher that has to
@@ -915,6 +1187,8 @@ removed.
 - The model is core and runtime-free. `AsyncCipher` needs no executor, and
   the batching defaults use `futures-util` only. The optional sources sit
   behind features, in line with the minimal and compatible goals.
-- `Value`, `ValueKind`, `Encrypt`, `Decrypt` in its current form, `Cipher`'s
-  container methods, `Decipher`, `DecipherVisitor`, `SeqAccess` and
-  `MapAccess` are removed. Nothing that depends on them has shipped.
+- The visitor-based `Encrypt`, `Decrypt<'c>`, `Cipher`'s container methods,
+  `Decipher`, `DecipherVisitor`, `SeqAccess`, `MapAccess`, `Value` and
+  `ValueKind`, which shipped in the 0.3 to 0.5 crates, are removed in a
+  breaking release. No CipherStash product that depends on them has
+  shipped. The `Encrypt` name is reused for the new source trait (#449).
