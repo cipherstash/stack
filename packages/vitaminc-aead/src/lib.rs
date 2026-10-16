@@ -14,6 +14,8 @@ pub mod plaintext;
 pub mod seal;
 pub mod shape;
 pub mod tags;
+#[cfg(feature = "chrono")]
+mod timestamp;
 pub mod typed;
 mod unspecified;
 mod walk;
@@ -45,6 +47,10 @@ pub use walk::{decrypt_into, decrypt_into_async, decrypt_to_frame, walk, Decrypt
 // The frame: a value as transport bytes, and back.
 #[doc(inline)]
 pub use frame::{to_frame, Frame, FrameWriter, PassthroughFrame};
+// A UTC instant that always encrypts.
+#[cfg(feature = "chrono")]
+#[doc(inline)]
+pub use timestamp::{LeapSecond, Timestamp};
 
 #[doc(inline)]
 #[allow(deprecated)]

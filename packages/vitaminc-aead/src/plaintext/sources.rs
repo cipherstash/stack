@@ -450,8 +450,9 @@ mod chrono_sources {
         }
     }
 
-    /// Stored as nanoseconds, the unit of today's `TIMESTAMP` tag. A leap
-    /// second has no count and stops the walk.
+    /// Stored as nanoseconds, the unit of the `TIMESTAMP` tag. A leap second
+    /// has no count and stops the walk; a [`Timestamp`](crate::Timestamp)
+    /// field refuses it when the value is built instead.
     impl Encrypt for DateTime<Utc> {
         const DEPTH: Option<usize> = depth::SCALAR;
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
