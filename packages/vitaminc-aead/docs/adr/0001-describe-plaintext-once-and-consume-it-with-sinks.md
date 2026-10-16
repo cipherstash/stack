@@ -294,9 +294,9 @@ nesting deeper than `MAX_DEPTH`) are not written into `EncryptSink`. They
 live in the public `vitaminc_aead::shape` module (`SeqRules`, `MapRules`,
 `Settle`, `Locate`), so another sink keeps the same rules through the same
 code: `Terms` (section 7) refuses exactly the values `EncryptSink` refuses.
-A broken rule is a `Refusal { reason: Unencryptable, path: Path }`, where a
-`Path` is a list of `Step::Index(usize)` and `Step::Key(String)` from the
-root. Each child sink links to its parent's place, so the path is built only
+A broken rule is a `Refusal`, which gives its `reason()` (an
+`Unencryptable`) and its `path()`. A `Path` is a list of `Step::Index(usize)`
+and `Step::Key(String)` from the root. Each child sink links to its parent's place, so the path is built only
 when a refusal is. A refusal's `Display` shows only the reason, and its
 `Debug` masks every map key, because keys can be user data. That module is
 the whole of the container logic that before this decision was spread
@@ -823,6 +823,14 @@ pub enum DecryptError<E, C = Infallible> {
 }
 ```
 
+The public steps have their own, narrower errors. `seal_all` (and
+`seal_all_async`) returns `SealError<E>` (`Cipher`, `Count`), and
+`From<SealError<E>> for EncryptError<E>` lets `?` lift it inside `encrypt`.
+`open_all` (and `open_all_async`) returns `OpenError<E>` (`Cipher`,
+`Malformed`, `Count`). It has no `From` into `DecryptError`: `decrypt_into`
+maps it itself, so a caller who calls `open_all` directly handles
+`OpenError`.
+
 A cipher that returns the wrong number of leaves is refused:
 `EncryptError::Count` on the way in, and `DecryptError::Malformed` on the way
 out. `Unencryptable`, the reason inside a `Refusal`, is `#[non_exhaustive]`:
@@ -1096,7 +1104,7 @@ is the rule rather than an accident.
 
 | Crate                  | Before (0.5.1)                                                                                                             | After                                                                                                                                                                                                  |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `vitaminc-aead`        | `Encrypt`, `Cipher`, `SeqCipher`, `MapCipher`, `Decrypt`, `Decipher`, `DecipherVisitor`, `SeqAccess`, `MapAccess`, `CipherText`, `Context` | `Plaintext`, `Sink`, `SeqSink`, `MapSink`, `SourceError` and `plaintext::Error`, `Physical`, `Logical`, `Kind`, `KnownLogical`, `UnknownLogical`, `UnknownLogicalId`, `TimeUnit`, `Raw`, `Bytes`, `visit_seq`/`visit_map`, `Path`/`Step`; the leaf codec and tag table; the frame (`Frame`, `FrameWriter`, `PassthroughFrame`, `to_frame`); `Cipher`, `AsyncCipher`, `Pending`, `EncryptSink`; `CipherText<Leaf, P>`, `Node`, `Opened`; `plan`, `walk`, `encrypt`/`decrypt` and their async and `_into` forms, `decrypt_to_frame`; the `shape` module (`Refusal`, `Unencryptable`, `SeqRules`, `MapRules`, `Settle`, `Locate`); the `seal` module (`seal_all`, `open_all` and async forms, `LeafCount`, `DEFAULT_CONCURRENCY`); `Decrypt`, `FromScalar`, `DecryptProtected`; `Tee`; `Context`, `ContextTag`, `LeafTypeAad`. chrono, `rust_decimal` and `uuid` sources behind features; `hlist` stays opt-in; a docs-hidden `test-support` feature for sibling crates' tests |
+| `vitaminc-aead`        | `Encrypt`, `Cipher`, `SeqCipher`, `MapCipher`, `Decrypt`, `Decipher`, `DecipherVisitor`, `SeqAccess`, `MapAccess`, `CipherText`, `Context` | `Plaintext`, `Sink`, `SeqSink`, `MapSink`, `SourceError` and `plaintext::Error`, `Physical`, `Logical`, `Kind`, `KnownLogical`, `UnknownLogical`, `UnknownLogicalId`, `TimeUnit`, `Raw`, `Bytes`, `visit_seq`/`visit_map`, `Path`/`Step`; the leaf codec and tag table; the frame (`Frame`, `FrameWriter`, `PassthroughFrame`, `to_frame`); `Cipher`, `AsyncCipher`, `Pending`, `EncryptSink`; `CipherText<Leaf, P>`, `Node`, `Opened`; `plan`, `walk`, `encrypt`/`decrypt` and their async and `_into` forms, `decrypt_to_frame`; the `shape` module (`Refusal`, `Unencryptable`, `SeqRules`, `MapRules`, `Settle`, `Locate`); the `seal` module (`seal_all`, `open_all` and async forms, `SealError`, `OpenError`, `LeafCount`, `DEFAULT_CONCURRENCY`); `Decrypt`, `FromScalar`, `DecryptProtected`; `Tee`; `Context`, `ContextTag`, `LeafTypeAad`. chrono, `rust_decimal` and `uuid` sources behind features; `hlist` stays opt-in; a docs-hidden `test-support` feature for sibling crates' tests |
 | `vitaminc-encrypt`     | `Aes256Cipher` with its `SeqCipher`, `MapCipher` and `AesDecipher`, `Key`, static cipher                                     | `impl Cipher for Aes256Cipher` (`seal` and `open`) and `Key`; the `opening_version_1()` view (`OpensVersion1`); `AesCipherText = Node<LocalCipherText>`; the `encrypt_with_key`/`decrypt_with_key` facade; re-exports of `encrypt`, `decrypt`, `decrypt_into`, `Plaintext`, `Decrypt` and others. Container logic moves up into `EncryptSink`. The `hlist` static cipher stays |
 | `vitaminc-aead-frame`  | `vitaminc-aead-value`: `Value`, `ValueKind`, tags, transport codec for values and ciphertexts, `canonical` feature          | Renamed. The ciphertext codec (`encode_ciphertext`/`decode_ciphertext` over `Node<Leaf>`), plus re-exports of the frame and the tag table from `vitaminc-aead` so a binding has the whole transport. `Value` and `ValueKind` are deleted; `CT_NONE` is retired as `CT_NONE_RETIRED` |
 | `vitaminc-normalize`   | the `canonical` feature of `vitaminc-aead-value`                                                                           | New crate. Public per-scalar encoders (`normalize`, `domain_of`, `NormalizeError`), frozen domain labels, the logical-type opt-in table, `Terms`, `Term { path, normalized }`, `terms`, `plan_with_terms`, `encrypt_with_terms` and its async form, `TermError`, `TermsError`, `Normalized { domain, bytes }`, `Path`/`Step` re-exported. No cryptography of its own, no PAE |
