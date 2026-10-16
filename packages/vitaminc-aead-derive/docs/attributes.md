@@ -55,8 +55,12 @@ struct Tree {
 }
 ```
 
-Recursion through another type cannot be seen from one derive, and fails to
-compile with `error[E0391]: cycle detected when simplifying constant`, naming
+The derive looks for the type's bare name. A field that names the type
+through a path, such as `crate::models::Tree`, is read as another type with the
+same name (`db::User` inside a `User` is common), so it is not detected.
+
+Recursion through another type, or through a path, cannot be seen from one
+derive, and fails to compile with `error[E0391]: cycle detected when simplifying constant`, naming
 each type's `DEPTH`. Mark every type in the cycle `recursive`:
 
 ```ignore

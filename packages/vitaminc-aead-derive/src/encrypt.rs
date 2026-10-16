@@ -182,11 +182,22 @@ fn depth(krate: &syn::Path, input: &DeriveInput, shape: &Shape, recursive: bool)
     let check = |ty: TokenStream| {
         quote!(::core::assert!(#depth::within_limit(<#ty as #krate::Encrypt>::DEPTH), #message))
     };
-    let (item_check, visit_check) = if input.generics.params.is_empty() {
+    // A type with no type or const parameters is checked where it is
+    // defined, so `cargo check` sees the error. Each lifetime becomes
+    // `'static`, which meets any bound a lifetime parameter can have.
+    let lifetimes_only = input.generics.type_params().next().is_none()
+        && input.generics.const_params().next().is_none();
+    let (item_check, visit_check) = if lifetimes_only {
+        let ty = if input.generics.params.is_empty() {
+            quote!(#name)
+        } else {
+            let statics = input.generics.lifetimes().map(|_| quote!('static));
+            quote!(#name<#(#statics),*>)
+        };
         // The `&Name` impl works its depth out from each field's `&Field`
         // impl, which may differ from the owned one, so both are checked.
-        let owned = check(quote!(#name));
-        let borrowed = check(quote!(&'static #name));
+        let owned = check(ty.clone());
+        let borrowed = check(quote!(&'static #ty));
         (
             quote!(const _: () = { #owned; #borrowed; };),
             TokenStream::new(),
@@ -209,11 +220,24 @@ fn depth(krate: &syn::Path, input: &DeriveInput, shape: &Shape, recursive: bool)
 /// recursion through another type cannot be seen from here; it needs
 /// `#[aead(recursive)]`.
 fn names_itself(name: &syn::Ident, shape: &Shape) -> bool {
+    // The type's name counts only where it does not follow `::`, so a
+    // field of another module's type with the same name (`db::User`) is not
+    // taken for recursion. A self-reference through a full path, such as
+    // `crate::models::Tree`, is then a cycle error, and the attribute docs
+    // send the author to `#[aead(recursive)]`.
     fn mentions(tokens: TokenStream, name: &syn::Ident) -> bool {
-        tokens.into_iter().any(|token| match token {
-            proc_macro2::TokenTree::Ident(ident) => ident == *name || ident == "Self",
-            proc_macro2::TokenTree::Group(group) => mentions(group.stream(), name),
-            _ => false,
+        let mut after_path_sep = false;
+        tokens.into_iter().any(|token| {
+            let hit = match &token {
+                proc_macro2::TokenTree::Ident(ident) => {
+                    ident == "Self" || (!after_path_sep && ident == name)
+                }
+                proc_macro2::TokenTree::Group(group) => mentions(group.stream(), name),
+                _ => false,
+            };
+            after_path_sep =
+                matches!(&token, proc_macro2::TokenTree::Punct(p) if p.as_char() == ':');
+            hit
         })
     }
     let walked: Vec<&FieldInfo> = match shape {
@@ -771,6 +795,24 @@ mod tests {
             "{out}"
         );
         assert!(!out.contains("const {"), "{out}");
+
+        // A type with only lifetime parameters is checked where it is
+        // defined too, at `'static`.
+        let out = expand(parse_quote! {
+            struct Row<'a, 'b: 'a> {
+                name: &'a str,
+                tags: Vec<&'b str>,
+            }
+        });
+        assert_contains(
+            &out,
+            quote!(#depth::within_limit(<Row<'static, 'static> as ::vitaminc_aead::Encrypt>::DEPTH)),
+        );
+        assert_contains(
+            &out,
+            quote!(#depth::within_limit(<&'static Row<'static, 'static> as ::vitaminc_aead::Encrypt>::DEPTH)),
+        );
+        assert!(!out.contains("const {"), "{out}");
     }
 
     /// A generic type's depth is known only at a concrete type, so it is
@@ -835,6 +877,20 @@ mod tests {
             assert_lacks(&out, quote!(const DEPTH));
             assert_lacks(&out, quote!(within_limit));
         }
+
+        // Another type with the same name, reached through a path, is not
+        // recursion: its depth is fixed and checked as any other.
+        let out = expand(parse_quote! {
+            struct User {
+                id: u32,
+                inner: legacy::User,
+            }
+        });
+        assert_contains(
+            &out,
+            quote!(<legacy::User as ::vitaminc_aead::Encrypt>::DEPTH),
+        );
+        assert_contains(&out, quote!(within_limit));
 
         // A skipped field is not walked, so naming the type there is no
         // recursion.

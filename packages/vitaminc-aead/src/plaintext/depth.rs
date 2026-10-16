@@ -8,6 +8,100 @@
 //!
 //! These are `const fn`s so a type's depth is worked out at compile time,
 //! from its fields' depths.
+//!
+//! A generic type is checked where it is used at a concrete type, when that
+//! use is built (`cargo build`, not `cargo check`). `Holder<V128<u32>>` nests
+//! one level deeper than `MAX_DEPTH`, so building a use of it fails:
+//!
+//! ```compile_fail,E0080
+//! #![recursion_limit = "512"]
+//! use vitaminc_aead::{plan, Encrypt};
+//!
+//! type V2<T> = Vec<Vec<T>>;
+//! type V4<T> = V2<V2<T>>;
+//! type V8<T> = V4<V4<T>>;
+//! type V16<T> = V8<V8<T>>;
+//! type V32<T> = V16<V16<T>>;
+//! type V64<T> = V32<V32<T>>;
+//! type V128<T> = V64<V64<T>>;
+//!
+//! #[derive(Encrypt)]
+//! struct Holder<T> {
+//!     value: T,
+//! }
+//!
+//! let _ = plan::<_, (), _>(Holder { value: V128::<u32>::new() }, "aad");
+//! ```
+//!
+//! One level shallower, at exactly `MAX_DEPTH`, it builds:
+//!
+//! ```
+//! #![recursion_limit = "512"]
+//! use vitaminc_aead::{plan, Encrypt};
+//!
+//! type V2<T> = Vec<Vec<T>>;
+//! type V4<T> = V2<V2<T>>;
+//! type V8<T> = V4<V4<T>>;
+//! type V16<T> = V8<V8<T>>;
+//! type V32<T> = V16<V16<T>>;
+//! type V64<T> = V32<V32<T>>;
+//! type V127<T> = V64<V32<V16<V8<V4<V2<Vec<T>>>>>>>;
+//!
+//! #[derive(Encrypt)]
+//! struct Holder<T> {
+//!     value: T,
+//! }
+//!
+//! assert!(plan::<_, (), _>(Holder { value: V127::<u32>::new() }, "aad").is_ok());
+//! ```
+//!
+//! A type with only lifetime parameters is checked where it is defined, as
+//! a type with none is, so no use is needed for the error:
+//!
+//! ```compile_fail,E0080
+//! #![recursion_limit = "512"]
+//! use vitaminc_aead::Encrypt;
+//!
+//! type V2<T> = Vec<Vec<T>>;
+//! type V4<T> = V2<V2<T>>;
+//! type V8<T> = V4<V4<T>>;
+//! type V16<T> = V8<V8<T>>;
+//! type V32<T> = V16<V16<T>>;
+//! type V64<T> = V32<V32<T>>;
+//! type V128<T> = V64<V64<T>>;
+//!
+//! #[derive(Encrypt)]
+//! struct Row<'a> {
+//!     name: &'a str,
+//!     deep: V128<u32>,
+//! }
+//! ```
+//!
+//! So is a type whose field is another type of the same name, reached
+//! through a path:
+//!
+//! ```compile_fail,E0080
+//! #![recursion_limit = "512"]
+//! use vitaminc_aead::Encrypt;
+//!
+//! type V2<T> = Vec<Vec<T>>;
+//! type V4<T> = V2<V2<T>>;
+//! type V8<T> = V4<V4<T>>;
+//! type V16<T> = V8<V8<T>>;
+//! type V32<T> = V16<V16<T>>;
+//! type V64<T> = V32<V32<T>>;
+//!
+//! mod legacy {
+//!     pub type User = super::V64<super::V64<u32>>;
+//! }
+//!
+//! #[derive(Encrypt)]
+//! struct User {
+//!     id: u32,
+//!     inner: legacy::User,
+//! }
+//! # fn main() {}
+//! ```
 
 use crate::frame::MAX_DEPTH;
 
