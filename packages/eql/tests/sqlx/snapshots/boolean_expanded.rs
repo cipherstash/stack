@@ -92,9 +92,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -229,9 +229,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -366,9 +366,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -503,9 +503,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -640,9 +640,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -777,9 +777,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -914,9 +914,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -1051,9 +1051,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1029usize,
+            start_line: 1037usize,
             start_col: 22usize,
-            end_line: 1029usize,
+            end_line: 1037usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -1188,9 +1188,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1096usize,
+            start_line: 1104usize,
             start_col: 22usize,
-            end_line: 1096usize,
+            end_line: 1104usize,
             end_col: 67usize,
             compile_fail: false,
             no_run: false,
@@ -1330,9 +1330,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1169usize,
+            start_line: 1177usize,
             start_col: 22usize,
-            end_line: 1169usize,
+            end_line: 1177usize,
             end_col: 70usize,
             compile_fail: false,
             no_run: false,
@@ -1433,9 +1433,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1226usize,
+            start_line: 1234usize,
             start_col: 22usize,
-            end_line: 1226usize,
+            end_line: 1234usize,
             end_col: 71usize,
             compile_fail: false,
             no_run: false,
@@ -1522,9 +1522,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1404usize,
+            start_line: 1412usize,
             start_col: 22usize,
-            end_line: 1404usize,
+            end_line: 1412usize,
             end_col: 74usize,
             compile_fail: false,
             no_run: false,
@@ -1893,9 +1893,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3506usize,
+            start_line: 3529usize,
             start_col: 22usize,
-            end_line: 3506usize,
+            end_line: 3529usize,
             end_col: 72usize,
             compile_fail: false,
             no_run: false,
@@ -1916,6 +1916,10 @@ pub mod boolean {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     bool,
                 >(::eql_tests::scalar_domains::Variant::Storage);
+                let column_expr = <bool as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let fixture = <bool as ScalarType>::fixture_table_name();
                 let expected = <bool as ScalarType>::fixture_values().len() as i64;
@@ -1937,7 +1941,7 @@ pub mod boolean {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO typed_count(value) SELECT ({0})::{1} FROM {2}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     d,
                                     fixture,
                                 ),
@@ -2022,9 +2026,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3540usize,
+            start_line: 3565usize,
             start_col: 22usize,
-            end_line: 3540usize,
+            end_line: 3565usize,
             end_col: 69usize,
             compile_fail: false,
             no_run: false,
@@ -2045,6 +2049,10 @@ pub mod boolean {
                 let spec = ::eql_tests::scalar_domains::ScalarDomainSpec::new::<
                     bool,
                 >(::eql_tests::scalar_domains::Variant::Storage);
+                let column_expr = <bool as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let d = &spec.sql_domain;
                 let fixture = <bool as ScalarType>::fixture_table_name();
                 let expected = <bool as ScalarType>::fixture_values().len() as i64;
@@ -2052,7 +2060,7 @@ pub mod boolean {
                     ::alloc::fmt::format(
                         format_args!(
                             "SELECT COUNT(({0})::{1}) FROM {2}",
-                            &spec.column_expr,
+                            &column_expr,
                             d,
                             fixture,
                         ),
@@ -2066,7 +2074,7 @@ pub mod boolean {
                                 ::alloc::fmt::format(
                                     format_args!(
                                         "COUNT(({0})::{1}) on {2}: want {3}, got {4}; SQL={5}",
-                                        &spec.column_expr,
+                                        &column_expr,
                                         d,
                                         fixture,
                                         expected,
@@ -2132,9 +2140,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3584usize,
+            start_line: 3611usize,
             start_col: 22usize,
-            end_line: 3584usize,
+            end_line: 3611usize,
             end_col: 78usize,
             compile_fail: false,
             no_run: false,
@@ -2161,6 +2169,10 @@ pub mod boolean {
                 let Some(extractor) = spec.extractor_expr("value") else {
                     return Ok(());
                 };
+                let column_expr = <bool as ::eql_tests::scalar_domains::ScalarType>::column_expr(
+                        &pool,
+                    )
+                    .await?;
                 let fixture = <bool as ScalarType>::fixture_table_name();
                 let expected = <bool as ScalarType>::fixture_values().len() as i64;
                 let mut tx = pool.begin().await?;
@@ -2181,7 +2193,7 @@ pub mod boolean {
                             ::alloc::fmt::format(
                                 format_args!(
                                     "INSERT INTO distinct_count(value) SELECT ({0})::{1} FROM {2}",
-                                    &spec.column_expr,
+                                    &column_expr,
                                     d,
                                     fixture,
                                 ),
@@ -2272,9 +2284,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3392usize,
+            start_line: 3415usize,
             start_col: 22usize,
-            end_line: 3392usize,
+            end_line: 3415usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -2440,9 +2452,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 3392usize,
+            start_line: 3415usize,
             start_col: 22usize,
-            end_line: 3392usize,
+            end_line: 3415usize,
             end_col: 83usize,
             compile_fail: false,
             no_run: false,
@@ -2606,9 +2618,9 @@ pub mod boolean {
             ignore: false,
             ignore_message: ::core::option::Option::None,
             source_file: "tests/sqlx/src/matrix.rs",
-            start_line: 1896usize,
+            start_line: 1904usize,
             start_col: 22usize,
-            end_line: 1896usize,
+            end_line: 1904usize,
             end_col: 55usize,
             compile_fail: false,
             no_run: false,

@@ -32,10 +32,14 @@ postgres = "0.19"
 # depend on lives in cipherstash-client, which protect-ffi encrypts through.
 # Its `JsonIndexer` runs offline over a supplied index key. The same exact pin
 # tests/sqlx names, so this workspace's lockfile gains no second copy.
-# protect-ffi resolves cipherstash-client from its own workspace and lockfile,
-# so the pin covers the version named here, not necessarily the one protect-ffi
-# ships: a protect-ffi bump is covered once this line moves to match it.
-cipherstash-client = "=0.42.0"
+# protect-ffi resolves cipherstash-client from its own workspace and lockfile;
+# scripts/__tests__/cipherstash-client-parity.test.mjs fails on every PR where
+# the two lockfiles disagree on cipherstash-client or cipherstash-config (the
+# crates that compute selectors), so a protect-ffi bump must move this line
+# (and tests/sqlx's) with it, and the pin then covers the versions of those two
+# crates protect-ffi ships. Primitive dependencies such as blake3 are not
+# compared.
+cipherstash-client = "=0.42.3"
 # The tampering test decodes a stored body, changes one byte and re-encodes
 # it. The same line eql-bindings uses, so the lockfile gains no second copy.
 base64 = "0.22"

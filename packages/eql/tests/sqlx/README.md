@@ -104,7 +104,9 @@ from the fixture it loaded.
 Each states a rule that singles out one selector and fails, listing every
 candidate, when zero or several match (`src/fixtures/ste_vec_selector.rs`).
 `tests/selector_literal_guard.rs` fails if a selector-shaped hex literal is
-added to `src/` or `tests/`. A forged selector in a literal-payload test must
+added to a `.rs` file under `src/` or `tests/`, including SQL and escaped JSON
+inside Rust strings. The generated `fixtures/*.sql` files hold real selectors
+and are not scanned. A forged selector in a literal-payload test must
 be visibly fake (for example `"00000000000000000000000000000001"`).
 
 ## Writing Tests

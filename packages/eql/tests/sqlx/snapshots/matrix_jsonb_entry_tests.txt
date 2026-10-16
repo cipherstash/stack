@@ -1,4 +1,5 @@
 jsonb_entry::jsonb_entry_<T>_aggregate_ignores_op_less_entries
+jsonb_entry::jsonb_entry_<T>_document_is_not_an_entry
 jsonb_entry::jsonb_entry_<T>_field_selector_is_unique
 jsonb_entry::jsonb_entry_<T>_fixture_shape
 jsonb_entry::jsonb_entry_<T>_index_engages

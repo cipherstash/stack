@@ -59,22 +59,6 @@ where
     ste_vec_selector::pick_one(TABLE, FIELD_OP_RULE, &candidates, |_| true)
 }
 
-/// SQL scalar subquery yielding the `$.field` op selector of the loaded
-/// fixture, for SQL built where no connection is in hand
-/// ([`crate::jsonb_entry::JsonbEntryInteger`]'s static `column_expr`, which the
-/// shared matrix macros call synchronously). It applies [`FIELD_OP_RULE`] in
-/// SQL: several op-carrying selectors make Postgres raise "more than one row
-/// returned by a subquery", and none makes every extraction NULL, which
-/// `jsonb_entry_integer_fixture_shape` and
-/// `jsonb_entry_integer_field_selector_is_unique` report with the candidates.
-pub fn field_op_selector_subquery() -> String {
-    format!(
-        "(SELECT DISTINCT e ->> 's' \
-          FROM {TABLE} f, jsonb_array_elements(f.payload::jsonb -> 'sv') e \
-          WHERE e ? 'op')"
-    )
-}
-
 /// Build the plaintext documents: `{"field": <value>}` per integer fixture value,
 /// paired with the bare integer oracle value.
 fn documents() -> Vec<(i32, Value)> {
@@ -147,7 +131,7 @@ mod tests {
     }
 
     /// `TABLE` is the table the generator writes for `NAME`: the matrix's
-    /// `fixture_table_name()` and the selector subquery both read `TABLE`, so
+    /// `fixture_table_name()` and `field_op_selector` both read `TABLE`, so
     /// the two cannot name different tables.
     #[test]
     fn table_is_the_generated_fixture_table() {

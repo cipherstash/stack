@@ -553,9 +553,9 @@ dependencies = [
 
 [[package]]
 name = "cipherstash-client"
-version = "0.42.0"
+version = "0.42.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c8714a2997ab5a8cc2c871f01dcae9ff7c6b342ed51c5c0d7c8edd4d954c9d1"
+checksum = "a1d748e6b3aa180c940e9d77592dc0bde09165dacb0b3046d8778d7958c8596b"
 dependencies = [
  "aes-gcm-siv",
  "anyhow",
@@ -570,7 +570,7 @@ dependencies = [
  "cipherstash-config",
  "cipherstash-core",
  "cllw-ore 0.4.2",
- "cts-common 0.42.2",
+ "cts-common 0.42.3",
  "derive_more 1.0.0",
  "dirs",
  "futures",
@@ -596,8 +596,8 @@ dependencies = [
  "serde_json",
  "serdect",
  "sha2 0.10.9",
- "stack-auth 0.42.2",
- "stack-profile 0.42.2",
+ "stack-auth 0.42.3",
+ "stack-profile 0.42.3",
  "static_assertions",
  "thiserror 1.0.69",
  "tokio",
@@ -626,9 +626,9 @@ dependencies = [
 
 [[package]]
 name = "cipherstash-core"
-version = "0.42.0"
+version = "0.42.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1946988e0b7f9de259d85b10c9c1fd7e1327751103b808c2c6e930b9a87c25c9"
+checksum = "317a43580d9ca0b7f9eb3c22346d25ed8ae951690e065c3dc14f4a66bb9ccf8c"
 dependencies = [
  "getrandom 0.2.16",
  "hmac 0.12.1",
@@ -910,9 +910,9 @@ dependencies = [
 
 [[package]]
 name = "cts-common"
-version = "0.42.2"
+version = "0.42.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "576c82618990e693abe4dfbd06dada0bcb45884a4514405851eec6d82818f52c"
+checksum = "32943c66cd3ab157144d4d872e46c4023a0dcc055af2fbe7e38ce8122e73a78c"
 dependencies = [
  "arrayvec",
  "base32",
@@ -4173,20 +4173,20 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "stack-auth"
-version = "0.42.2"
+version = "0.42.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1a9ac43060af7605899754daa3de2e26302c2ab4d9249a8bc16157bc53dad65"
+checksum = "6303b3d19e5078a6a9d269b218365f693fa807d2d957f6103a1852658bbea284"
 dependencies = [
  "aquamarine",
  "base64",
- "cts-common 0.42.2",
+ "cts-common 0.42.3",
  "jsonwebtoken",
  "miette",
  "open",
  "reqwest",
  "serde",
  "serde_json",
- "stack-profile 0.42.2",
+ "stack-profile 0.42.3",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -4286,9 +4286,9 @@ dependencies = [
 
 [[package]]
 name = "stack-profile"
-version = "0.42.2"
+version = "0.42.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90ce7ca95d8e688a35e86e0682293a2085d9b1f26e7ca5b489009c6ee0c6967a"
+checksum = "42735655af804919228fa55352afd8bcb76d742348f0a03480c1773f2cf2d8a2"
 dependencies = [
  "dirs",
  "gethostname",

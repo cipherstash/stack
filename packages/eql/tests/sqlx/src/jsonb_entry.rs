@@ -37,6 +37,22 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for JsonbEntryInteger {
     }
 }
 
+/// The entry-extraction expression for `selector`: `payload -> '<sel>'::text`,
+/// the form a customer writes. `->` already yields `public.eql_v3_json_entry`,
+/// so the call sites' `::public.eql_v3_json_entry` cast is a no-op. The
+/// selector operand is explicitly typed as text so Postgres resolves the
+/// `public.eql_v3_json_search -> text` operator instead of native jsonb path
+/// lookup. Parenthesised by the call sites (`({col})::{d}`).
+///
+/// `selector` comes from the fixture (a hex MAC); it is quoted as a SQL string
+/// literal so a stray quote cannot escape it.
+pub fn entry_column_expr(selector: &str) -> String {
+    format!(
+        "payload -> {}::text",
+        crate::scalar_domains::sql_string_literal(selector)
+    )
+}
+
 /// Fixture values: integer's list, wrapped. Materialised once into a `LazyLock`
 /// because the trait returns `&'static [Self]` and `i32`'s const slice cannot
 /// be reinterpreted as `&[JsonbEntryInteger]` without an allocation.
@@ -67,22 +83,15 @@ impl ScalarType for JsonbEntryInteger {
         "public.eql_v3_json_entry".to_string()
     }
 
-    /// Extract the entry at the `$.field` op selector. `->` already yields
-    /// `public.eql_v3_json_entry`; the call sites' `::public.eql_v3_json_entry` cast is
-    /// a no-op. The selector operand is explicitly typed as text so Postgres
-    /// resolves the `public.eql_v3_json_search -> text` operator instead of native jsonb path
-    /// lookup. Parenthesised by the call sites (`({col})::{d}`).
-    ///
-    /// The selector is keyed by the CipherStash workspace, so it is not a
-    /// literal: this seam is static and called synchronously by the shared
-    /// matrix macros, so the expression reads the selector from the loaded
-    /// fixture in SQL (`v3_doc_integer::field_op_selector_subquery`, an
-    /// uncorrelated subquery Postgres evaluates once per statement).
-    fn column_expr() -> String {
-        format!(
-            "payload -> {}::text",
-            v3_doc_integer::field_op_selector_subquery()
-        )
+    /// Extract the entry at the `$.field` op selector of the LOADED fixture,
+    /// as the literal `payload -> '<sel>'::text` customers write (see
+    /// [`entry_column_expr`]). The selector is keyed by the CipherStash
+    /// workspace, so it is read from the fixture
+    /// ([`v3_doc_integer::field_op_selector`], which fails naming every
+    /// candidate unless exactly one matches) rather than pinned.
+    async fn column_expr(pool: &sqlx::PgPool) -> anyhow::Result<String> {
+        let selector = v3_doc_integer::field_op_selector(pool).await?;
+        Ok(entry_column_expr(&selector))
     }
 
     fn to_sql_literal(value: &Self) -> String {
@@ -139,6 +148,46 @@ mod tests {
             .map(JsonbEntryInteger)
             .collect();
         assert_eq!(got, want);
+    }
+
+    /// The matrix's entry access path is the literal selector lookup a
+    /// customer writes, `payload -> '<sel>'::text`, not a subquery and not the
+    /// bare `payload` default. The forged selector is visibly fake.
+    #[test]
+    fn entry_column_expr_is_the_literal_selector_lookup() {
+        assert_eq!(
+            entry_column_expr("00000000000000000000000000000001"),
+            "payload -> '00000000000000000000000000000001'::text",
+        );
+        // A quote in the selector stays inside the literal.
+        assert_eq!(entry_column_expr("a'b"), "payload -> 'a''b'::text");
+    }
+
+    /// `JsonbEntryInteger::column_expr` queries the database rather than
+    /// returning a static expression: against a pool that reaches no database
+    /// it fails with the pool's connection error. (The scalar default, by
+    /// contrast, succeeds against the same pool — see
+    /// `scalar_domains::seam_tests`.) This proves only that a query is made.
+    /// That the expression is the literal lookup of the selector
+    /// `field_op_selector` reads from the fixture is the `ensure` in
+    /// `jsonb_entry_integer_field_selector_is_unique`
+    /// (`tests/encrypted_domain/jsonb_entry.rs`), against the live fixture.
+    #[tokio::test]
+    async fn column_expr_reads_the_selector_from_the_fixture() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(100))
+            .connect_lazy("postgres://unused@127.0.0.1:1/none")
+            .unwrap();
+        let err = <JsonbEntryInteger as ScalarType>::column_expr(&pool)
+            .await
+            .expect_err("column_expr must query the database for its selector");
+        assert!(
+            matches!(
+                err.downcast_ref::<sqlx::Error>(),
+                Some(sqlx::Error::PoolTimedOut)
+            ),
+            "column_expr must fail acquiring a connection, got {err:?}"
+        );
     }
 
     #[test]

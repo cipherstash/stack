@@ -687,42 +687,6 @@ async fn v3_jsonb_ord_ope_term_entry_branches(pool: PgPool) -> anyhow::Result<()
     Ok(())
 }
 
-// ============================================================================
-// Shape guard for the workspace-keyed `$.hello` op selector.
-//
-// The `$.hello` selector is a MAC of (column context, JSONPath) under the
-// workspace keyset, so it differs per CipherStash workspace and is never
-// pinned: every test reads it from the loaded fixture with
-// `hello_op_selector`, which applies `HELLO_OP_RULE` (the selector on all 10
-// rows whose `op` length takes exactly TWO values, the `world-1`..`world-9` vs
-// `world-10` split). What stays checkable is that the rule singles out exactly
-// one selector. This test fails, listing every op-carrying selector with its
-// profile, when it stops doing so — rather than leaving it to surface as wrong
-// ANSWERS (LB3 counting 0 distinct ops, ordering arms seeing unordered rows),
-// which is how a stale pinned selector used to fail. Whether a keyset and path
-// still produce the same selector bytes is pinned in
-// `packages/eql/tests/encryption`.
-// ============================================================================
-
-#[sqlx::test(fixtures(path = "../fixtures", scripts("v3_ste_vec")))]
-async fn v3_jsonb_hello_op_selector_is_unique(pool: PgPool) -> anyhow::Result<()> {
-    let sel = hello_op_selector(&pool).await?;
-    let carrying: i64 = sqlx::query_scalar(&format!(
-        "SELECT count(*) FROM fixtures.v3_ste_vec f \
-         WHERE EXISTS ( \
-           SELECT 1 FROM jsonb_array_elements(f.payload::jsonb->'sv') e \
-           WHERE e->>'s' = '{sel}' AND e ? 'op' \
-         )"
-    ))
-    .fetch_one(&pool)
-    .await?;
-    assert_eq!(
-        carrying, 10,
-        "the $.hello op selector {sel} must carry `op` on every row"
-    );
-    Ok(())
-}
-
 /// LB1–LB3 structural invariants of the GENERATED fixture, asserted directly
 /// (the containment / index oracles only imply them). This is the "generated
 /// fixture matches the load-bearing properties" guard, and it doubles as the

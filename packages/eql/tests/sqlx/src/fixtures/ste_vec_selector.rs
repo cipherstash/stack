@@ -33,19 +33,23 @@ pub struct OpSelectorCandidate {
     pub min_op_length: i64,
     /// Longest `op` hex length under this selector.
     pub max_op_length: i64,
+    /// Number of fixture rows carrying an `op` of [`Self::max_op_length`]
+    /// under this selector.
+    pub rows_at_max_op_length: i64,
 }
 
 impl std::fmt::Display for OpSelectorCandidate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{}  rows={}/{} distinct_op_lengths={} min={} max={}",
+            "{}  rows={}/{} distinct_op_lengths={} min={} max={} rows_at_max={}",
             self.selector,
             self.rows,
             self.total_rows,
             self.distinct_op_lengths,
             self.min_op_length,
             self.max_op_length,
+            self.rows_at_max_op_length,
         )
     }
 }
@@ -56,14 +60,22 @@ impl std::fmt::Display for OpSelectorCandidate {
 /// selector-lookup operator.
 pub fn op_selector_candidates_sql(table: &str) -> String {
     format!(
-        "SELECT e ->> 's' AS selector, \
-                count(DISTINCT f.id) AS rows, \
+        "WITH entries AS ( \
+           SELECT f.id, e ->> 's' AS selector, length(e ->> 'op') AS op_length \
+           FROM {table} f, jsonb_array_elements(f.payload::jsonb -> 'sv') e \
+           WHERE e ? 'op' \
+         ), longest AS ( \
+           SELECT selector, max(op_length) AS op_length FROM entries GROUP BY 1 \
+         ) \
+         SELECT en.selector, \
+                count(DISTINCT en.id) AS rows, \
                 (SELECT count(*) FROM {table}) AS total_rows, \
-                count(DISTINCT length(e ->> 'op')) AS distinct_op_lengths, \
-                min(length(e ->> 'op'))::bigint AS min_op_length, \
-                max(length(e ->> 'op'))::bigint AS max_op_length \
-         FROM {table} f, jsonb_array_elements(f.payload::jsonb -> 'sv') e \
-         WHERE e ? 'op' \
+                count(DISTINCT en.op_length) AS distinct_op_lengths, \
+                min(en.op_length)::bigint AS min_op_length, \
+                max(en.op_length)::bigint AS max_op_length, \
+                count(DISTINCT en.id) FILTER (WHERE en.op_length = l.op_length) \
+                  AS rows_at_max_op_length \
+         FROM entries en JOIN longest l USING (selector) \
          GROUP BY 1 ORDER BY 1"
     )
 }
@@ -127,6 +139,7 @@ mod tests {
             distinct_op_lengths: lengths,
             min_op_length: 132,
             max_op_length: if lengths > 1 { 148 } else { 132 },
+            rows_at_max_op_length: if lengths > 1 { 1 } else { rows },
         }
     }
 
@@ -180,7 +193,7 @@ mod tests {
     #[test]
     fn candidate_sql_reads_the_named_table() {
         let sql = op_selector_candidates_sql("fixtures.v3_ste_vec");
-        assert!(sql.contains("FROM fixtures.v3_ste_vec f"));
+        assert!(sql.contains("FROM fixtures.v3_ste_vec f,"));
         assert!(sql.contains("(SELECT count(*) FROM fixtures.v3_ste_vec)"));
         assert!(sql.contains("payload::jsonb -> 'sv'"));
     }

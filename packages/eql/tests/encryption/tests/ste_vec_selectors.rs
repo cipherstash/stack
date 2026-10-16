@@ -31,10 +31,13 @@
 //! document covers every JSON shape the indexer branches on: numbers (integer
 //! and float), a string, a bool, null, a nested object and an array.
 //!
-//! What it pins is the cipherstash-client version this EQL workspace resolves.
-//! protect-ffi, which writes customers' documents, resolves cipherstash-client
-//! from its own workspace and lockfile, so a protect-ffi bump is covered only
-//! once this workspace moves to the same version.
+//! What it pins is the cipherstash-client and cipherstash-config (which parses
+//! the index config) this EQL workspace resolves. protect-ffi, which writes
+//! customers' documents, resolves both from its own workspace and lockfile.
+//! `scripts/__tests__/cipherstash-client-parity.test.mjs` fails on every PR
+//! where the two lockfiles disagree on either, so the versions pinned here are
+//! the ones protect-ffi ships. Primitive dependencies such as blake3 (the
+//! selector MAC) are not compared.
 //!
 //! Regenerate with `EQL_UPDATE_STE_VEC_SELECTORS=1` (exactly `1`; any other
 //! value, `0` included, regenerates nothing), deliberately not the crate's

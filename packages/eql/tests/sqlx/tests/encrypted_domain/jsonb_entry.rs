@@ -22,14 +22,16 @@ eql_tests::jsonb_entry_matrix! {
 }
 
 // ----------------------------------------------------------------------------
-// Entry-specific structural invariant. Pins that the fixture's `$.field` op
-// selector extracts a real, `op`-carrying entry from every fixture row — a
-// missing entry would make every matrix comparison vacuous via NULL extraction
-// rather than failing.
+// Entry-specific structural invariant. Pins that the matrix's access path
+// (`column_expr`, the literal lookup of the fixture's `$.field` op selector)
+// extracts a real, `op`-carrying entry from every fixture row — a missing entry
+// would make every matrix comparison vacuous via NULL extraction rather than
+// failing.
 // ----------------------------------------------------------------------------
 #[sqlx::test(fixtures(path = "../../fixtures", scripts("v3_doc_integer")))]
 async fn jsonb_entry_integer_fixture_shape(pool: sqlx::PgPool) -> anyhow::Result<()> {
     let sel = field_op_selector(&pool).await?;
+    let col = <JsonbEntryInteger as ScalarType>::column_expr(&pool).await?;
     let n = <JsonbEntryInteger as ScalarType>::fixture_values().len() as i64;
 
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fixtures.v3_doc_integer")
@@ -52,7 +54,7 @@ async fn jsonb_entry_integer_fixture_shape(pool: sqlx::PgPool) -> anyhow::Result
     // Every row's entry at the selector is non-NULL — guards against a row
     // missing its `$.field` entry silently hollowing out the matrix.
     let null_entries: i64 = sqlx::query_scalar(&format!(
-        "SELECT COUNT(*) FROM fixtures.v3_doc_integer WHERE (payload -> '{sel}'::text) IS NULL",
+        "SELECT COUNT(*) FROM fixtures.v3_doc_integer WHERE ({col}) IS NULL",
     ))
     .fetch_one(&pool)
     .await?;
@@ -66,8 +68,8 @@ async fn jsonb_entry_integer_fixture_shape(pool: sqlx::PgPool) -> anyhow::Result
     // `eql_v3.ord_term` returns SQL NULL for an op-less entry).
     let invalid: i64 = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM fixtures.v3_doc_integer \
-         WHERE NOT public.eql_v3_is_valid_ste_vec_entry_payload((payload -> '{sel}'::text)::jsonb) \
-            OR eql_v3.ord_term((payload -> '{sel}'::text)::public.eql_v3_json_entry) IS NULL",
+         WHERE NOT public.eql_v3_is_valid_ste_vec_entry_payload(({col})::jsonb) \
+            OR eql_v3.ord_term(({col})::public.eql_v3_json_entry) IS NULL",
     ))
     .fetch_one(&pool)
     .await?;
@@ -79,7 +81,7 @@ async fn jsonb_entry_integer_fixture_shape(pool: sqlx::PgPool) -> anyhow::Result
     // Distinct op terms == row count (distinct plaintexts → distinct CLLW-OPE
     // leaves), so the correctness/ordering oracle has real discrimination.
     let distinct_op: i64 = sqlx::query_scalar(&format!(
-        "SELECT COUNT(DISTINCT ((payload -> '{sel}'::text)::jsonb ->> 'op')) \
+        "SELECT COUNT(DISTINCT (({col})::jsonb ->> 'op')) \
          FROM fixtures.v3_doc_integer",
     ))
     .fetch_one(&pool)
@@ -96,29 +98,60 @@ async fn jsonb_entry_integer_fixture_shape(pool: sqlx::PgPool) -> anyhow::Result
 // Selector shape guard. A SteVec selector is a keyed MAC over (workspace keyset,
 // STE_VEC_PREFIX, path), so the `$.field` selector differs per CipherStash
 // workspace and is never pinned: every test reads it from the loaded fixture
-// (`field_op_selector`), and the matrix's `column_expr` reads it in SQL. What
-// stays checkable is the SHAPE that makes the lookup unambiguous: exactly one
-// op-carrying selector in the fixture. This test fails, naming every candidate,
-// when that stops holding, instead of leaving it to surface as ~40 confusing
-// NULL-extraction or "more than one row returned by a subquery" failures across
-// the matrix. Whether a keyset and path still produce the same selector bytes is
-// pinned in `packages/eql/tests/encryption`.
+// (`field_op_selector`), and the matrix's `column_expr` embeds it as the literal
+// `payload -> '<sel>'::text`. What stays checkable is the SHAPE that makes the
+// lookup unambiguous: exactly one op-carrying selector in the fixture. This test
+// fails, naming every candidate, when that stops holding, instead of leaving it
+// to surface as ~40 confusing failures across the matrix. That the matrix's
+// access path reaches a valid, `op`-carrying entry on every row is
+// `jsonb_entry_integer_fixture_shape`. Whether a keyset and path still produce
+// the same selector bytes is pinned in `packages/eql/tests/encryption`.
 // ----------------------------------------------------------------------------
 #[sqlx::test(fixtures(path = "../../fixtures", scripts("v3_doc_integer")))]
 async fn jsonb_entry_integer_field_selector_is_unique(pool: sqlx::PgPool) -> anyhow::Result<()> {
-    let sel = field_op_selector(&pool).await?;
+    field_op_selector(&pool).await?;
+    Ok(())
+}
 
-    // The SQL form the matrix uses must resolve to the same selector.
-    let via_sql: Option<String> = sqlx::query_scalar(&format!(
-        "SELECT {}",
-        eql_tests::fixtures::v3_doc_integer::field_op_selector_subquery()
+// ----------------------------------------------------------------------------
+// Reading the whole document instead of the entry fails loudly. Every entry
+// matrix arm casts its column to `public.eql_v3_json_entry`, whose CHECK
+// requires string `s` and `c` and admits only entry keys; a SteVec document has
+// neither at its root. So an arm that reads bare `payload` where it should read
+// `column_expr` raises a check violation rather than comparing documents. This
+// pins that safety net: the matrix relies on it in place of a type-level
+// guarantee that every fixture-reading arm resolves `column_expr`.
+// ----------------------------------------------------------------------------
+#[sqlx::test(fixtures(path = "../../fixtures", scripts("v3_doc_integer")))]
+async fn jsonb_entry_integer_document_is_not_an_entry(pool: sqlx::PgPool) -> anyhow::Result<()> {
+    let n = <JsonbEntryInteger as ScalarType>::fixture_values().len() as i64;
+
+    // Control: the resolved entry read casts on every row.
+    let col = <JsonbEntryInteger as ScalarType>::column_expr(&pool).await?;
+    let entries: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(({col})::public.eql_v3_json_entry) FROM fixtures.v3_doc_integer",
     ))
     .fetch_one(&pool)
     .await?;
     anyhow::ensure!(
-        via_sql.as_deref() == Some(sel.as_str()),
-        "column_expr's SQL selector lookup returned {via_sql:?}, field_op_selector returned {sel}",
+        entries == n,
+        "the entry read must cast on all {n} rows, got {entries}",
     );
+
+    // The mistaken read: the whole document, cast as an arm would cast it.
+    let err = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT((payload)::public.eql_v3_json_entry) FROM fixtures.v3_doc_integer",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect_err("a whole SteVec document must not cast to public.eql_v3_json_entry");
+    let code = err.as_database_error().and_then(|e| e.code());
+    anyhow::ensure!(
+        code.as_deref() == Some("23514"),
+        "expected SQLSTATE 23514 (check_violation) casting the document to an entry, \
+         got {code:?}: {err}",
+    );
+
     Ok(())
 }
 
