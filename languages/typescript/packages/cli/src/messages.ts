@@ -389,6 +389,9 @@ export const messages = {
     repairJournalUnreadable: (detail: string) =>
       `${detail}\nstash eql repair needs drizzle-kit's meta/_journal.json to tell which migrations have already been applied. Check that --out points at your drizzle-kit output directory.`,
   },
+  decrypt: {
+    unknownSubcommand: 'Unknown decrypt subcommand',
+  },
   db: {
     unknownSubcommand: 'Unknown db subcommand',
     /** Warning shown when a deprecated `db <sub>` alias for `eql <sub>` is used. */

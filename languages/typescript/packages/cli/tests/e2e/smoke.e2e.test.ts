@@ -30,6 +30,10 @@ describe('stash CLI — non-interactive smoke', () => {
     expect(r.output).toContain('eql upgrade')
     expect(r.output).toContain('eql status')
     expect(r.output).toContain('eql validate')
+    expect(r.output).toContain('decrypt status')
+    expect(r.output).toContain('decrypt plan')
+    expect(r.output).toContain('decrypt backfill')
+    expect(r.output).toContain('decrypt drop')
     // The dotenv "injected env" banner regression guard lives in the
     // dedicated test below — this cwd has no .env file, so a bare
     // `not.toContain('injected env')` here would pass vacuously.
@@ -93,6 +97,14 @@ describe('stash CLI — non-interactive smoke', () => {
     const { exitCode } = await r.exit
     expect(exitCode).toBe(1)
     expect(r.output).toContain(messages.db.unknownSubcommand)
+    expect(r.output).toContain('bogus-sub')
+  })
+
+  it('decrypt bogus-sub exits 1 with help', async () => {
+    const r = render(['decrypt', 'bogus-sub'])
+    const { exitCode } = await r.exit
+    expect(exitCode).toBe(1)
+    expect(r.output).toContain(messages.decrypt.unknownSubcommand)
     expect(r.output).toContain('bogus-sub')
   })
 
