@@ -19,7 +19,7 @@ This crate provides the data model and the traversals for encrypting structured 
 
 ## Key Features
 
-- **One data model**: a value is described once, as a [`Plaintext`] that walks itself into a [`Sink`]. Encryption, decryption, the transport frame, index terms and host bindings are all sinks or sources of the same model, so there is no intermediate value type to convert through.
+- **One data model**: a value is described once, as a [`Encrypt`] that walks itself into a [`Sink`]. Encryption, decryption, the transport frame, index terms and host bindings are all sinks or sources of the same model, so there is no intermediate value type to convert through.
 - **A cipher is `seal` and `open`**: the [`Cipher`] trait seals and opens one leaf; every rule about the *shape* of a value (how map entries are bound to their keys, how sequence elements are bound to their sequence but not to their index or count, how empty containers are authenticated, the refusal of a container with nothing sealed) lives once in the encrypting sink and the opening walk. [`AsyncCipher`] is the same for a cipher that has to be awaited, with batching hooks for a remote key service.
 - **Typed decryption names a sink**: a [`Decrypt`] target is any type that names the sink that builds it, so a ciphertext is decoded straight into a struct, a `Vec`, an `Option`, a `Protected<T>`, or a host value. Decoding is strict.
 - **Self-describing leaves**: every scalar seals as a tagged leaf (`[tag] ++ payload`), with an optional logical type (a date, a timestamp, a decimal, a UUID) over its physical kind, so a value encrypted from Rust, Go or JavaScript opens from any of them.
@@ -99,7 +99,7 @@ A cipher that has to be awaited implements [`AsyncCipher`] instead, and drives [
 
 ### Encrypting data
 
-[`encrypt`] takes any [`Plaintext`] source. Built in: strings, bytes (`Vec<u8>`, `&[u8]`, `[u8; N]`), the integers `i8`, `i16`, `i32`, `i64`, `i128`, `u16`, `u32`, `u64` and `u128`, `f32` and `f64`, `bool`, `Option<T>`, `Vec<T>`, `HashMap<String, T>` and `BTreeMap<String, T>`, `Protected<T>` (walked by reference inside the wrapper), and, behind features, `chrono`, `rust_decimal` and `uuid` scalars. The result is a [`CipherText`] tree mirroring the value's shape: one sealed leaf per scalar, with the containers around them.
+[`encrypt`] takes any [`Encrypt`] source. Built in: strings, bytes (`Vec<u8>`, `&[u8]`, `[u8; N]`), the integers `i8`, `i16`, `i32`, `i64`, `i128`, `u16`, `u32`, `u64` and `u128`, `f32` and `f64`, `bool`, `Option<T>`, `Vec<T>`, `HashMap<String, T>` and `BTreeMap<String, T>`, `Protected<T>` (walked by reference inside the wrapper), and, behind features, `chrono`, `rust_decimal` and `uuid` scalars. The result is a [`CipherText`] tree mirroring the value's shape: one sealed leaf per scalar, with the containers around them.
 
 ```rust
 # use vitaminc_aead::{Cipher, Context, Unspecified};
@@ -266,7 +266,7 @@ The binding is a declaration, not a check of the value, and it only works when b
 ### Working with Protected Types
 
 The crate integrates with `vitaminc-protected` so sensitive plaintext stays wrapped. A `Protected<T>`
-is a [`Plaintext`] whenever `&T` is: it is walked *by reference inside the wrapper*, so the secret
+is a [`Encrypt`] whenever `&T` is: it is walked *by reference inside the wrapper*, so the secret
 never leaves it on the way in. On the way out, `Protected<T>` is a [`Decrypt`] target that builds in
 place: scalars are read straight into the wrapper, and a `Vec` or an `Option` builds inside it from
 the first element, so a failure part way wipes what was already decoded.
@@ -297,10 +297,10 @@ assert_eq!(back.risky_unwrap(), "password123");
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Because a derived newtype is transparent, `#[derive(Plaintext)] struct Key(Protected<[u8; 32]>);`
+Because a derived newtype is transparent, `#[derive(Encrypt)] struct Key(Protected<[u8; 32]>);`
 gets exactly that path — no hand-written impl is needed to keep key material wrapped.
 
-### Deriving `Plaintext` and `Decrypt`
+### Deriving `Encrypt` and `Decrypt`
 
 A struct walks as a map keyed by field name, each value sealed under its key, and decodes strictly: an unknown key, a duplicate key or a missing field is refused. A fieldless enum is one int leaf holding the variant's discriminant.
 
@@ -320,15 +320,15 @@ A struct walks as a map keyed by field name, each value sealed under its key, an
 #     }
 # }
 # let cipher = Clear;
-use vitaminc_aead::{decrypt, encrypt, CipherText, Decrypt, Plaintext};
+use vitaminc_aead::{decrypt, encrypt, CipherText, Decrypt, Encrypt};
 
-#[derive(Debug, PartialEq, Plaintext, Decrypt)]
+#[derive(Debug, PartialEq, Encrypt, Decrypt)]
 enum Role {
     Admin = 1,
     Member = 2,
 }
 
-#[derive(Debug, PartialEq, Plaintext, Decrypt)]
+#[derive(Debug, PartialEq, Encrypt, Decrypt)]
 struct User {
     #[aead(passthrough)]
     id: u64,                 // stored in the clear, readable without the key
@@ -353,15 +353,15 @@ The attributes are documented on the derives: `rename`, `passthrough`, `skip`, `
 
 ### Custom types
 
-A hand-written source implements [`Plaintext`] by walking itself into the sink, and a hand-written target implements [`Decrypt`] by naming a sink that builds it. Most types need neither; derive both. A source that is a thin view of something else, such as a frame or a host value, is where the trait is written by hand:
+A hand-written source implements [`Encrypt`] by walking itself into the sink, and a hand-written target implements [`Decrypt`] by naming a sink that builds it. Most types need neither; derive both. A source that is a thin view of something else, such as a frame or a host value, is where the trait is written by hand:
 
 ```rust
-use vitaminc_aead::{MapSink, Plaintext, SeqSink, Sink};
+use vitaminc_aead::{MapSink, Encrypt, SeqSink, Sink};
 
 /// A record whose fields are not all one type, so no `BTreeMap` fits.
 struct Reading { sensor: String, values: Vec<f64>, ok: bool }
 
-impl Plaintext for Reading {
+impl Encrypt for Reading {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         let mut map = sink.map(Some(3))?;
         self.sensor.visit(map.entry("sensor")?)?;
@@ -386,7 +386,7 @@ Anything secret-bearing belongs in `Protected` and gets encrypted; anything that
 
 ### The frame
 
-Host bindings do not convert their values into a Rust value tree. [`Frame`] is a validated, borrowed transport frame that implements [`Plaintext`] by walking its own bytes in place, [`FrameWriter`] is a [`Sink`] that writes one, and [`to_frame`] walks any source into a frame. The Go binding encrypts from the frame it receives and decrypts into one; the Node binding snapshots a JavaScript value as a frame to encrypt it off the JavaScript thread.
+Host bindings do not convert their values into a Rust value tree. [`Frame`] is a validated, borrowed transport frame that implements [`Encrypt`] by walking its own bytes in place, [`FrameWriter`] is a [`Sink`] that writes one, and [`to_frame`] walks any source into a frame. The Go binding encrypts from the frame it receives and decrypts into one; the Node binding snapshots a JavaScript value as a frame to encrypt it off the JavaScript thread.
 
 ### Index terms
 

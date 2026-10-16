@@ -1,4 +1,4 @@
-//! The plaintext data model: a source describes itself once ([`Plaintext`])
+//! The plaintext data model: a source describes itself once ([`Encrypt`])
 //! to a consumer ([`Sink`]), the way serde splits `Serialize` from
 //! `Serializer`.
 //!
@@ -17,7 +17,7 @@
 //!   [`Logical`] type, rather than a method per kind. See [`kinds`].
 //!
 //! `Sink` is implemented inside vitaminc and its host bindings. Application
-//! code implements `Plaintext`, usually by derive.
+//! code implements `Encrypt`, usually by derive.
 
 pub mod kinds;
 mod path;
@@ -33,7 +33,7 @@ pub use path::render;
 pub use path::{Path, Step};
 pub use sources::{Bytes, Raw};
 
-/// What `#[derive(Plaintext)]`'s expansion needs by path. Not an API.
+/// What `#[derive(Encrypt)]`'s expansion needs by path. Not an API.
 #[doc(hidden)]
 pub mod __private {
     pub use super::sources::discard_one;
@@ -45,11 +45,18 @@ pub use tee::Tee;
 /// Implemented by Rust primitives and containers, by the optional chrono,
 /// `rust_decimal` and uuid types, and by host bindings for their own values.
 /// A struct implements it by walking its fields into a map, which is what
-/// `#[derive(Plaintext)]` generates.
+/// `#[derive(Encrypt)]` generates.
+///
+/// `Encrypt` and [`Decrypt`](crate::Decrypt) are the pair a type implements
+/// to say how it is encrypted and decrypted. Neither does any cryptography:
+/// that is the [`Cipher`](crate::Cipher)'s job, and the same walk also
+/// feeds sinks that are not ciphers, such as equality terms and the
+/// transport frame. This trait replaces the visitor-based `Encrypt` of
+/// vitaminc 0.5, which drove a cipher directly.
 ///
 /// # Owned values and `Protected`
 ///
-/// A source implements `Plaintext` for `T` and for `&T`. The by-value walk
+/// A source implements `Encrypt` for `T` and for `&T`. The by-value walk
 /// consumes the value; the borrowed walk hands the sink borrows of what
 /// the value holds and leaves it where it is. `Protected<T>` walks as a
 /// borrow of what it wraps, so nothing leaves the wrapper during the walk
@@ -65,7 +72,7 @@ pub use tee::Tee;
 /// hand-written leaf that owns a secret buffer should wrap itself the same
 /// way, and a hand-written container should not drop unvisited children
 /// bare.
-pub trait Plaintext {
+pub trait Encrypt {
     /// Describe `self` to `sink`, consuming it.
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error>;
 }
@@ -132,11 +139,11 @@ pub trait Sink: Sized {
     /// physical value fits it ([`Logical::admits`]).
     ///
     /// ```
-    /// use vitaminc_aead::plaintext::{Int, Logical, Physical, Plaintext, Sink};
+    /// use vitaminc_aead::plaintext::{Int, Logical, Physical, Encrypt, Sink};
     ///
     /// struct Celsius(i32);
     ///
-    /// impl Plaintext for Celsius {
+    /// impl Encrypt for Celsius {
     ///     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
     ///         sink.scalar(None, Physical::Int(Int::I32(self.0)))
     ///     }
@@ -145,7 +152,7 @@ pub trait Sink: Sized {
     /// /// Days since 1970-01-01.
     /// struct Day(i32);
     ///
-    /// impl Plaintext for Day {
+    /// impl Encrypt for Day {
     ///     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
     ///         sink.scalar(Some(Logical::Date), Physical::Int(Int::I32(self.0)))
     ///     }
@@ -166,7 +173,7 @@ pub trait Sink: Sized {
     /// The value is `Clone` so that a sink which is really several sinks
     /// (see [`Tee`]) can give the subtree to each of them. Passthrough is
     /// non-sensitive by contract, so the copy carries no secret.
-    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<Self::Ok, Self::Error>;
+    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<Self::Ok, Self::Error>;
 }
 
 /// The sink for a sequence's elements.
@@ -208,7 +215,7 @@ pub fn visit_seq<S, I>(sink: S, len: Option<usize>, items: I) -> Result<S::Ok, S
 where
     S: Sink,
     I: IntoIterator,
-    I::Item: Plaintext,
+    I::Item: Encrypt,
 {
     let mut seq = sink.seq(len)?;
     for item in items {
@@ -224,11 +231,11 @@ where
 ///
 /// ```
 /// use std::collections::BTreeMap;
-/// use vitaminc_aead::plaintext::{visit_map, Plaintext, Sink};
+/// use vitaminc_aead::plaintext::{visit_map, Encrypt, Sink};
 ///
 /// struct Scores(BTreeMap<String, u32>);
 ///
-/// impl Plaintext for Scores {
+/// impl Encrypt for Scores {
 ///     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
 ///         let len = Some(self.0.len());
 ///         visit_map(sink, len, self.0.iter().map(|(name, score)| (name.as_str(), *score)))
@@ -239,7 +246,7 @@ pub fn visit_map<'k, S, I, P>(sink: S, len: Option<usize>, entries: I) -> Result
 where
     S: Sink,
     I: IntoIterator<Item = (&'k str, P)>,
-    P: Plaintext,
+    P: Encrypt,
 {
     let mut map = sink.map(len)?;
     for (key, value) in entries {
@@ -325,7 +332,7 @@ pub(crate) mod record {
             Ok(self)
         }
 
-        fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<(), RecordError> {
+        fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<(), RecordError> {
             self.0.push(Event::Passthrough);
             value.visit(Record(self.0))
         }
@@ -370,7 +377,7 @@ pub(crate) mod record {
     }
 
     /// Walk `p` and return what a sink would have seen.
-    pub fn record<P: Plaintext>(p: P) -> Result<Vec<Event>, RecordError> {
+    pub fn record<P: Encrypt>(p: P) -> Result<Vec<Event>, RecordError> {
         let mut log = Vec::new();
         p.visit(Record(&mut log))?;
         Ok(log)

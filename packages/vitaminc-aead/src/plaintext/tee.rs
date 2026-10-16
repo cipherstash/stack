@@ -5,7 +5,7 @@
 //! order. Any sinks with the same error type compose, at any depth.
 
 use super::kinds::{Logical, Physical};
-use super::{MapSink, Plaintext, SeqSink, Sink};
+use super::{Encrypt, MapSink, SeqSink, Sink};
 
 /// A pair of sinks that forwards every call to both and pairs the results.
 ///
@@ -14,9 +14,9 @@ use super::{MapSink, Plaintext, SeqSink, Sink};
 /// One walk of a value, consumed by two sinks that share an error type:
 ///
 /// ```
-/// use vitaminc_aead::plaintext::{Plaintext, Sink, Tee};
+/// use vitaminc_aead::plaintext::{Encrypt, Sink, Tee};
 ///
-/// fn both<A, B>(value: impl Plaintext, a: A, b: B) -> Result<(A::Ok, B::Ok), A::Error>
+/// fn both<A, B>(value: impl Encrypt, a: A, b: B) -> Result<(A::Ok, B::Ok), A::Error>
 /// where
 ///     A: Sink,
 ///     B: Sink<Error = A::Error>,
@@ -53,7 +53,7 @@ impl<A: Sink, B: Sink<Error = A::Error>> Sink for Tee<A, B> {
 
     /// The one call a tee cannot share: each side walks the subtree for
     /// itself, so it is cloned. Passthrough is cleartext by contract.
-    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<Self::Ok, A::Error> {
+    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<Self::Ok, A::Error> {
         let (a, b) = (self.0, self.1);
         a.passthrough(value.clone())
             .and_then(|a| b.passthrough(value).map(|b| (a, b)))
@@ -223,7 +223,7 @@ mod tests {
             fn map(self, _: Option<usize>) -> Result<Self, RecordError> {
                 Ok(self)
             }
-            fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<(), RecordError> {
+            fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<(), RecordError> {
                 Ok(())
             }
         }

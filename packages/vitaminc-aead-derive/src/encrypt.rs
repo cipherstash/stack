@@ -1,4 +1,4 @@
-//! Expansion of `#[derive(Plaintext)]`.
+//! Expansion of `#[derive(Encrypt)]`.
 //!
 //! Two impls are generated. The by-value `visit` moves each field out and
 //! walks it; when the sink or a field refuses part way, the fields not yet
@@ -24,10 +24,10 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let name = &input.ident;
 
     // Bound every type parameter, serde-style: a field of type `Vec<T>` then
-    // picks up `Vec<T>: Plaintext` from the blanket impl in `vitaminc_aead`.
+    // picks up `Vec<T>: Encrypt` from the blanket impl in `vitaminc_aead`.
     let mut generics = input.generics.clone();
     for param in generics.type_params_mut() {
-        param.bounds.push(parse_quote!(#krate::Plaintext));
+        param.bounds.push(parse_quote!(#krate::Encrypt));
     }
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
@@ -42,7 +42,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         .type_params()
         .map(|param| {
             let ident = &param.ident;
-            parse_quote!(&'__r #ident: #krate::Plaintext)
+            parse_quote!(&'__r #ident: #krate::Encrypt)
         })
         .collect();
     ref_generics
@@ -73,7 +73,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
 
     Ok(quote! {
         #[automatically_derived]
-        impl #impl_generics #krate::Plaintext for #name #ty_generics #where_clause {
+        impl #impl_generics #krate::Encrypt for #name #ty_generics #where_clause {
             fn visit<__S>(#receiver, __sink: __S) -> ::core::result::Result<__S::Ok, __S::Error>
             where
                 __S: #krate::Sink,
@@ -83,7 +83,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         }
 
         #[automatically_derived]
-        impl #ref_impl_generics #krate::Plaintext for &'__r #name #ty_generics #ref_where_clause {
+        impl #ref_impl_generics #krate::Encrypt for &'__r #name #ty_generics #ref_where_clause {
             fn visit<__S>(self, __sink: __S) -> ::core::result::Result<__S::Ok, __S::Error>
             where
                 __S: #krate::Sink,
@@ -118,14 +118,14 @@ fn value(field: &FieldInfo) -> TokenStream {
 fn newtype_body(krate: &syn::Path, field: &FieldInfo) -> TokenStream {
     let value = value(field);
     quote! {
-        #krate::Plaintext::visit(#value, __sink)
+        #krate::Encrypt::visit(#value, __sink)
     }
 }
 
 fn newtype_ref_body(krate: &syn::Path, field: &FieldInfo) -> TokenStream {
     let member = &field.member;
     quote! {
-        #krate::Plaintext::visit(&self.#member, __sink)
+        #krate::Encrypt::visit(&self.#member, __sink)
     }
 }
 
@@ -158,7 +158,7 @@ fn map_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
             // the encrypted ones.
             quote!(#krate::Sink::passthrough(__entry, #value))
         } else {
-            quote!(#krate::Plaintext::visit(#value, __entry))
+            quote!(#krate::Encrypt::visit(#value, __entry))
         };
         quote! {
             let __entry = match #krate::MapSink::entry(&mut __map, #key) {
@@ -204,7 +204,7 @@ fn map_ref_body(krate: &syn::Path, fields: &[FieldInfo]) -> TokenStream {
             }
         } else {
             quote! {
-                #krate::Plaintext::visit(&self.#member, #krate::MapSink::entry(&mut __map, #key)?)?;
+                #krate::Encrypt::visit(&self.#member, #krate::MapSink::entry(&mut __map, #key)?)?;
             }
         }
     });
@@ -281,7 +281,7 @@ mod tests {
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Plaintext::visit(self.name, __entry)),
+            quote!(::vitaminc_aead::Encrypt::visit(self.name, __entry)),
         );
         assert_contains(
             &out,
@@ -289,7 +289,7 @@ mod tests {
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Plaintext::visit(self.age, __entry)),
+            quote!(::vitaminc_aead::Encrypt::visit(self.age, __entry)),
         );
         assert_contains(&out, quote!(::vitaminc_aead::MapSink::end(__map)));
     }
@@ -317,7 +317,7 @@ mod tests {
         assert_contains(
             &out,
             quote!(if let ::core::result::Result::Err(__err) =
-                ::vitaminc_aead::Plaintext::visit(self.age, __entry)
+                ::vitaminc_aead::Encrypt::visit(self.age, __entry)
             {
                 return ::core::result::Result::Err(__err);
             }),
@@ -338,11 +338,11 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(impl<'__r> ::vitaminc_aead::Plaintext for &'__r Row),
+            quote!(impl<'__r> ::vitaminc_aead::Encrypt for &'__r Row),
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Plaintext::visit(
+            quote!(::vitaminc_aead::Encrypt::visit(
                 &self.name,
                 ::vitaminc_aead::MapSink::entry(&mut __map, "name")?
             )),
@@ -359,7 +359,7 @@ mod tests {
         ));
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Plaintext::visit(&self.0, __sink)),
+            quote!(::vitaminc_aead::Encrypt::visit(&self.0, __sink)),
         );
     }
 
@@ -415,7 +415,7 @@ mod tests {
         );
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Plaintext::visit(self.ssn, __entry)),
+            quote!(::vitaminc_aead::Encrypt::visit(self.ssn, __entry)),
         );
     }
 
@@ -458,7 +458,7 @@ mod tests {
         assert_contains(&out, quote!(mut self, __sink: __S));
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Plaintext::visit(
+            quote!(::vitaminc_aead::Encrypt::visit(
                 ::core::mem::take(&mut self.token),
                 __entry
             )),
@@ -491,7 +491,7 @@ mod tests {
 
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Plaintext::visit(self.0, __sink)),
+            quote!(::vitaminc_aead::Encrypt::visit(self.0, __sink)),
         );
         assert_lacks(&out, quote!(::vitaminc_aead::Sink::map));
 
@@ -500,7 +500,7 @@ mod tests {
         ));
         assert_contains(
             &out,
-            quote!(::vitaminc_aead::Plaintext::visit(
+            quote!(::vitaminc_aead::Encrypt::visit(
                 ::core::mem::take(&mut self.0),
                 __sink
             )),
@@ -554,7 +554,7 @@ mod tests {
     }
 
     /// Serde-style: bounding the parameter rather than each field's type lets a
-    /// field of type `Vec<T>` pick up `Vec<T>: Plaintext` from the blanket
+    /// field of type `Vec<T>` pick up `Vec<T>: Encrypt` from the blanket
     /// impl. The by-reference impl bounds the parameter by reference, and its
     /// lifetimes outlive the borrow.
     #[test]
@@ -566,10 +566,10 @@ mod tests {
             }
         });
 
-        assert_contains(&out, quote!(impl<'a, T: ::vitaminc_aead::Plaintext>));
+        assert_contains(&out, quote!(impl<'a, T: ::vitaminc_aead::Encrypt>));
         assert_contains(&out, quote!(for Holder<'a, T>));
         assert_contains(&out, quote!(impl<'__r, 'a: '__r, T>));
-        assert_contains(&out, quote!(&'__r T: ::vitaminc_aead::Plaintext));
+        assert_contains(&out, quote!(&'__r T: ::vitaminc_aead::Encrypt));
         assert_contains(&out, quote!(for &'__r Holder<'a, T>));
     }
 
@@ -584,7 +584,7 @@ mod tests {
             }
         });
 
-        assert_contains(&out, quote!(::vitaminc::aead::Plaintext for User));
+        assert_contains(&out, quote!(::vitaminc::aead::Encrypt for User));
         assert_contains(&out, quote!(::vitaminc::aead::MapSink::entry));
         assert_contains(
             &out,

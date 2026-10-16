@@ -4,14 +4,14 @@
 
 mod inner {
     use vitaminc_aead::Decrypt;
-    use vitaminc_aead::Plaintext;
+    use vitaminc_aead::Encrypt;
 
-    #[derive(Plaintext, Decrypt)]
+    #[derive(Encrypt, Decrypt)]
     pub(crate) struct Private {
         a: u32,
     }
 
-    #[derive(Plaintext, Decrypt)]
+    #[derive(Encrypt, Decrypt)]
     pub struct Public {
         p: Private,
     }

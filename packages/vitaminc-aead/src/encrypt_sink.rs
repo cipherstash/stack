@@ -36,7 +36,7 @@ use vitaminc_protected::{Controlled, Protected};
 use crate::frame::PassthroughFrame;
 use crate::leaf::{self, ScalarError};
 use crate::plaintext::{
-    Error, Logical, MapSink, Physical, Plaintext, SeqSink, Sink, SourceError, Step,
+    Encrypt, Error, Logical, MapSink, Physical, SeqSink, Sink, SourceError, Step,
 };
 use crate::seal::{
     seal_all, seal_all_async, AsyncCipher, Cipher, LeafCount, Node, Pending, SealError,
@@ -94,7 +94,7 @@ impl<E> From<SealError<E>> for EncryptError<E> {
 /// this is the whole of the data-model work, and it is synchronous.
 pub fn plan<'a, P, E, A>(value: P, aad: A) -> Result<Node<Pending>, EncryptError<E>>
 where
-    P: Plaintext,
+    P: Encrypt,
     A: IntoAad<'a>,
 {
     value.visit(EncryptSink::root(aad))
@@ -107,7 +107,7 @@ pub fn encrypt<'a, P, C, A>(
     aad: A,
 ) -> Result<Node<C::Leaf>, EncryptError<C::Error>>
 where
-    P: Plaintext,
+    P: Encrypt,
     C: Cipher,
     A: IntoAad<'a>,
 {
@@ -126,7 +126,7 @@ pub fn encrypt_async<'a, 'c, P, C, A>(
     aad: A,
 ) -> impl Future<Output = Result<Node<C::Leaf>, EncryptError<C::Error>>> + Send + 'c
 where
-    P: Plaintext,
+    P: Encrypt,
     C: AsyncCipher,
     A: IntoAad<'a>,
 {
@@ -294,7 +294,7 @@ impl<E, O: Slot> Sink for EncryptSink<E, O> {
     }
 
     /// Passthrough is non-sensitive by design: it is framed, not sealed.
-    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<O::Ok, Self::Error> {
+    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<O::Ok, Self::Error> {
         let frame = shape::frame_passthrough(value, self.depth, &self.out, EncryptError::Shape)?;
         Ok(self.out.put(CipherText::Passthrough(PassthroughFrame(
             frame.risky_ref().to_vec(),
@@ -406,13 +406,13 @@ mod tests {
     fn a_source_error_inside_a_passthrough_stays_a_source_error() {
         #[derive(Clone)]
         struct Throws;
-        impl Plaintext for Throws {
+        impl Encrypt for Throws {
             fn visit<S: Sink>(self, _: S) -> Result<S::Ok, S::Error> {
                 Err(S::Error::source(SourceError::new(core::fmt::Error)))
             }
         }
         struct Doc;
-        impl Plaintext for Doc {
+        impl Encrypt for Doc {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 sink.passthrough(Throws)
             }
@@ -423,7 +423,7 @@ mod tests {
         ));
     }
 
-    fn planned<P: Plaintext>(p: P) -> Result<Node<Pending>, EncryptError<Refused>> {
+    fn planned<P: Encrypt>(p: P) -> Result<Node<Pending>, EncryptError<Refused>> {
         plan(p, "ctx")
     }
 
@@ -478,7 +478,7 @@ mod tests {
     #[test]
     fn an_all_passthrough_container_is_refused() {
         struct Pass;
-        impl Plaintext for Pass {
+        impl Encrypt for Pass {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 sink.passthrough("public")
             }
@@ -495,7 +495,7 @@ mod tests {
         );
         // One sealed sibling is enough.
         struct Mixed;
-        impl Plaintext for Mixed {
+        impl Encrypt for Mixed {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 let mut seq = sink.seq(Some(2))?;
                 Pass.visit(seq.element()?)?;
@@ -527,7 +527,7 @@ mod tests {
     #[test]
     fn a_source_error_stops_the_walk() {
         struct Failing;
-        impl Plaintext for Failing {
+        impl Encrypt for Failing {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 let mut seq = sink.seq(None)?;
                 1u32.visit(seq.element()?)?;
@@ -559,7 +559,7 @@ mod tests {
         fn map(self, _: Option<usize>) -> Result<Self, E> {
             Ok(self)
         }
-        fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<(), E> {
+        fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<(), E> {
             Ok(())
         }
     }
@@ -610,7 +610,7 @@ mod tests {
     #[test]
     fn a_length_hint_is_only_a_hint() {
         struct Unsized;
-        impl Plaintext for Unsized {
+        impl Encrypt for Unsized {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 visit_seq(
                     sink,
@@ -631,7 +631,7 @@ mod tests {
         map: bool,
     }
 
-    impl Plaintext for DropsAChild {
+    impl Encrypt for DropsAChild {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             if self.map {
                 let mut map = sink.map(None)?;
@@ -661,7 +661,7 @@ mod tests {
         }
         // A dropped element is caught at the next element too.
         struct DropsThenWrites;
-        impl Plaintext for DropsThenWrites {
+        impl Encrypt for DropsThenWrites {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 let mut seq = sink.seq(None)?;
                 let _ = seq.element()?;
@@ -679,7 +679,7 @@ mod tests {
     #[derive(Clone)]
     struct Unclosed;
 
-    impl Plaintext for Unclosed {
+    impl Encrypt for Unclosed {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut outer = sink.seq(None)?;
             let mut inner = outer.element()?.seq(None)?;
@@ -693,7 +693,7 @@ mod tests {
     #[test]
     fn a_passthrough_that_does_not_frame_is_refused_at_encryption() {
         struct Doc;
-        impl Plaintext for Doc {
+        impl Encrypt for Doc {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 let mut seq = sink.seq(Some(2))?;
                 1u32.visit(seq.element()?)?;
@@ -726,7 +726,7 @@ mod tests {
     #[derive(Clone, Copy)]
     struct Nest(Kind, usize);
 
-    impl Plaintext for Nest {
+    impl Encrypt for Nest {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let Nest(kind, n) = self;
             if n == 0 {
@@ -772,7 +772,7 @@ mod tests {
         // sequence around a frame that is itself `MAX_DEPTH` deep is one
         // too many.
         struct Wrapped(usize);
-        impl Plaintext for Wrapped {
+        impl Encrypt for Wrapped {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 let mut seq = sink.seq(Some(2))?;
                 1u16.visit(seq.element()?)?;
@@ -791,7 +791,7 @@ mod tests {
     /// second of them `bad`, beside a well-formed `id`.
     struct Users<P>(P);
 
-    impl<P: Plaintext> Plaintext for Users<P> {
+    impl<P: Encrypt> Encrypt for Users<P> {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(Some(2))?;
             1u32.visit(map.entry("id")?)?;
@@ -806,7 +806,7 @@ mod tests {
     /// A map that gives `k` twice.
     struct Dup;
 
-    impl Plaintext for Dup {
+    impl Encrypt for Dup {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let mut map = sink.map(None)?;
             1u32.visit(map.entry("k")?)?;
@@ -821,7 +821,7 @@ mod tests {
         map: bool,
     }
 
-    impl Plaintext for OnlyPass {
+    impl Encrypt for OnlyPass {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             if self.map {
                 let mut map = sink.map(Some(1))?;

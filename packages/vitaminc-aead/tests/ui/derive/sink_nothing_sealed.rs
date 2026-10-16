@@ -1,9 +1,9 @@
 //! Every field skipped or passed through would seal nothing, so the
 //! ciphertext would carry no tag at all.
 
-use vitaminc_aead::Plaintext;
+use vitaminc_aead::Encrypt;
 
-#[derive(Plaintext)]
+#[derive(Encrypt)]
 struct Row {
     #[aead(passthrough)]
     id: i64,

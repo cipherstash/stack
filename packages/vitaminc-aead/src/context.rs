@@ -56,7 +56,7 @@ use vitaminc_protected::OpaqueDebug;
 use crate::seal::{AsyncCipher, Cipher, Node};
 use crate::typed::{DecodeError, Decrypt};
 use crate::walk::DecryptError;
-use crate::{Context, ContextPiece, EncryptError, IntoAad, IntoContext, Plaintext};
+use crate::{Context, ContextPiece, Encrypt, EncryptError, IntoAad, IntoContext};
 
 /// Folds a context `tag` and `extra_aad` into the context layout bound by
 /// `ContextTag`: the pair `(extra_aad, tag)`.
@@ -152,7 +152,7 @@ where
 /// `ContextTag` *inside another* would fold the AAD twice, into
 /// `((extra, "a"), "b")`, which is not the layout `context("a").refine("b")`
 /// decrypts against; it does not compile, because a `ContextTag` is not a
-/// [`Plaintext`]:
+/// [`Encrypt`]:
 ///
 /// ```rust,compile_fail,E0277
 /// use vitaminc_aead::{Cipher, ContextTag};
@@ -222,7 +222,7 @@ impl<Tag, T> ContextTag<Tag, T> {
 
 impl<Tag, T> ContextTag<Tag, T>
 where
-    T: Plaintext,
+    T: Encrypt,
     // The tag is owned by the wrapper, and the AAD lifetime is chosen at the
     // call site. Requiring `IntoAad<'static>` lets the tag become an owned (or
     // `'static`-borrowed) `ContextPiece` that is then re-borrowed for the

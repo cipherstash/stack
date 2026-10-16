@@ -1,4 +1,4 @@
-//! Compile-fail tests for the guards in `#[derive(Plaintext)]` /
+//! Compile-fail tests for the guards in `#[derive(Encrypt)]` /
 //! `#[derive(Decrypt)]`.
 //!
 //! The derive crate's own unit tests assert that `Shape::parse` returns an

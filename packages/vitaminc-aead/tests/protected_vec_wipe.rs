@@ -11,7 +11,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use vitaminc_aead::plaintext::{
-    Error, Logical, MapSink, Physical, Plaintext, SeqSink, Sink, SourceError,
+    Encrypt, Error, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
 };
 use vitaminc_protected::Protected;
 
@@ -78,7 +78,7 @@ impl Sink for Quiet {
         Ok(self)
     }
 
-    fn passthrough<P: Plaintext + Clone>(self, _: P) -> Result<(), Stopped> {
+    fn passthrough<P: Encrypt + Clone>(self, _: P) -> Result<(), Stopped> {
         Ok(())
     }
 }

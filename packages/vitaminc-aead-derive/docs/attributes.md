@@ -20,7 +20,7 @@ Points the generated code at a re-export of `vitaminc_aead`, for callers who
 depend on it through an umbrella crate rather than directly:
 
 ```ignore
-#[derive(Plaintext, Decrypt)]
+#[derive(Encrypt, Decrypt)]
 #[aead(crate = "::vitaminc::aead")]
 struct User {
     name: String,
@@ -35,7 +35,7 @@ direct dependency on `vitaminc_aead` at all.
 Changes the map key a field is stored under:
 
 ```ignore
-#[derive(Plaintext, Decrypt)]
+#[derive(Encrypt, Decrypt)]
 struct User {
     #[aead(rename = "n")]
     name: String,
@@ -59,7 +59,7 @@ Stores a field as a cleartext map entry, so it can be an ordinary database
 column that other queries select, filter, and update without holding the key:
 
 ```ignore
-#[derive(Plaintext, Decrypt)]
+#[derive(Encrypt, Decrypt)]
 struct Row {
     #[aead(passthrough)]
     tenant: String,   // a plain column
@@ -91,7 +91,7 @@ field beside it. That coupling is precisely what `passthrough` exists to avoid.
 
 ### Requirements
 
-A passthrough field's type implements `Plaintext + Clone` on the way in
+A passthrough field's type implements `Encrypt + Clone` on the way in
 (the subtree is walked into a frame, and a sink that is really several sinks
 gives each a copy) and `Decrypt` on the way out.
 
@@ -112,7 +112,7 @@ somewhere else, such as an ordinary column alongside the ciphertext, or a
 value derived from the others:
 
 ```ignore
-#[derive(Plaintext, Decrypt)]
+#[derive(Encrypt, Decrypt)]
 struct User {
     #[aead(skip)]
     id: u64,          // not in the ciphertext at all
@@ -140,7 +140,7 @@ swaps the field for its default with `core::mem::take` instead, and the empty
 value left behind is dropped, and wiped, with `self`:
 
 ```ignore
-#[derive(Plaintext, Decrypt, ZeroizeOnDrop)]
+#[derive(Encrypt, Decrypt, ZeroizeOnDrop)]
 struct SecretToken(#[aead(take)] String);
 ```
 

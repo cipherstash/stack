@@ -9,7 +9,7 @@
 //! [`PASSTHROUGH`] byte marks the next node as a subtree that travels in
 //! the clear.
 //!
-//! [`Frame`] is a validated, borrowed frame that implements [`Plaintext`]
+//! [`Frame`] is a validated, borrowed frame that implements [`Encrypt`]
 //! by walking its own bytes in place, so a host that ships frames (Go) is
 //! a source with no intermediate value. [`FrameWriter`] is a [`Sink`] that
 //! writes frame bytes, so the same host decrypts straight into a frame.
@@ -22,7 +22,7 @@ use vitaminc_protected::{Controlled, OpaqueDebug, Protected, TimingSafeEq};
 use zeroize::Zeroize;
 
 use crate::leaf::{self, Form, ScalarError};
-use crate::plaintext::{Error, Logical, MapSink, Physical, Plaintext, SeqSink, Sink, SourceError};
+use crate::plaintext::{Encrypt, Error, Logical, MapSink, Physical, SeqSink, Sink, SourceError};
 
 /// Framing tag for a sequence: `ARRAY`, `u32` count, then the elements.
 pub const ARRAY: u8 = 0xF0;
@@ -55,7 +55,7 @@ pub struct FrameError;
 impl<'a> Frame<'a> {
     /// Validate `bytes` as exactly one value node.
     ///
-    /// The whole frame is checked up front, so [`visit`](Plaintext::visit)
+    /// The whole frame is checked up front, so [`visit`](Encrypt::visit)
     /// never has to report a malformed frame part way through a walk.
     pub fn parse(bytes: &'a [u8]) -> Result<Self, FrameError> {
         let (frame, rest) = Self::parse_nested(bytes, 0)?;
@@ -174,7 +174,7 @@ const VALIDATED: &str = "frame was validated by Frame::parse";
 
 /// A frame walked in place: no scalar leaves the buffer except to go
 /// straight to the sink.
-impl Plaintext for Frame<'_> {
+impl Encrypt for Frame<'_> {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         visit_node(
             &mut Cursor {
@@ -187,7 +187,7 @@ impl Plaintext for Frame<'_> {
 }
 
 /// A borrowed frame is the same frame: it is a view, and `Copy`.
-impl Plaintext for &Frame<'_> {
+impl Encrypt for &Frame<'_> {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         (*self).visit(sink)
     }
@@ -242,7 +242,7 @@ impl PassthroughFrame {
     }
 }
 
-impl Plaintext for PassthroughFrame {
+impl Encrypt for PassthroughFrame {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         self.parse()
             .map_err(|e| S::Error::source(SourceError::new(e)))?
@@ -250,7 +250,7 @@ impl Plaintext for PassthroughFrame {
     }
 }
 
-impl Plaintext for &PassthroughFrame {
+impl Encrypt for &PassthroughFrame {
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         self.parse()
             .map_err(|e| S::Error::source(SourceError::new(e)))?
@@ -301,14 +301,14 @@ impl Error for FrameWriteError {
 /// The result is checked with [`Frame::parse`] before it is returned, so a
 /// source that opens a container and never ends it is refused here, not by
 /// every later reader of the frame.
-pub fn to_frame<P: Plaintext>(p: P) -> Result<Protected<Vec<u8>>, FrameWriteError> {
+pub fn to_frame<P: Encrypt>(p: P) -> Result<Protected<Vec<u8>>, FrameWriteError> {
     to_frame_at(p, 0)
 }
 
 /// [`to_frame`] for a subtree whose root sits `depth` levels below the top
 /// of a document, so [`MAX_DEPTH`] counts from the top, as the transport
 /// decoder counts it.
-pub(crate) fn to_frame_at<P: Plaintext>(
+pub(crate) fn to_frame_at<P: Encrypt>(
     p: P,
     depth: usize,
 ) -> Result<Protected<Vec<u8>>, FrameWriteError> {
@@ -456,7 +456,7 @@ impl<'o> Sink for FrameWriter<'o> {
         })
     }
 
-    fn passthrough<P: Plaintext + Clone>(self, value: P) -> Result<(), FrameWriteError> {
+    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<(), FrameWriteError> {
         let depth = self.depth;
         let out = self.node(PASSTHROUGH)?;
         value.visit(FrameWriter {
@@ -526,7 +526,7 @@ mod tests {
     use crate::plaintext::{visit_seq, Int};
     use std::collections::BTreeMap;
 
-    fn frame_of<P: Plaintext>(p: P) -> Vec<u8> {
+    fn frame_of<P: Encrypt>(p: P) -> Vec<u8> {
         to_frame(p).expect("frames").risky_ref().clone()
     }
 
@@ -565,7 +565,7 @@ mod tests {
         map: bool,
     }
 
-    impl Plaintext for DropsAChild {
+    impl Encrypt for DropsAChild {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             if self.map {
                 let mut map = sink.map(None)?;
@@ -592,7 +592,7 @@ mod tests {
         // And so a passthrough that drops one cannot be sealed into a
         // document that would never decrypt.
         struct Doc;
-        impl Plaintext for Doc {
+        impl Encrypt for Doc {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 let mut seq = sink.seq(Some(2))?;
                 1u16.visit(seq.element()?)?;
@@ -636,7 +636,7 @@ mod tests {
     #[test]
     fn passthrough_is_framed_in_the_clear() {
         struct Pass;
-        impl Plaintext for Pass {
+        impl Encrypt for Pass {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 sink.passthrough("public")
             }
@@ -674,7 +674,7 @@ mod tests {
     #[test]
     fn unknown_lengths_are_patched_in() {
         struct Unsized(Vec<u32>);
-        impl Plaintext for Unsized {
+        impl Encrypt for Unsized {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 visit_seq(sink, None, self.0)
             }
@@ -685,7 +685,7 @@ mod tests {
     #[test]
     fn a_wrong_length_hint_is_refused() {
         struct Lies;
-        impl Plaintext for Lies {
+        impl Encrypt for Lies {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 visit_seq(sink, Some(5), vec![1u32])
             }
@@ -699,7 +699,7 @@ mod tests {
     #[test]
     fn duplicate_keys_are_refused_both_ways() {
         struct Dup;
-        impl Plaintext for Dup {
+        impl Encrypt for Dup {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 let mut map = sink.map(None)?;
                 1u32.visit(map.entry("k")?)?;
@@ -742,7 +742,7 @@ mod tests {
     #[derive(Clone, Copy)]
     struct Nest(Kind, usize);
 
-    impl Plaintext for Nest {
+    impl Encrypt for Nest {
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let Nest(kind, n) = self;
             if n == 0 {
@@ -787,7 +787,7 @@ mod tests {
         }
 
         struct Deep(usize);
-        impl Plaintext for Deep {
+        impl Encrypt for Deep {
             fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                 if self.0 == 0 {
                     return sink.scalar(None, Physical::Int(Int::U8(0)));
