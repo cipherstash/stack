@@ -128,9 +128,7 @@ fn the_walk_agrees_with_depth_at_the_limit_for_passthrough() {
         clear: Full::full(),
     }));
 
-    let deeper = depth::container(depth::passthrough(
-        <Vec<V126<u32>> as Encrypt>::DEPTH,
-    ));
+    let deeper = depth::container(depth::passthrough(<Vec<V126<u32>> as Encrypt>::DEPTH));
     assert_eq!(deeper, Some(MAX_DEPTH + 1));
     assert!(!accepted(PassesThroughDeeper(Full::full())));
 }
