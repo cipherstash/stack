@@ -33,8 +33,10 @@ use crate::typed::FromScalar;
 /// # Ok::<(), LeapSecond>(())
 /// ```
 ///
-/// `Debug` is redacted, as for every plaintext scalar.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, OpaqueDebug)]
+/// `Debug` is redacted, as for every plaintext scalar. `Default` is the
+/// Unix epoch, as for `DateTime<Utc>`, so a `#[aead(skip)]` or
+/// `#[aead(take)]` field can change from one to the other.
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, OpaqueDebug)]
 pub struct Timestamp(DateTime<Utc>);
 
 /// A leap second, which a [`Timestamp`] cannot hold.
