@@ -18,13 +18,13 @@ use syn::{parse_quote, DeriveInput, Result};
 
 use crate::{
     attrs::ContainerAttrs,
-    shape::{Dialect, FieldInfo, Shape, VariantInfo},
+    shape::{FieldInfo, Shape, VariantInfo},
 };
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let attrs = ContainerAttrs::parse(&input.attrs)?;
     let krate = &attrs.krate;
-    let shape = Shape::parse(&input, Dialect::Sink)?;
+    let shape = Shape::parse(&input)?;
     let name = &input.ident;
     let vis = &input.vis;
 
@@ -39,7 +39,8 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     // the bounds live on their impls, as for any generic type.
     let (decl_generics, _, decl_where) = input.generics.split_for_impl();
     // Uses every generic parameter at once, whatever its kind, without
-    // owning anything: see the legacy derive's note on `fn() -> T`.
+    // owning anything: `fn() -> T` is covariant and carries no drop check,
+    // where `PhantomData<T>` would make the sink own a `T`.
     let marker = quote!(::core::marker::PhantomData<fn() -> #name #ty_generics>);
 
     let expanded = match &shape {

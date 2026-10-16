@@ -14,13 +14,13 @@ use syn::{parse_quote, DeriveInput, Result};
 
 use crate::{
     attrs::ContainerAttrs,
-    shape::{Dialect, FieldInfo, Shape, VariantInfo},
+    shape::{FieldInfo, Shape, VariantInfo},
 };
 
 pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
     let attrs = ContainerAttrs::parse(&input.attrs)?;
     let krate = &attrs.krate;
-    let shape = Shape::parse(&input, Dialect::Sink)?;
+    let shape = Shape::parse(&input)?;
     let name = &input.ident;
 
     // Bound every type parameter, serde-style: a field of type `Vec<T>` then

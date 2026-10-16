@@ -12,9 +12,7 @@ option is one the author believes is in effect.
 | `skip` | field | Leave the field out of the ciphertext; rebuild it with `Default` on decrypt |
 | `take` | field | Take the value with `mem::take` instead of moving it, for a type that implements `Drop` |
 
-`skip` and `take` are for `#[derive(Plaintext)]` and the sink-based
-`#[derive(Decrypt)]`. The `Encrypt` derive and the legacy `Decrypt` derive
-refuse them. Enum variants take no attributes.
+Enum variants take no attributes.
 
 ## `#[aead(crate = "...")]`
 
@@ -93,12 +91,9 @@ field beside it. That coupling is precisely what `passthrough` exists to avoid.
 
 ### Requirements
 
-With `Plaintext` and the sink-based `Decrypt`, a passthrough field's type
-implements `Plaintext + Clone` on the way in (the subtree is walked into a
-frame, and a sink that is really several sinks gives each a copy) and
-`Decrypt` on the way out. With the legacy `Encrypt`/`Decrypt` derives it must
-be `Any + Send + 'static`: the value travels through the cipher type-erased
-and is downcast on the way out.
+A passthrough field's type implements `Plaintext + Clone` on the way in
+(the subtree is walked into a frame, and a sink that is really several sinks
+gives each a copy) and `Decrypt` on the way out.
 
 Two shapes are rejected at compile time:
 

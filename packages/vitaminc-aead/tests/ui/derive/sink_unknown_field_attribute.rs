@@ -1,8 +1,8 @@
 // A misspelt attribute is rejected rather than ignored: a silently dropped
 // option is one the author believes is in effect.
-use vitaminc_aead::{Decrypt, Encrypt};
+use vitaminc_aead::{Decrypt, Plaintext};
 
-#[derive(Encrypt, Decrypt)]
+#[derive(Plaintext, Decrypt)]
 struct Row {
     #[aead(passthru)]
     tenant: String,

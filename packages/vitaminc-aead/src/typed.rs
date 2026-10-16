@@ -30,8 +30,7 @@
 //! Nothing here knows whether the cipher was sync or async: the opened tree
 //! is walked after every await has completed.
 //!
-//! This trait will replace [`Decrypt`](crate::Decrypt). Until that is
-//! removed it is reached through this module rather than the crate root.
+//! [`Decrypt`] is re-exported from the crate root.
 
 use core::marker::PhantomData;
 use std::collections::{BTreeMap, HashMap};
@@ -46,12 +45,12 @@ use crate::seal::{AsyncCipher, Cipher, Node};
 use crate::walk::{decrypt_into, decrypt_into_async, DecryptError};
 use crate::IntoAad;
 
-/// Derive the sink-based [`Decrypt`] for a struct or a fieldless enum. A
-/// struct reads a map keyed by field name; a fieldless enum reads one int
-/// leaf holding the variant's discriminant. Takes the same `#[aead(...)]` attributes as
-/// [`Plaintext`](macro@crate::Plaintext).
+/// Derive [`Decrypt`] for a struct or a fieldless enum: the sink that builds
+/// it. A struct reads a map keyed by field name; a fieldless enum reads an
+/// int leaf holding the variant's discriminant. Takes the same
+/// `#[aead(...)]` attributes as [`Plaintext`](macro@crate::Plaintext).
 #[doc(inline)]
-pub use vitaminc_aead_derive::TypedDecrypt as Decrypt;
+pub use vitaminc_aead_derive::Decrypt;
 
 /// Why a typed target refused what it was given.
 ///

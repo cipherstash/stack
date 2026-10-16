@@ -68,30 +68,11 @@ pub(crate) enum Shape {
     Enum(Vec<VariantInfo>),
 }
 
-/// Which pair of derives is parsing. The `Encrypt`/`Decrypt` derives are on
-/// their way out and accept only what they always did; everything newer is
-/// for `Plaintext`/`Decrypt` over sinks.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Dialect {
-    /// Today's `Encrypt` and `Decrypt`.
-    Legacy,
-    /// `Plaintext` and the sink-based `Decrypt`.
-    Sink,
-}
-
 impl Shape {
-    pub(crate) fn parse(input: &DeriveInput, dialect: Dialect) -> Result<Self> {
+    pub(crate) fn parse(input: &DeriveInput) -> Result<Self> {
         let data = match &input.data {
             Data::Struct(data) => data,
-            Data::Enum(data) if dialect == Dialect::Sink => return parse_enum(data, input),
-            Data::Enum(_) => {
-                return Err(syn::Error::new_spanned(
-                    &input.ident,
-                    "the Encrypt and Decrypt derives do not support enums. Derive `Plaintext` \
-                     and the sink-based `Decrypt` instead, which seal a fieldless enum as its \
-                     discriminant, or model the choice as a struct of `Option` fields.",
-                ))
-            }
+            Data::Enum(data) => return parse_enum(data, input),
             Data::Union(_) => {
                 return Err(syn::Error::new_spanned(
                     &input.ident,
@@ -102,9 +83,6 @@ impl Shape {
 
         let named = matches!(data.fields, Fields::Named(_));
         let fields = collect(&data.fields)?;
-        if dialect == Dialect::Legacy {
-            reject_sink_only_attrs(&fields, input)?;
-        }
         reject_conflicting_attrs(&fields, input)?;
 
         // A newtype is transparent; a *named* one-field struct is not, since
@@ -241,20 +219,6 @@ fn explicit_discriminant(expr: &syn::Expr) -> Result<u32> {
     ))
 }
 
-/// `skip` and `take` mean nothing to the `Encrypt`/`Decrypt` derives, and
-/// silently ignoring either would leave the author believing a field was
-/// left out, or a `Drop` type handled, when it was not.
-fn reject_sink_only_attrs(fields: &[FieldInfo], input: &DeriveInput) -> Result<()> {
-    if fields.iter().any(|field| field.skip || field.take) {
-        return Err(syn::Error::new_spanned(
-            &input.ident,
-            "`#[aead(skip)]` and `#[aead(take)]` are only supported by `#[derive(Plaintext)]` \
-             and the sink-based `#[derive(Decrypt)]`",
-        ));
-    }
-    Ok(())
-}
-
 /// A skipped field has no entry to pass through, and a passthrough entry
 /// is never taken out of `self`, so these combinations describe nothing.
 fn reject_conflicting_attrs(fields: &[FieldInfo], input: &DeriveInput) -> Result<()> {
@@ -354,35 +318,6 @@ mod tests {
     use super::*;
     use syn::parse_quote;
 
-    fn legacy(input: &DeriveInput) -> Result<Shape> {
-        Shape::parse(input, Dialect::Legacy)
-    }
-
-    fn sink(input: &DeriveInput) -> Result<Shape> {
-        Shape::parse(input, Dialect::Sink)
-    }
-
-    /// Enums have no authenticated variant discriminator in the legacy
-    /// derives, so they refuse them outright rather than pick an encoding.
-    #[test]
-    fn enums_are_rejected_by_the_legacy_derives() {
-        let input: DeriveInput = parse_quote! {
-            enum Choice {
-                A(String),
-                B(u32),
-            }
-        };
-        let err = legacy(&input).expect_err("enum should be rejected");
-        assert!(err.to_string().contains("do not support enums"));
-        let input: DeriveInput = parse_quote! {
-            enum Status {
-                Active,
-                Suspended,
-            }
-        };
-        assert!(legacy(&input).is_err());
-    }
-
     /// A fieldless enum is one int leaf, so the sink derives accept it,
     /// with the discriminants Rust would assign.
     #[test]
@@ -395,7 +330,7 @@ mod tests {
                 Last = 4294967295,
             }
         };
-        match sink(&input).expect("fieldless enum") {
+        match Shape::parse(&input).expect("fieldless enum") {
             Shape::Enum(variants) => {
                 assert_eq!(variants[0].discriminant, 0);
                 assert_eq!(variants[1].discriminant, 5);
@@ -429,7 +364,7 @@ mod tests {
             },
         ] {
             let input: DeriveInput = input;
-            let err = sink(&input).expect_err("should be rejected");
+            let err = Shape::parse(&input).expect_err("should be rejected");
             assert!(err.to_string().contains("unsigned integer literal"));
         }
         let input: DeriveInput = parse_quote! {
@@ -438,7 +373,7 @@ mod tests {
                 B,
             }
         };
-        assert!(sink(&input)
+        assert!(Shape::parse(&input)
             .expect_err("overflow")
             .to_string()
             .contains("does not fit"));
@@ -452,7 +387,7 @@ mod tests {
                 Active,
             }
         };
-        let err = sink(&input).expect_err("attribute should be rejected");
+        let err = Shape::parse(&input).expect_err("attribute should be rejected");
         assert!(err.to_string().contains("variants take no"));
     }
 
@@ -466,7 +401,7 @@ mod tests {
                 B,
             }
         };
-        let err = sink(&input).expect_err("data enum should be rejected");
+        let err = Shape::parse(&input).expect_err("data enum should be rejected");
         assert!(err.to_string().contains("only fieldless enums"));
     }
 
@@ -475,7 +410,7 @@ mod tests {
         let input: DeriveInput = parse_quote! {
             enum Never {}
         };
-        assert!(sink(&input)
+        assert!(Shape::parse(&input)
             .expect_err("empty enum")
             .to_string()
             .contains("no variants"));
@@ -486,7 +421,7 @@ mod tests {
                 C,
             }
         };
-        assert!(sink(&input)
+        assert!(Shape::parse(&input)
             .expect_err("duplicate discriminant")
             .to_string()
             .contains("duplicate discriminant `1`"));
@@ -500,8 +435,7 @@ mod tests {
                 b: u32,
             }
         };
-        assert!(legacy(&input).is_err());
-        assert!(sink(&input).is_err());
+        assert!(Shape::parse(&input).is_err());
     }
 
     /// Two fields renamed onto one key would overwrite each other on encrypt
@@ -515,7 +449,7 @@ mod tests {
                 b: String,
             }
         };
-        let err = legacy(&input).expect_err("duplicate key should be rejected");
+        let err = Shape::parse(&input).expect_err("duplicate key should be rejected");
         assert!(err.to_string().contains("duplicate map key `a`"));
     }
 
@@ -530,7 +464,7 @@ mod tests {
                 b: String,
             }
         };
-        assert!(matches!(sink(&input), Ok(Shape::Map(_))));
+        assert!(matches!(Shape::parse(&input), Ok(Shape::Map(_))));
     }
 
     /// A map with no sealed entries carries no tag at all, and the map sink
@@ -545,7 +479,7 @@ mod tests {
                 tenant: String,
             }
         };
-        let err = legacy(&input).expect_err("all-passthrough struct should be rejected");
+        let err = Shape::parse(&input).expect_err("all-passthrough struct should be rejected");
         assert!(err.to_string().contains("no field would be encrypted"));
         let input: DeriveInput = parse_quote! {
             struct Row {
@@ -555,27 +489,8 @@ mod tests {
                 tenant: String,
             }
         };
-        let err = sink(&input).expect_err("nothing-sealed struct should be rejected");
+        let err = Shape::parse(&input).expect_err("nothing-sealed struct should be rejected");
         assert!(err.to_string().contains("no field would be encrypted"));
-    }
-
-    /// `skip` and `take` belong to the sink derives; the legacy ones must
-    /// not drop them silently.
-    #[test]
-    fn the_legacy_derives_reject_skip_and_take() {
-        for attr in ["skip", "take"] {
-            let attr: syn::Meta = syn::parse_str(attr).expect("meta");
-            let input: DeriveInput = parse_quote! {
-                struct Row {
-                    #[aead(#attr)]
-                    a: String,
-                    b: String,
-                }
-            };
-            let err = legacy(&input).expect_err("legacy derive should reject");
-            assert!(err.to_string().contains("only supported by"));
-            assert!(sink(&input).is_ok());
-        }
     }
 
     #[test]
@@ -589,7 +504,7 @@ mod tests {
                     b: String,
                 }
             };
-            let err = sink(&input).expect_err("conflict should be rejected");
+            let err = Shape::parse(&input).expect_err("conflict should be rejected");
             assert!(err
                 .to_string()
                 .contains("has no entry to pass through or take"));
@@ -604,7 +519,7 @@ mod tests {
         let input: DeriveInput = parse_quote!(
             struct Token(#[aead(rename = "token")] String);
         );
-        let err = legacy(&input).expect_err("renamed newtype should be rejected");
+        let err = Shape::parse(&input).expect_err("renamed newtype should be rejected");
         assert!(err.to_string().contains("no effect on a newtype"));
     }
 
@@ -616,7 +531,7 @@ mod tests {
         let input: DeriveInput = parse_quote!(
             struct Wrapper(#[aead(passthrough)] String);
         );
-        let err = legacy(&input).expect_err("passthrough newtype should be rejected");
+        let err = Shape::parse(&input).expect_err("passthrough newtype should be rejected");
         assert!(err.to_string().contains("meaningless on a newtype"));
     }
 
@@ -625,12 +540,12 @@ mod tests {
         let input: DeriveInput = parse_quote!(
             struct Wrapper(#[aead(skip)] String);
         );
-        let err = sink(&input).expect_err("skipped newtype should be rejected");
+        let err = Shape::parse(&input).expect_err("skipped newtype should be rejected");
         assert!(err.to_string().contains("meaningless on a newtype"));
         let input: DeriveInput = parse_quote!(
             struct Wrapper(#[aead(take)] String);
         );
-        match sink(&input).expect("taken newtype") {
+        match Shape::parse(&input).expect("taken newtype") {
             Shape::Newtype(field) => assert!(field.take),
             other => panic!("expected a newtype, got {other:?}"),
         }
@@ -647,7 +562,7 @@ mod tests {
                 ssn: String,
             }
         };
-        match legacy(&input) {
+        match Shape::parse(&input) {
             Ok(Shape::Map(fields)) => {
                 assert!(fields[0].passthrough);
                 assert!(!fields[1].passthrough);
@@ -661,7 +576,7 @@ mod tests {
         let input: DeriveInput = parse_quote!(
             struct Wrapper(String);
         );
-        assert!(matches!(legacy(&input), Ok(Shape::Newtype(_))));
+        assert!(matches!(Shape::parse(&input), Ok(Shape::Newtype(_))));
     }
 
     /// A *named* single-field struct is not transparent: its field name is
@@ -673,7 +588,7 @@ mod tests {
                 inner: String,
             }
         };
-        match legacy(&input) {
+        match Shape::parse(&input) {
             Ok(Shape::Map(fields)) => assert_eq!(fields[0].key, "inner"),
             _ => panic!("expected a map shape"),
         }
@@ -684,7 +599,7 @@ mod tests {
         let input: DeriveInput = parse_quote!(
             struct Pair(String, u32);
         );
-        match legacy(&input) {
+        match Shape::parse(&input) {
             Ok(Shape::Map(fields)) => {
                 assert_eq!(fields[0].key, "0");
                 assert_eq!(fields[1].key, "1");
@@ -707,8 +622,7 @@ mod tests {
             ),
         ];
         for input in inputs {
-            assert!(matches!(legacy(&input), Ok(Shape::Empty)));
-            assert!(matches!(sink(&input), Ok(Shape::Empty)));
+            assert!(matches!(Shape::parse(&input), Ok(Shape::Empty)));
         }
     }
 }

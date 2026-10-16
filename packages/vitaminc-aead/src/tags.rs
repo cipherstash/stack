@@ -76,8 +76,8 @@ pub const UINT128: u8 = 0x11;
 pub const DATE: u8 = 0x12;
 /// UTC timestamp: `i64` Unix seconds, then `u32` nanoseconds, little-endian.
 /// The nanoseconds are below 2,000,000,000; values of 1,000,000,000 and
-/// above are chrono's leap-second representation. `vitaminc-aead-value`
-/// writes and reads those; `vitaminc-aead`'s codec reads this tag as
+/// above were chrono's leap-second representation, which the `Value` codec
+/// wrote and read before ADR 0001; this codec reads this tag as
 /// [`Logical::Timestamp`](crate::Logical) in nanoseconds and refuses a leap
 /// second, which has no count in any unit (see [`crate::leaf`]).
 pub const TIMESTAMP: u8 = 0x13;

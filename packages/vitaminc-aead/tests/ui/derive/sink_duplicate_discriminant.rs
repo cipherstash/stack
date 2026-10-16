@@ -1,6 +1,6 @@
 //! Two variants with one discriminant would be stored as the same value.
 
-use vitaminc_aead::typed::Decrypt;
+use vitaminc_aead::Decrypt;
 
 #[derive(Decrypt)]
 enum Status {

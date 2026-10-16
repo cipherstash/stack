@@ -1,5 +1,0 @@
-error: the Encrypt and Decrypt derives do not support enums. Derive `Plaintext` and the sink-based `Decrypt` instead, which seal a fieldless enum as its discriminant, or model the choice as a struct of `Option` fields.
- --> tests/ui/derive/enum_is_rejected.rs:6:6
-  |
-6 | enum Choice {
-  |      ^^^^^^

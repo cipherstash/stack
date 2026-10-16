@@ -22,7 +22,7 @@
 //! `TIMESTAMP` and `DECIMAL` payloads are written from, and read into, the
 //! int they are logical types over.
 //!
-//! Two encodings that `vitaminc-aead-value` accepts have no
+//! Two encodings the `Value` codec accepted before ADR 0001 have no
 //! physical-plus-logical form, so this codec does not round-trip them:
 //!
 //! - A `TIMESTAMP` with nanoseconds of 1,000,000,000 or more is chrono's
@@ -811,29 +811,26 @@ mod tests {
             if !is_scalar(&bytes) {
                 continue;
             }
-            let read = read(&bytes, Form::Frame);
-            match name {
-                // Decided: a leap second has no count, so it is refused.
-                "timestamp-leap" => assert_eq!(read, Err(ScalarError::Invalid), "{name}"),
-                // Decided: a negative zero reads as zero, written unsigned.
-                "decimal-negative-zero" => {
-                    let ((ty, value), _) = read.expect(name);
-                    assert_eq!(value, Physical::Int(Int::I128(0)), "{name}");
-                    let mut out = Vec::new();
-                    write(ty, value, Form::Frame, &mut out).expect(name);
-                    assert_ne!(out, bytes, "{name}");
-                }
-                _ => {
-                    let ((ty, value), used) = read.expect(name);
-                    assert_eq!(used, bytes.len(), "{name}");
-                    let mut out = Vec::new();
-                    write(ty, value, Form::Frame, &mut out).expect(name);
-                    assert_eq!(out, bytes, "{name}");
-                }
-            }
+            let ((ty, value), used) = read(&bytes, Form::Frame).expect(name);
+            assert_eq!(used, bytes.len(), "{name}");
+            let mut out = Vec::new();
+            write(ty, value, Form::Frame, &mut out).expect(name);
+            assert_eq!(out, bytes, "{name}");
             checked += 1;
         }
         assert!(checked > 20, "only {checked} scalar vectors");
+
+        // A normalized vector reads, and writes back as its canonical bytes.
+        for v in corpus["normalized"].as_array().expect("normalized") {
+            let name = v["name"].as_str().expect("name");
+            let bytes = hex(v["transport"].as_str().expect("transport"));
+            let canonical = hex(v["reencode"].as_str().expect("reencode"));
+            let ((ty, value), used) = read(&bytes, Form::Frame).expect(name);
+            assert_eq!(used, bytes.len(), "{name}");
+            let mut out = Vec::new();
+            write(ty, value, Form::Frame, &mut out).expect(name);
+            assert_eq!(out, canonical, "{name}");
+        }
 
         for v in corpus["malformed"].as_array().expect("malformed") {
             let name = v["name"].as_str().expect("name");

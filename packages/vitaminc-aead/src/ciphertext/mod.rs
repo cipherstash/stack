@@ -18,7 +18,17 @@ pub use write_monads::CipherTextBuilder;
 /// a stored leaf's version fails tag verification instead of selecting a
 /// different (perhaps weaker) set of derivation rules — a downgrade is
 /// foreclosed by construction, not by parser luck.
-pub const WIRE_VERSION: u8 = 1;
+///
+/// Version 2 is the tagged leaf of ADR 0001: the plaintext is a type tag
+/// followed by the scalar's bytes. Version 1 leaves have the same layout,
+/// but what they hold depends on who sealed them: the pre-ADR 0001 `Value`
+/// path (`vitaminc-aead-value` 0.5 and the Go binding) sealed tagged
+/// scalars, while `vitaminc-encrypt` 0.5's `Encrypt` path sealed raw,
+/// untagged bytes. Nothing in a version 1 leaf tells the two apart, so a
+/// reader that reads tags opens version 1 only where it knows the leaf came
+/// from the `Value` path, by passing it to `read_version_in` on the reader
+/// from [`LocalCipherText::into_reader`].
+pub const WIRE_VERSION: u8 = 2;
 
 /// A sealed leaf: `version(1) ‖ nonce ‖ ciphertext ‖ tag`.
 #[derive(Debug, Serialize, Deserialize)]

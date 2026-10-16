@@ -1,6 +1,6 @@
 //! A skipped field has no entry to pass through.
 
-use vitaminc_aead::typed::Decrypt;
+use vitaminc_aead::Decrypt;
 
 #[derive(Decrypt)]
 struct Row {

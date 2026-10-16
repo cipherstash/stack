@@ -3,7 +3,7 @@
 //! A type that should stay unreachable can be `pub` inside a private module.
 
 mod inner {
-    use vitaminc_aead::typed::Decrypt;
+    use vitaminc_aead::Decrypt;
     use vitaminc_aead::Plaintext;
 
     #[derive(Plaintext, Decrypt)]

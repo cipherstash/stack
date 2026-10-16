@@ -20,7 +20,7 @@ use std::collections::HashSet;
 use vitaminc_protected::{Controlled, Protected};
 
 use crate::leaf;
-use crate::plaintext::{Error, MapSink, Physical, SeqSink, Sink, SourceError};
+use crate::plaintext::{Error, MapSink, SeqSink, Sink, SourceError};
 use crate::seal::{open_all, open_all_async, AsyncCipher, Cipher, Node, OpenError, Opened};
 use crate::{CipherText, IntoAad};
 
@@ -154,12 +154,6 @@ pub fn walk<S: Sink>(node: Node<Opened>, sink: S) -> Result<S::Ok, DecryptError<
             empty_marker(plaintext)?;
             Ok(sink.map(Some(0))?.end()?)
         }
-        // Written only by the `Encrypt` path. The data model has no separate
-        // "absent", so it reads as null.
-        CipherText::None(plaintext) => {
-            empty_marker(plaintext)?;
-            Ok(sink.scalar(None, Physical::Null)?)
-        }
         CipherText::Passthrough(frame) => {
             let frame = frame.parse().map_err(|_| DecryptError::Malformed)?;
             Ok(sink.passthrough(frame)?)
@@ -289,18 +283,6 @@ mod tests {
     }
 
     #[test]
-    fn a_none_node_from_the_old_path_reads_as_null() {
-        let aad = "ctx".into_aad();
-        let node: Node<Leaf> = CipherText::None(Leaf {
-            aad: aad.for_none().as_bytes().to_vec(),
-            plaintext: vec![],
-        });
-        let mut log = Vec::new();
-        decrypt_into(&Mock, node, "ctx", Record(&mut log)).expect("decrypts");
-        assert_eq!(log, [Event::Scalar(None, Owned::Null)]);
-    }
-
-    #[test]
     fn a_walk_error_keeps_its_kind_under_any_cipher_error() {
         let widen = |e: DecryptError<u8>| e.with_cipher::<&str>();
         assert!(matches!(widen(DecryptError::Auth), DecryptError::Auth));
@@ -317,10 +299,9 @@ mod tests {
     #[test]
     fn every_marker_that_is_not_empty_is_an_auth_failure() {
         let tampered = || Protected::new(vec![1]);
-        let nodes: [Node<Opened>; 3] = [
+        let nodes: [Node<Opened>; 2] = [
             CipherText::EmptySequence(tampered()),
             CipherText::EmptyMap(tampered()),
-            CipherText::None(tampered()),
         ];
         for node in nodes {
             assert!(matches!(

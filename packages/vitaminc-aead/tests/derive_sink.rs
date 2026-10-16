@@ -5,10 +5,9 @@
 
 use std::collections::BTreeMap;
 
-use vitaminc_aead::typed::Decrypt;
 use vitaminc_aead::{
-    decrypt, encrypt, Bytes, Context, DecodeError, DecryptError, Int, IntoAad, Logical, MapSink,
-    Physical, Plaintext, Raw, SeqSink, Sink, SourceError,
+    decrypt, encrypt, Bytes, Context, DecodeError, Decrypt, DecryptError, Int, IntoAad, Logical,
+    MapSink, Physical, Plaintext, Raw, SeqSink, Sink, SourceError,
 };
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::ZeroizeOnDrop;
@@ -713,7 +712,7 @@ mod umbrella {
     }
 }
 
-#[derive(umbrella::aead::Plaintext, umbrella::aead::typed::Decrypt, Debug, PartialEq)]
+#[derive(umbrella::aead::Plaintext, umbrella::aead::Decrypt, Debug, PartialEq)]
 #[aead(crate = "crate::umbrella::aead")]
 struct Renamed {
     value: u32,
@@ -964,4 +963,21 @@ fn protected_fields_stay_wrapped() {
     let back: Keyed = round_trip(keyed()).expect("decodes");
     assert_eq!(back.key.risky_ref(), &[1, 2, 3, 4]);
     assert_eq!(back.label, "k");
+}
+
+// A const generic of any type, not only `usize`, passes through the derive
+// unchanged: the generated sink repeats the struct's generics as written.
+
+#[derive(Plaintext, Decrypt, Debug, PartialEq, Clone)]
+struct Window<const N: u32> {
+    start: i64,
+}
+
+#[test]
+fn a_const_generic_of_a_non_usize_type_round_trips() {
+    let window = Window::<7> { start: -3 };
+    assert_eq!(
+        round_trip::<Window<7>>(window.clone()).expect("decodes"),
+        window
+    );
 }

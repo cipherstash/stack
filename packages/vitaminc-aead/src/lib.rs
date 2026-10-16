@@ -1,54 +1,55 @@
 #![deny(clippy::unwrap_used, clippy::todo, unsafe_code, unused_imports)]
 #![doc = include_str!("../README.md")]
 mod aad;
-mod cipher;
 mod ciphertext;
 mod container;
 mod context;
-mod decipher;
-mod decrypt;
-mod element;
-mod encrypt;
 mod encrypt_sink;
 pub mod frame;
 #[cfg(feature = "hlist")]
 pub mod hlist;
 pub mod leaf;
 mod nonce;
-mod passthrough;
 pub mod plaintext;
 pub mod seal;
 pub mod shape;
 pub mod tags;
-#[cfg(test)]
-mod test_util;
 pub mod typed;
+mod unspecified;
 mod walk;
 
-#[doc(inline)]
-pub use encrypt_sink::{encrypt, encrypt_async, plan, EncryptError, EncryptSink};
-#[doc(inline)]
-pub use frame::{to_frame, Frame, FrameWriter, PassthroughFrame};
+// The data model: sources, sinks and the scalar kinds.
 #[doc(inline)]
 pub use plaintext::{
     Bytes, Float, Int, Kind, KnownLogical, Logical, MapSink, Physical, Plaintext, Raw, SeqSink,
     Sink, SourceError, Tee, TimeUnit, UnknownLogical, UnknownLogicalId,
 };
+/// Derive [`Plaintext`] for a struct or a fieldless enum. A struct walks as
+/// a map keyed by field name; a fieldless enum as an int leaf holding the
+/// variant's discriminant. Pair it with [`Decrypt`] to read the value back.
+/// Inlined so the `#[aead(...)]` reference renders here.
 #[doc(inline)]
-pub use seal::{Node, Opened, Pending};
+pub use vitaminc_aead_derive::Plaintext;
+// Encryption: the sink, the ciphers and the entry points.
+#[doc(inline)]
+pub use encrypt_sink::{encrypt, encrypt_async, plan, EncryptError, EncryptSink};
+#[doc(inline)]
+pub use seal::{AsyncCipher, Cipher, Node, Opened, Pending};
 #[doc(inline)]
 pub use shape::{Refusal, Unencryptable};
+// Decryption: typed targets, and sinks of any kind.
 #[doc(inline)]
-pub use typed::{decrypt, decrypt_async, DecodeError, DecryptProtected, FromScalar};
+pub use typed::{decrypt, decrypt_async, DecodeError, Decrypt, DecryptProtected, FromScalar};
 #[doc(inline)]
 pub use walk::{decrypt_into, decrypt_into_async, decrypt_to_frame, walk, DecryptError};
+// The frame: a value as transport bytes, and back.
+#[doc(inline)]
+pub use frame::{to_frame, Frame, FrameWriter, PassthroughFrame};
 
 #[doc(inline)]
 #[allow(deprecated)]
 pub use aad::{Aad, AadPiece};
 pub use aad::{Context, ContextPiece, IntoAad, IntoContext, LeafTypeAad};
-#[doc(inline)]
-pub use cipher::{Cipher, MapCipher, SeqCipher, Unspecified};
 #[doc(inline)]
 pub use ciphertext::{CipherTextBuilder, LocalCipherText, WIRE_VERSION};
 #[doc(inline)]
@@ -56,26 +57,6 @@ pub use container::CipherText;
 #[doc(inline)]
 pub use context::ContextTag;
 #[doc(inline)]
-pub use decipher::{Decipher, DecipherVisitor, MapAccess, SeqAccess};
-#[doc(inline)]
-pub use decrypt::Decrypt;
-#[doc(inline)]
-pub use element::Element;
-#[doc(inline)]
-pub use encrypt::Encrypt;
-#[doc(inline)]
 pub use nonce::{Nonce, NonceGenerator, RandomNonceGenerator};
-// Inlined rather than linked, so the macros' own documentation — the
-// `#[aead(...)]` reference in particular — renders here instead of sending the
-// reader to another crate. There is still only one copy of that text.
-/// Derive [`Plaintext`] for a struct or a fieldless enum. The sink-based
-/// [`Decrypt`](typed::Decrypt) derive sits beside its trait in [`typed`]:
-/// `use vitaminc_aead::Decrypt` is still the legacy derive until #406, so
-/// pair `Plaintext` with `vitaminc_aead::typed::Decrypt`.
 #[doc(inline)]
-pub use vitaminc_aead_derive::Plaintext;
-#[doc(inline)]
-pub use vitaminc_aead_derive::{Decrypt, Encrypt};
-
-#[doc(inline)]
-pub use passthrough::Passthrough;
+pub use unspecified::Unspecified;
