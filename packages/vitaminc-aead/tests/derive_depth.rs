@@ -11,11 +11,12 @@
 // resolve, as it would in any crate that builds one.
 #![recursion_limit = "512"]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use vitaminc_aead::frame::MAX_DEPTH;
 use vitaminc_aead::plaintext::depth;
 use vitaminc_aead::{plan, Encrypt, EncryptError, MapSink, Sink, Unencryptable};
+use vitaminc_protected::Protected;
 
 type V2<T> = Vec<Vec<T>>;
 type V4<T> = V2<V2<T>>;
@@ -43,6 +44,12 @@ impl Full for u32 {
 impl<T: Full> Full for Vec<T> {
     fn full() -> Self {
         vec![T::full()]
+    }
+}
+
+impl<T: Full> Full for HashMap<String, T> {
+    fn full() -> Self {
+        HashMap::from([("k".to_owned(), T::full())])
     }
 }
 
@@ -243,4 +250,43 @@ fn a_recursive_type_has_no_fixed_depth_and_the_walk_checks_it() {
         }],
     };
     assert!(accepted(even));
+}
+
+/// Each source's `DEPTH` is added up by the derive, so each must match the
+/// walk it does: too low and a struct compiles whose values are refused,
+/// too high and a valid struct does not compile.
+#[test]
+fn every_source_declares_the_depth_its_walk_has() {
+    assert_eq!(<HashMap<String, Vec<u32>> as Encrypt>::DEPTH, Some(2));
+    assert_eq!(<&HashMap<String, Vec<u32>> as Encrypt>::DEPTH, Some(2));
+    assert_eq!(<&BTreeMap<String, Vec<u32>> as Encrypt>::DEPTH, Some(2));
+    assert_eq!(<&[Vec<u32>] as Encrypt>::DEPTH, Some(2));
+    assert_eq!(<&Option<Vec<u32>> as Encrypt>::DEPTH, Some(1));
+    assert_eq!(<&&Vec<u32> as Encrypt>::DEPTH, Some(1));
+    assert_eq!(<Protected<Vec<u32>> as Encrypt>::DEPTH, Some(1));
+    assert_eq!(<&Protected<Vec<u32>> as Encrypt>::DEPTH, Some(1));
+    assert_eq!(
+        <Protected<Vec<u8>> as Encrypt>::DEPTH,
+        Some(0),
+        "bytes are a leaf"
+    );
+    assert_eq!(<&[u8] as Encrypt>::DEPTH, Some(0), "bytes are a leaf");
+    assert_eq!(<[u8; 16] as Encrypt>::DEPTH, Some(0), "bytes are a leaf");
+
+    assert!(
+        accepted(V127::<HashMap<String, u32>>::full()),
+        "a map at exactly MAX_DEPTH is accepted"
+    );
+    assert!(
+        !accepted(V128::<HashMap<String, u32>>::full()),
+        "a map one level deeper is refused"
+    );
+    assert!(
+        accepted(Protected::new(V128::<u32>::full())),
+        "Protected adds no level"
+    );
+    assert!(
+        !accepted(Protected::new(Vec::<V128<u32>>::full())),
+        "Protected one level too deep is refused"
+    );
 }
