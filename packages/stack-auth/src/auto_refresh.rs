@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
-use tokio::sync::{Mutex, MutexGuard, Notify};
+use tokio::sync::{Mutex, Notify, OwnedMutexGuard};
 
 use crate::clock::{system_clock, SharedClock};
 use crate::refresher::Refresher;
@@ -43,8 +44,13 @@ impl From<AutoRefreshError> for crate::AuthError {
 /// See the [crate-level documentation](crate#token-refresh) for a full
 /// description of the concurrency model and flow diagram.
 pub(crate) struct AutoRefresh<R, S = NoStore> {
+    shared: Arc<RefreshState<R, S>>,
+}
+
+/// Owned by both the strategy and any refresh task that outlives its caller.
+struct RefreshState<R, S> {
     refresher: R,
-    state: Mutex<State>,
+    state: Arc<Mutex<State>>,
     store: S,
     /// Set to `true` while a refresh HTTP call is in-flight.
     ///
@@ -82,7 +88,7 @@ struct State {
     /// Unlike `denial`, this is not TTL'd, is not restricted to account-level
     /// refusals, and is never consulted by `get_token`'s own retry path — it
     /// exists solely so a caller parked in
-    /// [`wait_for_in_flight_refresh`](AutoRefresh::wait_for_in_flight_refresh)
+    /// [`wait_for_in_flight_refresh`](RefreshState::wait_for_in_flight_refresh)
     /// sees the *same* outcome as whoever actually performed the refresh it
     /// was waiting on, instead of a generic `Expired` that discards why the
     /// wait ended in failure.
@@ -139,22 +145,16 @@ fn credential_consumed(err: &crate::AuthError) -> bool {
     matches!(err, crate::AuthError::Store(_))
 }
 
-/// Ensures [`AutoRefresh::refresh_in_progress`] is cleared and waiters are
+/// Ensures [`RefreshState::refresh_in_progress`] is cleared and waiters are
 /// notified if the refresh future is cancelled (dropped) before completing.
 ///
 /// On the normal path (success or handled error), the guard is defused before
 /// drop so that the regular cleanup code runs instead.
 ///
-/// Unlike the normal paths, `Drop` is synchronous and so notifies without
-/// taking the state lock. A caller that has read `refresh_in_progress` as
-/// `true` and is on its way into
-/// [`wait_for_in_flight_refresh`](AutoRefresh::wait_for_in_flight_refresh)
-/// holds that lock, which does not block this notification — so if the refresh
-/// future is cancelled in that window, the wake still lands on an empty list
-/// and that caller parks with nothing left to wake it. The `enable()` call in
-/// `wait_for_in_flight_refresh` does not close this narrower variant; doing so
-/// needs the notify moved under the state lock or a bounded wait, and is
-/// tracked separately.
+/// Native caller cancellation never drops this guard: the refresh task owns it.
+/// It still releases waiters on a task panic, runtime shutdown, or an inline
+/// wasm future being dropped. Waiters register *before* rechecking the flag,
+/// so this synchronous notification cannot be lost even without the state lock.
 struct CancelGuard<'a> {
     in_progress: &'a AtomicBool,
     notify: &'a Notify,
@@ -244,68 +244,53 @@ impl State {
 }
 
 impl<R> AutoRefresh<R, NoStore> {
-    /// Create a new `AutoRefresh` with a pre-loaded token and no external store.
-    ///
-    /// Use this for refreshers that cannot self-authenticate (e.g. OAuth,
-    /// which needs a refresh token from a prior device code flow).
+    /// Create an engine with a pre-loaded token and no external store.
     pub(crate) fn with_token(refresher: R, token: Token) -> Self {
-        Self {
-            refresher,
-            state: Mutex::new(State::new(Some(token))),
-            store: NoStore,
-            refresh_in_progress: AtomicBool::new(false),
-            refresh_notify: Notify::new(),
-            clock: system_clock(),
-        }
+        Self::new(refresher, NoStore, Some(token), system_clock())
     }
 
-    /// Like [`with_token`](Self::with_token) but with an injected clock, so tests
-    /// can drive token expiry deterministically.
     #[cfg(test)]
     #[cfg(feature = "http")]
     pub(crate) fn with_token_and_clock(refresher: R, token: Token, clock: SharedClock) -> Self {
-        Self {
-            refresher,
-            state: Mutex::new(State::new(Some(token))),
-            store: NoStore,
-            refresh_in_progress: AtomicBool::new(false),
-            refresh_notify: Notify::new(),
-            clock,
-        }
-    }
-}
-
-impl<R, S: TokenStore> AutoRefresh<R, S> {
-    /// Create a new `AutoRefresh` backed by `store` and no in-memory token.
-    ///
-    /// On the first `get_token` call the store is consulted before falling
-    /// through to initial authentication via `try_credential(None)`; every
-    /// successful refresh writes the new token back via `store.save()`. Pass
-    /// [`NoStore`] for the no-external-cache case — it's the default and
-    /// elides to a zero-cost no-op.
-    pub(crate) fn with_store(refresher: R, store: S) -> Self {
-        Self {
-            refresher,
-            state: Mutex::new(State::new(None)),
-            store,
-            refresh_in_progress: AtomicBool::new(false),
-            refresh_notify: Notify::new(),
-            clock: system_clock(),
-        }
+        Self::new(refresher, NoStore, Some(token), clock)
     }
 }
 
 impl<R, S> AutoRefresh<R, S> {
-    /// The refresher this engine renews through.
+    fn new(refresher: R, store: S, token: Option<Token>, clock: SharedClock) -> Self {
+        Self {
+            shared: Arc::new(RefreshState {
+                refresher,
+                state: Arc::new(Mutex::new(State::new(token))),
+                store,
+                refresh_in_progress: AtomicBool::new(false),
+                refresh_notify: Notify::new(),
+                clock,
+            }),
+        }
+    }
+
+    /// Create an engine that consults `store` on cold start and saves every
+    /// successful refresh. `NoStore` disables external caching.
+    pub(crate) fn with_store(refresher: R, store: S) -> Self {
+        Self::new(refresher, store, None, system_clock())
+    }
+
     pub(crate) fn refresher(&self) -> &R {
-        &self.refresher
+        &self.shared.refresher
     }
 }
 
 impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
-    /// Retrieve a valid access token, refreshing or re-authenticating as needed.
     pub(crate) async fn get_token(&self) -> Result<ServiceToken, AutoRefreshError> {
-        let mut state = self.state.lock().await;
+        self.shared.get_token().await
+    }
+}
+
+impl<R: Refresher, S: TokenStore> RefreshState<R, S> {
+    /// Retrieve a valid access token, refreshing or re-authenticating as needed.
+    async fn get_token(self: &Arc<Self>) -> Result<ServiceToken, AutoRefreshError> {
+        let mut state = self.state.clone().lock_owned().await;
 
         if state.token.is_none() {
             // A settled account-level refusal is checked before the store
@@ -321,7 +306,7 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
             // case another caller populated it while we awaited.
             drop(state);
             let loaded = self.store.load().await;
-            state = self.state.lock().await;
+            state = self.state.clone().lock_owned().await;
             if state.token.is_none() {
                 state.token = loaded;
             }
@@ -336,7 +321,10 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
             if let Some(err) = state.fresh_denial(now) {
                 return Err(AutoRefreshError::Auth(err));
             }
-            return self.initial_auth(&mut state).await;
+            let Some(credential) = self.refresher.try_credential(None) else {
+                return Err(AutoRefreshError::NotFound);
+            };
+            return self.start_refresh(state, credential).await;
         }
 
         if !state.token.as_ref().is_some_and(|t| t.is_expired_at(now)) {
@@ -362,41 +350,48 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
             return state.require_usable_token(now);
         };
 
-        self.refresh_in_progress.store(true, Ordering::Release);
+        self.start_refresh(state, credential).await
+    }
 
-        if state.token.as_ref().is_some_and(|t| t.is_usable_at(now)) {
+    /// There is no suspension between extracting the credential and spawning
+    /// its owner. Dropping the JoinHandle cancels only the caller's wait, not
+    /// the exchange, persistence, state installation, or waiter notification.
+    async fn start_refresh(
+        self: &Arc<Self>,
+        state: OwnedMutexGuard<State>,
+        credential: R::Credential,
+    ) -> Result<ServiceToken, AutoRefreshError> {
+        self.refresh_in_progress.store(true, Ordering::Release);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let shared = Arc::clone(self);
+            tokio::spawn(async move { shared.run_refresh(state, credential).await })
+                .await
+                .map_err(|_| {
+                    crate::AuthError::Internal(crate::error::InternalError(
+                        "token refresh task terminated before completion".into(),
+                    ))
+                })?
+        }
+        // WASI hosts drive the export to completion with block_on; browser
+        // wasm futures are not Send and have no Tokio task executor.
+        #[cfg(target_arch = "wasm32")]
+        self.run_refresh(state, credential).await
+    }
+
+    async fn run_refresh(
+        &self,
+        mut state: OwnedMutexGuard<State>,
+        credential: R::Credential,
+    ) -> Result<ServiceToken, AutoRefreshError> {
+        if state
+            .token
+            .as_ref()
+            .is_some_and(|t| t.is_usable_at(self.clock.now_unix_secs()))
+        {
             self.refresh_non_blocking(state, credential).await
         } else {
             self.refresh_blocking(&mut state, credential).await
-        }
-    }
-
-    /// No cached token — authenticate via `try_credential(None)`.
-    ///
-    /// The lock is held throughout to prevent concurrent initial-auth attempts.
-    async fn initial_auth(&self, state: &mut State) -> Result<ServiceToken, AutoRefreshError> {
-        let Some(credential) = self.refresher.try_credential(None) else {
-            return Err(AutoRefreshError::NotFound);
-        };
-        self.refresh_in_progress.store(true, Ordering::Release);
-        let mut guard = CancelGuard {
-            in_progress: &self.refresh_in_progress,
-            notify: &self.refresh_notify,
-            defused: false,
-        };
-        match self.refresher.refresh(&credential).await {
-            Ok(new_token) => {
-                self.save_refreshed_token(&new_token).await;
-                let token = self.install_refreshed_token(state, new_token);
-                guard.defuse();
-                Ok(token)
-            }
-            Err(err) => {
-                guard.defuse();
-                self.refresh_in_progress.store(false, Ordering::Release);
-                state.record_refusal(&err, self.clock.now_unix_secs());
-                Err(AutoRefreshError::Auth(err))
-            }
         }
     }
 
@@ -431,7 +426,7 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
     /// the notification.
     async fn wait_for_in_flight_refresh(
         &self,
-        state: MutexGuard<'_, State>,
+        state: OwnedMutexGuard<State>,
         now: u64,
     ) -> Result<ServiceToken, AutoRefreshError> {
         if let Ok(token) = state.service_token() {
@@ -451,15 +446,20 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
         // `enable()` joins the list while the state lock is still held, and
         // `refresh_non_blocking` takes that same lock to record its outcome
         // before it notifies, so the notification cannot land before we are
-        // listed. This does not cover `CancelGuard::drop`, which notifies
-        // without the lock — see the note on that impl.
+        // listed. The flag is rechecked below for `CancelGuard::drop`, which
+        // does not acquire the lock.
         let mut notified = std::pin::pin!(self.refresh_notify.notified());
         // The `bool` reports whether a stored permit was consumed, which only
         // `notify_one` produces; this `Notify` is only ever driven by
         // `notify_waiters`, so there is nothing to act on.
         let _ = notified.as_mut().enable();
         drop(state);
-        notified.await;
+        // CancelGuard can notify without this lock. Registering first and
+        // then rechecking closes the cancellation/panic race too: either its
+        // notification reaches us, or its cleared flag makes waiting needless.
+        if self.refresh_in_progress.load(Ordering::Acquire) {
+            notified.await;
+        }
         // Re-check after wake — refresh may have failed. Re-read the clock: an
         // arbitrary amount of time may have passed while awaiting the refresh.
         let now = self.clock.now_unix_secs();
@@ -499,26 +499,15 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
         }
     }
 
-    /// Token is expiring but still usable — drop the lock, refresh in the
-    /// background of this call, and return the old (still-valid) token.
-    ///
-    /// Takes `MutexGuard` by value because the lock is dropped before the HTTP
-    /// request. Notifies waiters after the refresh completes (success or error).
-    ///
-    /// A [`CancelGuard`] ensures that if this future is cancelled at any point
-    /// before the new token is installed — including the post-HTTP save +
-    /// install window — `refresh_in_progress` is cleared and waiters are
-    /// notified, so subsequent callers don't hang in
-    /// [`wait_for_in_flight_refresh`](Self::wait_for_in_flight_refresh).
-    /// The credential is not restored on cancellation (it's already gone from
-    /// `state.token`), so the next caller will get whatever the cached token
-    /// offers — usable, expired, or absent.
+    /// Release the lock while refreshing so concurrent callers can use the
+    /// cached token. The initiating caller waits for this attempt's outcome.
     async fn refresh_non_blocking(
         &self,
-        state: MutexGuard<'_, State>,
+        state: OwnedMutexGuard<State>,
         credential: R::Credential,
     ) -> Result<ServiceToken, AutoRefreshError> {
         let current_service_token = state.service_token()?;
+        let current_expires_at = state.token.as_ref().map_or(0, Token::expires_at);
         drop(state);
 
         let mut guard = CancelGuard {
@@ -533,7 +522,12 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
                 let mut state = self.state.lock().await;
                 let _ = self.install_refreshed_token(&mut state, new_token);
                 guard.defuse();
-                Ok(current_service_token)
+                let now = self.clock.now_unix_secs();
+                if now < current_expires_at {
+                    Ok(current_service_token)
+                } else {
+                    state.require_usable_token(now)
+                }
             }
             Err(err) => {
                 let consumed = credential_consumed(&err);
@@ -565,7 +559,7 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
                 // call still succeeds. A consumed credential does not: the
                 // rotation happened upstream but was lost, and succeeding
                 // would hide that until the cached token expires.
-                if consumed {
+                if consumed || self.clock.now_unix_secs() >= current_expires_at {
                     Err(AutoRefreshError::Auth(err))
                 } else {
                     Ok(current_service_token)
@@ -577,15 +571,8 @@ impl<R: Refresher, S: TokenStore> AutoRefresh<R, S> {
         result
     }
 
-    /// Token is fully expired — refresh while holding the lock so concurrent
-    /// callers block on `lock().await` until the new token is available.
-    ///
-    /// A [`CancelGuard`] ensures that if this future is cancelled at any point
-    /// before the new token is installed — including the post-HTTP save
-    /// window — `refresh_in_progress` is cleared and waiters are notified so
-    /// they don't hang indefinitely. (The credential is lost on cancel —
-    /// see [`CancelGuard`] docs — but subsequent callers will get `Expired`
-    /// rather than blocking forever.)
+    /// Initial auth or a fully expired token: keep the owned lock until the
+    /// task finishes, so concurrent callers all observe the installed result.
     async fn refresh_blocking(
         &self,
         state: &mut State,
@@ -1061,7 +1048,7 @@ mod tests {
                 );
 
                 // Verify the refresh token was restored so a retry is possible.
-                let state = strategy.state.lock().await;
+                let state = strategy.shared.state.lock().await;
                 assert!(
                     state.token.is_some(),
                     "token should still be cached after failed refresh"
@@ -1195,7 +1182,7 @@ mod tests {
                 );
 
                 // Verify the access token and refresh token are still present.
-                let state = strategy.state.lock().await;
+                let state = strategy.shared.state.lock().await;
                 assert!(state.token.is_some(), "token should still be cached");
                 assert_eq!(
                     state.token.as_ref().unwrap().access_token().as_str(),
@@ -1245,7 +1232,7 @@ mod tests {
                 );
 
                 // Verify the cache now holds the refreshed token.
-                let state = strategy.state.lock().await;
+                let state = strategy.shared.state.lock().await;
                 assert_eq!(
                     state.token.as_ref().unwrap().access_token().as_str(),
                     "refreshed-token",
@@ -1299,7 +1286,7 @@ mod tests {
                 "a lost rotation must fail the call, got: {result:?}"
             );
 
-            let state = strategy.state.lock().await;
+            let state = strategy.shared.state.lock().await;
             assert!(
                 state.token.as_ref().unwrap().refresh_token().is_none(),
                 "the spent refresh token must not be restored for replay"
@@ -1321,7 +1308,7 @@ mod tests {
                 "a lost rotation must fail the call, got: {result:?}"
             );
 
-            let state = strategy.state.lock().await;
+            let state = strategy.shared.state.lock().await;
             assert!(
                 state.token.as_ref().unwrap().refresh_token().is_none(),
                 "the spent refresh token must not be restored for replay"
@@ -1774,7 +1761,7 @@ mod stress_tests {
                 );
             }
 
-            let state = strategy.state.lock().await;
+            let state = strategy.shared.state.lock().await;
             assert!(
                 state.token.as_ref().unwrap().refresh_token().is_some(),
                 "refresh token should be restored after failed refresh"
@@ -1865,173 +1852,6 @@ mod stress_tests {
             assert_eq!(stats2.total(), 1, "only one retry refresh should be made");
         }
     }
-
-    mod given_cancelled_refresh {
-        use super::*;
-
-        /// If a blocking refresh (fully expired token) is cancelled mid-flight,
-        /// the `CancelGuard` must reset `refresh_in_progress` and notify waiters
-        /// so the next caller doesn't hang in `wait_for_in_flight_refresh`.
-        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-        async fn blocked_callers_recover_after_cancellation() {
-            let counting = CountingState::new();
-            let state = DelayedRefreshState {
-                counting: counting.clone(),
-                delay: Duration::from_secs(10), // Very slow — will be cancelled
-            };
-            let (base_url, _) = start_axum_server(delayed_refresh_handler, state).await;
-            let dir = tempfile::tempdir().unwrap();
-            let strategy = Arc::new(auto_refresh_with_token(
-                &dir,
-                &base_url,
-                make_token("expired-token", 0, true),
-            ));
-
-            // Spawn get_token and let the blocking refresh start.
-            let s = Arc::clone(&strategy);
-            let handle = tokio::spawn(async move { s.get_token().await });
-            tokio::time::sleep(Duration::from_millis(100)).await;
-
-            // Cancel the refresh mid-flight.
-            handle.abort();
-            let _ = handle.await;
-
-            // The next caller must not hang. The credential is lost (refresh
-            // token was taken before the HTTP call), so the result is Expired,
-            // but the important thing is that it completes promptly.
-            let s = Arc::clone(&strategy);
-            let result = tokio::time::timeout(Duration::from_secs(2), s.get_token()).await;
-
-            assert!(
-                result.is_ok(),
-                "get_token() should not hang after cancelled blocking refresh"
-            );
-        }
-
-        /// Regression test: cancellation in the window *after* the upstream
-        /// HTTP refresh succeeds but *before* the new token is installed must
-        /// still clear `refresh_in_progress` and notify waiters. The previous
-        /// implementation defused the [`CancelGuard`] before
-        /// `save_refreshed_token`, so a drop during the (async) store-save or
-        /// the subsequent state-lock acquire would strand the flag — wedging
-        /// any caller that later hit `wait_for_in_flight_refresh`.
-        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-        async fn save_phase_cancellation_does_not_strand_in_progress_flag() {
-            use crate::token_store::TokenStore;
-
-            /// Store that returns a single pre-loaded token from `load()` and
-            /// delays inside `save()` long enough for a test to cancel.
-            struct SlowSaveStore {
-                initial: tokio::sync::Mutex<Option<Token>>,
-                delay: Duration,
-            }
-
-            impl TokenStore for SlowSaveStore {
-                async fn load(&self) -> Option<Token> {
-                    self.initial.lock().await.take()
-                }
-
-                async fn save(&self, _token: &Token) {
-                    tokio::time::sleep(self.delay).await;
-                }
-            }
-
-            // Fast upstream HTTP — refresh succeeds in <50ms.
-            let counting = CountingState::new();
-            let state = DelayedRefreshState {
-                counting: counting.clone(),
-                delay: Duration::from_millis(10),
-            };
-            let (base_url, _) = start_axum_server(delayed_refresh_handler, state).await;
-            let dir = tempfile::tempdir().unwrap();
-            let store = ProfileStore::new(dir.path());
-            store.init_workspace("ZVATKW3VHMFG27DY").unwrap();
-            let ws_store = store.current_workspace_store().unwrap();
-            let refresher = DeviceSessionRefresher::new(
-                Some(ws_store),
-                base_url,
-                "cli",
-                "ap-southeast-2.aws",
-                None,
-                crate::transport::default_transport(),
-            );
-            // Slow async save — cancellation reliably lands here, in the
-            // post-HTTP / pre-install window.
-            let slow_store = SlowSaveStore {
-                initial: tokio::sync::Mutex::new(Some(make_token("expired-token", 0, true))),
-                delay: Duration::from_secs(10),
-            };
-            let strategy = Arc::new(AutoRefresh::with_store(refresher, slow_store));
-
-            // Trigger refresh; the task will complete the HTTP exchange and
-            // then block inside store.save (the slow async path).
-            let s = Arc::clone(&strategy);
-            let handle = tokio::spawn(async move { s.get_token().await });
-            // 200ms is comfortably past the 10ms HTTP delay but well inside
-            // the 10s save delay — so abort() lands during save_refreshed_token.
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            handle.abort();
-            let _ = handle.await;
-
-            // The CancelGuard must have cleared refresh_in_progress on drop.
-            // If the old (pre-fix) code regresses, the flag stays true and a
-            // subsequent caller wedges on wait_for_in_flight_refresh waiting
-            // for a notify that will never come — the timeout below catches it.
-            let s = Arc::clone(&strategy);
-            let result = tokio::time::timeout(Duration::from_secs(2), s.get_token()).await;
-
-            assert!(
-                result.is_ok(),
-                "get_token() should not hang after cancellation in the save/install window"
-            );
-        }
-
-        /// If a non-blocking refresh (expiring-but-usable token) is cancelled
-        /// mid-flight, the `CancelGuard` must reset `refresh_in_progress` and
-        /// notify waiters so they don't hang once the token crosses real expiry.
-        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-        async fn non_blocking_callers_recover_after_cancellation() {
-            let counting = CountingState::new();
-            let state = DelayedRefreshState {
-                counting: counting.clone(),
-                delay: Duration::from_secs(10), // Very slow — will be cancelled
-            };
-            let (base_url, _) = start_axum_server(delayed_refresh_handler, state).await;
-            let dir = tempfile::tempdir().unwrap();
-            // Token expires in 30s — is_expired() = true, is_usable() = true.
-            let strategy = Arc::new(auto_refresh_with_token(
-                &dir,
-                &base_url,
-                make_token("still-usable", 30, true),
-            ));
-
-            // Spawn get_token — triggers non-blocking refresh, drops lock, then
-            // blocks on the slow HTTP call.
-            let s = Arc::clone(&strategy);
-            let handle = tokio::spawn(async move { s.get_token().await });
-            tokio::time::sleep(Duration::from_millis(100)).await;
-
-            // Cancel the refresh mid-flight.
-            handle.abort();
-            let _ = handle.await;
-
-            // The next caller must not hang. The token is still usable so it
-            // should be returned even though the refresh was cancelled.
-            let s = Arc::clone(&strategy);
-            let result = tokio::time::timeout(Duration::from_secs(2), s.get_token()).await;
-
-            assert!(
-                result.is_ok(),
-                "get_token() should not hang after cancelled non-blocking refresh"
-            );
-            let result = result.unwrap();
-            assert!(
-                result.is_ok(),
-                "expected Ok with still-usable token, got: {:?}",
-                result.unwrap_err()
-            );
-        }
-    }
 }
 
 /// Deterministic regression test for the "token crosses real expiry while a
@@ -2116,6 +1936,55 @@ mod expiry_crossing_regression {
         }
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn initiating_caller_returns_the_old_token_only_before_its_expiry() {
+        for (elapsed, expected) in [
+            (9, "expiring-soon"),
+            (10, "refreshed-token"),
+            (11, "refreshed-token"),
+        ] {
+            let clock = TestClock::new(1_000_000);
+            let started = Arc::new(Notify::new());
+            let gate = Arc::new(Notify::new());
+            let calls = Arc::new(AtomicUsize::new(0));
+            let strategy = Arc::new(AutoRefresh::with_token_and_clock(
+                GatedRefresher {
+                    started: Arc::clone(&started),
+                    gate: Arc::clone(&gate),
+                    calls: Arc::clone(&calls),
+                    refreshed_expires_at: clock.now() + 3600,
+                },
+                make_token("expiring-soon", clock.now() + 10),
+                clock.shared(),
+            ));
+            let caller = tokio::spawn({
+                let strategy = Arc::clone(&strategy);
+                async move { strategy.get_token().await }
+            });
+            tokio::time::timeout(std::time::Duration::from_secs(1), started.notified())
+                .await
+                .expect("the usable token must start a refresh");
+
+            // Finish the exchange one second before, exactly at, and one
+            // second after the old token's expiry. Only the first case may
+            // return the old token to the caller that initiated the refresh.
+            clock.advance(elapsed);
+            gate.notify_one();
+            let returned = tokio::time::timeout(std::time::Duration::from_secs(1), caller)
+                .await
+                .expect("the initiating caller must finish")
+                .unwrap()
+                .unwrap();
+            assert_eq!(returned.as_str(), expected, "elapsed={elapsed}");
+            assert_eq!(
+                strategy.get_token().await.unwrap().as_str(),
+                "refreshed-token",
+                "the refreshed token must be cached in every case"
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
+    }
+
     #[tokio::test]
     async fn waiters_wait_for_refresh_when_token_crosses_expiry() {
         let clock = TestClock::new(1_000_000);
@@ -2175,8 +2044,8 @@ mod expiry_crossing_regression {
         let first = first.await.unwrap().unwrap();
         assert_eq!(
             first.as_str(),
-            "expiring-soon",
-            "first caller receives the old token (still usable when it was called)"
+            "refreshed-token",
+            "the old token expired while the first caller waited"
         );
 
         for (i, waiter) in waiters.into_iter().enumerate() {
@@ -2241,7 +2110,7 @@ mod expiry_crossing_regression {
     /// The failure counterpart to
     /// [`waiters_wait_for_refresh_when_token_crosses_expiry`]: when the in-flight
     /// refresh *fails* and the clock has crossed real expiry, waiters waking in
-    /// [`AutoRefresh::wait_for_in_flight_refresh`] must re-read the clock, find
+    /// [`RefreshState::wait_for_in_flight_refresh`] must re-read the clock, find
     /// the cached token unusable via `require_usable_token(now)`, and return
     /// `Expired` — they must not hang, and must not hand back a stale token. This
     /// is exactly the branch the post-wake clock re-read (the `now` re-read after
@@ -2292,17 +2161,15 @@ mod expiry_crossing_regression {
             tokio::task::yield_now().await;
         }
 
-        // 4. Release the refresh → it returns Err. The first caller still returns
-        //    the old token it captured while it was usable; the waiters re-read
-        //    the now-advanced clock, find the token unusable, and get Expired.
+        // 4. Release the failed refresh. No caller may receive the old token:
+        //    it expired while the exchange was in flight.
         gate.notify_one();
 
         let first = first.await.unwrap();
-        assert_eq!(
-            first.unwrap().as_str(),
-            "expiring-soon",
-            "first caller keeps the old token it captured before the refresh failed"
-        );
+        assert!(matches!(
+            first,
+            Err(AutoRefreshError::Auth(crate::AuthError::TokenExpired(_)))
+        ));
 
         for (i, waiter) in waiters.into_iter().enumerate() {
             let result = waiter.await.unwrap();
@@ -2384,11 +2251,10 @@ mod expiry_crossing_regression {
         gate.notify_one();
 
         let first = first.await.unwrap();
-        assert_eq!(
-            first.unwrap().as_str(),
-            "expiring-soon",
-            "first caller keeps the old token it captured before the refusal"
-        );
+        assert!(matches!(
+            first,
+            Err(AutoRefreshError::Auth(AuthError::UsageLimitExceeded(_)))
+        ));
 
         for (i, waiter) in waiters.into_iter().enumerate() {
             let result = waiter.await.unwrap();
@@ -2491,11 +2357,10 @@ mod expiry_crossing_regression {
         gate.notify_one();
 
         let first = first.await.unwrap();
-        assert_eq!(
-            first.unwrap().as_str(),
-            "expiring-soon",
-            "first caller keeps the old token it captured before the refusal"
-        );
+        assert!(matches!(
+            first,
+            Err(AutoRefreshError::Auth(AuthError::InvalidGrant(_)))
+        ));
 
         for (i, waiter) in waiters.into_iter().enumerate() {
             let result = waiter.await.unwrap();
@@ -2541,124 +2406,14 @@ mod expiry_crossing_regression {
     }
 }
 
+// Keep `test` as a standalone cfg so cargo-mutants recognises these modules
+// as test harnesses and mutates the refresh engine they exercise instead.
 #[cfg(test)]
-#[cfg(feature = "http")]
-#[allow(clippy::unwrap_used)]
-mod regression_cip_3159 {
-    use super::*;
-    use crate::access_key_refresher::AccessKeyRefresher;
-    use crate::SecretToken;
-    use std::sync::atomic::Ordering;
-    use std::sync::Arc;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+#[path = "auto_refresh/tests/cancellation.rs"]
+mod cancellation_tests;
 
-    /// `/api/authorise` handler that sleeps `delay` before returning a valid
-    /// access-key token response (with an ABSOLUTE-epoch `expiry`, as CTS
-    /// returns), giving the test a window to cancel in.
-    async fn delayed_authorise_handler(
-        axum::extract::State(delay): axum::extract::State<Duration>,
-    ) -> axum::Json<serde_json::Value> {
-        tokio::time::sleep(delay).await;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        axum::Json(serde_json::json!({
-            "accessToken": "refreshed-token",
-            "expiry": now + 3600
-        }))
-    }
-
-    async fn start_authorise_server(delay: Duration) -> url::Url {
-        let app = axum::Router::new()
-            .route(
-                "/api/authorise",
-                axum::routing::post(delayed_authorise_handler),
-            )
-            .with_state(delay);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        url::Url::parse(&format!("http://{addr}")).unwrap()
-    }
-
-    /// is_expired() == true (within the 90s leeway, so `get_token` refreshes),
-    /// but is_usable() == true for `secs_until_expiry` (so it takes the
-    /// non-blocking path).
-    fn expiring_but_usable_token(access: &str, secs_until_expiry: u64) -> Token {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        Token {
-            access_token: SecretToken::new(access),
-            token_type: "Bearer".to_string(),
-            expires_at: now + secs_until_expiry,
-            refresh_token: None,
-            region: None,
-            client_id: None,
-            device_instance_id: None,
-            federated_from: None,
-        }
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn cancellation_in_relock_window_does_not_strand_refresh() {
-        let http_delay = Duration::from_millis(400);
-        let base_url = start_authorise_server(http_delay).await;
-
-        let strategy = Arc::new(AutoRefresh::with_token(
-            AccessKeyRefresher::new(
-                SecretToken::new("CSAKtestKeyId.testKeySecret"),
-                base_url,
-                None,
-                crate::transport::default_transport(),
-            ),
-            expiring_but_usable_token("old-usable", 2),
-        ));
-
-        // Caller A drives the refresh: it locks state, sets the in-progress
-        // flag, drops the lock, then awaits the (slow) HTTP authorise call.
-        let a = Arc::clone(&strategy);
-        let handle = tokio::spawn(async move { a.get_token().await });
-
-        // Let A reach the HTTP await, then take the state lock so that when A's
-        // request completes it parks on its post-HTTP `state.lock().await`
-        // instead of installing the new token.
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let held = strategy.state.lock().await;
-
-        // A's HTTP completes (~400ms) and blocks on the lock we hold.
-        tokio::time::sleep(http_delay + Duration::from_millis(200)).await;
-        assert!(
-            strategy.refresh_in_progress.load(Ordering::Acquire),
-            "precondition: a refresh should be in flight while caller A is parked",
-        );
-
-        // Cancel A precisely in the post-HTTP, pre-install window.
-        handle.abort();
-        let _ = handle.await;
-        drop(held);
-
-        // The CancelGuard's Drop must have cleared the flag on cancellation.
-        // Pre-fix, defuse() ran before the re-lock, so this stays `true`.
-        assert!(
-            !strategy.refresh_in_progress.load(Ordering::Acquire),
-            "refresh_in_progress stranded `true` after cancellation in the re-lock window (CIP-3159)",
-        );
-
-        // End-to-end: once the cached token crosses real expiry, a stranded flag
-        // would route the next caller into wait_for_in_flight_refresh and hang on
-        // a notify that never comes. With the fix, the caller re-authenticates.
-        tokio::time::sleep(Duration::from_millis(2100)).await;
-        let b = Arc::clone(&strategy);
-        let result =
-            tokio::time::timeout(Duration::from_secs(3), async move { b.get_token().await }).await;
-        assert!(
-            matches!(result, Ok(Ok(_))),
-            "get_token() hung or failed after cancellation — refresh wedged (CIP-3159): {result:?}",
-        );
-    }
-}
+#[cfg(test)]
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+#[path = "auto_refresh/tests/soak.rs"]
+mod cancellation_soak;
