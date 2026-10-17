@@ -9,9 +9,9 @@ use uuid::Uuid;
 
 use super::build::{FieldPlan, FieldsBuilder, IntoLabel, Opens, PlanContext, Runs};
 use super::field_ref::FieldRef;
-use super::value::{Indexed, Typed, ValuePlan, ValueShape};
+use super::value::{Indexed, Typed, ValueLayout, ValuePlan, ValueShape};
 use super::PlanError;
-use crate::op::{Answers, DefaultIndex, Input, Operator, QueryToken, Supports};
+use crate::op::{Answers, DefaultIndex, Input, LabelledTarget, Operator, QueryToken, Supports};
 use crate::target::{
     ciphertext, Borrowed, CallerContext, DeclaredContext, DecryptField, Decryptable, EncryptFrom,
     Index, Indexes, Pending, PendingFuture, Select, Whole,
@@ -650,7 +650,22 @@ impl<'a, Op: Operator, F: Input<Op::Arity>, K: 'static> QueryBuilder<'a, Op, F, 
     where
         P: Chooses<Op, F, At>,
     {
-        self.via(P::Via::default()).on(plan)
+        let QueryBuilder {
+            mut common,
+            value,
+            op,
+        } = self;
+        let (index, label) = match common.call_context() {
+            Ok(call) => plan.choose(call),
+            Err(error) => (P::Via::default(), Err(error)),
+        };
+        QueryOp {
+            common,
+            value,
+            index,
+            label,
+            op,
+        }
     }
 }
 
@@ -711,7 +726,12 @@ where
 ///
 /// A field of a fields plan and a one-value plan built `with` indexes
 /// answer through the operator's [`DefaultIndex`]; a one-value plan for a
-/// target type answers through the type's [`Answers`] impl. The plan's
+/// target type answers through the type's [`Answers`] impl, when the type
+/// is a [`LabelledTarget`], whose stored terms were derived under the
+/// context the plan's label names. Such a plan is queried through the
+/// indexes the type declares ([`ValueLayout`]) even when the type cannot be
+/// encrypted through it, as an EQL type sealed under its column cannot.
+/// The plan's
 /// plaintext is the input's ([`Input::Plaintext`]): `S` for a query given
 /// an `S`, and for a `Between` given an `(S, S)`. `At` is the position of
 /// that index in a plan built `with` several, and is inferred.
@@ -720,15 +740,21 @@ where
     label = "no index answers this operator on this plan",
     note = "a field of a fields plan or a plan built `with` indexes answers an operator through its default index (`op::Eq`: `Equality`; `op::Matches`: `Match` with the default configuration, case-insensitive and over text only; `op::Lt`, `Lte`, `Gt`, `Gte` and `Between`: `Ore` over an integer, `Between` given a pair); a typed plan answers the operators its target type implements `Answers` for; `.via(index)` names an index the plan declares"
 )]
-pub trait Chooses<Op: Operator, In: Input<Op::Arity>, At>:
-    Resolves<In::Plaintext, Self::Via, At>
-{
+pub trait Chooses<Op: Operator, In: Input<Op::Arity>, At>: plan_sealed::Sealed {
     /// The index that answers `Op` on this plan.
     type Via: Supports<Op, In> + Default;
+    /// The index the query runs through on this plan, and the label the
+    /// write used, or why the plan refuses the query, as
+    /// [`Resolves::resolve`] says. `call` is the context the call named, if
+    /// any.
+    fn choose(&self, call: Option<Label>) -> (Self::Via, Result<Label, PlanError>);
 }
 
 impl<Op: DefaultIndex<In>, In: Input<Op::Arity>> Chooses<Op, In, Whole> for FieldPlan {
     type Via = Op::Via;
+    fn choose(&self, call: Option<Label>) -> (Op::Via, Result<Label, PlanError>) {
+        Resolves::<In::Plaintext, Op::Via, Whole>::resolve(self, Op::Via::default(), call)
+    }
 }
 
 impl<Op, S, In, X, At> Chooses<Op, In, At> for ValuePlan<S, Indexed<X>>
@@ -740,6 +766,9 @@ where
     X: Indexes<S> + Select<Op::Via, At>,
 {
     type Via = Op::Via;
+    fn choose(&self, call: Option<Label>) -> (Op::Via, Result<Label, PlanError>) {
+        Resolves::<S, Op::Via, At>::resolve(self, Op::Via::default(), call)
+    }
 }
 
 impl<Op, S, In, T> Chooses<Op, In, Whole> for ValuePlan<S, Typed<T>>
@@ -747,11 +776,15 @@ where
     Op: Operator,
     In: Input<Op::Arity, Plaintext = S>,
     S: 'static,
-    T: Answers<Op, In>,
-    T::Via: Default,
-    Typed<T>: ValueShape<S>,
+    T: Answers<Op, In> + LabelledTarget,
+    Typed<T>: ValueLayout<S>,
 {
     type Via = T::Via;
+    fn choose(&self, call: Option<Label>) -> (T::Via, Result<Label, PlanError>) {
+        let index = T::Via::default();
+        let label = self.query_label(&index.spec(), call);
+        (index, label)
+    }
 }
 
 mod plan_sealed {
@@ -769,7 +802,11 @@ mod plan_sealed {
 /// A field of a fields plan ([`Plan::field`](super::Plan::field)) and a
 /// one-value plan for a target type take the index as given, and refuse
 /// one the plan does not declare when the query is awaited
-/// ([`PlanError::IndexNotDeclared`]). A one-value plan built `with`
+/// ([`PlanError::IndexNotDeclared`]). A one-value plan for a target type
+/// takes a named index only when the type is sealed under the label
+/// ([`ValueShape`]): a type that answers through its [`Answers`] impls
+/// alone, as an EQL type does, cannot have another index named on its
+/// plan, which would send a term the type's SQL does not take. A one-value plan built `with`
 /// indexes selects its own index of that type ([`Indexes::select`]), at
 /// the position `At`, which is inferred; a plan without that index does
 /// not compile.
@@ -841,9 +878,9 @@ where
         self.common.keyset.take()
     }
     fn check(&self) -> Result<(), Error> {
-        if let Err(error) = &self.label {
-            return Err(error.clone().into());
-        }
+        let label = self.label.as_ref().map_err(|error| error.clone())?;
+        self.index
+            .check_label(label, self.common.extend.is_extended())?;
         self.index.check(&self.value)
     }
     fn prepare<'p>(self, keyset: &'p KeysetCipher<'a, K>, _: bool) -> Pending<'p, Self::Output, K>
@@ -855,16 +892,22 @@ where
             Err(error) => return Pending::failed(keyset, error.into()),
         };
         // `check` ran before any keyset was resolved; a chain prepared on
-        // its own is held to the same refusal, so no term is derived from a
-        // value the index refuses. `admit` checks and takes the verifier in
-        // one pass over the value.
-        let verifier = match self.index.admit(&self.value) {
+        // its own is held to the same refusals, so no term is derived under
+        // a context or from a value the index refuses. `admit` checks and
+        // takes the verifier in one pass over the value.
+        let extended = self.common.extend.is_extended();
+        let verifier = match self
+            .index
+            .check_label(&label, extended)
+            .and_then(|()| self.index.admit(&self.value))
+        {
             Ok(verifier) => verifier,
             Err(error) => return Pending::failed(keyset, error),
         };
+        let token = QueryToken::new(label.clone(), extended);
         self.value
             .derive(&self.index, keyset, label, self.common.extend)
-            .map(move |terms| I::query(verifier, terms, QueryToken::new()))
+            .map(move |terms| I::query(verifier, terms, token))
     }
 }
 

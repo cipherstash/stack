@@ -33,8 +33,10 @@ pub mod numeric;
 pub mod real;
 pub mod smallint;
 /// Generated: the table of EQL types a Stack Encrypt data plan may name as
-/// a field target (`TARGETS`) and the by-name dispatch that runs a
-/// producible type's own plan. The descriptor type, the errors and the
+/// a field target (`TARGETS`), the by-name dispatch that runs a
+/// producible type's own plan, and the `op::Answers` impls through which
+/// Stack Encrypt's typed query chain queries a producible type
+/// ([`crate::encryption::query`]). The descriptor type, the errors and the
 /// public entry points are hand-written in [`crate::encryption::targets`].
 pub mod targets;
 pub mod text;

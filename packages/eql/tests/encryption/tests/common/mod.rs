@@ -12,6 +12,9 @@ use uuid::Uuid;
 pub struct Calls {
     pub generate: Vec<Vec<String>>,
     pub retrieve: Vec<Vec<String>>,
+    /// Index key loads, one per keyset a call resolves after the cipher is
+    /// built.
+    pub loads: usize,
 }
 
 pub struct Observed {
@@ -51,6 +54,7 @@ impl IndexKeySource for Observed {
         &self,
         keyset: Option<IdentifiedBy>,
     ) -> Result<(Uuid, IndexKey), stack_kms::Error> {
+        self.calls.lock().unwrap().loads += 1;
         self.inner.load_index_key(keyset).await
     }
 }
@@ -64,5 +68,6 @@ pub async fn cipher() -> (StackCipher<Observed>, Arc<Mutex<Calls>>) {
         .init()
         .await
         .unwrap();
+    calls.lock().unwrap().loads = 0;
     (cipher, calls)
 }

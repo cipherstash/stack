@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Rust queries an EQL v4 field through Stack Encrypt's typed query chain**
+  (`stack-encrypt` feature, #1238). `cipher.query(op::Eq, v).on(&plan)` on a
+  plan for `TextEq`, `IntegerEq`, `BigintEq`, `RealEq` or `DoubleEq`
+  (`Plan::value::<S>().context("table/column").encrypt_into::<T>()`)
+  returns the type's query twin (`TextEqQuery`, …), and
+  `cipher.query(op::Matches, text).on(&plan)` on a plan for `TextMatch`
+  returns a `MatchTwin<TextMatchQuery>`: the twin, which it serializes as,
+  with `verify` and `target_limit` under `EqlMatch`. The query is the bytes
+  the data path (`stack_encrypt::dynamic::query_term`) derives for the same
+  field, and `verify` and `target_limit` answer as the data path's do.
+  eql-codegen writes the `op::Answers` impls into `v4/targets.rs` from each
+  type's indexes, by the rule the data path answers an EQL type's operators
+  with, and stops on a producible type carrying an order index or more
+  than one index; an operator a type does not answer, or another index
+  named with `.via(..)`, does not compile. Each answering type is an
+  `op::LabelledTarget`. The label must name the column, table then column,
+  and the query must not be extended, or the awaited query is refused
+  before any keyset is resolved. `eql_bindings::encryption::query` holds
+  `TwinIndex` (Stack Encrypt's index, its query sent as the twin, for the
+  twin's own plaintext only), `MatchTwin` and `QueryTwin`.
+  `Hmac256` and `BloomFilter` now declare their indexes (`EncryptFrom::indexes`),
+  so a type holding one declares the equality or match index, and `EqlMatch`
+  implements `op::MatchCase` (case-insensitive).
 - **`eql_bindings::v4` needs the `stack-encrypt` feature.** Only Stack
   Encrypt produces an EQL v4 value (ADR-0002), so the module is compiled with
   that feature alone, and its producible types derive `EncryptFrom` and

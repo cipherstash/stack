@@ -12,8 +12,10 @@ use stack_encrypt::sem::{
     EqualityTerm, MatchConfig, MatchOptions, MatchQuery, MatchTerms, OpeTerm, OreTerm, RangeQuery,
     TermError, Tokenizer,
 };
-use stack_encrypt::target::{Encrypted, IndexSpec};
-use stack_encrypt::{Equality, Error, Match, Ope, Ore, Plan};
+use stack_encrypt::target::{
+    CallerContext, ConsumeSource, EncryptFrom, Encrypted, Encryption, Index, IndexSpec,
+};
+use stack_encrypt::{Equality, Error, Label, Match, NonEmpty, Ope, Ore, Plan};
 
 /// A match configuration that keeps case, so its index answers only a
 /// case-sensitive `Matches`.
@@ -337,6 +339,201 @@ async fn a_target_with_several_terms_names_the_index_with_via() {
     );
     let eq = cipher.query(op::Eq, "bob").on(&one_term).await;
     assert!(eq.is_ok(), "one term answers what the term answers");
+}
+
+/// A target sealed under a context of its own, a `NonEmpty<Label>` rather
+/// than the caller's context, as an EQL type is sealed under its column. The
+/// label names that context, so the type opts in to queries on its plan
+/// (`op::LabelledTarget`); it accepts no `CallerContext`, so no plan can
+/// encrypt into it.
+struct Tagged;
+
+impl EncryptFrom<String> for Tagged {
+    type Context = NonEmpty<Label>;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, String, Self, K, Self::Context>
+    where
+        String: 's,
+    {
+        <EqualityTerm as EncryptFrom<String>>::encryption()
+            .accepting::<NonEmpty<Label>>()
+            .map(|_| Tagged)
+    }
+    fn indexes() -> Vec<IndexSpec> {
+        vec![IndexSpec::Equality]
+    }
+}
+
+impl op::LabelledTarget for Tagged {}
+
+/// The equality index, its query term sent with the context it was derived
+/// under, as an EQL query value stores its column: what a query term that
+/// records its context reads from the token. A label of other than two
+/// segments names no column, and is refused before any term exists.
+#[derive(Clone, Copy, Debug, Default)]
+struct Labelled;
+
+#[derive(Debug, PartialEq)]
+struct LabelledTerm {
+    label: String,
+    extended: bool,
+    term: EqualityTerm,
+}
+
+impl op::QueryTerm for LabelledTerm {}
+
+impl Index<String> for Labelled {
+    type Term = EqualityTerm;
+    fn spec(&self) -> IndexSpec {
+        Index::<String>::spec(&Equality)
+    }
+    fn operation<'s, K: 'static, M: ConsumeSource<'s, String>>(
+        &self,
+    ) -> Encryption<'s, String, EqualityTerm, K, CallerContext, M> {
+        Index::<String>::operation(&Equality)
+    }
+}
+
+impl op::Supports<op::Eq, String> for Labelled {
+    type Query = LabelledTerm;
+    type Verifier = ();
+    fn check(&self, value: &String) -> Result<(), Error> {
+        op::Supports::<op::Eq, String>::check(&Equality, value)
+    }
+    fn check_label(&self, label: &Label, _: bool) -> Result<(), Error> {
+        if label.segments().len() == 2 {
+            Ok(())
+        } else {
+            Err(Error::Other("not a column".into()))
+        }
+    }
+    fn verifier(&self, _: &String) {}
+    fn query((): (), term: EqualityTerm, token: op::QueryToken) -> LabelledTerm {
+        LabelledTerm {
+            label: token.label().to_string(),
+            extended: token.is_extended(),
+            term,
+        }
+    }
+}
+
+impl op::Answers<op::Eq, String> for Tagged {
+    type Via = Labelled;
+}
+
+fn refused_as_not_a_column<T: std::fmt::Debug>(result: Result<T, Error>) {
+    assert!(
+        matches!(&result, Err(Error::Other(reason)) if reason.to_string() == "not a column"),
+        "{result:?}"
+    );
+}
+
+/// A `LabelledTarget` is queried through its plan though nothing can be
+/// encrypted through it, and its query term reads the context its terms
+/// were derived under from the token: the plan's label or the call's, and
+/// whether the call extended it.
+#[tokio::test]
+async fn a_labelled_target_is_queried_under_the_plans_label() {
+    let cipher = stack_cipher().await;
+    let eq_plan = Plan::value::<String>()
+        .context("users/email")
+        .encrypt_into::<EqualityTerm>()
+        .build()
+        .unwrap();
+    let stored: EqualityTerm = cipher
+        .encrypt(&"bob@example.com".to_owned())
+        .using(&eq_plan)
+        .await
+        .unwrap();
+
+    let plan = Plan::value::<String>()
+        .context("users/email")
+        .encrypt_into::<Tagged>()
+        .build()
+        .unwrap();
+    let query = cipher
+        .query(op::Eq, "bob@example.com")
+        .on(&plan)
+        .await
+        .unwrap();
+    assert_eq!(
+        query,
+        LabelledTerm {
+            label: "users/email".into(),
+            extended: false,
+            term: stored,
+        }
+    );
+
+    let unlabelled = Plan::value::<String>()
+        .encrypt_into::<Tagged>()
+        .build()
+        .unwrap();
+    let query = cipher
+        .query(op::Eq, "bob@example.com")
+        .context("users/name")
+        .on(&unlabelled)
+        .await
+        .unwrap();
+    assert_eq!(query.label, "users/name");
+
+    // Extended, the terms are derived under the label and the extension, and
+    // the token says so: a term that records only the label must refuse it.
+    let extended = cipher
+        .query(op::Eq, "bob@example.com")
+        .extend(7u64)
+        .on(&plan)
+        .await
+        .unwrap();
+    let stored_extended: EqualityTerm = cipher
+        .encrypt(&"bob@example.com".to_owned())
+        .extend(7u64)
+        .using(&eq_plan)
+        .await
+        .unwrap();
+    assert!(extended.extended);
+    assert_eq!(
+        extended.label, "users/email",
+        "the label, before the extension"
+    );
+    assert_eq!(extended.term, stored_extended);
+}
+
+/// A context the index refuses is refused when the query is awaited,
+/// before the named keyset is loaded or any term is derived.
+#[tokio::test]
+async fn a_label_the_index_refuses_is_refused_before_any_keyset_or_term() {
+    let (cipher, loads) = loads_counting_cipher().await;
+    let plan = Plan::value::<String>()
+        .context("users")
+        .encrypt_into::<Tagged>()
+        .build()
+        .unwrap();
+    refused_as_not_a_column(
+        cipher
+            .query(op::Eq, "bob@example.com")
+            .keyset("tenant")
+            .on(&plan)
+            .await,
+    );
+    assert_eq!(
+        loads.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "refused before the named keyset is loaded"
+    );
+    // A label the index takes loads the keyset, so the count above is the
+    // refusal's.
+    let plan = Plan::value::<String>()
+        .context("users/email")
+        .encrypt_into::<Tagged>()
+        .build()
+        .unwrap();
+    cipher
+        .query(op::Eq, "bob@example.com")
+        .keyset("tenant")
+        .on(&plan)
+        .await
+        .unwrap();
+    assert_eq!(loads.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
 #[tokio::test]

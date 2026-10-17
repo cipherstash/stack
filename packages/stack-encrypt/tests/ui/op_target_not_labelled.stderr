@@ -1,0 +1,20 @@
+error[E0277]: `ByTenant` is not queried under a plan's label
+  --> tests/ui/op_target_not_labelled.rs:38:41
+   |
+38 |     let _ = cipher.query(op::Eq, "bob").on(&plan);
+   |                                         ^^ a typed plan for this target type answers no query
+   |
+help: the trait `LabelledTarget` is not implemented for `ByTenant`
+  --> tests/ui/op_target_not_labelled.rs:11:1
+   |
+11 | struct ByTenant;
+   | ^^^^^^^^^^^^^^^
+   = note: a target type answers queries on its plan when it implements `op::LabelledTarget`: its stored terms were derived under the context the plan's label names
+   = help: the following other types implement trait `LabelledTarget`:
+             (CipherText<SealedValue, PassthroughFrame>, T)
+             Encrypted<T>
+             EqualityTerm
+             MatchTerms<O>
+             OpeTerm<S>
+             OreTerm<S>
+   = note: required for `ValuePlan<std::string::String, Typed<ByTenant>>` to implement `Chooses<stack_encrypt::op::Eq, std::string::String, Whole>`

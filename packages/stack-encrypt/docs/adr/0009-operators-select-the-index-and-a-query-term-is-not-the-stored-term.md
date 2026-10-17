@@ -157,7 +157,11 @@ pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
 `query` makes it from the verifier and the terms the index derived for the
 query's input. `QueryToken` can be made only inside the crate, so only a
 query chain calls `query`, and no caller can turn a stored term into a query
-term by hand.
+term by hand. The token also carries the context the terms were derived
+under, for a query term that records it, as an EQL query value stores its
+column; such an index refuses a context it cannot record in a defaulted
+`check_label`, which the chain runs with `check`, before any term exists
+(#1238).
 
 `QueryTerm` and the two traits that refine it are defined in decision 4.
 `Query` is not `Term`. An ORE index's `Supports<Lt, S>::Query` is the left
