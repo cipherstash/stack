@@ -138,3 +138,58 @@ file changes only when a derivation does: regenerate it with
   `Stats::from_value` reads (an absent histogram is the declared prior), and
   the limit, null when no finite fetch can be promised, which is what the
   typed `MatchQuery` answers.
+
+# Value-kinds fixture: `value_kinds.json`
+
+One field of each value kind a plan gained in #1144: `int8`, `int16`,
+`uint8`, `uint16`, `int128`, `uint128`, `date`, `timestamp` and `decimal`.
+The data-plan lowering sealed one record of them under the deterministic key
+source, and the file holds that record, each value's transport frame, and two
+equality queries whose input differs from the stored value but whose term is
+the stored one. `tests/value_kinds.rs` checks that the record opens to the
+values exactly, that the record path, the data query path
+(`dynamic::query_term`) and the typed path derive the same terms, and that
+the committed terms are today's. The Go SDK's `encrypt` tests read the same
+file: the generated `testusers.ValueKinds` type, under the same context and
+identities, parses each `text` into its Go type, writes it as the same
+`frame`, opens the sealed record, and derives the same terms through the
+deterministic guest.
+
+Regenerate with `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p stack-encrypt
+--all-features --test value_kinds`. Only the sealed leaves change between
+runs; the frames and the terms must not. Do not edit the file by hand.
+
+```json
+{
+  "_comment":   "what this file is",
+  "key_source": { "kind": "deterministic-sha256", "seed": "<32 bytes, hex>" },
+  "keyset_id":  "<uuid the record was sealed under>",
+  "plan":       { "<field>": { "context": ["value_kinds", "<field>"], "outputs": [...], "type": "<kind>" }, ... },
+  "values": [
+    { "field": "<field>", "type": "<kind>", "text": "<the value as text>", "frame": "<hex>" }
+  ],
+  "record":  { "<field>": { "c": "<hex>", "eq": "<hex>", "ore" | "ope": "<hex>" }, ... },
+  "queries": [
+    { "field": "<field>", "operator": "eq", "text": "<the input as text>", "frame": "<hex>", "term": "<hex>" }
+  ]
+}
+```
+
+- **`values`.** Each field's value, in the order the plan lists the fields.
+  `text` is how a test spells it: a decimal integer for the integer kinds,
+  `YYYY-MM-DD` for a date, RFC 3339 with nanoseconds in UTC for a timestamp,
+  and a decimal with its scale (`-1234.5600` has scale 4) for a decimal.
+  `frame` is the value's transport frame, hex: vitaminc's tag and payload
+  (ADR-0002's table), which is also the plaintext a sealed leaf holds. A
+  date's payload counts days from 0001-01-01 as day 1, a timestamp's is
+  Unix seconds then nanoseconds, and a decimal's is rust_decimal's flags
+  word and 96-bit mantissa, so the scale is kept.
+- **`record`.** The stored record: `"c"` is the frozen `SealedValue` leaf,
+  and each term its frozen bytes, as in the record fixture. Every field has
+  an equality term; the integer fields have an ORE or OPE term too. A date,
+  timestamp and decimal have no order term until #1236.
+- **`queries`.** Equality queries vitaminc-normalize folds onto a stored
+  term: `-1234.56` finds the stored `-1234.5600` (the scale is normalised),
+  and `…03.123456Z` finds the stored `…03.123456789Z` (a timestamp's term is
+  truncated to the microsecond; the ciphertext keeps every nanosecond).
+  Each `term` equals the stored field's `eq`.

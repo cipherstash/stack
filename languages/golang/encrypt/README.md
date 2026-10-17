@@ -205,6 +205,33 @@ and `Equality`, `Match`, `Ore` or `Ope` (the term types). A field with
 An `opaque` struct is one `Sealed` field. Every stored type implements
 `driver.Valuer` and `sql.Scanner`.
 
+A sealed field outside an opaque struct is one value of one of these types,
+or a type defined over one (`type Email string`):
+
+| Go field | Seals as | Indexes |
+|---|---|---|
+| `string` | text | `equality`, `match`, `ore`, `ope` |
+| `[]byte` | bytes | `equality`, `ore`, `ope` |
+| `bool` | a boolean | none |
+| `int8`, `int16`, `int32`, `int64`, `int` | an integer of the field's own width (`int` is 64-bit) | `equality`, `ore`, `ope` |
+| `uint8` (`byte`), `uint16`, `uint32`, `uint64`, `uint` | the same, unsigned | `equality`, `ore`, `ope` |
+| `encrypt.Int128`, `encrypt.Uint128` | a 128-bit integer | `equality`, `ore`, `ope` |
+| `float32`, `float64` | a float of its width | `equality`, `ore`, `ope` |
+| `encrypt.Decimal` | a decimal: a 96-bit coefficient and a scale up to 28 | `equality` |
+| `encrypt.Date` | a calendar date | `equality` |
+| `time.Time` | a timestamp, to the nanosecond, in UTC | `equality` |
+
+`encrypt.Date`, `Int128`, `Uint128` and `Decimal` are vitaminc's `vcvalue`
+types; build them with `encrypt.DateOf`, `ParseInt128`, `ParseUint128` and
+`ParseDecimal` (which refuses NaN and the infinities). A `time.Time` opens in
+UTC: compare it with `Equal`, not `==`. Each integer type seals at its own
+width, and each width is passed to the order scheme as itself, so an `int8`
+field's terms are an `int8`'s. Equality follows vitaminc's normalisation: an
+integer equals itself at every width, decimals compare at any scale
+(`1.50 = 1.5`), and a timestamp compares to the microsecond. An order index on
+a decimal, date or timestamp is refused for now: those order terms wait for
+new cllw-ore and ore-rs releases (#1236).
+
 A `match` index stores text with no token (an empty string, separator-only
 text, or text shorter than the n-gram length of 3 characters) as the empty
 filter: a valid value that no query matches, so an optional or short value can
@@ -243,7 +270,7 @@ rules.
 | The field declares | Methods | Each returns |
 |---|---|---|
 | `index=equality` | `Eq` | `encrypt.EqualityTerm` |
-| `index=ore` or `index=ope`, on an integer | `Lt`, `Lte`, `Gt`, `Gte` | `encrypt.OreTerm`, or `encrypt.OpeTerm` when the field declares no `ore` |
+| `index=ore` or `index=ope`, on an integer of any width | `Lt`, `Lte`, `Gt`, `Gte` | `encrypt.OreTerm`, or `encrypt.OpeTerm` when the field declares no `ore` |
 | the same | `Between(ctx, cipher, lo, hi)` | `encrypt.Range[encrypt.OreTerm]` or `encrypt.Range[encrypt.OpeTerm]`, the two bounds' terms |
 | `index=match`, on a string | `Matches` | `encrypt.MatchQuery[T]` |
 | `encrypt_into=TextEq` | `Eq` | `eql.TextEqQuery` |
@@ -398,15 +425,24 @@ The EQL types the engine produces, and the Go field types each takes:
 | `TextEq` | `string` | `=`, `<>` |
 | `TextMatch` | `string` | `@@` (substring match, 3-grams, case-insensitive) |
 | `Text` | `string` | none: stored and read only |
-| `Integer` | `int32` | none |
-| `IntegerEq` | `int32` | `=`, `<>` |
-| `Bigint` | `int64` | none |
-| `BigintEq` | `int64` | `=`, `<>` |
+| `Integer` | `int32`, or any Go integer type (see below) | none |
+| `IntegerEq` | the same | `=`, `<>` |
+| `Bigint` | `int64`, or any Go integer type | none |
+| `BigintEq` | the same | `=`, `<>` |
 | `Boolean` | `bool` | none |
 | `Real` | `float32` | none |
 | `RealEq` | `float32` | `=`, `<>` |
 | `Double` | `float64` | none |
 | `DoubleEq` | `float64` | `=`, `<>` |
+
+Any built-in Go integer field takes an integer EQL type (ADR-0002): the field
+is sealed at the type's width, and opens back into the field's type. A type
+every value of which fits (an `int16` or a `uint16` field for `Integer`)
+always seals; a wider one (an `int64` or a `uint32` field for `Integer`) is
+range checked value by value, and `Encrypt` refuses a value that does not fit
+with `ErrEncoding`, naming the field's kind and not the value.
+`encrypt.Int128` and `encrypt.Uint128` are not converted, and floats take
+exactly their own width.
 
 A `TextMatch` value must be at least three characters long: shorter text has
 no 3-grams to index and is refused. The number equality types compare as
