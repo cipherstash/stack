@@ -13,10 +13,10 @@ categories.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-vitaminc-aead-derive = { version = "0.5.1", path = "../aead-derive" }
-vitaminc-context = { version = "0.5.1", path = "../context" }
-vitaminc-protected = { version = "0.5.1", path = "../protected" }
-vitaminc-random = { version = "0.5.1", path = "../random" }
+vitaminc-aead-derive = { version = "0.6.0", path = "../aead-derive" }
+vitaminc-context = { version = "0.6.0", path = "../context" }
+vitaminc-protected = { version = "0.6.0", path = "../protected" }
+vitaminc-random = { version = "0.6.0", path = "../random" }
 
 bytes = { version = "^1", features = ["serde"] }
 serde = { workspace = true }

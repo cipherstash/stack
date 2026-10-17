@@ -13,7 +13,7 @@ categories.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-vitaminc-aead = { version = "0.5.1", path = "../aead" }
+vitaminc-aead = { version = "0.6.0", path = "../aead" }
 
 [dev-dependencies]
 quickcheck = "1.1.0"

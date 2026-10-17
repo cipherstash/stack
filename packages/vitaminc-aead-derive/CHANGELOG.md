@@ -1,4 +1,25 @@
 
+## [0.6.0] - 2026-10-17
+
+### Breaking
+
+- **Breaking:** raise the MSRV to 1.88 and pin kms to the AWS SDK floor
+- **Breaking:** walk Protected<T> by reference and retire visit_protected
+- **Breaking:** remove Encrypt, Decipher, DecipherVisitor, SeqAccess and MapAccess
+- **Breaking:** name the source trait Encrypt so it pairs with Decrypt
+
+### Features
+
+- derive Plaintext and the sink-based Decrypt
+- refuse derived types too deep to encrypt at compile time
+
+### Fixes
+
+- accept u32::MAX as an enum's last discriminant
+- give ContextTag its async methods and say what the walk authenticates
+- check the borrowed impl's depth at compile time for non-generic types
+- check lifetime-only types and same-named path fields at compile time
+
 ## [0.5.1] - 2026-10-05
 
 ## [0.5.0] - 2026-09-20
