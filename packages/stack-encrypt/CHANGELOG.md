@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A target sealed under a context of its own can opt in to queries on
+  its plan** (#1238). `op::LabelledTarget` says a target type's stored terms
+  were derived under the context a plan's label names. A typed plan for such
+  a type (`Plan::value::<S>().encrypt_into::<T>()`) answers the operators its
+  `op::Answers` impls name, and needs only the indexes `T` declares, not a
+  context the label converts into: an EQL v4 type, sealed under its column,
+  is queried through its plan though it cannot be encrypted through it.
+  This crate's term targets implement it; a type sealed under a context no
+  label names must not, and its plan answers no query. Naming an index with
+  `.via(..)` still needs a type sealed under the label itself.
+  `op::QueryToken` carries the context the query's terms were derived under
+  (`label`, `is_extended`), for a query term that records it, and
+  `op::Supports::check_label` (defaulted to `Ok`) lets such an index refuse
+  a context it cannot record when the query is awaited, before any keyset
+  is resolved or term derived.
 - **A binding queries by operator** (`dynamic` feature; ADR-0009, ADR-0007
   amended 2026-10-16). `dynamic::query_term(keyset, &plan, field, op,
   input, &resolver)` derives the query term for a field of a data plan, an

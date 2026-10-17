@@ -661,11 +661,29 @@ pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
         self.check(input)?;
         Ok(self.verifier(input))
     }
+    /// Why this index cannot answer a query whose terms are derived under
+    /// `label`, the plan's or the call's, extended by parts the call gave
+    /// (`.extend(..)`) when `extended` is true: for an index whose query term
+    /// records the context it was derived under, a context it cannot record.
+    /// An EQL query value stores the column it queries, so its index refuses
+    /// a label that names no column, and any extension, which the column
+    /// cannot hold. Run when the query is awaited, before [`check`](Self::check)
+    /// and before any keyset is resolved; every index in this crate takes
+    /// any context and returns `Ok(())`.
+    fn check_label(&self, _label: &Label, _extended: bool) -> Result<(), Error> {
+        Ok(())
+    }
     /// The query term, from the verifier and the terms the index derived
     /// for the input's plaintexts. Only a query chain calls this:
     /// `QueryToken` cannot be made outside this crate, so no caller can
     /// pair one query's tokens with another value's filter, or pass a
     /// stored term off as a query.
+    ///
+    /// The token carries the context the terms were derived under
+    /// ([`QueryToken::label`], [`QueryToken::is_extended`]), for a query
+    /// term that records it beside its terms. The chain calls this only
+    /// after [`check_label`](Self::check_label) accepted that context, so a
+    /// term built from it need not refuse it again.
     fn query(
         verifier: Self::Verifier,
         terms: In::Terms<Self::Term>,
@@ -673,15 +691,35 @@ pub trait Supports<Op: Operator, In: Input<Op::Arity>>: Index<In::Plaintext> {
     ) -> Self::Query;
 }
 
-/// Proof that [`Supports::query`] is called by a query chain. Only this
-/// crate can make one, so an index in another crate can implement
-/// [`Supports`] but no caller can turn a term into a query term by hand.
+/// Proof that [`Supports::query`] is called by a query chain, and the
+/// context the query's terms were derived under. Only this crate can make
+/// one, so an index in another crate can implement [`Supports`] but no
+/// caller can turn a term into a query term by hand, or name a context its
+/// terms were not derived under.
 #[derive(Debug)]
-pub struct QueryToken(());
+pub struct QueryToken {
+    label: Label,
+    extended: bool,
+}
 
 impl QueryToken {
-    pub(crate) fn new() -> Self {
-        Self(())
+    pub(crate) fn new(label: Label, extended: bool) -> Self {
+        Self { label, extended }
+    }
+
+    /// The label the query's terms were derived under, before any
+    /// extension: the plan's or the call's, the context the write used for
+    /// the field. It is the whole context exactly when
+    /// [`is_extended`](Self::is_extended) is false.
+    pub fn label(&self) -> &Label {
+        &self.label
+    }
+
+    /// Whether the call extended the label by parts of its own
+    /// (`.extend(..)`), so the terms were derived under the label followed
+    /// by those parts rather than the label alone.
+    pub fn is_extended(&self) -> bool {
+        self.extended
     }
 }
 
@@ -812,6 +850,41 @@ pub trait Answers<Op: Operator, In: Input<Op::Arity>> {
     /// so its `Default` is the index.
     type Via: Supports<Op, In> + Default;
 }
+
+/// A target type whose stored terms were derived under the context a
+/// query's label names, so a plan for it
+/// (`Plan::value::<S>().encrypt_into::<T>()`) answers the operators its
+/// [`Answers`] impls name, with each query derived under the plan's label.
+///
+/// Implementing it is a claim about the stored values: a query term derived
+/// under the label equals the stored term only if the stored term was
+/// derived under the same context. This crate's term targets
+/// ([`EqualityTerm`], [`MatchTerms`], [`OreTerm`], [`OpeTerm`], and
+/// [`Encrypted`](crate::target::Encrypted) or a ciphertext beside one
+/// term) are sealed under the caller's context, which is the label. An EQL
+/// v4 type is sealed under the column it stores, which a two-segment label
+/// names, and its index refuses any other label
+/// ([`Supports::check_label`]). A type sealed under a context no label
+/// names, such as an integer tenant id, must not implement it: a query on
+/// its plan would match nothing, with no error.
+///
+/// A query on such a plan derives through the index alone and never runs
+/// the target's own encryption, so the target need not accept the label as
+/// its context: an EQL type, sealed under a column identifier, cannot be
+/// encrypted through its plan and is queried through it all the same.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not queried under a plan's label",
+    label = "a typed plan for this target type answers no query",
+    note = "a target type answers queries on its plan when it implements `op::LabelledTarget`: its stored terms were derived under the context the plan's label names"
+)]
+pub trait LabelledTarget {}
+
+impl LabelledTarget for EqualityTerm {}
+impl<O> LabelledTarget for MatchTerms<O> {}
+impl<S: CllwOreEncrypt> LabelledTarget for OreTerm<S> {}
+impl<S: CllwOpeEncrypt> LabelledTarget for OpeTerm<S> {}
+impl<T: LabelledTarget> LabelledTarget for (crate::StackCipherText, T) {}
+impl<T> LabelledTarget for crate::target::Encrypted<T> {}
 
 impl<S: crate::Encrypt + 'static> Answers<Eq, S> for EqualityTerm {
     type Via = Equality;

@@ -20,10 +20,10 @@ help: the following other types implement trait `Chooses<Op, In, At>`
   | | where
   | |     Op: Operator,
   | |     In: Input<Op::Arity, Plaintext = S>,
-... |
-  | |     T::Via: Default,
-  | |     Typed<T>: ValueShape<S>,
-  | |____________________________^ `ValuePlan<S, Typed<T>>` implements `Chooses<Op, In, Whole>`
+  | |     S: 'static,
+  | |     T: Answers<Op, In> + LabelledTarget,
+  | |     Typed<T>: ValueLayout<S>,
+  | |_____________________________^ `ValuePlan<S, Typed<T>>` implements `Chooses<Op, In, Whole>`
   = note: required for `stack_encrypt::op::Matches` to implement `DefaultIndex<u32>`
   = note: required for `ValuePlan<u32, Indexed<stack_encrypt::Equality>>` to implement `Chooses<stack_encrypt::op::Matches, u32, _>`
 

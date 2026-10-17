@@ -337,6 +337,14 @@ mod sealed {
 /// into that context. A target whose context is, say, a `NonEmpty<u64>`
 /// builds, and runs through
 /// [`encryption_with_context`](ValuePlan::encryption_with_context).
+///
+/// A query through a [`Typed`] plan whose target is a
+/// [`LabelledTarget`](crate::op::LabelledTarget) needs only this: the query
+/// derives through the index the target's `Answers` impl names, under the
+/// plan's label, and never runs the target's encryption. So an EQL type,
+/// sealed under its column rather than the label, is queried through its
+/// plan though it cannot be encrypted through it. Naming another index with
+/// `.via(..)` needs [`ValueShape`].
 pub trait ValueLayout<S>: sealed::Sealed + Clone {
     /// What one run produces.
     type Output: 'static;
@@ -346,7 +354,9 @@ pub trait ValueLayout<S>: sealed::Sealed + Clone {
 
 /// How a one-value plan lays its value out under a [`Label`]: [`Indexed`]
 /// or [`Typed`]. What [`ValuePlan::encryption`], `cipher.encrypt(..).using`
-/// and a query through the plan ask. Sealed.
+/// and a query that names its index with `.via(..)` ask. A query that lets
+/// a [`Typed`] plan choose the index asks only [`ValueLayout`], when the
+/// target is a [`LabelledTarget`](crate::op::LabelledTarget). Sealed.
 pub trait ValueShape<S>: ValueLayout<S> {
     /// The description of one value, run under its whole context.
     fn lower<'s, K: 'static>(&self) -> Encryption<'s, S, Self::Output, K, CallerContext>
@@ -542,10 +552,12 @@ impl<S, X> ValuePlan<S, Indexed<X>> {
 
 impl<S, T> ValuePlan<S, Typed<T>>
 where
-    Typed<T>: ValueShape<S>,
+    Typed<T>: ValueLayout<S>,
 {
     /// The label a query through `index` is derived under, or why the plan
-    /// cannot answer it.
+    /// cannot answer it. It reads only the indexes `T` declares
+    /// ([`ValueLayout`]); which plans may be queried at all is the query
+    /// chain's (`Chooses`, `Resolves`).
     pub(crate) fn query_label(
         &self,
         index: &IndexSpec,
