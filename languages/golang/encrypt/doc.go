@@ -137,7 +137,10 @@
 //
 // Eq returns an [EqualityTerm] (or, for a field with encrypt_into, the EQL
 // type's query value), an ordering an [OreTerm] or [OpeTerm], and Between a
-// [Range] of two. Their answers are exact. Matches returns a [MatchQuery],
+// [Range] of two. Their answers are exact. The orderings are answered on
+// integers and on text, which orders by its folded form (case and accents
+// folded, under Unicode 16), so Café and cafe tie and alice orders before
+// Zoe. Matches returns a [MatchQuery],
 // whose answer can hold rows that do not match: size the fetch with
 // [MatchQuery.TargetLimit], then decrypt the rows and keep those
 // [MatchQuery.Verify] reports true, one call into the engine for the page.

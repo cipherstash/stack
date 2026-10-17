@@ -18,15 +18,10 @@ const _ = gensupport.GeneratedVersion1
 // Kinds prints its sealed fields in the clear: it has no String or LogValue
 // method. Write them, or run stashgen with -redact.
 
-// E: stores ore terms that no generated method queries: the engine answers no
-// query through the ore index on this field (Email): the orderings are answered
-// over integers only. Drop the index unless your own code compares the stored
-// terms.
-
 // F64: stores ore terms that no generated method queries: the engine answers no
 // query through the ore index on this field (float64): the orderings are
-// answered over integers only. Drop the index unless your own code compares the
-// stored terms.
+// answered over integers and text only. Drop the index unless your own code
+// compares the stored terms.
 
 type EncryptedKinds struct {
 	S   EncryptedKindsS
@@ -591,6 +586,31 @@ func (f KindsEField) Encrypt(ctx context.Context, c *encrypt.Cipher, v Email) (E
 func (f KindsEField) Eq(ctx context.Context, c *encrypt.Cipher, v Email) (encrypt.EqualityTerm, error) {
 	term, err := f.field.Term(ctx, c, "eq", v)
 	return encrypt.EqualityTerm(term), err
+}
+
+func (f KindsEField) Lt(ctx context.Context, c *encrypt.Cipher, v Email) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f KindsEField) Lte(ctx context.Context, c *encrypt.Cipher, v Email) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f KindsEField) Gt(ctx context.Context, c *encrypt.Cipher, v Email) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f KindsEField) Gte(ctx context.Context, c *encrypt.Cipher, v Email) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f KindsEField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi Email) (encrypt.Range[encrypt.OreTerm], error) {
+	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
 }
 
 // Matches derives the matches query for v. Its answer can hold rows that do not

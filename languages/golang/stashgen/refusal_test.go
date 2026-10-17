@@ -339,17 +339,18 @@ func TestTheWholeDeclarationIsCheckedAgainstTheEmbeddedEngine(t *testing.T) {
 }
 
 // An index no generated method queries is stored, and the generator says
-// so, on stderr and in the file: an order index on text, bytes or a float,
-// and the second of two order indexes on an integer.
+// so, on stderr and in the file: an order index on bytes or a float, and
+// the second of two order indexes on an integer or text. An order index on
+// text answers the orderings, so it gets methods and no notice.
 func TestAnIndexNoMethodQueriesGetsANotice(t *testing.T) {
-	src := user(ctx + "\tName string `stash:\"name,encrypt,index=match;ope\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`\n\tAge int64 `stash:\"age,encrypt,index=ore;ope\"`\n\tRank int32 `stash:\"rank,encrypt,index=ope\"`")
+	src := user(ctx + "\tName string `stash:\"name,encrypt,index=match;ope\"`\n\tBlob []byte `stash:\"blob,encrypt,index=ope\"`\n\tScore float64 `stash:\"score,encrypt,index=ore\"`\n\tAge int64 `stash:\"age,encrypt,index=ore;ope\"`\n\tRank int32 `stash:\"rank,encrypt,index=ope\"`")
 	file, err := generate(t, src, stashgen.Request{Type: "User"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	notices := strings.Join(file.Notices, "\n")
 	for _, want := range []string{
-		"stashgen: User.Name: stores ope terms that no generated method queries",
+		"stashgen: User.Blob: stores ope terms that no generated method queries",
 		"stashgen: User.Score: stores ore terms that no generated method queries",
 		"stashgen: User.Age: stores ope terms that no generated method queries: the engine answers no query through the ope index on this field (int64): the ore index already answers",
 	} {
@@ -357,10 +358,15 @@ func TestAnIndexNoMethodQueriesGetsANotice(t *testing.T) {
 			t.Errorf("notices lack %q:\n%s", want, notices)
 		}
 	}
-	if strings.Contains(notices, "User.Rank") {
-		t.Errorf("an ope index that answers the orderings got a notice:\n%s", notices)
+	for _, field := range []string{"User.Name", "User.Rank"} {
+		if strings.Contains(notices, field) {
+			t.Errorf("an order index that answers the orderings got a notice (%s):\n%s", field, notices)
+		}
 	}
-	if !strings.Contains(string(file.Content), "// Name: stores ope terms that no generated method queries") {
+	if !strings.Contains(string(file.Content), "// Blob: stores ope terms that no generated method queries") {
 		t.Errorf("the file does not carry the notice:\n%s", file.Content)
+	}
+	if !strings.Contains(string(file.Content), "func (f NameField) Lt(") {
+		t.Errorf("a text field with ope has no Lt:\n%s", file.Content)
 	}
 }

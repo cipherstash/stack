@@ -55,7 +55,7 @@
 //! does.
 //!
 //! What the types can see is checked at compile time: a match query on an
-//! integer, an ordering on text, an operator a target type does not answer,
+//! integer, an ordering on bytes, an operator a target type does not answer,
 //! and, on a one-value plan, an index the plan does not hold or a
 //! case-sensitive match against a case-folding index. A field of a fields
 //! plan is data, so there an index the field does not declare, or declares
@@ -343,14 +343,15 @@ impl<S: 'static> Input<Pair> for (S, S) {
 
 /// A plaintext the ordering operators ([`Lt`], [`Lte`], [`Gt`], [`Gte`],
 /// [`Between`]) are answered over: the integer types, whose ORE and OPE
-/// terms order as the values do and whose order key is the value itself.
-/// Text is not one: its order term is a catalog question (ADR-0009, ADR-0002),
-/// and an ordering on a text plan does not compile.
+/// terms order as the values do, and text (`String`), whose terms order as
+/// its order key does: the system ADR-0002's fold, Unicode 16 NFC with case
+/// and accents folded, so `Café`, `cafe` and `CAFÉ` tie and `alice` orders
+/// before `Zoe` (ADR-0009).
 ///
-/// Sealed: `Between` refuses an inverted range with the type's `PartialOrd`
-/// while the server compares ORE terms, so a type whose two orders could
-/// disagree (a newtype over folded text, say) must not be able to join. A
-/// type that meets every other bound is still refused:
+/// Sealed: `Between` refuses an inverted range by [`inverted`](Self::inverted),
+/// which must agree with the order the server compares, so a type whose two
+/// orders could disagree must not be able to join. A type that meets every
+/// other bound is still refused:
 ///
 /// ```compile_fail
 /// # use cllw_ore::{CllwOpeEncrypt, CllwOreEncrypt, Error, Key};
@@ -374,9 +375,9 @@ impl<S: 'static> Input<Pair> for (S, S) {
 /// impl Ordered for Folded {} // `Ordered` is sealed
 /// ```
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not ordered: the ordering operators are answered over the integer types only",
+    message = "`{Self}` is not ordered: the ordering operators are answered over the integer types and text",
     label = "no ordering operator over this type",
-    note = "`Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u8` to `u128` or `i8` to `i128`; the order of text is not settled (ADR-0009), so an ordering over text does not compile"
+    note = "`Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u8` to `u128`, `i8` to `i128`, or a `String`"
 )]
 pub trait Ordered:
     sealed::Sealed
@@ -386,6 +387,17 @@ pub trait Ordered:
     + Send
     + 'static
 {
+    /// Whether `lo..=hi` is an inverted range, in the order the server
+    /// compares: the value's own order for an integer, the order key's for
+    /// text, so `("b", "A")` is inverted and `("A", "a")` is one value.
+    ///
+    /// # Errors
+    ///
+    /// What deriving the order key refuses: text holding a code point
+    /// Unicode 16 does not assign ([`TermError::Normalize`]).
+    fn inverted(lo: &Self, hi: &Self) -> Result<bool, TermError> {
+        Ok(lo > hi)
+    }
 }
 
 macro_rules! ordered {
@@ -395,6 +407,17 @@ macro_rules! ordered {
     )+};
 }
 ordered!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+
+impl sealed::Sealed for String {}
+impl Ordered for String {
+    fn inverted(lo: &Self, hi: &Self) -> Result<bool, TermError> {
+        let (lo, hi) = (
+            crate::sem::text_order_key(lo)?,
+            crate::sem::text_order_key(hi)?,
+        );
+        Ok(lo.as_slice() > hi.as_slice())
+    }
+}
 
 /// Text search: rows whose text contains the query's tokens, under the
 /// match index's tokenizer. Not containment: a Bloom match is order- and
@@ -745,7 +768,7 @@ macro_rules! orders {
             type Query = RangeQuery<$term<S>>;
             type Verifier = ();
             fn check(&self, (lo, hi): &(S, S)) -> Result<(), Error> {
-                if lo > hi {
+                if S::inverted(lo, hi)? {
                     Err(TermError::InvertedRange.into())
                 } else {
                     Ok(())

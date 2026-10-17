@@ -439,10 +439,9 @@ where
 /// `String` or `Vec<u8>` would be freed with the plaintext still in it, in
 /// a guest's linear memory, where the host can read it.
 ///
-/// Text is ordered as its raw UTF-8, not in the Unicode 16 NFC that
-/// equality and match terms use: `café` written precomposed and with a
-/// combining accent is one value to `=` and two to an ordering. A known
-/// gap, to close with block ORE (#1140).
+/// Text is ordered by its order key, the system ADR-0002's fold, as on the
+/// typed path ([`crate::sem::text_order_key`]): the same bytes for the same
+/// text, `café` precomposed or with a combining accent, and `Café`, ties.
 fn ore_of<'a, 'c, K: 'static, D>(
     cipher: &'a KeysetCipher<'_, K>,
     value: Physical<'_>,

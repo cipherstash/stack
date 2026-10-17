@@ -243,17 +243,25 @@ rules.
 | The field declares | Methods | Each returns |
 |---|---|---|
 | `index=equality` | `Eq` | `encrypt.EqualityTerm` |
-| `index=ore` or `index=ope`, on an integer | `Lt`, `Lte`, `Gt`, `Gte` | `encrypt.OreTerm`, or `encrypt.OpeTerm` when the field declares no `ore` |
+| `index=ore` or `index=ope`, on an integer or a string | `Lt`, `Lte`, `Gt`, `Gte` | `encrypt.OreTerm`, or `encrypt.OpeTerm` when the field declares no `ore` |
 | the same | `Between(ctx, cipher, lo, hi)` | `encrypt.Range[encrypt.OreTerm]` or `encrypt.Range[encrypt.OpeTerm]`, the two bounds' terms |
 | `index=match`, on a string | `Matches` | `encrypt.MatchQuery[T]` |
 | `encrypt_into=TextEq` | `Eq` | `eql.TextEqQuery` |
 | `encrypt_into=TextMatch` | `Matches` | `encrypt.EQLMatchQuery[eql.TextMatchQuery, T]` |
 
 A method takes the field's own Go type, so `Fields.Age.Lt` on a `uint32`
-field takes a `uint32`. An order index on text, bytes or a float stores its
-term but answers no ordering operator yet, so such a field has no `Lt`; nor
-does the `ope` index of a field that declares `ore` too, since `ore` answers
-the orderings. stashgen prints a notice for each such index, on stderr and in
+field takes a `uint32`.
+
+Text orders by its folded form (ADR-0002): case and accents are folded and
+`ß` becomes `ss`, under Unicode 16. So `Café`, `cafe` and `CAFÉ` are one
+value and tie, `alice` orders before `Zoe`, and `é` orders with `e`, not
+after `z`. `Between("b", "A")` is refused as an inverted range, since `A`
+folds to `a`. Text holding a code point Unicode 16 does not assign has no
+fold, and its query or write is refused with `encrypt.ErrTerm`.
+
+An order index on bytes or a float stores its term but answers no ordering
+operator, so such a field has no `Lt`; nor does the `ope` index of a field
+that declares `ore` too, since `ore` answers the orderings. stashgen prints a notice for each such index, on stderr and in
 the generated file: the terms are stored, and only your own code can compare
 them. A match index on an index-only field (`index=match` with no `encrypt`)
 is refused, because `Verify` checks a match query's rows by decrypting them.

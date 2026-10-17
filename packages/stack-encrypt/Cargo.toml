@@ -37,6 +37,9 @@ vitaminc-hmac = { workspace = true }
 # number whatever its width, text in Unicode 16 NFC. Match text is
 # normalized by the same crate before it is tokenized.
 vitaminc-normalize = { workspace = true }
+# Text order terms are derived over `vitaminc-ore`'s folded order key, not
+# cllw-ore's own text collation.
+vitaminc-ore = { workspace = true }
 vitaminc-prf = { workspace = true }
 vitaminc-protected = { workspace = true }
 serde = { workspace = true }

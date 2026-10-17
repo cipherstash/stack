@@ -35,11 +35,12 @@
 //! A field with indexes answers what [`OpSpec::answered_by`] says for its
 //! declared kind: `eq` through an equality index, `matches` through a match
 //! index over text, and the orderings (`lt`, `lte`, `gt`, `gte`,
-//! `between`) through an ORE index over an integer, or an OPE index when
-//! the field declares no ORE. The typed path's default for an ordering is
-//! ORE, and OPE is the typed path's `.via(Ope)`; here a field that declares
-//! only OPE is answered through it. An ordering over text, bytes or a float
-//! is not answered, as `op::Ordered` covers the integers only.
+//! `between`) through an ORE index over an integer or text, or an OPE index
+//! when the field declares no ORE. The typed path's default for an ordering
+//! is ORE, and OPE is the typed path's `.via(Ope)`; here a field that
+//! declares only OPE is answered through it. Text orders by its folded
+//! order key (ADR-0002). An ordering over bytes or a float is not answered,
+//! as `op::Ordered` covers the integers and text only.
 //!
 //! A field that names an EQL type answers what its
 //! [`TargetDescriptor::operators`] lists: the operators of a single value
@@ -161,7 +162,8 @@ impl OpSpec {
     ///
     /// let both = [IndexSpec::Ope, IndexSpec::Ore];
     /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::UInt32, &both), Some(&IndexSpec::Ore));
-    /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::String, &both), None);
+    /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::String, &both), Some(&IndexSpec::Ore));
+    /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::Bytes, &both), None);
     /// assert_eq!(OpSpec::Eq.answered_by(ValueKind::UInt32, &both), None);
     /// ```
     pub fn answered_by(self, kind: ValueKind, indexes: &[IndexSpec]) -> Option<&IndexSpec> {
@@ -188,12 +190,17 @@ impl fmt::Display for OpSpec {
     }
 }
 
-/// The kinds the ordering operators are answered over: the integers, as
-/// [`op::Ordered`](crate::op::Ordered) covers them in the typed path.
+/// The kinds the ordering operators are answered over: the integers and
+/// text, as [`op::Ordered`](crate::op::Ordered) covers them in the typed
+/// path. Text orders by its order key (ADR-0002's fold).
 fn ordered(kind: ValueKind) -> bool {
     matches!(
         kind,
-        ValueKind::Int32 | ValueKind::Int64 | ValueKind::UInt32 | ValueKind::UInt64
+        ValueKind::Int32
+            | ValueKind::Int64
+            | ValueKind::UInt32
+            | ValueKind::UInt64
+            | ValueKind::String
     )
 }
 
@@ -566,8 +573,18 @@ fn check_input(index: &IndexSpec, input: &Input) -> Result<(), Error> {
     let refused = |error: TermError| Error::Cipher(error.into());
     match (index, input) {
         (_, Input::Pair(lo, hi)) => {
-            if integer_order(lo, hi) == Some(Ordering::Greater) {
+            if bound_order(lo, hi).map_err(refused)? == Some(Ordering::Greater) {
                 return Err(refused(TermError::InvertedRange));
+            }
+        }
+        // Order text the fold cannot take (a code point unassigned in
+        // Unicode 16) is refused here, before a term or a keyset, as
+        // derivation would refuse it after one.
+        (IndexSpec::Ore | IndexSpec::Ope, Input::One(FfiValue::String(text))) => {
+            if let Some(text) = utf8(text) {
+                crate::sem::text_order_key(text)
+                    .map(drop)
+                    .map_err(refused)?;
             }
         }
         (IndexSpec::Match(options), Input::One(value)) => {
@@ -582,6 +599,23 @@ fn check_input(index: &IndexSpec, input: &Input) -> Result<(), Error> {
         _ => {}
     }
     Ok(())
+}
+
+/// The order of a range's two bounds, as the server compares their terms:
+/// integers of one kind by value, text by its order key, so `("b", "A")` is
+/// inverted and `("A", "a")` is one value. `None` for anything else.
+fn bound_order(lo: &FfiValue, hi: &FfiValue) -> Result<Option<Ordering>, TermError> {
+    if let (FfiValue::String(lo), FfiValue::String(hi)) = (lo, hi) {
+        let (Some(lo), Some(hi)) = (utf8(lo), utf8(hi)) else {
+            return Ok(None);
+        };
+        let (lo, hi) = (
+            crate::sem::text_order_key(lo)?,
+            crate::sem::text_order_key(hi)?,
+        );
+        return Ok(Some(lo.as_slice().cmp(hi.as_slice())));
+    }
+    Ok(integer_order(lo, hi))
 }
 
 /// The order of two integers of one kind, or `None` for anything else.
@@ -1125,6 +1159,7 @@ mod tests {
                 ValueKind::Int64,
                 ValueKind::UInt32,
                 ValueKind::UInt64,
+                ValueKind::String,
             ] {
                 assert_eq!(
                     answered(op, kind, &all),
@@ -1142,16 +1177,11 @@ mod tests {
                     "{op} {kind}"
                 );
             }
-            for kind in [
-                ValueKind::String,
-                ValueKind::Bytes,
-                ValueKind::Float64,
-                ValueKind::Bool,
-            ] {
+            for kind in [ValueKind::Bytes, ValueKind::Float64, ValueKind::Bool] {
                 assert_eq!(
                     answered(op, kind, &all),
                     None,
-                    "{op} is answered over integers only: {kind}"
+                    "{op} is answered over integers and text only: {kind}"
                 );
             }
         }
@@ -1306,7 +1336,7 @@ mod tests {
             ),
             (
                 "nickname",
-                OpSpec::Lt,
+                OpSpec::Eq,
                 text("bob"),
                 Reason::OperatorNotAnswered,
             ),
@@ -1369,8 +1399,19 @@ mod tests {
         let cipher = cipher().await;
         let keyset = cipher.default_keyset();
         let pair = |lo, hi| FfiValue::Array(vec![FfiValue::UInt32(lo), FfiValue::UInt32(hi)]);
+        let texts = |lo, hi| FfiValue::Array(vec![text(lo), text(hi)]);
         let cases = [
             ("age", OpSpec::Between, pair(65, 18), "inverted"),
+            // Text bounds compare by their folded order keys: `A` folds
+            // to `a`, which is below `b`.
+            ("nickname", OpSpec::Between, texts("b", "A"), "inverted"),
+            ("nickname", OpSpec::Lt, text("a\u{0378}"), "normalize"),
+            (
+                "nickname",
+                OpSpec::Between,
+                texts("a", "b\u{0378}"),
+                "normalize",
+            ),
             ("name", OpSpec::Matches, text("al"), "empty"),
             ("name", OpSpec::Matches, text("\u{0378}abc"), "normalize"),
             ("email", OpSpec::Eq, text("a\u{0378}bc"), "normalize"),
@@ -1389,6 +1430,27 @@ mod tests {
                 assert!(expected, "{what}: {error:?}");
             }
         }
+        // A folded tie is one value, so the range is not inverted, and the
+        // terms of folded equivalents are one term.
+        let tie = texts("A", "a");
+        assert!(check_query(
+            &users(),
+            "nickname",
+            OpSpec::Between,
+            tie.clone(),
+            &NoTargets
+        )
+        .is_ok());
+        assert!(query(&keyset, "nickname", OpSpec::Between, tie)
+            .await
+            .is_ok());
+        let cafe = query(&keyset, "nickname", OpSpec::Lt, text("cafe"))
+            .await
+            .unwrap();
+        let folded = query(&keyset, "nickname", OpSpec::Lt, text("CAF\u{c9}"))
+            .await
+            .unwrap();
+        assert_eq!(folded.operand, cafe.operand);
     }
 
     /// A plan whose context is a field of each record has no context a
@@ -1983,7 +2045,17 @@ mod tests {
                     (OpSpec::Between, IndexSpec::Ore),
                 ],
             ),
-            ("nickname", "string", vec![]),
+            (
+                "nickname",
+                "string",
+                vec![
+                    (OpSpec::Lt, IndexSpec::Ore),
+                    (OpSpec::Lte, IndexSpec::Ore),
+                    (OpSpec::Gt, IndexSpec::Ore),
+                    (OpSpec::Gte, IndexSpec::Ore),
+                    (OpSpec::Between, IndexSpec::Ore),
+                ],
+            ),
         ] {
             let listed = field_operators(&users(), name, &NoTargets).unwrap();
             assert_eq!(listed, want, "{name}");

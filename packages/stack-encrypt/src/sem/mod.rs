@@ -129,6 +129,7 @@ mod tokenize;
 
 pub use tokenize::Tokenizer;
 
+use std::any::Any;
 use std::collections::HashSet;
 use std::fmt;
 use std::marker::PhantomData;
@@ -175,6 +176,88 @@ const ORE_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ore-key/v1";
 /// PAE domain for OPE key derivation (distinct from ORE: OPE ciphertexts are
 /// encrypt-only, so the two schemes must never share a key).
 const OPE_KEY_DOMAIN: &[u8] = b"stack-encrypt/sem/ope-key/v1";
+
+/// The order key of text: the system ADR-0002's fold (Unicode 16 NFC with
+/// case and accents folded), from `vitaminc-ore`, whose lexicographic byte
+/// order is the order an ORE or OPE term over text compares. `Café`,
+/// `cafe` and `CAFÉ` have one key and tie; `alice` orders before `Zoe`,
+/// and `é` with `e`, not after `z`.
+///
+/// The key is a fresh, zeroizing copy of the folded text: it is plaintext.
+///
+/// # Errors
+///
+/// [`TermError::Normalize`] for text holding a code point Unicode 16 does
+/// not assign, whose folding is not known.
+pub(crate) fn text_order_key(text: &str) -> Result<Zeroizing<Vec<u8>>, TermError> {
+    use vitaminc_protected::Controlled;
+    Ok(Zeroizing::new(vitaminc_ore::text(text)?.risky_unwrap()))
+}
+
+/// What an order term is derived over: the source as cllw-ore encrypts it,
+/// or, for text, the text's order key ([`text_order_key`]). cllw-ore's own
+/// text encryption applies its own collation (`orderize_string`), which is
+/// not the order ADR-0002 defines, so text goes to cllw-ore as its key's
+/// bytes. cllw-ore encrypts bytes into the same variable-length ciphertext
+/// type it encrypts text into, so the term's type is unchanged.
+enum OrderSource<T> {
+    Value(T),
+    TextKey(Zeroizing<Vec<u8>>),
+}
+
+impl<T: 'static> OrderSource<T> {
+    /// Text in any owned form the typed and dynamic paths hand an order
+    /// term (`String`, `Zeroizing<String>`, `&'static str`) becomes its
+    /// order key; anything else is encrypted as it is.
+    fn of(value: T) -> Result<Self, TermError> {
+        let boxed: Box<dyn Any> = Box::new(value);
+        let boxed = match boxed.downcast::<String>() {
+            Ok(text) => return Self::text(&Zeroizing::new(*text)),
+            Err(boxed) => boxed,
+        };
+        let boxed = match boxed.downcast::<Zeroizing<String>>() {
+            Ok(text) => return Self::text(&text),
+            Err(boxed) => boxed,
+        };
+        let boxed = match boxed.downcast::<&'static str>() {
+            Ok(text) => return Self::text(&text),
+            Err(boxed) => boxed,
+        };
+        boxed
+            .downcast::<T>()
+            .map(|value| Self::Value(*value))
+            .map_err(|_| TermError::Ore(cllw_ore::Error))
+    }
+
+    fn text(text: &str) -> Result<Self, TermError> {
+        Ok(Self::TextKey(text_order_key(text)?))
+    }
+
+    /// The PRF context the scheme's key is derived under: `[domain,
+    /// context]`, as for every term kind, with the order key's frozen
+    /// domain label between them for text, so a text term's key names the
+    /// transform its order key was derived over (ADR-0002). Every other
+    /// source keeps the framing, and the keys, it always had.
+    fn key_context<'k>(&self, domain: &'k [u8], context: &'k [u8]) -> Context<'k> {
+        match self {
+            Self::Value(_) => Context::pae(&[domain, context]),
+            Self::TextKey(_) => {
+                Context::pae(&[domain, vitaminc_ore::domain::TEXT.as_bytes(), context])
+            }
+        }
+    }
+}
+
+/// The output cllw-ore gives the key's bytes, as the output it gives `T`:
+/// the same variable-length type for every text form, which is the only
+/// case this is asked.
+fn as_output<O: 'static, T: 'static>(output: O) -> Result<T, cllw_ore::Error> {
+    let boxed: Box<dyn Any> = Box::new(output);
+    boxed
+        .downcast::<T>()
+        .map(|output| *output)
+        .map_err(|_| cllw_ore::Error)
+}
 
 /// Errors from SEM term generation.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -1282,7 +1365,7 @@ term_wrapper!(OpeTerm, CllwOpeEncrypt);
 /// call under an asynchronous backend; `Send` for the same reason. CLLW
 /// failures surface through the visitor's `Value` rather than
 /// [`PrfVisitorError`] so they keep their own error type.
-struct OreVisitor<T>(T);
+struct OreVisitor<T>(OrderSource<T>);
 
 impl<T, P> PrfVisitor<[u8; 32], P> for OreVisitor<T>
 where
@@ -1295,13 +1378,16 @@ where
     fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
         let key = cllw_ore::Key::from(block);
         block.zeroize();
-        Ok(self.0.encrypt(&key))
+        Ok(match self.0 {
+            OrderSource::Value(value) => value.encrypt(&key),
+            OrderSource::TextKey(order_key) => order_key.encrypt(&key).and_then(as_output),
+        })
     }
 }
 
 /// The OPE twin of [`OreVisitor`]: same key handling, produces a CLLW OPE
 /// ciphertext (byte order is plaintext order).
-struct OpeVisitor<T>(T);
+struct OpeVisitor<T>(OrderSource<T>);
 
 impl<T, P> PrfVisitor<[u8; 32], P> for OpeVisitor<T>
 where
@@ -1314,7 +1400,10 @@ where
     fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
         let key = cllw_ore::Key::from(block);
         block.zeroize();
-        Ok(self.0.encrypt_ope(&key))
+        Ok(match self.0 {
+            OrderSource::Value(value) => value.encrypt_ope(&key),
+            OrderSource::TextKey(order_key) => order_key.encrypt_ope(&key).and_then(as_output),
+        })
     }
 }
 
@@ -1331,12 +1420,13 @@ where
     T::Output: Send + 'static,
 {
     refuse_bool::<T>()?;
+    let source = OrderSource::of(value)?;
     let context_bytes = context.as_bytes();
     context_bytes
         .prf_visit_with_context(
             prf,
-            Context::pae(&[ORE_KEY_DOMAIN, context_bytes]),
-            OreVisitor(value),
+            source.key_context(ORE_KEY_DOMAIN, context_bytes),
+            OreVisitor(source),
         )
         .into_result()
         .map_err(TermError::from_prf)?
@@ -1362,12 +1452,13 @@ where
     T::Output: Send + 'static,
 {
     refuse_bool::<T>()?;
+    let source = OrderSource::of(value)?;
     let context_bytes = context.as_bytes();
     context_bytes
         .prf_visit_with_context(
             prf,
-            Context::pae(&[OPE_KEY_DOMAIN, context_bytes]),
-            OpeVisitor(value),
+            source.key_context(OPE_KEY_DOMAIN, context_bytes),
+            OpeVisitor(source),
         )
         .into_result()
         .map_err(TermError::from_prf)?

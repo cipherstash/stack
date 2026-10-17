@@ -41,9 +41,14 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   NULL.
 - **`encrypt.Range`**: what `Between` returns, the low and high bound's
   terms.
+- **Ordering methods on text.** A string field with `index=ore` or
+  `index=ope` gets `Lt`, `Lte`, `Gt`, `Gte` and `Between`. Text orders by its
+  folded form (ADR-0002: case and accents folded, under Unicode 16), so
+  `Café` and `cafe` tie and `alice` orders before `Zoe`. Text order terms
+  change bytes from the alpha's; none was deployed.
 - **stashgen notices an index no generated method queries**: an `ore` or
-  `ope` index on text, bytes or a float (the engine answers the orderings
-  over integers only), or the second of two order indexes on an integer.
+  `ope` index on bytes or a float (the engine answers the orderings over
+  integers and text only), or the second of two order indexes on a field.
   The index is still stored; the notice is on stderr and in the file.
 
 ### Changed

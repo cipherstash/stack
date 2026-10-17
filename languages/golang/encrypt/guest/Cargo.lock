@@ -2087,6 +2087,7 @@ dependencies = [
  "vitaminc-encrypt 0.6.0",
  "vitaminc-hmac",
  "vitaminc-normalize",
+ "vitaminc-ore",
  "vitaminc-prf",
  "vitaminc-protected 0.6.0",
  "zeroize",
@@ -2774,6 +2775,21 @@ dependencies = [
  "unicode-general-category",
  "unicode-normalization",
  "vitaminc-aead 0.6.0",
+ "vitaminc-protected 0.6.0",
+]
+
+[[package]]
+name = "vitaminc-ore"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8eeddea1570c1b0572f285bbca73f0a8eafd3447c54c8329093f501f65b2496"
+dependencies = [
+ "thiserror 2.0.20",
+ "unicode-general-category",
+ "unicode-normalization",
+ "vitaminc-aead 0.6.0",
+ "vitaminc-context 0.6.0",
+ "vitaminc-normalize",
  "vitaminc-protected 0.6.0",
 ]
 

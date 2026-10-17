@@ -611,8 +611,8 @@ func planQueries(f *genFile) error {
 //
 // It returns a notice for each index the engine answers no operator
 // through on the field: the index stores a term no generated method can
-// query. That is an ore or ope index on text, bytes or a float (the engine
-// stores it and answers the orderings over integers only), or a second
+// query. That is an ore or ope index on bytes or a float (the engine stores
+// it and answers the orderings over integers and text only), or a second
 // order index beside the one the engine already answers the orderings
 // with. Storing it is allowed, since a program may compare the stored terms
 // itself, but an order term tells anyone who reads the column how its
@@ -637,7 +637,7 @@ func indexesAnswer(g *genField) ([]string, error) {
 		}
 		why := ""
 		if ix.Name == IndexOre || ix.Name == IndexOpe {
-			why = ": the orderings are answered over integers only"
+			why = ": the orderings are answered over integers and text only"
 			for _, other := range []IndexName{IndexOre, IndexOpe} {
 				if op, ok := answers[other]; ok && other != ix.Name {
 					why = fmt.Sprintf(": the %s index already answers %s and the other orderings", other, op)
