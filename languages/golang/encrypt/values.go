@@ -20,6 +20,12 @@ import (
 // Date is a calendar date, with no time of day and no time zone: Year, Month
 // and Day, in the proleptic Gregorian calendar, years -262143 to 262142.
 // Validate reports a date that does not exist (February 30).
+//
+// The zero Date (year 0, month 0, day 0) is not a date: a Date field must be
+// set before it is encrypted or queried, and a zero one is refused with
+// ErrEncoding, naming the field. A sealed field cannot be a pointer, so an
+// optional date has no sealed form of its own yet: keep it in an opaque
+// struct, or store a sentinel date your program treats as absent.
 type Date = vcvalue.Date
 
 // DateOf is the calendar day t falls on in its own location: what t.Date()
@@ -47,7 +53,8 @@ func ParseInt128(s string) (Int128, error) { return vcvalue.ParseInt128(s) }
 func ParseUint128(s string) (Uint128, error) { return vcvalue.ParseUint128(s) }
 
 // Decimal is a finite decimal number with its scale: "1.50" is not "1.5",
-// and opens as it was sealed. Its mantissa fits 96 bits and its scale is at
+// and opens as it was sealed, except that a zero has no sign: -0.00 opens as
+// 0.00, at the same scale. Its mantissa fits 96 bits and its scale is at
 // most 28, rust_decimal's range. There is no NaN and no infinity: the type
 // cannot hold one, and ParseDecimal refuses one. An equality term normalises
 // the scale, so 1.5, 1.50 and 1.500 match each other.

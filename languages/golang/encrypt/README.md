@@ -208,23 +208,32 @@ An `opaque` struct is one `Sealed` field. Every stored type implements
 A sealed field outside an opaque struct is one value of one of these types,
 or a type defined over one (`type Email string`):
 
-| Go field | Seals as | Indexes |
-|---|---|---|
-| `string` | text | `equality`, `match`, `ore`, `ope` |
-| `[]byte` | bytes | `equality`, `ore`, `ope` |
-| `bool` | a boolean | none |
-| `int8`, `int16`, `int32`, `int64`, `int` | an integer of the field's own width (`int` is 64-bit) | `equality`, `ore`, `ope` |
-| `uint8` (`byte`), `uint16`, `uint32`, `uint64`, `uint` | the same, unsigned | `equality`, `ore`, `ope` |
-| `encrypt.Int128`, `encrypt.Uint128` | a 128-bit integer | `equality`, `ore`, `ope` |
-| `float32`, `float64` | a float of its width | `equality`, `ore`, `ope` |
-| `encrypt.Decimal` | a decimal: a 96-bit coefficient and a scale up to 28 | `equality` |
-| `encrypt.Date` | a calendar date | `equality` |
-| `time.Time` | a timestamp, to the nanosecond, in UTC | `equality` |
+| Go field | Seals as | Indexes it can store | Query methods |
+|---|---|---|---|
+| `string` | text | `equality`, `match`, `ore`, `ope` | `Eq`, `Matches` |
+| `[]byte` | bytes | `equality`, `ore`, `ope` | `Eq` |
+| `bool` | a boolean | none | none |
+| `int8`, `int16`, `int32`, `int64`, `int` | an integer of the field's own width (`int` is 64-bit) | `equality`, `ore`, `ope` | `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` |
+| `uint8` (`byte`), `uint16`, `uint32`, `uint64`, `uint` | the same, unsigned | `equality`, `ore`, `ope` | the same |
+| `encrypt.Int128`, `encrypt.Uint128` | a 128-bit integer | `equality`, `ore`, `ope` | the same |
+| `float32`, `float64` | a float of its width | `equality`, `ore`, `ope` | `Eq` |
+| `encrypt.Decimal` | a decimal: a 96-bit coefficient and a scale up to 28 | `equality` | `Eq` |
+| `encrypt.Date` | a calendar date | `equality` | `Eq` |
+| `time.Time` | a timestamp, to the nanosecond, in UTC | `equality` | `Eq` |
+
+Each query method needs its index declared. An `ore` or `ope` index on text,
+bytes or a float stores its term, but the engine answers no ordering through
+it yet, so such a field has no `Lt` (see [Queries](#queries)).
 
 `encrypt.Date`, `Int128`, `Uint128` and `Decimal` are vitaminc's `vcvalue`
 types; build them with `encrypt.DateOf`, `ParseInt128`, `ParseUint128` and
 `ParseDecimal` (which refuses NaN and the infinities). A `time.Time` opens in
-UTC: compare it with `Equal`, not `==`. Each integer type seals at its own
+UTC: compare it with `Equal`, not `==`. A decimal opens at the scale it was
+sealed with, but a zero has no sign: `-0.00` opens as `0.00`. The zero
+`encrypt.Date` is not a date, and `Encrypt` or a query refuses it with
+`ErrEncoding`, naming the field; so is a decimal or a `time.Time` outside
+vitaminc's range. A sealed field cannot be a pointer, so an optional date has
+no sealed form yet: keep it in an opaque struct, or use a sentinel date. Each integer type seals at its own
 width, and each width is passed to the order scheme as itself, so an `int8`
 field's terms are an `int8`'s. Equality follows vitaminc's normalisation: an
 integer equals itself at every width, decimals compare at any scale

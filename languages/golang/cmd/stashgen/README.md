@@ -246,6 +246,7 @@ A float in an opaque struct must be finite: `encoding/json` refuses NaN and the 
 A sealed field outside an opaque struct is one scalar, or a type defined over one; a struct, slice or map field seals only inside an opaque struct.
 The scalars are `string`, `[]byte`, `bool`, every integer type (each sealed at its own width, `int` and `uint` as 64-bit), `encrypt.Int128` and `encrypt.Uint128`, `float32`, `float64`, `encrypt.Decimal`, `encrypt.Date` and `time.Time` (a timestamp). The wire type `stashgen` writes for each is the field's own: `int8` is `gensupport.Int8`, `time.Time` is `gensupport.Timestamp`, and so on.
 An order index (`ore`, `ope`) on a decimal, date or timestamp is refused: those order terms wait for new cllw-ore and ore-rs releases (#1236).
+The zero `encrypt.Date` is not a date: a date field must be set, and `Encrypt` refuses a zero one with `encrypt.ErrEncoding`, naming the field. A sealed field cannot be a pointer (`*encrypt.Date` is refused as a composite), so an optional date has no sealed form yet: keep it in an opaque struct, or store a sentinel date.
 A nil `[]byte` in a sealed field, or a nil slice of a type defined over `[]byte`, comes back from `Decrypt` as an empty, non-nil slice; inside an opaque struct, nil comes back as nil.
 A protobuf message with a `oneof` cannot be generated from a policy: protoc-gen-go puts its members in wrapper types, not in the message struct, and `Generate` refuses it.
 
