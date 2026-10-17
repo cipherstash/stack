@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"reflect"
-	"strconv"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
@@ -61,7 +60,11 @@ func isInteger(k Kind) bool {
 }
 
 // integerAs is the integer, given as exactly one of a signed or an unsigned
-// value, as the Go type of kind, if it fits.
+// value, as the Go type of kind, if it fits. A 128-bit kind has no arm: its
+// only Go types are encrypt.Int128 and Uint128, which asKind passes through,
+// and stashgen declares no 128-bit kind for a built-in integer field (no
+// producible EQL type has one), so a built-in integer never reaches one here;
+// if one did, it is refused as not fitting.
 func integerAs(kind Kind, signed *int64, unsigned *uint64) (any, bool) {
 	inSigned := func(lo, hi int64) (int64, bool) {
 		if signed != nil {
@@ -78,41 +81,28 @@ func integerAs(kind Kind, signed *int64, unsigned *uint64) (any, bool) {
 	switch kind {
 	case Int8:
 		i, ok := inSigned(math.MinInt8, math.MaxInt8)
-		return int8(i), ok
+		return int8(i), ok //nolint:gosec // range-checked: ok is false when it does not fit
 	case Int16:
 		i, ok := inSigned(math.MinInt16, math.MaxInt16)
-		return int16(i), ok
+		return int16(i), ok //nolint:gosec // range-checked: ok is false when it does not fit
 	case Int32:
 		i, ok := inSigned(math.MinInt32, math.MaxInt32)
-		return int32(i), ok
+		return int32(i), ok //nolint:gosec // range-checked: ok is false when it does not fit
 	case Int64:
 		i, ok := inSigned(math.MinInt64, math.MaxInt64)
 		return i, ok
 	case Uint8:
 		u, ok := inUnsigned(math.MaxUint8)
-		return uint8(u), ok
+		return uint8(u), ok //nolint:gosec // range-checked: ok is false when it does not fit
 	case Uint16:
 		u, ok := inUnsigned(math.MaxUint16)
-		return uint16(u), ok
+		return uint16(u), ok //nolint:gosec // range-checked: ok is false when it does not fit
 	case Uint32:
 		u, ok := inUnsigned(math.MaxUint32)
-		return uint32(u), ok
+		return uint32(u), ok //nolint:gosec // range-checked: ok is false when it does not fit
 	case Uint64:
 		u, ok := inUnsigned(math.MaxUint64)
 		return u, ok
-	case Int128, Uint128:
-		text := ""
-		if signed != nil {
-			text = strconv.FormatInt(*signed, 10)
-		} else {
-			text = strconv.FormatUint(*unsigned, 10)
-		}
-		if kind == Int128 {
-			v, err := vcvalue.ParseInt128(text)
-			return v, err == nil
-		}
-		v, err := vcvalue.ParseUint128(text)
-		return v, err == nil
 	}
 	return nil, false
 }

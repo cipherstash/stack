@@ -2,9 +2,10 @@ package stashgen
 
 import (
 	"fmt"
-	"github.com/cipherstash/stack/languages/golang/internal/record"
 	"go/format"
 	"strings"
+
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
 // emit writes the generated file from the model. It writes gofmt-ready Go and

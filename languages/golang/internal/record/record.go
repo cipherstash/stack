@@ -84,15 +84,6 @@ const (
 // dynamic::record::EQL_KEY.
 const EQLKey = "eql"
 
-// Integer reports whether k is an integer kind, of any width.
-func (k Kind) Integer() bool {
-	switch k {
-	case Int8, Int16, Int32, Int64, Int128, Uint8, Uint16, Uint32, Uint64, Uint128:
-		return true
-	}
-	return false
-}
-
 // IsTerm reports whether the output is an index term.
 func (o Output) IsTerm() bool { return o != Ciphertext && o != "" }
 
