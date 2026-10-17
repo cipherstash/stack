@@ -41,6 +41,10 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   NULL.
 - **`encrypt.Range`**: what `Between` returns, the low and high bound's
   terms.
+- **`IntegerEq`, `BigintEq`, `RealEq` and `DoubleEq`**: an `int32`, `int64`,
+  `float32` or `float64` field tagged `encrypt_into=` one of them gets `Eq`.
+  `=` compares as PostgreSQL compares the plain types: an integer has one
+  term whatever its width, and for floats `-0.0 = 0.0` and `NaN = NaN`.
 - **stashgen notices an index no generated method queries**: an `ore` or
   `ope` index on text, bytes or a float (the engine answers the orderings
   over integers only), or the second of two order indexes on an integer.
@@ -53,3 +57,5 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
   checked by decrypting them, and such a field stores no ciphertext.
 - A query with a nil cipher returns `ErrEncoding` from generated code as from
   the library.
+- stashgen's refusal of an EQL type it cannot produce names the issue that
+  tracks the blocker, in place of telling you to wait for vitaminc 0.6.

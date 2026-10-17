@@ -26,14 +26,18 @@ type EncryptedProfile struct {
 	Score   eql.Double
 	Note    eql.Text
 	Name    eql.TextMatch
+	Age     eql.IntegerEq
+	Rank    eql.BigintEq
+	Weight  eql.RealEq
+	Price   eql.DoubleEq
 }
 
 func (e EncryptedProfile) String() string {
-	return gensupport.Redacted("EncryptedProfile", map[string]any{"ID": e.ID}, "Visits", "Balance", "Active", "Ratio", "Score", "Note", "Name")
+	return gensupport.Redacted("EncryptedProfile", map[string]any{"ID": e.ID}, "Visits", "Balance", "Active", "Ratio", "Score", "Note", "Name", "Age", "Rank", "Weight", "Price")
 }
 
 func (e EncryptedProfile) LogValue() slog.Value {
-	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Visits", "Balance", "Active", "Ratio", "Score", "Note", "Name")
+	return gensupport.RedactedLog(map[string]any{"ID": e.ID}, "Visits", "Balance", "Active", "Ratio", "Score", "Note", "Name", "Age", "Rank", "Weight", "Price")
 }
 
 // Stops compiling when Profile gains, loses, reorders or retypes a field.
@@ -49,6 +53,10 @@ type profileShape struct {
 	Score   float64
 	Note    string
 	Name    string
+	Age     int32
+	Rank    int64
+	Weight  float32
+	Price   float64
 }
 
 var profileDeclaration = gensupport.Declare("profiles").
@@ -59,7 +67,11 @@ var profileDeclaration = gensupport.Declare("profiles").
 	EncryptInto("ratio", gensupport.Float32, "Real").
 	EncryptInto("score", gensupport.Float64, "Double").
 	EncryptInto("note", gensupport.String, "Text").
-	EncryptInto("name", gensupport.String, "TextMatch")
+	EncryptInto("name", gensupport.String, "TextMatch").
+	EncryptInto("age", gensupport.Int32, "IntegerEq").
+	EncryptInto("rank", gensupport.Int64, "BigintEq").
+	EncryptInto("weight", gensupport.Float32, "RealEq").
+	EncryptInto("price", gensupport.Float64, "DoubleEq")
 
 var profileCodec = gensupport.New(gensupport.Generated[Profile, EncryptedProfile]{
 	TypeName:        "Profile",
@@ -75,6 +87,10 @@ var profileCodec = gensupport.New(gensupport.Generated[Profile, EncryptedProfile
 			"score":   v.Score,
 			"note":    v.Note,
 			"name":    v.Name,
+			"age":     v.Age,
+			"rank":    v.Rank,
+			"weight":  v.Weight,
+			"price":   v.Price,
 		}
 	},
 	Seal: func(rec gensupport.Record) (EncryptedProfile, error) {
@@ -90,6 +106,10 @@ var profileCodec = gensupport.New(gensupport.Generated[Profile, EncryptedProfile
 		e.Score = eql.Double(rec["score"].EQL)
 		e.Note = eql.Text(rec["note"].EQL)
 		e.Name = eql.TextMatch(rec["name"].EQL)
+		e.Age = eql.IntegerEq(rec["age"].EQL)
+		e.Rank = eql.BigintEq(rec["rank"].EQL)
+		e.Weight = eql.RealEq(rec["weight"].EQL)
+		e.Price = eql.DoubleEq(rec["price"].EQL)
 		return e, nil
 	},
 	Open: func(e EncryptedProfile) gensupport.Record {
@@ -102,6 +122,10 @@ var profileCodec = gensupport.New(gensupport.Generated[Profile, EncryptedProfile
 			"score":   {EQL: e.Score},
 			"note":    {EQL: e.Note},
 			"name":    {EQL: e.Name},
+			"age":     {EQL: e.Age},
+			"rank":    {EQL: e.Rank},
+			"weight":  {EQL: e.Weight},
+			"price":   {EQL: e.Price},
 		}
 	},
 	Value: func(e EncryptedProfile, vals gensupport.Values) (Profile, error) {
@@ -131,6 +155,18 @@ var profileCodec = gensupport.New(gensupport.Generated[Profile, EncryptedProfile
 		if v.Name, err = gensupport.Get[string](vals, "name"); err != nil {
 			return Profile{}, err
 		}
+		if v.Age, err = gensupport.Get[int32](vals, "age"); err != nil {
+			return Profile{}, err
+		}
+		if v.Rank, err = gensupport.Get[int64](vals, "rank"); err != nil {
+			return Profile{}, err
+		}
+		if v.Weight, err = gensupport.Get[float32](vals, "weight"); err != nil {
+			return Profile{}, err
+		}
+		if v.Price, err = gensupport.Get[float64](vals, "price"); err != nil {
+			return Profile{}, err
+		}
 		return v, nil
 	},
 })
@@ -156,6 +192,10 @@ var ProfileFields = struct {
 	Score   ProfileScoreField
 	Note    ProfileNoteField
 	Name    ProfileNameField
+	Age     ProfileAgeField
+	Rank    ProfileRankField
+	Weight  ProfileWeightField
+	Price   ProfilePriceField
 }{
 	Visits:  ProfileVisitsField{gensupport.NewField[int32](profileDeclaration, "visits")},
 	Balance: ProfileBalanceField{gensupport.NewField[int64](profileDeclaration, "balance")},
@@ -164,6 +204,10 @@ var ProfileFields = struct {
 	Score:   ProfileScoreField{gensupport.NewField[float64](profileDeclaration, "score")},
 	Note:    ProfileNoteField{gensupport.NewField[string](profileDeclaration, "note")},
 	Name:    ProfileNameField{gensupport.NewField[string](profileDeclaration, "name")},
+	Age:     ProfileAgeField{gensupport.NewField[int32](profileDeclaration, "age")},
+	Rank:    ProfileRankField{gensupport.NewField[int64](profileDeclaration, "rank")},
+	Weight:  ProfileWeightField{gensupport.NewField[float32](profileDeclaration, "weight")},
+	Price:   ProfilePriceField{gensupport.NewField[float64](profileDeclaration, "price")},
 }
 
 type ProfileVisitsField struct {
@@ -233,4 +277,60 @@ func (f ProfileNameField) Encrypt(ctx context.Context, c *encrypt.Cipher, v stri
 // match: decrypt the rows it fetches and keep those Verify reports true.
 func (f ProfileNameField) Matches(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EQLMatchQuery[eql.TextMatchQuery, string], error) {
 	return gensupport.EQLMatches[eql.TextMatchQuery](ctx, f.field, c, v)
+}
+
+type ProfileAgeField struct {
+	field gensupport.Field[int32]
+}
+
+func (f ProfileAgeField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int32) (eql.IntegerEq, error) {
+	out, err := f.field.Encrypt(ctx, c, v)
+	return eql.IntegerEq(out.EQL), err
+}
+
+func (f ProfileAgeField) Eq(ctx context.Context, c *encrypt.Cipher, v int32) (eql.IntegerEqQuery, error) {
+	term, err := f.field.Term(ctx, c, "eq", v)
+	return eql.IntegerEqQuery(term), err
+}
+
+type ProfileRankField struct {
+	field gensupport.Field[int64]
+}
+
+func (f ProfileRankField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int64) (eql.BigintEq, error) {
+	out, err := f.field.Encrypt(ctx, c, v)
+	return eql.BigintEq(out.EQL), err
+}
+
+func (f ProfileRankField) Eq(ctx context.Context, c *encrypt.Cipher, v int64) (eql.BigintEqQuery, error) {
+	term, err := f.field.Term(ctx, c, "eq", v)
+	return eql.BigintEqQuery(term), err
+}
+
+type ProfileWeightField struct {
+	field gensupport.Field[float32]
+}
+
+func (f ProfileWeightField) Encrypt(ctx context.Context, c *encrypt.Cipher, v float32) (eql.RealEq, error) {
+	out, err := f.field.Encrypt(ctx, c, v)
+	return eql.RealEq(out.EQL), err
+}
+
+func (f ProfileWeightField) Eq(ctx context.Context, c *encrypt.Cipher, v float32) (eql.RealEqQuery, error) {
+	term, err := f.field.Term(ctx, c, "eq", v)
+	return eql.RealEqQuery(term), err
+}
+
+type ProfilePriceField struct {
+	field gensupport.Field[float64]
+}
+
+func (f ProfilePriceField) Encrypt(ctx context.Context, c *encrypt.Cipher, v float64) (eql.DoubleEq, error) {
+	out, err := f.field.Encrypt(ctx, c, v)
+	return eql.DoubleEq(out.EQL), err
+}
+
+func (f ProfilePriceField) Eq(ctx context.Context, c *encrypt.Cipher, v float64) (eql.DoubleEqQuery, error) {
+	term, err := f.field.Term(ctx, c, "eq", v)
+	return eql.DoubleEqQuery(term), err
 }

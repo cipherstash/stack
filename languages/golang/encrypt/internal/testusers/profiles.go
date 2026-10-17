@@ -16,4 +16,8 @@ type Profile struct {
 	Score   float64  `stash:"score,encrypt_into=Double"`
 	Note    string   `stash:"note,encrypt_into=Text"`
 	Name    string   `stash:"name,encrypt_into=TextMatch"`
+	Age     int32    `stash:"age,encrypt_into=IntegerEq"`
+	Rank    int64    `stash:"rank,encrypt_into=BigintEq"`
+	Weight  float32  `stash:"weight,encrypt_into=RealEq"`
+	Price   float64  `stash:"price,encrypt_into=DoubleEq"`
 }

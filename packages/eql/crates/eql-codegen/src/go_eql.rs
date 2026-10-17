@@ -206,7 +206,7 @@ mod tests {
         // TextEq is producible and says so; TextOrdOre is not and says why.
         assert!(out.contains("// TextEq is the EQL type stored in public.eql_v4_text_eq"));
         assert!(out.contains("Producible: true, Reason: \"\""));
-        assert!(out.contains("Name: \"TextOrdOre\"") && out.contains("ordering terms wait"));
+        assert!(out.contains("Name: \"TextOrdOre\"") && out.contains("block ORE terms"));
         // Every table row is one line: the shape gofmt leaves alone.
         for line in out.lines().filter(|l| l.starts_with("\t{Name: ")) {
             assert!(line.ends_with("},"), "{line}");

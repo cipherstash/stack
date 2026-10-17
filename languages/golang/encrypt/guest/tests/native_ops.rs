@@ -1371,13 +1371,17 @@ fn targets_lists_what_the_build_holds() {
         producible,
         [
             "Integer",
+            "IntegerEq",
             "Bigint",
+            "BigintEq",
             "Text",
             "TextEq",
             "TextMatch",
             "Boolean",
             "Real",
-            "Double"
+            "RealEq",
+            "Double",
+            "DoubleEq"
         ],
         "the engine's producible types, in catalog order"
     );
@@ -1772,7 +1776,7 @@ fn the_catalog_lists_each_types_operators() {
             assert_eq!(op, want, "{name}");
         };
         match name.as_str() {
-            "TextEq" => only([
+            "TextEq" | "IntegerEq" | "BigintEq" | "RealEq" | "DoubleEq" => only([
                 ("operator", "eq"),
                 ("fidelity", "exact"),
                 ("arity", "one"),

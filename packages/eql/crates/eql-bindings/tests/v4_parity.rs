@@ -5,6 +5,9 @@
 //! read as a Stack Encrypt one (ADR-0002), so these are pinned with literals
 //! rather than through the helpers they check.
 
+// `eql_bindings::v4` exists only with the `stack-encrypt` feature.
+#![cfg(feature = "stack-encrypt")]
+
 use eql_bindings::{v3, v4};
 use eql_domains::{Term, CATALOG};
 use serde_json::{json, Value};

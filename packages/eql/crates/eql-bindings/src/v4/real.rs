@@ -14,35 +14,18 @@ use ts_rs::TS;
     doc,
     doc = " See the [EQL real reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
-#[cfg_attr(doc, doc = "")]
-#[cfg_attr(
-    all(doc, feature = "stack-encrypt"),
-    doc = " Plaintext input and decrypted output: [`Float32`](crate::encryption::plaintext::Float32). With the `stack-encrypt` feature, implements `EncryptFrom<Float32>` and `DecryptInto<Float32>`."
-)]
-#[cfg_attr(
-    all(doc, not(feature = "stack-encrypt")),
-    doc = " Plaintext input and decrypted output: `Float32`. With the `stack-encrypt` feature, implements `EncryptFrom<Float32>` and `DecryptInto<Float32>`."
-)]
-#[cfg_attr(
-    all(doc, feature = "stack-encrypt"),
-    doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`."
-)]
-#[cfg_attr(
-    all(doc, feature = "stack-encrypt"),
-    doc = " See the [complete encryption example](crate::encryption#example)."
-)]
-#[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::EncryptFrom))]
-#[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::DecryptInto))]
-#[cfg_attr(
-    feature = "stack-encrypt",
-    stash(plaintext = crate::encryption::plaintext::Float32)
-)]
+///
+/// Plaintext input and decrypted output: [`Float32`](crate::encryption::plaintext::Float32). Implements `EncryptFrom<Float32>` and `DecryptInto<Float32>`.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[stash(plaintext = crate::encryption::plaintext::Float32)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Real {
-    #[cfg_attr(feature = "stack-encrypt", stash(default))]
+    #[stash(default)]
     pub v: SchemaVersion,
-    #[cfg_attr(feature = "stack-encrypt", stash(context_field))]
+    #[stash(context_field)]
     pub i: Identifier,
     pub c: Ciphertext,
 }
@@ -80,10 +63,18 @@ impl DomainType for Real {
     doc,
     doc = " See the [EQL real reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input and decrypted output: [`Float32`](crate::encryption::plaintext::Float32). Implements `EncryptFrom<Float32>` and `DecryptInto<Float32>`.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[stash(plaintext = crate::encryption::plaintext::Float32)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RealEq {
+    #[stash(default)]
     pub v: SchemaVersion,
+    #[stash(context_field)]
     pub i: Identifier,
     pub c: Ciphertext,
     pub hm: Hmac256,
@@ -248,10 +239,18 @@ impl DomainType for RealOrdOpe {
     doc,
     doc = " See the [EQL real reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
 )]
+///
+/// Plaintext input: [`Float32`](crate::encryption::plaintext::Float32). Implements `EncryptFrom<Float32>` to build equality query terms. Query operands do not decrypt.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom)]
+#[stash(plaintext = crate::encryption::plaintext::Float32)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RealEqQuery {
+    #[stash(default)]
     pub v: SchemaVersion,
+    #[stash(context_field)]
     pub i: Identifier,
     pub hm: Hmac256,
 }

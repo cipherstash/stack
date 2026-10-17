@@ -37,10 +37,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["eq"],
         query: Some("IntegerEqQuery"),
         query_sql_domain: Some("eql_v4.query_integer_eq"),
-        producible: false,
-        reason: Some(
-            "integer equality is produced once vitaminc 0.6 is released: its one integer domain is the one the engine derives in, and a term derived under vitaminc 0.5's per-width domains would stop matching after the upgrade",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "IntegerOrdOre",
@@ -53,7 +51,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_integer_ord_ore"),
         producible: false,
         reason: Some(
-            "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)",
+            "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)",
         ),
     },
     Target {
@@ -67,7 +65,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_integer_ord"),
         producible: false,
         reason: Some(
-            "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)",
+            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
         ),
     },
     Target {
@@ -81,7 +79,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_integer_ord_ope"),
         producible: false,
         reason: Some(
-            "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)",
+            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
         ),
     },
     Target {
@@ -95,7 +93,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: None,
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -109,7 +107,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_smallint_eq"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -123,7 +121,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_smallint_ord_ore"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -137,7 +135,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_smallint_ord"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -151,7 +149,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_smallint_ord_ope"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -175,10 +173,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["eq"],
         query: Some("BigintEqQuery"),
         query_sql_domain: Some("eql_v4.query_bigint_eq"),
-        producible: false,
-        reason: Some(
-            "integer equality is produced once vitaminc 0.6 is released: its one integer domain is the one the engine derives in, and a term derived under vitaminc 0.5's per-width domains would stop matching after the upgrade",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "BigintOrdOre",
@@ -191,7 +187,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_bigint_ord_ore"),
         producible: false,
         reason: Some(
-            "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)",
+            "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)",
         ),
     },
     Target {
@@ -205,7 +201,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_bigint_ord"),
         producible: false,
         reason: Some(
-            "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)",
+            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
         ),
     },
     Target {
@@ -219,7 +215,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_bigint_ord_ope"),
         producible: false,
         reason: Some(
-            "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)",
+            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
         ),
     },
     Target {
@@ -233,7 +229,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: None,
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -247,7 +243,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_date_eq"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -261,7 +257,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_date_ord_ore"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -275,7 +271,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_date_ord"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -289,7 +285,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_date_ord_ope"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -303,7 +299,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: None,
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -317,7 +313,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_timestamp_eq"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -331,7 +327,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_timestamp_ord_ore"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -345,7 +341,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_timestamp_ord"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -359,7 +355,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_timestamp_ord_ope"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -373,7 +369,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: None,
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -387,7 +383,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_numeric_eq"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -401,7 +397,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_numeric_ord_ore"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -415,7 +411,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_numeric_ord"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -429,7 +425,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_numeric_ord_ope"),
         producible: false,
         reason: Some(
-            "vitaminc 0.5's value enum has no kind for this family; the kind and its encodings arrive in vitaminc 0.6 (ADR-0002)",
+            "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 specifies the kind and its encodings (ADR-0002, #1144)",
         ),
     },
     Target {
@@ -479,7 +475,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_text_ord_ore"),
         producible: false,
         reason: Some(
-            "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)",
+            "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)",
         ),
     },
     Target {
@@ -493,7 +489,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_text_ord"),
         producible: false,
         reason: Some(
-            "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)",
+            "no EQL type is built from the engine's text order terms yet (#1131)",
         ),
     },
     Target {
@@ -507,7 +503,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_text_ord_ope"),
         producible: false,
         reason: Some(
-            "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)",
+            "no EQL type is built from the engine's text order terms yet (#1131)",
         ),
     },
     Target {
@@ -521,7 +517,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_text_search_ore"),
         producible: false,
         reason: Some(
-            "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)",
+            "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)",
         ),
     },
     Target {
@@ -535,7 +531,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_text_search"),
         producible: false,
         reason: Some(
-            "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)",
+            "no EQL type is built from the engine's text order terms yet (#1131)",
         ),
     },
     Target {
@@ -571,10 +567,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["eq"],
         query: Some("RealEqQuery"),
         query_sql_domain: Some("eql_v4.query_real_eq"),
-        producible: false,
-        reason: Some(
-            "float equality is produced once vitaminc 0.6, which gives a float its canonical equality form, is released (ADR-0002)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "RealOrdOre",
@@ -587,7 +581,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_real_ord_ore"),
         producible: false,
         reason: Some(
-            "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)",
+            "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)",
         ),
     },
     Target {
@@ -601,7 +595,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_real_ord"),
         producible: false,
         reason: Some(
-            "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)",
+            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
         ),
     },
     Target {
@@ -615,7 +609,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_real_ord_ope"),
         producible: false,
         reason: Some(
-            "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)",
+            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
         ),
     },
     Target {
@@ -639,10 +633,8 @@ pub const TARGETS: &[Target] = &[
         indexes: &["eq"],
         query: Some("DoubleEqQuery"),
         query_sql_domain: Some("eql_v4.query_double_eq"),
-        producible: false,
-        reason: Some(
-            "float equality is produced once vitaminc 0.6, which gives a float its canonical equality form, is released (ADR-0002)",
-        ),
+        producible: true,
+        reason: None,
     },
     Target {
         name: "DoubleOrdOre",
@@ -655,7 +647,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_double_ord_ore"),
         producible: false,
         reason: Some(
-            "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)",
+            "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)",
         ),
     },
     Target {
@@ -669,7 +661,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_double_ord"),
         producible: false,
         reason: Some(
-            "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)",
+            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
         ),
     },
     Target {
@@ -683,7 +675,7 @@ pub const TARGETS: &[Target] = &[
         query_sql_domain: Some("eql_v4.query_double_ord_ope"),
         producible: false,
         reason: Some(
-            "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)",
+            "the engine does not yet derive this family's order terms over ADR-0002's order keys (#1236)",
         ),
     },
     Target {
@@ -696,7 +688,7 @@ pub const TARGETS: &[Target] = &[
         query: Some("SteVecQuery"),
         query_sql_domain: Some("eql_v4.query_json"),
         producible: false,
-        reason: Some("the JSON index is a new operation in the engine"),
+        reason: Some("the JSON index is a new operation in the engine (#1060)"),
     },
     Target {
         name: "Json",
@@ -726,8 +718,17 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
         "Integer" => {
             run_target::<super::integer::Integer, Int32, K>("Integer", keyset, column, plaintext)
         }
+        "IntegerEq" => run_target::<super::integer::IntegerEq, Int32, K>(
+            "IntegerEq",
+            keyset,
+            column,
+            plaintext,
+        ),
         "Bigint" => {
             run_target::<super::bigint::Bigint, Int64, K>("Bigint", keyset, column, plaintext)
+        }
+        "BigintEq" => {
+            run_target::<super::bigint::BigintEq, Int64, K>("BigintEq", keyset, column, plaintext)
         }
         "Text" => run_target::<super::text::Text, String, K>("Text", keyset, column, plaintext),
         "TextEq" => {
@@ -740,8 +741,14 @@ pub(crate) fn encrypt_named<'a, K: 'static>(
             run_target::<super::boolean::Boolean, Bool, K>("Boolean", keyset, column, plaintext)
         }
         "Real" => run_target::<super::real::Real, Float32, K>("Real", keyset, column, plaintext),
+        "RealEq" => {
+            run_target::<super::real::RealEq, Float32, K>("RealEq", keyset, column, plaintext)
+        }
         "Double" => {
             run_target::<super::double::Double, Float64, K>("Double", keyset, column, plaintext)
+        }
+        "DoubleEq" => {
+            run_target::<super::double::DoubleEq, Float64, K>("DoubleEq", keyset, column, plaintext)
         }
         _ => Err(refuse(name)),
     }
@@ -758,8 +765,14 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
         "Integer" => {
             open_target::<super::integer::Integer, Int32, K>("Integer", opener, column, stored)
         }
+        "IntegerEq" => {
+            open_target::<super::integer::IntegerEq, Int32, K>("IntegerEq", opener, column, stored)
+        }
         "Bigint" => {
             open_target::<super::bigint::Bigint, Int64, K>("Bigint", opener, column, stored)
+        }
+        "BigintEq" => {
+            open_target::<super::bigint::BigintEq, Int64, K>("BigintEq", opener, column, stored)
         }
         "Text" => open_target::<super::text::Text, String, K>("Text", opener, column, stored),
         "TextEq" => open_target::<super::text::TextEq, String, K>("TextEq", opener, column, stored),
@@ -770,8 +783,14 @@ pub(crate) fn decrypt_named<'a, K: 'static>(
             open_target::<super::boolean::Boolean, Bool, K>("Boolean", opener, column, stored)
         }
         "Real" => open_target::<super::real::Real, Float32, K>("Real", opener, column, stored),
+        "RealEq" => {
+            open_target::<super::real::RealEq, Float32, K>("RealEq", opener, column, stored)
+        }
         "Double" => {
             open_target::<super::double::Double, Float64, K>("Double", opener, column, stored)
+        }
+        "DoubleEq" => {
+            open_target::<super::double::DoubleEq, Float64, K>("DoubleEq", opener, column, stored)
         }
         _ => Err(refuse(name)),
     }
@@ -786,6 +805,15 @@ pub(crate) fn query_named<'a, K: 'static>(
     plaintext: FfiValue,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     match name {
+        "IntegerEq" => run_target::<super::integer::IntegerEqQuery, Int32, K>(
+            "IntegerEq",
+            keyset,
+            column,
+            plaintext,
+        ),
+        "BigintEq" => run_target::<super::bigint::BigintEqQuery, Int64, K>(
+            "BigintEq", keyset, column, plaintext,
+        ),
         "TextEq" => {
             run_target::<super::text::TextEqQuery, String, K>("TextEq", keyset, column, plaintext)
         }
@@ -794,6 +822,12 @@ pub(crate) fn query_named<'a, K: 'static>(
             keyset,
             column,
             plaintext,
+        ),
+        "RealEq" => {
+            run_target::<super::real::RealEqQuery, Float32, K>("RealEq", keyset, column, plaintext)
+        }
+        "DoubleEq" => run_target::<super::double::DoubleEqQuery, Float64, K>(
+            "DoubleEq", keyset, column, plaintext,
         ),
         _ => Err(refuse_query(name)),
     }

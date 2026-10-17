@@ -44,6 +44,12 @@ use ts_rs::TS;
 pub mod from_v2;
 pub mod sql;
 pub mod v3;
+// EQL v4 holds the payloads Stack Encrypt writes (ADR-0002). Only Stack
+// Encrypt produces a v4 value, so the module exists only with the
+// `stack-encrypt` feature, and its types derive Stack Encrypt's traits
+// unconditionally. (A `///` doc here would move `v4`'s own intra-doc links
+// out of its scope.)
+#[cfg(feature = "stack-encrypt")]
 pub mod v4;
 
 #[cfg(feature = "stack-encrypt")]

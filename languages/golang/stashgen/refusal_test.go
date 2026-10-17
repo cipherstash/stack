@@ -92,7 +92,7 @@ func TestRefusals(t *testing.T) {
 		{"an opaque struct with an interface", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tAny any"), stashgen.Request{Type: "User"}, "Any", "is not a type JSON carries"},
 		{"an opaque struct with a struct JSON would truncate", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tTx hidden") + "\ntype hidden struct {\n\tA int\n\tb int\n}\n", stashgen.Request{Type: "User"}, "Tx", "JSON would drop"},
 		{"an opaque struct with a map keyed by a struct", user("\t_ struct{} `stash:\"context=users,opaque\"`\n\tM map[hidden]int") + "\ntype hidden struct{ A int }\n", stashgen.Request{Type: "User"}, "M", "map key that is not a string or an integer"},
-		{"an EQL type the engine cannot produce yet", user(ctx + "\tAge int32 `stash:\"age,encrypt_into=IntegerEq\"`"), stashgen.Request{Type: "User"}, "Age", "has no EQL type IntegerEq"},
+		{"an EQL type the engine cannot produce yet", user(ctx + "\tAge int32 `stash:\"age,encrypt_into=IntegerOrd\"`"), stashgen.Request{Type: "User"}, "Age", "has no EQL type IntegerOrd"},
 		{"an index on a composite", user(ctx + "\tAttrs map[string]string `stash:\"attrs,encrypt,index=equality\"`"), stashgen.Request{Type: "User"}, "Attrs", "seals only as part of an opaque struct"},
 		{"the json index, not in the engine yet", user(ctx + "\tAttrs string `stash:\"attrs,index=json\"`"), stashgen.Request{Type: "User"}, "Attrs", "cannot derive the json index yet"},
 		{"an index option a query term cannot use", user(ctx + "\tEmail string `stash:\"email,encrypt,index=match(k=3)\"`"), stashgen.Request{Type: "User"}, "Email", "a query term uses only the default index options"},

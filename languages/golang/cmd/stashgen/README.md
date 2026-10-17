@@ -159,11 +159,13 @@ The engine produces these EQL types today, each from one Go field type:
 | `encrypt_into` | Go field |
 |---|---|
 | `TextEq`, `Text`, `TextMatch` | `string` |
-| `Integer` | `int32` |
-| `Bigint` | `int64` |
+| `Integer`, `IntegerEq` | `int32` |
+| `Bigint`, `BigintEq` | `int64` |
 | `Boolean` | `bool` |
-| `Real` | `float32` |
-| `Double` | `float64` |
+| `Real`, `RealEq` | `float32` |
+| `Double`, `DoubleEq` | `float64` |
+
+The `Eq` types answer `Eq`; `Text`, `Integer`, `Bigint`, `Boolean`, `Real` and `Double` are stored and read only, with no query method.
 
 The width must match: an `int` or `int64` field is not an `Integer`, and a `float64` field is not a `Real`.
 A `TextMatch` field refuses text shorter than three characters, such as an empty string or a two-letter code, because it has no 3-grams to index; its query refuses such text too.

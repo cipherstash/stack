@@ -3,7 +3,7 @@
 //! types a Stack Encrypt data plan may name as a field target, and the
 //! by-name dispatch that runs a named type's own Rust plan. Generated beside
 //! the v4 family modules by the same mechanism ([`crate::bindings`]), and
-//! gated to the `stack-encrypt` feature by the hand-written `v4/mod.rs`.
+//! under the `stack-encrypt` feature with the rest of `v4`.
 //! Stack Encrypt produces EQL v4 only (ADR-0002), so every target is an
 //! `eql_v4_*` domain.
 //!
@@ -18,11 +18,12 @@
 //! the derive, and [`target_gap`] is tested to agree with
 //! [`encryption_gap`](crate::bindings::encryption_gap) on every domain.
 //!
-//! The reasons a type is not producible are the plan's
-//! (`docs/plans/2026-10-04-plan-builder.md`, "EQL types"): every family but
-//! text has no specified plaintext encoding; match and OPE terms are derived
-//! but no EQL type is built from them; EQL's ORE term is block ORE where the
-//! engine derives CLLW ORE; and the JSON index is a new engine operation.
+//! The reasons a type is not producible, each naming the issue that tracks
+//! it: the engine's value enum has no kind for the family (#1144); the
+//! engine's order terms are not yet derived over ADR-0002's order keys
+//! (#1236) or, for text, no EQL type is built from them (#1131); EQL's ORE
+//! term is block ORE where the engine derives CLLW ORE (#1132); and the JSON
+//! index is a new engine operation (#1060).
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -393,10 +394,16 @@ mod tests {
         for producible in ["", "eq", "match"] {
             assert!(gap(&text, producible).is_none(), "text {producible:?}");
         }
-        for ordered in ["ord", "ord_ore", "ord_ope", "search", "search_ore"] {
+        for ordered in ["ord", "ord_ope", "search"] {
             assert!(
-                gap(&text, ordered).unwrap().contains("ordering terms"),
+                gap(&text, ordered).unwrap().contains("text order terms"),
                 "{ordered}"
+            );
+        }
+        for block_ore in ["ord_ore", "search_ore"] {
+            assert!(
+                gap(&text, block_ore).unwrap().contains("block ORE"),
+                "{block_ore}"
             );
         }
         assert!(gap(&text, "match").is_none(), "TextMatch is producible");
@@ -406,25 +413,25 @@ mod tests {
                 .find(|f| f.name == name)
                 .expect("family")
         };
-        for family_name in ["integer", "bigint"] {
+        for family_name in ["integer", "bigint", "real", "double"] {
+            let family = family(family_name);
+            assert!(gap(family, "").is_none(), "{family_name}");
+            assert!(gap(family, "eq").is_none(), "{family_name}Eq is producible");
             assert!(
-                gap(family(family_name), "eq")
-                    .unwrap()
-                    .contains("integer equality is produced once vitaminc 0.6"),
+                gap(family, "ord").unwrap().contains("#1236"),
                 "{family_name}"
             );
-            assert!(gap(family(family_name), "").is_none(), "{family_name}");
+            assert!(
+                gap(family, "ord_ore").unwrap().contains("block ORE"),
+                "{family_name}"
+            );
         }
-        assert!(gap(family("integer"), "ord_ore")
+        assert!(gap(family("date"), "")
             .unwrap()
-            .contains("ordering terms"));
-        assert!(gap(family("real"), "eq")
-            .unwrap()
-            .contains("float equality is produced once vitaminc 0.6"));
-        assert!(gap(family("date"), "").unwrap().contains("has no kind"));
+            .contains("no kind for this family"));
         assert!(gap(family("smallint"), "eq")
             .unwrap()
-            .contains("has no kind"));
+            .contains("no kind for this family"));
         assert!(gap(family("json"), "").unwrap().contains("tree of leaves"));
     }
 

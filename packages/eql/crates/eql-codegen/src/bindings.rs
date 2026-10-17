@@ -334,20 +334,23 @@ fn render_query_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) 
 }
 
 /// The `(family, domain)` pairs whose generated v4 structs carry the opt-in
-/// `stack-encrypt` derives: every storage-only domain whose plaintext
-/// vitaminc 0.5 encodes, and the text equality domain. Integer equality is
-/// held back until its PRF domain settles (see [`encryption_gap`]). Every other stored domain has a reason in
-/// [`encryption_gap`], and a test holds the two together so a new domain
+/// `stack-encrypt` derives: the storage and equality domains of every family
+/// whose plaintext the engine's value enum carries, and text match. Every
+/// other stored domain has a reason in [`encryption_gap`], and a test holds the two together so a new domain
 /// cannot arrive without either a derive or a reason.
 pub const ENCRYPTION_DOMAINS: &[(&str, &str)] = &[
     ("integer", ""),
+    ("integer", "eq"),
     ("bigint", ""),
+    ("bigint", "eq"),
     ("text", ""),
     ("text", "eq"),
     ("text", "match"),
     ("boolean", ""),
     ("real", ""),
+    ("real", "eq"),
     ("double", ""),
+    ("double", "eq"),
 ];
 
 /// Why no `eql_v3` struct derives Stack Encrypt's traits.
@@ -357,8 +360,8 @@ pub const V3_ENCRYPTION_GAP: &str =
 
 /// The plaintext a family's v4 domains are produced from: the vitaminc
 /// `ValueKind` name a plan field's `"type"` key spells, and the Rust type the
-/// derive and the by-name dispatch name. `None` for a family vitaminc 0.5
-/// has no scalar kind for.
+/// derive and the by-name dispatch name. `None` for a family the engine's
+/// value enum has no kind for.
 pub fn plaintext_of(family: &str) -> Option<(&'static str, &'static str)> {
     Some(match family {
         "text" => ("string", "String"),
@@ -387,26 +390,20 @@ pub fn encryption_gap(
         return None;
     }
     Some(if !domain.is_scalar() {
-        "the JSON index is a new operation in the engine"
+        "the JSON index is a new operation in the engine (#1060)"
     } else if family.name == "json" {
         "a JSON value seals as a tree of leaves and EQL's `c` holds one; how a document \
          becomes one sealed leaf is not decided"
     } else if plaintext_of(family.name).is_none() {
-        "vitaminc 0.5's value enum has no kind for this family; the kind and its \
-         encodings arrive in vitaminc 0.6 (ADR-0002)"
-    } else if domain
-        .terms
-        .iter()
-        .any(|t| matches!(t, Term::Ore | Term::Ope))
-    {
-        "ordering terms wait for vitaminc-ore, the order encodings in vitaminc 0.6 (ADR-0002)"
-    } else if matches!(family.name, "integer" | "bigint") && domain.terms == [Term::Hm] {
-        "integer equality is produced once vitaminc 0.6 is released: its one integer domain is \
-         the one the engine derives in, and a term derived under vitaminc 0.5's per-width \
-         domains would stop matching after the upgrade"
-    } else if matches!(family.name, "real" | "double") {
-        "float equality is produced once vitaminc 0.6, which gives a float its canonical \
-         equality form, is released (ADR-0002)"
+        "the engine's value enum and the Go SDK have no kind for this family yet; vitaminc 0.6 \
+         specifies the kind and its encodings (ADR-0002, #1144)"
+    } else if domain.terms.contains(&Term::Ore) {
+        "EQL stores block ORE terms and the engine derives CLLW ORE (#1132)"
+    } else if domain.terms.contains(&Term::Ope) && family.name == "text" {
+        "no EQL type is built from the engine's text order terms yet (#1131)"
+    } else if domain.terms.contains(&Term::Ope) {
+        "the engine does not yet derive this family's order terms over ADR-0002's order keys \
+         (#1236)"
     } else {
         // Reached by an equality-only domain of a family whose plaintext is
         // specified but which is not listed: nothing in the catalog today.
@@ -417,7 +414,9 @@ pub fn encryption_gap(
 
 /// Keep attributes in the generator so regeneration preserves the opt-in
 /// derives without enabling other domains before their operations and
-/// plaintext contracts are supported ([`ENCRYPTION_DOMAINS`]).
+/// plaintext contracts are supported ([`ENCRYPTION_DOMAINS`]). Only a v4
+/// struct gets them, and the v4 module exists only with the `stack-encrypt`
+/// feature (`eql_bindings::v4`), so the attributes are not gated again.
 fn encryption_attrs(
     version: EqlVersion,
     family: &DomainFamily,
@@ -427,16 +426,10 @@ fn encryption_attrs(
     if encryption_gap(version, family, domain).is_some() {
         return Default::default();
     }
-    let decrypt = (!query).then(
-        || quote!(#[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::DecryptInto))]),
-    );
+    let decrypt = (!query).then(|| quote!(#[derive(stack_encrypt::DecryptInto)]));
     let (_, rust) = plaintext_of(family.name).expect("a derived family names its plaintext");
     let plaintext_ty: syn::Type = syn::parse_str(rust).expect("plaintext is a type path");
     let shown = rust.rsplit("::").next().unwrap_or(rust);
-    // The plaintext line shows with or without the feature: it says what the
-    // type is built from, and the sentence itself names the feature. Only the
-    // link is feature-gated, since a plaintext from `crate::encryption` does
-    // not exist without it and the link would not resolve.
     let plaintext_doc = |named: &str| {
         if query {
             let terms = if domain.terms.contains(&Term::Bloom) {
@@ -445,33 +438,29 @@ fn encryption_attrs(
                 "equality"
             };
             format!(
-                " Plaintext input: {named}. With the `stack-encrypt` feature, \
-                 implements `EncryptFrom<{shown}>` to build {terms} query terms. Query operands \
-                 do not decrypt."
+                " Plaintext input: {named}. Implements `EncryptFrom<{shown}>` to build {terms} \
+                 query terms. Query operands do not decrypt."
             )
         } else {
             format!(
-                " Plaintext input and decrypted output: {named}. With the \
-                 `stack-encrypt` feature, implements `EncryptFrom<{shown}>` and \
-                 `DecryptInto<{shown}>`."
+                " Plaintext input and decrypted output: {named}. Implements \
+                 `EncryptFrom<{shown}>` and `DecryptInto<{shown}>`."
             )
         }
     };
     let plaintext = plaintext_doc(&format!("[`{shown}`]({rust})"));
-    let plaintext_unlinked = plaintext_doc(&format!("`{shown}`"));
     (
         quote! {
-            #[cfg_attr(doc, doc = "")]
-            #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = #plaintext)]
-            #[cfg_attr(all(doc, not(feature = "stack-encrypt")), doc = #plaintext_unlinked)]
-            #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.")]
-            #[cfg_attr(all(doc, feature = "stack-encrypt"), doc = " See the [complete encryption example](crate::encryption#example).")]
-            #[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::EncryptFrom))]
+            #[doc = ""]
+            #[doc = #plaintext]
+            #[doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`."]
+            #[doc = " See the [complete encryption example](crate::encryption#example)."]
+            #[derive(stack_encrypt::EncryptFrom)]
             #decrypt
-            #[cfg_attr(feature = "stack-encrypt", stash(plaintext = #plaintext_ty))]
+            #[stash(plaintext = #plaintext_ty)]
         },
-        quote!(#[cfg_attr(feature = "stack-encrypt", stash(default))]),
-        quote!(#[cfg_attr(feature = "stack-encrypt", stash(context_field))]),
+        quote!(#[stash(default)]),
+        quote!(#[stash(context_field)]),
     )
 }
 
@@ -1062,7 +1051,7 @@ fn render_bindings(dir: &Path) -> Vec<(PathBuf, String)> {
 /// Render the v4 bindings: one module per family with a scalar domain (a
 /// mixed family's scalar domains under its own name, since v4 has no
 /// hand-written SteVec module to sit beside), and the Stack Encrypt target
-/// table and dispatch (`targets.rs`, gated to the `stack-encrypt` feature by
+/// table and dispatch (`targets.rs`, under the `stack-encrypt` feature with
 /// the hand-written `v4/mod.rs`). Stack Encrypt produces v4 only, so the
 /// target table lives here.
 fn render_v4_bindings(dir: &Path) -> Vec<(PathBuf, String)> {
@@ -1729,21 +1718,17 @@ mod tests {
                     } else if family.name == "json" {
                         "tree of leaves"
                     } else if plaintext_of(family.name).is_none() {
-                        "has no kind for this family"
-                    } else if domain
-                        .terms
-                        .iter()
-                        .any(|t| matches!(t, Term::Ore | Term::Ope))
-                    {
-                        "ordering terms"
-                    } else if matches!(family.name, "integer" | "bigint") {
-                        "integer equality is produced once vitaminc 0.6"
+                        "no kind for this family"
+                    } else if domain.terms.contains(&Term::Ore) {
+                        "block ORE terms"
+                    } else if domain.terms.contains(&Term::Ope) {
+                        if family.name == "text" {
+                            "text order terms"
+                        } else {
+                            "order keys (#1236)"
+                        }
                     } else {
-                        assert!(
-                            matches!(family.name, "real" | "double"),
-                            "{full}: every other specified, unordered domain is derived"
-                        );
-                        "float equality is produced once vitaminc 0.6"
+                        panic!("{full}: every specified, unordered domain is derived: {reason}")
                     };
                     assert!(reason.contains(expected), "{full}: {reason}");
                 }

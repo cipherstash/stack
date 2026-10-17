@@ -1,8 +1,24 @@
 {
   "_comment": "The v4 query operands eql-bindings derives for each plaintext under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit.",
+  "age": {
+    "plaintext": 42,
+    "query": "{\"v\":4,\"i\":{\"t\":\"profiles\",\"c\":\"age\"},\"hm\":\"ed60c97cff62963a142f9b7762de2e2b98e3d486a178b07f6e930318770fbecb\"}"
+  },
   "name": {
     "plaintext": "alice",
     "query": "{\"v\":4,\"i\":{\"t\":\"profiles\",\"c\":\"name\"},\"bf\":[80,125,212,221,348,638,664,776,1141,1322,1400,1418,1532,1704,1762,1843,1865,1970]}"
   },
-  "table": "profiles"
+  "price": {
+    "plaintext": 9.75,
+    "query": "{\"v\":4,\"i\":{\"t\":\"profiles\",\"c\":\"price\"},\"hm\":\"1b9f59331489691ca4eee0252b98b0863db3b8fbed9f0a0ba8df58f2bc7564ab\"}"
+  },
+  "rank": {
+    "plaintext": 7,
+    "query": "{\"v\":4,\"i\":{\"t\":\"profiles\",\"c\":\"rank\"},\"hm\":\"54e9bd5b5c8620be147b65fe754240f64562d4ce62394b3e4390867f2ef483cc\"}"
+  },
+  "table": "profiles",
+  "weight": {
+    "plaintext": 1.5,
+    "query": "{\"v\":4,\"i\":{\"t\":\"profiles\",\"c\":\"weight\"},\"hm\":\"96cc94054dd2785dd2592355d2478ca4470d29e09b47637a99f7a91066c93f8b\"}"
+  }
 }

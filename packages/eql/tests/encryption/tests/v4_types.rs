@@ -1,9 +1,7 @@
 //! The EQL v4 types Stack Encrypt produces besides `TextEq`: the
-//! storage-only integer, bigint, boolean, float and text types, and
-//! `TextMatch`. `Json` is not producible yet: a JSON value seals as a tree of
-//! leaves and EQL's `c` holds one. `IntegerEq` and `BigintEq` are held back:
-//! their equality term moves to vitaminc 0.6's shared integer PRF domain, and
-//! terms stored before that would stop matching.
+//! storage-only integer, bigint, boolean, float and text types, the integer
+//! and float equality types, and `TextMatch`. `Json` is not producible yet: a
+//! JSON value seals as a tree of leaves and EQL's `c` holds one.
 //!
 //! Each type must round-trip through both entry points (the typed
 //! `encrypt_as` and the by-name dispatch a Go plan reaches), seal exactly the
@@ -177,24 +175,116 @@ async fn integers_round_trip_and_seal_the_value_enum_leaf() {
     }
 }
 
-/// Withdrawn until vitaminc 0.6: a later re-enable is a deliberate change to
-/// this test, not a side effect of a regenerated table.
+/// The `hm` the named type stores for `value`, and the one its query twin
+/// derives.
+async fn eq_terms(
+    keyset: &stack_encrypt::KeysetCipher<'_, common::Observed>,
+    name: &str,
+    value: FfiValue,
+) -> (serde_json::Value, serde_json::Value) {
+    let stored: serde_json::Value = by_name(keyset, name, value.clone()).await;
+    let query = targets::query(name, keyset, &label(), value)
+        .unwrap()
+        .await
+        .unwrap();
+    let query: serde_json::Value = serde_json::from_slice(&query).unwrap();
+    (stored["hm"].clone(), query["hm"].clone())
+}
+
+/// The equality term follows ADR-0002's semantic baseline: integers of
+/// either width share one term for one value, and a float's `-0.0` and every
+/// NaN fold to one value each, as Postgres's own `float8 =` treats them.
 #[tokio::test]
-async fn integer_equality_types_are_held_back_with_their_reason() {
+async fn number_equality_terms_follow_the_semantic_baseline() {
     let (cipher, _) = common::cipher().await;
     let keyset = cipher.default_keyset();
-    for (name, value) in [
-        ("IntegerEq", FfiValue::Int32(1)),
-        ("BigintEq", FfiValue::Int64(1)),
-    ] {
-        let target = targets::target(name).expect("in the table");
-        assert!(!target.producible, "{name}");
-        let error = refused(targets::encrypt(name, &keyset, &label(), value));
-        assert!(
-            matches!(&error, TargetError::Unproducible { reason, .. } if reason.contains("integer equality is produced once vitaminc 0.6")),
-            "{name}: {error}"
-        );
-    }
+    let hm = |name: &'static str, value: FfiValue| {
+        let keyset = &keyset;
+        async move {
+            let (stored, query) = eq_terms(keyset, name, value).await;
+            assert!(stored.is_string(), "{name} stores an hm: {stored}");
+            assert_eq!(stored, query, "{name}: the query probes the stored term");
+            stored
+        }
+    };
+
+    assert_ne!(
+        hm("IntegerEq", FfiValue::Int32(42)).await,
+        hm("IntegerEq", FfiValue::Int32(43)).await
+    );
+    assert_eq!(
+        hm("IntegerEq", FfiValue::Int32(42)).await,
+        hm("BigintEq", FfiValue::Int64(42)).await,
+        "one integer domain for every width"
+    );
+
+    assert_eq!(
+        hm("RealEq", FfiValue::Float32(-0.0)).await,
+        hm("RealEq", FfiValue::Float32(0.0)).await
+    );
+    assert_eq!(
+        hm("RealEq", FfiValue::Float32(f32::from_bits(0xffc0_1234))).await,
+        hm("RealEq", FfiValue::Float32(f32::NAN)).await
+    );
+    assert_eq!(
+        hm("DoubleEq", FfiValue::Float64(-0.0)).await,
+        hm("DoubleEq", FfiValue::Float64(0.0)).await
+    );
+    assert_eq!(
+        hm(
+            "DoubleEq",
+            FfiValue::Float64(f64::from_bits(0xfff8_0000_0000_beef))
+        )
+        .await,
+        hm("DoubleEq", FfiValue::Float64(f64::NAN)).await
+    );
+    assert_ne!(
+        hm("DoubleEq", FfiValue::Float64(1.5)).await,
+        hm("DoubleEq", FfiValue::Float64(2.5)).await
+    );
+    assert_eq!(
+        hm("RealEq", FfiValue::Float32(1.5)).await,
+        hm("DoubleEq", FfiValue::Float64(1.5)).await,
+        "an f32 hashes as the f64 it widens to"
+    );
+    // An integer and a float are different kinds, even at one value.
+    assert_ne!(
+        hm("BigintEq", FfiValue::Int64(1)).await,
+        hm("DoubleEq", FfiValue::Float64(1.0)).await
+    );
+}
+
+/// The typed entry point stores the same term as the by-name dispatch, and
+/// the ciphertext keeps the value exactly: `-0.0` folds in the term only.
+#[tokio::test]
+async fn number_equality_types_round_trip_through_the_typed_entry_point() {
+    let (cipher, _) = common::cipher().await;
+    let keyset = cipher.default_keyset();
+
+    let stored: integer::IntegerEq = keyset.encrypt_as(&Int32(-7), column()).await.unwrap();
+    assert_v4_envelope(&stored, &["v", "i", "c", "hm"]);
+    let named: serde_json::Value = by_name(&keyset, "IntegerEq", FfiValue::Int32(-7)).await;
+    assert_eq!(serde_json::to_value(&stored).unwrap()["hm"], named["hm"]);
+    let opened: Int32 = cipher.decrypt_as(stored, column().into()).await.unwrap();
+    assert_eq!(opened.0, -7);
+
+    let stored: bigint::BigintEq = keyset.encrypt_as(&Int64(i64::MIN), column()).await.unwrap();
+    assert_v4_envelope(&stored, &["v", "i", "c", "hm"]);
+    let opened: Int64 = cipher.decrypt_as(stored, column().into()).await.unwrap();
+    assert_eq!(opened.0, i64::MIN);
+
+    let stored: real::RealEq = keyset.encrypt_as(&Float32(-0.0), column()).await.unwrap();
+    assert_v4_envelope(&stored, &["v", "i", "c", "hm"]);
+    let opened: Float32 = cipher.decrypt_as(stored, column().into()).await.unwrap();
+    assert_eq!(opened.0.to_bits(), (-0.0f32).to_bits());
+
+    let stored: double::DoubleEq = keyset
+        .encrypt_as(&Float64(f64::NAN), column())
+        .await
+        .unwrap();
+    assert_v4_envelope(&stored, &["v", "i", "c", "hm"]);
+    let opened: Float64 = cipher.decrypt_as(stored, column().into()).await.unwrap();
+    assert_eq!(opened.0.to_bits(), f64::NAN.to_bits());
 }
 
 #[tokio::test]
@@ -680,6 +770,153 @@ fn postgres_stores_and_queries_every_producible_v4_type() {
     );
 }
 
+/// Needs an EQL v4 installation. `=` on each number equality type finds
+/// exactly the rows its query names, with `-0.0` and NaN treated as
+/// Postgres's own `float8 =` treats them.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_finds_number_equality_rows() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let (cipher, _) = runtime.block_on(common::cipher());
+    let keyset = cipher.default_keyset();
+    let mut db = postgres::Client::connect(
+        &std::env::var("EQL_TEST_DATABASE_URL").expect("EQL_TEST_DATABASE_URL"),
+        postgres::NoTls,
+    )
+    .unwrap();
+    db.batch_execute(
+        "CREATE TEMP TABLE v4_number_eq (
+            id int PRIMARY KEY,
+            age public.eql_v4_integer_eq,
+            balance public.eql_v4_bigint_eq,
+            ratio public.eql_v4_real_eq,
+            score public.eql_v4_double_eq
+        );",
+    )
+    .unwrap();
+
+    let json = |value: &dyn erased::Json| value.to_json();
+    let rows = [
+        (1, 42, 10i64, 0.5f32, 0.0f64),
+        (2, 7, -1, -0.0, f64::NAN),
+        (3, 42, i64::MAX, 0.0, -0.0),
+    ];
+    for (id, age, balance, ratio, score) in rows {
+        let stored = runtime.block_on(async {
+            (
+                keyset
+                    .encrypt_as::<_, integer::IntegerEq>(&Int32(age), column())
+                    .await
+                    .unwrap(),
+                keyset
+                    .encrypt_as::<_, bigint::BigintEq>(&Int64(balance), column())
+                    .await
+                    .unwrap(),
+                keyset
+                    .encrypt_as::<_, real::RealEq>(&Float32(ratio), column())
+                    .await
+                    .unwrap(),
+                keyset
+                    .encrypt_as::<_, double::DoubleEq>(&Float64(score), column())
+                    .await
+                    .unwrap(),
+            )
+        });
+        db.execute(
+            "INSERT INTO v4_number_eq VALUES ($1,
+                $2::text::jsonb::public.eql_v4_integer_eq,
+                $3::text::jsonb::public.eql_v4_bigint_eq,
+                $4::text::jsonb::public.eql_v4_real_eq,
+                $5::text::jsonb::public.eql_v4_double_eq)",
+            &[
+                &id,
+                &json(&stored.0),
+                &json(&stored.1),
+                &json(&stored.2),
+                &json(&stored.3),
+            ],
+        )
+        .unwrap();
+    }
+
+    let mut ids = |column_name: &str, query_domain: &str, query: String| -> Vec<i32> {
+        db.query(
+            &format!(
+                "SELECT id FROM v4_number_eq WHERE {column_name} = $1::text::jsonb::eql_v4.{query_domain} ORDER BY id"
+            ),
+            &[&query],
+        )
+        .unwrap()
+        .iter()
+        .map(|r| r.get(0))
+        .collect()
+    };
+    let q = |stored: Result<String, stack_encrypt::Error>| stored.unwrap();
+    let age = |v: i32| {
+        q(runtime.block_on(async {
+            keyset
+                .encrypt_as::<_, integer::IntegerEqQuery>(&Int32(v), column())
+                .await
+                .map(|q| json(&q))
+        }))
+    };
+    let balance = |v: i64| {
+        q(runtime.block_on(async {
+            keyset
+                .encrypt_as::<_, bigint::BigintEqQuery>(&Int64(v), column())
+                .await
+                .map(|q| json(&q))
+        }))
+    };
+    let ratio = |v: f32| {
+        q(runtime.block_on(async {
+            keyset
+                .encrypt_as::<_, real::RealEqQuery>(&Float32(v), column())
+                .await
+                .map(|q| json(&q))
+        }))
+    };
+    let score = |v: f64| {
+        q(runtime.block_on(async {
+            keyset
+                .encrypt_as::<_, double::DoubleEqQuery>(&Float64(v), column())
+                .await
+                .map(|q| json(&q))
+        }))
+    };
+    let (age_42, age_8) = (age(42), age(8));
+    let (balance_max, balance_0) = (balance(i64::MAX), balance(0));
+    let (ratio_zero, ratio_half) = (ratio(0.0), ratio(0.5));
+    let (score_neg_zero, score_nan) = (score(-0.0), score(f64::from_bits(0xfff8_0000_0000_beef)));
+
+    assert_eq!(ids("age", "query_integer_eq", age_42), [1, 3]);
+    assert_eq!(ids("age", "query_integer_eq", age_8), Vec::<i32>::new());
+    assert_eq!(ids("balance", "query_bigint_eq", balance_max), [3]);
+    assert_eq!(
+        ids("balance", "query_bigint_eq", balance_0),
+        Vec::<i32>::new()
+    );
+    assert_eq!(
+        ids("ratio", "query_real_eq", ratio_zero),
+        [2, 3],
+        "-0.0 = 0.0"
+    );
+    assert_eq!(ids("ratio", "query_real_eq", ratio_half), [1]);
+    assert_eq!(
+        ids("score", "query_double_eq", score_neg_zero),
+        [1, 3],
+        "-0.0 = 0.0"
+    );
+    assert_eq!(
+        ids("score", "query_double_eq", score_nan),
+        [2],
+        "NaN = NaN, whatever its payload"
+    );
+}
+
 /// A stored value's JSON text, for binding as `$n::text::jsonb`.
 mod erased {
     pub trait Json {
@@ -721,6 +958,22 @@ async fn the_v4_query_fixture_is_what_the_dispatch_derives() {
         "name": {
             "plaintext": "alice",
             "query": query("TextMatch", "name", FfiValue::String("alice".into())).await,
+        },
+        "age": {
+            "plaintext": 42,
+            "query": query("IntegerEq", "age", FfiValue::Int32(42)).await,
+        },
+        "rank": {
+            "plaintext": 7,
+            "query": query("BigintEq", "rank", FfiValue::Int64(7)).await,
+        },
+        "weight": {
+            "plaintext": 1.5,
+            "query": query("RealEq", "weight", FfiValue::Float32(1.5)).await,
+        },
+        "price": {
+            "plaintext": 9.75,
+            "query": query("DoubleEq", "price", FfiValue::Float64(9.75)).await,
         },
     });
     let path =
@@ -767,6 +1020,10 @@ mod go_rows {
         pub score: f64,
         pub note: String,
         pub name: String,
+        pub age: i32,
+        pub rank: i64,
+        pub weight: f32,
+        pub price: f64,
     }
 
     /// The committed rows, or the file `EQL_V4_ROWS` names: CI points it at
@@ -860,6 +1117,38 @@ mod go_rows {
             .await
             .unwrap();
         assert_eq!(name, p.name);
+        let age: Int32 = cipher
+            .decrypt_as(
+                parsed::<integer::IntegerEq>(row, "age"),
+                column("age").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(age.0, p.age);
+        let rank: Int64 = cipher
+            .decrypt_as(
+                parsed::<bigint::BigintEq>(row, "rank"),
+                column("rank").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(rank.0, p.rank);
+        let weight: Float32 = cipher
+            .decrypt_as(
+                parsed::<real::RealEq>(row, "weight"),
+                column("weight").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(weight.0.to_bits(), p.weight.to_bits());
+        let price: Float64 = cipher
+            .decrypt_as(
+                parsed::<double::DoubleEq>(row, "price"),
+                column("price").into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(price.0.to_bits(), p.price.to_bits());
     }
 }
 
@@ -877,8 +1166,9 @@ async fn rows_the_go_sdk_sealed_open_in_rust() {
 }
 
 /// The Go-sealed rows in PostgreSQL: each value passes its `eql_v4_*` domain
-/// check, `@@` finds the row with the fixture's Go-derived query operand,
-/// and what comes back out still opens.
+/// check, `@@` and `=` find the rows with the fixture's query operands (which
+/// the Go SDK's test derives byte for byte), and what comes back out still
+/// opens.
 #[test]
 #[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
 fn postgres_stores_and_queries_rows_the_go_sdk_sealed() {
@@ -902,7 +1192,11 @@ fn postgres_stores_and_queries_rows_the_go_sdk_sealed() {
             ratio public.eql_v4_real,
             score public.eql_v4_double,
             note public.eql_v4_text,
-            name public.eql_v4_text_match
+            name public.eql_v4_text_match,
+            age public.eql_v4_integer_eq,
+            rank public.eql_v4_bigint_eq,
+            weight public.eql_v4_real_eq,
+            price public.eql_v4_double_eq
         );",
     )
     .unwrap();
@@ -916,7 +1210,11 @@ fn postgres_stores_and_queries_rows_the_go_sdk_sealed() {
                 $5::text::jsonb::public.eql_v4_real,
                 $6::text::jsonb::public.eql_v4_double,
                 $7::text::jsonb::public.eql_v4_text,
-                $8::text::jsonb::public.eql_v4_text_match)",
+                $8::text::jsonb::public.eql_v4_text_match,
+                $9::text::jsonb::public.eql_v4_integer_eq,
+                $10::text::jsonb::public.eql_v4_bigint_eq,
+                $11::text::jsonb::public.eql_v4_real_eq,
+                $12::text::jsonb::public.eql_v4_double_eq)",
             &[
                 &row.id,
                 &v("visits"),
@@ -926,6 +1224,10 @@ fn postgres_stores_and_queries_rows_the_go_sdk_sealed() {
                 &v("score"),
                 &v("note"),
                 &v("name"),
+                &v("age"),
+                &v("rank"),
+                &v("weight"),
+                &v("price"),
             ],
         )
         .unwrap();
@@ -961,6 +1263,48 @@ fn postgres_stores_and_queries_rows_the_go_sdk_sealed() {
         .collect();
     assert!(!expected.is_empty());
     assert_eq!(ids, expected, "@@ {needle:?} over Go-sealed names");
+
+    // `=` on each equality column, against the rows whose plaintext equals
+    // the query's.
+    let equal = |column_name: &str, query_domain: &str, holds: &dyn Fn(&go_rows::Plain) -> bool| {
+        let expected: Vec<i32> = fixture
+            .rows
+            .iter()
+            .filter(|r| holds(&r.plaintext))
+            .map(|r| r.id)
+            .collect();
+        assert!(!expected.is_empty(), "{column_name}: a row matches");
+        (expected, column_name.to_owned(), query_domain.to_owned())
+    };
+    let plain = |key: &str| queries[key]["plaintext"].clone();
+    let checks = [
+        equal("age", "query_integer_eq", &|p| {
+            serde_json::json!(p.age) == plain("age")
+        }),
+        equal("rank", "query_bigint_eq", &|p| {
+            serde_json::json!(p.rank) == plain("rank")
+        }),
+        equal("weight", "query_real_eq", &|p| {
+            f64::from(p.weight) == plain("weight").as_f64().unwrap()
+        }),
+        equal("price", "query_double_eq", &|p| {
+            p.price == plain("price").as_f64().unwrap()
+        }),
+    ];
+    for (expected, column_name, query_domain) in checks {
+        let ids: Vec<i32> = db
+            .query(
+                &format!(
+                    "SELECT id FROM go_profiles WHERE {column_name} = $1::text::jsonb::eql_v4.{query_domain} ORDER BY id"
+                ),
+                &[&queries[column_name.as_str()]["query"].as_str().unwrap()],
+            )
+            .unwrap()
+            .iter()
+            .map(|r| r.get(0))
+            .collect();
+        assert_eq!(ids, expected, "= over Go-sealed {column_name}");
+    }
 
     // Read back from the domains and open again.
     for row in &fixture.rows {

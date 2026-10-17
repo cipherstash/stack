@@ -6,7 +6,8 @@
 //! [`crate::v3`], with `eql_v4_*` domain names and a `v` of `4`.
 //!
 //! **Only these structs derive Stack Encrypt's traits** (`EncryptFrom`,
-//! `DecryptInto`, behind the `stack-encrypt` feature). Stack Encrypt's output
+//! `DecryptInto`). Only Stack Encrypt produces a v4 value, so this module
+//! exists only with the `stack-encrypt` feature. Stack Encrypt's output
 //! is not byte-for-byte compatible with cipherstash-client's, so no `eql_v3`
 //! struct claims it. Which v4 types derive them is
 //! `eql-codegen`'s `ENCRYPTION_DOMAINS`; the rest say why in
@@ -33,11 +34,8 @@ pub mod real;
 pub mod smallint;
 /// Generated: the table of EQL types a Stack Encrypt data plan may name as
 /// a field target (`TARGETS`) and the by-name dispatch that runs a
-/// producible type's own plan. Gated here, in the hand-written module list,
-/// rather than inside the generated file. The descriptor type, the errors
-/// and the public entry points are hand-written in
-/// [`crate::encryption::targets`].
-#[cfg(feature = "stack-encrypt")]
+/// producible type's own plan. The descriptor type, the errors and the
+/// public entry points are hand-written in [`crate::encryption::targets`].
 pub mod targets;
 pub mod text;
 pub mod timestamp;

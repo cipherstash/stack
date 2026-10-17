@@ -189,13 +189,17 @@ mod tests {
             producible,
             [
                 "Integer",
+                "IntegerEq",
                 "Bigint",
+                "BigintEq",
                 "Text",
                 "TextEq",
                 "TextMatch",
                 "Boolean",
                 "Real",
-                "Double"
+                "RealEq",
+                "Double",
+                "DoubleEq"
             ],
             "the engine's producible types, in catalog order"
         );

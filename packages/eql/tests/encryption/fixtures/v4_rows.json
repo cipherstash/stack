@@ -12,7 +12,11 @@
         "ratio": 0.5,
         "score": 2.25,
         "note": "a private note",
-        "name": "alice"
+        "name": "alice",
+        "age": 42,
+        "rank": 7,
+        "weight": 1.5,
+        "price": 9.75
       },
       "stored": {
         "active": {
@@ -21,7 +25,16 @@
             "t": "profiles",
             "c": "active"
           },
-          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAA7z71FqWkCCWSkyPiBK7IQIAD0ug/nDu5R6UBEM9vJjtvDMBTuommRH359HgY7qUe5cAKm2WZaiFnjLqEGLDlJhvOJ4N4uQBzfyMNiLROxWw=="
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAA7z71FqWkCCWSkyPiBK7IQIAD0ug/nDu5R6UBEM9vJjtvDMBTuommRH359HgY7qUe5cAKOFk1SWI53d53C11YlgdX5e7vkiqKTcLshM1vpgA=="
+        },
+        "age": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "age"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACaqBouRs68ubIb5N1OQbmcIABm7QQMIr1TNGIweTMmGzZsXGuC+7f6J8hofUigXNGM5QLxt+dtojhM2JhycNjwnNQhOYcyY0sCNy/ROzDWuyS1SoU=",
+          "hm": "ed60c97cff62963a142f9b7762de2e2b98e3d486a178b07f6e930318770fbecb"
         },
         "balance": {
           "v": 4,
@@ -29,7 +42,7 @@
             "t": "profiles",
             "c": "balance"
           },
-          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAZJDEBcfVqv/o1B2CASJrAIAA9a/qD4wfv0t6fGVxDhKQOlQDIuYj5si13wnlmGENABAJ9hNn4JVUPAf0Oqgp+srYrqieBVnldyN2orjNNIl/8coQzlPV7"
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAZJDEBcfVqv/o1B2CASJrAIAA9a/qD4wfv0t6fGVxDhKQOlQDIuYj5si13wnlmGENABAIQxQ+Pa4ne7yEPxdOVzjiQox/lvSNgN9H0vvDQircFxN4bzgSF"
         },
         "name": {
           "v": 4,
@@ -37,7 +50,7 @@
             "t": "profiles",
             "c": "name"
           },
-          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAASxNA10KeHfMqSIglat8/GIADzC2+uswJkz9HL6DqUBBNDtGODBX5yNHLKryZ0Lgc24AJL13hLIs56eETD0CVxajCIWD1YDvt/qQ96PAk6BQX1+wqM",
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAASxNA10KeHfMqSIglat8/GIADzC2+uswJkz9HL6DqUBBNDtGODBX5yNHLKryZ0Lgc24ALhYPWuXmaNIoZbdwVw8PpS5u1QdTm071hn+f2eluPtcGZc",
           "bf": [
             80,
             125,
@@ -65,7 +78,25 @@
             "t": "profiles",
             "c": "note"
           },
-          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACaWtPMkbUZL3WUSHDD8aD7IADB6CfVElii+gglc1gys6JmpNlLoIFn47AvStPnpJb63wK/3W5csrSgiLUwUES8hwXQnhc0UhgyZv43mkk3tmtP0bJps5Y8bFvyxaLs"
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACaWtPMkbUZL3WUSHDD8aD7IADB6CfVElii+gglc1gys6JmpNlLoIFn47AvStPnpJb63wLcdjyabd75RThQ4CsEexovXy5QDLArZdZgRoBDmg/jShmurQATioUTUqTz"
+        },
+        "price": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "price"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABCExNfO+rr+B8wqj1M0aD4IADBdFcMOac9Yl8IAruRLW/XvOYbrEvf8/b/qUk9C02FfwJOmaRbHOuJeEThjicwd0FgANPkHMbZ2klQcOQkdnKaOEfu1X66",
+          "hm": "1b9f59331489691ca4eee0252b98b0863db3b8fbed9f0a0ba8df58f2bc7564ab"
+        },
+        "rank": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "rank"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABlWVkNzeHCBmpVMce0NgD6IAA4mPP/Krsok6Rmw3q0qARIDYCQpqM4GDID/zkILOkeKAIlW42N/yURtgBRtgsxh0No3cTCtq2rCdlAooi6j5FQ2W/QGzp9",
+          "hm": "54e9bd5b5c8620be147b65fe754240f64562d4ce62394b3e4390867f2ef483cc"
         },
         "ratio": {
           "v": 4,
@@ -73,7 +104,7 @@
             "t": "profiles",
             "c": "ratio"
           },
-          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAuHszuxtkGGxdJ+yeeEgrtIACJ8iRTZnq+2wD3LmxdAqmDDHzDzzH5th5lG8EQq4qujQI0F4mjsLKrWLTCn4cnL+j9RJGWZUye1KEUEgFLy2w7jbg="
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAuHszuxtkGGxdJ+yeeEgrtIACJ8iRTZnq+2wD3LmxdAqmDDHzDzzH5th5lG8EQq4qujQIhrxgAqpgRGwaL1PCunFuJD2OO1u8WbklfdpCWW4+4KCo="
         },
         "score": {
           "v": 4,
@@ -81,7 +112,7 @@
             "t": "profiles",
             "c": "score"
           },
-          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAbQulFdQ7itXP4biDOHDhxIAA4jkCscZEzyZymEuOdqFk34IZ2lMPnDiYFZgGjl+Qh0gKQ8PLCnxbnz0u/MiTy1keIajXDNTMgKHZwKVDhzp2lyFdkxNyG"
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAbQulFdQ7itXP4biDOHDhxIAA4jkCscZEzyZymEuOdqFk34IZ2lMPnDiYFZgGjl+Qh0gJkRzmA2A/4kWGHplvyWJPXVEY4uE0sSqMBQq3Xa9AzCU6IOUs+"
         },
         "visits": {
           "v": 4,
@@ -89,7 +120,16 @@
             "t": "profiles",
             "c": "visits"
           },
-          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAFDIc6s4iXDM+dzEA4ntTLIACXLoQBRqkNqM7yC8syykzCq7A4M32xA4/pWvh7C8atkgJnOr7F0ixiqCPrPH8Fr+u40q0M0yY0SAGJAzRZL9RtKmk="
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAFDIc6s4iXDM+dzEA4ntTLIACXLoQBRqkNqM7yC8syykzCq7A4M32xA4/pWvh7C8atkgIkk++HnvHeJ43/6TKyHlZdACadIhQuCTI+w9ZxJdArk7s="
+        },
+        "weight": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "weight"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACKITYga2qq0YHkFjTZcJ+4IACohdycH28XrjPCTXO5ZxudPnwg9RQaee1GS8RdT/bMKwJbEtW7gdbIYe0JMCtDM6uG3DoI7r2tUtL5PmBr3l4hQ+M=",
+          "hm": "96cc94054dd2785dd2592355d2478ca4470d29e09b47637a99f7a91066c93f8b"
         }
       }
     },
@@ -102,7 +142,11 @@
         "ratio": -1.5,
         "score": 0,
         "note": "",
-        "name": "bob smith"
+        "name": "bob smith",
+        "age": 42,
+        "rank": -7,
+        "weight": -1.5,
+        "price": 0
       },
       "stored": {
         "active": {
@@ -111,7 +155,16 @@
             "t": "profiles",
             "c": "active"
           },
-          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABGXg/rWzFqWgcCw0KVmlV7IADK5ojyhDsQsCNphHB+3xjIrvP/87lbuOrEITfr0CumXgKas9j1WjeleoZNXxXCpQl5zTEbpuhNm3jz432uwQ=="
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACeHWVW9n4VWX4jBWxAAXmOIADVxouCpKVuK55miYzKXtaxuk8M8yNirsNapVfaL5Cp9wKitSfLQl5U4d3sh9+zZZCKIhctq+xtpFjGdhDxZA=="
+        },
+        "age": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "age"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAC+UPfku+czy1jwxVlq5OIMIACI2l/JLpp27aUW/fdoZu76xFDx7IEJpBBS2tb5ex9WwwIGBFAxAyPvQY5viinEk+R6LXdmfp8QTvaT5FnDgUEcwNs=",
+          "hm": "ed60c97cff62963a142f9b7762de2e2b98e3d486a178b07f6e930318770fbecb"
         },
         "balance": {
           "v": 4,
@@ -119,7 +172,7 @@
             "t": "profiles",
             "c": "balance"
           },
-          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAACHOuVBG9X5O4D9ApUC1DpIADAVYvyCPRFFVrNaWA5vGxA5PF75NkyEagzyfXSd1UIKwKPUkm2pn+4U7GMsAIcIoIwhG1aIpGmcAIvUtLfYiVA74iL35fU"
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAB1ZVEXi2Es47JsbxxhOjhIIACjfYkd2iXoEsJoMxrjsVNgvKqKbMBlXgrMHFc2IFDM0wJPL2ijJkbRnr+iZO7L3/XU1OKT/U65J5K2YzKUYRA4lqodEgMF"
         },
         "name": {
           "v": 4,
@@ -127,7 +180,7 @@
             "t": "profiles",
             "c": "name"
           },
-          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAlsDmtaCz7PVYXLYbtkdYiIADMhjWHFWFQffW6FoF5Kd0/vSO5UX+T+vZyisdueEEtugLKO7i9XY98Meyx+sRY3ODPp1DEZ2mua3DQV27QBeWr2rj1P3qmzA==",
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABmXH78GfaFYi06tdQL/YsdIABN+V8pc7G0+4120i61nbzJjVef8ywhG3ZiZFs2et0YTQK6SbrjSj5sJs1csvXCPLxXOdEB+uIlhtF2rrHObnDMj/pv4WzQVw==",
           "bf": [
             59,
             178,
@@ -177,7 +230,25 @@
             "t": "profiles",
             "c": "note"
           },
-          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABtkZKQt8AupdgAkSYhBWuLIABushFe05tB4gQmcP9j+7VPX95cAW65PgvtgFajKobc6gJRmGKJ3XDJKTAOVvT7vrNPR4suqu/qGHnVB23ZOg=="
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABobLCs537p+tT0KKzLIInaIAD6IFDEC396qG3xo6e/RUntWltagliYr8Rq9Mf7Z4MU6QLfQyQ8MD2pQIg6YERpyUul2FdLxB8stW8DbaoDUg=="
+        },
+        "price": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "price"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABt75+DHEYg2qfQw6iBiV8fIABOSEifNTOtcSRVx808u1FVucm5wkEm3QLEkkXB3twR3ALAOhm+xks8I2MSXvr3cz/sHA6l/1D+NnsxnUprAjpikdzGF9FI",
+          "hm": "b0b544178e92859e68e6435482637ae76bfd6603e503c4ded4881a89aaeb61d1"
+        },
+        "rank": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "rank"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAADUOgpJDtn7zL6nzhYavTlAIADm+hoRGsKYDUzB0eIK2MVQdsL5G0YDtvAdNcFtbKCbkALNfWX2QT9N+k/T/1q432PwjSkPOYPEK5KqZb7kUrDj4E1QsXOg",
+          "hm": "7b1dbcfc1a19eec19cbda0117985973da7f24dc77c7e97f88f63a948f904d49d"
         },
         "ratio": {
           "v": 4,
@@ -185,7 +256,7 @@
             "t": "profiles",
             "c": "ratio"
           },
-          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAADJpOTT8kFqPHwznhWnYNgQIAC3GPCNDOMGBnh6gPSa5KTDr+VBQDNZAZr7kqKF16sx0QKivm/zonrrAnhWeznFBi6gEq+aGsOWkmzf0JjTPjdfykA="
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAACp4hotRiv5B8jrITj//bvPIAADksVFAKIzjTpgqZ8I3IP2HvR81DT2ZfPkkPw7T96z3wK1aKZuwGIC2kaPM/YUExB7UOjMQp29Z28yGvxb5virR7s="
         },
         "score": {
           "v": 4,
@@ -193,7 +264,7 @@
             "t": "profiles",
             "c": "score"
           },
-          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABAfBAgu3xTGBg6oVcxVdCnIADQvBhh5sMdxmdosyrWjFQngkmQ+312sbVAFpgs2UBpcQJExgoNvIsa/YdKXID8Dglp2fw7W87SIT5c/Lomaou5MY0ldsFn"
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAAw8GMAQWghCy9KJ1GKZqWpIACXBMEeoUUEIUIHGJFqbaz1Ohw0HY58iliBm01koQx74QL41ECR0FhZBugCejaBR17/+m3UvvbRUjy7TvSsipQLQbVUi5Ko"
         },
         "visits": {
           "v": 4,
@@ -201,7 +272,16 @@
             "t": "profiles",
             "c": "visits"
           },
-          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAABi/myUaRsBCFbuVTRBJLPiIADSnhrChMGg0gQaL8/2ghirKHXXC41P2aq5DghRI2FtWgLiTbX8qj/N69eB9aNPN6A0ilO2zy62YAxUlx97NnS+OMw="
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAD/xGWx+0HoAi6vHLbwDANUIAAST1oa+P3JdVyt8+a0HqfuCp03GLjTY1gU+sQt2gjcCAIag/JipAzrJzQ94YcAjAQY+xnYBBY9uEZltgLKvTkEo4E="
+        },
+        "weight": {
+          "v": 4,
+          "i": {
+            "t": "profiles",
+            "c": "weight"
+          },
+          "c": "stack-encrypt:1:AQAAAAAAAAAAAAAAAAAAAAChUfuxiOq+/Ehfu9sVsvfsIABWrl3a0t2Cnc1QBb2J/MLDdiba/6iLIIHITm82kj6p5QKXxLhV7DQNszAUEOjLJG4msDS5aafyn6jXgbUwoUhTD7k=",
+          "hm": "e2a35073033a519f51db4adc9ee92fd470cfd6eefc5f4d4c72c9ecc0a9e4e6b9"
         }
       }
     }

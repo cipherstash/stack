@@ -24,8 +24,8 @@ import (
 // eql_v4 columns and queries it.
 
 var profiles = []testusers.Profile{
-	{ID: 1, Visits: 3, Balance: 1234567890123, Active: true, Ratio: 0.5, Score: 2.25, Note: "a private note", Name: "alice"},
-	{ID: 2, Visits: 0, Balance: -1, Active: false, Ratio: -1.5, Score: 0, Note: "", Name: "bob smith"},
+	{ID: 1, Visits: 3, Balance: 1234567890123, Active: true, Ratio: 0.5, Score: 2.25, Note: "a private note", Name: "alice", Age: 42, Rank: 7, Weight: 1.5, Price: 9.75},
+	{ID: 2, Visits: 0, Balance: -1, Active: false, Ratio: -1.5, Score: 0, Note: "", Name: "bob smith", Age: 42, Rank: -7, Weight: -1.5, Price: 0},
 }
 
 func fixturePath(name string) string {
@@ -65,6 +65,10 @@ func stored(e testusers.EncryptedProfile) map[string][]byte {
 		"score":   e.Score,
 		"note":    e.Note,
 		"name":    e.Name,
+		"age":     e.Age,
+		"rank":    e.Rank,
+		"weight":  e.Weight,
+		"price":   e.Price,
 	}
 }
 
@@ -85,6 +89,10 @@ func TestV4FieldsSealToTheirEQLTypesAndOpenBack(t *testing.T) {
 		"score":   "c,i,v",
 		"note":    "c,i,v",
 		"name":    "bf,c,i,v",
+		"age":     "c,hm,i,v",
+		"rank":    "c,hm,i,v",
+		"weight":  "c,hm,i,v",
+		"price":   "c,hm,i,v",
 	}
 	for i, e := range encrypted {
 		for column, value := range stored(e) {
@@ -145,6 +153,22 @@ func TestV4QueriesMatchTheRustFixture(t *testing.T) {
 			Plaintext string
 			Query     string
 		}
+		Age struct {
+			Plaintext int32
+			Query     string
+		}
+		Rank struct {
+			Plaintext int64
+			Query     string
+		}
+		Weight struct {
+			Plaintext float32
+			Query     string
+		}
+		Price struct {
+			Plaintext float64
+			Query     string
+		}
 	}
 	if err := json.Unmarshal(raw, &fixture); err != nil {
 		t.Fatal(err)
@@ -161,6 +185,33 @@ func TestV4QueriesMatchTheRustFixture(t *testing.T) {
 	}
 	if string(name.Query()) != fixture.Name.Query {
 		t.Errorf("Name.Matches = %s\nwant             %s", name.Query(), fixture.Name.Query)
+	}
+	equality := []struct {
+		field string
+		query func() ([]byte, error)
+		want  string
+	}{
+		{"Age", func() ([]byte, error) {
+			return testusers.ProfileFields.Age.Eq(ctx, cipher, fixture.Age.Plaintext)
+		}, fixture.Age.Query},
+		{"Rank", func() ([]byte, error) {
+			return testusers.ProfileFields.Rank.Eq(ctx, cipher, fixture.Rank.Plaintext)
+		}, fixture.Rank.Query},
+		{"Weight", func() ([]byte, error) {
+			return testusers.ProfileFields.Weight.Eq(ctx, cipher, fixture.Weight.Plaintext)
+		}, fixture.Weight.Query},
+		{"Price", func() ([]byte, error) {
+			return testusers.ProfileFields.Price.Eq(ctx, cipher, fixture.Price.Plaintext)
+		}, fixture.Price.Query},
+	}
+	for _, eq := range equality {
+		got, err := eq.query()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if eq.want == "" || string(got) != eq.want {
+			t.Errorf("%s.Eq = %s\nwant     %s", eq.field, got, eq.want)
+		}
 	}
 
 	// And a stored value holds every filter bit of a query for text it
@@ -253,6 +304,10 @@ type fixturePlain struct {
 	Score   float64 `json:"score"`
 	Note    string  `json:"note"`
 	Name    string  `json:"name"`
+	Age     int32   `json:"age"`
+	Rank    int64   `json:"rank"`
+	Weight  float32 `json:"weight"`
+	Price   float64 `json:"price"`
 }
 
 // TestV4RowsMatchTheCommittedFixture checks the committed v4_rows.json
@@ -282,7 +337,7 @@ func TestV4RowsMatchTheCommittedFixture(t *testing.T) {
 		p := profiles[i]
 		row := fixtureRow{
 			ID:        p.ID,
-			Plaintext: fixturePlain{p.Visits, p.Balance, p.Active, p.Ratio, p.Score, p.Note, p.Name},
+			Plaintext: plainOf(p),
 			Stored:    map[string]json.RawMessage{},
 		}
 		for column, value := range stored(e) {
@@ -337,6 +392,10 @@ func TestV4RowsMatchTheCommittedFixture(t *testing.T) {
 			Score:   []byte(row.Stored["score"]),
 			Note:    []byte(row.Stored["note"]),
 			Name:    []byte(row.Stored["name"]),
+			Age:     []byte(row.Stored["age"]),
+			Rank:    []byte(row.Stored["rank"]),
+			Weight:  []byte(row.Stored["weight"]),
+			Price:   []byte(row.Stored["price"]),
 		}
 	}
 	opened, err := testusers.DecryptProfile(context.Background(), c.DefaultKeyset(), sealed)
@@ -344,12 +403,15 @@ func TestV4RowsMatchTheCommittedFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i, row := range committed.Rows {
-		p := opened[i]
-		got := fixturePlain{p.Visits, p.Balance, p.Active, p.Ratio, p.Score, p.Note, p.Name}
-		if got != row.Plaintext {
+		if got := plainOf(opened[i]); got != row.Plaintext {
 			t.Errorf("row %d opens to %+v, want %+v", row.ID, got, row.Plaintext)
 		}
 	}
+}
+
+// plainOf is a profile's plaintext as the fixture records it.
+func plainOf(p testusers.Profile) fixturePlain {
+	return fixturePlain{p.Visits, p.Balance, p.Active, p.Ratio, p.Score, p.Note, p.Name, p.Age, p.Rank, p.Weight, p.Price}
 }
 
 // withoutCiphertexts renders a fixture with every stored value's `c`

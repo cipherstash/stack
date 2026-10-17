@@ -2,9 +2,10 @@
 //!
 //! A Stack Encrypt target encrypts a plaintext through Vitamin C's
 //! `Encrypt` and reads it back through `Decrypt`. These newtypes name the
-//! plaintext of each storage-only EQL v4 type: [`Int32`] for `Integer`,
-//! [`Int64`] for `Bigint`, [`Bool`] for `Boolean`, and [`Float32`] /
-//! [`Float64`] for `Real` and `Double`.
+//! plaintext of each number and boolean EQL v4 type: [`Int32`] for `Integer`
+//! and `IntegerEq`, [`Int64`] for `Bigint` and `BigintEq`, [`Bool`] for
+//! `Boolean`, and [`Float32`] / [`Float64`] for `Real`, `RealEq`, `Double`
+//! and `DoubleEq`.
 //!
 //! Each describes itself as the primitive it wraps, so it seals the leaf
 //! vitaminc seals for that primitive, which is the leaf a data plan's field of
@@ -16,10 +17,11 @@
 //! refuse a leaf of another width, so a column's type is the one it was
 //! written with.
 //!
-//! None of them derives an equality term. `IntegerEq`, `BigintEq`, `RealEq`
-//! and `DoubleEq` are held back until vitaminc 0.6 is released: the engine
-//! already derives integer and float equality in 0.6's shared domains, and a
-//! published build must not derive them under vitaminc 0.5's.
+//! The equality types store the engine's equality term beside the
+//! ciphertext, derived over ADR-0002's semantic baseline: one integer of
+//! either width has one term, and a float's `-0.0` and every NaN fold to one
+//! value each, as Postgres's `float8 =` treats them. The ciphertext keeps the
+//! value exactly, so `-0.0` still opens as `-0.0`.
 //!
 //! ```rust,ignore
 //! use eql_bindings::encryption::plaintext::Int32;

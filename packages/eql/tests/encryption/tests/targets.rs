@@ -359,8 +359,8 @@ mod given_a_name_the_engine_cannot_produce {
         let error = refused(targets::encrypt("TextOrdOre", &keyset, &email(), text("x")));
         assert_eq!(
             error.to_string(),
-            "the engine cannot produce TextOrdOre yet: ordering terms wait for vitaminc-ore, the \
-             order encodings in vitaminc 0.6 (ADR-0002)"
+            "the engine cannot produce TextOrdOre yet: EQL stores block ORE terms and the engine \
+             derives CLLW ORE (#1132)"
         );
         // Refused by name before the label or the value is looked at.
         let error = refused(targets::encrypt(
@@ -479,7 +479,7 @@ mod the_table {
                 "boolean" => Some(ValueKind::Bool),
                 "real" => Some(ValueKind::Float32),
                 "double" => Some(ValueKind::Float64),
-                // The rest have no scalar kind in vitaminc 0.5's value enum.
+                // The rest have no kind in the engine's value enum yet.
                 _ => None,
             };
             assert_eq!(
@@ -553,11 +553,11 @@ mod the_table {
         }
     }
 
-    /// The types the engine produces in EQL v4 today: every storage-only
-    /// and equality-only domain whose plaintext vitaminc 0.5 encodes and,
-    /// for equality, derives a term for.
+    /// The types the engine produces in EQL v4 today: the storage and
+    /// equality domains of every family whose plaintext the engine's value
+    /// enum carries, and text match.
     #[test]
-    fn the_producible_types_are_the_unordered_ones_vitaminc_0_5_encodes() {
+    fn the_producible_types_are_the_unordered_ones_the_value_enum_carries() {
         let producible: Vec<&str> = targets::targets()
             .iter()
             .filter(|t| t.producible)
@@ -567,13 +567,17 @@ mod the_table {
             producible,
             [
                 "Integer",
+                "IntegerEq",
                 "Bigint",
+                "BigintEq",
                 "Text",
                 "TextEq",
                 "TextMatch",
                 "Boolean",
                 "Real",
-                "Double"
+                "RealEq",
+                "Double",
+                "DoubleEq"
             ],
         );
         for row in targets::targets().iter().filter(|t| !t.producible) {
@@ -581,10 +585,10 @@ mod the_table {
             let expected = match (row.family, row.suffix) {
                 ("json", "Search") => "JSON index",
                 ("json", "") => "tree of leaves",
-                ("smallint" | "date" | "timestamp" | "numeric", _) => "has no kind",
-                (_, "Ord" | "OrdOre" | "OrdOpe" | "Search" | "SearchOre") => "ordering terms",
-                ("real" | "double", "Eq") => "float equality is produced once vitaminc 0.6",
-                ("integer" | "bigint", "Eq") => "integer equality is produced once vitaminc 0.6",
+                ("smallint" | "date" | "timestamp" | "numeric", _) => "no kind for this family",
+                (_, "OrdOre" | "SearchOre") => "derives CLLW ORE (#1132)",
+                ("text", "Ord" | "OrdOpe" | "Search") => "text order terms yet (#1131)",
+                (_, "Ord" | "OrdOpe") => "order keys (#1236)",
                 (family, suffix) => panic!("{}: unexpected {family} {suffix}", row.name),
             };
             assert!(reason.contains(expected), "{}: {reason}", row.name);

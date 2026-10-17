@@ -629,7 +629,7 @@ mod tests {
         assert!(matches!(refuse("Nope"), TargetError::Unknown { name } if name == "Nope"));
         assert!(matches!(
             refuse("TextOrdOre"),
-            TargetError::Unproducible { name: "TextOrdOre", reason } if reason.contains("vitaminc-ore")
+            TargetError::Unproducible { name: "TextOrdOre", reason } if reason.contains("block ORE")
         ));
         assert!(producible("TextEq").is_ok());
     }

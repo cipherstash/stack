@@ -19,7 +19,7 @@ func TestTypesTableNamesTheProducibleTypes(t *testing.T) {
 			t.Errorf("%s: an unproducible type has a reason", typ.Name)
 		}
 	}
-	want := []string{"Integer", "Bigint", "Text", "TextEq", "TextMatch", "Boolean", "Real", "Double"}
+	want := []string{"Integer", "IntegerEq", "Bigint", "BigintEq", "Text", "TextEq", "TextMatch", "Boolean", "Real", "RealEq", "Double", "DoubleEq"}
 	if len(producible) != len(want) {
 		t.Fatalf("producible = %v, want %v", producible, want)
 	}
@@ -28,7 +28,7 @@ func TestTypesTableNamesTheProducibleTypes(t *testing.T) {
 			t.Fatalf("producible = %v, want %v", producible, want)
 		}
 	}
-	for name, plaintext := range map[string]string{"Integer": "int32", "Bigint": "int64", "Boolean": "bool", "Real": "float32", "Double": "float64"} {
+	for name, plaintext := range map[string]string{"Integer": "int32", "IntegerEq": "int32", "Bigint": "int64", "BigintEq": "int64", "Boolean": "bool", "Real": "float32", "RealEq": "float32", "Double": "float64", "DoubleEq": "float64"} {
 		if typ, ok := eql.Lookup(name); !ok || typ.Plaintext != plaintext {
 			t.Errorf("%s: Plaintext = %q, want %q", name, typ.Plaintext, plaintext)
 		}

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -389,10 +390,10 @@ func TestTheCatalogListsEachTypesOperators(t *testing.T) {
 	}
 	for _, target := range targets {
 		switch {
-		case target.Name == "TextEq":
+		case slices.Contains([]string{"TextEq", "IntegerEq", "BigintEq", "RealEq", "DoubleEq"}, target.Name):
 			want := []record.Operator{{Name: "eq", Fidelity: record.Exact, Index: record.Equality}}
 			if len(target.Operators) != 1 || target.Operators[0] != want[0] {
-				t.Fatalf("TextEq answers %+v, want %+v", target.Operators, want)
+				t.Fatalf("%s answers %+v, want %+v", target.Name, target.Operators, want)
 			}
 		case target.Name == "TextMatch":
 			want := record.Operator{Name: "matches", Fidelity: record.Probabilistic, Index: record.Match}

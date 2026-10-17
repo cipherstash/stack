@@ -14,35 +14,18 @@ use ts_rs::TS;
     doc,
     doc = " See the [EQL boolean reference](https://cipherstash.com/docs/reference/eql/booleans) for SQL domain variants, operators, and query examples."
 )]
-#[cfg_attr(doc, doc = "")]
-#[cfg_attr(
-    all(doc, feature = "stack-encrypt"),
-    doc = " Plaintext input and decrypted output: [`Bool`](crate::encryption::plaintext::Bool). With the `stack-encrypt` feature, implements `EncryptFrom<Bool>` and `DecryptInto<Bool>`."
-)]
-#[cfg_attr(
-    all(doc, not(feature = "stack-encrypt")),
-    doc = " Plaintext input and decrypted output: `Bool`. With the `stack-encrypt` feature, implements `EncryptFrom<Bool>` and `DecryptInto<Bool>`."
-)]
-#[cfg_attr(
-    all(doc, feature = "stack-encrypt"),
-    doc = " Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`."
-)]
-#[cfg_attr(
-    all(doc, feature = "stack-encrypt"),
-    doc = " See the [complete encryption example](crate::encryption#example)."
-)]
-#[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::EncryptFrom))]
-#[cfg_attr(feature = "stack-encrypt", derive(stack_encrypt::DecryptInto))]
-#[cfg_attr(
-    feature = "stack-encrypt",
-    stash(plaintext = crate::encryption::plaintext::Bool)
-)]
+///
+/// Plaintext input and decrypted output: [`Bool`](crate::encryption::plaintext::Bool). Implements `EncryptFrom<Bool>` and `DecryptInto<Bool>`.
+/// Encryption context: `NonEmpty<Identifier>`, constructed with `Identifier::for_column(table, column)` and stored in `i`.
+/// See the [complete encryption example](crate::encryption#example).
+#[derive(stack_encrypt::EncryptFrom, stack_encrypt::DecryptInto)]
+#[stash(plaintext = crate::encryption::plaintext::Bool)]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Boolean {
-    #[cfg_attr(feature = "stack-encrypt", stash(default))]
+    #[stash(default)]
     pub v: SchemaVersion,
-    #[cfg_attr(feature = "stack-encrypt", stash(context_field))]
+    #[stash(context_field)]
     pub i: Identifier,
     pub c: Ciphertext,
 }

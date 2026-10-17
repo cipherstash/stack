@@ -399,14 +399,20 @@ The EQL types the engine produces, and the Go field types each takes:
 | `TextMatch` | `string` | `@@` (substring match, 3-grams, case-insensitive) |
 | `Text` | `string` | none: stored and read only |
 | `Integer` | `int32` | none |
+| `IntegerEq` | `int32` | `=`, `<>` |
 | `Bigint` | `int64` | none |
+| `BigintEq` | `int64` | `=`, `<>` |
 | `Boolean` | `bool` | none |
 | `Real` | `float32` | none |
+| `RealEq` | `float32` | `=`, `<>` |
 | `Double` | `float64` | none |
+| `DoubleEq` | `float64` | `=`, `<>` |
 
 A `TextMatch` value must be at least three characters long: shorter text has
-no 3-grams to index and is refused. `IntegerEq` and `BigintEq` are held back
-until the engine's integer equality term settles in vitaminc 0.6. The rest of
+no 3-grams to index and is refused. The number equality types compare as
+PostgreSQL compares the plain types: an integer equals itself whatever its
+width, and for floats `-0.0 = 0.0` and `NaN = NaN`; the stored value still
+decrypts to exactly what was written. The rest of
 the catalog (ordering, dates, decimals, JSON) is listed in
 `eql.Types` with the reason it is not produced yet, and `stashgen` refuses it
 with that reason. The guest builds the value: the generated code

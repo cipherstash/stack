@@ -113,18 +113,17 @@ and read back only a value of their own width:
 | v4 type | Plaintext |
 | --- | --- |
 | `Text`, `TextMatch` | `String` |
-| `Integer` | `Int32` |
-| `Bigint` | `Int64` |
+| `Integer`, `IntegerEq` | `Int32` |
+| `Bigint`, `BigintEq` | `Int64` |
 | `Boolean` | `Bool` |
-| `Real` | `Float32` |
-| `Double` | `Float64` |
+| `Real`, `RealEq` | `Float32` |
+| `Double`, `DoubleEq` | `Float64` |
 
 Each seals the leaf the value enum (`FfiValue`) seals for the same value, so
-values written here and by the Go SDK open each other. `IntegerEq`,
-`BigintEq`, `RealEq` and `DoubleEq` wait for vitaminc 0.6's release: the
-engine derives integer and float equality in its shared domains, and terms
-derived under vitaminc 0.5's per-width domains would stop matching after the
-upgrade.
+values written here and by the Go SDK open each other. On the equality
+types, `=` behaves as Postgres's own does: an integer has one term whatever
+its width, and for floats `-0.0 = 0.0` and `NaN = NaN`. The ciphertext keeps
+the exact value.
 `TextMatch` builds its filter under a configuration pinned in this crate
 (`EqlMatch`: 3-grams of the lower-cased text, `k = 6`, a 2048-bit filter) for
 stored values and queries alike. The configuration is part of the stored
@@ -134,9 +133,10 @@ where that matters. Write the stored column on the left, `col @@ query`: the
 other order finds nothing until #1171 is fixed. Text too short to make a
 3-gram (empty strings, two-letter codes) cannot be stored in a `TextMatch`
 column yet, and a `TextMatchQuery` for it is refused too: one filter type
-builds both, and an empty filter as a query would match every row. Ordering
-types wait for vitaminc 0.6's order encodings, and `Json` for a decision on
-sealing a document as one leaf.
+builds both, and an empty filter as a query would match every row. The
+ordering types wait for the engine's order keys (#1236), text's order types
+(#1131) and block ORE (#1132), and `Json` for a decision on sealing a
+document as one leaf.
 
 The generated API docs include a complete, executable example in the
 `eql_bindings::encryption` module, from cipher setup through decryption. Its
