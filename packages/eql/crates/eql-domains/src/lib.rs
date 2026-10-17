@@ -45,11 +45,15 @@ pub use fixtures::{
 pub const ENVELOPE_KEYS: &[&str] = &["v", "i", "c"];
 
 /// The keys a range query domain carries its two bounds under, low then
-/// high, beside the `v` and `i` every query operand carries:
-/// `{"v": 4, "i": {…}, "lo": <term>, "hi": <term>}`. Each bound is the
-/// value the family's single-bound query domain for the same term carries
-/// under its term key (`ob` or `op`): a range is Stack Encrypt's
-/// `RangeQuery { lo, hi }` with nothing added. Inclusive at both ends.
+/// high: `{"v": 4, "i": {…}, "lo": <term>, "hi": <term>}`. Each bound is the
+/// single-bound query domain's `ob` (ORE) or `op` (OPE) value, in a
+/// `{v, i, lo, hi}` envelope. Inclusive at both ends.
+///
+/// Stack Encrypt does not write this envelope yet. Its `RangeQuery` has no
+/// serialized form, the data path's `Operand::Range { lo, hi }` carries raw
+/// term bytes, and `query_term` refuses a range on an EQL target. When the
+/// ordered EQL types become producible, the engine will need to build this
+/// envelope from the two bounds' terms.
 ///
 /// Cross-schema contract data like [`ENVELOPE_KEYS`]: `eql-codegen` builds
 /// the range domain CHECKs and accessors from it, and the bindings name

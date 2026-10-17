@@ -340,10 +340,11 @@ fn render_query_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) 
 ///
 /// The fields are the envelope's `v` and `i`, then the bounds under
 /// [`RANGE_BOUND_KEYS`], each the term newtype the family's single-bound query
-/// struct for the same term holds (`OreBlock256` for `ob`, `OpeCllw` for `op`),
-/// so a range is Stack Encrypt's `RangeQuery { lo, hi }` with nothing added.
-/// No struct derives Stack Encrypt's traits yet: the ordered types it ranges
-/// over are not producible.
+/// struct for the same term holds (`OreBlock256` for `ob`, `OpeCllw` for `op`):
+/// the single-bound domain's `ob` or `op` value, in a `{v, i, lo, hi}`
+/// envelope. No struct derives Stack Encrypt's traits yet: the ordered types
+/// it ranges over are not producible, and the engine does not build the
+/// envelope (see [`RANGE_BOUND_KEYS`]).
 fn render_range_query_struct(family: &DomainFamily, term: Term) -> TokenStream {
     let eql = crate::range::RANGE_VERSION;
     let ident = format_ident!("{}", family.range_struct_ident(term));

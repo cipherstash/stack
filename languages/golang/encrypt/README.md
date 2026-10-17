@@ -263,9 +263,12 @@ any library built on `database/sql` or pgx. A `Range` binds as two
 parameters, `Low` and `High`. On an EQL column a range is one value instead:
 package `encrypt/eql` has a range query type per ordered family and order
 index (`eql.IntegerRangeOreQuery`, `eql.TextRangeOpeQuery`, ...), the one
-operand of `eql_v4.between(column, $1::eql_v4.query_integer_range_ore)`. No
-generated method returns one yet, because the ordered EQL types are not
-producible.
+operand of `eql_v4.between(column, $1::eql_v4.query_integer_range_ore)`. Keep
+the cast to the exact range domain: an uncast `$1`, a `jsonb` parameter, or a
+range of another term or family fails with SQLSTATE 42725 ("function ... is
+not unique"), unlike the single-bound operators, which resolve an untyped
+`$1`. No generated method returns one yet, because the ordered EQL types are
+not producible.
 
 `Eq`, the orderings and `Between` are exact: the server's answer is the
 answer. `Matches` is probabilistic: the server answers with every row whose

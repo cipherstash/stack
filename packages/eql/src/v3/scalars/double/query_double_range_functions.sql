@@ -91,6 +91,13 @@ AS $$ SELECT {{prefix}}_internal.ope_cllw(jsonb_build_object('op', r::jsonb -> '
 --!       serves as one range scan.
 --! @note `BETWEEN` is an SQL keyword, so call it schema-qualified:
 --!       `{{prefix}}.between(...)` parses, a bare `between(...)` does not.
+--! @note Cast the range to its exact domain, `$1::{{prefix}}.query_double_range_ore`.
+--!       PostgreSQL resolves a function's domain arguments as their base type,
+--!       `jsonb`, and every `between` overload takes jsonb domains, so an
+--!       uncast `$1`, a `jsonb` parameter, or a range of another term or
+--!       family matches several overloads and the statement fails with 42725
+--!       ("function ... is not unique") before it runs. The single-bound
+--!       operators resolve an untyped `$1`; `between` does not.
 CREATE FUNCTION {{prefix}}.between(a public.{{prefix}}_double_ord_ore, r {{prefix}}.query_double_range_ore)
 RETURNS boolean
 LANGUAGE sql IMMUTABLE PARALLEL SAFE
@@ -114,6 +121,13 @@ AS $$ SELECT {{prefix}}.ord_term_ore(a) >= {{prefix}}.lo(r) AND {{prefix}}.ord_t
 --!       serves as one range scan.
 --! @note `BETWEEN` is an SQL keyword, so call it schema-qualified:
 --!       `{{prefix}}.between(...)` parses, a bare `between(...)` does not.
+--! @note Cast the range to its exact domain, `$1::{{prefix}}.query_double_range_ope`.
+--!       PostgreSQL resolves a function's domain arguments as their base type,
+--!       `jsonb`, and every `between` overload takes jsonb domains, so an
+--!       uncast `$1`, a `jsonb` parameter, or a range of another term or
+--!       family matches several overloads and the statement fails with 42725
+--!       ("function ... is not unique") before it runs. The single-bound
+--!       operators resolve an untyped `$1`; `between` does not.
 CREATE FUNCTION {{prefix}}.between(a public.{{prefix}}_double_ord, r {{prefix}}.query_double_range_ope)
 RETURNS boolean
 LANGUAGE sql IMMUTABLE PARALLEL SAFE
@@ -137,6 +151,13 @@ AS $$ SELECT {{prefix}}.ord_term(a) >= {{prefix}}.lo(r) AND {{prefix}}.ord_term(
 --!       serves as one range scan.
 --! @note `BETWEEN` is an SQL keyword, so call it schema-qualified:
 --!       `{{prefix}}.between(...)` parses, a bare `between(...)` does not.
+--! @note Cast the range to its exact domain, `$1::{{prefix}}.query_double_range_ope`.
+--!       PostgreSQL resolves a function's domain arguments as their base type,
+--!       `jsonb`, and every `between` overload takes jsonb domains, so an
+--!       uncast `$1`, a `jsonb` parameter, or a range of another term or
+--!       family matches several overloads and the statement fails with 42725
+--!       ("function ... is not unique") before it runs. The single-bound
+--!       operators resolve an untyped `$1`; `between` does not.
 CREATE FUNCTION {{prefix}}.between(a public.{{prefix}}_double_ord_ope, r {{prefix}}.query_double_range_ope)
 RETURNS boolean
 LANGUAGE sql IMMUTABLE PARALLEL SAFE

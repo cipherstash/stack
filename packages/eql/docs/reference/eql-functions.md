@@ -143,7 +143,7 @@ Every ordered family has a **range query domain** per ordering term, beside its 
 | `eql_v4.query_<T>_range_ore` | two block-ORE terms (`ob` arrays) | `public.eql_v4_<T>_ord_ore`, `public.eql_v4_text_search_ore` |
 | `eql_v4.query_<T>_range_ope` | two CLLW-OPE terms (`op` hex strings) | `public.eql_v4_<T>_ord`, `public.eql_v4_<T>_ord_ope`, `public.eql_v4_text_search` |
 
-`<T>` is any ordered family: `integer`, `smallint`, `bigint`, `date`, `timestamp`, `numeric`, `text`, `real`, `double`. A range value is `{"v": 4, "i": {...}, "lo": <term>, "hi": <term>}`, each bound the value the single-bound query domain holds under its term key, with no ciphertext `c`.
+`<T>` is any ordered family: `integer`, `smallint`, `bigint`, `date`, `timestamp`, `numeric`, `text`, `real`, `double`. A range value is `{"v": 4, "i": {...}, "lo": <term>, "hi": <term>}`: each bound is the single-bound query domain's `ob` (ORE) or `op` (OPE) value, in a `{v, i, lo, hi}` envelope, with no ciphertext `c`. Stack Encrypt does not build this envelope yet; it will when the ordered EQL types become producible.
 
 ```sql
 -- true when lo <= column <= hi, both bounds included
@@ -168,7 +168,7 @@ SELECT * FROM users WHERE eql_v4.between(age, $1::eql_v4.query_integer_range_ore
 
 - `eql_v4.between` is an inlinable SQL function, so the planner sees `ord_term_ore(age) >= lo AND ord_term_ore(age) <= hi`, and a btree on the column's order term (`eql_v4.ord_term_ore(col)` for ORE, `eql_v4.ord_term(col)` for OPE) serves it as one range scan.
 - Always write it schema-qualified. `BETWEEN` is an SQL keyword, so a bare `between(...)` does not parse.
-- A range over the other term (an OPE range on an `_ord_ore` column) has no overload and fails when the query is planned.
+- **Always cast the range parameter to its exact range domain**, as in `$1::eql_v4.query_integer_range_ore`. PostgreSQL resolves a function's domain arguments as their base type, `jsonb`, and every `between` overload takes jsonb domains. So an uncast `$1`, a `jsonb` parameter, or a range of the wrong term (an OPE range on an `_ord_ore` column) or the wrong family matches several overloads, and the statement fails with SQLSTATE 42725 (`function eql_v4.between(...) is not unique`) when it is parsed, before it runs. This differs from the single-bound operators: `col < $1` resolves an untyped `$1`.
 - A `NULL` range matches no row. So does a range whose low bound is above its high bound; the client refuses to build one.
 - The `eql_bindings::v4` Rust types (`IntegerRangeOreQuery`, …) and the Go `encrypt/eql` types of the same names hold a range value, so it binds as one parameter.
 

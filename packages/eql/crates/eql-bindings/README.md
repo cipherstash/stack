@@ -141,11 +141,15 @@ document as one leaf.
 Each ordered v4 family also has two range query types, one per order term:
 `IntegerRangeOreQuery` and `IntegerRangeOpeQuery`, and so on
 (`v4::all_range_query()` lists them). A range holds both bounds of one
-`BETWEEN` as `{v, i, lo, hi}` and binds as one parameter to
+`BETWEEN`: each bound is the single-bound domain's `ob` (ORE) or `op` (OPE)
+value, in a `{v, i, lo, hi}` envelope. It binds as one parameter to
 `eql_v4.between(column, $1::eql_v4.query_integer_range_ore)`, which includes
-both bounds. Nothing produces one yet, since the ordered types are not
-producible; the types and the SQL are in place for when they are. EQL v3 has
-no range types or `between`.
+both bounds. Cast the parameter to its exact range domain: an uncast `$1`, a
+`jsonb` parameter, or a range of another term or family fails with SQLSTATE
+42725 ("function ... is not unique"), unlike the single-bound operators, which
+resolve an untyped `$1`. Nothing produces a range yet, since the ordered types
+are not producible, and Stack Encrypt will need to build the envelope when
+they are. EQL v3 has no range types or `between`.
 
 The generated API docs include a complete, executable example in the
 `eql_bindings::encryption` module, from cipher setup through decryption. Its

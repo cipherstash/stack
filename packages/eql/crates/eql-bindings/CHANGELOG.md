@@ -14,10 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `IntegerRangeOpeQuery`, `TextRangeOreQuery` and `TextRangeOpeQuery`, and so
   on for `smallint`, `bigint`, `date`, `timestamp`, `numeric`, `real` and
   `double`, listed by `v4::all_range_query()`. Each holds both bounds of one
-  `BETWEEN` as `{v, i, lo, hi}`, each bound the term the family's
-  single-bound query operand holds (`OreBlock256` for ORE, `OpeCllw` for
-  OPE), so a range binds as one parameter
-  (`$1::eql_v4.query_integer_range_ore`). They bind the
+  `BETWEEN`: each bound is the single-bound domain's `ob` (ORE,
+  `OreBlock256`) or `op` (OPE, `OpeCllw`) value, in a `{v, i, lo, hi}`
+  envelope, so a range binds as one parameter. The parameter must be cast to
+  its exact range domain (`$1::eql_v4.query_integer_range_ore`); anything else
+  fails with SQLSTATE 42725. They bind the
   `eql_v4.query_<family>_range_<ore|ope>` domains in the v4 SQL bundle. No
   range type derives Stack Encrypt's traits yet, because the ordered types
   they range over are not producible. There are no v3 range types.

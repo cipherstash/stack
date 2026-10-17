@@ -41,6 +41,13 @@ AS $$ SELECT {{ a.body }} $$;
 --!       serves as one range scan.
 --! @note `BETWEEN` is an SQL keyword, so call it schema-qualified:
 --!       `{{ schema }}.between(...)` parses, a bare `between(...)` does not.
+--! @note Cast the range to its exact domain, `$1::{{ schema }}.{{ b.range }}`.
+--!       PostgreSQL resolves a function's domain arguments as their base type,
+--!       `jsonb`, and every `between` overload takes jsonb domains, so an
+--!       uncast `$1`, a `jsonb` parameter, or a range of another term or
+--!       family matches several overloads and the statement fails with 42725
+--!       ("function ... is not unique") before it runs. The single-bound
+--!       operators resolve an untyped `$1`; `between` does not.
 CREATE FUNCTION {{ schema }}.between(a {{ b.column }}, r {{ schema }}.{{ b.range }})
 RETURNS boolean
 LANGUAGE sql IMMUTABLE PARALLEL SAFE

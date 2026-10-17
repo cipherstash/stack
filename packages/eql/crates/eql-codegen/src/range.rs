@@ -3,17 +3,25 @@
 //! stored domain that carries the term (ADR-0009, decisions 7 and 8).
 //!
 //! A `Between` query is one term holding both bounds (Stack Encrypt's
-//! `RangeQuery { lo, hi }`), and in SQL it stays one operand:
+//! `RangeQuery`), and in SQL it stays one operand:
 //!
 //! ```sql
 //! WHERE eql_v4.between(age, $1::eql_v4.query_integer_range_ore)
 //! ```
 //!
-//! The wire shape is `{v, i, lo, hi}`
-//! ([`RANGE_BOUND_KEYS`]): each bound is the
-//! value the single-bound query domain for the same term holds under its term
-//! key, so a bound of an ORE range is an `ob` array and a bound of an OPE range
-//! an `op` hex string.
+//! Each bound is the single-bound domain's `ob` (ORE) or `op` (OPE) value, in
+//! a `{v, i, lo, hi}` envelope ([`RANGE_BOUND_KEYS`]): a bound of an ORE range
+//! is an `ob` array, a bound of an OPE range an `op` hex string. The engine
+//! does not build that envelope yet; it will need to when the ordered EQL
+//! types become producible.
+//!
+//! The range parameter must be cast to its exact range domain. `between` has
+//! many overloads over jsonb-backed domains, and PostgreSQL resolves a
+//! function's domain arguments as their base type, so an uncast `$1`, a
+//! `jsonb` parameter, or a range of the wrong term or family matches several
+//! overloads and fails with 42725 ("function ... is not unique") before the
+//! query runs. The single-bound operators resolve an untyped `$1`;
+//! `between` does not.
 //!
 //! EQL v3 has none of this. v3 is what cipherstash-client writes, and nothing
 //! there produces a range. Both files carry the `-- ONLY EQL VERSION: 4` line

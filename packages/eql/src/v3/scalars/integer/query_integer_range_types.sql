@@ -6,10 +6,14 @@
 --! @brief Range query-operand domains for integer: the operand of `{{prefix}}.between`.
 --! @note A range holds both bounds of one `BETWEEN` as one value:
 --!       `{"v": {{eql_version}}, "i": {...}, "lo": <term>, "hi": <term>}`. Each bound is the
---!       value the family's single-bound query domain for the same ordering
---!       term holds under its term key (`ob` or `op`). Both bounds are
---!       included. There is one range domain per ordering term the family
---!       stores (ADR-0009, decisions 7 and 8).
+--!       single-bound query domain's `ob` (ORE) or `op` (OPE) value, in a
+--!       `{v, i, lo, hi}` envelope. Both bounds are included. There is one
+--!       range domain per ordering term the family stores (ADR-0009,
+--!       decisions 7 and 8).
+--! @note Cast the range parameter to its exact range domain
+--!       (`$1::{{prefix}}.query_integer_range_ore`). An uncast `$1`, a `jsonb`
+--!       parameter, or a range of another term or family fails with 42725
+--!       ("function ... is not unique"); see `{{prefix}}.between`.
 --! @note EQL version {{eql_version}} only: the `-- ONLY EQL VERSION:` line above keeps this
 --!       file out of every other version's installer.
 --! @note Like every query operand, a range lives in `{{prefix}}`, not `public`,
