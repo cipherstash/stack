@@ -1,8 +1,8 @@
 //! One index term for a runtime value.
 //!
 //! A value arrives here as anything that describes itself to vitaminc
-//! ([`Encrypt`]): a transport frame a guest walks in place, an
-//! [`FfiValue`] a binding decoded, a Rust value. It is walked to the one
+//! ([`Encrypt`]): a transport frame a guest walks in place, a
+//! [`ValueFrame`] the engine holds, a Rust value. It is walked to the one
 //! scalar it must be, and the term derives there, from the scalar vitaminc
 //! hands the sink, so this module restates none of vitaminc's vocabulary.
 //! The derivation is the typed path's, which is what makes a term a
@@ -17,9 +17,10 @@
 //! - **Match** takes text only, cut in Unicode 16 NFC.
 //! - **ORE and OPE** take an integer of at most 64 bits, a float, text or
 //!   bytes, each as the Rust type the typed path would have named. An 8- or
-//!   16-bit integer is read as the 32-bit integer of its sign, as an
-//!   [`FfiValue`] reads it, so a frame from a host with narrower integers
-//!   derives the term of the width a plan field declares. A boolean has no
+//!   16-bit integer is read as the 32-bit integer of its sign, as the
+//!   engine's value model reads it ([`ValueFrame`]), so a frame from a host
+//!   with narrower integers derives the term of the width a plan field
+//!   declares. A boolean has no
 //!   order term: with two values, its order term would tell anyone holding
 //!   the column which rows are `true`.
 //!
@@ -33,7 +34,7 @@
 use std::convert::Infallible;
 use std::marker::PhantomData;
 
-use super::FfiValue;
+use super::{FfiValue, ValueFrame};
 use stack_kms::DataKeySource;
 use vitaminc_aead::plaintext::{
     Error as SinkError, Float, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
@@ -277,8 +278,8 @@ fn integer<T: TryFrom<u64>>(value: &FfiValue) -> Result<T, Error> {
 /// # }).unwrap();
 /// ```
 ///
-/// The record path runs the same derivation as an [`Index`] of an
-/// [`FfiValue`] field. It is local to the keyset cipher, so the await
+/// The record path runs the same derivation as an [`Index`] of a
+/// [`ValueFrame`] field. It is local to the keyset cipher, so the await
 /// settles a pending that has nothing to request.
 ///
 /// # Errors
@@ -533,10 +534,10 @@ where
 /// It refuses with [`Refused`], whose `None` is "not a scalar this index
 /// takes" (the caller names the index) and whose `Some` is the error `F`
 /// returned or the walk failed with.
-struct OneScalar<F>(F);
+pub(super) struct OneScalar<F>(F);
 
 impl<F> OneScalar<F> {
-    fn new(f: F) -> Self {
+    pub(super) fn new(f: F) -> Self {
         Self(f)
     }
 }
@@ -544,7 +545,7 @@ impl<F> OneScalar<F> {
 /// Why a [`OneScalar`] walk stopped. A source that fails (an [`FfiValue`]
 /// string that is not UTF-8, which its construction rules out) is `None`,
 /// as a value with no term is.
-struct Refused(Option<Error>);
+pub(super) struct Refused(pub(super) Option<Error>);
 
 impl SinkError for Refused {
     fn source(_: SourceError) -> Self {
@@ -581,7 +582,7 @@ where
 /// The container sinks a [`OneScalar`] never makes: it refuses a sequence
 /// or a map before one exists, so this type has no values and its methods
 /// cannot be called.
-enum NoContainer<T> {
+pub(super) enum NoContainer<T> {
     #[allow(dead_code)]
     Never(Infallible, PhantomData<T>),
 }
@@ -662,27 +663,27 @@ fn lifted(error: Error) -> crate::Error {
     }
 }
 
-/// An [`IndexSpec`] is an [`Index`] of an [`FfiValue`]: the index named as
+/// An [`IndexSpec`] is an [`Index`] of a [`ValueFrame`]: the index named as
 /// data, over a plaintext whose type is known only when it arrives. Its
-/// `operation` is [`term`]'s derivation wrapped as a description, so a
-/// field lowered from data runs through the same `indexed()` and `zip`
-/// every other field does, and its term is a [`TermBytes`]. A Rust chain
-/// over `FfiValue` fields names its indexes this way too
-/// (`(IndexSpec::Equality, IndexSpec::Ore)`), and is then the same
-/// declaration as a data plan's.
+/// `operation` is [`term`]'s derivation wrapped as a description, which
+/// walks the frame in place to its one scalar, so a field lowered from data
+/// runs through the same `indexed()` and `zip` every other field does, and
+/// its term is a [`TermBytes`]. A Rust chain over `ValueFrame` fields names
+/// its indexes this way too (`(IndexSpec::Equality, IndexSpec::Ore)`), and is
+/// then the same declaration as a data plan's.
 ///
 /// A value the index does not take (a container, a boolean under ORE)
 /// fails the description when it runs, with the dynamic [`Error::Term`]
 /// inside [`crate::Error::Other`]; a plan lowered from data refuses it
 /// before that, at its boundary ([`admits`](super::admits)).
-impl Index<FfiValue> for IndexSpec {
+impl Index<ValueFrame> for IndexSpec {
     type Term = TermBytes;
     fn spec(&self) -> IndexSpec {
         self.clone()
     }
-    fn operation<'s, K: 'static, M: ConsumeSource<'s, FfiValue>>(
+    fn operation<'s, K: 'static, M: ConsumeSource<'s, ValueFrame>>(
         &self,
-    ) -> Encryption<'s, FfiValue, TermBytes, K, CallerContext, M> {
+    ) -> Encryption<'s, ValueFrame, TermBytes, K, CallerContext, M> {
         let spec = self.clone();
         chosen(move |source: M::Source, cipher, cx: CallerContext| {
             let context = match cx.validated() {
@@ -715,7 +716,7 @@ mod tests {
     }
 
     /// A pair the scheme refuses fails the run of `IndexSpec`'s public
-    /// `Index<FfiValue>` with the dynamic `Error::Term` inside the crate
+    /// `Index<ValueFrame>` with the dynamic `Error::Term` inside the crate
     /// error, and requests nothing: the record path refuses such a pair at
     /// its boundary, a Rust caller running the index directly meets it here.
     #[tokio::test]
@@ -743,8 +744,10 @@ mod tests {
         ] {
             let refused = keyset
                 .run(
-                    Index::<FfiValue>::operation::<FakeDataKeySource, crate::target::Owned>(&kind),
-                    value,
+                    Index::<ValueFrame>::operation::<FakeDataKeySource, crate::target::Owned>(
+                        &kind,
+                    ),
+                    vf(value),
                     ctx(),
                 )
                 .await;
@@ -772,8 +775,10 @@ mod tests {
         for kind in [IndexSpec::Equality, default_match()] {
             let refused = keyset
                 .run(
-                    Index::<FfiValue>::operation::<FakeDataKeySource, crate::target::Owned>(&kind),
-                    s("a\u{0378}bc"),
+                    Index::<ValueFrame>::operation::<FakeDataKeySource, crate::target::Owned>(
+                        &kind,
+                    ),
+                    vf(s("a\u{0378}bc")),
                     CallerContext::from(nonempty!("users/bio")),
                 )
                 .await;
@@ -788,7 +793,7 @@ mod tests {
     }
 
     /// The query path refuses match text with no tokens; the record path,
-    /// which runs the same derivation as an index of an `FfiValue`, stores
+    /// which runs the same derivation as an index of a `ValueFrame`, stores
     /// it as the empty filter. Same value, same options, two answers,
     /// because a query with no tokens would match every row and a stored
     /// value with none is matched by no query.
@@ -809,10 +814,10 @@ mod tests {
 
             let stored: TermBytes = keyset
                 .run(
-                    Index::<FfiValue>::operation::<FakeDataKeySource, crate::target::Owned>(
+                    Index::<ValueFrame>::operation::<FakeDataKeySource, crate::target::Owned>(
                         &default_match(),
                     ),
-                    s(text),
+                    vf(s(text)),
                     CallerContext::from(nonempty!("users/bio")),
                 )
                 .await
@@ -852,7 +857,7 @@ mod tests {
     /// A `TermBytes` reads as the typed term's bytes, through every
     /// accessor: `as_bytes`, `as_ref` and `into_bytes` give the same
     /// 32 PRF bytes an `EqualityTerm` holds, for a term derived through
-    /// `IndexSpec`'s `Index<FfiValue>`.
+    /// `IndexSpec`'s `Index<ValueFrame>`.
     #[tokio::test]
     async fn term_bytes_read_as_the_typed_terms_bytes() {
         let cipher = cipher().await;
@@ -867,10 +872,10 @@ mod tests {
 
         let through_value: TermBytes = keyset
             .run(
-                Index::<FfiValue>::operation::<FakeDataKeySource, crate::target::Owned>(
+                Index::<ValueFrame>::operation::<FakeDataKeySource, crate::target::Owned>(
                     &IndexSpec::Equality,
                 ),
-                FfiValue::UInt32(34),
+                vf(FfiValue::UInt32(34)),
                 CallerContext::from(nonempty!("users/age")),
             )
             .await
@@ -888,6 +893,10 @@ mod tests {
 
     fn s(value: &str) -> FfiValue {
         FfiValue::String(value.into())
+    }
+
+    fn vf(value: FfiValue) -> ValueFrame {
+        ValueFrame::of(&value).expect("in the value model")
     }
 
     fn bytes(value: &[u8]) -> FfiValue {

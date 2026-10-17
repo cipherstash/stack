@@ -36,14 +36,16 @@
 //! ABI's numeric term kinds, and the mapping from a library error to a
 //! status code.
 //!
-//! A term's value is not decoded at all: the frame is parsed and walked in
-//! place to the scalar it holds, the way vitaminc's own guest walks a frame
-//! into encryption, so no copy of the plaintext is built to derive it. A
-//! record's source, a plan and an options object are decoded into an
-//! [`FfiValue`]: the engine reads them, splits a source into fields and
-//! keeps each field's value past this call.
+//! Plaintext is never decoded into a value tree. A term's value is parsed and
+//! walked in place to the scalar it holds, the way vitaminc's own guest walks
+//! a frame into encryption. A record's source, a query's input and a page of
+//! values to verify are read as [`ValueFrame`]s: the frame is checked against
+//! the engine's value model, and the engine walks it, splitting a source into
+//! one frame per field as it goes. A record opens into one frame, which is
+//! the output. Control data (a plan, an options object, query statistics)
+//! carries no secret and is decoded into an [`FfiValue`].
 
-use stack_encrypt::dynamic::{self, FfiValue, Scope};
+use stack_encrypt::dynamic::{self, FfiValue, Scope, ValueFrame};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::IndexSpec;
 use stack_encrypt::ErrorPayload;
@@ -170,7 +172,7 @@ where
     K: DataKeySource + Sync + 'static,
 {
     let plan = parse_plan(plan)?;
-    let tree = dynamic::record::encrypt_with(cipher, decode_value(source)?, &plan, &resolver())
+    let tree = dynamic::record::encrypt_with(cipher, decode_plaintext(source)?, &plan, &resolver())
         .map_err(|e| fail_dynamic(&e))?
         .await
         .map_err(|e| fail_error(&e))?;
@@ -209,7 +211,7 @@ where
             .map_err(|e| fail_dynamic(&e))?
             .await
             .map_err(|e| fail_error(&e))?;
-    encode_value(value)
+    encode_frame(value)
 }
 
 // =============================================================================
@@ -250,7 +252,7 @@ where
         &plan,
         field,
         operator,
-        decode_value(input)?,
+        decode_plaintext(input)?,
         &resolver(),
     )
     .map_err(|e| fail_dynamic(&e))?
@@ -274,15 +276,15 @@ pub fn verify(
     operator: &[u8],
 ) -> Result<Vec<u8>, u32> {
     let (plan, field, operator) = parse_query(plan, field, operator)?;
-    let FfiValue::Array(values) = decode_value(values)? else {
-        return Err(last_error::malformed("the values to verify are not a list"));
-    };
+    let values = decode_plaintext(values)?
+        .elements()
+        .ok_or_else(|| last_error::malformed("the values to verify are not a list"))?;
     let verified = dynamic::verify(
         &plan,
         field,
         operator,
-        decode_value(input)?,
-        &values,
+        decode_plaintext(input)?,
+        values,
         &resolver(),
     )
     .map_err(|e| fail_dynamic(&e))?;
@@ -466,7 +468,8 @@ pub mod validate {
     /// against its field's outputs).
     pub fn record(source: &[u8], plan: &[u8]) -> Result<(), u32> {
         let plan = parse_plan(plan)?;
-        dynamic::record::check_source(decode_value(source)?, &plan).map_err(|e| fail_dynamic(&e))
+        dynamic::record::check_source(decode_plaintext(source)?, &plan)
+            .map_err(|e| fail_dynamic(&e))
     }
 
     /// A query's inputs, as [`query_term`](super::query_term) takes them:
@@ -476,8 +479,14 @@ pub mod validate {
     /// term exists ([`dynamic::check_query`]).
     pub fn query_term(input: &[u8], plan: &[u8], field: &[u8], operator: &[u8]) -> Result<(), u32> {
         let (plan, field, operator) = parse_query(plan, field, operator)?;
-        dynamic::check_query(&plan, field, operator, decode_value(input)?, &resolver())
-            .map_err(|e| fail_dynamic(&e))
+        dynamic::check_query(
+            &plan,
+            field,
+            operator,
+            decode_plaintext(input)?,
+            &resolver(),
+        )
+        .map_err(|e| fail_dynamic(&e))
     }
 
     /// A record tree against its plan, as [`decrypt_record`] takes them:
@@ -496,8 +505,26 @@ pub mod validate {
 // Codec glue
 // =============================================================================
 
+/// Control data from a frame: a plan, an options object, statistics.
 fn decode_value(bytes: &[u8]) -> Result<FfiValue, u32> {
     FfiValue::from_frame(bytes).map_err(|_| not_a_frame())
+}
+
+/// Plaintext from a frame: checked against the engine's value model and
+/// held as the frame, in a buffer wiped when it drops. The same frames are
+/// refused as control data's, so a malformed input fails the same way on
+/// every path.
+fn decode_plaintext(bytes: &[u8]) -> Result<ValueFrame, u32> {
+    ValueFrame::from_bytes(bytes).map_err(|_| not_a_frame())
+}
+
+/// An opened value as the output buffer: its frame, copied into a buffer
+/// whose capacity is exactly its length (see [`encode_value`]); the frame
+/// is wiped when it drops.
+fn encode_frame(frame: ValueFrame) -> Result<Vec<u8>, u32> {
+    let mut out = exact_buffer(Some(frame.risky_ref().len()))?;
+    out.extend_from_slice(frame.risky_ref());
+    Ok(out)
 }
 
 /// One frame, parsed and checked but not decoded: what a term's value is

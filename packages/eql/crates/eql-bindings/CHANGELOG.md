@@ -32,7 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reason when not — serializable as the guest's `se_targets` export, and
   `encrypt` / `decrypt` / `query` entry points that dispatch on the name and
   run the type's own `EncryptFrom` / `DecryptInto` plan, resolving to the EQL
-  value's JSON bytes through the engine's `Pending`. `Identifier::from_label`
+  value's JSON bytes through the engine's `Pending`. The plaintext crosses as
+  Stack Encrypt's `dynamic::ValueFrame`, one value as its transport frame:
+  `encrypt` and `query` take one, `decrypt` resolves to one, and the
+  `Plaintext` trait reads a type's plaintext out of a frame (`from_frame`,
+  which walks the frame into the type's own decrypt sink once its kind is
+  checked) and writes it back (`into_frame`), so no value tree holds it. `Identifier::from_label`
   reads a two-segment plan label as the column identifier. `TextEq` is the
   one producible type; every other name is refused with its reason.
 

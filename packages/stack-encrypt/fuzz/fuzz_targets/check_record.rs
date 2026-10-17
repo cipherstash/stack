@@ -33,7 +33,7 @@ use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use stack_encrypt::dynamic::record::{check_record, plan_with, Plan};
 use stack_encrypt::dynamic::{
-    FfiValue, Output, TargetDescriptor, TargetError, TargetResolver, ValueKind,
+    FfiValue, Output, TargetDescriptor, TargetError, TargetResolver, ValueFrame, ValueKind,
 };
 use stack_encrypt::{
     KeysetCipher, Label, PassthroughFrame, Pending, SealedValue, StackCipher, StackCipherText,
@@ -65,7 +65,7 @@ impl TargetResolver for Fixed {
         _: &str,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
-        _: FfiValue,
+        _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("check_record runs no cipher")
     }
@@ -75,7 +75,7 @@ impl TargetResolver for Fixed {
         _: &'a StackCipher<K>,
         _: &Label,
         _: &[u8],
-    ) -> Result<Pending<'a, FfiValue, K>, TargetError> {
+    ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
         unreachable!("check_record runs no cipher")
     }
     fn query<'a, K: 'static>(
@@ -83,7 +83,7 @@ impl TargetResolver for Fixed {
         _: &str,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
-        _: FfiValue,
+        _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         unreachable!("check_record runs no cipher")
     }

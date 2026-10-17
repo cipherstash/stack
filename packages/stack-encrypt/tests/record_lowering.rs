@@ -1,7 +1,7 @@
 //! The record fixture is the proof of the lowering (ADR-0007, amended
 //! 2026-10-06): a Rust chain and the data-plan lowering each open the
 //! records the other sealed, and both derive the same bytes for each term.
-//! The chain's fields are `dynamic::FfiValue`s, the plaintext type a binding's
+//! The chain's fields are `dynamic::ValueFrame`s, the plaintext type a binding's
 //! values have, so the two authors write one declaration over one type; a
 //! chain over bare `u32`/`String` fields seals the same tagged leaves (see
 //! `dynamic::record`). `tests/fixtures/record_lowering.json` holds one
@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
-use stack_encrypt::dynamic::{FfiValue, Scope, TermBytes};
+use stack_encrypt::dynamic::{FfiValue, Scope, TermBytes, ValueFrame};
 use stack_encrypt::plan::{pick, FieldValues};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::{Encrypted, IndexSpec};
@@ -39,22 +39,22 @@ use vitaminc_protected::Controlled;
 const SEED: [u8; 32] = *b"stack-encrypt record fixture v1 ";
 
 struct User {
-    age: FfiValue,
-    email: FfiValue,
-    notes: FfiValue,
+    age: ValueFrame,
+    email: ValueFrame,
+    notes: ValueFrame,
     id: u32,
 }
 
 fn user() -> User {
     User {
-        age: FfiValue::UInt32(34),
-        email: FfiValue::String("bob@example.com".into()),
-        notes: FfiValue::String("likes cats".into()),
+        age: frame(FfiValue::UInt32(34)),
+        email: frame(FfiValue::String("bob@example.com".into())),
+        notes: frame(FfiValue::String("likes cats".into())),
         id: 42,
     }
 }
 
-/// The one declaration, as the Rust chain writes it over `FfiValue` fields.
+/// The one declaration, as the Rust chain writes it over `ValueFrame` fields.
 fn typed_plan() -> Plan<User, DeterministicSource> {
     Plan::context("users")
         .fields()
@@ -130,12 +130,22 @@ fn source_of(plaintext: &Json, plan: &DataPlan) -> FfiValue {
     )
 }
 
-fn json_of_opened(value: FfiValue) -> Json {
+/// A value as the engine holds it: its frame.
+fn frame(value: FfiValue) -> ValueFrame {
+    ValueFrame::of(&value).expect("a value")
+}
+
+/// An opened value, read back from its frame as JSON.
+fn json_of_opened(value: ValueFrame) -> Json {
+    json_of_tree(FfiValue::from_frame(value.risky_ref()).expect("a value"))
+}
+
+fn json_of_tree(value: FfiValue) -> Json {
     match value {
         FfiValue::Object(entries) => Json::Object(
             entries
                 .into_iter()
-                .map(|(k, v)| (k, json_of_opened(v)))
+                .map(|(k, v)| (k, json_of_tree(v)))
                 .collect(),
         ),
         FfiValue::UInt32(v) => json!(v),
@@ -365,7 +375,7 @@ async fn open_typed(cipher: &StackCipher<DeterministicSource>, tree: StackCipher
         .using(&typed_plan())
         .await
         .expect("the typed chain opens it");
-    let mut value = |name: &str| json_of_opened(opened.take::<FfiValue>(name).expect(name));
+    let mut value = |name: &str| json_of_opened(opened.take::<ValueFrame>(name).expect(name));
     let (age, email, notes) = (value("age"), value("email"), value("notes"));
     json!({
         "age": age,
@@ -522,15 +532,15 @@ fn write_fixture(path: &PathBuf, fixture: &Json) {
 /// context, `text` is sealed and indexed under `<tenant>/text`, `id` is
 /// carried through.
 struct Note {
-    tenant: FfiValue,
-    text: FfiValue,
+    tenant: ValueFrame,
+    text: ValueFrame,
     id: u32,
 }
 
 fn note() -> Note {
     Note {
-        tenant: FfiValue::String("tenants/acme".into()),
-        text: FfiValue::String("hello".into()),
+        tenant: frame(FfiValue::String("tenants/acme".into())),
+        text: frame(FfiValue::String("hello".into())),
         id: 42,
     }
 }
@@ -571,13 +581,16 @@ fn globex() -> Label {
 
 /// The typed chain's note record, shaped as the stored tree.
 fn record_of_note(mut values: FieldValues) -> StackCipherText {
-    let tenant: FfiValue = values.take("tenant").expect("tenant");
+    let tenant: ValueFrame = values.take("tenant").expect("tenant");
     let text: Encrypted<TermBytes> = values.take("text").expect("text");
     let id: u32 = values.take("id").expect("id");
     CipherText::Map(vec![
         (
             "tenant".into(),
-            CipherText::Map(vec![("passthrough".into(), passthrough(tenant))]),
+            CipherText::Map(vec![(
+                "passthrough".into(),
+                passthrough(FfiValue::from_frame(tenant.risky_ref()).expect("a value")),
+            )]),
         ),
         (
             "text".into(),
@@ -625,7 +638,7 @@ fn note_of_record(tree: StackCipherText) -> FieldValues {
                             let _ = values.insert(&name, id);
                         }
                         text => {
-                            let _ = values.insert(&name, text);
+                            let _ = values.insert(&name, frame(text));
                         }
                     }
                 }
@@ -671,7 +684,7 @@ async fn open_note_typed(
         Some(expected) => open.context(expected).using(&note_plan()).await?,
         None => open.using(&note_plan()).await?,
     };
-    let mut value = |name: &str| json_of_opened(opened.take::<FfiValue>(name).expect(name));
+    let mut value = |name: &str| json_of_opened(opened.take::<ValueFrame>(name).expect(name));
     let (tenant, text) = (value("tenant"), value("text"));
     Ok(json!({ "tenant": tenant, "text": text, "id": opened.take::<u32>("id").expect("id") }))
 }

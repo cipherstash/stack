@@ -15,14 +15,20 @@
 //! A term is derived from anything that describes itself to vitaminc
 //! ([`Encrypt`](crate::Encrypt)), walked to its one scalar: a guest
 //! walks the transport frame it was handed in place, with no tree built.
-//! What the engine holds is [`FfiValue`], a language-neutral value tree: a
-//! plan, a record source and a field's plaintext are values a binding
-//! decoded, which the engine reads, splits into fields and clones, and
-//! which outlive the buffer they arrived in.
+//! A plaintext the engine holds is a [`ValueFrame`]: one value as its
+//! transport frame, in a buffer wiped when it drops. A record's source is
+//! walked once and split into one frame per field; a field is sealed and
+//! indexed by walking its frame into the encrypting sink and the term
+//! derivers; and a record opens straight into a frame (vitaminc ADR 0001: a
+//! value describes itself once, and sinks consume it). A binding's control
+//! data, which carries no secret (a plan, a context, options), is an
+//! [`FfiValue`] tree.
 //!
 //! # What is here
 //!
 //! * [`context`](context()) — an [`FfiValue`] read as an encryption context.
+//! * [`ValueFrame`] — the engine's plaintext for a value whose type is known
+//!   only at run time, and the value model it holds.
 //! * [`term`](term()) — one index term for a value, derived at the one
 //!   scalar it is walked to.
 //! * [`record`] — a fields plan spelled as data, *lowered* into the plan
@@ -36,7 +42,7 @@
 //!   lowering runs that type's own plan in the same request; [`NoTargets`]
 //!   is the build without them.
 //! * [`TermBytes`] — the term a field lowered from data derives, as its
-//!   frozen bytes. Such a field's plaintext is an [`FfiValue`].
+//!   frozen bytes. Such a field's plaintext is a [`ValueFrame`].
 //! * [`query_term`], [`verify`] and [`target_limit`] — a query named by
 //!   operator ([`OpSpec`]) on a plan field, and a probabilistic term's two
 //!   questions, over a page of decrypted values and over [`Stats`](crate::op::Stats)
@@ -47,9 +53,9 @@
 //!
 //! # What is not here
 //!
-//! Encrypting a whole value is not: [`FfiValue`] implements `Encrypt`
-//! already, so `keyset.encrypt(value, aad)` is the whole of it and needs
-//! nothing from this module. Nor is a second executor: nothing here calls
+//! Encrypting a whole value is not: a [`ValueFrame`], like any source,
+//! implements `Encrypt` already, so `keyset.encrypt(value, aad)` is the whole
+//! of it and needs nothing from this module. Nor is a second executor: nothing here calls
 //! the term functions or the seal path to produce a record. A capability a
 //! data plan needs and the builder lacks is added to the builder, once.
 //!
@@ -85,17 +91,17 @@ mod query;
 pub mod record;
 mod target;
 mod term;
+mod value_frame;
 
 use std::fmt;
 
 pub use context::{borrowed, context};
-/// The language-neutral value tree — the runtime value every binding
-/// funnels through — and the value kinds, the type a plan field declares
-/// in its `"type"` key. A kind's names are frozen wire format; see
-/// [`admits`] and [`read`] for what a kind means to this engine. A value
-/// crosses a binding's boundary as a transport frame
-/// ([`FfiValue::to_frame`], [`FfiValue::from_frame`]); everything else here
-/// takes and returns values, never encoded bytes.
+/// The tree a binding's control data decodes into, and the value kinds, the
+/// type a plan field declares in its `"type"` key. A kind's names are frozen
+/// wire format; see [`admits`] and [`read`] for what a kind means to this
+/// engine. Control data crosses a binding's boundary as a transport frame
+/// ([`FfiValue::to_frame`], [`FfiValue::from_frame`]); a plaintext crosses
+/// as one too, and stays one ([`ValueFrame`]).
 pub use ffi_value::{
     Element, Entry, FfiValue, FromFrameError, ParseValueKindError, Put, Root, Utf8String,
     ValueKind, ValueMap, ValueSeq, ValueSink,
@@ -108,6 +114,7 @@ pub use query::{
 pub use record::{FieldPlan, Output, Plan};
 pub use target::{NoTargets, TargetDescriptor, TargetError, TargetResolver};
 pub use term::{term, TermBytes};
+pub use value_frame::{Children, Modeled, Opening, ValueFrame};
 
 use crate::target::IndexSpec;
 use crate::{KeysetCipher, StackCipher};

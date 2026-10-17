@@ -1,15 +1,25 @@
-//! The runtime value tree every binding funnels through: [`FfiValue`], and
+//! The value tree a binding's control data decodes into: [`FfiValue`], and
 //! the kinds a plan field declares ([`ValueKind`]).
 //!
-//! Both were `vitaminc-aead-value`'s until vitaminc ADR 0001 reduced that
-//! crate to the transport (`vitaminc-aead-frame`). A value now describes
-//! itself to vitaminc through [`Encrypt`] and is read back through a
-//! [`Decrypt`] sink, so an [`FfiValue`] seals the same tagged leaves a
-//! typed Rust value of the same kind does, and crosses an FFI boundary as a
-//! transport frame ([`to_frame`](FfiValue::to_frame),
-//! [`from_frame`](FfiValue::from_frame)). The tree is kept here, unchanged
-//! in shape, so the engine and the bindings built on it keep their
-//! behaviour while they move onto vitaminc's model.
+//! **`FfiValue` is not plaintext's type.** It carries what a binding sends to
+//! describe an operation, none of which is secret: a plan, a context, an
+//! options object, a query's statistics, and what the engine answers (a
+//! query term's wire object, a catalog). vitaminc 0.6 has no shared value
+//! type (vitaminc ADR 0001): a value describes itself once, and sinks
+//! consume it. So a plaintext the engine holds is a
+//! [`ValueFrame`](super::ValueFrame), one value as its transport frame in a
+//! wiped buffer, and every plaintext path (a record's source and what it
+//! opens to, a query's input, a page to verify, an EQL target's plaintext)
+//! walks frames into sinks with no tree in between.
+//!
+//! `FfiValue` still describes itself to vitaminc ([`Encrypt`]) and can be
+//! read back from a walk ([`Decrypt`]), because that is how control data
+//! crosses a binding's boundary as a transport frame
+//! ([`to_frame`](FfiValue::to_frame), [`from_frame`](FfiValue::from_frame)).
+//! The same impls let a Rust test spell a value as a tree and hand it to an
+//! entry point that takes any source; the engine walks it and keeps none of
+//! it. Do not seal through an `FfiValue` in code a binding runs: decode a
+//! host's plaintext into a [`ValueFrame`](super::ValueFrame) instead.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -27,12 +37,13 @@ use zeroize::Zeroize;
 use crate::plan::IntoLabel;
 use crate::{Label, LabelError};
 
-/// An owned, `Send`, language-neutral representation of a dynamically typed
-/// host value: what a binding converts a host value into on the host's
-/// thread, so encryption and decryption can run on any thread.
-/// Secret-bearing leaves (strings and bytes) are held in [`Protected`] so
-/// the Rust-side copies are wiped on drop; copies owned by the host
-/// runtime's heap cannot be wiped from here.
+/// An owned, `Send`, language-neutral tree of a binding's control data: a
+/// plan, a context, options, statistics, and the engine's answers. Not
+/// plaintext: a binding's plaintext is a [`ValueFrame`](super::ValueFrame)
+/// (vitaminc ADR 0001 removed the shared value type). Text and bytes
+/// leaves are held in
+/// [`Protected`] all the same, as they were when this type also carried
+/// plaintext, so a value spelled in a test is wiped like any other.
 ///
 /// Each variant is one of vitaminc's scalars or containers: `Null` is a
 /// null, `Undefined` a null under the `Undefined` logical type, the

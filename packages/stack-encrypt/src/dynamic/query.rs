@@ -69,13 +69,17 @@ use std::fmt;
 use stack_kms::DataKeySource;
 
 use super::record::{FieldPlan, Plan};
+use super::term::OneScalar;
 use super::term::{derive, Use};
+use super::value_frame::Parts;
 use super::ValueKind;
-use super::{admits, read, utf8, Error, FfiValue, Reason, TargetDescriptor, TargetResolver};
+use super::{admits, read, Error, FfiValue, Reason, TargetDescriptor, TargetResolver, ValueFrame};
 use crate::op::{Limit, Stats};
 use crate::sem::{match_limit, MatchOptions, QueryTokens, TermError};
 use crate::target::IndexSpec;
 use crate::{KeysetCipher, Pending};
+use vitaminc_aead::plaintext::{Logical, Physical};
+use vitaminc_aead::Encrypt;
 
 /// An operator, named at run time: the runtime form of the
 /// [`op`](crate::op) module's operator types, as [`IndexSpec`] is of the
@@ -365,8 +369,8 @@ struct Answer<'p> {
 
 /// The input of a query, read as its field's kind.
 enum Input {
-    One(FfiValue),
-    Pair(FfiValue, FfiValue),
+    One(ValueFrame),
+    Pair(ValueFrame, ValueFrame),
 }
 
 /// Find `field` in `plan` and the index that answers `operator` for it.
@@ -534,14 +538,19 @@ fn has_context(plan: &Plan, field: &str) -> Result<(), Error> {
 /// [`Error::Source`] naming the field: [`Reason::FieldType`] for a value
 /// that cannot be read as the kind, [`Reason::NotARange`] for a `between`
 /// input that is not a list of two values.
-fn read_input(answer: &Answer<'_>, operator: OpSpec, input: FfiValue) -> Result<Input, Error> {
+fn read_input(answer: &Answer<'_>, operator: OpSpec, input: impl Encrypt) -> Result<Input, Error> {
     let name = answer.field.name();
-    let one = |value| read(answer.kind, value).map_err(|error| error.in_field(name));
     if !operator.takes_pair() {
-        return one(input).map(Input::One);
+        return read(answer.kind, input)
+            .map(Input::One)
+            .map_err(|error| error.in_field(name));
     }
-    match input {
-        FfiValue::Array(bounds) => match <[FfiValue; 2]>::try_from(bounds) {
+    let one = |value: ValueFrame| read(answer.kind, value).map_err(|error| error.in_field(name));
+    let bounds = ValueFrame::of(input)
+        .and_then(|input| input.parts())
+        .map_err(|_| not_a_range(name))?;
+    match bounds {
+        Parts::Seq(bounds) => match <[ValueFrame; 2]>::try_from(bounds) {
             Ok([lo, hi]) => Ok(Input::Pair(one(lo)?, one(hi)?)),
             Err(_) => Err(not_a_range(name)),
         },
@@ -585,14 +594,24 @@ fn check_input(index: &IndexSpec, input: &Input) -> Result<(), Error> {
 }
 
 /// The order of two integers of one kind, or `None` for anything else.
-fn integer_order(lo: &FfiValue, hi: &FfiValue) -> Option<Ordering> {
-    match (lo, hi) {
-        (FfiValue::Int32(lo), FfiValue::Int32(hi)) => Some(lo.cmp(hi)),
-        (FfiValue::Int64(lo), FfiValue::Int64(hi)) => Some(lo.cmp(hi)),
-        (FfiValue::UInt32(lo), FfiValue::UInt32(hi)) => Some(lo.cmp(hi)),
-        (FfiValue::UInt64(lo), FfiValue::UInt64(hi)) => Some(lo.cmp(hi)),
-        _ => None,
-    }
+fn integer_order(lo: &ValueFrame, hi: &ValueFrame) -> Option<Ordering> {
+    let (lo_kind, lo) = integer_of(lo)?;
+    let (hi_kind, hi) = integer_of(hi)?;
+    (lo_kind == hi_kind).then(|| lo.cmp(&hi))
+}
+
+/// An integer scalar's kind and value, or `None` for anything else.
+fn integer_of(value: &ValueFrame) -> Option<(ValueKind, i128)> {
+    let kind = value.kind()?;
+    let int = value
+        .visit(OneScalar::new(
+            |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
+                (None, Physical::Int(int)) => int.to_i128().ok_or(None),
+                _ => Err(None),
+            },
+        ))
+        .ok()?;
+    Some((kind, int))
 }
 
 /// The tokens a match query of `value` keeps, under the index's options.
@@ -606,13 +625,17 @@ fn integer_order(lo: &FfiValue, hi: &FfiValue) -> Option<Ordering> {
 /// [`TermError::EmptyTermText`] for text that cuts no token, whose filter
 /// would match every row. [`Error::Internal`] for a value that is not text,
 /// which [`read_input`] has ruled out.
-fn query_tokens(value: &FfiValue, options: &MatchOptions) -> Result<QueryTokens, Error> {
-    let FfiValue::String(text) = value else {
-        return Err(Error::Internal);
-    };
-    let text = utf8(text).ok_or(Error::Internal)?;
-    // The query chain's rule, from the same helper.
-    QueryTokens::of_query(text, options).map_err(|error| Error::Cipher(error.into()))
+fn query_tokens(value: &ValueFrame, options: &MatchOptions) -> Result<QueryTokens, Error> {
+    value
+        .visit(OneScalar::new(
+            |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
+                // The query chain's rule, from the same helper.
+                (None, Physical::Text(text)) => Ok(QueryTokens::of_query(text, options)
+                    .map_err(|error| Error::Cipher(error.into()))),
+                _ => Err(None),
+            },
+        ))
+        .map_err(|_| Error::Internal)?
 }
 
 /// Check a query without a cipher: everything [`query_term`] refuses before
@@ -626,7 +649,7 @@ pub fn check_query(
     plan: &Plan,
     field: &str,
     operator: OpSpec,
-    input: FfiValue,
+    input: impl Encrypt,
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<(), Error> {
     let answer = answer(plan, field, operator, resolver)?;
@@ -698,7 +721,7 @@ pub fn query_term<'a, K>(
     plan: &Plan,
     field: &str,
     operator: OpSpec,
-    input: FfiValue,
+    input: impl Encrypt,
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<Pending<'a, QueryTerm, K>, Error>
 where
@@ -724,7 +747,7 @@ where
             .map(move |json| made(domain, Operand::One(json))));
     }
     let context = answer.field.context();
-    let term = |value: &FfiValue| {
+    let term = |value: &ValueFrame| {
         derive(cipher, value, &answer.index, context.clone(), Use::Query)
             .map_err(|error| error.in_field(field))
     };
@@ -791,28 +814,35 @@ fn probabilistic(
 /// [`Reason::ExactOperator`] for an exact operator, which has nothing to
 /// verify; and [`Error::Source`] with [`Reason::FieldType`] for a value
 /// that is neither a string nor null.
-pub fn verify(
+pub fn verify<V: Encrypt>(
     plan: &Plan,
     field: &str,
     operator: OpSpec,
-    input: FfiValue,
-    values: &[FfiValue],
+    input: impl Encrypt,
+    values: impl IntoIterator<Item = V>,
     resolver: &(impl TargetResolver + ?Sized),
 ) -> Result<Vec<bool>, Error> {
     let (options, _) = probabilistic(plan, field, operator, resolver)?;
     let input = read(ValueKind::String, input).map_err(|error| error.in_field(field))?;
     let tokens = query_tokens(&input, &options)?;
+    // Each value is walked in place to its one scalar: text is checked for
+    // the query's tokens, a null holds none, and anything else is not a
+    // value of the field.
     values
-        .iter()
-        .map(|value| match value {
-            FfiValue::String(text) => {
-                Ok(utf8(text).is_some_and(|text| tokens.verify(text, &options)))
-            }
-            FfiValue::Null => Ok(false),
-            _ => Err(Error::Source {
-                field: Some(field.to_owned()),
-                reason: Reason::FieldType,
-            }),
+        .into_iter()
+        .map(|value| {
+            value
+                .visit(OneScalar::new(
+                    |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
+                        (None, Physical::Text(text)) => Ok(tokens.verify(text, &options)),
+                        (None, Physical::Null) => Ok(false),
+                        _ => Err(None),
+                    },
+                ))
+                .map_err(|_| Error::Source {
+                    field: Some(field.to_owned()),
+                    reason: Reason::FieldType,
+                })
         })
         .collect()
 }
@@ -1000,6 +1030,10 @@ mod tests {
 
     fn text(s: &str) -> FfiValue {
         FfiValue::String(s.into())
+    }
+
+    fn vf(value: &FfiValue) -> ValueFrame {
+        ValueFrame::of(value).expect("a value")
     }
 
     /// One field of `users`, as a binding spells it.
@@ -1427,7 +1461,15 @@ mod tests {
             (Some("email"), Some(Reason::QueryContextField))
         );
         // Verifying derives nothing, so it needs no context.
-        let error = verify(&plan, "email", OpSpec::Eq, text("a"), &[], &NoTargets).unwrap_err();
+        let error = verify(
+            &plan,
+            "email",
+            OpSpec::Eq,
+            text("a"),
+            Vec::<FfiValue>::new(),
+            &NoTargets,
+        )
+        .unwrap_err();
         assert_eq!(
             reason_of(&error),
             (Some("email"), Some(Reason::ExactOperator)),
@@ -1478,7 +1520,7 @@ mod tests {
             "name",
             OpSpec::Matches,
             text("alice"),
-            &[],
+            Vec::<FfiValue>::new(),
             &NoTargets,
         )
         .unwrap();
@@ -1781,15 +1823,16 @@ mod tests {
             (FfiValue::UInt64(1), FfiValue::UInt64(2)),
         ];
         for (lo, hi) in cases {
-            assert_eq!(integer_order(&lo, &hi), Some(Ordering::Less), "{lo:?}");
-            assert_eq!(integer_order(&hi, &lo), Some(Ordering::Greater), "{lo:?}");
-            assert_eq!(integer_order(&lo, &lo), Some(Ordering::Equal), "{lo:?}");
+            let (lo, hi) = (vf(&lo), vf(&hi));
+            assert_eq!(integer_order(&lo, &hi), Some(Ordering::Less));
+            assert_eq!(integer_order(&hi, &lo), Some(Ordering::Greater));
+            assert_eq!(integer_order(&lo, &lo), Some(Ordering::Equal));
         }
         assert_eq!(
-            integer_order(&FfiValue::UInt32(1), &FfiValue::UInt64(2)),
+            integer_order(&vf(&FfiValue::UInt32(1)), &vf(&FfiValue::UInt64(2))),
             None
         );
-        assert_eq!(integer_order(&text("a"), &text("b")), None);
+        assert_eq!(integer_order(&vf(&text("a")), &vf(&text("b"))), None);
     }
 
     #[test]
@@ -2068,7 +2111,7 @@ mod tests {
             _: &str,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
-            _: FfiValue,
+            _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("a query encrypts nothing")
         }
@@ -2078,7 +2121,7 @@ mod tests {
             _: &'a crate::StackCipher<K>,
             _: &Label,
             _: &[u8],
-        ) -> Result<Pending<'a, FfiValue, K>, TargetError> {
+        ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
             unreachable!("a query decrypts nothing")
         }
         fn query<'a, K: 'static>(
@@ -2086,7 +2129,7 @@ mod tests {
             _: &str,
             keyset: &'a KeysetCipher<'_, K>,
             _: &Label,
-            _: FfiValue,
+            _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             Ok(Pending::ready(keyset, Ok(br#"{"bf":[1,5,2047]}"#.to_vec())))
         }
@@ -2244,7 +2287,7 @@ mod tests {
             _: &str,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
-            _: FfiValue,
+            _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("a query encrypts nothing")
         }
@@ -2254,7 +2297,7 @@ mod tests {
             _: &'a crate::StackCipher<K>,
             _: &Label,
             _: &[u8],
-        ) -> Result<Pending<'a, FfiValue, K>, TargetError> {
+        ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
             unreachable!("a query decrypts nothing")
         }
         fn query<'a, K: 'static>(
@@ -2262,7 +2305,7 @@ mod tests {
             _: &str,
             keyset: &'a KeysetCipher<'_, K>,
             _: &Label,
-            _: FfiValue,
+            _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             Ok(Pending::ready(keyset, Ok(br#"{"hm":"00"}"#.to_vec())))
         }
@@ -2308,7 +2351,15 @@ mod tests {
                 "{op}"
             );
         }
-        let error = verify(&plan, "email", OpSpec::Eq, text("a"), &[], &OneType).unwrap_err();
+        let error = verify(
+            &plan,
+            "email",
+            OpSpec::Eq,
+            text("a"),
+            Vec::<FfiValue>::new(),
+            &OneType,
+        )
+        .unwrap_err();
         assert_eq!(
             reason_of(&error),
             (Some("email"), Some(Reason::ExactOperator))

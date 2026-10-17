@@ -28,7 +28,7 @@
 use std::fmt;
 
 use super::query::{operator_to_value, target_operators};
-use super::{FfiValue, OpSpec, ValueKind};
+use super::{FfiValue, OpSpec, ValueFrame, ValueKind};
 
 use crate::sem::MatchOptions;
 use crate::{KeysetCipher, Label, Pending, StackCipher};
@@ -486,7 +486,7 @@ pub trait TargetResolver {
         name: &str,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
-        plaintext: FfiValue,
+        plaintext: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>;
 
     /// Open a stored value of the named type back to its plaintext, checking
@@ -505,7 +505,7 @@ pub trait TargetResolver {
         cipher: &'a StackCipher<K>,
         label: &Label,
         stored: &[u8],
-    ) -> Result<Pending<'a, FfiValue, K>, TargetError>;
+    ) -> Result<Pending<'a, ValueFrame, K>, TargetError>;
 
     /// Run the named type's query twin over one value: the operand that
     /// matches stored values under `label`'s column, as JSON bytes.
@@ -518,7 +518,7 @@ pub trait TargetResolver {
         name: &str,
         keyset: &'a KeysetCipher<'_, K>,
         label: &Label,
-        plaintext: FfiValue,
+        plaintext: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>;
 }
 
@@ -547,7 +547,7 @@ impl TargetResolver for NoTargets {
         name: &str,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
-        _: FfiValue,
+        _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         Self::refuse(name)
     }
@@ -558,7 +558,7 @@ impl TargetResolver for NoTargets {
         _: &'a StackCipher<K>,
         _: &Label,
         _: &[u8],
-    ) -> Result<Pending<'a, FfiValue, K>, TargetError> {
+    ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
         Self::refuse(name)
     }
 
@@ -567,7 +567,7 @@ impl TargetResolver for NoTargets {
         name: &str,
         _: &'a KeysetCipher<'_, K>,
         _: &Label,
-        _: FfiValue,
+        _: ValueFrame,
     ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
         Self::refuse(name)
     }
@@ -625,7 +625,7 @@ mod tests {
             _: &str,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
-            _: FfiValue,
+            _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("not run here")
         }
@@ -635,7 +635,7 @@ mod tests {
             _: &'a StackCipher<K>,
             _: &Label,
             _: &[u8],
-        ) -> Result<Pending<'a, FfiValue, K>, TargetError> {
+        ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
             unreachable!("not run here")
         }
         fn query<'a, K: 'static>(
@@ -643,7 +643,7 @@ mod tests {
             _: &str,
             _: &'a KeysetCipher<'_, K>,
             _: &Label,
-            _: FfiValue,
+            _: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             unreachable!("not run here")
         }
