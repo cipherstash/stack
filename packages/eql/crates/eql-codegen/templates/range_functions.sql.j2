@@ -1,0 +1,48 @@
+-- AUTOMATICALLY GENERATED FILE.
+{{ only_directive }}
+{% for r in requires -%}
+-- REQUIRE: {{ r }}
+{% endfor %}
+--! @file v3/scalars/{{ family_name }}/query_{{ family_name }}_range_functions.sql
+--! @brief The bound accessors and `{{ schema }}.between` for {{ family_name }}'s range query domains.
+--! @note EQL version {{ eql_version }} only, like the range domains themselves.
+{% for a in accessors %}
+--! @brief The {{ a.side }} bound of a {{ schema }}.{{ a.range }}, as a {{ a.term_label }} term.
+--!
+--! Reads the bound with the term's own constructor, exactly as a single-bound
+--! query operand's term is read, so a bound compares like that term would.
+--!
+--! @param r {{ schema }}.{{ a.range }} Range query operand
+--! @return {{ a.returns }} The {{ a.side }} bound's term (included in the range), or NULL for a NULL range
+--! @note IMMUTABLE and STRICT. It is evaluated once per query when
+--!       `{{ schema }}.between` is served by an index, since its argument is the
+--!       query's parameter, not a column.
+CREATE FUNCTION {{ schema }}.{{ a.function_name }}(r {{ schema }}.{{ a.range }})
+RETURNS {{ a.returns }}
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$ SELECT {{ a.body }} $$;
+{% endfor %}
+{%- for b in betweens %}
+--! @brief Whether a {{ b.column }} value lies in a range, both bounds included.
+--!
+--! True when `{{ schema }}.lo(r) <= {{ schema }}.{{ b.extractor }}(a) <= {{ schema }}.hi(r)`.
+--! The range is one operand, so a statement cannot pair the low bound of one
+--! query with the high bound of another (ADR-0009, decision 7):
+--! `WHERE {{ schema }}.between(col, $1::{{ schema }}.{{ b.range }})`.
+--!
+--! @param a {{ b.column }} Encrypted column value
+--! @param r {{ schema }}.{{ b.range }} Range query operand: both bounds of one `BETWEEN`
+--! @return boolean True when the value is in the range; NULL when either argument is NULL
+--! @note Inlinable on purpose: `LANGUAGE sql`, one expression, IMMUTABLE, no
+--!       `SET` clause, and not STRICT. PostgreSQL inlines a STRICT SQL function
+--!       only when its body is strict, and `x AND y` is not, so STRICT would
+--!       stop inlining. Inlined, the planner sees two comparisons on
+--!       `{{ schema }}.{{ b.extractor }}(a)`, which a btree index on that expression
+--!       serves as one range scan.
+--! @note `BETWEEN` is an SQL keyword, so call it schema-qualified:
+--!       `{{ schema }}.between(...)` parses, a bare `between(...)` does not.
+CREATE FUNCTION {{ schema }}.between(a {{ b.column }}, r {{ schema }}.{{ b.range }})
+RETURNS boolean
+LANGUAGE sql IMMUTABLE PARALLEL SAFE
+AS $$ SELECT {{ schema }}.{{ b.extractor }}(a) >= {{ schema }}.lo(r) AND {{ schema }}.{{ b.extractor }}(a) <= {{ schema }}.hi(r) $$;
+{% endfor -%}

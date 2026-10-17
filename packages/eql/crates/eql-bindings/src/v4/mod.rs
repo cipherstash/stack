@@ -13,6 +13,11 @@
 //! `eql-codegen`'s `ENCRYPTION_DOMAINS`; the rest say why in
 //! `crate::encryption::targets`.
 //!
+//! Beyond v3's types, every ordered family has a range query operand per
+//! order term (`IntegerRangeOreQuery`, `IntegerRangeOpeQuery`, …, listed by
+//! [`all_range_query`]): both bounds of one `BETWEEN`, the one operand of
+//! `eql_v4.between(column, range)`. EQL v3 has no range domains.
+//!
 //! v4 has no SteVec bindings, payload enums, TypeScript export or
 //! published JSON Schema yet; those follow in `@cipherstash/eql` 4.0. The
 //! term newtypes and the [`DomainType`] trait are shared with v3: a v4
@@ -42,7 +47,7 @@ pub mod timestamp;
 
 pub use crate::v3::domain_type::{DomainType, SQL_SCHEMA};
 pub use crate::v3::terms;
-pub use inventory::{all, all_query};
+pub use inventory::{all, all_query, all_range_query};
 
 /// The PostgreSQL typname prefix every `public` v4 domain carries.
 pub const PUBLIC_TYPNAME_PREFIX: &str = "eql_v4_";

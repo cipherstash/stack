@@ -55,6 +55,16 @@ pub fn environment() -> minijinja::Environment<'static> {
     )
     .expect("aggregates.sql template");
     env.add_template(
+        "range_types.sql",
+        include_str!("../templates/range_types.sql.j2"),
+    )
+    .expect("range_types.sql template");
+    env.add_template(
+        "range_functions.sql",
+        include_str!("../templates/range_functions.sql.j2"),
+    )
+    .expect("range_functions.sql template");
+    env.add_template(
         "ore_fallback.sql",
         include_str!("../templates/ore_fallback.sql.j2"),
     )

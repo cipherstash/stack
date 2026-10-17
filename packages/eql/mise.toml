@@ -316,7 +316,7 @@ cargo clippy --locked -p eql-bindings -p eql-encryption-tests --all-features --a
 """
 
 [tasks."test:encryption:postgres"]
-description = "Install the EQL v4 bundle built from the tree into the database EQL_TEST_DATABASE_URL names and run the stack-encrypt PostgreSQL test against it (fresh encryption, fake KMS)"
+description = "Install the EQL v4 bundle built from the tree into the database EQL_TEST_DATABASE_URL names and run the PostgreSQL tests against it: stack-encrypt values (fresh encryption, fake KMS), and the range query domains and eql_v4.between"
 # `build` writes release/cipherstash-encrypt-v4.sql from the SQL in the tree. The
 # copy under crates/eql-bindings/sql is the RELEASED bundle, rewritten only by
 # the lockstep version bump, so a test that installs it cannot see a SQL edit
@@ -334,7 +334,7 @@ psql "$EQL_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -f release/cipherstash-encrypt-
 # `--ignored` selects by attribute, and cargo exits 0 on an empty selection, so
 # a test that loses its `#[ignore]` or is renamed would leave this task passing
 # on nothing. List what the filter selects before running it.
-for suite in text_eq v4_types; do
+for suite in text_eq v4_types v4_range; do
   listing=$(cargo test --locked -p eql-encryption-tests --test "$suite" -- --ignored --list | sed -n 's/: test$//p')
   [ -n "$listing" ] || { echo "error: '--ignored' selects no test in $suite; the PostgreSQL test has gone missing." >&2; exit 1; }
   cargo test --locked -p eql-encryption-tests --test "$suite" -- --ignored

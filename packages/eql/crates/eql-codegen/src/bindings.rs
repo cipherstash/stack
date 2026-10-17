@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use eql_domains::{Domain, DomainFamily, Term, CATALOG, ENVELOPE_KEYS};
+use eql_domains::{Domain, DomainFamily, Term, CATALOG, ENVELOPE_KEYS, RANGE_BOUND_KEYS};
 
 use crate::consts::RUST_GENERATED_MARKER;
 use crate::render::EqlVersion;
@@ -333,6 +333,89 @@ fn render_query_struct(eql: EqlVersion, family: &DomainFamily, domain: &Domain) 
     }
 }
 
+/// One range query-operand struct + its `DomainType` impl: the operand of
+/// `eql_v4.between(column, range)` for the ordering term `term`, holding both
+/// bounds of one `BETWEEN` (ADR-0009 decision 7). EQL v4 only: no v3 domain
+/// carries a range, so [`render_family_bindings`] emits these for v4 alone.
+///
+/// The fields are the envelope's `v` and `i`, then the bounds under
+/// [`RANGE_BOUND_KEYS`], each the term newtype the family's single-bound query
+/// struct for the same term holds (`OreBlock256` for `ob`, `OpeCllw` for `op`),
+/// so a range is Stack Encrypt's `RangeQuery { lo, hi }` with nothing added.
+/// No struct derives Stack Encrypt's traits yet: the ordered types it ranges
+/// over are not producible.
+fn render_range_query_struct(family: &DomainFamily, term: Term) -> TokenStream {
+    let eql = crate::range::RANGE_VERSION;
+    let ident = format_ident!("{}", family.range_struct_ident(term));
+    let sql_domain = crate::range::range_sql_domain(family, term);
+    let reference = reference_docs(family);
+    let schema_id = schema_id_override(eql);
+    let term_name = match term {
+        Term::Ore => "block ORE",
+        Term::Ope => "CLLW OPE",
+        Term::Hm | Term::Bloom => unreachable!("{term:?} has no range domain"),
+    };
+    let summary =
+        format!(" `{sql_domain}` — {term_name} range query operand: both bounds of one `BETWEEN`.");
+    let columns = family
+        .range_columns(term)
+        .iter()
+        .map(|d| format!("`{}`", domain_name(eql, &d.full_name(family.name))))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let keys_str = ["v", "i"]
+        .into_iter()
+        .chain(RANGE_BOUND_KEYS)
+        .map(|k| format!("`{k}`"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let detail = format!(
+        " Function: `{prefix}.between(column, range)`, both bounds included. Columns: \
+         {columns}. Required keys: {keys_str}.",
+        prefix = eql.prefix()
+    );
+    let tid = format_ident!("{}", term.binding_newtype());
+    let [lo, hi] = RANGE_BOUND_KEYS.map(|k| format_ident!("{k}"));
+    let bound_keys = RANGE_BOUND_KEYS;
+
+    quote! {
+        #[doc = #summary]
+        #[doc = ""]
+        #[doc = #detail]
+        #reference
+        #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
+        #[serde(deny_unknown_fields)]
+        pub struct #ident {
+            pub v: SchemaVersion,
+            pub i: Identifier,
+            pub #lo: #tid,
+            pub #hi: #tid,
+        }
+
+        impl DomainType for #ident {
+            fn sql_domain_static() -> &'static str {
+                #sql_domain
+            }
+            fn sql_domain(&self) -> &'static str {
+                Self::sql_domain_static()
+            }
+            fn term_json_keys_static() -> Option<&'static [&'static str]> {
+                Some(&[#(#bound_keys),*])
+            }
+            fn term_json_keys(&self) -> Option<&'static [&'static str]> {
+                Self::term_json_keys_static()
+            }
+            fn parse_value(&self, value: &serde_json::Value) -> Result<(), serde_json::Error> {
+                #ident::deserialize(value).map(|_| ())
+            }
+            fn schema(&self) -> Schema {
+                schema_for!(#ident)
+            }
+            #schema_id
+        }
+    }
+}
+
 /// The `(family, domain)` pairs whose generated v4 structs carry the opt-in
 /// `stack-encrypt` derives: the storage and equality domains of every family
 /// whose plaintext the engine's value enum carries, and text match. Every
@@ -523,7 +606,12 @@ pub fn render_family_bindings(version: EqlVersion, family: &DomainFamily) -> Str
     let imports = family_imports(version, &used);
 
     // Storage structs for every domain, then a query twin for each term-bearing
-    // domain (storage-only domains have no operators, so no query operand).
+    // domain (storage-only domains have no operators, so no query operand),
+    // then, for v4, a range query operand per ordering term.
+    let ranges = match version {
+        EqlVersion::V3 => Vec::new(),
+        EqlVersion::V4 => family.range_terms(),
+    };
     let structs: TokenStream = family
         .domains
         .iter()
@@ -534,6 +622,11 @@ pub fn render_family_bindings(version: EqlVersion, family: &DomainFamily) -> Str
                 .iter()
                 .filter(|d| !d.terms.is_empty())
                 .map(|d| render_query_struct(version, family, d)),
+        )
+        .chain(
+            ranges
+                .into_iter()
+                .map(|t| render_range_query_struct(family, t)),
         )
         .collect();
 
@@ -643,10 +736,18 @@ pub fn render_v4_inventory_rs() -> String {
             quote! { Box::new(PhantomData::<super::#m::#s>), }
         })
         .collect();
+    let range_entries: TokenStream = eql_domains::families_with_scalar_domains()
+        .flat_map(|f| f.range_terms().into_iter().map(move |t| (f, t)))
+        .map(|(f, t)| {
+            let m = format_ident!("{}", f.name);
+            let s = format_ident!("{}", f.range_struct_ident(t));
+            quote! { Box::new(PhantomData::<super::#m::#s>), }
+        })
+        .collect();
 
-    let mod_doc = " The `all()` / `all_query()` inventories — every v4 stored and \
-                   query-operand payload type in eql-domains::CATALOG order. \
-                   Generated from the catalog.";
+    let mod_doc = " The `all()` / `all_query()` / `all_range_query()` inventories — every v4 \
+                   stored, query-operand and range query-operand payload type in \
+                   eql-domains::CATALOG order. Generated from the catalog.";
 
     let file = quote! {
         #![doc = #mod_doc]
@@ -668,6 +769,15 @@ pub fn render_v4_inventory_rs() -> String {
         pub fn all_query() -> Vec<Box<dyn DomainType>> {
             vec![
                 #query_entries
+            ]
+        }
+
+        /// Every v4 RANGE query operand (`eql_v4.query_<family>_range_<term>`),
+        /// one per family and ordering term, in `eql-domains::CATALOG` order —
+        /// generated. The operand of `eql_v4.between`; EQL v3 has none.
+        pub fn all_range_query() -> Vec<Box<dyn DomainType>> {
+            vec![
+                #range_entries
             ]
         }
     };

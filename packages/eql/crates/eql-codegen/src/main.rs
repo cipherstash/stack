@@ -169,6 +169,48 @@ fn main() -> ExitCode {
         };
     }
 
+    // `select <3|4> <file>...`: print, in the order given, the files that
+    // belong to that EQL version: every file but one confined to the other
+    // version by a `-- ONLY EQL VERSION:` line. tasks/build.sh runs the
+    // install order through this before rendering each version's bundle, so
+    // the v4-only range surface never reaches the v3 installer.
+    if args.len() >= 3 && args[1] == "select" {
+        let version = match args[2].parse::<eql_codegen::render::EqlVersion>() {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::from(2);
+            }
+        };
+        let mut selected = Vec::new();
+        for file in &args[3..] {
+            let belongs = std::fs::read_to_string(file)
+                .map_err(|e| e.to_string())
+                .and_then(|src| {
+                    eql_codegen::render::belongs_to(&src, version).map_err(|e| e.to_string())
+                });
+            match belongs {
+                Ok(true) => selected.push(file),
+                Ok(false) => {}
+                Err(e) => {
+                    eprintln!("error: {file}: {e}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        if selected.is_empty() {
+            eprintln!(
+                "error: select chose no file for EQL version {}",
+                version.number()
+            );
+            return ExitCode::FAILURE;
+        }
+        for file in selected {
+            println!("{file}");
+        }
+        return ExitCode::SUCCESS;
+    }
+
     // `clean`: remove the generated SQL surface (marker-aware) under every
     // src/v3/scalars/* type dir. Replaces build.sh's filename-pattern sweep;
     // hand-written files (no AUTO-GENERATED marker) are preserved.
@@ -205,6 +247,7 @@ fn main() -> ExitCode {
     eprintln!("       eql-codegen order      (print the src/v3 install order, one path per line)");
     eprintln!("       eql-codegen clean      (remove the generated SQL surface)");
     eprintln!("       eql-codegen render <3|4> <out-dir> <file>... (render placeholder SQL as one EQL version)");
+    eprintln!("       eql-codegen select <3|4> <file>... (print the files that belong to one EQL version)");
     eprintln!("       eql-codegen list-types (print catalog tokens)");
     eprintln!(
         "       eql-codegen list-schemas [3|4] (print owned schemas, rendered, public first)"

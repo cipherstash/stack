@@ -403,3 +403,87 @@ impl DomainType for BigintOrdOpeQuery {
         format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
     }
 }
+/// `eql_v4.query_bigint_range_ore` — block ORE range query operand: both bounds of one `BETWEEN`.
+///
+/// Function: `eql_v4.between(column, range)`, both bounds included. Columns: `public.eql_v4_bigint_ord_ore`. Required keys: `v` `i` `lo` `hi`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
+)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BigintRangeOreQuery {
+    pub v: SchemaVersion,
+    pub i: Identifier,
+    pub lo: OreBlock256,
+    pub hi: OreBlock256,
+}
+impl DomainType for BigintRangeOreQuery {
+    fn sql_domain_static() -> &'static str {
+        "eql_v4.query_bigint_range_ore"
+    }
+    fn sql_domain(&self) -> &'static str {
+        Self::sql_domain_static()
+    }
+    fn term_json_keys_static() -> Option<&'static [&'static str]> {
+        Some(&["lo", "hi"])
+    }
+    fn term_json_keys(&self) -> Option<&'static [&'static str]> {
+        Self::term_json_keys_static()
+    }
+    fn parse_value(&self, value: &serde_json::Value) -> Result<(), serde_json::Error> {
+        BigintRangeOreQuery::deserialize(value).map(|_| ())
+    }
+    fn schema(&self) -> Schema {
+        schema_for!(BigintRangeOreQuery)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
+    fn schema_id(&self) -> String {
+        format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
+    }
+}
+/// `eql_v4.query_bigint_range_ope` — CLLW OPE range query operand: both bounds of one `BETWEEN`.
+///
+/// Function: `eql_v4.between(column, range)`, both bounds included. Columns: `public.eql_v4_bigint_ord` `public.eql_v4_bigint_ord_ope`. Required keys: `v` `i` `lo` `hi`.
+#[cfg_attr(doc, doc = "")]
+#[cfg_attr(
+    doc,
+    doc = " See the [EQL bigint reference](https://cipherstash.com/docs/reference/eql/numbers) for SQL domain variants, operators, and query examples."
+)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BigintRangeOpeQuery {
+    pub v: SchemaVersion,
+    pub i: Identifier,
+    pub lo: OpeCllw,
+    pub hi: OpeCllw,
+}
+impl DomainType for BigintRangeOpeQuery {
+    fn sql_domain_static() -> &'static str {
+        "eql_v4.query_bigint_range_ope"
+    }
+    fn sql_domain(&self) -> &'static str {
+        Self::sql_domain_static()
+    }
+    fn term_json_keys_static() -> Option<&'static [&'static str]> {
+        Some(&["lo", "hi"])
+    }
+    fn term_json_keys(&self) -> Option<&'static [&'static str]> {
+        Self::term_json_keys_static()
+    }
+    fn parse_value(&self, value: &serde_json::Value) -> Result<(), serde_json::Error> {
+        BigintRangeOpeQuery::deserialize(value).map(|_| ())
+    }
+    fn schema(&self) -> Schema {
+        schema_for!(BigintRangeOpeQuery)
+    }
+    fn schema_id_base_static() -> &'static str {
+        super::SCHEMA_ID_BASE
+    }
+    fn schema_id(&self) -> String {
+        format!("{}{}.json", super::SCHEMA_ID_BASE, self.domain())
+    }
+}

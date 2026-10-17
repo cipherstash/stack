@@ -964,6 +964,22 @@ pub fn render_type(spec: &DomainFamily, out_dir: &Path) -> Vec<(PathBuf, String)
             rendered.push((out_dir.join(format!("{name}_aggregates.sql")), agg));
         }
     }
+    // The EQL v4 range surface (ADR-0009 decisions 7 and 8): a range query
+    // domain per ordering term, its bound accessors and `between`. Both files
+    // carry `-- ONLY EQL VERSION: 4`, so the build renders them into the v4
+    // bundle only. None for a family with no ordering term.
+    if let Some(body) = crate::range::render_range_types_file(spec) {
+        rendered.push((
+            out_dir.join(crate::range::range_types_file(family_name)),
+            body,
+        ));
+    }
+    if let Some(body) = crate::range::render_range_functions_file(spec) {
+        rendered.push((
+            out_dir.join(crate::range::range_functions_file(family_name)),
+            body,
+        ));
+    }
     // json_entry cross-type operators: bind the fixed
     // public.eql_v3_json_entry leaf to every query operand this family declares
     // that carries the term json_entry can serve (Term::Ope) AND whose values
@@ -1278,10 +1294,13 @@ mod tests {
         // Query-operand + json_entry cross-type files for the term-bearing domains.
         assert!(names.contains(&"json_entry_integer_functions.sql".to_string()));
         assert!(names.contains(&"json_entry_integer_operators.sql".to_string()));
+        // The EQL v4 range surface: domains, then accessors and `between`.
+        assert!(names.contains(&"query_integer_range_types.sql".to_string()));
+        assert!(names.contains(&"query_integer_range_functions.sql".to_string()));
         // 1 types + 1 query_types + 2 per domain (5) + 2 query per term-bearing
         // domain (4) + 3 ord-capable aggregates = 1+1+10+8+3 = 23, plus the 2
-        // json_entry cross files.
-        assert_eq!(written.len(), 25);
+        // json_entry cross files and the 2 range files.
+        assert_eq!(written.len(), 27);
         for p in &written {
             assert!(fs::read_to_string(p)
                 .unwrap()
