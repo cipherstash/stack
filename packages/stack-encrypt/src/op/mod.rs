@@ -840,6 +840,10 @@ impl<S: Ordered> DefaultIndex<(S, S)> for Between {
 /// dictate, and that choice decides what the query term reveals. A type
 /// that does not answer an operator has no impl, and the query does not
 /// compile.
+///
+/// To be queried on a typed plan (`Plan::value::<S>().encrypt_into::<T>()`),
+/// the type must also implement [`LabelledTarget`], whatever context it is
+/// sealed under: an `Answers` impl alone answers no query.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not answer `{Op}` given `{In}`",
     label = "this target type does not answer the operator",

@@ -115,6 +115,23 @@
 //!     let _ = cipher.query(op::Eq, "bob").via(index).on(plan);
 //! }
 //! ```
+//! The twin index answers for its twin's own plaintext only
+//! ([`QueryTwin::Plaintext`]): `TextEqQuery`'s for a `String`,
+//! ```no_run
+//! use eql_bindings::encryption::query::TwinIndex;
+//! use eql_bindings::v4::text::TextEqQuery;
+//! use stack_encrypt::{op, Equality};
+//! fn answers<I: op::Supports<op::Eq, String>>() {}
+//! answers::<TwinIndex<Equality, TextEqQuery>>();
+//! ```
+//! and not `IntegerEqQuery`'s, whose plaintext is an `Int32`:
+//! ```compile_fail
+//! use eql_bindings::encryption::query::TwinIndex;
+//! use eql_bindings::v4::integer::IntegerEqQuery;
+//! use stack_encrypt::{op, Equality};
+//! fn answers<I: op::Supports<op::Eq, String>>() {}
+//! answers::<TwinIndex<Equality, IntegerEqQuery>>();
+//! ```
 //! A `TextMatch` query verifies a row; a `TextEq` query is exact, so it has
 //! nothing to verify and no `verify`:
 //! ```compile_fail

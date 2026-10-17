@@ -16,9 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `op::Answers` impls name, and needs only the indexes `T` declares, not a
   context the label converts into: an EQL v4 type, sealed under its column,
   is queried through its plan though it cannot be encrypted through it.
-  This crate's term targets implement it; a type sealed under a context no
-  label names must not, and its plan answers no query. Naming an index with
-  `.via(..)` still needs a type sealed under the label itself.
+  A target type answers queries on its plan only when it implements this
+  as well as `op::Answers`, whatever context it is sealed under; this
+  crate's term targets implement both. A type sealed under a context no
+  label names must not implement it, so its plan answers no query. Naming
+  an index with `.via(..)` still needs a type sealed under the label itself.
   `op::QueryToken` carries the context the query's terms were derived under
   (`label`, `is_extended`), for a query term that records it, and
   `op::Supports::check_label` (defaulted to `Ok`) lets such an index refuse
