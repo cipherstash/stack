@@ -460,8 +460,13 @@ fn frame_of(value: impl Encrypt) -> Result<ValueFrame, Error> {
 impl Plaintext for String {
     const KIND: ValueKind = ValueKind::String;
 
+    /// The frame is written from the opened text, which is wiped when this
+    /// returns: the frame writer copies the text into its own `Protected`
+    /// buffer, and the opened `String` would otherwise go back to the
+    /// allocator with the plaintext still in it.
     fn into_frame(self) -> Result<ValueFrame, Error> {
-        frame_of(self.as_str())
+        let text = zeroize::Zeroizing::new(self);
+        frame_of(text.as_str())
     }
 }
 
