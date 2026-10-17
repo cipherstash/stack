@@ -192,6 +192,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Encrypt`, and `read` returns a `ValueFrame`; `verify` takes the page of
     values as any iterator of sources (`ValueFrame::elements` splits a list
     a binding handed over).
+  - `ValueFrame::check` checks frame bytes as `ValueFrame::from_bytes` does
+    and hands them back as a `Frame` to walk in place, with no copy: the Go
+    guest encrypts and checks a record source, and reads a query's input,
+    that way, so the only copies of a source's plaintext are the per-field
+    frames the split writes.
   - `IndexSpec` is an `Index` of `ValueFrame` (it was of `FfiValue`), so a
     Rust chain over dynamic fields names `ValueFrame` fields.
   - `TargetResolver::encrypt` and `query` take a `ValueFrame`, and

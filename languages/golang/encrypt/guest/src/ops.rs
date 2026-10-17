@@ -172,10 +172,11 @@ where
     K: DataKeySource + Sync + 'static,
 {
     let plan = parse_plan(plan)?;
-    let tree = dynamic::record::encrypt_with(cipher, decode_plaintext(source)?, &plan, &resolver())
-        .map_err(|e| fail_dynamic(&e))?
-        .await
-        .map_err(|e| fail_error(&e))?;
+    let tree =
+        dynamic::record::encrypt_with(cipher, checked_plaintext(source)?, &plan, &resolver())
+            .map_err(|e| fail_dynamic(&e))?
+            .await
+            .map_err(|e| fail_error(&e))?;
     encode_tree(tree)
 }
 
@@ -252,7 +253,7 @@ where
         &plan,
         field,
         operator,
-        decode_plaintext(input)?,
+        checked_plaintext(input)?,
         &resolver(),
     )
     .map_err(|e| fail_dynamic(&e))?
@@ -276,6 +277,10 @@ pub fn verify(
     operator: &[u8],
 ) -> Result<Vec<u8>, u32> {
     let (plan, field, operator) = parse_query(plan, field, operator)?;
+    // Each value becomes a frame of its own (wiped on drop): vitaminc's
+    // `Frame` walks a sequence but does not hand out its elements' frames,
+    // and reading them out of the frame layout here would duplicate
+    // vitaminc's parser.
     let values = decode_plaintext(values)?
         .elements()
         .ok_or_else(|| last_error::malformed("the values to verify are not a list"))?;
@@ -283,7 +288,7 @@ pub fn verify(
         &plan,
         field,
         operator,
-        decode_plaintext(input)?,
+        checked_plaintext(input)?,
         values,
         &resolver(),
     )
@@ -468,7 +473,7 @@ pub mod validate {
     /// against its field's outputs).
     pub fn record(source: &[u8], plan: &[u8]) -> Result<(), u32> {
         let plan = parse_plan(plan)?;
-        dynamic::record::check_source(decode_plaintext(source)?, &plan)
+        dynamic::record::check_source(checked_plaintext(source)?, &plan)
             .map_err(|e| fail_dynamic(&e))
     }
 
@@ -483,7 +488,7 @@ pub mod validate {
             &plan,
             field,
             operator,
-            decode_plaintext(input)?,
+            checked_plaintext(input)?,
             &resolver(),
         )
         .map_err(|e| fail_dynamic(&e))
@@ -516,6 +521,15 @@ fn decode_value(bytes: &[u8]) -> Result<FfiValue, u32> {
 /// every path.
 fn decode_plaintext(bytes: &[u8]) -> Result<ValueFrame, u32> {
     ValueFrame::from_bytes(bytes).map_err(|_| not_a_frame())
+}
+
+/// Plaintext checked as [`decode_plaintext`] checks it, and walked in place
+/// from the host's buffer: for a source or an input that is walked once,
+/// where a frame of its own would be one more copy of the plaintext. The
+/// record split copies each field into its own wiped frame, and a query's
+/// input is read straight into its term.
+fn checked_plaintext(bytes: &[u8]) -> Result<Frame<'_>, u32> {
+    ValueFrame::check(bytes).map_err(|_| not_a_frame())
 }
 
 /// An opened value as the output buffer: its frame, copied into a buffer

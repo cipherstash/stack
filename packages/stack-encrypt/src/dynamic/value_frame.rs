@@ -89,6 +89,26 @@ impl ValueFrame {
         Self::of(frame).map_err(super::FromFrameError::Value)
     }
 
+    /// Check frame bytes a host handed over as [`from_bytes`](Self::from_bytes)
+    /// does, and return them as a [`Frame`] to walk in place, without
+    /// copying the value into a buffer of its own. For a source that is
+    /// walked once and dropped, such as a record a binding encrypts: the
+    /// split copies each field into its own frame, so a whole-source copy
+    /// first would be one copy of the plaintext too many.
+    ///
+    /// The frame parse refuses a malformed frame and a repeated key; the
+    /// walk that follows writes nothing and refuses what the value model does
+    /// not hold, inside a passthrough subtree too.
+    ///
+    /// # Errors
+    ///
+    /// As [`from_bytes`](Self::from_bytes).
+    pub fn check(bytes: &[u8]) -> Result<Frame<'_>, super::FromFrameError> {
+        let frame = Frame::parse(bytes).map_err(super::FromFrameError::Frame)?;
+        frame.visit(Check).map_err(super::FromFrameError::Value)?;
+        Ok(frame)
+    }
+
     /// A frame this module's writers wrote from frames already in the value
     /// model: the record a decrypt assembles. Checked to be one frame.
     pub(super) fn from_written(buffer: Protected<Vec<u8>>) -> Result<Self, crate::Error> {
@@ -138,6 +158,64 @@ impl ValueFrame {
     /// Whether the value holds a passthrough at any depth.
     pub(super) fn has_passthrough(&self) -> bool {
         self.visit(Skip::refusing_passthrough()).is_err()
+    }
+}
+
+/// The value model's check with nothing written: [`ValueFrame::check`]'s
+/// walk. A repeated key needs no check here, because the frame parse
+/// refuses one.
+struct Check;
+
+impl Sink for Check {
+    type Ok = ();
+    type Error = DecodeError;
+    type Seq = Check;
+    type Map = Check;
+
+    fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<(), DecodeError> {
+        model(ty, value)
+            .map(drop)
+            .ok_or(DecodeError::Expected(EXPECTED))
+    }
+
+    fn seq(self, _: Option<usize>) -> Result<Check, DecodeError> {
+        Ok(Check)
+    }
+
+    fn map(self, _: Option<usize>) -> Result<Check, DecodeError> {
+        Ok(Check)
+    }
+
+    fn passthrough<P: Encrypt + Clone>(self, value: P) -> Result<(), DecodeError> {
+        value.visit(Check)
+    }
+}
+
+impl SeqSink for Check {
+    type Ok = ();
+    type Error = DecodeError;
+    type Element<'s> = Check;
+
+    fn element(&mut self) -> Result<Check, DecodeError> {
+        Ok(Check)
+    }
+
+    fn end(self) -> Result<(), DecodeError> {
+        Ok(())
+    }
+}
+
+impl MapSink for Check {
+    type Ok = ();
+    type Error = DecodeError;
+    type Entry<'s> = Check;
+
+    fn entry(&mut self, _: &str) -> Result<Check, DecodeError> {
+        Ok(Check)
+    }
+
+    fn end(self) -> Result<(), DecodeError> {
+        Ok(())
     }
 }
 
@@ -1110,6 +1188,50 @@ mod tests {
 
     /// A scalar outside the model is refused wherever it is, a passthrough
     /// included, and so is a repeated key.
+    /// `check` refuses exactly what `from_bytes` refuses, and hands back the
+    /// bytes it was given.
+    #[test]
+    fn check_refuses_what_from_bytes_refuses_without_a_copy() {
+        let good = every_variant();
+        let bytes = ValueFrame::of(&good).expect("frames");
+        let checked = ValueFrame::check(bytes.risky_ref()).expect("checks");
+        assert_eq!(checked.as_bytes().as_ptr(), bytes.risky_ref().as_ptr());
+        assert_eq!(checked.as_bytes(), bytes.risky_ref());
+        let wide = vitaminc_aead::to_frame(vitaminc_aead::plaintext::Raw(
+            None,
+            Physical::Int(Int::I128(7)),
+        ))
+        .expect("frames");
+        let hidden = vitaminc_aead::to_frame(Hidden(vitaminc_aead::plaintext::Raw(
+            None,
+            Physical::Int(Int::I128(7)),
+        )))
+        .expect("frames");
+        let uuid = vitaminc_aead::to_frame(vitaminc_aead::plaintext::Raw(
+            Some(Logical::Uuid),
+            Physical::Bytes(&[7; 16]),
+        ))
+        .expect("frames");
+        for refused in [wide.risky_ref(), hidden.risky_ref(), uuid.risky_ref()] {
+            assert!(matches!(
+                ValueFrame::check(refused),
+                Err(super::super::FromFrameError::Value(DecodeError::Expected(
+                    _
+                )))
+            ));
+            assert!(matches!(
+                ValueFrame::from_bytes(refused),
+                Err(super::super::FromFrameError::Value(DecodeError::Expected(
+                    _
+                )))
+            ));
+        }
+        assert!(matches!(
+            ValueFrame::check(&[]),
+            Err(super::super::FromFrameError::Frame(_))
+        ));
+    }
+
     /// A value that travels as a passthrough subtree.
     #[derive(Clone)]
     struct Hidden<P>(P);
