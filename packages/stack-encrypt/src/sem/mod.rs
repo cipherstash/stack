@@ -194,69 +194,155 @@ pub(crate) fn text_order_key(text: &str) -> Result<Zeroizing<Vec<u8>>, TermError
     Ok(Zeroizing::new(vitaminc_ore::text(text)?.risky_unwrap()))
 }
 
-/// What an order term is derived over: the source as cllw-ore encrypts it,
-/// or, for text, the text's order key ([`text_order_key`]). cllw-ore's own
-/// text encryption applies its own collation (`orderize_string`), which is
-/// not the order ADR-0002 defines, so text goes to cllw-ore as its key's
-/// bytes. cllw-ore encrypts bytes into the same variable-length ciphertext
-/// type it encrypts text into, so the term's type is unchanged.
-enum OrderSource<T> {
-    Value(T),
-    TextKey(Zeroizing<Vec<u8>>),
+/// The order key of a float: ADR-0002's, from `vitaminc-ore`, the `f64`
+/// with `-0.0` folded into `+0.0` and every NaN into one positive quiet NaN
+/// above `+Infinity`, so `-0.0` and `0.0` tie and every NaN sorts last, as
+/// Postgres's `float8` orders them. An `f32` takes the key of the `f64` it
+/// widens to.
+pub(crate) fn float_order_key(value: f64) -> Result<Zeroizing<Vec<u8>>, TermError> {
+    use vitaminc_ore::{order, Float, OrderTarget, Physical};
+    use vitaminc_protected::Controlled;
+    let key = order(OrderTarget::F64, None, Physical::Float(Float::F64(value)))?;
+    Ok(Zeroizing::new(key.bytes().risky_ref().clone()))
 }
 
-impl<T: 'static> OrderSource<T> {
-    /// Text in any owned form the typed and dynamic paths hand an order
-    /// term (`String`, `Zeroizing<String>`, `&'static str`) becomes its
-    /// order key; anything else is encrypted as it is.
-    fn of(value: T) -> Result<Self, TermError> {
-        let boxed: Box<dyn Any> = Box::new(value);
-        let boxed = match boxed.downcast::<String>() {
-            Ok(text) => return Self::text(&Zeroizing::new(*text)),
-            Err(boxed) => boxed,
-        };
-        let boxed = match boxed.downcast::<Zeroizing<String>>() {
-            Ok(text) => return Self::text(&text),
-            Err(boxed) => boxed,
-        };
-        let boxed = match boxed.downcast::<&'static str>() {
-            Ok(text) => return Self::text(&text),
-            Err(boxed) => boxed,
-        };
-        boxed
-            .downcast::<T>()
-            .map(|value| Self::Value(*value))
-            .map_err(|_| TermError::Ore(cllw_ore::Error))
-    }
+/// What an order term is derived over: the value's order key, as ADR-0002
+/// defines it for the value's [`OrderTarget`](vitaminc_ore::OrderTarget)
+/// and `vitaminc-ore` encodes it. An integer's key is its value at its own
+/// width, big-endian with the sign bit flipped; a float's is
+/// [`float_order_key`]; text's is [`text_order_key`]; bytes are their own
+/// key.
+///
+/// The released cllw-ore does not implement `vitaminc-ore`'s `OrderScheme`
+/// yet, so the CLLW schemes the engine already uses encrypt the key: a
+/// fixed-width key as the unsigned integer of its width, whose CLLW
+/// ciphertexts compare as its big-endian bytes do, and a variable-length
+/// key as bytes. Each lands in the ciphertext type cllw-ore gives the
+/// source type itself, so `OreTerm<T>` and `OpeTerm<T>` keep their types.
+struct OrderSource(vitaminc_ore::OrderPlaintext);
 
-    fn text(text: &str) -> Result<Self, TermError> {
-        Ok(Self::TextKey(text_order_key(text)?))
-    }
-
-    /// The PRF context the scheme's key is derived under: `[domain,
-    /// context]`, as for every term kind, with the order key's frozen
-    /// domain label between them for text, so a text term's key names the
-    /// transform its order key was derived over (ADR-0002). Every other
-    /// source keeps the framing, and the keys, it always had.
-    fn key_context<'k>(&self, domain: &'k [u8], context: &'k [u8]) -> Context<'k> {
-        match self {
-            Self::Value(_) => Context::pae(&[domain, context]),
-            Self::TextKey(_) => {
-                Context::pae(&[domain, vitaminc_ore::domain::TEXT.as_bytes(), context])
-            }
+impl OrderSource {
+    /// The order key of `value`, for every source type the typed and
+    /// dynamic paths hand an order term.
+    ///
+    /// # Errors
+    ///
+    /// [`TermError::NoOrderTerm`] for a boolean, [`TermError::NarrowFloat`]
+    /// for an `f32`, [`TermError::Normalize`] for text the fold cannot take,
+    /// and [`TermError::Ore`] for any other source type cllw-ore encrypts
+    /// (a fixed-size byte array) that has no order key here.
+    fn of<T: 'static>(value: T) -> Result<Self, TermError> {
+        use vitaminc_ore::{order, Float, Int, OrderTarget as O, Physical as P};
+        let any: Box<dyn Any> = Box::new(value);
+        macro_rules! keyed {
+            ($any:ident; $($ty:ty => |$v:ident| ($target:expr, $physical:expr)),* $(,)?) => {
+                $(
+                    let $any = match $any.downcast::<$ty>() {
+                        Ok($v) => return Ok(Self(order($target, None, $physical)?)),
+                        Err(any) => any,
+                    };
+                )*
+            };
         }
+        keyed!(any;
+            u8 => |v| (O::U8, P::Int(Int::U8(*v))),
+            u16 => |v| (O::U16, P::Int(Int::U16(*v))),
+            u32 => |v| (O::U32, P::Int(Int::U32(*v))),
+            u64 => |v| (O::U64, P::Int(Int::U64(*v))),
+            u128 => |v| (O::U128, P::Int(Int::U128(*v))),
+            i8 => |v| (O::I8, P::Int(Int::I8(*v))),
+            i16 => |v| (O::I16, P::Int(Int::I16(*v))),
+            i32 => |v| (O::I32, P::Int(Int::I32(*v))),
+            i64 => |v| (O::I64, P::Int(Int::I64(*v))),
+            i128 => |v| (O::I128, P::Int(Int::I128(*v))),
+            f64 => |v| (O::F64, P::Float(Float::F64(*v))),
+            String => |v| (O::Text, P::Text(&Zeroizing::new(*v))),
+            Zeroizing<String> => |v| (O::Text, P::Text(&v)),
+            &'static str => |v| (O::Text, P::Text(&v)),
+            Vec<u8> => |v| (O::Bytes, P::Bytes(&Zeroizing::new(*v))),
+            Zeroizing<Vec<u8>> => |v| (O::Bytes, P::Bytes(&v)),
+            &'static [u8] => |v| (O::Bytes, P::Bytes(&v)),
+        );
+        if any.is::<bool>() {
+            return Err(TermError::NoOrderTerm);
+        }
+        if any.is::<f32>() {
+            return Err(TermError::NarrowFloat);
+        }
+        Err(TermError::Ore(cllw_ore::Error))
+    }
+
+    /// The PRF context the scheme's key is derived under: `[domain, the
+    /// order key's frozen domain label, context]`, so a term's key names
+    /// the target and transform its order key was derived over (ADR-0002).
+    fn key_context<'k>(&self, domain: &'k [u8], context: &'k [u8]) -> Context<'k> {
+        Context::pae(&[domain, self.0.domain().as_bytes(), context])
+    }
+
+    /// The key encrypted under scheme `S`, as the output cllw-ore gives the
+    /// source type `T`.
+    fn encrypt<S: Cllw, T: 'static>(&self, key: &cllw_ore::Key) -> Result<T, cllw_ore::Error> {
+        use vitaminc_protected::Controlled;
+        let bytes: &[u8] = self.0.bytes().risky_ref();
+        let output = match self.0.width() {
+            Some(1) => S::run(u8::from_be_bytes(fixed(bytes)?), key),
+            Some(2) => S::run(u16::from_be_bytes(fixed(bytes)?), key),
+            Some(4) => S::run(u32::from_be_bytes(fixed(bytes)?), key),
+            Some(8) => S::run(u64::from_be_bytes(fixed(bytes)?), key),
+            Some(16) => S::run(u128::from_be_bytes(fixed(bytes)?), key),
+            None => S::run(Zeroizing::new(bytes.to_vec()), key),
+            // A twelve- or fourteen-byte key (a timestamp or a decimal):
+            // no source type reaches one yet.
+            Some(_) => Err(cllw_ore::Error),
+        }?;
+        output
+            .downcast::<T>()
+            .map(|output| *output)
+            .map_err(|_| cllw_ore::Error)
     }
 }
 
-/// The output cllw-ore gives the key's bytes, as the output it gives `T`:
-/// the same variable-length type for every text form, which is the only
-/// case this is asked.
-fn as_output<O: 'static, T: 'static>(output: O) -> Result<T, cllw_ore::Error> {
-    let boxed: Box<dyn Any> = Box::new(output);
-    boxed
-        .downcast::<T>()
-        .map(|output| *output)
-        .map_err(|_| cllw_ore::Error)
+/// A fixed-width key's bytes as the array its unsigned integer is read from.
+fn fixed<const N: usize>(bytes: &[u8]) -> Result<[u8; N], cllw_ore::Error> {
+    bytes.try_into().map_err(|_| cllw_ore::Error)
+}
+
+/// One of cllw-ore's two schemes, so [`OrderSource::encrypt`] is written
+/// once for both.
+trait Cllw {
+    fn run<V>(value: V, key: &cllw_ore::Key) -> Result<Box<dyn Any>, cllw_ore::Error>
+    where
+        V: CllwOreEncrypt + CllwOpeEncrypt,
+        <V as CllwOreEncrypt>::Output: 'static,
+        <V as CllwOpeEncrypt>::Output: 'static;
+}
+
+/// CLLW ORE.
+struct Ore;
+
+impl Cllw for Ore {
+    fn run<V>(value: V, key: &cllw_ore::Key) -> Result<Box<dyn Any>, cllw_ore::Error>
+    where
+        V: CllwOreEncrypt + CllwOpeEncrypt,
+        <V as CllwOreEncrypt>::Output: 'static,
+        <V as CllwOpeEncrypt>::Output: 'static,
+    {
+        Ok(Box::new(CllwOreEncrypt::encrypt(value, key)?))
+    }
+}
+
+/// CLLW OPE.
+struct Ope;
+
+impl Cllw for Ope {
+    fn run<V>(value: V, key: &cllw_ore::Key) -> Result<Box<dyn Any>, cllw_ore::Error>
+    where
+        V: CllwOreEncrypt + CllwOpeEncrypt,
+        <V as CllwOreEncrypt>::Output: 'static,
+        <V as CllwOpeEncrypt>::Output: 'static,
+    {
+        Ok(Box::new(value.encrypt_ope(key)?))
+    }
 }
 
 /// Errors from SEM term generation.
@@ -328,6 +414,16 @@ pub enum TermError {
         help("A boolean column cannot be ordered without revealing which rows are true. Store it with no order index, and with no equality index either: a boolean has no equality term.")
     )]
     NoOrderTerm,
+    /// An `f32` has no order term of its own: ADR-0002 orders a float as
+    /// an `f64`, and an `f32` widens to one exactly, so its term is the
+    /// `f64`'s. A typed `OreTerm<f32>` or `OpeTerm<f32>` would be a narrower
+    /// ciphertext than that term, so it is refused; order the `f64`.
+    #[error("no order term is defined for an f32: order the f64 it widens to")]
+    #[diagnostic(
+        code(stack_encrypt::narrow_float),
+        help("Declare the order term over `f64` (`OreTerm<f64>`, `OpeTerm<f64>`) and widen the value with `f64::from`: ADR-0002 orders every float as an f64.")
+    )]
+    NarrowFloat,
     /// The value cannot be normalized for its term: text with a code point
     /// unassigned in Unicode 16 (an equality or match term), or a value not
     /// valid for its logical type. The reason is vitaminc's, and names no
@@ -353,6 +449,7 @@ impl crate::ErrorPayload for TermError {
             | Self::InvertedRange
             | Self::NoEqualityTerm
             | Self::NoOrderTerm
+            | Self::NarrowFloat
             | Self::Normalize(_) => serde_json::Map::new(),
         }
     }
@@ -1365,7 +1462,7 @@ term_wrapper!(OpeTerm, CllwOpeEncrypt);
 /// call under an asynchronous backend; `Send` for the same reason. CLLW
 /// failures surface through the visitor's `Value` rather than
 /// [`PrfVisitorError`] so they keep their own error type.
-struct OreVisitor<T>(OrderSource<T>);
+struct OreVisitor<T>(OrderSource, PhantomData<fn() -> T>);
 
 impl<T, P> PrfVisitor<[u8; 32], P> for OreVisitor<T>
 where
@@ -1378,16 +1475,13 @@ where
     fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
         let key = cllw_ore::Key::from(block);
         block.zeroize();
-        Ok(match self.0 {
-            OrderSource::Value(value) => value.encrypt(&key),
-            OrderSource::TextKey(order_key) => order_key.encrypt(&key).and_then(as_output),
-        })
+        Ok(self.0.encrypt::<Ore, T::Output>(&key))
     }
 }
 
 /// The OPE twin of [`OreVisitor`]: same key handling, produces a CLLW OPE
 /// ciphertext (byte order is plaintext order).
-struct OpeVisitor<T>(OrderSource<T>);
+struct OpeVisitor<T>(OrderSource, PhantomData<fn() -> T>);
 
 impl<T, P> PrfVisitor<[u8; 32], P> for OpeVisitor<T>
 where
@@ -1400,10 +1494,7 @@ where
     fn visit_block(self, mut block: [u8; 32]) -> Result<Self::Value, PrfVisitorError> {
         let key = cllw_ore::Key::from(block);
         block.zeroize();
-        Ok(match self.0 {
-            OrderSource::Value(value) => value.encrypt_ope(&key),
-            OrderSource::TextKey(order_key) => order_key.encrypt_ope(&key).and_then(as_output),
-        })
+        Ok(self.0.encrypt::<Ope, T::Output>(&key))
     }
 }
 
@@ -1419,29 +1510,18 @@ where
     T: CllwOreEncrypt + Send + 'static,
     T::Output: Send + 'static,
 {
-    refuse_bool::<T>()?;
     let source = OrderSource::of(value)?;
     let context_bytes = context.as_bytes();
     context_bytes
         .prf_visit_with_context(
             prf,
             source.key_context(ORE_KEY_DOMAIN, context_bytes),
-            OreVisitor(source),
+            OreVisitor::<T>(source, PhantomData),
         )
         .into_result()
         .map_err(TermError::from_prf)?
         .map(OreTerm)
         .map_err(TermError::Ore)
-}
-
-/// cllw-ore orders a `bool`, and its two values would split a column into
-/// its `true` and `false` rows, so no order term is derived for one, on the
-/// typed path as on the dynamic one.
-fn refuse_bool<T: 'static>() -> Result<(), TermError> {
-    if std::any::TypeId::of::<T>() == std::any::TypeId::of::<bool>() {
-        return Err(TermError::NoOrderTerm);
-    }
-    Ok(())
 }
 
 /// Derive an OPE term — as [`ore`], under the OPE domain so the two schemes
@@ -1451,14 +1531,13 @@ where
     T: CllwOpeEncrypt + Send + 'static,
     T::Output: Send + 'static,
 {
-    refuse_bool::<T>()?;
     let source = OrderSource::of(value)?;
     let context_bytes = context.as_bytes();
     context_bytes
         .prf_visit_with_context(
             prf,
             source.key_context(OPE_KEY_DOMAIN, context_bytes),
-            OpeVisitor(source),
+            OpeVisitor::<T>(source, PhantomData),
         )
         .into_result()
         .map_err(TermError::from_prf)?

@@ -39,6 +39,17 @@
         "match"
       ],
       "type": "string"
+    },
+    "score": {
+      "context": [
+        "users",
+        "score"
+      ],
+      "outputs": [
+        "c",
+        "ore"
+      ],
+      "type": "float64"
     }
   },
   "queries": [
@@ -75,7 +86,7 @@
         "fidelity": "exact",
         "index": "ore",
         "operator": "lt",
-        "term": "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a126a606d6d336"
+        "term": "68b730d3d7d32718eb6f3b6684691670543cfcd7be2e49d479cd25021baf1ddc"
       }
     },
     {
@@ -87,7 +98,7 @@
         "fidelity": "exact",
         "index": "ore",
         "operator": "lte",
-        "term": "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a126a606d6d336"
+        "term": "68b730d3d7d32718eb6f3b6684691670543cfcd7be2e49d479cd25021baf1ddc"
       }
     },
     {
@@ -99,7 +110,7 @@
         "fidelity": "exact",
         "index": "ore",
         "operator": "gt",
-        "term": "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a1256421f2eba6"
+        "term": "68b730d3d7d32718eb6f3b6684691670543cfcd7be2e49d479cd24f5b5c9e679"
       }
     },
     {
@@ -111,7 +122,7 @@
         "fidelity": "exact",
         "index": "ore",
         "operator": "gte",
-        "term": "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a1256421f2eba6"
+        "term": "68b730d3d7d32718eb6f3b6684691670543cfcd7be2e49d479cd24f5b5c9e679"
       }
     },
     {
@@ -127,8 +138,8 @@
         "index": "ore",
         "operator": "between",
         "term": [
-          "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a1256421f2eba6",
-          "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a20bc4002878be"
+          "68b730d3d7d32718eb6f3b6684691670543cfcd7be2e49d479cd24f5b5c9e679",
+          "68b730d3d7d32718eb6f3b6684691670543cfcd7be2e49d479ce5c165acd6570"
         ]
       }
     },
@@ -154,6 +165,36 @@
         "index": "match",
         "operator": "matches",
         "term": "30009d00c100"
+      }
+    },
+    {
+      "field": "score",
+      "input": 1.5,
+      "operator": "lt",
+      "term": {
+        "domain": null,
+        "fidelity": "exact",
+        "index": "ore",
+        "operator": "lt",
+        "term": "e14b4c3ec5319e68a42046b36844cb25fd2c75f10d1ab547ab6e5039d09dc4519ca47d4d470a41a0ff589fd510970e84ccc003482d167a306ed340ebf4160ccb"
+      }
+    },
+    {
+      "field": "score",
+      "input": [
+        -0.5,
+        2.5
+      ],
+      "operator": "between",
+      "term": {
+        "domain": null,
+        "fidelity": "exact",
+        "index": "ore",
+        "operator": "between",
+        "term": [
+          "e02809dd25e969938e50b17f9be83f0d59e93cb45c1b2dda894b85c3b11da10b711176158bc5c9bbbe53ab562086700ee280e39add4b618bb849dc3656d905a3",
+          "e14c2f845c943fc85c69a9446ce9d6382f3ba99b057f1821e613519b7d409911204367fea156b16aa634f91f08c73b6d3dd0a818b601cef6496412ddbbb9e599"
+        ]
       }
     }
   ],

@@ -259,7 +259,12 @@ after `z`. `Between("b", "A")` is refused as an inverted range, since `A`
 folds to `a`. Text holding a code point Unicode 16 does not assign has no
 fold, and its query or write is refused with `encrypt.ErrTerm`.
 
-An order index on bytes or a float stores its term but answers no ordering
+Floats order as PostgreSQL's `float8` does (ADR-0002): `-0.0` and `0.0` are
+one value, and every NaN is one value, above `+Inf`, so `Between(math.NaN(),
+math.Inf(1))` is refused as an inverted range. A `float32` orders as the
+`float64` it widens to.
+
+An order index on bytes stores its term but answers no ordering
 operator, so such a field has no `Lt`; nor does the `ope` index of a field
 that declares `ore` too, since `ore` answers the orderings. stashgen prints a notice for each such index, on stderr and in
 the generated file: the terms are stored, and only your own code can compare

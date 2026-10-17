@@ -41,15 +41,16 @@ error[E0271]: type mismatch resolving `<(u32, {integer}) as Input<One>>::Plainte
              found tuple `(u32, {integer})`
    = note: required for `ValuePlan<u32, Indexed<stack_encrypt::Ore>>` to implement `Chooses<stack_encrypt::op::Lt, (u32, {integer}), Whole>`
 
-error[E0277]: `(u32, {integer})` is not ordered: the ordering operators are answered over the integer types and text
+error[E0277]: `(u32, {integer})` is not ordered: the ordering operators are answered over the integer types, `f64` and text
   --> tests/ui/op_between_takes_a_pair.rs:13:48
    |
 13 |     let _ = cipher.query(op::Lt, &(18u32, 65)).on(&age_plan);
    |                                                ^^ no ordering operator over this type
    |
    = help: the trait `Ordered` is not implemented for `(u32, {integer})`
-   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u8` to `u128`, `i8` to `i128`, or a `String`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u8` to `u128`, `i8` to `i128`, an `f64` or a `String`; widen an `f32` to `f64`
    = help: the following other types implement trait `Ordered`:
+             f64
              i128
              i16
              i32
@@ -57,7 +58,6 @@ error[E0277]: `(u32, {integer})` is not ordered: the ordering operators are answ
              i8
              std::string::String
              u128
-             u16
            and $N others
    = note: required for `stack_encrypt::op::Lt` to implement `DefaultIndex<(u32, {integer})>`
    = note: required for `ValuePlan<u32, Indexed<stack_encrypt::Ore>>` to implement `Chooses<stack_encrypt::op::Lt, (u32, {integer}), Whole>`

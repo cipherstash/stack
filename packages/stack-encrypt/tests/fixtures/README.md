@@ -130,7 +130,9 @@ file changes only when a derivation does: regenerate it with
 - **`queries`.** Each query as a binding sends it, and its term in the wire
   form `QueryTerm::to_value` writes, the bytes in hex: one term, or for
   `between` the low bound's then the high's. An input is JSON, read as the
-  field's declared type, so `40` queries the `uint32` field `age`.
+  field's declared type, so `40` queries the `uint32` field `age` and
+  `1.5` the `float64` field `score`, whose terms derive over the float's
+  ADR-0002 order key.
 - **`verify`.** A page of decrypted values, null for an empty field, and the
   boolean `verify` answers for each, which is what the typed `MatchQuery`
   answers.

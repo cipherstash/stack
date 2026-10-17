@@ -180,7 +180,7 @@ func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName
 	case "matches":
 		return stashgen.IndexMatch, declared(stashgen.IndexMatch)
 	}
-	if t.Kind != stashgen.KindInt && t.Kind != stashgen.KindUint && t.Kind != stashgen.KindString {
+	if t.Kind != stashgen.KindInt && t.Kind != stashgen.KindUint && t.Kind != stashgen.KindFloat && t.Kind != stashgen.KindString {
 		return "", false
 	}
 	if declared(stashgen.IndexOre) {

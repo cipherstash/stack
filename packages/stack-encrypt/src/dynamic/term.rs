@@ -439,9 +439,11 @@ where
 /// `String` or `Vec<u8>` would be freed with the plaintext still in it, in
 /// a guest's linear memory, where the host can read it.
 ///
-/// Text is ordered by its order key, the system ADR-0002's fold, as on the
-/// typed path ([`crate::sem::text_order_key`]): the same bytes for the same
-/// text, `café` precomposed or with a combining accent, and `Café`, ties.
+/// Every scalar is ordered by its ADR-0002 order key, as on the typed path:
+/// text by its fold ([`crate::sem::text_order_key`]), so `café` precomposed
+/// or with a combining accent, and `Café`, tie; a float as an `f64`
+/// ([`crate::sem::float_order_key`]), so an `f32` is widened first, as the
+/// typed path asks, and `-0.0` ties `0.0`.
 fn ore_of<'a, 'c, K: 'static, D>(
     cipher: &'a KeysetCipher<'_, K>,
     value: Physical<'_>,
@@ -459,7 +461,7 @@ where
         Physical::Int(Int::U16(v)) => ore(cipher, u32::from(v), context),
         Physical::Int(Int::U32(v)) => ore(cipher, v, context),
         Physical::Int(Int::U64(v)) => ore(cipher, v, context),
-        Physical::Float(Float::F32(v)) => ore(cipher, v, context),
+        Physical::Float(Float::F32(v)) => ore(cipher, f64::from(v), context),
         Physical::Float(Float::F64(v)) => ore(cipher, v, context),
         Physical::Text(t) => ore(cipher, Zeroizing::new(t.to_owned()), context),
         Physical::Bytes(b) => ore(cipher, Zeroizing::new(b.to_vec()), context),
@@ -485,7 +487,7 @@ where
         Physical::Int(Int::U16(v)) => ope(cipher, u32::from(v), context),
         Physical::Int(Int::U32(v)) => ope(cipher, v, context),
         Physical::Int(Int::U64(v)) => ope(cipher, v, context),
-        Physical::Float(Float::F32(v)) => ope(cipher, v, context),
+        Physical::Float(Float::F32(v)) => ope(cipher, f64::from(v), context),
         Physical::Float(Float::F64(v)) => ope(cipher, v, context),
         Physical::Text(t) => ope(cipher, Zeroizing::new(t.to_owned()), context),
         Physical::Bytes(b) => ope(cipher, Zeroizing::new(b.to_vec()), context),
@@ -981,7 +983,9 @@ mod tests {
             ordered!(-4i64, FfiValue::Int64(-4), "i64");
             ordered!(34u32, FfiValue::UInt32(34), "u32");
             ordered!(35u64, FfiValue::UInt64(35), "u64");
-            ordered!(1.5f32, FfiValue::Float32(1.5), "f32");
+            // A float32 is ordered as the f64 it widens to: the typed path
+            // names the f64, and refuses an f32 order term.
+            ordered!(f64::from(1.5f32), FfiValue::Float32(1.5), "f32");
             ordered!(2.5f64, FfiValue::Float64(2.5), "f64");
             ordered!("alice".to_string(), s("alice"), "text");
             ordered!(b"ab".to_vec(), bytes(b"ab"), "bytes");

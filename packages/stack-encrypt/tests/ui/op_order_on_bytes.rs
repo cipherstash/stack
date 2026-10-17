@@ -1,4 +1,4 @@
-//! The ordering operators are answered over the integer types and text.
+//! The ordering operators are answered over the integer types, `f64` and text.
 //! Bytes have no order key the ordering operators compare, so an ordering on
 //! a bytes plan does not compile, even where the plan declares an ORE index.
 use stack_encrypt::kms::FakeDataKeySource;

@@ -31,7 +31,8 @@ fn plan_json() -> Json {
     json!({
         "email": { "context": ["users", "email"], "outputs": ["c", "eq"], "type": "string" },
         "age": { "context": ["users", "age"], "outputs": ["c", "eq", "ore"], "type": "uint32" },
-        "name": { "context": ["users", "name"], "outputs": ["c", "match"], "type": "string" }
+        "name": { "context": ["users", "name"], "outputs": ["c", "match"], "type": "string" },
+        "score": { "context": ["users", "score"], "outputs": ["c", "ore"], "type": "float64" }
     })
 }
 
@@ -47,6 +48,8 @@ fn queries() -> Vec<(&'static str, OpSpec, Json)> {
         ("age", OpSpec::Between, json!([18, 65])),
         ("name", OpSpec::Matches, json!("alice")),
         ("name", OpSpec::Matches, json!("ali")),
+        ("score", OpSpec::Lt, json!(1.5)),
+        ("score", OpSpec::Between, json!([-0.5, 2.5])),
     ]
 }
 
@@ -182,6 +185,33 @@ async fn typed_operand(
             }
         }
         ("name", OpSpec::Matches) => one(typed_match(cipher, &text(input)).await.to_bytes()),
+        ("score", operator) => {
+            let float = |value: &Json| value.as_f64().expect("a number");
+            let score = Plan::context("users/score")
+                .with::<f64, _>(Ore)
+                .build()
+                .expect("plan");
+            match operator {
+                OpSpec::Lt => one(cipher
+                    .query(op::Lt, &float(input))
+                    .on(&score)
+                    .await
+                    .expect("lt")
+                    .to_bytes()),
+                OpSpec::Between => {
+                    let range = cipher
+                        .query(op::Between, &(float(&input[0]), float(&input[1])))
+                        .on(&score)
+                        .await
+                        .expect("between");
+                    Operand::Range {
+                        lo: range.lo().to_bytes(),
+                        hi: range.hi().to_bytes(),
+                    }
+                }
+                other => panic!("no typed score query for {other}"),
+            }
+        }
         other => panic!("no typed query for {other:?}"),
     }
 }

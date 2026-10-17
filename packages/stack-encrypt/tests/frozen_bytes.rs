@@ -470,7 +470,7 @@ async fn ore_term_encoding_is_the_raw_cllw_bytes() {
     // differ (see the `sem` module docs).
     assert_eq!(
         hex(term.as_bytes()),
-        "1ae5f8558dc2d7dddd6c5b714e9d285586a1b8390d9140421e78906cba1bd651"
+        "70fe4ffe4d6a6972cb9bd05bd860f7bfc6dba897bb1620eaf614928c8f61a658"
     );
     assert_eq!(term.to_bytes(), term.as_bytes());
     assert_eq!(term.as_ref(), term.as_bytes());
@@ -496,7 +496,7 @@ async fn ope_term_encoding_is_the_raw_cllw_bytes() {
 
     assert_eq!(
         hex(term.as_bytes()),
-        "00837615a1ea2fdcbebf7efe34cf4d2ee432c7eeff84fbd72e1bf05efa2338033c"
+        "0004863f4a43b48103f4c3c8c873d77182d5c9084bc50b67eb4b84699bdee611b0"
     );
     assert_eq!(
         OpeTerm::<u32>::from_bytes(term.as_bytes()).expect("decode ope term"),

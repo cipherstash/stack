@@ -51,6 +51,7 @@ type QueryProfile struct {
 	Email string   `stash:"email,encrypt,index=equality"`
 	Age   uint32   `stash:"age,encrypt,index=equality;ore"`
 	Name  string   `stash:"name,encrypt,index=match"`
+	Score float64  `stash:"score,encrypt,index=ore"`
 }
 
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Document -name Document
@@ -83,6 +84,8 @@ type Probe struct {
 	I64 int64    `stash:"i64,encrypt,index=ore;ope"`
 	S   string   `stash:"s,encrypt,index=ore;ope"`
 	B   []byte   `stash:"b,encrypt,index=ore;ope"`
+	F64 float64  `stash:"f64,encrypt,index=ore;ope"`
+	F32 float32  `stash:"f32,encrypt,index=ore;ope"`
 }
 
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Note -name Note

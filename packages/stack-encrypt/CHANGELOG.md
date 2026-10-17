@@ -84,9 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The ordering operators, and `Between` as one term.** `op::Lt`, `Lte`,
   `Gt` and `Gte` take one value and `op::Between` a pair of bounds,
   `cipher.query(op::Between, &(18, 65)).on(&age_plan)`, inclusive at both
-  ends. They are answered over the integer types and text (`op::Ordered`)
-  by the `Ore` index by default and by `Ope` through `.via(Ope)`; an
-  ordering on bytes or a float does not compile. A comparison's query term is the index's own term
+  ends. They are answered over the integer types, `f64` and text
+  (`op::Ordered`) by the `Ore` index by default and by `Ope` through
+  `.via(Ope)`; an ordering on bytes, or on an `f32`, does not compile. A comparison's query term is the index's own term
   for the value (`OreTerm`, `OpeTerm`); a range's is one `sem::RangeQuery`
   carrying both bounds' terms, read with `lo()` and `hi()`, so no statement
   can pair the low bound of one query with the high bound of another. A
@@ -159,14 +159,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **Every order term derives over its ADR-0002 order key.** An ORE or OPE
+  term encrypts the value's order key from `vitaminc-ore`, for the value's
+  `OrderTarget`, under a key framing that names the key's frozen domain
+  label (`vitaminc/ore/value/int32/v1`, and so on). The released cllw-ore
+  does not implement `vitaminc-ore`'s `OrderScheme` yet, so the CLLW schemes
+  the engine already uses encrypt the key, and every term keeps its type. A
+  float's key folds `-0.0` into `0.0` and every NaN into one value above
+  `+Infinity`, which is Postgres's `float8` order: so the ordering operators
+  are answered over `f64` (`op::Ordered`) and over a data plan's `float32`
+  and `float64` fields, which they were not. An `f32` is ordered as the
+  `f64` it widens to: a typed `OreTerm<f32>` or `OpeTerm<f32>` is refused
+  (`TermError::NarrowFloat`), and the data path widens a `float32` first.
+  Integer and bytes order terms change bytes through the framing alone,
+  float order terms through the key as well; text order terms do not change
+  again. None was deployed (ADR-0002).
 - **Text orders by its folded order key.** An ORE or OPE term over text is
   derived over the system ADR-0002's fold (Unicode 16 NFC with case and
   accents folded, from `vitaminc-ore`) in place of cllw-ore's own
   collation, under a key framing that names the fold's frozen label. So
   `Café`, `cafe`, `CAFÉ` and `cafe` with a combining accent are one term and
   tie, `alice` orders before `Zoe`, and `é` orders with `e`, not after `z`.
-  Every text order term changes bytes; integer, float and bytes order terms
-  do not. None was deployed (ADR-0002). Text holding a code point Unicode 16
+  Every text order term changes bytes. None was deployed (ADR-0002). Text holding a code point Unicode 16
   does not assign has no fold and no order term (`TermError::Normalize`),
   on write and on query. The ordering operators are answered on text, on
   the typed path (`op::Ordered` for `String`, whose `Between` judges an
