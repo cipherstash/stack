@@ -174,7 +174,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     a test spells), walk it once and write each field's value into a
     `ValueFrame` of its own, which is all the engine keeps of it. A value
     refused while the source is split names its field, with the reasons it
-    had (`RepeatedKey`, `Unframeable`, `Passthrough`, `FieldType`).
+    had (`RepeatedKey`, `Unframeable`, `FieldType`; a value the value model
+    does not hold is `FieldType` inside a passthrough subtree too).
+  - Two refusals changed. The split is one walk of the source that stops
+    at its first fault, so of several faults in one row, those the split
+    finds (a repeated key, a value outside the model) are reported in
+    source order rather than plan order: the walk does not copy the rest of
+    a source it has already refused. And a passthrough value in a field
+    that seals a ciphertext and derives a term is now `Source { reason:
+    Passthrough }` whatever order the field lists its outputs in. It was
+    `Term` when a term output came before `c` in the plan and `Source`
+    otherwise, so the answer depended on how the outputs were spelled.
   - `record::decrypt` and `decrypt_with` resolve to one `ValueFrame` (the
     record, or the batch) instead of an `FfiValue`: each field opens into a
     frame, which is walked into its entry of the record's frame and wiped.

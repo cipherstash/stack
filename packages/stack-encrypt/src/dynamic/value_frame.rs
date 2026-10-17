@@ -295,10 +295,16 @@ pub(super) struct FieldFault {
 }
 
 /// A frame writer's refusal as a decode error. A repeated key is reported
-/// where the key is known ([`Modeled::entry`]).
+/// where the key is known ([`Modeled::entry`]). A value the model does not
+/// hold inside a passthrough subtree reaches here wrapped as the writer's
+/// source error ([`ModelOnly`] can only return the writer's error type), and
+/// is unwrapped, so it is refused as the same `Expected` a sealed value is.
 fn decode_error(error: FrameWriteError) -> DecodeError {
     match error {
-        FrameWriteError::Source(error) => DecodeError::Source(error),
+        FrameWriteError::Source(error) => match error.inner().downcast_ref::<DecodeError>() {
+            Some(DecodeError::Expected(expected)) => DecodeError::Expected(expected),
+            _ => DecodeError::Source(error),
+        },
         FrameWriteError::Invalid => DecodeError::Expected(EXPECTED),
         other => DecodeError::Source(SourceError::new(other)),
     }
@@ -1104,6 +1110,16 @@ mod tests {
 
     /// A scalar outside the model is refused wherever it is, a passthrough
     /// included, and so is a repeated key.
+    /// A value that travels as a passthrough subtree.
+    #[derive(Clone)]
+    struct Hidden<P>(P);
+
+    impl<P: Encrypt + Clone> Encrypt for Hidden<P> {
+        fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+            sink.passthrough(self.0)
+        }
+    }
+
     #[test]
     fn what_the_model_does_not_hold_is_refused() {
         assert!(matches!(
@@ -1121,6 +1137,15 @@ mod tests {
         ));
         let hidden = FfiValue::Passthrough(Box::new(FfiValue::Null));
         assert!(ValueFrame::of(&hidden).is_ok());
+        // Inside a passthrough too, and refused the same way.
+        let hidden = Hidden(vitaminc_aead::plaintext::Raw(
+            None,
+            Physical::Int(Int::I128(7)),
+        ));
+        assert!(matches!(
+            ValueFrame::of(hidden),
+            Err(DecodeError::Expected(_))
+        ));
         let repeated = FfiValue::Object(vec![
             ("k".into(), FfiValue::Null),
             ("k".into(), FfiValue::Null),

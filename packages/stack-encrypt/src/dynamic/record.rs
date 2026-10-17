@@ -6674,6 +6674,22 @@ mod tests {
             let source = vitaminc_aead::Frame::parse(&frame).expect("a frame");
             let error = check_source(source, &plan).expect_err("an i128 field");
             expect(&error, "Source", Some("email"), FieldType);
+            // The same inside a passthrough subtree: the field is named, and
+            // the cause is the value's type, not an unframeable source.
+            let mut frame = Vec::new();
+            {
+                let mut map = vitaminc_aead::FrameWriter::new(&mut frame)
+                    .map(Some(1))
+                    .expect("a map");
+                map.entry("id")
+                    .expect("an entry")
+                    .passthrough(wide)
+                    .expect("written");
+                map.end().expect("ended");
+            }
+            let source = vitaminc_aead::Frame::parse(&frame).expect("a frame");
+            let error = check_source(source, &plan).expect_err("an i128 in a passthrough");
+            expect(&error, "Source", Some("id"), FieldType);
             // Each row of a batch is split the same way, and the first fault
             // in source order names its field.
             let mut repeated = object(row(34));
