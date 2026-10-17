@@ -31,6 +31,18 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Added
 
+- **Range query types in `encrypt/eql`**, one per ordered family and order
+  index: `eql.IntegerRangeOreQuery`, `eql.IntegerRangeOpeQuery`,
+  `eql.TextRangeOreQuery`, `eql.TextRangeOpeQuery`, and the same for
+  `smallint`, `bigint`, `date`, `timestamp`, `numeric`, `real` and `double`.
+  Each holds both bounds of one `BETWEEN` (each bound the single-bound
+  domain's `ob` or `op` value, in a `{v, i, lo, hi}` envelope) as the JSON
+  value `eql_v4.between(column, $1::eql_v4.query_<family>_range_<ore|ope>)`
+  takes, so a range binds as one parameter; the cast to the exact range
+  domain is required, or the statement fails with SQLSTATE 42725, and implements `driver.Valuer`,
+  `sql.Scanner` and JSON like the other query types. They are not in
+  `eql.Types`, which lists stored types, and no generated method returns one
+  yet: the ordered EQL types are not producible.
 - **`encrypt.MatchQuery` and `encrypt.EQLMatchQuery`**: what a `Matches`
   method returns. Each carries the term or EQL query value to bind,
   `Verify` (check decrypted rows, since a match can return false positives)

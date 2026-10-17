@@ -89,23 +89,47 @@ mv src/deps-ordered-v3.txt.tmp src/deps-ordered-v3.txt
 # the gates and assemble that version's installer from the rendered tree. `eql-codegen render` fails
 # on an unknown placeholder and on a literal eql_v3/eql_v4 in the source, and
 # writes nothing unless every file renders.
+#
+# Not every file belongs to every version. A file with a `-- ONLY EQL VERSION: N`
+# line belongs to version N alone: today the generated range query domains and
+# `between` (query_<T>_range_*.sql, ADR-0009 decision 7) are EQL v4 only.
+# `eql-codegen select` drops the files that belong to the other version from the
+# install order, keeping the order of the rest, and `render` refuses to render a
+# file as a version it does not belong to, so nothing confined to v4 can reach
+# the v3 installer even if this filter is bypassed.
 assemble() {
   local version=$1 installer=$2 uninstaller=$3
   local root="build/render/eql_v${version}"
   local ordered="$root/deps-ordered.txt"
+  local selected
 
-  rm -rf "$root"
   # shellcheck disable=SC2046 # one path per line, none with spaces
+  selected=$(cargo run -q -p eql-codegen -- select "$version" $(cat src/deps-ordered-v3.txt))
+  rm -rf "$root"
+  # shellcheck disable=SC2086 # one path per line, none with spaces
   cargo run -q -p eql-codegen -- render "$version" "$root" \
-    $(cat src/deps-ordered-v3.txt) tasks/pin_search_path_v3.sql tasks/uninstall-v3.sql
-  sed "s|^|$root/|" src/deps-ordered-v3.txt > "$ordered"
+    $selected tasks/pin_search_path_v3.sql tasks/uninstall-v3.sql
+  printf '%s\n' "$selected" | sed "s|^|$root/|" > "$ordered"
 
-  # The symbol-order checker parses eql_v3 names. One run covers both
-  # versions: eql_v4 is the same files in the same order, every name renamed
-  # alike, so define-before-use holds for one exactly when it holds for the
-  # other.
+  # The symbol-order checker parses eql_v3 names. For v3 it reads the rendered
+  # tree. For v4 it reads a copy of the rendered v4 tree with the names mapped
+  # back to eql_v3: the renderer guarantees the source names no schema
+  # literally, so the mapping is exact. Version 4 needs its own run because its
+  # order holds files version 3's does not (the range surface), and those must
+  # define before use too.
   if [[ "$version" == 3 ]]; then
     bash tasks/test/verify_symbol_order_v3.sh "$ordered"
+  else
+    # Under build/ (gitignored), so a failed check leaves nothing elsewhere.
+    local mapped="build/render/symbols-v${version}"
+    rm -rf "$mapped"
+    while IFS= read -r f; do
+      mkdir -p "$mapped/$(dirname "$f")"
+      sed 's/eql_v4/eql_v3/g' "$f" > "$mapped/$f"
+    done < "$ordered"
+    sed "s|^|$mapped/|" "$ordered" > "$mapped/deps-ordered.txt"
+    bash tasks/test/verify_symbol_order_v3.sh "$mapped/deps-ordered.txt"
+    rm -rf "$mapped"
   fi
 
   : > "$installer"

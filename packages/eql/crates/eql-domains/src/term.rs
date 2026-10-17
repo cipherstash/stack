@@ -109,6 +109,21 @@ impl Term {
         matches!(self, Term::Ore | Term::Ope)
     }
 
+    /// The suffix of the range query domain that carries a `Between` over
+    /// this term, or `None` for a term with no ordering: `range_ore` for
+    /// block ORE, `range_ope` for CLLW OPE. A family has one range domain
+    /// per ordering term it stores (ADR-0009 decisions 7 and 8), named
+    /// `query_<family>_<suffix>` by
+    /// [`DomainFamily::range_query_name`](crate::DomainFamily::range_query_name).
+    /// `Some` exactly when [`Term::provides_ordering`] is true.
+    pub const fn range_suffix(self) -> Option<&'static str> {
+        match self {
+            Term::Ore => Some("range_ore"),
+            Term::Ope => Some("range_ope"),
+            Term::Hm | Term::Bloom => None,
+        }
+    }
+
     /// JSON key whose payload must be a NON-EMPTY array for this term to be
     /// well-formed, or `None` if the term imposes no such structural rule. The
     /// ORE term (`ob`) is an array of block terms; an empty array (`ob: []`) is
@@ -230,6 +245,17 @@ mod tests {
         assert_eq!(Term::Ore.binding_newtype(), "OreBlock256");
         assert_eq!(Term::Bloom.binding_newtype(), "BloomFilter");
         assert_eq!(Term::Ope.binding_newtype(), "OpeCllw");
+    }
+
+    #[test]
+    fn range_suffix_names_each_ordering_term_and_nothing_else() {
+        assert_eq!(Term::Ore.range_suffix(), Some("range_ore"));
+        assert_eq!(Term::Ope.range_suffix(), Some("range_ope"));
+        assert_eq!(Term::Hm.range_suffix(), None);
+        assert_eq!(Term::Bloom.range_suffix(), None);
+        for t in [Term::Hm, Term::Ore, Term::Bloom, Term::Ope] {
+            assert_eq!(t.range_suffix().is_some(), t.provides_ordering(), "{t:?}");
+        }
     }
 
     #[test]

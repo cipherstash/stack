@@ -44,6 +44,22 @@ pub use fixtures::{
 /// drift between the SQL and the canonical types.
 pub const ENVELOPE_KEYS: &[&str] = &["v", "i", "c"];
 
+/// The keys a range query domain carries its two bounds under, low then
+/// high: `{"v": 4, "i": {…}, "lo": <term>, "hi": <term>}`. Each bound is the
+/// single-bound query domain's `ob` (ORE) or `op` (OPE) value, in a
+/// `{v, i, lo, hi}` envelope. Inclusive at both ends.
+///
+/// Stack Encrypt does not write this envelope yet. Its `RangeQuery` has no
+/// serialized form, the data path's `Operand::Range { lo, hi }` carries raw
+/// term bytes, and `query_term` refuses a range on an EQL target. When the
+/// ordered EQL types become producible, the engine will need to build this
+/// envelope from the two bounds' terms.
+///
+/// Cross-schema contract data like [`ENVELOPE_KEYS`]: `eql-codegen` builds
+/// the range domain CHECKs and accessors from it, and the bindings name
+/// their fields from it. Range domains exist in EQL v4 only.
+pub const RANGE_BOUND_KEYS: [&str; 2] = ["lo", "hi"];
+
 /// The version prefix every PUBLIC-SCHEMA EQL type name carries:
 /// `public.eql_v3_integer_eq`, `public.eql_v3_json`, …. The prefix
 /// keeps EQL domains from shadowing PostgreSQL built-in type names

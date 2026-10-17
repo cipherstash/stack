@@ -164,6 +164,62 @@ fn order_subcommand_fails_on_a_dangling_require() {
     );
 }
 
+/// `select` prints, in the order given, the files that belong to a version,
+/// dropping one confined to the other version. `tasks/build.sh` builds each
+/// bundle's file list with it, so stdout is paths only.
+#[test]
+fn select_subcommand_drops_files_confined_to_the_other_version() {
+    let root = tempdir();
+    let shared = root.0.join("shared.sql");
+    let v4_only = root.0.join("range.sql");
+    std::fs::write(&shared, "SELECT {{prefix}}.f();\n").unwrap();
+    std::fs::write(
+        &v4_only,
+        "-- AUTOMATICALLY GENERATED FILE.\n-- ONLY EQL VERSION: 4\nSELECT 1;\n",
+    )
+    .unwrap();
+    let run = |version: &str, files: &[&std::path::Path]| {
+        Command::new(bin())
+            .arg("select")
+            .arg(version)
+            .args(files)
+            .output()
+            .expect("run eql-codegen select")
+    };
+
+    let out = run("4", &[&v4_only, &shared]);
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("{}\n{}\n", v4_only.display(), shared.display())
+    );
+    let out = run("3", &[&v4_only, &shared]);
+    assert!(out.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("{}\n", shared.display())
+    );
+
+    // Selecting nothing is an error, not an empty bundle.
+    let out = run("3", &[&v4_only]);
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("chose no file"));
+
+    // A malformed directive or a missing file fails, naming the file.
+    let bad = root.0.join("bad.sql");
+    std::fs::write(&bad, "-- ONLY EQL VERSION: five\n").unwrap();
+    for file in [bad.as_path(), root.0.join("missing.sql").as_path()] {
+        let out = run("4", &[&shared, file]);
+        assert!(!out.status.success(), "{}", file.display());
+        assert!(out.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&out.stderr).contains(&*file.to_string_lossy()));
+    }
+
+    let out = run("5", &[&shared]);
+    assert_eq!(out.status.code(), Some(2));
+}
+
 /// An unrecognised argument prints usage and exits 2 (the `ExitCode::from(2)`
 /// fall-through in `main.rs`).
 #[test]

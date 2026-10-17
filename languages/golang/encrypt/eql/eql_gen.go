@@ -2205,3 +2205,435 @@ func (v JSON) MarshalJSON() ([]byte, error) {
 func (v *JSON) UnmarshalJSON(b []byte) error {
 	return unmarshal((*[]byte)(v), b)
 }
+
+// IntegerRangeOreQuery is a range query value over the ore index of the integer family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_integer_range_ore takes in eql_v4.between. It ranges over IntegerOrdOre.
+type IntegerRangeOreQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v IntegerRangeOreQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_integer_range_ore column.
+func (v *IntegerRangeOreQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "IntegerRangeOreQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v IntegerRangeOreQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "IntegerRangeOreQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *IntegerRangeOreQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// IntegerRangeOpeQuery is a range query value over the ope index of the integer family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_integer_range_ope takes in eql_v4.between. It ranges over IntegerOrd, IntegerOrdOpe.
+type IntegerRangeOpeQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v IntegerRangeOpeQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_integer_range_ope column.
+func (v *IntegerRangeOpeQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "IntegerRangeOpeQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v IntegerRangeOpeQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "IntegerRangeOpeQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *IntegerRangeOpeQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// SmallintRangeOreQuery is a range query value over the ore index of the smallint family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_smallint_range_ore takes in eql_v4.between. It ranges over SmallintOrdOre.
+type SmallintRangeOreQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v SmallintRangeOreQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_smallint_range_ore column.
+func (v *SmallintRangeOreQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "SmallintRangeOreQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v SmallintRangeOreQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "SmallintRangeOreQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *SmallintRangeOreQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// SmallintRangeOpeQuery is a range query value over the ope index of the smallint family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_smallint_range_ope takes in eql_v4.between. It ranges over SmallintOrd, SmallintOrdOpe.
+type SmallintRangeOpeQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v SmallintRangeOpeQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_smallint_range_ope column.
+func (v *SmallintRangeOpeQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "SmallintRangeOpeQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v SmallintRangeOpeQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "SmallintRangeOpeQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *SmallintRangeOpeQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// BigintRangeOreQuery is a range query value over the ore index of the bigint family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_bigint_range_ore takes in eql_v4.between. It ranges over BigintOrdOre.
+type BigintRangeOreQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v BigintRangeOreQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_bigint_range_ore column.
+func (v *BigintRangeOreQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "BigintRangeOreQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v BigintRangeOreQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "BigintRangeOreQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *BigintRangeOreQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// BigintRangeOpeQuery is a range query value over the ope index of the bigint family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_bigint_range_ope takes in eql_v4.between. It ranges over BigintOrd, BigintOrdOpe.
+type BigintRangeOpeQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v BigintRangeOpeQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_bigint_range_ope column.
+func (v *BigintRangeOpeQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "BigintRangeOpeQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v BigintRangeOpeQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "BigintRangeOpeQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *BigintRangeOpeQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// DateRangeOreQuery is a range query value over the ore index of the date family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_date_range_ore takes in eql_v4.between. It ranges over DateOrdOre.
+type DateRangeOreQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v DateRangeOreQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_date_range_ore column.
+func (v *DateRangeOreQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "DateRangeOreQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v DateRangeOreQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "DateRangeOreQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *DateRangeOreQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// DateRangeOpeQuery is a range query value over the ope index of the date family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_date_range_ope takes in eql_v4.between. It ranges over DateOrd, DateOrdOpe.
+type DateRangeOpeQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v DateRangeOpeQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_date_range_ope column.
+func (v *DateRangeOpeQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "DateRangeOpeQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v DateRangeOpeQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "DateRangeOpeQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *DateRangeOpeQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// TimestampRangeOreQuery is a range query value over the ore index of the timestamp family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_timestamp_range_ore takes in eql_v4.between. It ranges over TimestampOrdOre.
+type TimestampRangeOreQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v TimestampRangeOreQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_timestamp_range_ore column.
+func (v *TimestampRangeOreQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "TimestampRangeOreQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v TimestampRangeOreQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "TimestampRangeOreQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *TimestampRangeOreQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// TimestampRangeOpeQuery is a range query value over the ope index of the timestamp family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_timestamp_range_ope takes in eql_v4.between. It ranges over TimestampOrd, TimestampOrdOpe.
+type TimestampRangeOpeQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v TimestampRangeOpeQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_timestamp_range_ope column.
+func (v *TimestampRangeOpeQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "TimestampRangeOpeQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v TimestampRangeOpeQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "TimestampRangeOpeQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *TimestampRangeOpeQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// NumericRangeOreQuery is a range query value over the ore index of the numeric family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_numeric_range_ore takes in eql_v4.between. It ranges over NumericOrdOre.
+type NumericRangeOreQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v NumericRangeOreQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_numeric_range_ore column.
+func (v *NumericRangeOreQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "NumericRangeOreQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v NumericRangeOreQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "NumericRangeOreQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *NumericRangeOreQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// NumericRangeOpeQuery is a range query value over the ope index of the numeric family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_numeric_range_ope takes in eql_v4.between. It ranges over NumericOrd, NumericOrdOpe.
+type NumericRangeOpeQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v NumericRangeOpeQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_numeric_range_ope column.
+func (v *NumericRangeOpeQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "NumericRangeOpeQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v NumericRangeOpeQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "NumericRangeOpeQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *NumericRangeOpeQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// TextRangeOreQuery is a range query value over the ore index of the text family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_text_range_ore takes in eql_v4.between. It ranges over TextOrdOre, TextSearchOre.
+type TextRangeOreQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v TextRangeOreQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_text_range_ore column.
+func (v *TextRangeOreQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "TextRangeOreQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v TextRangeOreQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "TextRangeOreQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *TextRangeOreQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// TextRangeOpeQuery is a range query value over the ope index of the text family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_text_range_ope takes in eql_v4.between. It ranges over TextOrd, TextOrdOpe, TextSearch.
+type TextRangeOpeQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v TextRangeOpeQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_text_range_ope column.
+func (v *TextRangeOpeQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "TextRangeOpeQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v TextRangeOpeQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "TextRangeOpeQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *TextRangeOpeQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// RealRangeOreQuery is a range query value over the ore index of the real family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_real_range_ore takes in eql_v4.between. It ranges over RealOrdOre.
+type RealRangeOreQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v RealRangeOreQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_real_range_ore column.
+func (v *RealRangeOreQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "RealRangeOreQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v RealRangeOreQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "RealRangeOreQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *RealRangeOreQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// RealRangeOpeQuery is a range query value over the ope index of the real family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_real_range_ope takes in eql_v4.between. It ranges over RealOrd, RealOrdOpe.
+type RealRangeOpeQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v RealRangeOpeQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_real_range_ope column.
+func (v *RealRangeOpeQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "RealRangeOpeQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v RealRangeOpeQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "RealRangeOpeQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *RealRangeOpeQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// DoubleRangeOreQuery is a range query value over the ore index of the double family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_double_range_ore takes in eql_v4.between. It ranges over DoubleOrdOre.
+type DoubleRangeOreQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v DoubleRangeOreQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_double_range_ore column.
+func (v *DoubleRangeOreQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "DoubleRangeOreQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v DoubleRangeOreQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "DoubleRangeOreQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *DoubleRangeOreQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}
+
+// DoubleRangeOpeQuery is a range query value over the ope index of the double family: both bounds of one BETWEEN,
+// included, as the one operand eql_v4.query_double_range_ope takes in eql_v4.between. It ranges over DoubleOrd, DoubleOrdOpe.
+type DoubleRangeOpeQuery []byte
+
+// Value is the EQL value as the driver takes it: the JSON text, or NULL when empty.
+func (v DoubleRangeOpeQuery) Value() (driver.Value, error) {
+	return value(v)
+}
+
+// Scan reads a eql_v4.query_double_range_ope column.
+func (v *DoubleRangeOpeQuery) Scan(src any) error {
+	return scan((*[]byte)(v), src, "DoubleRangeOpeQuery")
+}
+
+// MarshalJSON is the EQL value as the JSON it is, or null when empty.
+func (v DoubleRangeOpeQuery) MarshalJSON() ([]byte, error) {
+	return marshal(v, "DoubleRangeOpeQuery")
+}
+
+// UnmarshalJSON reads the EQL value from JSON, as it is.
+func (v *DoubleRangeOpeQuery) UnmarshalJSON(b []byte) error {
+	return unmarshal((*[]byte)(v), b)
+}

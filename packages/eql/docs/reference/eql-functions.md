@@ -10,6 +10,7 @@ A reference for the functions and operators EQL exposes for querying encrypted d
 - [Function Equivalents](#function-equivalents)
 - [Index Term Extraction](#index-term-extraction)
 - [Encrypted JSON (`public.eql_v3_json_search`)](#encrypted-json-publiceql_v3_json_search)
+- [Range queries in EQL v4: `eql_v4.between`](#range-queries-in-eql-v4-eql_v4between)
 - [Aggregate Functions](#aggregate-functions)
 - [Diagnostics](#diagnostics)
 
@@ -128,6 +129,48 @@ See [json-support.md](./json-support.md).
 ## Encrypted JSON (`public.eql_v3_json_search`)
 
 The full encrypted-JSONB function surface — containment, `->` / `->>`, `eql_v3.jsonb_path_query` / `_first` / `_exists`, `eql_v3.jsonb_array_length` / `_elements`, `eql_v3.to_ste_vec_query`, `eql_v3.jsonb_document_contains`, the envelope accessors `eql_v3.meta_data` / `eql_v3.ciphertext` / `eql_v3.selector`, and the GIN helpers — is documented in **[EQL with JSON and JSONB](./json-support.md)**. (`eql_v3.jsonb_array_elements_text` was removed in 3.0 — a bare-ciphertext stream is no longer independently decryptable; use `eql_v3.jsonb_array_elements`.)
+
+---
+
+## Range queries in EQL v4: `eql_v4.between`
+
+EQL v4 is the same SQL installed as the `eql_v4` schema, for values written by Stack Encrypt (`release/cipherstash-encrypt-v4.sql`). Everything above applies to it with `eql_v4` in place of `eql_v3`. It also has one thing EQL v3 does not: a range query that is **one operand**, so a statement cannot pair the low bound of one query with the high bound of another.
+
+Every ordered family has a **range query domain** per ordering term, beside its single-bound query domains:
+
+| Range domain | Bounds | Column domains it applies to |
+|---|---|---|
+| `eql_v4.query_<T>_range_ore` | two block-ORE terms (`ob` arrays) | `public.eql_v4_<T>_ord_ore`, `public.eql_v4_text_search_ore` |
+| `eql_v4.query_<T>_range_ope` | two CLLW-OPE terms (`op` hex strings) | `public.eql_v4_<T>_ord`, `public.eql_v4_<T>_ord_ope`, `public.eql_v4_text_search` |
+
+`<T>` is any ordered family: `integer`, `smallint`, `bigint`, `date`, `timestamp`, `numeric`, `text`, `real`, `double`. A range value is `{"v": 4, "i": {...}, "lo": <term>, "hi": <term>}`: each bound is the single-bound query domain's `ob` (ORE) or `op` (OPE) value, in a `{v, i, lo, hi}` envelope, with no ciphertext `c`. Stack Encrypt does not build this envelope yet; it will when the ordered EQL types become producible.
+
+```sql
+-- true when lo <= column <= hi, both bounds included
+eql_v4.between(a public.eql_v4_integer_ord_ore, r eql_v4.query_integer_range_ore) RETURNS boolean
+eql_v4.between(a public.eql_v4_integer_ord,     r eql_v4.query_integer_range_ope) RETURNS boolean
+eql_v4.between(a public.eql_v4_integer_ord_ope, r eql_v4.query_integer_range_ope) RETURNS boolean
+
+-- the bounds, as the column's order term type
+eql_v4.lo(r eql_v4.query_integer_range_ore) RETURNS eql_v4_internal.ore_block_256
+eql_v4.hi(r eql_v4.query_integer_range_ore) RETURNS eql_v4_internal.ore_block_256
+eql_v4.lo(r eql_v4.query_integer_range_ope) RETURNS eql_v4_internal.ope_cllw
+eql_v4.hi(r eql_v4.query_integer_range_ope) RETURNS eql_v4_internal.ope_cllw
+```
+
+**Example:**
+
+```sql
+CREATE INDEX ON users USING btree (eql_v4.ord_term_ore(age));
+
+SELECT * FROM users WHERE eql_v4.between(age, $1::eql_v4.query_integer_range_ore);
+```
+
+- `eql_v4.between` is an inlinable SQL function, so the planner sees `ord_term_ore(age) >= lo AND ord_term_ore(age) <= hi`, and a btree on the column's order term (`eql_v4.ord_term_ore(col)` for ORE, `eql_v4.ord_term(col)` for OPE) serves it as one range scan.
+- Always write it schema-qualified. `BETWEEN` is an SQL keyword, so a bare `between(...)` does not parse.
+- **Always cast the range parameter to its exact range domain**, as in `$1::eql_v4.query_integer_range_ore`. PostgreSQL resolves a function's domain arguments as their base type, `jsonb`, and every `between` overload takes jsonb domains. So an uncast `$1`, a `jsonb` parameter, or a range of the wrong term (an OPE range on an `_ord_ore` column) or the wrong family matches several overloads, and the statement fails with SQLSTATE 42725 (`function eql_v4.between(...) is not unique`) when it is parsed, before it runs. This differs from the single-bound operators: `col < $1` resolves an untyped `$1`.
+- A `NULL` range matches no row. So does a range whose low bound is above its high bound; the client refuses to build one.
+- The `eql_bindings::v4` Rust types (`IntegerRangeOreQuery`, …) and the Go `encrypt/eql` types of the same names hold a range value, so it binds as one parameter.
 
 ---
 

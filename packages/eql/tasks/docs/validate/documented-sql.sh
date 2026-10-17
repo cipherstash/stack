@@ -14,6 +14,11 @@ PGDATABASE=${PGDATABASE:-postgres}
 # version as {{prefix}} / {{eql_version}} placeholders (ADR-0002), which psql
 # cannot parse. `mise run build` renders it.
 source_directory="build/render/eql_v3/src"
+# Files confined to EQL v4 (`-- ONLY EQL VERSION: 4`: the range query domains
+# and eql_v4.between) are rendered only into the eql_v4 tree, so they are read
+# from there: every file of the v4 tree with no counterpart in the v3 tree. The
+# other v4 files are the v3 ones under another name, already validated above.
+v4_directory="build/render/eql_v4/src"
 
 echo "Validating SQL syntax for all documented files..."
 echo ""
@@ -28,12 +33,25 @@ echo ""
 errors=0
 validated=0
 
-if [ ! -d $source_directory ]; then
-  echo "error: source directory does not exist: ${source_directory}"
+for dir in "$source_directory" "$v4_directory"; do
+  if [ ! -d "$dir" ]; then
+    echo "error: source directory does not exist: ${dir}"
+    exit 2
+  fi
+done
+
+v4_only=()
+while IFS= read -r file; do
+  if [ ! -f "$source_directory/${file#"$v4_directory"/}" ]; then
+    v4_only+=("$file")
+  fi
+done < <(find "$v4_directory" -name "*.sql" -not -name "*_test.sql" | sort)
+if [ ${#v4_only[@]} -eq 0 ]; then
+  echo "error: found no file confined to EQL v4 under ${v4_directory}; expected the range surface"
   exit 2
 fi
 
-for file in $(find $source_directory -name "*.sql" -not -name "*_test.sql" | sort); do
+for file in $(find $source_directory -name "*.sql" -not -name "*_test.sql" | sort) "${v4_only[@]}"; do
   echo -n "Validating $file... "
 
   # Capture both stdout and stderr

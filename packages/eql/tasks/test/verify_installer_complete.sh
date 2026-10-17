@@ -32,6 +32,15 @@ INSTALLER="${2:-release/cipherstash-encrypt.sql}"
 # so overriding only $1 cannot pair one tree's order with another's files.
 ROOT="${3:-$(dirname "$ORDERED")}"
 PIN="$ROOT/tasks/pin_search_path_v3.sql"
+# The EQL version the installer is for: the N of the rendered tree's
+# build/render/eql_v<N> name. A file confined to another version by a
+# `-- ONLY EQL VERSION: M` line is not part of this installer.
+if [[ "$(basename "$ROOT")" =~ ^eql_v([0-9]+)$ ]]; then
+  VERSION="${BASH_REMATCH[1]}"
+else
+  echo "ERROR: cannot tell the EQL version from the rendered tree $ROOT (expected .../eql_v<N>)" >&2
+  exit 2
+fi
 
 for f in "$ORDERED" "$INSTALLER" "$PIN"; do
   if [[ ! -f "$f" ]]; then
@@ -82,7 +91,18 @@ trap 'rm -rf "$work"' EXIT
 # exactly the files the order names, so the rendered tree always agrees with the
 # order and a comparison against it could never fail. Map the source paths into
 # the rendered namespace the order uses.
-find src/v3 -type f -name '*.sql' ! -name '*_test.sql' | sed "s|^|$ROOT/|" | LC_ALL=C sort > "$work/disk"
+#
+# A file confined to another version (`-- ONLY EQL VERSION: M`, M != $VERSION)
+# belongs to that version's installer, not this one. The test is a grep here,
+# not `eql-codegen select`, which build.sh filtered the order with: the two must
+# agree independently for this gate to mean anything.
+find src/v3 -type f -name '*.sql' ! -name '*_test.sql' | LC_ALL=C sort > "$work/all"
+while IFS= read -r f; do
+  only=$(sed -n 's/^-- ONLY EQL VERSION: \([0-9][0-9]*\)[[:space:]]*$/\1/p' "$f")
+  if [[ -z "$only" || "$only" == "$VERSION" ]]; then
+    printf '%s/%s\n' "$ROOT" "$f"
+  fi
+done < "$work/all" > "$work/disk"
 grep -v '^[[:space:]]*$' "$ORDERED" | LC_ALL=C sort > "$work/order" || true
 n_disk=$(count_lines "$work/disk")
 

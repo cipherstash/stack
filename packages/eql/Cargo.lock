@@ -1235,10 +1235,12 @@ name = "eql-encryption-tests"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "chrono",
  "cipherstash-client",
  "eql-bindings",
  "eql-domains",
  "postgres",
+ "rust_decimal",
  "serde",
  "serde_json",
  "stack-encrypt",

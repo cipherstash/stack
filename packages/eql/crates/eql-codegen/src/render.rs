@@ -18,6 +18,13 @@
 //! placeholder is an error, and so is a literal `eql_v3` or `eql_v4` in the
 //! source: a literal name would render the same in both outputs, so the `eql_v4`
 //! bundle would quietly reach into `eql_v3`.
+//!
+//! A file belongs to every version unless it says otherwise with one line,
+//! [`ONLY_DIRECTIVE`] and a version number: `-- ONLY EQL VERSION: 4`. That is
+//! how a surface EQL v4 has and EQL v3 must not (the range query domains and
+//! `between`, ADR-0009 decision 7) shares the one source tree: the build
+//! renders a file only for the version it belongs to ([`belongs_to`]), and
+//! [`render_str`] refuses to render it as any other.
 
 use std::fmt;
 use std::fs;
@@ -29,6 +36,12 @@ pub const PREFIX: &str = "{{prefix}}";
 
 /// The payload-version placeholder.
 pub const EQL_VERSION: &str = "{{eql_version}}";
+
+/// The start of the line that confines a source file to one EQL version:
+/// `-- ONLY EQL VERSION: 4`. At most one per file; a file without one belongs
+/// to every version. The number is the payload version ([`EqlVersion::number`]),
+/// not the schema name, because the source may not name a schema literally.
+pub const ONLY_DIRECTIVE: &str = "-- ONLY EQL VERSION:";
 
 /// An EQL version the source can be rendered as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,6 +93,16 @@ pub enum RenderError {
     Unterminated { line: usize },
     /// A literal `eql_v3` or `eql_v4` where a placeholder belongs.
     LiteralName { line: usize, literal: &'static str },
+    /// An [`ONLY_DIRECTIVE`] line that does not name a version.
+    BadOnlyDirective { line: usize, value: String },
+    /// A second [`ONLY_DIRECTIVE`] line.
+    DuplicateOnlyDirective { line: usize },
+    /// A file confined to another version, rendered as this one.
+    OtherVersion {
+        line: usize,
+        only: EqlVersion,
+        version: EqlVersion,
+    },
 }
 
 impl fmt::Display for RenderError {
@@ -98,14 +121,74 @@ impl fmt::Display for RenderError {
                  so the name follows the EQL version (`{literal}_internal` is \
                  `{PREFIX}_internal`)"
             ),
+            RenderError::BadOnlyDirective { line, value } => write!(
+                f,
+                "line {line}: `{ONLY_DIRECTIVE}{value}` names no EQL version (expected \
+                 `{ONLY_DIRECTIVE} 3` or `{ONLY_DIRECTIVE} 4`)"
+            ),
+            RenderError::DuplicateOnlyDirective { line } => {
+                write!(f, "line {line}: a second `{ONLY_DIRECTIVE}` line")
+            }
+            RenderError::OtherVersion {
+                line,
+                only,
+                version,
+            } => write!(
+                f,
+                "line {line}: this file belongs to {} only and cannot be rendered as {}",
+                only.prefix(),
+                version.prefix()
+            ),
         }
     }
 }
 
 impl std::error::Error for RenderError {}
 
-/// Render one source text as `version`.
+/// The one version `src` is confined to by its [`ONLY_DIRECTIVE`] line, with
+/// the line's number, or `None` when it belongs to every version.
+fn only_version(src: &str) -> Result<Option<(usize, EqlVersion)>, RenderError> {
+    let mut found = None;
+    for (i, line) in src.lines().enumerate() {
+        let Some(value) = line.strip_prefix(ONLY_DIRECTIVE) else {
+            continue;
+        };
+        let lineno = i + 1;
+        if found.is_some() {
+            return Err(RenderError::DuplicateOnlyDirective { line: lineno });
+        }
+        let version = value
+            .strip_prefix(' ')
+            .and_then(|v| v.trim_end().parse::<EqlVersion>().ok())
+            .ok_or_else(|| RenderError::BadOnlyDirective {
+                line: lineno,
+                value: value.to_string(),
+            })?;
+        found = Some((lineno, version));
+    }
+    Ok(found)
+}
+
+/// Whether `src` belongs to `version`: true unless an [`ONLY_DIRECTIVE`] line
+/// confines it to another. The build asks this of every ordered file before
+/// rendering a version's bundle, so a file confined to EQL v4 never reaches
+/// the EQL v3 installer.
+pub fn belongs_to(src: &str, version: EqlVersion) -> Result<bool, RenderError> {
+    Ok(only_version(src)?.is_none_or(|(_, only)| only == version))
+}
+
+/// Render one source text as `version`. A source confined to another version
+/// by its [`ONLY_DIRECTIVE`] line is refused ([`RenderError::OtherVersion`]).
 pub fn render_str(src: &str, version: EqlVersion) -> Result<String, RenderError> {
+    if let Some((line, only)) = only_version(src)? {
+        if only != version {
+            return Err(RenderError::OtherVersion {
+                line,
+                only,
+                version,
+            });
+        }
+    }
     let mut out = String::with_capacity(src.len());
     for (i, line) in src.split_inclusive('\n').enumerate() {
         let lineno = i + 1;
@@ -309,6 +392,82 @@ mod tests {
         );
     }
 
+    const V4_ONLY: &str = "-- AUTOMATICALLY GENERATED FILE.\n\
+                           -- ONLY EQL VERSION: 4\n\
+                           SELECT {{prefix}}.between();\n";
+
+    #[test]
+    fn a_file_without_the_directive_belongs_to_every_version() {
+        for v in EqlVersion::ALL {
+            assert_eq!(belongs_to(SRC, v), Ok(true));
+        }
+    }
+
+    #[test]
+    fn a_confined_file_belongs_to_its_version_alone_and_renders_only_as_it() {
+        assert_eq!(belongs_to(V4_ONLY, EqlVersion::V4), Ok(true));
+        assert_eq!(belongs_to(V4_ONLY, EqlVersion::V3), Ok(false));
+        assert_eq!(
+            render_str(V4_ONLY, EqlVersion::V4).unwrap(),
+            "-- AUTOMATICALLY GENERATED FILE.\n\
+             -- ONLY EQL VERSION: 4\n\
+             SELECT eql_v4.between();\n"
+        );
+        let err = render_str(V4_ONLY, EqlVersion::V3).unwrap_err();
+        assert_eq!(
+            err,
+            RenderError::OtherVersion {
+                line: 2,
+                only: EqlVersion::V4,
+                version: EqlVersion::V3
+            }
+        );
+        assert_eq!(
+            err.to_string(),
+            "line 2: this file belongs to eql_v4 only and cannot be rendered as eql_v3"
+        );
+        // Trailing whitespace is tolerated; the version is the number.
+        assert_eq!(
+            belongs_to("-- ONLY EQL VERSION: 3  \n", EqlVersion::V3),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn a_malformed_or_repeated_directive_is_refused() {
+        for (src, value) in [
+            ("x\n-- ONLY EQL VERSION: 2\n", " 2"),
+            ("x\n-- ONLY EQL VERSION:4\n", "4"),
+            ("x\n-- ONLY EQL VERSION: v4\n", " v4"),
+            ("x\n-- ONLY EQL VERSION:\n", ""),
+        ] {
+            let err = belongs_to(src, EqlVersion::V4).unwrap_err();
+            assert_eq!(
+                err,
+                RenderError::BadOnlyDirective {
+                    line: 2,
+                    value: value.to_string()
+                }
+            );
+            assert!(err.to_string().starts_with("line 2: "), "{err}");
+            assert_eq!(render_str(src, EqlVersion::V4), Err(err));
+        }
+        let twice = "-- ONLY EQL VERSION: 4\n-- ONLY EQL VERSION: 4\n";
+        assert_eq!(
+            belongs_to(twice, EqlVersion::V4),
+            Err(RenderError::DuplicateOnlyDirective { line: 2 })
+        );
+        assert_eq!(
+            RenderError::DuplicateOnlyDirective { line: 2 }.to_string(),
+            "line 2: a second `-- ONLY EQL VERSION:` line"
+        );
+        // Prose that mentions the directive mid-line is not a directive.
+        assert_eq!(
+            belongs_to("--! see `-- ONLY EQL VERSION: 4`\n", EqlVersion::V3),
+            Ok(true)
+        );
+    }
+
     #[test]
     fn parses_versions() {
         assert_eq!("3".parse(), Ok(EqlVersion::V3));
@@ -354,6 +513,23 @@ mod tests {
             fs::read_to_string(out.join("src/v3/a.sql")).unwrap(),
             "SELECT eql_v4.f();\n"
         );
+    }
+
+    #[test]
+    fn render_files_refuses_a_file_confined_to_the_other_version() {
+        let scratch = Scratch::new("eql-render-only");
+        let dir = &scratch.0;
+        let root = dir.join("root");
+        let out = dir.join("out");
+        fs::create_dir_all(root.join("src/v3")).unwrap();
+        fs::write(root.join("src/v3/range.sql"), V4_ONLY).unwrap();
+        let files = [PathBuf::from("src/v3/range.sql")];
+
+        let err = render_files(&root, &files, &out, EqlVersion::V3).unwrap_err();
+        assert!(err.to_string().contains("belongs to eql_v4 only"), "{err}");
+        assert!(!out.exists());
+        render_files(&root, &files, &out, EqlVersion::V4).unwrap();
+        assert!(out.join("src/v3/range.sql").exists());
     }
 
     #[test]

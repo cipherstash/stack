@@ -15,7 +15,8 @@ fi
 #  0. Read the RENDERED source. The SQL source names its schemas by
 #     placeholder ({{prefix}}, {{eql_version}}; ADR-0002), and `mise run build`
 #     renders it as EQL v3 into build/render/eql_v3/ with `eql-codegen render`,
-#     keeping relative paths. A file under src/ or tasks/ is read from there,
+#     keeping relative paths. A file under src/ or tasks/ is read from there
+#     (or, for a file confined to one version, from that version's tree),
 #     so the reference names `eql_v3.eq_term`, and the renderer stays the one
 #     place placeholders are substituted. `docs:generate` and this filter's
 #     other callers depend on `build`; a missing rendered copy is an error, not
@@ -60,7 +61,12 @@ rel="${abs#"$EQL_ROOT/"}"
 input="$1"
 case "$rel" in
   src/* | tasks/*)
-    input="$EQL_ROOT/build/render/eql_v3/$rel"
+    # A file confined to one EQL version (`-- ONLY EQL VERSION: N`, e.g. the
+    # v4-only range surface) is rendered for that version alone, so read that
+    # version's copy; it documents names that exist (eql_v4.between), not v3
+    # names that do not.
+    only=$(sed -n 's/^-- ONLY EQL VERSION: \([0-9][0-9]*\)[[:space:]]*$/\1/p' "$abs" | head -n 1)
+    input="$EQL_ROOT/build/render/eql_v${only:-3}/$rel"
     if [[ ! -f "$input" ]]; then
       echo "$1: no rendered copy at $input; run 'mise run build' first" >&2
       exit 1
