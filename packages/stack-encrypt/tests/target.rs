@@ -178,6 +178,19 @@ async fn match_leaf_supports_containment_queries() {
     assert!(stored.contains(&query));
 }
 
+/// A match configuration whose options fail the scheme's bounds, so a term
+/// under it fails during the synchronous build, before any I/O.
+struct TooManyHashes;
+
+impl MatchConfig for TooManyHashes {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            k: 17,
+            ..Default::default()
+        }
+    }
+}
+
 /// A custom type-level match configuration.
 struct SmallFilter;
 
@@ -706,13 +719,13 @@ async fn a_column_stops_declaring_at_the_first_refused_row() {
 #[tokio::test]
 async fn a_failed_field_fails_the_record_before_any_kms_call() {
     // One failed field must not cause the record's other fields to mint
-    // data keys that are then thrown away. A match term over text that
-    // yields no tokens fails during the synchronous build, before any I/O.
+    // data keys that are then thrown away. A match term under invalid
+    // options fails during the synchronous build, before any I/O.
     let (cipher, generates, _) = counting_cipher().await;
     let cipher = cipher.default_keyset();
     let b = "b".to_string();
 
-    let zipped = MatchTerms::<SmallFilter>::encrypt_from(&"", &cipher, nonempty!("users/x"))
+    let zipped = MatchTerms::<TooManyHashes>::encrypt_from(&"abc", &cipher, nonempty!("users/x"))
         .zip(StackCipherText::encrypt_from(
             &b,
             &cipher,

@@ -6,12 +6,10 @@
 
 use std::collections::HashMap;
 
-use stack_encrypt::{
-    BoxedPassthrough, Cipher, CipherText, ContextTag, Element, Encrypt, IntoAad, SealedValue,
-    StackCipher,
-};
+use stack_encrypt::{CipherText, ContextTag, Encrypt, PassthroughFrame, SealedValue, StackCipher};
 use stack_kms::FakeDataKeySource;
-use vitaminc_aead::{MapCipher, Passthrough};
+use vitaminc_aead::plaintext::{MapSink, Sink};
+use vitaminc_aead::Decrypt;
 use vitaminc_protected::{Controlled, Protected};
 
 async fn cipher() -> StackCipher<FakeDataKeySource> {
@@ -126,9 +124,8 @@ async fn option_none_roundtrips() {
 
 #[tokio::test]
 async fn protected_roundtrip() {
-    // Exercises the `Protected` Decrypt impl, the sole user of `Decipher::map_ok`.
-    // (`Vec<u8>` would encrypt element-wise as a sequence of `u8`, not as bytes,
-    // so a string leaf is used here.)
+    // Exercises the `Protected` Decrypt impl, which builds the value inside
+    // the wrapper.
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let secret = Protected::new("classified".to_string());
@@ -150,12 +147,15 @@ async fn nested_vec_roundtrips() {
     assert_eq!(pt, nested);
 }
 
+/// The context a `ContextTag` binds is an AAD like any other: a value
+/// sealed under `ContextTag::aad(tag)` opens under the same, and only the
+/// same, tag.
 #[tokio::test]
 async fn context_tag_binds_and_roundtrips() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt(ContextTag::new("token".to_string(), "user:42"), ())
+        .encrypt("token".to_string(), ContextTag::aad("user:42"))
         .await
         .expect("encrypt");
 
@@ -172,7 +172,7 @@ async fn context_tag_wrong_context_fails() {
     let cipher = cipher().await;
     let keyset = cipher.default_keyset();
     let ct = keyset
-        .encrypt(ContextTag::new("token".to_string(), "user:42"), ())
+        .encrypt("token".to_string(), ContextTag::aad("user:42"))
         .await
         .expect("encrypt");
 
@@ -218,8 +218,7 @@ async fn empty_marker_does_not_decode_under_wrong_aad() {
 }
 
 /// A hand-written record carrying one field in the clear, through the
-/// type-erased `passthrough_entry_boxed` a cipher-generic `Encrypt` has to
-/// use.
+/// sink's passthrough.
 struct Row {
     id: u32,
     email: String,
@@ -244,19 +243,24 @@ impl Row {
 }
 
 impl Encrypt for Row {
-    fn encrypt_with_aad<'a, C, A>(self, cipher: C, aad: A) -> Result<C::Ok, C::Error>
-    where
-        C: Cipher,
-        A: IntoAad<'a>,
-    {
-        let mut map = cipher
-            .encrypt_map(aad)
-            .passthrough_entry_boxed("id", Box::new(self.id))?;
+    fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
+        let mut map = sink.map(None)?;
+        map.entry("id")?.passthrough(self.id)?;
         if self.repeat_id {
-            map = map.passthrough_entry_boxed("id", Box::new(self.id))?;
+            map.entry("id")?.passthrough(self.id)?;
         }
-        map.encrypt_entry("email", self.email)?.end()
+        self.email.visit(map.entry("email")?)?;
+        map.end()
     }
+}
+
+/// A passthrough payload: the frame of `value`, in the clear.
+fn clear(value: u32) -> PassthroughFrame {
+    PassthroughFrame(
+        vitaminc_aead::to_frame(value)
+            .expect("a u32 frames")
+            .risky_unwrap(),
+    )
 }
 
 /// A passthrough entry lands in the map as given, beside the sealed ones;
@@ -271,10 +275,15 @@ async fn a_passthrough_map_entry_is_stored_in_the_clear_once() {
         panic!("a record encrypts as a map: {ct:?}");
     };
     let entry = |name: &str| entries.iter().find(|(key, _)| key == name).map(|(_, v)| v);
-    assert!(
-        matches!(entry("id"), Some(CipherText::Passthrough(v)) if v.downcast_ref::<u32>() == Some(&7)),
-        "{entries:?}"
-    );
+    let Some(CipherText::Passthrough(id)) = entry("id") else {
+        panic!("the id rides in the clear: {entries:?}");
+    };
+    let id = id
+        .parse()
+        .expect("one frame")
+        .visit(u32::sink())
+        .expect("a u32");
+    assert_eq!(id, 7, "the passthrough carries the value as given");
     assert!(
         matches!(entry("email"), Some(CipherText::Single(_))),
         "{entries:?}"
@@ -288,12 +297,11 @@ async fn a_passthrough_map_entry_is_stored_in_the_clear_once() {
 /// none — no entries at all, or only passthroughs, which carry no tag —
 /// would verify under *any* AAD. The encrypt side never produces one
 /// (emptiness is the authenticated `Empty*` marker); the decrypt side must
-/// refuse to open one, even for a type that reads passthroughs back.
+/// refuse to open one, on the tree's shape, before any sink sees it.
 #[tokio::test]
 async fn a_container_with_nothing_sealed_in_it_does_not_open() {
     let cipher = cipher().await;
     let aad = b"users".as_slice();
-    let clear = |value: u32| CipherText::Passthrough(Box::new(value) as BoxedPassthrough);
 
     let result: Result<Vec<String>, _> = cipher.decrypt(CipherText::Sequence(vec![]), aad).await;
     assert!(result.is_err(), "an entry-less sequence proves nothing");
@@ -301,15 +309,24 @@ async fn a_container_with_nothing_sealed_in_it_does_not_open() {
         cipher.decrypt(CipherText::Map(vec![]), aad).await;
     assert!(result.is_err(), "an entry-less map proves nothing");
 
-    let result: Result<Vec<Passthrough<u32>>, _> = cipher
-        .decrypt(CipherText::Sequence(vec![clear(1), clear(2)]), aad)
+    let result: Result<Vec<u32>, _> = cipher
+        .decrypt(
+            CipherText::Sequence(vec![
+                CipherText::Passthrough(clear(1)),
+                CipherText::Passthrough(clear(2)),
+            ]),
+            aad,
+        )
         .await;
     assert!(
         result.is_err(),
         "an all-passthrough sequence proves nothing"
     );
-    let result: Result<HashMap<String, Passthrough<u32>>, _> = cipher
-        .decrypt(CipherText::Map(vec![("id".to_string(), clear(1))]), aad)
+    let result: Result<HashMap<String, u32>, _> = cipher
+        .decrypt(
+            CipherText::Map(vec![("id".to_string(), CipherText::Passthrough(clear(1)))]),
+            aad,
+        )
         .await;
     assert!(result.is_err(), "an all-passthrough map proves nothing");
 }
@@ -358,94 +375,6 @@ async fn sequence_element_cannot_be_rehomed_as_scalar() {
         result.is_err(),
         "re-homed sequence element must not decrypt"
     );
-}
-
-#[tokio::test]
-async fn element_roundtrips_under_bare_caller_aad() {
-    // `Element<T>` derives `for_sequence_element` inside its own Encrypt/Decrypt
-    // impls. Both sides must honour that derivation: the decipher opens the leaf
-    // under the AAD the Decrypt drive supplies, not a pre-derived one.
-    let cipher = cipher().await;
-    let keyset = cipher.default_keyset();
-    let ct = keyset
-        .encrypt(Element("row".to_string()), b"users".as_slice())
-        .await
-        .expect("encrypt");
-    let pt: Element<String> = cipher
-        .decrypt(ct, b"users".as_slice())
-        .await
-        .expect("Element must round-trip under the bare caller AAD");
-    assert_eq!(pt.into_inner(), "row");
-}
-
-#[tokio::test]
-async fn element_interchanges_with_vec_element() {
-    // A row sealed as one element of a `Vec` decrypts alone as `Element<T>`
-    // under the same caller AAD (Element's documented use-case), and a lone
-    // `Element` ciphertext decrypts as a one-element `Vec`.
-    let cipher = cipher().await;
-    let keyset = cipher.default_keyset();
-    let aad = b"users".as_slice();
-
-    let ct = keyset
-        .encrypt(vec!["a".to_string(), "b".to_string()], aad)
-        .await
-        .expect("encrypt");
-    let second = match ct {
-        CipherText::Sequence(mut items) => items.remove(1),
-        other => other,
-    };
-    let pt: Element<String> = cipher
-        .decrypt(second, aad)
-        .await
-        .expect("spliced element must decrypt as Element");
-    assert_eq!(pt.into_inner(), "b");
-
-    let lone = keyset
-        .encrypt(Element("c".to_string()), aad)
-        .await
-        .expect("encrypt");
-    let wrapped = CipherText::Sequence(vec![lone]);
-    let pt: Vec<String> = cipher
-        .decrypt(wrapped, aad)
-        .await
-        .expect("lone Element must decrypt as a one-element Vec");
-    assert_eq!(pt, vec!["c".to_string()]);
-}
-
-#[tokio::test]
-async fn element_fails_under_wrong_caller_aad() {
-    let cipher = cipher().await;
-    let keyset = cipher.default_keyset();
-    let ct = keyset
-        .encrypt(Element("row".to_string()), b"users".as_slice())
-        .await
-        .expect("encrypt");
-    let result: Result<Element<String>, _> = cipher.decrypt(ct, b"orders".as_slice()).await;
-    assert!(
-        result.is_err(),
-        "Element under the wrong caller AAD must not decrypt"
-    );
-}
-
-/// The derivation that binds a sequence element to its position is the
-/// library's, applied by `Element<T>` itself — there is no entry point that
-/// lets a caller retrieve keys under one context and authenticate under
-/// another, so a batched row is read back by naming the type, not by
-/// reconstructing the AAD.
-#[tokio::test]
-async fn a_batched_element_opens_by_naming_the_type() {
-    let cipher = cipher().await;
-    let keyset = cipher.default_keyset();
-    let ct = keyset
-        .encrypt(Element("row".to_string()), b"users".as_slice())
-        .await
-        .expect("encrypt");
-    let opened: Element<String> = cipher
-        .decrypt(ct, b"users".as_slice())
-        .await
-        .expect("Element applies its own derivation on open");
-    assert_eq!(opened.into_inner(), "row");
 }
 
 #[tokio::test]

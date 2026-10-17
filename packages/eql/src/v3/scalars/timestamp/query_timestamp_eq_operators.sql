@@ -4,28 +4,28 @@
 -- REQUIRE: src/v3/scalars/timestamp/query_timestamp_eq_functions.sql
 
 --! @file encrypted_domain/timestamp/query_timestamp_eq_operators.sql
---! @brief Operators for eql_v3.query_timestamp_eq.
+--! @brief Operators for {{prefix}}.query_timestamp_eq.
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3.eq,
-  LEFTARG = public.eql_v3_timestamp_eq, RIGHTARG = eql_v3.query_timestamp_eq,
+  FUNCTION = {{prefix}}.eq,
+  LEFTARG = public.{{prefix}}_timestamp_eq, RIGHTARG = {{prefix}}.query_timestamp_eq,
   COMMUTATOR = =, NEGATOR = <>, RESTRICT = eqsel, JOIN = eqjoinsel
 );
 
 CREATE OPERATOR = (
-  FUNCTION = eql_v3.eq,
-  LEFTARG = eql_v3.query_timestamp_eq, RIGHTARG = public.eql_v3_timestamp_eq,
+  FUNCTION = {{prefix}}.eq,
+  LEFTARG = {{prefix}}.query_timestamp_eq, RIGHTARG = public.{{prefix}}_timestamp_eq,
   COMMUTATOR = =, NEGATOR = <>, RESTRICT = eqsel, JOIN = eqjoinsel
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3.neq,
-  LEFTARG = public.eql_v3_timestamp_eq, RIGHTARG = eql_v3.query_timestamp_eq,
+  FUNCTION = {{prefix}}.neq,
+  LEFTARG = public.{{prefix}}_timestamp_eq, RIGHTARG = {{prefix}}.query_timestamp_eq,
   COMMUTATOR = <>, NEGATOR = =, RESTRICT = neqsel, JOIN = neqjoinsel
 );
 
 CREATE OPERATOR <> (
-  FUNCTION = eql_v3.neq,
-  LEFTARG = eql_v3.query_timestamp_eq, RIGHTARG = public.eql_v3_timestamp_eq,
+  FUNCTION = {{prefix}}.neq,
+  LEFTARG = {{prefix}}.query_timestamp_eq, RIGHTARG = public.{{prefix}}_timestamp_eq,
   COMMUTATOR = <>, NEGATOR = =, RESTRICT = neqsel, JOIN = neqjoinsel
 );

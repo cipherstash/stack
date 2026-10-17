@@ -93,7 +93,7 @@ pub fn take_last_error() -> Option<Vec<u8>> {
 mod tests {
     use super::*;
     use crate::status::{STATUS_ENCODING, STATUS_INTERNAL};
-    use vitaminc_aead_value::{transport as codec, FfiValue};
+    use crate::value::HostValue;
 
     /// A packed result, read the way the Go host reads it.
     #[derive(Debug, PartialEq)]
@@ -117,16 +117,8 @@ mod tests {
     /// The recorded error's code, handed over as the host would get it.
     fn last_code() -> Option<String> {
         let bytes = take_last_error()?;
-        let value = codec::decode_value(&mut codec::Reader::new(&bytes)).expect("decodes");
-        let FfiValue::Object(entries) = value else {
-            return None;
-        };
-        entries.into_iter().find_map(|(key, value)| match value {
-            FfiValue::String(code) if key == "code" => {
-                String::from_utf8(code.risky_ref().to_vec()).ok()
-            }
-            _ => None,
-        })
+        let value = HostValue::decode(&bytes).expect("decodes");
+        value.get("code")?.as_text().map(str::to_owned)
     }
 
     #[test]

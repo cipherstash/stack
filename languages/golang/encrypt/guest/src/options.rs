@@ -41,11 +41,11 @@
 //! it is objects, strings, bytes and nothing else, and this module is its
 //! one home. The Go bindings plan points here.
 
+use stack_encrypt::dynamic::FfiValue;
 use stack_encrypt::dynamic::Scope;
 use stack_encrypt::{KeysetCipher, Label, StackCipher};
 use stack_kms::{IdentifiedBy, IndexKeySource};
 use uuid::Uuid;
-use vitaminc_aead_value::FfiValue;
 use vitaminc_protected::Controlled;
 use zerokms_protocol::Name;
 

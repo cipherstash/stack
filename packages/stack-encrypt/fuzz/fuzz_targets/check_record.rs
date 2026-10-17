@@ -35,9 +35,11 @@ use stack_encrypt::dynamic::record::{check_record, plan_with, Plan};
 use stack_encrypt::dynamic::{
     FfiValue, Output, TargetDescriptor, TargetError, TargetResolver, ValueKind,
 };
-use stack_encrypt::{KeysetCipher, Label, Pending, SealedValue, StackCipher, StackCipherText};
+use stack_encrypt::{
+    KeysetCipher, Label, PassthroughFrame, Pending, SealedValue, StackCipher, StackCipherText,
+};
 use uuid::Uuid;
-use vitaminc_protected::Protected;
+use vitaminc_protected::{Controlled, Protected};
 
 /// The resolver plans parse under: one producible type, `TextEq` over
 /// strings, and nothing that runs — `check_record` never reaches a cipher.
@@ -50,10 +52,10 @@ impl TargetResolver for Fixed {
             "text",
             "Eq",
             Some(ValueKind::String),
-            "public.eql_v3_text_eq",
+            "public.eql_v4_text_eq",
             vec!["eq".to_string()],
             Some("TextEqQuery".to_string()),
-            Some("eql_v3.query_text_eq".to_string()),
+            Some("eql_v4.query_text_eq".to_string()),
             true,
             None,
         )]
@@ -264,7 +266,6 @@ impl PlanSpec {
 #[derive(Arbitrary, Debug)]
 enum Tree {
     Single,
-    None,
     EmptySequence,
     EmptyMap,
     Passthrough,
@@ -284,17 +285,20 @@ fn leaf() -> SealedValue {
     .clone()
 }
 
+/// A value as a passthrough node: its frame, in the clear.
+fn passthrough(value: FfiValue) -> StackCipherText {
+    let frame = value.to_frame().expect("a scalar frames");
+    StackCipherText::Passthrough(PassthroughFrame(frame.risky_unwrap()))
+}
+
 impl Tree {
     fn into_ciphertext(self) -> StackCipherText {
         match self {
             Tree::Single => StackCipherText::Single(leaf()),
-            Tree::None => StackCipherText::None(leaf()),
             Tree::EmptySequence => StackCipherText::EmptySequence(leaf()),
             Tree::EmptyMap => StackCipherText::EmptyMap(leaf()),
-            Tree::Passthrough => StackCipherText::Passthrough(Box::new(FfiValue::Null)),
-            Tree::PassthroughBytes => StackCipherText::Passthrough(Box::new(FfiValue::Bytes(
-                Protected::new(b"{}".to_vec()),
-            ))),
+            Tree::Passthrough => passthrough(FfiValue::Null),
+            Tree::PassthroughBytes => passthrough(FfiValue::Bytes(Protected::new(b"{}".to_vec()))),
             Tree::Sequence(items) => {
                 StackCipherText::Sequence(items.into_iter().map(Tree::into_ciphertext).collect())
             }
@@ -320,7 +324,7 @@ impl Tree {
                     .all(|(at, (name, _))| !entries[..at].iter().any(|(prior, _)| prior == name));
                 unique && entries.iter().all(|(_, node)| node.is_clean())
             }
-            Tree::Single | Tree::None | Tree::EmptySequence | Tree::EmptyMap => true,
+            Tree::Single | Tree::EmptySequence | Tree::EmptyMap => true,
         }
     }
 }

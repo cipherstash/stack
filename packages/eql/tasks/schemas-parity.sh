@@ -14,26 +14,31 @@ cd "$REPO_ROOT"
 #     scans across.
 # This gate is DB-free: it compares the two source-of-truth declarations
 # directly, so a hand-edit to one side without the other fails CI before any
-# Postgres install. The installed-DB copy is separately pinned by
+# Postgres install. Both are placeholder source ({{prefix}}), so both sides are
+# rendered as EQL v3 with the build's own renderer and compared by real name. The installed-DB copy is separately pinned by
 # `owned_schemas_returns_exactly_the_two_v3_schemas` in tests/sqlx.
 
-SCHEMA_SQL="src/v3/schema.sql"
+SCHEMA_SRC="src/v3/schema.sql"
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+cargo run -q -p eql-codegen -- render 3 "$work" "$SCHEMA_SRC"
+SCHEMA_SQL="$work/$SCHEMA_SRC"
 
 # Pull the ARRAY['eql_v3', 'eql_v3_internal']::name[] literal from the
 # owned_schemas() body and extract its single-quoted tokens, in order.
 array_literal=$(grep -oE "ARRAY\[[^]]*\]::name\[\]" "$SCHEMA_SQL" | head -1 || true)
 if [ -z "$array_literal" ]; then
-  echo "ERROR: could not find the ARRAY[...]::name[] literal in $SCHEMA_SQL" >&2
+  echo "ERROR: could not find the ARRAY[...]::name[] literal in $SCHEMA_SRC" >&2
   echo "       (eql_v3_internal.owned_schemas() body changed shape?)" >&2
   exit 1
 fi
 sql_schemas=$(printf '%s\n' "$array_literal" | grep -oE "'[^']*'" | tr -d "'")
 
-rust_schemas=$(cargo run -q -p eql-codegen -- list-schemas)
+rust_schemas=$(cargo run -q -p eql-codegen -- list-schemas 3)
 
 if [ "$sql_schemas" != "$rust_schemas" ]; then
   echo "SCHEMA DRIFT: SQL owned_schemas() and Rust codegen consts disagree." >&2
-  echo "  SQL  ($SCHEMA_SQL, eql_v3_internal.owned_schemas()):" >&2
+  echo "  SQL  ($SCHEMA_SRC rendered as v3, eql_v3_internal.owned_schemas()):" >&2
   printf '    %s\n' $sql_schemas >&2
   echo "  Rust (eql-codegen list-schemas / consts.rs SCHEMA,INTERNAL_SCHEMA):" >&2
   printf '    %s\n' $rust_schemas >&2

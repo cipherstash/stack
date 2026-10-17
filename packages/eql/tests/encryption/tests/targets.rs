@@ -6,11 +6,11 @@
 mod common;
 
 use eql_bindings::encryption::targets::{self as targets, Opener, Target, TargetError};
-use eql_bindings::v3::text::{TextEq, TextEqQuery};
-use eql_bindings::{v3, Identifier};
+use eql_bindings::v4::text::{TextEq, TextEqQuery};
+use eql_bindings::{v4, Identifier};
 use eql_domains::{Shape, Term, CATALOG};
+use stack_encrypt::dynamic::{FfiValue, ValueKind};
 use stack_encrypt::Label;
-use vitaminc_aead_value::{FfiValue, ValueKind};
 
 fn email() -> Label {
     Label::new(["users", "email"]).unwrap()
@@ -284,6 +284,36 @@ mod given_text_eq {
         }
     }
 
+    /// Earlier builds wrote Stack Encrypt payloads with `"v": 3` and the same
+    /// ciphertext prefix. A real, well-formed v4 payload with only its version
+    /// changed is refused, so the version alone is what refuses it.
+    #[tokio::test]
+    async fn refuses_a_stored_payload_of_the_other_version() {
+        let (cipher, _) = common::cipher().await;
+        let keyset = cipher.default_keyset();
+        let stored = targets::encrypt("TextEq", &keyset, &email(), text("secret"))
+            .unwrap()
+            .await
+            .unwrap();
+        let mut payload: serde_json::Value = serde_json::from_slice(&stored).unwrap();
+        assert_eq!(payload["v"], 4);
+        payload["v"] = 3.into();
+        let as_v3 = serde_json::to_vec(&payload).unwrap();
+
+        let error = refused(targets::decrypt("TextEq", &cipher, &email(), &as_v3));
+        assert!(
+            matches!(
+                error,
+                TargetError::Stored {
+                    target: "TextEq",
+                    ..
+                }
+            ),
+            "{error}"
+        );
+        assert!(error.to_string().contains("version 3"), "{error}");
+    }
+
     #[tokio::test]
     async fn refuses_a_label_that_is_not_a_column() {
         let (cipher, _) = common::cipher().await;
@@ -329,8 +359,8 @@ mod given_a_name_the_engine_cannot_produce {
         let error = refused(targets::encrypt("TextOrdOre", &keyset, &email(), text("x")));
         assert_eq!(
             error.to_string(),
-            "the engine cannot produce TextOrdOre yet: EQL stores a block ORE term and the engine \
-             derives a CLLW ORE term; the two are different algorithms"
+            "the engine cannot produce TextOrdOre yet: ordering terms wait for vitaminc-ore, the \
+             order encodings in vitaminc 0.6 (ADR-0002)"
         );
         // Refused by name before the label or the value is looked at.
         let error = refused(targets::encrypt(
@@ -420,7 +450,7 @@ mod the_table {
             assert_eq!(row.family, family.name, "{name}: family");
             assert_eq!(
                 row.sql_domain,
-                format!("public.{}", domain.sql_typname(family.name)),
+                format!("public.eql_v4_{}", domain.full_name(family.name)),
                 "{name}: stored domain"
             );
             let indexes: Vec<&str> = if matches!(domain.shape, Shape::SteVec) {
@@ -442,14 +472,24 @@ mod the_table {
                 })
                 .collect();
             assert_eq!(row.suffix, suffix, "{name}: suffix");
+            let kind = match family.name {
+                "text" => Some(ValueKind::String),
+                "integer" => Some(ValueKind::Int32),
+                "bigint" => Some(ValueKind::Int64),
+                "boolean" => Some(ValueKind::Bool),
+                "real" => Some(ValueKind::Float32),
+                "double" => Some(ValueKind::Float64),
+                // The rest have no scalar kind in vitaminc 0.5's value enum.
+                _ => None,
+            };
             assert_eq!(
                 row.plaintext,
-                (family.name == "text").then_some("string"),
-                "{name}: only text's plaintext encoding is specified"
+                kind.map(ValueKind::name),
+                "{name}: the family's plaintext kind"
             );
             assert_eq!(
                 row.plaintext_kind(),
-                (family.name == "text").then_some(ValueKind::String),
+                kind,
                 "{name}: the plaintext name is a vitaminc kind"
             );
             if matches!(domain.shape, Shape::SteVec) {
@@ -458,7 +498,7 @@ mod the_table {
                     Some("SteVecQuery"),
                     "{name}: the containment needle"
                 );
-                assert_eq!(row.query_sql_domain, Some("eql_v3.query_json"), "{name}");
+                assert_eq!(row.query_sql_domain, Some("eql_v4.query_json"), "{name}");
             } else if domain.terms.is_empty() {
                 assert_eq!(
                     (row.query, row.query_sql_domain),
@@ -473,7 +513,7 @@ mod the_table {
                 );
                 assert_eq!(
                     row.query_sql_domain.map(str::to_owned),
-                    Some(format!("eql_v3.{}", domain.query_name(family.name))),
+                    Some(format!("eql_v4.{}", domain.query_name(family.name))),
                     "{name}: query domain"
                 );
             }
@@ -482,9 +522,21 @@ mod the_table {
 
     #[test]
     fn every_row_is_a_compiled_domain_type_and_so_is_its_query() {
-        let stored: Vec<&str> = v3::all().iter().map(|d| d.sql_domain()).collect();
-        let queries: Vec<&str> = v3::all_query().iter().map(|d| d.sql_domain()).collect();
+        let stored: Vec<&str> = v4::all().iter().map(|d| d.sql_domain()).collect();
+        let queries: Vec<&str> = v4::all_query().iter().map(|d| d.sql_domain()).collect();
+        // v4 has no SteVec bindings yet, so the SteVec rows (the document
+        // and its `SteVecQuery` needle) have no compiled type behind them.
+        // They must stay unproducible, so neither Rust's `encrypt`/`query`
+        // nor a generator such as Go's can select them.
         for row in targets::targets() {
+            if row.query == Some("SteVecQuery") {
+                assert!(
+                    !row.producible,
+                    "{}: a SteVec row has no v4 type and must not be producible",
+                    row.name
+                );
+                continue;
+            }
             assert!(
                 stored.contains(&row.sql_domain),
                 "{}: {} is in all()",
@@ -492,10 +544,8 @@ mod the_table {
                 row.sql_domain
             );
             if let Some(query) = row.query_sql_domain {
-                // The SteVec needle is in `all()`, not `all_query()`: it is
-                // a hand-written document shape, not a scalar twin.
                 assert!(
-                    queries.contains(&query) || stored.contains(&query),
+                    queries.contains(&query),
                     "{}: {query} is a compiled domain type",
                     row.name
                 );
@@ -503,8 +553,11 @@ mod the_table {
         }
     }
 
+    /// The types the engine produces in EQL v4 today: every storage-only
+    /// and equality-only domain whose plaintext vitaminc 0.5 encodes and,
+    /// for equality, derives a term for.
     #[test]
-    fn text_eq_is_the_one_producible_type_today() {
+    fn the_producible_types_are_the_unordered_ones_vitaminc_0_5_encodes() {
         let producible: Vec<&str> = targets::targets()
             .iter()
             .filter(|t| t.producible)
@@ -512,18 +565,27 @@ mod the_table {
             .collect();
         assert_eq!(
             producible,
-            ["TextEq"],
-            "the plan's list: the engine produces TextEq only"
+            [
+                "Integer",
+                "Bigint",
+                "Text",
+                "TextEq",
+                "TextMatch",
+                "Boolean",
+                "Real",
+                "Double"
+            ],
         );
         for row in targets::targets().iter().filter(|t| !t.producible) {
             let reason = row.reason.expect("an unproducible type has a reason");
             let expected = match (row.family, row.suffix) {
                 ("json", "Search") => "JSON index",
-                (family, _) if family != "text" => "encodes a plaintext",
-                (_, "OrdOre" | "SearchOre") => "CLLW",
-                (_, "Match" | "Ord" | "OrdOpe" | "Search") => "no EQL type is built",
-                (_, "") => "storage-only",
-                (_, suffix) => panic!("{}: unexpected text suffix {suffix}", row.name),
+                ("json", "") => "tree of leaves",
+                ("smallint" | "date" | "timestamp" | "numeric", _) => "has no kind",
+                (_, "Ord" | "OrdOre" | "OrdOpe" | "Search" | "SearchOre") => "ordering terms",
+                ("real" | "double", "Eq") => "float equality is produced once vitaminc 0.6",
+                ("integer" | "bigint", "Eq") => "integer equality is produced once vitaminc 0.6",
+                (family, suffix) => panic!("{}: unexpected {family} {suffix}", row.name),
             };
             assert!(reason.contains(expected), "{}: {reason}", row.name);
         }
@@ -541,15 +603,15 @@ mod the_table {
                 "family": "text",
                 "suffix": "Eq",
                 "plaintext": "string",
-                "sql_domain": "public.eql_v3_text_eq",
+                "sql_domain": "public.eql_v4_text_eq",
                 "indexes": ["eq"],
                 "query": "TextEqQuery",
-                "query_sql_domain": "eql_v3.query_text_eq",
+                "query_sql_domain": "eql_v4.query_text_eq",
                 "producible": true,
                 "reason": null
             })
         );
-        let row = targets::target("Integer").unwrap();
+        let row = targets::target("Date").unwrap();
         let json = serde_json::to_value(row).unwrap();
         assert_eq!(
             json["plaintext"],

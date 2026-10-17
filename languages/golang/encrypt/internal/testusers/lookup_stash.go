@@ -151,8 +151,29 @@ func (f LookupScoreField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int3
 	return EncryptedLookupScore{Ore: out.Ore}, err
 }
 
-func (f LookupScoreField) Ore(ctx context.Context, c *encrypt.Cipher, v int32) (encrypt.OreTerm, error) {
-	return f.field.Ore(ctx, c, v)
+func (f LookupScoreField) Lt(ctx context.Context, c *encrypt.Cipher, v int32) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f LookupScoreField) Lte(ctx context.Context, c *encrypt.Cipher, v int32) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f LookupScoreField) Gt(ctx context.Context, c *encrypt.Cipher, v int32) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f LookupScoreField) Gte(ctx context.Context, c *encrypt.Cipher, v int32) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f LookupScoreField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi int32) (encrypt.Range[encrypt.OreTerm], error) {
+	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
 }
 
 type LookupCodeField struct {
@@ -164,6 +185,7 @@ func (f LookupCodeField) Encrypt(ctx context.Context, c *encrypt.Cipher, v Statu
 	return EncryptedLookupCode{Equality: out.Equality}, err
 }
 
-func (f LookupCodeField) Equality(ctx context.Context, c *encrypt.Cipher, v Status) (encrypt.EqualityTerm, error) {
-	return f.field.Equality(ctx, c, v)
+func (f LookupCodeField) Eq(ctx context.Context, c *encrypt.Cipher, v Status) (encrypt.EqualityTerm, error) {
+	term, err := f.field.Term(ctx, c, "eq", v)
+	return encrypt.EqualityTerm(term), err
 }

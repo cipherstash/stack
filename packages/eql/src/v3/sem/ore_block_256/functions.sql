@@ -4,7 +4,7 @@
 -- REQUIRE: src/v3/sem/ore_block_256/types.sql
 
 --! @file v3/sem/ore_block_256/functions.sql
---! @brief ORE block construction, extraction, and comparison (eql_v3 SEM).
+--! @brief ORE block construction, extraction, and comparison ({{prefix}} SEM).
 --!
 --! jsonb-only subset of src/ore_block_u64_8_256/functions.sql. The
 --! encrypted-column overloads are omitted; the helper jsonb_array_to_bytea_array
@@ -16,7 +16,7 @@
 --! @brief Convert JSONB array to ORE block composite type
 --! @internal
 --! @param val jsonb Array of hex-encoded ORE block terms
---! @return eql_v3_internal.ore_block_256 ORE block composite, or NULL if input is null
+--! @return {{prefix}}_internal.ore_block_256 ORE block composite, or NULL if input is null
 --! @note plpgsql, not `LANGUAGE sql` (issue #353). The sole caller
 --!   (`ore_block_256`) is itself plpgsql, so this function is NEVER reached
 --!   from an inlinable context — as `LANGUAGE sql` it paid the per-call
@@ -33,25 +33,25 @@
 --!   drops out of ordered queries). An empty array instead engages the
 --!   comparator's `cardinality = 0` guard, which sorts empty BEFORE every
 --!   non-empty term. See issue #262 (pinned by T7).
-CREATE FUNCTION eql_v3_internal.jsonb_array_to_ore_block_256(val jsonb)
-RETURNS eql_v3_internal.ore_block_256
+CREATE FUNCTION {{prefix}}_internal.jsonb_array_to_ore_block_256(val jsonb)
+RETURNS {{prefix}}_internal.ore_block_256
   IMMUTABLE
 AS $$
 DECLARE
-  terms eql_v3_internal.ore_block_256_term[];
+  terms {{prefix}}_internal.ore_block_256_term[];
 BEGIN
   IF val IS NULL OR jsonb_typeof(val) != 'array' THEN
     RETURN NULL;
   END IF;
-  SELECT array_agg(ROW(b)::eql_v3_internal.ore_block_256_term)
+  SELECT array_agg(ROW(b)::{{prefix}}_internal.ore_block_256_term)
     INTO terms
-  FROM unnest(eql_v3_internal.jsonb_array_to_bytea_array(val)) AS b;
+  FROM unnest({{prefix}}_internal.jsonb_array_to_bytea_array(val)) AS b;
   -- plpgsql pitfall: `SELECT <composite> INTO <composite-var>` assigns the
   -- select-list columns FIELD-WISE into the variable — return the row
   -- constructor directly instead. The COALESCE stays load-bearing for the
   -- empty-`ob` case (issue #262): array_agg over zero rows yields NULL, and
   -- the comparator needs an EMPTY terms array, not NULL terms.
-  RETURN ROW(COALESCE(terms, ARRAY[]::eql_v3_internal.ore_block_256_term[]))::eql_v3_internal.ore_block_256;
+  RETURN ROW(COALESCE(terms, ARRAY[]::{{prefix}}_internal.ore_block_256_term[]))::{{prefix}}_internal.ore_block_256;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -62,24 +62,24 @@ $$ LANGUAGE plpgsql;
 --! It takes a bare `jsonb` arg (not a jsonb-backed encrypted DOMAIN), so the
 --! structural skip in tasks/pin_search_path_v3.sql does not recognise it;
 --! this marker is the documented manual opt-in.
-COMMENT ON FUNCTION eql_v3_internal.jsonb_array_to_ore_block_256(jsonb) IS
+COMMENT ON FUNCTION {{prefix}}_internal.jsonb_array_to_ore_block_256(jsonb) IS
   'eql-inline-critical: per-encrypted-value ORE opclass-path helper; must stay unpinned (SET search_path adds per-call overhead)';
 
 
 --! @brief Extract ORE block index term from JSONB payload
 --! @param val jsonb containing encrypted EQL payload
---! @return eql_v3_internal.ore_block_256 ORE block index term
+--! @return {{prefix}}_internal.ore_block_256 ORE block index term
 --! @throws Exception if 'ob' field is missing
-CREATE FUNCTION eql_v3_internal.ore_block_256(val jsonb)
-  RETURNS eql_v3_internal.ore_block_256
+CREATE FUNCTION {{prefix}}_internal.ore_block_256(val jsonb)
+  RETURNS {{prefix}}_internal.ore_block_256
   IMMUTABLE STRICT PARALLEL SAFE
   SET search_path = pg_catalog, extensions, public
 AS $$
   BEGIN
     -- Declared STRICT: PostgreSQL returns NULL for a NULL argument without
     -- entering the body, so no explicit `val IS NULL` guard is needed.
-    IF eql_v3_internal.has_ore_block_256(val) THEN
-      RETURN eql_v3_internal.jsonb_array_to_ore_block_256(val->'ob');
+    IF {{prefix}}_internal.has_ore_block_256(val) THEN
+      RETURN {{prefix}}_internal.jsonb_array_to_ore_block_256(val->'ob');
     END IF;
     RAISE 'Expected an ore index (ob) value in json: %', val;
   END;
@@ -97,7 +97,7 @@ $$ LANGUAGE plpgsql;
 --!   previous `val ->> 'ob' IS NOT NULL` form stringified scalars/objects and so
 --!   reported them as present. `{}` (absent `ob`) and `{"ob": null}` (JSON null)
 --!   both remain `false`.
-CREATE FUNCTION eql_v3_internal.has_ore_block_256(val jsonb)
+CREATE FUNCTION {{prefix}}_internal.has_ore_block_256(val jsonb)
   RETURNS boolean
   IMMUTABLE STRICT PARALLEL SAFE
   SET search_path = pg_catalog, extensions, public
@@ -110,8 +110,8 @@ $$ LANGUAGE plpgsql;
 
 --! @brief Compare two ORE block terms using cryptographic comparison
 --! @internal
---! @param a eql_v3_internal.ore_block_256_term First ORE term
---! @param b eql_v3_internal.ore_block_256_term Second ORE term
+--! @param a {{prefix}}_internal.ore_block_256_term First ORE term
+--! @param b {{prefix}}_internal.ore_block_256_term Second ORE term
 --! @return integer -1 if a < b, 0 if a = b, 1 if a > b
 --! @throws Exception if ciphertexts are different lengths
 --! @note Marked `IMMUTABLE` (the three `compare_ore_block_256_term(s)`
@@ -121,7 +121,7 @@ $$ LANGUAGE plpgsql;
 --!   is itself `IMMUTABLE STRICT PARALLEL SAFE` — so `IMMUTABLE` lets the
 --!   planner fold/cache these in ordering and index contexts. NOT `STRICT`:
 --!   the NULL-handling branches below are load-bearing for the array overload.
-CREATE FUNCTION eql_v3_internal.compare_ore_block_256_term(a eql_v3_internal.ore_block_256_term, b eql_v3_internal.ore_block_256_term)
+CREATE FUNCTION {{prefix}}_internal.compare_ore_block_256_term(a {{prefix}}_internal.ore_block_256_term, b {{prefix}}_internal.ore_block_256_term)
   RETURNS integer
   IMMUTABLE
   SET search_path = pg_catalog, extensions, public
@@ -221,10 +221,10 @@ $$ LANGUAGE plpgsql;
 
 --! @brief Compare arrays of ORE block terms recursively
 --! @internal
---! @param a eql_v3_internal.ore_block_256_term[] First array
---! @param b eql_v3_internal.ore_block_256_term[] Second array
+--! @param a {{prefix}}_internal.ore_block_256_term[] First array
+--! @param b {{prefix}}_internal.ore_block_256_term[] Second array
 --! @return integer -1/0/1, or NULL if either array is NULL
-CREATE FUNCTION eql_v3_internal.compare_ore_block_256_terms(a eql_v3_internal.ore_block_256_term[], b eql_v3_internal.ore_block_256_term[])
+CREATE FUNCTION {{prefix}}_internal.compare_ore_block_256_terms(a {{prefix}}_internal.ore_block_256_term[], b {{prefix}}_internal.ore_block_256_term[])
 RETURNS integer
   IMMUTABLE
   SET search_path = pg_catalog, extensions, public
@@ -248,10 +248,10 @@ AS $$
       RETURN 1;
     END IF;
 
-    cmp_result := eql_v3_internal.compare_ore_block_256_term(a[1], b[1]);
+    cmp_result := {{prefix}}_internal.compare_ore_block_256_term(a[1], b[1]);
 
     IF cmp_result = 0 THEN
-      RETURN eql_v3_internal.compare_ore_block_256_terms(a[2:array_length(a,1)], b[2:array_length(b,1)]);
+      RETURN {{prefix}}_internal.compare_ore_block_256_terms(a[2:array_length(a,1)], b[2:array_length(b,1)]);
     END IF;
 
     RETURN cmp_result;
@@ -261,15 +261,15 @@ $$ LANGUAGE plpgsql;
 
 --! @brief Compare ORE block composite types
 --! @internal
---! @param a eql_v3_internal.ore_block_256 First ORE block
---! @param b eql_v3_internal.ore_block_256 Second ORE block
+--! @param a {{prefix}}_internal.ore_block_256 First ORE block
+--! @param b {{prefix}}_internal.ore_block_256 Second ORE block
 --! @return integer -1/0/1
-CREATE FUNCTION eql_v3_internal.compare_ore_block_256_terms(a eql_v3_internal.ore_block_256, b eql_v3_internal.ore_block_256)
+CREATE FUNCTION {{prefix}}_internal.compare_ore_block_256_terms(a {{prefix}}_internal.ore_block_256, b {{prefix}}_internal.ore_block_256)
 RETURNS integer
   IMMUTABLE
   SET search_path = pg_catalog, extensions, public
 AS $$
   BEGIN
-    RETURN eql_v3_internal.compare_ore_block_256_terms(a.terms, b.terms);
+    RETURN {{prefix}}_internal.compare_ore_block_256_terms(a.terms, b.terms);
   END
 $$ LANGUAGE plpgsql;

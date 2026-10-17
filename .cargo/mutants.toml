@@ -72,6 +72,11 @@ exclude_re = [
   'stack-encrypt/src/cipher\.rs:\d+:\d+: replace client_key_provider -> EnvKeyProvider with Default::default\(\)$',
   'stack-encrypt/src/target/pending\.rs:443:9: replace <impl IntoFuture for Pending<.*>>::into_future -> Self::IntoFuture with Default::default\(\)$',
   # stack-encrypt — equivalent.
+  # An operator and an index are unit structs, whose `Default` is the value
+  # `clone` and `case_sensitive` already return.
+  'stack-encrypt/src/op(/mod)?\.rs:\d+:\d+: replace <impl Clone for Matches<C>>::clone -> Self with Default::default\(\)$',
+  'stack-encrypt/src/op(/mod)?\.rs:\d+:\d+: replace Matches::case_sensitive -> Matches<CaseSensitive> with Default::default\(\)$',
+  'stack-encrypt/src/target/index\.rs:\d+:\d+: replace <impl Clone for Match<O>>::clone -> Self with Default::default\(\)$',
   'stack-encrypt/src/cipher\.rs:\d+:\d+: replace StackCipher<FromEnv>::builder -> StackCipherBuilder with Default::default\(\)$',
   'stack-encrypt/src/sem/mod\.rs:\d+:\d+: replace <impl MatchConfig for DefaultMatch>::options -> MatchOptions with Default::default\(\)$',
   # Both unit-context conversions explicitly return Self::default().

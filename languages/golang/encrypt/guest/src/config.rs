@@ -25,9 +25,9 @@
 
 use std::num::NonZeroUsize;
 
+use stack_encrypt::dynamic::FfiValue;
 use stack_kms::{ClientKey, ZeroKmsEndpoint};
 use uuid::Uuid;
-use vitaminc_aead_value::FfiValue;
 use zeroize::Zeroizing;
 
 /// A parse failure, carrying which key was at fault. Maps to

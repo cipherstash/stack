@@ -1,0 +1,8 @@
+{
+  "_comment": "The v4 query operands eql-bindings derives for each plaintext under FakeDataKeySource's index key (keyset nil), read by the Go SDK's hermetic test; regenerate with EQL_UPDATE_FIXTURES=1, do not edit.",
+  "name": {
+    "plaintext": "alice",
+    "query": "{\"v\":4,\"i\":{\"t\":\"profiles\",\"c\":\"name\"},\"bf\":[80,125,212,221,348,638,664,776,1141,1322,1400,1418,1532,1704,1762,1843,1865,1970]}"
+  },
+  "table": "profiles"
+}

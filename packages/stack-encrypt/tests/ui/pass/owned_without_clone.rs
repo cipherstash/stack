@@ -5,7 +5,7 @@ use stack_encrypt::sem::{CllwOpeEncrypt, CllwOreEncrypt, EqualityTerm, MatchTerm
 use stack_encrypt::target::{
     ciphertext, equality, matching, ope, ore, CallerContext, Owned, Pending,
 };
-use stack_encrypt::{nonempty, Encrypt, KeysetCipher, StackCipherText};
+use stack_encrypt::{nonempty, KeysetCipher, Encrypt, StackCipherText};
 use stack_kms::FakeDataKeySource;
 
 fn seal<'a, S: Encrypt>(
@@ -14,7 +14,7 @@ fn seal<'a, S: Encrypt>(
 ) -> Pending<'a, StackCipherText, FakeDataKeySource> {
     keyset.run(ciphertext::<_, _, Owned>(), value, nonempty!("column").into())
 }
-fn index<'a, S: vitaminc_prf::PrfValue>(
+fn index<'a, S: Encrypt>(
     keyset: &'a KeysetCipher<'_, FakeDataKeySource>,
     value: S,
 ) -> Pending<'a, EqualityTerm, FakeDataKeySource> {

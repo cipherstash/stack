@@ -43,18 +43,14 @@ schemars = "1"
 # from the PACKAGED crate against the registry stack-encrypt instead:
 # `cargo publish --dry-run --all-features` in test-eql.yml at PR time, and
 # `publish_all_features` in ../../release-plz.toml at release time.
-stack-encrypt = { path = "../../../stack-encrypt", version = "0.2.0", optional = true, default-features = false }
-# The vitaminc line stack-encrypt is built on. `PrfValue` is named from this
-# crate directly (stack-encrypt re-exports only `IntoPrfContext` and
-# `PrfContext`), and two vitaminc lines in one graph do not interoperate, so
-# the requirement is stack-encrypt's.
-vitaminc-prf = { version = "0.5.0", optional = true }
-# `FfiValue` / `ValueKind`: the runtime plaintext a plan field target takes
-# and the kind names a plan's `"type"` key spells (`encryption::targets`).
-# Named from vitaminc directly, like `PrfValue` above, so the feature needs
-# nothing from stack-encrypt's own `dynamic` feature; the same line
-# stack-encrypt and the Go guest build against.
-vitaminc-aead-value = { version = "0.5.1", optional = true }
+# `dynamic`: `FfiValue` / `ValueKind`, the runtime plaintext a plan field
+# target takes and the kind names a plan's `"type"` key spells
+# (`encryption::targets`).
+stack-encrypt = { path = "../../../stack-encrypt", version = "0.3.0", optional = true, default-features = false, features = ["dynamic"] }
+# `Physical`, `Int`, `Float` and `FromScalar`: the scalar plaintexts in
+# `encryption::plaintext` describe themselves through vitaminc's `Encrypt`
+# and read back only their own width through `FromScalar`.
+vitaminc-aead = { version = "0.6.0", optional = true }
 # The plaintext a target reads out of its `Protected` runtime value is held
 # in `Zeroizing` until it is sealed, so the copy is wiped like the original.
 zeroize = { version = "1", optional = true }
@@ -66,8 +62,7 @@ hex = { version = "0.4", optional = true }
 default = []
 stack-encrypt = [
   "dep:stack-encrypt",
-  "dep:vitaminc-prf",
-  "dep:vitaminc-aead-value",
+  "dep:vitaminc-aead",
   "dep:zeroize",
   "dep:thiserror",
   "dep:base64",

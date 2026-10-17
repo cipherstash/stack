@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use vitaminc_aead_value::FfiValue;
+use super::FfiValue;
 use vitaminc_protected::Controlled;
 
 use super::{Error, Reason};
@@ -36,7 +36,7 @@ use crate::{ContextPiece, NonEmpty};
 ///
 /// A bare string is one text part. An array is a list, and may nest as deep
 /// as the transport codec allows
-/// ([`MAX_DEPTH`](vitaminc_aead_value::transport::MAX_DEPTH) levels, counted
+/// ([`MAX_DEPTH`](vitaminc_aead::frame::MAX_DEPTH) levels, counted
 /// from the root of the encoded value); a deeper value is refused by the
 /// codec before this module sees it. Text and bytes with the same content
 /// are distinct contexts (UTF-8 versus bytes typed leaves) — the same

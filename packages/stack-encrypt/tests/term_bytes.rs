@@ -5,7 +5,7 @@
 //! them changes every stored term — and because terms are compared for
 //! equality server-side, the failure mode is not an error but a query that
 //! silently stops matching. Breaking one of these tests means the derivation
-//! moved, and the `/v1` suffix in the domain labels has to move with it.
+//! moved, and the version suffix in the domain labels has to move with it.
 //!
 //! Keyed by `FakeDataKeySource`'s deterministic index key, so the expected
 //! bytes are stable without ZeroKMS.
@@ -16,6 +16,12 @@
 //! labels and framing here did not. That was a prerelease wire break, taken
 //! deliberately (CIP-4036); the `/v1` suffixes stayed because nothing of
 //! this crate's own moved.
+//!
+//! The equality and match pins moved again with the labels, to `/v2`, when
+//! both began deriving through `vitaminc-normalize`: an equality term is the
+//! PRF over the value's normalized bytes under vitaminc's domain for its
+//! kind, and match text is tokenized in Unicode 16 NFC. No stored term
+//! existed to keep. The ORE and OPE derivations did not move.
 
 use stack_encrypt::nonempty;
 use stack_encrypt::sem::{DefaultMatch, MatchConfig, MatchOptions};
@@ -45,7 +51,33 @@ async fn equality_term_bytes_are_pinned() {
 
     assert_eq!(
         hex(term.as_bytes()),
-        "c101ef066547cb33003c352dcd02a42bfe4a24e2d0609caca0189d9f1af8262a"
+        "0aa0df4adabbad408580770b6e156aecca21a1d45f84e554ad4a1a0f76006fef"
+    );
+}
+
+/// Equality compares text in Unicode 16 NFC and numbers whatever their
+/// width: two spellings of one string, and one number at two widths, are
+/// one term each.
+#[tokio::test]
+async fn equality_terms_are_one_per_normal_form() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let term = |value: &'static str| keyset.equality_term(value, nonempty!("users/email"));
+    assert_eq!(
+        term("cafe\u{301}").await.unwrap(),
+        term("caf\u{e9}").await.unwrap(),
+        "a combining accent and the precomposed letter are one string"
+    );
+    assert_eq!(
+        keyset
+            .equality_term(34u32, nonempty!("users/age"))
+            .await
+            .unwrap(),
+        keyset
+            .equality_term(34i64, nonempty!("users/age"))
+            .await
+            .unwrap(),
+        "34 is one number at every width"
     );
 }
 
@@ -63,8 +95,8 @@ async fn match_term_positions_are_pinned() {
     assert_eq!(
         term.positions(),
         [
-            4, 5, 10, 13, 14, 30, 39, 53, 56, 61, 85, 94, 95, 100, 111, 125, 127, 156, 173, 188,
-            189, 202, 208, 224, 229, 239
+            6, 15, 28, 40, 51, 54, 55, 61, 64, 92, 115, 148, 151, 153, 155, 161, 163, 172, 177,
+            179, 186, 187, 197, 216, 246, 251, 254
         ]
     );
 }
@@ -130,9 +162,9 @@ async fn match_term_positions_are_pinned_for_a_wide_filter() {
     assert_eq!(
         term.positions(),
         [
-            2287, 2398, 2404, 2829, 5150, 5181, 5293, 9255, 11964, 14175, 16080, 24350, 25354,
-            28362, 31748, 33647, 35845, 39141, 39480, 41998, 42621, 45365, 50303, 60896, 64668,
-            64957, 65365
+            6398, 8087, 11318, 13096, 14587, 16924, 19131, 21007, 22427, 22518, 24792, 25004,
+            34675, 35505, 35770, 36919, 38067, 41990, 42949, 45716, 48448, 55869, 56883, 57753,
+            58019, 60065, 65116
         ],
         "positions for a 65536-bit filter are frozen: both bytes of each slice are in play"
     );

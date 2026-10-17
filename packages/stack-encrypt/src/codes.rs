@@ -80,6 +80,12 @@ mod tests {
             TermError::Ore(_) => TermError::Ore(cllw_ore::Error),
             TermError::InvalidOptions(_) => TermError::InvalidOptions("k out of range"),
             TermError::EmptyTermText => TermError::EmptyTermText,
+            TermError::InvertedRange => TermError::InvertedRange,
+            TermError::NoEqualityTerm => TermError::NoEqualityTerm,
+            TermError::NoOrderTerm => TermError::NoOrderTerm,
+            TermError::Normalize(_) => {
+                TermError::Normalize(vitaminc_normalize::NormalizeError::UnassignedCodePoint)
+            },
             TermError::Bytes(_) => TermError::Bytes(TermBytesError::OddMatchTermsLength(3)),
         ]));
         errors.extend(boxed(variants![
@@ -148,6 +154,10 @@ mod tests {
                     downcase: false,
                     ..MatchOptions::default()
                 }),
+            },
+            PlanError::MatchCase { .. } => PlanError::MatchCase {
+                declared: "CaseInsensitive",
+                folds: false,
             },
             PlanError::TwoContextSources { .. } => PlanError::TwoContextSources {
                 first: "the plan",
@@ -381,6 +391,15 @@ mod tests {
                 json!({ "len": 3 }),
             ),
             (Box::new(TermError::EmptyTermText), json!({})),
+            (Box::new(TermError::InvertedRange), json!({})),
+            (Box::new(TermError::NoEqualityTerm), json!({})),
+            (Box::new(TermError::NoOrderTerm), json!({})),
+            (
+                Box::new(TermError::Normalize(
+                    vitaminc_normalize::NormalizeError::UnassignedCodePoint,
+                )),
+                json!({}),
+            ),
             (
                 Box::new(TermBytesError::MalformedCllwCiphertext(5)),
                 json!({ "len": 5 }),

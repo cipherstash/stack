@@ -17,19 +17,23 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use std::future::IntoFuture;
 
+use stack_encrypt::dynamic::FfiValue;
 use stack_encrypt::dynamic::Scope;
 use stack_encrypt::sem::DefaultMatch;
-use stack_encrypt::{nonempty, CipherText, Encrypt, Label, SealedValue, StackCipher};
+use stack_encrypt::{
+    nonempty, CipherText, Label, Node, PassthroughFrame, PendingStackCipherText, SealedValue,
+    StackCipher,
+};
 use stack_encrypt_guest::ops::{self, TERM_EQUALITY, TERM_MATCH, TERM_OPE, TERM_ORE};
 use stack_encrypt_guest::status::{
-    STATUS_AUTH, STATUS_CONTEXT_MISMATCH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET,
+    STATUS_AUTH, STATUS_CONTEXT_MISMATCH, STATUS_ENCODING, STATUS_FOREIGN_KEYSET, STATUS_TERM,
 };
 use stack_kms::{
     DataKey, DataKeySource, DataKeyWithTag, FakeDataKeySource, GenerateKeyPayload, IndexKeySource,
     RetrieveKeyPayload,
 };
 use uuid::Uuid;
-use vitaminc_aead_value::{transport as codec, FfiValue};
+use vitaminc_aead_frame::{decode_ciphertext, encode_ciphertext};
 use vitaminc_protected::{Controlled, Protected};
 use zerokms_protocol::{IdentifiedBy, UnverifiedContext};
 
@@ -93,19 +97,29 @@ fn cipher() -> StackCipher<Counting> {
 }
 
 fn encode(value: FfiValue) -> Vec<u8> {
-    let mut out = Vec::new();
-    codec::encode_value(value, &mut out).expect("encode value");
-    out
+    value.to_frame().expect("encode value").risky_unwrap()
 }
 
 fn decode(bytes: &[u8]) -> FfiValue {
-    codec::decode_value(&mut codec::Reader::new(bytes)).expect("decode value")
+    FfiValue::from_frame(bytes).expect("decode value")
 }
 
-/// Decode a guest ciphertext buffer with the passthrough payload kept as a
-/// plain [`FfiValue`], so tests can inspect term nodes directly.
-fn decode_tree(bytes: &[u8]) -> CipherText<Vec<u8>, FfiValue> {
-    codec::decode_ciphertext(&mut codec::Reader::new(bytes)).expect("decode ciphertext tree")
+/// Decode a guest ciphertext buffer with its leaves as bytes, so tests can
+/// inspect the nodes directly.
+fn decode_tree(bytes: &[u8]) -> Node<Vec<u8>> {
+    decode_ciphertext(bytes).expect("decode ciphertext tree")
+}
+
+/// Encode a ciphertext tree as the guest reads it.
+fn encode_tree(tree: &Node<Vec<u8>>) -> Vec<u8> {
+    let mut out = Vec::new();
+    encode_ciphertext(tree, &mut out).expect("encode ciphertext tree");
+    out
+}
+
+/// A value as a passthrough node: its frame, in the clear.
+fn clear(value: FfiValue) -> Node<Vec<u8>> {
+    CipherText::Passthrough(PassthroughFrame(encode(value)))
 }
 
 fn text(value: &FfiValue) -> &str {
@@ -194,8 +208,11 @@ fn single_field_plan(field: &str, context: FfiValue) -> Vec<u8> {
 }
 
 /// The bytes of a term node in a decoded record tree.
-fn term_bytes(node: &CipherText<Vec<u8>, FfiValue>) -> Vec<u8> {
-    let CipherText::Passthrough(FfiValue::Bytes(b)) = node else {
+fn term_bytes(node: &Node<Vec<u8>>) -> Vec<u8> {
+    let CipherText::Passthrough(frame) = node else {
+        panic!("expected a passthrough term node");
+    };
+    let FfiValue::Bytes(b) = decode(&frame.0) else {
         panic!("expected a passthrough bytes term node");
     };
     b.risky_ref().to_vec()
@@ -330,12 +347,13 @@ fn unsupported_term_inputs_are_encoding_errors() {
     let cipher = cipher();
     let ctx = encode(s("f"));
 
-    // Floats and bools have no equality encoding; match is text-only;
+    // Bools have no equality domain and no order term; match is text-only;
     // containers have no term semantics; kinds outside the table and empty
     // contexts are rejected.
     for (value, kind) in [
-        (FfiValue::Float64(1.5), TERM_EQUALITY),
         (FfiValue::Bool(true), TERM_EQUALITY),
+        (FfiValue::Bool(true), TERM_ORE),
+        (FfiValue::Bool(false), TERM_OPE),
         (FfiValue::UInt32(1), TERM_MATCH),
         (FfiValue::Array(vec![]), TERM_ORE),
         (FfiValue::Null, TERM_EQUALITY),
@@ -456,12 +474,11 @@ fn a_forged_passthrough_ciphertext_slot_is_rejected_not_decrypted() {
         };
         for (key, slot) in outputs.iter_mut() {
             if key == "c" {
-                *slot = CipherText::Passthrough(FfiValue::UInt32(99));
+                *slot = clear(FfiValue::UInt32(99));
             }
         }
     }
-    let mut forged = Vec::new();
-    codec::encode_ciphertext(&CipherText::Map(fields), &mut forged).expect("re-encode");
+    let forged = encode_tree(&CipherText::Map(fields));
 
     assert_eq!(
         block_on(ops::decrypt_record(
@@ -666,9 +683,8 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
     let keyset = cipher.default_keyset();
     let native = nonempty!("users").with("age").with(7u64);
     let sealed = block_on(
-        FfiValue::UInt32(34)
-            .encrypt_with_aad(&keyset, native)
-            .expect("encrypt")
+        PendingStackCipherText::plan(FfiValue::UInt32(34), native)
+            .expect("plan")
             .seal(&keyset, native),
     )
     .expect("seal");
@@ -677,12 +693,11 @@ fn a_natively_sealed_field_under_an_extended_context_opens_through_a_plan() {
     };
 
     // Shape the tree the way `encrypt_record` writes it: field → { c: leaf }.
-    let tree: CipherText<Vec<u8>, FfiValue> = CipherText::Map(vec![(
+    let tree: Node<Vec<u8>> = CipherText::Map(vec![(
         "age".to_string(),
         CipherText::Map(vec![("c".to_string(), CipherText::Single(leaf.to_bytes()))]),
     )]);
-    let mut record = Vec::new();
-    codec::encode_ciphertext(&tree, &mut record).expect("encode tree");
+    let record = encode_tree(&tree);
 
     let plan_with = |context: FfiValue| single_field_plan("age", context);
 
@@ -954,21 +969,15 @@ fn a_mixed_keyset_record_batch_opens_through_any_one_call_per_keyset() {
     ))
     .expect("encrypt globex row");
     let batch = {
-        let (CipherText::Map(a), CipherText::Map(g)) = (
-            codec::decode_ciphertext_boxed::<Vec<u8>>(&mut codec::Reader::new(&acme_rows))
-                .expect("decode"),
-            codec::decode_ciphertext_boxed::<Vec<u8>>(&mut codec::Reader::new(&globex_rows))
-                .expect("decode"),
-        ) else {
+        let (CipherText::Map(a), CipherText::Map(g)) =
+            (decode_tree(&acme_rows), decode_tree(&globex_rows))
+        else {
             panic!("a single record is a map");
         };
-        let mut out = Vec::new();
-        codec::encode_ciphertext_boxed(
-            CipherText::Sequence(vec![CipherText::Map(a), CipherText::Map(g)]),
-            &mut out,
-        )
-        .expect("encode batch");
-        out
+        encode_tree(&CipherText::Sequence(vec![
+            CipherText::Map(a),
+            CipherText::Map(g),
+        ]))
     };
 
     let before = cipher.kms().retrieve_calls.load(Ordering::SeqCst);
@@ -1047,12 +1056,9 @@ fn term_validation_refuses_what_the_term_op_refuses() {
     let ctx = encode(s("f"));
 
     for (label, value, kind) in [
-        (
-            "a float under equality",
-            FfiValue::Float64(1.5),
-            TERM_EQUALITY,
-        ),
         ("a bool under equality", FfiValue::Bool(true), TERM_EQUALITY),
+        ("a bool under ore", FfiValue::Bool(true), TERM_ORE),
+        ("a bool under ope", FfiValue::Bool(true), TERM_OPE),
         ("an integer under match", FfiValue::UInt32(1), TERM_MATCH),
         ("a container", FfiValue::Array(vec![]), TERM_ORE),
         ("an object", obj(vec![("k", s("v"))]), TERM_EQUALITY),
@@ -1093,8 +1099,9 @@ fn term_validation_refuses_what_the_term_op_refuses() {
         (s("x"), TERM_EQUALITY),
         (FfiValue::Bytes(Protected::new(vec![1])), TERM_EQUALITY),
         (s("x y"), TERM_MATCH),
+        (FfiValue::Float64(1.5), TERM_EQUALITY),
         (FfiValue::Float64(1.5), TERM_ORE),
-        (FfiValue::Bool(true), TERM_OPE),
+        (FfiValue::Int32(-1), TERM_OPE),
         (s("x"), TERM_ORE),
     ] {
         assert_eq!(ops::validate::term(&encode(value), &ctx, kind), Ok(()));
@@ -1198,7 +1205,7 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
     .expect("encrypt record");
     assert_eq!(ops::validate::record_tree(&record, &plan, None), Ok(()));
 
-    type Node = CipherText<Vec<u8>, FfiValue>;
+    type Node = stack_encrypt::Node<Vec<u8>>;
     // The tree is not `Clone`; every variant decodes the record afresh.
     let fields = || {
         let CipherText::Map(fields) = decode_tree(&record) else {
@@ -1206,11 +1213,7 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
         };
         fields
     };
-    let re_encode = |tree: Node| {
-        let mut out = Vec::new();
-        codec::encode_ciphertext(&tree, &mut out).expect("re-encode");
-        out
-    };
+    let re_encode = |tree: Node| encode_tree(&tree);
     let with_age = |edit: &dyn Fn(&mut Node)| {
         let mut fields = fields();
         for (field, node) in &mut fields {
@@ -1227,7 +1230,7 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
         };
         for (key, slot) in outputs.iter_mut() {
             if key == "c" {
-                *slot = CipherText::Passthrough(FfiValue::UInt32(99));
+                *slot = clear(FfiValue::UInt32(99));
             }
         }
     });
@@ -1237,16 +1240,14 @@ fn record_tree_validation_refuses_what_decrypt_record_refuses() {
         };
         outputs.retain(|(key, _)| key != "c");
     });
-    let not_a_map = with_age(&|node| *node = CipherText::Passthrough(FfiValue::Null));
+    let not_a_map = with_age(&|node| *node = clear(FfiValue::Null));
     let missing_field = {
         let mut fields = fields();
         fields.retain(|(field, _)| field != "age");
         CipherText::Map(fields)
     };
-    let batch_of_non_records = CipherText::Sequence(vec![
-        CipherText::Map(fields()),
-        CipherText::Passthrough(FfiValue::Null),
-    ]);
+    let batch_of_non_records =
+        CipherText::Sequence(vec![CipherText::Map(fields()), clear(FfiValue::Null)]);
 
     for (label, tree) in [
         ("a forged passthrough under c", forged_c),
@@ -1366,7 +1367,614 @@ fn targets_lists_what_the_build_holds() {
         .filter(|i| producible(i))
         .filter_map(name_of)
         .collect();
-    assert_eq!(producible, ["TextEq"], "the engine produces TextEq only");
+    assert_eq!(
+        producible,
+        [
+            "Integer",
+            "Bigint",
+            "Text",
+            "TextEq",
+            "TextMatch",
+            "Boolean",
+            "Real",
+            "Double"
+        ],
+        "the engine's producible types, in catalog order"
+    );
+}
+
+// =============================================================================
+// Queries by operator
+// =============================================================================
+
+/// The entries of a query term's object, by key.
+fn query_term_entries(out: &[u8]) -> Vec<(String, FfiValue)> {
+    let FfiValue::Object(entries) = decode(out) else {
+        panic!("a query term is an object");
+    };
+    entries
+}
+
+fn entry<'a>(entries: &'a [(String, FfiValue)], key: &str) -> &'a FfiValue {
+    &entries
+        .iter()
+        .find(|(k, _)| k == key)
+        .unwrap_or_else(|| panic!("no {key}"))
+        .1
+}
+
+fn bytes_of(value: &FfiValue) -> Vec<u8> {
+    match value {
+        FfiValue::Bytes(b) => b.risky_ref().to_vec(),
+        other => panic!("expected bytes, got {}", kind(other)),
+    }
+}
+
+/// A query by operator derives, through the guest, the bytes the term
+/// export derives for the index that answers it, under the field's
+/// context: the plan picks the index, and the derivation is the one a
+/// stored term came from.
+#[test]
+fn a_query_term_is_the_term_of_the_index_that_answers_its_operator() {
+    let cipher = cipher();
+    let keyset = cipher.default_keyset();
+    let term_of = |value: FfiValue, field: &str, kind: u32| {
+        block_on(ops::term(
+            &keyset,
+            &encode(value),
+            &encode(label(field)),
+            kind,
+        ))
+        .expect("term")
+    };
+    let query = |input: FfiValue, field: &str, operator: &str| {
+        let input = encode(input);
+        assert_eq!(
+            ops::validate::query_term(&input, &plan(), field.as_bytes(), operator.as_bytes()),
+            Ok(()),
+            "{operator} on {field} validates"
+        );
+        query_term_entries(
+            &block_on(ops::query_term(
+                &keyset,
+                &input,
+                &plan(),
+                field.as_bytes(),
+                operator.as_bytes(),
+            ))
+            .expect("query term"),
+        )
+    };
+
+    let eq = query(FfiValue::UInt32(34), "age", "eq");
+    assert_eq!(text(entry(&eq, "operator")), "eq");
+    assert_eq!(text(entry(&eq, "fidelity")), "exact");
+    assert_eq!(text(entry(&eq, "index")), "eq");
+    assert!(matches!(entry(&eq, "domain"), FfiValue::Null));
+    assert_eq!(
+        bytes_of(entry(&eq, "term")),
+        term_of(FfiValue::UInt32(34), "age", TERM_EQUALITY)
+    );
+
+    // A host's float reads as the field's integer.
+    let lt = query(FfiValue::Float64(40.0), "age", "lt");
+    assert_eq!(text(entry(&lt, "index")), "ore");
+    assert_eq!(
+        bytes_of(entry(&lt, "term")),
+        term_of(FfiValue::UInt32(40), "age", TERM_ORE)
+    );
+
+    let range = query(
+        FfiValue::Array(vec![FfiValue::UInt32(18), FfiValue::UInt32(65)]),
+        "age",
+        "between",
+    );
+    let FfiValue::Array(bounds) = entry(&range, "term") else {
+        panic!("a range is a list of two terms");
+    };
+    assert_eq!(bounds.len(), 2);
+    assert_eq!(
+        bytes_of(&bounds[0]),
+        term_of(FfiValue::UInt32(18), "age", TERM_ORE)
+    );
+    assert_eq!(
+        bytes_of(&bounds[1]),
+        term_of(FfiValue::UInt32(65), "age", TERM_ORE)
+    );
+
+    let matches = query(s("alice"), "name", "matches");
+    assert_eq!(text(entry(&matches, "fidelity")), "probabilistic");
+    assert_eq!(
+        bytes_of(entry(&matches, "term")),
+        term_of(s("alice"), "name", TERM_MATCH)
+    );
+}
+
+/// The validator refuses what the operation refuses, with the same status,
+/// before a keyset is resolved: an operator the field does not answer, or
+/// one the engine does not know, as a mistyped value is refused; the typed
+/// path's own query refusals as `STATUS_TERM`.
+/// Equality text that does not normalize (a code point unassigned in
+/// Unicode 16) is refused by the cipher-free check as a term failure, as
+/// derivation would refuse it, so a guest with no cipher reports
+/// STATUS_TERM rather than STATUS_STATE, and the query op agrees.
+#[test]
+fn equality_text_that_does_not_normalize_is_a_term_failure_before_any_cipher() {
+    let plan = encode(obj(vec![(
+        "email",
+        obj(vec![
+            ("context", label("email")),
+            ("outputs", FfiValue::Array(vec![s("c"), s("eq")])),
+            ("type", s("string")),
+        ]),
+    )]));
+    let input = encode(s("a\u{0378}bc"));
+    assert_eq!(
+        ops::validate::query_term(&input, &plan, b"email", b"eq"),
+        Err(STATUS_TERM),
+        "validation"
+    );
+    let cipher = cipher();
+    let keyset = cipher.default_keyset();
+    assert_eq!(
+        block_on(ops::query_term(&keyset, &input, &plan, b"email", b"eq")).map(|_| ()),
+        Err(STATUS_TERM),
+        "the op"
+    );
+}
+
+#[test]
+fn query_term_validation_refuses_what_the_query_op_refuses() {
+    let cipher = cipher();
+    let keyset = cipher.default_keyset();
+    for (what, input, field, operator, status) in [
+        (
+            "unknown operator",
+            FfiValue::UInt32(1),
+            "age",
+            "like",
+            STATUS_ENCODING,
+        ),
+        ("not answered", s("ali"), "age", "matches", STATUS_ENCODING),
+        (
+            "not answered by a match index",
+            s("ali"),
+            "name",
+            "eq",
+            STATUS_ENCODING,
+        ),
+        (
+            "no such field",
+            FfiValue::UInt32(1),
+            "height",
+            "eq",
+            STATUS_ENCODING,
+        ),
+        ("mistyped input", s("34"), "age", "eq", STATUS_ENCODING),
+        (
+            "not a range",
+            FfiValue::UInt32(1),
+            "age",
+            "between",
+            STATUS_ENCODING,
+        ),
+        (
+            "inverted range",
+            FfiValue::Array(vec![FfiValue::UInt32(65), FfiValue::UInt32(18)]),
+            "age",
+            "between",
+            STATUS_TERM,
+        ),
+        ("no token", s("al"), "name", "matches", STATUS_TERM),
+    ] {
+        let input = encode(input);
+        assert_eq!(
+            ops::validate::query_term(&input, &plan(), field.as_bytes(), operator.as_bytes()),
+            Err(status),
+            "{what}: validation"
+        );
+        assert_eq!(
+            block_on(ops::query_term(
+                &keyset,
+                &input,
+                &plan(),
+                field.as_bytes(),
+                operator.as_bytes()
+            )),
+            Err(status),
+            "{what}: the op"
+        );
+    }
+    assert_eq!(
+        ops::validate::query_term(&encode(FfiValue::UInt32(1)), &plan(), b"\xff", b"eq"),
+        Err(STATUS_ENCODING),
+        "a field name that is not UTF-8"
+    );
+}
+
+/// `verify` answers one boolean per value, in order, with no cipher; an
+/// exact operator has nothing to verify.
+#[test]
+fn verify_answers_a_page_in_one_call() {
+    let values = encode(FfiValue::Array(vec![
+        s("Alice Smith"),
+        s("Bob"),
+        FfiValue::Null,
+        s("malice"),
+    ]));
+    let out =
+        ops::verify(&encode(s("alice")), &values, &plan(), b"name", b"matches").expect("verify");
+    let FfiValue::Array(verified) = decode(&out) else {
+        panic!("a list");
+    };
+    let verified: Vec<bool> = verified
+        .iter()
+        .map(|v| match v {
+            FfiValue::Bool(b) => *b,
+            other => panic!("a boolean, not {}", kind(other)),
+        })
+        .collect();
+    assert_eq!(
+        verified,
+        [true, false, false, true],
+        "malice holds every 3-gram of alice"
+    );
+
+    for (what, input, values, field, operator) in [
+        (
+            "an exact operator",
+            FfiValue::UInt32(1),
+            FfiValue::Array(vec![]),
+            "age",
+            "eq",
+        ),
+        (
+            "values not a list",
+            s("alice"),
+            s("Alice"),
+            "name",
+            "matches",
+        ),
+        (
+            "a value of another type",
+            s("alice"),
+            FfiValue::Array(vec![FfiValue::UInt32(1)]),
+            "name",
+            "matches",
+        ),
+        (
+            "an unknown operator",
+            s("alice"),
+            FfiValue::Array(vec![]),
+            "name",
+            "match",
+        ),
+    ] {
+        assert_eq!(
+            ops::verify(
+                &encode(input),
+                &encode(values),
+                &plan(),
+                field.as_bytes(),
+                operator.as_bytes()
+            ),
+            Err(STATUS_ENCODING),
+            "{what}"
+        );
+    }
+    assert_eq!(
+        ops::verify(
+            &encode(s("al")),
+            &encode(FfiValue::Array(vec![])),
+            &plan(),
+            b"name",
+            b"matches"
+        ),
+        Err(STATUS_TERM),
+        "a query that cuts no token verifies nothing"
+    );
+}
+
+/// `target_limit` reads the term's bytes and the statistics, with no
+/// cipher: a measured histogram sizes a fetch, the declared prior a data
+/// plan has none of answers null.
+#[test]
+fn target_limit_sizes_a_fetch_from_the_terms_bytes() {
+    let cipher = cipher();
+    let keyset = cipher.default_keyset();
+    let out = block_on(ops::query_term(
+        &keyset,
+        &encode(s("ali")),
+        &plan(),
+        b"name",
+        b"matches",
+    ))
+    .expect("query term");
+    let term = bytes_of(entry(&query_term_entries(&out), "term"));
+    let pair = |bits: u32, rows: u64| {
+        FfiValue::Array(vec![FfiValue::UInt32(bits), FfiValue::UInt64(rows)])
+    };
+    let measured = encode(obj(vec![
+        ("rows", FfiValue::UInt64(1_000_000)),
+        (
+            "histogram",
+            FfiValue::Array(vec![pair(40, 500_000), pair(120, 500_000)]),
+        ),
+    ]));
+    let limit = |stats: &[u8], term: &[u8], field: &str, operator: &str| {
+        ops::target_limit(
+            term,
+            stats,
+            &plan(),
+            field.as_bytes(),
+            operator.as_bytes(),
+            10,
+        )
+    };
+    let rows = decode(&limit(&measured, &term, "name", "matches").expect("a limit"));
+    assert!(
+        matches!(rows, FfiValue::UInt64(n) if n > 10),
+        "{}",
+        kind(&rows)
+    );
+    let declared = encode(obj(vec![("rows", FfiValue::UInt64(1_000_000))]));
+    assert!(matches!(
+        decode(&limit(&declared, &term, "name", "matches").expect("a limit")),
+        FfiValue::Null
+    ));
+
+    assert_eq!(
+        limit(&measured, &[1], "name", "matches"),
+        Err(STATUS_ENCODING),
+        "half a position"
+    );
+    assert_eq!(
+        limit(&encode(s("x")), &term, "name", "matches"),
+        Err(STATUS_ENCODING),
+        "not stats"
+    );
+    assert_eq!(
+        limit(&measured, &term, "age", "eq"),
+        Err(STATUS_ENCODING),
+        "an exact operator"
+    );
+}
+
+/// The `eql` build's catalog lists, per type, the operators the engine
+/// answers: `TextEq` answers `eq`, exactly, and a type the engine does not
+/// produce answers nothing.
+#[test]
+fn the_catalog_lists_each_types_operators() {
+    if !stack_encrypt_guest::targets::HOLDS_EQL {
+        return;
+    }
+    let FfiValue::Object(entries) = decode(&ops::targets().expect("targets")) else {
+        panic!("an object");
+    };
+    let FfiValue::Array(items) = &entries[0].1 else {
+        panic!("a list");
+    };
+    for item in items {
+        let FfiValue::Object(fields) = item else {
+            panic!("an object");
+        };
+        let name = text(entry(fields, "name")).to_owned();
+        let FfiValue::Array(operators) = entry(fields, "operators") else {
+            panic!("{name}: operators is a list");
+        };
+        let producible = matches!(entry(fields, "producible"), FfiValue::Bool(true));
+        let only = |want: [(&str, &str); 4]| {
+            assert_eq!(operators.len(), 1, "{name} answers one operator");
+            let FfiValue::Object(op) = &operators[0] else {
+                panic!("an object");
+            };
+            let op: Vec<(&str, &str)> = op.iter().map(|(k, v)| (k.as_str(), text(v))).collect();
+            assert_eq!(op, want, "{name}");
+        };
+        match name.as_str() {
+            "TextEq" => only([
+                ("operator", "eq"),
+                ("fidelity", "exact"),
+                ("arity", "one"),
+                ("index", "eq"),
+            ]),
+            "TextMatch" => only([
+                ("operator", "matches"),
+                ("fidelity", "probabilistic"),
+                ("arity", "one"),
+                ("index", "match"),
+            ]),
+            _ => {
+                // A type the engine does not produce answers nothing, and
+                // the other produced types are storage-only: no twin.
+                let why = if producible {
+                    "is storage-only, so answers nothing"
+                } else {
+                    "is not produced, so answers nothing"
+                };
+                assert!(operators.is_empty(), "{name} {why}");
+            }
+        }
+    }
+}
+
+/// `TextMatch` answers `matches` through its query twin and nothing else:
+/// the term is a `TextMatchQuery` under `eql_v4.query_text_match`, and
+/// `verify` and `target_limit` run under EQL's match options, reading the
+/// twin's `bf`. `eq` is refused as not answered.
+#[test]
+fn a_text_match_field_answers_matches_through_its_twin() {
+    if !stack_encrypt_guest::targets::HOLDS_EQL {
+        return;
+    }
+    let cipher = cipher();
+    let keyset = cipher.default_keyset();
+    let plan = encode(obj(vec![(
+        "name",
+        obj(vec![("context", label("name")), ("target", s("TextMatch"))]),
+    )]));
+    let term = block_on(ops::query_term(
+        &keyset,
+        &encode(s("Alice")),
+        &plan,
+        b"name",
+        b"matches",
+    ))
+    .expect("matches on a TextMatch field");
+    let FfiValue::Object(term) = decode(&term) else {
+        panic!("a term is an object");
+    };
+    let field = |key: &str| &term.iter().find(|(k, _)| k == key).expect(key).1;
+    assert_eq!(text(field("fidelity")), "probabilistic");
+    assert_eq!(text(field("index")), "match");
+    assert_eq!(text(field("domain")), "eql_v4.query_text_match");
+    let FfiValue::Bytes(twin) = field("term") else {
+        panic!("the term is bytes");
+    };
+    let twin: serde_json::Value = serde_json::from_slice(twin.risky_ref()).expect("JSON");
+    let bits = twin["bf"].as_array().expect("a bf").len();
+    assert!(
+        bits > 0 && bits <= 3 * 6,
+        "3 trigrams of k = 6 bits: {bits}"
+    );
+
+    let verified = ops::verify(
+        &encode(s("ALICE")),
+        &encode(FfiValue::Array(vec![
+            s("say alice"),
+            s("alison"),
+            FfiValue::Null,
+        ])),
+        &plan,
+        b"name",
+        b"matches",
+    )
+    .expect("verify");
+    let FfiValue::Array(verified) = decode(&verified) else {
+        panic!("a list");
+    };
+    let verified: Vec<bool> = verified
+        .iter()
+        .map(|v| matches!(v, FfiValue::Bool(true)))
+        .collect();
+    assert_eq!(verified, [true, false, false]);
+    let FfiValue::Bytes(twin_bytes) = field("term") else {
+        unreachable!()
+    };
+    let limit = ops::target_limit(
+        twin_bytes.risky_ref(),
+        &encode(obj(vec![("rows", FfiValue::UInt64(1000))])),
+        &plan,
+        b"name",
+        b"matches",
+        10,
+    )
+    .expect("target_limit reads the twin's bf");
+    assert!(
+        matches!(decode(&limit), FfiValue::Null),
+        "a declared count and no measured histogram give no finite fetch"
+    );
+
+    assert_eq!(
+        block_on(ops::query_term(
+            &keyset,
+            &encode(s("alice")),
+            &plan,
+            b"name",
+            b"eq",
+        ))
+        .map(|_| ()),
+        Err(STATUS_ENCODING),
+        "eq on a TextMatch field"
+    );
+}
+
+/// The operators of one field, each as `(operator, fidelity, arity, index)`.
+fn operators_of(plan: &[u8], field: &str) -> Vec<[String; 4]> {
+    let FfiValue::Array(items) =
+        decode(&ops::operators(plan, field.as_bytes()).expect("operators"))
+    else {
+        panic!("operators are a list");
+    };
+    items
+        .iter()
+        .map(|item| {
+            let FfiValue::Object(entries) = item else {
+                panic!("an operator is an object");
+            };
+            let keys: Vec<&str> = entries.iter().map(|(k, _)| k.as_str()).collect();
+            assert_eq!(keys, ["operator", "fidelity", "arity", "index"]);
+            [0, 1, 2, 3].map(|i| text(&entries[i].1).to_owned())
+        })
+        .collect()
+}
+
+/// A field's operators are the queries the engine answers on it, with
+/// their fidelity, arity and index: what the generator writes one method
+/// for. Every operator listed derives a term, and every other is refused.
+#[test]
+fn a_fields_operators_are_the_queries_it_answers() {
+    let row = |op: &str, fidelity: &str, arity: &str, index: &str| {
+        [op, fidelity, arity, index].map(str::to_owned)
+    };
+    assert_eq!(
+        operators_of(&plan(), "age"),
+        [
+            row("eq", "exact", "one", "eq"),
+            row("lt", "exact", "one", "ore"),
+            row("lte", "exact", "one", "ore"),
+            row("gt", "exact", "one", "ore"),
+            row("gte", "exact", "one", "ore"),
+            row("between", "exact", "pair", "ore"),
+        ]
+    );
+    assert_eq!(
+        operators_of(&plan(), "name"),
+        [row("matches", "probabilistic", "one", "match")]
+    );
+    for (field, input) in [("age", FfiValue::UInt32(7)), ("name", s("alice smith"))] {
+        let listed: Vec<String> = operators_of(&plan(), field)
+            .into_iter()
+            .map(|[op, ..]| op)
+            .collect();
+        for op in ["eq", "lt", "lte", "gt", "gte", "between", "matches"] {
+            let input = if op == "between" {
+                FfiValue::Array(vec![input.clone(), input.clone()])
+            } else {
+                input.clone()
+            };
+            let checked =
+                ops::validate::query_term(&encode(input), &plan(), field.as_bytes(), op.as_bytes());
+            if listed.iter().any(|l| l == op) {
+                assert_eq!(checked, Ok(()), "{field} {op} is listed and answered");
+            } else {
+                assert_eq!(checked, Err(STATUS_ENCODING), "{field} {op} is not listed");
+            }
+        }
+    }
+    assert_eq!(
+        ops::operators(&plan(), b"phone"),
+        Err(STATUS_ENCODING),
+        "a field the plan lacks"
+    );
+    assert_eq!(ops::operators(b"\xff", b"age"), Err(STATUS_ENCODING));
+}
+
+/// In the `eql` build a field that names an EQL type answers what the
+/// catalog lists for the type: `TextEq` answers `eq`.
+#[test]
+fn a_target_fields_operators_are_its_types() {
+    if !stack_encrypt_guest::targets::HOLDS_EQL {
+        return;
+    }
+    let plan = encode(obj(vec![(
+        "email",
+        obj(vec![("context", label("email")), ("target", s("TextEq"))]),
+    )]));
+    assert_eq!(
+        operators_of(&plan, "email"),
+        [["eq", "exact", "one", "eq"].map(str::to_owned)]
+    );
 }
 
 // =============================================================================
@@ -1423,7 +2031,7 @@ fn a_context_field_record_opens_under_the_context_it_stores() {
     let CipherText::Sequence(rows) = decode_tree(&record) else {
         panic!("a batch is a sequence");
     };
-    let eq_of = |row: &CipherText<Vec<u8>, FfiValue>| {
+    let eq_of = |row: &Node<Vec<u8>>| {
         let CipherText::Map(fields) = row else {
             panic!("a row is a map");
         };

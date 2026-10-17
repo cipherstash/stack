@@ -2,8 +2,7 @@
 //!
 //! Everything else in this crate is typed: a target names its source type,
 //! and the operations it composes are reached through bounds — `Encrypt` for
-//! a ciphertext, [`PrfValue`](vitaminc_prf::PrfValue) for an equality term,
-//! `AsRef<str>` for a match term. That is what makes a term a cross-language
+//! a ciphertext or an equality term, `AsRef<str>` for a match term. That is what makes a term a cross-language
 //! contract: `equality_term(34u32)` derives the same bytes wherever it is
 //! called from, because `34u32` is the same value everywhere.
 //!
@@ -13,13 +12,19 @@
 //! the typed operation. This module is that something, written once here
 //! rather than once per language binding.
 //!
-//! The runtime value is [`FfiValue`], vitaminc's language-neutral value tree
-//! and the type every binding already funnels through.
+//! A term is derived from anything that describes itself to vitaminc
+//! ([`Encrypt`](crate::Encrypt)), walked to its one scalar: a guest
+//! walks the transport frame it was handed in place, with no tree built.
+//! What the engine holds is [`FfiValue`], a language-neutral value tree: a
+//! plan, a record source and a field's plaintext are values a binding
+//! decoded, which the engine reads, splits into fields and clones, and
+//! which outlive the buffer they arrived in.
 //!
 //! # What is here
 //!
 //! * [`context`](context()) — an [`FfiValue`] read as an encryption context.
-//! * [`term`](term()) — one index term for a value, dispatched on its variant.
+//! * [`term`](term()) — one index term for a value, derived at the one
+//!   scalar it is walked to.
 //! * [`record`] — a fields plan spelled as data, *lowered* into the plan
 //!   builder ([`Plan`](crate::Plan)) and run by the engine: the same code a
 //!   Rust chain and the derive run, so a record written from any language
@@ -30,9 +35,14 @@
 //!   that links them, so a plan field may name one as its target and the
 //!   lowering runs that type's own plan in the same request; [`NoTargets`]
 //!   is the build without them.
-//! * [`Value`] — an [`FfiValue`] as a plan field's plaintext, the type of
-//!   every field lowered from data; [`TermBytes`] — the term such a field
-//!   derives, as its frozen bytes.
+//! * [`TermBytes`] — the term a field lowered from data derives, as its
+//!   frozen bytes. Such a field's plaintext is an [`FfiValue`].
+//! * [`query_term`], [`verify`] and [`target_limit`] — a query named by
+//!   operator ([`OpSpec`]) on a plan field, and a probabilistic term's two
+//!   questions, over a page of decrypted values and over [`Stats`](crate::op::Stats)
+//!   (ADR-0009; ADR-0007, amended 2026-10-16), and [`field_operators`], the
+//!   operators a plan field answers, for a generator to ask before the
+//!   program runs.
 //! * [`Scope`] — which cipher an opening operation decrypts through.
 //!
 //! # What is not here
@@ -55,11 +65,10 @@
 //!
 //! A plan field's `"type"` names (`"int64"`, `"string"`, …) are wire format
 //! in the same way: a binding spells them, and a stored row opens only under
-//! the type it was sealed as. They are not this crate's: a declared type is
-//! vitaminc's [`ValueKind`], re-exported here, whose names vitaminc freezes
-//! beside its tag table. This crate adds only what a kind means to an index
-//! ([`admits`]) and to a query value ([`read`]); it decides nothing about
-//! the bytes ([`record`]). Every field with a term output declares one;
+//! the type it was sealed as. A declared type is a [`ValueKind`], whose
+//! names are frozen. What a kind means to an index ([`admits`]) and to a
+//! query value ([`read`]) is stated over it; the bytes are vitaminc's, from
+//! the tagged leaf a value of the kind seals as ([`record`]). Every field with a term output declares one;
 //! a plan whose indexed field has none is refused when it is built
 //! ([`Error::UntypedIndex`], naming the field).
 //!
@@ -70,29 +79,35 @@
 //! tells a binding author that. [`Scope`] is exhaustive for a different
 //! reason, given on the type.
 mod context;
+mod ffi_value;
 mod kind;
+mod query;
 pub mod record;
 mod target;
 mod term;
-mod value;
 
 use std::fmt;
 
 pub use context::{borrowed, context};
+/// The language-neutral value tree — the runtime value every binding
+/// funnels through — and the value kinds, the type a plan field declares
+/// in its `"type"` key. A kind's names are frozen wire format; see
+/// [`admits`] and [`read`] for what a kind means to this engine. A value
+/// crosses a binding's boundary as a transport frame
+/// ([`FfiValue::to_frame`], [`FfiValue::from_frame`]); everything else here
+/// takes and returns values, never encoded bytes.
+pub use ffi_value::{
+    Element, Entry, FfiValue, FromFrameError, ParseValueKindError, Put, Root, Utf8String,
+    ValueKind, ValueMap, ValueSeq, ValueSink,
+};
 pub use kind::{admits, read};
+pub use query::{
+    check_query, field_operators, limit_to_value, operator_to_value, query_term, target_limit,
+    verify, Fidelity, OpSpec, Operand, QueryTerm,
+};
 pub use record::{FieldPlan, Output, Plan};
 pub use target::{NoTargets, TargetDescriptor, TargetError, TargetResolver};
-pub use term::{term, Scalar, TermBytes};
-pub use value::Value;
-/// vitaminc's language-neutral value tree — the runtime value every binding
-/// funnels through. Its transport codec is `vitaminc_aead_value::transport`,
-/// which stays the binding's: this crate takes and returns values, never
-/// encoded bytes.
-pub use vitaminc_aead_value::FfiValue;
-/// vitaminc's value kinds: the type a plan field declares in its `"type"`
-/// key. Its names are frozen wire format; see [`admits`] and [`read`] for
-/// what a kind means to this engine.
-pub use vitaminc_aead_value::ValueKind;
+pub use term::{term, TermBytes};
 
 use crate::target::IndexSpec;
 use crate::{KeysetCipher, StackCipher};
@@ -137,7 +152,7 @@ impl<K> fmt::Debug for Scope<'_, K> {
 
 /// The UTF-8 inside a string leaf. Valid by `Utf8String`'s construction
 /// invariant; checked rather than assumed because this is boundary code.
-fn utf8(s: &vitaminc_aead_value::Utf8String) -> Option<&str> {
+fn utf8(s: &Utf8String) -> Option<&str> {
     std::str::from_utf8(s.risky_ref()).ok()
 }
 
@@ -187,9 +202,9 @@ pub enum Error {
 
     /// A term was asked for a value the scheme defines no such term for: a
     /// container, null or passthrough (which have no term semantics at all),
-    /// or a scalar outside the kind's domain — equality over a float or a
-    /// boolean, match over anything but text. See
-    /// [`IndexSpec::supports`].
+    /// or a scalar outside the kind's domain — equality over a boolean,
+    /// match over anything but text, an order term over a boolean. See
+    /// [`IndexSpec::defines`].
     #[error("no {kind} term is defined for this value{}", in_field_text(field))]
     #[diagnostic(code(stack_encrypt::dynamic_term))]
     Term {
@@ -236,8 +251,12 @@ pub enum Error {
     /// them), a field the plan does not name, a plan field the source does
     /// not carry or carries twice, or a passthrough or a repeated map key
     /// under a field the plan seals, or a value of another type than its
-    /// field declares. Also a query value that cannot be read as its field's
-    /// type ([`read`]).
+    /// field declares. Also a query its field does not answer: an operator
+    /// the field's type does not answer, an input that cannot be read as the
+    /// field's type ([`read`]) or is not the pair a range takes, a page of
+    /// values to verify that holds a value of another type, or statistics
+    /// or a term that are not what [`target_limit`] reads — the same shape of
+    /// refusal as a mistyped field, naming the field.
     #[error(
         "record source does not fit the plan: {reason}{}",
         in_field_text(field)
@@ -440,10 +459,10 @@ macro_rules! reasons {
 }
 
 reasons! {
-    /// What was wrong with a context, plan, source or stored record: the reason
-    /// a dynamic input error carries beside the field it names.
+    /// What was wrong with a context, plan, source, stored record or query: the
+    /// reason a dynamic input error carries beside the field it names.
     ///
-    /// One vocabulary for all four, since several reasons apply to more than
+    /// One vocabulary for all five, since several reasons apply to more than
     /// one (a field given twice is a misfit in a source and in a stored
     /// record). [`as_str`](Self::as_str) is the `snake_case` name a binding
     /// reports in its payload's `reason` field; `Display` is the phrase the
@@ -501,7 +520,7 @@ reasons! {
         /// `"type"` is not a string naming a value type.
         UnknownType => "unknown_type", r#""type" does not name a value type"#;
         /// The field's declared type has no such index: match on an integer,
-        /// equality on a float, any index on a composite.
+        /// equality or an order index on a boolean, any index on a composite.
         IndexNotAdmitted => "index_not_admitted", "the declared type has no such index";
         /// Two fields are keyed under one identity.
         SharedIdentity => "shared_identity", "two fields are keyed under one identity";
@@ -526,6 +545,9 @@ reasons! {
         FieldType => "field_type", "a value is not of the type its field declares";
         /// A passthrough sits where a sealed value, or a ciphertext, must be.
         Passthrough => "passthrough", "a passthrough where a sealed value must be";
+        /// A passthrough value cannot be stored as a frame: it nests deeper,
+        /// or holds text, bytes or a key longer, than a frame carries.
+        Unframeable => "unframeable", "a passthrough value nests deeper, or holds a longer value, than a frame carries";
         /// A stored field is not a map of outputs.
         OutputsNotMap => "outputs_not_map", "a stored field is not a map of outputs";
         /// A stored sealed field has no `"c"` node.
@@ -537,6 +559,25 @@ reasons! {
         /// A stored `"passthrough"` or `"eql"` node is not a passthrough
         /// carrying a value of the kind it holds.
         NotPassthrough => "not_passthrough", "a node does not carry a value of the kind it holds";
+        /// A plan takes its context from a field of each record, so a query on
+        /// it has no context: the caller names the context, and sends the plan
+        /// under it.
+        QueryContextField => "query_context_field", "the plan takes its context from a field of each record, so a query has none";
+        /// An operator name is not one the engine knows ([`OpSpec::parse`]).
+        UnknownOperator => "unknown_operator", "the operator is not one the engine knows";
+        /// The field's type does not answer the operator: no index it declares
+        /// answers it, or the EQL type it names does not ([`OpSpec::answered_by`]).
+        OperatorNotAnswered => "operator_not_answered", "the field's type does not answer the operator";
+        /// A range's input is not a list of two values.
+        NotARange => "not_a_range", "a range is not a list of two values";
+        /// The operator's answer is exact, so there is nothing to verify and no
+        /// fetch to size.
+        ExactOperator => "exact_operator", "the operator's answer is exact, so there is nothing to verify or size";
+        /// The term is not one the field's index derives for the operator.
+        NotAQueryTerm => "not_a_query_term", "the term is not one the field's index derives for the operator";
+        /// Statistics are not a row count with an optional histogram and
+        /// confidence ([`Stats::from_value`](crate::op::Stats::from_value)).
+        NotStats => "not_stats", "the statistics are not a row count with an optional histogram and confidence";
     }
 }
 

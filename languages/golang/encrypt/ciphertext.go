@@ -50,8 +50,9 @@ func scanBytes(kind string, src any) ([]byte, error) {
 }
 
 // otherLeaf is a leaf of a kind the SDK does not store: the authenticated
-// markers for an absent value, an empty sequence and an empty map, which a
-// record field never produces. Decoding one is an error at the use site.
+// markers for an empty sequence and an empty map, which a record field never
+// produces. Decoding one is an error at the use site. An absent value is a
+// sealed null, a Ciphertext like any other value.
 type otherLeaf struct {
 	kind  vcffi.LeafKind
 	bytes []byte

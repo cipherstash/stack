@@ -6,16 +6,15 @@
 //! JavaScript number is a float, and match is defined over text alone. So a
 //! plan field may say what its values are, in its `"type"` key.
 //!
-//! The vocabulary is vitaminc's, not this crate's: a declared type is a
-//! [`ValueKind`] (`vitaminc_aead_value::ValueKind`, re-exported here), whose
+//! The vocabulary is [`ValueKind`], whose
 //! [`name`](ValueKind::name)s (`"uint64"`, `"string"`, …, `"array"`,
-//! `"object"`) are frozen wire format beside vitaminc's tag table, and whose
+//! `"object"`) are frozen wire format, and whose
 //! [`holds`](ValueKind::holds) and [`FfiValue::kind`] say whether a value is
-//! of a kind. What vitaminc deliberately leaves to the declaring layer is the
-//! two rules this module adds:
+//! of a kind. Beside it, this module adds two rules:
 //!
 //! - [`admits`]: which indexes a kind is defined for, so a plan asking for
-//!   match on an integer or equality on a float is refused when it is built;
+//!   match on an integer or equality on a boolean is refused when it is
+//!   built;
 //! - [`read`]: how a query value is read as a field's kind, converting a
 //!   number only when the conversion is exact.
 //!
@@ -37,35 +36,54 @@
 //! field has none is refused when it is built
 //! ([`Error::UntypedIndex`], naming the field). A field that only seals, or
 //! only carries its value through, may leave it out: no term derives from it.
-use vitaminc_aead_value::{FfiValue, ValueKind};
+use vitaminc_aead::plaintext::{Float, Int, Physical};
+
+use super::{FfiValue, ValueKind};
 
 use super::{Error, Reason};
 use crate::target::IndexSpec;
 
 /// Whether the scheme defines an `index` term for values of `kind`.
 ///
-/// The same table as [`IndexSpec::supports`], stated over kinds instead of
-/// values, so a plan can be refused when it is built rather than when its
-/// first value arrives: equality over every integer, text and bytes (no
-/// floats, no booleans); match over text alone; ORE and OPE over every
-/// scalar. A composite (`array`, `object`) has no term. Only the index's
-/// kind matters: a match index's options do not change what it applies to.
+/// The table [`IndexSpec::defines`] reads for a value, stated over kinds
+/// instead, so a plan can be refused when it is built rather than when its
+/// first value arrives. Equality is vitaminc's: every kind
+/// `vitaminc-normalize` gives an equality domain, which is every integer,
+/// both floats, text and bytes, and not a boolean. The rest are this
+/// crate's: match over text alone, and ORE and OPE over every scalar but a
+/// boolean, whose order term would reveal which rows are `true`. A
+/// composite (`array`, `object`) has no term. Only the index's kind
+/// matters: a match index's options do not change what it applies to.
 ///
 /// ```
 /// use stack_encrypt::dynamic::{admits, ValueKind};
 /// use stack_encrypt::target::IndexSpec;
 ///
 /// assert!(admits(ValueKind::UInt64, &IndexSpec::Equality));
-/// assert!(!admits(ValueKind::Float64, &IndexSpec::Equality));
+/// assert!(!admits(ValueKind::Bool, &IndexSpec::Equality));
+/// assert!(!admits(ValueKind::Bool, &IndexSpec::Ore));
 /// assert!(!admits(ValueKind::Object, &IndexSpec::Ore));
 /// ```
 pub fn admits(kind: ValueKind, index: &IndexSpec) -> bool {
-    use ValueKind::*;
-    match index {
-        IndexSpec::Equality => matches!(kind, Int32 | Int64 | UInt32 | UInt64 | String | Bytes),
-        IndexSpec::Match(_) => kind == String,
-        IndexSpec::Ore | IndexSpec::Ope => !matches!(kind, Array | Object),
-    }
+    scalar_of(kind).is_some_and(|scalar| index.takes(None, &scalar))
+}
+
+/// A scalar of `kind`, for asking the table about the kind: any value of a
+/// kind is taken by an index exactly when every other is. `None` for a
+/// composite, which is no scalar.
+fn scalar_of(kind: ValueKind) -> Option<Physical<'static>> {
+    Some(match kind {
+        ValueKind::Bool => Physical::Bool(false),
+        ValueKind::Int32 => Physical::Int(Int::I32(0)),
+        ValueKind::Int64 => Physical::Int(Int::I64(0)),
+        ValueKind::UInt32 => Physical::Int(Int::U32(0)),
+        ValueKind::UInt64 => Physical::Int(Int::U64(0)),
+        ValueKind::Float32 => Physical::Float(Float::F32(0.0)),
+        ValueKind::Float64 => Physical::Float(Float::F64(0.0)),
+        ValueKind::String => Physical::Text(""),
+        ValueKind::Bytes => Physical::Bytes(&[]),
+        ValueKind::Array | ValueKind::Object => return None,
+    })
 }
 
 /// Read a query value as `kind`.
@@ -84,8 +102,7 @@ pub fn admits(kind: ValueKind, index: &IndexSpec) -> bool {
 /// and is refused otherwise.
 ///
 /// **The engine does not call this.** [`term`](super::term()) takes a
-/// [`Scalar`](super::Scalar) and an [`IndexSpec`] and never sees the field's
-/// declared kind, so a binding deriving a query term for a typed field must
+/// value and an [`IndexSpec`] and never sees the field's declared kind, so a binding deriving a query term for a typed field must
 /// call `read` first, with [`FieldPlan::field_type`](super::FieldPlan::field_type).
 /// One that skips it hands `Float64(34.0)` to a `uint64` field, derives a
 /// float term where the stored one is the `u64` term, and matches nothing,
@@ -192,7 +209,6 @@ impl Number {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dynamic::Scalar;
     use crate::sem::{MatchOptions, Tokenizer};
     use vitaminc_protected::Protected;
 
@@ -226,27 +242,23 @@ mod tests {
         ]
     }
 
-    /// `admits` is `IndexSpec::supports` stated over kinds: the two tables
-    /// cannot disagree about any scalar, and a composite admits nothing.
+    /// `admits` is `IndexSpec::defines` stated over kinds: the two cannot
+    /// disagree about a value of any kind, and a composite admits nothing.
     #[test]
-    fn admits_agrees_with_supports_for_every_scalar_kind() {
+    fn admits_agrees_with_defines_for_every_kind() {
         for kind in ValueKind::ALL {
             for index in indexes() {
-                match Scalar::of(&sample(kind), &index) {
-                    Ok(scalar) => {
-                        assert_eq!(
-                            admits(kind, &index),
-                            index.supports(&scalar),
-                            "{kind} and {index}"
-                        )
-                    }
-                    Err(_) => assert!(!admits(kind, &index), "{kind} is not a scalar"),
-                }
+                assert_eq!(
+                    admits(kind, &index),
+                    index.defines(sample(kind)),
+                    "{kind} and {index}"
+                );
             }
         }
         // Spelled out, so the table reads without the cross-check.
         assert!(admits(ValueKind::UInt64, &IndexSpec::Equality));
-        assert!(!admits(ValueKind::Float64, &IndexSpec::Equality));
+        assert!(admits(ValueKind::Float64, &IndexSpec::Equality));
+        assert!(admits(ValueKind::Bytes, &IndexSpec::Equality));
         assert!(!admits(ValueKind::Bool, &IndexSpec::Equality));
         assert!(admits(
             ValueKind::String,
@@ -257,8 +269,28 @@ mod tests {
             &IndexSpec::Match(MatchOptions::default())
         ));
         assert!(admits(ValueKind::Float64, &IndexSpec::Ore));
+        assert!(admits(ValueKind::String, &IndexSpec::Ope));
+        assert!(!admits(ValueKind::Bool, &IndexSpec::Ore));
+        assert!(!admits(ValueKind::Bool, &IndexSpec::Ope));
         assert!(!admits(ValueKind::Object, &IndexSpec::Ope));
         assert!(!admits(ValueKind::Array, &IndexSpec::Ore));
+    }
+
+    /// Equality is vitaminc's table: a kind admits it exactly when
+    /// `vitaminc-normalize` gives the kind's values an equality domain.
+    #[test]
+    fn admits_equality_exactly_where_vitaminc_gives_a_domain() {
+        for kind in ValueKind::ALL {
+            let has_domain = matches!(
+                vitaminc_normalize::terms(sample(kind)).as_deref(),
+                Ok([term]) if term.path.steps().is_empty()
+            );
+            assert_eq!(
+                admits(kind, &IndexSpec::Equality),
+                has_domain,
+                "{kind} admits equality exactly when it has a domain"
+            );
+        }
     }
 
     /// A match index's options are not part of what it applies to: text

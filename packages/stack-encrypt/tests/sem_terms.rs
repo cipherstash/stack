@@ -286,38 +286,47 @@ async fn match_rejects_invalid_options() {
 }
 
 #[tokio::test]
-async fn match_rejects_text_that_yields_no_tokens() {
-    use stack_encrypt::sem::TermError;
-
+async fn match_stores_text_that_yields_no_tokens_as_the_empty_filter() {
     let cipher = generator().await;
     let gen = cipher.default_keyset();
+    let query = gen
+        .match_terms::<DefaultMatch>("hello", nonempty!("users/bio"))
+        .await
+        .unwrap();
 
-    // An empty term used as a query would vacuously match every stored row.
-    for text in ["", "  "] {
+    // Empty or separator-only text, and text shorter than the n-gram, cut
+    // no token. The stored side keeps such a value as the empty filter: a
+    // query always has a token, and the empty filter holds none of its
+    // positions, so no query matches the value. (A query of such text is
+    // refused by the query chain instead; `tests/op.rs` holds that.)
+    for text in ["", "  ", "hi"] {
+        let stored = gen
+            .match_terms::<DefaultMatch>(text, nonempty!("users/bio"))
+            .await
+            .unwrap_or_else(|error| panic!("{text:?} stores: {error}"));
         assert!(
-            matches!(
-                gen.match_terms::<DefaultMatch>(text, nonempty!("users/bio"))
-                    .await,
-                Err(Error::Term(TermError::EmptyTermText))
-            ),
-            "{text:?} must be rejected"
+            stored.positions().is_empty(),
+            "{text:?} is the empty filter"
+        );
+        assert!(stored.to_bytes().is_empty());
+        assert!(!stored.contains(&query), "{text:?}: no query matches it");
+        assert!(
+            !query.contains(&stored),
+            "{text:?}: and the empty filter, as a query, matches nothing"
+        );
+        assert_eq!(
+            MatchTerms::<DefaultMatch>::from_bytes(&stored.to_bytes()).unwrap(),
+            stored,
+            "{text:?}: the empty filter round-trips through its bytes"
         );
     }
 
-    // A probe shorter than the n-gram length could never match a stored gram
-    // (v1 indexer semantics) — rejected instead of a silent false negative.
-    assert!(matches!(
-        gen.match_terms::<DefaultMatch>("hi", nonempty!("users/bio"))
-            .await,
-        Err(Error::Term(TermError::EmptyTermText))
-    ));
-
     // Separator-only text under the Standard tokenizer.
-    assert!(matches!(
-        gen.match_terms::<WordMatch>(" ,;:! ", nonempty!("users/bio"))
-            .await,
-        Err(Error::Term(TermError::EmptyTermText))
-    ));
+    let stored = gen
+        .match_terms::<WordMatch>(" ,;:! ", nonempty!("users/bio"))
+        .await
+        .unwrap();
+    assert!(stored.positions().is_empty());
 }
 
 #[tokio::test]

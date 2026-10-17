@@ -1,7 +1,7 @@
 [package]
 name = "stack-encrypt"
 description = "Encrypt Rust values under per-value ZeroKMS data keys via the vitaminc cipher traits"
-version = "0.2.0"
+version = "0.3.0"
 edition.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -22,18 +22,21 @@ stack-kms = { path = "../stack-kms", version = "0.1.0", default-features = false
 # return type names the auto-detected auth strategy. Only needed with `http`.
 stack-auth = { workspace = true, optional = true }
 # `#[derive(EncryptFrom)]` / `#[derive(DecryptInto)]`, re-exported from `target`.
-stack-encrypt-derive = { path = "../stack-encrypt-derive", version = "0.2.0" }
+stack-encrypt-derive = { path = "../stack-encrypt-derive", version = "0.3.0" }
 
-# The workspace vitaminc (0.5.1): one canonical context encoding shared by
+# The workspace vitaminc (0.6.0): one canonical context encoding shared by
 # the AEAD and PRF derivations (`IntoContext`, cipherstash/vitaminc#339),
 # `NonEmpty::with`, `From<integer> for NonEmpty` (#314) and the parts view
 # (#318), all of which this crate relies on. All five must share one
 # version or the aead crate is duplicated.
 vitaminc-aead = { workspace = true }
-# `dynamic`: the runtime value model every language binding funnels through.
-vitaminc-aead-value = { workspace = true, optional = true }
 vitaminc-encrypt = { workspace = true }
 vitaminc-hmac = { workspace = true }
+# Equality terms derive over `vitaminc-normalize`'s encoding of a value
+# (the workspace turns on vitaminc-prf's `normalize` feature): one term per
+# number whatever its width, text in Unicode 16 NFC. Match text is
+# normalized by the same crate before it is tokenized.
+vitaminc-normalize = { workspace = true }
 vitaminc-prf = { workspace = true }
 vitaminc-protected = { workspace = true }
 serde = { workspace = true }
@@ -60,8 +63,8 @@ default = ["http"]
 http = ["dep:stack-auth", "stack-auth/http", "stack-kms/http"]
 # `stack_encrypt::dynamic`: encrypt and decrypt values whose types are known
 # only at runtime, as an FFI binding's are. Off by default — it is only of
-# use to a binding author, and it pulls `vitaminc-aead-value` in.
-dynamic = ["dep:vitaminc-aead-value"]
+# use to a binding author. Its transport frames are vitaminc-aead's own.
+dynamic = []
 # `stack_encrypt::kms::FakeDataKeySource`: the in-memory key source for tests
 # with no ZeroKMS, so a caller's dev-dependency on stack-encrypt is enough and
 # no direct stack-kms dependency has to agree with this crate's.

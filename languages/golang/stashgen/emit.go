@@ -20,6 +20,9 @@ func emit(f *genFile) ([]byte, error) {
 			}
 		}
 	}
+	if err := planQueries(f); err != nil {
+		return nil, err
+	}
 	w := &writer{}
 	w.header(f)
 	w.encryptedType(f)
@@ -208,9 +211,10 @@ func (w *writer) shapeStruct(name string, fields []shapeField) {
 }
 
 // kindExpr is the gensupport kind of a Go type: the wire type the field
-// seals as. The mapping is vcffi's: int8, int16 and int32 travel as int32,
-// int and int64 as int64, the unsigned ones likewise, []byte as bytes. A
-// composite is untyped and seals as one self-describing value.
+// seals as. int8, int16 and int32 seal as int32, int and int64 as int64, the
+// unsigned ones likewise, []byte as bytes: vcffi sends a narrower integer at
+// its own width, and the engine reads it as the 32-bit integer of its sign.
+// A composite is untyped and seals as one self-describing value.
 func kindExpr(t GoType) string {
 	switch t.Kind {
 	case KindString:
@@ -553,23 +557,171 @@ func (w *writer) fieldEntries(f *genFile) {
 			w.p("\treturn %s{%s}, nil", g.outputType, strings.Join(parts, ", "))
 		}
 		w.p("}")
-		if g.queryType != "" {
+		for _, q := range g.queries {
 			w.nl()
-			w.p("func (f %s) Query(ctx context.Context, c *encrypt.Cipher, v %s) (%s, error) {", g.fieldType, g.typeExpr, g.queryType)
-			w.p("\tout, err := f.field.Query(ctx, c, v)")
-			w.p("\treturn %s(out.EQL), err", g.queryType)
-			w.p("}")
-		}
-		for _, o := range g.outputs {
-			if o.index == "" {
-				continue
-			}
-			w.nl()
-			w.p("func (f %s) %s(ctx context.Context, c *encrypt.Cipher, v %s) (%s, error) {", g.fieldType, o.name, g.typeExpr, o.typeExpr)
-			w.p("\treturn f.field.%s(ctx, c, v)", o.name)
-			w.p("}")
+			w.query(g, q)
 		}
 	}
+}
+
+// queryMethod is one generated method for an operator the engine answers on
+// a field.
+type queryMethod struct {
+	method     string // "Eq", "Between", "Matches"
+	operator   Operator
+	resultType string // "encrypt.EqualityTerm", "encrypt.Range[encrypt.OreTerm]", "encrypt.MatchQuery[string]"
+	termType   string // for a range, the bound's type: "encrypt.OreTerm"; for an EQL matches query, the query type: "eql.TextMatchQuery"
+}
+
+// planQueries picks each sealed field's query methods from the operators the
+// engine answers on it: one method for each, named for the operator, whose
+// result is the Go type of what the operator's term is. An operator the SDK
+// has no Go type for stops the generator, naming the field, rather than
+// leaving the field without a query the engine answers.
+func planQueries(f *genFile) error {
+	for i := range f.fields {
+		g := &f.fields[i]
+		g.queries = nil
+		for _, op := range g.operators {
+			q, err := queryFor(g, op)
+			if err != nil {
+				return fieldErr(f.typeName, g.GoName, "%v", err)
+			}
+			g.queries = append(g.queries, q)
+		}
+		unqueried, err := indexesAnswer(g)
+		if err != nil {
+			return fieldErr(f.typeName, g.GoName, "%v", err)
+		}
+		for _, n := range unqueried {
+			f.notices = append(f.notices, g.GoName+": "+n)
+			f.unqueried = append(f.unqueried, fmt.Sprintf("stashgen: %s.%s: %s", f.typeName, g.GoName, n))
+		}
+	}
+	return nil
+}
+
+// indexesAnswer checks a field's indexes against the operators the engine
+// answers on it.
+//
+// It refuses a probabilistic query on an index-only field: the query's rows
+// are checked by decrypting them with Verify, and an index-only field
+// stores no ciphertext, so Verify could never pass and every real match
+// would be thrown away.
+//
+// It returns a notice for each index the engine answers no operator
+// through on the field: the index stores a term no generated method can
+// query. That is an ore or ope index on text, bytes or a float (the engine
+// stores it and answers the orderings over integers only), or a second
+// order index beside the one the engine already answers the orderings
+// with. Storing it is allowed, since a program may compare the stored terms
+// itself, but an order term tells anyone who reads the column how its
+// values order, so the generator says so.
+func indexesAnswer(g *genField) ([]string, error) {
+	if g.Verb != VerbEncryptIndex && g.Verb != VerbIndex {
+		return nil, nil
+	}
+	answers := map[IndexName]string{}
+	for _, op := range g.operators {
+		if op.Probabilistic && g.Verb == VerbIndex {
+			return nil, fmt.Errorf("the %s index answers %s, whose rows are checked by decrypting them with Verify, and an index-only field stores no ciphertext to decrypt; seal it as well (encrypt,index=%s)", op.Index, op.Name, op.Index)
+		}
+		if _, ok := answers[op.Index]; !ok {
+			answers[op.Index] = op.Name
+		}
+	}
+	var notices []string
+	for _, ix := range g.Indexes {
+		if _, ok := answers[ix.Name]; ok {
+			continue
+		}
+		why := ""
+		if ix.Name == IndexOre || ix.Name == IndexOpe {
+			why = ": the orderings are answered over integers only"
+			for _, other := range []IndexName{IndexOre, IndexOpe} {
+				if op, ok := answers[other]; ok && other != ix.Name {
+					why = fmt.Sprintf(": the %s index already answers %s and the other orderings", other, op)
+				}
+			}
+		}
+		notices = append(notices, fmt.Sprintf("stores %s terms that no generated method queries: the engine answers no query through the %s index on this field (%s)%s. Drop the index unless your own code compares the stored terms.", ix.Name, ix.Name, g.typeExpr, why))
+	}
+	return notices, nil
+}
+
+func queryFor(g *genField, op Operator) (queryMethod, error) {
+	q := queryMethod{method: operatorMethod(op.Name), operator: op}
+	if !isIdent(q.method) || q.method == "Encrypt" {
+		return q, fmt.Errorf("the engine answers the operator %q, which has no Go method name", op.Name)
+	}
+	if g.Verb == VerbEncryptInto {
+		// The term of every operator on an EQL type is the type's query
+		// value.
+		switch {
+		case g.queryType == "":
+			return q, fmt.Errorf("the engine answers %s on %s, which has no query type", op.Name, g.EQLType)
+		case op.Pair:
+			return q, fmt.Errorf("the engine answers %s on %s with two values, and an EQL query value is one", op.Name, g.EQLType)
+		case op.Probabilistic && (op.Index != IndexMatch || g.GoType.Kind != KindString):
+			return q, fmt.Errorf("the engine answers %s on %s with a probabilistic term through the %s index, and the SDK verifies only a match index over a string", op.Name, g.EQLType, op.Index)
+		case op.Probabilistic:
+			// The query value is the type's, and the query keeps what Verify
+			// and TargetLimit need, as a MatchQuery does.
+			q.resultType = "encrypt.EQLMatchQuery[" + g.queryType + ", " + g.typeExpr + "]"
+			q.termType = g.queryType
+			return q, nil
+		}
+		q.resultType = g.queryType
+		return q, nil
+	}
+	termType := map[IndexName]string{IndexEquality: "encrypt.EqualityTerm", IndexOre: "encrypt.OreTerm", IndexOpe: "encrypt.OpeTerm"}[op.Index]
+	switch {
+	case op.Probabilistic && op.Index == IndexMatch && !op.Pair && g.GoType.Kind == KindString:
+		q.resultType = "encrypt.MatchQuery[" + g.typeExpr + "]"
+	case op.Probabilistic || termType == "":
+		return q, fmt.Errorf("the engine answers %s through the %s index, and the SDK has no Go type for that query", op.Name, op.Index)
+	case op.Pair && op.Index != IndexEquality:
+		q.resultType = "encrypt.Range[" + termType + "]"
+		q.termType = termType
+	case op.Pair:
+		return q, fmt.Errorf("the engine answers %s with two values through the %s index, and the SDK has no Go type for that range", op.Name, op.Index)
+	default:
+		q.resultType = termType
+	}
+	return q, nil
+}
+
+// operatorMethod is the Go method for an operator: its name with the first
+// letter upper case, eq -> Eq, between -> Between.
+func operatorMethod(name string) string {
+	if name == "" {
+		return ""
+	}
+	return strings.ToUpper(name[:1]) + name[1:]
+}
+
+// query writes one operator's method on a field's entry.
+func (w *writer) query(g genField, q queryMethod) {
+	recv := fmt.Sprintf("func (f %s) %s(ctx context.Context, c *encrypt.Cipher, ", g.fieldType, q.method)
+	switch {
+	case q.operator.Probabilistic:
+		w.b.WriteString(wrapComment(fmt.Sprintf("%s derives the %s query for v. Its answer can hold rows that do not match: decrypt the rows it fetches and keep those Verify reports true.", q.method, q.operator.Name), 80))
+		w.p("%sv %s) (%s, error) {", recv, g.typeExpr, q.resultType)
+		if g.Verb == VerbEncryptInto {
+			w.p("	return gensupport.EQLMatches[%s](ctx, f.field, c, v)", q.termType)
+		} else {
+			w.p("	return gensupport.Matches(ctx, f.field, c, v)")
+		}
+	case q.operator.Pair:
+		w.p("%slo, hi %s) (%s, error) {", recv, g.typeExpr, q.resultType)
+		w.p("	low, high, err := f.field.Range(ctx, c, %q, lo, hi)", q.operator.Name)
+		w.p("	return %s{Low: low, High: high}, err", q.resultType)
+	default:
+		w.p("%sv %s) (%s, error) {", recv, g.typeExpr, q.resultType)
+		w.p("	term, err := f.field.Term(ctx, c, %q, v)", q.operator.Name)
+		w.p("	return %s(term), err", q.resultType)
+	}
+	w.p("}")
 }
 
 func (w *writer) model(f *genFile, m *genModel) {

@@ -1,0 +1,63 @@
+error[E0277]: `u32` is not what a query of arity `Pair` takes
+  --> tests/ui/op_between_takes_a_pair.rs:12:39
+   |
+12 |     let _ = cipher.query(op::Between, &40u32).on(&age_plan);
+   |                    -----              ^^^^^^ the operator takes another input
+   |                    |
+   |                    required by a bound introduced by this call
+   |
+   = help: the trait `Input<Pair>` is not implemented for `u32`
+   = note: an operator of arity `One` takes one value, `op::Between` (arity `Pair`) takes a pair, `&(lo, hi)`, and `op::AtPath` (arity `Pathed`) takes no input yet: it arrives with the JSON index
+help: the trait `Input<Pair>` is implemented for `(S, S)`
+  --> src/op/mod.rs
+   |
+   | impl<S: 'static> Input<Pair> for (S, S) {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `plan::chain::<impl StackCipher<K>>::query`
+  --> src/plan/chain.rs
+   |
+   |     pub fn query<'a, Op, Q>(&'a self, op: Op, value: &Q) -> QueryBuilder<'a, Op, F<Q>, K>
+   |            ----- required by a bound in this associated function
+...
+   |         F<Q>: Input<Op::Arity>,
+   |               ^^^^^^^^^^^^^^^^ required by this bound in `plan::chain::<impl StackCipher<K>>::query`
+
+error[E0599]: the method `on` exists for struct `QueryBuilder<'_, stack_encrypt::op::Between, u32, FakeDataKeySource>`, but its trait bounds were not satisfied
+  --> tests/ui/op_between_takes_a_pair.rs:12:47
+   |
+12 |     let _ = cipher.query(op::Between, &40u32).on(&age_plan);
+   |                                               ^^
+   |
+   = note: the following trait bounds were not satisfied:
+           `u32: Input<Pair>`
+
+error[E0271]: type mismatch resolving `<(u32, {integer}) as Input<One>>::Plaintext == u32`
+  --> tests/ui/op_between_takes_a_pair.rs:13:48
+   |
+13 |     let _ = cipher.query(op::Lt, &(18u32, 65)).on(&age_plan);
+   |                                                ^^ expected `u32`, found `(u32, {integer})`
+   |
+   = note: expected type `u32`
+             found tuple `(u32, {integer})`
+   = note: required for `ValuePlan<u32, Indexed<stack_encrypt::Ore>>` to implement `Chooses<stack_encrypt::op::Lt, (u32, {integer}), Whole>`
+
+error[E0277]: `(u32, {integer})` is not ordered: the ordering operators are answered over the integer types only
+  --> tests/ui/op_between_takes_a_pair.rs:13:48
+   |
+13 |     let _ = cipher.query(op::Lt, &(18u32, 65)).on(&age_plan);
+   |                                                ^^ no ordering operator over this type
+   |
+   = help: the trait `Ordered` is not implemented for `(u32, {integer})`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u8` to `u128` or `i8` to `i128`; the order of text is not settled (ADR-0009), so an ordering over text does not compile
+   = help: the following other types implement trait `Ordered`:
+             i128
+             i16
+             i32
+             i64
+             i8
+             u128
+             u16
+             u32
+           and $N others
+   = note: required for `stack_encrypt::op::Lt` to implement `DefaultIndex<(u32, {integer})>`
+   = note: required for `ValuePlan<u32, Indexed<stack_encrypt::Ore>>` to implement `Chooses<stack_encrypt::op::Lt, (u32, {integer}), Whole>`

@@ -95,7 +95,7 @@ mod source;
 pub mod transcode;
 mod tuples;
 
-pub(crate) use self::core::{decipher_pending, seal_pending};
+pub(crate) use self::core::{bind_pending, seal_pending};
 pub use context::{AeadContext, CallerContext, DeclaredContext, ExpectedContext, Extends};
 pub use index::{
     indexed, At, Encrypted, Equality, Index, IndexSpec, Indexes, Match, Ope, Ore, Select, TermSet,

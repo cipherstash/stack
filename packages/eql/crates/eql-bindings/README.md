@@ -101,9 +101,42 @@ evolution plan.
 
 ## Rust text equality with Stack Encrypt
 
-The optional `stack-encrypt` feature enables `EncryptFrom<String>` for `TextEq`
-and `TextEqQuery`, and `DecryptInto<String>` for `TextEq`. Other domains do not
-yet expose these conversions. The derives are emitted by `eql-codegen`.
+The optional `stack-encrypt` feature enables `EncryptFrom<String>` for
+`v4::text::TextEq` and `v4::text::TextEqQuery`, and `DecryptInto<String>` for
+`v4::text::TextEq`. Stack Encrypt writes EQL v4 only, so no `v3` type
+implements these traits. The derives are emitted by `eql-codegen`.
+
+The other v4 types Stack Encrypt produces take a plaintext from
+`eql_bindings::encryption::plaintext`, which seal as the primitive they wrap
+and read back only a value of their own width:
+
+| v4 type | Plaintext |
+| --- | --- |
+| `Text`, `TextMatch` | `String` |
+| `Integer` | `Int32` |
+| `Bigint` | `Int64` |
+| `Boolean` | `Bool` |
+| `Real` | `Float32` |
+| `Double` | `Float64` |
+
+Each seals the leaf the value enum (`FfiValue`) seals for the same value, so
+values written here and by the Go SDK open each other. `IntegerEq`,
+`BigintEq`, `RealEq` and `DoubleEq` wait for vitaminc 0.6's release: the
+engine derives integer and float equality in its shared domains, and terms
+derived under vitaminc 0.5's per-width domains would stop matching after the
+upgrade.
+`TextMatch` builds its filter under a configuration pinned in this crate
+(`EqlMatch`: 3-grams of the lower-cased text, `k = 6`, a 2048-bit filter) for
+stored values and queries alike. The configuration is part of the stored
+format, so changing it means a new domain or payload version. A filter can
+match a row that does not contain the query, so re-check after decrypting
+where that matters. Write the stored column on the left, `col @@ query`: the
+other order finds nothing until #1171 is fixed. Text too short to make a
+3-gram (empty strings, two-letter codes) cannot be stored in a `TextMatch`
+column yet, and a `TextMatchQuery` for it is refused too: one filter type
+builds both, and an empty filter as a query would match every row. Ordering
+types wait for vitaminc 0.6's order encodings, and `Json` for a decision on
+sealing a document as one leaf.
 
 The generated API docs include a complete, executable example in the
 `eql_bindings::encryption` module, from cipher setup through decryption. Its
@@ -117,7 +150,7 @@ cargo test -p eql-encryption-tests --test text_eq_example
 With an initialized cipher, the essential calls are:
 
 ```rust,ignore
-use eql_bindings::{Identifier, v3::text::{TextEq, TextEqQuery}};
+use eql_bindings::{Identifier, v4::text::{TextEq, TextEqQuery}};
 
 let column = Identifier::for_column("users", "email")?;
 let keyset = cipher.default_keyset();
@@ -144,8 +177,8 @@ This is a **new producer profile**, independent of existing cipherstash-client
 ciphertext and terms. `c` is `stack-encrypt:1:` followed by padded standard base64 of Stack
 Encrypt's native `SealedValue` bytes; `hm` is the native 32-byte equality term
 encoded as hex. Serde handles the final EQL JSON envelope only. SQL consumes
-these payloads through the existing `public.eql_v3_text_eq` and
-`eql_v3.query_text_eq` domains and their equality extractor index. Writers and
+these payloads through the `public.eql_v4_text_eq` and
+`eql_v4.query_text_eq` domains and their equality extractor index. Writers and
 query producers for these values must use this same profile.
 
 The `Identifier` stored in `i` is Stack Encrypt's `Describe`: its ZeroKMS
@@ -160,17 +193,18 @@ assumed. Outcomes against today's sources:
 
 | Writer | Reader and query producer | Outcome |
 | --- | --- | --- |
-| Rust (`stack-encrypt` profile) | Rust (`stack-encrypt` profile) | **Proven.** `tests/encryption/tests/text_eq.rs`: JSON round trip, both canonical directions, PostgreSQL insert and equality query. |
+| Rust (`stack-encrypt` profile) | Rust (`stack-encrypt` profile) | **Proven.** `tests/encryption/tests/text_eq.rs`: JSON round trip, both canonical directions, PostgreSQL insert and equality query. `tests/encryption/tests/v4_types.rs`: the same for the other producible v4 types, in both directions between the typed plaintexts and the value enum. |
 | JS / FFI (`cipherstash-client` profile) | Rust | **Not supported.** `c` lacks the `stack-encrypt:1:` prefix and is refused loudly on decryption. A Rust probe against such a column is accepted by SQL and matches nothing. |
 | Rust (`stack-encrypt` profile) | JS / FFI | **Not supported.** The JS reader does not know the `stack-encrypt:1:` prefix and the two profiles' equality terms never match. |
 
 Rows 2 and 3 need compatible encryption, decryption and index derivation on
-both sides before they can change; that is upstream work, not a flag. This
-profile is an interim step on EQL v3: nothing in a `v: 3` payload marks which
-producer made an equality term, so a new-profile probe against an old-producer
-column returns zero rows with no error. The separation will come from the EQL
-version itself (v4), not from a marker inside v3. Until then, one profile per
-column, and record which.
+both sides before they can change; that is upstream work, not a flag. The
+profiles are separated by EQL version (ADR-0002): Stack Encrypt writes the
+`eql_v4` domains and only the [`v4`](src/v4/mod.rs) types derive its traits,
+while cipherstash-client writes `eql_v3`. A payload of the wrong version fails
+the domain check on insert. A plain `=` between a v3 column and a v4 query
+term still returns zero rows with no error, so keep each column to one
+version.
 
 ### EQL types as plan field targets
 
@@ -192,7 +226,7 @@ unknown one with "no such EQL type".
 ```rust,ignore
 use eql_bindings::encryption::targets;
 use stack_encrypt::Label;
-use vitaminc_aead_value::FfiValue;
+use stack_encrypt::dynamic::FfiValue;
 
 let column = Label::new(["users", "email"])?; // the field's context: table/column
 let stored: Vec<u8> = targets::encrypt("TextEq", &keyset, &column, FfiValue::String("alice@example.com".into()))?.await?;
@@ -200,8 +234,8 @@ let probe: Vec<u8> = targets::query("TextEq", &keyset, &column, FfiValue::String
 let opened: FfiValue = targets::decrypt("TextEq", &cipher, &column, &stored)?.await?;
 ```
 
-The table and the dispatch are generated into `src/v3/targets.rs` beside
-`inventory.rs` (`mise run types:generate`), gated to the `stack-encrypt`
+The table and the dispatch are generated into `src/v4/targets.rs` beside
+the v4 family modules (`mise run types:generate`), gated to the `stack-encrypt`
 feature, and drift-gated by the same parity tests. The same generator writes
 the Go package `languages/golang/encrypt/eql` from the same rows
 (`eql-codegen go-eql`, also under `types:generate` / `types:check`). The
@@ -211,7 +245,8 @@ crate would need stack-encrypt API newer than the crates.io release the
 published crate names, and the guest already depends on both. A type is producible exactly
 when its generated struct carries the `stack-encrypt` derives
 (`ENCRYPTION_DOMAINS` in `eql-codegen`), because the dispatch runs the derived
-plan; `TextEq` is the only one today.
+plan; `targets::targets()` lists them, each with `producible` and, when it is
+`false`, the reason.
 
 ### Developing the `stack-encrypt` feature
 

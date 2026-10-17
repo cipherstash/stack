@@ -16,6 +16,11 @@ const _ = gensupport.GeneratedVersion1
 // Order prints its sealed fields in the clear: it has no String or LogValue
 // method. Write them, or run stashgen with -redact.
 
+// Customer: stores ope terms that no generated method queries: the engine
+// answers no query through the ope index on this field (string): the orderings
+// are answered over integers only. Drop the index unless your own code compares
+// the stored terms.
+
 type EncryptedOrder struct {
 	ID       int64                `db:"id"`
 	Amount   EncryptedOrderAmount `db:"amount"`
@@ -157,12 +162,34 @@ func (f OrderAmountField) Encrypt(ctx context.Context, c *encrypt.Cipher, v int6
 	return EncryptedOrderAmount{Ciphertext: out.Ciphertext, Equality: out.Equality, Ore: out.Ore}, nil
 }
 
-func (f OrderAmountField) Equality(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.EqualityTerm, error) {
-	return f.field.Equality(ctx, c, v)
+func (f OrderAmountField) Eq(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.EqualityTerm, error) {
+	term, err := f.field.Term(ctx, c, "eq", v)
+	return encrypt.EqualityTerm(term), err
 }
 
-func (f OrderAmountField) Ore(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OreTerm, error) {
-	return f.field.Ore(ctx, c, v)
+func (f OrderAmountField) Lt(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f OrderAmountField) Lte(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f OrderAmountField) Gt(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f OrderAmountField) Gte(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f OrderAmountField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi int64) (encrypt.Range[encrypt.OreTerm], error) {
+	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
 }
 
 type OrderNoteField struct {
@@ -186,10 +213,8 @@ func (f OrderCustomerField) Encrypt(ctx context.Context, c *encrypt.Cipher, v st
 	return EncryptedOrderCustomer{Ciphertext: out.Ciphertext, Match: out.Match, Ope: out.Ope}, nil
 }
 
-func (f OrderCustomerField) Match(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.MatchTerm, error) {
-	return f.field.Match(ctx, c, v)
-}
-
-func (f OrderCustomerField) Ope(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.OpeTerm, error) {
-	return f.field.Ope(ctx, c, v)
+// Matches derives the matches query for v. Its answer can hold rows that do not
+// match: decrypt the rows it fetches and keep those Verify reports true.
+func (f OrderCustomerField) Matches(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.MatchQuery[string], error) {
+	return gensupport.Matches(ctx, f.field, c, v)
 }

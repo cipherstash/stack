@@ -11,17 +11,28 @@ help: the trait `stack_encrypt::Encrypt` is not implemented for `SerdeOnly`
   |
 4 | struct SerdeOnly { value: String }
   | ^^^^^^^^^^^^^^^^
+note: there are multiple different versions of crate `vitaminc_aead` in the dependency graph
+ --> $CARGO/vitaminc-aead-$VERSION/src/plaintext/mod.rs
+  |
+  | pub trait Encrypt {
+  | ^^^^^^^^^^^^^^^^^ this is the expected trait
+  |
+ ::: $CARGO/vitaminc-aead-$VERSION/src/encrypt/mod.rs
+  |
+  | pub trait Encrypt {
+  | ----------------- this is the trait that was imported
+  = help: you can use `cargo tree` to explore your dependency tree
   = help: the following other types implement trait `stack_encrypt::Encrypt`:
-            &str
-            ContextTag<Tag, T>
-            FfiValue
-            HashMap<K, T>
-            Vec<T>
-            Vec<u8>
-            [u8; N]
-            stack_encrypt::Element<T>
+            &&'b T
+            &'a BTreeMap<K, V>
+            &'a HashMap<K, V>
+            &'a Vec<T>
+            &'a [T]
+            &'a std::option::Option<T>
+            &'a vitaminc_protected::protected::Protected<T>
+            &FfiValue
           and $N others
-  = note: required for `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` to implement `EncryptFrom<SerdeOnly>`
+  = note: required for `CipherText<SealedValue, PassthroughFrame>` to implement `EncryptFrom<SerdeOnly>`
   = note: 1 redundant requirement hidden
   = note: required for `Target` to implement `EncryptFrom<SerdeOnly>`
 note: required by a bound in `target::operations::<impl KeysetCipher<'_, K>>::encrypt_as`

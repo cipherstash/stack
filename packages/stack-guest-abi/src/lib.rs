@@ -54,8 +54,8 @@
 //!   both are tested natively and the guests' leak tests run the real
 //!   lifecycle.
 //! - [`last_error`] — the full error behind the most recent failed export:
-//!   its code, message, help, fields and causes, encoded once in the
-//!   transport codec for `se_last_error`. The status number stays the fast
+//!   its code, message, help, fields and causes, encoded once as a
+//!   transport frame for `se_last_error`. The status number stays the fast
 //!   path; this is the detail a host asks for after it.
 //! - [`status`] — the status table. **One numbering for every guest**: the
 //!   codes below keep their values for good, and a guest that needs more
@@ -65,6 +65,8 @@
 //!   call and gets both response buffers back through the registry.
 //! - [`headers`] — the `name: value` line format request and response
 //!   headers cross the import in.
+//! - [`value`] — [`HostValue`](value::HostValue), a value a guest hands its
+//!   host, and the transport frame it crosses as.
 //!
 //! What is deliberately *not* here: anything that names a crate a guest is
 //! built over. The ZeroKMS connection over the transport, the token import
@@ -102,6 +104,7 @@ pub mod call;
 pub mod headers;
 pub mod last_error;
 pub mod status;
+pub mod value;
 
 #[cfg(target_arch = "wasm32")]
 pub mod abi;

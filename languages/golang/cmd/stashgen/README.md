@@ -40,11 +40,11 @@ Your program calls those functions, and it never builds or names a plan.
    ```go
    encrypted, err := users.Encrypt(ctx, cipher, people)
    opened, err := users.Decrypt(ctx, cipher, encrypted)
-   query, err := users.Fields.Email.Query(ctx, cipher, "bob@example.com")
+   query, err := users.Fields.Email.Eq(ctx, cipher, "bob@example.com")
    ```
 
 6. Store the encrypted type.
-   Each `encrypt_into` field is one EQL column: `eql.TextEq` implements `driver.Valuer` and `sql.Scanner`, so a database library binds and scans it as the JSON a `public.eql_v3_text_eq` column holds.
+   Each `encrypt_into` field is one EQL column: `eql.TextEq` implements `driver.Valuer` and `sql.Scanner`, so a database library binds and scans it as the JSON a `public.eql_v4_text_eq` column holds. Stack Encrypt writes EQL v4; see the `encrypt` package README for the EQL types it produces and the Go field type each takes.
 
 7. Run the generator again after each change to the struct or to a tag.
    A change to the fields of the struct stops the build until you do.
@@ -96,9 +96,9 @@ A query on such a type derives its term under the context the cipher names, so i
 > To update one column, use its `Fields` entry, such as `Fields.Email.Encrypt`.
 
 The index names are `equality`, `match`, `ore`, `ope` and `json`.
-A `match` index needs text with at least one token: the engine derives no match term for an empty string, separator-only text, or text shorter than the n-gram length (3 characters), because an empty term would match every row.
-`Encrypt` then fails for the whole batch, with an error naming the row, the field and the index.
-So an optional or short value does not belong under `match`: give the field `equality` alone, or make the value required.
+A `match` index stores text with no token (an empty string, separator-only text, or text shorter than the n-gram length of 3 characters) as the empty filter, which no query matches, so an optional or short value can live under `match`; the empty filter tells a reader of the column that the value is one of those.
+A match query of such text is refused, because an empty filter as a query would match every row.
+An EQL `TextMatch` field is stricter: see below.
 An index takes its options in parentheses after its name, separated by commas: `index=equality;match(k=3)`.
 This build refuses an index with options: a query term is derived with the default options only, so a stored term with other options would never match one.
 These words are the same as the Rust API's words for the same behaviour, with two that only Go has.
@@ -123,7 +123,12 @@ For `-type User`, the file `user_stash.go` holds:
 - `Encrypt` and `Decrypt`, which take a slice and return a slice, and send one ZeroKMS request for each 500 sealed values in it, plus one the first time a keyset is used.
 - `Fields`, with one entry for each sealed field.
   An opaque struct, or a struct with no sealed field outside an opaque one, gets no `Fields`: nothing in it is sealed on its own, so nothing can be queried.
-  An entry encrypts one value, and it has a query method only for what the field declares: `Query` for `encrypt_into`, and `Equality`, `Match`, `Ore` or `Ope` for `index=`.
+  An entry encrypts one value, and has one query method for each operator the engine answers on the field: `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` or `Matches`.
+  stashgen asks the embedded engine which operators each field answers, and which index answers each one, so it holds no copy of those rules: an equality index answers `Eq`, a match index on a string `Matches`, and an ORE or OPE index on an integer the four orderings and `Between`, through ORE when the field declares both.
+  `encrypt_into=TextEq` answers `Eq`, which returns the type's query value, `eql.TextEqQuery`.
+  `encrypt_into=TextMatch` answers `Matches`, which returns an `encrypt.EQLMatchQuery`: the `eql.TextMatchQuery` operand, with `Verify` and `TargetLimit`.
+  The query of `Matches` carries `Verify` and `TargetLimit`, because its answer can hold rows that do not match; an exact operator's query carries neither.
+  See the encrypt package's README for each method's result and the query with `database/sql`.
 - `String` and `LogValue` on `EncryptedUser`, which print the passthrough fields and hide the sealed ones.
 - A copy of the fields of `User`, so a change to them stops the build.
 
@@ -149,7 +154,21 @@ The same input always gives the same file: fields keep their declared order, and
 `stashgen` checks each declaration with the engine, and holds no copy of the engine's rules: it runs the WASI guest the SDK embeds and asks it, one field at a time, so the error names the field.
 It asks the engine for the EQL types it holds: each name, its plaintext type, its indexes, its query form, and whether the engine produces it today.
 The command links the build of the engine that holds the EQL types (`encrypt/eql`), so it can answer for every type; a generated file imports `encrypt/eql` only when it names one.
-The engine produces `TextEq` today; `encrypt_into` with any other type is refused with the type's name.
+The engine produces these EQL types today, each from one Go field type:
+
+| `encrypt_into` | Go field |
+|---|---|
+| `TextEq`, `Text`, `TextMatch` | `string` |
+| `Integer` | `int32` |
+| `Bigint` | `int64` |
+| `Boolean` | `bool` |
+| `Real` | `float32` |
+| `Double` | `float64` |
+
+The width must match: an `int` or `int64` field is not an `Integer`, and a `float64` field is not a `Real`.
+A `TextMatch` field refuses text shorter than three characters, such as an empty string or a two-letter code, because it has no 3-grams to index; its query refuses such text too.
+Put the column on the left of `@@` (`WHERE name @@ $1::eql_v4.query_text_match`): the other operand order finds nothing until #1171 is fixed.
+`encrypt_into` with any other type is refused with the type's name and the reason it is not produced yet.
 Separate columns work today for four indexes: `equality`, `match`, `ore` and `ope`.
 
 A field with `encrypt_into` is stored under its table and column, which is what an EQL value records in its `i`.

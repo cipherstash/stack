@@ -756,14 +756,18 @@ lists, headers, or cleans it; it must declare its own `-- REQUIRE:` edges
 (usually to `<T>_types.sql` and whichever generated function or operator file it
 extends). Use it for cross-domain casts, helper functions, or type-specific
 constraints. Unlike the generated siblings, **`<T>_extensions.sql` IS
-committed.** (Neither `integer` nor `smallint` ships one today.)
+committed.** (Neither `integer` nor `smallint` ships one today.) Like every
+file under `src/v3`, it names schemas and the payload version by placeholder:
+`{{prefix}}.eq_term`, `public.{{prefix}}_integer_eq`,
+`VALUE->>'v' = '{{eql_version}}'`. The build rejects a literal `eql_v3`. See
+"Schema and version placeholders" in `AGENTS.md`.
 
 `tasks/pin_search_path_v3.sql` describes the fallback marker for inline-critical
 extension functions that take no domain argument and so escape the structural
 skip:
 
 ```sql
-COMMENT ON FUNCTION eql_v3.my_helper(...) IS 'eql-inline-critical: ...';
+COMMENT ON FUNCTION {{prefix}}.my_helper(...) IS 'eql-inline-critical: ...';
 ```
 
 The generator never emits this marker; every function it produces takes a domain

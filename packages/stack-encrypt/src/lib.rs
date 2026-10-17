@@ -26,9 +26,10 @@
 //! the cipher bound to one of that client's keysets, from
 //! [`default_keyset`](StackCipher::default_keyset) or
 //! [`keyset`](StackCipher::keyset) — encrypts any value that implements
-//! [`Encrypt`] (`String`, `Vec<T>`, `HashMap<K, V>`, `Option<T>`,
-//! `Protected<T>`, your own types, and any nesting of them). Either cipher
-//! decrypts back into any [`Decrypt`] type. Every scalar inside the value is
+//! vitaminc's [`Encrypt`] (`String`, `Vec<T>`, `HashMap<K, V>`,
+//! `Option<T>`, `Protected<T>`, your own types through
+//! `#[derive(vitaminc_aead::Encrypt)]`, and any nesting of them). Either
+//! cipher decrypts back into any [`Decrypt`] type. Every scalar inside the value is
 //! sealed under its **own** ZeroKMS data key, so each value access is an
 //! individually auditable key retrieval — there is no long-lived key in your
 //! process.
@@ -225,8 +226,9 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //!
 //! Besides your AAD, the *shape* of a value is authenticated: an element cannot
 //! be spliced out of a sequence and passed off as a scalar, a map value cannot
-//! be moved under a different key, and "absent" / "empty" are themselves
-//! sealed markers rather than inferable from structure. A tampered or
+//! be moved under a different key, "empty" is itself a sealed marker rather
+//! than inferable from structure, and "absent" is a sealed null leaf. Every
+//! leaf records its own type, so a leaf cannot be read back as another. A tampered or
 //! re-homed ciphertext fails with [`Error::Aead`]; a failed or denied key
 //! retrieval surfaces as [`Error::Kms`]. A ciphertext opened under the
 //! *wrong context* is refused by ZeroKMS first: every data key is bound to
@@ -236,18 +238,14 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! source that ignores descriptors (`FakeDataKeySource`, in tests) lets a
 //! wrong context reach the AEAD, where it is [`Error::Aead`].
 //!
-//! For one-row reads of a batch-encrypted collection, decrypt as
-//! [`Element<T>`](Element) under the same AAD used for the whole collection:
-//! the derivation that binds an element to its position is applied by the
-//! type, not by the caller. That is the general rule here — every leaf's AAD
-//! is derived from the context its key was minted under, and there is no
-//! entry point that lets a caller supply one of its own.
+//! Every leaf's AAD is derived from the context its key was minted under,
+//! and there is no entry point that lets a caller supply one of its own.
 //!
 //! # Relationship to vitaminc
 //!
-//! A `KeysetCipher` is a vitaminc [`Cipher`]; everything a vitaminc cipher can
-//! encrypt, it can encrypt, and the AEAD, AAD derivations and leaf wire format
-//! are vitaminc's (`vitaminc_encrypt::Aes256Cipher`, AES-256-GCM under a random
+//! A `KeysetCipher` seals through a vitaminc `Cipher`; everything vitaminc
+//! can encrypt, it can encrypt, and the data model, the AAD derivations and
+//! the leaf wire format are vitaminc's (`vitaminc_encrypt::Aes256Cipher`, AES-256-GCM under a random
 //! per-leaf nonce vitaminc generates itself). The ZeroKMS `iv` a [`SealedValue`]
 //! carries is *not* that nonce: it identifies the data key, and is sent back to
 //! ZeroKMS with the key `tag` to re-derive it — under the same [`Descriptor`]
@@ -277,13 +275,14 @@ pub mod descriptor;
 #[cfg(feature = "dynamic")]
 pub mod dynamic;
 pub mod keyset;
+pub mod op;
 pub mod plan;
 pub mod sem;
 pub mod target;
 
 pub use cipher::{
-    BoxedPassthrough, Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue,
-    StackCipher, StackCipherBuilder, StackCipherText, StackDecipher,
+    Error, FromEnv, LeafBytesError, PendingStackCipherText, SealedValue, StackCipher,
+    StackCipherBuilder, StackCipherText,
 };
 pub use descriptor::{Describe, Description, Descriptor, Label, LabelError};
 pub use keyset::KeysetCipher;
@@ -306,13 +305,14 @@ pub use target::{
 };
 
 // Re-export the vitaminc AEAD surface callers need to drive the cipher, so they
-// don't have to depend on `vitaminc-aead` directly for the common path. A
-// context type of your own implements `IntoContext` once; `IntoAad` and
-// `IntoPrfContext` are vitaminc's blankets over it, so both derivations see
-// the same bytes.
+// don't have to depend on `vitaminc-aead` directly for the common path: a
+// value describes itself once (`Encrypt`) and names the sink that reads it
+// back (`Decrypt`). A context type of your own implements `IntoContext` once;
+// `IntoAad` and `IntoPrfContext` are vitaminc's blankets over it, so both
+// derivations see the same bytes.
 pub use vitaminc_aead::{
-    Cipher, CipherText, Context, ContextPiece, ContextTag, Decipher, Decrypt, Element, Encrypt,
-    IntoAad, IntoContext, Unspecified,
+    CipherText, Context, ContextPiece, ContextTag, Decrypt, Encrypt, IntoAad, IntoContext, Node,
+    PassthroughFrame, Unspecified,
 };
 // The vitaminc 0.4 names, deprecated there; re-exported for one transition so
 // a caller that spelled them keeps compiling with a warning.

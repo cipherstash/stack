@@ -14,7 +14,7 @@ help: the trait `DecryptField<u32, CallerContext>` is not implemented for `Opaqu
             `(A, B, C)` implements `DecryptField<P, Ctx>`
             `(A, B, C, D)` implements `DecryptField<P, Ctx>`
             `(A, B, C, D, E)` implements `DecryptField<P, Ctx>`
-            `CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>` implements `DecryptField<P, Ctx>`
+            `CipherText<SealedValue, PassthroughFrame>` implements `DecryptField<P, Ctx>`
             `Encrypted<Terms>` implements `DecryptField<P, Ctx>`
             `EqualityTerm` implements `DecryptField<P, Ctx>`
             `MatchTerms<O>` implements `DecryptField<P, Ctx>`
@@ -38,7 +38,7 @@ help: the trait `Decryptable` is not implemented for `Opaque`
              (A, B, C)
              (A, B, C, D)
              (A, B, C, D, E)
-             CipherText<SealedValue, Box<(dyn Any + Send + 'static)>>
+             CipherText<SealedValue, PassthroughFrame>
              Encrypted<Terms>
              EqualityTerm
              MatchTerms<O>

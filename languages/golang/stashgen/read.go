@@ -51,6 +51,7 @@ type genFile struct {
 	notices         []string
 	printsPlaintext bool
 	unexported      []string
+	unqueried       []string // stderr notices: indexes no generated method queries
 	redact          bool
 	redactRecv      string
 
@@ -88,14 +89,16 @@ type encMember struct {
 // genField is one stored field with what the emitter writes for it.
 type genField struct {
 	Field
-	typeExpr   string   // the field's Go type
-	via        string   // the embedded passthrough struct it is promoted from, or ""
-	tags       string   // the other libraries' tags, without stash
-	outputType string   // the encrypted type's field type: "eql.TextEq" or "EncryptedContactEmail"
-	outputs    []output // the outputs of a sealed field in separate columns
-	queryType  string   // "eql.TextEqQuery", or "" when the field has no query
-	fieldType  string   // "EmailField"
-	pathType   string   // the type with its package path, for model checks
+	typeExpr   string        // the field's Go type
+	via        string        // the embedded passthrough struct it is promoted from, or ""
+	tags       string        // the other libraries' tags, without stash
+	outputType string        // the encrypted type's field type: "eql.TextEq" or "EncryptedContactEmail"
+	outputs    []output      // the outputs of a sealed field in separate columns
+	queryType  string        // "eql.TextEqQuery", or "" when the field has no query
+	operators  []Operator    // the operators the engine answers on the field
+	queries    []queryMethod // the field's query methods, one for each operator
+	fieldType  string        // "EmailField"
+	pathType   string        // the type with its package path, for model checks
 }
 
 // definedScalar reports whether the field's type is a named type over a

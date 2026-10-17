@@ -733,6 +733,8 @@ jobs:
         run: mise run test:installer_complete
       - name: Symbol-order cross-check (v3)
         run: mise run test:symbol_order_v3
+      - name: v4 isolation gate and its self-test
+        run: mise run test:v4_isolation
       - name: Build-ordering helper unit tests
         run: mise run test:build_ordering_helpers
 

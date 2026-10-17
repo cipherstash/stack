@@ -183,6 +183,23 @@ pub enum PlanError {
         /// The index as the query asked for it.
         asked: IndexSpec,
     },
+    /// A match configuration's [`MatchCase`](crate::op::MatchCase) names one
+    /// case and its options fold the other, so a `Matches` query would be
+    /// asked in a case its index does not answer.
+    #[error(
+        "a match configuration declares the case {declared} but its options {}",
+        if *folds { "fold case" } else { "keep case" }
+    )]
+    #[diagnostic(
+        code(stack_encrypt::plan_match_case),
+        help("Make `MatchCase::Case` agree with `MatchConfig::options().downcase`: `CaseInsensitive` when it is true, `CaseSensitive` when it is false.")
+    )]
+    MatchCase {
+        /// The case `MatchCase::Case` names: `CaseInsensitive` or `CaseSensitive`.
+        declared: &'static str,
+        /// Whether the configuration's options fold case.
+        folds: bool,
+    },
     /// The plan's context was given twice. A plan takes its context from
     /// exactly one place: the plan, the call that runs it, or a context
     /// field.
@@ -263,6 +280,9 @@ impl crate::ErrorPayload for PlanError {
                 ("declared", index_value(declared)),
                 ("asked", index_value(asked)),
             ]),
+            Self::MatchCase { declared, folds } => {
+                payload([("declared", (*declared).into()), ("folds", (*folds).into())])
+            }
             Self::TwoContextSources { first, second } => {
                 payload([("first", (*first).into()), ("second", (*second).into())])
             }

@@ -10,7 +10,7 @@
 //! leaf or marker is authenticated ciphertext, but passthrough metadata and
 //! terms are not, and a visitor must not present them as such.
 use crate::sem::{EqualityTerm, MatchConfig, MatchTerms, OpeTerm, OreTerm};
-use crate::{BoxedPassthrough, CipherText, Error, SealedValue, StackCipherText};
+use crate::{CipherText, Error, PassthroughFrame, SealedValue, StackCipherText};
 
 /// An encrypted output that can drive a destination visitor.
 ///
@@ -36,7 +36,9 @@ pub trait Reader: Sized {
 pub trait Visitor: Sized {
     /// The destination this visitor builds.
     type Value;
-    /// One sealed leaf: a scalar's ciphertext.
+    /// One sealed leaf: a scalar's ciphertext. An absent optional is one
+    /// too, a sealed null, so opening it under the wrong context fails
+    /// like any leaf.
     ///
     /// # Errors
     ///
@@ -60,15 +62,6 @@ pub trait Visitor: Sized {
     fn map<R: MapReader>(self, _: R) -> Result<Self::Value, Error> {
         Err(Error::UnsupportedShape)
     }
-    /// The sealed marker of an absent optional. It is ciphertext, not a
-    /// null: opening it under the wrong context fails like any leaf.
-    ///
-    /// # Errors
-    ///
-    /// Refuses with [`Error::UnsupportedShape`] unless overridden.
-    fn absent(self, _: SealedValue) -> Result<Self::Value, Error> {
-        Err(Error::UnsupportedShape)
-    }
     /// The sealed marker of an empty sequence.
     ///
     /// # Errors
@@ -86,12 +79,13 @@ pub trait Visitor: Sized {
         Err(Error::UnsupportedShape)
     }
     /// Passthrough metadata the plaintext carried alongside its encrypted
-    /// fields. Not authenticated: the reader hands it over as it was given.
+    /// fields, as the frame of its subtree. Not authenticated: the reader
+    /// hands it over as it was given.
     ///
     /// # Errors
     ///
     /// Refuses with [`Error::UnsupportedShape`] unless overridden.
-    fn passthrough(self, _: BoxedPassthrough) -> Result<Self::Value, Error> {
+    fn passthrough(self, _: PassthroughFrame) -> Result<Self::Value, Error> {
         Err(Error::UnsupportedShape)
     }
     /// An equality term. One-way, and not authenticated.
@@ -183,7 +177,6 @@ impl Reader for StackCipherText {
             CipherText::Single(leaf) => visitor.sealed(leaf),
             CipherText::Sequence(items) => visitor.sequence(items.into_iter()),
             CipherText::Map(entries) => visitor.map(entries.into_iter()),
-            CipherText::None(marker) => visitor.absent(marker),
             CipherText::EmptySequence(marker) => visitor.empty_sequence(marker),
             CipherText::EmptyMap(marker) => visitor.empty_map(marker),
             CipherText::Passthrough(value) => visitor.passthrough(value),

@@ -10,7 +10,7 @@
 //! the typed call runs. Nothing here derives a term or seals a byte itself
 //! (ADR-0007: one engine, entered through a plan); the dispatch is generated
 //! from `eql-domains::CATALOG` by `eql-codegen` into
-//! [`crate::v3::targets`], beside the inventory, so a type cannot be in the
+//! [`crate::v4::targets`], beside the v4 family modules, so a type cannot be in the
 //! catalog and missing from the table.
 //!
 //! The guest build that holds the EQL types links this module; the build
@@ -30,10 +30,10 @@
 //!   "family": "text",
 //!   "suffix": "Eq",
 //!   "plaintext": "string",
-//!   "sql_domain": "public.eql_v3_text_eq",
+//!   "sql_domain": "public.eql_v4_text_eq",
 //!   "indexes": ["eq"],
 //!   "query": "TextEqQuery",
-//!   "query_sql_domain": "eql_v3.query_text_eq",
+//!   "query_sql_domain": "eql_v4.query_text_eq",
 //!   "producible": true,
 //!   "reason": null
 //! }
@@ -51,6 +51,11 @@
 //! | `query_sql_domain` | The query twin's PostgreSQL domain, `null` likewise. |
 //! | `producible` | Whether the engine can produce this type today. [`encrypt`] and [`query`] refuse a type that is not, and a generator should too. |
 //! | `reason` | Why not, when `producible` is `false`; `null` when it is. |
+//!
+//! The engine adds an eleventh key, `operators`, when it lists the table:
+//! the operators it answers for the type, computed from the row by its own
+//! rules (`stack_encrypt::dynamic::TargetDescriptor`), so this table holds
+//! none of them.
 //!
 //! The table has one row per stored domain in catalog order; query twins are
 //! not rows (each row names its own). Adding a field is a wire change for
@@ -79,14 +84,15 @@
 use std::fmt;
 
 use serde::{de::DeserializeOwned, Serialize};
+use stack_encrypt::dynamic::{FfiValue, ValueKind};
 use stack_encrypt::kms::MaybeSend;
 use stack_encrypt::target::ExpectedContext;
 use stack_encrypt::{
     DecryptInto, EncryptFrom, Error, KeysetCipher, Label, NonEmpty, Pending, StackCipher,
 };
-use vitaminc_aead_value::{FfiValue, ValueKind};
 
-use crate::v3::targets::{decrypt_named, encrypt_named, query_named, TARGETS};
+use super::plaintext;
+use crate::v4::targets::{decrypt_named, encrypt_named, query_named, TARGETS};
 use crate::Identifier;
 
 /// One EQL type a plan may name as a field target: a row of [`targets`].
@@ -108,7 +114,7 @@ pub struct Target {
     /// or `None` while the family's encoding is unspecified. See
     /// [`plaintext_kind`](Self::plaintext_kind) for the parsed kind.
     pub plaintext: Option<&'static str>,
-    /// The stored value's PostgreSQL domain: `public.eql_v3_text_eq`.
+    /// The stored value's PostgreSQL domain: `public.eql_v4_text_eq`.
     pub sql_domain: &'static str,
     /// The indexes the type carries, by `IndexSpec::key()` name.
     pub indexes: &'static [&'static str],
@@ -129,6 +135,19 @@ impl Target {
     /// [`plaintext`](Self::plaintext).
     pub fn plaintext_kind(&self) -> Option<ValueKind> {
         self.plaintext.and_then(|name| name.parse().ok())
+    }
+
+    /// The options this type's match index is built under, for a type that
+    /// carries one (`TextMatch`): [`EqlMatch`](super::EqlMatch)'s, the one
+    /// match configuration every EQL type's filter is built under. `None`
+    /// for a type with no match index. Stack Encrypt answers `matches`
+    /// through the type with them, cutting the query's tokens for `verify`
+    /// as the stored filter was cut.
+    pub fn match_options(&self) -> Option<stack_encrypt::sem::MatchOptions> {
+        use stack_encrypt::sem::MatchConfig;
+        self.indexes
+            .contains(&"match")
+            .then(super::EqlMatch::options)
     }
 }
 
@@ -383,8 +402,15 @@ pub(crate) fn refuse(name: &str) -> TargetError {
 }
 
 mod sealed {
+    use super::plaintext::{Bool, Float32, Float64, Int32, Int64};
+
     pub trait Sealed {}
     impl Sealed for String {}
+    impl Sealed for Int32 {}
+    impl Sealed for Int64 {}
+    impl Sealed for Bool {}
+    impl Sealed for Float32 {}
+    impl Sealed for Float64 {}
 }
 
 /// A Rust plaintext an EQL type is produced from, read out of and written
@@ -392,7 +418,7 @@ mod sealed {
 /// plaintext types the catalog's producible families name, and the generated
 /// dispatch picks one per type. `Zeroize`, because [`from_value`](Self::from_value)
 /// copies the plaintext out of the runtime value's `Protected` buffer and
-/// the copy is wiped when it is dropped ([`run_target`] holds it in
+/// the copy is wiped when it is dropped (`run_target` holds it in
 /// [`zeroize::Zeroizing`]), as the original is.
 pub trait Plaintext: sealed::Sealed + Sized + MaybeSend + zeroize::Zeroize + 'static {
     /// The kind of value this plaintext is.
@@ -428,6 +454,39 @@ impl Plaintext for String {
         FfiValue::String(self.into())
     }
 }
+
+/// The scalar plaintexts read exactly their own kind: a JSON number is not
+/// narrowed or widened into another width, because the stored bytes must be
+/// the declared kind's.
+macro_rules! scalar_plaintext {
+    ($($ty:ident => $variant:ident),+ $(,)?) => {$(
+        impl Plaintext for plaintext::$ty {
+            const KIND: ValueKind = ValueKind::$variant;
+
+            fn from_value(target: &'static str, value: FfiValue) -> Result<Self, TargetError> {
+                match value {
+                    FfiValue::$variant(v) => Ok(plaintext::$ty(v)),
+                    other => Err(TargetError::Plaintext {
+                        target,
+                        expected: Self::KIND,
+                        found: other.kind(),
+                    }),
+                }
+            }
+
+            fn into_value(self) -> FfiValue {
+                FfiValue::$variant(self.0)
+            }
+        }
+    )+};
+}
+scalar_plaintext!(
+    Int32 => Int32,
+    Int64 => Int64,
+    Bool => Bool,
+    Float32 => Float32,
+    Float64 => Float64,
+);
 
 /// Run a target's own plan over one runtime value and resolve to the EQL
 /// value's JSON bytes. The generated dispatch calls this with the type and
@@ -520,7 +579,7 @@ mod tests {
         );
         assert_eq!(
             target("TextEq").map(|t| t.sql_domain),
-            Some("public.eql_v3_text_eq")
+            Some("public.eql_v4_text_eq")
         );
         assert_eq!(target("texteq"), None, "names match exactly");
         for t in targets() {
@@ -541,28 +600,13 @@ mod tests {
 
     #[test]
     fn a_producible_type_without_a_query_twin_answers_no_query() {
-        // No such type in the catalog today (`Text` is not producible), so
-        // the rule is pinned on a synthetic row; `refuse_query` on the live
-        // table falls through to `refuse`.
-        let storage_only = Target {
-            name: "Text",
-            family: "text",
-            suffix: "",
-            plaintext: Some("string"),
-            sql_domain: "public.eql_v3_text",
-            indexes: &[],
-            query: None,
-            query_sql_domain: None,
-            producible: true,
-            reason: None,
-        };
-        let leaked: &'static Target = Box::leak(Box::new(storage_only));
+        // `Text` is producible and storage-only, so it has no query twin.
         assert!(matches!(
-            no_query(Some(leaked)),
+            no_query(target("Text")),
             Some(TargetError::NoQuery { name: "Text" })
         ));
         assert_eq!(
-            no_query(Some(leaked)).unwrap().to_string(),
+            refuse_query("Text").to_string(),
             "Text answers no query: it is a storage-only type"
         );
         assert!(
@@ -570,11 +614,11 @@ mod tests {
             "TextEq answers a query"
         );
         assert!(
-            no_query(target("Text")).is_none(),
-            "an unproducible type is refused as that"
+            no_query(target("Json")).is_none(),
+            "an unproducible type without a query twin is refused as unproducible"
         );
         assert!(matches!(
-            refuse_query("Text"),
+            refuse_query("Json"),
             TargetError::Unproducible { .. }
         ));
         assert!(matches!(refuse_query("Nope"), TargetError::Unknown { .. }));
@@ -585,7 +629,7 @@ mod tests {
         assert!(matches!(refuse("Nope"), TargetError::Unknown { name } if name == "Nope"));
         assert!(matches!(
             refuse("TextOrdOre"),
-            TargetError::Unproducible { name: "TextOrdOre", reason } if reason.contains("CLLW")
+            TargetError::Unproducible { name: "TextOrdOre", reason } if reason.contains("vitaminc-ore")
         ));
         assert!(producible("TextEq").is_ok());
     }

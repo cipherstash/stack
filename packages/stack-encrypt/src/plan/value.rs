@@ -34,7 +34,7 @@ impl Plan<(), ()> {
     /// # async fn example() -> Result<(), stack_encrypt::Error> {
     /// use stack_encrypt::kms::FakeDataKeySource;
     /// use stack_encrypt::sem::EqualityTerm;
-    /// use stack_encrypt::{Equality, Ore, Plan, StackCipher, StackCipherText};
+    /// use stack_encrypt::{op, Equality, Ore, Plan, StackCipher, StackCipherText};
     ///
     /// let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
     ///
@@ -52,10 +52,9 @@ impl Plan<(), ()> {
     /// let email = String::from("bob@example.com");
     /// let (c, eq) = cipher.encrypt(&email).context("users/email").using(&email_plan).await?;
     /// let query_value = cipher
-    ///     .query("bob@example.com")
+    ///     .query(op::Eq, "bob@example.com")
     ///     .context("users/email")
-    ///     .using(&email_plan)
-    ///     .equality()
+    ///     .on(&email_plan)
     ///     .await?;
     /// assert_eq!(query_value, eq);
     /// let back = cipher.open((c, eq)).context("users/email").using(&email_plan).await?;
@@ -152,7 +151,7 @@ impl<S> ValueStart<S> {
     /// Unlike a fields plan's context field, the context here is a `C`, not
     /// a [`Label`], so the plan does not run through the chain:
     /// `cipher.encrypt(..).using`, `cipher.open(..).using` and
-    /// `cipher.query(..).using` do not take it (it is neither
+    /// `cipher.query(..).on` do not take it (it is neither
     /// [`Runs`](super::Runs) nor [`Opens`](super::Opens)), and it has no
     /// query path. Run it as the derive does, with its two descriptions:
     /// `keyset.run(plan.encryption_with_context(), &value, context)` and
@@ -661,7 +660,7 @@ macro_rules! indexed_opens {
     ($([$($generics:tt)*] $record:ty;)+) => {$(
         impl<S, X, K, $($generics)*> Opens<$record, K> for ValuePlan<S, Indexed<X>>
         where
-            S: crate::Decrypt<'static> + 'static,
+            S: crate::Decrypt + Send + 'static,
             K: 'static,
         {
             type Output = S;
@@ -679,7 +678,7 @@ macro_rules! indexed_opens {
         }
         impl<S, X, K, $($generics)*> Opens<Vec<$record>, K> for ValuePlan<S, Indexed<X>>
         where
-            S: crate::Decrypt<'static> + 'static,
+            S: crate::Decrypt + Send + 'static,
             K: 'static,
         {
             type Output = Vec<S>;

@@ -15,5 +15,5 @@ note: required by a bound in `Encryption::<'s, S, T, K, Ctx, M>::zip`
    |            ^^^^^^^^^^^^^^^^^^ required by this bound in `Encryption::<'s, S, T, K, Ctx, M>::zip`
 help: consider further restricting type parameter `S` with trait `Clone`
    |
- 9 | fn seal_and_index<S: Encrypt + vitaminc_prf::PrfValue + std::clone::Clone>(
-   |                                                       +++++++++++++++++++
+ 9 | fn seal_and_index<S: Encrypt + std::clone::Clone>(
+   |                              +++++++++++++++++++

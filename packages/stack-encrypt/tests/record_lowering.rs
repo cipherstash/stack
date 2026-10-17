@@ -1,10 +1,10 @@
 //! The record fixture is the proof of the lowering (ADR-0007, amended
 //! 2026-10-06): a Rust chain and the data-plan lowering each open the
 //! records the other sealed, and both derive the same bytes for each term.
-//! The chain's fields are `dynamic::Value`s, the plaintext type a binding's
+//! The chain's fields are `dynamic::FfiValue`s, the plaintext type a binding's
 //! values have, so the two authors write one declaration over one type; a
-//! chain over bare `u32`/`String` fields shares the terms and not the leaves
-//! (see `dynamic::record`). `tests/fixtures/record_lowering.json` holds one
+//! chain over bare `u32`/`String` fields seals the same tagged leaves (see
+//! `dynamic::record`). `tests/fixtures/record_lowering.json` holds one
 //! record from each author, sealed under a deterministic key source so the
 //! bytes open in any process, and its README gives the schema a Go test
 //! reads later.
@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use common::{deterministic_cipher, DeterministicSource};
 use serde_json::{json, Map, Value as Json};
 use stack_encrypt::dynamic::record::{self, Plan as DataPlan};
-use stack_encrypt::dynamic::{FfiValue, Scope, TermBytes, Value};
+use stack_encrypt::dynamic::{FfiValue, Scope, TermBytes};
 use stack_encrypt::plan::{pick, FieldValues};
 use stack_encrypt::sem::MatchOptions;
 use stack_encrypt::target::{Encrypted, IndexSpec};
@@ -39,22 +39,22 @@ use vitaminc_protected::Controlled;
 const SEED: [u8; 32] = *b"stack-encrypt record fixture v1 ";
 
 struct User {
-    age: Value,
-    email: Value,
-    notes: Value,
+    age: FfiValue,
+    email: FfiValue,
+    notes: FfiValue,
     id: u32,
 }
 
 fn user() -> User {
     User {
-        age: Value::new(FfiValue::UInt32(34)),
-        email: Value::new(FfiValue::String("bob@example.com".into())),
-        notes: Value::new(FfiValue::String("likes cats".into())),
+        age: FfiValue::UInt32(34),
+        email: FfiValue::String("bob@example.com".into()),
+        notes: FfiValue::String("likes cats".into()),
         id: 42,
     }
 }
 
-/// The one declaration, as the Rust chain writes it over `Value` fields.
+/// The one declaration, as the Rust chain writes it over `FfiValue` fields.
 fn typed_plan() -> Plan<User, DeterministicSource> {
     Plan::context("users")
         .fields()
@@ -178,7 +178,7 @@ fn json_of_record(tree: StackCipherText) -> Json {
             let value = match (key.as_str(), node) {
                 ("c", CipherText::Single(leaf)) => json!(hex(&leaf.to_bytes())),
                 ("passthrough", CipherText::Passthrough(payload)) => {
-                    match *payload.downcast::<FfiValue>().expect("a value") {
+                    match FfiValue::from_frame(&payload.0).expect("a value") {
                         FfiValue::UInt32(v) => json!(v),
                         FfiValue::String(s) => {
                             json!(String::from_utf8(s.risky_ref().to_vec()).expect("utf8"))
@@ -187,7 +187,7 @@ fn json_of_record(tree: StackCipherText) -> Json {
                     }
                 }
                 (_, CipherText::Passthrough(payload)) => {
-                    match *payload.downcast::<FfiValue>().expect("a value") {
+                    match FfiValue::from_frame(&payload.0).expect("a value") {
                         FfiValue::Bytes(bytes) => json!(hex(bytes.risky_ref())),
                         _ => panic!("a term is bytes"),
                     }
@@ -199,6 +199,14 @@ fn json_of_record(tree: StackCipherText) -> Json {
         let _ = out.insert(name, Json::Object(field));
     }
     Json::Object(out)
+}
+
+/// A value as a passthrough node: its frame, in the clear.
+fn passthrough(value: FfiValue) -> StackCipherText {
+    use vitaminc_protected::Controlled;
+    CipherText::Passthrough(stack_encrypt::PassthroughFrame(
+        value.to_frame().expect("a value frames").risky_unwrap(),
+    ))
 }
 
 fn record_of_json(record: &Json) -> StackCipherText {
@@ -216,20 +224,16 @@ fn record_of_json(record: &Json) -> StackCipherText {
                                 SealedValue::from_bytes(&unhex(value.as_str().expect("hex")))
                                     .expect("a frozen leaf"),
                             ),
-                            "passthrough" => CipherText::Passthrough(Box::new(match value {
+                            "passthrough" => passthrough(match value {
                                 Json::String(text) => FfiValue::String(text.as_str().into()),
                                 _ => FfiValue::UInt32(
                                     u32::try_from(value.as_u64().expect("an integer"))
                                         .expect("u32"),
                                 ),
-                            })
-                                as stack_encrypt::BoxedPassthrough),
-                            _ => CipherText::Passthrough(Box::new(FfiValue::Bytes(
-                                vitaminc_protected::Protected::new(unhex(
-                                    value.as_str().expect("hex"),
-                                )),
-                            ))
-                                as stack_encrypt::BoxedPassthrough),
+                            }),
+                            _ => passthrough(FfiValue::Bytes(vitaminc_protected::Protected::new(
+                                unhex(value.as_str().expect("hex")),
+                            ))),
                         };
                         (key.clone(), node)
                     })
@@ -248,10 +252,7 @@ fn record_of_typed(mut values: FieldValues) -> StackCipherText {
     let notes: StackCipherText = values.take("notes").expect("notes");
     let id: u32 = values.take("id").expect("id");
     let term = |bytes: Vec<u8>| -> StackCipherText {
-        CipherText::Passthrough(
-            Box::new(FfiValue::Bytes(vitaminc_protected::Protected::new(bytes)))
-                as stack_encrypt::BoxedPassthrough,
-        )
+        passthrough(FfiValue::Bytes(vitaminc_protected::Protected::new(bytes)))
     };
     CipherText::Map(vec![
         (
@@ -275,9 +276,7 @@ fn record_of_typed(mut values: FieldValues) -> StackCipherText {
             "id".into(),
             CipherText::Map(vec![(
                 "passthrough".into(),
-                CipherText::Passthrough(
-                    Box::new(FfiValue::UInt32(id)) as stack_encrypt::BoxedPassthrough
-                ),
+                passthrough(FfiValue::UInt32(id)),
             )]),
         ),
     ])
@@ -303,7 +302,7 @@ fn typed_of_record(tree: StackCipherText) -> FieldValues {
                     let CipherText::Passthrough(payload) = node else {
                         panic!("a passthrough node");
                     };
-                    let FfiValue::UInt32(id) = *payload.downcast::<FfiValue>().expect("a value")
+                    let FfiValue::UInt32(id) = FfiValue::from_frame(&payload.0).expect("a value")
                     else {
                         panic!("a u32");
                     };
@@ -366,8 +365,7 @@ async fn open_typed(cipher: &StackCipher<DeterministicSource>, tree: StackCipher
         .using(&typed_plan())
         .await
         .expect("the typed chain opens it");
-    let mut value =
-        |name: &str| json_of_opened(opened.take::<Value>(name).expect(name).into_inner());
+    let mut value = |name: &str| json_of_opened(opened.take::<FfiValue>(name).expect(name));
     let (age, email, notes) = (value("age"), value("email"), value("notes"));
     json!({
         "age": age,
@@ -524,15 +522,15 @@ fn write_fixture(path: &PathBuf, fixture: &Json) {
 /// context, `text` is sealed and indexed under `<tenant>/text`, `id` is
 /// carried through.
 struct Note {
-    tenant: Value,
-    text: Value,
+    tenant: FfiValue,
+    text: FfiValue,
     id: u32,
 }
 
 fn note() -> Note {
     Note {
-        tenant: Value::new(FfiValue::String("tenants/acme".into())),
-        text: Value::new(FfiValue::String("hello".into())),
+        tenant: FfiValue::String("tenants/acme".into()),
+        text: FfiValue::String("hello".into()),
         id: 42,
     }
 }
@@ -573,19 +571,13 @@ fn globex() -> Label {
 
 /// The typed chain's note record, shaped as the stored tree.
 fn record_of_note(mut values: FieldValues) -> StackCipherText {
-    let tenant: Value = values.take("tenant").expect("tenant");
+    let tenant: FfiValue = values.take("tenant").expect("tenant");
     let text: Encrypted<TermBytes> = values.take("text").expect("text");
     let id: u32 = values.take("id").expect("id");
-    let passthrough = |value: FfiValue| -> StackCipherText {
-        CipherText::Passthrough(Box::new(value) as stack_encrypt::BoxedPassthrough)
-    };
     CipherText::Map(vec![
         (
             "tenant".into(),
-            CipherText::Map(vec![(
-                "passthrough".into(),
-                passthrough(tenant.into_inner()),
-            )]),
+            CipherText::Map(vec![("passthrough".into(), passthrough(tenant))]),
         ),
         (
             "text".into(),
@@ -628,12 +620,12 @@ fn note_of_record(tree: StackCipherText) -> FieldValues {
                     let CipherText::Passthrough(payload) = node else {
                         panic!("a passthrough node");
                     };
-                    match *payload.downcast::<FfiValue>().expect("a value") {
+                    match FfiValue::from_frame(&payload.0).expect("a value") {
                         FfiValue::UInt32(id) => {
                             let _ = values.insert(&name, id);
                         }
                         text => {
-                            let _ = values.insert(&name, Value::new(text));
+                            let _ = values.insert(&name, text);
                         }
                     }
                 }
@@ -679,8 +671,7 @@ async fn open_note_typed(
         Some(expected) => open.context(expected).using(&note_plan()).await?,
         None => open.using(&note_plan()).await?,
     };
-    let mut value =
-        |name: &str| json_of_opened(opened.take::<Value>(name).expect(name).into_inner());
+    let mut value = |name: &str| json_of_opened(opened.take::<FfiValue>(name).expect(name));
     let (tenant, text) = (value("tenant"), value("text"));
     Ok(json!({ "tenant": tenant, "text": text, "id": opened.take::<u32>("id").expect("id") }))
 }

@@ -16,6 +16,41 @@ const _ = gensupport.GeneratedVersion1
 // Probe prints its sealed fields in the clear: it has no String or LogValue
 // method. Write them, or run stashgen with -redact.
 
+// U32: stores ope terms that no generated method queries: the engine answers no
+// query through the ope index on this field (uint32): the ore index already
+// answers lt and the other orderings. Drop the index unless your own code
+// compares the stored terms.
+
+// U64: stores ope terms that no generated method queries: the engine answers no
+// query through the ope index on this field (uint64): the ore index already
+// answers lt and the other orderings. Drop the index unless your own code
+// compares the stored terms.
+
+// I64: stores ope terms that no generated method queries: the engine answers no
+// query through the ope index on this field (int64): the ore index already
+// answers lt and the other orderings. Drop the index unless your own code
+// compares the stored terms.
+
+// S: stores ore terms that no generated method queries: the engine answers no
+// query through the ore index on this field (string): the orderings are
+// answered over integers only. Drop the index unless your own code compares the
+// stored terms.
+
+// S: stores ope terms that no generated method queries: the engine answers no
+// query through the ope index on this field (string): the orderings are
+// answered over integers only. Drop the index unless your own code compares the
+// stored terms.
+
+// B: stores ore terms that no generated method queries: the engine answers no
+// query through the ore index on this field ([]byte): the orderings are
+// answered over integers only. Drop the index unless your own code compares the
+// stored terms.
+
+// B: stores ope terms that no generated method queries: the engine answers no
+// query through the ope index on this field ([]byte): the orderings are
+// answered over integers only. Drop the index unless your own code compares the
+// stored terms.
+
 type EncryptedProbe struct {
 	U32 EncryptedProbeU32
 	U64 EncryptedProbeU64
@@ -193,12 +228,29 @@ func (f ProbeU32Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint32)
 	return EncryptedProbeU32{Ciphertext: out.Ciphertext, Ore: out.Ore, Ope: out.Ope}, nil
 }
 
-func (f ProbeU32Field) Ore(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
-	return f.field.Ore(ctx, c, v)
+func (f ProbeU32Field) Lt(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lt", v)
+	return encrypt.OreTerm(term), err
 }
 
-func (f ProbeU32Field) Ope(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OpeTerm, error) {
-	return f.field.Ope(ctx, c, v)
+func (f ProbeU32Field) Lte(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f ProbeU32Field) Gt(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f ProbeU32Field) Gte(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f ProbeU32Field) Between(ctx context.Context, c *encrypt.Cipher, lo, hi uint32) (encrypt.Range[encrypt.OreTerm], error) {
+	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
 }
 
 type ProbeU64Field struct {
@@ -213,12 +265,29 @@ func (f ProbeU64Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint64)
 	return EncryptedProbeU64{Ciphertext: out.Ciphertext, Ore: out.Ore, Ope: out.Ope}, nil
 }
 
-func (f ProbeU64Field) Ore(ctx context.Context, c *encrypt.Cipher, v uint64) (encrypt.OreTerm, error) {
-	return f.field.Ore(ctx, c, v)
+func (f ProbeU64Field) Lt(ctx context.Context, c *encrypt.Cipher, v uint64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lt", v)
+	return encrypt.OreTerm(term), err
 }
 
-func (f ProbeU64Field) Ope(ctx context.Context, c *encrypt.Cipher, v uint64) (encrypt.OpeTerm, error) {
-	return f.field.Ope(ctx, c, v)
+func (f ProbeU64Field) Lte(ctx context.Context, c *encrypt.Cipher, v uint64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f ProbeU64Field) Gt(ctx context.Context, c *encrypt.Cipher, v uint64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f ProbeU64Field) Gte(ctx context.Context, c *encrypt.Cipher, v uint64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f ProbeU64Field) Between(ctx context.Context, c *encrypt.Cipher, lo, hi uint64) (encrypt.Range[encrypt.OreTerm], error) {
+	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
 }
 
 type ProbeI64Field struct {
@@ -233,12 +302,29 @@ func (f ProbeI64Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v int64) 
 	return EncryptedProbeI64{Ciphertext: out.Ciphertext, Ore: out.Ore, Ope: out.Ope}, nil
 }
 
-func (f ProbeI64Field) Ore(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OreTerm, error) {
-	return f.field.Ore(ctx, c, v)
+func (f ProbeI64Field) Lt(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lt", v)
+	return encrypt.OreTerm(term), err
 }
 
-func (f ProbeI64Field) Ope(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OpeTerm, error) {
-	return f.field.Ope(ctx, c, v)
+func (f ProbeI64Field) Lte(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f ProbeI64Field) Gt(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f ProbeI64Field) Gte(ctx context.Context, c *encrypt.Cipher, v int64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f ProbeI64Field) Between(ctx context.Context, c *encrypt.Cipher, lo, hi int64) (encrypt.Range[encrypt.OreTerm], error) {
+	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
 }
 
 type ProbeSField struct {
@@ -253,14 +339,6 @@ func (f ProbeSField) Encrypt(ctx context.Context, c *encrypt.Cipher, v string) (
 	return EncryptedProbeS{Ciphertext: out.Ciphertext, Ore: out.Ore, Ope: out.Ope}, nil
 }
 
-func (f ProbeSField) Ore(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.OreTerm, error) {
-	return f.field.Ore(ctx, c, v)
-}
-
-func (f ProbeSField) Ope(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.OpeTerm, error) {
-	return f.field.Ope(ctx, c, v)
-}
-
 type ProbeBField struct {
 	field gensupport.Field[[]byte]
 }
@@ -271,12 +349,4 @@ func (f ProbeBField) Encrypt(ctx context.Context, c *encrypt.Cipher, v []byte) (
 		return EncryptedProbeB{}, err
 	}
 	return EncryptedProbeB{Ciphertext: out.Ciphertext, Ore: out.Ore, Ope: out.Ope}, nil
-}
-
-func (f ProbeBField) Ore(ctx context.Context, c *encrypt.Cipher, v []byte) (encrypt.OreTerm, error) {
-	return f.field.Ore(ctx, c, v)
-}
-
-func (f ProbeBField) Ope(ctx context.Context, c *encrypt.Cipher, v []byte) (encrypt.OpeTerm, error) {
-	return f.field.Ope(ctx, c, v)
 }

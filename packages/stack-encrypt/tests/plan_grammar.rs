@@ -12,6 +12,7 @@ use std::sync::atomic::Ordering;
 
 use common::{counting_cipher, loads_counting_cipher, recording_cipher, stack_cipher};
 use stack_encrypt::kms::FakeDataKeySource;
+use stack_encrypt::op;
 use stack_encrypt::plan::{pick, Field, FieldKind, FieldValues, Fields, Opens, PlanError, Runs};
 use stack_encrypt::sem::{
     EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OpeTerm, OreTerm, Tokenizer,
@@ -141,10 +142,9 @@ async fn a_plan_built_without_a_context_takes_the_calls() {
     let stored: Encrypted<EqualityTerm> = record.take("email").unwrap();
 
     let query_value = cipher
-        .query("bob@example.com")
+        .query(op::Eq, "bob@example.com")
         .context("tenants/acme")
-        .using(&email_plan)
-        .equality()
+        .on(&email_plan)
         .await
         .unwrap();
     assert_eq!(
@@ -152,10 +152,9 @@ async fn a_plan_built_without_a_context_takes_the_calls() {
         "a query naming the same context matches"
     );
     let elsewhere = cipher
-        .query("bob@example.com")
+        .query(op::Eq, "bob@example.com")
         .context("tenants/globex")
-        .using(&email_plan)
-        .equality()
+        .on(&email_plan)
         .await
         .unwrap();
     assert_ne!(elsewhere, stored.terms);
@@ -185,9 +184,8 @@ async fn a_plan_run_with_no_context_is_refused_before_any_key_request() {
     assert_eq!(
         plan_error(
             cipher
-                .query("bob@example.com")
-                .using(&users_plan.field("email").unwrap())
-                .equality()
+                .query(op::Eq, "bob@example.com")
+                .on(&users_plan.field("email").unwrap())
                 .await
         ),
         PlanError::NoContext
@@ -210,7 +208,7 @@ async fn a_plan_run_with_no_context_is_refused_before_any_key_request() {
         PlanError::NoContext
     );
     assert_eq!(
-        plan_error(cipher.query(&34u32).using(&age_plan).equality().await),
+        plan_error(cipher.query(op::Eq, &34u32).on(&age_plan).await),
         PlanError::NoContext
     );
     let age = cipher
@@ -289,10 +287,9 @@ async fn a_context_given_twice_is_refused_at_the_call_before_any_key_request() {
     assert_eq!(
         plan_error(
             cipher
-                .query("bob@example.com")
+                .query(op::Eq, "bob@example.com")
                 .context("users")
-                .using(&users_plan.field("email").unwrap())
-                .equality()
+                .on(&users_plan.field("email").unwrap())
                 .await
         ),
         two("the plan", "the call")
@@ -339,10 +336,9 @@ async fn a_context_given_twice_is_refused_at_the_call_before_any_key_request() {
     assert_eq!(
         plan_error(
             cipher
-                .query(&34u32)
+                .query(op::Eq, &34u32)
                 .context("users/age")
-                .using(&age_plan)
-                .equality()
+                .on(&age_plan)
                 .await
         ),
         two("the plan", "the call")
@@ -365,10 +361,9 @@ async fn a_call_context_that_is_not_a_label_is_refused() {
     )));
     assert!(bad(plan_error(
         cipher
-            .query("bob@example.com")
+            .query(op::Eq, "bob@example.com")
             .context("a//b")
-            .using(&users_plan.field("email").unwrap())
-            .equality()
+            .on(&users_plan.field("email").unwrap())
             .await
     )));
     assert!(bad(plan_error(
@@ -836,10 +831,9 @@ async fn a_context_field_is_the_context_of_every_other_field() {
 
     // A query names the context field's value.
     let query_value = cipher
-        .query("bob@example.com")
+        .query(op::Eq, "bob@example.com")
         .context("tenants/acme")
-        .using(&records_plan.field("email").unwrap())
-        .equality()
+        .on(&records_plan.field("email").unwrap())
         .await
         .unwrap();
     assert_eq!(query_value, stored.terms);
@@ -966,7 +960,7 @@ struct One<F> {
 /// other plan.
 async fn same_field_bytes<F, Terms, X>(value: F, indexes: X)
 where
-    F: Encrypt + Decrypt<'static> + Clone + Send + Sync + PartialEq + Debug + 'static,
+    F: Encrypt + Decrypt + Clone + Send + Sync + PartialEq + Debug + 'static,
     Terms: TermSet<F> + PartialEq + Debug + Send,
     X: Indexes<F, Terms = Terms> + Clone + Send + Sync + 'static,
 {
@@ -1090,7 +1084,7 @@ fn a_five_index_field_is_refused_by_both_spellings() {
         .fields::<One<String>, FakeDataKeySource>()
         .encrypt_index(
             pick("v", |o: &One<String>| &o.v),
-            (Equality, Match::default(), Ore, Ope, Match::<Words>::new()),
+            (Equality, Match, Ore, Ope, Match::<Words>::new()),
         )
         .build();
     assert_eq!(plan_error(data), refused());
@@ -1128,38 +1122,35 @@ async fn a_typed_field_answers_the_queries_its_target_declares_and_no_other() {
 
     let email_plan = users_plan.field("email").unwrap();
     let query_value = cipher
-        .query("bob@example.com")
-        .using(&email_plan)
-        .equality()
+        .query(op::Eq, "bob@example.com")
+        .on(&email_plan)
         .await
         .unwrap();
     assert_eq!(query_value, stored.terms.0);
     let matched = cipher
-        .query("bob@example.com")
-        .using(&email_plan)
-        .index(Match::default())
+        .query(op::Matches, "bob@example.com")
+        .on(&email_plan)
         .await
         .unwrap();
-    assert_eq!(matched, stored.terms.1);
+    assert_eq!(matched.positions(), stored.terms.1.positions());
     assert_eq!(
         plan_error(
             cipher
-                .query("bob@example.com")
-                .using(&email_plan)
-                .index(Ore)
+                .query(op::Lt, &34u32)
+                .via(Ope)
+                .on(&users_plan.field("age").unwrap())
                 .await
         ),
         PlanError::IndexNotDeclared {
-            field: "email".into(),
-            index: "ore"
+            field: "age".into(),
+            index: "ope"
         }
     );
     assert_eq!(
         plan_error(
             cipher
-                .query(&34u32)
-                .using(&users_plan.field("age").unwrap())
-                .equality()
+                .query(op::Eq, &34u32)
+                .on(&users_plan.field("age").unwrap())
                 .await
         ),
         PlanError::IndexNotDeclared {
@@ -1183,9 +1174,8 @@ async fn a_typed_field_of_terms_alone_does_not_come_back() {
     let mut record = cipher.encrypt(&user()).using(&users_plan).await.unwrap();
     let term: EqualityTerm = record.take("email").unwrap();
     let query_value = cipher
-        .query("bob@example.com")
-        .using(&users_plan.field("email").unwrap())
-        .equality()
+        .query(op::Eq, "bob@example.com")
+        .on(&users_plan.field("email").unwrap())
         .await
         .unwrap();
     assert_eq!(query_value, term);
@@ -1332,23 +1322,22 @@ async fn a_one_value_typed_plan_answers_its_targets_queries_and_no_other() {
     let email = String::from("bob@example.com");
     let (_, hm) = cipher.encrypt(&email).using(&email_plan).await.unwrap();
     let query_value = cipher
-        .query("bob@example.com")
-        .using(&email_plan)
-        .equality()
+        .query(op::Eq, "bob@example.com")
+        .on(&email_plan)
         .await
         .unwrap();
     assert_eq!(query_value, hm);
     assert_eq!(
         plan_error(
             cipher
-                .query("bob@example.com")
-                .using(&email_plan)
-                .index(Ore)
+                .query(op::Matches, "bob")
+                .via(Match)
+                .on(&email_plan)
                 .await
         ),
         PlanError::IndexNotDeclared {
             field: "the value".into(),
-            index: "ore"
+            index: "match"
         }
     );
 }
@@ -1367,17 +1356,17 @@ async fn a_one_value_plan_quotes_no_call_context_in_its_refusals() {
 
     let error = plan_error(
         cipher
-            .query("bob@example.com")
+            .query(op::Matches, "bob")
             .context(marker)
-            .using(&plan)
-            .index(Ore)
+            .via(Match)
+            .on(&plan)
             .await,
     );
     assert_eq!(
         error,
         PlanError::IndexNotDeclared {
             field: "the value".into(),
-            index: "ore"
+            index: "match"
         }
     );
     let message = error.to_string();
@@ -1630,9 +1619,8 @@ async fn a_pinned_identity_rescues_a_field_name_that_is_not_plain() {
     );
     let value: Encrypted<EqualityTerm> = record.take("0").unwrap();
     let query_value = cipher
-        .query(&21u32)
-        .using(&readings_plan.field("0").unwrap())
-        .equality()
+        .query(op::Eq, &21u32)
+        .on(&readings_plan.field("0").unwrap())
         .await
         .unwrap();
     assert_eq!(query_value, value.terms);
@@ -1683,10 +1671,9 @@ async fn a_pinned_identity_keys_a_call_context_plan_for_query_and_open() {
     assert_eq!(sent.lock().unwrap().generated(), ["reading/value"]);
     let stored: Encrypted<EqualityTerm> = record.take("0").unwrap();
     let query_value = cipher
-        .query(&21u32)
+        .query(op::Eq, &21u32)
         .context("reading")
-        .using(&readings_plan.field("0").unwrap())
-        .equality()
+        .on(&readings_plan.field("0").unwrap())
         .await
         .unwrap();
     assert_eq!(query_value, stored.terms);

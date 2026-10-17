@@ -378,7 +378,7 @@ async fn match_term_bytes_are_pinned() {
     let bytes = term.to_bytes();
     assert_eq!(
         hex(&bytes),
-        "040005000a000d000e001e002700350038003d0055005e005f0064006f007d007f009c00ad00bc00bd00ca00d000e000e500ef00"
+        "06000f001c0028003300360037003d0040005c0073009400970099009b00a100a300ac00b100b300ba00bb00c500d800f600fb00fe00"
     );
     assert_eq!(
         MatchTerms::<DefaultMatch>::from_bytes(&bytes).expect("decode match term"),

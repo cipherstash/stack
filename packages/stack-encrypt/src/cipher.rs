@@ -2,11 +2,13 @@
 //! module documents the internals.
 //!
 //! `StackCipher` is scoped to one ZeroKMS client; a [`KeysetCipher`] — the
-//! cipher bound to one of that client's keysets — is a vitaminc [`Cipher`]
-//! whose per-leaf keys are ZeroKMS data keys, minted under that keyset,
-//! rather than one fixed key. Structurally it mirrors
-//! `vitaminc_encrypt::Aes256Cipher`: encrypting an [`Encrypt`] value produces
-//! a recursive ciphertext tree ([`StackCipherText`], the analog of
+//! cipher bound to one of that client's keysets — seals values whose
+//! per-leaf keys are ZeroKMS data keys, minted under that keyset, rather
+//! than one fixed key. The value side is vitaminc's: a value describes
+//! itself once ([`Encrypt`]), vitaminc plans it into a tree of pending
+//! leaves, each with its tagged plaintext and the AAD its place derives,
+//! and a bytes-only [`Cipher`] seals and opens one leaf at a time. The
+//! result is a ciphertext tree ([`StackCipherText`], the analog of
 //! `AesCipherText`) whose leaves ([`SealedValue`]) each carry the ZeroKMS
 //! metadata for their own data key — the keyset it was minted under
 //! included, which is why decrypting needs no keyset named and lives on the
@@ -14,41 +16,48 @@
 //!
 //! ## Batching the key fetch
 //!
-//! Data-key generation/retrieval is an async ZeroKMS round-trip, so the key
-//! fetch cannot happen inside the synchronous [`Cipher`]/[`Decipher`] trait
-//! methods. It is front-loaded on both sides; the AES work stays inside the
-//! trait drive:
+//! Data-key generation/retrieval is an async ZeroKMS round-trip, and each
+//! leaf needs its own key, so the keys are fetched for the whole tree
+//! before any leaf is sealed or opened. The AES work stays in vitaminc's
+//! synchronous walk:
 //!
-//! * **Encrypt** — driving the [`Cipher`] trait over a `&KeysetCipher` builds
-//!   a *pending* tree ([`PendingStackCipherText`]) that holds plaintext plus
-//!   each leaf's fully derived AAD, but does no I/O. A single
+//! * **Encrypt** — [`PendingStackCipherText::plan`] walks the value into
+//!   vitaminc's pending tree and does no I/O. A single
 //!   [`PendingStackCipherText::seal`] (or the [`KeysetCipher::encrypt`]
 //!   convenience) then batches **one** `generate_keys` call for the whole
-//!   tree, under the handle's keyset, and seals every leaf.
+//!   tree, under the handle's keyset, and seals every leaf through
+//!   `MintedKeys`, the sealing half of this crate's [`Cipher`], one key per
+//!   leaf in walk order.
 //! * **Decrypt** — [`StackCipher::decrypt`] batches **one** `retrieve_keys`
-//!   call per keyset the leaves were sealed under and zips each key onto its
-//!   leaf, building a [`StackDecipher`] it does not hand out. The
-//!   value's [`Decrypt`] impl then drives that decipher exactly as it would
-//!   `AesDecipher`: each leaf is opened under the AAD the drive supplies, so
-//!   the visitor pattern (nested `Vec`/`HashMap`/`Option`/`Protected` values,
-//!   and AAD-deriving wrappers such as `vitaminc_aead::Element`) works
-//!   identically to `Aes256Cipher`.
+//!   call per keyset the leaves were sealed under and zips each key onto
+//!   its leaf. vitaminc's [`decrypt`](vitaminc_aead::decrypt) then opens
+//!   every leaf through `BoundKeys`, the opening half, and walks the opened
+//!   tree into the value's [`Decrypt`] sink.
+//!
+//! Neither half is vitaminc's `AsyncCipher`. Its `seal_many` batches the
+//! leaves of one document, but a ZeroKMS request names the descriptor of
+//! the context the whole tree is sealed under, which a leaf's derived AAD
+//! does not carry, and the target layer merges the key requests of many
+//! documents (the fields of a record, the rows of a column) into one call
+//! (RFC 0002). So the fetch is the target layer's
+//! [`Pending`](crate::target::Pending), and the cipher vitaminc drives is
+//! the synchronous one.
 //!
 //! ## AAD derivation
 //!
-//! The caller's AAD is refined per node with the same domain-separated
-//! derivations `Aes256Cipher` uses, so the container *shape* is authenticated:
+//! vitaminc derives each leaf's AAD from the caller's, on both sides, with
+//! the same domain-separated derivations every vitaminc cipher gets, so the
+//! container *shape* is authenticated:
 //!
 //! * sequence elements are sealed under [`Context::for_sequence_element`];
 //! * map values under [`Context::for_map_entry`] of their cleartext key (so
 //!   swapping or renaming keys fails decryption);
-//! * authenticated-absent markers under [`Context::for_none`], and empty
-//!   sequences/maps under [`Context::for_empty_sequence`]/[`Context::for_empty_map`] —
-//!   each sealing an *empty* plaintext, verified as empty on open.
+//! * empty sequences/maps under [`Context::for_empty_sequence`] /
+//!   [`Context::for_empty_map`], each sealing an *empty* plaintext,
+//!   verified as empty on open. An absent value (`None`) is a null leaf like
+//!   any other scalar.
 //!
-//! The decrypt side performs the same derivations inside [`StackDecipher`]'s
-//! `decrypt_seq`/`decrypt_map`/`decrypt_option` as the caller's `Decrypt` impl
-//! drives it, so there is a single source of truth for the per-node AAD.
+//! This crate binds its own envelope on top of that, per leaf (below).
 //!
 //! ## Leaf crypto and wire format
 //!
@@ -82,9 +91,7 @@
 //! concatenation). A compatibility module can be added later to read existing
 //! records as customers of `cipherstash-client` migrate.
 
-use std::any::Any;
-use std::borrow::Cow;
-use std::collections::HashSet;
+use std::cell::RefCell;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -96,27 +103,26 @@ use stack_kms::{EnvKeyProvider, StackKms, StackKmsBuilder};
 #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 use stack_kms::{FallbackKeyProvider, KeyProvider, KeyProviderError, ProfileStore};
 use uuid::Uuid;
+use vitaminc_aead::seal::seal_all;
 use vitaminc_aead::{
-    Cipher, CipherText, Context, Decipher, DecipherVisitor, Decrypt, Encrypt, IntoAad, IntoContext,
-    LocalCipherText, MapAccess, MapCipher, SeqAccess, SeqCipher, Unspecified,
+    Cipher, CipherText, Context, Decrypt, Encrypt, IntoAad, IntoContext, LocalCipherText, Node,
+    Pending, Unspecified,
 };
-use vitaminc_encrypt::{Aes256Cipher, AesCipherText, Key as AesKey};
-use vitaminc_protected::{Controlled, Protected};
+use vitaminc_encrypt::{Aes256Cipher, Key as AesKey};
+use vitaminc_protected::Protected;
 
 use crate::keyset::{KeysetCache, KeysetCipher, KeysetState, Lookup, DEFAULT_NAME_TTL};
 use crate::Descriptor;
 
-/// The passthrough payload type: type-erased, as for Rust-native vitaminc
-/// ciphers. Callers box on the way in and downcast on the way out.
-pub type BoxedPassthrough = Box<dyn Any + Send + 'static>;
-
 /// The recursive ciphertext container produced by [`StackCipher`]: vitaminc's
-/// generic [`CipherText`] tree over [`SealedValue`] leaves. Its shape
-/// mirrors the encrypted plaintext: a scalar yields `Single`, a `Vec` yields
-/// `Sequence` (or `EmptySequence`), a `HashMap` or struct yields `Map` (or
-/// `EmptyMap`). Map keys are stored in the clear but bound into their value's
-/// AAD.
-pub type StackCipherText = CipherText<SealedValue, BoxedPassthrough>;
+/// ciphertext tree ([`Node`]) over [`SealedValue`] leaves. Its shape
+/// mirrors the encrypted plaintext: a scalar, `None` included, yields
+/// `Single`, a `Vec` yields `Sequence` (or `EmptySequence`), a `HashMap` or
+/// struct yields `Map` (or `EmptyMap`). Map keys are stored in the clear but
+/// bound into their value's AAD. A passthrough subtree travels in the clear
+/// as a [`PassthroughFrame`](vitaminc_aead::PassthroughFrame): the subtree's
+/// frame bytes.
+pub type StackCipherText = Node<SealedValue>;
 
 /// Errors from sealing or opening a [`StackCipherText`].
 ///
@@ -816,7 +822,7 @@ impl<K: DataKeySource> KeysetCipher<'_, K> {
         A: IntoContext<'a>,
     {
         let context = aad.into_context();
-        let pending = value.encrypt_with_aad(self, context.clone().into_aad())?;
+        let pending = PendingStackCipherText::plan(value, context.clone())?;
         pending.seal(self, context).await
     }
 
@@ -825,61 +831,49 @@ impl<K: DataKeySource> KeysetCipher<'_, K> {
     /// is retrieved.
     pub async fn decrypt<'a, T, A>(&self, ciphertext: StackCipherText, aad: A) -> Result<T, Error>
     where
-        T: Decrypt<'static> + 'static,
+        T: Decrypt,
         A: IntoContext<'a>,
     {
         decrypt_through(self, ciphertext, aad).await
     }
 }
 
-/// Retrieve every leaf's data key under `aad`'s descriptor and bind them
-/// onto the ciphertext, for either scope. The work is the same on both —
-/// one descriptor, one pending, one settle — and the scope is the whole
+/// `decrypt`, for either scope: retrieve every leaf's data key under
+/// `aad`'s descriptor, bind them onto the ciphertext, and open it into `T`
+/// under the same `aad`. The work is the same on both scopes — one
+/// descriptor, one pending, one settle — and the scope is the whole
 /// difference: a [`KeysetCipher`] constrains the leaves to its keyset, a
 /// [`StackCipher`] constrains nothing.
 ///
-/// Deliberately private. The returned [`StackDecipher`] is driven with an
-/// AAD supplied per call, so exposing this would let a caller retrieve keys
-/// under one context and authenticate the ciphertext under an unrelated
-/// one. Every leaf's AAD is a derivation of the descriptor its key was
-/// minted under — `for_sequence_element`, `for_map_entry`, `for_leaf` —
-/// and that derivation is the library's to compute, never the caller's to
-/// supply. [`decrypt_through`] is the only way in, and it passes one `aad`
-/// to both halves.
-async fn decipher_through<'s, 'a, K: DataKeySource + 's>(
-    scope: impl crate::target::CipherScope<'s, K>,
-    ciphertext: StackCipherText,
-    aad: impl IntoContext<'a>,
-) -> Result<StackDecipher, Error> {
-    crate::target::decipher_pending(scope, ciphertext, Descriptor::of(aad))
-        .settle()
-        .await
-}
-
-/// `decrypt`, for either scope: [`decipher_through`], then the value's own
-/// [`Decrypt`] drive under the same `aad`.
+/// One `aad` goes to both halves, and that is the point: every leaf's AAD
+/// is a derivation of the descriptor its key was minted under —
+/// `for_sequence_element`, `for_map_entry`, `for_leaf` — and that
+/// derivation is the library's to compute, never the caller's to supply.
 async fn decrypt_through<'s, 'a, T, K: DataKeySource + 's>(
     scope: impl crate::target::CipherScope<'s, K>,
     ciphertext: StackCipherText,
     aad: impl IntoContext<'a>,
 ) -> Result<T, Error>
 where
-    T: Decrypt<'static> + 'static,
+    T: Decrypt,
 {
     let context = aad.into_context();
-    let decipher = decipher_through(scope, ciphertext, context.clone()).await?;
-    T::decrypt_with_aad(decipher, context.into_aad()).map_err(Error::from)
+    let keyed = crate::target::bind_pending(scope, ciphertext, Descriptor::of(context.clone()))
+        .settle()
+        .await?;
+    open_keyed(keyed, context)
 }
 
 impl<K: DataKeySource> StackCipher<K> {
     /// Decrypt a [`StackCipherText`] into `T`, authenticating against `aad`.
     ///
     /// One batched `retrieve_keys` call per keyset the leaves were sealed
-    /// under, every key under the [`Descriptor`] of `aad`, then `T`'s
-    /// [`Decrypt`] impl drives the resulting [`StackDecipher`] with the
-    /// *same* `aad` — exactly as `Aes256Cipher::decrypt_with_aad` drives
-    /// `AesDecipher`. One context in, and every leaf's AAD derived from it;
-    /// there is no form of this call that takes two.
+    /// under, every key under the [`Descriptor`] of `aad`, then vitaminc
+    /// opens every leaf under the AAD it derives from the *same* `aad` and
+    /// walks the result into `T`'s [`Decrypt`] sink — exactly as
+    /// `vitaminc_aead::decrypt` does over an `Aes256Cipher`. One context in,
+    /// and every leaf's AAD derived from it; there is no form of this call
+    /// that takes two.
     ///
     /// Not keyset-scoped: each leaf carries the id of the keyset it was
     /// sealed under, and this opens leaves from any keyset the client is
@@ -900,7 +894,7 @@ impl<K: DataKeySource> StackCipher<K> {
     /// a foreign leaf before any.
     pub async fn decrypt<'a, T, A>(&self, ciphertext: StackCipherText, aad: A) -> Result<T, Error>
     where
-        T: Decrypt<'static> + 'static,
+        T: Decrypt,
         A: IntoContext<'a>,
     {
         decrypt_through(self, ciphertext, aad).await
@@ -1208,21 +1202,20 @@ impl TryFrom<SealedValueRepr> for SealedValue {
 }
 
 /// A leaf with its retrieved data key bound alongside. Produced by
-/// [`bind_keys`] once the batched `retrieve_keys` call has returned; consumed by
-/// [`StackDecipher`], which opens it under whatever AAD the driving
-/// [`Decrypt`] impl supplies.
+/// [`bind_keys`] once the batched `retrieve_keys` call has returned; opened
+/// by [`BoundKeys`] under the AAD vitaminc's walk derives for its place.
 pub(crate) struct KeyedLeaf {
     leaf: SealedValue,
     key: DataKey,
 }
 
 /// [`StackCipherText`] with a [`DataKey`] zipped onto every keyed leaf.
-pub(crate) type KeyedCipherText = CipherText<KeyedLeaf, BoxedPassthrough>;
+pub(crate) type KeyedCipherText = Node<KeyedLeaf>;
 
 /// Zip retrieved keys onto the tree in the same depth-first order the
-/// target layer requested them (`retrieve_requests`), so each leaf carries its
-/// own key and the subsequent [`Decipher`] drive is free of ordering
-/// assumptions.
+/// target layer requested them (`retrieve_requests`), so each leaf carries
+/// its own key and opening it makes no assumption about the order vitaminc
+/// visits leaves in.
 pub(crate) fn bind_keys(
     ciphertext: StackCipherText,
     keys: &mut impl Iterator<Item = DataKey>,
@@ -1237,7 +1230,6 @@ pub(crate) fn bind_keys(
 
     match ciphertext {
         CipherText::Single(leaf) => Ok(CipherText::Single(bind(leaf, keys)?)),
-        CipherText::None(leaf) => Ok(CipherText::None(bind(leaf, keys)?)),
         CipherText::EmptySequence(leaf) => Ok(CipherText::EmptySequence(bind(leaf, keys)?)),
         CipherText::EmptyMap(leaf) => Ok(CipherText::EmptyMap(bind(leaf, keys)?)),
         CipherText::Sequence(items) => {
@@ -1259,59 +1251,53 @@ pub(crate) fn bind_keys(
 }
 
 // =============================================================================
-// Pending tree (`Cipher::Ok`) — built synchronously, sealed asynchronously
+// Pending tree — planned synchronously, sealed asynchronously
 // =============================================================================
 
-/// The intermediate result of driving the [`Cipher`] trait: a tree that holds
-/// plaintext (and the AAD each leaf will be sealed against, fully derived) but
-/// has done no ZeroKMS I/O. [`seal`](Self::seal) turns it into a
+/// A value planned for sealing: vitaminc's tree of pending leaves, each
+/// holding its tagged plaintext and the AAD its place in the value derives,
+/// with no ZeroKMS I/O done yet. [`seal`](Self::seal) turns it into a
 /// [`StackCipherText`].
-pub enum PendingStackCipherText {
-    /// A scalar awaiting a data key, with its bound (derived) AAD.
-    Single {
-        plaintext: Protected<Vec<u8>>,
-        aad: Context<'static>,
-    },
-    /// A pending sequence with at least one element.
-    Sequence(Vec<PendingStackCipherText>),
-    /// A pending empty-sequence marker; `aad` is already the
-    /// [`Context::for_empty_sequence`] derivation.
-    EmptySequence { aad: Context<'static> },
-    /// A pending map with at least one entry.
-    Map(Vec<(String, PendingStackCipherText)>),
-    /// A pending empty-map marker; `aad` is already the [`Context::for_empty_map`]
-    /// derivation.
-    EmptyMap { aad: Context<'static> },
-    /// A pending authenticated-absent marker; `aad` is already the
-    /// [`Context::for_none`] derivation.
-    None { aad: Context<'static> },
-    /// A passthrough value (needs no key).
-    Passthrough(BoxedPassthrough),
-}
+///
+/// [`plan`](Self::plan) walks the value once, through vitaminc's
+/// `EncryptSink`, which owns every container rule (element and entry AAD,
+/// the empty markers, duplicate keys, a container with nothing sealed in
+/// it). This crate decides only where each leaf's key comes from.
+pub struct PendingStackCipherText(Node<Pending>);
 
 impl PendingStackCipherText {
-    /// Number of leaves that need a ZeroKMS data key (everything but
-    /// passthrough — markers are sealed leaves too).
+    /// Plan `value` for sealing under `aad`. No key is requested.
+    ///
+    /// A value vitaminc refuses to encrypt as given (a map with a repeated
+    /// key, a container whose every child is a passthrough, a nesting deeper
+    /// than the transport carries) is [`Error::Aead`], as it is when the
+    /// value is sealed in one step.
+    pub fn plan<'a, P: Encrypt>(value: P, aad: impl IntoAad<'a>) -> Result<Self, Error> {
+        vitaminc_aead::plan::<_, Unspecified, _>(value, aad)
+            .map(Self)
+            .map_err(|_| Error::Aead)
+    }
+
+    /// Number of leaves that need a ZeroKMS data key: every leaf, the empty
+    /// markers included; a passthrough needs none.
     pub(crate) fn key_count(&self) -> usize {
-        match self {
-            PendingStackCipherText::Single { .. }
-            | PendingStackCipherText::None { .. }
-            | PendingStackCipherText::EmptySequence { .. }
-            | PendingStackCipherText::EmptyMap { .. } => 1,
-            PendingStackCipherText::Sequence(items) => items.iter().map(Self::key_count).sum(),
-            PendingStackCipherText::Map(entries) => {
-                entries.iter().map(|(_, v)| v.key_count()).sum()
+        fn count(node: &Node<Pending>) -> usize {
+            match node {
+                CipherText::Single(_) | CipherText::EmptySequence(_) | CipherText::EmptyMap(_) => 1,
+                CipherText::Sequence(items) => items.iter().map(count).sum(),
+                CipherText::Map(entries) => entries.iter().map(|(_, v)| count(v)).sum(),
+                CipherText::Passthrough(_) => 0,
             }
-            PendingStackCipherText::Passthrough(_) => 0,
         }
+        count(&self.0)
     }
 
     /// Generate one data key per keyed leaf (one batched ZeroKMS call — none
     /// for a passthrough-only tree), every key under the [`Descriptor`] of
     /// `aad`, and seal the whole tree.
     ///
-    /// `aad` is the context the tree was built under — the value passed to
-    /// `encrypt_with_aad`, in the same shape (see the
+    /// `aad` is the context the tree was planned under — the value passed to
+    /// [`plan`](Self::plan), in the same shape (see the
     /// [descriptor docs](crate::descriptor)). The tree itself only carries
     /// the *derived* per-leaf AADs, so the root is named here; nothing can
     /// check that the two agree, which is why [`KeysetCipher::encrypt`], which
@@ -1334,8 +1320,8 @@ impl PendingStackCipherText {
     ///
     /// [`seal`](Self::seal) is this plus an immediate settle — one ZeroKMS
     /// call per tree. `into_pending` exists for callers that hold *several*
-    /// independently built trees (each from its own [`Encrypt`] drive, e.g.
-    /// one per record field in a language binding) and want them merged with
+    /// independently planned trees (one per record field in a language
+    /// binding, say) and want them merged with
     /// [`Pending::zip`](crate::target::Pending::zip) /
     /// [`Pending::all`](crate::target::Pending::all) so the whole assembly
     /// seals in **one** batched `generate_keys` call. Same sealing path
@@ -1360,56 +1346,18 @@ impl PendingStackCipherText {
         crate::target::seal_pending(cipher, self, Descriptor::of(aad))
     }
 
-    /// Recursively seal under `keyset_id`, drawing one key per leaf from
-    /// `keys` in traversal order.
+    /// Seal under `keyset_id`, drawing one key per leaf from `keys` in
+    /// vitaminc's walk order. A leaf with no key left is refused.
     pub(crate) fn seal_with(
         self,
         keyset_id: Uuid,
-        keys: &mut impl Iterator<Item = DataKeyWithTag>,
+        mut keys: impl Iterator<Item = DataKeyWithTag>,
     ) -> Result<StackCipherText, Unspecified> {
-        // Markers seal an *empty* plaintext so the AEAD tag still binds their
-        // (already domain-separated) AAD, mirroring `Aes256Cipher`.
-        fn seal_marker(
-            aad: Context<'static>,
-            keyset_id: Uuid,
-            keys: &mut impl Iterator<Item = DataKeyWithTag>,
-        ) -> Result<SealedValue, Unspecified> {
-            let key = keys.next().ok_or(Unspecified)?;
-            seal_leaf(Protected::new(Vec::new()), &aad, keyset_id, key)
-        }
-
-        match self {
-            PendingStackCipherText::Single { plaintext, aad } => {
-                let key = keys.next().ok_or(Unspecified)?;
-                Ok(CipherText::Single(seal_leaf(
-                    plaintext, &aad, keyset_id, key,
-                )?))
-            }
-            PendingStackCipherText::None { aad } => {
-                Ok(CipherText::None(seal_marker(aad, keyset_id, keys)?))
-            }
-            PendingStackCipherText::EmptySequence { aad } => Ok(CipherText::EmptySequence(
-                seal_marker(aad, keyset_id, keys)?,
-            )),
-            PendingStackCipherText::EmptyMap { aad } => {
-                Ok(CipherText::EmptyMap(seal_marker(aad, keyset_id, keys)?))
-            }
-            PendingStackCipherText::Sequence(items) => {
-                let mut out = Vec::with_capacity(items.len());
-                for item in items {
-                    out.push(item.seal_with(keyset_id, keys)?);
-                }
-                Ok(CipherText::Sequence(out))
-            }
-            PendingStackCipherText::Map(entries) => {
-                let mut out = Vec::with_capacity(entries.len());
-                for (k, v) in entries {
-                    out.push((k, v.seal_with(keyset_id, keys)?));
-                }
-                Ok(CipherText::Map(out))
-            }
-            PendingStackCipherText::Passthrough(value) => Ok(CipherText::Passthrough(value)),
-        }
+        let minted = MintedKeys {
+            keyset_id,
+            keys: RefCell::new(&mut keys),
+        };
+        seal_all(&minted, self.0).map_err(|_| Unspecified)
     }
 }
 
@@ -1466,11 +1414,12 @@ fn leaf_aad(aad: &Context<'_>, keyset_id: Uuid, tag: &[u8]) -> Context<'static> 
     ])
 }
 
-/// Seal one plaintext leaf under a freshly generated data key.
+/// Seal one leaf's tagged plaintext under a freshly generated data key.
 ///
-/// The AAD is the [`leaf_aad`] derivation of the caller's (derived) AAD, the
-/// keyset the key was minted under, and the key `tag` — `tag` is always
-/// bound, so the leaf is cryptographically tied to its ZeroKMS data key.
+/// The AAD is the [`leaf_aad`] derivation of the AAD vitaminc derived for
+/// the leaf's place, the keyset the key was minted under, and the key
+/// `tag` — `tag` is always bound, so the leaf is cryptographically tied to
+/// its ZeroKMS data key.
 fn seal_leaf(
     plaintext: Protected<Vec<u8>>,
     aad: &Context<'_>,
@@ -1485,640 +1434,95 @@ fn seal_leaf(
     SealedValue::tag_fits_length_field(&key.tag).map_err(|_| Unspecified)?;
     let iv = key.key.iv;
     let cipher = leaf_cipher(&key.key)?;
-    match (&cipher).encrypt_bytes_vec(plaintext, leaf_aad(aad, keyset_id, &key.tag))? {
-        AesCipherText::Single(ciphertext) => Ok(SealedValue {
-            keyset_id,
-            iv,
-            tag: key.tag,
-            ciphertext,
-        }),
-        _ => Err(Unspecified),
-    }
+    let ciphertext = cipher.seal(plaintext, &leaf_aad(aad, keyset_id, &key.tag))?;
+    Ok(SealedValue {
+        keyset_id,
+        iv,
+        tag: key.tag,
+        ciphertext,
+    })
 }
 
-/// Open one keyed leaf under `aad`, returning the plaintext bytes.
+/// Open one keyed leaf under `aad`, returning its tagged plaintext.
 fn open_leaf(keyed: KeyedLeaf, aad: &Context<'_>) -> Result<Protected<Vec<u8>>, Unspecified> {
-    /// Keeps the recovered bytes inside `Protected` across the visitor
-    /// boundary (the blanket `Decrypt for Vec<u8>` would unwrap them).
-    struct ProtectedBytes;
-    impl<'c> DecipherVisitor<'c> for ProtectedBytes {
-        type Value = Protected<Vec<u8>>;
-        fn visit_bytes_vec(self, data: Protected<Vec<u8>>) -> Result<Self::Value, Unspecified> {
-            Ok(data)
-        }
-    }
-
     let KeyedLeaf { leaf, key } = keyed;
     let cipher = leaf_cipher(&key)?;
-    cipher
-        .decipher(AesCipherText::Single(leaf.ciphertext))
-        .decrypt_bytes(ProtectedBytes, leaf_aad(aad, leaf.keyset_id, &leaf.tag))
+    cipher.open(leaf.ciphertext, &leaf_aad(aad, leaf.keyset_id, &leaf.tag))
 }
 
-/// Open one marker leaf (absent / empty-sequence / empty-map) and require the
-/// sealed plaintext to be empty. Without the emptiness check, a `Single` leaf
-/// could be re-tagged as a marker of the same AAD derivation.
-fn verify_empty_marker(keyed: KeyedLeaf, aad: &Context<'_>) -> Result<(), Unspecified> {
-    let plaintext = open_leaf(keyed, aad)?;
-    if plaintext.risky_ref().is_empty() {
-        Ok(())
-    } else {
+// =============================================================================
+// The vitaminc ciphers: one leaf at a time, keys already in hand
+// =============================================================================
+
+/// The sealing half of this crate's vitaminc [`Cipher`]: seals each leaf
+/// under the next of a batch of data keys ZeroKMS has already generated,
+/// in the order vitaminc's [`seal_all`] visits the leaves.
+///
+/// The batch is fetched before the walk, in one `generate_keys` call per
+/// pending (see [`PendingStackCipherText::seal`]), so the walk itself is
+/// synchronous. A leaf for which no key is left is refused.
+struct MintedKeys<'k, I> {
+    keyset_id: Uuid,
+    keys: RefCell<&'k mut I>,
+}
+
+impl<I: Iterator<Item = DataKeyWithTag>> Cipher for MintedKeys<'_, I> {
+    type Leaf = SealedValue;
+    type Error = Unspecified;
+
+    fn seal(
+        &self,
+        plaintext: Protected<Vec<u8>>,
+        aad: &Context<'_>,
+    ) -> Result<SealedValue, Unspecified> {
+        let key = self.keys.borrow_mut().next().ok_or(Unspecified)?;
+        seal_leaf(plaintext, aad, self.keyset_id, key)
+    }
+
+    /// Opening goes through [`BoundKeys`], whose leaves carry their
+    /// retrieved keys. A minted key is never used to open.
+    fn open(&self, _: SealedValue, _: &Context<'_>) -> Result<Protected<Vec<u8>>, Unspecified> {
         Err(Unspecified)
     }
 }
 
-// =============================================================================
-// Encrypt side: `Cipher` impl over a `&KeysetCipher` (builds the pending tree)
-// =============================================================================
+/// The opening half of this crate's vitaminc [`Cipher`]: opens a leaf
+/// whose retrieved data key [`bind_keys`] has already bound to it, under
+/// the AAD vitaminc's walk derives for the leaf's place. vitaminc then
+/// checks the empty markers and the container rules and hands each
+/// scalar to the sink, so the decrypt side has one definition of the
+/// per-node AAD, shared with every other vitaminc cipher.
+pub(crate) struct BoundKeys;
 
-impl<'c, 'k, K> Cipher for &'c KeysetCipher<'k, K> {
-    type Ok = PendingStackCipherText;
-    type Error = Unspecified;
-    type Passthrough = BoxedPassthrough;
-    type SeqCipher = PendingSeqCipher<'c, 'k, K>;
-    type MapCipher = PendingMapCipher<'c, 'k, K>;
-
-    fn encrypt_bytes_vec<'a, A>(
-        self,
-        data: Protected<Vec<u8>>,
-        aad: A,
-    ) -> Result<Self::Ok, Self::Error>
-    where
-        A: IntoAad<'a>,
-    {
-        Ok(PendingStackCipherText::Single {
-            plaintext: data,
-            aad: aad.into_aad().into_owned(),
-        })
-    }
-
-    fn encrypt_seq<'a, A>(self, size_hint: Option<usize>, aad: A) -> Self::SeqCipher
-    where
-        A: IntoAad<'a>,
-    {
-        let aad = aad.into_aad().into_owned();
-        PendingSeqCipher {
-            cipher: self,
-            items: Vec::with_capacity(size_hint.unwrap_or(0)),
-            // Both derived once here, then borrowed per element.
-            element_aad: aad.for_sequence_element(),
-            aad,
-            encrypted: false,
-        }
-    }
-
-    fn encrypt_map<'a, A>(self, aad: A) -> Self::MapCipher
-    where
-        A: IntoAad<'a>,
-    {
-        PendingMapCipher {
-            cipher: self,
-            entries: Vec::new(),
-            seen_keys: HashSet::new(),
-            current_key: None,
-            aad: aad.into_aad().into_owned(),
-            encrypted: false,
-        }
-    }
-
-    fn encrypt_none<'a, A>(self, aad: A) -> Result<Self::Ok, Self::Error>
-    where
-        A: IntoAad<'a>,
-    {
-        // Domain-separated so a `Single` leaf sealed under the bare AAD can
-        // never be re-tagged as an authenticated absence (and vice versa).
-        Ok(PendingStackCipherText::None {
-            aad: aad.into_aad().for_none(),
-        })
-    }
-
-    fn passthrough(self, value: Self::Passthrough) -> Result<Self::Ok, Self::Error> {
-        Ok(PendingStackCipherText::Passthrough(value))
-    }
-
-    fn passthrough_boxed(
-        self,
-        value: Box<dyn Any + Send + 'static>,
-    ) -> Result<Self::Ok, Self::Error> {
-        // This cipher's passthrough type *is* `Box<dyn Any + Send>`, so the
-        // type-erased box is already the passthrough payload.
-        self.passthrough(value)
-    }
-}
-
-/// [`SeqCipher`] driver: accumulates a pending sub-tree per element. Holds the
-/// cipher only to re-drive nested [`Encrypt`] values (no I/O happens here).
-pub struct PendingSeqCipher<'c, 'k, K> {
-    cipher: &'c KeysetCipher<'k, K>,
-    items: Vec<PendingStackCipherText>,
-    /// The AAD fixed at [`Cipher::encrypt_seq`]; the empty marker is sealed
-    /// against its `for_empty_sequence` derivation.
-    aad: Context<'static>,
-    /// [`Context::for_sequence_element`] of `aad`, derived once and applied to
-    /// every element.
-    element_aad: Context<'static>,
-    /// Whether at least one element went through the authenticated
-    /// [`encrypt_next`](SeqCipher::encrypt_next) path *and* produced a sealed
-    /// node — see [`end`](SeqCipher::end).
-    encrypted: bool,
-}
-
-impl<K> SeqCipher for PendingSeqCipher<'_, '_, K> {
-    type Ok = PendingStackCipherText;
-    type Error = Unspecified;
-    type Passthrough = BoxedPassthrough;
-
-    fn encrypt_next<T>(mut self, data: T) -> Result<Self, Self::Error>
-    where
-        T: Encrypt,
-    {
-        // Borrow the stored derived AAD — no allocation per element.
-        let pending = data.encrypt_with_aad(self.cipher, self.element_aad.clone())?;
-        // A nested `Encrypt` impl may route through the passthrough channel;
-        // only a genuinely pending-sealed node may satisfy `end`'s
-        // all-passthrough rejection.
-        self.encrypted |= !matches!(pending, PendingStackCipherText::Passthrough(_));
-        self.items.push(pending);
-        Ok(self)
-    }
-
-    fn passthrough_next(mut self, value: Self::Passthrough) -> Result<Self, Self::Error> {
-        self.items.push(PendingStackCipherText::Passthrough(value));
-        Ok(self)
-    }
-
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        if self.items.is_empty() {
-            Ok(PendingStackCipherText::EmptySequence {
-                aad: self.aad.for_empty_sequence(),
-            })
-        } else if !self.encrypted {
-            // Every item is a passthrough: nothing in the container would
-            // authenticate the AAD, so refuse to produce it — mirroring
-            // `decrypt_tree`'s rejection on open.
-            Err(Unspecified)
-        } else {
-            Ok(PendingStackCipherText::Sequence(self.items))
-        }
-    }
-}
-
-/// [`MapCipher`] driver: keys are stored in the clear; values become pending
-/// sub-trees sealed against [`Context::for_map_entry`] of the map AAD and their
-/// key. Mirrors `AesMapCipher`'s key/value and duplicate-key contract checks.
-pub struct PendingMapCipher<'c, 'k, K> {
-    cipher: &'c KeysetCipher<'k, K>,
-    entries: Vec<(String, PendingStackCipherText)>,
-    /// Duplicate keys are rejected at encrypt time: `decrypt_tree` rejects
-    /// them outright, so accepting one here would produce a permanently
-    /// unreadable ciphertext.
-    seen_keys: HashSet<String>,
-    current_key: Option<Cow<'static, str>>,
-    /// The AAD fixed at [`Cipher::encrypt_map`].
-    aad: Context<'static>,
-    /// See [`PendingSeqCipher::encrypted`].
-    encrypted: bool,
-}
-
-impl<K> MapCipher for PendingMapCipher<'_, '_, K> {
-    type Ok = PendingStackCipherText;
-    type Error = Unspecified;
-    type Passthrough = BoxedPassthrough;
-
-    fn encrypt_key<S>(mut self, key: S) -> Result<Self, Self::Error>
-    where
-        S: Into<Cow<'static, str>>,
-    {
-        // A pending key means `encrypt_key` ran twice with no intervening
-        // `encrypt_value` — fail rather than silently drop the first key.
-        if self.current_key.is_some() {
-            return Err(Unspecified);
-        }
-        let key = key.into();
-        if !self.seen_keys.insert(key.as_ref().to_owned()) {
-            return Err(Unspecified);
-        }
-        self.current_key = Some(key);
-        Ok(self)
-    }
-
-    fn encrypt_value<U>(mut self, value: U) -> Result<Self, Self::Error>
-    where
-        U: Encrypt,
-    {
-        let key = self.current_key.take().ok_or(Unspecified)?;
-        // Seal against PAE(domain, aad, key) — key and value are inseparable.
-        // `decrypt_tree` derives the same AAD on open.
-        let entry_aad = self.aad.for_map_entry(&key);
-        let pending = value.encrypt_with_aad(self.cipher, entry_aad)?;
-        self.encrypted |= !matches!(pending, PendingStackCipherText::Passthrough(_));
-        self.entries.push((key.into_owned(), pending));
-        Ok(self)
-    }
-
-    fn passthrough_entry<S>(mut self, key: S, value: Self::Passthrough) -> Result<Self, Self::Error>
-    where
-        S: Into<Cow<'static, str>>,
-    {
-        // Adopting a pending key here would silently drop it — same contract
-        // violation `encrypt_key` rejects.
-        if self.current_key.is_some() {
-            return Err(Unspecified);
-        }
-        let key = key.into();
-        if !self.seen_keys.insert(key.as_ref().to_owned()) {
-            return Err(Unspecified);
-        }
-        self.entries
-            .push((key.into_owned(), PendingStackCipherText::Passthrough(value)));
-        Ok(self)
-    }
-
-    fn passthrough_entry_boxed<S>(
-        self,
-        key: S,
-        value: Box<dyn Any + Send + 'static>,
-    ) -> Result<Self, Self::Error>
-    where
-        S: Into<Cow<'static, str>>,
-    {
-        // This cipher's passthrough type *is* `Box<dyn Any + Send>`, so the
-        // type-erased box is already the payload — same as `passthrough_boxed`.
-        self.passthrough_entry(key, value)
-    }
-
-    fn end(self) -> Result<Self::Ok, Self::Error> {
-        // Finalising with a pending key would silently drop the entry.
-        if self.current_key.is_some() {
-            return Err(Unspecified);
-        }
-        if self.entries.is_empty() {
-            Ok(PendingStackCipherText::EmptyMap {
-                aad: self.aad.for_empty_map(),
-            })
-        } else if !self.encrypted {
-            // Every entry is a passthrough — see `PendingSeqCipher::end`.
-            Err(Unspecified)
-        } else {
-            Ok(PendingStackCipherText::Map(self.entries))
-        }
-    }
-}
-
-// Decrypt side: a synchronous `Decipher` over a key-bound ciphertext tree
-// =============================================================================
-
-/// A [`Decipher`] over a single [`StackCipherText`] whose leaves already
-/// carry their retrieved data keys, built inside
-/// [`StackCipher::decrypt`] and driven there by the value's [`Decrypt`]
-/// impl under the same context the keys were retrieved with.
-///
-/// Structurally identical to `vitaminc_encrypt::AesDecipher` — the only
-/// difference is where each leaf's key comes from. The AAD is supplied per call
-/// by [`Decrypt::decrypt_with_aad`] and refined here exactly as the encrypt side
-/// refined it: sequence elements under [`Context::for_sequence_element`], map
-/// values under [`Context::for_map_entry`] of their key, markers under their
-/// respective derivations with an enforced-empty plaintext. Because the
-/// derivation lives in this drive (not in a pre-pass), `Decrypt` impls that
-/// transform the AAD themselves (e.g. `vitaminc_aead::Element`) work unchanged.
-pub struct StackDecipher {
-    ciphertext: KeyedCipherText,
-}
-
-impl StackDecipher {
-    pub(crate) fn over(ciphertext: KeyedCipherText) -> Self {
-        Self { ciphertext }
-    }
-
-    /// Typed convenience over [`Decipher::decrypt_passthrough`] for this
-    /// cipher's [`BoxedPassthrough`] payload type: recovers the payload and
-    /// downcasts it to `T`, returning [`Unspecified`] if the ciphertext is not
-    /// a passthrough or the stored type does not match.
-    pub fn decrypt_passthrough_as<T>(self) -> Result<T, Unspecified>
-    where
-        T: Any + Send + 'static,
-    {
-        self.decrypt_passthrough()?
-            .downcast::<T>()
-            .map(|b| *b)
-            .map_err(|_| Unspecified)
-    }
-}
-
-impl<'c> Decipher<'c> for StackDecipher {
-    type Ok<T>
-        = Result<T, Unspecified>
-    where
-        T: Send + 'c;
-
-    type Passthrough = BoxedPassthrough;
-
-    fn map_ok<T, U, F>(ok: Self::Ok<T>, f: F) -> Self::Ok<U>
-    where
-        T: Send + 'c,
-        U: Send + 'c,
-        F: FnOnce(T) -> U,
-    {
-        ok.map(f)
-    }
-
-    fn decrypt_bytes<'a, V, A>(self, visitor: V, aad: A) -> Self::Ok<V::Value>
-    where
-        V: DecipherVisitor<'c> + Send + 'c,
-        A: IntoAad<'a>,
-    {
-        match self.ciphertext {
-            CipherText::Single(keyed) => {
-                let bytes = open_leaf(keyed, &aad.into_aad())?;
-                visitor.visit_bytes_vec(bytes)
-            }
-            _ => Err(Unspecified),
-        }
-    }
-
-    fn decrypt_seq<'a, V, A>(self, visitor: V, aad: A) -> Self::Ok<V::Value>
-    where
-        V: DecipherVisitor<'c> + Send + 'c,
-        A: IntoAad<'a>,
-    {
-        match self.ciphertext {
-            // At least one non-passthrough item required: passthrough items
-            // authenticate nothing, so an all-passthrough (or entry-less)
-            // sequence would verify under any AAD. The encrypt side refuses to
-            // produce one; refuse to open one. Emptiness is only provable by
-            // the authenticated `EmptySequence` marker.
-            CipherText::Sequence(items)
-                if items
-                    .iter()
-                    .any(|i| !matches!(i, CipherText::Passthrough(_))) =>
-            {
-                visitor.visit_seq(StackSeqAccess {
-                    items: items.into_iter(),
-                    element_aad: aad.into_aad().for_sequence_element(),
-                })
-            }
-            CipherText::EmptySequence(keyed) => {
-                let aad = aad.into_aad();
-                verify_empty_marker(keyed, &aad.for_empty_sequence())?;
-                // Store the element derivation exactly as the non-empty arm
-                // does: never read (the iterator is empty), but a divergent
-                // value here would silently break a visitor that consulted it.
-                visitor.visit_seq(StackSeqAccess {
-                    items: Vec::new().into_iter(),
-                    element_aad: aad.for_sequence_element(),
-                })
-            }
-            _ => Err(Unspecified),
-        }
-    }
-
-    fn decrypt_map<'a, V, A>(self, visitor: V, aad: A) -> Self::Ok<V::Value>
-    where
-        V: DecipherVisitor<'c> + Send + 'c,
-        A: IntoAad<'a>,
-    {
-        match self.ciphertext {
-            // At least one non-passthrough entry required — see `decrypt_seq`.
-            CipherText::Map(entries)
-                if entries
-                    .iter()
-                    .any(|(_, v)| !matches!(v, CipherText::Passthrough(_))) =>
-            {
-                // Reject duplicate keys before the visitor sees any entry: two
-                // ciphertexts of the same logical record seal a given key's
-                // value against the identical `for_map_entry` AAD, so a stale
-                // entry appended to a current ciphertext *verifies* — with a
-                // last-wins visitor that is a single-field rollback.
-                let mut seen = HashSet::with_capacity(entries.len());
-                if !entries.iter().all(|(key, _)| seen.insert(key.as_str())) {
-                    return Err(Unspecified);
-                }
-                visitor.visit_map(StackMapAccess {
-                    entries: entries.into_iter(),
-                    aad: aad.into_aad(),
-                    pending: None,
-                })
-            }
-            CipherText::EmptyMap(keyed) => {
-                let aad = aad.into_aad();
-                verify_empty_marker(keyed, &aad.for_empty_map())?;
-                // Raw caller AAD, not the marker derivation — see `decrypt_seq`.
-                visitor.visit_map(StackMapAccess {
-                    entries: Vec::new().into_iter(),
-                    aad,
-                    pending: None,
-                })
-            }
-            _ => Err(Unspecified),
-        }
-    }
-
-    fn decrypt_any<'a, V, A>(self, visitor: V, aad: A) -> Self::Ok<V::Value>
-    where
-        V: DecipherVisitor<'c> + Send + 'c,
-        A: IntoAad<'a>,
-    {
-        match self.ciphertext {
-            ct @ CipherText::Single(_) => Self::over(ct).decrypt_bytes(visitor, aad),
-            ct @ (CipherText::Sequence(_) | CipherText::EmptySequence(_)) => {
-                Self::over(ct).decrypt_seq(visitor, aad)
-            }
-            ct @ (CipherText::Map(_) | CipherText::EmptyMap(_)) => {
-                Self::over(ct).decrypt_map(visitor, aad)
-            }
-            CipherText::None(keyed) => {
-                // Verify the domain-separated marker (tag AND empty plaintext)
-                // before reporting absence — an unauthenticated `visit_none`
-                // would let an attacker forge "absent" values, and a bare-AAD
-                // check would let a `Single` leaf be re-tagged as one. Mirrors
-                // `decrypt_option`.
-                verify_empty_marker(keyed, &aad.into_aad().for_none())?;
-                visitor.visit_none()
-            }
-            // A self-describing visitor recovers a passthrough via
-            // `visit_passthrough` (type-erased); visitors that do not override
-            // it inherit the default rejection.
-            CipherText::Passthrough(boxed) => visitor.visit_passthrough(boxed),
-        }
-    }
-
-    fn decrypt_passthrough(self) -> Self::Ok<Self::Passthrough> {
-        match self.ciphertext {
-            CipherText::Passthrough(boxed) => Ok(boxed),
-            _ => Err(Unspecified),
-        }
-    }
-
-    fn decrypt_option<'a, T, A>(self, aad: A) -> Self::Ok<Option<T>>
-    where
-        T: Decrypt<'c> + 'c,
-        A: IntoAad<'a>,
-    {
-        match self.ciphertext {
-            CipherText::None(keyed) => {
-                // Verify the tag over the domain-separated marker AAD AND that
-                // the sealed plaintext is actually empty. Without both, a
-                // `Single(leaf)` sealed under the same caller AAD could be
-                // re-tagged as `None(leaf)` and decrypt as Ok(None) — silent
-                // authenticated data deletion.
-                verify_empty_marker(keyed, &aad.into_aad().for_none())?;
-                Ok(None)
-            }
-            // Passthrough must never be decoded as an Option payload.
-            CipherText::Passthrough(_) => Err(Unspecified),
-            // Any other variant is the `Some` payload: recurse into `T` with
-            // the caller's AAD unchanged (there is no depth tag; the shape of
-            // nested options is decided by `T` at the call site, as in
-            // `AesDecipher`).
-            other => T::decrypt_with_aad(Self::over(other), aad).map(Some),
-        }
-    }
-}
-
-struct StackSeqAccess {
-    items: std::vec::IntoIter<KeyedCipherText>,
-    /// [`Context::for_sequence_element`] of the caller's AAD, derived once at
-    /// construction and re-supplied per element by borrowing. Mirrors
-    /// `PendingSeqCipher::element_aad` on the encrypt side.
-    element_aad: Context<'static>,
-}
-
-impl<'c> SeqAccess<'c> for StackSeqAccess {
+impl Cipher for BoundKeys {
+    type Leaf = KeyedLeaf;
     type Error = Unspecified;
 
-    fn next_element<T: Decrypt<'c> + 'c>(&mut self) -> Result<Option<T>, Self::Error> {
-        match self.items.next() {
-            Some(ct) => {
-                T::decrypt_with_aad(StackDecipher::over(ct), self.element_aad.clone()).map(Some)
-            }
-            None => Ok(None),
-        }
+    /// Sealing goes through [`MintedKeys`]: a leaf is sealed under a key
+    /// generated for it, never one retrieved for another leaf.
+    fn seal(&self, _: Protected<Vec<u8>>, _: &Context<'_>) -> Result<KeyedLeaf, Unspecified> {
+        Err(Unspecified)
+    }
+
+    fn open(&self, leaf: KeyedLeaf, aad: &Context<'_>) -> Result<Protected<Vec<u8>>, Unspecified> {
+        open_leaf(leaf, aad)
     }
 }
 
-struct StackMapAccess<'a> {
-    entries: std::vec::IntoIter<(String, KeyedCipherText)>,
-    aad: Context<'a>,
-    /// The entry handed out by `next_key` and not yet consumed by
-    /// `next_value` / `next_passthrough`. Held as ciphertext rather than
-    /// decrypted up front so the caller can choose the plaintext type after
-    /// seeing the key — see [`MapAccess::next_key`] — alongside the entry
-    /// AAD it was sealed under, derived once here so the key itself moves
-    /// out to the caller.
-    pending: Option<(Context<'static>, KeyedCipherText)>,
-}
-
-impl<'c, 'a> MapAccess<'c> for StackMapAccess<'a> {
-    type Error = Unspecified;
-
-    fn next_key(&mut self) -> Result<Option<String>, Self::Error> {
-        // A still-pending entry means the caller skipped a value. Refused
-        // rather than tolerated: an entry whose value is never opened is an
-        // entry whose AAD binding is never verified.
-        if self.pending.is_some() {
-            return Err(Unspecified);
-        }
-        match self.entries.next() {
-            Some((key, ct)) => {
-                // Mirror `PendingMapCipher::encrypt_value`: the value was
-                // sealed against `for_map_entry(key)`, so a swapped or
-                // renamed key fails when the entry is opened.
-                self.pending = Some((self.aad.for_map_entry(&key), ct));
-                Ok(Some(key))
-            }
-            None => Ok(None),
-        }
-    }
-
-    fn next_value<T: Decrypt<'c> + 'c>(&mut self) -> Result<T, Self::Error> {
-        let (entry_aad, ct) = self.pending.take().ok_or(Unspecified)?;
-        T::decrypt_with_aad(StackDecipher::over(ct), entry_aad)
-    }
-
-    fn next_passthrough(&mut self) -> Result<Box<dyn Any + Send + 'static>, Self::Error> {
-        match self.pending.take() {
-            Some((_key, CipherText::Passthrough(value))) => Ok(value),
-            // A sealed value under a key the caller asked to read as a
-            // passthrough: refuse rather than hand it back with its tag
-            // unchecked — but keep the entry pending. The refusal is the
-            // caller's answer, not a reason to lose the entry: it can still
-            // open it with `next_value`, and until it does `next_key` keeps
-            // refusing to move past it.
-            Some(entry) => {
-                self.pending = Some(entry);
-                Err(Unspecified)
-            }
-            None => Err(Unspecified),
-        }
-    }
+/// Open a key-bound tree into `T` under `aad`. Every failure is
+/// [`Error::Aead`]: a wrong key or AAD, a tampered leaf or marker, a
+/// malformed tree, and a value that is not a `T` all read the same to the
+/// caller, as they did before vitaminc split them.
+pub(crate) fn open_keyed<'a, T: Decrypt>(
+    keyed: KeyedCipherText,
+    aad: impl IntoAad<'a>,
+) -> Result<T, Error> {
+    vitaminc_aead::decrypt(&BoundKeys, keyed, aad).map_err(|_| Error::Aead)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn map_access(entries: Vec<(&str, KeyedCipherText)>) -> StackMapAccess<'static> {
-        StackMapAccess {
-            entries: entries
-                .into_iter()
-                .map(|(key, ct)| (key.to_string(), ct))
-                .collect::<Vec<_>>()
-                .into_iter(),
-            aad: Context::from_encoded(b"map"),
-            pending: None,
-        }
-    }
-
-    #[test]
-    fn a_passthrough_entry_is_read_back_as_the_boxed_value() {
-        let mut map = map_access(vec![("plain", CipherText::Passthrough(Box::new(7u32)))]);
-
-        assert_eq!(map.next_key(), Ok(Some("plain".to_string())));
-        let value = map.next_passthrough().expect("passthrough entry");
-        assert_eq!(value.downcast_ref::<u32>(), Some(&7));
-        assert_eq!(map.next_key(), Ok(None));
-    }
-
-    /// Asking for a sealed entry as a passthrough is refused, and the entry
-    /// stays pending: it is neither handed back unverified nor lost, so the
-    /// caller can still open it with `next_value` and cannot skip it.
-    #[test]
-    fn a_sealed_entry_survives_being_misread_as_a_passthrough() {
-        let mut map = map_access(vec![
-            ("sealed", CipherText::Sequence(vec![])),
-            ("plain", CipherText::Passthrough(Box::new(7u32))),
-        ]);
-
-        assert_eq!(map.next_key(), Ok(Some("sealed".to_string())));
-        assert!(map.next_passthrough().is_err());
-        // Still pending: the map refuses to advance past an unopened entry.
-        assert_eq!(map.next_key(), Err(Unspecified));
-        // And the refusal is repeatable, not a one-shot that then drops it.
-        assert!(map.next_passthrough().is_err());
-        assert_eq!(map.next_key(), Err(Unspecified));
-    }
-
-    /// A draw with nothing pending — before any `next_key`, or after the
-    /// entry has already been taken — is a clean refusal, never a value and
-    /// never a panic. This is the guard that keeps an absent or unverified
-    /// value from being handed back, so a refactor from `ok_or(..)?` to an
-    /// `unwrap` would regress silently without it.
-    #[test]
-    fn drawing_a_value_with_nothing_pending_is_refused() {
-        let mut map = map_access(vec![("plain", CipherText::Passthrough(Box::new(7u32)))]);
-
-        // No `next_key` yet: nothing is pending.
-        assert!(map.next_value::<String>().is_err());
-        assert!(map.next_passthrough().is_err());
-
-        // A legitimate draw consumes the entry, so a second draw of either
-        // kind is refused too.
-        assert_eq!(map.next_key(), Ok(Some("plain".to_string())));
-        assert!(map.next_passthrough().is_ok());
-        assert!(map.next_passthrough().is_err());
-        assert!(map.next_value::<String>().is_err());
-        assert_eq!(map.next_key(), Ok(None));
-    }
 
     /// A cipher's `Debug` — and a keyset handle's — names the keyset and the
     /// source's type and stops there: the cache behind a cipher holds every
@@ -2145,27 +1549,26 @@ mod tests {
         }
     }
 
-    /// `decrypt_passthrough` hands back the payload of a passthrough node and
-    /// nothing else: any sealed shape is refused rather than surfaced
-    /// unopened, and a payload of another type is refused by the downcast.
+    /// Each half of the cipher does one thing: a minted key never opens a
+    /// leaf, and a key bound to a leaf for opening never seals one.
     #[test]
-    fn decrypt_passthrough_opens_only_a_passthrough() {
-        let passthrough = || StackDecipher::over(CipherText::Passthrough(Box::new(7u32)));
-
-        assert_eq!(
-            passthrough().decrypt_passthrough_as::<u32>(),
-            Ok(7),
-            "a passthrough payload of the requested type should be handed back"
+    fn each_half_of_the_cipher_refuses_the_other_halfs_work() {
+        let leaf =
+            SealedValue::from_parts(Uuid::nil(), [0; 16], vec![1; 4], vec![2; 32]).expect("a leaf");
+        let mut keys = std::iter::empty::<DataKeyWithTag>();
+        let minted = MintedKeys {
+            keyset_id: Uuid::nil(),
+            keys: RefCell::new(&mut keys),
+        };
+        let aad = Context::from_encoded(b"aad");
+        assert!(minted.open(leaf, &aad).is_err(), "a minted key never opens");
+        assert!(
+            minted.seal(Protected::new(vec![1]), &aad).is_err(),
+            "and seals nothing once the batch is spent"
         );
-        assert_eq!(
-            passthrough().decrypt_passthrough_as::<String>(),
-            Err(Unspecified),
-            "a payload of another type should fail the downcast"
-        );
-        assert_eq!(
-            StackDecipher::over(CipherText::Sequence(vec![])).decrypt_passthrough_as::<u32>(),
-            Err(Unspecified),
-            "a sealed shape should be refused rather than surfaced unopened"
+        assert!(
+            BoundKeys.seal(Protected::new(vec![1]), &aad).is_err(),
+            "a bound key never seals"
         );
     }
 

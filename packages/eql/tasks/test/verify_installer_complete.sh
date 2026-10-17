@@ -24,9 +24,14 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-ORDERED="${1:-src/deps-ordered-v3.txt}"
+ORDERED="${1:-build/render/eql_v3/deps-ordered.txt}"
 INSTALLER="${2:-release/cipherstash-encrypt.sql}"
-PIN="tasks/pin_search_path_v3.sql"
+# The rendered tree the ordered paths point into (build.sh renders the
+# placeholder source into build/render/eql_v<N>/, keeping relative paths, and
+# writes deps-ordered.txt at its root). Defaults to the order file's directory,
+# so overriding only $1 cannot pair one tree's order with another's files.
+ROOT="${3:-$(dirname "$ORDERED")}"
+PIN="$ROOT/tasks/pin_search_path_v3.sql"
 
 for f in "$ORDERED" "$INSTALLER" "$PIN"; do
   if [[ ! -f "$f" ]]; then
@@ -73,7 +78,11 @@ fail=0
 echo "==> Non-vacuity gate: the order names every src/v3 SQL file"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-find src/v3 -type f -name '*.sql' ! -name '*_test.sql' | LC_ALL=C sort > "$work/disk"
+# The disk side reads the SOURCE tree, not the rendered one: build.sh renders
+# exactly the files the order names, so the rendered tree always agrees with the
+# order and a comparison against it could never fail. Map the source paths into
+# the rendered namespace the order uses.
+find src/v3 -type f -name '*.sql' ! -name '*_test.sql' | sed "s|^|$ROOT/|" | LC_ALL=C sort > "$work/disk"
 grep -v '^[[:space:]]*$' "$ORDERED" | LC_ALL=C sort > "$work/order" || true
 n_disk=$(count_lines "$work/disk")
 

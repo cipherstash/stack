@@ -36,6 +36,10 @@ on:
       # The eql guest build links eql-bindings.
       - packages/eql/crates/eql-bindings/**
       - packages/eql/crates/eql-domains/**
+      # The Go tests read the cross-language fixtures the EQL suite writes,
+      # which are derived under EQL's lockfile.
+      - packages/eql/tests/encryption/**
+      - packages/eql/Cargo.lock
       - languages/golang/**
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh
@@ -61,6 +65,10 @@ on:
       # The eql guest build links eql-bindings.
       - packages/eql/crates/eql-bindings/**
       - packages/eql/crates/eql-domains/**
+      # The Go tests read the cross-language fixtures the EQL suite writes,
+      # which are derived under EQL's lockfile.
+      - packages/eql/tests/encryption/**
+      - packages/eql/Cargo.lock
       - languages/golang/**
       - scripts/check-wasm-imports.py
       - scripts/go-binding-test.sh
@@ -103,6 +111,24 @@ jobs:
       # caches) the whole test toolset, which `mise run` would otherwise
       # install uncached.
       MISE_ENV: test
+    # The Go module's PostgreSQL test (encrypt/postgres_test.go) stores
+    # generated rows and runs the query methods against it through
+    # database/sql; it skips where DATABASE_URL is unset, as on the macOS
+    # and Windows jobs.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        # Container port only: Docker picks the host port, and the Go step
+        # reads it from `job.services`, so the number is written once.
+        ports:
+          - 5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -133,6 +159,7 @@ jobs:
             .
             languages/golang/encrypt/guest
             languages/golang/auth/guest
+            packages/eql
 
       # The HTTP-free core compiles for wasm32-wasip1 with no JS-host backend
       # and no native HTTP/TLS stack in its graph: the invariant the wazero
@@ -215,10 +242,23 @@ jobs:
       - name: Go binding
         env:
           STACK_ENCRYPT_TESTS_REQUIRE_LOCK: "1"
+          DATABASE_URL: "postgres://postgres:postgres@localhost:${{ job.services.postgres.ports['5432'] }}/postgres?sslmode=disable"
         run: |
           ulimit -l "$(ulimit -H -l)"
           echo "RLIMIT_MEMLOCK: $(ulimit -l) KiB"
           mise run go:test
+
+      # The Rust suite opens the committed v4_rows.json, whose ciphertexts the
+      # Go SDK sealed when the file was last regenerated. This also hands it
+      # the rows the Go SDK seals in this run, so a Go guest and a native
+      # Rust build that stop agreeing on today's ciphertexts fail here rather
+      # than when someone next regenerates the file. The toolchain is the
+      # root's pin, as for the guests.
+      - name: Rows the Go SDK seals today open in Rust
+        run: |
+          rows="$RUNNER_TEMP/v4_rows.json"
+          (cd languages/golang && CGO_ENABLED=0 EQL_V4_ROWS_OUT="$rows" go test -count=1 -run TestV4RowsMatchTheCommittedFixture ./encrypt)
+          EQL_V4_ROWS="$rows" cargo test --locked --manifest-path packages/eql/Cargo.toml -p eql-encryption-tests --test v4_types rows_the_go_sdk_sealed_open_in_rust
 
       # What is encrypted is fixed before the program ships: every generated
       # file is committed, and this fails when `go generate` would change

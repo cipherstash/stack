@@ -17,10 +17,11 @@ eql-bindings = { path = "../../crates/eql-bindings", features = ["stack-encrypt"
 # The parity oracle for the generated target table (tests/targets.rs): the
 # table must name every stored catalog domain, in catalog order.
 eql-domains = { path = "../../crates/eql-domains" }
-stack-encrypt = { path = "../../../stack-encrypt", default-features = false }
-# `FfiValue`: the runtime plaintext the target dispatch takes. The same line
-# eql-bindings names.
-vitaminc-aead-value = "0.5.1"
+# `dynamic`: `FfiValue`, the runtime plaintext the target dispatch takes,
+# as eql-bindings names it.
+stack-encrypt = { path = "../../../stack-encrypt", default-features = false, features = ["dynamic"] }
+# `plaintext::Sink`, for a plaintext type with its own `Encrypt` impl.
+vitaminc-aead = "0.6.0"
 stack-kms = { path = "../../../stack-kms", default-features = false, features = ["test-support"] }
 serde = "1"
 serde_json = "1"

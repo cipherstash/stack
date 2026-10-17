@@ -2,6 +2,7 @@
 status: accepted
 date: 2026-10-04
 extends: ADR-0003, ADR-0004
+amended: 2026-10-16, proposed with ADR-0009 and in effect when ADR-0009 is accepted
 ---
 
 # Bindings enter the engine through a plan lowered from data, never through a second executor
@@ -29,6 +30,14 @@ extends: ADR-0003, ADR-0004
 > Go SDK, as the `context_field` tag word. The typed parts that stay
 > Rust-only are the typed verb `encrypt_into`, the picker and the one-value
 > start.
+>
+> **Amended 2026-10-16**, by #1188, **proposed**. This amendment depends on
+> ADR-0009, which is proposed, and takes effect when ADR-0009 is accepted;
+> until then it is proposed with it, and changes with it. The decision is
+> unchanged. Added, under its last bullet: the operator and its input in the
+> data grammar, the query term and its query domain back, `verify` and
+> `target_limit` as engine exports, and the operators each EQL type answers,
+> with their fidelity, in the catalog.
 
 Stack Encrypt has one execution engine: the `Encryption` and `Decryption`
 descriptions in `target/` and the batched `Pending` they produce. ADR-0003
@@ -188,3 +197,116 @@ to Go (G1: one engine). The reasons recorded against this on 2026-10-04 were
 guest size and an EQL-free guest for programs that never store into EQL. Two
 guest builds answer the second, and the first is measured before the SDK ships
 one build or two (G7).
+
+## Amended 2026-10-16 (#1188), proposed with ADR-0009
+
+**Status: proposed.** ADR-0009 is proposed, and this amendment rests on it:
+it takes effect when ADR-0009 is accepted, and is revised or withdrawn with
+it. The code it describes lands first, as ADR-0009's Rust side has
+(#1182 to #1186), because Stack Encrypt has no stored data and no released
+binding a change could break.
+
+ADR-0009 makes the operator, not the index, what a query names, and gives a
+probabilistic term `verify` and `target_limit`. The data grammar a binding
+lowered named a field and, for a query, took the term the field's EQL type
+chose. It had no operator and no operator input, and no export could verify
+a decrypted value or size a fetch. The last bullet of the decision says what
+to do with a capability the grammar cannot express: add it to the grammar,
+once, so every author has it. This amendment does that for the query side.
+ADR-0009's appendix B is the sketch it was amended from.
+
+**A query names a field, an operator and the operator's input.** The
+operator crosses as its name: `eq`, `lt`, `lte`, `gt`, `gte`, `between` or
+`matches`. The input is one value, or for `between` a list of two, low then
+high. The engine reads the input as the field's declared type first
+(`dynamic::read`), so a host's float `34.0` queries a `uint64` field as the
+`u64` the field stored. It then finds the index that answers the operator by
+the table the typed path's `DefaultIndex` impls state, written over a type
+and the indexes a field declares (`dynamic::OpSpec::answered_by`): `eq`
+through an equality index, `matches` through a match index over text, the
+orderings through an ORE index over an integer, or OPE when the field
+declares no ORE. A field that does not answer the operator is refused with
+the same shape of error as a mistyped field: an input error naming the field,
+with the reason `operator_not_answered` (or `unknown_operator`,
+`not_a_range`). The refusals the typed path makes before a term exists, a
+range the wrong way round and match text that cuts no token, are refused the
+same way here, before the cipher is consulted.
+
+**The term comes back with its query domain.** The guest's
+`se_query_term(input, plan, field, operator, options)` returns one object:
+the operator, its fidelity, the index that answered, the PostgreSQL domain
+the term is cast to, and the term. A field with indexes derives that index's
+term under the field's context, by the derivation its stored terms came
+from, as bytes, and `between` derives one term per bound under the one
+context, as a list of two. A field that names an EQL type runs the type's
+query twin, and the term is the twin's JSON and the domain its
+`query_sql_domain`. One query domain per operator is EQL v4's (ADR-0009,
+decision 8); until that lands in the catalog a type's twin carries every term
+of the type.
+
+**`verify` and `target_limit` are engine exports.** `se_verify(input, values,
+plan, field, operator)` answers one boolean per decrypted value, a page in
+one call. `se_target_limit(term, stats, plan, field, operator, want)` answers
+the rows to fetch, or null for no finite fetch. Neither uses a key, so each
+runs in a guest that holds no cipher, as `se_plan_check` does. `verify` names
+the query as it was derived, by the field, the operator and the input, and
+the engine cuts the input's tokens again with the field's own tokenizer and
+options. The tokens are plaintext, so no term carries them across the
+binding. Sending the input and a page of decrypted values back in is no new
+exposure: the input came from the host, and the values came out of the
+guest as a decrypt. The alternative, a tokenizer in each language, is the
+"lives twice" cost this ADR accepts only for an encoder, and a tokenizer that
+drifts from the one that built the stored filter verifies the wrong thing.
+`target_limit` takes the term's bytes, because the number of bits the query
+sets is a property of the term the engine built, and the fill formula
+belongs beside the index configuration. Both refuse an exact operator, which
+has nothing to verify and no fetch to size, as the typed path does not
+compile the call.
+
+**The catalog reports the operators each EQL type answers, and their
+fidelity.** Each `se_targets` entry gains `operators`: one object per
+operator the engine answers for a field that names the type, with its name,
+its fidelity (`exact` or `probabilistic`), its arity (`one` or `pair`) and
+the type's index that answers it. The engine computes the list from the
+type's row by the same table every plan field is held to, so a generator
+asks the engine it embeds rather than holding a copy of the rules, as the
+2026-10-06 amendment asks of every rule. ADR-0009 rejects a fidelity value
+on a term, because Rust says it with a trait. A generator asks before the
+program runs, so it needs the answer as data, and the code it generates
+carries `Verify` only where the answer is `probabilistic`, which rebuilds
+decision 4 of ADR-0009 in a language without traits. Today `TextEq` answers
+`eq`, `TextMatch` answers `matches`, and the storage-only types have no twin,
+so answer nothing. A type answers `matches` through its twin only when the
+engine knows the options its match index is built under, since `verify`
+must cut the query's tokens as the stored filter was cut: `eql-bindings`
+gives them for each type with a match index (`Target::match_options`, EQL's
+one match configuration), and the guest hands them to the engine with the
+type's descriptor. They are not on the wire, because a host has no use for
+them. `verify` and `target_limit` then run under those options, reading the
+twin's `bf`. No type answers `between` yet: a twin is one value, not a
+range.
+
+What does not change: a binding still reaches the engine through a plan, and
+nothing here derives a term outside the engine's own derivation, so a query
+from Go and the typed query chain derive the same bytes. A cross-language
+fixture holds them together (`tests/fixtures/query_operators.json`): the Rust
+side checks each recorded term against the typed chain, and the Go SDK's
+tests derive, verify and size the same queries through the guest.
+The catalog answers for an EQL type; a field declared with indexes has no
+type to look up, so `se_operators` answers for any field of a plan: the
+plan and the field's name in, the same operator objects out, computed by the
+one table `se_query_term` reads (`dynamic::field_operators`). The Go
+generator asks it for every sealed field, `encrypt_into` fields included,
+and writes one method per operator (#1189).
+
+`se_query`, which derived a target field's twin with no operator, is
+removed: the generated Go code names operators (#1189), and `eq` on a target
+field is the twin. `se_term`, a term by index under an explicit context, no
+longer serves a query. It stays for one host need: a record call's term
+failure does not say which row and field it came from, and the Go SDK asks
+`se_term` again for each term to name them. When the record exports name the
+field themselves, it goes too.
+
+A data plan's match index declares no `expected_tokens` prior, so
+`target_limit` on a field declared as data is unbounded without a measured
+histogram. A data form for the prior is later work.

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`Target::match_options`** (`stack-encrypt` feature): the options a type's
+  match index is built under, `EqlMatch`'s, for a type that carries one
+  (`TextMatch`), and `None` otherwise. Stack Encrypt answers `matches`
+  through the type with them, cutting the query's tokens for `verify` as the
+  stored filter was cut.
 - **EQL types as plan field targets, by name** (`stack-encrypt` feature).
   `eql_bindings::encryption::targets` holds a catalog-generated table
   (`targets()`) of every EQL type a Stack Encrypt data plan may name as a
@@ -34,6 +39,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inventory).
 
 ### Changed
+
+- **`TextEq` and `TextEqQuery` compare text in Unicode 16 NFC**
+  (`stack-encrypt` feature). Their `hm` is Stack Encrypt's equality term,
+  which now derives through `vitaminc-normalize`: `café` written with a
+  precomposed `é` and with `e` and a combining accent is one value, and
+  text holding a code point unassigned in Unicode 16 is refused, when it is
+  stored as well as when it is queried. Case and
+  whitespace are kept. Every `hm` changes bytes; no stored value existed to
+  keep. `Hmac256` encrypts from any vitaminc `Encrypt` where it took a
+  `PrfValue`, and the feature no longer depends on `vitaminc-prf`.
+
+- **The `stack-encrypt` feature builds on vitaminc ADR 0001.**
+  `encryption::targets` takes `FfiValue` and `ValueKind` from
+  `stack_encrypt::dynamic` (the feature turns on stack-encrypt's `dynamic`
+  feature) in place of `vitaminc-aead-value`, which is gone, and the
+  `Ciphertext` target takes any vitaminc `Encrypt` plaintext and opens into any
+  `Decrypt + Send` type, as stack-encrypt's own targets do.
 
 - **Query-operand domain names switched to the `query_<name>` prefix, homed
   in the `eql_v3` schema.** The SQL domain names carried by the

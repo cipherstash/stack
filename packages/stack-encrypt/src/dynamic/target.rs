@@ -27,8 +27,10 @@
 
 use std::fmt;
 
-use vitaminc_aead_value::{FfiValue, ValueKind};
+use super::query::{operator_to_value, target_operators};
+use super::{FfiValue, OpSpec, ValueKind};
 
+use crate::sem::MatchOptions;
 use crate::{KeysetCipher, Label, Pending, StackCipher};
 
 /// One EQL type a plan may name as a target, as the host describes it.
@@ -52,6 +54,21 @@ use crate::{KeysetCipher, Label, Pending, StackCipher};
 /// | `query_sql_domain` | string or null: the query twin's PostgreSQL domain |
 /// | `producible` | bool: whether the engine produces the type today |
 /// | `reason` | string or null: why not, when it does not |
+/// | `operators` | list of objects: the operators the engine answers for the type ([`operators`](Self::operators)), each `{"operator", "fidelity", "arity", "index"}`; empty for a type it does not produce |
+///
+/// Each `operators` entry has every key:
+///
+/// | key | value |
+/// |---|---|
+/// | `operator` | string: the operator's name, `eq` ([`OpSpec::name`]) |
+/// | `fidelity` | string: `exact` or `probabilistic` ([`Fidelity::name`](super::Fidelity::name)) |
+/// | `arity` | string: `one`, or `pair` for an operator whose input is two values, low then high |
+/// | `index` | string: the key of the type's index that answers it, `eq` |
+///
+/// The first ten keys are the row `eql-bindings` serializes for the type;
+/// `operators` is the engine's, computed from the row by the table every
+/// plan field is held to ([`OpSpec::answered_by`]), so a generator reads the
+/// operators from the engine it embeds rather than from a copy of the rules.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TargetDescriptor {
@@ -75,6 +92,15 @@ pub struct TargetDescriptor {
     pub producible: bool,
     /// Why it does not, when it does not.
     pub reason: Option<String>,
+    /// The options the type's match index is built under, for a type that
+    /// carries one and whose builder says which ([`with_match_options`]).
+    /// Not on the wire: the engine needs them to answer `matches` through
+    /// the type (to cut the query's tokens for [`verify`] as the stored
+    /// filter was cut, and to read a query term), and a host does not.
+    ///
+    /// [`with_match_options`]: Self::with_match_options
+    /// [`verify`]: super::verify
+    pub match_options: Option<MatchOptions>,
 }
 
 impl TargetDescriptor {
@@ -104,7 +130,19 @@ impl TargetDescriptor {
             query_sql_domain,
             producible,
             reason,
+            match_options: None,
         }
+    }
+
+    /// The descriptor of a type whose match index is built under `options`:
+    /// such a type answers `matches` through its query twin
+    /// ([`operators`](Self::operators)). A type with a match index and no
+    /// options given answers no probabilistic operator, since `verify`
+    /// could not cut the query's tokens as the stored filter was cut.
+    #[must_use]
+    pub fn with_match_options(mut self, options: MatchOptions) -> Self {
+        self.match_options = Some(options);
+        self
     }
 
     /// The descriptor in its wire form: the object a guest's `se_targets`
@@ -133,7 +171,32 @@ impl TargetDescriptor {
             ),
             ("producible".to_string(), FfiValue::Bool(self.producible)),
             ("reason".to_string(), optional(&self.reason)),
+            (
+                "operators".to_string(),
+                FfiValue::Array(
+                    target_operators(self)
+                        .iter()
+                        .map(|(op, index)| operator_to_value(*op, index))
+                        .collect(),
+                ),
+            ),
         ])
+    }
+
+    /// The operators the engine answers for a field that names this type,
+    /// in [`OpSpec::ALL`]'s order: none for a type it does not produce or
+    /// that has no query twin, and otherwise each operator of one value
+    /// that one of the type's indexes answers for its plaintext kind
+    /// ([`OpSpec::answered_by`]): the exact ones, and `matches` when the
+    /// type's match options are known ([`with_match_options`](Self::with_match_options)).
+    /// The query for each is the type's query twin. `between` is not
+    /// answered through a type yet: see [`query_term`](super::query_term)'s
+    /// module.
+    pub fn operators(&self) -> Vec<OpSpec> {
+        target_operators(self)
+            .into_iter()
+            .map(|(op, _)| op)
+            .collect()
     }
 }
 
@@ -526,10 +589,10 @@ mod tests {
             "text",
             "Eq",
             Some(ValueKind::String),
-            "public.eql_v3_text_eq",
+            "public.eql_v4_text_eq",
             vec!["eq".to_string()],
             Some("TextEqQuery".to_string()),
-            Some("eql_v3.query_text_eq".to_string()),
+            Some("eql_v4.query_text_eq".to_string()),
             true,
             None,
         )
@@ -541,10 +604,10 @@ mod tests {
             "text",
             "OrdOre",
             Some(ValueKind::String),
-            "public.eql_v3_text_ord_ore",
+            "public.eql_v4_text_ord_ore",
             vec!["eq".to_string(), "ore".to_string()],
             Some("TextOrdOreQuery".to_string()),
-            Some("eql_v3.query_text_ord_ore".to_string()),
+            Some("eql_v4.query_text_ord_ore".to_string()),
             false,
             Some("block ORE is not CLLW ORE".to_string()),
         )
@@ -604,7 +667,8 @@ mod tests {
                 "query",
                 "query_sql_domain",
                 "producible",
-                "reason"
+                "reason",
+                "operators"
             ],
             "the se_targets entry's keys, in order"
         );
@@ -624,7 +688,7 @@ mod tests {
         assert!(matches!(&entries[6].1, FfiValue::Null));
         assert_eq!(
             entries.len(),
-            10,
+            11,
             "an absent value is null, never a missing key"
         );
     }

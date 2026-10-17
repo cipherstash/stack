@@ -44,6 +44,7 @@ use ts_rs::TS;
 pub mod from_v2;
 pub mod sql;
 pub mod v3;
+pub mod v4;
 
 #[cfg(feature = "stack-encrypt")]
 pub mod encryption;
@@ -61,13 +62,18 @@ pub const EQL_SCHEMA_VERSION: u16 = 3;
 /// CHECK's `VALUE->>'v' = '3'`, so a wrong-version payload fails at the type
 /// boundary instead of at INSERT. The inner value is private; the only
 /// constructible instance is the current version.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, TS)]
-#[ts(export, export_to = "v3/")]
-pub struct SchemaVersion(#[ts(type = "3")] u16);
+//
+// The text above is the v3 binding's doc, and `bindings/v3/SchemaVersion.ts`
+// carries it verbatim (see `V3_TS_DOCS`). One type serves every generation:
+// `V` is the wire version, and `v3::SchemaVersion` / `v4::SchemaVersion` name
+// `SchemaVersion<3>` / `SchemaVersion<4>`. Plain `SchemaVersion` defaults to
+// v3, the version this crate released it as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+pub struct SchemaVersion<const V: u16 = EQL_SCHEMA_VERSION>(u16);
 
-impl SchemaVersion {
-    /// The current (only) wire version, `3`.
-    pub const CURRENT: Self = Self(EQL_SCHEMA_VERSION);
+impl<const V: u16> SchemaVersion<V> {
+    /// The only wire version this type admits, `V`.
+    pub const CURRENT: Self = Self(V);
 
     /// The wire value.
     pub const fn get(self) -> u16 {
@@ -75,33 +81,36 @@ impl SchemaVersion {
     }
 }
 
-impl Default for SchemaVersion {
+impl<const V: u16> Default for SchemaVersion<V> {
     fn default() -> Self {
         Self::CURRENT
     }
 }
 
-impl<'de> Deserialize<'de> for SchemaVersion {
+impl<'de, const V: u16> Deserialize<'de> for SchemaVersion<V> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let v = u16::deserialize(deserializer)?;
-        if v == EQL_SCHEMA_VERSION {
+        if v == V {
             Ok(Self(v))
         } else {
             Err(serde::de::Error::custom(format!(
-                "unsupported EQL schema version {v} (expected {EQL_SCHEMA_VERSION})"
+                "unsupported EQL schema version {v} (expected {V})"
             )))
         }
     }
 }
 
-/// Manual schema: pins `v` to the literal `3` (`const`), mirroring the
+/// Manual schema: pins `v` to the literal `V` (`const`), mirroring the
 /// domain CHECK — the derive would emit an unconstrained integer.
-impl schemars::JsonSchema for SchemaVersion {
+impl<const V: u16> schemars::JsonSchema for SchemaVersion<V> {
     fn schema_name() -> std::borrow::Cow<'static, str> {
-        "SchemaVersion".into()
+        match V {
+            EQL_SCHEMA_VERSION => "SchemaVersion".into(),
+            _ => format!("SchemaVersionV{V}").into(),
+        }
     }
 
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -111,10 +120,70 @@ impl schemars::JsonSchema for SchemaVersion {
         // must be updated alongside it.
         schemars::json_schema!({
             "type": "integer",
-            "const": EQL_SCHEMA_VERSION,
-            "description": "The envelope version field (`v`) — always exactly `3` on the wire.",
+            "const": V,
+            "description": format!("The envelope version field (`v`) — always exactly `{V}` on the wire."),
         })
     }
+}
+
+/// The JSDoc block of `bindings/v3/SchemaVersion.ts`: the doc comment on
+/// [`SchemaVersion`], as ts-rs's derive would have written it. KEEP IN SYNC.
+const V3_TS_DOCS: &str = "/**\n \
+ * The envelope version field (`v`) — always exactly [`EQL_SCHEMA_VERSION`]\n \
+ * on the wire.\n \
+ *\n \
+ * Deserialization rejects any other value: the Rust analogue of the domain\n \
+ * CHECK's `VALUE->>'v' = '3'`, so a wrong-version payload fails at the type\n \
+ * boundary instead of at INSERT. The inner value is private; the only\n \
+ * constructible instance is the current version.\n \
+ */\n";
+
+/// Manual TypeScript binding: ts-rs's derive has no const generics. Each
+/// version is the literal type `V`; only v3's is exported, as
+/// `bindings/v3/SchemaVersion.ts` (`export type SchemaVersion = 3;`).
+impl<const V: u16> TS for SchemaVersion<V> {
+    type WithoutGenerics = Self;
+    const DOCS: Option<&'static str> = if V == EQL_SCHEMA_VERSION {
+        Some(V3_TS_DOCS)
+    } else {
+        None
+    };
+
+    fn name() -> String {
+        match V {
+            EQL_SCHEMA_VERSION => "SchemaVersion".into(),
+            _ => format!("SchemaVersionV{V}"),
+        }
+    }
+
+    fn inline() -> String {
+        V.to_string()
+    }
+
+    fn inline_flattened() -> String {
+        panic!("{} cannot be flattened", Self::name())
+    }
+
+    fn decl() -> String {
+        format!("type {} = {V};", Self::name())
+    }
+
+    fn decl_concrete() -> String {
+        Self::decl()
+    }
+
+    fn output_path() -> Option<&'static std::path::Path> {
+        match V {
+            EQL_SCHEMA_VERSION => Some(std::path::Path::new("v3/SchemaVersion.ts")),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn export_bindings_schemaversion() {
+    <SchemaVersion as TS>::export_all().expect("could not export type");
 }
 
 /// Table + column identifier — wire shape `{"t": "...", "c": "..."}`.

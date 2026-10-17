@@ -414,8 +414,8 @@ mod tests {
     /// such. Swapping the arms, or dropping the `Other` one, fails here.
     #[test]
     fn target_refusals_are_encoding_and_a_resolver_failure_is_internal() {
+        use stack_encrypt::dynamic::ValueKind;
         use stack_encrypt::dynamic::{Error, TargetError};
-        use vitaminc_aead_value::ValueKind;
         let refusals = [
             TargetError::NoTargets {
                 name: "TextEq".into(),

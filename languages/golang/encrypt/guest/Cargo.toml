@@ -61,13 +61,13 @@ stack-kms = { path = "../../../../packages/stack-kms", default-features = false 
 eql-bindings = { path = "../../../../packages/eql/crates/eql-bindings", features = ["stack-encrypt"], optional = true }
 zerokms-protocol = "=0.12.31"
 
-# The FFI codec + `FfiValue` tree, shared with vitaminc's own guest — one
-# codec, not a fork. Same vitaminc version stack-encrypt builds against
-# (see the comment in packages/stack-encrypt/Cargo.toml). A different
-# version here fails at the `FfiValue: Decrypt` bound, since the aead crate
-# would be duplicated.
-vitaminc-aead-value = "0.5.1"
-vitaminc-protected = "0.5.1"
+# The transport frame and ciphertext codec, shared with vitaminc's own
+# guest — one codec, not a fork. Same vitaminc version stack-encrypt builds
+# against (see the comment in packages/stack-encrypt/Cargo.toml). A
+# different version here fails at the `FfiValue: Decrypt` bound, since the
+# aead crate would be duplicated.
+vitaminc-aead-frame = "0.6.0"
+vitaminc-protected = "0.6.0"
 
 futures = { version = "0.3", default-features = false, features = ["executor"] }
 serde = "1"

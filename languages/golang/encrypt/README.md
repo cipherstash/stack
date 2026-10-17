@@ -31,10 +31,14 @@ The package reference is on [pkg.go.dev]; the generator's reference is
    type User struct {
    	_     struct{} `stash:"context=users"`
    	ID    int64    `stash:"id,passthrough"`
-   	Email string   `stash:"email,encrypt,index=equality;match"`
-   	Age   uint32   `stash:"age,encrypt,index=equality;ore"`
+   	Email string   `stash:"email,encrypt_into=TextEq"`
+   	Name  string   `stash:"name,encrypt_into=TextMatch"`
+   	Age   int32    `stash:"age,encrypt_into=Integer"`
    }
    ```
+
+   `encrypt_into=` names the EQL type the field is stored as. The Go field
+   type must match it; see [EQL columns](#eql-columns).
 
 3. Run the generator. It writes `user_stash.go` beside the struct.
 
@@ -56,17 +60,28 @@ The package reference is on [pkg.go.dev]; the generator's reference is
 
    encrypted, err := users.Encrypt(ctx, cipher, people)
    opened, err := users.Decrypt(ctx, cipher, encrypted)
-   term, err := users.Fields.Email.Equality(ctx, cipher, "bob@example.com")
+   term, err := users.Fields.Email.Eq(ctx, cipher, "bob@example.com")
    ```
 
    `Encrypt` and `Decrypt` send one ZeroKMS request for each 500 sealed
    values in the batch, plus one request the first time a keyset is used.
+   A query derives its term locally and sends no request of its own; only
+   the first use of a keyset, by a query or anything else, loads it from
+   ZeroKMS. See [Queries](#queries).
 
-6. Store the encrypted type. Each sealed field is one or more byte columns:
-   `e.Email.Ciphertext`, `e.Email.Equality`, `e.Email.Match`. `Ciphertext`
-   and each term type implement `driver.Valuer` and `sql.Scanner`, so a
-   database library binds and scans each column as bytes; map each one to
-   its own column.
+6. Store the encrypted type. Each `encrypt_into` field is one EQL v4 column:
+   `eql.TextEq` implements `driver.Valuer` and `sql.Scanner`, so a database
+   library binds and scans it as the JSON a `public.eql_v4_text_eq` column
+   holds. Install EQL v4 into PostgreSQL first, with the
+   `eql-v4-install.sql` attached to the release. A query casts its parameter
+   to the column's query type:
+
+   ```sql
+   SELECT id, email, name, age FROM users WHERE email = $1::eql_v4.query_text_eq
+   ```
+
+   A field tagged `encrypt` or `index=` stores its ciphertext and each term
+   as separate byte columns instead; see [What is stored](#what-is-stored).
 
 7. Run the generator again after each change to the struct or to a tag. A
    change to the fields of the struct stops the build until you do.
@@ -80,8 +95,8 @@ The package reference is on [pkg.go.dev]; the generator's reference is
    `git diff` sees only files git already tracks; the `git status` check
    also fails on a generated file that was never committed.
 
-The rest of this file is the reference. [`example/`](example/) is the eight
-steps as a program.
+The rest of this file is the reference. [`example/`](example/) is a program
+that stores separate byte columns (`index=`) against real ZeroKMS.
 
 ## Connect
 
@@ -190,15 +205,16 @@ and `Equality`, `Match`, `Ore` or `Ope` (the term types). A field with
 An `opaque` struct is one `Sealed` field. Every stored type implements
 `driver.Valuer` and `sql.Scanner`.
 
-A `match` index needs text with at least one token. The engine derives no
-match term for an empty string, separator-only text, or text shorter than the
-n-gram length (3 characters), because an empty term would match every row.
-`Encrypt` then fails for the whole batch with `ErrTerm`, naming the row, the
-field and the index. So an optional or short value does not belong under
-`match`: give such a field `equality` alone, or make the value required.
+A `match` index stores text with no token (an empty string, separator-only
+text, or text shorter than the n-gram length of 3 characters) as the empty
+filter: a valid value that no query matches, so an optional or short value can
+live under `match`. The empty filter tells anyone who can read the column that
+the value is one of those. A match *query* of such text is refused with
+`ErrTerm`, because an empty filter as a query would match every row. An EQL
+`TextMatch` field is stricter, as "EQL columns" below says.
 
 Terms are byte-equal to the ones the Rust crate derives, so a term from
-`users.Fields.Email.Equality` compares against a stored term written from any
+`users.Fields.Email.Eq` compares against a stored term written from any
 language. `EqualityTerm.Equal` compares in constant time; `OreTerm.Compare`
 and `OpeTerm.Compare` order as the plaintexts; `MatchTerm.Positions` decodes
 the token positions.
@@ -211,8 +227,99 @@ A database can compare some terms by itself:
 - `Ore`: do not compare in SQL. Plain byte order is almost always right, and
   sometimes wrong, with no error. Compare in Go with `OreTerm.Compare`, or
   use an EQL type (`encrypt_into=`), which the database compares correctly.
-- `Match`: do not compare in SQL. Decode the positions in Go with
-  `MatchTerm.Positions`, or use an EQL type.
+- `Match`: a row matches when its stored filter holds every position of the
+  query's term. Decode both into positions in SQL and compare with `@>`, as
+  [Queries](#queries) shows, or in Go with `MatchTerm.Positions`.
+
+## Queries
+
+Each sealed field's entry in `Fields` has one method for each operator the
+engine answers on the field: `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` and
+`Matches`. A field has no method for an operator it does not answer, so such
+a query does not compile. The generator asks the engine which operators each
+field answers, and which index answers each one; it holds no copy of those
+rules.
+
+| The field declares | Methods | Each returns |
+|---|---|---|
+| `index=equality` | `Eq` | `encrypt.EqualityTerm` |
+| `index=ore` or `index=ope`, on an integer | `Lt`, `Lte`, `Gt`, `Gte` | `encrypt.OreTerm`, or `encrypt.OpeTerm` when the field declares no `ore` |
+| the same | `Between(ctx, cipher, lo, hi)` | `encrypt.Range[encrypt.OreTerm]` or `encrypt.Range[encrypt.OpeTerm]`, the two bounds' terms |
+| `index=match`, on a string | `Matches` | `encrypt.MatchQuery[T]` |
+| `encrypt_into=TextEq` | `Eq` | `eql.TextEqQuery` |
+| `encrypt_into=TextMatch` | `Matches` | `encrypt.EQLMatchQuery[eql.TextMatchQuery, T]` |
+
+A method takes the field's own Go type, so `Fields.Age.Lt` on a `uint32`
+field takes a `uint32`. An order index on text, bytes or a float stores its
+term but answers no ordering operator yet, so such a field has no `Lt`; nor
+does the `ope` index of a field that declares `ore` too, since `ore` answers
+the orderings. stashgen prints a notice for each such index, on stderr and in
+the generated file: the terms are stored, and only your own code can compare
+them. A match index on an index-only field (`index=match` with no `encrypt`)
+is refused, because `Verify` checks a match query's rows by decrypting them.
+
+Every query type implements `driver.Valuer`, so it binds as a parameter in
+any library built on `database/sql` or pgx. A `Range` binds as two
+parameters, `Low` and `High`.
+
+`Eq`, the orderings and `Between` are exact: the server's answer is the
+answer. `Matches` is probabilistic: the server answers with every row whose
+stored filter holds the query's bits, which can include rows that do not
+hold the query's text. So `MatchQuery` carries two more methods, and an
+exact query's type carries neither (on an `encrypt_into=TextMatch` field,
+`Matches` returns an `encrypt.EQLMatchQuery`, the `eql.TextMatchQuery`
+operand with the same two):
+
+- `TargetLimit(ctx, want, stats)` is how many rows to fetch for `want` of
+  them to verify. A field declared with tags states no expected number of
+  tokens, so with no measured histogram of the stored filters in
+  `encrypt.Stats` the limit is unbounded, and `Limit.FetchOr(page)` fetches
+  a page.
+- `Verify(ctx, values)` says, for each decrypted value of a page, whether it
+  really holds the query's text: one call into the engine for the page, with
+  no key.
+
+The example below uses separate byte columns, as [`example/`](example/)
+declares its fields (`Email` with `stash:"email,encrypt,index=equality;match"`,
+`Age` with `stash:"age,encrypt,index=equality;ore"`), not the `encrypt_into`
+`User` of the quick start:
+
+```go
+// Positions of a stored filter or a match term, for @>.
+const positions = `CREATE FUNCTION match_positions(term bytea) RETURNS int[]
+LANGUAGE sql IMMUTABLE STRICT AS $$
+  SELECT coalesce(array_agg(get_byte(term, 2 * i) | (get_byte(term, 2 * i + 1) << 8)), '{}')
+  FROM generate_series(0, length(term) / 2 - 1) AS i
+$$`
+
+q, err := users.Fields.Email.Matches(ctx, cipher, "alice")
+limit, err := q.TargetLimit(ctx, 10, encrypt.Stats{Rows: rowCount})
+
+rows, err := db.QueryContext(ctx, `
+	SELECT id, email, email_eq, email_match, age, age_eq, age_ore FROM users
+	WHERE match_positions(email_match) @> match_positions($1)
+	ORDER BY id LIMIT $2`, q, limit.FetchOr(50))
+// scan each row into a users.Encrypted, then
+people, err := users.Decrypt(ctx, cipher, encrypted)
+emails := make([]string, len(people))
+for i, p := range people {
+	emails[i] = p.Email
+}
+verified, err := q.Verify(ctx, emails)
+hits := people[:0]
+for i, p := range people {
+	if verified[i] {
+		hits = append(hits, p)
+	}
+}
+```
+
+`Verify` cuts the query's text into tokens again in the engine, with the
+field's own tokenizer, so a `MatchQuery` keeps that text for as long as the
+program holds the query. Go cannot wipe a string: the text stays in memory
+until the garbage collector reclaims it, as the string you passed in does.
+A `MatchQuery` never prints it; `fmt`, `slog` and `%#v` show the field and
+the size of the term only.
 
 ## Errors
 
@@ -276,12 +383,40 @@ package documentation for the full account.
 ## EQL columns
 
 A field tagged `encrypt_into=TextEq` is stored as one EQL value, the JSON
-PostgreSQL holds in a `public.eql_v3_text_eq` column, as an `eql.TextEq`
-from package `encrypt/eql`. The guest builds the value: the generated code
+PostgreSQL holds in a `public.eql_v4_text_eq` column, as an `eql.TextEq`
+from package `encrypt/eql`. Stack Encrypt writes EQL v4, the `eql_v4` install
+of EQL's SQL; the `eql_v3` columns the TypeScript SDK writes hold
+cipherstash-client's terms, which these never match. Install EQL v4 into
+PostgreSQL first, with the `eql-v4-install.sql` attached to each Go release
+(`psql -f eql-v4-install.sql`); `stash eql install` installs EQL v3 only, and
+an `eql_v4_*` column needs the v4 domains.
+
+The EQL types the engine produces, and the Go field types each takes:
+
+| EQL type | Go field | Queries |
+|---|---|---|
+| `TextEq` | `string` | `=`, `<>` |
+| `TextMatch` | `string` | `@@` (substring match, 3-grams, case-insensitive) |
+| `Text` | `string` | none: stored and read only |
+| `Integer` | `int32` | none |
+| `Bigint` | `int64` | none |
+| `Boolean` | `bool` | none |
+| `Real` | `float32` | none |
+| `Double` | `float64` | none |
+
+A `TextMatch` value must be at least three characters long: shorter text has
+no 3-grams to index and is refused. `IntegerEq` and `BigintEq` are held back
+until the engine's integer equality term settles in vitaminc 0.6. The rest of
+the catalog (ordering, dates, decimals, JSON) is listed in
+`eql.Types` with the reason it is not produced yet, and `stashgen` refuses it
+with that reason. The guest builds the value: the generated code
 imports `encrypt/eql`, which embeds the build of the engine that holds the
 EQL types and registers it on import, so the program runs that build and
-stores what it returns. `Fields.Email.Query` returns the `eql.TextEqQuery`
-the column's `eql_v3.query_text_eq` operand takes. `mise run
+stores what it returns. `Fields.Email.Eq` returns the `eql.TextEqQuery`
+the column's `eql_v4.query_text_eq` operand takes; `TextEq` answers `eq`
+alone, and a `TextMatch` field's `Matches` returns an
+`encrypt.EQLMatchQuery`: the `eql.TextMatchQuery` operand with `Verify` and
+`TargetLimit`. `mise run
 wasm:guest:build:eql` builds that guest beside the other. A cipher extended
 with a tenant part refuses a struct with an `encrypt_into` field: an EQL
 value is stored under a table and a column, and the extended label has no

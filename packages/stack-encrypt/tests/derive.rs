@@ -10,7 +10,7 @@ use std::sync::atomic::Ordering as AtomicOrdering;
 
 use cllw_ore::CllwOreEncrypt;
 use common::{counting_cipher, recording_cipher, stack_cipher};
-use stack_encrypt::sem::{EqualityTerm, MatchTerms, OreTerm};
+use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, MatchTerms, OreTerm, TermError};
 use stack_encrypt::target::{AeadContext, DecryptFrom, EncryptInto, Encrypted};
 use stack_encrypt::{
     nonempty, ContextPiece, DecryptField, DecryptInto, Decryptable, EncryptFrom, Error,
@@ -436,20 +436,50 @@ async fn a_ciphertext_only_record_accepts_an_aead_only_context_like_the_leaf_doe
     assert!(matches!(result, Err(Error::Aead)), "{result:?}");
 }
 
+/// A match configuration whose options fail the scheme's bounds, so its
+/// leaf fails during the synchronous build.
+struct TooManyHashes;
+impl MatchConfig for TooManyHashes {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            k: 17,
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(EncryptFrom, DecryptInto)]
+struct BadlyIndexedText {
+    c: StackCipherText,
+    m: MatchTerms<TooManyHashes>,
+}
+
 #[tokio::test]
 async fn a_failed_field_fails_the_derived_record_before_any_io() {
     let (cipher, generates, _) = counting_cipher().await;
     let keyset = cipher.default_keyset();
 
-    // Text that yields no match tokens fails that leaf during the
-    // synchronous build; the derived record is the zip of its fields, so it
-    // fails the same way and never mints the data key its ciphertext field
-    // would have wanted.
-    let result: Result<SearchableText, _> = String::new()
+    // Invalid match options fail that leaf during the synchronous build;
+    // the derived record is the zip of its fields, so it fails the same way
+    // and never mints the data key its ciphertext field would have wanted.
+    let result: Result<BadlyIndexedText, _> = "alice"
+        .to_string()
         .encrypt_into_with_context(&keyset, nonempty!("users/name"))
         .await;
-    assert!(matches!(result, Err(Error::Term(_))));
+    assert!(matches!(
+        result,
+        Err(Error::Term(TermError::InvalidOptions(_)))
+    ));
     assert_eq!(generates.load(AtomicOrdering::SeqCst), 0);
+
+    // Text with no match tokens is not a failure: the leaf is the empty
+    // filter, and the record seals as any other.
+    let stored: SearchableText = String::new()
+        .encrypt_into_with_context(&keyset, nonempty!("users/name"))
+        .await
+        .unwrap();
+    assert!(stored.m.positions().is_empty());
+    assert_eq!(generates.load(AtomicOrdering::SeqCst), 1);
 }
 
 // --- Structs: each field from one field of the plaintext, under its own context

@@ -157,12 +157,34 @@ func (f MemberAgeField) Encrypt(ctx context.Context, c *encrypt.Cipher, v uint32
 	return EncryptedMemberAge{Ciphertext: out.Ciphertext, Equality: out.Equality, Ore: out.Ore}, nil
 }
 
-func (f MemberAgeField) Equality(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.EqualityTerm, error) {
-	return f.field.Equality(ctx, c, v)
+func (f MemberAgeField) Eq(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.EqualityTerm, error) {
+	term, err := f.field.Term(ctx, c, "eq", v)
+	return encrypt.EqualityTerm(term), err
 }
 
-func (f MemberAgeField) Ore(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
-	return f.field.Ore(ctx, c, v)
+func (f MemberAgeField) Lt(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f MemberAgeField) Lte(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f MemberAgeField) Gt(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f MemberAgeField) Gte(ctx context.Context, c *encrypt.Cipher, v uint32) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f MemberAgeField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi uint32) (encrypt.Range[encrypt.OreTerm], error) {
+	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
 }
 
 type MemberEmailField struct {
@@ -177,12 +199,15 @@ func (f MemberEmailField) Encrypt(ctx context.Context, c *encrypt.Cipher, v stri
 	return EncryptedMemberEmail{Ciphertext: out.Ciphertext, Equality: out.Equality, Match: out.Match}, nil
 }
 
-func (f MemberEmailField) Equality(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
-	return f.field.Equality(ctx, c, v)
+func (f MemberEmailField) Eq(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.EqualityTerm, error) {
+	term, err := f.field.Term(ctx, c, "eq", v)
+	return encrypt.EqualityTerm(term), err
 }
 
-func (f MemberEmailField) Match(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.MatchTerm, error) {
-	return f.field.Match(ctx, c, v)
+// Matches derives the matches query for v. Its answer can hold rows that do not
+// match: decrypt the rows it fetches and keep those Verify reports true.
+func (f MemberEmailField) Matches(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.MatchQuery[string], error) {
+	return gensupport.Matches(ctx, f.field, c, v)
 }
 
 type MemberNotesField struct {

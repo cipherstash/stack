@@ -60,7 +60,7 @@ impl TargetResolver for EqlTargets {
         name: &str,
         keyset: &'a stack_encrypt::KeysetCipher<'_, K>,
         label: &stack_encrypt::Label,
-        plaintext: vitaminc_aead_value::FfiValue,
+        plaintext: stack_encrypt::dynamic::FfiValue,
     ) -> Result<stack_encrypt::Pending<'a, Vec<u8>, K>, TargetError> {
         eql_bindings::encryption::targets::encrypt(name, keyset, label, plaintext).map_err(convert)
     }
@@ -71,7 +71,7 @@ impl TargetResolver for EqlTargets {
         cipher: &'a stack_encrypt::StackCipher<K>,
         label: &stack_encrypt::Label,
         stored: &[u8],
-    ) -> Result<stack_encrypt::Pending<'a, vitaminc_aead_value::FfiValue, K>, TargetError> {
+    ) -> Result<stack_encrypt::Pending<'a, stack_encrypt::dynamic::FfiValue, K>, TargetError> {
         eql_bindings::encryption::targets::decrypt(name, cipher, label, stored).map_err(convert)
     }
 
@@ -80,7 +80,7 @@ impl TargetResolver for EqlTargets {
         name: &str,
         keyset: &'a stack_encrypt::KeysetCipher<'_, K>,
         label: &stack_encrypt::Label,
-        plaintext: vitaminc_aead_value::FfiValue,
+        plaintext: stack_encrypt::dynamic::FfiValue,
     ) -> Result<stack_encrypt::Pending<'a, Vec<u8>, K>, TargetError> {
         eql_bindings::encryption::targets::query(name, keyset, label, plaintext).map_err(convert)
     }
@@ -91,7 +91,7 @@ impl TargetResolver for EqlTargets {
 /// crate's `to_value`.
 #[cfg(feature = "eql")]
 fn describe(target: &eql_bindings::encryption::targets::Target) -> TargetDescriptor {
-    TargetDescriptor::new(
+    let descriptor = TargetDescriptor::new(
         target.name,
         target.family,
         target.suffix,
@@ -102,7 +102,13 @@ fn describe(target: &eql_bindings::encryption::targets::Target) -> TargetDescrip
         target.query_sql_domain.map(str::to_owned),
         target.producible,
         target.reason.map(str::to_owned),
-    )
+    );
+    // A type with a match index answers `matches` through its twin only
+    // when the engine knows the options its filter is built under.
+    match target.match_options() {
+        Some(options) => descriptor.with_match_options(options),
+        None => descriptor,
+    }
 }
 
 /// An `eql-bindings` refusal as the engine's. The field name is left empty:
@@ -169,7 +175,7 @@ mod tests {
         assert!(text_eq.producible);
         assert_eq!(
             text_eq.plaintext,
-            Some(vitaminc_aead_value::ValueKind::String)
+            Some(stack_encrypt::dynamic::ValueKind::String)
         );
         assert_eq!(text_eq.indexes, ["eq"]);
         assert_eq!(text_eq.query.as_deref(), Some("TextEqQuery"));
@@ -179,7 +185,20 @@ mod tests {
             .filter(|t| t.producible)
             .map(|t| t.name.as_str())
             .collect();
-        assert_eq!(producible, ["TextEq"], "the engine produces TextEq only");
+        assert_eq!(
+            producible,
+            [
+                "Integer",
+                "Bigint",
+                "Text",
+                "TextEq",
+                "TextMatch",
+                "Boolean",
+                "Real",
+                "Double"
+            ],
+            "the engine's producible types, in catalog order"
+        );
         assert!(matches!(
             resolver().resolve("TextOrdOre"),
             Err(TargetError::Unproducible { .. })
@@ -203,10 +222,10 @@ mod tests {
         assert!(matches!(
             convert(Eql::Plaintext {
                 target: "TextEq",
-                expected: vitaminc_aead_value::ValueKind::String,
-                found: Some(vitaminc_aead_value::ValueKind::UInt64),
+                expected: stack_encrypt::dynamic::ValueKind::String,
+                found: Some(stack_encrypt::dynamic::ValueKind::UInt64),
             }),
-            TargetError::Plaintext { target, expected: Some(vitaminc_aead_value::ValueKind::String), .. } if target == "TextEq"
+            TargetError::Plaintext { target, expected: Some(stack_encrypt::dynamic::ValueKind::String), .. } if target == "TextEq"
         ));
     }
 

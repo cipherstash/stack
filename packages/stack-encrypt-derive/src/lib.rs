@@ -108,8 +108,8 @@
 //! use stack_encrypt::target::transcode::{Transcode, Visitor};
 //! use stack_encrypt::target::{self, CallerContext};
 //! use stack_encrypt::{
-//!     CipherText, Decryptable, Encrypt, EncryptFrom, Encryption, Error, SealedValue, StackCipher,
-//!     nonempty,
+//!     CipherText, Decryptable, EncryptFrom, Encryption, Error, Encrypt, SealedValue,
+//!     StackCipher, nonempty,
 //! };
 //! use stack_encrypt::kms::FakeDataKeySource;
 //!

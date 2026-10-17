@@ -87,7 +87,7 @@
 //!     .encrypt(&user)
 //!     .context("users")
 //!     .fields()
-//!     .encrypt_index::<String>("email", (Equality, Match::default()))
+//!     .encrypt_index::<String>("email", (Equality, Match))
 //!     .encrypt_index::<u32>("age", (Equality, Ore))
 //!     .encrypt::<String>("notes")
 //!     .passthrough::<u64>("id")
@@ -151,14 +151,14 @@
 //! # async fn example() -> Result<(), stack_encrypt::Error> {
 //! use stack_encrypt::kms::FakeDataKeySource;
 //! use stack_encrypt::sem::{EqualityTerm, MatchTerms};
-//! use stack_encrypt::{Encrypted, Equality, Match, Ore, Plan, StackCipher};
+//! use stack_encrypt::{op, Encrypted, Equality, Match, Ore, Plan, StackCipher};
 //!
 //! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 //! let user = User { email: "bob@example.com".into(), age: 34, notes: "hi".into(), id: 42 };
 //!
 //! let users_plan: Plan<User, _> = Plan::context("users")
 //!     .fields()
-//!     .encrypt_index::<String>("email", (Equality, Match::default()))
+//!     .encrypt_index::<String>("email", (Equality, Match))
 //!     .encrypt_index::<u32>("age", (Equality, Ore))
 //!     .encrypt::<String>("notes")
 //!     .passthrough::<u64>("id")
@@ -170,7 +170,7 @@
 //!
 //! // Query: derived under the label the write used, so it matches.
 //! let email_plan = users_plan.field("email")?;
-//! let query_value = cipher.query("bob@example.com").using(&email_plan).equality().await?;
+//! let query_value = cipher.query(op::Eq, "bob@example.com").on(&email_plan).await?;
 //! assert_eq!(query_value, stored.terms.0);
 //!
 //! // Read: every field that can come back.
@@ -222,7 +222,7 @@
 //! use stack_encrypt::kms::FakeDataKeySource;
 //! use stack_encrypt::plan::pick;
 //! use stack_encrypt::sem::EqualityTerm;
-//! use stack_encrypt::{Encrypted, EncryptFrom, Plan, StackCipher, StackCipherText};
+//! use stack_encrypt::{op, Encrypted, EncryptFrom, Plan, StackCipher, StackCipherText};
 //!
 //! struct User {
 //!     email: String,
@@ -252,7 +252,7 @@
 //! let cipher = StackCipher::builder().kms(FakeDataKeySource::new()).init().await?;
 //! let user = User { email: "bob@example.com".into(), nickname: "bob".into() };
 //! let record: EncryptedUser = cipher.default_keyset().encrypt_as(&user, ().into()).await?;
-//! let query_value = cipher.query("bob@example.com").using(&by_hand.field("email")?).equality().await?;
+//! let query_value = cipher.query(op::Eq, "bob@example.com").on(&by_hand.field("email")?).await?;
 //! assert_eq!(record.email.terms, query_value);
 //! # Ok(())
 //! # }
@@ -273,15 +273,10 @@
 //! sources only the call has no data form: a binding names the context in
 //! the declaration it sends, or in the record.
 //!
-//! The engine is shared; the stored leaf is not. A data plan seals every
-//! field as the tagged `dynamic::Value` leaf, whatever its type, so a Rust
-//! record whose rows a binding also reads must declare those fields as
-//! `dynamic::Value`. A bare `String` or `u32` field derives the same terms
-//! but encrypts a different leaf. A bare `String` reader accepts a
-//! binding's leaf and returns its type tag as a leading line feed
-//! (`"\nalice"`), with no error. One leaf encoding for both, or the
-//! encoding bound into the leaf's context so the wrong reader fails, is
-//! tracked in #1118.
+//! The engine is shared, and so is the stored leaf: every leaf is tagged
+//! with its type (vitaminc ADR 0001), so a data plan's `uint32` field and a
+//! Rust `u32` field seal the same leaf under the same context, and a reader
+//! of another type refuses it rather than misreading it.
 //!
 //! # How a chain lowers
 //!
@@ -301,7 +296,7 @@
 //! | `fields()` | each field picked out of the value (by name, or by a picker's accessor as `project` does), `zip`ped |
 //! | `extend(parts)` | the [`DeclaredContext`](crate::target::DeclaredContext) the description runs under |
 //! | `using(&plan)` | [`KeysetCipher::run`](crate::KeysetCipher::run) of [`Plan::encryption`] |
-//! | `query(v).using(..).equality()` | the selected index's operation alone, `.under(label)` |
+//! | `query(op, v).on(..)` | the answering index's operation alone, `.under(label)`, once per plaintext the operator takes ([`Input`](crate::op::Input)), mapped to its query term ([`Supports::query`](crate::op::Supports::query)) |
 //! | `open(record).using(&plan)` | [`open`](crate::target::open) per field, run by `run_decryption` |
 //! | `.await`, [`all`] | `Pending::zip`, then one settle |
 //!
@@ -319,9 +314,9 @@ mod values;
 
 pub use build::{FieldKind, FieldPlan, FieldsBuilder, IntoLabel, Opens, Plan, PlanContext, Runs};
 pub use chain::{
-    all, All, Batch, EncryptBuilder, EncryptFields, EncryptIndexed, EncryptUsing,
+    all, All, Batch, Chooses, EncryptBuilder, EncryptFields, EncryptIndexed, EncryptUsing,
     EncryptWithContext, KeysetChoice, OpenBuilder, OpenUsing, Operation, PlanKms, QueryBuilder,
-    QueryIndex, QueryUsing,
+    QueryOp, QueryVia, Resolves,
 };
 pub use error::PlanError;
 pub use field_ref::{pick, FieldRef};

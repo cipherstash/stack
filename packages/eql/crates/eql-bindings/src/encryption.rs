@@ -2,14 +2,17 @@
 //!
 //! The target declares its operations; Stack Encrypt invokes Vitamin C's
 //! plaintext implementations. These adapters only encode encrypted outputs.
-//! Equality uses Vitamin C's exact string semantics: no normalization or case
-//! folding. The stored identifier supplies context for ciphertext and terms.
+//! Equality compares text in Unicode 16 NFC, the normal form
+//! `vitaminc-normalize` gives it, and folds no case: `café` written with a
+//! precomposed `é` and with `e` and a combining accent is one value, `Café`
+//! another. The stored identifier supplies context for ciphertext and terms.
 //!
 //! This is a new producer profile, independent of existing cipherstash-client
-//! ciphertext and terms. The EQL envelope and SQL domains remain unchanged.
+//! ciphertext and terms, so it writes the `eql_v4` domains ([`crate::v4`]),
+//! never `eql_v3` (ADR-0002).
 //!
-//! [`TextEq`]: crate::v3::text::TextEq
-//! [`TextEqQuery`]: crate::v3::text::TextEqQuery
+//! [`TextEq`]: crate::v4::text::TextEq
+//! [`TextEqQuery`]: crate::v4::text::TextEqQuery
 //!
 //! # Example
 //!
@@ -55,32 +58,35 @@
 //!
 //! Query terms cannot recover plaintext:
 //! ```compile_fail
-//! use eql_bindings::v3::text::TextEqQuery;
+//! use eql_bindings::v4::text::TextEqQuery;
 //! fn require<T: stack_encrypt::DecryptInto<String>>() {}
 //! require::<TextEqQuery>();
 //! ```
 //! An encrypted EQL record is not a plaintext value:
 //! ```compile_fail
-//! use eql_bindings::v3::text::TextEq;
+//! use eql_bindings::v4::text::TextEq;
 //! fn require<T: stack_encrypt::Encrypt>() {}
 //! require::<TextEq>();
 //! ```
 //! The text domain accepts text, and requires a concrete column identifier:
 //! ```compile_fail
-//! use eql_bindings::v3::text::TextEq;
+//! use eql_bindings::v4::text::TextEq;
 //! fn require<T: stack_encrypt::EncryptFrom<u32>>() {}
 //! require::<TextEq>();
 //! ```
 //! ```compile_fail
-//! use eql_bindings::v3::text::TextEq;
+//! use eql_bindings::v4::text::TextEq;
 //! fn require<T: stack_encrypt::EncryptFrom<String, Context = ()>>() {}
 //! require::<TextEq>();
 //! ```
 
+pub mod plaintext;
 pub mod targets;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use stack_encrypt::sem::EqualityTerm;
+#[allow(deprecated)]
+use stack_encrypt::sem::MatchTerm;
+use stack_encrypt::sem::{EqualityTerm, MatchConfig, MatchOptions, TermError, Tokenizer};
 use stack_encrypt::target::transcode::{Reader, Transcode, Visitor};
 use stack_encrypt::target::{self, AeadContext, CallerContext};
 use stack_encrypt::{
@@ -88,10 +94,9 @@ use stack_encrypt::{
     Describe, Description, Encrypt, EncryptFrom, Encryption, Error, IntoContext, MaybeEmpty,
     NonEmpty, SealedValue, StackCipherText,
 };
-use vitaminc_prf::PrfValue;
 
 use crate::{
-    v3::terms::{Ciphertext, Hmac256},
+    v3::terms::{BloomFilter, Ciphertext, Hmac256},
     Identifier,
 };
 
@@ -195,7 +200,7 @@ impl Visitor for NativeCiphertextVisitor {
         Ok(CipherText::Single(leaf))
     }
 }
-impl<P: Decrypt<'static> + 'static> DecryptInto<P> for Ciphertext {
+impl<P: Decrypt + Send + 'static> DecryptInto<P> for Ciphertext {
     type Context = AeadContext;
     fn decryption<K: 'static>(self, context: Self::Context) -> Decryption<P, K> {
         match self.read(NativeCiphertextVisitor) {
@@ -232,7 +237,7 @@ impl Transcode for Hmac256 {
         EqualityVisitor
     }
 }
-impl<S: PrfValue + Clone> EncryptFrom<S> for Hmac256 {
+impl<S: Encrypt + Clone> EncryptFrom<S> for Hmac256 {
     type Context = CallerContext;
     fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
     where
@@ -250,11 +255,125 @@ impl<P, Ctx> DecryptField<P, Ctx> for Hmac256 {
     }
 }
 
+/// The match configuration of EQL v4's `TextMatch`: 3-grams of the
+/// lower-cased text, `k = 6` positions per token in a 2048-bit filter.
+///
+/// Pinned here rather than taken from Stack Encrypt's default, because it is
+/// part of the stored format: a stored filter and a query filter agree only
+/// when both were built under the same values, and nothing in the payload
+/// records them. Changing any of them is a new domain or payload version,
+/// never an edit in place. Every position is below 2048, so it fits a
+/// `smallint`.
+///
+/// A filter is a set of bits, so `@@` can return rows that do not contain the
+/// query (false positives) and never misses one that does. 2048 bits keeps
+/// that rate low for text of a few hundred characters; re-check matches
+/// after decrypting where it matters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct EqlMatch;
+impl MatchConfig for EqlMatch {
+    fn options() -> MatchOptions {
+        MatchOptions {
+            tokenizer: Tokenizer::Ngram { length: 3 },
+            downcase: true,
+            k: 6,
+            m: 2048,
+        }
+    }
+}
+
+/// Builds EQL's bloom filter, the set bit positions as `smallint`s, from the
+/// native match terms built under [`EqlMatch`]. Stored values and queries
+/// take it from the same type, so they always agree; matching
+/// cipherstash-client's parameters is not a goal, because cipherstash-client
+/// never writes an `eql_v4` column.
+///
+/// Text that cuts no token (empty, separator-only, or shorter than a 3-gram)
+/// is refused with [`TermError::EmptyTermText`], stored or queried. Stack
+/// Encrypt stores such a value as the empty filter, but EQL treats an empty
+/// filter as contained by every stored filter, and this one type builds both
+/// the stored filter and the query operand, so it cannot tell a query from a
+/// stored value: refusing both is the one way a query cannot match every
+/// row.
+#[doc(hidden)]
+pub struct MatchVisitor;
+impl Visitor for MatchVisitor {
+    type Value = BloomFilter;
+    // `MatchTerm` is the type's name in the crates.io stack-encrypt this
+    // crate publishes against, and a deprecated alias of `MatchTerms` in the
+    // tree: the one spelling that compiles against both.
+    #[allow(deprecated)]
+    fn matching<O: MatchConfig>(self, terms: MatchTerm<O>) -> Result<Self::Value, Error> {
+        if terms.positions().is_empty() {
+            return Err(Error::Term(TermError::EmptyTermText));
+        }
+        terms
+            .positions()
+            .iter()
+            .map(|&position| {
+                i16::try_from(position).map_err(|_| {
+                    Error::Other(
+                        "a match position does not fit a smallint; EQL's bloom filter stores \
+                         filters of at most 32768 bits"
+                            .into(),
+                    )
+                })
+            })
+            .collect::<Result<_, _>>()
+            .map(BloomFilter)
+    }
+}
+impl Transcode for BloomFilter {
+    type Visitor = MatchVisitor;
+    fn visitor() -> Self::Visitor {
+        MatchVisitor
+    }
+}
+impl<S: AsRef<str>> EncryptFrom<S> for BloomFilter {
+    type Context = CallerContext;
+    fn encryption<'s, K: 'static>() -> Encryption<'s, S, Self, K, Self::Context>
+    where
+        S: 's,
+    {
+        // The type names the configuration and lets inference fill the rest:
+        // `matching` takes three type parameters in the crates.io
+        // stack-encrypt this crate publishes against and four in the tree,
+        // so a turbofish compiles against only one of them.
+        #[allow(deprecated)]
+        let terms: Encryption<'s, S, MatchTerm<EqlMatch>, K, CallerContext> = target::matching();
+        terms.transcode()
+    }
+}
+impl Decryptable for BloomFilter {
+    const DECRYPTABLE: bool = false;
+}
+impl<P, Ctx> DecryptField<P, Ctx> for BloomFilter {
+    fn decryption_field<K: 'static>(self, _: Ctx) -> Option<Decryption<P, K>> {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use stack_encrypt::{nonempty, Descriptor, Label};
 
     use super::*;
+
+    /// The stored format: a change here strands every filter already stored
+    /// under the old values, so it must arrive as a new domain or payload
+    /// version, and this test makes that a deliberate edit.
+    #[test]
+    fn the_match_configuration_is_pinned() {
+        let options = EqlMatch::options();
+        assert!(matches!(options.tokenizer, Tokenizer::Ngram { length: 3 }));
+        assert!(options.downcase);
+        assert_eq!(options.k, 6);
+        assert_eq!(options.m, 2048);
+        assert!(
+            options.m <= 1 << 15,
+            "every position must fit EQL's smallint filter"
+        );
+    }
 
     fn id(t: &str, c: &str) -> Identifier {
         Identifier {

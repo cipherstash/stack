@@ -1,0 +1,283 @@
+{
+  "_comment": "Query terms derived by operator through the data path (stack_encrypt::dynamic::query_term), each equal to the typed query chain's, with a verified page and fetch limits. Read by tests/query_operators.rs and the Go SDK's tests; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand.",
+  "key_source": {
+    "kind": "deterministic-sha256",
+    "seed": "737461636b2d656e6372797074207265636f7264206669787475726520763120"
+  },
+  "keyset_id": "00000000-0000-0000-0000-000000000000",
+  "plan": {
+    "age": {
+      "context": [
+        "users",
+        "age"
+      ],
+      "outputs": [
+        "c",
+        "eq",
+        "ore"
+      ],
+      "type": "uint32"
+    },
+    "email": {
+      "context": [
+        "users",
+        "email"
+      ],
+      "outputs": [
+        "c",
+        "eq"
+      ],
+      "type": "string"
+    },
+    "name": {
+      "context": [
+        "users",
+        "name"
+      ],
+      "outputs": [
+        "c",
+        "match"
+      ],
+      "type": "string"
+    }
+  },
+  "queries": [
+    {
+      "field": "email",
+      "input": "bob@example.com",
+      "operator": "eq",
+      "term": {
+        "domain": null,
+        "fidelity": "exact",
+        "index": "eq",
+        "operator": "eq",
+        "term": "0cf708c07acaaa169e84e4adf7081f0433d87760bd7e9c63bd7a58c000b8d33b"
+      }
+    },
+    {
+      "field": "age",
+      "input": 34,
+      "operator": "eq",
+      "term": {
+        "domain": null,
+        "fidelity": "exact",
+        "index": "eq",
+        "operator": "eq",
+        "term": "cc854fd5c7e3f4bb28cb15cae47d866b65b7012c06df43b4b9a6c51adff4710a"
+      }
+    },
+    {
+      "field": "age",
+      "input": 40,
+      "operator": "lt",
+      "term": {
+        "domain": null,
+        "fidelity": "exact",
+        "index": "ore",
+        "operator": "lt",
+        "term": "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a126a606d6d336"
+      }
+    },
+    {
+      "field": "age",
+      "input": 40,
+      "operator": "lte",
+      "term": {
+        "domain": null,
+        "fidelity": "exact",
+        "index": "ore",
+        "operator": "lte",
+        "term": "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a126a606d6d336"
+      }
+    },
+    {
+      "field": "age",
+      "input": 18,
+      "operator": "gt",
+      "term": {
+        "domain": null,
+        "fidelity": "exact",
+        "index": "ore",
+        "operator": "gt",
+        "term": "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a1256421f2eba6"
+      }
+    },
+    {
+      "field": "age",
+      "input": 18,
+      "operator": "gte",
+      "term": {
+        "domain": null,
+        "fidelity": "exact",
+        "index": "ore",
+        "operator": "gte",
+        "term": "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a1256421f2eba6"
+      }
+    },
+    {
+      "field": "age",
+      "input": [
+        18,
+        65
+      ],
+      "operator": "between",
+      "term": {
+        "domain": null,
+        "fidelity": "exact",
+        "index": "ore",
+        "operator": "between",
+        "term": [
+          "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a1256421f2eba6",
+          "7ca54e16d7944c0a9d8577d87f3864fdf79e99fea5956ba956a20bc4002878be"
+        ]
+      }
+    },
+    {
+      "field": "name",
+      "input": "alice",
+      "operator": "matches",
+      "term": {
+        "domain": null,
+        "fidelity": "probabilistic",
+        "index": "match",
+        "operator": "matches",
+        "term": "2800300053006d00890095009d00c100fe00"
+      }
+    },
+    {
+      "field": "name",
+      "input": "ali",
+      "operator": "matches",
+      "term": {
+        "domain": null,
+        "fidelity": "probabilistic",
+        "index": "match",
+        "operator": "matches",
+        "term": "30009d00c100"
+      }
+    }
+  ],
+  "target_limit": [
+    {
+      "field": "name",
+      "input": "ali",
+      "limit": 53954,
+      "operator": "matches",
+      "stats": {
+        "histogram": [
+          [
+            40,
+            500000
+          ],
+          [
+            120,
+            500000
+          ]
+        ],
+        "rows": 1000000
+      },
+      "term": "30009d00c100",
+      "want": 10
+    },
+    {
+      "field": "name",
+      "input": "ali",
+      "limit": 3825,
+      "operator": "matches",
+      "stats": {
+        "confidence": 0.5,
+        "histogram": [
+          [
+            40,
+            1000000
+          ]
+        ],
+        "rows": 1000000
+      },
+      "term": "30009d00c100",
+      "want": 10
+    },
+    {
+      "field": "name",
+      "input": "ali",
+      "limit": null,
+      "operator": "matches",
+      "stats": {
+        "rows": 1000000
+      },
+      "term": "30009d00c100",
+      "want": 10
+    },
+    {
+      "field": "name",
+      "input": "alice",
+      "limit": 611,
+      "operator": "matches",
+      "stats": {
+        "histogram": [
+          [
+            40,
+            500000
+          ],
+          [
+            120,
+            500000
+          ]
+        ],
+        "rows": 1000000
+      },
+      "term": "2800300053006d00890095009d00c100fe00",
+      "want": 10
+    },
+    {
+      "field": "name",
+      "input": "alice",
+      "limit": 10,
+      "operator": "matches",
+      "stats": {
+        "confidence": 0.5,
+        "histogram": [
+          [
+            40,
+            1000000
+          ]
+        ],
+        "rows": 1000000
+      },
+      "term": "2800300053006d00890095009d00c100fe00",
+      "want": 10
+    },
+    {
+      "field": "name",
+      "input": "alice",
+      "limit": null,
+      "operator": "matches",
+      "stats": {
+        "rows": 1000000
+      },
+      "term": "2800300053006d00890095009d00c100fe00",
+      "want": 10
+    }
+  ],
+  "verify": {
+    "field": "name",
+    "input": "alice",
+    "operator": "matches",
+    "values": [
+      "Alice Smith",
+      "alicia",
+      "Bob",
+      "malice",
+      "ALICE",
+      null
+    ],
+    "verified": [
+      true,
+      false,
+      false,
+      true,
+      true,
+      false
+    ]
+  }
+}

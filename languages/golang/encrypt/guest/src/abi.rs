@@ -6,8 +6,10 @@
 //!
 //! - **Every export handed plaintext wipes that buffer in place before it
 //!   returns**, rather than leaving it for `se_dealloc`: [`se_cipher_init`]
-//!   (the config carries the client key), and [`se_term`], [`se_query`] and
-//!   [`se_encrypt_record`] (their value/source buffers). The host's plaintext therefore lives no longer
+//!   (the config carries the client key), and [`se_term`],
+//!   [`se_query_term`], [`se_verify`] and [`se_encrypt_record`] (their
+//!   value, source and input buffers, and [`se_verify`]'s page of decrypted
+//!   values). The host's plaintext therefore lives no longer
 //!   than the call, instead of until the host gets round to releasing it.
 //!   **A host must not read a plaintext input buffer back after the call, or
 //!   pass the same buffer to two calls** — it will be zeros. Option, context,
@@ -52,8 +54,9 @@
 //! fields, so their contexts must be non-empty (`STATUS_ENCODING`
 //! otherwise): each is a [`stack_encrypt::NonEmpty`] from the moment it is
 //! parsed, and the sealing and opening sides bind that one value.
-//! [`se_plan_check`] and [`se_targets`] answer the Go generator's questions
-//! and need no cipher.
+//! [`se_plan_check`], [`se_targets`] and [`se_operators`] answer the Go
+//! generator's questions and need no cipher; nor do [`se_verify`] and [`se_target_limit`], a
+//! probabilistic query's two questions, which use no key.
 //!
 //! Every export decodes and validates *all* of its inputs — the operation
 //! payload, the plan or context, the term kind, the value against the
@@ -72,12 +75,11 @@ use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use futures::executor::block_on;
+use stack_encrypt::dynamic::FfiValue;
 use stack_encrypt::{KeysetCipher, StackCipher};
 use stack_guest_abi::abi::{export, input, take_plaintext, wipe_input};
 use stack_guest_abi::buffers;
 use stack_guest_abi::last_error::{self, malformed, out_of_order};
-use vitaminc_aead_value::transport as codec;
-use vitaminc_aead_value::FfiValue;
 
 use crate::ops;
 use crate::options::{parse_options, parse_selector, scope_for, KeysetSelector, Side};
@@ -111,8 +113,8 @@ thread_local! {
 
 /// Decode one codec-encoded input.
 fn decode(bytes: &[u8]) -> Result<FfiValue, u32> {
-    codec::decode_value(&mut codec::Reader::new(bytes))
-        .map_err(|_| malformed("an input is not a value in the transport codec"))
+    FfiValue::from_frame(bytes)
+        .map_err(|_| malformed("an input is not a value in the transport frame"))
 }
 
 /// Run `f` with the instance's cipher, or report `STATUS_STATE` when there
@@ -336,7 +338,7 @@ pub unsafe extern "C" fn se_keyset(sel_ptr: *const u8, sel_len: u32) -> u64 {
 ///
 /// The context is one part — a string, bytes, or an `i32`/`i64`/`u32`/`u64`
 /// — or an array of parts, which may nest as deep as the transport codec
-/// allows (`vitaminc_aead_value::transport::MAX_DEPTH` levels, counted from
+/// allows (`vitaminc_aead_frame::MAX_DEPTH` levels, counted from
 /// the root of the encoded value; deeper is refused as `STATUS_ENCODING`
 /// before the context is parsed). [`stack_encrypt::dynamic::context`] is the one home of
 /// that grammar and of which Rust context each shape spells.
@@ -465,24 +467,30 @@ pub unsafe extern "C" fn se_plan_check(plan_ptr: *const u8, plan_len: u32) -> u6
     })
 }
 
-/// Derive the EQL query value of one target field under the keyset `opts`
-/// selects: a codec-encoded plaintext, the codec-encoded plan and the
-/// field's name (UTF-8 bytes) in, the query value's JSON bytes out
-/// ([`ops::query`]). The plan is parsed against this build's resolver, so
-/// a build without EQL types refuses it as `STATUS_ENCODING` before the
-/// cipher is consulted, as it refuses the same plan at [`se_plan_check`].
+/// Derive the query term for one plan field, an operator and its input
+/// under the keyset `opts` selects ([`ops::query_term`]): a codec-encoded
+/// input (one value, or for `between` a list of two), the codec-encoded
+/// plan, and the field's and the operator's names (UTF-8 bytes) in; the
+/// term's codec-encoded object out. An operator the field does not answer
+/// is `STATUS_ENCODING` naming the field, as a mistyped value is, before
+/// the cipher is consulted; the refusals the typed path makes before a term
+/// exists (a range the wrong way round, match text that cuts no token or
+/// does not normalize) are `STATUS_TERM`, also before the cipher. The input
+/// buffer is wiped in place.
 ///
 /// # Safety
 ///
 /// As for [`se_term`].
 #[no_mangle]
-pub unsafe extern "C" fn se_query(
+pub unsafe extern "C" fn se_query_term(
     val_ptr: *mut u8,
     val_len: u32,
     plan_ptr: *const u8,
     plan_len: u32,
     field_ptr: *const u8,
     field_len: u32,
+    op_ptr: *const u8,
+    op_len: u32,
     opt_ptr: *const u8,
     opt_len: u32,
 ) -> u64 {
@@ -493,11 +501,88 @@ pub unsafe extern "C" fn se_query(
         // before it returns and before any wipe of an overlapping range.
         let plan = unsafe { input(plan_ptr, plan_len)? };
         let field = unsafe { input(field_ptr, field_len)? };
+        let operator = unsafe { input(op_ptr, op_len)? };
         let opts = unsafe { input(opt_ptr, opt_len)? };
-        ops::validate::query(value, plan, field)?;
+        ops::validate::query_term(value, plan, field, operator)?;
         with_keyset(opts, |keyset| {
-            block_on(ops::query(keyset, value, plan, field))
+            block_on(ops::query_term(keyset, value, plan, field, operator))
         })
+    })
+}
+
+/// Verify a page of decrypted values against a probabilistic query
+/// ([`ops::verify`]): the query's codec-encoded input and a codec-encoded
+/// list of values, the codec-encoded plan, and the field's and the
+/// operator's names in; a codec-encoded list of booleans out, one per value.
+/// Both plaintext buffers, the input and the values, are wiped in place. An
+/// exact operator has nothing to verify and is `STATUS_ENCODING`. Needs no
+/// cipher: it works in every instance state, as [`se_plan_check`] does.
+///
+/// # Safety
+///
+/// As for [`se_term`].
+#[no_mangle]
+pub unsafe extern "C" fn se_verify(
+    in_ptr: *mut u8,
+    in_len: u32,
+    vals_ptr: *mut u8,
+    vals_len: u32,
+    plan_ptr: *const u8,
+    plan_len: u32,
+    field_ptr: *const u8,
+    field_len: u32,
+    op_ptr: *const u8,
+    op_len: u32,
+) -> u64 {
+    export(|| {
+        // Both buffers are taken, and so wiped, before either result is
+        // acted on: a bad query pointer must not leave the page of
+        // decrypted values unwiped behind an early return.
+        let query = unsafe { take_plaintext(in_ptr, in_len) };
+        let values = unsafe { take_plaintext(vals_ptr, vals_len) };
+        let (query, values) = (query?, values?);
+        // SAFETY: host-owned ranges the export was handed; the borrows end
+        // before it returns.
+        let plan = unsafe { input(plan_ptr, plan_len)? };
+        let field = unsafe { input(field_ptr, field_len)? };
+        let operator = unsafe { input(op_ptr, op_len)? };
+        ops::verify(query.as_slice(), values.as_slice(), plan, field, operator)
+    })
+}
+
+/// How many rows a probabilistic query should fetch for `want` of them to
+/// verify ([`ops::target_limit`]): the term's bytes as [`se_query_term`]
+/// returned them, the codec-encoded statistics, the codec-encoded plan,
+/// and the field's and the operator's names in, with `want`; the
+/// codec-encoded limit out, an unsigned integer or null. An exact operator
+/// has no fetch to size and is `STATUS_ENCODING`. Needs no cipher.
+///
+/// # Safety
+///
+/// As for [`se_term`].
+#[no_mangle]
+pub unsafe extern "C" fn se_target_limit(
+    term_ptr: *const u8,
+    term_len: u32,
+    stats_ptr: *const u8,
+    stats_len: u32,
+    plan_ptr: *const u8,
+    plan_len: u32,
+    field_ptr: *const u8,
+    field_len: u32,
+    op_ptr: *const u8,
+    op_len: u32,
+    want: u64,
+) -> u64 {
+    export(|| {
+        // SAFETY: host-owned ranges the export was handed; the borrows end
+        // before it returns.
+        let term = unsafe { input(term_ptr, term_len)? };
+        let stats = unsafe { input(stats_ptr, stats_len)? };
+        let plan = unsafe { input(plan_ptr, plan_len)? };
+        let field = unsafe { input(field_ptr, field_len)? };
+        let operator = unsafe { input(op_ptr, op_len)? };
+        ops::target_limit(term, stats, plan, field, operator, want)
     })
 }
 
@@ -507,4 +592,29 @@ pub unsafe extern "C" fn se_query(
 #[no_mangle]
 pub extern "C" fn se_targets() -> u64 {
     export(ops::targets)
+}
+
+/// The operators one plan field answers ([`ops::operators`]): the
+/// codec-encoded plan and the field's name (UTF-8 bytes) in, a codec-encoded
+/// list of operator objects out. A field the plan does not have is
+/// `STATUS_ENCODING`. Needs no cipher: it works in every instance state, as
+/// [`se_plan_check`] does.
+///
+/// # Safety
+///
+/// As for [`se_term`].
+#[no_mangle]
+pub unsafe extern "C" fn se_operators(
+    plan_ptr: *const u8,
+    plan_len: u32,
+    field_ptr: *const u8,
+    field_len: u32,
+) -> u64 {
+    export(|| {
+        // SAFETY: host-owned ranges the export was handed; the borrows end
+        // before they return.
+        let plan = unsafe { input(plan_ptr, plan_len)? };
+        let field = unsafe { input(field_ptr, field_len)? };
+        ops::operators(plan, field)
+    })
 }

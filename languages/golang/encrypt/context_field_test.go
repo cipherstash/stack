@@ -109,19 +109,19 @@ func TestContextFieldQueriesNameTheContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A query through a cipher with no context has nothing to derive under.
-	if _, err := testusers.NoteFields.Text.Equality(ctx, cipher, "hello"); !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "Cipher.Context") {
+	if _, err := testusers.NoteFields.Text.Eq(ctx, cipher, "hello"); !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "Cipher.Context") {
 		t.Fatalf("a query with no context: %v, want ErrEncoding naming Cipher.Context", err)
 	}
 	// Under the tenant it singles out that tenant's row.
 	acme := cipher.Context("tenants/acme")
-	probe, err := testusers.NoteFields.Text.Equality(ctx, acme, "hello")
+	probe, err := testusers.NoteFields.Text.Eq(ctx, acme, "hello")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !probe.Equal(encrypted[0].Text.Equality) || probe.Equal(encrypted[1].Text.Equality) || probe.Equal(encrypted[2].Text.Equality) {
 		t.Error("the probe under tenants/acme does not single out acme's hello")
 	}
-	globex, err := testusers.NoteFields.Text.Equality(ctx, cipher.Context("tenants/globex"), "hello")
+	globex, err := testusers.NoteFields.Text.Eq(ctx, cipher.Context("tenants/globex"), "hello")
 	if err != nil || !globex.Equal(encrypted[1].Text.Equality) {
 		t.Fatalf("the probe under tenants/globex: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestGeneratedCodeOpensTheRustContextFieldFixture(t *testing.T) {
 				t.Fatalf("through the globex cipher: %v, want ErrContextMismatch", err)
 			}
 			// The term Go derives under the tenant is the bytes Rust stored.
-			eq, err := testusers.NoteFields.Text.Equality(ctx, cipher.Context(want.Tenant), want.Text)
+			eq, err := testusers.NoteFields.Text.Eq(ctx, cipher.Context(want.Tenant), want.Text)
 			if err != nil || !eq.Equal(stored.Text.Equality) {
 				t.Errorf("text equality: %v, equal=%v", err, eq.Equal(stored.Text.Equality))
 			}

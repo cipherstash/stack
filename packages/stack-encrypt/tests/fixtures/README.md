@@ -2,7 +2,7 @@
 
 One declaration, two authors, one engine. A Rust chain
 (`cipher.encrypt(&user).context("users").fields()…`, over fields of type
-`stack_encrypt::dynamic::Value`, the plaintext type a binding's values have)
+`stack_encrypt::dynamic::FfiValue`, the plaintext type a binding's values have)
 and the data-plan lowering (`stack_encrypt::dynamic::record`, what a
 language binding calls) each sealed the same plaintext under the same
 declaration. The fixture holds both records, with their term bytes, sealed
@@ -11,10 +11,9 @@ same seed. `tests/record_lowering.rs` opens each record with the other
 author and checks that both derive the terms it holds. That cross-opening
 is the proof that `dynamic::record` is a lowering into the plan builder and
 not a second executor (ADR-0007, amended 2026-10-06). A Go test reads the
-same file later, once the Go SDK's generated code is the third author. A
-chain over bare `u32` or `String` fields derives the same terms but a
-different leaf encoding, which the other reader cannot open or tell apart;
-`dynamic::record`'s docs say why the lowering does not bridge that.
+same file later, once the Go SDK's generated code is the third author.  A
+chain over bare `u32` or `String` fields seals the same leaves too: every
+leaf is tagged with its type (vitaminc ADR 0001), whoever wrote it.
 
 Regenerate with `STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p
 stack-encrypt --all-features --test record_lowering`. Only the sealed bytes
@@ -87,3 +86,55 @@ by hand.
 
 `label_segments.json` beside this file is a different fixture: the one rule
 for a plain label segment, read by the Rust, derive and Go tests.
+
+# Query fixture: `query_operators.json`
+
+Queries named by operator through the data path
+(`stack_encrypt::dynamic::query_term`, what a language binding calls), each
+term equal to the one the typed query chain (`cipher.query(op::Lt,
+&40u32).on(&plan)`) derives for the same query, with a page `verify`
+answered and fetch limits `target_limit` sized (ADR-0009; ADR-0007, amended
+2026-10-16). `tests/query_operators.rs` derives every entry and checks it
+against the typed path; the Go SDK's `encrypt` tests derive, verify and size
+the same queries through the guest's `se_query_term`, `se_verify` and
+`se_target_limit` exports and compare. No entry depends on a nonce, so the
+file changes only when a derivation does: regenerate it with
+`STACK_ENCRYPT_UPDATE_FIXTURES=1 cargo test -p stack-encrypt --all-features
+--test query_operators`, and do not edit it by hand.
+
+```json
+{
+  "_comment":     "what this file is",
+  "key_source":   { "kind": "deterministic-sha256", "seed": "<32 bytes, hex>" },
+  "keyset_id":    "<uuid the terms were derived under>",
+  "plan":         { "<field>": { "context": [...], "outputs": [...], "type": "<kind>" }, ... },
+  "queries": [
+    { "field": "<field>", "operator": "<name>", "input": <value, or [lo, hi]>,
+      "term": { "operator": "<name>", "fidelity": "exact" | "probabilistic",
+                "index": "<index key>", "domain": null, "term": "<hex>" | ["<hex>", "<hex>"] } }
+  ],
+  "verify": { "field": "<field>", "operator": "matches", "input": "<text>",
+              "values": [<text or null>, ...], "verified": [<bool>, ...] },
+  "target_limit": [
+    { "field": "<field>", "operator": "matches", "input": "<text>", "term": "<hex>",
+      "want": <integer>, "stats": { "rows": <integer>, "histogram": [[<bits>, <rows>], ...],
+      "confidence": <float> }, "limit": <integer or null> }
+  ]
+}
+```
+
+- **`key_source`**, **`keyset_id`.** As in the record fixture: terms derive
+  under `FakeDataKeySource`'s index key for the nil keyset, whatever the
+  seed, so the Go tests run the deterministic guest built from the same
+  source.
+- **`queries`.** Each query as a binding sends it, and its term in the wire
+  form `QueryTerm::to_value` writes, the bytes in hex: one term, or for
+  `between` the low bound's then the high's. An input is JSON, read as the
+  field's declared type, so `40` queries the `uint32` field `age`.
+- **`verify`.** A page of decrypted values, null for an empty field, and the
+  boolean `verify` answers for each, which is what the typed `MatchQuery`
+  answers.
+- **`target_limit`.** A match term's bytes, the statistics in the wire form
+  `Stats::from_value` reads (an absent histogram is the declared prior), and
+  the limit, null when no finite fetch can be promised, which is what the
+  typed `MatchQuery` answers.

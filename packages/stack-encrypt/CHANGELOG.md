@@ -9,6 +9,118 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A binding queries by operator** (`dynamic` feature; ADR-0009, ADR-0007
+  amended 2026-10-16). `dynamic::query_term(keyset, &plan, field, op,
+  input, &resolver)` derives the query term for a field of a data plan, an
+  operator (`dynamic::OpSpec`, named `eq`, `lt`, `lte`, `gt`, `gte`,
+  `between` or `matches`) and its input, reading the input as the field's
+  declared type first. The index that answers is the typed path's default
+  (`OpSpec::answered_by`), and the term is the bytes the typed query chain
+  derives for the same query. A field that names an EQL type answers through
+  the type's query twin. An operator the field does not answer is refused
+  as a mistyped value is, `dynamic::Error::Source` naming the field with
+  `Reason::OperatorNotAnswered`; `check_query` refuses the same without a
+  cipher. `dynamic::verify` checks a page of decrypted values against a
+  probabilistic query and `dynamic::target_limit` sizes its fetch from the
+  term's bytes and `Stats` (`Stats::from_value` reads their wire form), by
+  the code the typed `MatchQuery` runs, with the field's own match options;
+  neither uses a key. The catalog entry of an EQL type
+  (`TargetDescriptor::to_value`) lists the operators the engine answers for
+  it, each with its fidelity (`dynamic::Fidelity`), arity and index
+  (`TargetDescriptor::operators`).
+- **An EQL type with a match index answers `matches` through its twin.**
+  `TargetDescriptor::with_match_options` gives the engine the options a
+  type's match index is built under (`TargetDescriptor::match_options`, not
+  on the wire), and such a type answers `matches` (probabilistic) as well as
+  its exact operators: `query_term` derives the type's query twin, and
+  `verify` and `target_limit` run under the type's options, the latter
+  reading the twin's `bf`. A type with a match index and no options still
+  answers no probabilistic operator. The Go guest gives `TextMatch` EQL's
+  match options, so it answers `matches` through `TextMatchQuery`.
+- **A binding asks which operators a field answers.**
+  `dynamic::field_operators(&plan, field, &resolver)` lists the operators a
+  field of a data plan answers, each with the index that answers it: what
+  `query_term` derives a term for on that field and nothing else, for a
+  field declared with indexes as for one that names an EQL type.
+  `dynamic::operator_to_value` writes one entry in the catalog's wire form.
+  A generator asks this before the program runs, so it writes one query
+  method per operator and holds no copy of the table.
+- **A query names an operator, not an index.**
+  `cipher.query(op::Eq, "bob@example.com").on(&plan)` and
+  `cipher.query(op::Matches, "ali").on(&plan)`: the operator comes first, as
+  a value, and the plan named by `on` finds the index that answers it
+  (ADR-0009). An index declares the operators it answers (`op::Supports`), a
+  target type names the index that answers each one for it (`op::Answers`),
+  and a plan that declares indexes uses the operator's default index
+  (`op::DefaultIndex`); both name the index by its type, whose `Default` is
+  the index. `.via(index)` before `.on(&plan)` names another index the plan
+  declares, such as a match index with its own configuration.
+  `op::Matches` is the case-insensitive operator, as a value;
+  `op::Matches.case_sensitive()` is the other, and the case types are
+  `op::CaseInsensitive` and `op::CaseSensitive`. What the plan's type shows
+  is checked at compile time: a match query on an integer, an operator a
+  target does not answer, and on a one-value plan an index it does not hold
+  or a case-sensitive `Matches` against a case-folding index. On a field of
+  a fields plan those are refused when the query is awaited, before any key
+  is requested, as is a match configuration whose `op::MatchCase` disagrees
+  with its options (`PlanError::MatchCase`).
+- **A match query has its own type, `sem::MatchQuery`.** It is the filter over
+  the query's value; test a stored filter against it with
+  `MatchTerms::matches(&query)`. It comes only from a query chain:
+  `op::Supports::query` takes an `op::QueryToken` that only this crate can
+  make.
+- **`Match` is a value.** `.with((Equality, Match))` declares the match index
+  under the default configuration, as `Equality` declares equality;
+  `Match::<MyConfig>::new()` is another configuration.
+- **`verify` drops a match query's false positives after decrypt.** A
+  `MatchQuery` is `op::Probabilistic`: `query.verify(&value)` is `true` when
+  every token of the query's value, cut by the index's own tokenizer and
+  case folding, is a token of the decrypted value. Filter decrypted rows
+  with it. The query keeps its value's tokens to do this; they are zeroized
+  on drop and never shown by `Debug`, and the tokenizer now zeroizes its own
+  copies of the text. An exact term has no `verify`, and none of this
+  crate's indexes can answer `op::Matches` but with a probabilistic term
+  (`op::TermFor`).
+- **The ordering operators, and `Between` as one term.** `op::Lt`, `Lte`,
+  `Gt` and `Gte` take one value and `op::Between` a pair of bounds,
+  `cipher.query(op::Between, &(18, 65)).on(&age_plan)`, inclusive at both
+  ends. They are answered over the integer types (`op::Ordered`) by the
+  `Ore` index by default and by `Ope` through `.via(Ope)`; an ordering on
+  text does not compile. A comparison's query term is the index's own term
+  for the value (`OreTerm`, `OpeTerm`); a range's is one `sem::RangeQuery`
+  carrying both bounds' terms, read with `lo()` and `hi()`, so no statement
+  can pair the low bound of one query with the high bound of another. A
+  range whose low bound is above its high bound is refused when the query
+  is awaited, before either term is derived (`TermError::InvertedRange`).
+  What a query takes is the operator's `op::Arity` (`op::One` or
+  `op::Pair`), and `op::Input` relates the value given to the plaintext the
+  plan is checked against (ADR-0009, decision 7).
+- **The JSON operators are declared.** `op::Contains` and `op::ContainedBy`
+  (`@>` and `<@`) and the accessor `op::AtPath<Op>`, `op::AtPath(op::Eq)`,
+  which applies another operator at a JSON path and inherits its fidelity
+  (`op::TermFor`): `AtPath<Eq>` and `AtPath<Lt>` are exact. No index
+  answers them yet, since this crate has no JSON index, so a query with
+  them does not compile until one exists. `AtPath<Op>` takes a leaf
+  operator (`op::Leaf`: `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between`,
+  `Matches`), so `AtPath<Contains>` and a nested `AtPath<AtPath<_>>` do not
+  compile, and its arity, `op::Pathed<A>`, carries the leaf's (`Pathed<One>`
+  for `AtPath<Eq>`, `Pathed<Pair>` for `AtPath<Between>`); it has no
+  `op::Input` until the JSON index exists (ADR-0009, decision 1).
+- **`target_limit` says how many rows a match query should fetch.**
+  `query.target_limit(want, &stats)` is `want` plus the false positives
+  expected at the confidence `stats` names (99% by default), as an
+  `op::Limit`. `op::Stats::declared(rows)` uses the new
+  `MatchConfig::expected_tokens()` prior; `op::Stats::measured(rows,
+  histogram)` uses a histogram of the stored filters' set-bit counts. With
+  neither, the limit is `Limit::Unbounded`, and the caller pages with a
+  cursor. A `want` of 0 is `Limit::Rows(0)`. A limit, and `fetch_or`'s
+  page, never exceeds `op::MAX_ROWS` (`i64::MAX`), the largest SQL `LIMIT`.
+  `rows` counts the non-NULL rows; a table never analysed has an unknown
+  count, not 0, and gets no `Stats` (the docs give the catalog read). The
+  bound assumes a non-matching row shares no token with
+  the query, so on natural text its confidence is nominal; `verify` still
+  decides every row.
+
 - **Errors now expose stable codes, help text, and structured details.**
   All error types implement `miette::Diagnostic` with codes such as
   `stack_encrypt::foreign_keyset`. Help text explains how to resolve
@@ -46,6 +158,148 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Plan::new_with`.
 
 ### Breaking
+
+- **A match value with no tokens is stored as the empty filter, so
+  `KeysetCipher::match_terms` is no longer a query.** In 0.2.0 the same call
+  served write time and query time, and refused text that cuts no token
+  under the match index's tokenizer (empty or separator-only text, or text
+  shorter than the n-gram length) with `TermError::EmptyTermText`. Now it
+  derives the stored filter only, and returns the empty filter (`bf: []`)
+  for such text with no error. **Do not send the output of `match_terms` as
+  a query:** EQL treats an empty filter as contained by every stored filter,
+  and its query domains do not refuse one, so that query returns every row
+  with no error anywhere. A query comes from `cipher.query(op::Matches, ..)`,
+  which still refuses such text with `TermError::EmptyTermText`, when the
+  query is awaited, before a term exists and before any keyset is loaded
+  (`op::Supports::check` now takes the query's value); `dynamic::term`
+  refuses it for a match kind the same way. The stored side is the change a
+  caller sees: one two-letter name no longer fails a whole row, the value
+  seals and opens as any other, and the `dynamic` record path stores it the
+  same way. Storing the empty filter tells a reader of the database that the
+  value is empty, separator-only or shorter than the n-gram length
+  (ADR-0009).
+- **stack-encrypt requires the vitaminc 0.6 crates.** They are the first
+  release of vitaminc ADR 0001, which the entries below build on. A crate
+  that names a vitaminc type stack-encrypt takes or returns (`Encrypt`,
+  `Decrypt`, `Protected`) moves to 0.6 with it.
+- **Equality terms derive through `vitaminc-normalize`, so `TextEq` compares
+  text in Unicode 16 NFC.** An equality term is the PRF over the value's
+  normalized bytes under vitaminc's domain for its kind: `café` written with
+  a precomposed `é` and with `e` and a combining accent is one term, every
+  integer width of one number is one term (`34u32` and `34i64` match), both
+  float widths of one number are one term, and a date, timestamp, decimal
+  or uuid derives in a domain of its own. `KeysetCipher::equality_term`,
+  `target::equality`, the `Equality` index and `op::Eq` take an `Encrypt`
+  that is one scalar where they took a `PrfValue`. A boolean, a null or a
+  container has no equality term (`TermError::NoEqualityTerm`); a `bool`
+  satisfies the new bound, so equality on one now fails when the term is
+  derived where it used to fail to compile. Text holding a code point
+  unassigned in Unicode 16 (an emoji newer than it, say) is refused
+  (`TermError::Normalize`), when it is written to an equality or match
+  column as well as when it is queried: the whole record's encrypt fails.
+  Match text is tokenized in the same normal form, and refused the same
+  way. Every equality and match term changes
+  bytes (the domains move to `/v2`); ORE and OPE terms do not. No stored
+  term existed to keep; the record fixture is regenerated. ORE and OPE
+  text is still ordered as its raw UTF-8, not normalized, so on a column
+  with both an equality and an order index two forms of `café` are one
+  value to `=` and two to an ordering. This is a known gap, to be closed
+  with block ORE (#1140).
+- **`dynamic::Value` and `dynamic::Scalar` are gone.** A field lowered from
+  data holds an `FfiValue`, which is now `Clone` (a deep copy into fresh
+  `Protected` payloads, as `Value`'s was) and reads as a context label.
+  `dynamic::term` takes any `Encrypt` (an `&FfiValue`, a transport frame
+  walked in place, a Rust value) and derives at the one scalar it holds;
+  `IndexSpec::defines(value)` replaces `IndexSpec::supports(&scalar)`, and
+  `IndexSpec` is an `Index<FfiValue>`.
+- **A boolean has no order term**, on the typed path and through a plan or
+  `dynamic::term`: with two values, an ORE or OPE term would tell anyone
+  holding the column which rows are `true`. An ORE or OPE term of a `bool`
+  (`KeysetCipher::ore_term`, the `Ore` and `Ope` indexes) is refused with
+  the new `TermError::NoOrderTerm`, before any key is minted, where cllw-ore
+  used to order one. `dynamic::admits` now refuses ORE and OPE on `bool`, and
+  admits equality on `float32` and `float64`, which vitaminc gives an
+  equality domain. A 128-bit integer has an equality term and no order
+  term.
+
+- **Values describe themselves with vitaminc's new `Encrypt` and read back
+  with `Decrypt` (vitaminc ADR 0001).** `KeysetCipher::encrypt`,
+  `StackCipher::decrypt` and every target take the new `Encrypt`, a source
+  that describes its value to a sink, where they took the old
+  visitor-driven `Encrypt`, and `Decrypt` where they took
+  `Decrypt<'static>`; derive both with `vitaminc_aead::{Encrypt, Decrypt}`
+  (`stack_encrypt::{Encrypt, Decrypt}` re-exports them). The name is the
+  same and the trait is not: a hand-written impl of the old one does not
+  compile against the new one. `Decipher`, `Element` and `Cipher` are no
+  longer re-exported, and `StackDecipher` and `BoxedPassthrough` are gone.
+  A pending tree is planned rather than driven:
+  `PendingStackCipherText::plan(value, aad)`, then `seal` or
+  `into_pending` as before. The key fetch is unchanged: one batched
+  `generate_keys` per assembly to seal, one `retrieve_keys` per keyset to
+  open.
+- **Every leaf records its type, so a Rust field and a data-plan field
+  share leaves.** A Rust `u32` and a data plan's `uint32` field seal the
+  same leaf under the same context, and each opens the other's; a reader of
+  another kind (text for an integer, an integer for bytes) is refused rather
+  than handed changed plaintext, as a bare `String` reader used to read a
+  binding's leaf as `"\nalice"` (#1118). An integer reader accepts an integer
+  leaf of any width whose value fits, and an `f64` reader an `f32` leaf,
+  which change no value.
+  Leaves are vitaminc's wire version 2, so a ciphertext sealed by an
+  earlier build does not open.
+- **An absent value is a sealed null leaf**, a `Single` like any other
+  value: the absent marker (`CipherText::None`) and
+  `transcode::Visitor::absent` are gone.
+- **A passthrough travels as its frame.** `StackCipherText` is vitaminc's
+  `Node<SealedValue>`: a passthrough subtree is a `PassthroughFrame`, the
+  transport frame of its value, in place of a boxed value, and
+  `transcode::Visitor::passthrough` takes one.
+  A dynamic passthrough value the frame cannot carry is refused when the
+  source is read, before any key is requested, as `Error::Source` naming
+  the field: a repeated key as `Reason::RepeatedKey`, and a value nested
+  deeper, or holding text, bytes or a key longer, than a frame carries as
+  the new `Reason::Unframeable` (`"unframeable"`).
+- **`dynamic::FfiValue` and `dynamic::ValueKind` are this crate's own**,
+  with the same variants and kind names, since vitaminc no longer has a
+  value tree. A value crosses a binding's boundary as a transport frame
+  (`FfiValue::to_frame`, `FfiValue::from_frame`), and is read through its
+  `Decrypt` sink: an 8- or 16-bit integer in a frame reads as the 32-bit
+  variant of its sign, and a scalar no variant holds is refused.
+
+- **`StackCipher::query_index` is gone**, with `QueryIndexBuilder` and
+  `QueryIndex`. Every query names an operator now that the orderings have
+  arrived:
+  - `query_index(Ore, &v)` over an integer is `query(op::Lt, &v)` (or any
+    ordering; the term is the same `OreTerm`).
+  - `query_index(Match, text)` is `query(op::Matches, text)`, which is not
+    the same call. It returns a `MatchQuery`, not the stored `MatchTerms`;
+    it refuses text that cuts no token (`TermError::EmptyTermText`); and it
+    compiles only for a configuration that implements `op::MatchCase`. A
+    configuration without one needs that one-line impl to be queried.
+  - `query_index(Ore, text)` and `query_index(Ope, text)` have no
+    replacement: an ordering over text does not compile until the order of
+    text is settled (ADR-0009). A text column can still store ORE and OPE
+    terms.
+- **`op::Supports`, `op::Answers` and `op::DefaultIndex` are keyed by the
+  query's input**, `Supports<Op, In>` with `In: Input<Op::Arity>`, in
+  place of the plaintext; for every operator but `Between` the input is
+  the plaintext, so `Supports<Eq, S>` reads as before. `Supports::check`
+  takes the input and returns `Error`, and `Supports::query` takes the
+  input's terms (`In::Terms<Self::Term>`: one term, or a pair for a
+  range). `plan::Resolves::resolve` takes the index and the call's context
+  and returns the index and the label.
+- **The query chain starts with the operator.** `cipher.query(op, v)`
+  replaces `cipher.query(v)`: `cipher.query(op::Eq, v).on(&plan)` replaces
+  `cipher.query(v).using(&plan).equality()`, and `on` replaces `using` for
+  queries only (a write still runs `using` a plan). An index's own term, for
+  an index no operator answers yet (`Ore`, `Ope`), is
+  `cipher.query_index(Ore, v).on(&plan)`, which goes when the ordering
+  operators arrive. `QueryUsing` is gone; the chain's types are `QueryBuilder`, `QueryVia`,
+  `QueryIndexBuilder`, `QueryIndex` and `QueryOp`, and the plan shapes
+  implement `plan::Chooses` and `plan::Resolves`.
+- **`Match::default()` is `Match`.** The match index under the default
+  configuration is the value `Match`, and `Default` is now implemented for
+  every `Match<O>`, so `Match::default()` no longer infers the configuration.
 
 - **Update pattern matches for `dynamic::Error`.** `Context`, `Plan`,
   `Source`, and `Record` now carry

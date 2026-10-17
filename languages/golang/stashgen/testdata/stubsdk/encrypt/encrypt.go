@@ -34,6 +34,21 @@ type (
 	JSONTerm     []byte
 )
 
+// Range is a between query on an order index: two terms.
+type Range[T OreTerm | OpeTerm] struct {
+	Low  T
+	High T
+}
+
+// MatchQuery is a matches query on a match index.
+type MatchQuery[T ~string] struct{ _ T }
+
+// EQLMatchQuery is a matches query on an EQL type with a match index.
+type EQLMatchQuery[Q ~[]byte, T ~string] struct {
+	_ Q
+	_ T
+}
+
 // Index is one index on a field, as generated code names it in a declaration.
 type Index interface {
 	Output() string

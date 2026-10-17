@@ -21,8 +21,9 @@ use std::borrow::Cow;
 use std::future::IntoFuture;
 
 use stack_auth::{SecretToken, ServiceToken};
+use stack_encrypt::dynamic::FfiValue;
 use stack_encrypt::dynamic::Scope;
-use stack_encrypt::{CipherText, Descriptor, StackCipher};
+use stack_encrypt::{CipherText, Descriptor, Node, PassthroughFrame, StackCipher};
 use stack_encrypt_guest::options::{parse_options, Side};
 use stack_encrypt_guest::status::fail_error;
 use stack_encrypt_guest::{config, ops};
@@ -32,7 +33,7 @@ use stack_kms::{
     GenerateKeyPayload, IndexKeySource, LoadKeysetError, RetrieveKeyError, RetrieveKeyPayload,
 };
 use uuid::Uuid;
-use vitaminc_aead_value::{transport as codec, FfiValue};
+use vitaminc_aead_frame::encode_ciphertext;
 use zerokms_protocol::{IdentifiedBy, UnverifiedContext, ViturRequestError};
 
 const PLAINTEXT: &str = "leak-marker-plaintext";
@@ -127,9 +128,13 @@ fn failing() -> StackCipher<Failing> {
 // =============================================================================
 
 fn encode(value: FfiValue) -> Vec<u8> {
-    let mut out = Vec::new();
-    codec::encode_value(value, &mut out).expect("encode");
-    out
+    use vitaminc_protected::Controlled;
+    value.to_frame().expect("encode").risky_unwrap()
+}
+
+/// A value as a passthrough node: its frame, in the clear.
+fn clear(value: FfiValue) -> Node<Vec<u8>> {
+    CipherText::Passthrough(PassthroughFrame(encode(value)))
 }
 
 fn s(value: &str) -> FfiValue {
@@ -191,13 +196,13 @@ fn sealed(cipher: &StackCipher<FakeDataKeySource>, plan: &[u8]) -> Vec<u8> {
 }
 
 /// A one-leaf ciphertext tree whose leaf is `leaf`, under `email`/`c`.
-fn tree_with_leaf(leaf: CipherText<Vec<u8>, Box<dyn std::any::Any + Send>>) -> Vec<u8> {
-    let tree: CipherText<Vec<u8>, Box<dyn std::any::Any + Send>> = CipherText::Map(vec![(
+fn tree_with_leaf(leaf: Node<Vec<u8>>) -> Vec<u8> {
+    let tree: Node<Vec<u8>> = CipherText::Map(vec![(
         "email".to_owned(),
         CipherText::Map(vec![("c".to_owned(), leaf)]),
     )]);
     let mut out = Vec::new();
-    codec::encode_ciphertext_boxed(tree, &mut out).expect("encode tree");
+    encode_ciphertext(&tree, &mut out).expect("encode tree");
     out
 }
 
@@ -218,7 +223,7 @@ fn failure<T: std::fmt::Debug>(
 ) -> FfiValue {
     let _ = call::run(step).expect_err(what);
     let bytes = call::take_last_error().unwrap_or_else(|| panic!("{what}: no error recorded"));
-    let error = codec::decode_value(&mut codec::Reader::new(&bytes)).expect("an error decodes");
+    let error = FfiValue::from_frame(&bytes).expect("an error decodes");
     assert_eq!(codes(&error), expect, "{what}: the codes it reaches");
     error
 }
@@ -488,8 +493,8 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
                 "record passthrough",
                 &["stack_encrypt::dynamic_record"],
                 || {
-                    let record = tree_with_leaf(CipherText::Passthrough(Box::new(
-                        FfiValue::Bytes(vitaminc_protected::Protected::new(CIPHERTEXT.to_vec())),
+                    let record = tree_with_leaf(clear(FfiValue::Bytes(
+                        vitaminc_protected::Protected::new(CIPHERTEXT.to_vec()),
                     )));
                     block_on(ops::decrypt_record(
                         Scope::Client(&cipher),
@@ -641,6 +646,103 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
             ),
         ),
     ];
+    // -- queries by operator -----------------------------------------------
+    let marker = || FfiValue::Bytes(vitaminc_protected::Protected::new(PLAINTEXT.into()));
+    let match_plan = || {
+        encode(obj(vec![(
+            "name",
+            field(label("name"), &["c", "match"], Some("string")),
+        )]))
+    };
+    let source = &["stack_encrypt::dynamic_source"];
+    out.extend([
+        (
+            "an operator the field does not answer",
+            failure("not answered", source, || {
+                block_on(ops::query_term(
+                    &keyset,
+                    &encode(s(PLAINTEXT)),
+                    &plan_under(label("email")),
+                    b"email",
+                    b"lt",
+                ))
+            }),
+        ),
+        (
+            "a query input of another type",
+            failure("query input", source, || {
+                block_on(ops::query_term(
+                    &keyset,
+                    &encode(marker()),
+                    &plan_under(label("email")),
+                    b"email",
+                    b"eq",
+                ))
+            }),
+        ),
+        (
+            "an operator name the engine does not know",
+            failure("unknown operator", source, || {
+                block_on(ops::query_term(
+                    &keyset,
+                    &encode(s(PLAINTEXT)),
+                    &plan_under(label("email")),
+                    b"email",
+                    PLAINTEXT.as_bytes(),
+                ))
+            }),
+        ),
+        (
+            "verifying an exact operator",
+            failure("verify exact", source, || {
+                ops::verify(
+                    &encode(s(PLAINTEXT)),
+                    &encode(FfiValue::Array(vec![s(PLAINTEXT)])),
+                    &plan_under(label("email")),
+                    b"email",
+                    b"eq",
+                )
+            }),
+        ),
+        (
+            "verifying a value of another type",
+            failure("verify value", source, || {
+                ops::verify(
+                    &encode(s(PLAINTEXT)),
+                    &encode(FfiValue::Array(vec![marker()])),
+                    &match_plan(),
+                    b"name",
+                    b"matches",
+                )
+            }),
+        ),
+        (
+            "a fetch sized from bytes that are not a term",
+            failure("limit term", source, || {
+                ops::target_limit(
+                    PLAINTEXT.as_bytes(),
+                    &encode(obj(vec![("rows", FfiValue::UInt64(1))])),
+                    &match_plan(),
+                    b"name",
+                    b"matches",
+                    10,
+                )
+            }),
+        ),
+        (
+            "statistics that are not statistics",
+            failure("limit stats", source, || {
+                ops::target_limit(
+                    &[1, 0],
+                    &encode(obj(vec![("rows", s(PLAINTEXT))])),
+                    &match_plan(),
+                    b"name",
+                    b"matches",
+                    10,
+                )
+            }),
+        ),
+    ]);
     // An EQL value whose stored bytes are a JSON string where an object
     // belongs: serde_json's message would quote the string.
     #[cfg(feature = "eql")]
@@ -651,19 +753,17 @@ fn scenarios() -> Vec<(&'static str, FfiValue)> {
                 "email",
                 obj(vec![("context", label("email")), ("target", s("TextEq"))]),
             )]));
-            let tree: CipherText<Vec<u8>, Box<dyn std::any::Any + Send>> = CipherText::Map(vec![(
+            let tree: Node<Vec<u8>> = CipherText::Map(vec![(
                 "email".to_owned(),
                 CipherText::Map(vec![(
                     "eql".to_owned(),
-                    CipherText::Passthrough(Box::new(FfiValue::Bytes(
-                        vitaminc_protected::Protected::new(
-                            [&b"\""[..], CIPHERTEXT, &b"\""[..]].concat(),
-                        ),
+                    clear(FfiValue::Bytes(vitaminc_protected::Protected::new(
+                        [&b"\""[..], CIPHERTEXT, &b"\""[..]].concat(),
                     ))),
                 )]),
             )]);
             let mut record = Vec::new();
-            codec::encode_ciphertext_boxed(tree, &mut record).expect("encode tree");
+            encode_ciphertext(&tree, &mut record).expect("encode tree");
             block_on(ops::decrypt_record(
                 Scope::Client(&cipher),
                 &record,
