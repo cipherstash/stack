@@ -15,14 +15,13 @@
 //!   compared in Unicode 16 NFC, and a date, timestamp, decimal or uuid has
 //!   a domain of its own. A boolean has none.
 //! - **Match** takes text only, cut in Unicode 16 NFC.
-//! - **ORE and OPE** take an integer of at most 64 bits, a float, text or
-//!   bytes, each as the Rust type the typed path would have named. An 8- or
-//!   16-bit integer is read as the 32-bit integer of its sign, as the
-//!   engine's value model reads it ([`ValueFrame`]), so a frame from a host
-//!   with narrower integers derives the term of the width a plan field
-//!   declares. A boolean has no
+//! - **ORE and OPE** take an integer of any width, a float, text or bytes,
+//!   each handed to cllw-ore as the Rust type the typed path would have
+//!   named: an `i8` as an `i8`, a `u128` as a `u128`. A boolean has no
 //!   order term: with two values, its order term would tell anyone holding
-//!   the column which rows are `true`.
+//!   the column which rows are `true`. A decimal, a date and a timestamp
+//!   have none yet: cllw-ore 0.5 does not encode them the ADR-0002 way, and
+//!   their order terms wait for new cllw-ore and ore-rs releases (#1236).
 //!
 //! # These are the query-probe path
 //!
@@ -143,9 +142,9 @@ impl IndexSpec {
     /// is one scalar the index takes. Equality takes every scalar vitaminc
     /// gives an equality domain (an integer, a float, text, bytes, and a
     /// date, timestamp, decimal or uuid), not a boolean or a null. Match
-    /// takes text. ORE and OPE take an integer of at most 64 bits, a float,
-    /// text or bytes, not a boolean. A match index's options do not change
-    /// what it takes.
+    /// takes text. ORE and OPE take an integer of any width, a float, text
+    /// or bytes; not a boolean, and not yet a decimal, date or timestamp
+    /// (#1236). A match index's options do not change what it takes.
     ///
     /// This is the one table: [`term`] refuses exactly what it refuses, and
     /// checking it first is how a binding refuses a bad request at its
@@ -187,13 +186,14 @@ impl IndexSpec {
     }
 }
 
-/// Whether CLLW ORE and OPE order this scalar: an integer of at most 64
-/// bits, a float, text or bytes. Not a boolean, which would reveal which
-/// rows hold `true`, and not a null.
+/// Whether CLLW ORE and OPE order this scalar: an integer of any width, a
+/// float, text or bytes. Not a boolean, which would reveal which rows hold
+/// `true`, and not a null. The caller has already refused a scalar under a
+/// logical type: a decimal, date or timestamp's order term waits for
+/// #1236.
 fn ordered(value: &Physical<'_>) -> bool {
     match value {
-        Physical::Int(int) => !matches!(int, Int::I128(_) | Int::U128(_)),
-        Physical::Float(_) | Physical::Text(_) | Physical::Bytes(_) => true,
+        Physical::Int(_) | Physical::Float(_) | Physical::Text(_) | Physical::Bytes(_) => true,
         Physical::Null | Physical::Bool(_) => false,
     }
 }
@@ -453,14 +453,16 @@ where
     D: IntoPrfContext<'c>,
 {
     Some(match value {
-        Physical::Int(Int::I8(v)) => ore(cipher, i32::from(v), context),
-        Physical::Int(Int::I16(v)) => ore(cipher, i32::from(v), context),
+        Physical::Int(Int::I8(v)) => ore(cipher, v, context),
+        Physical::Int(Int::I16(v)) => ore(cipher, v, context),
         Physical::Int(Int::I32(v)) => ore(cipher, v, context),
         Physical::Int(Int::I64(v)) => ore(cipher, v, context),
-        Physical::Int(Int::U8(v)) => ore(cipher, u32::from(v), context),
-        Physical::Int(Int::U16(v)) => ore(cipher, u32::from(v), context),
+        Physical::Int(Int::I128(v)) => ore(cipher, v, context),
+        Physical::Int(Int::U8(v)) => ore(cipher, v, context),
+        Physical::Int(Int::U16(v)) => ore(cipher, v, context),
         Physical::Int(Int::U32(v)) => ore(cipher, v, context),
         Physical::Int(Int::U64(v)) => ore(cipher, v, context),
+        Physical::Int(Int::U128(v)) => ore(cipher, v, context),
         Physical::Float(Float::F32(v)) => ore(cipher, v, context),
         Physical::Float(Float::F64(v)) => ore(cipher, v, context),
         Physical::Text(t) => ore(cipher, Zeroizing::new(t.to_owned()), context),
@@ -479,14 +481,16 @@ where
     D: IntoPrfContext<'c>,
 {
     Some(match value {
-        Physical::Int(Int::I8(v)) => ope(cipher, i32::from(v), context),
-        Physical::Int(Int::I16(v)) => ope(cipher, i32::from(v), context),
+        Physical::Int(Int::I8(v)) => ope(cipher, v, context),
+        Physical::Int(Int::I16(v)) => ope(cipher, v, context),
         Physical::Int(Int::I32(v)) => ope(cipher, v, context),
         Physical::Int(Int::I64(v)) => ope(cipher, v, context),
-        Physical::Int(Int::U8(v)) => ope(cipher, u32::from(v), context),
-        Physical::Int(Int::U16(v)) => ope(cipher, u32::from(v), context),
+        Physical::Int(Int::I128(v)) => ope(cipher, v, context),
+        Physical::Int(Int::U8(v)) => ope(cipher, v, context),
+        Physical::Int(Int::U16(v)) => ope(cipher, v, context),
         Physical::Int(Int::U32(v)) => ope(cipher, v, context),
         Physical::Int(Int::U64(v)) => ope(cipher, v, context),
+        Physical::Int(Int::U128(v)) => ope(cipher, v, context),
         Physical::Float(Float::F32(v)) => ope(cipher, v, context),
         Physical::Float(Float::F64(v)) => ope(cipher, v, context),
         Physical::Text(t) => ope(cipher, Zeroizing::new(t.to_owned()), context),
@@ -705,6 +709,7 @@ mod tests {
     use crate::sem::TermError;
     use crate::{nonempty, StackCipher};
     use stack_kms::FakeDataKeySource;
+    use vitaminc_aead::plaintext::Raw;
     use vitaminc_protected::Controlled;
 
     async fn cipher() -> StackCipher<FakeDataKeySource> {
@@ -895,6 +900,25 @@ mod tests {
         FfiValue::String(value.into())
     }
 
+    fn logical(ty: Logical, value: i128) -> ValueFrame {
+        ValueFrame::of(Raw(Some(ty), Physical::Int(Int::I128(value)))).expect("in range")
+    }
+
+    fn decimal(mantissa: i128, scale: u8) -> ValueFrame {
+        logical(Logical::Decimal { scale }, mantissa)
+    }
+
+    fn date(days: i128) -> ValueFrame {
+        logical(Logical::Date, days)
+    }
+
+    fn instant(nanos: i128) -> ValueFrame {
+        logical(
+            Logical::Timestamp(vitaminc_aead::plaintext::TimeUnit::Nanos),
+            nanos,
+        )
+    }
+
     fn vf(value: FfiValue) -> ValueFrame {
         ValueFrame::of(&value).expect("in the value model")
     }
@@ -1046,10 +1070,10 @@ mod tests {
             );
         }
 
-        /// A transport frame is walked in place to the same term an
-        /// `FfiValue` derives, at every width a host sends: an 8- or 16-bit
-        /// integer is read as the 32-bit integer of its sign, as an
-        /// `FfiValue` reads it.
+        /// A transport frame is walked in place to the term the typed path
+        /// derives for the Rust value of the frame's own width: an `i8` is
+        /// the `i8` term, a `u128` the `u128` term, under every index that
+        /// takes an integer.
         #[tokio::test]
         async fn a_frame_derives_the_terms_its_value_does() {
             let cipher = cipher().await;
@@ -1063,35 +1087,139 @@ mod tests {
                     term(keyset, frame, &kind, ctx).await.expect("derives")
                 }
             };
-            let of_value = |value: FfiValue, kind: IndexSpec| {
+            macro_rules! typed {
+                ($value:expr, $label:literal) => {
+                    let frame = vitaminc_aead::to_frame($value)
+                        .expect("frames")
+                        .risky_ref()
+                        .to_vec();
+                    assert_eq!(
+                        derive(frame.clone(), IndexSpec::Equality).await,
+                        keyset
+                            .equality_term($value, nonempty!("users/x"))
+                            .await
+                            .expect("typed")
+                            .into_bytes()
+                            .to_vec(),
+                        concat!($label, " eq")
+                    );
+                    assert_eq!(
+                        derive(frame.clone(), IndexSpec::Ore).await,
+                        keyset
+                            .ore_term($value, nonempty!("users/x"))
+                            .await
+                            .expect("typed")
+                            .as_ref()
+                            .to_vec(),
+                        concat!($label, " ore")
+                    );
+                    assert_eq!(
+                        derive(frame, IndexSpec::Ope).await,
+                        keyset
+                            .ope_term($value, nonempty!("users/x"))
+                            .await
+                            .expect("typed")
+                            .as_ref()
+                            .to_vec(),
+                        concat!($label, " ope")
+                    );
+                };
+            }
+            typed!(-8i8, "i8");
+            typed!(-300i16, "i16");
+            typed!(300u16, "u16");
+            typed!(34u64, "u64");
+            typed!(i128::MIN, "i128");
+            typed!(u128::MAX, "u128");
+            // The `UINT8` tag and its byte: no Rust source walks a `u8` as an
+            // int, but a host's frame can carry one, and it is the `u8` term.
+            let frame = vec![vitaminc_aead::tags::UINT8, 200];
+            assert_eq!(
+                derive(frame.clone(), IndexSpec::Ore).await,
+                keyset
+                    .ore_term(200u8, nonempty!("users/x"))
+                    .await
+                    .expect("typed")
+                    .as_ref()
+                    .to_vec()
+            );
+            assert_eq!(
+                derive(frame, IndexSpec::Equality).await,
+                derive(
+                    vitaminc_aead::to_frame(200u64)
+                        .expect("frames")
+                        .risky_ref()
+                        .to_vec(),
+                    IndexSpec::Equality
+                )
+                .await,
+                "one equality term per number, whatever its width"
+            );
+            // A date, a timestamp and a decimal have equality terms only,
+            // the ones their frame's own value derives.
+            for value in [date(19_782), instant(-1), decimal(-150, 2)] {
+                assert_eq!(
+                    derive(value.risky_ref().to_vec(), IndexSpec::Equality).await,
+                    term(&keyset, &value, &IndexSpec::Equality, ctx.clone())
+                        .await
+                        .expect("derives"),
+                );
+            }
+        }
+
+        /// vitaminc-normalize's baseline: a decimal's scale is normalised,
+        /// so `1.5`, `1.50` and `1.500` are one term, and a timestamp's term
+        /// is truncated to the microsecond, so two instants in one
+        /// microsecond are one term and the next microsecond is another.
+        /// The ciphertext keeps both exactly; only the term folds them. A
+        /// date is not its day count, nor a decimal the integer it equals.
+        #[tokio::test]
+        async fn equality_follows_vitaminc_for_decimals_and_timestamps() {
+            let cipher = cipher().await;
+            let keyset = cipher.default_keyset();
+            let ctx = context(s("users/x")).expect("context");
+            let eq = |value: ValueFrame| {
                 let ctx = ctx.clone();
                 let keyset = &keyset;
-                async move { term(keyset, &value, &kind, ctx).await.expect("derives") }
-            };
-            for kind in [IndexSpec::Equality, IndexSpec::Ore, IndexSpec::Ope] {
-                for (frame, value) in [
-                    (vitaminc_aead::to_frame(-8i8), FfiValue::Int32(-8)),
-                    (vitaminc_aead::to_frame(-300i16), FfiValue::Int32(-300)),
-                    (vitaminc_aead::to_frame(300u16), FfiValue::UInt32(300)),
-                    (vitaminc_aead::to_frame(34u64), FfiValue::UInt64(34)),
-                    (vitaminc_aead::to_frame("alice"), s("alice")),
-                ] {
-                    let frame = frame.expect("frames");
-                    assert_eq!(
-                        derive(frame.risky_ref().to_vec(), kind.clone()).await,
-                        of_value(value, kind.clone()).await,
-                        "{kind}"
-                    );
+                async move {
+                    term(keyset, &value, &IndexSpec::Equality, ctx)
+                        .await
+                        .expect("eq")
                 }
-            }
-            // The `UINT8` tag and its byte: no Rust source walks a `u8` as an
-            // int, but a host's frame can carry one.
-            for kind in [IndexSpec::Equality, IndexSpec::Ore, IndexSpec::Ope] {
-                assert_eq!(
-                    derive(vec![vitaminc_aead::tags::UINT8, 200], kind.clone()).await,
-                    of_value(FfiValue::UInt32(200), kind.clone()).await,
-                    "{kind}"
-                );
+            };
+            let one_and_a_half = eq(decimal(15, 1)).await;
+            assert_eq!(eq(decimal(150, 2)).await, one_and_a_half, "1.50 is 1.5");
+            assert_eq!(eq(decimal(1500, 3)).await, one_and_a_half, "1.500 is 1.5");
+            assert_ne!(eq(decimal(-15, 1)).await, one_and_a_half, "the sign counts");
+            assert_ne!(eq(decimal(15, 2)).await, one_and_a_half, "0.15 is not 1.5");
+            assert_eq!(
+                eq(decimal(0, 0)).await,
+                eq(decimal(0, 4)).await,
+                "0 is 0.0000"
+            );
+            let micro = 1_760_662_923_123_456_000;
+            let at = eq(instant(micro)).await;
+            assert_eq!(eq(instant(micro + 999)).await, at, "one microsecond");
+            assert_ne!(eq(instant(micro + 1_000)).await, at, "the next microsecond");
+            assert_ne!(eq(instant(micro - 1)).await, at, "the microsecond before");
+            assert_ne!(eq(date(1)).await, eq(date(2)).await, "two days");
+            let thirty_four = eq(ValueFrame::of(34u32).expect("a value")).await;
+            assert_ne!(
+                eq(decimal(34, 0)).await,
+                thirty_four,
+                "a decimal is not its integer"
+            );
+            assert_ne!(
+                eq(date(34)).await,
+                thirty_four,
+                "a date is not its day count"
+            );
+            for width in [
+                ValueFrame::of(34i8).expect("a value"),
+                ValueFrame::of(34i128).expect("a value"),
+                ValueFrame::of(34u128).expect("a value"),
+            ] {
+                assert_eq!(eq(width).await, thirty_four, "34 at every width");
             }
         }
 
@@ -1151,24 +1279,28 @@ mod tests {
             }
         }
 
-        /// A 128-bit integer has an equality term, from vitaminc, and no
-        /// order term: the order schemes take what an `FfiValue` holds.
+        /// A decimal, a date and a timestamp have an equality term, from
+        /// vitaminc, and no order term yet: their order encodings wait for
+        /// new cllw-ore and ore-rs releases (#1236), and the engine does not
+        /// shim around cllw-ore 0.5.
         #[tokio::test]
-        async fn a_128_bit_integer_has_no_order_term() {
+        async fn a_decimal_date_or_timestamp_has_no_order_term_yet() {
             let cipher = cipher().await;
             let keyset = cipher.default_keyset();
             let ctx = context(s("users/x")).expect("context");
-            for kind in [IndexSpec::Ore, IndexSpec::Ope] {
-                assert!(!kind.defines(7u128));
-                assert!(matches!(
-                    term(&keyset, 7u128, &kind, ctx.clone()).await,
-                    Err(Error::Term { .. })
-                ));
+            for leaf in [decimal(150, 2), date(19_782), instant(7)] {
+                for kind in [IndexSpec::Ore, IndexSpec::Ope] {
+                    assert!(!kind.defines(&leaf), "{kind}");
+                    assert!(matches!(
+                        term(&keyset, &leaf, &kind, ctx.clone()).await,
+                        Err(Error::Term { .. })
+                    ));
+                }
+                assert!(IndexSpec::Equality.defines(&leaf));
+                assert!(term(&keyset, &leaf, &IndexSpec::Equality, ctx.clone())
+                    .await
+                    .is_ok());
             }
-            assert!(IndexSpec::Equality.defines(7u128));
-            assert!(term(&keyset, 7u128, &IndexSpec::Equality, ctx)
-                .await
-                .is_ok());
         }
 
         /// Text with a code point unassigned in Unicode 16 has a domain but

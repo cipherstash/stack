@@ -506,18 +506,39 @@ impl fmt::Debug for FfiValue {
 pub enum ValueKind {
     /// `"bool"`.
     Bool,
+    /// `"int8"`.
+    Int8,
+    /// `"int16"`.
+    Int16,
     /// `"int32"`.
     Int32,
     /// `"int64"`.
     Int64,
+    /// `"int128"`.
+    Int128,
+    /// `"uint8"`.
+    UInt8,
+    /// `"uint16"`.
+    UInt16,
     /// `"uint32"`.
     UInt32,
     /// `"uint64"`.
     UInt64,
+    /// `"uint128"`.
+    UInt128,
     /// `"float32"`.
     Float32,
     /// `"float64"`.
     Float64,
+    /// `"decimal"`: vitaminc's `Decimal` logical type, a mantissa and a
+    /// scale.
+    Decimal,
+    /// `"date"`: vitaminc's `Date` logical type, a calendar date with no
+    /// time or zone.
+    Date,
+    /// `"timestamp"`: vitaminc's `Timestamp` logical type, an instant in
+    /// UTC, to the nanosecond.
+    Timestamp,
     /// `"string"`.
     String,
     /// `"bytes"`.
@@ -530,32 +551,52 @@ pub enum ValueKind {
 
 impl ValueKind {
     /// Every kind, in declaration order.
-    pub const ALL: [ValueKind; 11] = [
+    pub const ALL: [ValueKind; 20] = [
         ValueKind::Bool,
+        ValueKind::Int8,
+        ValueKind::Int16,
         ValueKind::Int32,
         ValueKind::Int64,
+        ValueKind::Int128,
+        ValueKind::UInt8,
+        ValueKind::UInt16,
         ValueKind::UInt32,
         ValueKind::UInt64,
+        ValueKind::UInt128,
         ValueKind::Float32,
         ValueKind::Float64,
+        ValueKind::Decimal,
+        ValueKind::Date,
+        ValueKind::Timestamp,
         ValueKind::String,
         ValueKind::Bytes,
         ValueKind::Array,
         ValueKind::Object,
     ];
 
-    /// How a declaration spells this kind: `"bool"`, `"int32"`, `"int64"`,
-    /// `"uint32"`, `"uint64"`, `"float32"`, `"float64"`, `"string"`,
-    /// `"bytes"`, `"array"` or `"object"`. Frozen wire format.
+    /// How a declaration spells this kind: `"bool"`, `"int8"`, `"int16"`,
+    /// `"int32"`, `"int64"`, `"int128"`, `"uint8"`, `"uint16"`, `"uint32"`,
+    /// `"uint64"`, `"uint128"`, `"float32"`, `"float64"`, `"decimal"`,
+    /// `"date"`, `"timestamp"`, `"string"`, `"bytes"`, `"array"` or
+    /// `"object"`. Frozen wire format.
     pub const fn name(self) -> &'static str {
         match self {
             ValueKind::Bool => "bool",
+            ValueKind::Int8 => "int8",
+            ValueKind::Int16 => "int16",
             ValueKind::Int32 => "int32",
             ValueKind::Int64 => "int64",
+            ValueKind::Int128 => "int128",
+            ValueKind::UInt8 => "uint8",
+            ValueKind::UInt16 => "uint16",
             ValueKind::UInt32 => "uint32",
             ValueKind::UInt64 => "uint64",
+            ValueKind::UInt128 => "uint128",
             ValueKind::Float32 => "float32",
             ValueKind::Float64 => "float64",
+            ValueKind::Decimal => "decimal",
+            ValueKind::Date => "date",
+            ValueKind::Timestamp => "timestamp",
             ValueKind::String => "string",
             ValueKind::Bytes => "bytes",
             ValueKind::Array => "array",
@@ -565,7 +606,10 @@ impl ValueKind {
 
     /// Whether `value` is of this kind. Exact: an `Int64` is not held by
     /// [`UInt64`](Self::UInt64), and a [`FfiValue::Passthrough`] is held by
-    /// no kind, whatever it wraps.
+    /// no kind, whatever it wraps. A control-data tree has no 8-, 16- or
+    /// 128-bit integer, decimal, date or timestamp, so no `FfiValue` is of
+    /// those kinds; a [`ValueFrame`](super::ValueFrame) can be
+    /// ([`ValueFrame::kind`](super::ValueFrame::kind)).
     pub fn holds(self, value: &FfiValue) -> bool {
         value.kind() == Some(self)
     }
@@ -836,6 +880,33 @@ mod tests {
 
     #[test]
     fn kind_names_parse_back_exactly() {
+        let names: Vec<&str> = ValueKind::ALL.iter().map(|kind| kind.name()).collect();
+        assert_eq!(
+            names,
+            [
+                "bool",
+                "int8",
+                "int16",
+                "int32",
+                "int64",
+                "int128",
+                "uint8",
+                "uint16",
+                "uint32",
+                "uint64",
+                "uint128",
+                "float32",
+                "float64",
+                "decimal",
+                "date",
+                "timestamp",
+                "string",
+                "bytes",
+                "array",
+                "object"
+            ],
+            "the frozen names"
+        );
         for kind in ValueKind::ALL {
             assert_eq!(kind.name().parse::<ValueKind>(), Ok(kind));
             assert_eq!(kind.to_string(), kind.name());

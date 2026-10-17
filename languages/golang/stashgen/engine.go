@@ -213,18 +213,24 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 				// holds no copy of why a type waits.
 				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("the engine cannot produce the EQL type %s yet: %s", f.EQLType, eqlType.Reason)}
 			}
-			// The engine checks the kind too (se_plan_check refuses a
-			// "type" other than the EQL type's plaintext); saying it here
-			// names the two kinds.
-			if eqlType.Plaintext != KindOther && eqlType.Plaintext != f.GoType.Kind {
-				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals a %s, and %s is %s", f.EQLType, eqlType.Plaintext, f.GoType, f.GoType.Kind)}
-			}
-			// The width too: Integer seals an int32 and Bigint an int64, Real
-			// a float32 and Double a float64. A narrower Go integer widens
-			// to the kind the generated code seals it as (int8 and int16
-			// seal as int32), so the comparison is on that kind.
-			if eqlType.wire != record.Untyped && rf.Kind != eqlType.wire {
-				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals %s, and %s seals as %s", f.EQLType, eqlType.wire, f.GoType, rf.Kind)}
+			// An integer EQL type takes any Go integer type whose every
+			// value fits its kind (ADR-0002): the field is sealed at the
+			// type's kind, and gensupport converts the value.
+			if wire, fits := intoKind(f.GoType, eqlType.wire); fits {
+				rf.Kind = wire
+			} else if _, _, integer := integerRange(eqlType.wire); integer && (f.GoType.Kind == KindInt || f.GoType.Kind == KindUint || f.GoType.Kind == KindInt128 || f.GoType.Kind == KindUint128) {
+				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals %s, and not every %s fits it", f.EQLType, eqlType.wire, f.GoType)}
+			} else {
+				// The engine checks the kind too (se_plan_check refuses a
+				// "type" other than the EQL type's plaintext); saying it
+				// here names the two kinds.
+				if eqlType.Plaintext != KindOther && eqlType.Plaintext != f.GoType.Kind {
+					return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals a %s, and %s is %s", f.EQLType, eqlType.Plaintext, f.GoType, f.GoType.Kind)}
+				}
+				// The width too: Real seals a float32 and Double a float64.
+				if eqlType.wire != record.Untyped && rf.Kind != eqlType.wire {
+					return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals %s, and %s seals as %s", f.EQLType, eqlType.wire, f.GoType, rf.Kind)}
+				}
 			}
 			// An EQL value is stored under a table and a column: the struct's
 			// context is the table and the field's name the column, so a
@@ -271,27 +277,51 @@ var indexOfOutput = map[record.Output]IndexName{
 }
 
 // wireKind is the record kind of a Go type: the same mapping the emitter
-// writes into the generated declaration (kindExpr).
+// writes into the generated declaration (kindExpr). Each integer type has the
+// kind of its own width.
 func wireKind(t GoType) record.Kind {
-	switch kindExpr(t) {
-	case "gensupport.String":
+	switch t.Kind {
+	case KindString:
 		return record.String
-	case "gensupport.Bool":
+	case KindBool:
 		return record.Bool
-	case "gensupport.Bytes":
+	case KindBytes:
 		return record.Bytes
-	case "gensupport.Int32":
-		return record.Int32
-	case "gensupport.Int64":
+	case KindInt:
+		switch t.Basic {
+		case "int8":
+			return record.Int8
+		case "int16":
+			return record.Int16
+		case "int32", "rune":
+			return record.Int32
+		}
 		return record.Int64
-	case "gensupport.Uint32":
-		return record.Uint32
-	case "gensupport.Uint64":
+	case KindUint:
+		switch t.Basic {
+		case "uint8", "byte":
+			return record.Uint8
+		case "uint16":
+			return record.Uint16
+		case "uint32":
+			return record.Uint32
+		}
 		return record.Uint64
-	case "gensupport.Float32":
-		return record.Float32
-	case "gensupport.Float64":
+	case KindFloat:
+		if t.Basic == "float32" {
+			return record.Float32
+		}
 		return record.Float64
+	case KindInt128:
+		return record.Int128
+	case KindUint128:
+		return record.Uint128
+	case KindDate:
+		return record.Date
+	case KindTimestamp:
+		return record.Timestamp
+	case KindDecimal:
+		return record.Decimal
 	}
 	return record.Untyped
 }
@@ -306,14 +336,68 @@ func kindOfWire(k record.Kind) Kind {
 		return KindBool
 	case record.Bytes:
 		return KindBytes
-	case record.Int32, record.Int64:
+	case record.Int8, record.Int16, record.Int32, record.Int64:
 		return KindInt
-	case record.Uint32, record.Uint64:
+	case record.Uint8, record.Uint16, record.Uint32, record.Uint64:
 		return KindUint
+	case record.Int128:
+		return KindInt128
+	case record.Uint128:
+		return KindUint128
 	case record.Float32, record.Float64:
 		return KindFloat
+	case record.Date:
+		return KindDate
+	case record.Timestamp:
+		return KindTimestamp
+	case record.Decimal:
+		return KindDecimal
 	}
 	return KindOther
+}
+
+// integerRange is an integer wire kind's signedness and width in bits, or
+// false for any other kind.
+func integerRange(k record.Kind) (signed bool, bits int, ok bool) {
+	switch k {
+	case record.Int8:
+		return true, 8, true
+	case record.Int16:
+		return true, 16, true
+	case record.Int32:
+		return true, 32, true
+	case record.Int64:
+		return true, 64, true
+	case record.Int128:
+		return true, 128, true
+	case record.Uint8:
+		return false, 8, true
+	case record.Uint16:
+		return false, 16, true
+	case record.Uint32:
+		return false, 32, true
+	case record.Uint64:
+		return false, 64, true
+	case record.Uint128:
+		return false, 128, true
+	}
+	return false, 0, false
+}
+
+// intoKind is the kind a field of Go type t is sealed as when it is stored
+// as an EQL type whose plaintext is the integer kind target: target itself
+// when every value of t fits it (ADR-0002: an int8 into a smallint, an int32
+// into a bigint, a uint16 into an integer), so the generated declaration names
+// target and gensupport converts the value; false when t is not an integer or
+// some of its values do not fit.
+func intoKind(t GoType, target record.Kind) (record.Kind, bool) {
+	fromSigned, fromBits, fromInt := integerRange(wireKind(t))
+	toSigned, toBits, toInt := integerRange(target)
+	if !fromInt || !toInt {
+		return record.Untyped, false
+	}
+	fits := (fromSigned == toSigned && toBits >= fromBits) || (!fromSigned && toSigned && toBits > fromBits)
+	return target, fits
 }
 
 func kindWord(k record.Kind) string {

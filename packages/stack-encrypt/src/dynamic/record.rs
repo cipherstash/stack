@@ -91,7 +91,7 @@
 //! into the encrypting sink, and it seals in vitaminc's self-describing
 //! tagged leaf encoding (`[tag] ++ payload`) whatever its declared
 //! `"type"`. The
-//! type decides which indexes the field admits ([`admits`]), which values it
+//! type decides which indexes the field admits ([`admits`](super::admits)), which values it
 //! seals and which it opens to (checked by kind, both ways), and nothing
 //! about the bytes: declaring a type on a field written without one changes
 //! no leaf. A field with any index declares its type, and a plan whose
@@ -147,7 +147,7 @@ use vitaminc_aead::{DecodeError, Encrypt};
 use vitaminc_protected::{Controlled, Protected};
 
 use super::{
-    admits, utf8, Error, NoTargets, Reason, Scope, TargetError, TargetResolver, TermBytes,
+    not_admitted, utf8, Error, NoTargets, Reason, Scope, TargetError, TargetResolver, TermBytes,
 };
 use crate::plan::{FieldValues, FieldsBuilder, Opens, Runs};
 use crate::target::{CallerContext, DeclaredContext, Decryption, Encrypted, IndexSpec};
@@ -233,7 +233,7 @@ enum Verb {
 /// A field may declare the type of its values (a [`ValueKind`]), and must
 /// when it has a term output: [`Plan::new_with`] refuses the plan otherwise
 /// ([`Error::UntypedIndex`]). A typed field admits only the indexes that
-/// kind is defined for ([`admits`], checked when the plan is built), seals
+/// kind is defined for ([`admits`](super::admits), checked when the plan is built), seals
 /// only values of that kind and opens only to one (checked per value), so
 /// the engine verifies what a binding hands it rather than trusting the
 /// binding's tagging. A field that only seals, or only carries its value
@@ -346,15 +346,18 @@ impl FieldPlan {
     /// # Errors
     ///
     /// [`Error::Plan`] if the field asks for an index the kind is not
-    /// defined for ([`admits`]): match on an integer, equality or
-    /// an order index on a boolean, any index on a composite.
+    /// defined for ([`admits`](super::admits)), with the reason [`not_admitted`] gives:
+    /// [`Reason::IndexNotAdmitted`] for match on an integer, equality or an
+    /// order index on a boolean, any index on a composite;
+    /// [`Reason::OrderTermPending`] for an order index on a decimal, date or
+    /// timestamp, which waits for #1236.
     pub fn with_type(mut self, field_type: ValueKind) -> Result<Self, Error> {
         for output in &self.outputs {
             if let Output::Term(index) = output {
-                if !admits(field_type, index) {
+                if let Some(reason) = not_admitted(field_type, index) {
                     return Err(Error::Plan {
                         field: Some(self.name.clone()),
-                        reason: Reason::IndexNotAdmitted,
+                        reason,
                     });
                 }
             }
@@ -988,7 +991,7 @@ pub fn plan(value: FfiValue) -> Result<Plan, Error> {
 /// is built ([`Error::UntypedIndex`], naming the field). It is optional on a
 /// field whose only output is `"c"` or
 /// `"passthrough"`, and on a target field, whose kind is the EQL type's own.
-/// Declared, it is checked against the field's outputs here ([`admits`]) and
+/// Declared, it is checked against the field's outputs here ([`admits`](super::admits)) and
 /// decides nothing about the bytes (see the
 /// [module docs](self#what-a-fields-type-decides-and-what-it-does-not)).
 ///
@@ -6516,7 +6519,7 @@ mod tests {
                     age(vec![
                         ("context", label("age")),
                         ("outputs", strings(&["c"])),
-                        ("type", s("decimal")),
+                        ("type", s("uuid")),
                     ]),
                     Some("age"),
                     UnknownType,
@@ -6531,6 +6534,17 @@ mod tests {
                     ]),
                     Some("age"),
                     IndexNotAdmitted,
+                    "Plan",
+                ),
+                (
+                    "an order index on a date",
+                    age(vec![
+                        ("context", label("age")),
+                        ("outputs", strings(&["c", "eq", "ore"])),
+                        ("type", s("date")),
+                    ]),
+                    Some("age"),
+                    OrderTermPending,
                     "Plan",
                 ),
                 (
@@ -6656,11 +6670,11 @@ mod tests {
             let error = check_source(FfiValue::Passthrough(Box::new(row(34))), &plan)
                 .expect_err("a passthrough at the top");
             expect(&error, "Source", None, NotAnObject);
-            // A 128-bit integer is outside the value model: a frame can carry
-            // it, the engine cannot hold it, and the field is named.
+            // A uuid is outside the value model: a frame can carry it, the
+            // engine cannot hold it, and the field is named.
             let wide = vitaminc_aead::plaintext::Raw(
-                None,
-                vitaminc_aead::plaintext::Physical::Int(vitaminc_aead::plaintext::Int::I128(1)),
+                Some(vitaminc_aead::plaintext::Logical::Uuid),
+                vitaminc_aead::plaintext::Physical::Bytes(&[7; 16]),
             );
             let mut frame = Vec::new();
             {
@@ -6672,7 +6686,7 @@ mod tests {
                 map.end().expect("ended");
             }
             let source = vitaminc_aead::Frame::parse(&frame).expect("a frame");
-            let error = check_source(source, &plan).expect_err("an i128 field");
+            let error = check_source(source, &plan).expect_err("a uuid field");
             expect(&error, "Source", Some("email"), FieldType);
             // The same inside a passthrough subtree: the field is named, and
             // the cause is the value's type, not an unframeable source.
@@ -6688,7 +6702,7 @@ mod tests {
                 map.end().expect("ended");
             }
             let source = vitaminc_aead::Frame::parse(&frame).expect("a frame");
-            let error = check_source(source, &plan).expect_err("an i128 in a passthrough");
+            let error = check_source(source, &plan).expect_err("a uuid in a passthrough");
             expect(&error, "Source", Some("id"), FieldType);
             // Each row of a batch is split the same way, and the first fault
             // in source order names its field.

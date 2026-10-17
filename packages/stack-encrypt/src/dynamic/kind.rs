@@ -36,7 +36,7 @@
 //! field has none is refused when it is built
 //! ([`Error::UntypedIndex`], naming the field). A field that only seals, or
 //! only carries its value through, may leave it out: no term derives from it.
-use vitaminc_aead::plaintext::{Float, Int, Logical, Physical, Raw};
+use vitaminc_aead::plaintext::{Float, Int, Logical, Physical, Raw, TimeUnit};
 use vitaminc_aead::Encrypt;
 
 use super::term::OneScalar;
@@ -50,40 +50,95 @@ use crate::target::IndexSpec;
 /// The table [`IndexSpec::defines`] reads for a value, stated over kinds
 /// instead, so a plan can be refused when it is built rather than when its
 /// first value arrives. Equality is vitaminc's: every kind
-/// `vitaminc-normalize` gives an equality domain, which is every integer,
-/// both floats, text and bytes, and not a boolean. The rest are this
-/// crate's: match over text alone, and ORE and OPE over every scalar but a
-/// boolean, whose order term would reveal which rows are `true`. A
-/// composite (`array`, `object`) has no term. Only the index's kind
-/// matters: a match index's options do not change what it applies to.
+/// `vitaminc-normalize` gives an equality domain, which is every integer
+/// of every width, both floats, a decimal, a date, a timestamp, text and
+/// bytes, and not a boolean. The rest are this crate's: match over text
+/// alone, and ORE and OPE over every integer, both floats, text and bytes.
+/// A boolean has no order term, which would reveal which rows are `true`.
+/// A decimal, a date and a timestamp have none yet: their order encodings
+/// wait for new cllw-ore and ore-rs releases (#1236), and [`not_admitted`]
+/// names that reason. A composite (`array`, `object`) has no term. Only the
+/// index's kind matters: a match index's options do not change what it
+/// applies to.
 ///
 /// ```
 /// use stack_encrypt::dynamic::{admits, ValueKind};
 /// use stack_encrypt::target::IndexSpec;
 ///
 /// assert!(admits(ValueKind::UInt64, &IndexSpec::Equality));
+/// assert!(admits(ValueKind::Int8, &IndexSpec::Ore));
+/// assert!(admits(ValueKind::Date, &IndexSpec::Equality));
+/// assert!(!admits(ValueKind::Date, &IndexSpec::Ore));
 /// assert!(!admits(ValueKind::Bool, &IndexSpec::Equality));
 /// assert!(!admits(ValueKind::Bool, &IndexSpec::Ore));
 /// assert!(!admits(ValueKind::Object, &IndexSpec::Ore));
 /// ```
 pub fn admits(kind: ValueKind, index: &IndexSpec) -> bool {
-    scalar_of(kind).is_some_and(|scalar| index.takes(None, &scalar))
+    scalar_of(kind).is_some_and(|(ty, scalar)| index.takes(ty, &scalar))
 }
 
-/// A scalar of `kind`, for asking the table about the kind: any value of a
-/// kind is taken by an index exactly when every other is. `None` for a
-/// composite, which is no scalar.
-fn scalar_of(kind: ValueKind) -> Option<Physical<'static>> {
+/// Why `kind` does not admit `index`, or `None` when it does: the reason a
+/// plan that declares the pair is refused with.
+///
+/// [`Reason::OrderTermPending`] for an ORE or OPE index on a decimal, date
+/// or timestamp, whose order terms wait for new cllw-ore and ore-rs
+/// releases (#1236). [`Reason::IndexNotAdmitted`] for every other pair
+/// [`admits`] refuses.
+///
+/// ```
+/// use stack_encrypt::dynamic::{not_admitted, Reason, ValueKind};
+/// use stack_encrypt::target::IndexSpec;
+///
+/// assert_eq!(not_admitted(ValueKind::Timestamp, &IndexSpec::Ope), Some(Reason::OrderTermPending));
+/// assert_eq!(not_admitted(ValueKind::Bool, &IndexSpec::Ore), Some(Reason::IndexNotAdmitted));
+/// assert_eq!(not_admitted(ValueKind::Timestamp, &IndexSpec::Equality), None);
+/// ```
+pub fn not_admitted(kind: ValueKind, index: &IndexSpec) -> Option<Reason> {
+    if admits(kind, index) {
+        return None;
+    }
+    let ordering = matches!(index, IndexSpec::Ore | IndexSpec::Ope);
+    let pending = matches!(
+        kind,
+        ValueKind::Decimal | ValueKind::Date | ValueKind::Timestamp
+    );
+    Some(if ordering && pending {
+        Reason::OrderTermPending
+    } else {
+        Reason::IndexNotAdmitted
+    })
+}
+
+/// A scalar of `kind`, with its logical type, for asking the table about
+/// the kind: any value of a kind is taken by an index exactly when every
+/// other is. `None` for a composite, which is no scalar.
+fn scalar_of(kind: ValueKind) -> Option<(Option<Logical>, Physical<'static>)> {
+    let int = |int| (None, Physical::Int(int));
     Some(match kind {
-        ValueKind::Bool => Physical::Bool(false),
-        ValueKind::Int32 => Physical::Int(Int::I32(0)),
-        ValueKind::Int64 => Physical::Int(Int::I64(0)),
-        ValueKind::UInt32 => Physical::Int(Int::U32(0)),
-        ValueKind::UInt64 => Physical::Int(Int::U64(0)),
-        ValueKind::Float32 => Physical::Float(Float::F32(0.0)),
-        ValueKind::Float64 => Physical::Float(Float::F64(0.0)),
-        ValueKind::String => Physical::Text(""),
-        ValueKind::Bytes => Physical::Bytes(&[]),
+        ValueKind::Bool => (None, Physical::Bool(false)),
+        ValueKind::Int8 => int(Int::I8(0)),
+        ValueKind::Int16 => int(Int::I16(0)),
+        ValueKind::Int32 => int(Int::I32(0)),
+        ValueKind::Int64 => int(Int::I64(0)),
+        ValueKind::Int128 => int(Int::I128(0)),
+        ValueKind::UInt8 => int(Int::U8(0)),
+        ValueKind::UInt16 => int(Int::U16(0)),
+        ValueKind::UInt32 => int(Int::U32(0)),
+        ValueKind::UInt64 => int(Int::U64(0)),
+        ValueKind::UInt128 => int(Int::U128(0)),
+        ValueKind::Float32 => (None, Physical::Float(Float::F32(0.0))),
+        ValueKind::Float64 => (None, Physical::Float(Float::F64(0.0))),
+        ValueKind::Decimal => (
+            Some(Logical::Decimal { scale: 0 }),
+            Physical::Int(Int::I128(0)),
+        ),
+        ValueKind::Date => (Some(Logical::Date), Physical::Int(Int::I32(0))),
+        ValueKind::Timestamp => (
+            Some(Logical::Timestamp(TimeUnit::Nanos)),
+            Physical::Int(Int::I128(0)),
+        ),
+        ValueKind::String => (None, Physical::Text("")),
+        ValueKind::Bytes => (None, Physical::Bytes(&[])),
         ValueKind::Array | ValueKind::Object => return None,
     })
 }
@@ -93,11 +148,15 @@ fn scalar_of(kind: ValueKind) -> Option<Physical<'static>> {
 /// A value already of this kind is returned as it is. A number of another
 /// width or kind is converted when the conversion is exact: an integer in
 /// range, or a float with no fractional part in range, for an integer kind
-/// (a JavaScript `34` arrives as a float); an integer or float the target
-/// float kind represents exactly, for a float kind. A NaN is never
-/// converted, in either float direction: it equals nothing, so no
-/// conversion of it is exact. Nothing else converts: a string is never
-/// parsed as a number, and a number never becomes a string.
+/// of any width (a JavaScript `34` arrives as a float); an integer or float
+/// the target float kind represents exactly, for a float kind; an integer
+/// whose magnitude fits 96 bits, for a decimal (at scale 0, so `34` reads as
+/// the decimal `34`, which equals `34.00`). A NaN is never converted, in
+/// either float direction: it equals nothing, so no conversion of it is
+/// exact. A float is never read as a decimal, since most floats have no
+/// short decimal form, and nothing converts to or from a date or a
+/// timestamp. Nothing else converts: a string is never parsed as a number,
+/// and a number never becomes a string.
 ///
 /// The value is any source ([`Encrypt`]): a transport frame a binding was
 /// handed, walked in place. What comes back is the value as the field's kind,
@@ -124,6 +183,9 @@ fn scalar_of(kind: ValueKind) -> Option<Physical<'static>> {
 /// assert_eq!(value.kind(), Some(ValueKind::UInt64));
 /// assert_eq!(value.risky_ref(), FfiValue::UInt64(34).to_frame()?.risky_ref());
 /// assert!(read(ValueKind::UInt64, FfiValue::Float64(34.5)).is_err());
+/// // Against an `int8` field, 34 is the 8-bit integer; 300 does not fit.
+/// assert_eq!(read(ValueKind::Int8, FfiValue::Int64(34))?.kind(), Some(ValueKind::Int8));
+/// assert!(read(ValueKind::Int8, FfiValue::Int64(300)).is_err());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
@@ -144,61 +206,112 @@ pub fn read(kind: ValueKind, value: impl Encrypt) -> Result<ValueFrame, Error> {
         ))
         .map_err(|_| refused())?;
     let int = |int: Int| Raw(None, Physical::Int(int));
+    let signed = || number.integer();
     let read = match kind {
-        ValueKind::Int32 => number
-            .integer()
+        ValueKind::Int8 => signed()
+            .and_then(|i| i8::try_from(i).ok())
+            .map(|v| int(Int::I8(v))),
+        ValueKind::Int16 => signed()
+            .and_then(|i| i16::try_from(i).ok())
+            .map(|v| int(Int::I16(v))),
+        ValueKind::Int32 => signed()
             .and_then(|i| i32::try_from(i).ok())
             .map(|v| int(Int::I32(v))),
-        ValueKind::Int64 => number
-            .integer()
+        ValueKind::Int64 => signed()
             .and_then(|i| i64::try_from(i).ok())
             .map(|v| int(Int::I64(v))),
-        ValueKind::UInt32 => number
-            .integer()
+        ValueKind::Int128 => signed().map(|v| int(Int::I128(v))),
+        ValueKind::UInt8 => signed()
+            .and_then(|i| u8::try_from(i).ok())
+            .map(|v| int(Int::U8(v))),
+        ValueKind::UInt16 => signed()
+            .and_then(|i| u16::try_from(i).ok())
+            .map(|v| int(Int::U16(v))),
+        ValueKind::UInt32 => signed()
             .and_then(|i| u32::try_from(i).ok())
             .map(|v| int(Int::U32(v))),
-        ValueKind::UInt64 => number
-            .integer()
+        ValueKind::UInt64 => signed()
             .and_then(|i| u64::try_from(i).ok())
             .map(|v| int(Int::U64(v))),
+        ValueKind::UInt128 => number.unsigned().map(|v| int(Int::U128(v))),
         ValueKind::Float64 => number
             .exact_f64()
             .map(|f| Raw(None, Physical::Float(Float::F64(f)))),
         ValueKind::Float32 => number
             .exact_f32()
             .map(|f| Raw(None, Physical::Float(Float::F32(f)))),
+        ValueKind::Decimal => number.whole().map(|i| {
+            Raw(
+                Some(Logical::Decimal { scale: 0 }),
+                Physical::Int(Int::I128(i)),
+            )
+        }),
         _ => None,
     };
     ValueFrame::of(read.ok_or_else(refused)?).map_err(|_| refused())
 }
 
-/// A numeric leaf, widened without loss: every integer variant fits an
-/// `i128`, and an `f32` widens to an `f64` exactly.
+/// 2^127 as an `f64`, exactly: the first float past `i128::MAX`.
+const TWO_127: f64 = 170_141_183_460_469_231_731_687_303_715_884_105_728.0;
+/// 2^128 as an `f64`, exactly: the first float past `u128::MAX`.
+const TWO_128: f64 = 340_282_366_920_938_463_463_374_607_431_768_211_456.0;
+
+/// A numeric leaf, widened without loss: every integer but a `u128` above
+/// `i128::MAX` fits an `i128`, which is `Unsigned`; an `f32` widens to an
+/// `f64` exactly.
 #[derive(Clone, Copy)]
 enum Number {
     Integer(i128),
+    Unsigned(u128),
     Float(f64),
 }
 
 impl Number {
     /// The number a scalar of the value model is, or `None` for anything
-    /// that is not a number.
+    /// that is not a number. A decimal, date or timestamp is not one.
     fn of(ty: Option<Logical>, value: Physical<'_>) -> Option<Self> {
         Some(match (ty, value) {
-            (None, Physical::Int(int)) => Number::Integer(int.to_i128()?),
+            (None, Physical::Int(int)) => match int.to_i128() {
+                Some(v) => Number::Integer(v),
+                None => Number::Unsigned(int.to_u128()?),
+            },
             (None, Physical::Float(Float::F32(v))) => Number::Float(v.into()),
             (None, Physical::Float(Float::F64(v))) => Number::Float(v),
             _ => return None,
         })
     }
 
-    /// The integer this number is exactly, if it is one. A float outside
-    /// `i128` saturates, which no target integer type then accepts.
+    /// The integer this number is exactly, if it is one that fits an
+    /// `i128`. A float outside `i128` is not one: casting it would
+    /// saturate to a different number.
     fn integer(self) -> Option<i128> {
         match self {
             Number::Integer(i) => Some(i),
-            Number::Float(f) if f.is_finite() && f.fract() == 0.0 => Some(f as i128),
-            Number::Float(_) => None,
+            Number::Unsigned(_) => None,
+            Number::Float(f) => {
+                (f.fract() == 0.0 && (-TWO_127..TWO_127).contains(&f)).then_some(f as i128)
+            }
+        }
+    }
+
+    /// The integer this number is exactly, if it is a non-negative one
+    /// that fits a `u128`.
+    fn unsigned(self) -> Option<u128> {
+        match self {
+            Number::Integer(i) => u128::try_from(i).ok(),
+            Number::Unsigned(u) => Some(u),
+            Number::Float(f) => {
+                (f.fract() == 0.0 && (0.0..TWO_128).contains(&f)).then_some(f as u128)
+            }
+        }
+    }
+
+    /// The integer this number is, if it is an integer and not a float: a
+    /// decimal is read from an integer alone.
+    fn whole(self) -> Option<i128> {
+        match self {
+            Number::Integer(i) => Some(i),
+            Number::Unsigned(_) | Number::Float(_) => None,
         }
     }
 
@@ -210,7 +323,13 @@ impl Number {
             Number::Float(f) => (!f.is_nan()).then_some(f),
             Number::Integer(i) => {
                 let f = i as f64;
-                (f as i128 == i).then_some(f)
+                // `i128::MAX` rounds up to 2^127, which casts back to
+                // `i128::MAX` by saturation: the range check refuses it.
+                (f < TWO_127 && f as i128 == i).then_some(f)
+            }
+            Number::Unsigned(u) => {
+                let f = u as f64;
+                (f < TWO_128 && f as u128 == u).then_some(f)
             }
         }
     }
@@ -229,26 +348,58 @@ mod tests {
     use super::*;
     use crate::dynamic::FfiValue;
     use crate::sem::{MatchOptions, Tokenizer};
+    use vitaminc_aead::plaintext::Raw;
     use vitaminc_protected::Protected;
 
     // What a kind is, its name and its tags, and which values it holds are
     // vitaminc's to test (`ValueKind`). These test the two rules this crate
     // adds over the vocabulary.
 
+    /// A scalar as the engine holds it: its frame.
+    fn scalar(ty: Option<Logical>, value: Physical<'_>) -> ValueFrame {
+        ValueFrame::of(Raw(ty, value)).expect("in the value model")
+    }
+
+    fn int(int: Int) -> ValueFrame {
+        scalar(None, Physical::Int(int))
+    }
+
+    fn tree(value: FfiValue) -> ValueFrame {
+        ValueFrame::of(&value).expect("in the value model")
+    }
+
     /// One value of every kind.
-    fn sample(kind: ValueKind) -> FfiValue {
+    fn sample(kind: ValueKind) -> ValueFrame {
         match kind {
-            ValueKind::Bool => FfiValue::Bool(true),
-            ValueKind::Int32 => FfiValue::Int32(-3),
-            ValueKind::Int64 => FfiValue::Int64(-4),
-            ValueKind::UInt32 => FfiValue::UInt32(34),
-            ValueKind::UInt64 => FfiValue::UInt64(35),
-            ValueKind::Float32 => FfiValue::Float32(1.5),
-            ValueKind::Float64 => FfiValue::Float64(2.5),
-            ValueKind::String => FfiValue::String("alice".into()),
-            ValueKind::Bytes => FfiValue::Bytes(Protected::new(b"ab".to_vec())),
-            ValueKind::Array => FfiValue::Array(vec![FfiValue::UInt32(1)]),
-            ValueKind::Object => FfiValue::Object(vec![("k".to_string(), FfiValue::UInt32(1))]),
+            ValueKind::Bool => tree(FfiValue::Bool(true)),
+            ValueKind::Int8 => int(Int::I8(-1)),
+            ValueKind::Int16 => int(Int::I16(-2)),
+            ValueKind::Int32 => tree(FfiValue::Int32(-3)),
+            ValueKind::Int64 => tree(FfiValue::Int64(-4)),
+            ValueKind::Int128 => int(Int::I128(i128::MIN)),
+            ValueKind::UInt8 => int(Int::U8(32)),
+            ValueKind::UInt16 => int(Int::U16(33)),
+            ValueKind::UInt32 => tree(FfiValue::UInt32(34)),
+            ValueKind::UInt64 => tree(FfiValue::UInt64(35)),
+            ValueKind::UInt128 => int(Int::U128(u128::MAX)),
+            ValueKind::Float32 => tree(FfiValue::Float32(1.5)),
+            ValueKind::Float64 => tree(FfiValue::Float64(2.5)),
+            ValueKind::Decimal => scalar(
+                Some(Logical::Decimal { scale: 2 }),
+                Physical::Int(Int::I64(150)),
+            ),
+            ValueKind::Date => scalar(Some(Logical::Date), Physical::Int(Int::I32(19_782))),
+            ValueKind::Timestamp => scalar(
+                Some(Logical::Timestamp(TimeUnit::Nanos)),
+                Physical::Int(Int::I128(1_760_662_923_123_456_789)),
+            ),
+            ValueKind::String => tree(FfiValue::String("alice".into())),
+            ValueKind::Bytes => tree(FfiValue::Bytes(Protected::new(b"ab".to_vec()))),
+            ValueKind::Array => tree(FfiValue::Array(vec![FfiValue::UInt32(1)])),
+            ValueKind::Object => tree(FfiValue::Object(vec![(
+                "k".to_string(),
+                FfiValue::UInt32(1),
+            )])),
         }
     }
 
@@ -331,6 +482,211 @@ mod tests {
         }
     }
 
+    /// The new kinds' rows, spelled out: equality on every one, order on
+    /// every integer width and on none of the decimal, date and timestamp,
+    /// match on none.
+    #[test]
+    fn admits_the_new_kinds_where_their_terms_exist() {
+        let integers = [
+            ValueKind::Int8,
+            ValueKind::Int16,
+            ValueKind::Int128,
+            ValueKind::UInt8,
+            ValueKind::UInt16,
+            ValueKind::UInt128,
+        ];
+        let logical = [ValueKind::Decimal, ValueKind::Date, ValueKind::Timestamp];
+        let matched = IndexSpec::Match(MatchOptions::default());
+        for kind in integers {
+            assert!(admits(kind, &IndexSpec::Equality), "{kind} equality");
+            assert!(admits(kind, &IndexSpec::Ore), "{kind} ore");
+            assert!(admits(kind, &IndexSpec::Ope), "{kind} ope");
+            assert!(!admits(kind, &matched), "{kind} match");
+        }
+        for kind in logical {
+            assert!(admits(kind, &IndexSpec::Equality), "{kind} equality");
+            assert!(!admits(kind, &IndexSpec::Ore), "{kind} ore");
+            assert!(!admits(kind, &IndexSpec::Ope), "{kind} ope");
+            assert!(!admits(kind, &matched), "{kind} match");
+        }
+    }
+
+    /// `not_admitted` is `admits` with a reason: none for an admitted pair,
+    /// the #1236 reason for an order index on a decimal, date or timestamp
+    /// and nothing else, and the generic reason for every other refusal.
+    #[test]
+    fn not_admitted_names_the_pending_order_terms_and_nothing_else() {
+        for kind in ValueKind::ALL {
+            for index in indexes() {
+                let reason = not_admitted(kind, &index);
+                assert_eq!(reason.is_none(), admits(kind, &index), "{kind} and {index}");
+                let pending = matches!(index, IndexSpec::Ore | IndexSpec::Ope)
+                    && matches!(
+                        kind,
+                        ValueKind::Decimal | ValueKind::Date | ValueKind::Timestamp
+                    );
+                if pending {
+                    assert_eq!(reason, Some(Reason::OrderTermPending), "{kind} and {index}");
+                } else if reason.is_some() {
+                    assert_eq!(reason, Some(Reason::IndexNotAdmitted), "{kind} and {index}");
+                }
+            }
+        }
+        assert_eq!(
+            not_admitted(ValueKind::Decimal, &IndexSpec::Ore),
+            Some(Reason::OrderTermPending)
+        );
+        assert_eq!(
+            not_admitted(ValueKind::Date, &IndexSpec::Ope),
+            Some(Reason::OrderTermPending)
+        );
+        assert_eq!(
+            not_admitted(ValueKind::Bool, &IndexSpec::Ope),
+            Some(Reason::IndexNotAdmitted)
+        );
+        assert_eq!(
+            not_admitted(ValueKind::Date, &IndexSpec::Match(MatchOptions::default())),
+            Some(Reason::IndexNotAdmitted)
+        );
+        assert_eq!(not_admitted(ValueKind::Int8, &IndexSpec::Ore), None);
+        assert!(Reason::OrderTermPending.to_string().contains("#1236"));
+    }
+
+    /// Every integer width is a source and a target: a value in range
+    /// converts exactly, one outside it is refused.
+    #[test]
+    fn read_converts_between_every_integer_width() {
+        assert!(reads_as(
+            ValueKind::Int8,
+            FfiValue::Int64(-128),
+            int(Int::I8(-128))
+        ));
+        assert!(read_frame(ValueKind::Int8, FfiValue::Int64(128)).is_none());
+        assert!(reads_as(
+            ValueKind::Int16,
+            int(Int::U8(200)),
+            int(Int::I16(200))
+        ));
+        assert!(read_frame(ValueKind::Int16, FfiValue::Int32(40_000)).is_none());
+        assert!(reads_as(
+            ValueKind::UInt8,
+            int(Int::I16(255)),
+            int(Int::U8(255))
+        ));
+        assert!(read_frame(ValueKind::UInt8, int(Int::I8(-1))).is_none());
+        assert!(reads_as(
+            ValueKind::UInt16,
+            int(Int::U128(65_535)),
+            int(Int::U16(65_535))
+        ));
+        assert!(read_frame(ValueKind::UInt16, FfiValue::UInt32(65_536)).is_none());
+        assert!(reads_as(
+            ValueKind::Int128,
+            FfiValue::UInt64(u64::MAX),
+            int(Int::I128(u64::MAX.into()))
+        ));
+        assert!(reads_as(
+            ValueKind::Int128,
+            int(Int::U128(i128::MAX as u128)),
+            int(Int::I128(i128::MAX))
+        ));
+        // A `u128` above `i128::MAX` is no `i128`, nor any narrower width.
+        assert!(read_frame(ValueKind::Int128, int(Int::U128(u128::MAX))).is_none());
+        assert!(read_frame(ValueKind::UInt64, int(Int::U128(u128::MAX))).is_none());
+        assert!(reads_as(
+            ValueKind::UInt128,
+            int(Int::I8(7)),
+            int(Int::U128(7))
+        ));
+        assert!(read_frame(ValueKind::UInt128, int(Int::I128(-1))).is_none());
+        assert!(reads_as(
+            ValueKind::Int64,
+            int(Int::I128(-5)),
+            int(Int::I64(-5))
+        ));
+        assert!(reads_as(
+            ValueKind::UInt32,
+            int(Int::U16(9)),
+            int(Int::U32(9))
+        ));
+        assert!(reads_as(
+            ValueKind::Int32,
+            int(Int::I8(-9)),
+            int(Int::I32(-9))
+        ));
+    }
+
+    /// The 128-bit edges: a float at 2^127 is past `i128` and one at 2^128
+    /// past `u128`, though casting either would saturate to the maximum and
+    /// derive the term of a different number. -2^127 is `i128::MIN`
+    /// exactly. An integer the float kind would round is refused in the
+    /// other direction too.
+    #[test]
+    fn read_refuses_a_number_past_the_128_bit_ranges() {
+        let two_127 = 170_141_183_460_469_231_731_687_303_715_884_105_728.0_f64;
+        let two_128 = 340_282_366_920_938_463_463_374_607_431_768_211_456.0_f64;
+        assert!(read_frame(ValueKind::Int128, FfiValue::Float64(two_127)).is_none());
+        assert!(reads_as(
+            ValueKind::Int128,
+            FfiValue::Float64(-two_127),
+            int(Int::I128(i128::MIN))
+        ));
+        assert!(read_frame(ValueKind::UInt128, FfiValue::Float64(two_128)).is_none());
+        assert!(reads_as(
+            ValueKind::UInt128,
+            FfiValue::Float64(two_127),
+            int(Int::U128(1 << 127))
+        ));
+        assert!(read_frame(ValueKind::UInt128, FfiValue::Float64(-1.0)).is_none());
+        assert!(read_frame(ValueKind::UInt128, FfiValue::Float64(0.5)).is_none());
+        assert!(read_frame(ValueKind::UInt128, FfiValue::Float64(f64::NAN)).is_none());
+        assert!(read_frame(ValueKind::Float64, int(Int::I128(i128::MAX))).is_none());
+        assert!(read_frame(ValueKind::Float64, int(Int::U128(u128::MAX))).is_none());
+        assert!(reads_as(
+            ValueKind::Float64,
+            int(Int::I128(i128::MIN)),
+            tree(FfiValue::Float64(-two_127))
+        ));
+        assert!(reads_as(
+            ValueKind::Float64,
+            int(Int::U128(1 << 127)),
+            tree(FfiValue::Float64(two_127))
+        ));
+        assert!(read_frame(ValueKind::Float32, int(Int::U128((1 << 24) + 1))).is_none());
+    }
+
+    /// An integer reads as a decimal at scale 0 when its magnitude fits 96
+    /// bits; a float never does. Nothing converts to a date or a
+    /// timestamp, and a decimal, date or timestamp converts to nothing.
+    #[test]
+    fn read_converts_an_integer_to_a_decimal_and_nothing_to_a_date() {
+        let decimal = |mantissa: i128| {
+            scalar(
+                Some(Logical::Decimal { scale: 0 }),
+                Physical::Int(Int::I128(mantissa)),
+            )
+        };
+        assert!(reads_as(
+            ValueKind::Decimal,
+            FfiValue::Int64(-34),
+            decimal(-34)
+        ));
+        assert!(reads_as(ValueKind::Decimal, int(Int::U8(34)), decimal(34)));
+        assert!(read_frame(ValueKind::Decimal, int(Int::I128(1 << 96))).is_none());
+        assert!(read_frame(ValueKind::Decimal, int(Int::U128(u128::MAX))).is_none());
+        assert!(read_frame(ValueKind::Decimal, FfiValue::Float64(1.0)).is_none());
+        assert!(read_frame(ValueKind::Date, FfiValue::Int32(19_782)).is_none());
+        assert!(read_frame(ValueKind::Timestamp, FfiValue::Int64(1)).is_none());
+        for kind in [ValueKind::Decimal, ValueKind::Date, ValueKind::Timestamp] {
+            for target in [ValueKind::Int128, ValueKind::Float64, ValueKind::String] {
+                assert!(
+                    read_frame(target, sample(kind)).is_none(),
+                    "{kind} as {target}"
+                );
+            }
+        }
+    }
+
     /// `read`, with the frame it writes read back as a value tree to
     /// compare.
     fn read_ok(kind: ValueKind, value: FfiValue) -> Option<FfiValue> {
@@ -338,11 +694,27 @@ mod tests {
         Some(FfiValue::from_frame(read.risky_ref()).expect("a value"))
     }
 
+    /// `read` from any source, as the frame it writes, for the kinds a
+    /// control-data tree cannot hold.
+    fn read_frame(kind: ValueKind, value: impl Encrypt) -> Option<ValueFrame> {
+        read(kind, value).ok()
+    }
+
+    /// Whether `read` gives exactly the frame of `want`.
+    fn reads_as(kind: ValueKind, value: impl Encrypt, want: ValueFrame) -> bool {
+        read_frame(kind, value).is_some_and(|read| read.risky_ref() == want.risky_ref())
+    }
+
     #[test]
     fn read_returns_a_value_of_the_kind_as_it_is() {
         for kind in ValueKind::ALL {
-            let read = read_ok(kind, sample(kind)).expect("its own kind");
-            assert!(kind.holds(&read));
+            let read = read_frame(kind, sample(kind)).expect("its own kind");
+            assert_eq!(read.kind(), Some(kind));
+            assert_eq!(
+                read.risky_ref(),
+                sample(kind).risky_ref(),
+                "{kind} as it is"
+            );
         }
         // Already of the kind: returned as it is, not converted, so a NaN
         // the host sent as the field's own float kind is not refused here.

@@ -1,0 +1,231 @@
+{
+  "_comment": "One field of each value kind added in #1144, sealed by the data-plan lowering under a deterministic key source, with each value's transport frame and the equality queries vitaminc-normalize folds onto a stored term. Read by tests/value_kinds.rs and the Go SDK's encrypt tests; the schema is in README.md beside this file. Regenerate with STACK_ENCRYPT_UPDATE_FIXTURES=1; do not edit by hand.",
+  "key_source": {
+    "kind": "deterministic-sha256",
+    "seed": "737461636b2d656e63727970742076616c7565206b696e647320763120202020"
+  },
+  "keyset_id": "00000000-0000-0000-0000-000000000000",
+  "plan": {
+    "amount": {
+      "context": [
+        "value_kinds",
+        "amount"
+      ],
+      "outputs": [
+        "c",
+        "eq"
+      ],
+      "type": "decimal"
+    },
+    "at": {
+      "context": [
+        "value_kinds",
+        "at"
+      ],
+      "outputs": [
+        "c",
+        "eq"
+      ],
+      "type": "timestamp"
+    },
+    "date": {
+      "context": [
+        "value_kinds",
+        "date"
+      ],
+      "outputs": [
+        "c",
+        "eq"
+      ],
+      "type": "date"
+    },
+    "i128": {
+      "context": [
+        "value_kinds",
+        "i128"
+      ],
+      "outputs": [
+        "c",
+        "eq",
+        "ore"
+      ],
+      "type": "int128"
+    },
+    "i16": {
+      "context": [
+        "value_kinds",
+        "i16"
+      ],
+      "outputs": [
+        "c",
+        "eq",
+        "ore"
+      ],
+      "type": "int16"
+    },
+    "i8": {
+      "context": [
+        "value_kinds",
+        "i8"
+      ],
+      "outputs": [
+        "c",
+        "eq",
+        "ore"
+      ],
+      "type": "int8"
+    },
+    "u128": {
+      "context": [
+        "value_kinds",
+        "u128"
+      ],
+      "outputs": [
+        "c",
+        "eq",
+        "ope"
+      ],
+      "type": "uint128"
+    },
+    "u16": {
+      "context": [
+        "value_kinds",
+        "u16"
+      ],
+      "outputs": [
+        "c",
+        "eq",
+        "ope"
+      ],
+      "type": "uint16"
+    },
+    "u8": {
+      "context": [
+        "value_kinds",
+        "u8"
+      ],
+      "outputs": [
+        "c",
+        "eq",
+        "ore"
+      ],
+      "type": "uint8"
+    }
+  },
+  "queries": [
+    {
+      "field": "amount",
+      "frame": "140000028040e201000000000000000000",
+      "operator": "eq",
+      "term": "93a9395ae5d9581921a3fc2cdd9e0f3cc731d37e8f39f516f3dc3e3a6f0e8514",
+      "text": "-1234.56"
+    },
+    {
+      "field": "at",
+      "frame": "130bc9d26a0000000000ca5b07",
+      "operator": "eq",
+      "term": "448bc4271a535ec475e50404c800746fb71cbac46567396bc0873546e5498f4a",
+      "text": "2026-10-17T01:02:03.123456Z"
+    }
+  ],
+  "record": {
+    "amount": {
+      "c": "01000000000000000000000000000000007a4428d606d70760a6ab09137b7998952000aa5c98df7b5db708dec28195dbfa196953ce941a9404e7c315e14856139917c7029249c4c84bb9f1be5e99fff5bc199c340d0ebf56f8ae0ecf6394499f4d38494f8180fe0ed37ea53d50de4aab18",
+      "eq": "93a9395ae5d9581921a3fc2cdd9e0f3cc731d37e8f39f516f3dc3e3a6f0e8514"
+    },
+    "at": {
+      "c": "01000000000000000000000000000000003df5051c44f189118ff062fc589189362000c144eccd9336ad2098131bc1ccebd36780eafd132f5d9a7900964b441fbedd240282c8968473ccbb1b6246cb787cde5551260d4f231028319ed4605d103e55f4224b4ad1741612075748",
+      "eq": "448bc4271a535ec475e50404c800746fb71cbac46567396bc0873546e5498f4a"
+    },
+    "date": {
+      "c": "010000000000000000000000000000000081a52593eddb4ccba009332c41f7173d200048bbb91aa1c0c890d54de6fcd6b404e91d6a8272390ab807c78820543d49ef860210b75bdc7c68980614ed2aa7d3d36c1a6d9c2a075ce309cc58801391318ddc4ce1",
+      "eq": "03226ad4425267b31f8316c513d7155cfc2fd33bbf8992d14ea26cfc64311481"
+    },
+    "i128": {
+      "c": "0100000000000000000000000000000000f5bdd6ce34bc69330093fa760c6f6d8120001a9f80b14abd281d94e5139ba66a8744314abdde415fa182d4ad961c4dbf1dc0023029b1f06c2403c58d5b7d1f6f4c296baf4121c271fdc53db86b5fbaa4f81a713d081c46dae6848160e6621764",
+      "eq": "19fb32f017fe269cb2703fe732acd8c1673e49174e5492ea8c372c487d08ce2f",
+      "ore": "783dd7032ee6444ff6f81cb78e4fa0933129b9ebfbb2dd85da80b1b97ceebfe9a33856f15922af174171bb344d433548eee69d2a4eff29468ada896662860f75cde27d55eabe18cba31b8fe353621dae1863c334694457e545c89761e79a6b668d51ed29455402bcf7c552cdf2da0d68a477e0f0fa702ad07175c6a2e0ea9105"
+    },
+    "i16": {
+      "c": "0100000000000000000000000000000000b1739f40d4486c2af05aac240fae06e72000a9313873aaecad5b7a40ed810a0dd870304d8fb8d4ea88949606dce6384dbb66024260f0ca7dfe4e060246508a8aeb2a7149abf78353638b1d9ddc45e0847f9a",
+      "eq": "b902e228c35b328eef12f0b8df397d48ee63b81e944e3dfb0855b6006426e012",
+      "ore": "e189d1334cff1530c141420fa0b33e72"
+    },
+    "i8": {
+      "c": "01000000000000000000000000000000005151a6cfdd1a51bf3a1ea0e85de41428200008a7fb000a5365b240cb064def02dedb57434897a756ae6216259ae26419f45d024ca84dd9619251c9cd068d104083a2b263a4c03dd3733d48476292e080f9",
+      "eq": "15e37adf2fa39067953df8988ef98fb5ca354599495b23230133d525e62e6768",
+      "ore": "1b6736b6df86ea70"
+    },
+    "u128": {
+      "c": "010000000000000000000000000000000095b0c11aba5068ed6e8b76bcf85967a92000b74f8acb3cdefa94b9fdea95725157aad875dfdb1f567c293638e84dc7872c42024d404151d9ca6ff6ffc96245f666720772db73084409bfd1944c18e47b8c0fe7c1d5a5e97025724c6051eb2792",
+      "eq": "761458346368c5f42c19a00ec9d8849021dfb28d6d6768c75d4290fef986bb9f",
+      "ope": "012b2caf3024863459aebebd33b7e06cf4d8086a9e518be0d2786a31ba395ed49df105bf41bfe8e174640afb950744f5183cdbd3ac76faa1e5044ae71b4bf1422b8adaa0d7f4bac919b177e85988dc6519df554315eedbf3b49f7bf9151921d8ee6b1e5231137425a47f392a841157ed1b30c2031e5c47426274f3f43551d77d72"
+    },
+    "u16": {
+      "c": "0100000000000000000000000000000000c40545f440c7f3e3f81f3fa4bbdc13152000c1aa04095f495b7cf8e1022d2e73a5d653616c157249914dc212e5c2c9eed16402c6eab4016f01dfdb0b4a034198115172c9dedd1b0e361a7a1140ec1b92e3c2",
+      "eq": "f9ec131d5dcf5739ac3a928108e1b50fc51e9f87bcd92f9e6e052b19b5f6b86d",
+      "ope": "013a9c12f564527ffacb40938ae8606cf5"
+    },
+    "u8": {
+      "c": "0100000000000000000000000000000000bf3b588776242c390761ddd7097e0ae22000fd2f9eb1bb2712deff3805ba2af81cb31ea5c1fc8ef8e0f058c256e3b170e5d3025acd5d70a0b3dced2f0dcbf999e156203d4eb1b33e2a8f8328a2b68d8260",
+      "eq": "ce2278b04c84191451e85ffcbe67f1e7c8585f86583cdbcef68d2dd466fa7b0e",
+      "ore": "43e194aefba0b27c"
+    }
+  },
+  "values": [
+    {
+      "field": "i8",
+      "frame": "0cf8",
+      "text": "-8",
+      "type": "int8"
+    },
+    {
+      "field": "i16",
+      "frame": "0ed4fe",
+      "text": "-300",
+      "type": "int16"
+    },
+    {
+      "field": "u8",
+      "frame": "0dc8",
+      "text": "200",
+      "type": "uint8"
+    },
+    {
+      "field": "u16",
+      "frame": "0f60ea",
+      "text": "60000",
+      "type": "uint16"
+    },
+    {
+      "field": "i128",
+      "frame": "1000000000000000000000000000000080",
+      "text": "-170141183460469231731687303715884105728",
+      "type": "int128"
+    },
+    {
+      "field": "u128",
+      "frame": "11ffffffffffffffffffffffffffffffff",
+      "text": "340282366920938463463374607431768211455",
+      "type": "uint128"
+    },
+    {
+      "field": "date",
+      "frame": "1281460b00",
+      "text": "2024-02-29",
+      "type": "date"
+    },
+    {
+      "field": "at",
+      "frame": "130bc9d26a0000000015cd5b07",
+      "text": "2026-10-17T01:02:03.123456789Z",
+      "type": "timestamp"
+    },
+    {
+      "field": "amount",
+      "frame": "14000004800061bc000000000000000000",
+      "text": "-1234.5600",
+      "type": "decimal"
+    }
+  ]
+}

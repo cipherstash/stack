@@ -6,7 +6,10 @@
 // It is not the SDK, and nothing outside stashgen's tests imports it.
 package encrypt
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Cipher is a keyset with any extension of the context.
 type Cipher struct{ _ struct{} }
@@ -98,3 +101,21 @@ type clientOptions struct{}
 
 // Close closes the client.
 func (*Client) Close() error { return nil }
+
+// The value types a field can hold beside Go's own. The real ones are
+// aliases of vitaminc's vcvalue types; the generator recognises them by
+// their name in this package.
+type (
+	Date struct {
+		Year  int
+		Month time.Month
+		Day   int
+	}
+	Int128  [16]byte
+	Uint128 [16]byte
+	Decimal struct {
+		Coefficient [12]byte
+		Scale       uint8
+		Negative    bool
+	}
+)

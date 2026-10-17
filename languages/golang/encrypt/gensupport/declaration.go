@@ -19,20 +19,35 @@ import (
 // the engine refuses a plan whose indexed field has no type.
 type Kind string
 
-// The kinds. int8, int16 and int32 are Int32; int and int64 are Int64;
-// uint8, uint16 and uint32 are Uint32; uint and uint64 are Uint64; []byte is
-// Bytes. A type defined over one of these has its underlying kind.
+// The kinds. Each Go integer type has the kind of its own width: int8 is
+// Int8, int16 Int16, int32 Int32, int and int64 Int64, uint8 Uint8, uint16
+// Uint16, uint32 Uint32, uint and uint64 Uint64, and encrypt.Int128 and
+// encrypt.Uint128 the 128-bit kinds. time.Time is Timestamp, encrypt.Date
+// Date and encrypt.Decimal Decimal. []byte is Bytes. A type defined over a
+// basic type has its underlying kind. A field stored as an EQL type takes
+// the type's kind instead, when every value of its Go type fits it (an int16
+// into Integer's int32), and its value is converted to that kind before it
+// crosses.
 const (
-	Untyped Kind = ""
-	Bool    Kind = "bool"
-	Int32   Kind = "int32"
-	Int64   Kind = "int64"
-	Uint32  Kind = "uint32"
-	Uint64  Kind = "uint64"
-	Float32 Kind = "float32"
-	Float64 Kind = "float64"
-	String  Kind = "string"
-	Bytes   Kind = "bytes"
+	Untyped   Kind = ""
+	Bool      Kind = "bool"
+	Int8      Kind = "int8"
+	Int16     Kind = "int16"
+	Int32     Kind = "int32"
+	Int64     Kind = "int64"
+	Int128    Kind = "int128"
+	Uint8     Kind = "uint8"
+	Uint16    Kind = "uint16"
+	Uint32    Kind = "uint32"
+	Uint64    Kind = "uint64"
+	Uint128   Kind = "uint128"
+	Float32   Kind = "float32"
+	Float64   Kind = "float64"
+	Decimal   Kind = "decimal"
+	Date      Kind = "date"
+	Timestamp Kind = "timestamp"
+	String    Kind = "string"
+	Bytes     Kind = "bytes"
 )
 
 // OpaqueField is the one field of an opaque declaration: the whole struct,

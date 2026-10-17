@@ -25,8 +25,9 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 use vitaminc_aead::frame::{Frame, FrameError, FrameMap, FrameSeq, FrameWriteError, FrameWriter};
+use vitaminc_aead::plaintext::kinds::timestamp_nanos;
 use vitaminc_aead::plaintext::{
-    Error as _, Float, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
+    Error as _, Float, Int, Logical, MapSink, Physical, SeqSink, Sink, SourceError, TimeUnit,
 };
 use vitaminc_aead::{DecodeError, Decrypt, Encrypt};
 use vitaminc_protected::{Controlled, Protected};
@@ -52,15 +53,16 @@ use crate::{Label, LabelError};
 /// # The value model
 ///
 /// A frame can carry any of vitaminc's scalars. The engine admits a subset,
-/// the *value model*: null, `undefined`, booleans, integers of 32 and 64
-/// bits, both floats, text and bytes, and sequences, maps and passthroughs of
-/// them. An 8- or 16-bit integer is read as the 32-bit integer of its sign,
-/// which holds it exactly, so a host with narrower integers (Go's `int8`)
-/// seals the 32-bit leaf a plan field of that width declares. A 128-bit
-/// integer and a scalar under a logical type other than `undefined` (a date,
-/// a decimal) are refused. Every [`ValueFrame`] is in the model: it is
-/// written through the sink adapter that holds these rules, so a frame from
-/// a host and a frame opened from a ciphertext are read the same way.
+/// the *value model*: null, `undefined`, booleans, integers of every width
+/// (`i8` to `u128`, each kept at its own width), both floats, text, bytes,
+/// and three logical types: a date, a decimal (its scale kept), and a
+/// timestamp, read in nanoseconds whatever unit it arrives in, which is the
+/// unit vitaminc's `TIMESTAMP` leaf carries; and sequences, maps and
+/// passthroughs of them. A uuid, and a logical type this build does not
+/// know, are refused, as is a date, decimal or timestamp outside vitaminc's
+/// range. Every [`ValueFrame`] is in the model: it is written through the
+/// sink adapter that holds these rules, so a frame from a host and a frame
+/// opened from a ciphertext are read the same way.
 pub struct ValueFrame(Protected<Vec<u8>>);
 
 impl ValueFrame {
@@ -293,26 +295,24 @@ impl IntoLabel for ValueFrame {
 // =============================================================================
 
 /// What [`Modeled`] refuses a scalar with.
-const EXPECTED: &str = "a null, bool, int of at most 64 bits, float, string or bytes";
+const EXPECTED: &str =
+    "a null, bool, integer, float, string, bytes, date, timestamp or decimal in range";
 
-/// A scalar in the value model: an 8- or 16-bit integer as the 32-bit
-/// integer of its sign, every other scalar as it is, or `None` for one
+/// A scalar in the value model: a timestamp as the same instant in
+/// nanoseconds, every other scalar of the model as it is, or `None` for one
 /// outside the model.
 fn model(ty: Option<Logical>, value: Physical<'_>) -> Option<(Option<Logical>, Physical<'_>)> {
     Some(match (ty, value) {
-        (None, Physical::Int(int)) => (
-            None,
-            Physical::Int(match int {
-                Int::I8(v) => Int::I32(v.into()),
-                Int::I16(v) => Int::I32(v.into()),
-                Int::U8(v) => Int::U32(v.into()),
-                Int::U16(v) => Int::U32(v.into()),
-                Int::I128(_) | Int::U128(_) => return None,
-                other => other,
-            }),
-        ),
         (None, value) => (None, value),
-        (Some(Logical::Undefined), Physical::Null) => (ty, value),
+        (Some(Logical::Timestamp(unit)), Physical::Int(count)) => (
+            Some(Logical::Timestamp(TimeUnit::Nanos)),
+            Physical::Int(Int::I128(timestamp_nanos(unit, count)?)),
+        ),
+        (Some(logical @ (Logical::Undefined | Logical::Date | Logical::Decimal { .. })), value)
+            if logical.admits(&value) =>
+        {
+            (ty, value)
+        }
         _ => return None,
     })
 }
@@ -883,21 +883,28 @@ impl Sink for KindOf {
 /// `undefined`, or a scalar outside the model.
 pub(super) fn scalar_kind(ty: Option<Logical>, value: &Physical<'_>) -> Option<ValueKind> {
     let (ty, value) = model(ty, *value)?;
-    if ty.is_some() {
-        return None;
-    }
-    Some(match value {
-        Physical::Bool(_) => ValueKind::Bool,
-        Physical::Int(Int::I32(_)) => ValueKind::Int32,
-        Physical::Int(Int::I64(_)) => ValueKind::Int64,
-        Physical::Int(Int::U32(_)) => ValueKind::UInt32,
-        Physical::Int(Int::U64(_)) => ValueKind::UInt64,
-        Physical::Int(_) => return None,
-        Physical::Float(Float::F32(_)) => ValueKind::Float32,
-        Physical::Float(Float::F64(_)) => ValueKind::Float64,
-        Physical::Text(_) => ValueKind::String,
-        Physical::Bytes(_) => ValueKind::Bytes,
-        Physical::Null => return None,
+    Some(match (ty, value) {
+        (Some(Logical::Date), _) => ValueKind::Date,
+        (Some(Logical::Timestamp(_)), _) => ValueKind::Timestamp,
+        (Some(Logical::Decimal { .. }), _) => ValueKind::Decimal,
+        (Some(_), _) | (None, Physical::Null) => return None,
+        (None, Physical::Bool(_)) => ValueKind::Bool,
+        (None, Physical::Int(int)) => match int {
+            Int::I8(_) => ValueKind::Int8,
+            Int::I16(_) => ValueKind::Int16,
+            Int::I32(_) => ValueKind::Int32,
+            Int::I64(_) => ValueKind::Int64,
+            Int::I128(_) => ValueKind::Int128,
+            Int::U8(_) => ValueKind::UInt8,
+            Int::U16(_) => ValueKind::UInt16,
+            Int::U32(_) => ValueKind::UInt32,
+            Int::U64(_) => ValueKind::UInt64,
+            Int::U128(_) => ValueKind::UInt128,
+        },
+        (None, Physical::Float(Float::F32(_))) => ValueKind::Float32,
+        (None, Physical::Float(Float::F64(_))) => ValueKind::Float64,
+        (None, Physical::Text(_)) => ValueKind::String,
+        (None, Physical::Bytes(_)) => ValueKind::Bytes,
     })
 }
 
@@ -1159,31 +1166,78 @@ mod tests {
         );
     }
 
-    /// An 8- or 16-bit integer is the 32-bit integer of its sign, at any
-    /// depth and inside a passthrough, as the value tree read it.
+    /// Every integer keeps its own width, at any depth: an `i8` is the
+    /// `INT8` leaf, not the 32-bit one.
     #[test]
-    fn a_narrow_integer_is_written_at_32_bits() {
+    fn every_integer_keeps_its_width() {
         use vitaminc_aead::plaintext::Raw;
-        let narrow = vec![
-            Raw(None, Physical::Int(Int::I8(-8))),
-            Raw(None, Physical::Int(Int::U8(200))),
-        ];
-        let frame = ValueFrame::of(narrow).expect("in the model");
-        let wide = FfiValue::Array(vec![FfiValue::Int32(-8), FfiValue::UInt32(200)]);
-        assert_eq!(frame.risky_ref(), frame_of(&wide).risky_ref());
+        use vitaminc_aead::tags;
+        for (int, tag) in [
+            (Int::I8(-8), tags::INT8),
+            (Int::I16(-8), tags::INT16),
+            (Int::I128(-8), tags::INT128),
+            (Int::U8(8), tags::UINT8),
+            (Int::U16(8), tags::UINT16),
+            (Int::U128(8), tags::UINT128),
+        ] {
+            let frame = ValueFrame::of(Raw(None, Physical::Int(int))).expect("in the model");
+            assert_eq!(frame.risky_ref()[0], tag);
+            let back = ValueFrame::from_bytes(frame.risky_ref()).expect("in the model");
+            assert_eq!(
+                back.risky_ref(),
+                frame.risky_ref(),
+                "read back at its width"
+            );
+        }
         let nested = ValueFrame::of(vec![vec![300u16]]).expect("in the model");
-        let wide = FfiValue::Array(vec![FfiValue::Array(vec![FfiValue::UInt32(300)])]);
-        assert_eq!(nested.risky_ref(), frame_of(&wide).risky_ref());
-        let i16_frame = vitaminc_aead::to_frame(i16::MIN).expect("frames");
-        assert_eq!(
-            FfiValue::from_frame(
-                ValueFrame::from_bytes(i16_frame.risky_ref())
-                    .expect("in the model")
-                    .risky_ref()
-            )
-            .expect("reads back"),
-            FfiValue::Int32(i16::MIN.into())
+        let inner = ValueFrame::of(300u16).expect("in the model");
+        assert!(nested.risky_ref().ends_with(inner.risky_ref()));
+    }
+
+    /// A date, a decimal and a timestamp are in the model; a timestamp in
+    /// any unit is the same instant in nanoseconds, under the `TIMESTAMP`
+    /// tag; a decimal keeps its scale.
+    #[test]
+    fn the_logical_types_of_the_model_are_kept() {
+        use vitaminc_aead::plaintext::Raw;
+        let date = ValueFrame::of(Raw(Some(Logical::Date), Physical::Int(Int::I32(19_782))))
+            .expect("a date");
+        assert_eq!(date.kind(), Some(ValueKind::Date));
+        assert_eq!(date.risky_ref()[0], vitaminc_aead::tags::DATE);
+        let decimal = ValueFrame::of(Raw(
+            Some(Logical::Decimal { scale: 2 }),
+            Physical::Int(Int::I64(150)),
+        ))
+        .expect("a decimal");
+        assert_eq!(decimal.kind(), Some(ValueKind::Decimal));
+        let one_point_five = ValueFrame::of(Raw(
+            Some(Logical::Decimal { scale: 1 }),
+            Physical::Int(Int::I64(15)),
+        ))
+        .expect("a decimal");
+        assert_ne!(
+            decimal.risky_ref(),
+            one_point_five.risky_ref(),
+            "1.50 is not 1.5"
         );
+        let nanos = ValueFrame::of(Raw(
+            Some(Logical::Timestamp(TimeUnit::Nanos)),
+            Physical::Int(Int::I128(-2_000_000_000)),
+        ))
+        .expect("an instant");
+        assert_eq!(nanos.kind(), Some(ValueKind::Timestamp));
+        for (unit, count) in [
+            (TimeUnit::Seconds, -2i64),
+            (TimeUnit::Millis, -2_000),
+            (TimeUnit::Micros, -2_000_000),
+        ] {
+            let other = ValueFrame::of(Raw(
+                Some(Logical::Timestamp(unit)),
+                Physical::Int(Int::I64(count)),
+            ))
+            .expect("an instant");
+            assert_eq!(other.risky_ref(), nanos.risky_ref(), "{unit:?}");
+        }
     }
 
     /// A scalar outside the model is refused wherever it is, a passthrough
@@ -1197,14 +1251,9 @@ mod tests {
         let checked = ValueFrame::check(bytes.risky_ref()).expect("checks");
         assert_eq!(checked.as_bytes().as_ptr(), bytes.risky_ref().as_ptr());
         assert_eq!(checked.as_bytes(), bytes.risky_ref());
-        let wide = vitaminc_aead::to_frame(vitaminc_aead::plaintext::Raw(
-            None,
-            Physical::Int(Int::I128(7)),
-        ))
-        .expect("frames");
         let hidden = vitaminc_aead::to_frame(Hidden(vitaminc_aead::plaintext::Raw(
-            None,
-            Physical::Int(Int::I128(7)),
+            Some(Logical::Uuid),
+            Physical::Bytes(&[7; 16]),
         )))
         .expect("frames");
         let uuid = vitaminc_aead::to_frame(vitaminc_aead::plaintext::Raw(
@@ -1212,7 +1261,7 @@ mod tests {
             Physical::Bytes(&[7; 16]),
         ))
         .expect("frames");
-        for refused in [wide.risky_ref(), hidden.risky_ref(), uuid.risky_ref()] {
+        for refused in [hidden.risky_ref(), uuid.risky_ref()] {
             assert!(matches!(
                 ValueFrame::check(refused),
                 Err(super::super::FromFrameError::Value(DecodeError::Expected(
@@ -1244,25 +1293,44 @@ mod tests {
 
     #[test]
     fn what_the_model_does_not_hold_is_refused() {
+        use vitaminc_aead::plaintext::kinds::{MAX_DATE_DAYS, MAX_TIMESTAMP_NANOS};
+        use vitaminc_aead::plaintext::Raw;
+        let refused =
+            |value: Raw<'_>| matches!(ValueFrame::of(value), Err(DecodeError::Expected(_)));
+        assert!(refused(Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 16]))));
+        let unknown = Logical::from_wire(200, 0).expect("an unknown logical type");
+        assert!(refused(Raw(Some(unknown), Physical::Int(Int::I32(1)))));
+        assert!(refused(Raw(
+            Some(Logical::Date),
+            Physical::Int(Int::I64(i64::from(MAX_DATE_DAYS) + 1))
+        )));
+        assert!(refused(Raw(
+            Some(Logical::Date),
+            Physical::Text("2024-01-01")
+        )));
+        assert!(refused(Raw(
+            Some(Logical::Timestamp(TimeUnit::Nanos)),
+            Physical::Int(Int::I128(MAX_TIMESTAMP_NANOS + 1))
+        )));
+        assert!(refused(Raw(
+            Some(Logical::Timestamp(TimeUnit::Seconds)),
+            Physical::Int(Int::I128(i128::MAX))
+        )));
+        assert!(refused(Raw(
+            Some(Logical::Decimal { scale: 0 }),
+            Physical::Int(Int::I128(1 << 96))
+        )));
+        assert!(refused(Raw(Some(Logical::Undefined), Physical::Bool(true))));
         assert!(matches!(
-            ValueFrame::of(7u128),
-            Err(DecodeError::Expected(_))
-        ));
-        assert!(matches!(
-            ValueFrame::of(vec![-7i128]),
-            Err(DecodeError::Expected(_))
-        ));
-        let date = vitaminc_aead::plaintext::Raw(Some(Logical::Date), Physical::Int(Int::I32(1)));
-        assert!(matches!(
-            ValueFrame::of(date),
+            ValueFrame::of(vec![Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 16]))]),
             Err(DecodeError::Expected(_))
         ));
         let hidden = FfiValue::Passthrough(Box::new(FfiValue::Null));
         assert!(ValueFrame::of(&hidden).is_ok());
         // Inside a passthrough too, and refused the same way.
         let hidden = Hidden(vitaminc_aead::plaintext::Raw(
-            None,
-            Physical::Int(Int::I128(7)),
+            Some(Logical::Uuid),
+            Physical::Bytes(&[7; 16]),
         ));
         assert!(matches!(
             ValueFrame::of(hidden),
@@ -1280,11 +1348,8 @@ mod tests {
             ValueFrame::from_bytes(&[]),
             Err(super::super::FromFrameError::Frame(_))
         ));
-        let uuid = vitaminc_aead::to_frame(vitaminc_aead::plaintext::Raw(
-            Some(Logical::Uuid),
-            Physical::Bytes(&[7; 16]),
-        ))
-        .expect("frames");
+        let uuid = vitaminc_aead::to_frame(Raw(Some(Logical::Uuid), Physical::Bytes(&[7; 16])))
+            .expect("frames");
         assert!(matches!(
             ValueFrame::from_bytes(uuid.risky_ref()),
             Err(super::super::FromFrameError::Value(DecodeError::Expected(
@@ -1345,6 +1410,21 @@ mod tests {
             assert_eq!(frame_of(&value).kind(), kind, "{value:?}");
             assert_eq!(value.kind(), kind, "the tree agrees: {value:?}");
         }
+        use vitaminc_aead::plaintext::Raw;
+        for (int, kind) in [
+            (Int::I8(1), ValueKind::Int8),
+            (Int::I16(1), ValueKind::Int16),
+            (Int::I128(1), ValueKind::Int128),
+            (Int::U8(1), ValueKind::UInt8),
+            (Int::U16(1), ValueKind::UInt16),
+            (Int::U128(1), ValueKind::UInt128),
+        ] {
+            let frame = ValueFrame::of(Raw(None, Physical::Int(int))).expect("in the model");
+            assert_eq!(frame.kind(), Some(kind));
+        }
+        let undefined =
+            ValueFrame::of(Raw(Some(Logical::Undefined), Physical::Null)).expect("in the model");
+        assert_eq!(undefined.kind(), None);
     }
 
     /// A sequence's parts are its elements' own frames, in order.

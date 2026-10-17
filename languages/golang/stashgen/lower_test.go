@@ -31,10 +31,12 @@ func TestLoweringRefusesAnEQLTypeBesideAContextField(t *testing.T) {
 	}
 }
 
-// An EQL type seals one width of its kind. A Go field of the same kind and
-// another width is refused here, naming both, rather than by the engine's
-// generic refusal; a narrower integer that seals as the type's width passes.
-func TestLoweringRefusesAnotherWidthOfTheKind(t *testing.T) {
+// An EQL type seals one width of its kind. An integer of any width whose
+// every value fits it is sealed at the type's width (ADR-0002), and the plan
+// names that width; an integer some of whose values do not fit is refused
+// here, naming both, as is a float of the other width, rather than by the
+// engine's generic refusal.
+func TestLoweringWidensIntoAnEQLTypeAndRefusesWhatDoesNotFit(t *testing.T) {
 	eql := []EQLType{
 		{Name: "Integer", Plaintext: KindInt, Producible: true, wire: record.Int32},
 		{Name: "Bigint", Plaintext: KindInt, Producible: true, wire: record.Int64},
@@ -50,9 +52,11 @@ func TestLoweringRefusesAnotherWidthOfTheKind(t *testing.T) {
 		basic, eqlType, want string
 		kind                 Kind
 	}{
-		{"int", "Integer", "Integer seals int32, and int seals as int64", KindInt},
-		{"int64", "Integer", "Integer seals int32, and int64 seals as int64", KindInt},
-		{"int32", "Bigint", "Bigint seals int64, and int32 seals as int32", KindInt},
+		{"int", "Integer", "Integer seals int32, and not every int fits it", KindInt},
+		{"int64", "Integer", "Integer seals int32, and not every int64 fits it", KindInt},
+		{"uint32", "Integer", "Integer seals int32, and not every uint32 fits it", KindUint},
+		{"uint64", "Bigint", "Bigint seals int64, and not every uint64 fits it", KindUint},
+		{"uint", "Bigint", "Bigint seals int64, and not every uint fits it", KindUint},
 		{"float64", "Real", "Real seals float32, and float64 seals as float64", KindFloat},
 		{"float32", "Double", "Double seals float64, and float32 seals as float32", KindFloat},
 	} {
@@ -65,13 +69,21 @@ func TestLoweringRefusesAnotherWidthOfTheKind(t *testing.T) {
 	for _, c := range []struct {
 		basic, eqlType string
 		kind           Kind
+		wire           record.Kind
 	}{
-		{"int32", "Integer", KindInt}, {"int16", "Integer", KindInt}, {"int8", "Integer", KindInt},
-		{"int64", "Bigint", KindInt}, {"int", "Bigint", KindInt},
-		{"float32", "Real", KindFloat}, {"float64", "Double", KindFloat},
+		{"int32", "Integer", KindInt, record.Int32}, {"int16", "Integer", KindInt, record.Int32}, {"int8", "Integer", KindInt, record.Int32},
+		{"uint16", "Integer", KindUint, record.Int32}, {"uint8", "Integer", KindUint, record.Int32},
+		{"int64", "Bigint", KindInt, record.Int64}, {"int", "Bigint", KindInt, record.Int64}, {"int32", "Bigint", KindInt, record.Int64},
+		{"int8", "Bigint", KindInt, record.Int64}, {"uint32", "Bigint", KindUint, record.Int64}, {"uint8", "Bigint", KindUint, record.Int64},
+		{"float32", "Real", KindFloat, record.Float32}, {"float64", "Double", KindFloat, record.Float64},
 	} {
-		if _, err := lowerDeclaration(field(c.basic, c.kind, c.eqlType), eql); err != nil {
+		plan, err := lowerDeclaration(field(c.basic, c.kind, c.eqlType), eql)
+		if err != nil {
 			t.Errorf("%s into %s: %v", c.basic, c.eqlType, err)
+			continue
+		}
+		if got := plan.Fields[0].Kind; got != c.wire {
+			t.Errorf("%s into %s: the plan seals %s, want %s", c.basic, c.eqlType, got, c.wire)
 		}
 	}
 }

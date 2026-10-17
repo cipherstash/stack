@@ -7,8 +7,10 @@
 //
 // The spellings here are wire format, fixed by stack-encrypt's
 // dynamic::record: the output keys "c", "eq", "match", "ore", "ope" and
-// "passthrough", and the type names "bool", "int32", "int64", "uint32",
-// "uint64", "float32", "float64", "string" and "bytes". A field's context is
+// "passthrough", and the type names "bool", "int8", "int16", "int32",
+// "int64", "int128", "uint8", "uint16", "uint32", "uint64", "uint128",
+// "float32", "float64", "decimal", "date", "timestamp", "string" and
+// "bytes". A field's context is
 // its label — the plan's context segments and the field's identity — nested
 // to the left under each part the caller extends it by.
 //
@@ -41,16 +43,25 @@ type Kind string
 
 // The kinds. The names are vitaminc's ValueKind names, frozen.
 const (
-	Untyped Kind = ""
-	Bool    Kind = "bool"
-	Int32   Kind = "int32"
-	Int64   Kind = "int64"
-	Uint32  Kind = "uint32"
-	Uint64  Kind = "uint64"
-	Float32 Kind = "float32"
-	Float64 Kind = "float64"
-	String  Kind = "string"
-	Bytes   Kind = "bytes"
+	Untyped   Kind = ""
+	Bool      Kind = "bool"
+	Int8      Kind = "int8"
+	Int16     Kind = "int16"
+	Int32     Kind = "int32"
+	Int64     Kind = "int64"
+	Int128    Kind = "int128"
+	Uint8     Kind = "uint8"
+	Uint16    Kind = "uint16"
+	Uint32    Kind = "uint32"
+	Uint64    Kind = "uint64"
+	Uint128   Kind = "uint128"
+	Float32   Kind = "float32"
+	Float64   Kind = "float64"
+	Decimal   Kind = "decimal"
+	Date      Kind = "date"
+	Timestamp Kind = "timestamp"
+	String    Kind = "string"
+	Bytes     Kind = "bytes"
 )
 
 // Output is one output of a sealed field, by its wire key.
@@ -72,6 +83,15 @@ const (
 // its one node in a sealed record, fixed by stack-encrypt's
 // dynamic::record::EQL_KEY.
 const EQLKey = "eql"
+
+// Integer reports whether k is an integer kind, of any width.
+func (k Kind) Integer() bool {
+	switch k {
+	case Int8, Int16, Int32, Int64, Int128, Uint8, Uint16, Uint32, Uint64, Uint128:
+		return true
+	}
+	return false
+}
 
 // IsTerm reports whether the output is an index term.
 func (o Output) IsTerm() bool { return o != Ciphertext && o != "" }
@@ -292,7 +312,8 @@ func (p *Plan) Validate() error {
 // Known reports whether k is a kind that the engine names; Untyped is one.
 func (k Kind) Known() bool {
 	switch k {
-	case Untyped, Bool, Int32, Int64, Uint32, Uint64, Float32, Float64, String, Bytes:
+	case Untyped, Bool, Int8, Int16, Int32, Int64, Int128, Uint8, Uint16, Uint32, Uint64, Uint128,
+		Float32, Float64, Decimal, Date, Timestamp, String, Bytes:
 		return true
 	}
 	return false

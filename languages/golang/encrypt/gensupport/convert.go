@@ -13,10 +13,14 @@ import (
 
 // convert writes an opened sealed value into out, a pointer to the Go type
 // the struct declares. The engine returns a value at the field's declared
-// kind — int32, int64, uint32, uint64, float32, float64, string, []byte,
-// bool, or a vcvalue.Object for a composite — and the struct's type is in
-// the same family, narrower at most. A value outside the target's range, or
-// of another family, is an error.
+// kind — an integer of its own width (int8 to uint64, or vcvalue.Int128 and
+// vcvalue.Uint128), float32, float64, string, []byte, bool, time.Time for a
+// timestamp, vcvalue.Date, vcvalue.Decimal, or a vcvalue.Object for a
+// composite — and the struct's type is that type, or in the same family and
+// narrower at most (an EQL type's int32 opening into the int16 field it was
+// widened from). A value outside the target's range, or of another family,
+// is an error. A time, date, decimal or 128-bit integer is read only into
+// its own type, which Get matches before it calls this.
 //
 // An error names types and positions, never the value: the value is
 // decrypted plaintext, and an error is what a program logs.
@@ -300,6 +304,14 @@ func outOfRange(want any) error {
 func setInt[T ~int | ~int8 | ~int16 | ~int32 | ~int64](v any, out *T, lo, hi int64) error {
 	var n int64
 	switch i := v.(type) {
+	case int8:
+		n = int64(i)
+	case int16:
+		n = int64(i)
+	case uint8:
+		n = int64(i)
+	case uint16:
+		n = int64(i)
 	case int32:
 		n = int64(i)
 	case int64:
@@ -326,6 +338,20 @@ func setInt[T ~int | ~int8 | ~int16 | ~int32 | ~int64](v any, out *T, lo, hi int
 func setUint[T ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64](v any, out *T, hi uint64) error {
 	var n uint64
 	switch i := v.(type) {
+	case uint8:
+		n = uint64(i)
+	case uint16:
+		n = uint64(i)
+	case int8:
+		if i < 0 {
+			return outOfRange(*out)
+		}
+		n = uint64(i)
+	case int16:
+		if i < 0 {
+			return outOfRange(*out)
+		}
+		n = uint64(i)
 	case uint32:
 		n = uint64(i)
 	case uint64:
