@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Every integer width, 128-bit integers, dates, timestamps and decimals
+  as dynamic values** (`dynamic` feature; #1144, ADR-0002). They are
+  vitaminc leaves in a `ValueFrame`, with no new `FfiValue` variant:
+  `ValueKind` gains `Int8`, `Int16`, `Int128`, `UInt8`, `UInt16`,
+  `UInt128`, `Decimal`, `Date` and `Timestamp` (named `int8`, `int16`,
+  `int128`, `uint8`, `uint16`, `uint128`, `decimal`, `date`, `timestamp`
+  in a plan's `type`), and the value model keeps each integer at its own
+  width (8- and 16-bit integers are no longer widened to 32 bits). A
+  timestamp is held at nanosecond precision. Equality applies to all of
+  them, through vitaminc-normalize: one term per integer value at every
+  width, decimals at any scale, timestamps to the microsecond. ORE and OPE
+  apply to every integer width, each passed to cllw-ore as its own type.
+  An ORE or OPE index on a decimal, date or timestamp is refused with the
+  new `Reason::OrderTermPending`, which names #1236: those order terms wait
+  for new cllw-ore and ore-rs releases. `dynamic::not_admitted` says why a
+  kind does not admit an index. `dynamic::read` converts between the new
+  kinds where a value fits (an integer into any width that holds it, a
+  whole integer into a decimal at scale 0). `tests/value_kinds.rs` and its
+  fixture hold the record path, the data query path and the typed path to
+  the same bytes, and the Go SDK reads the fixture too.
 - **A binding queries by operator** (`dynamic` feature; ADR-0009, ADR-0007
   amended 2026-10-16). `dynamic::query_term(keyset, &plan, field, op,
   input, &resolver)` derives the query term for a field of a data plan, an
@@ -158,6 +178,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Plan::new_with`.
 
 ### Breaking
+
+- **An 8- or 16-bit integer in a dynamic value keeps its width** (`dynamic`
+  feature; #1144). The value model used to widen it to 32 bits before it
+  was sealed; now it is sealed as itself, so a field declared `int16` seals
+  an int16 leaf. A record sealed before under a 32-bit `type` does not open
+  under a plan that declares the narrower kind (`Plan(FieldType)`): the
+  typed decrypt checks the leaf's kind against the plan's.
 
 - **A dynamic plaintext is a frame, not a value tree** (`dynamic` feature;
   #1232, vitaminc ADR 0001). vitaminc 0.6 has no shared value type: a value

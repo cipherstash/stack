@@ -23,9 +23,12 @@
 // encrypt_into names the EQL type the field is stored as. The Go field type
 // must match it: TextEq, TextMatch and Text take a string, Integer and
 // IntegerEq an int32, Bigint and BigintEq an int64, Boolean a bool, Real and
-// RealEq a float32, and Double and DoubleEq a float64. The *Eq types answer
-// Eq; Integer, Bigint, Boolean, Real, Double and Text are stored and read
-// only.
+// RealEq a float32, and Double and DoubleEq a float64. An integer EQL type
+// also takes any other built-in Go integer type, sealed at the type's width:
+// one every value of which fits it (an int16 into Integer) always seals, and
+// a wider one (an int64 into Integer) is range checked, a value that does not
+// fit refused with [ErrEncoding]. The *Eq types answer Eq; Integer, Bigint,
+// Boolean, Real, Double and Text are stored and read only.
 //
 // 3. Run the generator. It writes user_stash.go beside the struct:
 //
@@ -106,11 +109,20 @@
 // plan the Rust chain and the derive run. A program never builds or names a
 // plan, and no call takes a context or an index choice of its own.
 //
+// A sealed field outside an opaque struct is one value: a string, []byte,
+// bool, an integer of any width (int8 to int64, uint8 to uint64, int, uint,
+// or [Int128] and [Uint128]), a float32 or float64, a [Decimal], a [Date] or a
+// time.Time (a timestamp), or a type defined over one of the built-in types.
+// Each integer seals at its own width. Equality applies to every one but a
+// bool; ORE and OPE to the integers, text, bytes and floats, and not yet to a
+// decimal, date or timestamp, whose order terms wait for new cllw-ore and
+// ore-rs releases (#1236).
+//
 // Passthrough fields never cross the binding: the engine does nothing to a
 // passthrough value that a program could observe, and the FFI codec cannot
-// carry every Go type a program stores beside a ciphertext (a time.Time, a
-// driver.Valuer). An opaque struct crosses as one JSON document and is one
-// column.
+// carry every Go type a program stores beside a ciphertext (a
+// driver.Valuer, a sql.NullTime). An opaque struct crosses as one JSON
+// document and is one column.
 //
 // # Terms
 //

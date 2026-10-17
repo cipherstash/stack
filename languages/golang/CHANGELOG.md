@@ -12,6 +12,13 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Breaking
 
+- **An `int8`, `int16`, `uint8` or `uint16` sealed field seals at its own
+  width; run stashgen again.** It used to seal as a 32-bit integer. Values
+  stored before do not decrypt under the regenerated declaration: the
+  engine checks the stored leaf's kind against the declared one and
+  refuses an int32 leaf for an `int16` field. Equality terms are the same
+  at every width, order terms are not. To keep reading stored values,
+  declare the field `int32` or `uint32` (or re-encrypt them).
 - **Run stashgen again.** A field's query methods are now one per operator
   the engine answers on it (`Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between`,
   `Matches`), in place of one per index (`Equality`, `Match`, `Ore`, `Ope`,
@@ -31,6 +38,24 @@ listed under **Breaking**. Releases are tagged `languages/golang/vX.Y.Z`.
 
 ### Added
 
+- **Every integer width, 128-bit integers, dates, timestamps and decimals
+  as sealed fields** (#1144). Each integer type seals at its own width
+  (`int8` as an int8, `uint16` as a uint16), so `record.Kind` and
+  `gensupport` gain `Int8`, `Int16`, `Int128`, `Uint8`, `Uint16`,
+  `Uint128`, `Decimal`, `Date` and `Timestamp`. A `time.Time` field seals
+  as a timestamp and opens in UTC. `encrypt.Date`, `Int128`, `Uint128` and
+  `Decimal` are vitaminc's `vcvalue` types, with `encrypt.DateOf`,
+  `ParseInt128`, `ParseUint128` and `ParseDecimal` (which refuses NaN and
+  the infinities with `ErrNonFiniteDecimal`). Equality applies to all of
+  them, ORE and OPE to every integer width. stashgen refuses an order index
+  on a decimal, date or timestamp, naming #1236. The value-kinds fixture
+  test opens a record the Rust lowering sealed and derives the same terms.
+- **Any built-in Go integer field takes an integer EQL type** (ADR-0002):
+  an `int16` or a `uint16` into `Integer`, an `int` into `Bigint`. The
+  field is sealed at the type's width and opens back into the field's
+  type. A type wider than the EQL type (an `int64` into `Integer`) is range
+  checked value by value, and `Encrypt` refuses a value that does not fit
+  with `ErrEncoding`. `encrypt.Int128` and `Uint128` are not converted.
 - **`encrypt.MatchQuery` and `encrypt.EQLMatchQuery`**: what a `Matches`
   method returns. Each carries the term or EQL query value to bind,
   `Verify` (check decrypted rows, since a match can return false positives)

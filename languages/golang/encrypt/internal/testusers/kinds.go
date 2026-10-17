@@ -3,6 +3,8 @@ package testusers
 import (
 	"database/sql"
 	"time"
+
+	"github.com/cipherstash/stack/languages/golang/encrypt"
 )
 
 // Defined types over scalars: the engine returns the underlying type and the
@@ -17,8 +19,7 @@ type (
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Account -name Account
 
 // Account is the shape of the plan's accounts example: passthrough fields
-// whose types the FFI codec cannot carry (a time.Time, a driver.Valuer), kept
-// on the host and returned as they are.
+// (a time.Time, a driver.Valuer) kept on the host and returned as they are.
 type Account struct {
 	_         struct{}     `stash:"context=accounts"`
 	ID        uint         `stash:"id,passthrough"`
@@ -70,6 +71,27 @@ type Kinds struct {
 	Sk []Inner           `stash:"sk,passthrough"`
 	A  any               `stash:"a,passthrough"`
 	Er error             `stash:"er,passthrough"`
+}
+
+//go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type ValueKinds -name ValueKinds
+
+// ValueKinds has one sealed field of each kind added in #1144, with the
+// context, identities and indexes of the plan in
+// packages/stack-encrypt/tests/fixtures/value_kinds.json, so the generated
+// code opens the record Rust sealed there and derives the same terms. Every
+// integer seals at its own width; the order indexes of a date, timestamp or
+// decimal wait for #1236, so those three carry equality alone.
+type ValueKinds struct {
+	_      struct{}        `stash:"context=value_kinds"`
+	I8     int8            `stash:"i8,encrypt,index=equality;ore"`
+	I16    int16           `stash:"i16,encrypt,index=equality;ore"`
+	U8     uint8           `stash:"u8,encrypt,index=equality;ore"`
+	U16    uint16          `stash:"u16,encrypt,index=equality;ope"`
+	I128   encrypt.Int128  `stash:"i128,encrypt,index=equality;ore"`
+	U128   encrypt.Uint128 `stash:"u128,encrypt,index=equality;ope"`
+	Date   encrypt.Date    `stash:"date,encrypt,index=equality"`
+	At     time.Time       `stash:"at,encrypt,index=equality"`
+	Amount encrypt.Decimal `stash:"amount,encrypt,index=equality"`
 }
 
 //go:generate go run github.com/cipherstash/stack/languages/golang/cmd/stashgen -type Lookup -name Lookup

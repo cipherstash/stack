@@ -44,9 +44,12 @@ type genFile struct {
 	codecVar        string // "codec"
 	fieldsVar       string // "Fields"
 	fieldTypePrefix string // "" or the -name
-	encryptFn       string
-	decryptFn       string
-	paramName       string // the slice parameter of Encrypt
+	// The kind each EncryptInto field of another integer width seals as:
+	// the EQL type's own kind, which gensupport converts the value to.
+	intoKinds map[string]record.Kind
+	encryptFn string
+	decryptFn string
+	paramName string // the slice parameter of Encrypt
 
 	notices         []string
 	printsPlaintext bool
@@ -691,7 +694,7 @@ func (r *reader) buildFields(c *collected) error {
 		if g.Sealed() && !g.GoType.Kind.Scalar() {
 			// The engine seals a composite as a tree of leaves, and a column
 			// holds one leaf; only an opaque struct seals a whole value.
-			return fieldErr(typeName, cf.goName, "a sealed field is one scalar (a string, number, bool or []byte, or a type defined over one); a %s seals only as part of an opaque struct", g.typeExpr)
+			return fieldErr(typeName, cf.goName, "a sealed field is one scalar (a string, number, bool, []byte, time.Time, encrypt.Date, encrypt.Decimal, encrypt.Int128 or encrypt.Uint128, or a type defined over a string, number, bool or []byte); a %s seals only as part of an opaque struct", g.typeExpr)
 		}
 		switch field.Verb {
 		case VerbPassthrough, VerbContextField:
@@ -716,6 +719,12 @@ func (r *reader) buildFields(c *collected) error {
 					reason = "not in this build of the engine"
 				}
 				return fieldErr(typeName, cf.goName, "the engine cannot produce the EQL type %s yet: %s", field.EQLType, reason)
+			}
+			if wire, ok := intoKind(g.GoType, eqlType.wire); ok && wire != wireKind(g.GoType) {
+				if f.intoKinds == nil {
+					f.intoKinds = map[string]record.Kind{}
+				}
+				f.intoKinds[field.Name] = wire
 			}
 			f.imports.add(eqlPath, "eql")
 			g.outputType = "eql." + EQLGoName(eqlType.Name)
@@ -773,6 +782,10 @@ func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Typ
 	}
 	seen[t] = true
 	defer delete(seen, t)
+	if kind, ok := valueKind(t); ok {
+		g.Kind = kind
+		return g
+	}
 	switch u := t.Underlying().(type) {
 	case *types.Basic:
 		g.Basic = u.Name()
@@ -814,6 +827,55 @@ func classify(t types.Type, typeExpr func(types.Type) string, seen map[types.Typ
 		}
 	}
 	return g
+}
+
+// vcvaluePath is vitaminc's Go value module, whose types encrypt's value
+// types alias.
+const vcvaluePath = "github.com/cipherstash/vitaminc/bindings/go/vcvalue"
+
+// valueKind is the kind of a value type the generator knows by name:
+// time.Time, and encrypt's Date, Int128, Uint128 and Decimal, whether the
+// field names the alias in encrypt or the vcvalue type it stands for. A type
+// defined over one of them is not one: the codec writes these by their exact
+// type, so it is classified by its underlying type and refused as a struct
+// or array.
+func valueKind(t types.Type) (Kind, bool) {
+	named := func(t types.Type) (string, string, bool) {
+		switch t := t.(type) {
+		case *types.Alias:
+			if obj := t.Obj(); obj.Pkg() != nil {
+				return obj.Pkg().Path(), obj.Name(), true
+			}
+		case *types.Named:
+			if obj := t.Obj(); obj.Pkg() != nil {
+				return obj.Pkg().Path(), obj.Name(), true
+			}
+		}
+		return "", "", false
+	}
+	for _, candidate := range []types.Type{t, types.Unalias(t)} {
+		path, name, ok := named(candidate)
+		if !ok {
+			continue
+		}
+		if path == "time" && name == "Time" {
+			return KindTimestamp, true
+		}
+		if path != encryptPath && path != vcvaluePath {
+			continue
+		}
+		switch name {
+		case "Date":
+			return KindDate, true
+		case "Int128":
+			return KindInt128, true
+		case "Uint128":
+			return KindUint128, true
+		case "Decimal":
+			return KindDecimal, true
+		}
+	}
+	return KindOther, false
 }
 
 // checkDirectives stops when another go:generate line in the package would

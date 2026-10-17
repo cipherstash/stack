@@ -203,7 +203,11 @@ func (c *Codec[P, E]) split(vals Values) (record.Source, map[string]any, error) 
 			return nil, nil, fmt.Errorf("the generated Source gave no field %q", f.name)
 		}
 		if f.crosses() {
-			row[f.name] = v
+			converted, err := asKind(f.kind, v)
+			if err != nil {
+				return nil, nil, fmt.Errorf("field %q: %w", f.name, err)
+			}
+			row[f.name] = converted
 		} else {
 			keep[f.name] = v
 		}

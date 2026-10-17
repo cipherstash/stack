@@ -106,7 +106,7 @@ pub use ffi_value::{
     Element, Entry, FfiValue, FromFrameError, ParseValueKindError, Put, Root, Utf8String,
     ValueKind, ValueMap, ValueSeq, ValueSink,
 };
-pub use kind::{admits, read};
+pub use kind::{admits, not_admitted, read};
 pub use query::{
     check_query, field_operators, limit_to_value, operator_to_value, query_term, target_limit,
     verify, Fidelity, OpSpec, Operand, QueryTerm,
@@ -529,6 +529,11 @@ reasons! {
         /// The field's declared type has no such index: match on an integer,
         /// equality or an order index on a boolean, any index on a composite.
         IndexNotAdmitted => "index_not_admitted", "the declared type has no such index";
+        /// The field declares an ORE or OPE index on a decimal, date or
+        /// timestamp. Their order terms wait for cllw-ore and ore-rs
+        /// releases that encode them the ADR-0002 way (#1236); equality on
+        /// them works today.
+        OrderTermPending => "order_term_pending", "an order index on a decimal, date or timestamp waits for new cllw-ore and ore-rs releases (#1236)";
         /// Two fields are keyed under one identity.
         SharedIdentity => "shared_identity", "two fields are keyed under one identity";
         /// The plan has no field of the name asked for.

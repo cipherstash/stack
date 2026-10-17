@@ -48,17 +48,31 @@ func (Static) EQLTypes(context.Context) ([]stashgen.EQLType, error) {
 }
 
 // sealsAs is the width the generated code seals a Go integer or float as:
-// int8, int16 and int32 as int32, int and int64 as int64.
+// its own.
 func sealsAs(t stashgen.GoType) string {
 	switch t.Basic {
-	case "int8", "int16", "int32":
-		return "int32"
-	case "int", "int64":
+	case "int":
 		return "int64"
-	case "float32", "float64":
-		return t.Basic
+	case "uint", "uintptr":
+		return "uint64"
+	case "byte":
+		return "uint8"
+	case "rune":
+		return "int32"
 	}
-	return ""
+	switch t.Kind {
+	case stashgen.KindInt128:
+		return "int128"
+	case stashgen.KindUint128:
+		return "uint128"
+	}
+	return t.Basic
+}
+
+// widths are the integer kinds, for an EQL integer type.
+var widths = map[string]bool{
+	"int8": true, "int16": true, "int32": true, "int64": true, "int128": true,
+	"uint8": true, "uint16": true, "uint32": true, "uint64": true, "uint128": true,
 }
 
 // Check applies the engine's rules as they stand today, then its table of
@@ -93,10 +107,15 @@ func (e Static) check(ctx context.Context, d stashgen.Declaration) error {
 				return &stashgen.FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("the engine cannot produce the EQL type %s yet; it produces %s", f.EQLType, strings.Join(names, ", "))}
 			}
 			t := eqlTypes[found]
-			if t.Plaintext != f.GoType.Kind {
+			_, integerType := widths[t.seals]
+			switch {
+			case integerType && (f.GoType.Kind == stashgen.KindInt || f.GoType.Kind == stashgen.KindUint):
+				// ADR-0002: any built-in integer, range checked on the host.
+			case integerType && integer(f.GoType) && sealsAs(f.GoType) != t.seals:
+				return &stashgen.FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals %s, and an %s is not converted to it", f.EQLType, t.seals, f.GoType)}
+			case t.Plaintext != f.GoType.Kind:
 				return &stashgen.FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals a %s, and %s is %s", f.EQLType, t.Plaintext, f.GoType, f.GoType.Kind)}
-			}
-			if t.seals != "" && sealsAs(f.GoType) != t.seals {
+			case t.seals != "" && sealsAs(f.GoType) != t.seals:
 				return &stashgen.FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals %s, and %s seals as %s", f.EQLType, t.seals, f.GoType, sealsAs(f.GoType))}
 			}
 		}
@@ -180,7 +199,7 @@ func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName
 	case "matches":
 		return stashgen.IndexMatch, declared(stashgen.IndexMatch)
 	}
-	if t.Kind != stashgen.KindInt && t.Kind != stashgen.KindUint {
+	if !integer(t) {
 		return "", false
 	}
 	if declared(stashgen.IndexOre) {
@@ -189,16 +208,31 @@ func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName
 	return stashgen.IndexOpe, declared(stashgen.IndexOpe)
 }
 
+// integer reports whether the type is an integer of any width.
+func integer(t stashgen.GoType) bool {
+	switch t.Kind {
+	case stashgen.KindInt, stashgen.KindUint, stashgen.KindInt128, stashgen.KindUint128:
+		return true
+	}
+	return false
+}
+
 // indexApplies mirrors dynamic::admits in stack-encrypt: equality over
-// integers, floats, text and bytes (the kinds vitaminc gives an equality
-// domain; a boolean has none), match over text alone, ORE and OPE over
-// every scalar but a boolean, whose order term would reveal which rows are
-// true. The JSON index is not in the engine yet.
+// every kind vitaminc gives an equality domain (integers of every width,
+// floats, decimals, dates, timestamps, text and bytes; a boolean has none),
+// match over text alone, ORE and OPE over integers of every width, floats,
+// text and bytes. Not over a boolean, whose order term would reveal which
+// rows are true, and not yet over a decimal, date or timestamp, whose order
+// terms wait for new cllw-ore and ore-rs releases (#1236). The JSON index is
+// not in the engine yet.
 func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 	switch name {
 	case stashgen.IndexEquality:
 		switch t.Kind {
-		case stashgen.KindString, stashgen.KindBytes, stashgen.KindInt, stashgen.KindUint, stashgen.KindFloat:
+		case stashgen.KindString, stashgen.KindBytes, stashgen.KindFloat, stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp:
+			return nil
+		}
+		if integer(t) {
 			return nil
 		}
 	case stashgen.IndexMatch:
@@ -207,7 +241,13 @@ func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 		}
 		return fmt.Errorf("match applies to a string, not to %s", t)
 	case stashgen.IndexOre, stashgen.IndexOpe:
-		if t.Kind.Scalar() && t.Kind != stashgen.KindBool {
+		switch t.Kind {
+		case stashgen.KindString, stashgen.KindBytes, stashgen.KindFloat:
+			return nil
+		case stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp:
+			return fmt.Errorf("an order index on a decimal, date or timestamp waits for new cllw-ore and ore-rs releases (#1236)")
+		}
+		if integer(t) {
 			return nil
 		}
 	case stashgen.IndexJSON:
@@ -220,7 +260,8 @@ func indexApplies(name stashgen.IndexName, t stashgen.GoType) error {
 // or a slice, map, pointer or all-exported struct of sealable types.
 func sealable(t stashgen.GoType) bool {
 	switch t.Kind {
-	case stashgen.KindString, stashgen.KindBool, stashgen.KindInt, stashgen.KindUint, stashgen.KindFloat, stashgen.KindBytes:
+	case stashgen.KindString, stashgen.KindBool, stashgen.KindInt, stashgen.KindUint, stashgen.KindFloat, stashgen.KindBytes,
+		stashgen.KindInt128, stashgen.KindUint128, stashgen.KindDecimal, stashgen.KindDate, stashgen.KindTimestamp:
 		return true
 	case stashgen.KindSlice, stashgen.KindPointer:
 		return t.Elem != nil && sealable(*t.Elem)

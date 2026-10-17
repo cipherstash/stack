@@ -39,7 +39,9 @@
 //! the field declares no ORE. The typed path's default for an ordering is
 //! ORE, and OPE is the typed path's `.via(Ope)`; here a field that declares
 //! only OPE is answered through it. An ordering over text, bytes or a float
-//! is not answered, as `op::Ordered` covers the integers only.
+//! is not answered, as `op::Ordered` covers the integers only (of every
+//! width, `int8` to `uint128`). Nor is one over a decimal, date or
+//! timestamp: a plan cannot declare an order index on one until #1236.
 //!
 //! A field that names an EQL type answers what its
 //! [`TargetDescriptor::operators`] lists: the operators of a single value
@@ -192,12 +194,22 @@ impl fmt::Display for OpSpec {
     }
 }
 
-/// The kinds the ordering operators are answered over: the integers, as
-/// [`op::Ordered`](crate::op::Ordered) covers them in the typed path.
+/// The kinds the ordering operators are answered over: the integers of
+/// every width, `int8` to `uint128`, as [`op::Ordered`](crate::op::Ordered)
+/// covers them in the typed path.
 fn ordered(kind: ValueKind) -> bool {
     matches!(
         kind,
-        ValueKind::Int32 | ValueKind::Int64 | ValueKind::UInt32 | ValueKind::UInt64
+        ValueKind::Int8
+            | ValueKind::Int16
+            | ValueKind::Int32
+            | ValueKind::Int64
+            | ValueKind::Int128
+            | ValueKind::UInt8
+            | ValueKind::UInt16
+            | ValueKind::UInt32
+            | ValueKind::UInt64
+            | ValueKind::UInt128
     )
 }
 
@@ -600,18 +612,24 @@ fn integer_order(lo: &ValueFrame, hi: &ValueFrame) -> Option<Ordering> {
     (lo_kind == hi_kind).then(|| lo.cmp(&hi))
 }
 
-/// An integer scalar's kind and value, or `None` for anything else.
-fn integer_of(value: &ValueFrame) -> Option<(ValueKind, i128)> {
+/// An integer scalar's kind and value, or `None` for anything else. The
+/// value is its sign and 128-bit two's-complement word (vitaminc's
+/// [`Int::sign_and_word`](vitaminc_aead::plaintext::Int::sign_and_word)),
+/// ordered negatives first, so one comparison covers every width from
+/// `i128::MIN` to `u128::MAX`.
+fn integer_of(value: &ValueFrame) -> Option<(ValueKind, (bool, u128))> {
     let kind = value.kind()?;
-    let int = value
+    let (negative, word) = value
         .visit(OneScalar::new(
             |ty: Option<Logical>, value: Physical<'_>| match (ty, value) {
-                (None, Physical::Int(int)) => int.to_i128().ok_or(None),
+                (None, Physical::Int(int)) => Ok(int.sign_and_word()),
                 _ => Err(None),
             },
         ))
         .ok()?;
-    Some((kind, int))
+    // `!negative` so a negative sorts below every non-negative; within a
+    // sign the two's-complement words order as the values do.
+    Some((kind, (!negative, word)))
 }
 
 /// The tokens a match query of `value` keeps, under the index's options.
@@ -1155,10 +1173,16 @@ mod tests {
             OpSpec::Between,
         ] {
             for kind in [
+                ValueKind::Int8,
+                ValueKind::Int16,
                 ValueKind::Int32,
                 ValueKind::Int64,
+                ValueKind::Int128,
+                ValueKind::UInt8,
+                ValueKind::UInt16,
                 ValueKind::UInt32,
                 ValueKind::UInt64,
+                ValueKind::UInt128,
             ] {
                 assert_eq!(
                     answered(op, kind, &all),
@@ -1181,6 +1205,9 @@ mod tests {
                 ValueKind::Bytes,
                 ValueKind::Float64,
                 ValueKind::Bool,
+                ValueKind::Decimal,
+                ValueKind::Date,
+                ValueKind::Timestamp,
             ] {
                 assert_eq!(
                     answered(op, kind, &all),
@@ -1188,6 +1215,14 @@ mod tests {
                     "{op} is answered over integers only: {kind}"
                 );
             }
+        }
+        // A decimal, a date and a timestamp answer `eq` through equality.
+        for kind in [ValueKind::Decimal, ValueKind::Date, ValueKind::Timestamp] {
+            assert_eq!(
+                answered(OpSpec::Eq, kind, &all),
+                Some(IndexSpec::Equality),
+                "{kind}"
+            );
         }
         for op in OpSpec::ALL {
             assert_eq!(
@@ -1811,6 +1846,163 @@ mod tests {
         }
     }
 
+    /// The new kinds query as the typed path does: an `int8` field's
+    /// orderings are the typed `i8` ORE terms, whatever integer width the
+    /// host sends; an `int128` field's range is the typed `i128` range; a
+    /// date, timestamp and decimal answer `eq` with the equality term the
+    /// record path stores; and an integer reads as a decimal, so `34`
+    /// finds `34.00`.
+    #[tokio::test]
+    async fn the_new_kinds_derive_the_typed_paths_terms() {
+        use vitaminc_aead::plaintext::{Int, Logical, Physical, Raw, TimeUnit};
+        let cipher = cipher().await;
+        let keyset = cipher.default_keyset();
+        let plan = record::plan(FfiValue::Object(vec![
+            field("tiny", "int8", vec![text("c"), text("ore")]),
+            field("huge", "int128", vec![text("c"), text("ope")]),
+            field("day", "date", vec![text("c"), text("eq")]),
+            field("at", "timestamp", vec![text("c"), text("eq")]),
+            field("price", "decimal", vec![text("c"), text("eq")]),
+        ]))
+        .expect("the plan parses");
+        let frame = |ty: Option<Logical>, value: Physical<'_>| {
+            ValueFrame::of(Raw(ty, value)).expect("a value")
+        };
+        let int = |int: Int| frame(None, Physical::Int(int));
+        let ask = |name: &'static str, operator: OpSpec, input: ValueFrame| {
+            let plan = &plan;
+            let keyset = &keyset;
+            async move {
+                query_term(keyset, plan, name, operator, input, &NoTargets)?
+                    .await
+                    .map_err(Error::Cipher)
+            }
+        };
+
+        let tiny = crate::Plan::context("users/tiny")
+            .with::<i8, _>(Ore)
+            .build()
+            .unwrap();
+        let typed = cipher.query(op::Lt, &-8i8).on(&tiny).await.unwrap();
+        for input in [
+            int(Int::I8(-8)),
+            vf(&FfiValue::Int64(-8)),
+            vf(&FfiValue::Float64(-8.0)),
+        ] {
+            let term = ask("tiny", OpSpec::Lt, input).await.unwrap();
+            assert_eq!(term.operand(), &Operand::One(typed.to_bytes()));
+        }
+        let refused = ask("tiny", OpSpec::Lt, vf(&FfiValue::Int64(300))).await;
+        assert!(
+            matches!(&refused, Err(error) if reason_of(error) == (Some("tiny"), Some(Reason::FieldType))),
+            "300 is no int8: {refused:?}"
+        );
+
+        let huge = crate::Plan::context("users/huge")
+            .with::<i128, _>(Ope)
+            .build()
+            .unwrap();
+        let typed = cipher
+            .query(op::Between, &(i128::MIN, i128::MAX))
+            .via(Ope)
+            .on(&huge)
+            .await
+            .unwrap();
+        let bounds = ValueFrame::of(vec![
+            Raw(None, Physical::Int(Int::I128(i128::MIN))),
+            Raw(None, Physical::Int(Int::I128(i128::MAX))),
+        ])
+        .unwrap();
+        let term = ask("huge", OpSpec::Between, bounds).await.unwrap();
+        assert_eq!(
+            term.operand(),
+            &Operand::Range {
+                lo: typed.lo().to_bytes(),
+                hi: typed.hi().to_bytes(),
+            }
+        );
+        let inverted = ValueFrame::of(vec![
+            Raw(None, Physical::Int(Int::I128(1))),
+            Raw(None, Physical::Int(Int::I128(0))),
+        ])
+        .unwrap();
+        assert!(
+            ask("huge", OpSpec::Between, inverted).await.is_err(),
+            "an inverted 128-bit range is refused"
+        );
+
+        let stored = |value: &ValueFrame, name: &'static str| {
+            let keyset = &keyset;
+            let ctx = super::super::context(FfiValue::Array(vec![text("users"), text(name)]))
+                .expect("context");
+            let value = value.clone();
+            async move {
+                super::super::term(keyset, &value, &IndexSpec::Equality, ctx)
+                    .await
+                    .unwrap()
+            }
+        };
+        let day = frame(Some(Logical::Date), Physical::Int(Int::I32(19_782)));
+        let term = ask("day", OpSpec::Eq, day.clone()).await.unwrap();
+        assert_eq!(term.operand(), &Operand::One(stored(&day, "day").await));
+        let at = frame(
+            Some(Logical::Timestamp(TimeUnit::Nanos)),
+            Physical::Int(Int::I128(1_760_662_923_123_456_789)),
+        );
+        let term = ask("at", OpSpec::Eq, at.clone()).await.unwrap();
+        assert_eq!(term.operand(), &Operand::One(stored(&at, "at").await));
+        let price = frame(
+            Some(Logical::Decimal { scale: 2 }),
+            Physical::Int(Int::I64(3400)),
+        );
+        let thirty_four = stored(&price, "price").await;
+        for input in [
+            frame(
+                Some(Logical::Decimal { scale: 0 }),
+                Physical::Int(Int::I64(34)),
+            ),
+            vf(&FfiValue::Int32(34)),
+            int(Int::U8(34)),
+        ] {
+            let term = ask("price", OpSpec::Eq, input).await.unwrap();
+            assert_eq!(
+                term.operand(),
+                &Operand::One(thirty_four.clone()),
+                "34 is 34.00"
+            );
+        }
+        for (name, operator) in [
+            ("day", OpSpec::Lt),
+            ("at", OpSpec::Gt),
+            ("price", OpSpec::Between),
+        ] {
+            let refused = ask(name, operator, vf(&FfiValue::Int32(1))).await;
+            assert!(
+                matches!(&refused, Err(error) if reason_of(error) == (Some(name), Some(Reason::OperatorNotAnswered))),
+                "{name} answers no ordering: {refused:?}"
+            );
+        }
+        let operators = |name: &str| {
+            field_operators(&plan, name, &NoTargets)
+                .unwrap()
+                .into_iter()
+                .map(|(op, _)| op)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(operators("day"), [OpSpec::Eq]);
+        assert_eq!(operators("price"), [OpSpec::Eq]);
+        assert_eq!(
+            operators("tiny"),
+            [
+                OpSpec::Lt,
+                OpSpec::Lte,
+                OpSpec::Gt,
+                OpSpec::Gte,
+                OpSpec::Between
+            ]
+        );
+    }
+
     /// A range is refused the wrong way round for every integer kind a
     /// field can declare, and two values of different kinds have no order
     /// here: the input was read as one kind first.
@@ -1833,6 +2025,31 @@ mod tests {
             None
         );
         assert_eq!(integer_order(&vf(&text("a")), &vf(&text("b"))), None);
+        // Every width, the 128-bit edges included: a `u128` above
+        // `i128::MAX` and a negative `i128` order as the numbers do.
+        let int = |int: vitaminc_aead::plaintext::Int| {
+            ValueFrame::of(vitaminc_aead::plaintext::Raw(
+                None,
+                vitaminc_aead::plaintext::Physical::Int(int),
+            ))
+            .expect("a value")
+        };
+        use vitaminc_aead::plaintext::Int;
+        for (lo, hi) in [
+            (Int::I8(-1), Int::I8(1)),
+            (Int::I16(-1), Int::I16(1)),
+            (Int::I128(i128::MIN), Int::I128(i128::MAX)),
+            (Int::I128(-1), Int::I128(0)),
+            (Int::U8(1), Int::U8(2)),
+            (Int::U16(1), Int::U16(2)),
+            (Int::U128(i128::MAX as u128), Int::U128(u128::MAX)),
+        ] {
+            let (lo, hi) = (int(lo), int(hi));
+            assert_eq!(integer_order(&lo, &hi), Some(Ordering::Less));
+            assert_eq!(integer_order(&hi, &lo), Some(Ordering::Greater));
+            assert_eq!(integer_order(&lo, &lo), Some(Ordering::Equal));
+        }
+        assert_eq!(integer_order(&int(Int::I8(1)), &int(Int::I16(2))), None);
     }
 
     #[test]

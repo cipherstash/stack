@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"go/format"
 	"strings"
+
+	"github.com/cipherstash/stack/languages/golang/internal/record"
 )
 
 // emit writes the generated file from the model. It writes gofmt-ready Go and
@@ -211,37 +213,56 @@ func (w *writer) shapeStruct(name string, fields []shapeField) {
 }
 
 // kindExpr is the gensupport kind of a Go type: the wire type the field
-// seals as. int8, int16 and int32 seal as int32, int and int64 as int64, the
-// unsigned ones likewise, []byte as bytes: vcffi sends a narrower integer at
-// its own width, and the engine reads it as the 32-bit integer of its sign.
-// A composite is untyped and seals as one self-describing value.
+// seals as. Each integer type has the kind of its own width (int8 is Int8,
+// int and int64 are Int64, uint8 and byte Uint8, uint, uint64 and uintptr
+// Uint64), []byte is Bytes, time.Time is Timestamp, and encrypt's Date,
+// Int128, Uint128 and Decimal have their own kinds. A composite is untyped
+// and seals as one self-describing value.
 func kindExpr(t GoType) string {
-	switch t.Kind {
-	case KindString:
-		return "gensupport.String"
-	case KindBool:
-		return "gensupport.Bool"
-	case KindBytes:
-		return "gensupport.Bytes"
-	case KindInt:
-		switch t.Basic {
-		case "int8", "int16", "int32":
-			return "gensupport.Int32"
-		}
-		return "gensupport.Int64"
-	case KindUint:
-		switch t.Basic {
-		case "uint8", "uint16", "uint32", "byte":
-			return "gensupport.Uint32"
-		}
-		return "gensupport.Uint64"
-	case KindFloat:
-		if t.Basic == "float32" {
-			return "gensupport.Float32"
-		}
-		return "gensupport.Float64"
+	return "gensupport." + kindConst(wireKind(t))
+}
+
+// kindConst is the name of a wire kind's constant in gensupport.
+func kindConst(k record.Kind) string {
+	switch k {
+	case record.Bool:
+		return "Bool"
+	case record.Int8:
+		return "Int8"
+	case record.Int16:
+		return "Int16"
+	case record.Int32:
+		return "Int32"
+	case record.Int64:
+		return "Int64"
+	case record.Int128:
+		return "Int128"
+	case record.Uint8:
+		return "Uint8"
+	case record.Uint16:
+		return "Uint16"
+	case record.Uint32:
+		return "Uint32"
+	case record.Uint64:
+		return "Uint64"
+	case record.Uint128:
+		return "Uint128"
+	case record.Float32:
+		return "Float32"
+	case record.Float64:
+		return "Float64"
+	case record.Decimal:
+		return "Decimal"
+	case record.Date:
+		return "Date"
+	case record.Timestamp:
+		return "Timestamp"
+	case record.String:
+		return "String"
+	case record.Bytes:
+		return "Bytes"
 	}
-	return "gensupport.Untyped"
+	return "Untyped"
 }
 
 func indexExpr(idx Index) string {
@@ -284,7 +305,11 @@ func (w *writer) declaration(f *genFile) {
 		case VerbEncrypt:
 			w.p("\tEncrypt(%q, %s)%s", fld.Name, kindExpr(fld.GoType), end)
 		case VerbEncryptInto:
-			w.p("\tEncryptInto(%q, %s, %q)%s", fld.Name, kindExpr(fld.GoType), fld.EQLType, end)
+			kind := kindExpr(fld.GoType)
+			if wire, ok := f.intoKinds[fld.Name]; ok {
+				kind = "gensupport." + kindConst(wire)
+			}
+			w.p("\tEncryptInto(%q, %s, %q)%s", fld.Name, kind, fld.EQLType, end)
 		case VerbEncryptIndex, VerbIndex:
 			call := "EncryptIndex"
 			if fld.Verb == VerbIndex {

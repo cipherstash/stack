@@ -159,15 +159,15 @@ The engine produces these EQL types today, each from one Go field type:
 | `encrypt_into` | Go field |
 |---|---|
 | `TextEq`, `Text`, `TextMatch` | `string` |
-| `Integer`, `IntegerEq` | `int32` |
-| `Bigint`, `BigintEq` | `int64` |
+| `Integer`, `IntegerEq` | `int32`, or any Go integer type |
+| `Bigint`, `BigintEq` | `int64`, or any Go integer type |
 | `Boolean` | `bool` |
 | `Real`, `RealEq` | `float32` |
 | `Double`, `DoubleEq` | `float64` |
 
 The `Eq` types answer `Eq`; `Text`, `Integer`, `Bigint`, `Boolean`, `Real` and `Double` are stored and read only, with no query method.
 
-The width must match: an `int` or `int64` field is not an `Integer`, and a `float64` field is not a `Real`.
+Any built-in Go integer field takes an integer type (ADR-0002) and seals at the type's width: an `int16` field always fits an `Integer`, and an `int64` field is range checked value by value, `Encrypt` refusing a value that does not fit with `encrypt.ErrEncoding`. `encrypt.Int128` and `encrypt.Uint128` are not converted. A float's width must match: a `float64` field is not a `Real`.
 A `TextMatch` field refuses text shorter than three characters, such as an empty string or a two-letter code, because it has no 3-grams to index; its query refuses such text too.
 Put the column on the left of `@@` (`WHERE name @@ $1::eql_v4.query_text_match`): the other operand order finds nothing until #1171 is fixed.
 `encrypt_into` with any other type is refused with the type's name and the reason it is not produced yet.
@@ -240,10 +240,13 @@ No warning, error or log line holds a plaintext value.
 ## What crosses the binding
 
 Generated code sends the engine every sealed field with its value, under the declaration lowered to data: each field's label (`<context>/<name>`), its outputs and its wire type (`int64`, `string`, `bytes`, ...), which `stashgen` chose from the field's Go type.
-A passthrough field stays on the host: the engine does nothing to it a program could observe, and the FFI codec cannot carry every Go type a program stores beside a ciphertext.
+A passthrough field stays on the host: the engine does nothing to it a program could observe, and the FFI codec cannot carry every Go type a program stores beside a ciphertext (a `driver.Valuer`, a `sql.NullTime`).
 An `opaque` struct crosses as one JSON document and is one column, decoded back into the exact Go types the struct declares; a field may be any type `encoding/json` carries both ways (a scalar or a type defined over one, `[]byte`, slices, maps with string or integer keys, pointers, structs whose fields are all exported, `time.Time`).
 A float in an opaque struct must be finite: `encoding/json` refuses NaN and the infinities, so `Encrypt` fails for the batch with `encrypt.ErrEncoding`. A sealed float field outside an opaque struct carries them.
 A sealed field outside an opaque struct is one scalar, or a type defined over one; a struct, slice or map field seals only inside an opaque struct.
+The scalars are `string`, `[]byte`, `bool`, every integer type (each sealed at its own width, `int` and `uint` as 64-bit), `encrypt.Int128` and `encrypt.Uint128`, `float32`, `float64`, `encrypt.Decimal`, `encrypt.Date` and `time.Time` (a timestamp). The wire type `stashgen` writes for each is the field's own: `int8` is `gensupport.Int8`, `time.Time` is `gensupport.Timestamp`, and so on.
+An order index (`ore`, `ope`) on a decimal, date or timestamp is refused: those order terms wait for new cllw-ore and ore-rs releases (#1236).
+The zero `encrypt.Date` is not a date: a date field must be set, and `Encrypt` refuses a zero one with `encrypt.ErrEncoding`, naming the field. A sealed field cannot be a pointer (`*encrypt.Date` is refused as a composite), so an optional date has no sealed form yet: keep it in an opaque struct, or store a sentinel date.
 A nil `[]byte` in a sealed field, or a nil slice of a type defined over `[]byte`, comes back from `Decrypt` as an empty, non-nil slice; inside an opaque struct, nil comes back as nil.
 A protobuf message with a `oneof` cannot be generated from a policy: protoc-gen-go puts its members in wrapper types, not in the message struct, and `Generate` refuses it.
 

@@ -186,7 +186,10 @@ type GoType struct {
 	// Kind is the type's underlying kind.
 	Kind Kind
 	// Basic is the underlying basic type's name for a scalar kind — "uint8",
-	// "int", "string" — which decides the wire type the field seals as.
+	// "int", "string" — which decides the wire type the field seals as. It is
+	// "" for a value type the generator knows by name (time.Time,
+	// encrypt.Date, encrypt.Int128, encrypt.Uint128, encrypt.Decimal), whose
+	// kind says all there is.
 	Basic string
 	// Elem is the element type of a slice, map or pointer, and nil otherwise.
 	Elem *GoType
@@ -216,20 +219,34 @@ const (
 	KindPointer
 	// KindStruct is a struct whose fields are all exported.
 	KindStruct
+	// KindInt128 and KindUint128 are encrypt.Int128 and encrypt.Uint128.
+	KindInt128
+	KindUint128
+	// KindDate is encrypt.Date, a calendar date.
+	KindDate
+	// KindTimestamp is time.Time, an instant.
+	KindTimestamp
+	// KindDecimal is encrypt.Decimal.
+	KindDecimal
 )
 
 var kindNames = [...]string{
-	KindOther:   "other",
-	KindString:  "string",
-	KindBool:    "bool",
-	KindInt:     "int",
-	KindUint:    "uint",
-	KindFloat:   "float",
-	KindBytes:   "bytes",
-	KindSlice:   "slice",
-	KindMap:     "map",
-	KindPointer: "pointer",
-	KindStruct:  "struct",
+	KindOther:     "other",
+	KindString:    "string",
+	KindBool:      "bool",
+	KindInt:       "int",
+	KindUint:      "uint",
+	KindFloat:     "float",
+	KindBytes:     "bytes",
+	KindSlice:     "slice",
+	KindMap:       "map",
+	KindPointer:   "pointer",
+	KindStruct:    "struct",
+	KindInt128:    "int128",
+	KindUint128:   "uint128",
+	KindDate:      "date",
+	KindTimestamp: "timestamp",
+	KindDecimal:   "decimal",
 }
 
 // String returns the kind's name.
@@ -243,7 +260,8 @@ func (k Kind) String() string {
 // Scalar reports whether the kind is one value an index can take.
 func (k Kind) Scalar() bool {
 	switch k {
-	case KindString, KindBool, KindInt, KindUint, KindFloat, KindBytes:
+	case KindString, KindBool, KindInt, KindUint, KindFloat, KindBytes,
+		KindInt128, KindUint128, KindDate, KindTimestamp, KindDecimal:
 		return true
 	}
 	return false

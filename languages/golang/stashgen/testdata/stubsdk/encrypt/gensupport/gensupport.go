@@ -25,16 +25,25 @@ type Kind string
 
 // The kinds.
 const (
-	Untyped Kind = ""
-	Bool    Kind = "bool"
-	Int32   Kind = "int32"
-	Int64   Kind = "int64"
-	Uint32  Kind = "uint32"
-	Uint64  Kind = "uint64"
-	Float32 Kind = "float32"
-	Float64 Kind = "float64"
-	String  Kind = "string"
-	Bytes   Kind = "bytes"
+	Untyped   Kind = ""
+	Bool      Kind = "bool"
+	Int8      Kind = "int8"
+	Int16     Kind = "int16"
+	Int32     Kind = "int32"
+	Int64     Kind = "int64"
+	Int128    Kind = "int128"
+	Uint8     Kind = "uint8"
+	Uint16    Kind = "uint16"
+	Uint32    Kind = "uint32"
+	Uint64    Kind = "uint64"
+	Uint128   Kind = "uint128"
+	Float32   Kind = "float32"
+	Float64   Kind = "float64"
+	Decimal   Kind = "decimal"
+	Date      Kind = "date"
+	Timestamp Kind = "timestamp"
+	String    Kind = "string"
+	Bytes     Kind = "bytes"
 )
 
 // Redacted formats a value with its sealed fields hidden.

@@ -36,6 +36,14 @@ func NewField[T any](d Declaration, name string) Field[T] {
 	return f
 }
 
+// kind is the field's declared kind, as its plan holds it.
+func (f Field[T]) kind() Kind {
+	if pf := f.plan.Field(f.name); pf != nil {
+		return Kind(pf.Kind)
+	}
+	return Untyped
+}
+
 // Encrypt seals one value of the field: its ciphertext and every term it
 // declares, in one request.
 func (f Field[T]) Encrypt(ctx context.Context, c *encrypt.Cipher, v T) (Output, error) {
@@ -45,7 +53,11 @@ func (f Field[T]) Encrypt(ctx context.Context, c *encrypt.Cipher, v T) (Output, 
 	if c == nil {
 		return Output{}, fmt.Errorf("gensupport: %s: Encrypt needs a cipher", f.name)
 	}
-	row := record.Source{f.name: v}
+	value, err := asKind(f.kind(), v)
+	if err != nil {
+		return Output{}, fmt.Errorf("gensupport: %s: %w", f.name, err)
+	}
+	row := record.Source{f.name: value}
 	if f.plan.ContextField != "" {
 		// One value of one field has no record to take its context from:
 		// the cipher names it, as it does for a query.
@@ -97,6 +109,15 @@ func (f Field[T]) query(ctx context.Context, c *encrypt.Cipher, operator string,
 	}
 	if c == nil {
 		return nil, fmt.Errorf("%w: gensupport: %s: a query needs a cipher", encrypt.ErrEncoding, f.name)
+	}
+	values := []any{input}
+	if pair, ok := input.([]any); ok {
+		values = pair
+	}
+	for _, v := range values {
+		if err := checkValue(v); err != nil {
+			return nil, fmt.Errorf("gensupport: %s: %w", f.name, err)
+		}
 	}
 	term, err := c.QueryTerm(ctx, f.plan, f.name, operator, input)
 	if err != nil {
