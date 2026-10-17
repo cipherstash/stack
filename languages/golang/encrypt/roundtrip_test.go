@@ -323,9 +323,11 @@ func TestAMatchIndexStoresShortText(t *testing.T) {
 }
 
 // Per-call hygiene, on every pull request: once Encrypt has returned, the
-// plaintext it carried is nowhere in guest memory — every buffer staged for a
-// call is wiped before its result comes back — so between calls the guest
-// holds the keyset cache and nothing of the program's data.
+// plaintext it carried is not found in guest memory, so between calls the
+// guest holds the keyset cache and nothing of the program's data that this
+// read can see. A freed heap chunk is mostly overwritten by allocator
+// metadata and reuse before the read, so this is not the heap guard; that
+// is stack-encrypt's tests/heap_hygiene.rs.
 func TestPlaintextDoesNotRemainInGuestMemory(t *testing.T) {
 	c := deterministicClient(t)
 	cipher := c.DefaultKeyset()
@@ -344,23 +346,26 @@ func TestPlaintextDoesNotRemainInGuestMemory(t *testing.T) {
 // The same check after Decrypt, which is the call that puts plaintext back
 // into the guest. It fails today, and the copy it finds is not the engine's.
 //
-// Exactly one copy of each opened string stays, and it is a stack copy, not
-// a heap one: it sits just below 1 MiB, in the wasm shadow stack, at the same
-// address on every run. It is the decrypted leaf (vitaminc's STRING tag
-// 0x0a, then the text) directly after a 16-byte AES-GCM counter block: the
-// 12 bytes before it are the leaf's own nonce (they appear in the stored
-// ciphertext), followed by the big-endian block counter 3. That is the
-// keystream state of the AES-GCM decryption that vitaminc-encrypt's
-// RustCrypto backend (aes-gcm 0.10, the wasm32 backend) runs in place, left
-// in a stack frame the cipher crates do not wipe. Every heap buffer on the
-// path is wiped: the record decrypt no longer builds a value tree (#1232; it
-// opens each field into a wiped frame), copying the opened leaf into a fresh
-// buffer and dropping the original leaves the copy where it is, and the
-// output buffer goes through se_dealloc. So the fix is in the cipher's stack
-// hygiene, in vitaminc or below it (cipherstash/vitaminc#370), not here;
-// the skip records it, and the test runs again once it is fixed there.
+// The copies that stay are stack copies, not heap ones: they sit just below
+// 1 MiB, in the wasm shadow stack, at the same addresses on every run. Each
+// is the decrypted leaf (vitaminc's STRING tag 0x0a, then the text) directly
+// after a 16-byte AES-GCM counter block (the leaf's own nonce, then the
+// big-endian block counter): the plaintext output of the CTR XOR, held in
+// the stack temporaries of the RustCrypto cipher crates (cipher, inout) that
+// vitaminc-encrypt's wasm32 backend (aes-gcm 0.10) decrypts through, which
+// nothing wipes. How many survive depends on the leaf's length and on how
+// later calls reuse those frames: a reviewer saw 0, 1 and 2 copies for
+// leaves of 46, 31 and 11 characters. So the fix is in the cipher's stack
+// hygiene, in vitaminc or below it (cipherstash/vitaminc#370), not here; the
+// skip records it, and the test runs again once it is fixed there.
+//
+// This test cannot speak for the heap: allocator metadata and reuse
+// overwrite most freed chunks before it reads memory. The heap guard is
+// stack-encrypt's tests/heap_hygiene.rs (and eql-encryption-tests' of the
+// same name), whose allocator fails a test on any freed block that still
+// holds plaintext.
 func TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt(t *testing.T) {
-	t.Skip("known: one copy of each opened string remains in the guest's shadow stack after Decrypt, in the AES-GCM keystream state of vitaminc-encrypt's RustCrypto backend (cipherstash/vitaminc#370); run this test again when that is wiped")
+	t.Skip("known: copies of an opened string can remain in the guest's shadow stack after Decrypt, as the plaintext output of the AES-CTR XOR in the RustCrypto cipher crates' unwiped stack temporaries, under vitaminc-encrypt's wasm32 backend (cipherstash/vitaminc#370); the count varies with the leaf's length; run this test again when that is wiped")
 	c := deterministicClient(t)
 	cipher := c.DefaultKeyset()
 	const plaintext = "residency-probe-4111-b1c2d3e4f5"

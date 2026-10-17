@@ -2,9 +2,13 @@
 //! the kinds a plan field declares ([`ValueKind`]).
 //!
 //! **`FfiValue` is not plaintext's type.** It carries what a binding sends to
-//! describe an operation, none of which is secret: a plan, a context, an
-//! options object, a query's statistics, and what the engine answers (a
-//! query term's wire object, a catalog). vitaminc 0.6 has no shared value
+//! describe an operation and set the engine up: a plan, a context, an
+//! options object, a query's statistics, a binding's configuration, and what
+//! the engine answers (a query term's wire object, a catalog). That is not
+//! all public: a configuration carries credentials (the Go guest's
+//! `cipher_init` config holds the client key, and a deterministic test
+//! build's seed arrives as [`FfiValue::Bytes`]), so the [`Protected`] text
+//! and bytes leaves are what keeps those wiped, not a courtesy. vitaminc 0.6 has no shared value
 //! type (vitaminc ADR 0001): a value describes itself once, and sinks
 //! consume it. So a plaintext the engine holds is a
 //! [`ValueFrame`](super::ValueFrame), one value as its transport frame in a
@@ -38,12 +42,12 @@ use crate::plan::IntoLabel;
 use crate::{Label, LabelError};
 
 /// An owned, `Send`, language-neutral tree of a binding's control data: a
-/// plan, a context, options, statistics, and the engine's answers. Not
-/// plaintext: a binding's plaintext is a [`ValueFrame`](super::ValueFrame)
-/// (vitaminc ADR 0001 removed the shared value type). Text and bytes
-/// leaves are held in
-/// [`Protected`] all the same, as they were when this type also carried
-/// plaintext, so a value spelled in a test is wiped like any other.
+/// plan, a context, options, statistics, configuration, and the engine's
+/// answers. Not plaintext: a binding's plaintext is a
+/// [`ValueFrame`](super::ValueFrame) (vitaminc ADR 0001 removed the shared
+/// value type). Text and bytes leaves are held in [`Protected`] and wiped
+/// on drop, and must stay so: control data includes credentials (a client
+/// key in a configuration, a seed as bytes).
 ///
 /// Each variant is one of vitaminc's scalars or containers: `Null` is a
 /// null, `Undefined` a null under the `Undefined` logical type, the

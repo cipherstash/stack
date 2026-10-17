@@ -13,7 +13,8 @@
 //!
 //! [`FfiValue`](super::FfiValue) is not plaintext's type. It is the tree a
 //! binding's control data decodes into: plans, contexts, options, query
-//! statistics. None of that is secret.
+//! statistics, and configuration, which can carry credentials, so its text
+//! and bytes leaves are wiped too.
 //!
 //! The value model the engine reads every such frame through is on
 //! [`ValueFrame`].

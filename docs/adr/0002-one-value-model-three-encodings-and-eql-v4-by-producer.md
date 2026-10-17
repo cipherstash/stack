@@ -20,9 +20,11 @@ relates-to: ADR-0001; stack-encrypt ADR-0003, ADR-0007
 > describes itself once, and sinks consume it). Stack Encrypt follows: a
 > plaintext whose type is known only at run time is held as its transport
 > frame (`dynamic::ValueFrame`) and walked into vitaminc's sinks, and
-> `FfiValue` stays in Stack Encrypt as the tree of a binding's control data,
-> which carries no secret. The two bullets below that this changes say so
-> where they stand.
+> `FfiValue` stays in Stack Encrypt as the tree of a binding's control data.
+> Control data is not plaintext, but it is not all public: a binding's
+> configuration carries credentials (the Go guest's client key, a test
+> build's seed), so `FfiValue`'s wiped text and bytes leaves are required.
+> The two bullets below that this changes say so where they stand.
 
 Every value Stack Encrypt handles is encoded three times: as a **ciphertext**
 (reversible and self-describing), as an **equality term** (a keyed hash that
@@ -138,8 +140,11 @@ bundle (see Consequences). Chosen.
   over to the sealed leaves and from the opened leaves back to the frame it
   returns, with no value tree in between. `FfiValue` stays in Stack Encrypt
   as the tree of a binding's control data (plans, contexts, options,
-  statistics, the engine's answers), none of which is secret, and
-  `ValueKind`, the vocabulary a plan field declares, stays beside it.
+  statistics, configuration, the engine's answers). That includes
+  credentials, a client key in a configuration and a seed as bytes, so its
+  `Protected` text and bytes leaves stay, and are required rather than
+  cosmetic. `ValueKind`, the vocabulary a plan field declares, stays beside
+  it.
   Whether `ValueKind` is `#[non_exhaustive]` is the open decision.
 - Every variant exists in every build. `Date`, `Timestamp` and `Decimal` use
   vitaminc's own representation (the payloads in the table below), with

@@ -21,8 +21,8 @@
 //! indexed by walking its frame into the encrypting sink and the term
 //! derivers; and a record opens straight into a frame (vitaminc ADR 0001: a
 //! value describes itself once, and sinks consume it). A binding's control
-//! data, which carries no secret (a plan, a context, options), is an
-//! [`FfiValue`] tree.
+//! data (a plan, a context, options, a configuration, whose credentials are
+//! secret) is an [`FfiValue`] tree, with its text and bytes wiped.
 //!
 //! # What is here
 //!

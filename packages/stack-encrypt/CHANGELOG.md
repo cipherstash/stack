@@ -188,14 +188,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `decrypt` resolves to one.
 
   `FfiValue` stays, as the tree of a binding's control data (plans,
-  contexts, options, statistics, the engine's answers), none of it secret.
+  contexts, options, statistics, configuration, the engine's answers).
+  Control data is not plaintext, but a configuration carries credentials
+  (a client key, a test build's seed), so its text and bytes leaves stay
+  `Protected`.
   Ciphertexts, terms and the cross-language fixtures are byte for byte what
   they were. The Go guest decodes plaintext as `ValueFrame`s and returns an
-  opened record's frame as it is. A remaining copy of each opened string in
-  the guest's memory after a decrypt was traced to the AES-GCM keystream
-  state in a stack frame of vitaminc-encrypt's RustCrypto backend, not to
-  this crate, and `TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt` stays
-  skipped with that reason (cipherstash/vitaminc#370).
+  opened record's frame as it is. Copies of an opened string that remain in
+  the guest's memory after a decrypt were traced to the plaintext output of
+  the AES-CTR XOR, left in the unwiped stack temporaries of the RustCrypto
+  cipher crates under vitaminc-encrypt's wasm32 backend (their number varies
+  with the leaf's length), not to this crate, and
+  `TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt` stays skipped with
+  that reason (cipherstash/vitaminc#370). The heap is guarded separately:
+  `tests/heap_hygiene.rs` runs the record encrypt (from a `ValueFrame` and
+  from a raw frame), the record decrypt (with a nested field), `query_term`
+  and `verify` under an allocator that fails the test on any freed block
+  still holding plaintext.
 
 - **A match value with no tokens is stored as the empty filter, so
   `KeysetCipher::match_terms` is no longer a query.** In 0.2.0 the same call
