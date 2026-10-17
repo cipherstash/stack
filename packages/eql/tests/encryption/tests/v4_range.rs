@@ -386,10 +386,10 @@ fn postgres_between_finds_integers_in_an_inclusive_range() {
             .collect();
         assert!(none.is_empty());
 
-        // A range over the other term has no `between` for the column, so the
-        // call fails at plan time. PostgreSQL reports it as ambiguous: with no
-        // exact match it treats both domains as `jsonb`, which every
-        // `between` overload would take.
+        // A range over the other term has no `between` for the column. The
+        // statement fails when it is parsed, with 42725 ("not unique"):
+        // PostgreSQL resolves a function's domain arguments as their base
+        // type, `jsonb`, which every `between` overload takes.
         let err = db
             .query(
                 "SELECT n FROM v4_int_range WHERE eql_v4.between(ore, $1::text::jsonb::eql_v4.query_integer_range_ope)",
@@ -621,4 +621,287 @@ fn postgres_range_domains_check_their_shape() {
             assert_eq!(sqlstate(&err), "23514", "{why}: {err}");
         }
     }
+}
+
+/// Five plaintexts of `family`, strictly ascending, as cipherstash-client's
+/// indexers take them: what the smoke test stores and ranges over. A new
+/// ordered family must add a row here, or the test fails naming it.
+fn ascending(family: &str) -> [Plaintext; 5] {
+    use chrono::{DateTime, NaiveDate};
+    use rust_decimal::Decimal;
+    let date = |y, m, d| Plaintext::NaiveDate(NaiveDate::from_ymd_opt(y, m, d));
+    let at = |secs| Plaintext::Timestamp(DateTime::from_timestamp(secs, 0));
+    let dec = |n, scale| Plaintext::Decimal(Some(Decimal::new(n, scale)));
+    let text = |s: &str| Plaintext::Text(Some(s.to_owned()));
+    match family {
+        "integer" => [-20, -1, 0, 7, 100].map(|n| Plaintext::Int(Some(n))),
+        "smallint" => [-300, -1, 0, 5, 300].map(|n| Plaintext::SmallInt(Some(n))),
+        "bigint" => [i64::MIN + 1, -1, 0, 1 << 40, i64::MAX].map(|n| Plaintext::BigInt(Some(n))),
+        "date" => [
+            date(1969, 12, 31),
+            date(1970, 1, 1),
+            date(2000, 2, 29),
+            date(2024, 6, 1),
+            date(2099, 12, 31),
+        ],
+        "timestamp" => [-86_400, 0, 951_782_400, 1_717_200_000, 4_102_444_800].map(at),
+        "numeric" => [
+            dec(-15, 1),
+            dec(0, 0),
+            dec(25, 2),
+            dec(314_159, 5),
+            dec(1000, 0),
+        ],
+        "text" => ["apple", "banana", "cherry", "damson", "elderberry"].map(text),
+        // `real` values are exact in f32; both float widths encrypt as f64.
+        "real" => [-2.5, -0.5, 0.0, 1.25, 1e10].map(|f| Plaintext::Float(Some(f))),
+        "double" => [-1e300, -1.0, 0.0, 2.5, 1e300].map(|f| Plaintext::Float(Some(f))),
+        other => panic!("no smoke-test values for the ordered family {other:?}: add them here"),
+    }
+}
+
+/// The text a smoke-test value seals as for its `c` (and, for text, its
+/// `hm` and `bf`): `between` never reads them, and most ordered families
+/// have no producible type to seal the value itself.
+fn display(plaintext: &Plaintext) -> String {
+    match plaintext {
+        Plaintext::Text(Some(s)) => s.clone(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// Needs an EQL v4 installation. A smoke test over every ordered family
+/// and every `between` overload, generated from the catalog: five ascending
+/// rows per family in each column domain that carries an ordering term, and
+/// a range from the second value to the fourth, which must find exactly the
+/// rows at both bounds and the one inside, and neither row outside. For text
+/// it also checks that an order-term index serves `between`, for ORE on
+/// `_ord_ore` and for OPE on `_search`.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_between_smoke_test_over_every_ordered_family() {
+    let runtime = runtime();
+    let key = runtime.block_on(index_key());
+    let (cipher, _) = runtime.block_on(common::cipher());
+    let keyset = cipher.default_keyset();
+    let mut db = connect();
+    let ranges = v4::all_range_query();
+    let mut checked = 0;
+
+    for family in eql_domains::CATALOG
+        .iter()
+        .filter(|f| !f.range_terms().is_empty())
+    {
+        let values = ascending(family.name);
+        let table = format!("v4_smoke_{}", family.name);
+        let columns: Vec<&eql_domains::Domain> = family
+            .domains
+            .iter()
+            .filter(|d| d.terms.iter().any(|t| t.range_suffix().is_some()))
+            .collect();
+        db.batch_execute(&format!(
+            "CREATE TEMP TABLE {table} (id int PRIMARY KEY, {})",
+            columns
+                .iter()
+                .map(|d| format!("c_{} public.eql_v4_{}", d.name, d.full_name(family.name)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+        .unwrap();
+
+        for (id, value) in values.iter().enumerate() {
+            let text = display(value);
+            let (eq, matched) = runtime.block_on(async {
+                let eq: text::TextEq = keyset.encrypt_as(&text, column()).await.unwrap();
+                let matched = match family.name {
+                    "text" => Some(
+                        keyset
+                            .encrypt_as::<_, text::TextMatch>(&text, column())
+                            .await
+                            .unwrap(),
+                    ),
+                    _ => None,
+                };
+                (eq, matched)
+            });
+            let eq = serde_json::to_value(&eq).unwrap();
+            let payloads: Vec<String> = columns
+                .iter()
+                .map(|d| {
+                    let mut p = json!({"v": eq["v"], "i": eq["i"], "c": eq["c"]});
+                    for term in d.terms {
+                        match term {
+                            eql_domains::Term::Hm => p["hm"] = eq["hm"].clone(),
+                            eql_domains::Term::Bloom => {
+                                let m = matched.as_ref().expect("only text has a match term");
+                                p["bf"] = serde_json::to_value(m).unwrap()["bf"].clone();
+                            }
+                            eql_domains::Term::Ore => p["ob"] = ob(&key, value.clone(), false),
+                            eql_domains::Term::Ope => p["op"] = op(&key, value.clone()),
+                        }
+                    }
+                    p.to_string()
+                })
+                .collect();
+            let placeholders: Vec<String> = columns
+                .iter()
+                .enumerate()
+                .map(|(i, d)| {
+                    format!(
+                        "${}::text::jsonb::public.eql_v4_{}",
+                        i + 2,
+                        d.full_name(family.name)
+                    )
+                })
+                .collect();
+            let id = id as i32;
+            let mut params: Vec<&(dyn postgres::types::ToSql + Sync)> = vec![&id];
+            params.extend(
+                payloads
+                    .iter()
+                    .map(|p| p as &(dyn postgres::types::ToSql + Sync)),
+            );
+            db.execute(
+                &format!(
+                    "INSERT INTO {table} VALUES ($1, {})",
+                    placeholders.join(", ")
+                ),
+                &params,
+            )
+            .unwrap();
+        }
+
+        for term in family.range_terms() {
+            let bound = |v: &Plaintext| match term {
+                eql_domains::Term::Ore => ob(&key, v.clone(), true),
+                eql_domains::Term::Ope => op(&key, v.clone()),
+                other => unreachable!("{other:?} has no range"),
+            };
+            let domain = family.range_query_name(term);
+            let range = json!({"v": 4, "i": identifier(), "lo": bound(&values[1]), "hi": bound(&values[3])});
+            // The binding for the domain accepts the range.
+            ranges
+                .iter()
+                .find(|r| r.sql_domain() == format!("eql_v4.{domain}"))
+                .unwrap_or_else(|| panic!("no binding for {domain}"))
+                .parse_value(&range)
+                .unwrap();
+            for d in family.range_columns(term) {
+                let found: Vec<i32> = db
+                    .query(
+                        &format!(
+                            "SELECT id FROM {table} \
+                             WHERE eql_v4.between(c_{}, $1::text::jsonb::eql_v4.{domain}) ORDER BY id",
+                            d.name
+                        ),
+                        &[&range.to_string()],
+                    )
+                    .unwrap()
+                    .iter()
+                    .map(|r| r.get(0))
+                    .collect();
+                assert_eq!(
+                    found,
+                    [1, 2, 3],
+                    "{}: between(_{}, {domain})",
+                    family.name,
+                    d.name
+                );
+                checked += 1;
+            }
+        }
+
+        if family.name == "text" {
+            let range = |term: eql_domains::Term| {
+                let bound = |v: &Plaintext| match term {
+                    eql_domains::Term::Ore => ob(&key, v.clone(), true),
+                    _ => op(&key, v.clone()),
+                };
+                json!({"v": 4, "i": identifier(), "lo": bound(&values[1]), "hi": bound(&values[3])})
+                    .to_string()
+            };
+            db.batch_execute(&format!(
+                "CREATE INDEX {table}_ore ON {table} USING btree (eql_v4.ord_term_ore(c_ord_ore));
+                 CREATE INDEX {table}_search ON {table} USING btree (eql_v4.ord_term(c_search));
+                 ANALYZE {table};
+                 SET enable_seqscan = off;"
+            ))
+            .unwrap();
+            for (column, domain, index, value) in [
+                (
+                    "c_ord_ore",
+                    "query_text_range_ore",
+                    format!("{table}_ore"),
+                    range(eql_domains::Term::Ore),
+                ),
+                (
+                    "c_search",
+                    "query_text_range_ope",
+                    format!("{table}_search"),
+                    range(eql_domains::Term::Ope),
+                ),
+            ] {
+                let plan = explain(
+                    &mut db,
+                    &format!(
+                        "SELECT id FROM {table} WHERE eql_v4.between({column}, '{}'::jsonb::eql_v4.{domain})",
+                        value.replace('\'', "''")
+                    ),
+                );
+                let mut scans = Vec::new();
+                index_scans(&plan, &mut scans);
+                let (_, cond) = scans
+                    .iter()
+                    .find(|(name, _)| *name == index)
+                    .unwrap_or_else(|| {
+                        panic!("text {column}: no index scan on {index}:\n{plan:#}")
+                    });
+                assert!(
+                    cond.contains(">=") && cond.contains("<="),
+                    "text {column}: {cond}"
+                );
+            }
+            db.batch_execute("RESET enable_seqscan;").unwrap();
+        }
+    }
+    // 8 numeric and temporal families with 3 overloads each, and text's 5.
+    assert_eq!(checked, 29, "every between overload was exercised");
+}
+
+/// Needs an EQL v4 installation. The range parameter must be cast to its
+/// exact range domain. An uncast `$1`, a `jsonb` parameter, or a range of
+/// another family matches several `between` overloads (PostgreSQL resolves
+/// a function's domain arguments as their base type, `jsonb`), so preparing
+/// the statement fails with 42725, before any value is bound. The
+/// single-bound operators resolve an uncast `$1` on the same column.
+#[test]
+#[ignore = "requires EQL_TEST_DATABASE_URL pointing to an EQL v4 database"]
+fn postgres_between_needs_the_exact_range_domain() {
+    let mut db = connect();
+    db.batch_execute("CREATE TEMP TABLE v4_range_cast (ore public.eql_v4_integer_ord_ore);")
+        .unwrap();
+    for range in [
+        "$1",
+        "$1::jsonb",
+        "$1::eql_v4.query_bigint_range_ore",
+        "$1::eql_v4.query_integer_range_ope",
+    ] {
+        let err = db
+            .prepare(&format!(
+                "SELECT 1 FROM v4_range_cast WHERE eql_v4.between(ore, {range})"
+            ))
+            .unwrap_err();
+        assert_eq!(sqlstate(&err), "42725", "{range}: {err}");
+        assert!(
+            err.as_db_error()
+                .is_some_and(|e| e.message().contains("is not unique")),
+            "{range}: {err}"
+        );
+    }
+    db.prepare(
+        "SELECT 1 FROM v4_range_cast WHERE eql_v4.between(ore, $1::eql_v4.query_integer_range_ore)",
+    )
+    .unwrap();
+    db.prepare("SELECT 1 FROM v4_range_cast WHERE ore < $1")
+        .unwrap();
 }

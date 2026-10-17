@@ -36,7 +36,17 @@ postgres = "0.19"
 # protect-ffi resolves cipherstash-client from its own workspace and lockfile,
 # so the pin covers the version named here, not necessarily the one protect-ffi
 # ships: a protect-ffi bump is covered once this line moves to match it.
+#
+# The EQL v4 range tests (tests/v4_range.rs) use it too: EQL compares
+# block-ORE and CLLW-OPE terms, which Stack Encrypt does not derive for EQL
+# yet, so cipherstash-client's `OreIndexer` / `OpeIndexer` write the order
+# terms of their rows and ranges, offline over the same index key.
 cipherstash-client = "=0.42.0"
+# The plaintexts of the date, timestamp and numeric rows in tests/v4_range.rs,
+# as cipherstash-client's `Plaintext` names them. Both are already in the
+# lockfile through cipherstash-client.
+chrono = { version = "0.4", default-features = false }
+rust_decimal = "1"
 # The tampering test decodes a stored body, changes one byte and re-encodes
 # it. The same line eql-bindings uses, so the lockfile gains no second copy.
 base64 = "0.22"
