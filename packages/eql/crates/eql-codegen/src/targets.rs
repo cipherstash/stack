@@ -18,6 +18,12 @@
 //! the derive, and [`target_gap`] is tested to agree with
 //! [`encryption_gap`](crate::bindings::encryption_gap) on every domain.
 //!
+//! The same rows give the operators each producible type answers in Stack
+//! Encrypt's typed query chain ([`answers_for_indexes`]): the file implements
+//! `op::Answers` for each, with the type's query twin as the query term, and
+//! lists them in `ANSWERS` so the encryption tests can hold them to the
+//! operators the engine's data path answers for the same type.
+//!
 //! The reasons a type is not producible, each naming the issue that tracks
 //! it: the engine's value enum has no kind for the family (#1144); the
 //! engine's order terms are not yet derived over ADR-0002's order keys
@@ -55,6 +61,69 @@ pub fn index_key(term: Term) -> &'static str {
 /// payload keys.
 const JSON_INDEX_KEY: &str = "json";
 
+/// An operator a producible EQL type answers in Stack Encrypt's typed query
+/// chain: what the generated file implements `op::Answers` for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Answer {
+    /// `op::Eq`, through the equality index.
+    Eq,
+    /// `op::Matches`, through the match index under EQL's configuration.
+    Matches,
+}
+
+impl Answer {
+    /// The operator's wire name, `stack_encrypt::dynamic::OpSpec::name`.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Answer::Eq => "eq",
+            Answer::Matches => "matches",
+        }
+    }
+
+    /// The catalog term the operator's index derives: the one term the
+    /// query twin carries, under its JSON key.
+    pub(crate) fn term(self) -> Term {
+        match self {
+            Answer::Eq => Term::Hm,
+            Answer::Matches => Term::Bloom,
+        }
+    }
+}
+
+/// The operators a producible type with a query twin answers, given the
+/// indexes it carries by [`index_key`] name, the same input the engine's
+/// table reads: `Eq` for the `"eq"` index and `Matches` for the `"match"`
+/// index, as `OpSpec::answered_by` answers a field that names the type
+/// (`TargetDescriptor::operators`). The encryption tests compare the two,
+/// type by type.
+///
+/// # Panics
+///
+/// On indexes the typed query chain has no answer for yet: an order index
+/// (`"ore"` or `"ope"`) or the JSON index, or more than one index, since a
+/// query twin is assembled from the one term its type's index derived. No
+/// producible type carries either today. Making one producible must extend
+/// this function, so the generator stops rather than leave the type
+/// answering nothing.
+pub(crate) fn answers_for_indexes(name: &str, indexes: &[&str]) -> Vec<Answer> {
+    assert!(
+        indexes.len() <= 1,
+        "{name}: a query twin carrying more than one index ({indexes:?}) has no typed answer \
+         yet; extend eql-codegen's answers_for_indexes before making it producible"
+    );
+    indexes
+        .iter()
+        .map(|key| match *key {
+            "eq" => Answer::Eq,
+            "match" => Answer::Matches,
+            other => panic!(
+                "{name}: the typed query chain has no answer for the {other} index yet; extend \
+                 eql-codegen's answers_for_indexes before making it producible"
+            ),
+        })
+        .collect()
+}
+
 /// The plaintext a family's domains are produced from: see
 /// [`bindings::plaintext_of`](crate::bindings::plaintext_of).
 pub fn plaintext(family: &DomainFamily) -> Option<(&'static str, &'static str)> {
@@ -83,6 +152,9 @@ pub(crate) struct Row {
     /// answers a query.
     pub(crate) query: Option<(String, String)>,
     pub(crate) reason: Option<&'static str>,
+    /// The operators the type answers in the typed query chain: none
+    /// unless it is producible and has a query twin ([`answers_for_indexes`]).
+    pub(crate) answers: Vec<Answer>,
 }
 
 /// Every row, in catalog order: one per stored domain.
@@ -146,8 +218,15 @@ fn row(family: &'static DomainFamily, domain: &'static Domain) -> Row {
             ),
         ))
     };
+    let name = domain.rust_struct_name(family.name);
+    let reason = target_gap(family, domain);
+    let answers = if reason.is_none() && query.is_some() {
+        answers_for_indexes(&name, &indexes)
+    } else {
+        Vec::new()
+    };
     Row {
-        name: domain.rust_struct_name(family.name),
+        name,
         family: family.name,
         suffix: suffix(domain),
         plaintext: plaintext(family).map(|(kind, _)| kind),
@@ -158,8 +237,87 @@ fn row(family: &'static DomainFamily, domain: &'static Domain) -> Row {
         ),
         indexes,
         query,
-        reason: target_gap(family, domain),
+        reason,
+        answers,
     }
+}
+
+/// The typed query chain's impls for one type that answers an operator:
+/// its query twin's assembly from the one term it carries, `QueryTerm` on
+/// the twin when an exact operator returns it as is, and one `op::Answers`
+/// per operator, through Stack Encrypt's index for it, sent as the twin.
+fn answer_impls(r: &Row) -> TokenStream {
+    let module = format_ident!("{}", r.family);
+    let ty = format_ident!("{}", r.name);
+    let (twin_name, twin_domain) = r
+        .query
+        .as_ref()
+        .expect("a type that answers an operator has a query twin");
+    let twin = format_ident!("{twin_name}");
+    let (_, rust) = plaintext_of(r.family).expect("a producible family has a specified plaintext");
+    let source = format_ident!("{}", rust.rsplit("::").next().unwrap_or(rust));
+    // `answers_for_indexes` admits one index, so every operator's term is
+    // the same.
+    let term = r.answers[0].term();
+    let field = format_ident!("{}", term.json_key());
+    let newtype = format_ident!("{}", term.binding_newtype());
+    let assemble_doc = format!(
+        " `{twin_name}` from the column it queries and its `{}` term, at version 4.",
+        term.json_key()
+    );
+    let labelled_doc = format!(
+        " `{}` is sealed under the column a two-segment label names, so its plan is \
+         queried under the plan's label.",
+        r.name
+    );
+    let mut out = quote! {
+        #[doc = #labelled_doc]
+        impl op::LabelledTarget for super::#module::#ty {}
+        #[doc = #assemble_doc]
+        impl QueryTwin<#newtype> for super::#module::#twin {
+            type Plaintext = #source;
+            fn assemble(i: Identifier, #field: #newtype) -> Self {
+                Self { v: SchemaVersion::default(), i, #field }
+            }
+        }
+    };
+    for answer in &r.answers {
+        let name = &r.name;
+        let (op, via, doc) = match answer {
+            Answer::Eq => {
+                let term_doc =
+                    format!(" `{twin_name}` is exact: the query term of `{name}`'s `op::Eq`.");
+                out.extend(quote! {
+                    #[doc = #term_doc]
+                    impl op::QueryTerm for super::#module::#twin {}
+                });
+                (
+                    quote!(op::Eq),
+                    quote!(TwinIndex<Equality, super::#module::#twin>),
+                    format!(
+                        " `{name}` answers `op::Eq` through its equality index. The query \
+                         term is `{twin_name}`, bound as `{twin_domain}`."
+                    ),
+                )
+            }
+            Answer::Matches => (
+                quote!(op::Matches),
+                quote!(TwinIndex<Match<EqlMatch>, super::#module::#twin>),
+                format!(
+                    " `{name}` answers `op::Matches` through its match index, under \
+                     `EqlMatch`. The query term is a `MatchTwin<{twin_name}>`: the twin, \
+                     bound as `{twin_domain}`, and the tokens that verify a row."
+                ),
+            ),
+        };
+        out.extend(quote! {
+            #[doc = #doc]
+            impl op::Answers<#op, #source> for super::#module::#ty {
+                type Via = #via;
+            }
+        });
+    }
+    out
 }
 
 fn option_str(value: Option<&str>) -> TokenStream {
@@ -267,10 +425,58 @@ fn render_targets_from(rows: &[Row]) -> String {
         quote!(open_target, run_target,)
     };
 
+    // The typed query chain: per type that answers an operator, its twin's
+    // assembly from the one term it carries, and one `op::Answers` impl per
+    // operator, through Stack Encrypt's index for it, sent as the twin.
+    let answering: Vec<&Row> = rows.iter().filter(|r| !r.answers.is_empty()).collect();
+    let answer_impls: TokenStream = answering.iter().map(|r| answer_impls(r)).collect();
+    let answer_entries: TokenStream = answering
+        .iter()
+        .map(|r| {
+            let name = &r.name;
+            let ops = r.answers.iter().map(|answer| answer.name());
+            quote!((#name, &[#(#ops),*]),)
+        })
+        .collect();
+    let answers_any = |wanted: Answer| answering.iter().any(|r| r.answers.contains(&wanted));
+    let mut answer_imports = TokenStream::new();
+    if !answering.is_empty() {
+        let mut newtypes: Vec<&str> = answering
+            .iter()
+            .flat_map(|r| {
+                r.answers
+                    .iter()
+                    .map(|answer| answer.term().binding_newtype())
+            })
+            .collect();
+        newtypes.sort_unstable();
+        newtypes.dedup();
+        let newtypes = newtypes.iter().map(|n| format_ident!("{n}"));
+        answer_imports.extend(quote! {
+            use crate::encryption::query::{QueryTwin, TwinIndex};
+            use crate::v4::terms::{#(#newtypes),*};
+            use crate::v4::SchemaVersion;
+            use stack_encrypt::op;
+        });
+    }
+    if answers_any(Answer::Eq) {
+        answer_imports.extend(quote!(
+            use stack_encrypt::Equality;
+        ));
+    }
+    if answers_any(Answer::Matches) {
+        answer_imports.extend(quote! {
+            use crate::encryption::EqlMatch;
+            use stack_encrypt::Match;
+        });
+    }
+
     let mod_doc = " The EQL types a Stack Encrypt data plan may name as a field target — \
                    every stored EQL v4 domain type in eql-domains::CATALOG order, as data a \
                    guest serializes (`TARGETS`), with the by-name dispatch that runs a \
-                   producible type's own Rust plan. Generated from the catalog; the \
+                   producible type's own Rust plan, and the `op::Answers` impls through \
+                   which Stack Encrypt's typed query chain queries a producible type \
+                   (`crate::encryption::query`). Generated from the catalog; the \
                    descriptor type, the errors and the public entry points stay \
                    hand-written in `crate::encryption::targets`, which documents the \
                    wire format.";
@@ -281,6 +487,7 @@ fn render_targets_from(rows: &[Row]) -> String {
         use stack_encrypt::dynamic::FfiValue;
 
         #imports
+        #answer_imports
         use crate::encryption::targets::{#helpers refuse, refuse_query, Opener, Target, TargetError};
         use crate::Identifier;
         use stack_encrypt::{KeysetCipher, NonEmpty, Pending};
@@ -336,6 +543,20 @@ fn render_targets_from(rows: &[Row]) -> String {
                 _ => Err(refuse_query(name)),
             }
         }
+
+        /// The operators each EQL type answers in Stack Encrypt's typed
+        /// query chain (`op::Answers`), by the wire names
+        /// `stack_encrypt::dynamic::OpSpec` gives them, in catalog order:
+        /// one row per type that answers any. Generated from the rule the
+        /// impls below are, so the encryption tests can hold the impls to
+        /// the operators the data path answers for each type. Not part of
+        /// the supported API.
+        #[doc(hidden)]
+        pub const ANSWERS: &[(&str, &[&str])] = &[
+            #answer_entries
+        ];
+
+        #answer_impls
     };
 
     format_rs(file)
@@ -537,6 +758,151 @@ mod tests {
         );
         assert_eq!(out.matches("_ => Err(refuse(name))").count(), 2);
         assert_eq!(out.matches("_ => Err(refuse_query(name))").count(), 1);
+    }
+
+    /// A type answers operators in the typed query chain exactly when the
+    /// engine produces it and it has a query twin, and then by the engine's
+    /// rule over its indexes: `Eq` for the equality index, `Matches` for
+    /// the match index. Spelled out per type, so the table reads without
+    /// the rule.
+    #[test]
+    fn a_producible_type_with_a_twin_answers_what_its_indexes_answer() {
+        for row in rows() {
+            let answers: Vec<&str> = row.answers.iter().map(|a| a.name()).collect();
+            if row.reason.is_some() || row.query.is_none() {
+                assert!(answers.is_empty(), "{}: answers nothing", row.name);
+                continue;
+            }
+            let expected: Vec<&str> = row
+                .indexes
+                .iter()
+                .map(|key| match *key {
+                    "eq" => "eq",
+                    "match" => "matches",
+                    other => panic!("{}: no answer for the {other} index", row.name),
+                })
+                .collect();
+            assert_eq!(answers, expected, "{}", row.name);
+        }
+        let answered: Vec<(String, Vec<&str>)> = rows()
+            .into_iter()
+            .filter(|r| !r.answers.is_empty())
+            .map(|r| (r.name, r.answers.iter().map(|a| a.name()).collect()))
+            .collect();
+        let spelled = |name: &str, ops: &[&'static str]| (name.to_owned(), ops.to_vec());
+        assert_eq!(
+            answered,
+            vec![
+                spelled("IntegerEq", &["eq"]),
+                spelled("BigintEq", &["eq"]),
+                spelled("TextEq", &["eq"]),
+                spelled("TextMatch", &["matches"]),
+                spelled("RealEq", &["eq"]),
+                spelled("DoubleEq", &["eq"]),
+            ]
+        );
+    }
+
+    /// The rule over indexes: `eq` answers `Eq` and `match` answers
+    /// `Matches`; each operator's twin term is its index's.
+    #[test]
+    fn answers_for_indexes_maps_each_index_to_its_operator() {
+        assert_eq!(answers_for_indexes("T", &[]), Vec::<Answer>::new());
+        assert_eq!(answers_for_indexes("T", &["eq"]), vec![Answer::Eq]);
+        assert_eq!(answers_for_indexes("T", &["match"]), vec![Answer::Matches]);
+        assert_eq!(index_key(Answer::Eq.term()), "eq");
+        assert_eq!(index_key(Answer::Matches.term()), "match");
+        assert_eq!(Answer::Eq.name(), "eq");
+        assert_eq!(Answer::Matches.name(), "matches");
+    }
+
+    /// A producible type whose twin carries an order index, or more than
+    /// one index, has no typed answer yet: the generator stops rather than
+    /// leave it answering nothing.
+    #[test]
+    #[should_panic(expected = "no answer for the ope index")]
+    fn an_order_index_stops_the_generator() {
+        answers_for_indexes("IntegerOrd", &["ope"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "more than one index")]
+    fn a_twin_of_several_indexes_stops_the_generator() {
+        answers_for_indexes("TextSearch", &["eq", "match"]);
+    }
+
+    /// The rendered file implements `op::Answers` once per answered
+    /// operator, through the index the operator names, sent as the type's
+    /// twin; marks an exact twin a `QueryTerm`; and lists every answering
+    /// type in `ANSWERS`.
+    #[test]
+    fn rendered_answers_are_one_impl_per_operator_and_one_table_row_per_type() {
+        let tight: String = render_targets_rs().split_whitespace().collect();
+        let mut answered = 0;
+        for row in rows() {
+            let module = row.family;
+            let name = &row.name;
+            let Some((twin, _)) = &row.query else {
+                continue;
+            };
+            let answers_impl = |op: &str| format!("implop::Answers<op::{op},");
+            let for_type = format!("forsuper::{module}::{name}{{typeVia=TwinIndex<");
+            let impls = tight.matches(&for_type).count();
+            assert_eq!(impls, row.answers.len(), "{name}: one impl per operator");
+            if row.answers.is_empty() {
+                assert!(!tight.contains(&format!("(\"{name}\",&[")), "{name}");
+                continue;
+            }
+            answered += 1;
+            let ops: Vec<String> = row
+                .answers
+                .iter()
+                .map(|a| format!("\"{}\"", a.name()))
+                .collect();
+            assert!(
+                tight.contains(&format!("(\"{name}\",&[{}]),", ops.join(","))),
+                "{name}: its ANSWERS row"
+            );
+            for answer in &row.answers {
+                let (op, via) = match answer {
+                    Answer::Eq => (
+                        "Eq",
+                        format!("TwinIndex<Equality,super::{module}::{twin}>;"),
+                    ),
+                    Answer::Matches => (
+                        "Matches",
+                        format!("TwinIndex<Match<EqlMatch>,super::{module}::{twin}>;"),
+                    ),
+                };
+                assert!(tight.contains(&answers_impl(op)), "{name}: op::{op}");
+                assert!(tight.contains(&via), "{name}: {via}");
+            }
+            let exact = row.answers.contains(&Answer::Eq);
+            assert_eq!(
+                tight.contains(&format!("implop::QueryTermforsuper::{module}::{twin}{{}}")),
+                exact,
+                "{name}: QueryTerm exactly on an exact twin"
+            );
+            assert_eq!(
+                tight
+                    .matches(&format!("forsuper::{module}::{twin}{{typePlaintext="))
+                    .count(),
+                1,
+                "{name}: one assembly"
+            );
+            assert_eq!(
+                tight
+                    .matches(&format!(
+                        "implop::LabelledTargetforsuper::{module}::{name}{{}}"
+                    ))
+                    .count(),
+                1,
+                "{name}: labelled"
+            );
+        }
+        assert_eq!(answered, 6);
+        assert_eq!(tight.matches("implop::Answers<").count(), 6);
+        assert_eq!(tight.matches("implop::LabelledTarget").count(), 6);
     }
 
     /// A producible type with no query twin — the storage-only `Text` —

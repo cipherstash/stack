@@ -11,6 +11,12 @@ name = "text_eq_example"
 path = "../../crates/eql-bindings/src/encryption/example.rs"
 harness = false
 
+# The same, for the typed query example in `eql_bindings::encryption::query`.
+[[test]]
+name = "query_example"
+path = "../../crates/eql-bindings/src/encryption/query_example.rs"
+harness = false
+
 # Keep crypto/Postgres test dependencies out of eql-bindings' default test build.
 [dev-dependencies]
 eql-bindings = { path = "../../crates/eql-bindings", features = ["stack-encrypt"] }
