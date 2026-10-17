@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -312,5 +313,40 @@ func valueKindsTerms(e testusers.EncryptedValueKinds) map[string]map[string][]by
 		"date":   {"eq": e.Date.Equality},
 		"at":     {"eq": e.At.Equality},
 		"amount": {"eq": e.Amount.Equality},
+	}
+}
+
+// A date, decimal or timestamp the codec cannot write is refused before it
+// crosses, with ErrEncoding and the field's name: the zero encrypt.Date (not
+// a date), a decimal with a scale past 28, and an instant past vitaminc's
+// range. A query of one is refused the same way.
+func TestAnInvalidDateDecimalOrTimestampIsRefusedNamingItsField(t *testing.T) {
+	c := deterministicClient(t)
+	ctx := context.Background()
+	cipher := c.DefaultKeyset()
+	at := time.Date(2026, 10, 18, 1, 2, 3, 0, time.UTC)
+	amount, err := encrypt.ParseDecimal("1.5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	date := encrypt.DateOf(at)
+	for _, c := range []struct {
+		field string
+		value testusers.ValueKinds
+	}{
+		{`"date"`, testusers.ValueKinds{At: at, Amount: amount}},
+		{`"amount"`, testusers.ValueKinds{At: at, Date: date, Amount: encrypt.Decimal{Scale: 29}}},
+		{`"at"`, testusers.ValueKinds{At: time.Date(300000, 1, 1, 0, 0, 0, 0, time.UTC), Date: date, Amount: amount}},
+	} {
+		_, err := testusers.EncryptValueKinds(ctx, cipher, []testusers.ValueKinds{c.value})
+		if !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "field "+c.field) {
+			t.Errorf("%s: Encrypt = %v, want ErrEncoding naming the field", c.field, err)
+		}
+	}
+	if _, err := testusers.ValueKindsFields.Date.Eq(ctx, cipher, encrypt.Date{}); !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "date") {
+		t.Errorf("Eq of the zero date = %v, want ErrEncoding naming the field", err)
+	}
+	if _, err := testusers.ValueKindsFields.Amount.Encrypt(ctx, cipher, encrypt.Decimal{Scale: 29}); !errors.Is(err, encrypt.ErrEncoding) || !strings.Contains(err.Error(), "amount") {
+		t.Errorf("Encrypt of one decimal past scale 28 = %v, want ErrEncoding naming the field", err)
 	}
 }

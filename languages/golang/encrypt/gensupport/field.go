@@ -110,6 +110,15 @@ func (f Field[T]) query(ctx context.Context, c *encrypt.Cipher, operator string,
 	if c == nil {
 		return nil, fmt.Errorf("%w: gensupport: %s: a query needs a cipher", encrypt.ErrEncoding, f.name)
 	}
+	values := []any{input}
+	if pair, ok := input.([]any); ok {
+		values = pair
+	}
+	for _, v := range values {
+		if err := checkValue(v); err != nil {
+			return nil, fmt.Errorf("gensupport: %s: %w", f.name, err)
+		}
+	}
 	term, err := c.QueryTerm(ctx, f.plan, f.name, operator, input)
 	if err != nil {
 		return nil, err

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"time"
 
 	"github.com/cipherstash/stack/languages/golang/encrypt"
 	"github.com/cipherstash/vitaminc/bindings/go/vcvalue"
@@ -21,6 +22,9 @@ import (
 //
 // The error names the kind and not the value, which is plaintext.
 func asKind(kind Kind, v any) (any, error) {
+	if err := checkValue(v); err != nil {
+		return nil, err
+	}
 	if !isInteger(kind) {
 		return v, nil
 	}
@@ -49,6 +53,27 @@ func asKind(kind Kind, v any) (any, error) {
 		return nil, fmt.Errorf("%w: a value does not fit the field's kind %s", encrypt.ErrEncoding, kind)
 	}
 	return out, nil
+}
+
+// checkValue refuses a date, decimal or timestamp the codec cannot write, before
+// it reaches the codec, so the caller can name the field: the codec's own
+// refusal names neither. A zero encrypt.Date (year 0, month 0, day 0) is not
+// a date and is refused here. The error is vitaminc's, which names the type
+// and not the value.
+func checkValue(v any) error {
+	var err error
+	switch v := v.(type) {
+	case vcvalue.Date:
+		err = v.Validate()
+	case vcvalue.Decimal:
+		err = v.Validate()
+	case time.Time:
+		err = vcvalue.Timestamp{Seconds: v.Unix(), Nanoseconds: uint32(v.Nanosecond())}.Validate() //nolint:gosec // Nanosecond is in [0, 1e9)
+	}
+	if err != nil {
+		return fmt.Errorf("%w: %w", encrypt.ErrEncoding, err)
+	}
+	return nil
 }
 
 func isInteger(k Kind) bool {
