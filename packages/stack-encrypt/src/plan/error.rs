@@ -123,7 +123,7 @@ pub enum PlanError {
     },
     /// A field is not of the type the plan declares for it, so the plan
     /// cannot resolve how to seal, index or read it.
-    #[error("field {field:?} is not a {expected}")]
+    #[error("field {field:?} is not {article} {expected}", article = article(expected))]
     #[diagnostic(
         code(stack_encrypt::plan_field_type),
         help("Give the field a value of the type the plan declares. A row stored as another type opens only after it is re-encrypted as the declared one.")
@@ -317,5 +317,39 @@ fn index_value(index: &IndexSpec) -> serde_json::Value {
             })
         }
         IndexSpec::Equality | IndexSpec::Ore | IndexSpec::Ope => index.key().into(),
+    }
+}
+
+/// The indefinite article for a type's name, as it is read aloud: "an" before
+/// a vowel sound (`an int8`, `an i64`, `an object`), and "a" otherwise. A name
+/// starting with `u` is read as "you" (`a uint8`, `a u32`), so it takes "a".
+fn article(name: &str) -> &'static str {
+    match name.chars().next().map(|c| c.to_ascii_lowercase()) {
+        Some('a' | 'e' | 'i' | 'o') => "an",
+        _ => "a",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_field_type_refusal_reads_with_the_right_article() {
+        let message = |expected| {
+            PlanError::FieldType {
+                field: "f".to_owned(),
+                expected,
+            }
+            .to_string()
+        };
+        assert_eq!(message("int8"), r#"field "f" is not an int8"#);
+        assert_eq!(message("object"), r#"field "f" is not an object"#);
+        assert_eq!(message("i64"), r#"field "f" is not an i64"#);
+        assert_eq!(message("uint8"), r#"field "f" is not a uint8"#);
+        assert_eq!(message("u32"), r#"field "f" is not a u32"#);
+        assert_eq!(message("string"), r#"field "f" is not a string"#);
+        assert_eq!(message("decimal"), r#"field "f" is not a decimal"#);
+        assert_eq!(message(""), r#"field "f" is not a "#);
     }
 }
