@@ -59,7 +59,10 @@ unsafe impl GlobalAlloc for Spy {
             if block.windows(MARK.len()).any(|window| window == MARK) {
                 BUSY.with(|busy| busy.set(true));
                 let trace = std::backtrace::Backtrace::force_capture().to_string();
-                if trace.contains(UPSTREAM_SEAL) {
+                // Symbol demangling differs by platform: Linux writes
+                // `<…::CipherKey>::seal`, macOS `…::CipherKey::seal`. Match
+                // with the angle brackets dropped.
+                if trace.replace(['<', '>'], "").contains(UPSTREAM_SEAL) {
                     *UPSTREAM.lock().unwrap() += 1;
                 } else {
                     FOUND
