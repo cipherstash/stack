@@ -1,0 +1,20 @@
+error[E0277]: `Vec<u8>` is not ordered: the ordering operators are answered over the integer types and text
+  --> tests/ui/op_order_on_bytes.rs:13:49
+   |
+13 |     let _ = cipher.query(op::Lt, &vec![1u8, 2]).on(&blob_plan);
+   |                                                 ^^ no ordering operator over this type
+   |
+   = help: the trait `Ordered` is not implemented for `Vec<u8>`
+   = note: `Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u8` to `u128`, `i8` to `i128`, or a `String`
+   = help: the following other types implement trait `Ordered`:
+             i128
+             i16
+             i32
+             i64
+             i8
+             std::string::String
+             u128
+             u16
+           and $N others
+   = note: required for `stack_encrypt::op::Lt` to implement `DefaultIndex<Vec<u8>>`
+   = note: required for `ValuePlan<Vec<u8>, Indexed<stack_encrypt::Ore>>` to implement `Chooses<stack_encrypt::op::Lt, Vec<u8>, Whole>`

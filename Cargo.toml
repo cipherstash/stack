@@ -131,5 +131,8 @@ vitaminc-hmac = "0.6.0"
 # Normalized equality terms (Unicode 16 NFC text, one integer encoding for
 # every width), which `vitaminc-prf`'s `normalize` feature derives over.
 vitaminc-normalize = "0.6.0"
+# The text order key: the system ADR-0002's fold, pinned to Unicode 16,
+# which text ORE and OPE terms are derived over (ADR-0009, #1234).
+vitaminc-ore = "0.6.0"
 vitaminc-prf = { version = "0.6.0", features = ["normalize"] }
 vitaminc-protected = "0.6.0"

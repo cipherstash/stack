@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"errors"
 	"math/rand"
 	"reflect"
+	"slices"
 	"testing"
 	"testing/quick"
 
@@ -17,7 +19,7 @@ import (
 // stores for them through the generated Probe fields' Encrypt, comparison
 // in Go. A query method derives the same bytes, but only for the index
 // that answers its operator (ORE, where a field declares both), and only
-// over integers, so the stored terms reach every index and kind. ORE is
+// over integers and text, so the stored terms reach every index and kind. ORE is
 // probabilistic — a wrong comparator or a wrong derivation still agrees
 // with plaintext order on many pairs — so a fixed vector set says little;
 // hundreds of random pairs per type say more. The index key is the
@@ -121,22 +123,29 @@ func adjacentProperty[T any](t *testing.T, cipher *encrypt.Cipher, ope bool, der
 	}
 }
 
-// collatedAlphabet holds characters that the ORE and OPE string encodings
-// keep as they are. Before deriving a term, cllw-ore's orderize_string
-// decomposes each character canonically and drops anything that is not
-// alphanumeric, whitespace or ASCII punctuation. So two strings order by
-// their UTF-8 bytes only when that collation leaves both unchanged: a
-// private-use character is dropped, and a precomposed Hangul syllable or
-// an accented letter decomposes. The non-ASCII letters here have no
-// canonical decomposition, so multi-byte UTF-8 ordering is still covered.
-var collatedAlphabet = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ßжω中")
+// foldedAlphabet holds characters that text's order key keeps as they are.
+// Text orders by its fold (ADR-0002): NFD, full case folding, NFD again,
+// accents dropped, NFC. So two strings order by their UTF-8 bytes when the
+// fold leaves both unchanged: lower-case letters with no accent, digits,
+// space and ASCII punctuation. The non-ASCII letters here are already
+// folded and have no decomposition, so multi-byte UTF-8 ordering is still
+// covered. Upper case, accents and the sharp s are checked as ties below.
+var foldedAlphabet = []rune("abcdefghijklmnopqrstuvwxyz0123456789 !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~\u0436\u03c9\u4e2d")
 
-func collatedString(r *rand.Rand) string {
+func foldedString(r *rand.Rand) string {
 	out := make([]rune, r.Intn(24))
 	for i := range out {
-		out[i] = collatedAlphabet[r.Intn(len(collatedAlphabet))]
+		out[i] = foldedAlphabet[r.Intn(len(foldedAlphabet))]
 	}
 	return string(out)
+}
+
+// inOrder orders strings by their place in values, for a list written in
+// the order the fold gives it.
+func inOrder(values []string) func(a, b string) int {
+	return func(a, b string) int {
+		return cmp.Compare(slices.Index(values, a), slices.Index(values, b))
+	}
 }
 
 func TestTermOrderIsPlaintextOrder(t *testing.T) {
@@ -176,16 +185,20 @@ func TestTermOrderIsPlaintextOrder(t *testing.T) {
 				d := storedTerm(f.S.Encrypt, ope,
 					func(e testusers.EncryptedProbeS) []byte { return e.Ore },
 					func(e testusers.EncryptedProbeS) []byte { return e.Ope })
-				// Strings order by the UTF-8 bytes of their collated form; a
-				// prefix orders before its extensions. See collatedAlphabet.
-				orderProperty(t, cipher, ope, d, byteOrder, collatedString)
-				adjacentProperty(t, cipher, ope, d, []string{"", "a", "aa", "ab", "b", "ba", "ß", "ßa", "中"}, byteOrder)
-				// Collation drops a control or private-use character, and
-				// strips the accent from a decomposed letter, so the terms
-				// cannot tell these pairs apart.
-				adjacentProperty(t, cipher, ope, d, []string{"", "\x7f"}, same)
-				adjacentProperty(t, cipher, ope, d, []string{"ab", "ab"}, same)
-				adjacentProperty(t, cipher, ope, d, []string{"e", "é"}, same)
+				// Strings order by the UTF-8 bytes of their folded form; a
+				// prefix orders before its extensions. See foldedAlphabet.
+				orderProperty(t, cipher, ope, d, byteOrder, foldedString)
+				adjacentProperty(t, cipher, ope, d, []string{"", "a", "aa", "ab", "b", "ba", "ж", "ω", "中"}, byteOrder)
+				// The fold drops case and accents and expands ß, so the terms
+				// cannot tell these apart.
+				adjacentProperty(t, cipher, ope, d, []string{"a", "A"}, same)
+				adjacentProperty(t, cipher, ope, d, []string{"e", "\u00e9", "\u00c9", "e\u0301"}, same)
+				adjacentProperty(t, cipher, ope, d, []string{"ss", "\u00df", "SS"}, same)
+				adjacentProperty(t, cipher, ope, d, []string{"caf\u00e9", "CAFE", "Cafe\u0301"}, same)
+				// Mixed case and accents order by the fold: Zoe after alice,
+				// and an accented letter beside its base letter.
+				names := []string{"alice", "Bob", "eclair", "\u00c9lan", "emu", "Zoe"}
+				adjacentProperty(t, cipher, ope, d, names, inOrder(names))
 			})
 			t.Run("bytes", func(t *testing.T) {
 				d := storedTerm(f.B.Encrypt, ope,
@@ -195,5 +208,41 @@ func TestTermOrderIsPlaintextOrder(t *testing.T) {
 				adjacentProperty(t, cipher, ope, d, [][]byte{{}, {0}, {0, 0}, {0, 1}, {1}, {255}, {255, 0}}, bytes.Compare)
 			})
 		})
+	}
+}
+
+// The generated ordering methods on a text field derive the term its
+// Encrypt stores for the folded value, and Between refuses a range that
+// is inverted once folded.
+func TestTextOrderingMethodsFoldTheValue(t *testing.T) {
+	c := deterministicClient(t)
+	cipher := c.DefaultKeyset()
+	ctx := context.Background()
+	f := testusers.ProbeFields
+	stored, err := f.S.Encrypt(ctx, cipher, "cafe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []string{"cafe", "Caf\u00e9", "CAFE", "cafe\u0301"} {
+		lt, err := f.S.Lt(ctx, cipher, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(lt, stored.Ore) {
+			t.Errorf("Lt(%q) is not the stored term of cafe", v)
+		}
+	}
+	r, err := f.S.Between(ctx, cipher, "a", "Zoe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Low.Compare(r.High) >= 0 {
+		t.Errorf("a should order below Zoe")
+	}
+	if _, err := f.S.Between(ctx, cipher, "b", "A"); !errors.Is(err, encrypt.ErrTerm) {
+		t.Errorf("Between(b, A) = %v, want ErrTerm: A folds to a, below b", err)
+	}
+	if _, err := f.S.Between(ctx, cipher, "A", "a"); err != nil {
+		t.Errorf("Between(A, a) is one folded value: %v", err)
 	}
 }

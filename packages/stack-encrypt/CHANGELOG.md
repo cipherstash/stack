@@ -84,9 +84,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The ordering operators, and `Between` as one term.** `op::Lt`, `Lte`,
   `Gt` and `Gte` take one value and `op::Between` a pair of bounds,
   `cipher.query(op::Between, &(18, 65)).on(&age_plan)`, inclusive at both
-  ends. They are answered over the integer types (`op::Ordered`) by the
-  `Ore` index by default and by `Ope` through `.via(Ope)`; an ordering on
-  text does not compile. A comparison's query term is the index's own term
+  ends. They are answered over the integer types and text (`op::Ordered`)
+  by the `Ore` index by default and by `Ope` through `.via(Ope)`; an
+  ordering on bytes or a float does not compile. A comparison's query term is the index's own term
   for the value (`OreTerm`, `OpeTerm`); a range's is one `sem::RangeQuery`
   carrying both bounds' terms, read with `lo()` and `hi()`, so no statement
   can pair the low bound of one query with the high bound of another. A
@@ -159,6 +159,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **Text orders by its folded order key.** An ORE or OPE term over text is
+  derived over the system ADR-0002's fold (Unicode 16 NFC with case and
+  accents folded, from `vitaminc-ore`) in place of cllw-ore's own
+  collation, under a key framing that names the fold's frozen label. So
+  `Café`, `cafe`, `CAFÉ` and `cafe` with a combining accent are one term and
+  tie, `alice` orders before `Zoe`, and `é` orders with `e`, not after `z`.
+  Every text order term changes bytes; integer, float and bytes order terms
+  do not. None was deployed (ADR-0002). Text holding a code point Unicode 16
+  does not assign has no fold and no order term (`TermError::Normalize`),
+  on write and on query. The ordering operators are answered on text, on
+  the typed path (`op::Ordered` for `String`, whose `Between` judges an
+  inverted range on the folded keys: `("b", "A")` is inverted, `("A", "a")`
+  is one value) and on the data-plan path, so a binding generates them too.
+
 - **A match value with no tokens is stored as the empty filter, so
   `KeysetCipher::match_terms` is no longer a query.** In 0.2.0 the same call
   served write time and query time, and refused text that cuts no token
@@ -200,11 +214,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Match text is tokenized in the same normal form, and refused the same
   way. Every equality and match term changes
   bytes (the domains move to `/v2`); ORE and OPE terms do not. No stored
-  term existed to keep; the record fixture is regenerated. ORE and OPE
-  text is still ordered as its raw UTF-8, not normalized, so on a column
-  with both an equality and an order index two forms of `café` are one
-  value to `=` and two to an ordering. This is a known gap, to be closed
-  with block ORE (#1140).
+  term existed to keep; the record fixture is regenerated. Text order
+  terms derive over the folded order key (see "Text orders by its folded
+  order key" above), so equality and ordering agree on two forms of
+  `café`.
 - **`dynamic::Value` and `dynamic::Scalar` are gone.** A field lowered from
   data holds an `FfiValue`, which is now `Clone` (a deep copy into fresh
   `Protected` payloads, as `Value`'s was) and reads as a context label.

@@ -59,6 +59,12 @@ async fn chains(cipher: &StackCipher<FakeDataKeySource>, person: &Person) -> Res
         .on(&people_plan.field("email")?)
         .await;
     let age_plan = Plan::context("people/age").with((Equality, Ore)).build()?;
+    let surname_plan = Plan::context("people/surname").with::<String, _>(Ore).build()?;
+    let _ = cipher.query(op::Lt, "nguyen").on(&surname_plan).await?;
+    let _ = cipher
+        .query(op::Between, &("a".to_owned(), "m".to_owned()))
+        .on(&surname_plan)
+        .await?;
     let ages = vec![1u32, 2];
     let _ = cipher.encrypt(&ages).using(&age_plan).await?;
     let _ = cipher.query(op::Lt, &3u32).on(&age_plan).await?;

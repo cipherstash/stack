@@ -263,8 +263,7 @@ pub trait Ranked: QueryTerm {
 
 - A term that implements `QueryTerm` only is **exact**. The server's answer
   is the answer. HMAC `Eq`, ORE and OPE (`Lt`, `Between`) on numbers, JSON
-  `AtPath<Eq>`, and ORE and OPE on text if the catalog keeps text ordering
-  (see "Text ordering" below).
+  `AtPath<Eq>`, and ORE and OPE on text (see "Text ordering" below).
 - A `Probabilistic` term can return **false positives and no false
   negatives**. `verify` is the operator's own meaning, run on a decrypted
   value: it decides whether a row the server returned is a real match. Bloom
@@ -501,10 +500,11 @@ key tie; that is what the column declared, and an earlier draft of this ADR
 was wrong to call it a false positive and put the term under `Probabilistic`.
 Its use is ordering and cursor paging on names (`ORDER BY name`, "the page
 after Nguyen"), and EQL v4 carries `query_text_ord` and `query_text_ord_ore`
-for it. Whether the Rust library produces the term is a catalog question
-(`TextOrdOre` is unproducible today, pending the system ADR-0002); nothing
-else in this ADR depends on it, and if text ordering is dropped this paragraph
-goes with it.
+for it. Stack Encrypt produces the term: the order key is vitaminc-ore's
+text order encoding, the system ADR-0002's fold pinned to Unicode 16, which
+vitaminc 0.6 ships, and the ORE and OPE indexes answer the orderings on text
+over it. `TextOrdOre` and `TextSearchOre` also need the block ORE scheme EQL
+stores (#1132).
 
 A `Ranked` term's `target_limit` applies the index's configured recall
 factor and needs no `Stats`.
@@ -576,8 +576,9 @@ ciphertexts, once block ORE lands), inclusive at both ends, and the client
 refuses `lo > hi` (`TermError::InvertedRange`) before either term is
 derived; `(v, v)` is one value. One call derives both bounds, under one
 context, so a caller cannot pair a bound from one column with a bound from
-another. The ordering operators are answered over the integer types
-(`op::Ordered`), by the ORE index by default and by OPE through `.via(Ope)`.
+another. The ordering operators are answered over the integer types and
+text (`op::Ordered`), by the ORE index by default and by OPE through
+`.via(Ope)`.
 
 In SQL the term stays one operand. EQL v4 gains a function that takes the
 column and the range, and a range query domain beside each ordered query
@@ -696,8 +697,8 @@ JSON column's query already selects it. A similarity index stores its vector
 separately, so a `Nearest` query must select the embedding, or the sketch,
 as well.
 
-Text ordering, if the catalog keeps it, needs no special case: `Lt` on text
-is an exact term over the order key, and what that key folds is the system
+Text ordering needs no special case: `Lt` on text is an exact term over the
+order key, and what that key folds is the system
 ADR-0002's decision (the value model, linked above), which keeps equality off
 the order term for the same reason.
 
@@ -877,8 +878,7 @@ let rows: Vec<UserRow> = sqlx::query_as(
 .fetch_all(&pool).await?;
 ```
 
-`AtPath<Lt>` on a text leaf, if the catalog keeps text ordering, is exact,
-as `Lt` on a text column would be: the leaf's order term compares order
+`AtPath<Lt>` on a text leaf is exact, as `Lt` on a text column is: the leaf's order term compares order
 keys, and there is nothing to verify.
 
 **`Nearest`, ranked.** Stack Similarity has no EQL spelling yet, so this is

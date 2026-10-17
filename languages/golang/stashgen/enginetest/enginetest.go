@@ -163,8 +163,8 @@ func (e Static) operators(ctx context.Context, d stashgen.Declaration) (map[stri
 
 // answeredBy mirrors OpSpec::answered_by in stack-encrypt: eq through an
 // equality index, matches through a match index, and the orderings through
-// ORE, or OPE when there is no ORE, over an integer alone; each only where
-// the index applies to the type.
+// ORE, or OPE when there is no ORE, over an integer or text; each only
+// where the index applies to the type.
 func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName) (stashgen.IndexName, bool) {
 	declared := func(want stashgen.IndexName) bool {
 		for _, idx := range indexes {
@@ -180,7 +180,7 @@ func answeredBy(operator string, t stashgen.GoType, indexes []stashgen.IndexName
 	case "matches":
 		return stashgen.IndexMatch, declared(stashgen.IndexMatch)
 	}
-	if t.Kind != stashgen.KindInt && t.Kind != stashgen.KindUint {
+	if t.Kind != stashgen.KindInt && t.Kind != stashgen.KindUint && t.Kind != stashgen.KindString {
 		return "", false
 	}
 	if declared(stashgen.IndexOre) {

@@ -1265,3 +1265,54 @@ async fn a_field_answers_the_orderings_through_its_declared_index() {
         }
     );
 }
+
+/// Text orders by its order key, ADR-0002's fold: the orderings are
+/// answered over text, a query term of `Café` is the term of `cafe`, `alice`
+/// orders before `Zoe` and `élan` between `eclair` and `emu`, and an
+/// inverted range is judged on the folded keys.
+#[tokio::test]
+async fn text_orders_by_its_folded_key() {
+    let cipher = stack_cipher().await;
+    let plan = Plan::context("users/surname")
+        .with::<String, _>((Ore, Ope))
+        .build()
+        .unwrap();
+    let lt = |text: &str| cipher.query(op::Lt, text).on(&plan);
+    let ope = |text: &str| cipher.query(op::Lt, text).via(Ope).on(&plan);
+    let cafe: OreTerm<String> = lt("cafe").await.unwrap();
+    for text in ["Caf\u{e9}", "CAF\u{c9}", "cafe\u{301}"] {
+        assert_eq!(lt(text).await.unwrap(), cafe, "{text:?}");
+    }
+
+    // OPE terms compare as bytes, so the order is visible here directly.
+    let order = ["alice", "eclair", "\u{c9}lan", "emu", "Zoe"];
+    let mut terms = Vec::new();
+    for text in order {
+        let term: OpeTerm<String> = ope(text).await.unwrap();
+        terms.push(term.as_bytes().to_vec());
+    }
+    assert!(terms.windows(2).all(|pair| pair[0] < pair[1]), "{order:?}");
+    // And ORE terms compare through their own comparison.
+    let alice: OreTerm<String> = lt("alice").await.unwrap();
+    let zoe: OreTerm<String> = lt("Zoe").await.unwrap();
+    assert!(alice < zoe);
+
+    let between = |lo: &str, hi: &str| {
+        cipher
+            .query(op::Between, &(lo.to_owned(), hi.to_owned()))
+            .on(&plan)
+    };
+    assert!(matches!(
+        between("b", "A").await,
+        Err(Error::Term(TermError::InvertedRange))
+    ));
+    assert!(between("A", "a").await.is_ok(), "one folded value");
+    assert!(between("a", "B").await.is_ok());
+    assert!(
+        matches!(
+            between("a\u{378}", "b").await,
+            Err(Error::Term(TermError::Normalize(_)))
+        ),
+        "a bound with no fold"
+    );
+}

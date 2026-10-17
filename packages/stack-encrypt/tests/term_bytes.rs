@@ -14,7 +14,7 @@
 //! the canonical encoding of a context (typed leaves, one encoding for the
 //! AEAD and the PRF), so the bytes under every label changed while the
 //! labels and framing here did not. That was a prerelease wire break, taken
-//! deliberately (CIP-4036); the `/v1` suffixes stayed because nothing of
+//! deliberately; the `/v1` suffixes stayed because nothing of
 //! this crate's own moved.
 //!
 //! The equality and match pins moved again with the labels, to `/v2`, when
@@ -22,6 +22,12 @@
 //! PRF over the value's normalized bytes under vitaminc's domain for its
 //! kind, and match text is tokenized in Unicode 16 NFC. No stored term
 //! existed to keep. The ORE and OPE derivations did not move.
+//!
+//! Text ORE and OPE terms moved once, and only for text: they derive over
+//! the text's order key (the system ADR-0002's fold, from `vitaminc-ore`)
+//! in place of cllw-ore's own collation, under a key framing that adds the
+//! fold's frozen label. None was deployed. Integer, float and bytes order
+//! terms, and their framing, are unchanged.
 
 use stack_encrypt::nonempty;
 use stack_encrypt::sem::{DefaultMatch, MatchConfig, MatchOptions};
@@ -168,4 +174,78 @@ async fn match_term_positions_are_pinned_for_a_wide_filter() {
         ],
         "positions for a 65536-bit filter are frozen: both bytes of each slice are in play"
     );
+}
+
+/// Text orders by its order key, the system ADR-0002's fold (`Ab` derives
+/// over `ab`), under a key whose framing names the fold's label. Pins the
+/// fold, the framing and the CLLW encryption together.
+#[tokio::test]
+async fn text_order_term_bytes_are_pinned() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let ore = keyset
+        .ore_term("Ab".to_string(), nonempty!("users/surname"))
+        .await
+        .unwrap();
+    let ope = keyset
+        .ope_term("Ab".to_string(), nonempty!("users/surname"))
+        .await
+        .unwrap();
+    assert_eq!(hex(ore.as_ref()), "5395281a56386ee6aa4cb925fbf601a7");
+    assert_eq!(hex(ope.as_ref()), "002d9bf26fd01fadf9adefce5b1eeb1547");
+}
+
+/// Folded equivalents are one order term, in every owned form text takes:
+/// case, a precomposed accent and a combining one all fold away.
+#[tokio::test]
+async fn text_order_terms_fold_case_and_accents() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let ore = |text: String| keyset.ore_term(text, nonempty!("users/surname"));
+    let ope = |text: String| keyset.ope_term(text, nonempty!("users/surname"));
+    let want_ore = ore("cafe".into()).await.unwrap();
+    let want_ope = ope("cafe".into()).await.unwrap();
+    for text in ["Caf\u{e9}", "CAF\u{c9}", "cafe\u{301}", "CAFE"] {
+        assert_eq!(ore(text.into()).await.unwrap(), want_ore, "{text:?} ore");
+        assert_eq!(ope(text.into()).await.unwrap(), want_ope, "{text:?} ope");
+    }
+    let borrowed = keyset
+        .ore_term("Caf\u{e9}", nonempty!("users/surname"))
+        .await
+        .unwrap();
+    assert_eq!(borrowed, want_ore, "a &'static str folds too");
+}
+
+/// A text order key's term is not the term of the same bytes as bytes: the
+/// key is derived under a framing that names the fold.
+#[tokio::test]
+async fn a_text_order_term_is_keyed_apart_from_bytes() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    let text = keyset
+        .ore_term("cafe".to_string(), nonempty!("users/surname"))
+        .await
+        .unwrap();
+    let bytes = keyset
+        .ore_term(b"cafe".to_vec(), nonempty!("users/surname"))
+        .await
+        .unwrap();
+    assert_eq!(text.as_ref().len(), bytes.as_ref().len());
+    assert_ne!(text, bytes);
+}
+
+/// Text holding a code point Unicode 16 does not assign has no known fold,
+/// so it has no order term.
+#[tokio::test]
+async fn text_with_no_fold_has_no_order_term() {
+    let cipher = cipher().await;
+    let keyset = cipher.default_keyset();
+    assert!(keyset
+        .ore_term("a\u{378}b".to_string(), nonempty!("users/surname"))
+        .await
+        .is_err());
+    assert!(keyset
+        .ope_term("a\u{378}b".to_string(), nonempty!("users/surname"))
+        .await
+        .is_err());
 }
