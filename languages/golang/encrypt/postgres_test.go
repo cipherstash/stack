@@ -61,7 +61,9 @@ func TestQueriesRunAgainstPostgres(t *testing.T) {
 			age_eq     bytea NOT NULL,
 			age_ore    bytea NOT NULL,
 			name       bytea NOT NULL,
-			name_match bytea NOT NULL
+			name_match bytea NOT NULL,
+			score      bytea NOT NULL,
+			score_ore  bytea NOT NULL
 		)`,
 		matchPositions,
 	} {
@@ -74,7 +76,7 @@ func TestQueriesRunAgainstPostgres(t *testing.T) {
 	var people []testusers.QueryProfile
 	for i, v := range f.Verify.Values {
 		if v != nil {
-			people = append(people, testusers.QueryProfile{Email: "p" + string(rune('a'+i)) + "@example.com", Age: uint32(20 + i), Name: *v})
+			people = append(people, testusers.QueryProfile{Email: "p" + string(rune('a'+i)) + "@example.com", Age: uint32(20 + i), Name: *v, Score: float64(i) - 1.5})
 		}
 	}
 	encrypted, err := testusers.EncryptQueryProfile(ctx, cipher, people)
@@ -83,8 +85,8 @@ func TestQueriesRunAgainstPostgres(t *testing.T) {
 	}
 	for i, e := range encrypted {
 		if _, err := conn.ExecContext(ctx,
-			`INSERT INTO profiles VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			i, e.Email.Ciphertext, e.Email.Equality, e.Age.Ciphertext, e.Age.Equality, e.Age.Ore, e.Name.Ciphertext, e.Name.Match,
+			`INSERT INTO profiles VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			i, e.Email.Ciphertext, e.Email.Equality, e.Age.Ciphertext, e.Age.Equality, e.Age.Ore, e.Name.Ciphertext, e.Name.Match, e.Score.Ciphertext, e.Score.Ore,
 		); err != nil {
 			t.Fatal(err)
 		}
@@ -121,7 +123,7 @@ func TestQueriesRunAgainstPostgres(t *testing.T) {
 		t.Fatal("a field declared with tags has no expected token count, so with no histogram the limit is unbounded")
 	}
 	result, err := conn.QueryContext(ctx, `
-		SELECT id, email, email_eq, age, age_eq, age_ore, name, name_match FROM profiles
+		SELECT id, email, email_eq, age, age_eq, age_ore, name, name_match, score, score_ore FROM profiles
 		WHERE pg_temp.match_positions(name_match) @> pg_temp.match_positions($1)
 		ORDER BY id LIMIT $2`, q, limit.FetchOr(50))
 	if err != nil {
@@ -134,7 +136,7 @@ func TestQueriesRunAgainstPostgres(t *testing.T) {
 	var fetched []testusers.EncryptedQueryProfile
 	for result.Next() {
 		var e testusers.EncryptedQueryProfile
-		if err := result.Scan(&id, &e.Email.Ciphertext, &e.Email.Equality, &e.Age.Ciphertext, &e.Age.Equality, &e.Age.Ore, &e.Name.Ciphertext, &e.Name.Match); err != nil {
+		if err := result.Scan(&id, &e.Email.Ciphertext, &e.Email.Equality, &e.Age.Ciphertext, &e.Age.Equality, &e.Age.Ore, &e.Name.Ciphertext, &e.Name.Match, &e.Score.Ciphertext, &e.Score.Ore); err != nil {
 			t.Fatal(err)
 		}
 		ids = append(ids, id)

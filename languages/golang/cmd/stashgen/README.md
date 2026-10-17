@@ -124,7 +124,7 @@ For `-type User`, the file `user_stash.go` holds:
 - `Fields`, with one entry for each sealed field.
   An opaque struct, or a struct with no sealed field outside an opaque one, gets no `Fields`: nothing in it is sealed on its own, so nothing can be queried.
   An entry encrypts one value, and has one query method for each operator the engine answers on the field: `Eq`, `Lt`, `Lte`, `Gt`, `Gte`, `Between` or `Matches`.
-  stashgen asks the embedded engine which operators each field answers, and which index answers each one, so it holds no copy of those rules: an equality index answers `Eq`, a match index on a string `Matches`, and an ORE or OPE index on an integer or a string the four orderings and `Between`, through ORE when the field declares both. A string orders by its folded form: case and accents folded, under Unicode 16.
+  stashgen asks the embedded engine which operators each field answers, and which index answers each one, so it holds no copy of those rules: an equality index answers `Eq`, a match index on a string `Matches`, and an ORE or OPE index on an integer, a float or a string the four orderings and `Between`, through ORE when the field declares both. A float orders as PostgreSQL's `float8` does (`-0.0` ties `0.0`, NaN sorts last), and a string by its folded form: case and accents folded, under Unicode 16.
   `encrypt_into=TextEq` answers `Eq`, which returns the type's query value, `eql.TextEqQuery`.
   `encrypt_into=TextMatch` answers `Matches`, which returns an `encrypt.EQLMatchQuery`: the `eql.TextMatchQuery` operand, with `Verify` and `TargetLimit`.
   The query of `Matches` carries `Verify` and `TargetLimit`, because its answer can hold rows that do not match; an exact operator's query carries neither.

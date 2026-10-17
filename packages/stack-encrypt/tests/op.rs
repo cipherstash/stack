@@ -1316,3 +1316,55 @@ async fn text_orders_by_its_folded_key() {
         "a bound with no fold"
     );
 }
+
+/// Floats order by their ADR-0002 order key, as Postgres's `float8` does:
+/// the orderings are answered over `f64`, `-0.0` and `0.0` are one query
+/// term, every NaN is one and sorts above `+Infinity`, and an inverted range
+/// is judged on the keys.
+#[tokio::test]
+async fn floats_order_by_their_order_key() {
+    let cipher = stack_cipher().await;
+    let plan = Plan::context("users/score")
+        .with::<f64, _>((Ore, Ope))
+        .build()
+        .unwrap();
+    let lt = |value: f64| cipher.query(op::Lt, &value).on(&plan);
+    let ope = |value: f64| cipher.query(op::Lt, &value).via(Ope).on(&plan);
+    let zero: OreTerm<f64> = lt(0.0).await.unwrap();
+    assert_eq!(lt(-0.0).await.unwrap(), zero, "-0.0 is 0.0");
+    let nan: OreTerm<f64> = lt(f64::NAN).await.unwrap();
+    assert_eq!(lt(-f64::NAN).await.unwrap(), nan, "one NaN");
+
+    let order = [
+        f64::NEG_INFINITY,
+        -1.5,
+        0.0,
+        1e-300,
+        1.5,
+        f64::INFINITY,
+        f64::NAN,
+    ];
+    let mut terms = Vec::new();
+    for value in order {
+        let term: OpeTerm<f64> = ope(value).await.unwrap();
+        terms.push(term.as_bytes().to_vec());
+    }
+    assert!(terms.windows(2).all(|pair| pair[0] < pair[1]), "{order:?}");
+    let low: OreTerm<f64> = lt(-1.5).await.unwrap();
+    assert!(low < zero && zero < nan);
+
+    let between = |lo: f64, hi: f64| cipher.query(op::Between, &(lo, hi)).on(&plan);
+    assert!(matches!(
+        between(2.5, 1.5).await,
+        Err(Error::Term(TermError::InvertedRange))
+    ));
+    assert!(
+        matches!(
+            between(f64::NAN, f64::INFINITY).await,
+            Err(Error::Term(TermError::InvertedRange))
+        ),
+        "NaN sorts last"
+    );
+    assert!(between(0.0, -0.0).await.is_ok(), "one value");
+    assert!(between(-0.5, 2.5).await.is_ok());
+}

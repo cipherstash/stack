@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"math"
 	"math/rand"
 	"reflect"
 	"slices"
@@ -19,7 +20,7 @@ import (
 // stores for them through the generated Probe fields' Encrypt, comparison
 // in Go. A query method derives the same bytes, but only for the index
 // that answers its operator (ORE, where a field declares both), and only
-// over integers and text, so the stored terms reach every index and kind. ORE is
+// over integers, floats and text, so the stored terms reach every index and kind. ORE is
 // probabilistic — a wrong comparator or a wrong derivation still agrees
 // with plaintext order on many pairs — so a fixed vector set says little;
 // hundreds of random pairs per type say more. The index key is the
@@ -140,6 +141,32 @@ func foldedString(r *rand.Rand) string {
 	return string(out)
 }
 
+// floatOrder is ADR-0002's order of floats, which is Postgres's float8
+// order: -0.0 is 0.0, and every NaN is one value, above +Inf.
+func floatOrder[F float32 | float64](a, b F) int {
+	an, bn := a != a, b != b
+	switch {
+	case an && bn:
+		return 0
+	case an:
+		return 1
+	case bn:
+		return -1
+	}
+	return cmp.Compare(a, b)
+}
+
+// floatValues are the edges of a float's order: both infinities, the
+// largest and smallest magnitudes, both zeros, and NaNs of several signs
+// and payloads, which are one value.
+func floatValues() []float64 {
+	return []float64{
+		math.Inf(-1), -math.MaxFloat64, -1.5, -math.SmallestNonzeroFloat64,
+		math.Copysign(0, -1), 0, math.SmallestNonzeroFloat64, 1.5, math.MaxFloat64, math.Inf(1),
+		math.NaN(), math.Float64frombits(0xfff8_0000_0000_0000), math.Float64frombits(0x7ff8_0000_0000_beef),
+	}
+}
+
 // inOrder orders strings by their place in values, for a list written in
 // the order the fold gives it.
 func inOrder(values []string) func(a, b string) int {
@@ -199,6 +226,25 @@ func TestTermOrderIsPlaintextOrder(t *testing.T) {
 				// and an accented letter beside its base letter.
 				names := []string{"alice", "Bob", "eclair", "\u00c9lan", "emu", "Zoe"}
 				adjacentProperty(t, cipher, ope, d, names, inOrder(names))
+			})
+			t.Run("float64", func(t *testing.T) {
+				d := storedTerm(f.F64.Encrypt, ope,
+					func(e testusers.EncryptedProbeF64) []byte { return e.Ore },
+					func(e testusers.EncryptedProbeF64) []byte { return e.Ope })
+				orderProperty(t, cipher, ope, d, floatOrder[float64])
+				adjacentProperty(t, cipher, ope, d, floatValues(), floatOrder[float64])
+			})
+			t.Run("float32", func(t *testing.T) {
+				d := storedTerm(f.F32.Encrypt, ope,
+					func(e testusers.EncryptedProbeF32) []byte { return e.Ore },
+					func(e testusers.EncryptedProbeF32) []byte { return e.Ope })
+				orderProperty(t, cipher, ope, d, floatOrder[float32])
+				var values []float32
+				for _, v := range floatValues() {
+					values = append(values, float32(v))
+				}
+				values = append(values, math.SmallestNonzeroFloat32, -math.SmallestNonzeroFloat32, math.MaxFloat32)
+				adjacentProperty(t, cipher, ope, d, values, floatOrder[float32])
 			})
 			t.Run("bytes", func(t *testing.T) {
 				d := storedTerm(f.B.Encrypt, ope,

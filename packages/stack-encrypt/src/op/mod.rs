@@ -343,10 +343,13 @@ impl<S: 'static> Input<Pair> for (S, S) {
 
 /// A plaintext the ordering operators ([`Lt`], [`Lte`], [`Gt`], [`Gte`],
 /// [`Between`]) are answered over: the integer types, whose ORE and OPE
-/// terms order as the values do, and text (`String`), whose terms order as
-/// its order key does: the system ADR-0002's fold, Unicode 16 NFC with case
-/// and accents folded, so `Café`, `cafe` and `CAFÉ` tie and `alice` orders
-/// before `Zoe` (ADR-0009).
+/// terms order as the values do; `f64`, whose terms order as Postgres's
+/// `float8` does, with `-0.0` and `0.0` tied and every NaN last; and text
+/// (`String`), whose terms order as its order key does: the system
+/// ADR-0002's fold, Unicode 16 NFC with case and accents folded, so `Café`,
+/// `cafe` and `CAFÉ` tie and `alice` orders before `Zoe` (ADR-0009). Each
+/// term is derived over the value's ADR-0002 order key. An `f32` is not
+/// one: ADR-0002 orders it as the `f64` it widens to, so widen it.
 ///
 /// Sealed: `Between` refuses an inverted range by [`inverted`](Self::inverted),
 /// which must agree with the order the server compares, so a type whose two
@@ -374,10 +377,19 @@ impl<S: 'static> Input<Pair> for (S, S) {
 ///
 /// impl Ordered for Folded {} // `Ordered` is sealed
 /// ```
+///
+/// An `f32` is refused, for its `f64`:
+///
+/// ```compile_fail
+/// use stack_encrypt::op::Ordered;
+///
+/// fn ordered<T: Ordered>() {}
+/// ordered::<f32>();
+/// ```
 #[diagnostic::on_unimplemented(
-    message = "`{Self}` is not ordered: the ordering operators are answered over the integer types and text",
+    message = "`{Self}` is not ordered: the ordering operators are answered over the integer types, `f64` and text",
     label = "no ordering operator over this type",
-    note = "`Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u8` to `u128`, `i8` to `i128`, or a `String`"
+    note = "`Lt`, `Lte`, `Gt`, `Gte` and `Between` take `u8` to `u128`, `i8` to `i128`, an `f64` or a `String`; widen an `f32` to `f64`"
 )]
 pub trait Ordered:
     sealed::Sealed
@@ -389,7 +401,8 @@ pub trait Ordered:
 {
     /// Whether `lo..=hi` is an inverted range, in the order the server
     /// compares: the value's own order for an integer, the order key's for
-    /// text, so `("b", "A")` is inverted and `("A", "a")` is one value.
+    /// a float and for text, so `(0.0, -0.0)` and `("A", "a")` are one value,
+    /// `(NaN, 1.0)` and `("b", "A")` are inverted.
     ///
     /// # Errors
     ///
@@ -407,6 +420,17 @@ macro_rules! ordered {
     )+};
 }
 ordered!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128);
+
+impl sealed::Sealed for f64 {}
+impl Ordered for f64 {
+    fn inverted(lo: &Self, hi: &Self) -> Result<bool, TermError> {
+        let (lo, hi) = (
+            crate::sem::float_order_key(*lo)?,
+            crate::sem::float_order_key(*hi)?,
+        );
+        Ok(lo.as_slice() > hi.as_slice())
+    }
+}
 
 impl sealed::Sealed for String {}
 impl Ordered for String {

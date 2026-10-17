@@ -351,14 +351,13 @@ func TestAnIndexNoMethodQueriesGetsANotice(t *testing.T) {
 	notices := strings.Join(file.Notices, "\n")
 	for _, want := range []string{
 		"stashgen: User.Blob: stores ope terms that no generated method queries",
-		"stashgen: User.Score: stores ore terms that no generated method queries",
 		"stashgen: User.Age: stores ope terms that no generated method queries: the engine answers no query through the ope index on this field (int64): the ore index already answers",
 	} {
 		if !strings.Contains(notices, want) {
 			t.Errorf("notices lack %q:\n%s", want, notices)
 		}
 	}
-	for _, field := range []string{"User.Name", "User.Rank"} {
+	for _, field := range []string{"User.Name", "User.Rank", "User.Score"} {
 		if strings.Contains(notices, field) {
 			t.Errorf("an order index that answers the orderings got a notice (%s):\n%s", field, notices)
 		}
@@ -368,5 +367,8 @@ func TestAnIndexNoMethodQueriesGetsANotice(t *testing.T) {
 	}
 	if !strings.Contains(string(file.Content), "func (f NameField) Lt(") {
 		t.Errorf("a text field with ope has no Lt:\n%s", file.Content)
+	}
+	if !strings.Contains(string(file.Content), "func (f ScoreField) Between(") {
+		t.Errorf("a float field with ore has no Between:\n%s", file.Content)
 	}
 }

@@ -35,12 +35,13 @@
 //! A field with indexes answers what [`OpSpec::answered_by`] says for its
 //! declared kind: `eq` through an equality index, `matches` through a match
 //! index over text, and the orderings (`lt`, `lte`, `gt`, `gte`,
-//! `between`) through an ORE index over an integer or text, or an OPE index
-//! when the field declares no ORE. The typed path's default for an ordering
-//! is ORE, and OPE is the typed path's `.via(Ope)`; here a field that
-//! declares only OPE is answered through it. Text orders by its folded
-//! order key (ADR-0002). An ordering over bytes or a float is not answered,
-//! as `op::Ordered` covers the integers and text only.
+//! `between`) through an ORE index over an integer, a float or text, or an
+//! OPE index when the field declares no ORE. The typed path's default for
+//! an ordering is ORE, and OPE is the typed path's `.via(Ope)`; here a field
+//! that declares only OPE is answered through it. Every order term is
+//! derived over the value's ADR-0002 order key: a float's ties `-0.0` with
+//! `0.0` and sorts every NaN last, and text's is its fold. An ordering over
+//! bytes is not answered, as `op::Ordered` does not cover them.
 //!
 //! A field that names an EQL type answers what its
 //! [`TargetDescriptor::operators`] lists: the operators of a single value
@@ -163,6 +164,7 @@ impl OpSpec {
     /// let both = [IndexSpec::Ope, IndexSpec::Ore];
     /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::UInt32, &both), Some(&IndexSpec::Ore));
     /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::String, &both), Some(&IndexSpec::Ore));
+    /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::Float32, &both), Some(&IndexSpec::Ore));
     /// assert_eq!(OpSpec::Lt.answered_by(ValueKind::Bytes, &both), None);
     /// assert_eq!(OpSpec::Eq.answered_by(ValueKind::UInt32, &both), None);
     /// ```
@@ -190,9 +192,10 @@ impl fmt::Display for OpSpec {
     }
 }
 
-/// The kinds the ordering operators are answered over: the integers and
-/// text, as [`op::Ordered`](crate::op::Ordered) covers them in the typed
-/// path. Text orders by its order key (ADR-0002's fold).
+/// The kinds the ordering operators are answered over: the integers, the
+/// floats and text, as [`op::Ordered`](crate::op::Ordered) covers them in
+/// the typed path. Each orders by its ADR-0002 order key; a `float32` is
+/// ordered as the `f64` it widens to, as the typed path asks.
 fn ordered(kind: ValueKind) -> bool {
     matches!(
         kind,
@@ -200,6 +203,8 @@ fn ordered(kind: ValueKind) -> bool {
             | ValueKind::Int64
             | ValueKind::UInt32
             | ValueKind::UInt64
+            | ValueKind::Float32
+            | ValueKind::Float64
             | ValueKind::String
     )
 }
@@ -602,9 +607,17 @@ fn check_input(index: &IndexSpec, input: &Input) -> Result<(), Error> {
 }
 
 /// The order of a range's two bounds, as the server compares their terms:
-/// integers of one kind by value, text by its order key, so `("b", "A")` is
-/// inverted and `("A", "a")` is one value. `None` for anything else.
+/// integers of one kind by value, floats and text by their order keys, so
+/// `(0.0, -0.0)` and `("A", "a")` are one value and `(NaN, 1.0)` and
+/// `("b", "A")` are inverted. `None` for anything else.
 fn bound_order(lo: &FfiValue, hi: &FfiValue) -> Result<Option<Ordering>, TermError> {
+    if let (Some(lo), Some(hi)) = (float(lo), float(hi)) {
+        let (lo, hi) = (
+            crate::sem::float_order_key(lo)?,
+            crate::sem::float_order_key(hi)?,
+        );
+        return Ok(Some(lo.as_slice().cmp(hi.as_slice())));
+    }
     if let (FfiValue::String(lo), FfiValue::String(hi)) = (lo, hi) {
         let (Some(lo), Some(hi)) = (utf8(lo), utf8(hi)) else {
             return Ok(None);
@@ -616,6 +629,15 @@ fn bound_order(lo: &FfiValue, hi: &FfiValue) -> Result<Option<Ordering>, TermErr
         return Ok(Some(lo.as_slice().cmp(hi.as_slice())));
     }
     Ok(integer_order(lo, hi))
+}
+
+/// A float bound as the `f64` its order term is derived over.
+fn float(value: &FfiValue) -> Option<f64> {
+    match value {
+        FfiValue::Float32(v) => Some(f64::from(*v)),
+        FfiValue::Float64(v) => Some(*v),
+        _ => None,
+    }
 }
 
 /// The order of two integers of one kind, or `None` for anything else.
@@ -1066,6 +1088,8 @@ mod tests {
             field("score", "int64", vec![text("ope")]),
             field("nickname", "string", vec![text("c"), text("ore")]),
             field("handle", "string", vec![text("c"), case_sensitive]),
+            field("ratio", "float32", vec![text("c"), text("ore")]),
+            field("rating", "float64", vec![text("c"), text("ope")]),
         ]))
         .expect("the plan parses")
     }
@@ -1159,6 +1183,8 @@ mod tests {
                 ValueKind::Int64,
                 ValueKind::UInt32,
                 ValueKind::UInt64,
+                ValueKind::Float32,
+                ValueKind::Float64,
                 ValueKind::String,
             ] {
                 assert_eq!(
@@ -1177,11 +1203,11 @@ mod tests {
                     "{op} {kind}"
                 );
             }
-            for kind in [ValueKind::Bytes, ValueKind::Float64, ValueKind::Bool] {
+            for kind in [ValueKind::Bytes, ValueKind::Bool] {
                 assert_eq!(
                     answered(op, kind, &all),
                     None,
-                    "{op} is answered over integers and text only: {kind}"
+                    "{op} is not answered over {kind}"
                 );
             }
         }
@@ -1405,6 +1431,19 @@ mod tests {
             // Text bounds compare by their folded order keys: `A` folds
             // to `a`, which is below `b`.
             ("nickname", OpSpec::Between, texts("b", "A"), "inverted"),
+            // Float bounds compare by their order keys: NaN sorts last.
+            (
+                "ratio",
+                OpSpec::Between,
+                FfiValue::Array(vec![FfiValue::Float32(f32::NAN), FfiValue::Float32(1.0)]),
+                "inverted",
+            ),
+            (
+                "rating",
+                OpSpec::Between,
+                FfiValue::Array(vec![FfiValue::Float64(2.5), FfiValue::Float64(-0.5)]),
+                "inverted",
+            ),
             ("nickname", OpSpec::Lt, text("a\u{0378}"), "normalize"),
             (
                 "nickname",
@@ -1451,6 +1490,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(folded.operand, cafe.operand);
+
+        // A float32 orders as the f64 it widens to: `-0.0` ties `0.0`, so
+        // the range is one value, and the two are one term.
+        let floats = |lo, hi| FfiValue::Array(vec![FfiValue::Float32(lo), FfiValue::Float32(hi)]);
+        assert!(check_query(
+            &users(),
+            "ratio",
+            OpSpec::Between,
+            floats(0.0, -0.0),
+            &NoTargets
+        )
+        .is_ok());
+        let zero = query(&keyset, "ratio", OpSpec::Lt, FfiValue::Float32(0.0))
+            .await
+            .unwrap();
+        let negative_zero = query(&keyset, "ratio", OpSpec::Lt, FfiValue::Float32(-0.0))
+            .await
+            .unwrap();
+        assert_eq!(negative_zero.operand, zero.operand);
     }
 
     /// A plan whose context is a field of each record has no context a

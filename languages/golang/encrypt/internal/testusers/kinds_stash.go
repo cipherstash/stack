@@ -18,11 +18,6 @@ const _ = gensupport.GeneratedVersion1
 // Kinds prints its sealed fields in the clear: it has no String or LogValue
 // method. Write them, or run stashgen with -redact.
 
-// F64: stores ore terms that no generated method queries: the engine answers no
-// query through the ore index on this field (float64): the orderings are
-// answered over integers and text only. Drop the index unless your own code
-// compares the stored terms.
-
 type EncryptedKinds struct {
 	S   EncryptedKindsS
 	E   EncryptedKindsE
@@ -903,6 +898,31 @@ func (f KindsF64Field) Encrypt(ctx context.Context, c *encrypt.Cipher, v float64
 		return EncryptedKindsF64{}, err
 	}
 	return EncryptedKindsF64{Ciphertext: out.Ciphertext, Ore: out.Ore}, nil
+}
+
+func (f KindsF64Field) Lt(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f KindsF64Field) Lte(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f KindsF64Field) Gt(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f KindsF64Field) Gte(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f KindsF64Field) Between(ctx context.Context, c *encrypt.Cipher, lo, hi float64) (encrypt.Range[encrypt.OreTerm], error) {
+	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
 }
 
 type KindsByField struct {

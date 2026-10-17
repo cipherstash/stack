@@ -576,9 +576,11 @@ ciphertexts, once block ORE lands), inclusive at both ends, and the client
 refuses `lo > hi` (`TermError::InvertedRange`) before either term is
 derived; `(v, v)` is one value. One call derives both bounds, under one
 context, so a caller cannot pair a bound from one column with a bound from
-another. The ordering operators are answered over the integer types and
-text (`op::Ordered`), by the ORE index by default and by OPE through
-`.via(Ope)`.
+another. The ordering operators are answered over the integer types, `f64`
+and text (`op::Ordered`), by the ORE index by default and by OPE through
+`.via(Ope)`. Each term is derived over the value's ADR-0002 order key, so a
+float orders as Postgres's `float8` does (`-0.0` ties `0.0`, NaN sorts
+last), and an `f32` is ordered as the `f64` it widens to.
 
 In SQL the term stays one operand. EQL v4 gains a function that takes the
 column and the range, and a range query domain beside each ordered query

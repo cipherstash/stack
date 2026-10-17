@@ -20,6 +20,7 @@ type EncryptedQueryProfile struct {
 	Email EncryptedQueryProfileEmail
 	Age   EncryptedQueryProfileAge
 	Name  EncryptedQueryProfileName
+	Score EncryptedQueryProfileScore
 }
 
 type EncryptedQueryProfileEmail struct {
@@ -38,12 +39,17 @@ type EncryptedQueryProfileName struct {
 	Match      encrypt.MatchTerm
 }
 
+type EncryptedQueryProfileScore struct {
+	Ciphertext encrypt.Ciphertext
+	Ore        encrypt.OreTerm
+}
+
 func (e EncryptedQueryProfile) String() string {
-	return gensupport.Redacted("EncryptedQueryProfile", nil, "Email", "Age", "Name")
+	return gensupport.Redacted("EncryptedQueryProfile", nil, "Email", "Age", "Name", "Score")
 }
 
 func (e EncryptedQueryProfile) LogValue() slog.Value {
-	return gensupport.RedactedLog(nil, "Email", "Age", "Name")
+	return gensupport.RedactedLog(nil, "Email", "Age", "Name", "Score")
 }
 
 // Stops compiling when QueryProfile gains, loses, reorders or retypes a field.
@@ -54,12 +60,14 @@ type queryProfileShape struct {
 	Email string
 	Age   uint32
 	Name  string
+	Score float64
 }
 
 var queryProfileDeclaration = gensupport.Declare("users").
 	EncryptIndex("email", gensupport.String, encrypt.Equality).
 	EncryptIndex("age", gensupport.Uint32, encrypt.Equality, encrypt.Ore).
-	EncryptIndex("name", gensupport.String, encrypt.Match())
+	EncryptIndex("name", gensupport.String, encrypt.Match()).
+	EncryptIndex("score", gensupport.Float64, encrypt.Ore)
 
 var queryProfileCodec = gensupport.New(gensupport.Generated[QueryProfile, EncryptedQueryProfile]{
 	TypeName:        "QueryProfile",
@@ -70,6 +78,7 @@ var queryProfileCodec = gensupport.New(gensupport.Generated[QueryProfile, Encryp
 			"email": v.Email,
 			"age":   v.Age,
 			"name":  v.Name,
+			"score": v.Score,
 		}
 	},
 	Seal: func(rec gensupport.Record) (EncryptedQueryProfile, error) {
@@ -87,6 +96,10 @@ var queryProfileCodec = gensupport.New(gensupport.Generated[QueryProfile, Encryp
 			Ciphertext: rec["name"].Ciphertext,
 			Match:      rec["name"].Match,
 		}
+		e.Score = EncryptedQueryProfileScore{
+			Ciphertext: rec["score"].Ciphertext,
+			Ore:        rec["score"].Ore,
+		}
 		return e, nil
 	},
 	Open: func(e EncryptedQueryProfile) gensupport.Record {
@@ -94,6 +107,7 @@ var queryProfileCodec = gensupport.New(gensupport.Generated[QueryProfile, Encryp
 			"email": {Ciphertext: e.Email.Ciphertext, Equality: e.Email.Equality},
 			"age":   {Ciphertext: e.Age.Ciphertext, Equality: e.Age.Equality, Ore: e.Age.Ore},
 			"name":  {Ciphertext: e.Name.Ciphertext, Match: e.Name.Match},
+			"score": {Ciphertext: e.Score.Ciphertext, Ore: e.Score.Ore},
 		}
 	},
 	Value: func(e EncryptedQueryProfile, vals gensupport.Values) (QueryProfile, error) {
@@ -106,6 +120,9 @@ var queryProfileCodec = gensupport.New(gensupport.Generated[QueryProfile, Encryp
 			return QueryProfile{}, err
 		}
 		if v.Name, err = gensupport.Get[string](vals, "name"); err != nil {
+			return QueryProfile{}, err
+		}
+		if v.Score, err = gensupport.Get[float64](vals, "score"); err != nil {
 			return QueryProfile{}, err
 		}
 		return v, nil
@@ -129,10 +146,12 @@ var QueryProfileFields = struct {
 	Email QueryProfileEmailField
 	Age   QueryProfileAgeField
 	Name  QueryProfileNameField
+	Score QueryProfileScoreField
 }{
 	Email: QueryProfileEmailField{gensupport.NewField[string](queryProfileDeclaration, "email")},
 	Age:   QueryProfileAgeField{gensupport.NewField[uint32](queryProfileDeclaration, "age")},
 	Name:  QueryProfileNameField{gensupport.NewField[string](queryProfileDeclaration, "name")},
+	Score: QueryProfileScoreField{gensupport.NewField[float64](queryProfileDeclaration, "score")},
 }
 
 type QueryProfileEmailField struct {
@@ -210,4 +229,41 @@ func (f QueryProfileNameField) Encrypt(ctx context.Context, c *encrypt.Cipher, v
 // match: decrypt the rows it fetches and keep those Verify reports true.
 func (f QueryProfileNameField) Matches(ctx context.Context, c *encrypt.Cipher, v string) (encrypt.MatchQuery[string], error) {
 	return gensupport.Matches(ctx, f.field, c, v)
+}
+
+type QueryProfileScoreField struct {
+	field gensupport.Field[float64]
+}
+
+func (f QueryProfileScoreField) Encrypt(ctx context.Context, c *encrypt.Cipher, v float64) (EncryptedQueryProfileScore, error) {
+	out, err := f.field.Encrypt(ctx, c, v)
+	if err != nil {
+		return EncryptedQueryProfileScore{}, err
+	}
+	return EncryptedQueryProfileScore{Ciphertext: out.Ciphertext, Ore: out.Ore}, nil
+}
+
+func (f QueryProfileScoreField) Lt(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f QueryProfileScoreField) Lte(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "lte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f QueryProfileScoreField) Gt(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gt", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f QueryProfileScoreField) Gte(ctx context.Context, c *encrypt.Cipher, v float64) (encrypt.OreTerm, error) {
+	term, err := f.field.Term(ctx, c, "gte", v)
+	return encrypt.OreTerm(term), err
+}
+
+func (f QueryProfileScoreField) Between(ctx context.Context, c *encrypt.Cipher, lo, hi float64) (encrypt.Range[encrypt.OreTerm], error) {
+	low, high, err := f.field.Range(ctx, c, "between", lo, hi)
+	return encrypt.Range[encrypt.OreTerm]{Low: low, High: high}, err
 }
