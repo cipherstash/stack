@@ -14,7 +14,7 @@
 //! the canonical encoding of a context (typed leaves, one encoding for the
 //! AEAD and the PRF), so the bytes under every label changed while the
 //! labels and framing here did not. That was a prerelease wire break, taken
-//! deliberately (CIP-4036); the `/v1` suffixes stayed because nothing of
+//! deliberately; the `/v1` suffixes stayed because nothing of
 //! this crate's own moved.
 //!
 //! The equality and match pins moved again with the labels, to `/v2`, when
