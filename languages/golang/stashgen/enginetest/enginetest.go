@@ -69,25 +69,10 @@ func sealsAs(t stashgen.GoType) string {
 	return t.Basic
 }
 
-// widths are the integer widths, signed and unsigned, for the widening
-// rule of an EQL integer type (ADR-0002).
-var widths = map[string]struct {
-	signed bool
-	bits   int
-}{
-	"int8": {true, 8}, "int16": {true, 16}, "int32": {true, 32}, "int64": {true, 64}, "int128": {true, 128},
-	"uint8": {false, 8}, "uint16": {false, 16}, "uint32": {false, 32}, "uint64": {false, 64}, "uint128": {false, 128},
-}
-
-// fits reports whether every value of a Go integer that seals as from fits
-// the integer kind to.
-func fits(from, to string) bool {
-	f, okFrom := widths[from]
-	t, okTo := widths[to]
-	if !okFrom || !okTo {
-		return false
-	}
-	return (f.signed == t.signed && t.bits >= f.bits) || (!f.signed && t.signed && t.bits > f.bits)
+// widths are the integer kinds, for an EQL integer type.
+var widths = map[string]bool{
+	"int8": true, "int16": true, "int32": true, "int64": true, "int128": true,
+	"uint8": true, "uint16": true, "uint32": true, "uint64": true, "uint128": true,
 }
 
 // Check applies the engine's rules as they stand today, then its table of
@@ -124,11 +109,10 @@ func (e Static) check(ctx context.Context, d stashgen.Declaration) error {
 			t := eqlTypes[found]
 			_, integerType := widths[t.seals]
 			switch {
-			case integerType && integer(f.GoType):
-				// ADR-0002: any integer whose every value fits.
-				if !fits(sealsAs(f.GoType), t.seals) {
-					return &stashgen.FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals %s, and not every %s fits it", f.EQLType, t.seals, f.GoType)}
-				}
+			case integerType && (f.GoType.Kind == stashgen.KindInt || f.GoType.Kind == stashgen.KindUint):
+				// ADR-0002: any built-in integer, range checked on the host.
+			case integerType && integer(f.GoType) && sealsAs(f.GoType) != t.seals:
+				return &stashgen.FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals %s, and an %s is not converted to it", f.EQLType, t.seals, f.GoType)}
 			case t.Plaintext != f.GoType.Kind:
 				return &stashgen.FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals a %s, and %s is %s", f.EQLType, t.Plaintext, f.GoType, f.GoType.Kind)}
 			case t.seals != "" && sealsAs(f.GoType) != t.seals:

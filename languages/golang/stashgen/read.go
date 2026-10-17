@@ -44,8 +44,8 @@ type genFile struct {
 	codecVar        string // "codec"
 	fieldsVar       string // "Fields"
 	fieldTypePrefix string // "" or the -name
-	// The kind each EncryptInto field of a narrower integer type seals as:
-	// the EQL type's own kind, which gensupport widens the value to.
+	// The kind each EncryptInto field of another integer width seals as:
+	// the EQL type's own kind, which gensupport converts the value to.
 	intoKinds map[string]record.Kind
 	encryptFn string
 	decryptFn string
@@ -720,7 +720,7 @@ func (r *reader) buildFields(c *collected) error {
 				}
 				return fieldErr(typeName, cf.goName, "the engine cannot produce the EQL type %s yet: %s", field.EQLType, reason)
 			}
-			if wire, fits := intoKind(g.GoType, eqlType.wire); fits && wire != wireKind(g.GoType) {
+			if wire, ok := intoKind(g.GoType, eqlType.wire); ok && wire != wireKind(g.GoType) {
 				if f.intoKinds == nil {
 					f.intoKinds = map[string]record.Kind{}
 				}

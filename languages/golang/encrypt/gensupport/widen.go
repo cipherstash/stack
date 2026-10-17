@@ -12,13 +12,13 @@ import (
 
 // asKind is a sealed field's value as the Go type of its declared kind, the
 // width the engine seals it at. A field's kind is its Go type's own unless the
-// field is stored as an EQL type of a wider integer kind (an int16 stored as
-// Integer is sealed as an int32, ADR-0002): then the value is converted here,
-// on the host, because nothing below the binding converts. Only an integer
-// changes; every other value, and an integer already of its kind's width,
-// crosses as it is. A value outside the kind's range is an error, which
-// stashgen's rule (every value of the Go type fits the kind) keeps generated
-// code from meeting.
+// field is stored as an EQL type of another integer kind (an int16 stored as
+// Integer is sealed as an int32, and so is an int64, ADR-0002): then the value
+// is converted here, on the host, because nothing below the binding converts.
+// Only an integer changes; every other value, and an integer already of its
+// kind's width, crosses as it is. A value outside the kind's range is refused
+// with encrypt.ErrEncoding: a Go type wider than the kind is accepted by
+// stashgen and range checked here, value by value.
 //
 // The error names the kind and not the value, which is plaintext.
 func asKind(kind Kind, v any) (any, error) {

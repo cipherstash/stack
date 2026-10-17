@@ -394,3 +394,47 @@ func check(err error, ok bool) error {
 	}
 	return nil
 }
+
+// A value sealed at an EQL integer type's kind is converted to it on the
+// host: any Go integer of a value that fits, from a narrower type or a wider
+// one, and a value that does not fit is refused with ErrEncoding, naming the
+// kind and not the value (ADR-0002).
+func TestAsKindConvertsAnIntegerThatFitsAndRefusesOneThatDoesNot(t *testing.T) {
+	for _, c := range []struct {
+		kind Kind
+		in   any
+		want any
+	}{
+		{Int32, int8(-7), int32(-7)},
+		{Int32, uint16(65535), int32(65535)},
+		{Int32, int64(math.MaxInt32), int32(math.MaxInt32)},
+		{Int32, int(math.MinInt32), int32(math.MinInt32)},
+		{Int64, uint32(math.MaxUint32), int64(math.MaxUint32)},
+		{Int64, uint64(math.MaxInt64), int64(math.MaxInt64)},
+		{Int8, int8(3), int8(3)},
+		{String, "s", "s"},
+	} {
+		got, err := asKind(c.kind, c.in)
+		if err != nil || got != c.want {
+			t.Errorf("asKind(%s, %T) = %v (%T), %v; want %v (%T)", c.kind, c.in, got, got, err, c.want, c.want)
+		}
+	}
+	for _, c := range []struct {
+		kind Kind
+		in   any
+	}{
+		{Int32, int64(math.MaxInt32) + 1},
+		{Int32, int(math.MinInt32) - 1},
+		{Int32, uint32(math.MaxUint32)},
+		{Int64, uint64(math.MaxInt64) + 1},
+		{Uint8, int8(-1)},
+	} {
+		_, err := asKind(c.kind, c.in)
+		if !errors.Is(err, encrypt.ErrEncoding) {
+			t.Errorf("asKind(%s, %T out of range) = %v, want ErrEncoding", c.kind, c.in, err)
+		}
+		if err != nil && strings.Contains(err.Error(), fmt.Sprint(c.in)) {
+			t.Errorf("asKind's error names the value: %v", err)
+		}
+	}
+}

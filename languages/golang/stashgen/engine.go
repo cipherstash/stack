@@ -213,13 +213,14 @@ func lowerDeclaration(d Declaration, eqlTypes []EQLType) (*record.Plan, error) {
 				// holds no copy of why a type waits.
 				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("the engine cannot produce the EQL type %s yet: %s", f.EQLType, eqlType.Reason)}
 			}
-			// An integer EQL type takes any Go integer type whose every
-			// value fits its kind (ADR-0002): the field is sealed at the
-			// type's kind, and gensupport converts the value.
-			if wire, fits := intoKind(f.GoType, eqlType.wire); fits {
+			// An integer EQL type takes any built-in Go integer type
+			// (ADR-0002): the field is sealed at the type's kind, and
+			// gensupport converts the value, refusing one that does not
+			// fit.
+			if wire, ok := intoKind(f.GoType, eqlType.wire); ok {
 				rf.Kind = wire
-			} else if _, _, integer := integerRange(eqlType.wire); integer && (f.GoType.Kind == KindInt || f.GoType.Kind == KindUint || f.GoType.Kind == KindInt128 || f.GoType.Kind == KindUint128) {
-				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals %s, and not every %s fits it", f.EQLType, eqlType.wire, f.GoType)}
+			} else if _, _, integer := integerRange(eqlType.wire); integer && wireKind(f.GoType) != eqlType.wire && (f.GoType.Kind == KindInt128 || f.GoType.Kind == KindUint128) {
+				return nil, &FieldError{Type: d.Type, Field: f.GoName, Reason: fmt.Sprintf("%s seals %s, and an %s is not converted to it", f.EQLType, eqlType.wire, f.GoType)}
 			} else {
 				// The engine checks the kind too (se_plan_check refuses a
 				// "type" other than the EQL type's plaintext); saying it
@@ -385,19 +386,20 @@ func integerRange(k record.Kind) (signed bool, bits int, ok bool) {
 }
 
 // intoKind is the kind a field of Go type t is sealed as when it is stored
-// as an EQL type whose plaintext is the integer kind target: target itself
-// when every value of t fits it (ADR-0002: an int8 into a smallint, an int32
-// into a bigint, a uint16 into an integer), so the generated declaration names
-// target and gensupport converts the value; false when t is not an integer or
-// some of its values do not fit.
+// as an EQL type whose plaintext is the integer kind target (ADR-0002): target
+// itself, for any built-in Go integer type, so the generated declaration
+// names target and gensupport converts the value. A type every value of which
+// fits (an int8 into a smallint, an int32 into a bigint, a uint16 into an
+// integer) always converts; a wider one (an int64 into an integer) is range
+// checked when a value is sealed, and a value that does not fit is refused
+// with encrypt.ErrEncoding. False when t is not a built-in integer: an
+// encrypt.Int128 or Uint128 has no conversion to a narrower kind.
 func intoKind(t GoType, target record.Kind) (record.Kind, bool) {
-	fromSigned, fromBits, fromInt := integerRange(wireKind(t))
-	toSigned, toBits, toInt := integerRange(target)
-	if !fromInt || !toInt {
+	_, _, toInt := integerRange(target)
+	if !toInt || (t.Kind != KindInt && t.Kind != KindUint) {
 		return record.Untyped, false
 	}
-	fits := (fromSigned == toSigned && toBits >= fromBits) || (!fromSigned && toSigned && toBits > fromBits)
-	return target, fits
+	return target, true
 }
 
 func kindWord(k record.Kind) string {

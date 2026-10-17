@@ -81,7 +81,7 @@ func TestRefusals(t *testing.T) {
 		{"a _ field with no context", user("\t_ struct{}\n\tEmail string `stash:\"email,encrypt\"`"), stashgen.Request{Type: "User"}, "_", "carries the context tag"},
 		{"an index that does not apply to the field type", user(ctx + "\tAge int32 `stash:\"age,encrypt,index=match\"`"), stashgen.Request{Type: "User"}, "Age", "match applies to a string, not to int32"},
 		{"an EQL type that does not apply to the field type", user(ctx + "\tAge int64 `stash:\"age,encrypt_into=TextEq\"`"), stashgen.Request{Type: "User"}, "Age", "TextEq seals a string, and int64 is int"},
-		{"an integer an EQL type cannot hold", user(ctx + "\tAge int64 `stash:\"age,encrypt_into=Integer\"`"), stashgen.Request{Type: "User"}, "Age", "Integer seals int32, and not every int64 fits it"},
+		{"a 128-bit integer into a narrower EQL type", user(ctx + "\tAge encrypt.Int128 `stash:\"age,encrypt_into=Integer\"`"), stashgen.Request{Type: "User"}, "Age", "Integer seals int32, and an encrypt.Int128 is not converted to it"},
 		{"a float of another width", user(ctx + "\tScore float64 `stash:\"score,encrypt_into=Real\"`"), stashgen.Request{Type: "User"}, "Score", "Real seals float32, and float64 seals as float64"},
 		{"a field type the engine cannot seal", user(ctx + "\tDone chan int `stash:\"done,encrypt\"`"), stashgen.Request{Type: "User"}, "Done", "seals only as part of an opaque struct"},
 		{"a composite sealed outside an opaque struct", user(ctx + "\tAt time.Location `stash:\"at,encrypt\"`"), stashgen.Request{Type: "User"}, "At", "a time.Location seals only as part of an opaque struct"},
