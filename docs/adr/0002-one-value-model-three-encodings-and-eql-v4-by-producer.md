@@ -166,7 +166,7 @@ bundle (see Consequences). Chosen.
   | `0x0E`, `0x0F` | `Int16`, `UInt16` | 2 bytes, little-endian; two's complement for `Int16` |
   | `0x10`, `0x11` | `Int128`, `UInt128` | 16 bytes, little-endian; two's complement for `Int128` |
   | `0x12` | `Date` | `i32`, little-endian: the day number in the proleptic Gregorian calendar with **0001-01-01 as day 1** (chrono's `num_days_from_ce`). 0001-01-01 is `01 00 00 00`, not zero |
-  | `0x13` | `Timestamp` | `i64` Unix seconds, then `u32` nanoseconds, both little-endian, UTC. Nanoseconds are below 1,000,000,000, except at a leap second (seconds modulo 60 is 59), where they may go up to 1,999,999,999 (chrono's representation). Anything else is refused |
+  | `0x13` | `Timestamp` | `i64` Unix seconds, then `u32` nanoseconds, both little-endian, UTC. Nanoseconds are below 1,000,000,000. *Amended 2026-10-18 (#1144):* vitaminc 0.6 refuses a leap second: nanoseconds of 1,000,000,000 or more (chrono's leap-second representation, which the pre-ADR-0001 `Value` codec accepted when the seconds modulo 60 were 59) are refused, because a leap second has no count in any unit. The instant must also lie within chrono's `NaiveDateTime` range (vitaminc's `MIN_TIMESTAMP_NANOS` to `MAX_TIMESTAMP_NANOS`, years -262143 to 262142). Anything else is refused |
   | `0x14` | `Decimal` | 16 bytes: a little-endian `u32` of flags (sign in bit 31, scale in bits 16–23 and at most 28, every other bit zero), then the low, middle and high little-endian `u32` words of the 96-bit mantissa. This is rust_decimal's `serialize()` and keeps the scale. There is no NaN or infinity |
 
 - `transport` stays a module of `vitaminc-aead-value`.
@@ -351,6 +351,13 @@ without loss, and refuses it otherwise.
   `uint8` and `uint16` get their own kinds when a target names them; no
   target does yet, so today they reach `Int16`, `Int32` or `Int64` through
   the fits-losslessly rule.
+  *Amended 2026-10-18 (#1144):* a field with no EQL target (`encrypt`,
+  `index=`) has no target to pick a kind from, so Go picks it from the Go
+  type: each integer type is its own kind (`int8` is `Int8`, `int16`
+  `Int16`, `uint8` `UInt8`, `uint16` `UInt16`, `int` and `int64` `Int64`,
+  `uint` and `uint64` `UInt64`), and its order terms are that width's. A
+  field stored as an EQL target still takes the target's kind, by the rule
+  above.
   `Int128` and `Uint128` are SDK value types. `time.Time` means `Timestamp`,
   and `encrypt.Date{Year, Month, Day}` is a date. A field whose target is a
   date family also accepts `time.Time` and takes its calendar day **in the
