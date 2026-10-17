@@ -18,9 +18,19 @@ use eql_bindings::v3::terms::Ciphertext;
 use eql_bindings::v4::{bigint, boolean, double, integer, real, text};
 use eql_bindings::Identifier;
 use serde::{de::DeserializeOwned, Serialize};
-use stack_encrypt::dynamic::{FfiValue, ValueKind};
+use stack_encrypt::dynamic::{FfiValue, ValueFrame, ValueKind};
 use stack_encrypt::target::transcode::{Reader, Visitor};
 use stack_encrypt::{CipherText, Label, NonEmpty};
+
+/// A value as the engine's runtime plaintext: its frame.
+fn frame(value: FfiValue) -> ValueFrame {
+    ValueFrame::of(&value).unwrap()
+}
+
+/// An opened frame read back as a value to compare.
+fn tree(value: ValueFrame) -> FfiValue {
+    FfiValue::from_frame(value.risky_ref()).unwrap()
+}
 
 fn column() -> NonEmpty<Identifier> {
     Identifier::for_column("users", "age").unwrap()
@@ -95,7 +105,7 @@ async fn by_name<T: DeserializeOwned>(
     name: &str,
     value: FfiValue,
 ) -> T {
-    let bytes = targets::encrypt(name, keyset, &label(), value)
+    let bytes = targets::encrypt(name, keyset, &label(), frame(value))
         .unwrap()
         .await
         .unwrap();
@@ -157,7 +167,7 @@ async fn integers_round_trip_and_seal_the_value_enum_leaf() {
         .unwrap()
         .await
         .unwrap();
-        assert!(matches!(opened, FfiValue::Int32(v) if v == value));
+        assert!(matches!(tree(opened), FfiValue::Int32(v) if v == value));
     }
 
     for value in [0i64, -1, i64::MIN, i64::MAX] {
@@ -183,7 +193,7 @@ async fn eq_terms(
     value: FfiValue,
 ) -> (serde_json::Value, serde_json::Value) {
     let stored: serde_json::Value = by_name(keyset, name, value.clone()).await;
-    let query = targets::query(name, keyset, &label(), value)
+    let query = targets::query(name, keyset, &label(), frame(value))
         .unwrap()
         .await
         .unwrap();
@@ -386,7 +396,7 @@ async fn every_producible_type_dispatches_by_name() {
         let kind = target
             .plaintext_kind()
             .expect("a producible type names its kind");
-        let stored = targets::encrypt(name, &keyset, &label(), sample(kind))
+        let stored = targets::encrypt(name, &keyset, &label(), frame(sample(kind)))
             .unwrap()
             .await
             .unwrap();
@@ -396,18 +406,21 @@ async fn every_producible_type_dispatches_by_name() {
             .unwrap()
             .await
             .unwrap();
-        assert!(same(&opened, &sample(kind)), "{name}: opened another value");
+        assert!(
+            same(&tree(opened), &sample(kind)),
+            "{name}: opened another value"
+        );
 
         match target.query {
             None => {
-                let error = refused(targets::query(name, &keyset, &label(), sample(kind)));
+                let error = refused(targets::query(name, &keyset, &label(), frame(sample(kind))));
                 assert!(
                     matches!(error, TargetError::NoQuery { .. }),
                     "{name}: {error}"
                 );
             }
             Some(_) => {
-                let query = targets::query(name, &keyset, &label(), sample(kind))
+                let query = targets::query(name, &keyset, &label(), frame(sample(kind)))
                     .unwrap()
                     .await
                     .unwrap();
@@ -447,7 +460,7 @@ async fn storage_only_text_round_trips_through_both_entry_points() {
         "Text",
         &keyset,
         &label(),
-        FfiValue::String("note".into()),
+        frame(FfiValue::String("note".into())),
     ));
     assert!(
         matches!(error, TargetError::NoQuery { name: "Text" }),
@@ -553,7 +566,7 @@ async fn a_value_of_another_kind_is_refused_not_converted() {
         ("Real", FfiValue::Float64(1.0), ValueKind::Float32),
         ("Text", FfiValue::Int32(1), ValueKind::String),
     ] {
-        let error = refused(targets::encrypt(name, &keyset, &label(), value));
+        let error = refused(targets::encrypt(name, &keyset, &label(), frame(value)));
         assert!(
             matches!(error, TargetError::Plaintext { target, expected: e, .. } if target == name && e == expected),
             "{name}: {error}"
@@ -945,7 +958,7 @@ async fn the_v4_query_fixture_is_what_the_dispatch_derives() {
         let keyset = &keyset;
         async move {
             let label = Label::new(["profiles", column]).unwrap();
-            let bytes = targets::query(name, keyset, &label, value)
+            let bytes = targets::query(name, keyset, &label, frame(value))
                 .unwrap()
                 .await
                 .unwrap();

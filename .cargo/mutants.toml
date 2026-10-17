@@ -85,6 +85,9 @@ exclude_re = [
   # the empty list (`dynamic::target::NoTargets`), which a test asserts on
   # and `resolve` turns into `TargetError::NoTargets`; `vec![]` is the body.
   'stack-encrypt/src/dynamic/target\.rs:\d+:\d+: replace <impl TargetResolver for NoTargets>::targets -> Vec<TargetDescriptor> with vec!\[\]$',
+  # A passthrough has no kind: `KindOf::passthrough` returns `Ok(None)`,
+  # which is `Ok(Default::default())`. `a_frame_names_its_kind` asserts it.
+  'stack-encrypt/src/dynamic/value_frame\.rs:\d+:\d+: replace <impl Sink for KindOf>::passthrough -> Result<Self::Ok, DecodeError> with Ok\(Default::default\(\)\)$',
 ]
 
 # Headroom over the measured baseline before a slow-but-correct mutant is

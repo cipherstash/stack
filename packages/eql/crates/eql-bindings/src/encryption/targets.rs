@@ -84,11 +84,12 @@
 use std::fmt;
 
 use serde::{de::DeserializeOwned, Serialize};
-use stack_encrypt::dynamic::{FfiValue, ValueKind};
+use stack_encrypt::dynamic::{ValueFrame, ValueKind};
 use stack_encrypt::kms::MaybeSend;
 use stack_encrypt::target::ExpectedContext;
 use stack_encrypt::{
-    DecryptInto, EncryptFrom, Error, KeysetCipher, Label, NonEmpty, Pending, StackCipher,
+    Decrypt, DecryptInto, Encrypt, EncryptFrom, Error, KeysetCipher, Label, NonEmpty, Pending,
+    StackCipher,
 };
 
 use super::plaintext;
@@ -308,7 +309,7 @@ pub fn encrypt<'a, K: 'static>(
     name: &str,
     keyset: &'a KeysetCipher<'_, K>,
     context: &Label,
-    plaintext: FfiValue,
+    plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     producible(name)?;
     let column = Identifier::from_label(context)?;
@@ -330,7 +331,7 @@ pub fn decrypt<'a, K: 'static>(
     opener: impl Into<Opener<'a, K>>,
     context: &Label,
     stored: &[u8],
-) -> Result<Pending<'a, FfiValue, K>, TargetError> {
+) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
     producible(name)?;
     let column = Identifier::from_label(context)?;
     decrypt_named(name, opener.into(), column, stored)
@@ -347,7 +348,7 @@ pub fn query<'a, K: 'static>(
     name: &str,
     keyset: &'a KeysetCipher<'_, K>,
     context: &Label,
-    plaintext: FfiValue,
+    plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
     producible(name)?;
     if let Some(error) = no_query(target(name)) {
@@ -414,44 +415,58 @@ mod sealed {
 }
 
 /// A Rust plaintext an EQL type is produced from, read out of and written
-/// back into the runtime value. Sealed: the implementations are exactly the
-/// plaintext types the catalog's producible families name, and the generated
-/// dispatch picks one per type. `Zeroize`, because [`from_value`](Self::from_value)
-/// copies the plaintext out of the runtime value's `Protected` buffer and
-/// the copy is wiped when it is dropped (`run_target` holds it in
-/// [`zeroize::Zeroizing`]), as the original is.
-pub trait Plaintext: sealed::Sealed + Sized + MaybeSend + zeroize::Zeroize + 'static {
+/// back into the engine's runtime plaintext, a [`ValueFrame`]. Sealed: the
+/// implementations are exactly the plaintext types the catalog's producible
+/// families name, and the generated dispatch picks one per type.
+/// `Zeroize`, because [`from_frame`](Self::from_frame) copies the plaintext
+/// out of the frame's `Protected` buffer and the copy is wiped when it is
+/// dropped (`run_target` holds it in [`zeroize::Zeroizing`]), as the frame
+/// is.
+pub trait Plaintext:
+    sealed::Sealed + Decrypt + Sized + MaybeSend + zeroize::Zeroize + 'static
+{
     /// The kind of value this plaintext is.
     const KIND: ValueKind;
-    /// Read the value as this plaintext, refusing any other kind.
-    fn from_value(target: &'static str, value: FfiValue) -> Result<Self, TargetError>;
-    /// The opened plaintext, as the runtime value.
-    fn into_value(self) -> FfiValue;
+
+    /// Read the value as this plaintext, refusing any other kind: the frame
+    /// is walked into this type's own decrypt sink once its kind is checked,
+    /// so nothing is narrowed or widened.
+    fn from_frame(target: &'static str, value: &ValueFrame) -> Result<Self, TargetError> {
+        let refused = || TargetError::Plaintext {
+            target,
+            expected: Self::KIND,
+            found: value.kind(),
+        };
+        if value.kind() != Some(Self::KIND) {
+            return Err(refused());
+        }
+        value.visit(Self::sink()).map_err(|_| refused())
+    }
+
+    /// The opened plaintext, as the engine's runtime plaintext.
+    ///
+    /// # Errors
+    ///
+    /// None for the plaintexts here, every one of which is in the engine's
+    /// value model; the `Result` is the frame writer's.
+    fn into_frame(self) -> Result<ValueFrame, Error>;
+}
+
+/// The frame of a plaintext, or the error a value vitaminc cannot write is.
+fn frame_of(value: impl Encrypt) -> Result<ValueFrame, Error> {
+    ValueFrame::of(value).map_err(|error| Error::Other(Box::new(error)))
 }
 
 impl Plaintext for String {
     const KIND: ValueKind = ValueKind::String;
 
-    fn from_value(target: &'static str, value: FfiValue) -> Result<Self, TargetError> {
-        let refused = |found| TargetError::Plaintext {
-            target,
-            expected: Self::KIND,
-            found,
-        };
-        match value {
-            // The bytes are UTF-8 by `Utf8String`'s construction invariant;
-            // checked rather than assumed because this is boundary code. One
-            // that fails the check is a string in name only, so it is
-            // reported as the bytes it is.
-            FfiValue::String(text) => std::str::from_utf8(text.risky_ref())
-                .map(str::to_owned)
-                .map_err(|_| refused(Some(ValueKind::Bytes))),
-            other => Err(refused(other.kind())),
-        }
-    }
-
-    fn into_value(self) -> FfiValue {
-        FfiValue::String(self.into())
+    /// The frame is written from the opened text, which is wiped when this
+    /// returns: the frame writer copies the text into its own `Protected`
+    /// buffer, and the opened `String` would otherwise go back to the
+    /// allocator with the plaintext still in it.
+    fn into_frame(self) -> Result<ValueFrame, Error> {
+        let text = zeroize::Zeroizing::new(self);
+        frame_of(text.as_str())
     }
 }
 
@@ -463,19 +478,8 @@ macro_rules! scalar_plaintext {
         impl Plaintext for plaintext::$ty {
             const KIND: ValueKind = ValueKind::$variant;
 
-            fn from_value(target: &'static str, value: FfiValue) -> Result<Self, TargetError> {
-                match value {
-                    FfiValue::$variant(v) => Ok(plaintext::$ty(v)),
-                    other => Err(TargetError::Plaintext {
-                        target,
-                        expected: Self::KIND,
-                        found: other.kind(),
-                    }),
-                }
-            }
-
-            fn into_value(self) -> FfiValue {
-                FfiValue::$variant(self.0)
+            fn into_frame(self) -> Result<ValueFrame, Error> {
+                frame_of(self.0)
             }
         }
     )+};
@@ -496,7 +500,7 @@ pub(crate) fn run_target<'a, T, S, K>(
     name: &'static str,
     keyset: &'a KeysetCipher<'_, K>,
     column: NonEmpty<Identifier>,
-    plaintext: FfiValue,
+    plaintext: ValueFrame,
 ) -> Result<Pending<'a, Vec<u8>, K>, TargetError>
 where
     T: EncryptFrom<S, Context = NonEmpty<Identifier>> + Serialize,
@@ -504,9 +508,9 @@ where
     K: 'static,
 {
     // The copy lives only until `encrypt_as` has cloned what it seals, and
-    // is wiped when this returns: the runtime value kept its bytes in
-    // `Protected`, and the copy is held to the same rule.
-    let plaintext = zeroize::Zeroizing::new(S::from_value(name, plaintext)?);
+    // is wiped when this returns: the frame kept its bytes in `Protected`,
+    // and the copy is held to the same rule.
+    let plaintext = zeroize::Zeroizing::new(S::from_frame(name, &plaintext)?);
     Ok(keyset
         .encrypt_as::<S, T>(&plaintext, column)
         .try_map(|value| serde_json::to_vec(&value).map_err(|error| Error::Other(Box::new(error)))))
@@ -519,7 +523,7 @@ pub(crate) fn open_target<'a, T, S, K>(
     opener: Opener<'a, K>,
     column: NonEmpty<Identifier>,
     stored: &[u8],
-) -> Result<Pending<'a, FfiValue, K>, TargetError>
+) -> Result<Pending<'a, ValueFrame, K>, TargetError>
 where
     T: DeserializeOwned + DecryptInto<S, Context = ExpectedContext<Identifier>> + 'static,
     S: Plaintext,
@@ -537,7 +541,7 @@ where
         Opener::Client(cipher) => cipher.decrypt_as::<S, T>(value, expected),
         Opener::Keyset(keyset) => keyset.decrypt_as::<S, T>(value, expected),
     }
-    .map(S::into_value))
+    .try_map(S::into_frame))
 }
 
 #[cfg(test)]
@@ -634,27 +638,52 @@ mod tests {
         assert!(producible("TextEq").is_ok());
     }
 
+    fn frame(value: stack_encrypt::dynamic::FfiValue) -> ValueFrame {
+        ValueFrame::of(&value).unwrap()
+    }
+
     #[test]
     fn a_string_plaintext_is_read_exactly_and_nothing_else_is_converted() {
-        let text = String::from_value("TextEq", FfiValue::String("café".into())).unwrap();
+        use stack_encrypt::dynamic::FfiValue;
+        let text = String::from_frame("TextEq", &frame(FfiValue::String("café".into()))).unwrap();
         assert_eq!(text, "café");
         assert!(matches!(
-            String::from_value("TextEq", FfiValue::UInt64(34)),
+            String::from_frame("TextEq", &frame(FfiValue::UInt64(34))),
             Err(TargetError::Plaintext {
                 target: "TextEq",
                 expected: ValueKind::String,
                 found: Some(ValueKind::UInt64)
             })
         ));
-        let error = String::from_value("TextEq", FfiValue::Null).unwrap_err();
+        let error = String::from_frame("TextEq", &frame(FfiValue::Null)).unwrap_err();
         assert!(matches!(error, TargetError::Plaintext { found: None, .. }));
         assert_eq!(
             error.to_string(),
             "TextEq is produced from a string plaintext, not a value with no kind"
         );
+        assert_eq!(
+            String::from("x").into_frame().unwrap().risky_ref(),
+            frame(FfiValue::String("x".into())).risky_ref()
+        );
+    }
+
+    /// A scalar plaintext reads its own kind and width only, and writes the
+    /// frame of the value it holds.
+    #[test]
+    fn a_scalar_plaintext_is_read_at_its_own_width() {
+        use stack_encrypt::dynamic::FfiValue;
+        let read = plaintext::Int32::from_frame("IntegerEq", &frame(FfiValue::Int32(-7))).unwrap();
+        assert!(read == plaintext::Int32(-7));
         assert!(matches!(
-            String::from("x").into_value(),
-            FfiValue::String(s) if s.risky_ref() == b"x"
+            plaintext::Int32::from_frame("IntegerEq", &frame(FfiValue::Int64(-7))),
+            Err(TargetError::Plaintext {
+                found: Some(ValueKind::Int64),
+                ..
+            })
         ));
+        assert_eq!(
+            plaintext::Int64(9).into_frame().unwrap().risky_ref(),
+            frame(FfiValue::Int64(9)).risky_ref()
+        );
     }
 }

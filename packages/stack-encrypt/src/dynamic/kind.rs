@@ -9,8 +9,8 @@
 //! The vocabulary is [`ValueKind`], whose
 //! [`name`](ValueKind::name)s (`"uint64"`, `"string"`, …, `"array"`,
 //! `"object"`) are frozen wire format, and whose
-//! [`holds`](ValueKind::holds) and [`FfiValue::kind`] say whether a value is
-//! of a kind. Beside it, this module adds two rules:
+//! [`holds`](ValueKind::holds), [`FfiValue::kind`](super::FfiValue::kind) and
+//! [`ValueFrame::kind`] say whether a value is of a kind. Beside it, this module adds two rules:
 //!
 //! - [`admits`]: which indexes a kind is defined for, so a plan asking for
 //!   match on an integer or equality on a boolean is refused when it is
@@ -36,9 +36,11 @@
 //! field has none is refused when it is built
 //! ([`Error::UntypedIndex`], naming the field). A field that only seals, or
 //! only carries its value through, may leave it out: no term derives from it.
-use vitaminc_aead::plaintext::{Float, Int, Physical};
+use vitaminc_aead::plaintext::{Float, Int, Logical, Physical, Raw};
+use vitaminc_aead::Encrypt;
 
-use super::{FfiValue, ValueKind};
+use super::term::OneScalar;
+use super::{ValueFrame, ValueKind};
 
 use super::{Error, Reason};
 use crate::target::IndexSpec;
@@ -97,6 +99,10 @@ fn scalar_of(kind: ValueKind) -> Option<Physical<'static>> {
 /// conversion of it is exact. Nothing else converts: a string is never
 /// parsed as a number, and a number never becomes a string.
 ///
+/// The value is any source ([`Encrypt`]): a transport frame a binding was
+/// handed, walked in place. What comes back is the value as the field's kind,
+/// written into a [`ValueFrame`] in the engine's value model.
+///
 /// This is for a query: what a host hands over to search with. A value
 /// being sealed is not converted; it must already be of the field's kind,
 /// and is refused otherwise.
@@ -111,46 +117,59 @@ fn scalar_of(kind: ValueKind) -> Option<Physical<'static>> {
 ///
 /// ```
 /// use stack_encrypt::dynamic::{read, FfiValue, ValueKind};
+/// use vitaminc_protected::Controlled;
 ///
 /// // A JavaScript number is a float; against a `uint64` field it is 34.
 /// let value = read(ValueKind::UInt64, FfiValue::Float64(34.0))?;
-/// assert!(matches!(value, FfiValue::UInt64(34)));
+/// assert_eq!(value.kind(), Some(ValueKind::UInt64));
+/// assert_eq!(value.risky_ref(), FfiValue::UInt64(34).to_frame()?.risky_ref());
 /// assert!(read(ValueKind::UInt64, FfiValue::Float64(34.5)).is_err());
-/// # Ok::<(), stack_encrypt::dynamic::Error>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Errors
 ///
 /// [`Error::Source`] ([`Reason::FieldType`]) if the value cannot be read as
-/// `kind` exactly. It names no field: the caller that knows the field names
-/// it ([`Error::in_field`]).
-pub fn read(kind: ValueKind, value: FfiValue) -> Result<FfiValue, Error> {
-    if kind.holds(&value) {
+/// `kind` exactly, or is not in the engine's value model. It names no
+/// field: the caller that knows the field names it ([`Error::in_field`]).
+pub fn read(kind: ValueKind, value: impl Encrypt) -> Result<ValueFrame, Error> {
+    let refused = || Error::bad_source(Reason::FieldType);
+    let value = ValueFrame::of(value).map_err(|_| refused())?;
+    if value.kind() == Some(kind) {
         return Ok(value);
     }
-    let number = Number::of(&value).ok_or(Error::bad_source(Reason::FieldType))?;
+    let number = (&value)
+        .visit(OneScalar::new(
+            |ty: Option<Logical>, value: Physical<'_>| Number::of(ty, value).ok_or(None),
+        ))
+        .map_err(|_| refused())?;
+    let int = |int: Int| Raw(None, Physical::Int(int));
     let read = match kind {
         ValueKind::Int32 => number
             .integer()
             .and_then(|i| i32::try_from(i).ok())
-            .map(FfiValue::Int32),
+            .map(|v| int(Int::I32(v))),
         ValueKind::Int64 => number
             .integer()
             .and_then(|i| i64::try_from(i).ok())
-            .map(FfiValue::Int64),
+            .map(|v| int(Int::I64(v))),
         ValueKind::UInt32 => number
             .integer()
             .and_then(|i| u32::try_from(i).ok())
-            .map(FfiValue::UInt32),
+            .map(|v| int(Int::U32(v))),
         ValueKind::UInt64 => number
             .integer()
             .and_then(|i| u64::try_from(i).ok())
-            .map(FfiValue::UInt64),
-        ValueKind::Float64 => number.exact_f64().map(FfiValue::Float64),
-        ValueKind::Float32 => number.exact_f32().map(FfiValue::Float32),
+            .map(|v| int(Int::U64(v))),
+        ValueKind::Float64 => number
+            .exact_f64()
+            .map(|f| Raw(None, Physical::Float(Float::F64(f)))),
+        ValueKind::Float32 => number
+            .exact_f32()
+            .map(|f| Raw(None, Physical::Float(Float::F32(f)))),
         _ => None,
     };
-    read.ok_or(Error::bad_source(Reason::FieldType))
+    ValueFrame::of(read.ok_or_else(refused)?).map_err(|_| refused())
 }
 
 /// A numeric leaf, widened without loss: every integer variant fits an
@@ -162,14 +181,13 @@ enum Number {
 }
 
 impl Number {
-    fn of(value: &FfiValue) -> Option<Self> {
-        Some(match value {
-            FfiValue::Int32(v) => Number::Integer((*v).into()),
-            FfiValue::Int64(v) => Number::Integer((*v).into()),
-            FfiValue::UInt32(v) => Number::Integer((*v).into()),
-            FfiValue::UInt64(v) => Number::Integer((*v).into()),
-            FfiValue::Float32(v) => Number::Float((*v).into()),
-            FfiValue::Float64(v) => Number::Float(*v),
+    /// The number a scalar of the value model is, or `None` for anything
+    /// that is not a number.
+    fn of(ty: Option<Logical>, value: Physical<'_>) -> Option<Self> {
+        Some(match (ty, value) {
+            (None, Physical::Int(int)) => Number::Integer(int.to_i128()?),
+            (None, Physical::Float(Float::F32(v))) => Number::Float(v.into()),
+            (None, Physical::Float(Float::F64(v))) => Number::Float(v),
             _ => return None,
         })
     }
@@ -209,6 +227,7 @@ impl Number {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dynamic::FfiValue;
     use crate::sem::{MatchOptions, Tokenizer};
     use vitaminc_protected::Protected;
 
@@ -312,8 +331,11 @@ mod tests {
         }
     }
 
+    /// `read`, with the frame it writes read back as a value tree to
+    /// compare.
     fn read_ok(kind: ValueKind, value: FfiValue) -> Option<FfiValue> {
-        read(kind, value).ok()
+        let read = read(kind, value).ok()?;
+        Some(FfiValue::from_frame(read.risky_ref()).expect("a value"))
     }
 
     #[test]

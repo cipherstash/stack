@@ -60,7 +60,7 @@ impl TargetResolver for EqlTargets {
         name: &str,
         keyset: &'a stack_encrypt::KeysetCipher<'_, K>,
         label: &stack_encrypt::Label,
-        plaintext: stack_encrypt::dynamic::FfiValue,
+        plaintext: stack_encrypt::dynamic::ValueFrame,
     ) -> Result<stack_encrypt::Pending<'a, Vec<u8>, K>, TargetError> {
         eql_bindings::encryption::targets::encrypt(name, keyset, label, plaintext).map_err(convert)
     }
@@ -71,7 +71,8 @@ impl TargetResolver for EqlTargets {
         cipher: &'a stack_encrypt::StackCipher<K>,
         label: &stack_encrypt::Label,
         stored: &[u8],
-    ) -> Result<stack_encrypt::Pending<'a, stack_encrypt::dynamic::FfiValue, K>, TargetError> {
+    ) -> Result<stack_encrypt::Pending<'a, stack_encrypt::dynamic::ValueFrame, K>, TargetError>
+    {
         eql_bindings::encryption::targets::decrypt(name, cipher, label, stored).map_err(convert)
     }
 
@@ -80,7 +81,7 @@ impl TargetResolver for EqlTargets {
         name: &str,
         keyset: &'a stack_encrypt::KeysetCipher<'_, K>,
         label: &stack_encrypt::Label,
-        plaintext: stack_encrypt::dynamic::FfiValue,
+        plaintext: stack_encrypt::dynamic::ValueFrame,
     ) -> Result<stack_encrypt::Pending<'a, Vec<u8>, K>, TargetError> {
         eql_bindings::encryption::targets::query(name, keyset, label, plaintext).map_err(convert)
     }

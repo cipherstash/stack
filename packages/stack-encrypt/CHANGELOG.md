@@ -159,6 +159,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- **A dynamic plaintext is a frame, not a value tree** (`dynamic` feature;
+  #1232, vitaminc ADR 0001). vitaminc 0.6 has no shared value type: a value
+  describes itself once, and sinks consume it. `dynamic::ValueFrame` is now
+  the engine's plaintext for a value whose type is known only at run time:
+  one value as its transport frame, in the engine's value model (an 8- or
+  16-bit integer read as the 32-bit integer of its sign, as before; a
+  128-bit integer or a date refused, as before), in a `Protected` buffer
+  wiped when it drops. It walks its own bytes into any sink (`Encrypt`) and
+  is a decrypt target that writes what it opens straight into a frame
+  (`Decrypt`). The plaintext paths walk frames:
+  - `record::encrypt`, `encrypt_with` and `check_source` take the source as
+    any `Encrypt` (a `ValueFrame`, a `vitaminc_aead::Frame`, or an `FfiValue`
+    a test spells), walk it once and write each field's value into a
+    `ValueFrame` of its own, which is all the engine keeps of it. A value
+    refused while the source is split names its field, with the reasons it
+    had (`RepeatedKey`, `Unframeable`, `FieldType`; a value the value model
+    does not hold is `FieldType` inside a passthrough subtree too).
+  - Two refusals changed. The split is one walk of the source that stops
+    at its first fault, so of several faults in one row, those the split
+    finds (a repeated key, a value outside the model) are reported in
+    source order rather than plan order: the walk does not copy the rest of
+    a source it has already refused. And a passthrough value in a field
+    that seals a ciphertext and derives a term is now `Source { reason:
+    Passthrough }` whatever order the field lists its outputs in. It was
+    `Term` when a term output came before `c` in the plan and `Source`
+    otherwise, so the answer depended on how the outputs were spelled.
+  - `record::decrypt` and `decrypt_with` resolve to one `ValueFrame` (the
+    record, or the batch) instead of an `FfiValue`: each field opens into a
+    frame, which is walked into its entry of the record's frame and wiped.
+  - `read`, `query_term`, `check_query` and `verify` take their input as any
+    `Encrypt`, and `read` returns a `ValueFrame`; `verify` takes the page of
+    values as any iterator of sources (`ValueFrame::elements` splits a list
+    a binding handed over).
+  - `ValueFrame::check` checks frame bytes as `ValueFrame::from_bytes` does
+    and hands them back as a `Frame` to walk in place, with no copy: the Go
+    guest encrypts and checks a record source, and reads a query's input,
+    that way, so the only copies of a source's plaintext are the per-field
+    frames the split writes.
+  - `IndexSpec` is an `Index` of `ValueFrame` (it was of `FfiValue`), so a
+    Rust chain over dynamic fields names `ValueFrame` fields.
+  - `TargetResolver::encrypt` and `query` take a `ValueFrame`, and
+    `decrypt` resolves to one.
+
+  `FfiValue` stays, as the tree of a binding's control data (plans,
+  contexts, options, statistics, configuration, the engine's answers).
+  Control data is not plaintext, but a configuration carries credentials
+  (a client key, a test build's seed), so its text and bytes leaves stay
+  `Protected`.
+  Ciphertexts, terms and the cross-language fixtures are byte for byte what
+  they were. The Go guest decodes plaintext as `ValueFrame`s and returns an
+  opened record's frame as it is. Copies of an opened string that remain in
+  the guest's memory after a decrypt were traced to the plaintext output of
+  the AES-CTR XOR, left in the unwiped stack temporaries of the RustCrypto
+  cipher crates under vitaminc-encrypt's wasm32 backend (their number varies
+  with the leaf's length), not to this crate, and
+  `TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt` stays skipped with
+  that reason (cipherstash/vitaminc#370). The heap is guarded separately:
+  `tests/heap_hygiene.rs` runs the record encrypt (from a `ValueFrame` and
+  from a raw frame), the record decrypt (with a nested field), `query_term`
+  and `verify` under an allocator that fails the test on any freed block
+  still holding plaintext.
+
 - **A match value with no tokens is stored as the empty filter, so
   `KeysetCipher::match_terms` is no longer a query.** In 0.2.0 the same call
   served write time and query time, and refused text that cuts no token

@@ -146,7 +146,7 @@ mod tests {
     //! What each type reads back. Sealing is the primitive's own; what is
     //! written here is the reading, so these pin that each type takes only
     //! its own kind and width. The round trip against the value enum
-    //! (`FfiValue`) is in the encryption test crate
+    //! (`ValueFrame`) is in the encryption test crate
     //! (`tests/encryption/tests/v4_types.rs`).
     use super::*;
 

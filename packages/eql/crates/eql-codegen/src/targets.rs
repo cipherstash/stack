@@ -278,7 +278,7 @@ fn render_targets_from(rows: &[Row]) -> String {
     let file = quote! {
         #![doc = #mod_doc]
 
-        use stack_encrypt::dynamic::FfiValue;
+        use stack_encrypt::dynamic::ValueFrame;
 
         #imports
         use crate::encryption::targets::{#helpers refuse, refuse_query, Opener, Target, TargetError};
@@ -300,7 +300,7 @@ fn render_targets_from(rows: &[Row]) -> String {
             name: &str,
             keyset: &'a KeysetCipher<'_, K>,
             column: NonEmpty<Identifier>,
-            plaintext: FfiValue,
+            plaintext: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             match name {
                 #encrypt_arms
@@ -315,7 +315,7 @@ fn render_targets_from(rows: &[Row]) -> String {
             opener: Opener<'a, K>,
             column: NonEmpty<Identifier>,
             stored: &[u8],
-        ) -> Result<Pending<'a, FfiValue, K>, TargetError> {
+        ) -> Result<Pending<'a, ValueFrame, K>, TargetError> {
             match name {
                 #decrypt_arms
                 _ => Err(refuse(name)),
@@ -329,7 +329,7 @@ fn render_targets_from(rows: &[Row]) -> String {
             name: &str,
             keyset: &'a KeysetCipher<'_, K>,
             column: NonEmpty<Identifier>,
-            plaintext: FfiValue,
+            plaintext: ValueFrame,
         ) -> Result<Pending<'a, Vec<u8>, K>, TargetError> {
             match name {
                 #query_arms
