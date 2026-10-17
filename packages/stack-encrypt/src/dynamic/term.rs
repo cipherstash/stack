@@ -1144,6 +1144,15 @@ mod tests {
                     .to_vec()
             );
             assert_eq!(
+                derive(frame.clone(), IndexSpec::Ope).await,
+                keyset
+                    .ope_term(200u8, nonempty!("users/x"))
+                    .await
+                    .expect("typed")
+                    .as_ref()
+                    .to_vec()
+            );
+            assert_eq!(
                 derive(frame, IndexSpec::Equality).await,
                 derive(
                     vitaminc_aead::to_frame(200u64)

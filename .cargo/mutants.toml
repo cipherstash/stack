@@ -88,6 +88,14 @@ exclude_re = [
   # A passthrough has no kind: `KindOf::passthrough` returns `Ok(None)`,
   # which is `Ok(Default::default())`. `a_frame_names_its_kind` asserts it.
   'stack-encrypt/src/dynamic/value_frame\.rs:\d+:\d+: replace <impl Sink for KindOf>::passthrough -> Result<Self::Ok, DecodeError> with Ok\(Default::default\(\)\)$',
+  # `model`'s `admits` guard on a date, decimal or undefined value is checked
+  # again by vitaminc on every path that reaches it: the frame writer behind
+  # `Modeled` and `ModelOnly` refuses an inadmissible logical value
+  # (`FrameWriteError::Invalid`, mapped to the same `Expected`), and
+  # `ValueFrame::check` only walks frames `Frame::parse` has validated. So
+  # `true` there refuses the same values with the same error. The guard stays
+  # so the model says what it holds without leaning on the writer behind it.
+  'stack-encrypt/src/dynamic/value_frame\.rs:\d+:\d+: replace match guard logical\.admits\(&value\) with true in model$',
 ]
 
 # Headroom over the measured baseline before a slow-but-correct mutant is
