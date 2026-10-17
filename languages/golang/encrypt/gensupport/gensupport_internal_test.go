@@ -424,7 +424,7 @@ func TestAsKindConvertsAnIntegerThatFitsAndRefusesOneThatDoesNot(t *testing.T) {
 		in   any
 	}{
 		{Int32, int64(math.MaxInt32) + 1},
-		{Int32, int(math.MinInt32) - 1},
+		{Int32, int64(math.MinInt32) - 1},
 		{Int32, uint32(math.MaxUint32)},
 		{Int64, uint64(math.MaxInt64) + 1},
 		{Uint8, int8(-1)},

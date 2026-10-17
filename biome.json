@@ -12,6 +12,7 @@
       "!languages/typescript/packages/protect-ffi/src/eql-v3-types",
       "!packages/stack-encrypt/tests/fixtures/record_lowering.json",
       "!packages/stack-encrypt/tests/fixtures/query_operators.json",
+      "!packages/stack-encrypt/tests/fixtures/value_kinds.json",
       "!packages/eql/tests/encryption/fixtures/ste_vec_selectors.json",
       "!packages/eql/tests/encryption/fixtures/v4_rows.json",
       "!packages/eql/crates/eql-bindings/bindings",
