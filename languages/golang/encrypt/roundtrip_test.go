@@ -342,15 +342,25 @@ func TestPlaintextDoesNotRemainInGuestMemory(t *testing.T) {
 }
 
 // The same check after Decrypt, which is the call that puts plaintext back
-// into the guest. It fails today: exactly one copy of each opened string
-// stays in the guest's freed heap. The host's copy is wiped (the output
-// buffer goes through se_dealloc) and the FfiValue's Protected payloads are
-// wiped on drop, so the copy is made on vitaminc's decrypt path before the
-// plaintext is wrapped in Protected; which line makes it is not yet known.
-// That is vitaminc's to fix; the skip records it, and the test runs again
-// once it is.
+// into the guest. It fails today, and the copy it finds is not the engine's.
+//
+// Exactly one copy of each opened string stays, and it is a stack copy, not
+// a heap one: it sits just below 1 MiB, in the wasm shadow stack, at the same
+// address on every run. It is the decrypted leaf (vitaminc's STRING tag
+// 0x0a, then the text) directly after a 16-byte AES-GCM counter block: the
+// 12 bytes before it are the leaf's own nonce (they appear in the stored
+// ciphertext), followed by the big-endian block counter 3. That is the
+// keystream state of the AES-GCM decryption that vitaminc-encrypt's
+// RustCrypto backend (aes-gcm 0.10, the wasm32 backend) runs in place, left
+// in a stack frame the cipher crates do not wipe. Every heap buffer on the
+// path is wiped: the record decrypt no longer builds a value tree (#1232; it
+// opens each field into a wiped frame), copying the opened leaf into a fresh
+// buffer and dropping the original leaves the copy where it is, and the
+// output buffer goes through se_dealloc. So the fix is in the cipher's stack
+// hygiene, in vitaminc or below it (cipherstash/vitaminc#370), not here;
+// the skip records it, and the test runs again once it is fixed there.
 func TestPlaintextDoesNotRemainInGuestMemoryAfterDecrypt(t *testing.T) {
-	t.Skip("known: one unwiped copy of each opened string remains after Decrypt, made on vitaminc's decrypt path; run this test again when vitaminc wipes it")
+	t.Skip("known: one copy of each opened string remains in the guest's shadow stack after Decrypt, in the AES-GCM keystream state of vitaminc-encrypt's RustCrypto backend (cipherstash/vitaminc#370); run this test again when that is wiped")
 	c := deterministicClient(t)
 	cipher := c.DefaultKeyset()
 	const plaintext = "residency-probe-4111-b1c2d3e4f5"

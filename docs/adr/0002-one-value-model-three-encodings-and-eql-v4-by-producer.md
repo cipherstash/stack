@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-10-08
-revised: 2026-10-12
+revised: 2026-10-12, amended 2026-10-17
 relates-to: ADR-0001; stack-encrypt ADR-0003, ADR-0007
 ---
 
@@ -14,6 +14,15 @@ relates-to: ADR-0001; stack-encrypt ADR-0003, ADR-0007
 > longer depends on order encodings, and `orderable-bytes` is frozen. The plan
 > keeps the steps; this document is the decision. One question is still open,
 > under "Open decision".
+>
+> **Amended 2026-10-17 (#1232).** vitaminc 0.6 removed the shared value type
+> rather than renaming `FfiValue` to `Value` (vitaminc ADR 0001: a value
+> describes itself once, and sinks consume it). Stack Encrypt follows: a
+> plaintext whose type is known only at run time is held as its transport
+> frame (`dynamic::ValueFrame`) and walked into vitaminc's sinks, and
+> `FfiValue` stays in Stack Encrypt as the tree of a binding's control data,
+> which carries no secret. The two bullets below that this changes say so
+> where they stand.
 
 Every value Stack Encrypt handles is encoded three times: as a **ciphertext**
 (reversible and self-describing), as an **equality term** (a keyed hash that
@@ -119,9 +128,19 @@ bundle (see Consequences). Chosen.
   `UInt128`, `Date`, `Timestamp` and `Decimal`, each with a `ValueKind` name,
   a `Value` variant and a ciphertext tag, in one breaking release. Rust `i128`
   and `u128` get `Encrypt` and `Decrypt` impls.
-- `FfiValue` is renamed `Value`, with `#[deprecated] pub type FfiValue = Value`
-  for one release. Whether `Value` and `ValueKind` are `#[non_exhaustive]` is
-  the open decision.
+- ~~`FfiValue` is renamed `Value`, with `#[deprecated] pub type FfiValue = Value`
+  for one release.~~ *Amended 2026-10-17 (#1232):* vitaminc 0.6 has no shared
+  value type to rename it to. Its ADR 0001 has a value describe itself once
+  (`Encrypt`) and every consumer be a sink: the encrypting sink, a term
+  deriver, a frame writer. A host binding walks its transport frame straight
+  into those sinks. So Stack Encrypt holds a dynamic plaintext as its frame,
+  `dynamic::ValueFrame`, in a wiped buffer, from the source a binding hands
+  over to the sealed leaves and from the opened leaves back to the frame it
+  returns, with no value tree in between. `FfiValue` stays in Stack Encrypt
+  as the tree of a binding's control data (plans, contexts, options,
+  statistics, the engine's answers), none of which is secret, and
+  `ValueKind`, the vocabulary a plan field declares, stays beside it.
+  Whether `ValueKind` is `#[non_exhaustive]` is the open decision.
 - Every variant exists in every build. `Date`, `Timestamp` and `Decimal` use
   vitaminc's own representation (the payloads in the table below), with
   conversions to and from chrono and rust_decimal behind those features. A
@@ -285,8 +304,11 @@ equal under `Value` semantics produce equal terms in both.
 ### Stack Encrypt
 
 - `dynamic::Value` and `dynamic::term::Scalar` are deleted. `dynamic::term`
-  takes a `&vitaminc_aead_value::Value`. `admits` keeps only the rules that
-  belong to Stack Encrypt, such as `Match` taking text only.
+  takes any source that describes itself to vitaminc (amended 2026-10-17,
+  #1232: there is no `vitaminc_aead_value::Value`; a binding's value arrives
+  as a transport frame and stays one, `dynamic::ValueFrame`). `admits` keeps
+  only the rules that belong to Stack Encrypt, such as `Match` taking text
+  only.
 - Order terms go through `vitaminc-ore`. The index for an ORE or OPE column
   picks the concrete scheme (cllw-ore or ore-rs, through `OrderScheme`) and
   its transforms; Stack Encrypt no longer calls cllw-ore's typed API. A block
