@@ -258,9 +258,30 @@ func TestGeneratedCodeOpensTheRustValueKindsFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !again[0].Amount.Equality.Equal(stored.Amount.Equality) || !again[0].At.Equality.Equal(stored.At.Equality) ||
-		!bytes.Equal(again[0].I128.Ore, stored.I128.Ore) || !bytes.Equal(again[0].U128.Ope, stored.U128.Ope) {
-		t.Error("a Go record of the fixture's values derives other terms than Rust did")
+	// Every term of every field, against the fixture's record: the
+	// ciphertexts differ (each leaf has a fresh nonce), the terms must not.
+	goTerms := valueKindsTerms(again[0])
+	for field, outputs := range rec {
+		for output := range outputs {
+			if output == "c" {
+				continue
+			}
+			got, ok := goTerms[field][output]
+			if !ok {
+				t.Errorf("the Go record has no %s.%s", field, output)
+				continue
+			}
+			if !bytes.Equal(got, hexField(t, rec, field, output)) {
+				t.Errorf("%s.%s: the Go record's term is not the one Rust stored", field, output)
+			}
+		}
+	}
+	for field, outputs := range goTerms {
+		for output := range outputs {
+			if _, ok := rec[field][output]; !ok {
+				t.Errorf("the Go record has %s.%s, which the fixture does not", field, output)
+			}
+		}
 	}
 	opened, err := testusers.DecryptValueKinds(ctx, c, again)
 	if err != nil {
@@ -275,5 +296,21 @@ func TestGeneratedCodeOpensTheRustValueKindsFixture(t *testing.T) {
 	moved.Date.Ciphertext = stored.Amount.Ciphertext
 	if _, err := testusers.DecryptValueKinds(ctx, cipher, []testusers.EncryptedValueKinds{moved}); err == nil {
 		t.Error("a leaf opened under another field's label")
+	}
+}
+
+// valueKindsTerms is each field's terms in a sealed ValueKinds record, by the
+// fixture's output names.
+func valueKindsTerms(e testusers.EncryptedValueKinds) map[string]map[string][]byte {
+	return map[string]map[string][]byte{
+		"i8":     {"eq": e.I8.Equality, "ore": e.I8.Ore},
+		"i16":    {"eq": e.I16.Equality, "ore": e.I16.Ore},
+		"u8":     {"eq": e.U8.Equality, "ore": e.U8.Ore},
+		"u16":    {"eq": e.U16.Equality, "ope": e.U16.Ope},
+		"i128":   {"eq": e.I128.Equality, "ore": e.I128.Ore},
+		"u128":   {"eq": e.U128.Equality, "ope": e.U128.Ope},
+		"date":   {"eq": e.Date.Equality},
+		"at":     {"eq": e.At.Equality},
+		"amount": {"eq": e.Amount.Equality},
 	}
 }
