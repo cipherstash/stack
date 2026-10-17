@@ -3,22 +3,16 @@
 
 ### Breaking
 
-- **Breaking:** raise the MSRV to 1.88 and pin kms to the AWS SDK floor
-- **Breaking:** walk Protected<T> by reference and retire visit_protected
-- **Breaking:** remove Encrypt, Decipher, DecipherVisitor, SeqAccess and MapAccess
-- **Breaking:** name the source trait Encrypt so it pairs with Decrypt
+- **Breaking:** the crate now declares a minimum supported Rust version of 1.88. 0.5.1 declared none.
+- **Breaking:** `#[derive(Encrypt)]` and `#[derive(Decrypt)]` keep their names but generate `vitaminc-aead` 0.6's sink-based traits (ADR 0001), and need `vitaminc-aead` 0.6. `Encrypt` is generated for both `T` and `&T`. Code that called the generated impls directly must move to the 0.6 entry points (`encrypt`, `decrypt`). Types derived with 0.5 produce ciphertext that 0.6 does not open; see `vitaminc-aead`.
+- **Breaking:** a `#[aead(passthrough)]` field's type must now implement `Encrypt + Clone` on the way in and `Decrypt` on the way out, instead of `Any + Send + 'static`. Borrowed types such as `&'a str` are now allowed.
+- **Breaking:** a field's type must be at least as visible as the struct, because the generated decrypt sink names it in a public type. Otherwise the derive fails with E0446. A type that should stay private can be declared `pub` inside a private module.
 
 ### Features
 
-- derive Plaintext and the sink-based Decrypt
-- refuse derived types too deep to encrypt at compile time
-
-### Fixes
-
-- accept u32::MAX as an enum's last discriminant
-- give ContextTag its async methods and say what the walk authenticates
-- check the borrowed impl's depth at compile time for non-generic types
-- check lifetime-only types and same-named path fields at compile time
+- A fieldless enum can be derived. It encrypts as one `u32` leaf holding the variant's discriminant, so every variant has the same ciphertext length. Data-carrying enums are still refused.
+- `#[aead(skip)]` leaves a field out and rebuilds it with `Default` on decryption. `#[aead(take)]` moves a field out with `mem::take`, so a `ZeroizeOnDrop` type can derive.
+- A derived type nested deeper than `MAX_DEPTH` fails to compile, so it is never refused as too deep at runtime unless it is recursive. Mark mutually recursive types with `#[aead(recursive)]`, or rustc reports a const-evaluation cycle (E0391).
 
 ## [0.5.1] - 2026-10-05
 
