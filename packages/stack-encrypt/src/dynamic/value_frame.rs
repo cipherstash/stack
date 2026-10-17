@@ -1066,6 +1066,12 @@ mod tests {
         let copy = frame.clone();
         assert_eq!(copy.risky_ref(), frame.risky_ref());
         assert_ne!(copy.risky_ref().as_ptr(), frame.risky_ref().as_ptr());
+        let bytes = copy.into_inner();
+        assert_eq!(
+            bytes.risky_ref(),
+            frame.risky_ref(),
+            "the frame, still protected"
+        );
     }
 
     /// An 8- or 16-bit integer is the 32-bit integer of its sign, at any
