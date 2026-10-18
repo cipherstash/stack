@@ -788,3 +788,139 @@ fn an_error_path_prints_as_written() {
     assert_eq!(error.path(), [PathSegment::Index(1)]);
     assert_eq!(error.to_string(), "[1]: a map key must be a string");
 }
+
+/// An unknown variant is refused without naming it: neither the message
+/// nor the path repeats the tag a host sent.
+#[test]
+fn an_unknown_variant_is_refused_without_naming_it() {
+    let mut tagged = BTreeMap::new();
+    tagged.insert("secret_looking_tag", BTreeMap::<&str, u8>::new());
+    let mut options = BTreeMap::new();
+    options.insert("keyset", tagged);
+    let error = from_slice::<Options>(&to_vec(&options).expect("writes")).expect_err("refused");
+    let text = format!("{error} {error:?}");
+    assert!(text.contains("unknown variant"), "{text}");
+    assert!(!text.contains("secret_looking_tag"), "{text}");
+    assert_eq!(error.path(), [PathSegment::Key("keyset".into())]);
+
+    let error =
+        from_slice::<Keyset>(&to_vec(&"secret_looking_tag").expect("writes")).expect_err("refused");
+    assert!(!format!("{error} {error:?}").contains("secret_looking_tag"));
+    assert!(error.path().is_empty());
+}
+
+/// An error inside a known variant's payload is placed under the variant.
+#[test]
+fn an_error_in_a_payload_is_placed_under_its_variant() {
+    let mut tagged = BTreeMap::new();
+    tagged.insert("name", 7u8);
+    let error = from_slice::<Keyset>(&to_vec(&tagged).expect("writes")).expect_err("refused");
+    assert_eq!(error.path(), [PathSegment::Key("name".into())]);
+    assert_eq!(error.message(), "expected a string, found an integer");
+}
+
+/// A struct with no fields expects no keys, and says so.
+#[test]
+fn an_unknown_key_where_none_is_expected_says_none() {
+    let mut fields = BTreeMap::new();
+    fields.insert("x", 1u8);
+    let mut tagged = BTreeMap::new();
+    tagged.insert("default", fields);
+    let error = from_slice::<Keyset>(&to_vec(&tagged).expect("writes")).expect_err("refused");
+    assert_eq!(error.message(), "an unknown key, expected none");
+    assert_eq!(error.path(), [PathSegment::Key("default".into())]);
+}
+
+/// Map keys and variant names are borrowed from the input, so a type whose
+/// keys are `&str` reads them without a copy.
+#[test]
+fn map_keys_and_variant_names_borrow_from_the_input() {
+    let mut map = BTreeMap::new();
+    map.insert("email", 1u8);
+    map.insert("name", 2u8);
+    let bytes = to_vec(&map).expect("writes");
+    let back: BTreeMap<&str, u8> = from_slice(&bytes).expect("reads");
+    assert_eq!(back, map);
+
+    struct Name<'a>(&'a str);
+    impl<'de> Deserialize<'de> for Name<'de> {
+        fn deserialize<D: de::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> Visitor<'de> for V {
+                type Value = Name<'de>;
+                fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.write_str("an enum")
+                }
+                fn visit_enum<A: de::EnumAccess<'de>>(
+                    self,
+                    data: A,
+                ) -> Result<Name<'de>, A::Error> {
+                    let (name, variant): (&'de str, _) = data.variant()?;
+                    de::VariantAccess::unit_variant(variant)?;
+                    Ok(Name(name))
+                }
+            }
+            d.deserialize_enum("Name", &[], V)
+        }
+    }
+    let bare = to_vec(&"eq").expect("writes");
+    let name: Name<'_> = from_slice(&bare).expect("reads");
+    assert_eq!(name.0, "eq");
+    let mut tagged = BTreeMap::new();
+    tagged.insert("ore", ());
+    let tagged = to_vec(&tagged).expect("writes");
+    let name: Name<'_> = from_slice(&tagged).expect("reads");
+    assert_eq!(name.0, "ore");
+}
+
+/// A bare variant name has a null payload: a newtype variant reads its
+/// payload from null, so one enum covers both `"match"` and
+/// `{"match": {...}}`; a variant whose payload cannot be null is refused,
+/// at the variant.
+#[test]
+fn a_bare_variant_name_reads_a_null_payload() {
+    #[derive(Deserialize, PartialEq, Debug)]
+    #[serde(deny_unknown_fields)]
+    struct MatchOptions {
+        k: u8,
+    }
+    #[derive(Deserialize, PartialEq, Debug)]
+    #[serde(rename_all = "lowercase")]
+    enum Output {
+        Eq,
+        Match(Option<MatchOptions>),
+        Name(String),
+        Pair(u8, u8),
+        Range { lo: u8 },
+    }
+    let read = |bytes: Vec<u8>| from_slice::<Output>(&bytes);
+
+    assert_eq!(read(to_vec(&"eq").unwrap()).unwrap(), Output::Eq);
+    assert_eq!(
+        read(to_vec(&"match").unwrap()).unwrap(),
+        Output::Match(None)
+    );
+    let mut opts = BTreeMap::new();
+    opts.insert("k", 3u8);
+    let mut tagged = BTreeMap::new();
+    tagged.insert("match", opts);
+    assert_eq!(
+        read(to_vec(&tagged).unwrap()).unwrap(),
+        Output::Match(Some(MatchOptions { k: 3 }))
+    );
+    let mut null = BTreeMap::new();
+    null.insert("match", ());
+    assert_eq!(read(to_vec(&null).unwrap()).unwrap(), Output::Match(None));
+
+    let error = read(to_vec(&"name").unwrap()).expect_err("refused");
+    assert_eq!(error.message(), "expected a string, found null");
+    assert_eq!(error.path(), [PathSegment::Key("name".into())]);
+    for bare in ["pair", "range"] {
+        let error = read(to_vec(&bare).unwrap()).expect_err("refused");
+        assert!(error.message().starts_with("expected a "), "{error}");
+        assert!(
+            error.message().ends_with(" variant, found a unit variant"),
+            "{error}"
+        );
+    }
+}

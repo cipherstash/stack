@@ -29,7 +29,15 @@
 //! An enum is externally tagged. A unit variant is written as its name, a
 //! string. Any other variant is an object of one entry, the variant's name
 //! mapped to its payload: `{"name": "acme"}`, or `{"default": {}}` for a
-//! struct variant with no fields. Reading accepts the same two forms.
+//! struct variant with no fields. Reading accepts the same two forms, and
+//! treats a missing payload and a null one alike: a bare name reads as a
+//! newtype variant whose payload is null (so `Match(Option<Options>)`
+//! reads `"match"` as `Match(None)`), and `{"name": null}` reads as a unit
+//! variant.
+//!
+//! serde's `untagged` and `flatten` read through a buffer of their own,
+//! which has no 128-bit integers, so a type using either cannot hold an
+//! `i128` or `u128`.
 //!
 //! The format is not human readable ([`is_human_readable`] is `false`), so
 //! a type with a compact binary form uses it: a `uuid::Uuid` crosses as its
@@ -77,9 +85,9 @@
 
 use std::fmt;
 
+use ::serde::de::value::{BorrowedStrDeserializer, UnitDeserializer};
 use ::serde::de::{
-    self, DeserializeSeed, EnumAccess, IntoDeserializer, MapAccess, SeqAccess, Unexpected,
-    VariantAccess, Visitor,
+    self, DeserializeSeed, EnumAccess, MapAccess, SeqAccess, Unexpected, VariantAccess, Visitor,
 };
 use ::serde::ser::{self, Serialize};
 use ::serde::Deserialize;
@@ -211,17 +219,21 @@ impl de::Error for Error {
     }
 
     fn unknown_variant(_variant: &str, expected: &'static [&'static str]) -> Self {
-        Self::new(format_args!(
-            "an unknown variant, expected one of {}",
-            expected.join(", ")
-        ))
+        Self::new(format_args!("an unknown variant, {}", one_of(expected)))
     }
 
     fn unknown_field(_field: &str, expected: &'static [&'static str]) -> Self {
-        Self::new(format_args!(
-            "an unknown key, expected one of {}",
-            expected.join(", ")
-        ))
+        Self::new(format_args!("an unknown key, {}", one_of(expected)))
+    }
+}
+
+/// What an unknown name could have been. A struct with no fields expects
+/// none, and says so rather than listing nothing.
+fn one_of(expected: &[&str]) -> String {
+    if expected.is_empty() {
+        "expected none".to_owned()
+    } else {
+        format!("expected one of {}", expected.join(", "))
     }
 }
 
@@ -430,17 +442,13 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
                     ));
                 }
                 let variant = self.key()?;
-                visitor
-                    .visit_enum(Enum { de: self, variant })
-                    .map_err(|e| e.at(PathSegment::Key(variant.to_owned())))
+                visitor.visit_enum(Enum { de: self, variant })
             }
             ARRAY | PASSTHROUGH => Err(Error::new(
                 "expected an enum: a variant name, or an object of one entry",
             )),
             _ => match self.scalar()? {
-                (None, Physical::Text(variant)) => {
-                    visitor.visit_enum(IntoDeserializer::<Error>::into_deserializer(variant))
-                }
+                (None, Physical::Text(variant)) => visitor.visit_enum(BareVariant { variant }),
                 _ => Err(Error::new(
                     "expected an enum: a variant name, or an object of one entry",
                 )),
@@ -516,7 +524,7 @@ impl<'de> MapAccess<'de> for Map<'_, 'de> {
         // An error about the key itself (an unknown key) stays at the
         // object's path: putting the key on the path would print it, and a
         // message never repeats what a host sent.
-        seed.deserialize(IntoDeserializer::<Error>::into_deserializer(key))
+        seed.deserialize(BorrowedStrDeserializer::<Error>::new(key))
             .map(Some)
     }
 
@@ -541,8 +549,7 @@ impl<'a, 'de> EnumAccess<'de> for Enum<'a, 'de> {
     type Variant = Self;
 
     fn variant_seed<V: DeserializeSeed<'de>>(self, seed: V) -> Result<(V::Value, Self), Error> {
-        let variant =
-            seed.deserialize(IntoDeserializer::<Error>::into_deserializer(self.variant))?;
+        let variant = seed.deserialize(BorrowedStrDeserializer::<Error>::new(self.variant))?;
         Ok((variant, self))
     }
 }
@@ -553,15 +560,18 @@ impl<'de> VariantAccess<'de> for Enum<'_, 'de> {
     /// `{"variant": null}` reads as a unit variant, so a host may give one a
     /// null payload as well as writing its bare name.
     fn unit_variant(self) -> Result<(), Error> {
-        de::Deserialize::deserialize(&mut *self.de)
+        let at = self.at();
+        de::Deserialize::deserialize(&mut *self.de).map_err(|e: Error| e.at(at))
     }
 
     fn newtype_variant_seed<T: DeserializeSeed<'de>>(self, seed: T) -> Result<T::Value, Error> {
-        seed.deserialize(&mut *self.de)
+        let at = self.at();
+        seed.deserialize(&mut *self.de).map_err(|e| e.at(at))
     }
 
     fn tuple_variant<V: Visitor<'de>>(self, _len: usize, visitor: V) -> Result<V::Value, Error> {
-        de::Deserializer::deserialize_seq(&mut *self.de, visitor)
+        let at = self.at();
+        de::Deserializer::deserialize_seq(&mut *self.de, visitor).map_err(|e| e.at(at))
     }
 
     fn struct_variant<V: Visitor<'de>>(
@@ -569,7 +579,65 @@ impl<'de> VariantAccess<'de> for Enum<'_, 'de> {
         _fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Error> {
-        de::Deserializer::deserialize_map(&mut *self.de, visitor)
+        let at = self.at();
+        de::Deserializer::deserialize_map(&mut *self.de, visitor).map_err(|e| e.at(at))
+    }
+}
+
+impl Enum<'_, '_> {
+    /// The path segment for an error inside the payload. It is added only
+    /// once the variant is known, so an unknown variant's name is never
+    /// printed.
+    fn at(&self) -> PathSegment {
+        PathSegment::Key(self.variant.to_owned())
+    }
+}
+
+/// A variant written as its bare name. Its payload is null: a unit variant
+/// reads nothing, a newtype variant reads its payload from null (so an
+/// `Option<T>` payload is `None`), and a tuple or struct variant is refused.
+struct BareVariant<'de> {
+    variant: &'de str,
+}
+
+impl<'de> EnumAccess<'de> for BareVariant<'de> {
+    type Error = Error;
+    type Variant = Self;
+
+    fn variant_seed<V: DeserializeSeed<'de>>(self, seed: V) -> Result<(V::Value, Self), Error> {
+        let variant = seed.deserialize(BorrowedStrDeserializer::<Error>::new(self.variant))?;
+        Ok((variant, self))
+    }
+}
+
+impl<'de> VariantAccess<'de> for BareVariant<'de> {
+    type Error = Error;
+
+    fn unit_variant(self) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn newtype_variant_seed<T: DeserializeSeed<'de>>(self, seed: T) -> Result<T::Value, Error> {
+        seed.deserialize(UnitDeserializer::<Error>::new())
+            .map_err(|e| e.at(PathSegment::Key(self.variant.to_owned())))
+    }
+
+    fn tuple_variant<V: Visitor<'de>>(self, _len: usize, _visitor: V) -> Result<V::Value, Error> {
+        Err(de::Error::invalid_type(
+            Unexpected::UnitVariant,
+            &"a tuple variant",
+        ))
+    }
+
+    fn struct_variant<V: Visitor<'de>>(
+        self,
+        _fields: &'static [&'static str],
+        _visitor: V,
+    ) -> Result<V::Value, Error> {
+        Err(de::Error::invalid_type(
+            Unexpected::UnitVariant,
+            &"a struct variant",
+        ))
     }
 }
 
