@@ -40,7 +40,11 @@ describe('auth refresh cancellation soak gates', () => {
     expect(
       gate.steps.find((step) => step.name === 'Long seeded soak').run,
     ).toBe('mise run test:soak:stack-auth')
-    expect(gate.if).toBeUndefined()
+    // Only an armed line runs the soak; release-crates needs the same switch,
+    // so a skipped soak never stands in front of a publish.
+    expect(gate.needs).toEqual(['crates-armed'])
+    expect(gate.if).toBe("needs.crates-armed.outputs.armed == 'true'")
+    expect(release.jobs['release-crates'].if).toBe(gate.if)
     expect(release.jobs['release-crates'].needs).toContain('auth-refresh-soak')
     // No status function bypasses the implicit success() dependency check.
     expect(release.jobs['release-crates'].if).not.toMatch(

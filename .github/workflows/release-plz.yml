@@ -225,8 +225,14 @@ jobs:
         id: armed
         run: node scripts/eql-pipeline-armed.mjs crates
 
+  # Gated on the switch so an unarmed line spends nothing on the soak. It
+  # still runs on every armed push, before release-crates' preflight decides
+  # whether any crate is unpublished, so a failed soak holds stack-kms and
+  # stack-encrypt too.
   auth-refresh-soak:
     name: Auth refresh cancellation soak before publishing
+    needs: [crates-armed]
+    if: needs.crates-armed.outputs.armed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
