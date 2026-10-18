@@ -2,6 +2,9 @@
 #![doc = include_str!("../README.md")]
 pub mod transport;
 
+#[cfg(feature = "serde")]
+pub mod serde;
+
 pub use transport::{decode_ciphertext, encode_ciphertext, CodecError};
 /// The frame: a value as transport bytes, and back. These live in
 /// `vitaminc-aead` next to the leaf codec they share, and are re-exported

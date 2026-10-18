@@ -59,6 +59,22 @@ map keys are UTF-8. The kind `0x02` was the `CT_NONE` absence marker,
 which ADR 0001 retires: a `None` is a null leaf now, so the marker is
 never written and refused when read.
 
+## serde (feature `serde`)
+
+`vitaminc_aead_frame::serde` is a serde data format over the frame:
+`from_slice` reads any `Deserialize` type from frame bytes and `to_vec` writes
+any `Serialize` type as frame bytes. It is for data a host exchanges with
+Rust that is not plaintext to seal, such as a call's options or a result.
+Plaintext still crosses as a frame walked into a sink.
+
+The mapping keeps what a frame carries: an integer reads at its exact width
+through `deserialize_any`, text and bytes are borrowed from the input, and
+the format is not human readable, so a type with a binary form (a UUID) uses
+it. Enums are externally tagged: a unit variant is its name, any other
+variant an object of one entry. A scalar with a logical type and a
+passthrough are refused. An error names the kind of value it found and the
+path to it, never the value.
+
 ## Hardening
 
 Both directions are attacker-reachable input. Nesting is bounded at

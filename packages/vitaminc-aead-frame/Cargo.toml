@@ -12,10 +12,23 @@ keywords.workspace = true
 categories.workspace = true
 rust-version.workspace = true
 
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 vitaminc-aead = { version = "0.6.0", path = "../aead" }
+serde = { workspace = true, optional = true }
+zeroize = { workspace = true, optional = true }
+
+[features]
+default = []
+# serde over the transport frame (`vitaminc_aead_frame::serde`): read any
+# `Deserialize` type from frame bytes and write any `Serialize` type as
+# frame bytes, for data a host exchanges with Rust that is not plaintext.
+serde = ["dep:serde", "dep:zeroize"]
 
 [dev-dependencies]
+serde_bytes = { workspace = true }
 quickcheck = "1.1.0"
 quickcheck_macros = "1.2.0"
 serde_json = "1"
