@@ -1,4 +1,9 @@
-//! Seeded, virtual-time cancellation soak. No credentials or network needed.
+//! Seeded cancellation soak. No credentials or network needed.
+//!
+//! The seeded runs use a current-thread runtime with paused time, so a seed
+//! replays exactly. That cannot interleave callers across worker threads, so
+//! a short run on a multi-thread runtime in real time, sped up by [`Pace`],
+//! covers the orderings only parallel workers produce.
 #![allow(clippy::unwrap_used)]
 
 use super::*;
@@ -23,11 +28,36 @@ impl Random {
     }
 }
 
-struct PausedClock(Instant);
+/// How many times faster than the wall clock the soak runs. Every scripted
+/// delay is divided by it and the engine's clock counts that many seconds per
+/// elapsed second, so token lifetimes and the expiry leeway keep their
+/// proportions. The paused-time runs use 1.
+#[derive(Clone, Copy)]
+struct Pace(u64);
 
-impl Clock for PausedClock {
+impl Pace {
+    fn ms(self, millis: u64) -> Duration {
+        Duration::from_micros(millis * 1_000 / self.0)
+    }
+
+    /// The bound within which a caller must get a token or give up. Paced
+    /// runs share real CPUs with the rest of the suite, so they get a fixed
+    /// real-time bound instead of a scaled one that a busy runner could miss.
+    fn stranded_after(self) -> Duration {
+        if self.0 == 1 {
+            Duration::from_secs(30)
+        } else {
+            Duration::from_secs(10)
+        }
+    }
+}
+
+struct PacedClock(Instant, Pace);
+
+impl Clock for PacedClock {
     fn now_unix_secs(&self) -> u64 {
-        1_000_000 + self.0.elapsed().as_secs()
+        let elapsed_ms = u64::try_from(self.0.elapsed().as_millis()).unwrap();
+        1_000_000 + elapsed_ms * self.1 .0 / 1_000
     }
 }
 
@@ -43,6 +73,7 @@ struct IdentityProvider {
 struct RotatingRefresher {
     idp: Arc<StdMutex<IdentityProvider>>,
     clock: SharedClock,
+    pace: Pace,
 }
 
 fn token(generation: u64, expires_at: u64) -> Token {
@@ -80,7 +111,7 @@ impl Refresher for RotatingRefresher {
                 95 + idp.random.below(30),
             )
         };
-        sleep(Duration::from_millis(delay)).await;
+        sleep(self.pace.ms(delay)).await;
         let generation = {
             let mut idp = self.idp.lock().unwrap();
             if fail {
@@ -104,7 +135,7 @@ impl Refresher for RotatingRefresher {
     }
 }
 
-struct RotationStore(Arc<StdMutex<IdentityProvider>>);
+struct RotationStore(Arc<StdMutex<IdentityProvider>>, Pace);
 
 impl TokenStore for RotationStore {
     async fn load(&self) -> Option<Token> {
@@ -114,7 +145,7 @@ impl TokenStore for RotationStore {
     async fn save(&self, token: &Token) {
         let delay = self.0.lock().unwrap().random.below(2_000);
         // Callers also cancel after the IdP has rotated, during persistence.
-        sleep(Duration::from_millis(delay)).await;
+        sleep(self.1.ms(delay)).await;
         let mut idp = self.0.lock().unwrap();
         let generation: u64 = token.refresh_token().unwrap().as_str().parse().unwrap();
         assert_eq!(generation, idp.generation, "saved a stale rotation");
@@ -123,8 +154,8 @@ impl TokenStore for RotationStore {
     }
 }
 
-async fn soak(seed: u64, rounds: usize) {
-    let clock: SharedClock = Arc::new(PausedClock(Instant::now()));
+async fn soak(seed: u64, rounds: usize, pace: Pace) {
+    let clock: SharedClock = Arc::new(PacedClock(Instant::now(), pace));
     let idp = Arc::new(StdMutex::new(IdentityProvider {
         random: Random(seed),
         generation: 0,
@@ -137,8 +168,9 @@ async fn soak(seed: u64, rounds: usize) {
         RotatingRefresher {
             idp: idp.clone(),
             clock: clock.clone(),
+            pace,
         },
-        RotationStore(idp.clone()),
+        RotationStore(idp.clone(), pace),
         Some(token(0, clock.now_unix_secs())),
         clock.clone(),
     ));
@@ -150,7 +182,7 @@ async fn soak(seed: u64, rounds: usize) {
             let mut random = Random(seed.wrapping_add(caller));
             let (mut completed, mut timed_out, mut selected_out) = (0, 0, 0);
             for _ in 0..rounds {
-                sleep(Duration::from_millis(random.below(60_000))).await;
+                sleep(pace.ms(random.below(60_000))).await;
                 let acquisition = async {
                     loop {
                         // Read before the call: the engine promises a token
@@ -170,17 +202,17 @@ async fn soak(seed: u64, rounds: usize) {
                             // Injected transient errors may reach a caller
                             // with no usable token. Retry within the bound.
                             Err(AutoRefreshError::Auth(AuthError::Server(_))) => {
-                                sleep(Duration::from_millis(10)).await;
+                                sleep(pace.ms(10)).await;
                             }
                             Err(err) => panic!("session lost (seed {seed}): {err:?}"),
                         }
                     }
                 };
-                let cancel_after = Duration::from_millis(random.below(4_000));
+                let cancel_after = pace.ms(random.below(4_000));
                 // One third never cancel: a fixed outer bound proves they
                 // cannot get stranded behind a missed notification.
                 let kind = random.below(3);
-                timeout(Duration::from_secs(30), async {
+                timeout(pace.stranded_after(), async {
                     match kind {
                         0 => {
                             acquisition.await;
@@ -201,7 +233,7 @@ async fn soak(seed: u64, rounds: usize) {
                     }
                 })
                 .await
-                .expect("caller exceeded 30s virtual-time bound");
+                .expect("caller stranded past its bound");
             }
             (completed, timed_out, selected_out)
         });
@@ -215,9 +247,9 @@ async fn soak(seed: u64, rounds: usize) {
     }
     // Drain a refresh whose last waiter cancelled, then compare all three
     // views of the rotating credential: issuer, durable store and engine.
-    timeout(Duration::from_secs(30), async {
+    timeout(pace.stranded_after(), async {
         while strategy.shared.refresh_in_progress.load(Ordering::Acquire) {
-            sleep(Duration::from_millis(1)).await;
+            sleep(pace.ms(1)).await;
         }
     })
     .await
@@ -239,14 +271,21 @@ async fn soak(seed: u64, rounds: usize) {
         installed, idp.generation,
         "newest rotation was not installed"
     );
-    assert!(
-        idp.generation > 25 && idp.errors > 0,
-        "insufficient refresh/error coverage"
-    );
-    assert!(
-        completed > 0 && timed_out > 0 && selected_out > 0,
-        "insufficient cancellation coverage"
-    );
+    // Coverage floors hold only for a replayable seed. In real time the
+    // scheduler decides how many callers cancel, so the multi-thread run
+    // checks the invariants above and that the session rotated at all.
+    if pace.0 == 1 {
+        assert!(
+            idp.generation > 25 && idp.errors > 0,
+            "insufficient refresh/error coverage"
+        );
+        assert!(
+            completed > 0 && timed_out > 0 && selected_out > 0,
+            "insufficient cancellation coverage"
+        );
+    } else {
+        assert!(idp.generation > 0, "the session never rotated");
+    }
     // Test-only progress counters make the long CI run's coverage reviewable.
     #[allow(clippy::print_stderr)]
     {
@@ -256,13 +295,21 @@ async fn soak(seed: u64, rounds: usize) {
 
 #[tokio::test(start_paused = true)]
 async fn cancellation_soak_short() {
-    soak(0x1170, 128).await;
+    soak(0x1170, 128, Pace(1)).await;
+}
+
+/// Real time on four workers, 100 times faster than the seeded runs: about
+/// three seconds of wall clock. Not replayable, so it asserts no coverage
+/// floor; it exists to interleave callers in ways one thread cannot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cancellation_soak_multi_thread() {
+    soak(0x1170, 8, Pace(100)).await;
 }
 
 #[tokio::test(start_paused = true)]
 #[ignore = "long release soak; run with test:soak:stack-auth"]
 async fn cancellation_soak_long() {
     for seed in [0x1170, 0xdead_beef, 0xcafe_f00d, 0x1234_5678] {
-        soak(seed, 4_096).await;
+        soak(seed, 4_096, Pace(1)).await;
     }
 }
