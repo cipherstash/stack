@@ -390,66 +390,95 @@ impl<'de> Deserializer<'de> {
     }
 }
 
+impl<'de> Deserializer<'de> {
+    /// Visit the array whose tag is next. A visitor that stopped early (a
+    /// tuple shorter than the array) would leave elements for the
+    /// enclosing container to read as its own next key or value, so the
+    /// array must be read to its end.
+    fn array<V: Visitor<'de>>(&mut self, visitor: V) -> Result<V::Value, Error> {
+        self.pos += 1;
+        let len = self.count()?;
+        let mut seq = Seq {
+            de: self,
+            left: len,
+            index: 0,
+        };
+        let value = visitor.visit_seq(&mut seq)?;
+        if seq.left != 0 {
+            return Err(Error::new("an array longer than expected"));
+        }
+        Ok(value)
+    }
+
+    /// Visit the object whose tag is next, which must be read to its end,
+    /// as an array must.
+    fn object<V: Visitor<'de>>(&mut self, visitor: V) -> Result<V::Value, Error> {
+        self.pos += 1;
+        let len = self.count()?;
+        let mut map = Map {
+            de: self,
+            left: len,
+            key: None,
+        };
+        let value = visitor.visit_map(&mut map)?;
+        if map.left != 0 || map.key.is_some() {
+            return Err(Error::new("an object with entries left unread"));
+        }
+        Ok(value)
+    }
+}
+
+/// Hand a scalar to a visitor at its exact type. A scalar with a logical
+/// type is refused, since serde has no data model for one.
+fn visit_scalar<'de, V: Visitor<'de>>(
+    ty: Option<Logical>,
+    value: Physical<'de>,
+    visitor: V,
+) -> Result<V::Value, Error> {
+    if ty.is_some() {
+        return Err(Error::new(
+            "a value with a logical type (a date, a timestamp, a decimal) is not supported",
+        ));
+    }
+    match value {
+        Physical::Null => visitor.visit_unit(),
+        Physical::Bool(b) => visitor.visit_bool(b),
+        Physical::Int(int) => visit_int(int, visitor),
+        Physical::Float(Float::F32(v)) => visitor.visit_f32(v),
+        Physical::Float(Float::F64(v)) => visitor.visit_f64(v),
+        Physical::Text(text) => visitor.visit_borrowed_str(text),
+        Physical::Bytes(bytes) => visitor.visit_borrowed_bytes(bytes),
+    }
+}
+
+/// Hand an integer to a visitor at its exact width.
+fn visit_int<'de, V: Visitor<'de>>(int: Int, visitor: V) -> Result<V::Value, Error> {
+    match int {
+        Int::I8(v) => visitor.visit_i8(v),
+        Int::I16(v) => visitor.visit_i16(v),
+        Int::I32(v) => visitor.visit_i32(v),
+        Int::I64(v) => visitor.visit_i64(v),
+        Int::I128(v) => visitor.visit_i128(v),
+        Int::U8(v) => visitor.visit_u8(v),
+        Int::U16(v) => visitor.visit_u16(v),
+        Int::U32(v) => visitor.visit_u32(v),
+        Int::U64(v) => visitor.visit_u64(v),
+        Int::U128(v) => visitor.visit_u128(v),
+    }
+}
+
 impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
     type Error = Error;
 
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match self.peek()? {
-            ARRAY => {
-                self.pos += 1;
-                let len = self.count()?;
-                let mut seq = Seq {
-                    de: self,
-                    left: len,
-                    index: 0,
-                };
-                let value = visitor.visit_seq(&mut seq)?;
-                // A visitor that stopped early (a tuple shorter than the
-                // array) would leave elements for the enclosing container to
-                // read as its own next key or value.
-                if seq.left != 0 {
-                    return Err(Error::new("an array longer than expected"));
-                }
-                Ok(value)
-            }
-            OBJECT => {
-                self.pos += 1;
-                let len = self.count()?;
-                let mut map = Map {
-                    de: self,
-                    left: len,
-                    key: None,
-                };
-                let value = visitor.visit_map(&mut map)?;
-                if map.left != 0 || map.key.is_some() {
-                    return Err(Error::new("an object with entries left unread"));
-                }
-                Ok(value)
-            }
+            ARRAY => self.array(visitor),
+            OBJECT => self.object(visitor),
             PASSTHROUGH => Err(Error::new("a passthrough is not supported")),
-            _ => match self.scalar()? {
-                (None, Physical::Null) => visitor.visit_unit(),
-                (None, Physical::Bool(b)) => visitor.visit_bool(b),
-                (None, Physical::Int(int)) => match int {
-                    Int::I8(v) => visitor.visit_i8(v),
-                    Int::I16(v) => visitor.visit_i16(v),
-                    Int::I32(v) => visitor.visit_i32(v),
-                    Int::I64(v) => visitor.visit_i64(v),
-                    Int::I128(v) => visitor.visit_i128(v),
-                    Int::U8(v) => visitor.visit_u8(v),
-                    Int::U16(v) => visitor.visit_u16(v),
-                    Int::U32(v) => visitor.visit_u32(v),
-                    Int::U64(v) => visitor.visit_u64(v),
-                    Int::U128(v) => visitor.visit_u128(v),
-                },
-                (None, Physical::Float(Float::F32(v))) => visitor.visit_f32(v),
-                (None, Physical::Float(Float::F64(v))) => visitor.visit_f64(v),
-                (None, Physical::Text(text)) => visitor.visit_borrowed_str(text),
-                (None, Physical::Bytes(bytes)) => visitor.visit_borrowed_bytes(bytes),
-                (Some(_), _) => Err(Error::new(
-                    "a value with a logical type (a date, a timestamp, a decimal) is not supported",
-                )),
-            },
+            _ => {
+                let (ty, value) = self.scalar()?;
+                visit_scalar(ty, value, visitor)
+            }
         }
     }
 
