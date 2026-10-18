@@ -1,22 +1,12 @@
 
 ## [0.6.1] - 2026-10-18
 
-### Documentation
-
-- say that expecting text is printed and that a container length is checked
-
 ### Features
 
-- serde over the transport frame, for data that is not plaintext
-
-### Fixes
-
-- keep an unknown key off the error path, so it is never printed
-- never print an unknown variant, and read a bare variant as a null payload
-- keep reads aligned, bound variant depth, and wipe buffers on error
-- never put a key a host chose on an error's path
-- read each kind only as itself, so a struct is never an array and text is never bytes
-- refuse a map key out of turn, so a read stays aligned and a written key is never lost
+- A serde data format over the frame, behind the new `serde` feature. `vitaminc_aead_frame::serde::from_slice` and `from_frame` read any `Deserialize` type from frame bytes, and `to_vec` writes any `Serialize` type as frame bytes. Use it for data a host exchanges with Rust that is not plaintext to seal, such as a call's options or a result; plaintext still crosses as a frame walked into a sink. The frame's bytes are unchanged, so hosts need no changes and existing ciphertexts are unaffected.
+- The mapping keeps what a frame carries: integers read at their exact width, text and bytes are borrowed from the input, and enums are externally tagged (a unit variant is its name, any other variant an object of one entry). A scalar with a logical type and a passthrough are refused, except JavaScript's `undefined`, which reads as null.
+- An `Error` never contains a value. It names the kind of value found and the path to it (`Error::path`, `Error::field`), and drops a type's own message, such as one from a `try_from` or `serialize_with` check, since it may print the value it refused. A type's `expecting` text is kept, so a hand-written one must not include a value. A map key that is data, or a key or variant name the type does not declare, never appears in an error; such an entry is placed by position.
+- Reading is strict. The whole frame is validated before serde sees it, so a malformed frame or a repeated key is refused up front. A container must be read to its end, each kind reads only as itself (a struct never from an array, text never as bytes), and a map key out of turn is refused, so a type that stops early cannot misread what follows. Writing refuses a value nested past `MAX_DEPTH` instead of overflowing the stack, and wipes its buffers if it fails part way.
 
 ## [0.6.0] - 2026-10-17
 
