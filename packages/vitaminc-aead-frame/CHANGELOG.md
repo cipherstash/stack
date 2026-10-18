@@ -1,4 +1,23 @@
 
+## [0.6.1] - 2026-10-18
+
+### Documentation
+
+- say that expecting text is printed and that a container length is checked
+
+### Features
+
+- serde over the transport frame, for data that is not plaintext
+
+### Fixes
+
+- keep an unknown key off the error path, so it is never printed
+- never print an unknown variant, and read a bare variant as a null payload
+- keep reads aligned, bound variant depth, and wipe buffers on error
+- never put a key a host chose on an error's path
+- read each kind only as itself, so a struct is never an array and text is never bytes
+- refuse a map key out of turn, so a read stays aligned and a written key is never lost
+
 ## [0.6.0] - 2026-10-17
 
 ### Breaking
