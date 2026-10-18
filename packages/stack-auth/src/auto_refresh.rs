@@ -520,14 +520,13 @@ impl<R: Refresher, S: TokenStore> RefreshState<R, S> {
             Ok(new_token) => {
                 self.save_refreshed_token(&new_token).await;
                 let mut state = self.state.lock().await;
-                let _ = self.install_refreshed_token(&mut state, new_token);
+                // The initiating caller gets the token it just installed. The
+                // old one is inside the expiry leeway by definition (that is
+                // why this refresh started), so handing it back could leave
+                // the caller only seconds to use it.
+                let token = self.install_refreshed_token(&mut state, new_token);
                 guard.defuse();
-                let now = self.clock.now_unix_secs();
-                if now < current_expires_at {
-                    Ok(current_service_token)
-                } else {
-                    state.require_usable_token(now)
-                }
+                Ok(token)
             }
             Err(err) => {
                 let consumed = credential_consumed(&err);
@@ -1937,12 +1936,8 @@ mod expiry_crossing_regression {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn initiating_caller_returns_the_old_token_only_before_its_expiry() {
-        for (elapsed, expected) in [
-            (9, "expiring-soon"),
-            (10, "refreshed-token"),
-            (11, "refreshed-token"),
-        ] {
+    async fn initiating_caller_receives_the_refreshed_token() {
+        for elapsed in [0, 9, 10, 11] {
             let clock = TestClock::new(1_000_000);
             let started = Arc::new(Notify::new());
             let gate = Arc::new(Notify::new());
@@ -1965,9 +1960,10 @@ mod expiry_crossing_regression {
                 .await
                 .expect("the usable token must start a refresh");
 
-            // Finish the exchange one second before, exactly at, and one
-            // second after the old token's expiry. Only the first case may
-            // return the old token to the caller that initiated the refresh.
+            // Finish the exchange well before, one second before, exactly at,
+            // and one second after the old token's expiry. The caller that
+            // initiated the refresh gets the new token every time: the old
+            // one is already inside the expiry leeway.
             clock.advance(elapsed);
             gate.notify_one();
             let returned = tokio::time::timeout(std::time::Duration::from_secs(1), caller)
@@ -1975,7 +1971,7 @@ mod expiry_crossing_regression {
                 .expect("the initiating caller must finish")
                 .unwrap()
                 .unwrap();
-            assert_eq!(returned.as_str(), expected, "elapsed={elapsed}");
+            assert_eq!(returned.as_str(), "refreshed-token", "elapsed={elapsed}");
             assert_eq!(
                 strategy.get_token().await.unwrap().as_str(),
                 "refreshed-token",
