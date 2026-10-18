@@ -22,7 +22,8 @@ name: "Report an unattended failure (reusable)"
 #       needs: [<every other job>]
 #       if: >-
 #         failure() && github.event_name != 'pull_request' &&
-#         github.event_name != 'workflow_dispatch'
+#         github.event_name != 'workflow_dispatch' &&
+#         github.event_name != 'merge_group'
 #       permissions:
 #         issues: write
 #       uses: ./.github/workflows/_report-unattended-failure.yml
@@ -30,8 +31,11 @@ name: "Report an unattended failure (reusable)"
 #         guidance: <what the person who picks this up should do>
 #
 # A pull request shows its own failure, and whoever dispatches a run by hand is
-# watching it (and may have pointed it at any branch). Every other event is
-# reported, so a trigger added later is covered without editing the condition.
+# watching it (and may have pointed it at any branch). A merge queue run fails
+# its pull request's merge in front of the author, and its ref
+# (`gh-readonly-queue/main/pr-<n>-<sha>`) is unique per attempt, so each one
+# would open a new issue. Every other event is reported, so a trigger added
+# later is covered without editing the condition.
 #
 # `needs` must list every other job in the workflow: `failure()` only sees the
 # jobs a job needs, so a failure in one left out is not reported.
@@ -46,8 +50,15 @@ on:
         required: true
         type: string
 
-permissions:
-  contents: read
+# Nothing at the workflow level. A called workflow gets at most what the
+# calling job grants, and GitHub checks this block against that grant even
+# though the job below sets its own: asking for `contents: read` here, with
+# callers granting only `issues: write`, failed every caller at startup ("is
+# requesting 'contents: read', but is only allowed 'contents: none'"). A
+# startup failure makes no check run, so a PR still looks green.
+# unattended-failure-report.test.mjs holds every caller's grant over what this
+# file asks for. The job needs no checkout: `gh` reads issues through GH_REPO.
+permissions: {}
 
 jobs:
   report:
@@ -56,6 +67,14 @@ jobs:
     timeout-minutes: 5
     permissions:
       issues: write
+    # Two failed runs of one workflow on one branch (two pushes in quick
+    # succession, say) would otherwise both look, both find nothing, and both
+    # open an issue. Serialised, the second finds the first's. GitHub keeps
+    # only one pending run per group, so with three at once the middle report
+    # is dropped; the others still land on the one issue.
+    concurrency:
+      group: report-unattended-failure-${{ github.workflow }}-${{ github.ref_name }}
+      cancel-in-progress: false
     steps:
       - name: Open or update the failure issue
         env:
@@ -72,10 +91,13 @@ jobs:
           body="The \`$EVENT\` run at $SHA failed: $RUN_URL
 
           $GUIDANCE"
-          # `--search` matches words, not the whole title; the jq filter
-          # demands an exact match so a similarly named workflow's issue is
-          # never commented on.
-          issue=$(gh issue list --state open --search "in:title \"$TITLE\"" \
+          # Every open issue, matched on the exact title. Not `--search`: the
+          # search index lags, so an issue opened by the previous report a
+          # moment ago may not be found, and its results are ranked and
+          # capped at the default 30, so the right one can fall outside them.
+          # A plain list reads the issues directly; the limit is far above the
+          # repository's open issue count.
+          issue=$(gh issue list --state open --limit 5000 \
             --json number,title --jq "map(select(.title == env.TITLE)) | .[0].number // empty")
           if [ -n "$issue" ]; then
             gh issue comment "$issue" --body "$body"

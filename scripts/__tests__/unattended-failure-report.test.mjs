@@ -27,13 +27,51 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  *    which drops push-to-main failures and fails shut on any trigger added
  *    later (eql-matrix-triggers.test.mjs forbids that shape in test-eql.yml
  *    for the same reason). So the condition is held to one spelling.
+ * 4. The reporter asks for a permission its caller does not grant. A called
+ *    workflow gets at most the calling job's grant, and GitHub refuses the
+ *    WHOLE caller at startup when the called file asks for more, at the
+ *    workflow level as well as in a job. That happened: the reporter asked
+ *    for `contents: read` at the top, the callers granted `issues: write`,
+ *    and Test EQL and Fuzz (crates) stopped starting. A startup failure
+ *    creates no check run, so the pull request still looked green, and
+ *    actionlint does not model the handoff. So every scope the reporter asks
+ *    for, anywhere in the file, must be granted by every caller.
  */
 
 const REPORTER = './.github/workflows/_report-unattended-failure.yml'
 
 /** The report job's condition, as the parsed workflow holds it. */
 const CONDITION =
-  "failure() && github.event_name != 'pull_request' && github.event_name != 'workflow_dispatch'"
+  "failure() && github.event_name != 'pull_request' && github.event_name != 'workflow_dispatch' && github.event_name != 'merge_group'"
+
+/** GitHub's permission levels, weakest first. */
+const LEVELS = ['none', 'read', 'write']
+
+/**
+ * The scopes a `permissions:` value names, as `{ scope: level }`. `read-all`
+ * and `write-all` name every scope, which this cannot enumerate, so they map
+ * to a `*` entry that `exceeds` treats as covering, or needing, everything.
+ */
+function scopes(permissions) {
+  if (permissions === undefined) return undefined
+  if (permissions === 'read-all') return { '*': 'read' }
+  if (permissions === 'write-all') return { '*': 'write' }
+  return { ...(permissions ?? {}) }
+}
+
+/** The scopes in `asked` that `granted` does not cover, as `scope: level`. */
+function exceeds(asked, granted) {
+  return Object.entries(asked)
+    .filter(([scope, level]) => {
+      const have = granted[scope] ?? granted['*'] ?? 'none'
+      if (scope === '*') {
+        // Every scope at `level`: only a matching `*` grant covers it.
+        return LEVELS.indexOf(granted['*'] ?? 'none') < LEVELS.indexOf(level)
+      }
+      return LEVELS.indexOf(have) < LEVELS.indexOf(level)
+    })
+    .map(([scope, level]) => `${scope}: ${level}`)
+}
 
 /**
  * Scheduled workflows that do not call the reporter, with the reason. An
@@ -109,6 +147,55 @@ describe('unattended workflow failures are reported', () => {
       expect(String(job.with?.guidance ?? '').trim()).not.toBe('')
     })
   }
+
+  // Point 4. The workflow level is checked as well as each job: GitHub checks
+  // it even when every job sets its own block, which is exactly the case
+  // that failed.
+  const called = readWorkflow(REPORTER.slice(2))
+  const asked = [
+    ['the workflow level', scopes(called?.permissions)],
+    ...Object.entries(called?.jobs ?? {}).map(([id, job]) => [
+      `job ${id}`,
+      scopes(job?.permissions),
+    ]),
+  ].filter(([, level]) => level !== undefined)
+
+  it('the reporter declares its permissions, so a caller default cannot leak in', () => {
+    // Undeclared, a block inherits the caller's grant, which this guard then
+    // cannot see. Declared at both levels, everything it asks for is named.
+    expect(called?.permissions).toBeDefined()
+    for (const job of Object.values(called?.jobs ?? {})) {
+      expect(job?.permissions).toBeDefined()
+    }
+  })
+
+  for (const { path, wf } of reporters) {
+    it(`${path} grants every permission the reporter asks for`, () => {
+      const [[, job]] = reportJobs(wf)
+      const granted = scopes(job.permissions) ?? scopes(wf.permissions) ?? {}
+      const missing = asked.flatMap(([where, level]) =>
+        exceeds(level, granted).map((scope) => `${where} asks for ${scope}`),
+      )
+      expect(
+        missing,
+        `${REPORTER} asks for more than ${path}'s report job grants, so GitHub fails ${path} at startup with "Error calling workflow ... is requesting '<scope>', but is only allowed '<scope>: none'". No check run is created, so a pull request still looks green. Grant the scope in the report job, or stop asking for it.`,
+      ).toEqual([])
+    })
+  }
+
+  it('the permission check catches the shape that failed', () => {
+    // The original reporter's workflow-level block against the callers' grant.
+    expect(exceeds({ contents: 'read' }, { issues: 'write' })).toEqual([
+      'contents: read',
+    ])
+    expect(exceeds({ issues: 'write' }, { issues: 'read' })).toEqual([
+      'issues: write',
+    ])
+    expect(exceeds({ issues: 'read' }, { issues: 'write' })).toEqual([])
+    expect(exceeds({}, {})).toEqual([])
+    expect(exceeds({ '*': 'read' }, { contents: 'read' })).toEqual(['*: read'])
+    expect(exceeds({ contents: 'read' }, { '*': 'read' })).toEqual([])
+  })
 
   it('the reporter keeps one open issue per workflow and branch', () => {
     const wf = readWorkflow(REPORTER.slice(2))
