@@ -1248,3 +1248,84 @@ fn a_value_read_before_its_key_is_refused() {
     let error = from_slice::<ValueFirst>(&bytes).expect_err("refused");
     assert_eq!(error.message(), "a map value was read before its key");
 }
+
+/// A struct or a map reads an object and nothing else. serde's derived
+/// struct visitor would also read an array by position, which would let a
+/// host send `[9]` where `{"rows": 9}` belongs.
+#[test]
+fn a_struct_or_map_reads_only_an_object() {
+    #[derive(Deserialize, Debug)]
+    #[allow(dead_code)]
+    struct Point {
+        x: u8,
+        y: u8,
+    }
+    let error = from_slice::<Point>(&to_vec(&(1u8, 2u8)).expect("writes")).expect_err("refused");
+    assert_eq!(error.message(), "expected struct Point, found an array");
+    let error = from_slice::<Point>(&to_vec(&1u8).expect("writes")).expect_err("refused");
+    assert_eq!(error.message(), "expected struct Point, found an integer");
+    let error =
+        from_slice::<BTreeMap<String, u8>>(&to_vec(&[1u8]).expect("writes")).expect_err("refused");
+    assert_eq!(error.message(), "expected a map, found an array");
+
+    let mut point = BTreeMap::new();
+    point.insert("x", 1u8);
+    point.insert("y", 2u8);
+    let read: Point = from_slice(&to_vec(&point).expect("writes")).expect("reads");
+    assert_eq!((read.x, read.y), (1, 2));
+}
+
+/// Text and bytes are kept apart: a string reads only text, and bytes read
+/// only bytes, though serde's own visitors would take either.
+#[test]
+fn a_string_reads_only_text_and_bytes_only_bytes() {
+    let bytes = to_vec(&serde_bytes::Bytes::new(b"acme")).expect("writes");
+    let text = to_vec(&"acme").expect("writes");
+
+    let error = from_slice::<String>(&bytes).expect_err("refused");
+    assert_eq!(error.message(), "expected a string, found bytes");
+    let error = from_slice::<&str>(&bytes).expect_err("refused");
+    assert_eq!(error.message(), "expected a borrowed string, found bytes");
+    let error = from_slice::<serde_bytes::ByteBuf>(&text).expect_err("refused");
+    assert_eq!(error.message(), "expected byte array, found a string");
+    let error = from_slice::<&[u8]>(&text).expect_err("refused");
+    assert_eq!(
+        error.message(),
+        "expected a borrowed byte array, found a string"
+    );
+    let error = from_slice::<String>(&to_vec(&[1u8]).expect("writes")).expect_err("refused");
+    assert_eq!(error.message(), "expected a string, found an array");
+
+    assert_eq!(from_slice::<&str>(&text).expect("reads"), "acme");
+    assert_eq!(from_slice::<&[u8]>(&bytes).expect("reads"), b"acme");
+    assert_eq!(
+        from_slice::<serde_bytes::ByteBuf>(&bytes)
+            .expect("reads")
+            .into_vec(),
+        b"acme"
+    );
+
+    // A logical scalar or a passthrough still says which it was.
+    let date = vitaminc_aead::to_frame(Raw(Some(Logical::Date), Physical::Int(Int::I32(1))))
+        .expect("frames");
+    let error = from_slice::<String>(date.risky_ref_for_test()).expect_err("refused");
+    assert!(error.message().contains("logical type"), "{error}");
+    let error = from_slice::<BTreeMap<String, u8>>(date.risky_ref_for_test()).expect_err("refused");
+    assert!(error.message().contains("logical type"), "{error}");
+    let mut passthrough = Vec::new();
+    {
+        let mut map = FrameWriter::new(&mut passthrough)
+            .map(Some(1))
+            .expect("map");
+        map.entry("p")
+            .expect("entry")
+            .passthrough(1u32)
+            .expect("passthrough");
+        map.end().expect("end");
+    }
+    let error = from_slice::<BTreeMap<String, String>>(&passthrough).expect_err("refused");
+    assert!(error.message().contains("passthrough"), "{error}");
+    let error =
+        from_slice::<BTreeMap<String, serde_bytes::ByteBuf>>(&passthrough).expect_err("refused");
+    assert!(error.message().contains("passthrough"), "{error}");
+}

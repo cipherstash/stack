@@ -21,6 +21,10 @@
 //! | bool | bool |
 //! | null, and JavaScript's `undefined` | unit, and `None` |
 //!
+//! Each kind reads only as itself: a struct or a map reads an object, never
+//! an array by position, and a string reads text, never bytes that happen
+//! to be UTF-8, nor bytes text.
+//!
 //! A frame keeps an integer's width, and so does this format: a type that
 //! reads through `deserialize_any` sees `visit_u32` for a `u32`, never a
 //! wider or narrower call. serde's own integer types accept any integer
@@ -401,6 +405,48 @@ impl<'de> Deserializer<'de> {
         let ((ty, value), _) = leaf::read(rest, Form::Frame).map_err(|_| malformed())?;
         Ok(is_plain(ty) && matches!(value, Physical::Null))
     }
+
+    /// The kind of the next node, for a refusal. It carries no value, so a
+    /// message built from it cannot repeat one.
+    fn found(&self) -> Result<Unexpected<'static>, Error> {
+        Ok(match self.peek()? {
+            ARRAY => Unexpected::Seq,
+            OBJECT => Unexpected::Map,
+            PASSTHROUGH => Unexpected::Other("a passthrough"),
+            _ => {
+                let rest = self.buf.get(self.pos..).ok_or_else(malformed)?;
+                let ((ty, value), _) = leaf::read(rest, Form::Frame).map_err(|_| malformed())?;
+                match (ty, value) {
+                    (Some(_), _) => Unexpected::Other("a value with a logical type"),
+                    (None, Physical::Null) => Unexpected::Unit,
+                    (None, Physical::Bool(_)) => Unexpected::Bool(false),
+                    (None, Physical::Int(_)) => Unexpected::Unsigned(0),
+                    (None, Physical::Float(_)) => Unexpected::Float(0.0),
+                    (None, Physical::Text(_)) => Unexpected::Str(""),
+                    (None, Physical::Bytes(_)) => Unexpected::Bytes(&[]),
+                }
+            }
+        })
+    }
+
+    /// Read the next node only if it is of the kind `expected` names, so a
+    /// type reads exactly the kind it asked for: a struct or map an object
+    /// and never an array, a string a text leaf and never bytes, bytes a
+    /// bytes leaf and never text.
+    fn only<V: Visitor<'de>>(
+        &mut self,
+        expected: fn(&Unexpected<'_>) -> bool,
+        visitor: V,
+    ) -> Result<V::Value, Error> {
+        let found = self.found()?;
+        // A passthrough or a logical scalar is refused by deserialize_any,
+        // which says which it was.
+        if expected(&found) || matches!(found, Unexpected::Other(_)) {
+            de::Deserializer::deserialize_any(self, visitor)
+        } else {
+            Err(de::Error::invalid_type(found, &visitor))
+        }
+    }
 }
 
 impl<'de> Deserializer<'de> {
@@ -544,7 +590,7 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
     ) -> Result<V::Value, Error> {
         match self.peek()? {
             OBJECT => self.object(fields, visitor),
-            _ => self.deserialize_any(visitor),
+            _ => self.only(|found| matches!(found, Unexpected::Map), visitor),
         }
     }
 
@@ -597,9 +643,34 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
         false
     }
 
+    /// A map is an object, as a struct is (above), never an array: serde's
+    /// derived struct visitor would read one by position.
+    fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        self.only(|found| matches!(found, Unexpected::Map), visitor)
+    }
+
+    /// A string is text. serde's string visitors would also take bytes that
+    /// happen to be UTF-8, which the format keeps apart.
+    fn deserialize_str<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        self.only(|found| matches!(found, Unexpected::Str(_)), visitor)
+    }
+
+    fn deserialize_string<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        de::Deserializer::deserialize_str(self, visitor)
+    }
+
+    /// Bytes are bytes. serde's byte visitors would also take text.
+    fn deserialize_bytes<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        self.only(|found| matches!(found, Unexpected::Bytes(_)), visitor)
+    }
+
+    fn deserialize_byte_buf<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
+        de::Deserializer::deserialize_bytes(self, visitor)
+    }
+
     ::serde::forward_to_deserialize_any! {
-        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
-        bytes byte_buf unit unit_struct seq tuple tuple_struct map identifier
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char
+        unit unit_struct seq tuple tuple_struct identifier
     }
 }
 
