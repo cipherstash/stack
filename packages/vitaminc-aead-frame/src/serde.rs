@@ -19,7 +19,7 @@
 //! | an integer | that exact width: `i8` … `i128`, `u8` … `u128` |
 //! | `f32`, `f64` | that width |
 //! | bool | bool |
-//! | null | unit, and `None` |
+//! | null, and JavaScript's `undefined` | unit, and `None` |
 //!
 //! A frame keeps an integer's width, and so does this format: a type that
 //! reads through `deserialize_any` sees `visit_u32` for a `u32`, never a
@@ -35,17 +35,20 @@
 //! reads `"match"` as `Match(None)`), and `{"name": null}` reads as a unit
 //! variant.
 //!
-//! serde's `untagged` and `flatten` read through a buffer of their own,
-//! which has no 128-bit integers, so a type using either cannot hold an
-//! `i128` or `u128`.
+//! serde's `untagged`, internally tagged (`tag = "…"`) and `flatten` read
+//! through a buffer of their own. It has no 128-bit integers, so a type
+//! using any of them cannot hold an `i128` or `u128`, and an error found
+//! while reading back from it has no path below the buffered value.
 //!
 //! The format is not human readable ([`is_human_readable`] is `false`), so
 //! a type with a compact binary form uses it: a `uuid::Uuid` crosses as its
-//! 16 bytes.
+//! 16 bytes. A map's key is text, so a `Uuid` used as a key crosses in its
+//! text form.
 //!
 //! Not supported, and refused: a passthrough node, and a scalar with a
 //! logical type (a date, a timestamp, a decimal), which serde has no data
-//! model for.
+//! model for. JavaScript's `undefined`, which always sits over null, reads
+//! as null.
 //!
 //! [`is_human_readable`]: ::serde::Deserializer::is_human_readable
 //!
@@ -57,9 +60,12 @@
 //! carries data a host sent: a credential in a configuration, say. A type's
 //! own message (from a `try_from` or `deserialize_with` check, through
 //! `Error::custom`) is dropped for the same reason, since it may print the
-//! value it refused. Each error records the path of keys and indexes from
-//! the root to where it happened ([`Error::path`]), so a caller can say
-//! which field was wrong.
+//! value it refused. Each error records the path from the root to where it
+//! happened ([`Error::path`]), so a caller can say which field was wrong.
+//! The path names a struct's fields and an enum's variants, which the type
+//! declares. Any other key (a map's, a flattened entry's) is data, so its
+//! entry is placed by position instead ([`PathSegment::Entry`]), and
+//! printed as `{1}`.
 //!
 //! ```
 //! use serde::{Deserialize, Serialize};
@@ -119,10 +125,16 @@ pub struct Error {
 /// One step from the root of a frame towards a node.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PathSegment {
-    /// An object's entry, by key.
+    /// An object's entry, by key: a field or variant name the type itself
+    /// declares, never a key only a host chose.
     Key(String),
     /// An array's element, by position.
     Index(usize),
+    /// An object's entry, by position, where its key is data rather than a
+    /// name the type declares: a map's key, a flattened entry, a variant
+    /// read through `#[serde(other)]`. The key is not kept, since it is
+    /// what a host sent (or, writing, what the caller's map held).
+    Entry(usize),
 }
 
 impl Error {
@@ -145,11 +157,11 @@ impl Error {
     }
 
     /// The first key on the path: for a struct read from the root, the
-    /// field the error is about.
+    /// field the error is about. A key is always a name the type declares.
     pub fn field(&self) -> Option<&str> {
         self.path.iter().find_map(|segment| match segment {
             PathSegment::Key(key) => Some(key.as_str()),
-            PathSegment::Index(_) => None,
+            PathSegment::Index(_) | PathSegment::Entry(_) => None,
         })
     }
 
@@ -169,6 +181,7 @@ impl fmt::Display for Error {
                 PathSegment::Key(key) if i == 0 => write!(f, "{key}")?,
                 PathSegment::Key(key) => write!(f, ".{key}")?,
                 PathSegment::Index(index) => write!(f, "[{index}]")?,
+                PathSegment::Entry(index) => write!(f, "{{{index}}}")?,
             }
         }
         write!(f, ": {}", self.message)
@@ -386,7 +399,7 @@ impl<'de> Deserializer<'de> {
         }
         let rest = self.buf.get(self.pos..).ok_or_else(malformed)?;
         let ((ty, value), _) = leaf::read(rest, Form::Frame).map_err(|_| malformed())?;
-        Ok(ty.is_none() && matches!(value, Physical::Null))
+        Ok(is_plain(ty) && matches!(value, Physical::Null))
     }
 }
 
@@ -411,17 +424,24 @@ impl<'de> Deserializer<'de> {
     }
 
     /// Visit the object whose tag is next, which must be read to its end,
-    /// as an array must.
-    fn object<V: Visitor<'de>>(&mut self, visitor: V) -> Result<V::Value, Error> {
+    /// as an array must. `names` are the fields the type declares, if it is
+    /// a struct: only those keys are put on an error's path.
+    fn object<V: Visitor<'de>>(
+        &mut self,
+        names: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Error> {
         self.pos += 1;
         let len = self.count()?;
         let mut map = Map {
             de: self,
+            names,
             left: len,
-            key: None,
+            index: 0,
+            at: None,
         };
         let value = visitor.visit_map(&mut map)?;
-        if map.left != 0 || map.key.is_some() {
+        if map.left != 0 || map.at.is_some() {
             return Err(Error::new("an object with entries left unread"));
         }
         Ok(value)
@@ -435,7 +455,7 @@ fn visit_scalar<'de, V: Visitor<'de>>(
     value: Physical<'de>,
     visitor: V,
 ) -> Result<V::Value, Error> {
-    if ty.is_some() {
+    if !is_plain(ty) {
         return Err(Error::new(
             "a value with a logical type (a date, a timestamp, a decimal) is not supported",
         ));
@@ -448,6 +468,23 @@ fn visit_scalar<'de, V: Visitor<'de>>(
         Physical::Float(Float::F64(v)) => visitor.visit_f64(v),
         Physical::Text(text) => visitor.visit_borrowed_str(text),
         Physical::Bytes(bytes) => visitor.visit_borrowed_bytes(bytes),
+    }
+}
+
+/// Whether a scalar reads as its physical value. JavaScript's `undefined`
+/// is the one logical type that does: it always sits over null, and a host
+/// that models a missing field as `undefined` means null by it.
+fn is_plain(ty: Option<Logical>) -> bool {
+    matches!(ty, None | Some(Logical::Undefined))
+}
+
+/// The path segment for an object's entry: its key when that is one of the
+/// names the type declares, and otherwise only its position, so a key a
+/// host chose is never printed.
+fn entry_at(names: &'static [&'static str], key: &str, index: usize) -> PathSegment {
+    match names.iter().find(|name| **name == key) {
+        Some(name) => PathSegment::Key((*name).to_owned()),
+        None => PathSegment::Entry(index),
     }
 }
 
@@ -473,7 +510,7 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match self.peek()? {
             ARRAY => self.array(visitor),
-            OBJECT => self.object(visitor),
+            OBJECT => self.object(&[], visitor),
             PASSTHROUGH => Err(Error::new("a passthrough is not supported")),
             _ => {
                 let (ty, value) = self.scalar()?;
@@ -499,10 +536,22 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
         visitor.visit_newtype_struct(self)
     }
 
+    fn deserialize_struct<V: Visitor<'de>>(
+        self,
+        _name: &'static str,
+        fields: &'static [&'static str],
+        visitor: V,
+    ) -> Result<V::Value, Error> {
+        match self.peek()? {
+            OBJECT => self.object(fields, visitor),
+            _ => self.deserialize_any(visitor),
+        }
+    }
+
     fn deserialize_enum<V: Visitor<'de>>(
         self,
         _name: &'static str,
-        _variants: &'static [&'static str],
+        variants: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Error> {
         match self.peek()? {
@@ -515,7 +564,11 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
                 }
                 let variant = self.key()?;
                 let payload = self.pos;
-                let value = visitor.visit_enum(Enum { de: self, variant })?;
+                let value = visitor.visit_enum(Enum {
+                    de: self,
+                    variants,
+                    variant,
+                })?;
                 if self.pos == payload {
                     return Err(unread());
                 }
@@ -525,7 +578,9 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
                 "expected an enum: a variant name, or an object of one entry",
             )),
             _ => match self.scalar()? {
-                (None, Physical::Text(variant)) => visitor.visit_enum(BareVariant { variant }),
+                (None, Physical::Text(variant)) => {
+                    visitor.visit_enum(BareVariant { variants, variant })
+                }
                 _ => Err(Error::new(
                     "expected an enum: a variant name, or an object of one entry",
                 )),
@@ -544,8 +599,7 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
 
     ::serde::forward_to_deserialize_any! {
         bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
-        bytes byte_buf unit unit_struct seq tuple tuple_struct map struct
-        identifier
+        bytes byte_buf unit unit_struct seq tuple tuple_struct map identifier
     }
 }
 
@@ -585,9 +639,13 @@ impl<'de> SeqAccess<'de> for Seq<'_, 'de> {
 
 struct Map<'a, 'de> {
     de: &'a mut Deserializer<'de>,
+    /// The fields the type declares, if it is a struct.
+    names: &'static [&'static str],
     left: usize,
-    /// The key of the entry whose value is next.
-    key: Option<&'de str>,
+    /// The position of the next entry.
+    index: usize,
+    /// Where the entry whose value is next sits on the path.
+    at: Option<PathSegment>,
 }
 
 impl<'de> MapAccess<'de> for Map<'_, 'de> {
@@ -602,7 +660,8 @@ impl<'de> MapAccess<'de> for Map<'_, 'de> {
         }
         self.left -= 1;
         let key = self.de.key()?;
-        self.key = Some(key);
+        self.at = Some(entry_at(self.names, key, self.index));
+        self.index += 1;
         // An error about the key itself (an unknown key) stays at the
         // object's path: putting the key on the path would print it, and a
         // message never repeats what a host sent.
@@ -611,13 +670,17 @@ impl<'de> MapAccess<'de> for Map<'_, 'de> {
     }
 
     fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, Error> {
-        let key = self.key.take().unwrap_or_default();
+        // A value asked for before its key would read the key's own bytes.
+        let at = self
+            .at
+            .take()
+            .ok_or_else(|| Error::new("a map value was read before its key"))?;
         let start = self.de.pos;
         let value = seed
             .deserialize(&mut *self.de)
-            .map_err(|e| e.at(PathSegment::Key(key.to_owned())))?;
+            .map_err(|e| e.at(at.clone()))?;
         if self.de.pos == start {
-            return Err(unread().at(PathSegment::Key(key.to_owned())));
+            return Err(unread().at(at));
         }
         Ok(value)
     }
@@ -629,6 +692,8 @@ impl<'de> MapAccess<'de> for Map<'_, 'de> {
 
 struct Enum<'a, 'de> {
     de: &'a mut Deserializer<'de>,
+    /// The variants the type declares.
+    variants: &'static [&'static str],
     variant: &'de str,
 }
 
@@ -664,20 +729,22 @@ impl<'de> VariantAccess<'de> for Enum<'_, 'de> {
 
     fn struct_variant<V: Visitor<'de>>(
         self,
-        _fields: &'static [&'static str],
+        fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, Error> {
         let at = self.at();
-        de::Deserializer::deserialize_map(&mut *self.de, visitor).map_err(|e| e.at(at))
+        de::Deserializer::deserialize_struct(&mut *self.de, "", fields, visitor)
+            .map_err(|e| e.at(at))
     }
 }
 
 impl Enum<'_, '_> {
     /// The path segment for an error inside the payload. It is added only
-    /// once the variant is known, so an unknown variant's name is never
-    /// printed.
+    /// once the variant is accepted, and names it only if it is one the
+    /// type declares: a variant read through `#[serde(other)]` accepts a
+    /// name the type does not know, which is never printed.
     fn at(&self) -> PathSegment {
-        PathSegment::Key(self.variant.to_owned())
+        entry_at(self.variants, self.variant, 0)
     }
 }
 
@@ -685,6 +752,8 @@ impl Enum<'_, '_> {
 /// reads nothing, a newtype variant reads its payload from null (so an
 /// `Option<T>` payload is `None`), and a tuple or struct variant is refused.
 struct BareVariant<'de> {
+    /// The variants the type declares.
+    variants: &'static [&'static str],
     variant: &'de str,
 }
 
@@ -707,7 +776,7 @@ impl<'de> VariantAccess<'de> for BareVariant<'de> {
 
     fn newtype_variant_seed<T: DeserializeSeed<'de>>(self, seed: T) -> Result<T::Value, Error> {
         seed.deserialize(UnitDeserializer::<Error>::new())
-            .map_err(|e| e.at(PathSegment::Key(self.variant.to_owned())))
+            .map_err(|e| e.at(entry_at(self.variants, self.variant, 0)))
     }
 
     fn tuple_variant<V: Visitor<'de>>(self, _len: usize, _visitor: V) -> Result<V::Value, Error> {
@@ -903,6 +972,7 @@ impl<'o> ser::Serializer for Serializer<'o> {
     fn serialize_map(self, len: Option<usize>) -> Result<SerMap<'o>, Error> {
         Ok(SerMap {
             map: self.0.map(len).map_err(written)?,
+            index: 0,
             key: None,
         })
     }
@@ -974,15 +1044,26 @@ impl ser::SerializeTupleStruct for SerSeq<'_> {
 
 struct SerMap<'o> {
     map: vitaminc_aead::frame::FrameMap<'o>,
-    /// The key of the entry whose value is next.
-    key: Option<String>,
+    /// The position of the next entry.
+    index: usize,
+    /// The key of the entry whose value is next, from the caller's map.
+    key: Option<Zeroizing<String>>,
 }
 
 impl SerMap<'_> {
-    fn entry<T: Serialize + ?Sized>(&mut self, key: &str, value: &T) -> Result<(), Error> {
+    /// Write one entry. `at` is where an error inside it is placed: a
+    /// struct's field by name, a map's entry by position only, as in
+    /// reading.
+    fn entry<T: Serialize + ?Sized>(
+        &mut self,
+        key: &str,
+        at: PathSegment,
+        value: &T,
+    ) -> Result<(), Error> {
+        self.index += 1;
         value
             .serialize(Serializer(self.map.entry(key).map_err(written)?))
-            .map_err(|e| e.at(PathSegment::Key(key.to_owned())))
+            .map_err(|e| e.at(at))
     }
 }
 
@@ -990,7 +1071,7 @@ impl ser::SerializeMap for SerMap<'_> {
     type Ok = ();
     type Error = Error;
     fn serialize_key<T: Serialize + ?Sized>(&mut self, key: &T) -> Result<(), Error> {
-        self.key = Some(key.serialize(KeySerializer)?);
+        self.key = Some(Zeroizing::new(key.serialize(KeySerializer)?));
         Ok(())
     }
     fn serialize_value<T: Serialize + ?Sized>(&mut self, value: &T) -> Result<(), Error> {
@@ -998,7 +1079,8 @@ impl ser::SerializeMap for SerMap<'_> {
             .key
             .take()
             .ok_or_else(|| Error::new("a map value was written before its key"))?;
-        self.entry(&key, value)
+        let at = PathSegment::Entry(self.index);
+        self.entry(&key, at, value)
     }
     fn end(self) -> Result<(), Error> {
         self.map.end().map_err(written)
@@ -1013,7 +1095,7 @@ impl ser::SerializeStruct for SerMap<'_> {
         key: &'static str,
         value: &T,
     ) -> Result<(), Error> {
-        self.entry(key, value)
+        self.entry(key, PathSegment::Key(key.to_owned()), value)
     }
     fn end(self) -> Result<(), Error> {
         self.map.end().map_err(written)

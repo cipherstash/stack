@@ -72,9 +72,12 @@ through `deserialize_any`, text and bytes are borrowed from the input, and
 the format is not human readable, so a type with a binary form (a UUID) uses
 it. Enums are externally tagged: a unit variant is its name, any other
 variant an object of one entry. A scalar with a logical type and a
-passthrough are refused. An error names the kind of value it found and the
-path to it, never the value, and drops a type's own message (from a
-`try_from` check, say), which may print it.
+passthrough are refused, except JavaScript's `undefined`, which reads as
+null. An error names the kind of value it found and the path to it, never
+the value, and drops a type's own message (from a `try_from` check, say),
+which may print it. The path names only the fields and variants a type
+declares; an entry whose key is data, such as a map's, is placed by
+position.
 
 ## Hardening
 

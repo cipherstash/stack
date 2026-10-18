@@ -409,7 +409,9 @@ fn a_logical_scalar_and_a_passthrough_are_refused() {
     }
     let error = from_slice::<BTreeMap<String, Seen>>(&bytes).expect_err("refused");
     assert!(error.message().contains("passthrough"), "{error}");
-    assert_eq!(error.field(), Some("p"));
+    // A map's key is data, so the entry is placed by position only.
+    assert_eq!(error.path(), [PathSegment::Entry(0)]);
+    assert_eq!(error.field(), None);
     // Even a field nobody reads: an ignored key is skipped, not refused.
     #[derive(Deserialize)]
     struct Nothing {}
@@ -1092,4 +1094,157 @@ fn a_variant_part_counts_its_depth_from_the_top() {
     while let Tree::Node(child, _) = next {
         next = *child;
     }
+}
+
+/// A key the type accepts as data (a map's key, a flattened entry) is never
+/// printed: its entry is placed by position. A field the type declares is
+/// still named.
+#[test]
+fn a_key_only_a_host_chose_is_placed_by_position() {
+    #[derive(Deserialize, Debug)]
+    #[allow(dead_code)]
+    struct Context {
+        known: u8,
+        ctx: BTreeMap<String, u8>,
+    }
+    let bytes = to_vec(&serde_json::json!({
+        "known": 1u8,
+        "ctx": { "a": 1u8, "secret_looking_key": "s3cr3t" },
+    }))
+    .expect("writes");
+    let error = from_slice::<Context>(&bytes).expect_err("refused");
+    assert_eq!(error.to_string(), "ctx{1}: expected u8, found a string");
+    assert_eq!(error.field(), Some("ctx"));
+    assert!(!format!("{error:?}").contains("secret_looking_key"));
+
+    #[derive(Deserialize, Debug)]
+    #[allow(dead_code)]
+    struct Flattened {
+        known: u8,
+        #[serde(flatten)]
+        rest: BTreeMap<String, u8>,
+    }
+    let bytes = to_vec(&serde_json::json!({
+        "known": 1u8,
+        "secret_looking_key": [1u8],
+    }))
+    .expect("writes");
+    let error = from_slice::<Flattened>(&bytes).expect_err("refused");
+    assert!(!format!("{error} {error:?}").contains("secret_looking_key"));
+
+    // A passthrough under a flattened key fails while serde buffers the
+    // entry, through this format: the entry is placed by position.
+    let mut bytes = Vec::new();
+    {
+        let mut map = FrameWriter::new(&mut bytes).map(Some(2)).expect("map");
+        map.entry("known")
+            .expect("entry")
+            .scalar(None, Physical::Int(Int::U8(1)))
+            .expect("known");
+        map.entry("secret_looking_key")
+            .expect("entry")
+            .passthrough(1u32)
+            .expect("passthrough");
+        map.end().expect("end");
+    }
+    let error = from_slice::<Flattened>(&bytes).expect_err("refused");
+    assert_eq!(error.path(), [PathSegment::Entry(1)]);
+    assert!(!format!("{error} {error:?}").contains("secret_looking_key"));
+
+    // Writing, a map's key is placed by position too.
+    let sent = BTreeMap::from([("secret_looking_key", BTreeMap::from([(1u8, 1u8)]))]);
+    let error = to_vec(&sent).expect_err("a key that is not text");
+    assert_eq!(error.path(), [PathSegment::Entry(0)]);
+    assert_eq!(error.to_string(), "{0}: a map key must be a string");
+    // A later entry is placed by its own position.
+    let sent = BTreeMap::from([
+        ("a", BTreeMap::new()),
+        ("secret_looking_key", BTreeMap::from([(1u8, 1u8)])),
+    ]);
+    let error = to_vec(&sent).expect_err("a key that is not text");
+    assert_eq!(error.path(), [PathSegment::Entry(1)]);
+}
+
+/// A variant read through `#[serde(other)]` accepts a tag the type does not
+/// declare. An error in its payload is placed by position, so the tag is
+/// never printed.
+#[test]
+fn a_variant_read_through_other_is_not_named() {
+    #[derive(Deserialize, Debug)]
+    #[serde(rename_all = "lowercase")]
+    enum Mode {
+        Strict,
+        #[serde(other)]
+        Unknown,
+    }
+    let bytes = to_vec(&BTreeMap::from([("secret_looking_tag", [1u8])])).expect("writes");
+    let error = from_slice::<Mode>(&bytes).expect_err("refused");
+    assert_eq!(error.path(), [PathSegment::Entry(0)]);
+    assert!(!format!("{error} {error:?}").contains("secret_looking_tag"));
+    // A declared variant is still named.
+    let bytes = to_vec(&BTreeMap::from([("strict", [1u8])])).expect("writes");
+    let error = from_slice::<Mode>(&bytes).expect_err("refused");
+    assert_eq!(error.path(), [PathSegment::Key("strict".into())]);
+    let _ = (Mode::Strict, Mode::Unknown);
+}
+
+/// JavaScript's `undefined` sits over null and reads as null: an absent
+/// optional field a JS host sends as `undefined` is `None`.
+#[test]
+fn undefined_reads_as_null() {
+    #[derive(Deserialize, Debug, PartialEq)]
+    struct Options {
+        context: Option<String>,
+        unit: (),
+    }
+    let mut bytes = Vec::new();
+    {
+        let mut map = FrameWriter::new(&mut bytes).map(Some(2)).expect("map");
+        map.entry("context")
+            .expect("entry")
+            .scalar(Some(Logical::Undefined), Physical::Null)
+            .expect("undefined");
+        map.entry("unit")
+            .expect("entry")
+            .scalar(Some(Logical::Undefined), Physical::Null)
+            .expect("undefined");
+        map.end().expect("end");
+    }
+    assert_eq!(
+        from_slice::<Options>(&bytes).expect("reads"),
+        Options {
+            context: None,
+            unit: ()
+        }
+    );
+}
+
+/// A visitor that asks for a value before its key is refused, rather than
+/// reading the key's own bytes as the value.
+#[test]
+fn a_value_read_before_its_key_is_refused() {
+    #[derive(Debug)]
+    struct ValueFirst;
+    impl<'de> Deserialize<'de> for ValueFirst {
+        fn deserialize<D: de::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> Visitor<'de> for V {
+                type Value = ValueFirst;
+                fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.write_str("an object")
+                }
+                fn visit_map<A: de::MapAccess<'de>>(
+                    self,
+                    mut map: A,
+                ) -> Result<ValueFirst, A::Error> {
+                    let _ = map.next_value::<u8>()?;
+                    Ok(ValueFirst)
+                }
+            }
+            d.deserialize_map(V)
+        }
+    }
+    let bytes = to_vec(&BTreeMap::from([("k", 1u8)])).expect("writes");
+    let error = from_slice::<ValueFirst>(&bytes).expect_err("refused");
+    assert_eq!(error.message(), "a map value was read before its key");
 }
