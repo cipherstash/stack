@@ -23,11 +23,13 @@ leaf's place in the value (`vitaminc-context`):
 | A map entry's value | `for_map_entry(key)`: `PAE(domain, context, key)` | the context and the entry's key |
 | A sequence element | `for_sequence_element()`: `PAE(domain, context, "element")` | the context, and that the leaf is an element, not a single value |
 | An empty map or sequence | `for_empty_map()` / `for_empty_sequence()` | that the container was empty |
-| `Some(x)` | `for_option_some()` | that the value was present |
 | Every leaf, finally | `for_leaf(version)` | the wire-format version byte |
 
 A leaf's plaintext also carries its type tag (`[tag] ++ payload`), so the tag
-is under the AEAD too. Map keys travel in the clear and are bound by the
+is under the AEAD too. An `Option` adds nothing of its own: `Some(x)` seals
+exactly as `x`, and `None` as a sealed null. Whether a value was present is
+told only by the leaf's type tag, so `Some(None)` and `None` seal alike.
+(`for_option_some()` is the PRF's derivation, not sealing's.) Map keys travel in the clear and are bound by the
 derivation above. Nested containers derive these contexts recursively.
 
 The question is what the whole of a sealed container should authenticate:
@@ -45,16 +47,20 @@ What a reader can rely on, for every leaf it opens:
 - it was sealed under this context, for this map key, as a sequence element
   or as a single value (not one moved into the other), and under this wire
   version;
-- an empty-container marker or a `Some` marker is the structural fact it
-  claims.
+- an empty-container marker is the structural fact it claims: the container
+  was sealed empty;
+- a container that is not empty still holds at least one sealed leaf. A
+  reader refuses a sequence or map with none, before opening anything, so
+  the boundary between empty and not empty is authenticated even though a
+  non-empty container's membership is not.
 
 What is **not** authenticated:
 
-- which entries a map holds. An entry can be missing, or a decrypt can be
-  handed a map with some entries removed, and every remaining leaf still
-  opens;
-- a sequence's order, length or duplicates. Elements can come back in any
-  order, as a subset, or repeated;
+- which entries a non-empty map holds. An entry can be missing, or a decrypt
+  can be handed a map with some entries removed, and every remaining leaf
+  still opens, as long as one sealed entry remains;
+- a non-empty sequence's order, length or duplicates. Elements can come back
+  in any order, as a non-empty subset, or repeated;
 - anything across separate values or rows. Two leaves sealed under the same
   context and key are interchangeable; a caller who needs a leaf bound to its
   row puts the row's identity in the context.
@@ -83,9 +89,11 @@ under another context.
   decrypt target that requires a field reports it missing; that is a shape
   mismatch, not a failed authentication. Stack Encrypt reports it as
   `Error::OpenedType` and keeps `Error::Aead` for a leaf that fails to open.
-- **Review findings of this kind are not defects.** A finding that a map's
-  membership, or a sequence's order, length or duplicates, is not
-  authenticated describes this decision. The repositories' review guidance
+- **Review findings of this kind are not defects.** A finding that a
+  non-empty map's membership, or a non-empty sequence's order, length or
+  duplicates, is not authenticated describes this decision. A finding that
+  the empty markers or the refusal of a container with no sealed leaf can
+  be bypassed is a defect. The repositories' review guidance
   (`AGENTS.md`, `.github/copilot-instructions.md`) says so. A finding that a
   *leaf* is not bound to its context, key, role, type or version is still a
   defect.
