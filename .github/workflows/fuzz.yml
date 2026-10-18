@@ -190,8 +190,8 @@ jobs:
           path: ${{ matrix.dir }}/fuzz/artifacts/**
           if-no-files-found: ignore
 
-  # Every run but a pull request or a manual dispatch is one nobody is
-  # watching, with no PR to turn red, so record its failure on an issue. See
+  # Every run but a pull request, a manual dispatch or a merge queue run is
+  # one nobody is watching, with no PR to turn red, so record its failure on an issue. See
   # _report-unattended-failure.yml; `needs` must name every other job.
   report:
     needs:
@@ -199,7 +199,8 @@ jobs:
       - fuzz-campaign
     if: >-
       failure() && github.event_name != 'pull_request' &&
-      github.event_name != 'workflow_dispatch'
+      github.event_name != 'workflow_dispatch' &&
+      github.event_name != 'merge_group'
     permissions:
       issues: write
     uses: ./.github/workflows/_report-unattended-failure.yml
