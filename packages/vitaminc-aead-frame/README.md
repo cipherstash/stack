@@ -73,7 +73,8 @@ the format is not human readable, so a type with a binary form (a UUID) uses
 it. Enums are externally tagged: a unit variant is its name, any other
 variant an object of one entry. A scalar with a logical type and a
 passthrough are refused. An error names the kind of value it found and the
-path to it, never the value.
+path to it, never the value, and drops a type's own message (from a
+`try_from` check, say), which may print it.
 
 ## Hardening
 

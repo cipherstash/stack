@@ -333,6 +333,19 @@ impl<'o> FrameWriter<'o> {
         Self { out, depth: 0 }
     }
 
+    /// A writer for a node that sits `depth` levels below the top of a
+    /// document, so [`MAX_DEPTH`] counts from the top: for a subtree
+    /// written to a buffer of its own and copied into the document later.
+    pub fn at_depth(out: &'o mut Vec<u8>, depth: usize) -> Self {
+        Self { out, depth }
+    }
+
+    /// How many levels below the top of its document this writer's node
+    /// sits.
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+
     fn node(self, tag: u8) -> Result<&'o mut Vec<u8>, FrameWriteError> {
         if self.depth > MAX_DEPTH {
             return Err(FrameWriteError::TooDeep);
@@ -836,6 +849,25 @@ mod tests {
         let scalar = frame_of(1u16);
         assert!(Frame::parse_nested(&scalar, MAX_DEPTH).is_ok());
         assert_eq!(Frame::parse_nested(&scalar, MAX_DEPTH + 1), Err(FrameError));
+    }
+
+    #[test]
+    fn a_writer_at_depth_counts_from_the_top() {
+        let mut out = Vec::new();
+        let writer = FrameWriter::at_depth(&mut out, 7);
+        assert_eq!(writer.depth(), 7);
+        let mut seq = writer.seq(Some(1)).expect("seq");
+        assert_eq!(seq.element().expect("element").depth(), 8);
+
+        // A scalar fits at the bound, and not below it.
+        let mut out = Vec::new();
+        assert!(FrameWriter::at_depth(&mut out, MAX_DEPTH)
+            .scalar(None, Physical::Bool(true))
+            .is_ok());
+        assert!(matches!(
+            FrameWriter::at_depth(&mut out, MAX_DEPTH + 1).scalar(None, Physical::Bool(true)),
+            Err(FrameWriteError::TooDeep)
+        ));
     }
 
     #[test]

@@ -697,7 +697,7 @@ fn a_unit_variant_reads_its_null_payload() {
     );
 
     // A type that reads only the first element of a sequence leaves the
-    // rest unread, and is refused.
+    // rest unread, and is refused by the array itself.
     #[derive(Debug)]
     struct FirstOnly;
     impl<'de> Deserialize<'de> for FirstOnly {
@@ -720,7 +720,7 @@ fn a_unit_variant_reads_its_null_payload() {
         }
     }
     let error = from_slice::<FirstOnly>(&to_vec(&[1u8, 2]).expect("writes")).expect_err("refused");
-    assert_eq!(error.message(), "the value did not read the whole frame");
+    assert_eq!(error.message(), "an array longer than expected");
 }
 
 /// An array or a passthrough is not an enum.
@@ -922,5 +922,174 @@ fn a_bare_variant_name_reads_a_null_payload() {
             error.message().ends_with(" variant, found a unit variant"),
             "{error}"
         );
+    }
+}
+
+/// A type that returns without reading the deserializer it was handed.
+#[derive(Debug, PartialEq)]
+struct Unread;
+
+impl<'de> Deserialize<'de> for Unread {
+    fn deserialize<D: de::Deserializer<'de>>(_: D) -> Result<Self, D::Error> {
+        Ok(Unread)
+    }
+}
+
+/// A container a type stopped reading early is refused where it is, not
+/// left for the enclosing object to misread as its next key or value.
+#[test]
+fn a_container_must_be_read_to_its_end() {
+    #[derive(Deserialize, Debug)]
+    #[allow(dead_code)]
+    struct Pair {
+        pair: (u8,),
+        n: u8,
+    }
+    #[derive(Serialize)]
+    struct Sent {
+        pair: (u8, u8),
+        n: u8,
+    }
+    let bytes = to_vec(&Sent { pair: (1, 2), n: 3 }).expect("writes");
+    let error = from_slice::<Pair>(&bytes).expect_err("refused");
+    assert_eq!(error.to_string(), "pair: an array longer than expected");
+
+    // An object whose last key is read but not its value.
+    #[derive(Debug)]
+    struct KeyOnly;
+    impl<'de> Deserialize<'de> for KeyOnly {
+        fn deserialize<D: de::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> Visitor<'de> for V {
+                type Value = KeyOnly;
+                fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.write_str("an object")
+                }
+                fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<KeyOnly, A::Error> {
+                    let _ = map.next_key::<&str>()?;
+                    Ok(KeyOnly)
+                }
+            }
+            d.deserialize_map(V)
+        }
+    }
+    let one = BTreeMap::from([("k", 1u8)]);
+    let error = from_slice::<KeyOnly>(&to_vec(&one).expect("writes")).expect_err("refused");
+    assert_eq!(error.message(), "an object with entries left unread");
+    // And one that stops before its last entry.
+    let two = BTreeMap::from([("j", 1u8), ("k", 2u8)]);
+    let error = from_slice::<KeyOnly>(&to_vec(&two).expect("writes")).expect_err("refused");
+    assert_eq!(error.message(), "an object with entries left unread");
+}
+
+/// A child whose type read nothing is refused at its own path, wherever it
+/// sits: an element, an entry's value, an enum's payload, or the root.
+#[test]
+fn a_value_its_type_did_not_read_is_refused() {
+    let error = from_slice::<Vec<Unread>>(&to_vec(&[1u8]).expect("writes")).expect_err("refused");
+    assert_eq!(error.to_string(), "[0]: a value its type did not read");
+
+    #[derive(Deserialize, Debug)]
+    #[allow(dead_code)]
+    struct Holder {
+        held: Unread,
+    }
+    let error = from_slice::<Holder>(&to_vec(&BTreeMap::from([("held", 1u8)])).expect("writes"))
+        .expect_err("refused");
+    assert_eq!(error.to_string(), "held: a value its type did not read");
+
+    #[derive(Deserialize, Debug)]
+    #[allow(dead_code)]
+    #[serde(rename_all = "lowercase")]
+    enum Tagged {
+        Name(Unread),
+    }
+    let error = from_slice::<Tagged>(&to_vec(&BTreeMap::from([("name", 1u8)])).expect("writes"))
+        .expect_err("refused");
+    assert_eq!(error.to_string(), "a value its type did not read");
+
+    let error = from_slice::<Unread>(&to_vec(&1u8).expect("writes")).expect_err("refused");
+    assert_eq!(error.message(), "the value did not read the whole frame");
+}
+
+/// A type's own error message is dropped, reading and writing, since it
+/// may print the value it refused. serde's own messages that name no value
+/// are kept.
+#[test]
+fn a_types_own_message_is_never_printed() {
+    #[derive(Deserialize, Debug)]
+    #[serde(try_from = "String")]
+    struct Token;
+    impl TryFrom<String> for Token {
+        type Error = String;
+        fn try_from(value: String) -> Result<Self, String> {
+            Err(format!("bad token {value}"))
+        }
+    }
+    #[derive(Deserialize, Debug)]
+    #[allow(dead_code)]
+    struct Config {
+        token: Token,
+    }
+    let bytes = to_vec(&BTreeMap::from([("token", "s3cr3t")])).expect("writes");
+    let error = from_slice::<Config>(&bytes).expect_err("refused");
+    assert_eq!(error.to_string(), "token: a value its type does not accept");
+    assert!(!format!("{error:?}").contains("s3cr3t"));
+
+    #[derive(Serialize)]
+    struct Leaky {
+        #[serde(serialize_with = "leak")]
+        token: &'static str,
+    }
+    fn leak<S: serde::Serializer>(value: &&str, _: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom(format!("bad token {value}")))
+    }
+    let error = to_vec(&Leaky { token: "s3cr3t" }).expect_err("refused");
+    assert_eq!(error.to_string(), "token: a value its type could not write");
+
+    // A length names no value, so serde's message for it is kept.
+    let error = from_slice::<(u8, u8)>(&to_vec(&[1u8]).expect("writes")).expect_err("refused");
+    assert_eq!(
+        error.message(),
+        "expected a tuple of size 2, found a length of 1"
+    );
+}
+
+/// A tuple or struct variant writes each part to a buffer of its own, and
+/// still counts its depth from the top of the document: a value nested too
+/// deep is refused where the limit is crossed, not after the whole value
+/// has been descended.
+#[test]
+fn a_variant_part_counts_its_depth_from_the_top() {
+    #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    #[serde(rename_all = "lowercase")]
+    enum Tree {
+        Node(Box<Tree>, u8),
+        Leaf,
+    }
+    fn tree(depth: usize) -> Tree {
+        (0..depth).fold(Tree::Leaf, |t, _| Tree::Node(Box::new(t), 0))
+    }
+    // Each node is an object and an array: two levels. The leaf under 64
+    // nodes sits at the limit.
+    let at_limit = tree(64);
+    let bytes = to_vec(&at_limit).expect("writes at the limit");
+    assert_eq!(from_slice::<Tree>(&bytes).expect("reads"), at_limit);
+
+    let error = to_vec(&tree(65)).expect_err("too deep");
+    assert!(error.message().contains("nests deeper"), "{error}");
+    // Refused at the 65th node, before its parts were written.
+    assert_eq!(error.path().len(), 2 * 64);
+
+    // A value far deeper is refused at the same place, without descending
+    // all the way down.
+    let deep = tree(100_000);
+    let error = to_vec(&deep).expect_err("too deep");
+    assert_eq!(error.path().len(), 2 * 64);
+    // Dropped iteratively: a recursive drop this deep would itself
+    // overflow the stack.
+    let mut next = deep;
+    while let Tree::Node(child, _) = next {
+        next = *child;
     }
 }

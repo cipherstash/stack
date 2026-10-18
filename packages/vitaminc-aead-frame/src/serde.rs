@@ -54,9 +54,12 @@
 //! serde's default messages print the value that did not fit ("invalid
 //! type: string \"…\""). This format's [`Error`] names only the kind of
 //! value it found, and does not repeat an unknown key, so a message never
-//! carries data a host sent: a credential in a configuration, say. Each
-//! error records the path of keys and indexes from the root to where it
-//! happened ([`Error::path`]), so a caller can say which field was wrong.
+//! carries data a host sent: a credential in a configuration, say. A type's
+//! own message (from a `try_from` or `deserialize_with` check, through
+//! `Error::custom`) is dropped for the same reason, since it may print the
+//! value it refused. Each error records the path of keys and indexes from
+//! the root to where it happened ([`Error::path`]), so a caller can say
+//! which field was wrong.
 //!
 //! ```
 //! use serde::{Deserialize, Serialize};
@@ -91,11 +94,11 @@ use ::serde::de::{
 };
 use ::serde::ser::{self, Serialize};
 use ::serde::Deserialize;
-use vitaminc_aead::frame::{ARRAY, OBJECT, PASSTHROUGH};
+use vitaminc_aead::frame::{FrameWriteError, ARRAY, MAX_DEPTH, OBJECT, PASSTHROUGH};
 use vitaminc_aead::leaf::{self, Form};
 use vitaminc_aead::plaintext::{Float, Int, Logical, MapSink, Physical, SeqSink, Sink};
 use vitaminc_aead::{Encrypt, Frame, FrameWriter};
-use zeroize::Zeroize;
+use zeroize::Zeroizing;
 
 // =============================================================================
 // Errors
@@ -202,9 +205,26 @@ fn kind(unexpected: &Unexpected<'_>) -> &'static str {
     }
 }
 
+/// A type's own message is dropped: `custom` takes any `Display`, and a
+/// `try_from` or `deserialize_with` check may well print the value it
+/// refused. serde's messages that are known to name no value (a missing or
+/// repeated field, a length) are kept, by overriding the methods that build
+/// them.
 impl de::Error for Error {
-    fn custom<T: fmt::Display>(msg: T) -> Self {
-        Self::new(msg)
+    fn custom<T: fmt::Display>(_msg: T) -> Self {
+        Self::new("a value its type does not accept")
+    }
+
+    fn missing_field(field: &'static str) -> Self {
+        Self::new(format_args!("missing field `{field}`"))
+    }
+
+    fn duplicate_field(field: &'static str) -> Self {
+        Self::new(format_args!("duplicate field `{field}`"))
+    }
+
+    fn invalid_length(len: usize, expected: &dyn de::Expected) -> Self {
+        Self::new(format_args!("expected {expected}, found a length of {len}"))
     }
 
     fn invalid_type(unexpected: Unexpected<'_>, expected: &dyn de::Expected) -> Self {
@@ -237,9 +257,11 @@ fn one_of(expected: &[&str]) -> String {
     }
 }
 
+/// As in reading, a type's own message is dropped, since it may print the
+/// value being written.
 impl ser::Error for Error {
-    fn custom<T: fmt::Display>(msg: T) -> Self {
-        Self::new(msg)
+    fn custom<T: fmt::Display>(_msg: T) -> Self {
+        Self::new("a value its type could not write")
     }
 }
 
@@ -291,6 +313,14 @@ struct Deserializer<'de> {
 
 fn malformed() -> Error {
     Error::new("malformed frame")
+}
+
+/// Every read that takes anything from a node takes all of it, so a child
+/// whose read left the position where it was was not read at all: a seed or
+/// a visitor returned without touching the deserializer it was handed.
+/// Counting it as read would leave its bytes for the next read.
+fn unread() -> Error {
+    Error::new("a value its type did not read")
 }
 
 impl<'de> Deserializer<'de> {
@@ -368,20 +398,33 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
             ARRAY => {
                 self.pos += 1;
                 let len = self.count()?;
-                visitor.visit_seq(Seq {
+                let mut seq = Seq {
                     de: self,
                     left: len,
                     index: 0,
-                })
+                };
+                let value = visitor.visit_seq(&mut seq)?;
+                // A visitor that stopped early (a tuple shorter than the
+                // array) would leave elements for the enclosing container to
+                // read as its own next key or value.
+                if seq.left != 0 {
+                    return Err(Error::new("an array longer than expected"));
+                }
+                Ok(value)
             }
             OBJECT => {
                 self.pos += 1;
                 let len = self.count()?;
-                visitor.visit_map(Map {
+                let mut map = Map {
                     de: self,
                     left: len,
                     key: None,
-                })
+                };
+                let value = visitor.visit_map(&mut map)?;
+                if map.left != 0 || map.key.is_some() {
+                    return Err(Error::new("an object with entries left unread"));
+                }
+                Ok(value)
             }
             PASSTHROUGH => Err(Error::new("a passthrough is not supported")),
             _ => match self.scalar()? {
@@ -442,7 +485,12 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
                     ));
                 }
                 let variant = self.key()?;
-                visitor.visit_enum(Enum { de: self, variant })
+                let payload = self.pos;
+                let value = visitor.visit_enum(Enum { de: self, variant })?;
+                if self.pos == payload {
+                    return Err(unread());
+                }
+                Ok(value)
             }
             ARRAY | PASSTHROUGH => Err(Error::new(
                 "expected an enum: a variant name, or an object of one entry",
@@ -491,9 +539,14 @@ impl<'de> SeqAccess<'de> for Seq<'_, 'de> {
         self.left -= 1;
         let index = self.index;
         self.index += 1;
-        seed.deserialize(&mut *self.de)
-            .map(Some)
-            .map_err(|e| e.at(PathSegment::Index(index)))
+        let start = self.de.pos;
+        let value = seed
+            .deserialize(&mut *self.de)
+            .map_err(|e| e.at(PathSegment::Index(index)))?;
+        if self.de.pos == start {
+            return Err(unread().at(PathSegment::Index(index)));
+        }
+        Ok(Some(value))
     }
 
     fn size_hint(&self) -> Option<usize> {
@@ -530,8 +583,14 @@ impl<'de> MapAccess<'de> for Map<'_, 'de> {
 
     fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, Error> {
         let key = self.key.take().unwrap_or_default();
-        seed.deserialize(&mut *self.de)
-            .map_err(|e| e.at(PathSegment::Key(key.to_owned())))
+        let start = self.de.pos;
+        let value = seed
+            .deserialize(&mut *self.de)
+            .map_err(|e| e.at(PathSegment::Key(key.to_owned())))?;
+        if self.de.pos == start {
+            return Err(unread().at(PathSegment::Key(key.to_owned())));
+        }
+        Ok(value)
     }
 
     fn size_hint(&self) -> Option<usize> {
@@ -648,19 +707,28 @@ impl<'de> VariantAccess<'de> for BareVariant<'de> {
 /// Write `value` as frame bytes.
 ///
 /// The buffer grows without leaving copies of what it held behind, as every
-/// frame vitaminc writes does.
+/// frame vitaminc writes does, and is wiped if writing fails part way.
 ///
 /// # Errors
 ///
 /// A value nested deeper than a frame allows, text or bytes too long for
 /// one, a map with a key that is not a string, or a repeated key.
 pub fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, Error> {
-    let mut out = Vec::new();
+    let mut out = Zeroizing::new(Vec::new());
     value.serialize(Serializer(FrameWriter::new(&mut out)))?;
+    Ok(core::mem::take(&mut *out))
+}
+
+/// Write `value` as a frame of its own, for a node `depth` levels below
+/// the top of a document. The buffer is wiped when it is dropped, whether
+/// or not it was copied into the document.
+fn to_part<T: Serialize + ?Sized>(value: &T, depth: usize) -> Result<Zeroizing<Vec<u8>>, Error> {
+    let mut out = Zeroizing::new(Vec::new());
+    value.serialize(Serializer(FrameWriter::at_depth(&mut out, depth)))?;
     Ok(out)
 }
 
-fn written(error: vitaminc_aead::frame::FrameWriteError) -> Error {
+fn written(error: FrameWriteError) -> Error {
     Error::new(error)
 }
 
@@ -801,7 +869,7 @@ impl<'o> ser::Serializer for Serializer<'o> {
         variant: &'static str,
         len: usize,
     ) -> Result<SerVariant<'o>, Error> {
-        Ok(SerVariant::new(self.0, variant, len))
+        SerVariant::new(self.0, variant, len)
     }
     fn serialize_map(self, len: Option<usize>) -> Result<SerMap<'o>, Error> {
         Ok(SerMap {
@@ -819,7 +887,7 @@ impl<'o> ser::Serializer for Serializer<'o> {
         variant: &'static str,
         len: usize,
     ) -> Result<SerVariant<'o>, Error> {
-        Ok(SerVariant::new(self.0, variant, len))
+        SerVariant::new(self.0, variant, len)
     }
 
     fn is_human_readable(&self) -> bool {
@@ -929,7 +997,8 @@ impl ser::SerializeStruct for SerMap<'_> {
 /// The outer object's entry borrows the outer object, so the payload cannot
 /// be written in place while both are held. Each part is written to its own
 /// buffer instead, and copied into the outer object at [`end`], by walking
-/// its frame. The buffers are wiped when they are copied.
+/// its frame. The buffers are wiped when they are dropped, so a part
+/// written before a later one fails is wiped too.
 ///
 /// [`end`]: ser::SerializeStructVariant::end
 struct SerVariant<'o> {
@@ -937,16 +1006,23 @@ struct SerVariant<'o> {
     variant: &'static str,
     /// Each part's key (a struct variant's field; `None` in a tuple
     /// variant) and frame.
-    parts: Vec<(Option<&'static str>, Vec<u8>)>,
+    parts: Vec<(Option<&'static str>, Zeroizing<Vec<u8>>)>,
 }
 
 impl<'o> SerVariant<'o> {
-    fn new(writer: FrameWriter<'o>, variant: &'static str, len: usize) -> Self {
-        Self {
+    /// The payload container sits one level below the outer object, and is
+    /// checked against [`MAX_DEPTH`] here, before any part is written: a
+    /// part starts a buffer of its own, so a recursive value would
+    /// otherwise descend all the way before the depth was counted.
+    fn new(writer: FrameWriter<'o>, variant: &'static str, len: usize) -> Result<Self, Error> {
+        if writer.depth() + 1 > MAX_DEPTH {
+            return Err(written(FrameWriteError::TooDeep));
+        }
+        Ok(Self {
             writer,
             variant,
             parts: Vec::with_capacity(len),
-        }
+        })
     }
 
     fn part<T: Serialize + ?Sized>(
@@ -958,30 +1034,24 @@ impl<'o> SerVariant<'o> {
             Some(key) => PathSegment::Key(key.to_owned()),
             None => PathSegment::Index(self.parts.len()),
         };
-        let frame =
-            to_vec(value).map_err(|e| e.at(at).at(PathSegment::Key(self.variant.to_owned())))?;
+        // A part is an element of the payload container, two levels below
+        // the outer object.
+        let depth = self.writer.depth() + 2;
+        let frame = to_part(value, depth)
+            .map_err(|e| e.at(at).at(PathSegment::Key(self.variant.to_owned())))?;
         self.parts.push((key, frame));
         Ok(())
     }
 
     fn end(self, is_struct: bool) -> Result<(), Error> {
-        let Self {
-            writer,
-            variant,
-            mut parts,
-        } = self;
-        let result = write_variant(writer, variant, &parts, is_struct);
-        for (_, frame) in &mut parts {
-            frame.zeroize();
-        }
-        result
+        write_variant(self.writer, self.variant, &self.parts, is_struct)
     }
 }
 
 fn write_variant(
     writer: FrameWriter<'_>,
     variant: &str,
-    parts: &[(Option<&'static str>, Vec<u8>)],
+    parts: &[(Option<&'static str>, Zeroizing<Vec<u8>>)],
     is_struct: bool,
 ) -> Result<(), Error> {
     let mut outer = writer.map(Some(1)).map_err(written)?;
