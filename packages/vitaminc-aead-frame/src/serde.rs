@@ -726,6 +726,11 @@ impl<'de> MapAccess<'de> for Map<'_, 'de> {
         &mut self,
         seed: K,
     ) -> Result<Option<K::Value>, Error> {
+        // A key asked for while a value is pending would read the value's
+        // own bytes.
+        if self.at.is_some() {
+            return Err(Error::new("a map key was read before the previous value"));
+        }
         if self.left == 0 {
             return Ok(None);
         }
@@ -1142,6 +1147,12 @@ impl ser::SerializeMap for SerMap<'_> {
     type Ok = ();
     type Error = Error;
     fn serialize_key<T: Serialize + ?Sized>(&mut self, key: &T) -> Result<(), Error> {
+        // A second key would silently replace the first, losing its entry.
+        if self.key.is_some() {
+            return Err(Error::new(
+                "a map key was written before the previous value",
+            ));
+        }
         self.key = Some(Zeroizing::new(key.serialize(KeySerializer)?));
         Ok(())
     }
@@ -1154,6 +1165,9 @@ impl ser::SerializeMap for SerMap<'_> {
         self.entry(&key, at, value)
     }
     fn end(self) -> Result<(), Error> {
+        if self.key.is_some() {
+            return Err(Error::new("a map key was written without its value"));
+        }
         self.map.end().map_err(written)
     }
 }

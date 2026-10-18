@@ -1249,6 +1249,81 @@ fn a_value_read_before_its_key_is_refused() {
     assert_eq!(error.message(), "a map value was read before its key");
 }
 
+/// A visitor that asks for a second key while a value is pending is
+/// refused, rather than reading the value's own bytes as the key.
+#[test]
+fn a_key_read_before_the_previous_value_is_refused() {
+    #[derive(Debug)]
+    struct KeyTwice;
+    impl<'de> Deserialize<'de> for KeyTwice {
+        fn deserialize<D: de::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> Visitor<'de> for V {
+                type Value = KeyTwice;
+                fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.write_str("an object")
+                }
+                fn visit_map<A: de::MapAccess<'de>>(
+                    self,
+                    mut map: A,
+                ) -> Result<KeyTwice, A::Error> {
+                    let _ = map.next_key::<String>()?;
+                    let _ = map.next_key::<String>()?;
+                    Ok(KeyTwice)
+                }
+            }
+            d.deserialize_map(V)
+        }
+    }
+    let bytes = to_vec(&BTreeMap::from([("a", "x"), ("b", "y")])).expect("writes");
+    let error = from_slice::<KeyTwice>(&bytes).expect_err("refused");
+    assert_eq!(
+        error.message(),
+        "a map key was read before the previous value"
+    );
+}
+
+/// A map's keys and values are written in turn: a value with no key, a
+/// second key while one is pending, and a key left without its value at the
+/// end are each refused, rather than writing a misaligned entry or losing a
+/// key.
+#[test]
+fn a_map_entry_written_out_of_turn_is_refused() {
+    use serde::ser::SerializeMap;
+
+    enum Order {
+        ValueFirst,
+        KeyTwice,
+        KeyLast,
+    }
+    impl Serialize for Order {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            let mut map = s.serialize_map(None)?;
+            map.serialize_entry("kept", &1u32)?;
+            match self {
+                Order::ValueFirst => map.serialize_value(&2u32)?,
+                Order::KeyTwice => {
+                    map.serialize_key("dropped")?;
+                    map.serialize_key("replaced")?;
+                }
+                Order::KeyLast => map.serialize_key("dropped")?,
+            }
+            map.end()
+        }
+    }
+    for (order, message) in [
+        (Order::ValueFirst, "a map value was written before its key"),
+        (
+            Order::KeyTwice,
+            "a map key was written before the previous value",
+        ),
+        (Order::KeyLast, "a map key was written without its value"),
+    ] {
+        let error = to_vec(&order).expect_err("refused");
+        assert_eq!(error.message(), message);
+    }
+}
+
 /// A struct or a map reads an object and nothing else. serde's derived
 /// struct visitor would also read an array by position, which would let a
 /// host send `[9]` where `{"rows": 9}` belongs.
