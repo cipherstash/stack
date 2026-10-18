@@ -1324,6 +1324,33 @@ fn a_map_entry_written_out_of_turn_is_refused() {
     }
 }
 
+/// A container's length is checked rather than taken as a hint: one that
+/// does not match the children written is refused, and `None` is accepted.
+#[test]
+fn a_container_length_must_match_its_children() {
+    use serde::ser::SerializeSeq;
+
+    struct Hint(Option<usize>);
+    impl Serialize for Hint {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            let mut seq = s.serialize_seq(self.0)?;
+            seq.serialize_element(&1u8)?;
+            seq.end()
+        }
+    }
+    for len in [Some(0), Some(2)] {
+        let error = to_vec(&Hint(len)).expect_err("refused");
+        assert_eq!(
+            error.message(),
+            "container length does not match its children"
+        );
+    }
+    for len in [None, Some(1)] {
+        let bytes = to_vec(&Hint(len)).expect("writes");
+        assert_eq!(from_slice::<Vec<u8>>(&bytes).expect("reads"), [1]);
+    }
+}
+
 /// A struct or a map reads an object and nothing else. serde's derived
 /// struct visitor would also read an array by position, which would let a
 /// host send `[9]` where `{"rows": 9}` belongs.

@@ -75,7 +75,8 @@ variant an object of one entry. A scalar with a logical type and a
 passthrough are refused, except JavaScript's `undefined`, which reads as
 null. An error names the kind of value it found and the path to it, never
 the value, and drops a type's own message (from a `try_from` check, say),
-which may print it. The path names only the fields and variants a type
+which may print it. A type's `expecting` text is kept, so a hand-written one
+must not include a value. The path names only the fields and variants a type
 declares; an entry whose key is data, such as a map's, is placed by
 position.
 

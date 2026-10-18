@@ -64,7 +64,11 @@
 //! carries data a host sent: a credential in a configuration, say. A type's
 //! own message (from a `try_from` or `deserialize_with` check, through
 //! `Error::custom`) is dropped for the same reason, since it may print the
-//! value it refused. Each error records the path from the root to where it
+//! value it refused. serde's messages for a value of the wrong type, value
+//! or length are kept, and they print what the type expected: its
+//! `Visitor::expecting`, or an `Expected` impl. A derived type's text is
+//! fixed, but a hand-written `expecting` is printed as written, so it must
+//! describe the type and never include a value. Each error records the path from the root to where it
 //! happened ([`Error::path`]), so a caller can say which field was wrong.
 //! The path names a struct's fields and an enum's variants, which the type
 //! declares. Any other key (a map's, a flattened entry's) is data, so its
@@ -226,7 +230,8 @@ fn kind(unexpected: &Unexpected<'_>) -> &'static str {
 /// `try_from` or `deserialize_with` check may well print the value it
 /// refused. serde's messages that are known to name no value (a missing or
 /// repeated field, a length) are kept, by overriding the methods that build
-/// them.
+/// them. `invalid_type`, `invalid_value` and `invalid_length` print the
+/// type's `expected` text, which is the type's to keep free of values.
 impl de::Error for Error {
     fn custom<T: fmt::Display>(_msg: T) -> Self {
         Self::new("a value its type does not accept")
@@ -886,7 +891,16 @@ impl<'de> VariantAccess<'de> for BareVariant<'de> {
 /// # Errors
 ///
 /// A value nested deeper than a frame allows, text or bytes too long for
-/// one, a map with a key that is not a string, or a repeated key.
+/// one, a map with a key that is not a string, a repeated key, a map key
+/// written without its value (or a value without its key), or a value its
+/// own `Serialize` refused.
+///
+/// A container's length is checked, not taken as a hint: if a `Serialize`
+/// gives `serialize_seq`, `serialize_map` or `serialize_struct` a length
+/// that is not the number of children it then writes, the container is
+/// refused ("container length does not match its children"). `serde_json`
+/// ignores a wrong length, so a hand-written impl that works there can fail
+/// here. Pass `None` when the count is not known up front.
 pub fn to_vec<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, Error> {
     let mut out = Zeroizing::new(Vec::new());
     value.serialize(Serializer(FrameWriter::new(&mut out)))?;
