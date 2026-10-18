@@ -467,3 +467,324 @@ fn error_display_has_no_path_at_the_root() {
     assert_eq!(error.to_string(), "expected u8, found a string");
     assert!(error.path().is_empty());
 }
+
+/// A map key is text: a string, a char, a unit variant or a newtype around
+/// one is written as its text, and anything else is refused.
+#[test]
+fn map_keys_are_text_and_nothing_else() {
+    #[derive(Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Debug)]
+    #[serde(rename_all = "lowercase")]
+    enum Key {
+        Alpha,
+    }
+    #[derive(Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Debug)]
+    struct Wrapped(String);
+
+    let by_char: BTreeMap<String, u8> =
+        from_slice(&to_vec(&BTreeMap::from([('c', 1u8)])).expect("writes")).expect("reads");
+    assert_eq!(by_char, BTreeMap::from([("c".to_owned(), 1)]));
+    let by_variant: BTreeMap<String, u8> =
+        from_slice(&to_vec(&BTreeMap::from([(Key::Alpha, 2u8)])).expect("writes")).expect("reads");
+    assert_eq!(by_variant, BTreeMap::from([("alpha".to_owned(), 2)]));
+    let by_newtype: BTreeMap<String, u8> =
+        from_slice(&to_vec(&BTreeMap::from([(Wrapped("w".into()), 3u8)])).expect("writes"))
+            .expect("reads");
+    assert_eq!(by_newtype, BTreeMap::from([("w".to_owned(), 3)]));
+
+    /// One key of each kind serde can serialize that is not text.
+    #[derive(Serialize)]
+    enum NotText {
+        Variant(u8),
+    }
+    #[derive(Serialize)]
+    struct Unit;
+    #[derive(Serialize)]
+    struct Pair(u8, u8);
+    #[derive(Serialize)]
+    struct Record {
+        a: u8,
+    }
+    fn refused<K: Serialize>(key: K) {
+        struct OneEntry<K>(K);
+        impl<K: Serialize> Serialize for OneEntry<K> {
+            fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                use serde::ser::SerializeMap;
+                let mut map = s.serialize_map(Some(1))?;
+                map.serialize_entry(&self.0, &0u8)?;
+                map.end()
+            }
+        }
+        let error = to_vec(&OneEntry(key)).expect_err("a key that is not text");
+        assert_eq!(error.message(), "a map key must be a string");
+    }
+    refused(true);
+    refused(1i8);
+    refused(1i16);
+    refused(1i32);
+    refused(1i64);
+    refused(1u8);
+    refused(1u16);
+    refused(1u32);
+    refused(1u64);
+    refused(1.0f32);
+    refused(1.0f64);
+    refused(serde_bytes::Bytes::new(&[1]));
+    refused(None::<u8>);
+    refused(Some("text"));
+    refused(());
+    refused(Unit);
+    refused(NotText::Variant(1));
+    refused(vec![1u8]);
+    refused((1u8, 2u8));
+    refused(Pair(1, 2));
+    refused(BTreeMap::from([("a", 1u8)]));
+    refused(Record { a: 1 });
+}
+
+/// Every struct shape round trips.
+#[test]
+fn every_struct_shape_round_trips() {
+    #[derive(Serialize, Deserialize, PartialEq, Debug)]
+    struct Unit;
+    #[derive(Serialize, Deserialize, PartialEq, Debug)]
+    struct Newtype(u32);
+    #[derive(Serialize, Deserialize, PartialEq, Debug)]
+    struct Tuple(u8, String);
+    #[derive(Serialize, Deserialize, PartialEq, Debug)]
+    struct All {
+        unit: Unit,
+        newtype: Newtype,
+        tuple: Tuple,
+    }
+    let all = All {
+        unit: Unit,
+        newtype: Newtype(7),
+        tuple: Tuple(1, "x".into()),
+    };
+    assert_eq!(
+        from_slice::<All>(&to_vec(&all).expect("writes")).expect("reads"),
+        all
+    );
+    // A newtype struct is its inner value; a unit struct is null.
+    assert_eq!(
+        to_vec(&Newtype(7)).expect("writes"),
+        to_vec(&7u32).expect("writes")
+    );
+    assert_eq!(to_vec(&Unit).expect("writes"), to_vec(&()).expect("writes"));
+}
+
+/// The format is binary both ways, so a type with a compact form uses it.
+#[test]
+fn the_format_is_not_human_readable() {
+    struct Form;
+    impl Serialize for Form {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            let human = s.is_human_readable();
+            s.serialize_bool(human)
+        }
+    }
+    impl<'de> Deserialize<'de> for Form {
+        fn deserialize<D: de::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            assert!(!d.is_human_readable());
+            bool::deserialize(d).map(|_| Form)
+        }
+    }
+    let bytes = to_vec(&Form).expect("writes");
+    assert_eq!(bytes, to_vec(&false).expect("writes"));
+    from_slice::<Form>(&bytes).expect("reads");
+}
+
+/// What `size_hint` a sequence and a map report: the entries left.
+#[test]
+fn sequences_and_maps_report_their_length() {
+    struct Hints(Vec<Option<usize>>);
+    impl<'de> Deserialize<'de> for Hints {
+        fn deserialize<D: de::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> Visitor<'de> for V {
+                type Value = Hints;
+                fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.write_str("a sequence or a map")
+                }
+                fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Hints, A::Error> {
+                    let mut hints = vec![seq.size_hint()];
+                    while seq.next_element::<de::IgnoredAny>()?.is_some() {
+                        hints.push(seq.size_hint());
+                    }
+                    Ok(Hints(hints))
+                }
+                fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<Hints, A::Error> {
+                    let mut hints = vec![map.size_hint()];
+                    while map
+                        .next_entry::<de::IgnoredAny, de::IgnoredAny>()?
+                        .is_some()
+                    {
+                        hints.push(map.size_hint());
+                    }
+                    Ok(Hints(hints))
+                }
+            }
+            d.deserialize_any(V)
+        }
+    }
+    let seq: Hints = from_slice(&to_vec(&[1u8, 2]).expect("writes")).expect("reads");
+    assert_eq!(seq.0, [Some(2), Some(1), Some(0)]);
+    let map: Hints = from_slice(&to_vec(&BTreeMap::from([("a", 1u8), ("b", 2)])).expect("writes"))
+        .expect("reads");
+    assert_eq!(map.0, [Some(2), Some(1), Some(0)]);
+}
+
+/// A field nobody reads is stepped over whatever it holds, and the fields
+/// after it still read.
+#[test]
+fn an_ignored_field_of_any_shape_is_skipped() {
+    #[derive(Serialize)]
+    struct Sent {
+        nested: BTreeMap<String, Vec<u8>>,
+        list: Vec<BTreeMap<String, u8>>,
+        scalar: String,
+        last: u32,
+    }
+    #[derive(Deserialize, Debug, PartialEq)]
+    struct Read {
+        last: u32,
+    }
+    let sent = Sent {
+        nested: BTreeMap::from([("a".into(), vec![1, 2]), ("b".into(), vec![])]),
+        list: vec![BTreeMap::from([("k".into(), 1)]), BTreeMap::new()],
+        scalar: "x".into(),
+        last: 9,
+    };
+    assert_eq!(
+        from_slice::<Read>(&to_vec(&sent).expect("writes")).expect("reads"),
+        Read { last: 9 }
+    );
+}
+
+/// A unit variant may carry a null payload, `{"eq": null}`, and the null is
+/// read, so what follows still reads; and a value that leaves part of the
+/// frame unread is refused.
+#[test]
+fn a_unit_variant_reads_its_null_payload() {
+    #[derive(Deserialize, PartialEq, Debug)]
+    #[serde(rename_all = "lowercase")]
+    enum Index {
+        Eq,
+        Ore,
+    }
+    let mut bytes = Vec::new();
+    {
+        let mut out = FrameWriter::new(&mut bytes).seq(Some(2)).expect("seq");
+        {
+            let mut map = vitaminc_aead::plaintext::SeqSink::element(&mut out)
+                .expect("element")
+                .map(Some(1))
+                .expect("map");
+            map.entry("eq")
+                .expect("entry")
+                .scalar(None, Physical::Null)
+                .expect("null");
+            map.end().expect("end");
+        }
+        "ore"
+            .visit(vitaminc_aead::plaintext::SeqSink::element(&mut out).expect("element"))
+            .expect("ore");
+        vitaminc_aead::plaintext::SeqSink::end(out).expect("end");
+    }
+    assert_eq!(
+        from_slice::<Vec<Index>>(&bytes).expect("reads"),
+        [Index::Eq, Index::Ore]
+    );
+
+    // A type that reads only the first element of a sequence leaves the
+    // rest unread, and is refused.
+    #[derive(Debug)]
+    struct FirstOnly;
+    impl<'de> Deserialize<'de> for FirstOnly {
+        fn deserialize<D: de::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> Visitor<'de> for V {
+                type Value = FirstOnly;
+                fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    f.write_str("a sequence")
+                }
+                fn visit_seq<A: de::SeqAccess<'de>>(
+                    self,
+                    mut seq: A,
+                ) -> Result<FirstOnly, A::Error> {
+                    let _ = seq.next_element::<u8>()?;
+                    Ok(FirstOnly)
+                }
+            }
+            d.deserialize_seq(V)
+        }
+    }
+    let error = from_slice::<FirstOnly>(&to_vec(&[1u8, 2]).expect("writes")).expect_err("refused");
+    assert_eq!(error.message(), "the value did not read the whole frame");
+}
+
+/// An array or a passthrough is not an enum.
+#[test]
+fn an_array_is_not_an_enum() {
+    #[derive(Deserialize, Debug)]
+    #[allow(dead_code)]
+    enum E {
+        A,
+    }
+    let error = from_slice::<E>(&to_vec(&[1u8]).expect("writes")).expect_err("refused");
+    assert_eq!(
+        error.message(),
+        "expected an enum: a variant name, or an object of one entry"
+    );
+    let error = from_slice::<E>(&to_vec(&1u8).expect("writes")).expect_err("refused");
+    assert_eq!(
+        error.message(),
+        "expected an enum: a variant name, or an object of one entry"
+    );
+}
+
+/// An error's path prints as keys joined by dots and indexes in brackets,
+/// and its `Debug` is its `Display`, wrapped.
+#[test]
+fn an_error_path_prints_as_written() {
+    #[derive(Deserialize, Debug)]
+    #[allow(dead_code)]
+    struct Inner {
+        n: u8,
+    }
+    #[derive(Deserialize, Debug)]
+    #[allow(dead_code)]
+    struct Outer {
+        outer: Vec<Inner>,
+    }
+    #[derive(Serialize)]
+    struct SentInner {
+        n: &'static str,
+    }
+    #[derive(Serialize)]
+    struct SentOuter {
+        outer: Vec<SentInner>,
+    }
+    let error = from_slice::<Outer>(
+        &to_vec(&SentOuter {
+            outer: vec![SentInner { n: "x" }],
+        })
+        .expect("writes"),
+    )
+    .expect_err("refused");
+    assert_eq!(error.to_string(), "outer[0].n: expected u8, found a string");
+    assert_eq!(
+        format!("{error:?}"),
+        "Error(outer[0].n: expected u8, found a string)"
+    );
+
+    // Reading, a later element is named by its own index.
+    let error =
+        from_slice::<Vec<u8>>(&to_vec(&(1u8, 2u8, "x")).expect("writes")).expect_err("refused");
+    assert_eq!(error.path(), [PathSegment::Index(2)]);
+
+    // The path of an error while writing names the element too.
+    let error = to_vec(&(0u8, BTreeMap::from([(1u8, 1u8)]))).expect_err("a key that is not text");
+    assert_eq!(error.path(), [PathSegment::Index(1)]);
+    assert_eq!(error.to_string(), "[1]: a map key must be a string");
+}

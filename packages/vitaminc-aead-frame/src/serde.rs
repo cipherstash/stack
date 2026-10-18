@@ -259,7 +259,14 @@ pub fn from_frame<'de, T: Deserialize<'de>>(frame: Frame<'de>) -> Result<T, Erro
         buf: frame.as_bytes(),
         pos: 0,
     };
-    T::deserialize(&mut de)
+    let value = T::deserialize(&mut de)?;
+    // The frame is one node, and `T` must have read all of it: a
+    // `Deserialize` that stopped early (a unit variant that left its payload
+    // unread, say) would otherwise pass with data ignored.
+    if de.pos != de.buf.len() {
+        return Err(Error::new("the value did not read the whole frame"));
+    }
+    Ok(value)
 }
 
 /// Reads one validated frame. Every read below runs on bytes
@@ -1095,5 +1102,44 @@ impl ser::Serializer for KeySerializer {
         _len: usize,
     ) -> Result<Self::SerializeStructVariant, Error> {
         Err(key_not_text())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every kind of unexpected value is named by its kind, and none prints
+    /// the value it carries.
+    #[test]
+    fn every_unexpected_value_is_named_by_kind_only() {
+        let cases = [
+            (Unexpected::Bool(true), "a boolean"),
+            (Unexpected::Unsigned(41), "an integer"),
+            (Unexpected::Signed(-41), "an integer"),
+            (Unexpected::Float(4.1), "a float"),
+            (Unexpected::Char('Z'), "a string"),
+            (Unexpected::Str("s3cr3t"), "a string"),
+            (Unexpected::Bytes(b"s3cr3t"), "bytes"),
+            (Unexpected::Unit, "null"),
+            (Unexpected::Option, "an optional value"),
+            (Unexpected::NewtypeStruct, "a newtype struct"),
+            (Unexpected::Seq, "an array"),
+            (Unexpected::Map, "an object"),
+            (Unexpected::Enum, "an enum"),
+            (Unexpected::UnitVariant, "a unit variant"),
+            (Unexpected::NewtypeVariant, "a newtype variant"),
+            (Unexpected::TupleVariant, "a tuple variant"),
+            (Unexpected::StructVariant, "a struct variant"),
+            (Unexpected::Other("s3cr3t"), "a value of another kind"),
+        ];
+        for (unexpected, expected) in cases {
+            assert_eq!(kind(&unexpected), expected);
+            let message = <Error as de::Error>::invalid_value(unexpected, &"x").to_string();
+            assert!(
+                !message.contains("s3cr3t") && !message.contains("41"),
+                "{message}"
+            );
+        }
     }
 }
