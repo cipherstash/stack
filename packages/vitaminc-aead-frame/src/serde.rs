@@ -506,9 +506,11 @@ impl<'de> MapAccess<'de> for Map<'_, 'de> {
         self.left -= 1;
         let key = self.de.key()?;
         self.key = Some(key);
+        // An error about the key itself (an unknown key) stays at the
+        // object's path: putting the key on the path would print it, and a
+        // message never repeats what a host sent.
         seed.deserialize(IntoDeserializer::<Error>::into_deserializer(key))
             .map(Some)
-            .map_err(|e| e.at(PathSegment::Key(key.to_owned())))
     }
 
     fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, Error> {

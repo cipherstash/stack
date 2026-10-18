@@ -315,12 +315,12 @@ fn an_unknown_key_is_refused_without_naming_it() {
         .expect("writes"),
     )
     .expect_err("refused");
-    let text = error.to_string();
+    let text = format!("{error} {error:?}");
     assert!(text.contains("unknown key"), "{text}");
     assert!(text.contains("keyset, context"), "{text}");
-    // The key is on the path, which a caller may report or not, but the
-    // message itself does not repeat it.
-    assert!(!error.message().contains("secret_looking_key"), "{text}");
+    // Neither the message nor the path repeats the key.
+    assert!(!text.contains("secret_looking_key"), "{text}");
+    assert!(error.path().is_empty(), "{text}");
 }
 
 /// A wrong type names the kind found, never the value, even deep in the
