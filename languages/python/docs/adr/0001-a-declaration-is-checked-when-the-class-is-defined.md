@@ -111,7 +111,9 @@ Option 2.
    allows.
    For a declaration, the earliest moment it exists is the end of the
    `class` statement.
-   The decorator is the only shape that reaches that moment on every path.
+   A decorator, a metaclass and `__init_subclass__` all reach that moment.
+   The decorator is the one that also works with the bases the first
+   user's classes already have (option 3).
 2. **One decorator, and it carries the context.**
    `@stash.model("users")`, with the context pieces as positional
    arguments.
@@ -222,9 +224,12 @@ user sees.
 - Kinds are an open set.
   A kind marker carries a name, and the engine's `ValueKind::from_str` is
   the only check.
-  Python holds no table of kinds, so a new kind (`int16`, `date`,
-  `timestamp`, `decimal` are proposed) needs a codec in the shell and no
-  change to the declaration code.
+  Python holds no table of kinds, so the declaration reader needs no
+  change for a new kind (`int16`, `date`, `timestamp`, `decimal` are
+  proposed).
+  What a new kind does need is a codec in the shell and one public marker
+  name, such as `stash.Date`, since the markers are the user's spelling of
+  the engine's names.
 - Python has less kind ambiguity than Go.
   Go's `time.Time` can mean a date or a timestamp.
   Python's `datetime.date` and `datetime.datetime` are different types, so
