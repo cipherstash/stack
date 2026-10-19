@@ -13,6 +13,8 @@ The second part applies to the Go SDK.
 - **Declaration:** the statement of how each field is encrypted: its context, and its indexes.
   The engine calls a saved declaration a plan.
 
+How to build the binding itself, what crosses it and how to prove it, is the guide in `packages/stack-encrypt/docs/language-integration.md` (`stack_encrypt::dynamic::guide` in the crate documentation).
+
 ## When two principles disagree
 
 Apply them in this order:

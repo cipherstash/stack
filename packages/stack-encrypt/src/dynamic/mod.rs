@@ -89,6 +89,14 @@ mod context;
 mod kind;
 mod query;
 pub mod record;
+
+/// How to build a language integration on this module: the binding, what
+/// crosses it, the three operations, the plan grammar, plaintext hygiene,
+/// keys and authentication, errors, versioning, one integer traced end to
+/// end with its real bytes, and a checklist. The Go SDK is the reference.
+pub mod guide {
+    #![doc = include_str!("../../docs/language-integration.md")]
+}
 mod target;
 mod term;
 #[cfg(test)]

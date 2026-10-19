@@ -588,6 +588,10 @@ credential guest) before `go test`, and
 round-trip and fixture tests use. Without the builds `NewClient` returns
 `ErrGuestNotBuilt` and the tests skip.
 
+This package is the reference integration for the engine. How the binding
+works, what crosses it and how to build one for another language is the
+guide in `packages/stack-encrypt/docs/language-integration.md`.
+
 ## Licence
 
 The Go code in this module is MIT-licensed ([`LICENSE`](../LICENSE)). The

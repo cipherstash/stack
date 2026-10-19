@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A guide to building a language integration**, `dynamic::guide`
+  (`docs/language-integration.md`, shipped in the crate docs under the
+  `dynamic` feature): the binding versus the language SDK, native versus
+  WebAssembly, the three operations and the Go guest's exports, the plan
+  grammar, control messages versus plaintext, the plaintext hygiene rules
+  and the tests that prove them, the step loop and the token import,
+  the status table and `se_last_error`, versioning, one `int32` stored as
+  EQL v4 `IntegerEq` traced through encrypt, query and decrypt with the
+  bytes from the committed fixtures, and a checklist for a new binding.
+  The frame format stays in `vitaminc-aead-frame`'s documentation and is
+  linked, not restated.
 - **Every integer width, 128-bit integers, dates, timestamps and decimals
   as dynamic values** (`dynamic` feature; #1144, ADR-0002). They are
   vitaminc leaves in a `ValueFrame`, with no new `FfiValue` variant:

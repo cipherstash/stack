@@ -241,6 +241,12 @@ endpoint — are `StackKmsBuilder`'s, and the two keyset-cache knobs are
 //! Every leaf's AAD is derived from the context its key was minted under,
 //! and there is no entry point that lets a caller supply one of its own.
 //!
+//! # Building a language integration
+//!
+//! A language other than Rust reaches this crate through the `dynamic`
+//! module (feature `dynamic`). The guide to building such a binding, with
+//! the Go SDK as the reference, is `dynamic::guide`.
+//!
 //! # Relationship to vitaminc
 //!
 //! A `KeysetCipher` seals through a vitaminc `Cipher`; everything vitaminc
