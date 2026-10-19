@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-18
+
+### Features
+
+- `FrameWriter::at_depth` and `FrameWriter::depth`, for writing a subtree to a buffer of its own while `MAX_DEPTH` still counts from the top of the document.
+
 ## [0.6.0] - 2026-10-17
 
 ### Breaking
