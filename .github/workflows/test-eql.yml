@@ -291,7 +291,8 @@ jobs:
   # Compile the test binaries ONCE. Runs on every non-PR event, and on PRs only
   # when relevant files changed (docs-only PRs never pay the ~4-min compile).
   build-archive:
-    name: "Build test archive"
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: "Build test archive (${{ matrix.runner.name }})"
     needs: [changes]
     # This repo is PUBLIC and accepts fork PRs (the approval policy only gates
     # first-time contributors). build-archive is the sole holder of the CS_*
@@ -313,7 +314,26 @@ jobs:
        || needs.changes.outputs.relevant == 'true')
       && (github.event_name != 'pull_request'
           || github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     env:
       # test:sqlx:archive depends on test:sqlx:prep, which copies the built EQL
       # into migrations/, applies it to a live Postgres, and regenerates the
@@ -380,6 +400,9 @@ jobs:
       # `nextest.tar.zst` and `release/*.sql` at its top level and the shard's
       # `download-artifact` puts them back where the archive expects them.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        # RunsOn trial: one entry uploads, because an artifact name is unique per
+        # run; every runner's consumers test the baseline's build.
+        if: matrix.runner.id == 'blacksmith'
         with:
           name: nextest-archive
           path: |
@@ -391,16 +414,33 @@ jobs:
   # Sharded sqlx suite. No longer needs [schema, codegen] (gate removed) —
   # shards start right after build-archive.
   test:
-    name: "Shard PG${{ matrix.postgres-version }} ${{ matrix.shard }}/${{ needs.setup.outputs.shard-total }}"
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: "Shard PG${{ matrix.postgres-version }} ${{ matrix.shard }}/${{ needs.setup.outputs.shard-total }} (${{ matrix.runner.name }})"
     needs: [changes, setup, build-archive]
     # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: ${{ matrix.runner.label }}
     strategy:
       fail-fast: false
       matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
         postgres-version: ${{ fromJSON(needs.setup.outputs.pg-versions) }}
         shard: ${{ fromJSON(needs.setup.outputs.shards) }}
     env:
@@ -453,16 +493,33 @@ jobs:
   # they follow the event's PG set (PG17 on PR; 14-17 in the queue). Moved out
   # of the old per-version test job so they run ONCE per version, not per shard.
   validate:
-    name: "Validate (Postgres ${{ matrix.postgres-version }})"
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: "Validate (Postgres ${{ matrix.postgres-version }}) (${{ matrix.runner.name }})"
     needs: [changes, setup]
     # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: ${{ matrix.runner.label }}
     strategy:
       fail-fast: false
       matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
         postgres-version: ${{ fromJSON(needs.setup.outputs.pg-versions) }}
     env:
       POSTGRES_VERSION: ${{ matrix.postgres-version }}
@@ -512,13 +569,33 @@ jobs:
           mise run test:clean_install_v3
 
   schema:
-    name: "JSON Schema validation"
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: "JSON Schema validation (${{ matrix.runner.name }})"
     needs: [changes]
     # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -541,13 +618,33 @@ jobs:
           mise run test:schema
 
   rust-crates:
-    name: "Rust workspace crates"
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: "Rust workspace crates (${{ matrix.runner.name }})"
     needs: [changes]
     # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     services:
       encryption-postgres:
         image: postgres:17
@@ -669,13 +766,33 @@ jobs:
           exit "$status"
 
   codegen:
-    name: "Encrypted-domain codegen"
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: "Encrypted-domain codegen (${{ matrix.runner.name }})"
     needs: [changes]
     # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -701,13 +818,33 @@ jobs:
           mise run test:schemas:parity
 
   self-contained-v3:
-    name: "eql_v3 self-containment"
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: "eql_v3 self-containment (${{ matrix.runner.name }})"
     needs: [changes]
     # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -737,13 +874,33 @@ jobs:
         run: mise run test:build_ordering_helpers
 
   matrix-coverage:
-    name: "Matrix coverage inventory"
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: "Matrix coverage inventory (${{ matrix.runner.name }})"
     needs: [changes]
     # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -779,13 +936,33 @@ jobs:
         run: mise run test:matrix:catalog-coverage
 
   splinter:
-    name: "Supabase splinter"
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: "Supabase splinter (${{ matrix.runner.name }})"
     needs: [changes]
     # Exclusion, not an allowlist — see the note on `build-archive`.
     if: >-
       github.event_name != 'pull_request'
       || needs.changes.outputs.relevant == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     env:
       POSTGRES_VERSION: "17"
     steps:
@@ -844,8 +1021,28 @@ jobs:
   # validated. DB-free and creds-free (the psql-backed syntax check stays in the
   # per-version `validate` job).
   docs-static:
-    name: "SQL doc validation"
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: "SQL doc validation (${{ matrix.runner.name }})"
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -883,8 +1080,28 @@ jobs:
   # Credential-free and DB-free — it only reads the registry and asks GitHub for
   # issue state, so it runs on every PR rather than hiding behind the e2e job.
   known-failures:
-    name: "known-failure markers"
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: "known-failure markers (${{ matrix.runner.name }})"
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     permissions:
       contents: read
       issues: read
@@ -921,8 +1138,28 @@ jobs:
   # `relevant` filter (src/**, crates/**) would skip it on exactly the docs-only
   # PRs it exists to check.
   doc-anchors:
-    name: "doc anchor links"
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: "doc anchor links (${{ matrix.runner.name }})"
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
@@ -946,7 +1183,8 @@ jobs:
   # e2e oracle. Like build-archive, it holds CS_* and so carries the same
   # fork-PR guard to keep the secrets off fork runs.
   e2e:
-    name: "e2e property suite (fresh encryption)"
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: "e2e property suite (fresh encryption) (${{ matrix.runner.name }})"
     needs: [changes, setup]
     # Exclusion, not an allowlist — see the note on `build-archive`, which
     # carries the same two clauses for the same two reasons.
@@ -955,7 +1193,26 @@ jobs:
        || needs.changes.outputs.relevant == 'true')
       && (github.event_name != 'pull_request'
           || github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 16vcpu
+            label: blacksmith-16vcpu-ubuntu-2204
+          - id: github
+            name: github
+            label: ubuntu-22.04
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-16
+            name: runs-on c8a 16cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
     env:
       POSTGRES_VERSION: "17"
       CS_CLIENT_ACCESS_KEY: ${{ secrets.CS_CLIENT_ACCESS_KEY }}

@@ -20,8 +20,28 @@ jobs:
   # plugin (at `warn`) surfaces new `as any`/`never`/`unknown` without blocking.
   # Tightening to fail on warnings is tracked in #625.
   lint:
-    name: Lint (Biome)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: Lint (Biome) (${{ matrix.runner.name }})
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 4vcpu
+            label: blacksmith-4vcpu-ubuntu-2404
+          - id: github
+            name: github
+            label: ubuntu-24.04
+          - id: runs-on-2
+            name: runs-on c8a 2cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=2/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
@@ -412,8 +432,28 @@ jobs:
         run: pnpm exec turbo run test:e2e --filter stash
 
   e2e-tests:
-    name: Run E2E Tests
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: Run E2E Tests (${{ matrix.runner.name }})
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 4vcpu
+            label: blacksmith-4vcpu-ubuntu-2404
+          - id: github
+            name: github
+            label: ubuntu-24.04
+          - id: runs-on-2
+            name: runs-on c8a 2cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=2/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
 
     # Auth-dependent suites in `e2e/` skip themselves unless these env vars
     # are set. We expose them at the job level so the wizard subprocess
@@ -493,8 +533,28 @@ jobs:
   # bindings available. The deno.json deliberately omits --allow-ffi so
   # a silent fallback to the NAPI module is impossible.
   wasm-e2e-tests:
-    name: Run WASM E2E Tests (Deno)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: Run WASM E2E Tests (Deno) (${{ matrix.runner.name }})
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 4vcpu
+            label: blacksmith-4vcpu-ubuntu-2404
+          - id: github
+            name: github
+            label: ubuntu-24.04
+          - id: runs-on-2
+            name: runs-on c8a 2cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=2/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
 
     permissions:
       contents: read
@@ -636,8 +696,28 @@ jobs:
         run: deno task test
 
   run-tests-bun:
-    name: Run Tests (Bun)
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    # RunsOn trial: this job on every runner in `runner`. Collapse before merging.
+    name: Run Tests (Bun) (${{ matrix.runner.name }})
+    runs-on: ${{ matrix.runner.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - id: blacksmith
+            name: blacksmith 4vcpu
+            label: blacksmith-4vcpu-ubuntu-2404
+          - id: github
+            name: github
+            label: ubuntu-24.04
+          - id: runs-on-2
+            name: runs-on c8a 2cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=2/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-4
+            name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
+          - id: runs-on-8
+            name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
     continue-on-error: true
 
     services:
