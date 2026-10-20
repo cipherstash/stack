@@ -66,6 +66,9 @@ jobs:
         # must differ, or one size's runner can be taken by another's job.
         # The two Node entries on one size share a label, which is harmless:
         # the runners they launch are identical.
+        # `family=c8a` pins one instance family, so the sizes compare cleanly;
+        # the built-in `Ncpu-linux-x64` runners picked a different family on
+        # each run.
         # The default root volume leaves ~10 GiB free, which the Rust binding
         # builds can fill; rust-lld then dies with SIGBUS (seen in
         # cipherstash/vitaminc#487).
@@ -76,12 +79,12 @@ jobs:
             label: blacksmith-4vcpu-ubuntu-2404
           - name: github
             label: ubuntu-latest
-          - name: runs-on 2cpu
-            label: runs-on=${{ github.run_id }}/runner=2cpu-linux-x64/volume=80gb/extras=s3-cache
-          - name: runs-on 4cpu
-            label: runs-on=${{ github.run_id }}/runner=4cpu-linux-x64/volume=80gb/extras=s3-cache
-          - name: runs-on 8cpu
-            label: runs-on=${{ github.run_id }}/runner=8cpu-linux-x64/volume=80gb/extras=s3-cache
+          - name: runs-on c8a 2cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=2/volume=80gb/extras=s3-cache
+          - name: runs-on c8a 4cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=4/volume=80gb/extras=s3-cache
+          - name: runs-on c8a 8cpu
+            label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/volume=80gb/extras=s3-cache
         exclude:
           - node-version: 22
             postgres-version: 17

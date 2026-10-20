@@ -125,12 +125,12 @@ jobs:
       # both crates instead (see the next step).
       # RunsOn trial: this PR changes no crate source, so its own diff has no
       # mutants and every runner would finish in seconds. Mutate the lines of
-      # a fixed stack-auth/stack-encrypt commit range instead (15 mutants), so
+      # a fixed stack-auth/stack-encrypt commit range instead (125 mutants), so
       # every entry does the same real work.
       - name: Compute the PR diff
         if: github.event_name == 'pull_request'
         run: |
-          git diff cef0a1c620159ad13f2af9b80dc537cce5a9c222 9b7e122e4a0b74215743e6b4a60770160d38884e > pr.diff
+          git diff fb75f40d541df8158154b86ec5b7708aefe66836 9b7e122e4a0b74215743e6b4a60770160d38884e > pr.diff
           echo "Changed lines under mutation:"
           cat pr.diff
 
