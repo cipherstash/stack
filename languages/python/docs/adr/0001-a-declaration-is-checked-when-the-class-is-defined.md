@@ -63,8 +63,8 @@ import stackencrypt as stash
 @stash.model("users")
 @dataclass
 class User:
-    email: Annotated[str, stash.Text, stash.Equality]
-    age: Annotated[int, stash.Int64, stash.Passthrough]
+    email: Annotated[str, stash.TextEq]
+    age: Annotated[int, stash.Passthrough]
     nickname: str          # DeclarationError here, at the class statement
 
 cipher = stash.Cipher(User)
@@ -115,20 +115,40 @@ Option 2.
    The decorator is the one that also works with the bases the first
    user's classes already have (option 3).
 2. **One decorator, and it carries the context.**
-   `@stash.model("users")`, with the context pieces as positional
-   arguments.
+   `@stash.model("users")`, with one argument: the table.
+   The engine's target context is exactly a table and a column, and the
+   column is the field's name, so the class needs nothing more.
    The name is open to the reviewers; the alternatives are
    `@stash.encrypted(...)` and `@stash.declare(...)`.
    The argument is documented once as the engine's `context`.
+   A record that names its own tenant (the engine's `context_field`) is
+   a record-level setting in the plan grammar, so if the SDK supports it,
+   it is a second decorator argument and not a field marker.
+   The first version does not support it; a tenant attaches to the cipher.
 3. **The decorator does four things and nothing else.**
    It reads the hints, builds the field map, asks the engine to check the
    plan, and stores the result on the class under one dunder attribute.
-   It makes no network request and needs no credentials; the first tracer
-   proved the engine's plan check runs without either.
+   It makes no network request and needs no credentials.
+
+   Two checks run, and they are not the same check:
+   - **Python's**: every field carries a marker (rule A), and the decorator
+     is outermost (the constructor check in decision 5).
+   - **The engine's**: the plan grammar, which indexes the declared kind
+     admits (`dynamic::admits`), and whether a named EQL type is one the
+     build can produce.
+     The call is `dynamic::record::plan_with` with the target resolver,
+     the same call the Go generator makes through `se_plan_check`.
 4. **The call site takes the class.** `Cipher(User)`.
    `Cipher` refuses a class the decorator has not seen, with the remedy in
    the message.
    No public name is called a plan or returns one.
+
+   `DeclarationError` and that refusal are built from structured facts:
+   the field name and the engine's `Reason`, as the language-integration
+   guide gives them, never by parsing the engine's message text.
+   No message carries a value.
+   A dataclass default is a value, so a message names the field and not
+   its default.
 5. **The model contract is a `Protocol`, not a dataclass.**
    A model class must give:
    - field hints that `typing.get_type_hints(cls, include_extras=True)`
@@ -143,27 +163,65 @@ Option 2.
    earlier.
    `is_dataclass` is not the guard: it rejects classes that meet the
    contract.
-6. **Rule A is assumed and not decided here.**
+6. **Plaintext crosses the binding as a frame built in Rust.**
+   On `next` the engine reads a record as a `ValueFrame` and holds no
+   tree type for plaintext.
+   The extension reads the model's attributes straight into a frame, and
+   builds the model instance straight from the decrypted frame.
+   No plaintext passes through a Python `dict` on the way in or out.
+   The model instance is the one plaintext copy Python owns, and Python
+   cannot wipe a `str` or `bytes`, so that copy is documented as the
+   user's.
+   The plan the decorator sends is a frame too; its grammar is the guide's.
+7. **Rule A is assumed and not decided here.**
    Every field carries a marker; a plain field carries `Passthrough`.
    Backlog item 1.2 decides it after the user test.
    The decorator is what makes the rule fire at class definition.
-7. **The marker spelling is the recommended option for item 1.1, not a
+8. **The marker spelling is the recommended option for item 1.1, not a
    decision of this ADR.**
-   Every indexed field names its kind.
-   An index marker alone means an EQL column with that index.
-   `Encrypted` is a sealed field with no index, and `Passthrough` a field
-   stored as it is.
+   A sealed field's marker names an EQL type, such as `TextEq`.
+   The marker names are generated from the EQL catalog by `eql-codegen`,
+   the way the Go SDK's `encrypt/eql` package is, so Python holds no
+   table that maps a kind and an index to an EQL type (principle G1).
+   `Passthrough` is the one hand-written marker: a field stored as it is,
+   and the engine's word for it (principle G2).
    Markers are names, not calls.
 
    | Field | Spelling |
    | --- | --- |
-   | Encrypted, equality index | `Annotated[str, stash.Text, stash.Equality]` |
-   | Encrypted, no index | `Annotated[str, stash.Text, stash.Encrypted]` |
-   | Not encrypted | `Annotated[int, stash.Int64, stash.Passthrough]` |
+   | Encrypted, equality index | `Annotated[str, stash.TextEq]` |
+   | Encrypted, no index | `Annotated[str, stash.Text]` |
+   | Not encrypted | `Annotated[int, stash.Passthrough]` |
 
-   `Encrypted` on a text field is refused by the engine today, because the
-   storage-only text domain is not yet producible.
-   The marker exists; the first version cannot exercise it.
+   Whether the kind can also come from the Python type (`str` for text)
+   instead of the marker is the user-test question of item 1.1.
+   An earlier draft of this ADR spelled a field as a kind marker plus an
+   index marker (`stash.Text, stash.Equality`).
+   That spelling needs a Python copy of the catalog's kind-and-index
+   table, which is what G1 forbids, so it was dropped at review.
+
+9. **A model never prints a sealed value, by default.**
+   The decorator writes `__repr__` and `__str__` on the class it
+   decorates and on the encrypted type the SDK returns.
+   Both print the passthrough fields and `[sealed]` in place of each
+   sealed field's value, the format of Go's generated `String` and
+   `LogValue`.
+   The same markers that drive encryption drive the print, so a sealed
+   field added later is hidden the day it is added; no per-field
+   `repr=False` is needed, and none is read.
+   Python's `logging` calls `__str__`, so logs are covered by the same
+   methods.
+   `@stash.model("users", redact=False)` is the class-level opt-out.
+   A class that defines its own `__repr__` or `__str__` by hand is
+   refused at the class statement with the remedy named (`redact=False`,
+   or remove the method); the decorator does not replace a method the
+   user wrote.
+   The methods `dataclass`, attrs and Pydantic generate are replaced,
+   since the decorator is outermost.
+   This is Go's `stashgen -redact` made the default, which Python can do
+   because the decorator holds the user's class and a generator does not.
+   A linter rule that reports a print of an opted-out model is open
+   (principle G3).
 
 ## What was run
 
@@ -195,12 +253,34 @@ Two more facts from the probe:
   `__init__` yet, so its signature is `()`.
   The decorator therefore reports the wrong order itself, naming the fix.
 
-Not run: the engine's plan check inside the decorator (the first tracer
-ran it inside `build()`, which is the same call), and the error text a
-user sees.
+A second rig on 2026-10-20 put the engine call inside the decorator.
+It used the prototype's built extension only as the engine entry
+(`plan_with` behind its `check_plan`), with every `CS_*` variable unset:
+
+| Class | Who refused | Where it fired |
+| --- | --- | --- |
+| a good declaration | nobody; the engine resolved the target to `TextEq` | the class statement |
+| a field with no marker | Python's check | the class statement |
+| `Match` on an `Int64` field | the engine: "the declared type has no such index" | the class statement |
+
+The rig ran against `main`'s engine, before the frame change on `next`.
+The claim it tests, that a decorator reaches the engine as the class is
+defined, does not depend on the plan's wire form.
+The rig is not committed.
+
+Not run: the error text a user sees, which the restart builds from the
+engine's structured reason fields; and the replacement of the
+`__repr__` that attrs and Pydantic generate, which the probe did not cover.
 
 ## Consequences
 
+- The restart plan carries the language-integration guide's checklist
+  (its section 11): the frame conformance corpus byte for byte, a
+  differential fuzz target over the Python codec, plaintext hygiene tests
+  for the extension's copies, a frozen stored-rows fixture, the engine and
+  frame-format versions named in the wheel's release notes, and the
+  cross-language fixtures read from the Python tests.
+  The first test is the guide's section 10 bytes reproduced from Python.
 - Importing a module that declares a model imports the native extension.
   The check needs the engine's rules and holds no copy of them
   (principle G1).
@@ -221,15 +301,13 @@ user sees.
 - `Plan`, `PlanBuilder` and `PlanSpec` leave the public surface.
   The engine's plan grammar still exists behind the decorator; the user
   never names it.
-- Kinds are an open set.
-  A kind marker carries a name, and the engine's `ValueKind::from_str` is
-  the only check.
-  Python holds no table of kinds, so the declaration reader needs no
-  change for a new kind (`int16`, `date`, `timestamp`, `decimal` are
-  proposed).
-  What a new kind does need is a codec in the shell and one public marker
-  name, such as `stash.Date`, since the markers are the user's spelling of
-  the engine's names.
+- The marker set is generated, so a new EQL type needs no change to the
+  declaration reader.
+  The reader passes a marker's name to the engine as the plan's `target`,
+  and the engine decides whether the catalog produces it.
+  A new kind (`date`, `timestamp`, `decimal` landed on `next`) needs a
+  codec in the shell for the value's bytes and a regeneration of the
+  markers, and nothing else in Python.
 - Python has less kind ambiguity than Go.
   Go's `time.Time` can mean a date or a timestamp.
   Python's `datetime.date` and `datetime.datetime` are different types, so

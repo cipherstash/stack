@@ -1,12 +1,12 @@
 # SDD ledger — plan: docs/plans/2026-10-08-python-sdk-tracer.md
 
-Spec: Linear CIP-4340 (read in full, 2026-10-08, via `linear issue view CIP-4340`).
+Spec: the Python SDK discovery ticket (read in full, 2026-10-08).
 Execution: native (inline), per the user's choice at the plan handoff.
 Worktree: `.claude/worktrees/python-sdk-tracer`, branch `worktree-python-sdk-tracer`,
 cut from `origin/main` @ 6f388478c.
 
 Setup: Ruling: base branch `feat/stack-encrypt-required-type` → `origin/main` —
-#1095 and #1096 were squash-merged into main (no ancestry, so
+PRs #1095 and #1096 were squash-merged into main (no ancestry, so
 `merge-base --is-ancestor` says no; the content check says yes). Verified on
 `origin/main`: `FieldPlan.target: Option<String>`, the grammar line
 `{ "context": …, "target": "<EQL type name>", "type": … }`, `"type"` **required
