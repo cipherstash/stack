@@ -44,10 +44,10 @@ jobs:
             label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
           - id: runs-on-c8g-4
             name: runs-on c8g 4cpu arm64
-            label: runs-on=${{ github.run_id }}/family=c8g/cpu=4/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
+            label: runs-on=${{ github.run_id }}/family=c8g.*/cpu=4/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
           - id: runs-on-c8g-8
             name: runs-on c8g 8cpu arm64
-            label: runs-on=${{ github.run_id }}/family=c8g/cpu=8/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
+            label: runs-on=${{ github.run_id }}/family=c8g.*/cpu=8/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v6
@@ -112,9 +112,9 @@ jobs:
           - name: runs-on c8a 8cpu
             label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/volume=80gb/extras=s3-cache
           - name: runs-on c8g 4cpu arm64
-            label: runs-on=${{ github.run_id }}/family=c8g/cpu=4/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
+            label: runs-on=${{ github.run_id }}/family=c8g.*/cpu=4/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
           - name: runs-on c8g 8cpu arm64
-            label: runs-on=${{ github.run_id }}/family=c8g/cpu=8/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
+            label: runs-on=${{ github.run_id }}/family=c8g.*/cpu=8/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
         exclude:
           - node-version: 22
             postgres-version: 17
@@ -466,10 +466,10 @@ jobs:
             label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
           - id: runs-on-c8g-4
             name: runs-on c8g 4cpu arm64
-            label: runs-on=${{ github.run_id }}/family=c8g/cpu=4/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
+            label: runs-on=${{ github.run_id }}/family=c8g.*/cpu=4/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
           - id: runs-on-c8g-8
             name: runs-on c8g 8cpu arm64
-            label: runs-on=${{ github.run_id }}/family=c8g/cpu=8/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
+            label: runs-on=${{ github.run_id }}/family=c8g.*/cpu=8/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
 
     # Auth-dependent suites in `e2e/` skip themselves unless these env vars
     # are set. We expose them at the job level so the wizard subprocess
@@ -573,10 +573,10 @@ jobs:
             label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
           - id: runs-on-c8g-4
             name: runs-on c8g 4cpu arm64
-            label: runs-on=${{ github.run_id }}/family=c8g/cpu=4/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
+            label: runs-on=${{ github.run_id }}/family=c8g.*/cpu=4/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
           - id: runs-on-c8g-8
             name: runs-on c8g 8cpu arm64
-            label: runs-on=${{ github.run_id }}/family=c8g/cpu=8/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
+            label: runs-on=${{ github.run_id }}/family=c8g.*/cpu=8/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
 
     permissions:
       contents: read
@@ -742,10 +742,10 @@ jobs:
             label: runs-on=${{ github.run_id }}/family=c8a/cpu=8/image=ubuntu24-full-x64/volume=80gb/extras=s3-cache
           - id: runs-on-c8g-4
             name: runs-on c8g 4cpu arm64
-            label: runs-on=${{ github.run_id }}/family=c8g/cpu=4/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
+            label: runs-on=${{ github.run_id }}/family=c8g.*/cpu=4/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
           - id: runs-on-c8g-8
             name: runs-on c8g 8cpu arm64
-            label: runs-on=${{ github.run_id }}/family=c8g/cpu=8/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
+            label: runs-on=${{ github.run_id }}/family=c8g.*/cpu=8/image=ubuntu24-full-arm64/volume=80gb/extras=s3-cache
     continue-on-error: true
 
     services:

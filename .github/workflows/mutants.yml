@@ -97,11 +97,12 @@ jobs:
           - name: runs-on c8a 16cpu
             label: runs-on=${{ github.run_id }}/family=c8a/cpu=16/image=ubuntu22-full-x64/volume=80gb/extras=s3-cache
           # arm64 (Graviton4) at the c8a sizes above, c8g only so the
-          # comparison is one CPU against another.
+          # comparison is one CPU against another. `c8g.*`, not `c8g`: a bare
+          # family is a prefix, and RunsOn handed out c8gd and c8gn for it.
           - name: runs-on c8g 16cpu arm64
-            label: runs-on=${{ github.run_id }}/family=c8g/cpu=16/image=ubuntu22-full-arm64/volume=80gb/extras=s3-cache
+            label: runs-on=${{ github.run_id }}/family=c8g.*/cpu=16/image=ubuntu22-full-arm64/volume=80gb/extras=s3-cache
           - name: runs-on c8g 8cpu arm64
-            label: runs-on=${{ github.run_id }}/family=c8g/cpu=8/image=ubuntu22-full-arm64/volume=80gb/extras=s3-cache
+            label: runs-on=${{ github.run_id }}/family=c8g.*/cpu=8/image=ubuntu22-full-arm64/volume=80gb/extras=s3-cache
     permissions:
       contents: read
       # Posts and updates the report comment on the PR.
