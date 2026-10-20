@@ -4,9 +4,10 @@
 > 13 October 2026. The engine has since moved on the `next` branch: a
 > record crosses as a frame (`ValueFrame`), not an `FfiValue` tree; Stack
 > Encrypt's EQL types are v4 only (`public.eql_v4_text_eq`), not the v3
-> domains this tracer stored into; 32 of the 51 EQL v4 types are
-> producible, not only `TextEq`; and the new kinds (`decimal`, `date`,
-> `timestamp`) have landed. Read the engine sections as history. The
+> domains this tracer stored into; most of the 51 EQL v4 types are
+> producible (40 on 2026-10-20; `languages/golang/encrypt/eql/eql_gen.go`
+> on `next` says which), not only `TextEq`; and the new kinds (`decimal`,
+> `date`, `timestamp`) have landed. Read the engine sections as history. The
 > Python and toolchain section (pyo3 0.29, maturin-only `extension-module`,
 > libpython on the loader path, `Pending` as `IntoFuture`, width narrowing,
 > the psycopg plumbing) still holds. The restart plan reads
