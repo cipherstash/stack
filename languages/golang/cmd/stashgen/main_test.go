@@ -119,6 +119,30 @@ func TestRunFlags(t *testing.T) {
 	}
 }
 
+func TestRunGeneratesNullableDOB(t *testing.T) {
+	for _, dateType := range []string{"encrypt.Date", "*encrypt.Date"} {
+		t.Run(dateType, func(t *testing.T) {
+			src := `package people
+
+import "github.com/cipherstash/stack/languages/golang/encrypt"
+
+type Person struct {
+	_ struct{} ` + "`stash:\"context=people\"`" + `
+	DOB ` + dateType + " `stash:\"dob,encrypt_into=Date\"`" + `
+}
+`
+			dir := writeModule(t, map[string]string{"model.go": src})
+			var stdout, stderr bytes.Buffer
+			if code := run([]string{"-type", "Person"}, dir, &stdout, &stderr, stashgen.GuestEngine); code != 0 {
+				t.Fatalf("exit %d, want 0\n%s", code, stderr.String())
+			}
+			if _, err := os.Stat(filepath.Join(dir, "person_stash.go")); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 // The real engine: the embedded guest, which the command links with the EQL
 // types, so a struct with encrypt_into=TextEq generates, and a type the
 // engine cannot produce yet is refused with nothing written. Skips when the
