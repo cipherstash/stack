@@ -1,9 +1,21 @@
 # Python SDK tracer — findings from the first attempt
 
+> **Superseded on `next` (2026-10-20).** This is a snapshot of `main` on
+> 13 October 2026. The engine has since moved on the `next` branch: a
+> record crosses as a frame (`ValueFrame`), not an `FfiValue` tree; Stack
+> Encrypt's EQL types are v4 only (`public.eql_v4_text_eq`), not the v3
+> domains this tracer stored into; 32 of the 51 EQL v4 types are
+> producible, not only `TextEq`; and the new kinds (`decimal`, `date`,
+> `timestamp`) have landed. Read the engine sections as history. The
+> Python and toolchain section (pyo3 0.29, maturin-only `extension-module`,
+> libpython on the loader path, `Pending` as `IntoFuture`, width narrowing,
+> the psycopg plumbing) still holds. The restart plan reads
+> `packages/stack-encrypt/docs/language-integration.md` on `next` first.
+
 **Status:** a proto-prototype, stopped by decision on 2026-10-13 after 7 of 9
 tasks, to be restarted fresh. The branch is kept as a reference under
 `prototype/python-sdk-tracer`. **Do not merge it.** Read this file, then
-CIP-4340, then start again from `main`.
+the Python SDK discovery ticket, then start again from `main`.
 
 The code is disposable. What follows is not: it is what the code proved,
 and most of it would take days to rediscover.
@@ -18,7 +30,7 @@ EQL v3.0.6 applied — 53 tests green, 3 Rust unit tests green:
 2. `Plan.of(User).context("users").build()` reads `Annotated` hints into the
    engine's data plan, fails closed at `build()` on an undeclared field
    (import time when that call sits at module level — by convention, not by
-   construction; see "Gaps against CIP-4340's wording"), and the engine's
+   construction; see "Gaps against the discovery ticket's wording"), and the engine's
    own `plan_with` validates the rest with no credentials.
 3. `Cipher(plan).encrypt(models)` seals a batch in **one** ZeroKMS request;
    an empty batch makes none; `decrypt` returns the model type; `query`
@@ -28,7 +40,7 @@ EQL v3.0.6 applied — 53 tests green, 3 Rust unit tests green:
    byte-identical.
 5. **The whole six-step path through PostgreSQL**: insert into
    `public.eql_v3_text_eq`, equality query through `eql_v3.query_text_eq`,
-   read back, decrypt. This is the "TextEq proven end to end in PostgreSQL"
+   read back, decrypt. This is the "TextEq proven end-to-end in PostgreSQL"
    that the catalog's storage-only `Text` domain records as its own blocker.
 
 Not done: CI (Task 8) and the scorecard (Task 9).
@@ -53,17 +65,15 @@ design choice.
   no EQL type is built from them yet"; the ORE types because "EQL stores a
   block ORE term and the engine derives a CLLW ORE term; the two are
   different algorithms"; `Text` because it "follows once TextEq is proven
-  end to end in PostgreSQL". **Consequence for CIP-4340:** decision 9 lists
+  end-to-end in PostgreSQL". **Consequence for the discovery ticket:** decision 9 lists
   `equality`, `match`, `ore` as the engine features the four tasks need, and
   backlog item 5 is "`match` and `ore` queries". Neither is a Python change;
   both wait on the engine. Amend the ticket before anyone builds against it.
 - **The engine-side design for that gap already exists:** "Value encodings
-  for new EQL kinds" (7 Oct 2026, the same day as CIP-4340's decisions;
-  https://claude.ai/artifact/9JQR2Zwn7ft5QkyzrMurbh — a Claude
-  Docs draft for team review, "nothing is built or ticketed yet"; it is a
-  living document, so open the link rather than trusting a copy). Read it
-  before planning anything past `TextEq`.
-  What it establishes:
+  for new EQL kinds" (7 Oct 2026, the same day as the discovery ticket's
+  decisions; an internal design draft, since landed on `next` as
+  `vitaminc-ore` and the new kinds, so the engine source is now the
+  reference). What it established at the time:
   - The 42 non-text families are tracked in **#1130** and are "blocked on
     encoding, not on code". A kind must exist in **three** encodings owned
     by three crates — the ciphertext tag (`vitaminc-aead-value`), the
@@ -189,7 +199,7 @@ design choice.
   shipping unit, so this is unowned.
 - The live-test gate is "does the engine construct", not "are `CS_*` set".
 
-## Gaps against CIP-4340's wording, found on re-reading
+## Gaps against the discovery ticket's wording, found on re-reading
 
 Two places where what was built is narrower than what the ticket says, and
 the findings above would otherwise imply the ticket was met.
@@ -197,9 +207,9 @@ the findings above would otherwise imply the ticket was met.
 - **"The engine checks the declaration when Python defines the class"
   (week-1 step 2) — not quite.** The check runs at `build()`, one call
   later, wherever the caller puts that call.
-  `Plan.of(User).context(…).build()` at module top level makes it import
-  time **by convention**; nothing fires when the `class` statement
-  finishes. A class decorator — `@stash.model("users")` above `@dataclass`
+  `Plan.of(User).context(…).build()` at module scope runs at import time
+  **by convention**, because the call sits at module scope; nothing fires
+  when the `class` statement finishes. A class decorator — `@stash.model("users")` above `@dataclass`
   — would run `build()` at class definition **by construction**, hold the
   `PlanSpec` on the class, and let the call site be `Cipher(User)`. It is a
   second way in (G6), so it has to earn its place: it carries the context,
@@ -240,7 +250,7 @@ the engine *through the shell* against the engine bare); the record as
 
 ## Open questions for the restart
 
-1. Amend CIP-4340 decision 9 and backlog item 5 for the catalog gap, with
+1. Amend the discovery ticket's decision 9 and backlog item 5 for the catalog gap, with
    the dependencies named precisely: `ore` → #1132 and the `vitaminc-ore`
    proposal (link above); the non-text kinds → #1130 and the same
    proposal; `match` → a TextMatch EQL type over the existing term, not yet
