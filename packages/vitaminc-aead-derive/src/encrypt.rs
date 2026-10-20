@@ -743,6 +743,68 @@ mod tests {
         assert_lacks(&out, quote!(::vitaminc_aead::Physical::Text));
     }
 
+    /// What an absent value of the type is sealed as: a newtype's inner
+    /// type's, by value and by reference; a `u32` leaf for a fieldless
+    /// enum; nothing for a struct, which is a map.
+    #[test]
+    fn fixed_follows_the_shape() {
+        let out = expand(parse_quote!(
+            struct Age(u32);
+        ));
+        assert_contains(
+            &out,
+            quote!(
+                const FIXED: ::core::option::Option<::vitaminc_aead::FixedType> =
+                    <u32 as ::vitaminc_aead::Encrypt>::FIXED;
+            ),
+        );
+        assert_contains(
+            &out,
+            quote!(
+                const FIXED: ::core::option::Option<::vitaminc_aead::FixedType> =
+                    <&'__r u32 as ::vitaminc_aead::Encrypt>::FIXED;
+            ),
+        );
+
+        let out = expand(parse_quote! {
+            enum Status {
+                Active,
+            }
+        });
+        assert_contains(
+            &out,
+            quote!(
+                const FIXED: ::core::option::Option<::vitaminc_aead::FixedType> =
+                    ::vitaminc_aead::FixedType::plain(::vitaminc_aead::Width::U32);
+            ),
+        );
+
+        let out = expand(parse_quote! {
+            struct User {
+                id: u32,
+            }
+        });
+        assert_lacks(&out, quote!(const FIXED));
+    }
+
+    /// A recursive newtype keeps the default `FIXED` rather than name its
+    /// own constant in a cycle, whether it names itself or says so with
+    /// `#[aead(recursive)]`.
+    #[test]
+    fn a_recursive_newtype_declares_no_fixed() {
+        for input in [
+            parse_quote!(
+                struct Wrapped(Option<Box<Wrapped>>);
+            ),
+            parse_quote!(
+                #[aead(recursive)]
+                struct Even(Option<Box<Odd>>);
+            ),
+        ] {
+            assert_lacks(&expand(input), quote!(const FIXED));
+        }
+    }
+
     /// Serde-style: bounding the parameter rather than each field's type lets a
     /// field of type `Vec<T>` pick up `Vec<T>: Encrypt` from the blanket
     /// impl. The by-reference impl bounds the parameter by reference, and its

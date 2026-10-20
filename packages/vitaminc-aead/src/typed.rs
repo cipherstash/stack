@@ -107,8 +107,7 @@ pub trait Decrypt: Sized {
     /// [`FromScalar::FIXED`]), so a `None` reads back wherever a `Some`
     /// does, a widened field included. `false`, the default, for a target
     /// that is not a scalar, whose `Option` then refuses every typed null.
-    fn reads_null(ty: FixedType) -> bool {
-        let _ = ty;
+    fn reads_null(_: FixedType) -> bool {
         false
     }
 }
@@ -1550,6 +1549,12 @@ mod tests {
         assert!(!<String as Decrypt>::reads_null(plain(Width::U32)));
         assert!(!<Vec<u32> as Decrypt>::reads_null(plain(Width::U32)));
         assert!(!<bool as Decrypt>::reads_null(plain(Width::U8)));
+        // `Option` and `Protected` read whatever their inner target reads.
+        assert!(!<Option<String> as Decrypt>::reads_null(plain(Width::U32)));
+        assert!(<Protected<u32> as Decrypt>::reads_null(plain(Width::U32)));
+        assert!(!<Protected<String> as Decrypt>::reads_null(plain(
+            Width::U32
+        )));
     }
 
     #[test]
@@ -1720,6 +1725,7 @@ mod tests {
         };
         let mut held: Option<u16> = None;
         refused(Clear::<u16, _>::new(Slot(&mut held)).scalar(None, Physical::Null));
+        refused(Clear::<u16, _>::new(Slot(&mut held)).typed_null(plain(Width::U16)));
         refused(Clear::<u16, _>::new(Slot(&mut held)).seq(None).map(|_| ()));
         refused(Clear::<u16, _>::new(Slot(&mut held)).map(None).map(|_| ()));
         assert!(matches!(
