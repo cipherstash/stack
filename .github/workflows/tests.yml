@@ -51,13 +51,37 @@ jobs:
       - name: Biome check (format + lint)
         run: pnpm run code:check
 
+  # RunsOn trial: the same job on the current Blacksmith runner, GitHub's
+  # runner and RunsOn sizes, for a side-by-side timing comparison. Collapse
+  # back to a single runner before merging.
   run-tests:
-    name: Run Tests (Node ${{ matrix.node-version }})
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    name: Run Tests (Node ${{ matrix.node-version }}, ${{ matrix.runner.name }})
+    runs-on: ${{ matrix.runner.label }}
     strategy:
+      fail-fast: false
       matrix:
         node-version: [22, 24]
         postgres-version: [16, 17]
+        # The run id is shared by every entry, so each RunsOn size's label
+        # must differ, or one size's runner can be taken by another's job.
+        # The two Node entries on one size share a label, which is harmless:
+        # the runners they launch are identical.
+        # The default root volume leaves ~10 GiB free, which the Rust binding
+        # builds can fill; rust-lld then dies with SIGBUS (seen in
+        # cipherstash/vitaminc#487).
+        # `s3-cache` serves actions/cache from the stack's S3 bucket, so
+        # RunsOn entries share no cache entries with GitHub's or Blacksmith's.
+        runner:
+          - name: blacksmith 4vcpu
+            label: blacksmith-4vcpu-ubuntu-2404
+          - name: github
+            label: ubuntu-latest
+          - name: runs-on 2cpu
+            label: runs-on=${{ github.run_id }}/runner=2cpu-linux-x64/volume=80gb/extras=s3-cache
+          - name: runs-on 4cpu
+            label: runs-on=${{ github.run_id }}/runner=4cpu-linux-x64/volume=80gb/extras=s3-cache
+          - name: runs-on 8cpu
+            label: runs-on=${{ github.run_id }}/runner=8cpu-linux-x64/volume=80gb/extras=s3-cache
         exclude:
           - node-version: 22
             postgres-version: 17
