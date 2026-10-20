@@ -251,10 +251,13 @@ pub enum Float {
 }
 
 /// The physical type of a fixed-width scalar whose leaf has a payload: an
-/// int or a float, with its width. What a [`FixedType`] rides on.
+/// int or a float, with its width, or sixteen bytes. What a [`FixedType`]
+/// rides on.
 ///
 /// `bool` is fixed width too, but its leaf is the tag alone, one byte, the
-/// same length as the plain null leaf, so it has no width here.
+/// same length as the plain null leaf, so it has no width here. Bytes have
+/// a fixed width only where a logical type fixes it: [`Width::Bytes16`] is
+/// for a uuid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Width {
     I8,
@@ -269,19 +272,43 @@ pub enum Width {
     U128,
     F32,
     F64,
+    /// Sixteen bytes.
+    Bytes16,
 }
 
 impl Width {
-    /// The physical kind: [`Kind::Int`] or [`Kind::Float`].
+    /// The physical kind: [`Kind::Int`], [`Kind::Float`] or [`Kind::Bytes`].
     pub const fn kind(self) -> Kind {
         match self {
             Width::F32 | Width::F64 => Kind::Float,
+            Width::Bytes16 => Kind::Bytes,
             _ => Kind::Int,
         }
     }
 
+    /// A zero of this physical type: a value whose leaf has the header and
+    /// the length every value of the type has.
+    pub const fn zero(self) -> Physical<'static> {
+        match self {
+            Width::I8 => Physical::Int(Int::I8(0)),
+            Width::I16 => Physical::Int(Int::I16(0)),
+            Width::I32 => Physical::Int(Int::I32(0)),
+            Width::I64 => Physical::Int(Int::I64(0)),
+            Width::I128 => Physical::Int(Int::I128(0)),
+            Width::U8 => Physical::Int(Int::U8(0)),
+            Width::U16 => Physical::Int(Int::U16(0)),
+            Width::U32 => Physical::Int(Int::U32(0)),
+            Width::U64 => Physical::Int(Int::U64(0)),
+            Width::U128 => Physical::Int(Int::U128(0)),
+            Width::F32 => Physical::Float(Float::F32(0.0)),
+            Width::F64 => Physical::Float(Float::F64(0.0)),
+            Width::Bytes16 => Physical::Bytes(&[0; 16]),
+        }
+    }
+
     /// The width of a value of this physical type, or `None` for a value
-    /// with no [`Width`]: null, bool, text and bytes.
+    /// with no [`Width`]: null, bool, text, and bytes of any length but
+    /// sixteen.
     pub fn of(v: &Physical<'_>) -> Option<Self> {
         Some(match v {
             Physical::Int(Int::I8(_)) => Width::I8,
@@ -296,6 +323,7 @@ impl Width {
             Physical::Int(Int::U128(_)) => Width::U128,
             Physical::Float(Float::F32(_)) => Width::F32,
             Physical::Float(Float::F64(_)) => Width::F64,
+            Physical::Bytes(b) if b.len() == 16 => Width::Bytes16,
             Physical::Null | Physical::Bool(_) | Physical::Text(_) | Physical::Bytes(_) => {
                 return None
             }
@@ -328,21 +356,27 @@ pub struct FixedType {
 }
 
 impl FixedType {
-    /// A plain int or float, with no logical type.
-    pub const fn plain(width: Width) -> Self {
-        Self { ty: None, width }
+    /// A plain int or float, with no logical type, or `None` for
+    /// [`Width::Bytes16`]: plain bytes are variable width.
+    pub const fn plain(width: Width) -> Option<Self> {
+        Self::new(None, width)
     }
 
-    /// `ty` over `width`, normalised, or `None` if `ty` does not ride on a
-    /// fixed-width physical type: undefined (over null) and uuid (over
-    /// bytes, whose frame form is variable width), and a date, timestamp or
-    /// decimal over a float.
+    /// `ty` over `width`, normalised, or `None` if the pair has no fixed
+    /// width: undefined (over null), a date, timestamp or decimal over a
+    /// float, a uuid over anything but sixteen bytes, and sixteen bytes
+    /// under anything but a uuid (plain or unknown bytes are variable
+    /// width, so a reader could not tell where their typed null ends).
     pub const fn new(ty: Option<Logical>, width: Width) -> Option<Self> {
         let float = matches!(width, Width::F32 | Width::F64);
+        let bytes = matches!(width, Width::Bytes16);
         let (ty, width) = match ty {
+            Some(Logical::Uuid) if bytes => (Some(Logical::Uuid), width),
+            Some(Logical::Uuid) => return None,
+            _ if bytes => return None,
             None => (None, width),
             Some(Logical::Unknown(u)) => (Some(Logical::Unknown(u)), width),
-            Some(Logical::Undefined | Logical::Uuid) => return None,
+            Some(Logical::Undefined) => return None,
             Some(_) if float => return None,
             Some(Logical::Date) => (Some(Logical::Date), Width::I32),
             Some(Logical::Timestamp(TimeUnit::Nanos)) => {
@@ -892,12 +926,24 @@ mod tests {
         assert_ne!(fixed(ms, Width::I64), fixed(ms, Width::I32));
         let unknown = Logical::from_wire(200, 9);
         assert_eq!(fixed(unknown, Width::F32).logical(), unknown);
-        assert_eq!(FixedType::plain(Width::U8).logical(), None);
+        assert_eq!(
+            FixedType::plain(Width::U8).map(FixedType::logical),
+            Some(None)
+        );
+        // Plain bytes, even sixteen of them, are variable width.
+        assert_eq!(FixedType::plain(Width::Bytes16), None);
+        assert_eq!(
+            fixed(Some(Logical::Uuid), Width::Bytes16).width(),
+            Width::Bytes16
+        );
     }
 
     #[test]
     fn a_type_not_over_a_fixed_width_physical_type_has_no_fixed_type() {
         assert_eq!(FixedType::new(Some(Logical::Uuid), Width::U128), None);
+        let unknown = Logical::from_wire(200, 0);
+        assert_eq!(FixedType::new(unknown, Width::Bytes16), None);
+        assert_eq!(FixedType::new(Some(Logical::Date), Width::Bytes16), None);
         assert_eq!(FixedType::new(Some(Logical::Undefined), Width::U8), None);
         assert_eq!(FixedType::new(Some(Logical::Date), Width::F64), None);
         assert_eq!(
@@ -908,6 +954,8 @@ mod tests {
             FixedType::new(Some(Logical::Decimal { scale: 2 }), Width::F32),
             None
         );
+        assert_eq!(Width::of(&Physical::Bytes(&[0; 16])), Some(Width::Bytes16));
+        assert_eq!(Width::Bytes16.kind(), Kind::Bytes);
         for v in [
             Physical::Null,
             Physical::Bool(true),

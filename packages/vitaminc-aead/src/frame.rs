@@ -456,14 +456,15 @@ impl<'o> Sink for FrameWriter<'o> {
         })
     }
 
-    /// Carried as it is, so a host that encrypts from the frame pads it.
-    fn typed_null(self, ty: FixedType) -> Result<(), FrameWriteError> {
-        if self.depth > MAX_DEPTH {
-            return Err(FrameWriteError::TooDeep);
-        }
-        reserve(self.out, leaf::typed_null_len(ty));
-        leaf::write_typed_null(ty, self.out);
-        Ok(())
+    /// Written as the plain null. A frame is plaintext, never sealed, so
+    /// padding hides nothing in it: what a frame writer produces goes to a
+    /// host (the frame [`decrypt_to_frame`](crate::decrypt_to_frame)
+    /// returns) or into the clear (a passthrough subtree), where the plain
+    /// null is what every reader already knows. A frame a host sends may
+    /// still carry a typed null, which [`Frame`] reads, so the host's
+    /// absent values are padded when sealed.
+    fn typed_null(self, _: FixedType) -> Result<(), FrameWriteError> {
+        self.scalar(None, Physical::Null)
     }
 
     fn seq(self, len: Option<usize>) -> Result<FrameSeq<'o>, FrameWriteError> {

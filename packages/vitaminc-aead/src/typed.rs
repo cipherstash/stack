@@ -10,9 +10,9 @@
 //! leaf holding 34 and refuses one holding -1. The width is a host-fidelity
 //! hint. `Option<T>` reads null and `undefined` as `None` and defers
 //! anything else to `T`. A typed null (see [`Sink::typed_null`]) is `None`
-//! only for an `Option<T>` whose `T` has that same
-//! [`FIXED`](Decrypt::FIXED) type, the one its own `None` seals as; any
-//! other target refuses it as the wrong kind, never reads it as a zero. `HashMap<String, T>` and `BTreeMap<String, T>`
+//! for an `Option<T>` whose `T` reads values of its type
+//! ([`Decrypt::reads_null`]); any other target refuses it as the wrong
+//! kind, and never reads it as a zero. `HashMap<String, T>` and `BTreeMap<String, T>`
 //! read a map, each value through `T`'s sink.
 //!
 //! `Protected<T>` is a target for every `T` that implements
@@ -42,7 +42,7 @@ use vitaminc_protected::{Controlled, Protected};
 use zeroize::Zeroize;
 
 use crate::plaintext::{
-    Encrypt, Error, FixedType, Float, Logical, MapSink, Physical, SeqSink, Sink, SourceError, Width,
+    Encrypt, Error, FixedType, Float, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
 };
 use crate::seal::{AsyncCipher, Cipher, Node};
 use crate::walk::{decrypt_into, decrypt_into_async, DecryptError};
@@ -100,13 +100,17 @@ impl Error for DecodeError {
 pub trait Decrypt: Sized {
     type Sink: Sink<Ok = Self, Error = DecodeError>;
 
-    /// The fixed-width type whose typed null an `Option<Self>` reads as
-    /// `None`: the [`Encrypt::FIXED`] of the same type, so a `None` reads
-    /// back as it was sealed. `None`, the default, for a type with none,
-    /// whose `Option` then refuses every typed null.
-    const FIXED: Option<FixedType> = None;
-
     fn sink() -> Self::Sink;
+
+    /// Whether an `Option<Self>` reads a typed null of `ty` as `None`: for
+    /// a scalar target, whether it reads a value of `ty` (see
+    /// [`FromScalar::FIXED`]), so a `None` reads back wherever a `Some`
+    /// does, a widened field included. `false`, the default, for a target
+    /// that is not a scalar, whose `Option` then refuses every typed null.
+    fn reads_null(ty: FixedType) -> bool {
+        let _ = ty;
+        false
+    }
 }
 
 /// Decrypt into `T`.
@@ -142,7 +146,16 @@ where
 pub trait FromScalar: Sized {
     /// What the type is called in a refusal.
     const EXPECTED: &'static str;
-    /// The type's [`Decrypt::FIXED`].
+    /// A fixed type whose typed null an `Option<Self>` reads as `None`
+    /// even though `from_scalar` refuses that type's zero.
+    ///
+    /// An `Option<Self>` reads a typed null of any type whose zero
+    /// `from_scalar` accepts ([`Width::zero`](crate::Width::zero)): every
+    /// type it reads a value of, for the built-in targets, so a `u64`
+    /// field reads a `u32` field's `None` as it reads its values. Only a
+    /// target that refuses zero needs this, to read its own `None`: a
+    /// fieldless enum with no variant at zero sets it to its
+    /// [`Encrypt::FIXED`].
     const FIXED: Option<FixedType> = None;
     fn from_scalar(ty: Option<Logical>, value: Physical<'_>) -> Option<Self>;
 
@@ -192,9 +205,12 @@ impl<T: FromScalar> Sink for ScalarSink<T> {
 
 impl<T: FromScalar> Decrypt for T {
     type Sink = ScalarSink<T>;
-    const FIXED: Option<FixedType> = T::FIXED;
     fn sink() -> ScalarSink<T> {
         ScalarSink(PhantomData)
+    }
+
+    fn reads_null(ty: FixedType) -> bool {
+        T::FIXED == Some(ty) || T::from_scalar(ty.logical(), ty.width().zero()).is_some()
     }
 }
 
@@ -279,11 +295,10 @@ impl<T> MapSink for Never<T> {
 }
 
 macro_rules! int_target {
-    ($($ty:ty => $width:ident),* $(,)?) => {
+    ($($ty:ty),* $(,)?) => {
         $(
             impl FromScalar for $ty {
                 const EXPECTED: &'static str = stringify!($ty);
-                const FIXED: Option<FixedType> = Some(FixedType::plain(Width::$width));
                 fn from_scalar(ty: Option<Logical>, v: Physical<'_>) -> Option<Self> {
                     match (ty, v) {
                         (None, Physical::Int(i)) => i
@@ -300,10 +315,7 @@ macro_rules! int_target {
 
 // `u8` is not a target for the same reason it is not a source: `Vec<u8>` is
 // a byte leaf, and the generic `Vec<T>` sequence target must not overlap it.
-int_target! {
-    i8 => I8, i16 => I16, i32 => I32, i64 => I64, i128 => I128,
-    u16 => U16, u32 => U32, u64 => U64, u128 => U128,
-}
+int_target!(i8, i16, i32, i64, i128, u16, u32, u64, u128);
 
 impl FromScalar for bool {
     const EXPECTED: &'static str = "bool";
@@ -317,7 +329,6 @@ impl FromScalar for bool {
 
 impl FromScalar for f32 {
     const EXPECTED: &'static str = "f32";
-    const FIXED: Option<FixedType> = Some(FixedType::plain(Width::F32));
     fn from_scalar(ty: Option<Logical>, v: Physical<'_>) -> Option<Self> {
         match (ty, v) {
             (None, Physical::Float(Float::F32(f))) => Some(f),
@@ -329,7 +340,6 @@ impl FromScalar for f32 {
 /// Widening from `f32` is exact, so an `f64` target accepts both widths.
 impl FromScalar for f64 {
     const EXPECTED: &'static str = "f64";
-    const FIXED: Option<FixedType> = Some(FixedType::plain(Width::F64));
     fn from_scalar(ty: Option<Logical>, v: Physical<'_>) -> Option<Self> {
         match (ty, v) {
             (None, Physical::Float(Float::F64(f))) => Some(f),
@@ -391,7 +401,6 @@ mod chrono_targets {
 
     impl FromScalar for NaiveDate {
         const EXPECTED: &'static str = "date";
-        const FIXED: Option<FixedType> = <NaiveDate as Encrypt>::FIXED;
         fn from_scalar(ty: Option<Logical>, v: Physical<'_>) -> Option<Self> {
             match (ty, v) {
                 (Some(Logical::Date), Physical::Int(days)) => conv::date(days),
@@ -404,7 +413,6 @@ mod chrono_targets {
     /// Rust timestamp in nanoseconds.
     impl FromScalar for DateTime<Utc> {
         const EXPECTED: &'static str = "timestamp";
-        const FIXED: Option<FixedType> = <DateTime<Utc> as Encrypt>::FIXED;
         fn from_scalar(ty: Option<Logical>, v: Physical<'_>) -> Option<Self> {
             match (ty, v) {
                 (Some(Logical::Timestamp(unit)), Physical::Int(count)) => {
@@ -419,7 +427,6 @@ mod chrono_targets {
 #[cfg(feature = "rust_decimal")]
 impl FromScalar for rust_decimal::Decimal {
     const EXPECTED: &'static str = "decimal";
-    const FIXED: Option<FixedType> = <rust_decimal::Decimal as Encrypt>::FIXED;
     fn from_scalar(ty: Option<Logical>, v: Physical<'_>) -> Option<Self> {
         match (ty, v) {
             (Some(Logical::Decimal { scale }), Physical::Int(mantissa)) => {
@@ -900,8 +907,9 @@ macro_rules! dict_target {
 dict_target!(HashMap, BTreeMap);
 
 /// `Option<T>`: null and `undefined` are `None`; anything else is `T`.
-/// A typed null is `None` if it is of `T`'s [`FIXED`](Decrypt::FIXED)
-/// type, and otherwise refused by `T`'s sink as the wrong kind.
+/// A typed null is `None` if `T` reads values of its type
+/// ([`Decrypt::reads_null`]), and otherwise refused by `T`'s sink as the
+/// wrong kind.
 ///
 /// Since `None` is written as null, `Option<Option<T>>` cannot tell
 /// `Some(None)` from `None`: both read back as `None`.
@@ -921,7 +929,7 @@ impl<T: Decrypt> Sink for Optional<T> {
     }
 
     fn typed_null(self, ty: FixedType) -> Result<Option<T>, DecodeError> {
-        if T::FIXED == Some(ty) {
+        if T::reads_null(ty) {
             return Ok(None);
         }
         self.0.typed_null(ty).map(Some)
@@ -979,9 +987,12 @@ impl<T, Q: MapSink<Ok = T, Error = DecodeError>> MapSink for Some_<T, Q> {
 
 impl<T: Decrypt> Decrypt for Option<T> {
     type Sink = Optional<T>;
-    const FIXED: Option<FixedType> = T::FIXED;
     fn sink() -> Optional<T> {
         Optional(T::sink())
+    }
+
+    fn reads_null(ty: FixedType) -> bool {
+        T::reads_null(ty)
     }
 }
 
@@ -1000,9 +1011,12 @@ pub trait DecryptProtected: Decrypt + Zeroize {
 
 impl<T: DecryptProtected> Decrypt for Protected<T> {
     type Sink = T::ProtectedSink;
-    const FIXED: Option<FixedType> = T::FIXED;
     fn sink() -> T::ProtectedSink {
         T::protected_sink()
+    }
+
+    fn reads_null(ty: FixedType) -> bool {
+        T::reads_null(ty)
     }
 }
 
@@ -1161,7 +1175,7 @@ impl<T: DecryptProtected> Sink for ProtectedOptional<T> {
     }
 
     fn typed_null(self, ty: FixedType) -> Result<Self::Ok, DecodeError> {
-        if T::FIXED == Some(ty) {
+        if T::reads_null(ty) {
             return Ok(Protected::new(None));
         }
         self.0.typed_null(ty).map(some)
@@ -1320,7 +1334,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plaintext::{Int, Raw};
+    use crate::plaintext::{Int, Raw, Width};
     use crate::seal::mock::{Mock, Remote};
     use crate::{encrypt, encrypt_async};
     use futures_executor::block_on;
@@ -1427,8 +1441,12 @@ mod tests {
         }
     }
 
+    fn plain(width: Width) -> FixedType {
+        FixedType::plain(width).expect("fixed")
+    }
+
     #[test]
-    fn a_typed_null_reads_as_none_only_for_an_option_of_its_type() {
+    fn a_typed_null_reads_as_none_for_an_option_of_a_type_that_reads_its_values() {
         // Sealed by `Option<T>`'s own `None`, and read back by it.
         assert_eq!(round_trip::<Option<u32>>(None::<u32>).expect("u32"), None);
         assert_eq!(round_trip::<Option<i8>>(None::<i8>).expect("i8"), None);
@@ -1441,25 +1459,30 @@ mod tests {
             round_trip::<Vec<Option<u16>>>(vec![None, Some(3u16)]).expect("elements"),
             [None, Some(3)]
         );
-        // Any other type's typed null is the wrong kind, never a `None`:
-        // not another width (even one whose values the target reads), not
-        // a float for an int, not a logical type over the same int.
-        let u32_null = || Null(FixedType::plain(Width::U32));
-        assert_eq!(expected(round_trip::<Option<u64>>(u32_null())), "u64");
+        // A widened field reads its old `None`s as it reads its old values.
+        assert_eq!(round_trip::<Option<u64>>(None::<u32>).expect("wider"), None);
+        assert_eq!(
+            round_trip::<Option<i8>>(None::<u64>).expect("narrower"),
+            None
+        );
+        assert_eq!(round_trip::<Option<f64>>(None::<f32>).expect("f64"), None);
+    }
+
+    #[test]
+    fn a_typed_null_of_a_type_the_target_does_not_read_is_the_wrong_kind() {
+        let u32_null = || Null(plain(Width::U32));
         assert_eq!(expected(round_trip::<Option<f32>>(u32_null())), "f32");
         assert_eq!(expected(round_trip::<Option<String>>(u32_null())), "string");
-        assert_eq!(
-            expected(round_trip::<Option<f64>>(Null(FixedType::plain(
-                Width::F32
-            )))),
-            "f64"
-        );
-        let date = FixedType::new(Some(Logical::Date), Width::I32).expect("fixed");
-        assert_eq!(expected(round_trip::<Option<i32>>(Null(date))), "i32");
+        assert_eq!(expected(round_trip::<Option<Vec<u8>>>(u32_null())), "bytes");
         assert_eq!(
             expected(round_trip::<Option<Vec<u32>>>(u32_null())),
             "sequence"
         );
+        assert_eq!(expected(round_trip::<Option<f32>>(None::<f64>)), "f32");
+        assert_eq!(expected(round_trip::<Option<u32>>(None::<f32>)), "u32");
+        // A logical type over the same int is not that int.
+        let date = FixedType::new(Some(Logical::Date), Width::I32).expect("fixed");
+        assert_eq!(expected(round_trip::<Option<i32>>(Null(date))), "i32");
     }
 
     #[test]
@@ -1499,31 +1522,34 @@ mod tests {
             &None
         );
         assert_eq!(
-            expected(round_trip::<Protected<Option<u64>>>(None::<u32>)),
-            "u64"
+            expected(round_trip::<Protected<Option<f32>>>(None::<u32>)),
+            "f32"
         );
     }
 
+    /// What every built-in source seals for `None`, its target reads back.
     #[test]
-    fn decrypt_and_encrypt_agree_on_every_fixed_type() {
-        fn same<T: Encrypt + Decrypt>() {
-            assert_eq!(<T as Encrypt>::FIXED, <T as Decrypt>::FIXED);
+    fn every_target_reads_its_own_sources_none() {
+        fn own<T: Encrypt + Decrypt>() {
+            let ty = <T as Encrypt>::FIXED.expect("fixed width");
+            assert!(<T as Decrypt>::reads_null(ty), "{ty:?}");
+            assert!(<Option<T> as Decrypt>::reads_null(ty), "{ty:?}");
         }
-        same::<i8>();
-        same::<i16>();
-        same::<i32>();
-        same::<i64>();
-        same::<i128>();
-        same::<u16>();
-        same::<u32>();
-        same::<u64>();
-        same::<u128>();
-        same::<f32>();
-        same::<f64>();
-        same::<bool>();
-        same::<String>();
-        same::<Option<u32>>();
-        same::<Vec<u32>>();
+        own::<i8>();
+        own::<i16>();
+        own::<i32>();
+        own::<i64>();
+        own::<i128>();
+        own::<u16>();
+        own::<u32>();
+        own::<u64>();
+        own::<u128>();
+        own::<f32>();
+        own::<f64>();
+        // And a type with no fixed width reads none.
+        assert!(!<String as Decrypt>::reads_null(plain(Width::U32)));
+        assert!(!<Vec<u32> as Decrypt>::reads_null(plain(Width::U32)));
+        assert!(!<bool as Decrypt>::reads_null(plain(Width::U8)));
     }
 
     #[test]

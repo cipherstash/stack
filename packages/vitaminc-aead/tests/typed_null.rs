@@ -137,10 +137,12 @@ struct Age(u32);
 fn a_derived_enum_and_newtype_hide_absence() {
     hides_absence(Status::Suspended);
     hides_absence(Age(42));
-    assert_eq!(<Age as Encrypt>::FIXED, Some(FixedType::plain(Width::U32)));
-    assert_eq!(<Age as Decrypt>::FIXED, Some(FixedType::plain(Width::U32)));
-    assert_eq!(<&Age as Encrypt>::FIXED, Some(FixedType::plain(Width::U32)));
-    assert_eq!(<Status as Encrypt>::FIXED, <Status as Decrypt>::FIXED);
+    let u32 = FixedType::plain(Width::U32);
+    assert_eq!(<Age as Encrypt>::FIXED, u32);
+    assert_eq!(<&Age as Encrypt>::FIXED, u32);
+    assert_eq!(<Status as Encrypt>::FIXED, u32);
+    assert!(<Age as Decrypt>::reads_null(u32.expect("fixed")));
+    assert!(<Status as Decrypt>::reads_null(u32.expect("fixed")));
     // An absent enum is not one of its variants.
     let read: Result<Status, _> = decrypt(
         &Mock,
@@ -202,21 +204,76 @@ fn a_struct_with_optional_fields_seals_the_same_lengths_either_way() {
     }
 }
 
-/// The frame carries a typed null both ways, so a host that encrypts from
-/// a frame (the Go guest) pads it, and decrypting to a frame keeps it.
+/// A frame a host sends may carry a typed null, which is sealed padded. A
+/// frame written here is plaintext for a host, so it carries the plain
+/// null every host decoder reads: padding hides nothing unsealed.
 #[test]
-fn a_typed_null_survives_the_frame_both_ways() {
-    let frame = to_frame(None::<u32>).expect("frames");
-    assert_eq!(
-        frame.risky_ref(),
-        &[tags::TYPED_NULL, tags::UINT32, 0, 0, 0]
-    );
-    let parsed = Frame::parse(frame.risky_ref()).expect("parses");
-    assert_eq!(sealed(parsed), [tags::TYPED_NULL, tags::UINT32, 0, 0, 0]);
+fn a_frame_reads_a_typed_null_and_writes_the_plain_null() {
+    let from_host = [tags::TYPED_NULL, tags::UINT32, 0, 0, 0];
+    let parsed = Frame::parse(&from_host).expect("parses");
+    assert_eq!(sealed(parsed), from_host);
 
+    assert_eq!(
+        to_frame(None::<u32>).expect("frames").risky_ref(),
+        &[tags::NULL]
+    );
     let node = encrypt(None::<u32>, &Mock, "ctx").expect("encrypts");
     let back = decrypt_to_frame(&Mock, node, "ctx").expect("decrypts");
-    assert_eq!(back.risky_ref(), frame.risky_ref());
+    assert_eq!(back.risky_ref(), &[tags::NULL]);
+}
+
+#[derive(Encrypt, Decrypt, Debug, PartialEq, Clone)]
+struct Row {
+    #[aead(passthrough)]
+    rank: Option<u32>,
+    secret: Option<u32>,
+}
+
+/// A passthrough field is stored in the clear for other readers, so its
+/// absence is the plain null, unchanged; only the sealed field pads.
+#[test]
+fn a_passthrough_none_stays_the_plain_null() {
+    let row = Row {
+        rank: None,
+        secret: None,
+    };
+    let CipherText::Map(entries) = encrypt(row.clone(), &Mock, "ctx").expect("encrypts") else {
+        panic!("not a map");
+    };
+    for (key, value) in entries {
+        match (key.as_str(), value) {
+            ("rank", CipherText::Passthrough(frame)) => assert_eq!(frame.0, [tags::NULL]),
+            ("secret", CipherText::Single(leaf)) => {
+                assert_eq!(leaf.plaintext, [tags::TYPED_NULL, tags::UINT32, 0, 0, 0])
+            }
+            (key, other) => panic!("{key}: {other:?}"),
+        }
+    }
+    let read: Row = decrypt(
+        &Mock,
+        encrypt(row.clone(), &Mock, "ctx").expect("encrypts"),
+        "ctx",
+    )
+    .expect("decrypts");
+    assert_eq!(read, row);
+}
+
+#[cfg(feature = "uuid")]
+#[test]
+fn a_uuid_hides_absence() {
+    hides_absence(uuid::Uuid::from_bytes([0xAB; 16]));
+}
+
+/// A field widened after data was written reads its old `None`s as it
+/// reads its old values.
+#[test]
+fn a_widened_field_reads_its_old_nones() {
+    let node = encrypt(None::<u32>, &Mock, "ctx").expect("encrypts");
+    let read: Option<u64> = decrypt(&Mock, node, "ctx").expect("decrypts");
+    assert_eq!(read, None);
+    let node = encrypt(None::<Age>, &Mock, "ctx").expect("encrypts");
+    let read: Option<u64> = decrypt(&Mock, node, "ctx").expect("decrypts");
+    assert_eq!(read, None);
 }
 
 /// A typed null whose padding is not zero is not an absence: a writer with

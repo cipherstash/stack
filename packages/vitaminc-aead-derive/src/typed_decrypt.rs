@@ -68,8 +68,9 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                         <#inner as #krate::typed::Decrypt>::Sink,
                         #wrap #ty_generics,
                     >;
-                    const FIXED: ::core::option::Option<#krate::FixedType> =
-                        <#inner as #krate::typed::Decrypt>::FIXED;
+                    fn reads_null(__ty: #krate::FixedType) -> bool {
+                        <#inner as #krate::typed::Decrypt>::reads_null(__ty)
+                    }
                     fn sink() -> Self::Sink {
                         #krate::typed::Wrapped::new(<#inner as #krate::typed::Decrypt>::sink())
                     }
@@ -307,8 +308,9 @@ fn enum_target(krate: &syn::Path, input: &DeriveInput, variants: &[VariantInfo])
         #[automatically_derived]
         impl #impl_generics #krate::FromScalar for #name #ty_generics #where_clause {
             const EXPECTED: &'static str = #expected;
+            // Its own `None`, even with no variant at zero to read.
             const FIXED: ::core::option::Option<#krate::FixedType> =
-                ::core::option::Option::Some(#krate::FixedType::plain(#krate::Width::U32));
+                #krate::FixedType::plain(#krate::Width::U32);
 
             fn from_scalar(
                 __ty: ::core::option::Option<#krate::Logical>,

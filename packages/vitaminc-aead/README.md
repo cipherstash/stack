@@ -133,7 +133,7 @@ assert!(matches!(encrypt(map, &cipher, ())?, CipherText::Map(entries) if entries
 
 // An empty container is an authenticated marker; `None` is a null leaf. A
 // `None` of a fixed-width type (an int, a float, a date, a timestamp, a
-// decimal) is a typed null, padded to the length of a `Some`, so the
+// decimal, a uuid) is a typed null, padded to the length of a `Some`, so the
 // ciphertext's length does not show which values are absent.
 assert!(matches!(encrypt(Vec::<u32>::new(), &cipher, ())?, CipherText::EmptySequence(_)));
 assert!(matches!(encrypt(None::<u32>, &cipher, ())?, CipherText::Single(_)));

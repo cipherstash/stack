@@ -198,81 +198,37 @@ pub fn write_leaf(
 /// # Ok::<(), ScalarError>(())
 /// ```
 pub fn write_typed_null(ty: FixedType, out: &mut Vec<u8>) {
-    let Header {
-        bytes,
-        len,
-        payload,
-    } = header(ty);
+    let (zero, header) = zero_leaf(ty);
     out.push(tags::TYPED_NULL);
-    out.extend_from_slice(&bytes[..len]);
-    // One byte of the payload's length went to `TYPED_NULL`. Every
-    // payload here is at least one byte, so this never underflows.
-    out.resize(out.len() + payload - 1, 0);
+    out.extend_from_slice(&zero[..header]);
+    // One byte of the value's length went to `TYPED_NULL`. Every payload
+    // here is at least one byte, so nothing is lost to the saturation.
+    out.resize(out.len() + zero.len().saturating_sub(header + 1), 0);
 }
 
-/// The header a value of a [`FixedType`] starts with, and the length of
-/// the payload after it.
-struct Header {
-    /// The header, in the first `len` bytes.
-    bytes: [u8; 4],
-    len: usize,
-    payload: usize,
-}
-
-fn header(ty: FixedType) -> Header {
-    let width = ty.width();
-    let tag = |tag, payload| Header {
-        bytes: [tag, 0, 0, 0],
-        len: 1,
-        payload,
+/// The leaf of a zero of `ty`, and how many of its bytes are the header:
+/// the tag, or the envelope's `LOGICAL, id, param, tag`. Written by the
+/// codec every value goes through, so a typed null cannot drift from the
+/// value it stands in for.
+fn zero_leaf(ty: FixedType) -> (Vec<u8>, usize) {
+    let zero = ty.width().zero();
+    let mut leaf = Vec::with_capacity(max_len(&zero));
+    // A `FixedType` admits its own zero (a test pins every kind), so this
+    // cannot fail.
+    let written = write(ty.logical(), zero, Form::Leaf, &mut leaf);
+    debug_assert!(written.is_ok(), "{ty:?} refuses its zero");
+    let header = if leaf.first() == Some(&tags::LOGICAL) {
+        4
+    } else {
+        1
     };
-    match ty.logical() {
-        None => tag(width_tag(width), width_payload(width)),
-        Some(Logical::Date) => tag(tags::DATE, 4),
-        Some(Logical::Timestamp(TimeUnit::Nanos)) => tag(tags::TIMESTAMP, 12),
-        Some(Logical::Decimal { .. }) => tag(tags::DECIMAL, 16),
-        Some(logical) => {
-            let (id, param) = logical.to_wire();
-            Header {
-                bytes: [tags::LOGICAL, id, param, width_tag(width)],
-                len: 4,
-                payload: width_payload(width),
-            }
-        }
-    }
+    let header = header.min(leaf.len());
+    (leaf, header)
 }
 
-/// The tag a plain value of `width` is written with.
-fn width_tag(width: Width) -> u8 {
-    match width {
-        Width::I8 => tags::INT8,
-        Width::I16 => tags::INT16,
-        Width::I32 => tags::INT32,
-        Width::I64 => tags::INT64,
-        Width::I128 => tags::INT128,
-        Width::U8 => tags::UINT8,
-        Width::U16 => tags::UINT16,
-        Width::U32 => tags::UINT32,
-        Width::U64 => tags::UINT64,
-        Width::U128 => tags::UINT128,
-        Width::F32 => tags::FLOAT32,
-        Width::F64 => tags::FLOAT64,
-    }
-}
-
-/// The payload length of a plain value of `width`.
-fn width_payload(width: Width) -> usize {
-    match width {
-        Width::I8 | Width::U8 => 1,
-        Width::I16 | Width::U16 => 2,
-        Width::I32 | Width::U32 | Width::F32 => 4,
-        Width::I64 | Width::U64 | Width::F64 => 8,
-        Width::I128 | Width::U128 => 16,
-    }
-}
-
-/// The width a plain tag is written for, or `None` for a tag that is not a
-/// plain int or float.
+/// The width a plain tag is written for, or `None` for a tag no
+/// [`FixedType`] is written with. Bytes are sixteen wide only under a
+/// uuid, which [`FixedType::new`] checks.
 fn tag_width(tag: u8) -> Option<Width> {
     Some(match tag {
         tags::INT8 => Width::I8,
@@ -287,6 +243,7 @@ fn tag_width(tag: u8) -> Option<Width> {
         tags::UINT128 => Width::U128,
         tags::FLOAT32 => Width::F32,
         tags::FLOAT64 => Width::F64,
+        tags::BYTES => Width::Bytes16,
         _ => return None,
     })
 }
@@ -294,8 +251,7 @@ fn tag_width(tag: u8) -> Option<Width> {
 /// The length of a typed null of `ty`, which is the length of a leaf
 /// holding a value of `ty`.
 pub fn typed_null_len(ty: FixedType) -> usize {
-    let Header { len, payload, .. } = header(ty);
-    len + payload
+    zero_leaf(ty).0.len()
 }
 
 /// An upper bound on the bytes [`write()`] appends for `v` in either form:
@@ -458,19 +414,17 @@ pub fn read_leaf_item(bytes: &[u8]) -> Result<Item<'_>, ScalarError> {
 }
 
 /// A typed null after its `TYPED_NULL` tag. Strict, so that every absence
-/// has one encoding: the header must be one this codec writes for some
-/// [`FixedType`] and the padding must be zero.
+/// has one encoding: the header names a [`FixedType`], and the whole typed
+/// null, header and padding, must be byte for byte what
+/// [`write_typed_null`] writes for it.
 fn read_typed_null(c: &mut Cursor<'_>) -> Result<FixedType, ScalarError> {
-    let tag = c.byte()?;
-    let (ty, width) = match tag {
+    let start = c.pos - 1;
+    let (ty, width) = match c.byte()? {
         tags::DATE => (Some(Logical::Date), Width::I32),
         tags::TIMESTAMP => (Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128),
         tags::DECIMAL => (Some(Logical::Decimal { scale: 0 }), Width::I128),
         tags::LOGICAL => {
             let ty = Logical::from_wire(c.byte()?, c.byte()?).ok_or(ScalarError::Malformed)?;
-            if has_shorthand(ty) {
-                return Err(ScalarError::Malformed);
-            }
             let width = tag_width(c.byte()?).ok_or(ScalarError::Malformed)?;
             (Some(ty), width)
         }
@@ -479,7 +433,12 @@ fn read_typed_null(c: &mut Cursor<'_>) -> Result<FixedType, ScalarError> {
     // A logical type over a physical type it cannot ride on (a uuid over
     // an int, a timestamp over a float) has no typed null.
     let fixed = FixedType::new(ty, width).ok_or(ScalarError::Malformed)?;
-    if c.take(header(fixed).payload - 1)?.iter().any(|&b| b != 0) {
+    // An envelope where a shorthand tag exists, or padding that is not
+    // zero, is not what the writer writes.
+    let mut expected = Vec::new();
+    write_typed_null(fixed, &mut expected);
+    c.pos = start;
+    if c.take(expected.len())? != expected {
         return Err(ScalarError::Malformed);
     }
     Ok(fixed)
@@ -1291,62 +1250,62 @@ mod tests {
         let unknown = Logical::from_wire(200, 9);
         let cases: Vec<(FixedType, Vec<u8>, Physical<'_>)> = vec![
             (
-                FixedType::plain(Width::I8),
+                FixedType::plain(Width::I8).expect("fixed"),
                 vec![T, 0x0C],
                 Physical::Int(Int::I8(-1)),
             ),
             (
-                FixedType::plain(Width::U8),
+                FixedType::plain(Width::U8).expect("fixed"),
                 vec![T, 0x0D],
                 Physical::Int(Int::U8(1)),
             ),
             (
-                FixedType::plain(Width::I16),
+                FixedType::plain(Width::I16).expect("fixed"),
                 vec![T, 0x0E, 0],
                 Physical::Int(Int::I16(1)),
             ),
             (
-                FixedType::plain(Width::U16),
+                FixedType::plain(Width::U16).expect("fixed"),
                 vec![T, 0x0F, 0],
                 Physical::Int(Int::U16(1)),
             ),
             (
-                FixedType::plain(Width::I32),
+                FixedType::plain(Width::I32).expect("fixed"),
                 vec![T, 0x04, 0, 0, 0],
                 Physical::Int(Int::I32(1)),
             ),
             (
-                FixedType::plain(Width::U32),
+                FixedType::plain(Width::U32).expect("fixed"),
                 vec![T, 0x06, 0, 0, 0],
                 Physical::Int(Int::U32(1)),
             ),
             (
-                FixedType::plain(Width::F32),
+                FixedType::plain(Width::F32).expect("fixed"),
                 vec![T, 0x08, 0, 0, 0],
                 Physical::Float(Float::F32(1.5)),
             ),
             (
-                FixedType::plain(Width::I64),
+                FixedType::plain(Width::I64).expect("fixed"),
                 vec![T, 0x05, 0, 0, 0, 0, 0, 0, 0],
                 Physical::Int(Int::I64(1)),
             ),
             (
-                FixedType::plain(Width::U64),
+                FixedType::plain(Width::U64).expect("fixed"),
                 vec![T, 0x07, 0, 0, 0, 0, 0, 0, 0],
                 Physical::Int(Int::U64(1)),
             ),
             (
-                FixedType::plain(Width::F64),
+                FixedType::plain(Width::F64).expect("fixed"),
                 vec![T, 0x09, 0, 0, 0, 0, 0, 0, 0],
                 Physical::Float(Float::F64(1.5)),
             ),
             (
-                FixedType::plain(Width::I128),
+                FixedType::plain(Width::I128).expect("fixed"),
                 [&[T, 0x10][..], &[0; 15]].concat(),
                 Physical::Int(Int::I128(1)),
             ),
             (
-                FixedType::plain(Width::U128),
+                FixedType::plain(Width::U128).expect("fixed"),
                 [&[T, 0x11][..], &[0; 15]].concat(),
                 Physical::Int(Int::U128(1)),
             ),
@@ -1371,6 +1330,12 @@ mod tests {
                 fixed(Some(ms), Width::I64),
                 [&[T, 0xF3, 3, 1, 0x05][..], &[0; 7]].concat(),
                 Physical::Int(Int::I64(1_700_000_000_000)),
+            ),
+            // A uuid's sixteen bytes are fixed by its type: no length.
+            (
+                fixed(Some(Logical::Uuid), Width::Bytes16),
+                [&[T, 0xF3, 5, 0, 0x0B][..], &[0; 15]].concat(),
+                Physical::Bytes(&[0xAB; 16]),
             ),
             (
                 fixed(unknown, Width::F32),
@@ -1398,6 +1363,59 @@ mod tests {
             assert_eq!(present.len(), expected.len(), "{ty:?}");
             assert_eq!(FixedType::of(ty.logical(), &value), Some(ty), "{ty:?}");
         }
+    }
+
+    /// `write_typed_null` writes from a zero of the type, so every
+    /// [`FixedType`] must admit its zero.
+    #[test]
+    fn every_fixed_type_admits_its_zero() {
+        let widths = [
+            Width::I8,
+            Width::I16,
+            Width::I32,
+            Width::I64,
+            Width::I128,
+            Width::U8,
+            Width::U16,
+            Width::U32,
+            Width::U64,
+            Width::U128,
+            Width::F32,
+            Width::F64,
+            Width::Bytes16,
+        ];
+        let types = [
+            None,
+            Some(Logical::Undefined),
+            Some(Logical::Date),
+            Some(Logical::Timestamp(TimeUnit::Seconds)),
+            Some(Logical::Timestamp(TimeUnit::Millis)),
+            Some(Logical::Timestamp(TimeUnit::Micros)),
+            Some(Logical::Timestamp(TimeUnit::Nanos)),
+            Some(Logical::Decimal { scale: 28 }),
+            Some(Logical::Uuid),
+            Logical::from_wire(200, 9),
+        ];
+        let mut checked = 0;
+        for ty in types {
+            for width in widths {
+                let Some(fixed) = FixedType::new(ty, width) else {
+                    continue;
+                };
+                let mut out = Vec::new();
+                assert!(
+                    write_leaf(fixed.logical(), width.zero(), &mut out).is_ok(),
+                    "{fixed:?}"
+                );
+                assert_eq!(typed_null(fixed).len(), out.len(), "{fixed:?}");
+                assert_eq!(
+                    read_leaf_item(&typed_null(fixed)),
+                    Ok(Item::TypedNull(fixed))
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 40, "only {checked}");
     }
 
     #[test]
@@ -1447,11 +1465,17 @@ mod tests {
             &[T, 0xF4, 200, 0, 0x04, 0, 0, 0],
             // A logical type over a physical type it cannot ride on: a
             // uuid over an int, a millisecond timestamp over a float, an
-            // unknown type over a bool or over text.
+            // unknown type over a bool, text or bytes; and plain bytes.
             &[T, 0xF3, 5, 0, 0x04, 0, 0, 0],
             &[T, 0xF3, 3, 1, 0x09, 0, 0, 0, 0, 0, 0, 0],
             &[T, 0xF3, 200, 0, 0x02],
             &[T, 0xF3, 200, 0, 0x0A],
+            &[
+                T, 0xF3, 200, 0, 0x0B, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            &[T, 0x0B, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            // A uuid's typed null with a length, as a frame gives bytes.
+            &[T, 0xF3, 5, 0, 0x0B, 16, 0, 0, 0],
         ];
         for bytes in refused {
             assert_eq!(

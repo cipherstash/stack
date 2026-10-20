@@ -517,7 +517,7 @@ mod tests {
             _error: PhantomData,
         };
         let err = sink
-            .typed_null(FixedType::plain(Width::I8))
+            .typed_null(FixedType::plain(Width::I8).expect("fixed"))
             .err()
             .expect("too deep");
         assert!(matches!(err, EncryptError::Shape(_)), "{err:?}");

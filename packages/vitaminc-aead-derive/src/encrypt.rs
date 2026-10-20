@@ -242,9 +242,7 @@ fn fixed(
             )
         }
         Shape::Enum(_) => {
-            let u32 = decl(quote!(::core::option::Option::Some(
-                #krate::FixedType::plain(#krate::Width::U32)
-            )));
+            let u32 = decl(quote!(#krate::FixedType::plain(#krate::Width::U32)));
             (u32.clone(), u32)
         }
         Shape::Map(_) | Shape::Empty => (TokenStream::new(), TokenStream::new()),

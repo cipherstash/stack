@@ -20,7 +20,7 @@ macro_rules! int {
         $(
             impl Encrypt for $ty {
                 const DEPTH: Option<usize> = depth::SCALAR;
-                const FIXED: Option<FixedType> = Some(FixedType::plain(Width::$width));
+                const FIXED: Option<FixedType> = FixedType::plain(Width::$width);
                 fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                     sink.scalar(None, Physical::Int(self.into()))
                 }
@@ -51,7 +51,7 @@ impl Encrypt for bool {
 
 impl Encrypt for f32 {
     const DEPTH: Option<usize> = depth::SCALAR;
-    const FIXED: Option<FixedType> = Some(FixedType::plain(Width::F32));
+    const FIXED: Option<FixedType> = FixedType::plain(Width::F32);
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(None, Physical::Float(Float::F32(self)))
     }
@@ -59,7 +59,7 @@ impl Encrypt for f32 {
 
 impl Encrypt for f64 {
     const DEPTH: Option<usize> = depth::SCALAR;
-    const FIXED: Option<FixedType> = Some(FixedType::plain(Width::F64));
+    const FIXED: Option<FixedType> = FixedType::plain(Width::F64);
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(None, Physical::Float(Float::F64(self)))
     }
@@ -201,12 +201,12 @@ where
     }
 }
 
-/// `None` is a null. There is no separate "absent" in the data model, so a
-/// host null and a Rust `None` are the same leaf.
+/// `None` is a null. There is no separate "absent" in the data model: a
+/// Rust `None` and a host null mean the same thing.
 ///
 /// When `T` has a [`FIXED`](Encrypt::FIXED) type, `None` is a typed null
 /// of it, which the encrypting sink pads to the length of a `Some`.
-/// Otherwise it is the plain null. An `Option<Option<T>>` has `T`'s type
+/// Otherwise it is the plain null, the same leaf as a host null. An `Option<Option<T>>` has `T`'s type
 /// too, so its two `None`s seal alike, as they always have.
 impl<T: Encrypt> Encrypt for Option<T> {
     const DEPTH: Option<usize> = T::DEPTH;
@@ -544,6 +544,9 @@ impl Encrypt for &rust_decimal::Decimal {
 #[cfg(feature = "uuid")]
 impl Encrypt for uuid::Uuid {
     const DEPTH: Option<usize> = depth::SCALAR;
+    /// Sixteen bytes under the uuid type: the one bytes leaf whose width is
+    /// fixed.
+    const FIXED: Option<FixedType> = FixedType::new(Some(Logical::Uuid), Width::Bytes16);
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(Some(Logical::Uuid), Physical::Bytes(self.as_bytes()))
     }
@@ -552,6 +555,7 @@ impl Encrypt for uuid::Uuid {
 #[cfg(feature = "uuid")]
 impl Encrypt for &uuid::Uuid {
     const DEPTH: Option<usize> = depth::SCALAR;
+    const FIXED: Option<FixedType> = <uuid::Uuid as Encrypt>::FIXED;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         (*self).visit(sink)
     }
@@ -907,7 +911,9 @@ mod tests {
         );
         assert_eq!(
             record(&None::<i8>).expect("ok"),
-            [Event::TypedNull(FixedType::plain(Width::I8))]
+            [Event::TypedNull(
+                FixedType::plain(Width::I8).expect("fixed")
+            )]
         );
         assert_eq!(record(&None::<&str>).expect("ok"), [scalar(Owned::Null)]);
         // A borrowed `Vec<u8>` is still a byte leaf, not a sequence.
@@ -946,7 +952,7 @@ mod tests {
     #[allow(clippy::needless_borrows_for_generic_args)]
     #[test]
     fn a_fixed_width_none_is_a_typed_null() {
-        let typed = |w| [Event::TypedNull(FixedType::plain(w))];
+        let typed = |w| [Event::TypedNull(FixedType::plain(w).expect("fixed"))];
         assert_eq!(record(None::<u32>).expect("ok"), typed(Width::U32));
         assert_eq!(record(None::<i128>).expect("ok"), typed(Width::I128));
         assert_eq!(record(None::<f32>).expect("ok"), typed(Width::F32));

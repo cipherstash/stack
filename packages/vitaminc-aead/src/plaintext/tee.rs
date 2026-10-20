@@ -174,7 +174,12 @@ mod tests {
             .visit(Tee(Record(&mut left), Record(&mut right)))
             .expect("ok");
         assert_eq!(left, right);
-        assert_eq!(left, [Event::TypedNull(FixedType::plain(Width::I32))]);
+        assert_eq!(
+            left,
+            [Event::TypedNull(
+                FixedType::plain(Width::I32).expect("fixed")
+            )]
+        );
     }
 
     #[test]

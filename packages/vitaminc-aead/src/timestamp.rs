@@ -131,7 +131,6 @@ impl Encrypt for &Timestamp {
 /// Any unit, as for `DateTime<Utc>`. A decoded count is never a leap second.
 impl FromScalar for Timestamp {
     const EXPECTED: &'static str = "timestamp";
-    const FIXED: Option<FixedType> = <Timestamp as Encrypt>::FIXED;
     fn from_scalar(ty: Option<Logical>, value: Physical<'_>) -> Option<Self> {
         DateTime::<Utc>::from_scalar(ty, value).and_then(|instant| Self::new(instant).ok())
     }

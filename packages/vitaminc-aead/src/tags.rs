@@ -97,9 +97,11 @@ pub const DECIMAL: u8 = 0x14;
 /// null date is `[TYPED_NULL, DATE, 0, 0, 0]`, five bytes like
 /// `[DATE, d0, d1, d2, d3]`.
 ///
-/// Only an int or a float, plain or under a logical type, has a typed null
-/// (see [`FixedType`](crate::FixedType)). A bool's leaf is the tag alone,
-/// already as short as [`NULL`]; text and bytes are variable width. A
+/// Only an int or a float, plain or under a logical type, and a uuid have a
+/// typed null (see [`FixedType`](crate::FixedType)). A bool's leaf is the
+/// tag alone, already as short as [`NULL`]; other text and bytes are
+/// variable width. A uuid's typed null has no length before its padding,
+/// even in a frame: its type fixes the length. A
 /// reader refuses a typed null of any other tag, an envelope where a
 /// shorthand tag exists, and padding that is not zero, so every absence
 /// has one encoding. [`NULL`] stays a valid absence of any type.
