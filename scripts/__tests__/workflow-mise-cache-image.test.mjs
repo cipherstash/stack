@@ -27,7 +27,10 @@ import { readWorkflow, workflowFiles } from './lib/workflows.mjs'
  * `ubuntu-2404`, and a RunsOn label's `image=ubuntu24-full-x64` does too). A
  * `runs-on` that is one matrix value (`${{ matrix.runner.label }}`) names the
  * image every value of that axis names, and only when they all name the same
- * one. A job whose `runs-on` names no image (`ubuntu-latest`, a RunsOn label
+ * one. The architecture is no part of `<image>`: mise-action puts
+ * `linux-<arch>` in the key after the prefix, so an arm64 entry
+ * (`image=ubuntu22-full-arm64`) and an x64 one never share a cache.
+ * A job whose `runs-on` names no image (`ubuntu-latest`, a RunsOn label
  * with no `image=`, a matrix mixing images) must turn the cache off. No step
  * sets `cache_key`, which
  * mise-action prefers over the prefix and so would bring the shared key back.
@@ -253,7 +256,34 @@ describe('mise-action cache keys', () => {
     expect(
       imageOf('runs-on=1/family=c8a/cpu=4/image=ubuntu24-full-x64/volume=80gb'),
     ).toBe('ubuntu-2404')
+    expect(
+      imageOf(
+        'runs-on=1/family=c8g/cpu=8/image=ubuntu22-full-arm64/volume=80gb',
+      ),
+    ).toBe('ubuntu-2204')
     expect(imageOf('runs-on=1/runner=4cpu-linux-x64')).toBeUndefined()
+  })
+
+  it('keys a matrix mixing x64 and arm64 entries of one image', () => {
+    expect(
+      cacheKeyFinding({
+        file: 'w.yml',
+        job: 'j',
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: a GitHub Actions expression, the literal `runs-on` value under test.
+        runsOn: '${{ matrix.label }}',
+        matrix: {
+          include: [
+            { label: 'blacksmith-16vcpu-ubuntu-2204' },
+            { label: 'runs-on=1/family=c8a/cpu=16/image=ubuntu22-full-x64' },
+            { label: 'runs-on=1/family=c8g/cpu=16/image=ubuntu22-full-arm64' },
+          ],
+        },
+        step: {
+          uses: 'jdx/mise-action@sha',
+          with: { cache_key_prefix: 'mise-v1-ubuntu-2204' },
+        },
+      }),
+    ).toBeNull()
   })
 
   it('lets a composite action cache only image-independent tools', () => {
