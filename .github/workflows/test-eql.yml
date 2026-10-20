@@ -400,11 +400,11 @@ jobs:
       # `nextest.tar.zst` and `release/*.sql` at its top level and the shard's
       # `download-artifact` puts them back where the archive expects them.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        # RunsOn trial: one entry uploads, because an artifact name is unique per
-        # run; every runner's consumers test the baseline's build.
-        if: matrix.runner.id == 'blacksmith'
+        # RunsOn trial: one archive per runner. The test binaries bake in
+        # their build's checkout path (`env!("CARGO_MANIFEST_DIR")`), and
+        # GitHub-hosted runners check out to `work/`, not `_work/`.
         with:
-          name: nextest-archive
+          name: nextest-archive-${{ matrix.runner.id }}
           path: |
             packages/eql/nextest.tar.zst
             packages/eql/release/*.sql
@@ -478,7 +478,7 @@ jobs:
       # workspace remap and the build_validation_tests expect them.
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: nextest-archive
+          name: nextest-archive-${{ matrix.runner.id }}
           path: packages/eql
 
       - name: Setup database (Postgres ${{ matrix.postgres-version }})
