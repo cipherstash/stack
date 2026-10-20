@@ -128,6 +128,11 @@ Commands:
   encrypt backfill     Resumably encrypt plaintext into the encrypted column
   encrypt drop         Generate a migration to drop the plaintext column
 
+  decrypt status       Show per-column reverse-migration status (phase, progress, undecryptable)
+  decrypt plan         Plan (or generate) the plaintext twins for encrypted columns
+  decrypt backfill     Resumably decrypt ciphertext into the plaintext column
+  decrypt drop         Generate a migration to drop the encrypted column
+
   env                  Mint deployment credentials and print them as env vars
 
 Options:
@@ -466,6 +471,92 @@ async function runEncryptCommand(
   }
 }
 
+async function runDecryptCommand(
+  sub: string | undefined,
+  flags: Record<string, boolean>,
+  values: Record<string, string>,
+) {
+  switch (sub) {
+    case 'status': {
+      const { decryptStatusCommand } = await requireStack(
+        () => import('../commands/decrypt/status.js'),
+      )
+      await decryptStatusCommand()
+      break
+    }
+    case 'plan': {
+      const { decryptPlanCommand } = await requireStack(
+        () => import('../commands/decrypt/plan.js'),
+      )
+      await decryptPlanCommand({
+        table: values.table,
+        column: values.column,
+        plaintextColumn: values['plaintext-column'],
+        migrationsDir: values['migrations-dir'],
+        dryRun: flags['dry-run'],
+      })
+      break
+    }
+    case 'backfill': {
+      const table = requireValue(values, 'table')
+      const column = requireValue(values, 'column')
+      const { decryptBackfillCommand } = await requireStack(
+        () => import('../commands/decrypt/backfill.js'),
+      )
+      // Through requireStack: the bound comes from @cipherstash/migrate,
+      // which imports @cipherstash/stack.
+      const { InvalidDecryptChunkSizeError, parseDecryptChunkSize } =
+        await requireStack(
+          () => import('../commands/decrypt/lib/chunk-size.js'),
+        )
+      let chunkSize: number | undefined
+      if (values['chunk-size'] !== undefined) {
+        // Parsed here, where the raw text is still in hand, so the error can
+        // quote exactly what was typed.
+        try {
+          chunkSize = parseDecryptChunkSize(values['chunk-size'])
+        } catch (error) {
+          if (!(error instanceof InvalidDecryptChunkSizeError)) throw error
+          p.log.error(error.message)
+          throw new CliExit(1)
+        }
+      }
+      await decryptBackfillCommand({
+        table,
+        column,
+        plaintextColumn: values['plaintext-column'],
+        pkColumn: values['pk-column'],
+        chunkSize,
+        confirmDualWritesDeployed: flags['confirm-dual-writes-deployed'],
+        force: flags.force,
+        confirmPlaintextCurrent: flags['confirm-plaintext-current'],
+        continueOnUndecryptable: flags['continue-on-undecryptable'],
+      })
+      break
+    }
+    case 'drop': {
+      const table = requireValue(values, 'table')
+      const column = requireValue(values, 'column')
+      const { decryptDropCommand } = await requireStack(
+        () => import('../commands/decrypt/drop.js'),
+      )
+      await decryptDropCommand({
+        table,
+        column,
+        plaintextColumn: values['plaintext-column'],
+        migrationsDir: values['migrations-dir'],
+        uninstallEql: flags['uninstall-eql'],
+      })
+      break
+    }
+    default:
+      p.log.error(`${messages.decrypt.unknownSubcommand}: ${sub ?? '(none)'}`)
+      console.log()
+      console.log(HELP)
+      throw new CliExit(1)
+  }
+}
+
 function requireValue(values: Record<string, string>, key: string): string {
   const v = values[key]
   if (!v) {
@@ -609,6 +700,9 @@ async function dispatch(
       break
     case 'encrypt':
       await runEncryptCommand(subcommand, flags, values)
+      break
+    case 'decrypt':
+      await runDecryptCommand(subcommand, flags, values)
       break
     case 'schema':
       await runSchemaCommand(subcommand, flags, values)

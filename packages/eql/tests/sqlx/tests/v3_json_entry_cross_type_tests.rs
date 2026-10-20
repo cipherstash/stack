@@ -35,7 +35,7 @@ use sqlx::PgPool;
 /// the Ope-only families (integer/…/numeric) the extra `hm` is simply ignored.
 const SYNTHETIC_HM: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
-use eql_tests::fixtures::v3_doc_integer::SELECTOR;
+use eql_tests::fixtures::v3_doc_integer::field_op_selector;
 
 /// #1 — Structural: every RANGE cross operator is backed by a PUBLIC `eql_v3.*`
 /// wrapper (callable by name on operator-free platforms), while `=`/`<>` are
@@ -140,10 +140,14 @@ async fn json_entry_cross_operators_are_public_ranges_and_blocked_equality(
 /// `$.field` `op` leaf: extract the entry's CLLW-OPE (`op`) term and wrap it
 /// term-only (`{v, i, op}`, no `c`). `op` carries the field's selector context,
 /// so `ord_term(operand)` is comparable to every leaf's `ord_term`.
-async fn field_context_ord_operand(tx: &mut sqlx::PgConnection, id: i64) -> Result<String> {
+async fn field_context_ord_operand(
+    tx: &mut sqlx::PgConnection,
+    sel: &str,
+    id: i64,
+) -> Result<String> {
     let operand: String = sqlx::query_scalar(&format!(
         "SELECT jsonb_build_object('v', '3', 'i', (payload::jsonb -> 'i'), 'op', \
-                (payload -> '{SELECTOR}'::text)::jsonb -> 'op')::text \
+                (payload -> '{sel}'::text)::jsonb -> 'op')::text \
          FROM fixtures.v3_doc_integer WHERE id = {id}"
     ))
     .fetch_one(&mut *tx)
@@ -183,7 +187,7 @@ async fn median_pivot_id(tx: &mut sqlx::PgConnection) -> Result<i64> {
 
 /// Extract every row's `$.field` entry into a temp table (id, plaintext, value)
 /// and return a functional btree name on `ord_term(value)`.
-async fn build_entry_table(tx: &mut sqlx::PgConnection) -> Result<()> {
+async fn build_entry_table(tx: &mut sqlx::PgConnection, sel: &str) -> Result<()> {
     sqlx::query(
         "CREATE TEMP TABLE entry_x (id bigint, plaintext integer, value public.eql_v3_json_entry) \
          ON COMMIT DROP",
@@ -192,7 +196,7 @@ async fn build_entry_table(tx: &mut sqlx::PgConnection) -> Result<()> {
     .await?;
     sqlx::query(&format!(
         "INSERT INTO entry_x(id, plaintext, value) \
-         SELECT id, plaintext, (payload -> '{SELECTOR}'::text)::public.eql_v3_json_entry \
+         SELECT id, plaintext, (payload -> '{sel}'::text)::public.eql_v3_json_entry \
          FROM fixtures.v3_doc_integer"
     ))
     .execute(&mut *tx)
@@ -213,8 +217,9 @@ async fn build_entry_table(tx: &mut sqlx::PgConnection) -> Result<()> {
 #[sqlx::test(fixtures(path = "../fixtures", scripts("v3_doc_integer")))]
 async fn json_entry_ord_cross_type_engages_index(pool: PgPool) -> Result<()> {
     let mut tx = pool.begin().await?;
-    let operand = field_context_ord_operand(&mut tx, 1).await?;
-    build_entry_table(&mut tx).await?;
+    let sel = field_op_selector(&mut *tx).await?;
+    let operand = field_context_ord_operand(&mut tx, &sel, 1).await?;
+    build_entry_table(&mut tx, &sel).await?;
     sqlx::query("SET LOCAL enable_seqscan = off")
         .execute(&mut *tx)
         .await?;
@@ -248,13 +253,14 @@ async fn json_entry_ord_cross_type_engages_index(pool: PgPool) -> Result<()> {
 #[sqlx::test(fixtures(path = "../fixtures", scripts("v3_doc_integer")))]
 async fn json_entry_ord_cross_type_operator_equals_function(pool: PgPool) -> Result<()> {
     let mut tx = pool.begin().await?;
-    build_entry_table(&mut tx).await?;
+    let sel = field_op_selector(&mut *tx).await?;
+    build_entry_table(&mut tx, &sel).await?;
     // Pivot on the MEDIAN row, not row 1: row 1 is the fixture's minimum
     // (i32::MIN), which makes the `<` comparison vacuous — both sides count an
     // empty set and 0 == 0 proves nothing. A mid-range pivot gives every
     // operator a non-degenerate split to agree on.
     let pivot_id = median_pivot_id(&mut tx).await?;
-    let operand = field_context_ord_operand(&mut tx, pivot_id).await?;
+    let operand = field_context_ord_operand(&mut tx, &sel, pivot_id).await?;
 
     let esc = operand.replace('\'', "''");
     for (op, func) in [(">", "gt"), (">=", "gte"), ("<", "lt"), ("<=", "lte")] {
@@ -301,9 +307,10 @@ async fn json_entry_ord_cross_type_operator_equals_function(pool: PgPool) -> Res
 #[sqlx::test(fixtures(path = "../fixtures", scripts("v3_doc_integer")))]
 async fn json_entry_range_cross_type_matches_plaintext_ordering(pool: PgPool) -> Result<()> {
     let mut tx = pool.begin().await?;
-    build_entry_table(&mut tx).await?;
+    let sel = field_op_selector(&mut *tx).await?;
+    build_entry_table(&mut tx, &sel).await?;
     let pivot_id = median_pivot_id(&mut tx).await?;
-    let operand = field_context_ord_operand(&mut tx, pivot_id).await?;
+    let operand = field_context_ord_operand(&mut tx, &sel, pivot_id).await?;
     let esc = operand.replace('\'', "''");
 
     let total: i64 = sqlx::query_scalar("SELECT count(*) FROM entry_x")
@@ -345,12 +352,12 @@ async fn json_entry_range_cross_type_matches_plaintext_ordering(pool: PgPool) ->
     Ok(())
 }
 
-/// The `v3_ste_vec` `$.hello` **string** leaf's `op` selector, imported from
-/// the ONE shared copy (see its doc for the `$.number` mis-pin history and how
-/// to re-derive the hex creds-free). Ordering arms below are exactly what makes
-/// a wrong pin visible — `"world-10"` sorts between `"world-1"` and `"world-2"`
+/// The `v3_ste_vec` `$.hello` **string** leaf's `op` selector, read from the
+/// loaded fixture (see `HELLO_OP_RULE` for how the leaf is told apart and the
+/// `$.number` mis-pin history). Ordering arms below are exactly what makes a
+/// wrong leaf visible — `"world-10"` sorts between `"world-1"` and `"world-2"`
 /// as a string but last as a number.
-use eql_tests::fixtures::v3_ste_vec::SEL_HELLO_OP;
+use eql_tests::fixtures::v3_ste_vec::hello_op_selector;
 
 /// #5 — Extract-surface equality is BLOCKED for EVERY family.
 ///
@@ -373,6 +380,7 @@ use eql_tests::fixtures::v3_ste_vec::SEL_HELLO_OP;
 /// containment instead.
 #[sqlx::test(fixtures(path = "../fixtures", scripts("v3_ste_vec")))]
 async fn json_entry_extract_equality_is_blocked_for_every_family(pool: PgPool) -> Result<()> {
+    let sel = hello_op_selector(&pool).await?;
     let mut tx = pool.begin().await?;
 
     // Operand from the $.hello leaf's real `op` term, plus a synthetic `hm` so the
@@ -382,14 +390,14 @@ async fn json_entry_extract_equality_is_blocked_for_every_family(pool: PgPool) -
     let operand: String = sqlx::query_scalar(&format!(
         "SELECT jsonb_build_object('v', '3', 'i', (payload::jsonb -> 'i'), \
                 'hm', '{SYNTHETIC_HM}', \
-                'op', (payload -> '{SEL_HELLO_OP}'::text)::jsonb -> 'op')::text \
+                'op', (payload -> '{sel}'::text)::jsonb -> 'op')::text \
          FROM fixtures.v3_ste_vec WHERE id = 1"
     ))
     .fetch_one(&mut *tx)
     .await?;
     let esc = operand.replace('\'', "''");
 
-    async fn make_entry_table(tx: &mut sqlx::PgConnection) -> Result<()> {
+    async fn make_entry_table(tx: &mut sqlx::PgConnection, sel: &str) -> Result<()> {
         sqlx::query(
             "CREATE TEMP TABLE entry_t (id bigint, value public.eql_v3_json_entry) ON COMMIT DROP",
         )
@@ -397,14 +405,14 @@ async fn json_entry_extract_equality_is_blocked_for_every_family(pool: PgPool) -
         .await?;
         sqlx::query(&format!(
             "INSERT INTO entry_t(id, value) \
-             SELECT id, (payload -> '{SEL_HELLO_OP}'::text)::public.eql_v3_json_entry \
+             SELECT id, (payload -> '{sel}'::text)::public.eql_v3_json_entry \
              FROM fixtures.v3_ste_vec"
         ))
         .execute(&mut *tx)
         .await?;
         Ok(())
     }
-    make_entry_table(&mut tx).await?;
+    make_entry_table(&mut tx, &sel).await?;
 
     // `=` and `<>` must RAISE for EVERY family's `_ord`/`_ord_ope` operand, in
     // both directions — never return rows, and never silently return none.
@@ -435,7 +443,7 @@ async fn json_entry_extract_equality_is_blocked_for_every_family(pool: PgPool) -
                     // The failed statement poisons the transaction; restart it.
                     tx.rollback().await?;
                     tx = pool.begin().await?;
-                    make_entry_table(&mut tx).await?;
+                    make_entry_table(&mut tx, &sel).await?;
                 }
             }
         }
@@ -489,7 +497,7 @@ async fn json_entry_extract_equality_is_blocked_for_every_family(pool: PgPool) -
 /// CLLW-OPE order over `orderize_string`.
 ///
 /// This arm is what keeps #5 honest, and it exists because #5 alone could not.
-/// `SEL_HELLO_OP` was pinned at `$.number` — the INTEGER leaf — and #5 passed
+/// The `$.hello` selector was once pinned at `$.number` — the INTEGER leaf — and #5 passed
 /// anyway for two compounding reasons: the fixture pairs `number = i` with
 /// `hello = "world-i"` 1:1, so both leaves induce the SAME equality partition;
 /// and #5 only exercises `=`/`<>`, the one comparison that cannot distinguish
@@ -498,6 +506,7 @@ async fn json_entry_extract_equality_is_blocked_for_every_family(pool: PgPool) -
 /// leaf disagrees with the string oracle on exactly row 10, and fails here.
 #[sqlx::test(fixtures(path = "../fixtures", scripts("v3_ste_vec")))]
 async fn json_entry_text_ord_cross_type_matches_plaintext_ordering(pool: PgPool) -> Result<()> {
+    let sel = hello_op_selector(&pool).await?;
     let mut tx = pool.begin().await?;
 
     // Pivot on row 2 ("world-2"), where string and numeric order disagree. Row 1
@@ -507,7 +516,7 @@ async fn json_entry_text_ord_cross_type_matches_plaintext_ordering(pool: PgPool)
     let operand: String = sqlx::query_scalar(&format!(
         "SELECT jsonb_build_object('v', '3', 'i', (payload::jsonb -> 'i'), \
                 'hm', '{SYNTHETIC_HM}', \
-                'op', (payload -> '{SEL_HELLO_OP}'::text)::jsonb -> 'op')::text \
+                'op', (payload -> '{sel}'::text)::jsonb -> 'op')::text \
          FROM fixtures.v3_ste_vec WHERE id = 2"
     ))
     .fetch_one(&mut *tx)
@@ -526,7 +535,7 @@ async fn json_entry_text_ord_cross_type_matches_plaintext_ordering(pool: PgPool)
     sqlx::query(&format!(
         "INSERT INTO entry_t(id, hello, value) \
          SELECT id, plaintext ->> 'hello', \
-                (payload -> '{SEL_HELLO_OP}'::text)::public.eql_v3_json_entry \
+                (payload -> '{sel}'::text)::public.eql_v3_json_entry \
          FROM fixtures.v3_ste_vec"
     ))
     .execute(&mut *tx)
@@ -548,7 +557,7 @@ async fn json_entry_text_ord_cross_type_matches_plaintext_ordering(pool: PgPool)
          got {expected_gt:?} of {total}"
     );
     // FIXTURE invariant, not a selector check: this oracle is plain SQL text
-    // comparison over `hello`, so it cannot see which leaf SEL_HELLO_OP names.
+    // comparison over `hello`, so it cannot see which leaf the selector names.
     // What it pins is that the fixture still DISCRIMINATES string order from
     // numeric order — zero-padding `documents()` to `"world-01"`..`"world-10"`
     // would align the two orders and silently strip this arm of the power to
@@ -571,7 +580,7 @@ async fn json_entry_text_ord_cross_type_matches_plaintext_ordering(pool: PgPool)
         matched_gt, expected_gt,
         "text `value > query_text_ord` must follow CLLW-OPE string order and match exactly \
          the rows whose $.hello sorts after the operand (row 10 excluded). A mismatch on \
-         id 10 means SEL_HELLO_OP is reading a numeric leaf, not $.hello."
+         id 10 means the selector is reading a numeric leaf, not $.hello."
     );
 
     tx.commit().await?;
@@ -610,9 +619,10 @@ async fn json_entry_unserved_operand_operators_raise(pool: PgPool) -> Result<()>
     // raises before reading any term. The ste_vec text-leaf operand `{v,i,op}`
     // (SteVec entries carry no `hm`) satisfies the `{v,i,op}` CHECK of
     // `query_{date,timestamp}_ord{,_ope}`.
+    let sel = hello_op_selector(&pool).await?;
     let temporal_operand: String = sqlx::query_scalar(&format!(
         "SELECT jsonb_build_object('v', '3', 'i', (payload::jsonb -> 'i'), \
-                'op', (payload -> '{SEL_HELLO_OP}'::text)::jsonb -> 'op')::text \
+                'op', (payload -> '{sel}'::text)::jsonb -> 'op')::text \
          FROM fixtures.v3_ste_vec WHERE id = 1"
     ))
     .fetch_one(&pool)
@@ -656,13 +666,13 @@ async fn json_entry_unserved_operand_operators_raise(pool: PgPool) -> Result<()>
             for query in [
                 format!(
                     "SELECT id FROM fixtures.v3_ste_vec \
-                     WHERE (payload -> '{SEL_HELLO_OP}'::text)::public.eql_v3_json_entry \
+                     WHERE (payload -> '{sel}'::text)::public.eql_v3_json_entry \
                            {op} '{esc}'::{operand_ty}"
                 ),
                 format!(
                     "SELECT id FROM fixtures.v3_ste_vec \
                      WHERE '{esc}'::{operand_ty} {op} \
-                           (payload -> '{SEL_HELLO_OP}'::text)::public.eql_v3_json_entry"
+                           (payload -> '{sel}'::text)::public.eql_v3_json_entry"
                 ),
             ] {
                 let err = sqlx::query(&query)

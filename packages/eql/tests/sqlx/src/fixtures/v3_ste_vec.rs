@@ -20,49 +20,68 @@ use serde_json::{json, Value};
 
 use super::index_kind::IndexKind;
 use super::spec::FixtureSpec;
+use super::ste_vec_selector;
 
 /// The canonical fixture name → table `fixtures.v3_ste_vec`, script
 /// `v3_ste_vec.sql`, SQLx ref `scripts("v3_ste_vec")`.
 const NAME: &str = "v3_ste_vec";
 
-/// The `$.hello` **string** leaf's `op` selector, pinned from the generated
-/// fixture. THE one shared copy — every suite that names this selector imports
-/// it from here (`eql_tests::fixtures::v3_ste_vec::SEL_HELLO_OP`), so a fixture
-/// or keyset regeneration is a single edit. The selector is a deterministic
-/// MAC of (column context, JSONPath), so it changes only on a keyset change,
-/// not per regeneration.
+/// The fixture table the selector helpers read.
+pub const TABLE: &str = "fixtures.v3_ste_vec";
+
+/// The rule that picks out the `$.hello` **string** leaf's `op` selector.
 ///
-/// History: an earlier copy of this constant named `$.number` — the fixture's
-/// INTEGER leaf — while claiming `$.hello`, and survived because the suites
-/// that used it were equality-only (the fixture pairs `number = i` with
-/// `hello = "world-i"` 1:1, so both leaves induce identical equality
-/// partitions). Only ORDER separates the leaves, which
+/// A string `op` term encrypts `1 + 8 * (bytes + 1)` plaintext bits (a type
+/// tag, the collated bytes, a NUL terminator) to one byte per bit plus a
+/// leading byte, so its hex length is `16 * bytes + 20`: one more character is
+/// exactly [`ONE_CHARACTER_HEX`] more. `hello` is `"world-1"`..`"world-9"`
+/// (equal length) plus the one-longer `"world-10"`, so `$.hello` is the only
+/// op-carrying selector present on every row whose `op` takes exactly two
+/// lengths, one character apart, with exactly one row at the longer length.
+/// `$.number` and `$.large` are fixed-width numeric terms (one length), and
+/// `$.empty` / `$.nested.deep` are constant. `$.accented` spans THREE lengths
+/// (84 for the `café`/`cafe` collision pair, 180 for `accented-3..9`, 196 for
+/// `accented-10`), and it is the two-lengths and one-character clauses that
+/// exclude it: it does have exactly one row at its longest length, so the
+/// one-row clause alone would not. Checking only "two lengths" is not enough
+/// either: on a nine-row fixture `$.accented` takes exactly two.
+///
+/// The rule matters because the leaves are easy to confuse: an earlier pinned
+/// copy of this selector named `$.number` while claiming `$.hello`, and survived
+/// because the suites using it were equality-only (`number = i` and
+/// `hello = "world-i"` induce the same equality partition). Only ORDER
+/// separates them, which
 /// `v3_json_entry_cross_type_tests::json_entry_text_ord_cross_type_matches_plaintext_ordering`
-/// now pins — and duplication is exactly how the mis-pin escaped notice, hence
-/// the single shared copy.
+/// pins.
+pub const HELLO_OP_RULE: &str = "op-carrying on every row, with exactly two distinct op lengths \
+     one character (16 hex) apart and exactly one row at the longer \
+     (world-1..9 vs world-10)";
+
+/// Hex characters one more plaintext character adds to a string `op` term
+/// (8 more plaintext bits, one ciphertext byte each).
+const ONE_CHARACTER_HEX: i64 = 16;
+
+/// The `$.hello` op selector of the LOADED `v3_ste_vec` fixture.
 ///
-/// To re-derive rather than trust this hex: `ste_vec_query_selector(…, "$.hello")`
-/// asks cipherstash-client directly (see the `proptest-e2e` suite
-/// `v3_json_entry_query_operand_e2e_tests`, which needs no constant at all).
-/// Creds-free, the fixture's term LENGTHS distinguish the two leaves: a string
-/// `op` is `8 * (len + 1) + 1` bits, so `$.hello` is 132 hex chars for
-/// `"world-1"`..`"world-9"` and 148 for `"world-10"`, while `$.number` is a
-/// fixed-width 65-bit number term — 132 on every row.
-///
-/// **Pinned to this repo's CI workspace** (`vars.CS_WORKSPACE_CRN`). The value
-/// below replaced `b325a0c77b130af97b805c12ff853ab3` when the suite moved here
-/// from `cipherstash/encrypt-query-language`: a different workspace means a
-/// different keyset, so the MAC re-pinned with no Rust, SQL or fixture change.
-/// `v3_jsonb_sel_hello_op_matches_fixture` is the drift guard; it reports the
-/// live candidates rather than choosing, so the leaf is identified by the
-/// length rule above, not guessed. Against that workspace the fixture's six
-/// `op`-carrying leaves separate cleanly at `16 * len + 20` hex chars —
-/// `$.empty` 20, `$.accented` 84/180/196 (three lengths, not four: the
-/// `café`/`cafe` collision pair shares one), `$.nested.deep` 148,
-/// `$.number` and `$.large` a fixed 132, and `$.hello` alone spanning 132/148.
-/// A contributor running against their own workspace will see the guard fire
-/// and should NOT commit their local value.
-pub const SEL_HELLO_OP: &str = "6f1db3bd70058dc4dab95cc692599b12";
+/// A SteVec selector is a keyed MAC over (workspace keyset, prefix, path), so
+/// it differs per CipherStash workspace and is read from the fixture rather
+/// than pinned (issue #1200). Fails, naming every candidate with its row count
+/// and op lengths, unless exactly one selector satisfies [`HELLO_OP_RULE`].
+pub async fn hello_op_selector<'e, E>(executor: E) -> Result<String>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let candidates = ste_vec_selector::op_selector_candidates(executor, TABLE).await?;
+    ste_vec_selector::pick_one(TABLE, HELLO_OP_RULE, &candidates, is_hello_op)
+}
+
+/// [`HELLO_OP_RULE`] as a predicate.
+fn is_hello_op(c: &ste_vec_selector::OpSelectorCandidate) -> bool {
+    c.rows == c.total_rows
+        && c.distinct_op_lengths == 2
+        && c.max_op_length - c.min_op_length == ONE_CHARACTER_HEX
+        && c.rows_at_max_op_length == 1
+}
 
 /// The canonical `payload` column type — the `public.eql_v3_json_search` DOMAIN, so the
 /// domain CHECK runs when the fixture loads.
@@ -125,6 +144,7 @@ pub async fn generate() -> Result<()> {
 mod tests {
     use super::*;
 
+    /// The documents have the shape the `$.hello` rule and the leaf tests rely on.
     #[test]
     fn documents_are_ten_rows_with_distinct_hello_and_varying_number() {
         let docs = documents();
@@ -145,6 +165,97 @@ mod tests {
         assert_eq!(docs[1]["accented"], json!("cafe"));
         assert_eq!(docs[0]["large"], json!(9_007_199_254_740_993_i64));
         assert_eq!(docs[1]["large"], json!(9_007_199_254_740_992_i64));
+    }
+
+    /// A candidate on every one of `rows` rows.
+    fn leaf(
+        selector: &str,
+        rows: i64,
+        lengths: i64,
+        min: i64,
+        max: i64,
+        rows_at_max: i64,
+    ) -> ste_vec_selector::OpSelectorCandidate {
+        ste_vec_selector::test_candidate(selector, rows, rows, lengths, min, max, rows_at_max)
+    }
+
+    /// The `$.hello` rule against the leaf profile the fixture documents
+    /// produce (op hex length `16 * chars + 20`): only `$.hello` is on every
+    /// row with two op lengths one character apart, split 9/1.
+    #[test]
+    fn hello_op_rule_singles_out_the_two_length_leaf() {
+        let n = ROW_COUNT;
+        let candidates = [
+            leaf("sel-empty", n, 1, 20, 20, n),
+            leaf("sel-accented", n, 3, 84, 196, 1),
+            leaf("sel-nested-deep", n, 1, 148, 148, n),
+            leaf("sel-number", n, 1, 132, 132, n),
+            leaf("sel-large", n, 1, 132, 132, n),
+            leaf("sel-hello", n, 2, 132, 148, 1),
+        ];
+        let got = ste_vec_selector::pick_one(TABLE, HELLO_OP_RULE, &candidates, is_hello_op);
+        assert_eq!(got.unwrap(), "sel-hello");
+
+        // A two-length leaf missing from a row is not `$.hello`.
+        let mut partial = candidates[5].clone();
+        partial.rows = ROW_COUNT - 1;
+        let err = ste_vec_selector::pick_one(TABLE, HELLO_OP_RULE, &[partial], is_hello_op)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("found 0"), "{err}");
+    }
+
+    /// Regression: the rule must enforce the documented `world-1..9` vs
+    /// `world-10` split, not merely "two lengths on every row".
+    ///
+    /// Profile of the same documents with `ROW_COUNT = 9`, using the op hex
+    /// length the 10-row profile above implies for a string leaf
+    /// (`16 * chars + 20`: `""` = 20, `"cafe"` = 84, `"world-1"` = 132,
+    /// `"constant"` = 148, `"accented-3"` = 180). `$.hello` collapses to ONE
+    /// length (`world-1..9`), while `$.accented` drops `accented-10` and
+    /// becomes exactly TWO lengths on every row (`café`/`cafe` = 84 vs
+    /// `accented-3..9` = 180). A rule that only counts lengths silently picks
+    /// `$.accented` as `$.hello`; the documented rule (two lengths one
+    /// character apart) matches nothing and fails loudly.
+    #[test]
+    fn hello_op_rule_rejects_a_two_length_leaf_that_is_not_the_one_character_split() {
+        let n = ROW_COUNT - 1;
+        let candidates = [
+            leaf("sel-empty", n, 1, 20, 20, n),
+            leaf("sel-accented", n, 2, 84, 180, n - 2),
+            leaf("sel-nested-deep", n, 1, 148, 148, n),
+            leaf("sel-number", n, 1, 132, 132, n),
+            leaf("sel-large", n, 1, 132, 132, n),
+            leaf("sel-hello", n, 1, 132, 132, n),
+        ];
+        let got = ste_vec_selector::pick_one(TABLE, HELLO_OP_RULE, &candidates, is_hello_op);
+        assert!(
+            got.is_err(),
+            "HELLO_OP_RULE ({HELLO_OP_RULE}) must not accept $.accented's \
+             84/180 two-length profile as $.hello; picked {got:?}",
+        );
+    }
+
+    /// The gap and split clauses of [`HELLO_OP_RULE`] are each load-bearing: a
+    /// one-character pair NOT split 9/1, and a 9/1 split NOT one character
+    /// apart, are both rejected, while the true profile is accepted. The split
+    /// clause does not exclude the real `$.accented`, which also has one row at
+    /// its longest length; its three lengths and their 112-hex spread do
+    /// (`hello_op_rule_singles_out_the_two_length_leaf`).
+    #[test]
+    fn hello_op_rule_needs_both_the_one_character_gap_and_the_nine_one_split() {
+        let n = ROW_COUNT;
+        assert!(is_hello_op(&leaf("hello", n, 2, 132, 148, 1)));
+        assert!(
+            !is_hello_op(&leaf("even-split", n, 2, 132, 148, n / 2)),
+            "a one-character pair split {}/{} is not world-1..9 vs world-10",
+            n / 2,
+            n - n / 2,
+        );
+        assert!(
+            !is_hello_op(&leaf("two-characters", n, 2, 132, 164, 1)),
+            "a 9/1 split two characters apart is not world-1..9 vs world-10",
+        );
     }
 
     #[test]

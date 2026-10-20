@@ -82,6 +82,18 @@ const NON_PUBLISH_OIDC_JOBS = [
 const OIDC_JOBS = [...PUBLISH_OIDC_JOBS, ...NON_PUBLISH_OIDC_JOBS]
 
 /**
+ * Workflows that publish with no OIDC at all, so the `id-token: write` marker
+ * the checks below key on never finds them.
+ *
+ * The Go module is published by pushing a tag: `go get` fetches a version as
+ * the files committed at `languages/golang/vX.Y.Z`, and the proxy makes it
+ * immutable once fetched. The credential is `contents: write`, and the same
+ * rule applies — only the job that pushes may hold it, so the jobs that run
+ * the build (third-party code) and the proxy check stay read-only.
+ */
+const TAG_PUBLISHING_WORKFLOWS = ['.github/workflows/release-golang.yml']
+
+/**
  * The jobs in a publishing workflow that may hold ANY writable scope. A
  * superset of `OIDC_JOBS`, asserted as such below.
  *
@@ -113,6 +125,9 @@ const REPO_WRITE_JOBS = [
   // pull-requests: write — posts and updates the sticky cargo-mutants report
   // comment on the PR.
   '.github/workflows/mutants.yml / mutants',
+  // contents: write — pushes the languages/golang/vX.Y.Z tag and creates the
+  // GitHub release. Publishing for the Go module; see TAG_PUBLISHING_WORKFLOWS.
+  '.github/workflows/release-golang.yml / publish',
 ]
 
 /**
@@ -223,13 +238,15 @@ describe('supply chain — a publishing workflow grants OIDC per job', () => {
       // without being classified as a known non-publishing exchange. The
       // second disjunct matters: an unsanctioned publisher must not also switch
       // this check off for the file it is in.
-      .filter(({ file, workflowLevel, jobs }) =>
-        jobs.some(
-          ([name, job]) =>
-            sanctioned(file, name) ||
-            (effective(job, workflowLevel)?.['id-token'] === 'write' &&
-              !nonPublishingOidc(file, name)),
-        ),
+      .filter(
+        ({ file, workflowLevel, jobs }) =>
+          TAG_PUBLISHING_WORKFLOWS.includes(file) ||
+          jobs.some(
+            ([name, job]) =>
+              sanctioned(file, name) ||
+              (effective(job, workflowLevel)?.['id-token'] === 'write' &&
+                !nonPublishingOidc(file, name)),
+          ),
       )
       .flatMap(({ file, workflowLevel, jobs }) =>
         jobs
@@ -245,6 +262,19 @@ describe('supply chain — a publishing workflow grants OIDC per job', () => {
       offenders,
       'A job in a publishing workflow that does not publish must not be able to write to the repository. If it genuinely needs a writable scope and must NOT be able to publish, add it to REPO_WRITE_JOBS with the scope and the reason — not to OIDC_JOBS.',
     ).toEqual([])
+  })
+
+  it('names only tag-publishing workflows that exist and have a sanctioned writer', () => {
+    // A stale entry would switch the read-only check off for nothing, and a
+    // renamed workflow would silently drop out of it.
+    const files = new Set(workflows.map(({ file }) => file))
+    for (const file of TAG_PUBLISHING_WORKFLOWS) {
+      expect(files.has(file), `${file} is not a workflow`).toBe(true)
+      expect(
+        REPO_WRITE_JOBS.some((entry) => entry.startsWith(`${file} / `)),
+        `${file} publishes, so one of its jobs must be in REPO_WRITE_JOBS`,
+      ).toBe(true)
+    }
   })
 
   it('never classifies an OIDC holder without sanctioning its writes', () => {
@@ -264,9 +294,10 @@ describe('supply chain — a publishing workflow grants OIDC per job', () => {
     // to the REPOSITORY default, which is settings-controlled and outside this
     // tree. A publishing workflow must not have its floor set somewhere a
     // reviewer of this repo cannot see.
-    const publishing = new Set(
-      PUBLISH_OIDC_JOBS.map((entry) => entry.split(' / ')[0]),
-    )
+    const publishing = new Set([
+      ...PUBLISH_OIDC_JOBS.map((entry) => entry.split(' / ')[0]),
+      ...TAG_PUBLISHING_WORKFLOWS,
+    ])
     const offenders = workflows
       .filter(
         ({ file, workflowLevel }) =>

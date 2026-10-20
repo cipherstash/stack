@@ -357,6 +357,15 @@ const result = await client
 - A lock-context denial is per-value and per-caller (the "gate 2" failure in
   `stash-zerokms`): ZeroKMS refused to release that key to that caller. It
   does not mean the credentials are wrong.
+- **Bulk tooling cannot decrypt lock-bound values.** `stash decrypt backfill`
+  (moving a column back to plaintext) runs as the workspace's client, never
+  as an end user, so a value bound to a user's claim fails on its own row:
+  the backfill skips it, counts it, and leaves its plaintext NULL, and
+  `stash decrypt drop` refuses to drop the encrypted column while any remain.
+  There is deliberately no bypass. Decrypt those rows in the application, as
+  each user (an `OidcFederationStrategy` client for that user and the same
+  `identityClaim`), write the plaintext column, then re-run the backfill. The
+  same applies to any job of your own that decrypts with an access key.
 
 ### Deprecated, and why
 

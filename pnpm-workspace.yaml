@@ -38,9 +38,9 @@ packages:
 
 catalogs:
   repo:
-    '@types/node': 22.20.1
+    '@types/node': 22.20.5
     tsup: 8.5.1
-    tsx: 4.23.12
+    tsx: 4.23.15
     typescript: 5.9.3
     vitest: 4.1.11
     # Must track `vitest` exactly: the coverage provider is versioned in
@@ -50,9 +50,9 @@ catalogs:
     # groups both under `dev-dependencies` and will otherwise move one alone.
     '@vitest/coverage-v8': 4.1.11
   security:
-    '@clerk/nextjs': 7.7.7
-    next: 15.5.24
-    vite: 8.2.1
+    '@clerk/nextjs': 7.9.14
+    next: 15.5.27
+    vite: 8.3.4
 
 # Security overrides for Dependabot alerts on transitive deps that Dependabot
 # cannot PR against (it only PRs direct dependencies). Each selector is scoped
@@ -66,6 +66,10 @@ catalogs:
 # pnpm overrides rewrite peer ranges, not peer resolutions. It is fixed by an
 # explicit dependency in languages/typescript/packages/wizard — that dep is a peer-resolution pin
 # (wizard never imports the sdk directly); do not remove it as "unused".
+# The same applies to @modelcontextprotocol/sdk (alert #247,
+# GHSA-6qxp-vccf-f47h / CVE-2026-104850, patched 1.31.0): another auto-installed
+# peer of claude-agent-sdk (`^1.29.0`), pinned by the same kind of explicit
+# wizard dependency.
 overrides:
   # #96, #115-#127 — Next.js middleware bypass / SSRF / DoS / XSS batch
   # (GHSA-267c-6grr-h53f, GHSA-26hh-7cqf-hhc6, GHSA-36qx-fr4f-26g5, et al.)
@@ -86,6 +90,10 @@ overrides:
   # installed with the entry still sitting here looking like a fix. Keep the
   # ceiling AHEAD of the patched floor, not at it.
   'postcss@<8.5.26': '^8.5.26'
+  # #243 GHSA-68fv-2mgg-jv7q / CVE-2026-93749 — source-map-js >=1.0.0 <1.2.2,
+  # patched 1.2.2 (published 2026-09-30). Reached through postcss and magicast,
+  # both of which declare ^1.x, so the pin is in range for every consumer.
+  'source-map-js@>=1.0.0 <1.2.2': '1.2.2'
   # #145 GHSA-fx2h-pf6j-xcff, #146 GHSA-v6wh-96g9-6wx3 — vite dev server (Windows)
   'vite@>=7.0.0 <7.3.5': '~7.3.5'
   # #142 GHSA-g7r4-m6w7-qqqr — esbuild dev server. 0.28.1 is the FIRST patched
@@ -158,7 +166,9 @@ overrides:
   # 0.35.0 (published 2026-06-10).
   # #210 GHSA-rgj7-g3m4-5g8c — raised to 0.35.4 (published 2026-08-26); the
   # ceiling moves with the pin so 0.35.0-0.35.3 cannot resolve.
-  'sharp@<0.35.4': '0.35.4'
+  # #246 GHSA-wq5f-xc86-pv6w / CVE-2026-96889 — bundled librsvg memory-safety
+  # bug (possible RCE); raised to 0.35.5 (published 2026-09-27).
+  'sharp@<0.35.5': '0.35.5'
 
 # Supply-chain hardening — see skills/stash-supply-chain-security/
 # 7 days in minutes; mirrors the Dependabot cooldown so manual + automated

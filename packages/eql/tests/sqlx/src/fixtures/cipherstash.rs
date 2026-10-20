@@ -310,8 +310,10 @@ fn query_payload_str(payload: &serde_json::Value, key: &str) -> Result<String> {
 /// `generate_selector`, Blake3 over the index key + prefix), so a test never has
 /// to pin a selector constant. Selectors are a deterministic function of the
 /// path under the fixture's keyset — a hard-coded hex silently names a DIFFERENT
-/// field if the keyset or the document shape changes, which is exactly how
-/// `SEL_HELLO_OP` came to point at `$.number`.
+/// field if the keyset or the document shape changes, which is exactly how a
+/// pinned `$.hello` selector once came to point at `$.number`. The suites that
+/// run without this client read selectors from the loaded fixture instead
+/// (`fixtures::ste_vec_selector`).
 pub async fn ste_vec_query_selector(table: &str, column: &str, path: &str) -> Result<String> {
     let payload =
         encrypt_ste_vec_query(table, column, &path.to_owned(), QueryOp::SteVecSelector).await?;

@@ -2,7 +2,7 @@
 
 Primitives for safely and resumably migrating existing plaintext columns to concrete EQL v3 `eql_v3_*` domains in production PostgreSQL databases.
 
-The package backs `stash encrypt backfill` and `stash encrypt drop`. You can also embed `runBackfill()` in a worker or cron job when a large migration should not run inside a CLI process.
+The package backs `stash encrypt backfill` and `stash encrypt drop`, and the reverse lifecycle `stash decrypt` uses to move columns back to plaintext. You can also embed `runBackfill()` in a worker or cron job when a large migration should not run inside a CLI process.
 
 ## Lifecycle
 
@@ -11,6 +11,12 @@ schema-added → dual-writing → backfilling → backfilled → dropped
 ```
 
 EQL v3 has no configuration table and no rename cut-over. The application switches to the encrypted column by name after backfill, then drops the original plaintext column after verifying coverage. State is tracked in the append-only `cipherstash.cs_migrations` table installed by `stash eql install`.
+
+The reverse lifecycle (`stash decrypt`) runs on the same engine and records its own phases, keyed by the ENCRYPTED column so they never share a timeline with the forward history:
+
+```text
+decrypt-dual-writing → decrypting → decrypted → encrypted-dropped
+```
 
 State readers still accept the legacy `cut_over` event and its `cut-over` phase. Manifest readers retain the `cut-over` target phase and `eqlVersion: 2`. Those fields are kept only so status tools can display existing migration history; this package no longer exports the EQL v2 Proxy configuration or rename primitives.
 
@@ -38,6 +44,31 @@ Runs a chunked, resumable, idempotent plaintext-to-encrypted backfill. For each 
 
 Pass an initialized EQL v3 `Encryption` client and an EQL v3 `encryptedTable`. The lower-level runner writes the envelope produced by the supplied client; the `stash encrypt backfill` command additionally verifies that the destination is an `eql_v3_*` domain before invoking it.
 
+### `runDecryptBackfill(options)`
+
+The reverse of `runBackfill`, on the same chunked engine (`runChunkedMigration`): keyset pagination, one transaction per chunk with its `decrypt_checkpoint`, resume from the last checkpoint (or from a failed run's `error` event, which records the last committed position), and the `encrypted IS NOT NULL AND plaintext IS NULL` idempotency guard. Each chunk is decrypted with ONE `bulkDecrypt` call (one ZeroKMS request; default 500 rows, at most `MAX_DECRYPT_CHUNK_SIZE` = 32767 because each row binds two parameters in the write), and each value is cast to the plaintext column's declared type (`columnSqlType`). A failed write throws `PlaintextWriteError`, which carries the SQLSTATE, column and type but never the database's message: a cast error's message contains the decrypted value.
+
+`force` overwrites plaintext that is already set. It is safe only while the application writes both columns: a row written to the plaintext column alone gets the older ciphertext's value back. A forced pass, once started, is owed: until one completes, every run is forced whether or not `force` is passed (`forceObligationOpen` reports it), so an interrupted forced pass is always finished as one. A `force` run over an unforced pass starts from the first row. The CLI also refuses, on a first run, a plaintext column that already holds values (`columnHasValues`) unless the operator chooses to overwrite or keep them.
+
+`bulkDecrypt` reports failures per row, so a value that cannot be decrypted with the client's credentials — typically one bound to an end-user lock context — is skipped and counted (`rowsSkipped`, `skippedByCode`) and its plaintext left NULL. `countUndecrypted` keeps counting it, which is what makes the `stash decrypt drop` coverage gate refuse to destroy its only copy. Rows whose ciphertext decrypts to `null` for a non-JSON column are skipped as `NULL_PLAINTEXT`, with their primary keys in `nullPlaintextPks`. A first chunk that decrypts nothing throws `UndecryptableBatchError` before writing (usually credentials for the wrong keyset) unless `continueOnUndecryptable` is set. A decrypted value that is still an EQL envelope fails the chunk (reverse leak guard).
+
+```ts
+import { columnSqlType, runDecryptBackfill } from '@cipherstash/migrate'
+
+const result = await runDecryptBackfill({
+  db,
+  decryptionClient: encryptionClient,
+  tableName: 'users',
+  encryptedColumn: 'email_encrypted',
+  plaintextColumn: 'email',
+  plaintextSqlType: (await columnSqlType(db, 'users', 'email')) ?? 'text',
+  pkColumn: 'id',
+})
+console.log(result.rowsDecrypted, result.rowsSkipped)
+```
+
+`plaintextTypeForEqlDomain(domain)` maps an EQL v3 domain back to its plaintext Postgres type (`eql_v3_text_search` → `text`, `eql_v3_timestamp_ord` → `timestamptz`, `eql_v3_json_search` → `jsonb`, …), returning `null` for anything it does not know.
+
 ### State and manifest helpers
 
 `appendEvent`, `progress`, and `latestByColumn` access the migration event log. `readManifest` and `writeManifest` manage the Zod-validated `.cipherstash/migrations.json` intent file.
@@ -46,7 +77,7 @@ Pass an initialized EQL v3 `Encryption` client and an EQL v3 `encryptedTable`. T
 
 `detectColumnEqlVersion`, `classifyEqlDomain`, `listEncryptedColumns`, and `resolveEncryptedColumn` recognize concrete EQL v3 domains and resolve the encrypted counterpart without relying on a naming convention. A legacy `eql_v2_encrypted` column returns `null`; callers must not treat that as an authorable generation.
 
-`countUnencrypted(client, table, plaintextColumn, encryptedColumn)` counts rows with plaintext set and ciphertext NULL. `stash encrypt drop` uses it before generating the v3 plaintext-drop migration. `countEncrypted` counts populated target rows. Both are full-table scans intended for one-shot verification.
+`countUnencrypted(client, table, plaintextColumn, encryptedColumn)` counts rows with plaintext set and ciphertext NULL; `countUndecrypted(client, table, encryptedColumn, plaintextColumn)` is its reverse. `stash encrypt drop` uses it before generating the v3 plaintext-drop migration. `countEncrypted` counts populated target rows. Both are full-table scans intended for one-shot verification.
 
 ## Worker example
 

@@ -20,6 +20,9 @@ The package reference is on [pkg.go.dev]; the generator's reference is
    go get -tool github.com/cipherstash/stack/languages/golang/cmd/stashgen
    ```
 
+   This resolves to the latest tagged version, which carries the engine
+   builds the module embeds; see [Building](#building).
+
 2. Put a `stash` tag on every exported field of the struct, and a `go:generate`
    comment beside it.
 
@@ -287,9 +290,31 @@ column.
 ## Building
 
 The package embeds `wasm/stack_encrypt_guest.wasm`, a build artefact of the
-Rust crate in [`guest/`](guest/). It is not committed: run
+Rust crate in [`guest/`](guest/), and package `encrypt/eql` embeds the EQL
+build beside it. A tagged version of the module (such as `v0.1.0-alpha.1`, as
+`go get` resolves it) carries both builds and the credential guest: the
+release workflow commits them to the commit the tag names, so a module that
+requires a tagged version needs no Rust toolchain and no build step. A
+pseudo-version does not. `go get ...@main`, or any commit rather than a
+tag, fetches a tree without the builds; it compiles, and `NewClient` returns
+`ErrGuestNotBuilt`.
+
+In a checkout of this repository the builds are not committed: run
 `mise run wasm:guest:build` (and `mise run wasm:auth-guest:build` for the
 credential guest) before `go test`, and
 `mise run wasm:guest:build:deterministic` for the test build the hermetic
 round-trip and fixture tests use. Without the builds `NewClient` returns
 `ErrGuestNotBuilt` and the tests skip.
+
+## Licence
+
+The Go code in this module is MIT-licensed ([`LICENSE`](../LICENSE)). The
+WASI guests it embeds are compiled from Rust crates that are not: the
+stack-encrypt guest and its EQL build are compiled from `stack-encrypt`,
+`stack-kms`, `stack-auth`, `stack-profile` (a dependency of `stack-auth`) and
+`stack-guest-abi`, which are licensed under the
+[PolyForm Internal Use License 1.0.0](https://polyformproject.org/licenses/internal-use/1.0.0).
+Those terms allow use for your internal business operations only. Each
+crate's `LICENSE` in the
+[CipherStash Stack repository](https://github.com/cipherstash/stack/tree/main/packages)
+has the full text.

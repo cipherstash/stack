@@ -1,8 +1,9 @@
 jsonb_entry::jsonb_entry_<T>_aggregate_ignores_op_less_entries
+jsonb_entry::jsonb_entry_<T>_document_is_not_an_entry
+jsonb_entry::jsonb_entry_<T>_field_selector_is_unique
 jsonb_entry::jsonb_entry_<T>_fixture_shape
 jsonb_entry::jsonb_entry_<T>_index_engages
 jsonb_entry::jsonb_entry_<T>_ord_ope_injectivity
-jsonb_entry::jsonb_entry_<T>_selector_matches_fixture
 jsonb_entry::matrix_jsonb_entry_<T>_entry_aggregate_group_by_max
 jsonb_entry::matrix_jsonb_entry_<T>_entry_aggregate_group_by_min
 jsonb_entry::matrix_jsonb_entry_<T>_entry_aggregate_max

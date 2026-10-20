@@ -143,15 +143,26 @@ pub trait ScalarType:
         format!("public.eql_v3_{}{}", Self::PG_TYPE, variant.suffix())
     }
 
-    /// SQL expression that yields the comparable value from a fixture row.
-    /// Default: the bare `payload` column (a whole encrypted-scalar payload).
-    /// A SteVec-entry view overrides this with an extraction expression such
-    /// as `(payload -> '<selector>')`, which already has type
-    /// `public.eql_v3_json_entry`. The expression is cast to `sql_domain(variant)`
-    /// at every call site, so a redundant `::public.eql_v3_json_entry` cast on an
-    /// already-entry expression is a harmless no-op.
-    fn column_expr() -> String {
-        "payload".to_string()
+    /// SQL expression that yields the comparable value from a row of the
+    /// LOADED fixture. Default: the bare `payload` column (a whole
+    /// encrypted-scalar payload). A SteVec-entry view overrides this with an
+    /// extraction expression such as `payload -> '<selector>'::text`, which
+    /// already has type `public.eql_v3_json_entry`. The expression is cast to
+    /// `sql_domain(variant)` at every call site, so a redundant
+    /// `::public.eql_v3_json_entry` cast on an already-entry expression is a
+    /// harmless no-op.
+    ///
+    /// Async and given the pool because an entry view's selector is keyed by
+    /// the CipherStash workspace and is only known once the fixture is loaded:
+    /// `JsonbEntryInteger` reads it from the fixture and embeds it as a
+    /// literal, so the statements are the `payload -> '<sel>'` form customers
+    /// write, not a subquery. Call it only where the expression is used (the
+    /// matrix arms and [`fetch_fixture_payload`]), because some matrix tests
+    /// load no fixture. An arm that has resolved it passes it on to
+    /// [`fetch_fixture_payload_at`] rather than resolving it again.
+    fn column_expr(pool: &PgPool) -> impl std::future::Future<Output = Result<String>> + Send {
+        let _ = pool;
+        std::future::ready(Ok("payload".to_string()))
     }
 
     /// A valid payload literal for this SQL domain family. Used by NULL
@@ -1353,8 +1364,8 @@ impl Variant {
 #[derive(Debug, Clone)]
 pub struct ScalarDomainSpec {
     pub sql_domain: String,
-    /// SQL expression yielding the comparable value (default `"payload"`).
-    pub column_expr: String,
+    // No `column_expr` field: the expression can depend on the loaded fixture,
+    // so call sites resolve it with `ScalarType::column_expr(&pool)`.
     pub variant: Variant,
     pub placeholder_payload: &'static str,
     pub eq_extractor: fn(&str) -> String,
@@ -1381,10 +1392,10 @@ pub struct ScalarDomainSpec {
 }
 
 impl ScalarDomainSpec {
+    /// The spec for scalar `T` under `variant`, read from `T`'s `ScalarType` methods.
     pub fn new<T: ScalarType>(variant: Variant) -> Self {
         Self {
             sql_domain: T::sql_domain(variant),
-            column_expr: T::column_expr(),
             variant,
             placeholder_payload: T::placeholder_payload(),
             eq_extractor: T::eq_extractor_expr,
@@ -1547,10 +1558,24 @@ pub fn commute_op(op: &str) -> &'static str {
 }
 
 /// Fetch the payload row keyed by `plaintext` from `T`'s fixture table.
+/// Resolves `T::column_expr` itself; a caller that already holds the resolved
+/// expression uses [`fetch_fixture_payload_at`] instead.
 pub async fn fetch_fixture_payload<T: ScalarType>(pool: &PgPool, plaintext: T) -> Result<String> {
+    let column_expr = T::column_expr(pool).await?;
+    fetch_fixture_payload_at(pool, &column_expr, plaintext).await
+}
+
+/// [`fetch_fixture_payload`] with `column_expr` already resolved, so a matrix
+/// arm that has resolved it for its own SQL does not resolve it twice (for a
+/// SteVec entry view that is a selector scan of the fixture).
+pub async fn fetch_fixture_payload_at<T: ScalarType>(
+    pool: &PgPool,
+    column_expr: &str,
+    plaintext: T,
+) -> Result<String> {
     let sql = format!(
         "SELECT ({col})::text FROM {table} WHERE plaintext = {lit}",
-        col = T::column_expr(),
+        col = column_expr,
         table = T::fixture_table_name(),
         lit = T::to_sql_literal(&plaintext),
     );
@@ -1674,6 +1699,7 @@ mod helper_panic_tests {
         let _ = commute_op("@>");
     }
 
+    /// The forward oracle refuses an operator it has no rule for.
     #[test]
     #[should_panic(expected = "expected_forward: unsupported operator")]
     fn expected_forward_panics_on_unsupported() {
@@ -1685,6 +1711,17 @@ mod helper_panic_tests {
 mod seam_tests {
     use super::*;
 
+    /// The default access path is the bare `payload` column, and resolving it
+    /// touches no database (the pool here points at nothing).
+    #[tokio::test]
+    async fn scalar_default_column_expr_is_bare_payload() {
+        let pool = PgPool::connect_lazy("postgres://unused@127.0.0.1:1/none").unwrap();
+        assert_eq!(
+            <i32 as ScalarType>::column_expr(&pool).await.unwrap(),
+            "payload"
+        );
+    }
+
     /// The access-path / extractor seam defaults must reproduce today's scalar
     /// SQL exactly: bare `payload`, `eql_v3.<pg_type><suffix>`, and the ordering
     /// extractor named by the domain's catalog term — `ord_term` on the
@@ -1694,7 +1731,6 @@ mod seam_tests {
     #[test]
     fn scalar_defaults_reproduce_today_sql() {
         let spec = ScalarDomainSpec::new::<i32>(Variant::Ord);
-        assert_eq!(spec.column_expr, "payload");
         assert_eq!(spec.sql_domain, "public.eql_v3_integer_ord");
         assert_eq!(spec.ord_term, Some(Term::Ope));
         assert_eq!(

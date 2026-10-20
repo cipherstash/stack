@@ -35,6 +35,9 @@ const TARGETS = process.argv.slice(2).length
       '.github/workflows/release-plz.yml',
       '.github/workflows/release-postgres-eql-image.yml',
       '.github/workflows/tests-supply-chain.yml',
+      // Commits the Go module's WASI guests on the tag `go get` fetches, so
+      // a poisoned restore would ship in every Go program built from it.
+      '.github/workflows/release-golang.yml',
     ]
 
 // `uses:` values that pull in the GitHub Actions cache directly.

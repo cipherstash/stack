@@ -1,0 +1,68 @@
+# Asks Claude for a code review of a pull request: fires the code-review routine, whose session reviews the pull
+# request this run names (its URL and number, in the turn appended to the session). It runs when a pull request is
+# opened, reopened or marked ready for review, and never on a draft. Bots' pull requests (Dependabot's, release-plz's)
+# and those from forks are skipped: forks are not given the repository's secrets. A pull request is reviewed once per
+# event, not on every push (no `synchronize`): mark it draft and ready again for a fresh review.
+#
+# Ported from tobyhede/zod's code-review.yml. claude-review.yml is the other review, run in CI by claude-code-action
+# behind CLAUDE_REVIEW_ENABLED; with both on, a pull request is reviewed twice.
+#
+# Secret: CLAUDE_ROUTINE_TOKEN, the routine's bearer token.
+# Variable: CLAUDE_ROUTINE_TRIGGER_ID, the routine's trigger id (`trig_…`).
+name: Code review
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+
+permissions: {}
+
+# One run per pull request at a time. A second event waits rather than cancelling the first, whose request may already
+# have started a session; a third replaces the waiting one, so a burst of toggles fires at most twice.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  request:
+    # The fork guard as workflow-dispatch-job-conditions.test.mjs requires it spelled.
+    if: >-
+      (github.event_name != 'pull_request'
+      || github.event.pull_request.head.repo.full_name == github.repository)
+      && github.event.pull_request.draft != true
+      && github.event.pull_request.user.type != 'Bot'
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fire the code-review routine
+        # The review is advisory: a failed request (an outage, a revoked token) shows as a failed step in this run, not
+        # as a red check on the pull request.
+        continue-on-error: true
+        env:
+          CLAUDE_ROUTINE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_TOKEN }}
+          TRIGGER_ID: ${{ vars.CLAUDE_ROUTINE_TRIGGER_ID }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$CLAUDE_ROUTINE_TOKEN" ]; then
+            echo "::error::CLAUDE_ROUTINE_TOKEN is empty: add it as a repository secret under Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+          # The id goes into the URL, so anything but a trigger id is refused.
+          if ! [[ "$TRIGGER_ID" =~ ^trig_[A-Za-z0-9]+$ ]]; then
+            echo "::error::CLAUDE_ROUTINE_TRIGGER_ID is not a trigger id (trig_…): set it as a repository variable under Settings > Secrets and variables > Actions > Variables"
+            exit 1
+          fi
+          # jq writes the body, so nothing in the pull request's fields can break the JSON.
+          body=$(jq -n --arg url "$PR_URL" --arg number "$PR_NUMBER" --arg repo "$REPO" \
+            '{text: "Review pull request #\($number) in \($repo): \($url)"}')
+          # No retry: a request that timed out may still have started a session, and a second would review twice. A
+          # failed request is re-run by hand. The token goes in on standard input, never on curl's command line.
+          curl --fail-with-body --silent --show-error --connect-timeout 10 --max-time 30 -X POST \
+            "https://api.anthropic.com/v1/claude_code/routines/$TRIGGER_ID/fire" \
+            -H @- \
+            -H "anthropic-version: 2023-06-01" \
+            -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
+            -H "Content-Type: application/json" \
+            -d "$body" <<<"Authorization: Bearer $CLAUDE_ROUTINE_TOKEN"

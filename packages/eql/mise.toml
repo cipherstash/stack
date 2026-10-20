@@ -210,10 +210,14 @@ dir = "{{config_root}}"
 run = "bash tasks/test/sqlx-partition.sh"
 
 [tasks."test:schema"]
-description = "Validate sample payloads against the v2.2 / v2.3 JSON Schemas (no database required)"
+description = "Validate sample payloads against the v2.2 / v2.3 JSON Schemas, and refuse pinned SteVec selectors (no database required)"
 dir = "{{config_root}}/tests/sqlx"
+# selector_literal_guard rides here because it needs no database or
+# credentials: the rest of the SQLx suite runs only from the credentialed
+# nextest archive, which fork PRs skip, so a pinned selector would otherwise
+# reach main unchecked (#1200).
 run = """
-cargo test --test payload_schema_tests
+cargo test --test payload_schema_tests --test selector_literal_guard
 """
 
 [tasks."codegen:parity"]

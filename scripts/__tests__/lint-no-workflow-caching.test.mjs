@@ -28,6 +28,9 @@ const TARGET_WORKFLOWS = [
   '.github/workflows/release-plz.yml',
   '.github/workflows/release-postgres-eql-image.yml',
   '.github/workflows/tests-supply-chain.yml',
+  // The Go module's release: it commits WASI guests built in the job onto
+  // the tag `go get` fetches.
+  '.github/workflows/release-golang.yml',
 ]
 
 const SCRIPT = resolve(

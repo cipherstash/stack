@@ -1,7 +1,8 @@
 //! The `v3_doc_integer` fixture — a SteVec document carrying one integer scalar at
 //! `$.field`, one row per `eql_domains::INTEGER_VALUES`. Lets the scalar matrix's
-//! behaviour generators run against the entry extracted at that selector
-//! (`payload -> SELECTOR`), reusing the integer oracle.
+//! behaviour generators run against the entry extracted at that path's selector,
+//! reusing the integer oracle. The selector is read from the loaded fixture
+//! (`field_op_selector`), because it is keyed by the CipherStash workspace.
 //!
 //! Unlike the scalar fixtures (`FixtureSpec<i32>::run()` encrypts bare ints)
 //! and `v3_ste_vec` (`FixtureSpec<serde_json::Value>::run()` makes the
@@ -20,6 +21,7 @@ use serde_json::Value;
 
 use super::index_kind::IndexKind;
 use super::spec::FixtureSpec;
+use super::ste_vec_selector;
 
 /// The generated fixture name → table `fixtures.v3_doc_integer`, script
 /// `v3_doc_integer.sql`, SQLx ref `scripts("v3_doc_integer")`.
@@ -29,34 +31,33 @@ const NAME: &str = "v3_doc_integer";
 /// the domain CHECK runs when the fixture loads.
 const PAYLOAD_TYPE: &str = "public.eql_v3_json_search";
 
-/// JSON path encrypted in each document. The SteVec selector hash for this
-/// path is pinned in `SELECTOR` below.
+/// JSON path encrypted in each document. Its SteVec selector is read from the
+/// loaded fixture by [`field_op_selector`], never pinned.
 const FIELD: &str = "field";
 
-/// The SteVec selector hash for the `$.field` **CLLW-OPE (`op`)** entry,
-/// constant across every row (same path + index → same selector). SteVec emits
-/// a path entry carrying `op` plus term-less value-selector entries under
-/// distinct selectors. The matrix needs the path entry because
-/// `eql_v3.ord_term` requires `op`.
+/// The fixture table the selector helpers read.
+pub const TABLE: &str = "fixtures.v3_doc_integer";
+
+/// The rule that picks out the `$.field` **CLLW-OPE (`op`)** entry: it is the
+/// only `op`-carrying selector in the fixture, because each document has one
+/// scalar leaf. SteVec also emits term-less value-selector entries under other
+/// selectors; the matrix needs the path entry because `eql_v3.ord_term`
+/// requires `op`.
+pub const FIELD_OP_RULE: &str = "the only op-carrying selector in the fixture";
+
+/// The `$.field` op selector of the LOADED `v3_doc_integer` fixture.
 ///
-/// Read from the generated fixture and pinned here so a future selector drift
-/// fails loudly: the integration `jsonb_entry` suite extracts the entry at
-/// `payload -> SELECTOR` and asserts it is non-NULL and `op`-carrying for every
-/// row, which only holds if this matches the emitted selector. The selector is
-/// derived from the workspace keyset + the fixed STE_VEC_PREFIX + the `field`
-/// path, so it is stable for a given CipherStash workspace; if it drifts,
-/// regenerate the fixture and re-pin from the emitted `"s"`.
-///
-/// **Pinned to this repo's CI workspace** (`vars.CS_WORKSPACE_CRN`), which is
-/// not the workspace the suite was developed against. The value below replaced
-/// `fce8be759db230351b10a058b7ba50a7` when the suite moved here from
-/// `cipherstash/encrypt-query-language`: the selector is keyed by the workspace
-/// keyset, so absorbing the repo re-pinned it even though no Rust, no SQL and
-/// no fixture logic changed. That is a property of the design, not a defect —
-/// `jsonb_entry_integer_selector_matches_fixture` exists precisely to report it
-/// as one copy-pasteable message. A contributor running the suite against their
-/// own workspace will see that message and should NOT commit their local value.
-pub const SELECTOR: &str = "606a4a449a26442d80915f78d142694f";
+/// A SteVec selector is a keyed MAC over (workspace keyset, prefix, path), so
+/// it differs per CipherStash workspace and is read from the fixture rather
+/// than pinned (issue #1200). Fails, naming every candidate, unless exactly one
+/// selector satisfies [`FIELD_OP_RULE`].
+pub async fn field_op_selector<'e, E>(executor: E) -> Result<String>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let candidates = ste_vec_selector::op_selector_candidates(executor, TABLE).await?;
+    ste_vec_selector::pick_one(TABLE, FIELD_OP_RULE, &candidates, |_| true)
+}
 
 /// Build the plaintext documents: `{"field": <value>}` per integer fixture value,
 /// paired with the bare integer oracle value.
@@ -129,12 +130,11 @@ mod tests {
         }
     }
 
+    /// `TABLE` is the table the generator writes for `NAME`: the matrix's
+    /// `fixture_table_name()` and `field_op_selector` both read `TABLE`, so
+    /// the two cannot name different tables.
     #[test]
-    fn selector_is_a_32_hex_string() {
-        assert_eq!(SELECTOR.len(), 32, "SELECTOR must be a 16-byte hex hash");
-        assert!(
-            SELECTOR.chars().all(|c| c.is_ascii_hexdigit()),
-            "SELECTOR must be lowercase hex: {SELECTOR}",
-        );
+    fn table_is_the_generated_fixture_table() {
+        assert_eq!(TABLE, format!("fixtures.{NAME}"));
     }
 }

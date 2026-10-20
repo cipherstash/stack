@@ -117,5 +117,21 @@ mise run wasm:auth-guest:build   # the guest, with its import-surface gate
 mise run go:test                 # the whole Go module, both packages
 ```
 
-The guest module is embedded from `wasm/` and not committed; without it,
-`Open` returns `ErrGuestNotBuilt` and the tests skip.
+The guest module is embedded from `wasm/`. A tagged version of the module,
+as `go get` resolves it, carries it: the release workflow commits it to the
+commit the tag names, so nothing needs building. A pseudo-version
+(`go get ...@main`, or any commit rather than a tag) does not, and neither
+does a checkout of this repository, where the guest is not committed and the
+commands above build it. Without it, `Open` returns `ErrGuestNotBuilt` and
+the tests skip.
+
+## Licence
+
+The Go code in this module is MIT-licensed ([`LICENSE`](../LICENSE)). The
+credential guest it embeds is compiled from Rust crates that are not:
+`stack-auth`, `stack-profile` and `stack-guest-abi` are licensed under the
+[PolyForm Internal Use License 1.0.0](https://polyformproject.org/licenses/internal-use/1.0.0).
+Those terms allow use for your internal business operations only. Each
+crate's `LICENSE` in the
+[CipherStash Stack repository](https://github.com/cipherstash/stack/tree/main/packages)
+has the full text.

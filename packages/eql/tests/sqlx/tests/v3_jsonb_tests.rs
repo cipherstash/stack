@@ -39,12 +39,18 @@ use sqlx::PgPool;
 // `documents()` changes. Regenerate the fixture on a keyset change.
 // ============================================================================
 
-/// The `$.hello` op PATH selector — a distinct-per-row `op` leaf, imported from
-/// the ONE shared copy (see its doc for provenance and how to re-derive it).
-/// Distinctness is load-bearing for the ordering tests and is guarded by
+/// The `$.hello` op PATH selector — a distinct-per-row `op` leaf, read from the
+/// loaded fixture because it is keyed by the CipherStash workspace (see
+/// `HELLO_OP_RULE` for how the leaf is told apart). Distinctness is
+/// load-bearing for the ordering tests and is guarded by
 /// `v3_jsonb_fixture_structural_invariants`. Containment deliberately ignores
 /// `op`: exact equality uses value-selector presence instead.
-use eql_tests::fixtures::v3_ste_vec::SEL_HELLO_OP;
+use eql_tests::fixtures::v3_ste_vec::hello_op_selector;
+
+/// A forged selector for the literal-payload tests that load no fixture. Any
+/// string works there; it is low-entropy so it cannot be mistaken for a real,
+/// workspace-keyed selector.
+const FORGED_OP_SEL: &str = "00000000000000000000000000000002";
 
 // ============================================================================
 // Tier-2 builders — curated literal payloads with KNOWN relationships.
@@ -100,9 +106,9 @@ fn value_needle(sels: &[&str]) -> String {
     format!(r#"{{"sv":[{}]}}"#, parts.join(","))
 }
 
-/// Build an `op` jsonb_entry literal at the canonical ordered selector.
+/// Build an `op` jsonb_entry literal at the forged ordered selector.
 fn op_entry(op_hex: &str) -> String {
-    entry(SEL_HELLO_OP, "op", op_hex)
+    entry(FORGED_OP_SEL, "op", op_hex)
 }
 
 /// Build a document literal (`public.eql_v3_json_search`-shaped) wrapping the given sv element
@@ -304,8 +310,8 @@ async fn v3_jsonb_op_ladder_is_total_order(pool: PgPool) -> anyhow::Result<()> {
 
 #[sqlx::test]
 async fn v3_jsonb_entry_entry_shape_resolves(pool: PgPool) -> anyhow::Result<()> {
-    let a = entry(SEL_HELLO_OP, "op", OP_LADDER[0]);
-    let b = entry(SEL_HELLO_OP, "op", OP_LADDER[1]);
+    let a = entry(FORGED_OP_SEL, "op", OP_LADDER[0]);
+    let b = entry(FORGED_OP_SEL, "op", OP_LADDER[1]);
     // Each entry ordering operator resolves on (entry, entry) and returns bool.
     for op in ["<", "<=", ">", ">="] {
         let _v: bool = sqlx::query_scalar(&format!(
@@ -379,13 +385,14 @@ async fn v3_jsonb_containment_constant_value_selector(pool: PgPool) -> anyhow::R
 
 #[sqlx::test(fixtures(path = "../fixtures", scripts("v3_ste_vec")))]
 async fn v3_jsonb_containment_ignores_op(pool: PgPool) -> anyhow::Result<()> {
+    let sel = hello_op_selector(&pool).await?;
     // Use a compatibility needle that carries row 1's `$.hello` ordering term.
     let op: String = sqlx::query_scalar(&format!(
-        "SELECT (payload ->> '{SEL_HELLO_OP}'::text)::jsonb ->> 'op' FROM fixtures.v3_ste_vec WHERE id = 1"
+        "SELECT (payload ->> '{sel}'::text)::jsonb ->> 'op' FROM fixtures.v3_ste_vec WHERE id = 1"
     ))
     .fetch_one(&pool)
     .await?;
-    let n = needle(&[(SEL_HELLO_OP, "op", &op)]);
+    let n = needle(&[(sel.as_str(), "op", &op)]);
 
     // Row 1 must be among the matches.
     let row1: i64 = sqlx::query_scalar(&format!(
@@ -423,12 +430,13 @@ async fn v3_jsonb_containment_ignores_op(pool: PgPool) -> anyhow::Result<()> {
 
 #[sqlx::test(fixtures(path = "../fixtures", scripts("v3_ste_vec")))]
 async fn v3_jsonb_containment_mixed(pool: PgPool) -> anyhow::Result<()> {
+    let sel = hello_op_selector(&pool).await?;
     // Mixed needle: a constant value selector plus a row-1-specific value
     // selector carrying an irrelevant op. An OR implementation would match all
     // rows through the constant selector; correct AND/subset containment must
     // return only row 1. The ordering term is ignored.
     let op: String = sqlx::query_scalar(&format!(
-        "SELECT (payload ->> '{SEL_HELLO_OP}'::text)::jsonb ->> 'op' FROM fixtures.v3_ste_vec WHERE id = 1"
+        "SELECT (payload ->> '{sel}'::text)::jsonb ->> 'op' FROM fixtures.v3_ste_vec WHERE id = 1"
     ))
     .fetch_one(&pool)
     .await?;
@@ -679,81 +687,6 @@ async fn v3_jsonb_ord_ope_term_entry_branches(pool: PgPool) -> anyhow::Result<()
     Ok(())
 }
 
-// ============================================================================
-// Drift guard for the workspace-keyed `$.hello` op selector.
-//
-// `SEL_HELLO_OP` is a MAC of (column context, JSONPath) under the workspace
-// keyset, so regenerating the fixture against a different CipherStash workspace
-// re-pins it. Its sibling `v3_doc_integer::SELECTOR` has carried such a guard
-// since upstream; this constant did not, and the asymmetry has a cost: when the
-// suite moved to `cipherstash/stack` the workspace changed, every
-// `payload -> SEL_HELLO_OP` lookup returned NULL, and the suite reported wrong
-// ANSWERS — LB3 counting 0 distinct ops, ordering arms seeing unordered rows —
-// rather than the one wrong CONSTANT behind all of them.
-//
-// The live selector cannot be derived without credentials, so on failure this
-// prints every op-carrying selector with the profile needed to pick the right
-// one. It deliberately does NOT choose automatically: guessing wrong would
-// re-pin to the wrong leaf silently, which is the exact bug recorded in
-// `v3_ste_vec::SEL_HELLO_OP`'s history (it once named `$.number` while claiming
-// `$.hello`, and survived because equality-only suites cannot separate them).
-//
-// `$.hello` is the selector on all 10 rows whose `op` length takes exactly TWO
-// values in a 9/1 split: a string op term is 8 * (len + 1) + 1 bits, and the
-// values are `world-1`..`world-9` (equal length) plus the one-longer
-// `world-10`. `$.number` and `$.large` are fixed-width numeric terms (one
-// length), `$.accented` spans four, and `$.empty` / `$.nested.deep` are
-// constant.
-// ============================================================================
-
-#[sqlx::test(fixtures(path = "../fixtures", scripts("v3_ste_vec")))]
-async fn v3_jsonb_sel_hello_op_matches_fixture(pool: PgPool) -> anyhow::Result<()> {
-    let carrying: i64 = sqlx::query_scalar(&format!(
-        "SELECT count(*) FROM fixtures.v3_ste_vec f \
-         WHERE EXISTS ( \
-           SELECT 1 FROM jsonb_array_elements(f.payload::jsonb->'sv') e \
-           WHERE e->>'s' = '{SEL_HELLO_OP}' AND e ? 'op' \
-         )"
-    ))
-    .fetch_one(&pool)
-    .await?;
-
-    if carrying == 10 {
-        return Ok(());
-    }
-
-    let menu: Vec<(String, i64, i64, i64, i64)> = sqlx::query_as(
-        "SELECT e->>'s', \
-                count(DISTINCT f.id), \
-                count(DISTINCT length(e->>'op')), \
-                min(length(e->>'op'))::bigint, \
-                max(length(e->>'op'))::bigint \
-         FROM fixtures.v3_ste_vec f, jsonb_array_elements(f.payload::jsonb->'sv') e \
-         WHERE e ? 'op' \
-         GROUP BY 1 ORDER BY 1",
-    )
-    .fetch_all(&pool)
-    .await?;
-
-    let table = menu
-        .iter()
-        .map(|(sel, rows, lengths, lo, hi)| {
-            format!("    {sel}  rows={rows} distinct_op_lengths={lengths} min={lo} max={hi}")
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    anyhow::bail!(
-        "v3_ste_vec $.hello op-selector drifted from the pinned constant.\n  \
-         pinned v3_ste_vec::SEL_HELLO_OP = {SEL_HELLO_OP}\n  \
-         carries `op` on {carrying}/10 rows (want 10)\n  \
-         live op-carrying selectors:\n{table}\n\
-         The SteVec selector is keyed by the CipherStash workspace. Pick the entry with \
-         rows=10 and distinct_op_lengths=2 (the 9/1 `world-1..9` vs `world-10` split), \
-         re-pin SEL_HELLO_OP to it, and re-run.",
-    )
-}
-
 /// LB1–LB3 structural invariants of the GENERATED fixture, asserted directly
 /// (the containment / index oracles only imply them). This is the "generated
 /// fixture matches the load-bearing properties" guard, and it doubles as the
@@ -763,6 +696,7 @@ async fn v3_jsonb_sel_hello_op_matches_fixture(pool: PgPool) -> anyhow::Result<(
 /// so it fails on the empty-fixture negative control (count(*) = 10).
 #[sqlx::test(fixtures(path = "../fixtures", scripts("v3_ste_vec")))]
 async fn v3_jsonb_fixture_structural_invariants(pool: PgPool) -> anyhow::Result<()> {
+    let hello_sel = hello_op_selector(&pool).await?;
     // LB1: exactly 10 rows, ids 1..=10.
     let n: i64 = sqlx::query_scalar("SELECT count(*) FROM fixtures.v3_ste_vec")
         .fetch_one(&pool)
@@ -811,7 +745,7 @@ async fn v3_jsonb_fixture_structural_invariants(pool: PgPool) -> anyhow::Result<
     // LB3: the $.hello op is present in every row AND distinct across all 10
     // (oracle discrimination — Risk #0).
     let distinct_hello_op: i64 = sqlx::query_scalar(&format!(
-        "SELECT count(DISTINCT (payload ->> '{SEL_HELLO_OP}'::text)::jsonb ->> 'op') \
+        "SELECT count(DISTINCT (payload ->> '{hello_sel}'::text)::jsonb ->> 'op') \
          FROM fixtures.v3_ste_vec"
     ))
     .fetch_one(&pool)
@@ -830,14 +764,15 @@ async fn v3_jsonb_fixture_structural_invariants(pool: PgPool) -> anyhow::Result<
 
 #[sqlx::test(fixtures(path = "../fixtures", scripts("v3_ste_vec")))]
 async fn v3_jsonb_containment_ignores_wrong_op_bytes(pool: PgPool) -> anyhow::Result<()> {
+    let sel = hello_op_selector(&pool).await?;
     // A compatibility needle carrying the real ordering term matches every row
     // that carries the shared path selector.
     let op: String = sqlx::query_scalar(&format!(
-        "SELECT (payload ->> '{SEL_HELLO_OP}'::text)::jsonb ->> 'op' FROM fixtures.v3_ste_vec WHERE id = 1"
+        "SELECT (payload ->> '{sel}'::text)::jsonb ->> 'op' FROM fixtures.v3_ste_vec WHERE id = 1"
     ))
     .fetch_one(&pool)
     .await?;
-    let good = needle(&[(SEL_HELLO_OP, "op", &op)]);
+    let good = needle(&[(sel.as_str(), "op", &op)]);
     let good_hits: i64 = sqlx::query_scalar(&format!(
         "SELECT count(*) FROM fixtures.v3_ste_vec WHERE payload @> '{good}'::eql_v3.query_json"
     ))
@@ -853,7 +788,7 @@ async fn v3_jsonb_containment_ignores_wrong_op_bytes(pool: PgPool) -> anyhow::Re
 
     // Real path selector with different ordering bytes. Containment strips the
     // ordering term and therefore still matches every row carrying the path.
-    let n = needle(&[(SEL_HELLO_OP, "op", "deadbeefdeadbeefdeadbeefdeadbeef")]);
+    let n = needle(&[(sel.as_str(), "op", "deadbeefdeadbeefdeadbeefdeadbeef")]);
     let hits: i64 = sqlx::query_scalar(&format!(
         "SELECT count(*) FROM fixtures.v3_ste_vec WHERE payload @> '{n}'::eql_v3.query_json"
     ))
@@ -1368,8 +1303,8 @@ async fn v3_jsonb_generator_envelope_shape_accepted(pool: PgPool) -> anyhow::Res
         "k":"sv","v":3,"i":{"c":"payload","t":"_fixture_v3_ste_vec"},
         "h":"mBbK_key_header",
         "sv":[
-            {"s":"87042b77604cf03ab1ec9a05b5f9c2f7","c":"ct","a":false},
-            {"s":"3a114ad13d25b030f41175114347de59","c":"ct","op":"00010203","a":false}
+            {"s":"00000000000000000000000000000003","c":"ct","a":false},
+            {"s":"00000000000000000000000000000004","c":"ct","op":"00010203","a":false}
         ]
     }"#;
     let ok: bool = sqlx::query_scalar(&format!(
@@ -1706,19 +1641,20 @@ async fn v3_jsonb_to_ste_vec_query_gin_is_cost_chosen(pool: PgPool) -> anyhow::R
 
 #[sqlx::test(fixtures(path = "../fixtures", scripts("v3_ste_vec")))]
 async fn v3_jsonb_index_ord_ope_btree_engages(pool: PgPool) -> anyhow::Result<()> {
+    let sel = hello_op_selector(&pool).await?;
     let mut tx = pool.begin().await?;
     sqlx::query("SET LOCAL enable_seqscan = off")
         .execute(&mut *tx)
         .await?;
     sqlx::query(&format!(
         "CREATE INDEX v3_jsonb_btree_idx ON fixtures.v3_ste_vec \
-         (eql_v3.ord_term(payload -> '{SEL_HELLO_OP}'::text))"
+         (eql_v3.ord_term(payload -> '{sel}'::text))"
     ))
     .execute(&mut *tx)
     .await?;
 
     let query = format!(
-        "SELECT id FROM fixtures.v3_ste_vec ORDER BY eql_v3.ord_term(payload -> '{SEL_HELLO_OP}'::text)"
+        "SELECT id FROM fixtures.v3_ste_vec ORDER BY eql_v3.ord_term(payload -> '{sel}'::text)"
     );
     assert_index_scan_uses(
         &mut *tx,

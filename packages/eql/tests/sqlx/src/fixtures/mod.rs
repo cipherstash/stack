@@ -26,6 +26,10 @@ pub mod cipherstash;
 
 pub mod driver;
 
+// Reads a SteVec selector out of a loaded fixture (selectors are keyed by the
+// CipherStash workspace, so the suite never pins one).
+pub mod ste_vec_selector;
+
 // The v2 → v3 envelope conversion seam: generated client payloads (`v: 2`)
 // are routed through `eql_bindings::from_v2` before staging, so every
 // written fixture satisfies the `v = '3'` domain CHECKs.

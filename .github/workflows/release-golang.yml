@@ -1,0 +1,421 @@
+name: Release (Go)
+
+# Tags a release of the Go module (languages/golang) that `go get` can use.
+#
+# The module embeds three WASI guests built from Rust (encrypt/wasm,
+# encrypt/eql/wasm, auth/wasm). They are gitignored on main, and Go fetches a
+# module version as the files committed at its tag, so a tag on a main commit
+# would build and then fail at `NewClient` with ErrGuestNotBuilt. This
+# workflow builds the guests at the commit it runs on, commits them on a
+# release-only commit that no branch points at, tags that commit
+# `languages/golang/v<version>` (the prefix Go requires for a module in a
+# subdirectory) and pushes the tag alone. main stays free of binaries.
+#
+# The GitHub release it creates carries the EQL v4 SQL bundle the module's
+# EQL types are stored in, built from the same commit, so one release page
+# holds everything a user of that version installs. Run by hand:
+#
+#   gh workflow run release-golang.yml -f version=0.1.0-alpha.1 --ref <branch>
+#
+# The ref must carry the EQL v4 bundle (packages/eql's v4 build), or the
+# build job stops at "Build the EQL SQL bundles". A version with a pre-release
+# suffix may be cut from any branch and is published as a GitHub pre-release;
+# a final version is cut from main only (scripts/go-release-version.mjs).
+#
+# Three jobs, split by what they may touch:
+#
+# - `build` holds no write token. It is the only job that runs third-party
+#   code (the toolchain installs, cargo build scripts and proc macros, the Go
+#   tests), and it hands the guests, their hashes and the SQL to `publish` as
+#   an artifact, with the git tree it built and tested as a job output.
+# - `publish` holds `contents: write` and runs only git and gh. It rebuilds
+#   the release commit from the artifact, refuses it unless its tree is the one
+#   `build` tested, pushes the tag and creates the release.
+# - `verify` is read-only again: it asks the Go proxy for the version, which
+#   fetches it, and checks the guests in the module zip are the ones built.
+#
+# A version is immutable once the proxy has fetched it, so a tag is never
+# moved or deleted. If `publish` or `verify` fails after the tag is pushed,
+# use "Re-run failed jobs" on the same run: `publish` accepts a tag that an
+# earlier attempt of the run pushed with the same tree, and creates or
+# completes the release. A new dispatch of the same version is refused.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Module version without the leading v, e.g. 0.1.0-alpha.1"
+        required: true
+        type: string
+
+# Only `publish` asks for write access; see
+# scripts/__tests__/workflow-publish-permissions.test.mjs.
+permissions:
+  contents: read
+
+env:
+  # The only files a release commit adds, in the order guests.sha256 lists
+  # them. Every job takes the paths from here and never from the artifact:
+  # guests.sha256 is written before the build job runs third-party code, so
+  # `publish` checks it names exactly these and nothing else
+  # (scripts/__tests__/go-release-artifact.test.mjs).
+  GUESTS: >-
+    languages/golang/encrypt/wasm/stack_encrypt_guest.wasm
+    languages/golang/encrypt/eql/wasm/stack_encrypt_guest_eql.wasm
+    languages/golang/auth/wasm/stack_auth_guest.wasm
+
+concurrency:
+  group: release-golang
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and test the release
+    runs-on: blacksmith-16vcpu-ubuntu-2204
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ inputs.version }}
+      # The Go tests run under the same mise environment as tests-golang.yml's
+      # wasi-check job, so they see what CI sees.
+      MISE_ENV: test
+    outputs:
+      tree: ${{ steps.stage.outputs.tree }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      # Before anything is built: every version Go would refuse, a v2+ major
+      # on a path with no /vN suffix included, fails here rather than after
+      # the tag is pushed.
+      - name: Check the version and the ref
+        run: node scripts/go-release-version.mjs "$VERSION" "$GITHUB_REF"
+
+      - name: Refuse a tag that already exists
+        run: |
+          tag="languages/golang/v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "::error::$tag already exists; a Go module version is immutable once fetched. To finish a failed release, re-run its failed jobs instead."
+            exit 1
+          fi
+
+      # The tag check misses a version whose tag was deleted after the proxy
+      # fetched it. The proxy goes on serving that version and sum.golang.org
+      # keeps its hash, so a new tag at the same number would fail every
+      # user's checksum. This asks @v/list, which the proxy has been seen to
+      # go on listing a deleted tag in (golang/go#44306), though it does not
+      # promise to. It never asks for the version itself (@v/<version>.info,
+      # `go list -m`): asked before the tag exists, the proxy caches "not
+      # found" for up to 30 minutes, and `verify` would fail after the push.
+      # Here and not in `publish`, so a re-run of `publish` that finds its own
+      # earlier tag is not refused.
+      - name: Refuse a version the Go proxy already lists
+        run: |
+          set -euo pipefail
+          module=github.com/cipherstash/stack/languages/golang
+          list=$(curl -fsS --retry 3 "https://proxy.golang.org/$module/@v/list") \
+            || { echo "::error::could not read the Go proxy's version list for $module"; exit 1; }
+          if grep -qxF "v$VERSION" <<< "$list"; then
+            echo "::error::the Go proxy already lists $module v$VERSION; its contents are fixed even though the tag is gone. Release a new version."
+            exit 1
+          fi
+
+      # No cache: this job builds the binaries that are published, and a
+      # poisoned restore would ship in them. scripts/lint-no-workflow-caching.mjs
+      # holds it.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          working_directory: .
+          cache: false
+
+      - name: Add rustfmt and clippy to the pinned toolchain
+        run: rustup component add rustfmt clippy
+
+      # Neither the guest builds nor the EQL build (two plain `cargo run`s in
+      # packages/eql/tasks/build.sh) pass --locked, and a stale lock would be
+      # resolved afresh here into guests or SQL nobody can rebuild from the
+      # tag. Before the EQL build, so it runs first of all the cargo work.
+      - name: Check the Cargo lockfiles are current
+        run: |
+          set -euo pipefail
+          for workspace in packages/eql languages/golang/encrypt/guest languages/golang/auth/guest; do
+            cargo metadata --locked --format-version 1 --manifest-path "$workspace/Cargo.toml" > /dev/null
+          done
+
+      # First of the builds because it is the cheap one that fails on a ref
+      # without the v4 bundle. eql_v4.version() reports `go-<version>`: the
+      # bundle is released with this Go version, not as an @cipherstash/eql
+      # version. `--force` because `--version` is not part of the build's
+      # cache key, so a cache hit would re-serve whatever version an earlier
+      # build stamped; the grep proves the stamp landed.
+      - name: Build the EQL SQL bundles
+        working-directory: packages/eql
+        run: |
+          set -euo pipefail
+          mise run --force build --version "go-$VERSION"
+          for sql in release/cipherstash-encrypt-v4.sql release/cipherstash-encrypt-v4-uninstall.sql; do
+            if [ ! -s "$sql" ]; then
+              echo "::error::packages/eql/$sql was not built. Dispatch this workflow from a ref that carries the EQL v4 bundle."
+              exit 1
+            fi
+          done
+          grep -qF "'go-$VERSION'" release/cipherstash-encrypt-v4.sql \
+            || { echo "::error::the v4 bundle is not stamped go-$VERSION"; exit 1; }
+
+      - name: Build the guests
+        run: |
+          mise run wasm:guest:build
+          mise run wasm:guest:build:eql
+          mise run wasm:auth-guest:build
+
+      # Hashed before the test builds and the tests run, and checked again
+      # after them below, so the guests committed are the ones tested.
+      - name: Hash the guests
+        run: |
+          set -euo pipefail
+          mkdir -p release-out
+          read -ra guests <<< "$GUESTS"
+          sha256sum "${guests[@]}" > release-out/guests.sha256
+          cat release-out/guests.sha256
+
+      # The deterministic test builds the hermetic Go tests load.
+      - name: Build the test guests
+        run: |
+          mise run wasm:guest:build:deterministic
+          mise run wasm:guest:build:eql:deterministic
+
+      - name: Go tests against the guests being released
+        run: mise run go:test
+
+      - name: Check the tests ran against the guests being released
+        run: sha256sum -c release-out/guests.sha256
+
+      # The release commit, made here only to prove it: `publish` makes it
+      # again from the artifact and must arrive at the same tree. Built from
+      # `git archive` of that commit, so only committed files take part, as
+      # they do for `go get`.
+      - name: Stage the release commit and check it as Go will fetch it
+        id: stage
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --detach
+          # The guests are gitignored on main; -f adds them to this commit only.
+          read -ra guests <<< "$GUESTS"
+          # --chmod=-x: the committed mode is set in git, not read from the
+          # file. Cargo writes the guests executable and `publish` writes them
+          # 0644, so a mode taken from disk made this job's tree differ from
+          # the one `publish` builds, and it refused the release.
+          git add -f --chmod=-x "${guests[@]}"
+          git commit -q -m "release(golang): v$VERSION with its WASI guests"
+          tree=$(git rev-parse 'HEAD^{tree}')
+
+          fetched=$(mktemp -d)
+          git archive HEAD languages/golang | tar -x -C "$fetched"
+          (cd "$fetched" && sha256sum -c "$GITHUB_WORKSPACE/release-out/guests.sha256")
+          (cd "$fetched/languages/golang" && GOWORK=off GOFLAGS=-mod=readonly go build ./...)
+
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          echo "release tree $tree"
+
+      - name: Stage the release files
+        run: |
+          set -euo pipefail
+          read -ra guests <<< "$GUESTS"
+          for guest in "${guests[@]}"; do
+            install -D -m 0644 "$guest" "release-out/$guest"
+          done
+          cp packages/eql/release/cipherstash-encrypt-v4.sql release-out/eql-v4-install.sql
+          cp packages/eql/release/cipherstash-encrypt-v4-uninstall.sql release-out/eql-v4-uninstall.sql
+          find release-out -type f | sort
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: go-release
+          path: release-out/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Tag and release
+    needs: build
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    # Required reviewers set on this environment in the repository settings
+    # gate every release; with none set, it gates nothing.
+    environment: release-golang
+    permissions:
+      # Push the tag and create the release.
+      contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+      TREE: ${{ needs.build.outputs.tree }}
+    steps:
+      # Not actions/checkout: its `token` input defaults to github.token,
+      # which in this job can write, and persist-credentials: false only stops
+      # it being left in .git/config. The repository is public, so the commit
+      # is fetched without a credential. The token is handed to the one push
+      # below, and to gh, and to nothing else.
+      - name: Fetch the commit without a credential
+        run: |
+          set -euo pipefail
+          git init -q .
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          git fetch -q --no-tags --depth=1 origin "$GITHUB_SHA"
+          git checkout -q --detach FETCH_HEAD
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: go-release
+          path: release-out
+
+      # The artifact comes from a job that ran third-party code after it wrote
+      # guests.sha256, so the manifest is data to check, not a list of paths
+      # to trust: a line naming any other file would put that file in the
+      # release commit, and the tree comparison below would not notice,
+      # because the build job derived its tree from the same manifest. The
+      # paths come from GUESTS; the manifest must be exactly one SHA-256 line
+      # for each, in order, before anything is copied.
+      - name: Commit the guests
+        run: |
+          set -euo pipefail
+          read -ra guests <<< "$GUESTS"
+          mapfile -t lines < release-out/guests.sha256
+          if [ "${#lines[@]}" -ne "${#guests[@]}" ]; then
+            echo "::error::guests.sha256 has ${#lines[@]} lines, not one for each of the ${#guests[@]} guests"
+            exit 1
+          fi
+          line_re='^[0-9a-f]{64}  (.+)$'
+          for i in "${!guests[@]}"; do
+            if ! [[ "${lines[$i]}" =~ $line_re ]] || [ "${BASH_REMATCH[1]}" != "${guests[$i]}" ]; then
+              echo "::error::guests.sha256 line $((i + 1)) is not the SHA-256 of ${guests[$i]}"
+              exit 1
+            fi
+          done
+          for guest in "${guests[@]}"; do
+            install -D -m 0644 "release-out/$guest" "$guest"
+          done
+          sha256sum -c release-out/guests.sha256
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --detach
+          # The mode is set in git, as the build job sets it, so the two trees
+          # agree whatever mode either job left the files in.
+          git add -f --chmod=-x "${guests[@]}"
+          git commit -m "release(golang): v$VERSION with its WASI guests" \
+            -m "Built from $GITHUB_SHA by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          tree=$(git rev-parse 'HEAD^{tree}')
+          if [ "$tree" != "$TREE" ]; then
+            echo "::error::release tree $tree is not the tree the build job tested ($TREE)"
+            exit 1
+          fi
+
+      # A tag already there is accepted only if an earlier attempt of this
+      # run pushed it: the same tree, on top of the same source commit.
+      - name: Push the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="languages/golang/v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            git fetch -q --no-tags --depth=1 origin "+refs/tags/$tag:refs/existing-release"
+            existing=$(git rev-parse 'refs/existing-release^{commit}')
+            parent=$(git cat-file -p "$existing" | sed -n 's/^parent //p')
+            if [ "$(git rev-parse "$existing^{tree}")" = "$TREE" ] && [ "$parent" = "$GITHUB_SHA" ]; then
+              echo "$tag was pushed by an earlier attempt of this run; keeping it"
+              exit 0
+            fi
+            echo "::error::$tag already exists and is not this run's release commit"
+            exit 1
+          fi
+          git tag -a "$tag" -m "Go module v$VERSION (built from $GITHUB_SHA)"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/$tag"
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="languages/golang/v$VERSION"
+          assets=(release-out/eql-v4-install.sql release-out/eql-v4-uninstall.sql release-out/guests.sha256)
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "the release for $tag exists from an earlier attempt; replacing its assets"
+            gh release upload "$tag" --clobber "${assets[@]}"
+            exit 0
+          fi
+          {
+            echo "Go module \`github.com/cipherstash/stack/languages/golang\` v$VERSION, built from $GITHUB_SHA."
+            echo
+            echo '```sh'
+            echo "go get github.com/cipherstash/stack/languages/golang@v$VERSION"
+            echo "go install github.com/cipherstash/stack/languages/golang/cmd/stashgen@v$VERSION"
+            echo '```'
+            echo
+            echo "Values this version writes are stored in EQL v4 columns. Install EQL v4 into PostgreSQL with the attached \`eql-v4-install.sql\` (\`psql -f eql-v4-install.sql\`)."
+            echo
+            echo "SHA-256 of the embedded WASI guests:"
+            echo '```'
+            cat release-out/guests.sha256
+            echo '```'
+          } > notes.md
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$tag" --verify-tag "${prerelease[@]}" \
+            --title "Go v$VERSION" --notes-file notes.md "${assets[@]}"
+
+  verify:
+    name: Check that Go resolves the version
+    needs: publish
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      # Go alone, at the root mise.toml's pin.
+      - uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4
+        with:
+          version: 2026.4.0
+          install: true
+          install_args: go
+          working_directory: .
+          cache: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: go-release
+          path: release-out
+
+      # The proxy fetches a version the first time it is asked for it, so
+      # this also makes the version available before anyone depends on it.
+      # `go mod download` fetches the module zip itself, which `go list -m`
+      # does not, and it runs from an empty directory with GOWORK off so
+      # nothing in this checkout can answer for the proxy.
+      - name: Download the version through the Go proxy
+        env:
+          GOPROXY: https://proxy.golang.org
+          GOWORK: "off"
+          GOFLAGS: ""
+        run: |
+          set -euo pipefail
+          module=github.com/cipherstash/stack/languages/golang
+          # guests.sha256 names paths from the repository root; the module
+          # zip starts at languages/golang.
+          sed 's#  languages/golang/#  #' release-out/guests.sha256 > "$RUNNER_TEMP/module.sha256"
+          cd "$(mktemp -d)"
+          for attempt in 1 2 3 4 5 6; do
+            if dir=$(go mod download -json "$module@v$VERSION" | jq -er .Dir); then
+              (cd "$dir" && sha256sum -c "$RUNNER_TEMP/module.sha256")
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::the Go proxy did not resolve v$VERSION"
+          exit 1

@@ -87,6 +87,12 @@ const COLUMN_FLAG: Flag = {
   value: '<name>',
   description: 'Target column.',
 }
+const PLAINTEXT_COLUMN_FLAG: Flag = {
+  name: '--plaintext-column',
+  value: '<name>',
+  description:
+    "The plaintext twin. Default: the pairing the reverse migration in progress recorded, else the original name from .cipherstash/migrations.json, else the column name without its '_encrypted' suffix, else '<column>_plaintext'.",
+}
 
 /**
  * The registry. Ordered as it should render in help. Populated from the existing
@@ -629,6 +635,148 @@ export const registry: CommandGroup[] = [
             name: '--migrations-dir',
             value: '<path>',
             description: 'Directory to write the drop migration into.',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    title: 'Decrypt',
+    commands: [
+      {
+        // Zero-arg like `encrypt status` — it reads every EQL v3 column.
+        name: 'decrypt status',
+        summary:
+          'Show per-column reverse-migration status (phase, progress, undecryptable)',
+      },
+      {
+        name: 'decrypt plan',
+        summary: 'Plan (or generate) the plaintext twins for encrypted columns',
+        long: [
+          'Step one of moving encrypted columns back to plaintext. With no flags,',
+          'lists every EQL v3 column in the current schema, the plaintext twin it',
+          'would reverse into (type mapped back from its EQL domain), and the next',
+          'command to run. With --table, produces the change that adds the twins:',
+          'Drizzle schema lines for drizzle-kit generate, or a reviewed SQL',
+          'migration elsewhere. Twins are added nullable; nothing is applied.',
+        ].join('\n'),
+        examples: [
+          'decrypt plan',
+          'decrypt plan --table users',
+          'decrypt plan --table users --column email_encrypted --dry-run',
+        ],
+        flags: [
+          {
+            ...TABLE_FLAG,
+            description: 'Generate for this table (omit for the overview).',
+          },
+          {
+            ...COLUMN_FLAG,
+            description:
+              'One encrypted column on --table (default: every EQL v3 column on it).',
+          },
+          PLAINTEXT_COLUMN_FLAG,
+          {
+            name: '--migrations-dir',
+            value: '<path>',
+            description:
+              'Directory to write the migration into (non-Drizzle projects).',
+          },
+          DRY_RUN_FLAG,
+        ],
+      },
+      {
+        name: 'decrypt backfill',
+        summary: 'Resumably decrypt ciphertext into the plaintext column',
+        long: [
+          'The reverse of `encrypt backfill`, on the same engine: chunked,',
+          'resumable, idempotent, one bulkDecrypt (one ZeroKMS request) per chunk.',
+          'Values that cannot be decrypted with these credentials, typically ones',
+          'bound to an end-user lock context, are skipped, counted, left NULL and',
+          'reported; `decrypt drop` refuses while any remain.',
+          '',
+          'It refuses a plaintext column that a forward encryption started from',
+          'and never dropped: finish or abandon that migration first. The first',
+          'run also refuses a plaintext column that already holds values: the',
+          'backfill only fills NULLs, so stale values would survive. Pass --force',
+          'to overwrite them from the ciphertext (every later run is then forced',
+          'until a forced pass completes), or --confirm-plaintext-current to keep',
+          'them. Keep writing both columns until the drop is applied.',
+        ].join('\n'),
+        examples: [
+          'decrypt backfill --table users --column email_encrypted',
+          'decrypt backfill --table users --column email_encrypted --plaintext-column email',
+        ],
+        flags: [
+          TABLE_FLAG,
+          {
+            ...COLUMN_FLAG,
+            description: 'The encrypted (EQL v3) column to decrypt.',
+          },
+          PLAINTEXT_COLUMN_FLAG,
+          {
+            name: '--pk-column',
+            value: '<name>',
+            description: 'Primary-key column used to page through rows.',
+          },
+          {
+            name: '--chunk-size',
+            value: '<n>',
+            description:
+              'Rows decrypted per batch — one ZeroKMS request each. A whole number from 1 to 32767.',
+            default: '500',
+          },
+          {
+            name: '--confirm-dual-writes-deployed',
+            description:
+              'Assert the app writes both the encrypted and plaintext columns (safety gate).',
+          },
+          {
+            name: '--force',
+            description:
+              'Re-decrypt rows whose plaintext is already set and overwrite it. Safe only while dual-writes are live.',
+          },
+          {
+            name: '--confirm-plaintext-current',
+            description:
+              'First run only: keep the values a plaintext column already holds, asserting they are current.',
+          },
+          {
+            name: '--continue-on-undecryptable',
+            description:
+              'Carry on when the first batch decrypts nothing, recording those rows as skipped.',
+          },
+        ],
+      },
+      {
+        name: 'decrypt drop',
+        summary: 'Generate a migration to drop the encrypted column',
+        long: [
+          'Runs from the `decrypted` phase. Verifies live coverage (no row with',
+          'ciphertext set and plaintext NULL), then writes a migration that',
+          're-checks coverage at apply time, drops the indexes built on the',
+          "column's EQL terms, and drops the column. Not applied for you.",
+        ].join('\n'),
+        examples: [
+          'decrypt drop --table users --column email_encrypted',
+          'decrypt drop --table users --column email_encrypted --uninstall-eql',
+        ],
+        flags: [
+          TABLE_FLAG,
+          {
+            ...COLUMN_FLAG,
+            description: 'The encrypted (EQL v3) column to drop.',
+          },
+          PLAINTEXT_COLUMN_FLAG,
+          {
+            name: '--migrations-dir',
+            value: '<path>',
+            description: 'Directory to write the drop migration into.',
+          },
+          {
+            name: '--uninstall-eql',
+            description:
+              'Also uninstall EQL v3 (its schemas and public.eql_v3_* domains) in the same migration — only when this is the last EQL v3 column in the database (re-checked at apply time).',
           },
         ],
       },

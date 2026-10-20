@@ -7,7 +7,7 @@ Rust-based test framework for EQL (Encrypt Query Language) using SQLx.
 This test crate provides:
 - **Granular test execution**: Run individual tests via `cargo test test_name`
 - **Self-documenting fixtures**: SQL files with inline documentation
-- **No magic literals**: Selector constants in `src/selectors.rs`
+- **No pinned selectors**: SteVec selectors are read from the loaded fixture (see [Selectors](#selectors))
 - **Fluent assertions**: Chainable query assertions via `QueryAssertion`
 
 ## Architecture
@@ -91,31 +91,40 @@ fixture-regeneration step does.
 
 ### Selectors
 
-See `src/selectors.rs` for all selector constants:
-- `Selectors::ROOT`: $ (root object)
-- `Selectors::N`: $.n path
-- `Selectors::HELLO`: $.hello path
-- `Selectors::ARRAY_ELEMENTS`: $.a[*] (array elements)
-- `Selectors::ARRAY_ROOT`: $.a (array root)
+A SteVec selector is a keyed MAC over the CipherStash workspace keyset, a
+fixed prefix and the JSON path, so the same path has a different selector in
+every workspace. The suite therefore never pins one: a test reads the selector
+from the fixture it loaded.
 
-Each selector is an MD5 hash that corresponds to the encrypted path query selector.
+- `fixtures::v3_doc_integer::field_op_selector(&pool)`: the `$.field` op
+  selector of `fixtures.v3_doc_integer`
+- `fixtures::v3_ste_vec::hello_op_selector(&pool)`: the `$.hello` op selector
+  of `fixtures.v3_ste_vec`
+
+Each states a rule that singles out one selector and fails, listing every
+candidate, when zero or several match (`src/fixtures/ste_vec_selector.rs`).
+`tests/selector_literal_guard.rs` fails if a selector-shaped hex literal is
+added to a `.rs` file under `src/` or `tests/`, including SQL and escaped JSON
+inside Rust strings. The generated `fixtures/*.sql` files hold real selectors
+and are not scanned. A forged selector in a literal-payload test must
+be visibly fake (for example `"00000000000000000000000000000001"`).
 
 ## Writing Tests
 
 ### Basic Test Pattern
 
 ```rust
-#[sqlx::test(fixtures(path = "../fixtures", scripts("encrypted_json")))]
+#[sqlx::test(fixtures(path = "../fixtures", scripts("v3_ste_vec")))]
 async fn my_test(pool: PgPool) -> Result<()> {
+    let sel = eql_tests::fixtures::v3_ste_vec::hello_op_selector(&pool).await?;
     let sql = format!(
-        "SELECT * FROM encrypted WHERE e = '{}'",
-        Selectors::N
+        "SELECT * FROM fixtures.v3_ste_vec WHERE (payload -> '{sel}'::text) IS NOT NULL"
     );
 
     QueryAssertion::new(&pool, &sql)
         .returns_rows()
         .await
-        .count(3)
+        .count(10)
         .await;
 
     Ok(())

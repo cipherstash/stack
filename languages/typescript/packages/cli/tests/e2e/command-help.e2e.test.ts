@@ -93,6 +93,64 @@ describe('per-command --help', () => {
     expect(r.output).toContain('--database-url')
   })
 
+  it('renders a group listing for `decrypt --help`', async () => {
+    const r = await run(['decrypt', '--help'], {
+      env: { npm_config_user_agent: '' },
+    })
+    expect(r.exitCode).toBe(0)
+    expect(r.output).toContain('Usage: npx stash decrypt <command> [options]')
+    expect(r.output).toContain('decrypt status')
+    expect(r.output).toContain('decrypt plan')
+    expect(r.output).toContain('decrypt backfill')
+    expect(r.output).toContain('decrypt drop')
+    expect(r.output).not.toContain('CipherStash CLI v')
+  })
+
+  it('renders full command help for `decrypt backfill --help`', async () => {
+    const r = await run(['decrypt', 'backfill', '--help'], {
+      env: { npm_config_user_agent: '' },
+    })
+    expect(r.exitCode).toBe(0)
+    expect(r.output).toContain('Usage: npx stash decrypt backfill [options]')
+    expect(r.output).toContain('--plaintext-column')
+    expect(r.output).toContain('--chunk-size')
+    expect(r.output).toContain('(default: 500)')
+    expect(r.output).toContain('--confirm-dual-writes-deployed')
+    expect(r.output).toContain('--confirm-plaintext-current')
+    expect(r.output).toContain('--continue-on-undecryptable')
+    expect(r.output).toContain('Safe only while dual-writes are live')
+  })
+
+  it('refuses a `decrypt backfill --chunk-size` one write cannot bind, before touching the database', async () => {
+    const r = await run(
+      [
+        'decrypt',
+        'backfill',
+        '--table',
+        'users',
+        '--column',
+        'email_encrypted',
+        '--chunk-size',
+        '40000',
+      ],
+      { env: { npm_config_user_agent: '' } },
+    )
+    expect(r.exitCode).toBe(1)
+    expect(r.output).toContain(
+      '--chunk-size must be a whole number of rows from 1 to 32767 (got "40000")',
+    )
+  })
+
+  it('renders full command help for `decrypt drop --help`', async () => {
+    const r = await run(['decrypt', 'drop', '--help'], {
+      env: { npm_config_user_agent: '' },
+    })
+    expect(r.exitCode).toBe(0)
+    expect(r.output).toContain('Usage: npx stash decrypt drop [options]')
+    expect(r.output).toContain('--uninstall-eql')
+    expect(r.output).toContain('--migrations-dir')
+  })
+
   it('honours the `-h` short flag after a command', async () => {
     const r = await run(['eql', 'install', '-h'], {
       env: { npm_config_user_agent: '' },

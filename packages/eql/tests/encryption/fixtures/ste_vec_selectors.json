@@ -1,0 +1,177 @@
+{
+  "_comment": "The SteVec selectors and op terms cipherstash-client's JsonIndexer derives for the document under FakeDataKeySource's index key (keyset nil, recorded in index_key), with the ste_vec index config @cipherstash/stack sends for an EQL v3 JSON column: prefix \"enabled\", the sentinel production sends unrewritten (issue #1203; a fix there changes every selector and is meant to fail this pin). A selector change under the same index_key breaks queries over SteVec documents customers have already stored: it is a breaking change, not a refresh. Regenerate with EQL_UPDATE_STE_VEC_SELECTORS=1 only alongside a changeset on @cipherstash/protect-ffi explaining the break, or, when only index_key changed, for the stack-kms test change that moved it; do not edit by hand.",
+  "document": {
+    "active": true,
+    "field": 1,
+    "hello": "world",
+    "missing": null,
+    "nested": {
+      "deep": "value"
+    },
+    "ratio": 1.5,
+    "roles": [
+      "admin",
+      "user"
+    ]
+  },
+  "entries": [
+    {
+      "op": null,
+      "query": "path $",
+      "s": "79d4ba86361d937f2993d3b98c075e3b"
+    },
+    {
+      "op": null,
+      "query": "path $.active",
+      "s": "11b2c514709ac9c276020dd11b536b7e"
+    },
+    {
+      "op": "003f1d2e1b7b9e196ad27da250135b9eac77e6612dd7f9eb3b14453ad256a6da1a0e92c830b7d88f98935176f3f51bb611d2a4b6e7ea003543d941ca2293cb24b92e",
+      "query": "path $.field",
+      "s": "e8f5a865f03076086c88f84092fbc11f"
+    },
+    {
+      "op": "00be9ea51be74702138af46863cf77b11df5a6494cc5b9908c38d3bc879bf868055fc29ec50903e843c8d0f3b1074a751fa9",
+      "query": "path $.hello",
+      "s": "4ce624f4e5d42afccc8ba3cc5cc4865e"
+    },
+    {
+      "op": null,
+      "query": "path $.missing",
+      "s": "04c5e20a3e8292b1f262286bbc1541ae"
+    },
+    {
+      "op": null,
+      "query": "path $.nested",
+      "s": "f4f5b9fc338b0608046426e899999360"
+    },
+    {
+      "op": "00be9ea51be74702130ab53921df54844d80b9f4e63c320c3d93d834bd1afa00e656487cf9f12e9b9b95045b7a7996b763e0",
+      "query": "path $.nested.deep",
+      "s": "a83be8b56e61de0eb91f5dd2fbd27229"
+    },
+    {
+      "op": "003f1d2e1b7b9e196ad27da25013db45b3adbb0a7d0047908d88999cf9294ecac222141fbd092a272e89f28471a2a10844ee05771ac989d7c12f14fc1bbbf101db55",
+      "query": "path $.ratio",
+      "s": "4d398db3deeb169df3e6555bc8aa3a1a"
+    },
+    {
+      "op": null,
+      "query": "path $.roles",
+      "s": "c85f57df77d22b5fa553278e98323eab"
+    },
+    {
+      "op": "00be9ea51b6713b224d96f3d1b4841213d5ead044e18f6aba1baeb318e92a796a36ae2f50beba4b0be9b68eb11012a3a7644",
+      "query": null,
+      "s": "95c999fa197c0885986b14c27d413556"
+    },
+    {
+      "op": "00be9ea51b6713b224d96f3d1b4841213d5ead044e18f6aba1baeb318e92a796a36ae2f50beba4b0be9b68eb11012a3a7644",
+      "query": "path $.roles[*]",
+      "s": "58831b09d9cfd19078f2bf19694ad878"
+    },
+    {
+      "op": "00be9ea51be74701942873023e4fcffba6014d6172e991936d6aade3ddf0d80859e2f7a0d0288e21d7b5",
+      "query": null,
+      "s": "95c999fa197c0885986b14c27d413556"
+    },
+    {
+      "op": "00be9ea51be74701942873023e4fcffba6014d6172e991936d6aade3ddf0d80859e2f7a0d0288e21d7b5",
+      "query": "path $.roles[*]",
+      "s": "58831b09d9cfd19078f2bf19694ad878"
+    },
+    {
+      "op": null,
+      "query": null,
+      "s": "02940a5686f418020d74d0002de800b2"
+    },
+    {
+      "op": null,
+      "query": "value $.active == true",
+      "s": "c927fa8e65b54b0771d4f159a06cb287"
+    },
+    {
+      "op": null,
+      "query": "value $.field == 1",
+      "s": "a3a0b9bc706164dfadbaae8641812fa5"
+    },
+    {
+      "op": null,
+      "query": "value $.hello == \"world\"",
+      "s": "1a5bb3bb21b3a241fa1b72f426e6fd70"
+    },
+    {
+      "op": null,
+      "query": null,
+      "s": "ad505c15665d885e912a73587efb6210"
+    },
+    {
+      "op": null,
+      "query": null,
+      "s": "03fde1bed397618949b7be9ae382f839"
+    },
+    {
+      "op": null,
+      "query": "value $.nested.deep == \"value\"",
+      "s": "310c4dc2ffff5c7b59f79418f202ee33"
+    },
+    {
+      "op": null,
+      "query": "value $.ratio == 1.5",
+      "s": "63476dad81490f4c1c5c67c62ce95a19"
+    },
+    {
+      "op": null,
+      "query": null,
+      "s": "0839fd15b38aa4e460c869f88f0a461e"
+    },
+    {
+      "op": null,
+      "query": null,
+      "s": "6f71a23e87e425691b5e5d810f036d5d"
+    },
+    {
+      "op": null,
+      "query": null,
+      "s": "76de72ebb9bf5486303698f1635ac8ed"
+    },
+    {
+      "op": null,
+      "query": null,
+      "s": "dcaf027cb5a86d3f366d38ca1ab8ab6a"
+    },
+    {
+      "op": null,
+      "query": null,
+      "s": "4a140c3e421cd64a826a479ffae64eae"
+    }
+  ],
+  "index_config": {
+    "array_index_mode": {
+      "item": true,
+      "position": false,
+      "wildcard": true
+    },
+    "kind": "ste-vec",
+    "mode": "compat",
+    "prefix": "enabled"
+  },
+  "index_key": "01dc1a6934ac96bd071ac7f17f56f444cfbd7c5db350747d6d69d8f8756a0c60",
+  "selectors": {
+    "path $": "79d4ba86361d937f2993d3b98c075e3b",
+    "path $.active": "11b2c514709ac9c276020dd11b536b7e",
+    "path $.field": "e8f5a865f03076086c88f84092fbc11f",
+    "path $.hello": "4ce624f4e5d42afccc8ba3cc5cc4865e",
+    "path $.missing": "04c5e20a3e8292b1f262286bbc1541ae",
+    "path $.nested": "f4f5b9fc338b0608046426e899999360",
+    "path $.nested.deep": "a83be8b56e61de0eb91f5dd2fbd27229",
+    "path $.ratio": "4d398db3deeb169df3e6555bc8aa3a1a",
+    "path $.roles": "c85f57df77d22b5fa553278e98323eab",
+    "path $.roles[*]": "58831b09d9cfd19078f2bf19694ad878",
+    "value $.active == true": "c927fa8e65b54b0771d4f159a06cb287",
+    "value $.field == 1": "a3a0b9bc706164dfadbaae8641812fa5",
+    "value $.hello == \"world\"": "1a5bb3bb21b3a241fa1b72f426e6fd70",
+    "value $.nested.deep == \"value\"": "310c4dc2ffff5c7b59f79418f202ee33",
+    "value $.ratio == 1.5": "63476dad81490f4c1c5c67c62ce95a19"
+  }
+}

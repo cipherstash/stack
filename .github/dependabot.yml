@@ -66,6 +66,16 @@ updates:
     # found" on a log page nobody visits, and the symptom is simply that no PR
     # ever arrives. The e2e test asserts this path holds a Cargo.toml.
     directory: /languages/typescript/packages/protect-ffi
+    # Lockfile only, like the EQL entry below and for the same reason: this
+    # workspace depends by path on eql-bindings, a member of the EQL
+    # workspace. A requirement this entry raised could be written into
+    # packages/eql/crates/eql-bindings/Cargo.toml without the EQL Cargo.lock,
+    # the #1205 shape one edge over. An update that needs a manifest change,
+    # in this workspace or that one, is dropped and made by hand. This applies
+    # to Dependabot security updates too; osv-scanner still reports the
+    # advisory. Held by
+    # scripts/__tests__/dependabot-cargo-cross-workspace.test.mjs.
+    versioning-strategy: lockfile-only
     # Monthly, where npm and actions are weekly. The deviation is about
     # validation cost, not risk appetite: a Cargo.lock bump is checked by
     # tests-rust.yml — one Blacksmith job, 45-minute timeout, cargo test +
@@ -138,23 +148,39 @@ updates:
           - version-update:semver-major
 
   # ── Cargo (packages/eql — the second Rust workspace) ───────────
-  # The EQL subtree brought a second Cargo workspace: five members
-  # (crates/eql-{domains,codegen,tests-macros,bindings} plus tests/sqlx) and
-  # its own Cargo.lock. It needs its own entry because Dependabot's cargo
-  # `directory:` is a single workspace root, not a glob — the protect-ffi entry
-  # above cannot reach it. The lockfile-to-ecosystem check in
-  # e2e/tests/supply-chain.e2e.test.ts asserts coverage per ECOSYSTEM, so it
-  # was already satisfied by that entry and would NOT have caught this gap;
-  # the symptom would simply have been that no PR ever arrived.
+  # The EQL subtree brought a second Cargo workspace: six members
+  # (crates/eql-{domains,codegen,tests-macros,bindings}, tests/sqlx and
+  # tests/encryption) and its own Cargo.lock. It needs its own entry because
+  # Dependabot's cargo `directory:` is a single workspace root, not a glob —
+  # the protect-ffi entry above cannot reach it. The lockfile-to-ecosystem
+  # check in e2e/tests/supply-chain.e2e.test.ts asserts coverage per
+  # ECOSYSTEM, so it was already satisfied by that entry and would NOT have
+  # caught this gap; the symptom would simply have been that no PR ever
+  # arrived.
   - package-ecosystem: cargo
     # The workspace root, where Cargo.toml and Cargo.lock live. Not `/`, and
     # not a crate directory — same trap as the protect-ffi entry documents.
     directory: /packages/eql
+    # Lockfile only: this entry must never edit a manifest. The workspace
+    # depends by path on root-workspace crates (see the ignores below), so a
+    # requirement it would raise can live in the ROOT Cargo.toml, outside this
+    # workspace; editing it there without the root Cargo.lock broke every root
+    # `--locked` build (#1205, #1207). An update that needs a manifest change is
+    # dropped rather than proposed, and is made by hand.
+    #
+    # That includes Dependabot SECURITY updates: `versioning-strategy` governs
+    # them as well as version updates, so a security fix that needs a
+    # requirement raised gets no PR from this entry. osv-scanner still reports
+    # the advisory (it reaches this lockfile with `--recursive ./`), and the fix
+    # is made by hand. Held, with the other two cargo entries, by
+    # scripts/__tests__/dependabot-cargo-cross-workspace.test.mjs.
+    versioning-strategy: lockfile-only
     # Monthly, matching protect-ffi and for the same reason: validating a
     # Cargo.lock bump here means the sharded SQLx matrix in test-eql.yml, which
     # compiles the full dependency tree and runs against live Postgres with
-    # CipherStash credentials. Security fixes are unaffected — those are driven
-    # by alerts, not by `schedule`.
+    # CipherStash credentials. The schedule does not delay security fixes —
+    # those are driven by alerts, not by `schedule` — though `lockfile-only`
+    # above still drops one that needs a manifest edit.
     #
     # No `day:`, for the reason recorded above: it applies to `interval: weekly`
     # and would be configuration that does nothing.
@@ -195,6 +221,26 @@ updates:
       # a registry version for a crate we release here would fight the lockstep
       # version hook (scripts/sync-lockstep-versions.mjs).
       - dependency-name: "eql-bindings"
+      # Inherited from the ROOT workspace. tests/encryption depends by path on
+      # packages/stack-kms and packages/stack-encrypt, and eql-bindings on
+      # stack-encrypt behind its optional `stack-encrypt` feature. Those crates
+      # declare these `{ workspace = true }`, so their requirements come from
+      # the root Cargo.toml even when built here. The root entry below ignores
+      # them because they move by hand with cipherstash-suite: the root
+      # manifest pins recipher and cllw-ore with `=`, and so does the Go guest.
+      # Without these lines this entry bumped them in this lockfile and, to
+      # satisfy the exact pins, rewrote the root Cargo.toml without touching
+      # the root Cargo.lock or the guest's pin, breaking every root `--locked`
+      # build and the guest (#1205, #1207). vitaminc* also keeps eql-bindings
+      # on the line stack-encrypt and the guest build against.
+      # versioning-strategy above already stops the manifest edit; these keep
+      # the lockfile from moving these crates apart from the root's.
+      # scripts/__tests__/dependabot-eql-inherited-ignores.test.mjs fails when
+      # the root entry ignores a crate this entry does not.
+      - dependency-name: "recipher"
+      - dependency-name: "cllw-ore"
+      - dependency-name: "zerokms-protocol"
+      - dependency-name: "vitaminc*"
       # Major bumps are reviewed and applied manually, not by Dependabot.
       - dependency-name: "*"
         update-types:
@@ -213,6 +259,17 @@ updates:
       - /packages/stack-encrypt/fuzz
       - /languages/golang/encrypt/guest
       - /languages/golang/auth/guest
+    # Lockfile only, like the other two cargo entries. Every one of these
+    # workspaces shares crates by path with another: the fuzz crates and both
+    # guests depend on root-workspace crates, the encrypt guest also on
+    # eql-bindings, and the EQL workspace on stack-encrypt and stack-kms. Those
+    # root crates take `{ workspace = true }` requirements from the root
+    # Cargo.toml, so a manifest edit made for any one of these lockfiles can
+    # leave the others stale under `--locked`. An update that needs a manifest
+    # change, security updates included, is dropped and made by hand; osv-scanner
+    # still reports the advisory. Held by
+    # scripts/__tests__/dependabot-cargo-cross-workspace.test.mjs.
+    versioning-strategy: lockfile-only
     # Monthly, matching the other two cargo entries.
     schedule:
       interval: monthly
@@ -263,6 +320,42 @@ updates:
     commit-message:
       prefix: "chore"
       include: scope
+    ignore:
+      # Major bumps are reviewed and applied manually, not by Dependabot.
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
+  # ── pip (.github/impact-gate — the advisory ImpactGate toolchain) ──
+  # impact.yml installs this hashed requirements.txt with `--require-hashes
+  # --no-deps`, so every transitive package is a pin here and nothing resolves
+  # in CI. Dependabot regenerates the hashes when it bumps one. Any change here
+  # also changes the baseline cache key, so a bump costs one cold rebuild.
+  - package-ecosystem: pip
+    directory: /.github/impact-gate
+    # Monthly, matching the other non-npm toolchains: the tools only feed an
+    # advisory report, and security fixes are driven by alerts, not `schedule`.
+    # No `day:`, for the reason recorded on the cargo entries.
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - supply-chain
+    commit-message:
+      prefix: "chore"
+      include: scope
+    groups:
+      # impact-gate constrains lizard (it excludes 1.24.0), so the set moves
+      # together in one PR rather than as conflicting per-package bumps.
+      impact-gate-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
     ignore:
       # Major bumps are reviewed and applied manually, not by Dependabot.
       - dependency-name: "*"

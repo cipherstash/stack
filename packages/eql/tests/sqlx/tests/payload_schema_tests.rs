@@ -68,9 +68,12 @@ fn assert_invalid(schema: &Validator, instance: &Value, label: &str) {
 }
 
 const CIPHERTEXT: &str = "mBbL@V^%dN?0W$;g)1-JP*cmqX%JhW0ZKZ^G?lNn$CfXJH";
-const HEX: &str = "8067db44a848ab32c3056a3dbe4edf16";
+// Forged, visibly fake values: these tests validate payload SHAPE only. A
+// random-looking 32-hex literal would read as a real, workspace-keyed SteVec
+// selector, which `selector_literal_guard` refuses.
+const HEX: &str = "abababababababababababababababab";
 const HEX_LONG: &str = "fbc7a11fc81f2a321553bc06a91f240bb7d8f3a9c6aec445a5ba6793";
-const SELECTOR: &str = "9493d6010fe7845d52149b697729c745";
+const SELECTOR: &str = "00000000000000000000000000000001";
 
 fn ident() -> Value {
     json!({ "t": "users", "c": "email" })

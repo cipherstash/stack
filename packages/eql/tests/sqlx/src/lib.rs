@@ -23,7 +23,6 @@ pub mod property;
 pub mod scalar_domains;
 #[macro_use]
 pub mod scalar_types;
-pub mod selectors;
 
 // Re-export `paste` under a stable path so the `scalar_domain_matrix!` macro
 // can refer to `$crate::paste::paste!` without requiring callers to depend on
@@ -44,7 +43,6 @@ pub use scalar_domains::{
     assert_null, assert_raises, assert_scalar_plaintexts, blocker_msg, commute_op,
     fetch_fixture_payload, sql_string_literal, ScalarDomainSpec, ScalarType, Variant,
 };
-pub use selectors::Selectors;
 
 /// Reset pg_stat_user_functions tracking before tests
 pub async fn reset_function_stats(pool: &PgPool) -> anyhow::Result<()> {

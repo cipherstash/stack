@@ -34,7 +34,8 @@ It also carries the source of five Rust crates published to crates.io,
 **`stack-encrypt-derive`** (`packages/stack-kms`, `packages/stack-encrypt`,
 `packages/stack-encrypt-derive`), and of the **Go module** at
 `languages/golang` (`encrypt` and `auth`, over WASI guests built
-from the stack-* crates), which has no release yet. All of these are in scope
+from the stack-* crates), released by `.github/workflows/release-golang.yml`
+as `languages/golang/vX.Y.Z` tags. All of these are in scope
 for security reports on the same terms as the npm packages above.
 
 The five stack-* crates are licensed under the PolyForm Internal Use License
@@ -57,7 +58,10 @@ production service.
 > `stack-profile`, `stack-kms`, `stack-encrypt` and `stack-encrypt-derive`
 > crates are published from here by `.github/workflows/release-plz.yml` (the
 > first version of each of the last three was published by hand, because
-> crates.io configures Trusted Publishing on an existing crate). EQL moved here at the Phase 5 cutover in
+> crates.io configures Trusted Publishing on an existing crate). The Go module
+> is released from here by `.github/workflows/release-golang.yml`, as
+> `languages/golang/vX.Y.Z` tags that `go get` fetches through the Go module
+> proxy. EQL moved here at the Phase 5 cutover in
 > `docs/plans/2026-08-13-eql-monorepo-absorption.md`, and the auth packages and
 > the two crates at the arming PR of the stack-* crates import. Releases made
 > before those moves were built elsewhere: `@cipherstash/eql@3.0.5` and earlier
@@ -222,13 +226,13 @@ We mitigate this by:
 
 - Explicitly disabling all caching in every workflow that publishes an artefact
   — `release.yml`, the reusables it calls (`_build-ffi-artifacts.yml`,
-  `_build-eql-sql.yml`, `_build-eql-docs.yml`), `release-plz.yml` and
-  `release-postgres-eql-image.yml`
+  `_build-eql-sql.yml`, `_build-eql-docs.yml`), `release-plz.yml`,
+  `release-postgres-eql-image.yml` and `release-golang.yml`
 - Automated checks for disabled caching on high-risk workflows
   (`scripts/lint-no-workflow-caching.mjs`), working from an allowlist of audited
   actions rather than a denylist of cache actions — so an action it has never
   seen is a finding by default. The cost is accepted: four EQL release jobs
-  compile Rust with no cache restore.
+  and the Go release's build job compile Rust with no cache restore.
 
 [1]: https://adnanthekhan.com/2024/05/06/the-monsters-in-your-build-cache-github-actions-cache-poisoning/
 

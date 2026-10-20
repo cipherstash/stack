@@ -1,0 +1,16 @@
+# Appended to ImpactGate defaults. Production generators remain eligible.
+ignore:
+  - '**/dist/**'
+  - 'dist/**'
+  - '**/target/**'
+  - 'target/**'
+  - '**/generated/**'
+  - 'generated/**'
+  - '**/*.generated.*'
+  - '**/*.gen.*'
+  - '**/*.d.ts'
+  - '**/node_modules/**'
+  - '**/vendor/**'
+  # Committed Go bindings carry DO NOT EDIT generated headers.
+  - '**/*_stash.go'
+  - '**/*_gen.go'

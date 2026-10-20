@@ -217,6 +217,12 @@ function computeDoneMigrate(obs: ColumnObservation): number {
   // shorter (no cut-over), so its terminal phases map one lower.
   switch (obs.phase) {
     case 'dropped':
+    // Reverse (`stash decrypt`) phases are keyed by the encrypted column and
+    // never reach this forward lookup; if one does, the forward ladder is done.
+    case 'decrypt-dual-writing':
+    case 'decrypting':
+    case 'decrypted':
+    case 'encrypted-dropped':
       return isV3 ? 4 : 5
     case 'cut-over':
       return 4

@@ -536,7 +536,7 @@ jobs:
           workspaces: packages/eql
           shared-key: sqlx-tests
           save-if: false
-      - name: Validate v2.2 / v2.3 payload schemas
+      - name: Validate v2.2 / v2.3 payload schemas, refuse pinned selectors
         run: |
           mise run test:schema
 

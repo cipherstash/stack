@@ -1770,6 +1770,7 @@ describe('every job that compiles Rust restores the shared cache', () => {
     ).toEqual([
       '.github/workflows/_build-eql-docs.yml (publish-docs)',
       '.github/workflows/_build-eql-sql.yml (build)',
+      '.github/workflows/release-golang.yml (build)',
       '.github/workflows/release-postgres-eql-image.yml (build-sql)',
       '.github/workflows/release.yml (prerelease-eql-npm)',
     ])

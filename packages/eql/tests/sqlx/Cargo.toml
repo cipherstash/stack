@@ -17,7 +17,7 @@ jsonschema = { version = "0.46.4", default-features = false }
 # The published client is the encryption oracle for fixtures and fresh e2e
 # queries. Pin it exactly so its SteVec envelope cannot drift independently of
 # the strict bindings and SQL contract tested in this repository.
-cipherstash-client = { version = "=0.42.0", features = ["tokio"] }
+cipherstash-client = { version = "=0.42.3", features = ["tokio"] }
 # chrono is already in the tree transitively (cipherstash-client / ore-rs); pin
 # it as a direct dependency so the harness can name `chrono::NaiveDate` for the
 # `date` scalar (Encode/Decode/Type come from the sqlx `chrono` feature above).

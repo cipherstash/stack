@@ -1,5 +1,3 @@
-import fs from 'node:fs'
-import path from 'node:path'
 import {
   appendEvent,
   countUnencrypted,
@@ -9,11 +7,14 @@ import {
   setManifestTargetPhase,
 } from '@cipherstash/migrate'
 import * as p from '@clack/prompts'
-import { detectDrizzle } from '@/commands/db/detect.js'
 import { detectPackageManager, runnerCommand } from '@/commands/init/utils.js'
 import { loadStashConfig } from '@/config/index.js'
 import { createPgClient } from '@/db/client.js'
-import { scaffoldDrizzleMigration } from './drizzle-helper.js'
+import {
+  buildMigrationStem,
+  sqlLiteral,
+  writeMigrationFile,
+} from './lib/migration-file.js'
 import { explainUnresolved, resolveColumnLifecycle } from './lib/resolve-eql.js'
 
 /**
@@ -156,39 +157,15 @@ export async function dropCommand(options: DropCommandOptions) {
       options.column,
       encryptedColumn,
     )
-    const migrationStem = buildMigrationStem(options.table, plaintextToDrop)
-
-    const cwd = process.cwd()
-    const migrationsDir = options.migrationsDir ?? 'drizzle'
-    const isDrizzle = detectDrizzle(cwd)
-    let filePath: string
-    let nextStep: string
-
-    if (isDrizzle) {
-      // Scaffold via drizzle-kit so the migration is journaled + snapshotted.
-      // Without this, the file ships but `drizzle-kit migrate` never picks it
-      // up because the journal doesn't reference it.
-      const result = await scaffoldDrizzleMigration({
-        name: migrationStem,
-        outDir: migrationsDir,
-        sql: dropSql,
-      })
-      filePath = result.path
-      nextStep = `Apply with your usual Drizzle migrate command:\n  ${runnerCommand(detectPackageManager(), 'drizzle-kit migrate')}`
-    } else {
-      // Non-Drizzle fallback: emit a timestamped SQL file the user
-      // applies with whichever migration tool they're running.
-      const dirAbs = path.resolve(cwd, migrationsDir)
-      fs.mkdirSync(dirAbs, { recursive: true })
-      const ts = new Date()
-        .toISOString()
-        .replace(/[-:.TZ]/g, '')
-        .slice(0, 14)
-      const fileName = `${ts}_${migrationStem}.sql`
-      filePath = path.join(dirAbs, fileName)
-      fs.writeFileSync(filePath, dropSql, 'utf-8')
-      nextStep = `Review the migration, then apply with your migration tool:\n  - prisma migrate deploy\n  - psql -f ${fileName}`
-    }
+    const {
+      filePath,
+      nextStep,
+      drizzleScaffolded: isDrizzle,
+    } = await writeMigrationFile({
+      stem: buildMigrationStem('drop', options.table, plaintextToDrop),
+      sql: dropSql,
+      migrationsDir: options.migrationsDir,
+    })
 
     await appendEvent(client, {
       tableName: options.table,
@@ -242,7 +219,7 @@ function buildV3DropSql(
   plaintextColumn: string,
   encryptedColumn: string,
 ): string {
-  const lit = (s: string) => s.replace(/'/g, "''")
+  const lit = sqlLiteral
   const qualifiedTable = qualifyTable(table)
   const quotedPlaintext = quoteIdent(plaintextColumn)
   const quotedEncrypted = quoteIdent(encryptedColumn)
@@ -273,15 +250,4 @@ BEGIN
 END
 $stash_drop$;
 `
-}
-
-/** Filesystem- and drizzle-kit-safe name derived from untrusted identifiers. */
-function buildMigrationStem(...identifiers: string[]): string {
-  const sanitized = identifiers
-    .map((identifier) =>
-      identifier.replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, ''),
-    )
-    .filter(Boolean)
-    .join('_')
-  return `drop_${sanitized || 'column'}`
 }

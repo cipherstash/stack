@@ -11,8 +11,8 @@
 //! `scalar_types!` list — and its test names live under `jsonb_entry::…`,
 //! validated by `test:matrix:inventory:jsonb_entry` (NOT the scalar inventory).
 
-use eql_tests::fixtures::v3_doc_integer::SELECTOR;
-use eql_tests::jsonb_entry::JsonbEntryInteger;
+use eql_tests::fixtures::v3_doc_integer::field_op_selector;
+use eql_tests::jsonb_entry::{entry_column_expr, JsonbEntryInteger};
 use eql_tests::scalar_domains::ScalarType;
 
 eql_tests::jsonb_entry_matrix! {
@@ -22,12 +22,16 @@ eql_tests::jsonb_entry_matrix! {
 }
 
 // ----------------------------------------------------------------------------
-// Entry-specific structural invariant. Pins that the pinned SELECTOR extracts a
-// real, `op`-carrying entry from every fixture row — a wrong selector would make
-// every matrix comparison vacuous via NULL extraction rather than failing.
+// Entry-specific structural invariant. Pins that the matrix's access path
+// (`column_expr`, the literal lookup of the fixture's `$.field` op selector)
+// extracts a real, `op`-carrying entry from every fixture row — a missing entry
+// would make every matrix comparison vacuous via NULL extraction rather than
+// failing.
 // ----------------------------------------------------------------------------
 #[sqlx::test(fixtures(path = "../../fixtures", scripts("v3_doc_integer")))]
 async fn jsonb_entry_integer_fixture_shape(pool: sqlx::PgPool) -> anyhow::Result<()> {
+    let sel = field_op_selector(&pool).await?;
+    let col = <JsonbEntryInteger as ScalarType>::column_expr(&pool).await?;
     let n = <JsonbEntryInteger as ScalarType>::fixture_values().len() as i64;
 
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fixtures.v3_doc_integer")
@@ -47,16 +51,16 @@ async fn jsonb_entry_integer_fixture_shape(pool: sqlx::PgPool) -> anyhow::Result
         "ids must be sequential from 1: got {ids:?}",
     );
 
-    // Every row's entry at the selector is non-NULL — guards against a wrong
-    // SELECTOR silently hollowing out the matrix.
+    // Every row's entry at the selector is non-NULL — guards against a row
+    // missing its `$.field` entry silently hollowing out the matrix.
     let null_entries: i64 = sqlx::query_scalar(&format!(
-        "SELECT COUNT(*) FROM fixtures.v3_doc_integer WHERE (payload -> '{SELECTOR}'::text) IS NULL",
+        "SELECT COUNT(*) FROM fixtures.v3_doc_integer WHERE ({col}) IS NULL",
     ))
     .fetch_one(&pool)
     .await?;
     anyhow::ensure!(
         null_entries == 0,
-        "{null_entries} rows have a NULL entry at SELECTOR — wrong selector for $.field?",
+        "{null_entries} rows have a NULL entry at the $.field op selector {sel}",
     );
 
     // Every extracted entry is a valid jsonb_entry payload AND carries `op`
@@ -64,20 +68,20 @@ async fn jsonb_entry_integer_fixture_shape(pool: sqlx::PgPool) -> anyhow::Result
     // `eql_v3.ord_term` returns SQL NULL for an op-less entry).
     let invalid: i64 = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM fixtures.v3_doc_integer \
-         WHERE NOT public.eql_v3_is_valid_ste_vec_entry_payload((payload -> '{SELECTOR}'::text)::jsonb) \
-            OR eql_v3.ord_term((payload -> '{SELECTOR}'::text)::public.eql_v3_json_entry) IS NULL",
+         WHERE NOT public.eql_v3_is_valid_ste_vec_entry_payload(({col})::jsonb) \
+            OR eql_v3.ord_term(({col})::public.eql_v3_json_entry) IS NULL",
     ))
     .fetch_one(&pool)
     .await?;
     anyhow::ensure!(
         invalid == 0,
-        "{invalid} rows have an invalid or op-less entry at SELECTOR",
+        "{invalid} rows have an invalid or op-less entry at the $.field op selector {sel}",
     );
 
     // Distinct op terms == row count (distinct plaintexts → distinct CLLW-OPE
     // leaves), so the correctness/ordering oracle has real discrimination.
     let distinct_op: i64 = sqlx::query_scalar(&format!(
-        "SELECT COUNT(DISTINCT ((payload -> '{SELECTOR}'::text)::jsonb ->> 'op')) \
+        "SELECT COUNT(DISTINCT (({col})::jsonb ->> 'op')) \
          FROM fixtures.v3_doc_integer",
     ))
     .fetch_one(&pool)
@@ -91,45 +95,73 @@ async fn jsonb_entry_integer_fixture_shape(pool: sqlx::PgPool) -> anyhow::Result
 }
 
 // ----------------------------------------------------------------------------
-// Selector drift guard. The whole entry suite is bound to ONE CipherStash
-// workspace: a SteVec selector is a keyed MAC over (workspace keyset,
-// STE_VEC_PREFIX, path), so regenerating `v3_doc_integer` against a different
-// keyset (rotated/changed CS_WORKSPACE_CRN / CS_CLIENT_KEY) re-pins the
-// `$.field` selector. This reads the LIVE selector from the loaded fixture and
-// asserts it equals the pinned `SELECTOR`, so drift surfaces as one
-// self-explaining, copy-pasteable re-pin message instead of ~40 confusing
-// NULL-extraction failures across the matrix. Supporting multiple workspaces
-// would require runtime selector resolution, which the static
-// `ScalarType::column_expr()` seam cannot do — out of scope here.
+// Selector shape guard. A SteVec selector is a keyed MAC over (workspace keyset,
+// STE_VEC_PREFIX, path), so the `$.field` selector differs per CipherStash
+// workspace and is never pinned: every test reads it from the loaded fixture
+// (`field_op_selector`), and the matrix's `column_expr` embeds it as the literal
+// `payload -> '<sel>'::text`. What stays checkable is the SHAPE that makes the
+// lookup unambiguous: exactly one op-carrying selector in the fixture. This test
+// fails, naming every candidate, when that stops holding, instead of leaving it
+// to surface as ~40 confusing failures across the matrix. It also pins that the
+// matrix's `column_expr` is the literal lookup of exactly that selector, not a
+// subquery or a different selector. That the access path reaches a valid,
+// `op`-carrying entry on every row is `jsonb_entry_integer_fixture_shape`, which
+// a subquery returning the same entry would pass too. Whether a keyset and path
+// still produce the same selector bytes is pinned in
+// `packages/eql/tests/encryption`.
 // ----------------------------------------------------------------------------
 #[sqlx::test(fixtures(path = "../../fixtures", scripts("v3_doc_integer")))]
-async fn jsonb_entry_integer_selector_matches_fixture(pool: sqlx::PgPool) -> anyhow::Result<()> {
-    // The `$.field` CLLW-OPE entry is the sv element carrying `op`. Cast the
-    // `public.eql_v3_json_search` payload to bare jsonb FIRST so `-> 'sv'` is the native array
-    // accessor, not the custom `public.eql_v3_json_search -> text` selector-lookup operator.
-    let live: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT elem ->> 's' \
-         FROM fixtures.v3_doc_integer, \
-              jsonb_array_elements(payload::jsonb -> 'sv') AS elem \
-         WHERE elem ? 'op'",
-    )
-    .fetch_all(&pool)
-    .await?;
+async fn jsonb_entry_integer_field_selector_is_unique(pool: sqlx::PgPool) -> anyhow::Result<()> {
+    let sel = field_op_selector(&pool).await?;
+    let col = <JsonbEntryInteger as ScalarType>::column_expr(&pool).await?;
+    anyhow::ensure!(
+        col == entry_column_expr(&sel),
+        "column_expr must be the literal lookup of the fixture's $.field op \
+         selector, `{}`; got `{col}`",
+        entry_column_expr(&sel),
+    );
+    Ok(())
+}
 
+// ----------------------------------------------------------------------------
+// Reading the whole document instead of the entry fails loudly. Every entry
+// matrix arm casts its column to `public.eql_v3_json_entry`, whose CHECK
+// requires string `s` and `c` and admits only entry keys; a SteVec document has
+// neither at its root. So an arm that reads bare `payload` where it should read
+// `column_expr` raises a check violation rather than comparing documents. This
+// pins that safety net: the matrix relies on it in place of a type-level
+// guarantee that every fixture-reading arm resolves `column_expr`.
+// ----------------------------------------------------------------------------
+#[sqlx::test(fixtures(path = "../../fixtures", scripts("v3_doc_integer")))]
+async fn jsonb_entry_integer_document_is_not_an_entry(pool: sqlx::PgPool) -> anyhow::Result<()> {
+    let n = <JsonbEntryInteger as ScalarType>::fixture_values().len() as i64;
+
+    // Control: the resolved entry read casts on every row.
+    let col = <JsonbEntryInteger as ScalarType>::column_expr(&pool).await?;
+    let entries: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(({col})::public.eql_v3_json_entry) FROM fixtures.v3_doc_integer",
+    ))
+    .fetch_one(&pool)
+    .await?;
     anyhow::ensure!(
-        live.len() == 1,
-        "expected exactly one distinct $.field op-selector in v3_doc_integer, got {live:?}",
+        entries == n,
+        "the entry read must cast on all {n} rows, got {entries}",
     );
-    let live = &live[0];
+
+    // The mistaken read: the whole document, cast as an arm would cast it.
+    let err = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT((payload)::public.eql_v3_json_entry) FROM fixtures.v3_doc_integer",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect_err("a whole SteVec document must not cast to public.eql_v3_json_entry");
+    let code = err.as_database_error().and_then(|e| e.code());
     anyhow::ensure!(
-        live == SELECTOR,
-        "v3_doc_integer $.field op-selector drifted from the pinned constant.\n  \
-         pinned v3_doc_integer::SELECTOR = {SELECTOR}\n  \
-         live fixture selector        = {live}\n\
-         The SteVec selector is keyed by the CipherStash workspace; if the \
-         workspace/keyset changed, re-pin SELECTOR to the live value above and \
-         regenerate the matrix_jsonb_entry_tests snapshot.",
+        code.as_deref() == Some("23514"),
+        "expected SQLSTATE 23514 (check_violation) casting the document to an entry, \
+         got {code:?}: {err}",
     );
+
     Ok(())
 }
 
@@ -140,13 +172,14 @@ async fn jsonb_entry_integer_selector_matches_fixture(pool: sqlx::PgPool) -> any
 // ----------------------------------------------------------------------------
 #[sqlx::test(fixtures(path = "../../fixtures", scripts("v3_doc_integer")))]
 async fn jsonb_entry_integer_ord_ope_injectivity(pool: sqlx::PgPool) -> anyhow::Result<()> {
+    let sel = field_op_selector(&pool).await?;
     let collisions: i64 = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) \
          FROM fixtures.v3_doc_integer a \
          JOIN fixtures.v3_doc_integer b ON a.id < b.id \
          WHERE a.plaintext <> b.plaintext \
-           AND eql_v3.ord_term((a.payload -> '{SELECTOR}'::text)::public.eql_v3_json_entry) \
-             = eql_v3.ord_term((b.payload -> '{SELECTOR}'::text)::public.eql_v3_json_entry)",
+           AND eql_v3.ord_term((a.payload -> '{sel}'::text)::public.eql_v3_json_entry) \
+             = eql_v3.ord_term((b.payload -> '{sel}'::text)::public.eql_v3_json_entry)",
     ))
     .fetch_one(&pool)
     .await?;
@@ -172,7 +205,7 @@ async fn jsonb_entry_integer_ord_ope_injectivity(pool: sqlx::PgPool) -> anyhow::
 // ----------------------------------------------------------------------------
 #[sqlx::test(fixtures(path = "../../fixtures", scripts("v3_doc_integer")))]
 async fn jsonb_entry_integer_index_engages(pool: sqlx::PgPool) -> anyhow::Result<()> {
-    let sel = SELECTOR;
+    let sel = field_op_selector(&pool).await?;
     let pivot = <JsonbEntryInteger as ScalarType>::fixture_values()[0];
     let payload =
         eql_tests::scalar_domains::fetch_fixture_payload::<JsonbEntryInteger>(&pool, pivot).await?;
@@ -227,7 +260,7 @@ async fn jsonb_entry_integer_index_engages(pool: sqlx::PgPool) -> anyhow::Result
 async fn jsonb_entry_integer_aggregate_ignores_op_less_entries(
     pool: sqlx::PgPool,
 ) -> anyhow::Result<()> {
-    let sel = SELECTOR;
+    let sel = field_op_selector(&pool).await?;
     // A valid public.eql_v3_json_entry that is NOT orderable: string s, string c,
     // no `op` term (a term-less value/structural entry — the shape a bool/null/
     // object/array leaf or a value entry takes), so `eql_v3.ord_term(entry)` is NULL.

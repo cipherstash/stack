@@ -135,6 +135,33 @@ export async function columnExists(
 }
 
 /**
+ * The columns of `tableName`'s primary key, in attribute order. Empty when
+ * the table has no primary key or does not exist.
+ *
+ * Resolves through {@link REGCLASS_SQL}, so an unqualified name follows
+ * `search_path` and stays case-exact. Matching `relname` in every schema
+ * instead would merge same-named tables (Supabase's `public.users` and
+ * `auth.users`) into one apparent composite key.
+ */
+export async function primaryKeyColumns(
+  client: ClientBase,
+  tableName: string,
+): Promise<string[]> {
+  const { schema, table } = splitTableName(tableName)
+  const { rows } = await client.query<{ column_name: string }>(
+    `SELECT a.attname AS column_name
+       FROM pg_index i
+       JOIN pg_attribute a
+         ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+      WHERE i.indisprimary
+        AND i.indrelid = ${REGCLASS_SQL}
+      ORDER BY a.attnum ASC`,
+    [table, schema],
+  )
+  return rows.map((row) => row.column_name)
+}
+
+/**
  * Every EQL-domain column on a table, classified. The EQL types are
  * self-describing, so this is the ground truth for "which columns on this
  * table are encrypted, and under which generation" — no naming convention
@@ -233,4 +260,121 @@ export async function resolveEncryptedColumn(
 ): Promise<ResolvedEncryptedColumn | null> {
   const candidates = await listEncryptedColumns(client, tableName)
   return pickEncryptedColumn(candidates, plaintextColumn, hint)
+}
+
+/**
+ * The column's declared type as Postgres itself renders it
+ * (`format_type(atttypid, atttypmod)`, e.g. `character varying(255)`,
+ * `timestamp with time zone`, `jsonb`), or `null` when the column does not
+ * exist.
+ *
+ * The reverse backfill casts every decrypted value to this exact string, so it
+ * honours whatever type the user actually gave the plaintext twin — a
+ * `varchar(255)` instead of the suggested `text`, say — rather than the type
+ * the CLI would have proposed. `format_type` output is designed to be valid
+ * type syntax, quoting included, which is why it is safe to splice.
+ */
+export async function columnSqlType(
+  client: ClientBase,
+  tableName: string,
+  columnName: string,
+): Promise<string | null> {
+  const { schema, table } = splitTableName(tableName)
+  const { rows } = await client.query<{ sql_type: string }>(
+    `SELECT format_type(a.atttypid, a.atttypmod) AS sql_type
+       FROM pg_attribute a
+      WHERE a.attrelid = ${REGCLASS_SQL}
+        AND a.attname = $3
+        AND a.attnum > 0
+        AND NOT a.attisdropped`,
+    [table, schema, columnName],
+  )
+  return rows[0]?.sql_type ?? null
+}
+
+/** An index that depends on a column, as {@link listColumnIndexes} reports it. */
+export interface ColumnIndexInfo {
+  /** Schema the index lives in. */
+  schema: string
+  /** The index's own name. */
+  name: string
+  /** `pg_get_indexdef` output, for display. */
+  definition: string
+}
+
+/**
+ * Every index that depends on `columnName` — plain column indexes AND
+ * expression indexes over it (an EQL functional index such as
+ * `eql_v3.ord_term(email_encrypted)` references the column only through its
+ * expression, so `indkey` alone would miss it; `pg_depend` records both).
+ *
+ * Used by `stash decrypt drop` to drop the EQL-term indexes explicitly and
+ * name them, rather than leaving them to `DROP COLUMN`'s implicit cascade.
+ */
+export async function listColumnIndexes(
+  client: ClientBase,
+  tableName: string,
+  columnName: string,
+): Promise<ColumnIndexInfo[]> {
+  const { schema, table } = splitTableName(tableName)
+  const { rows } = await client.query<{
+    schema: string
+    name: string
+    definition: string
+  }>(
+    `SELECT DISTINCT n.nspname AS schema,
+            ic.relname AS name,
+            pg_get_indexdef(i.indexrelid) AS definition
+       FROM pg_index i
+       JOIN pg_class ic ON ic.oid = i.indexrelid
+       JOIN pg_namespace n ON n.oid = ic.relnamespace
+       JOIN pg_attribute a
+         ON a.attrelid = i.indrelid
+        AND a.attname = $3
+        AND a.attnum > 0
+        AND NOT a.attisdropped
+       JOIN pg_depend d
+         ON d.classid = 'pg_class'::regclass
+        AND d.objid = i.indexrelid
+        AND d.refclassid = 'pg_class'::regclass
+        AND d.refobjid = i.indrelid
+        AND d.refobjsubid = a.attnum
+      WHERE i.indrelid = ${REGCLASS_SQL}
+      ORDER BY ic.relname`,
+    [table, schema, columnName],
+  )
+  return rows
+}
+
+/**
+ * SQL predicate (over `pg_attribute a`, `pg_type t`, `pg_class c`) matching a
+ * user-visible relation column whose type is an EQL v3 domain, or an array of
+ * one. Shared by {@link countEqlColumnsInDatabase} and the apply-time recheck
+ * `stash decrypt drop --uninstall-eql` embeds in its migration, so the CLI's
+ * check and the migration's check cannot disagree.
+ */
+export const EQL_COLUMN_PREDICATE_SQL = `a.attnum > 0
+         AND NOT a.attisdropped
+         AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+         AND (t.typname LIKE 'eql\\_v3\\_%' OR t.typname LIKE '\\_eql\\_v3\\_%')`
+
+/**
+ * How many columns in the WHOLE database (every schema) are typed with an EQL
+ * v3 domain. Uninstalling EQL v3 drops its schemas with `CASCADE`, which
+ * removes every such column along with the domains — so `stash decrypt drop
+ * --uninstall-eql` refuses unless the column it is dropping is the last one.
+ * Legacy `eql_v2_encrypted` columns are not counted: the v3 uninstall does not
+ * touch the v2 schema they depend on.
+ */
+export async function countEqlColumnsInDatabase(
+  client: ClientBase,
+): Promise<number> {
+  const { rows } = await client.query<{ count: string }>(
+    `SELECT count(*)::text AS count
+       FROM pg_attribute a
+       JOIN pg_type t ON t.oid = a.atttypid
+       JOIN pg_class c ON c.oid = a.attrelid
+      WHERE ${EQL_COLUMN_PREDICATE_SQL}`,
+  )
+  return Number(rows[0]?.count ?? 0)
 }

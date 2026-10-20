@@ -1,5 +1,26 @@
-import { latestByColumn } from '@cipherstash/migrate'
+import {
+  latestByColumn,
+  type MigrationStateRow,
+  primaryKeyColumns,
+  progress,
+} from '@cipherstash/migrate'
 import type pg from 'pg'
+
+/**
+ * Whether `err` says `cipherstash.cs_migrations` (or its schema) does not
+ * exist yet: the pre-install case, which every rollout reader treats as "no
+ * events" so the commands stay readable on a fresh project.
+ *
+ * Keyed on the SQLSTATE (`42P01` undefined_table, `3F000`
+ * invalid_schema_name), never the message: "permission denied for table
+ * cs_migrations" names the table too, and reading it as "no history" would
+ * hide an open migration from every refusal that checks for one.
+ */
+function isMissingMigrationsTable(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false
+  const code: unknown = Reflect.get(err, 'code')
+  return code === '42P01' || code === '3F000'
+}
 
 /**
  * `latestByColumn` from `@cipherstash/migrate`, but tolerant of the
@@ -9,20 +30,29 @@ import type pg from 'pg'
  */
 export async function latestByColumnSafe(
   client: pg.ClientBase,
-): Promise<
-  ReturnType<typeof latestByColumn> extends Promise<infer T> ? T : never
-> {
+): Promise<Awaited<ReturnType<typeof latestByColumn>>> {
   try {
-    return (await latestByColumn(client)) as Awaited<
-      ReturnType<typeof latestByColumn>
-    >
+    return await latestByColumn(client)
   } catch (err) {
-    if (
-      err instanceof Error &&
-      /cs_migrations|schema "cipherstash"/i.test(err.message)
-    ) {
-      return new Map() as Awaited<ReturnType<typeof latestByColumn>>
-    }
+    if (isMissingMigrationsTable(err)) return new Map()
+    throw err
+  }
+}
+
+/**
+ * `progress` from `@cipherstash/migrate` — the latest event for one column —
+ * but `null` rather than a throw when `cipherstash.cs_migrations` doesn't
+ * exist yet, as {@link latestByColumnSafe} does.
+ */
+export async function progressSafe(
+  client: pg.ClientBase,
+  table: string,
+  column: string,
+): Promise<MigrationStateRow | null> {
+  try {
+    return await progress(client, table, column)
+  } catch (err) {
+    if (isMissingMigrationsTable(err)) return null
     throw err
   }
 }
@@ -127,4 +157,28 @@ export async function fetchPhysicalColumns(
     // enough to swallow rather than crash the read-only status path.
   }
   return out
+}
+
+/**
+ * The table's single-column primary key, for keyset pagination. Throws an
+ * author-facing error for a table with no PK or a composite one — both
+ * backfill directions then ask for `--pk-column`.
+ */
+export async function detectPkColumn(
+  db: pg.ClientBase,
+  tableName: string,
+): Promise<string> {
+  const columns = await primaryKeyColumns(db, tableName)
+  const [only] = columns
+  if (only === undefined) {
+    throw new Error(
+      `Could not detect a primary key on ${tableName}. Pass --pk-column <name>.`,
+    )
+  }
+  if (columns.length > 1) {
+    throw new Error(
+      `${tableName} has a composite primary key; composite keys are not yet supported. Pass --pk-column <name> to override.`,
+    )
+  }
+  return only
 }

@@ -13,7 +13,7 @@ thiserror = "2"
 quote = "1"
 proc-macro2 = "1"
 syn = { version = "2", features = ["full"] }
-prettyplease = "=0.2.37"
+prettyplease = "0.2"
 
 [[bin]]
 name = "eql-codegen"

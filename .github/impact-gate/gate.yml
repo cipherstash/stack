@@ -1,0 +1,2 @@
+# Explicit policy prevents a checkout-local root config changing CI analysis.
+cognitive_max: null

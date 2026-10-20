@@ -1,7 +1,7 @@
 //! SteVec **entry** view type for the behaviour matrix. A `JsonbEntryInteger`
 //! reuses the `i32` plaintext oracle (`expected_forward`, pivots,
 //! `fixture_values`) but reaches its comparable value by extracting the entry
-//! at `v3_doc_integer::SELECTOR` and casting to `public.eql_v3_json_entry`, so the
+//! at the fixture's `$.field` op selector and casting to `public.eql_v3_json_entry`, so the
 //! matrix's correctness/ordering/null/order-by/count/index generators run
 //! against jsonb-entry comparisons instead of whole-column scalar casts.
 //!
@@ -30,11 +30,28 @@ impl sqlx::Type<sqlx::Postgres> for JsonbEntryInteger {
 }
 
 impl<'r> sqlx::Decode<'r, sqlx::Postgres> for JsonbEntryInteger {
+    /// Decodes the wrapped integer, the same as `i32`.
     fn decode(value: sqlx::postgres::PgValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
         Ok(JsonbEntryInteger(
             <i32 as sqlx::Decode<sqlx::Postgres>>::decode(value)?,
         ))
     }
+}
+
+/// The entry-extraction expression for `selector`: `payload -> '<sel>'::text`,
+/// the form a customer writes. `->` already yields `public.eql_v3_json_entry`,
+/// so the call sites' `::public.eql_v3_json_entry` cast is a no-op. The
+/// selector operand is explicitly typed as text so Postgres resolves the
+/// `public.eql_v3_json_search -> text` operator instead of native jsonb path
+/// lookup. Parenthesised by the call sites (`({col})::{d}`).
+///
+/// `selector` comes from the fixture (a hex MAC); it is quoted as a SQL string
+/// literal so a stray quote cannot escape it.
+pub fn entry_column_expr(selector: &str) -> String {
+    format!(
+        "payload -> {}::text",
+        crate::scalar_domains::sql_string_literal(selector)
+    )
 }
 
 /// Fixture values: integer's list, wrapped. Materialised once into a `LazyLock`
@@ -59,7 +76,7 @@ impl ScalarType for JsonbEntryInteger {
 
     /// The scalar-shaped document fixture, not `fixtures.eql_v3_integer`.
     fn fixture_table_name() -> String {
-        "fixtures.v3_doc_integer".to_string()
+        v3_doc_integer::TABLE.to_string()
     }
 
     /// Single entry domain, variant-independent.
@@ -67,13 +84,15 @@ impl ScalarType for JsonbEntryInteger {
         "public.eql_v3_json_entry".to_string()
     }
 
-    /// Extract the entry at the pinned selector. `->` already yields
-    /// `public.eql_v3_json_entry`; the call sites' `::public.eql_v3_json_entry` cast is
-    /// a no-op. The selector literal is explicitly typed as text so Postgres
-    /// resolves the `public.eql_v3_json_search -> text` operator instead of native jsonb path
-    /// lookup. Parenthesised by the call sites (`({col})::{d}`).
-    fn column_expr() -> String {
-        format!("payload -> '{}'::text", v3_doc_integer::SELECTOR)
+    /// Extract the entry at the `$.field` op selector of the LOADED fixture,
+    /// as the literal `payload -> '<sel>'::text` customers write (see
+    /// [`entry_column_expr`]). The selector is keyed by the CipherStash
+    /// workspace, so it is read from the fixture
+    /// ([`v3_doc_integer::field_op_selector`], which fails naming every
+    /// candidate unless exactly one matches) rather than pinned.
+    async fn column_expr(pool: &sqlx::PgPool) -> anyhow::Result<String> {
+        let selector = v3_doc_integer::field_op_selector(pool).await?;
+        Ok(entry_column_expr(&selector))
     }
 
     fn to_sql_literal(value: &Self) -> String {
@@ -121,6 +140,7 @@ impl OrderedScalar for JsonbEntryInteger {
 mod tests {
     use super::*;
 
+    /// The entry oracle is the integer oracle, wrapped.
     #[test]
     fn delegates_oracle_to_integer() {
         // Same forward result set as i32 for a representative op/pivot.
@@ -132,12 +152,47 @@ mod tests {
         assert_eq!(got, want);
     }
 
+    /// The matrix's entry access path is the literal selector lookup a
+    /// customer writes, `payload -> '<sel>'::text`, not a subquery and not the
+    /// bare `payload` default. The forged selector is visibly fake.
     #[test]
-    fn extracts_entry_at_selector() {
+    fn entry_column_expr_is_the_literal_selector_lookup() {
         assert_eq!(
-            <JsonbEntryInteger as ScalarType>::column_expr(),
-            format!("payload -> '{}'::text", v3_doc_integer::SELECTOR),
+            entry_column_expr("00000000000000000000000000000001"),
+            "payload -> '00000000000000000000000000000001'::text",
         );
+        // A quote in the selector stays inside the literal.
+        assert_eq!(entry_column_expr("a'b"), "payload -> 'a''b'::text");
+    }
+
+    /// `JsonbEntryInteger::column_expr` queries the database rather than
+    /// returning a static expression: against a pool that reaches no database
+    /// it fails with the pool's connection error. (The scalar default, by
+    /// contrast, succeeds against the same pool — see
+    /// `scalar_domains::seam_tests`.) This proves only that a query is made,
+    /// so any `sqlx::Error` will do: whether the host refuses the connect
+    /// (retried until `PoolTimedOut`) or forbids it (an immediate `Io` error)
+    /// is not this test's business. That the expression is the literal lookup
+    /// of the selector `field_op_selector` reads from the fixture is the
+    /// `ensure` in `jsonb_entry_integer_field_selector_is_unique`
+    /// (`tests/encrypted_domain/jsonb_entry.rs`), against the live fixture.
+    #[tokio::test]
+    async fn column_expr_reads_the_selector_from_the_fixture() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(100))
+            .connect_lazy("postgres://unused@127.0.0.1:1/none")
+            .unwrap();
+        let err = <JsonbEntryInteger as ScalarType>::column_expr(&pool)
+            .await
+            .expect_err("column_expr must query the database for its selector");
+        assert!(
+            err.downcast_ref::<sqlx::Error>().is_some(),
+            "column_expr must fail reaching the database, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn entry_domain_and_ord_extractor() {
         assert_eq!(
             <JsonbEntryInteger as ScalarType>::sql_domain(Variant::Ord),
             "public.eql_v3_json_entry",

@@ -868,13 +868,17 @@ macro_rules! __scalar_matrix_correctness_case {
                 pool: sqlx::PgPool,
             ) -> anyhow::Result<()> {
                 let spec = $crate::__scalar_matrix_spec!($scalar, $variant);
+                let column_expr =
+                    <$scalar as $crate::scalar_domains::ScalarType>::column_expr(&pool).await?;
                 let pivot: $scalar = $pivot_val;
                 let payload =
-                    $crate::scalar_domains::fetch_fixture_payload::<$scalar>(&pool, pivot.clone()).await?;
+                    $crate::scalar_domains::fetch_fixture_payload_at::<$scalar>(
+                        &pool, &column_expr, pivot.clone(),
+                    ).await?;
                 let lit = $crate::scalar_domains::sql_string_literal(&payload);
                 let predicate = format!(
                     "({col})::{d} {op} {lit}::jsonb::{d}",
-                    col = &spec.column_expr, d = &spec.sql_domain, op = $op,
+                    col = &column_expr, d = &spec.sql_domain, op = $op,
                 );
                 let expected =
                     <$scalar as $crate::scalar_domains::ScalarType>::expected_forward($op, pivot);
@@ -909,9 +913,13 @@ macro_rules! __scalar_matrix_cross_shape_case {
                 pool: sqlx::PgPool,
             ) -> anyhow::Result<()> {
                 let spec = $crate::__scalar_matrix_spec!($scalar, $variant);
+                let column_expr =
+                    <$scalar as $crate::scalar_domains::ScalarType>::column_expr(&pool).await?;
                 let pivot: $scalar = $pivot_val;
                 let payload =
-                    $crate::scalar_domains::fetch_fixture_payload::<$scalar>(&pool, pivot.clone()).await?;
+                    $crate::scalar_domains::fetch_fixture_payload_at::<$scalar>(
+                        &pool, &column_expr, pivot.clone(),
+                    ).await?;
                 let lit = $crate::scalar_domains::sql_string_literal(&payload);
                 let forward_count =
                     <$scalar as $crate::scalar_domains::ScalarType>::expected_forward($op, pivot.clone())
@@ -920,7 +928,7 @@ macro_rules! __scalar_matrix_cross_shape_case {
                     $crate::scalar_domains::commute_op($op), pivot.clone(),
                 ).len() as i64;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let shapes = [
                     ("d_d", format!("({col})::{d} {op} {lit}::jsonb::{d}", op = $op), forward_count),
                     ("d_j", format!("({col})::{d} {op} {lit}::jsonb", op = $op), forward_count),
@@ -2460,6 +2468,8 @@ macro_rules! __scalar_matrix_index_case {
                 pool: sqlx::PgPool,
             ) -> anyhow::Result<()> {
                 let spec = $crate::__scalar_matrix_spec!($scalar, $variant);
+                let column_expr =
+                    <$scalar as $crate::scalar_domains::ScalarType>::column_expr(&pool).await?;
                 // Catalog-derived: the extractor serving this combo's operators
                 // (the SAME `Term::extractor_for_operator` codegen uses). Every
                 // op in a single combo shares one extractor (one functional
@@ -2491,7 +2501,7 @@ macro_rules! __scalar_matrix_index_case {
                 )).execute(&mut *tx).await?;
                 sqlx::query(&format!(
                     "INSERT INTO {table}(plaintext, value) \
-                     SELECT plaintext, ({col})::{d} FROM {fixture}", col = &spec.column_expr, d = &spec.sql_domain, fixture = fixture_table,
+                     SELECT plaintext, ({col})::{d} FROM {fixture}", col = &column_expr, d = &spec.sql_domain, fixture = fixture_table,
                 )).execute(&mut *tx).await?;
                 sqlx::query(&format!(
                     "CREATE INDEX {index} ON {table} USING {using} ({extractor}(value))", using = $using, extractor = extractor,
@@ -2501,8 +2511,9 @@ macro_rules! __scalar_matrix_index_case {
                 sqlx::query("SET LOCAL enable_seqscan = off").execute(&mut *tx).await?;
 
                 let pivot: $scalar = <$scalar as $crate::scalar_domains::ScalarType>::fixture_values()[0].clone();
-                let payload =
-                    $crate::scalar_domains::fetch_fixture_payload::<$scalar>(&pool, pivot).await?;
+                let payload = $crate::scalar_domains::fetch_fixture_payload_at::<$scalar>(
+                    &pool, &column_expr, pivot,
+                ).await?;
                 let lit = $crate::scalar_domains::sql_string_literal(&payload);
 
                 // VALIDITY, NOT PREFERENCE: `enable_seqscan = off` is set
@@ -2611,6 +2622,8 @@ macro_rules! __scalar_matrix_order_by_case {
             ) -> anyhow::Result<()> {
                 use $crate::scalar_domains::{OrderedScalar, ScalarType};
                 let spec = $crate::__scalar_matrix_spec!($scalar, $variant);
+                let column_expr =
+                    <$scalar as $crate::scalar_domains::ScalarType>::column_expr(&pool).await?;
                 let fixture_table = <$scalar as ScalarType>::fixture_table_name();
 
                 let mid: $scalar = <$scalar as OrderedScalar>::mid_pivot();
@@ -2625,7 +2638,7 @@ macro_rules! __scalar_matrix_order_by_case {
                 } else {
                     String::new()
                 };
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let d = &spec.sql_domain;
                 let ord = spec.ord_extractor_expr(&format!("({col})::{d}"));
                 let sql = format!(
@@ -2727,6 +2740,8 @@ macro_rules! __scalar_matrix_order_by_nulls_case {
                 const NULL_ROWS: usize = 3;
 
                 let spec = $crate::__scalar_matrix_spec!($scalar, $variant);
+                let column_expr =
+                    <$scalar as $crate::scalar_domains::ScalarType>::column_expr(&pool).await?;
                 let d = &spec.sql_domain;
                 let table = concat!(
                     "matrix_", stringify!($suite), "_", stringify!($dom_name),
@@ -2751,7 +2766,7 @@ macro_rules! __scalar_matrix_order_by_nulls_case {
                 // Non-NULL rows: every fixture row, carrying its plaintext.
                 sqlx::query(&format!(
                     "INSERT INTO {table}(plaintext, value) \
-SELECT plaintext, ({col})::{d} FROM {fixture}", col = &spec.column_expr, fixture = fixture_table,
+SELECT plaintext, ({col})::{d} FROM {fixture}", col = &column_expr, fixture = fixture_table,
                 )).execute(&mut *tx).await?;
                 // NULL-valued rows: NULL plaintext too, so they surface as None
                 // and their position is what the assertion pins.
@@ -2850,11 +2865,13 @@ macro_rules! __scalar_matrix_order_by_using_case {
                 pool: sqlx::PgPool,
             ) -> anyhow::Result<()> {
                 let spec = $crate::__scalar_matrix_spec!($scalar, $variant);
+                let column_expr =
+                    <$scalar as $crate::scalar_domains::ScalarType>::column_expr(&pool).await?;
                 let fixture_table =
                     <$scalar as $crate::scalar_domains::ScalarType>::fixture_table_name();
                 let sql = format!(
                     "SELECT plaintext FROM {fixture} ORDER BY ({col})::{d} USING {op}",
-                    fixture = fixture_table, col = &spec.column_expr, d = &spec.sql_domain, op = $op,
+                    fixture = fixture_table, col = &column_expr, d = &spec.sql_domain, op = $op,
                 );
                 let err = sqlx::query_scalar::<_, $scalar>(&sql)
                     .fetch_all(&pool)
@@ -2941,8 +2958,10 @@ macro_rules! __scalar_matrix_aggregate_case {
             ) -> anyhow::Result<()> {
                 use $crate::scalar_domains::ScalarType;
                 let spec = $crate::__scalar_matrix_spec!($scalar, $variant);
+                let column_expr =
+                    <$scalar as $crate::scalar_domains::ScalarType>::column_expr(&pool).await?;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let fixture = <$scalar as ScalarType>::fixture_table_name();
                 let extremum: $scalar = <$scalar as ScalarType>::fixture_values()
                     .iter()
@@ -3054,8 +3073,10 @@ macro_rules! __scalar_matrix_aggregate_case {
             ) -> anyhow::Result<()> {
                 use $crate::scalar_domains::ScalarType;
                 let spec = $crate::__scalar_matrix_spec!($scalar, $variant);
+                let column_expr =
+                    <$scalar as $crate::scalar_domains::ScalarType>::column_expr(&pool).await?;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let fixture = <$scalar as ScalarType>::fixture_table_name();
                 let values: &[$scalar] = <$scalar as ScalarType>::fixture_values();
                 anyhow::ensure!(
@@ -3235,8 +3256,10 @@ macro_rules! __scalar_matrix_aggregate_group_by_case {
             ) -> anyhow::Result<()> {
                 use $crate::scalar_domains::ScalarType;
                 let spec = $crate::__scalar_matrix_spec!($scalar, $variant);
+                let column_expr =
+                    <$scalar as $crate::scalar_domains::ScalarType>::column_expr(&pool).await?;
                 let d = &spec.sql_domain;
-                let col = &spec.column_expr;
+                let col = &column_expr;
                 let fixture = <$scalar as ScalarType>::fixture_table_name();
                 let values: &[$scalar] = <$scalar as ScalarType>::fixture_values();
                 anyhow::ensure!(
@@ -3508,6 +3531,8 @@ macro_rules! __scalar_matrix_count_case {
             ) -> anyhow::Result<()> {
                 use $crate::scalar_domains::ScalarType;
                 let spec = $crate::__scalar_matrix_spec!($scalar, $variant);
+                let column_expr =
+                    <$scalar as $crate::scalar_domains::ScalarType>::column_expr(&pool).await?;
                 let d = &spec.sql_domain;
                 let fixture = <$scalar as ScalarType>::fixture_table_name();
                 let expected = <$scalar as ScalarType>::fixture_values().len() as i64;
@@ -3518,7 +3543,7 @@ macro_rules! __scalar_matrix_count_case {
                 )).execute(&mut *tx).await?;
                 sqlx::query(&format!(
                     "INSERT INTO typed_count(value) SELECT ({col})::{d} FROM {fixture}",
-                    col = &spec.column_expr,
+                    col = &column_expr,
                 )).execute(&mut *tx).await?;
 
                 let actual: i64 = sqlx::query_scalar(
@@ -3542,19 +3567,21 @@ macro_rules! __scalar_matrix_count_case {
             ) -> anyhow::Result<()> {
                 use $crate::scalar_domains::ScalarType;
                 let spec = $crate::__scalar_matrix_spec!($scalar, $variant);
+                let column_expr =
+                    <$scalar as $crate::scalar_domains::ScalarType>::column_expr(&pool).await?;
                 let d = &spec.sql_domain;
                 let fixture = <$scalar as ScalarType>::fixture_table_name();
                 let expected = <$scalar as ScalarType>::fixture_values().len() as i64;
 
                 let sql = format!(
                     "SELECT COUNT(({col})::{d}) FROM {fixture}",
-                    col = &spec.column_expr,
+                    col = &column_expr,
                 );
                 let actual: i64 = sqlx::query_scalar(&sql).fetch_one(&pool).await?;
                 anyhow::ensure!(
                     actual == expected,
                     "COUNT(({})::{}) on {}: want {}, got {}; SQL={}",
-                    &spec.column_expr, d, fixture, expected, actual, sql,
+                    &column_expr, d, fixture, expected, actual, sql,
                 );
                 Ok(())
             }
@@ -3593,6 +3620,8 @@ macro_rules! __scalar_matrix_count_distinct_dispatch {
                     // (Runtime guard, NOT a macro ident-match: that is the point of 6C.)
                     return Ok(());
                 };
+                let column_expr =
+                    <$scalar as $crate::scalar_domains::ScalarType>::column_expr(&pool).await?;
                 let fixture = <$scalar as ScalarType>::fixture_table_name();
                 let expected = <$scalar as ScalarType>::fixture_values().len() as i64;
 
@@ -3602,7 +3631,7 @@ macro_rules! __scalar_matrix_count_distinct_dispatch {
                 )).execute(&mut *tx).await?;
                 sqlx::query(&format!(
                     "INSERT INTO distinct_count(value) SELECT ({col})::{d} FROM {fixture}",
-                    col = &spec.column_expr,
+                    col = &column_expr,
                 )).execute(&mut *tx).await?;
 
                 let sql = format!(

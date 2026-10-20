@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   manifestPath,
   readManifest,
+  removeManifestColumn,
   setManifestTargetPhase,
   upsertManifestColumn,
   writeManifest,
@@ -263,6 +264,55 @@ describe('setManifestTargetPhase', () => {
       // No manifest at all — should not throw, should not create.
       await setManifestTargetPhase('users', 'email', 'dropped', tmp)
       expect(await readManifest(tmp)).toBeNull()
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('removeManifestColumn', () => {
+  const column = (name: string) => ({
+    column: name,
+    castAs: 'text' as const,
+    indexes: [],
+    targetPhase: 'dropped' as const,
+  })
+
+  it('removes one column and keeps its siblings', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'cs-manifest-'))
+    try {
+      await writeManifest(
+        { version: 1, tables: { users: [column('email'), column('name')] } },
+        tmp,
+      )
+      expect(await removeManifestColumn('users', 'email', tmp)).toBe(true)
+      const after = await readManifest(tmp)
+      expect(after?.tables.users?.map((c) => c.column)).toEqual(['name'])
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('deletes the table key when its last column goes', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'cs-manifest-'))
+    try {
+      await writeManifest(
+        { version: 1, tables: { users: [column('email')] } },
+        tmp,
+      )
+      await removeManifestColumn('users', 'email', tmp)
+      expect((await readManifest(tmp))?.tables).toEqual({})
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('is a no-op (false) without a manifest or an entry', async () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'cs-manifest-'))
+    try {
+      expect(await removeManifestColumn('users', 'email', tmp)).toBe(false)
+      await writeManifest({ version: 1, tables: {} }, tmp)
+      expect(await removeManifestColumn('users', 'email', tmp)).toBe(false)
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }
