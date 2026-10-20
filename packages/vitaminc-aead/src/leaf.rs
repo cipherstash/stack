@@ -973,16 +973,29 @@ mod tests {
         assert!(checked > 20, "only {checked} scalar vectors");
 
         // A normalized vector reads, and writes back as its canonical bytes.
+        // A typed null is written back as the plain null, as a frame writer
+        // writes it, and its typed form back as itself.
+        let mut typed_nulls = 0;
         for v in corpus["normalized"].as_array().expect("normalized") {
             let name = v["name"].as_str().expect("name");
             let bytes = hex(v["transport"].as_str().expect("transport"));
             let canonical = hex(v["reencode"].as_str().expect("reencode"));
-            let ((ty, value), used) = read(&bytes, Form::Frame).expect(name);
+            let (item, used) = read_item(&bytes, Form::Frame).expect(name);
             assert_eq!(used, bytes.len(), "{name}");
             let mut out = Vec::new();
-            write(ty, value, Form::Frame, &mut out).expect(name);
+            match item {
+                Item::Scalar(ty, value) => write(ty, value, Form::Frame, &mut out).expect(name),
+                Item::TypedNull(ty) => {
+                    write(None, Physical::Null, Form::Frame, &mut out).expect(name);
+                    let mut typed = Vec::new();
+                    write_typed_null(ty, &mut typed);
+                    assert_eq!(typed, bytes, "{name}");
+                    typed_nulls += 1;
+                }
+            }
             assert_eq!(out, canonical, "{name}");
         }
+        assert!(typed_nulls > 5, "only {typed_nulls} typed null vectors");
 
         for v in corpus["malformed"].as_array().expect("malformed") {
             let name = v["name"].as_str().expect("name");
@@ -991,7 +1004,7 @@ mod tests {
                 continue;
             }
             // Refused outright, or a valid scalar followed by trailing bytes.
-            match read(&bytes, Form::Frame) {
+            match read_item(&bytes, Form::Frame) {
                 Err(_) => {}
                 Ok((_, used)) => assert!(used < bytes.len(), "{name}"),
             }
