@@ -36,7 +36,7 @@ use vitaminc_protected::{Controlled, Protected};
 use crate::frame::PassthroughFrame;
 use crate::leaf::{self, ScalarError};
 use crate::plaintext::{
-    Encrypt, Error, Logical, MapSink, Physical, SeqSink, Sink, SourceError, Step,
+    Encrypt, Error, FixedType, Logical, MapSink, Physical, SeqSink, Sink, SourceError, Step,
 };
 use crate::seal::{
     seal_all, seal_all_async, AsyncCipher, Cipher, LeafCount, Node, Pending, SealError,
@@ -271,6 +271,18 @@ impl<E, O: Slot> EncryptSink<E, O> {
             aad: self.aad,
         })))
     }
+
+    /// Plan an absent value of a fixed-width type as one leaf: a typed
+    /// null, as long as a leaf holding a value of the type.
+    fn typed_null_leaf(self, ty: FixedType) -> Result<O::Ok, EncryptError<E>> {
+        shape::scalar(self.depth, None, &Physical::Null, &self.out)?;
+        let mut plaintext = Protected::new(Vec::with_capacity(leaf::typed_null_len(ty)));
+        leaf::write_typed_null(ty, plaintext.risky_inner_mut());
+        Ok(self.out.put(CipherText::Single(Pending {
+            plaintext,
+            aad: self.aad,
+        })))
+    }
 }
 
 fn marker(aad: Context<'static>) -> Pending {
@@ -288,6 +300,10 @@ impl<E, O: Slot> Sink for EncryptSink<E, O> {
 
     fn scalar(self, ty: Option<Logical>, v: Physical<'_>) -> Result<O::Ok, Self::Error> {
         self.leaf(ty, v)
+    }
+
+    fn typed_null(self, ty: FixedType) -> Result<O::Ok, Self::Error> {
+        self.typed_null_leaf(ty)
     }
 
     fn seq(self, len: Option<usize>) -> Result<Self::Seq, Self::Error> {
@@ -473,11 +489,38 @@ mod tests {
 
     #[test]
     fn none_is_a_null_leaf_not_a_marker() {
-        let node = planned(None::<u32>).expect("plans");
+        let node = planned(None::<String>).expect("plans");
         assert!(matches!(node, CipherText::Single(_)));
         let leaves = leaves_with_aad(node, &"ctx".into_aad());
         assert_eq!(leaves[0].0.plaintext.risky_ref(), &[0x00]);
         assert_eq!(leaves[0].1, "ctx".into_aad());
+    }
+
+    #[test]
+    fn a_fixed_width_none_is_a_typed_null_as_long_as_a_some() {
+        let node = planned(None::<u32>).expect("plans");
+        assert!(matches!(node, CipherText::Single(_)));
+        let leaves = leaves_with_aad(node, &"ctx".into_aad());
+        assert_eq!(leaves[0].0.plaintext.risky_ref(), &[0x15, 0x06, 0, 0, 0]);
+        assert_eq!(leaves[0].1, "ctx".into_aad());
+        let some = leaves_with_aad(planned(Some(34u32)).expect("plans"), &"ctx".into_aad());
+        assert_eq!(some[0].0.plaintext.risky_ref().len(), 5);
+    }
+
+    #[test]
+    fn a_typed_null_too_deep_is_refused_like_a_scalar() {
+        use crate::plaintext::{FixedType, Width};
+        let sink = EncryptSink::<Refused, Root> {
+            aad: "ctx".into_aad().into_owned(),
+            out: Root,
+            depth: crate::frame::MAX_DEPTH + 1,
+            _error: PhantomData,
+        };
+        let err = sink
+            .typed_null(FixedType::plain(Width::I8))
+            .err()
+            .expect("too deep");
+        assert!(matches!(err, EncryptError::Shape(_)), "{err:?}");
     }
 
     #[test]
@@ -572,6 +615,10 @@ mod tests {
         type Seq = Self;
         type Map = Self;
         fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), E> {
+            *self.0 += 1;
+            Ok(())
+        }
+        fn typed_null(self, _: FixedType) -> Result<(), E> {
             *self.0 += 1;
             Ok(())
         }

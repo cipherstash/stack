@@ -68,6 +68,8 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
                         <#inner as #krate::typed::Decrypt>::Sink,
                         #wrap #ty_generics,
                     >;
+                    const FIXED: ::core::option::Option<#krate::FixedType> =
+                        <#inner as #krate::typed::Decrypt>::FIXED;
                     fn sink() -> Self::Sink {
                         #krate::typed::Wrapped::new(<#inner as #krate::typed::Decrypt>::sink())
                     }
@@ -211,6 +213,13 @@ fn map_target(
                 ::core::result::Result::Err(#krate::DecodeError::Expected(#expected))
             }
 
+            fn typed_null(
+                self,
+                _: #krate::FixedType,
+            ) -> ::core::result::Result<Self::Ok, Self::Error> {
+                ::core::result::Result::Err(#krate::DecodeError::Expected(#expected))
+            }
+
             fn seq(
                 self,
                 _: ::core::option::Option<usize>,
@@ -298,6 +307,8 @@ fn enum_target(krate: &syn::Path, input: &DeriveInput, variants: &[VariantInfo])
         #[automatically_derived]
         impl #impl_generics #krate::FromScalar for #name #ty_generics #where_clause {
             const EXPECTED: &'static str = #expected;
+            const FIXED: ::core::option::Option<#krate::FixedType> =
+                ::core::option::Option::Some(#krate::FixedType::plain(#krate::Width::U32));
 
             fn from_scalar(
                 __ty: ::core::option::Option<#krate::Logical>,

@@ -512,9 +512,11 @@ mod tests {
             leaves[4].1,
             "ctx".into_aad().for_map_entry("c").for_sequence_element()
         );
-        // The marker is empty; the null leaf is a NULL tag.
+        // The marker is empty; the absent `u32` is a typed null, as long
+        // as the `u32` leaves beside it.
         assert!(leaves[3].0.plaintext.risky_ref().is_empty());
-        assert_eq!(leaves[1].0.plaintext.risky_ref(), &[0x00]);
+        assert_eq!(leaves[1].0.plaintext.risky_ref(), &[0x15, 0x06, 0, 0, 0]);
+        assert_eq!(leaves[0].0.plaintext.risky_ref().len(), 5);
         // And the plan's AAD is what the sealed leaf is bound under.
         let sealed = encrypt(sample(), &Mock, "ctx").expect("encrypts");
         let sealed = leaves_with_aad(sealed, &"ctx".into_aad());

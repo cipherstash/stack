@@ -21,8 +21,10 @@ use std::collections::HashSet;
 use vitaminc_protected::{Controlled, OpaqueDebug, Protected, TimingSafeEq};
 use zeroize::Zeroize;
 
-use crate::leaf::{self, Form, ScalarError};
-use crate::plaintext::{Encrypt, Error, Logical, MapSink, Physical, SeqSink, Sink, SourceError};
+use crate::leaf::{self, Form, Item, ScalarError};
+use crate::plaintext::{
+    Encrypt, Error, FixedType, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
+};
 
 /// Framing tag for a sequence: `ARRAY`, `u32` count, then the elements.
 pub const ARRAY: u8 = 0xF0;
@@ -117,11 +119,11 @@ impl<'a> Cursor<'a> {
         core::str::from_utf8(self.take(len)?).map_err(|_| FrameError)
     }
 
-    fn scalar(&mut self) -> Result<(Option<Logical>, Physical<'a>), FrameError> {
-        let (scalar, used) =
-            leaf::read(&self.buf[self.pos..], Form::Frame).map_err(|_| FrameError)?;
+    fn scalar(&mut self) -> Result<Item<'a>, FrameError> {
+        let (item, used) =
+            leaf::read_item(&self.buf[self.pos..], Form::Frame).map_err(|_| FrameError)?;
         self.pos += used;
-        Ok(scalar)
+        Ok(item)
     }
 
     /// The next whole value node, as its own frame.
@@ -221,10 +223,10 @@ fn visit_node<S: Sink>(c: &mut Cursor<'_>, sink: S) -> Result<S::Ok, S::Error> {
             c.byte().expect(VALIDATED);
             sink.passthrough(c.node(0).expect(VALIDATED))
         }
-        _ => {
-            let (ty, v) = c.scalar().expect(VALIDATED);
-            sink.scalar(ty, v)
-        }
+        _ => match c.scalar().expect(VALIDATED) {
+            Item::Scalar(ty, v) => sink.scalar(ty, v),
+            Item::TypedNull(ty) => sink.typed_null(ty),
+        },
     }
 }
 
@@ -452,6 +454,16 @@ impl<'o> Sink for FrameWriter<'o> {
             ScalarError::Invalid => FrameWriteError::Invalid,
             ScalarError::TooLong | ScalarError::Malformed => FrameWriteError::TooLong,
         })
+    }
+
+    /// Carried as it is, so a host that encrypts from the frame pads it.
+    fn typed_null(self, ty: FixedType) -> Result<(), FrameWriteError> {
+        if self.depth > MAX_DEPTH {
+            return Err(FrameWriteError::TooDeep);
+        }
+        reserve(self.out, leaf::typed_null_len(ty));
+        leaf::write_typed_null(ty, self.out);
+        Ok(())
     }
 
     fn seq(self, len: Option<usize>) -> Result<FrameSeq<'o>, FrameWriteError> {

@@ -77,11 +77,13 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         item_check,
         visit_check,
     } = depth(krate, &input, &shape, attrs.recursive);
+    let (fixed, ref_fixed) = fixed(krate, &input, &shape, attrs.recursive);
 
     Ok(quote! {
         #[automatically_derived]
         impl #impl_generics #krate::Encrypt for #name #ty_generics #where_clause {
             #depth
+            #fixed
 
             fn visit<__S>(#receiver, __sink: __S) -> ::core::result::Result<__S::Ok, __S::Error>
             where
@@ -95,6 +97,7 @@ pub(crate) fn derive(input: DeriveInput) -> Result<TokenStream> {
         #[automatically_derived]
         impl #ref_impl_generics #krate::Encrypt for &'__r #name #ty_generics #ref_where_clause {
             #ref_depth
+            #ref_fixed
 
             fn visit<__S>(self, __sink: __S) -> ::core::result::Result<__S::Ok, __S::Error>
             where
@@ -212,6 +215,39 @@ fn depth(krate: &syn::Path, input: &DeriveInput, shape: &Shape, recursive: bool)
         by_ref: quote!(const DEPTH: ::core::option::Option<usize> = #by_ref;),
         item_check,
         visit_check,
+    }
+}
+
+/// The `FIXED` constants for both impls: what an absent value of the type
+/// is sealed as. A newtype is transparent, so it has its inner type's (by
+/// value and by reference, as `DEPTH` does). A fieldless enum is always a
+/// `u32` leaf. A struct is a map, which has none, and a recursive newtype
+/// keeps the default rather than name its own constant in a cycle.
+fn fixed(
+    krate: &syn::Path,
+    input: &DeriveInput,
+    shape: &Shape,
+    recursive: bool,
+) -> (TokenStream, TokenStream) {
+    let decl = |value: TokenStream| quote!(const FIXED: ::core::option::Option<#krate::FixedType> = #value;);
+    match shape {
+        Shape::Newtype(_) if recursive || names_itself(&input.ident, shape) => {
+            (TokenStream::new(), TokenStream::new())
+        }
+        Shape::Newtype(field) => {
+            let ty = &field.ty;
+            (
+                decl(quote!(<#ty as #krate::Encrypt>::FIXED)),
+                decl(quote!(<&'__r #ty as #krate::Encrypt>::FIXED)),
+            )
+        }
+        Shape::Enum(_) => {
+            let u32 = decl(quote!(::core::option::Option::Some(
+                #krate::FixedType::plain(#krate::Width::U32)
+            )));
+            (u32.clone(), u32)
+        }
+        Shape::Map(_) | Shape::Empty => (TokenStream::new(), TokenStream::new()),
     }
 }
 

@@ -29,8 +29,17 @@
 //!   leap second. It has no count in any unit and is refused.
 //! - A `DECIMAL` with the sign bit set on a zero mantissa reads as zero,
 //!   and zero is always written without the sign.
+//!
+//! An absent value of a fixed-width type is a **typed null**
+//! ([`tags::TYPED_NULL`]), padded to the length of a value of the type so
+//! the two cannot be told apart by length once sealed. It is not a scalar:
+//! [`write_typed_null`] writes one, [`read_item`] and [`read_leaf_item`]
+//! read one, and [`read`] and [`read_leaf`] refuse one, so a reader that
+//! does not know about typed nulls fails closed.
 
-use crate::plaintext::kinds::{Float, Int, Logical, Physical, TimeUnit, MAX_DECIMAL_SCALE};
+use crate::plaintext::kinds::{
+    FixedType, Float, Int, Logical, Physical, TimeUnit, Width, MAX_DECIMAL_SCALE,
+};
 use crate::tags;
 
 /// Which wire form a scalar is in.
@@ -167,6 +176,128 @@ pub fn write_leaf(
     write(ty, v, Form::Leaf, out)
 }
 
+/// Write a typed null of `ty`: [`tags::TYPED_NULL`], the header a value of
+/// `ty` starts with, then zeros, to the length a value of `ty` takes. The
+/// same bytes in either form, since a fixed-width scalar has no length
+/// prefix. Cannot fail: a [`FixedType`] is valid by construction.
+///
+/// # Examples
+///
+/// A null date is as long as a date.
+///
+/// ```
+/// use vitaminc_aead::leaf::{read_leaf_item, write_typed_null, Item, ScalarError};
+/// use vitaminc_aead::plaintext::{FixedType, Logical, Width};
+/// use vitaminc_aead::tags;
+///
+/// let date = FixedType::new(Some(Logical::Date), Width::I32).expect("fixed");
+/// let mut out = Vec::new();
+/// write_typed_null(date, &mut out);
+/// assert_eq!(out, [tags::TYPED_NULL, tags::DATE, 0, 0, 0]);
+/// assert_eq!(read_leaf_item(&out)?, Item::TypedNull(date));
+/// # Ok::<(), ScalarError>(())
+/// ```
+pub fn write_typed_null(ty: FixedType, out: &mut Vec<u8>) {
+    let Header {
+        bytes,
+        len,
+        payload,
+    } = header(ty);
+    out.push(tags::TYPED_NULL);
+    out.extend_from_slice(&bytes[..len]);
+    // One byte of the payload's length went to `TYPED_NULL`. Every
+    // payload here is at least one byte, so this never underflows.
+    out.resize(out.len() + payload - 1, 0);
+}
+
+/// The header a value of a [`FixedType`] starts with, and the length of
+/// the payload after it.
+struct Header {
+    /// The header, in the first `len` bytes.
+    bytes: [u8; 4],
+    len: usize,
+    payload: usize,
+}
+
+fn header(ty: FixedType) -> Header {
+    let width = ty.width();
+    let tag = |tag, payload| Header {
+        bytes: [tag, 0, 0, 0],
+        len: 1,
+        payload,
+    };
+    match ty.logical() {
+        None => tag(width_tag(width), width_payload(width)),
+        Some(Logical::Date) => tag(tags::DATE, 4),
+        Some(Logical::Timestamp(TimeUnit::Nanos)) => tag(tags::TIMESTAMP, 12),
+        Some(Logical::Decimal { .. }) => tag(tags::DECIMAL, 16),
+        Some(logical) => {
+            let (id, param) = logical.to_wire();
+            Header {
+                bytes: [tags::LOGICAL, id, param, width_tag(width)],
+                len: 4,
+                payload: width_payload(width),
+            }
+        }
+    }
+}
+
+/// The tag a plain value of `width` is written with.
+fn width_tag(width: Width) -> u8 {
+    match width {
+        Width::I8 => tags::INT8,
+        Width::I16 => tags::INT16,
+        Width::I32 => tags::INT32,
+        Width::I64 => tags::INT64,
+        Width::I128 => tags::INT128,
+        Width::U8 => tags::UINT8,
+        Width::U16 => tags::UINT16,
+        Width::U32 => tags::UINT32,
+        Width::U64 => tags::UINT64,
+        Width::U128 => tags::UINT128,
+        Width::F32 => tags::FLOAT32,
+        Width::F64 => tags::FLOAT64,
+    }
+}
+
+/// The payload length of a plain value of `width`.
+fn width_payload(width: Width) -> usize {
+    match width {
+        Width::I8 | Width::U8 => 1,
+        Width::I16 | Width::U16 => 2,
+        Width::I32 | Width::U32 | Width::F32 => 4,
+        Width::I64 | Width::U64 | Width::F64 => 8,
+        Width::I128 | Width::U128 => 16,
+    }
+}
+
+/// The width a plain tag is written for, or `None` for a tag that is not a
+/// plain int or float.
+fn tag_width(tag: u8) -> Option<Width> {
+    Some(match tag {
+        tags::INT8 => Width::I8,
+        tags::INT16 => Width::I16,
+        tags::INT32 => Width::I32,
+        tags::INT64 => Width::I64,
+        tags::INT128 => Width::I128,
+        tags::UINT8 => Width::U8,
+        tags::UINT16 => Width::U16,
+        tags::UINT32 => Width::U32,
+        tags::UINT64 => Width::U64,
+        tags::UINT128 => Width::U128,
+        tags::FLOAT32 => Width::F32,
+        tags::FLOAT64 => Width::F64,
+        _ => return None,
+    })
+}
+
+/// The length of a typed null of `ty`, which is the length of a leaf
+/// holding a value of `ty`.
+pub fn typed_null_len(ty: FixedType) -> usize {
+    let Header { len, payload, .. } = header(ty);
+    len + payload
+}
+
 /// An upper bound on the bytes [`write()`] appends for `v` in either form:
 /// an envelope, a tag, a length and the payload. Lets a caller size a
 /// `Protected` buffer once rather than let it regrow, since a regrowing
@@ -256,8 +387,19 @@ fn write_int(i: Int, out: &mut Vec<u8>) {
 /// One scalar as read from the wire.
 pub type Scalar<'a> = (Option<Logical>, Physical<'a>);
 
+/// One leaf or frame scalar node as read from the wire: a scalar, or a
+/// typed null.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Item<'a> {
+    /// A value, or the plain null.
+    Scalar(Option<Logical>, Physical<'a>),
+    /// An absent value of a fixed-width type.
+    TypedNull(FixedType),
+}
+
 /// Read one scalar in `form` from the front of `bytes`, validating it.
-/// Returns the scalar and how many bytes it occupied.
+/// Returns the scalar and how many bytes it occupied. A typed null is not
+/// a scalar and is refused; [`read_item`] reads either.
 ///
 /// # Examples
 ///
@@ -283,13 +425,64 @@ pub fn read(bytes: &[u8], form: Form) -> Result<(Scalar<'_>, usize), ScalarError
     Ok((scalar, c.pos))
 }
 
-/// Read one sealed leaf's plaintext, which must be exactly one scalar.
+/// Read one sealed leaf's plaintext, which must be exactly one scalar. A
+/// typed null is refused; [`read_leaf_item`] reads either.
 pub fn read_leaf(bytes: &[u8]) -> Result<Scalar<'_>, ScalarError> {
     let (scalar, used) = read(bytes, Form::Leaf)?;
     if used != bytes.len() {
         return Err(ScalarError::Malformed);
     }
     Ok(scalar)
+}
+
+/// Read one scalar or typed null in `form` from the front of `bytes`,
+/// validating it. Returns it and how many bytes it occupied.
+pub fn read_item(bytes: &[u8], form: Form) -> Result<(Item<'_>, usize), ScalarError> {
+    if bytes.first() == Some(&tags::TYPED_NULL) {
+        let mut c = Cursor { buf: bytes, pos: 1 };
+        let ty = read_typed_null(&mut c)?;
+        return Ok((Item::TypedNull(ty), c.pos));
+    }
+    let ((ty, v), used) = read(bytes, form)?;
+    Ok((Item::Scalar(ty, v), used))
+}
+
+/// Read one sealed leaf's plaintext, which must be exactly one scalar or
+/// typed null.
+pub fn read_leaf_item(bytes: &[u8]) -> Result<Item<'_>, ScalarError> {
+    let (item, used) = read_item(bytes, Form::Leaf)?;
+    if used != bytes.len() {
+        return Err(ScalarError::Malformed);
+    }
+    Ok(item)
+}
+
+/// A typed null after its `TYPED_NULL` tag. Strict, so that every absence
+/// has one encoding: the header must be one this codec writes for some
+/// [`FixedType`] and the padding must be zero.
+fn read_typed_null(c: &mut Cursor<'_>) -> Result<FixedType, ScalarError> {
+    let tag = c.byte()?;
+    let (ty, width) = match tag {
+        tags::DATE => (Some(Logical::Date), Width::I32),
+        tags::TIMESTAMP => (Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128),
+        tags::DECIMAL => (Some(Logical::Decimal { scale: 0 }), Width::I128),
+        tags::LOGICAL => {
+            let ty = Logical::from_wire(c.byte()?, c.byte()?).ok_or(ScalarError::Malformed)?;
+            if has_shorthand(ty) {
+                return Err(ScalarError::Malformed);
+            }
+            let width = tag_width(c.byte()?).ok_or(ScalarError::Malformed)?;
+            (Some(ty), width)
+        }
+        tag => (None, tag_width(tag).ok_or(ScalarError::Malformed)?),
+    };
+    // A logical type over a physical type it cannot ride on (a uuid over
+    // an int, a timestamp over a float) has no typed null.
+    let fixed = FixedType::new(ty, width).ok_or(ScalarError::Malformed)?;
+    if c.take(header(fixed).payload - 1)?.iter().any(|&b| b != 0) {
+        return Err(ScalarError::Malformed);
+    }
+    Ok(fixed)
 }
 
 struct Cursor<'a> {
@@ -737,7 +930,7 @@ mod tests {
         assert_eq!(read_leaf(&[0x06, 1, 2]), Err(ScalarError::Malformed));
         assert_eq!(read_leaf(&[0x00, 0x00]), Err(ScalarError::Malformed));
         assert_eq!(read_leaf(&[0x0A, 0xFF]), Err(ScalarError::Malformed));
-        assert_eq!(read_leaf(&[0x15]), Err(ScalarError::Malformed));
+        assert_eq!(read_leaf(&[0x16]), Err(ScalarError::Malformed));
         assert_eq!(read_leaf(&[0xF0]), Err(ScalarError::Malformed));
         assert_eq!(
             read(&[0x0A, 5, 0, 0, 0, b'x'], Form::Frame),
@@ -1052,9 +1245,13 @@ mod tests {
             read_leaf(&[0xF3, 200, 0, 0x12, 0x44, 0x24, 0x0B, 0x00]),
             Err(ScalarError::Malformed)
         );
-        // An unknown tag, and no tag at all.
+        // An unknown tag, a typed null, and no tag at all.
         assert_eq!(
-            read_leaf(&[0xF3, 200, 0, 0x15]),
+            read_leaf(&[0xF3, 200, 0, 0x16]),
+            Err(ScalarError::Malformed)
+        );
+        assert_eq!(
+            read_leaf_item(&[0xF3, 200, 0, tags::TYPED_NULL, tags::INT8]),
             Err(ScalarError::Malformed)
         );
         assert_eq!(read_leaf(&[0xF3, 200, 0]), Err(ScalarError::Malformed));
@@ -1073,6 +1270,225 @@ mod tests {
     fn a_leaf_of_only_the_text_or_bytes_tag_is_empty() {
         assert_eq!(read_leaf(&[tags::STRING]), Ok((None, Physical::Text(""))));
         assert_eq!(read_leaf(&[tags::BYTES]), Ok((None, Physical::Bytes(&[]))));
+    }
+
+    fn typed_null(ty: FixedType) -> Vec<u8> {
+        let mut out = Vec::new();
+        write_typed_null(ty, &mut out);
+        out
+    }
+
+    fn fixed(ty: Option<Logical>, width: Width) -> FixedType {
+        FixedType::new(ty, width).expect("fixed width")
+    }
+
+    /// Every fixed-width type's typed null, pinned, beside a value of the
+    /// type: the cross-language wire commitment, and the same length.
+    #[test]
+    fn typed_null_known_answers() {
+        use tags::TYPED_NULL as T;
+        let ms = Logical::Timestamp(TimeUnit::Millis);
+        let unknown = Logical::from_wire(200, 9);
+        let cases: Vec<(FixedType, Vec<u8>, Physical<'_>)> = vec![
+            (
+                FixedType::plain(Width::I8),
+                vec![T, 0x0C],
+                Physical::Int(Int::I8(-1)),
+            ),
+            (
+                FixedType::plain(Width::U8),
+                vec![T, 0x0D],
+                Physical::Int(Int::U8(1)),
+            ),
+            (
+                FixedType::plain(Width::I16),
+                vec![T, 0x0E, 0],
+                Physical::Int(Int::I16(1)),
+            ),
+            (
+                FixedType::plain(Width::U16),
+                vec![T, 0x0F, 0],
+                Physical::Int(Int::U16(1)),
+            ),
+            (
+                FixedType::plain(Width::I32),
+                vec![T, 0x04, 0, 0, 0],
+                Physical::Int(Int::I32(1)),
+            ),
+            (
+                FixedType::plain(Width::U32),
+                vec![T, 0x06, 0, 0, 0],
+                Physical::Int(Int::U32(1)),
+            ),
+            (
+                FixedType::plain(Width::F32),
+                vec![T, 0x08, 0, 0, 0],
+                Physical::Float(Float::F32(1.5)),
+            ),
+            (
+                FixedType::plain(Width::I64),
+                vec![T, 0x05, 0, 0, 0, 0, 0, 0, 0],
+                Physical::Int(Int::I64(1)),
+            ),
+            (
+                FixedType::plain(Width::U64),
+                vec![T, 0x07, 0, 0, 0, 0, 0, 0, 0],
+                Physical::Int(Int::U64(1)),
+            ),
+            (
+                FixedType::plain(Width::F64),
+                vec![T, 0x09, 0, 0, 0, 0, 0, 0, 0],
+                Physical::Float(Float::F64(1.5)),
+            ),
+            (
+                FixedType::plain(Width::I128),
+                [&[T, 0x10][..], &[0; 15]].concat(),
+                Physical::Int(Int::I128(1)),
+            ),
+            (
+                FixedType::plain(Width::U128),
+                [&[T, 0x11][..], &[0; 15]].concat(),
+                Physical::Int(Int::U128(1)),
+            ),
+            (
+                fixed(Some(Logical::Date), Width::I32),
+                vec![T, 0x12, 0, 0, 0],
+                Physical::Int(Int::I32(11_017)),
+            ),
+            (
+                fixed(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128),
+                [&[T, 0x13][..], &[0; 11]].concat(),
+                Physical::Int(Int::I128(1_000_000_005)),
+            ),
+            (
+                fixed(Some(Logical::Decimal { scale: 0 }), Width::I128),
+                [&[T, 0x14][..], &[0; 15]].concat(),
+                Physical::Int(Int::I128(150)),
+            ),
+            // Through the envelope: the envelope's header, then the
+            // physical tag, then the padding.
+            (
+                fixed(Some(ms), Width::I64),
+                [&[T, 0xF3, 3, 1, 0x05][..], &[0; 7]].concat(),
+                Physical::Int(Int::I64(1_700_000_000_000)),
+            ),
+            (
+                fixed(unknown, Width::F32),
+                vec![T, 0xF3, 200, 9, 0x08, 0, 0, 0],
+                Physical::Float(Float::F32(1.5)),
+            ),
+        ];
+        for (ty, expected, value) in cases {
+            assert_eq!(typed_null(ty), expected, "{ty:?}");
+            assert_eq!(typed_null_len(ty), expected.len(), "{ty:?}");
+            assert_eq!(
+                read_leaf_item(&expected).expect("reads"),
+                Item::TypedNull(ty),
+                "{ty:?}"
+            );
+            // A frame carries the same bytes, and reads to where they end.
+            let framed = [&expected[..], &[tags::NULL]].concat();
+            assert_eq!(
+                read_item(&framed, Form::Frame).expect("reads"),
+                (Item::TypedNull(ty), expected.len()),
+                "{ty:?}"
+            );
+            // As long as a value of the type: the point of it.
+            let present = leaf(ty.logical(), value);
+            assert_eq!(present.len(), expected.len(), "{ty:?}");
+            assert_eq!(FixedType::of(ty.logical(), &value), Some(ty), "{ty:?}");
+        }
+    }
+
+    #[test]
+    fn a_typed_null_is_not_a_scalar() {
+        let null_date = typed_null(fixed(Some(Logical::Date), Width::I32));
+        assert_eq!(read_leaf(&null_date), Err(ScalarError::Malformed));
+        assert_eq!(read(&null_date, Form::Frame), Err(ScalarError::Malformed));
+        // And a scalar reads through `read_item` as a scalar.
+        assert_eq!(
+            read_leaf_item(&[0x06, 34, 0, 0, 0]),
+            Ok(Item::Scalar(None, Physical::Int(Int::U32(34))))
+        );
+        assert_eq!(
+            read_leaf_item(&[0x00]),
+            Ok(Item::Scalar(None, Physical::Null))
+        );
+    }
+
+    /// Every absence has one encoding, so a key-holding writer cannot pass
+    /// another plaintext off as one.
+    #[test]
+    fn a_typed_null_is_read_strictly() {
+        use tags::TYPED_NULL as T;
+        let refused: &[&[u8]] = &[
+            // No header, and a header with no padding.
+            &[T],
+            &[T, 0x06],
+            // Padding that is not zero, short, or followed by more.
+            &[T, 0x06, 0, 1, 0],
+            &[T, 0x06, 0, 0],
+            &[T, 0x06, 0, 0, 0, 0],
+            &[T, 0x12, 0, 0, 0, 0],
+            // A tag with no typed null: null, undefined, bool, text, bytes,
+            // another typed null, an unknown tag.
+            &[T, 0x00],
+            &[T, 0x01],
+            &[T, 0x02],
+            &[T, 0x03],
+            &[T, 0x0A],
+            &[T, 0x0B],
+            &[T, T, 0x06, 0, 0, 0],
+            &[T, 0x16],
+            // An envelope where a shorthand tag exists (a date), with no
+            // logical type (id 0), and over the reserved long envelope.
+            &[T, 0xF3, 2, 0, 0x04, 0, 0, 0],
+            &[T, 0xF3, 0, 0, 0x04, 0, 0, 0],
+            &[T, 0xF4, 200, 0, 0x04, 0, 0, 0],
+            // A logical type over a physical type it cannot ride on: a
+            // uuid over an int, a millisecond timestamp over a float, an
+            // unknown type over a bool or over text.
+            &[T, 0xF3, 5, 0, 0x04, 0, 0, 0],
+            &[T, 0xF3, 3, 1, 0x09, 0, 0, 0, 0, 0, 0, 0],
+            &[T, 0xF3, 200, 0, 0x02],
+            &[T, 0xF3, 200, 0, 0x0A],
+        ];
+        for bytes in refused {
+            assert_eq!(
+                read_leaf_item(bytes),
+                Err(ScalarError::Malformed),
+                "{bytes:?}"
+            );
+        }
+    }
+
+    /// Whatever `read_item` accepts after a typed null tag writes back to
+    /// the bytes it read: one encoding per absence.
+    #[quickcheck]
+    fn any_typed_null_input_reads_without_panic_and_has_one_encoding(
+        tag: u8,
+        id: u8,
+        param: u8,
+        rest: Vec<u8>,
+    ) -> bool {
+        let tag = tag % 0x16;
+        // Mostly zero padding, so the accepting path is exercised too.
+        let rest: Vec<u8> = rest.iter().map(|&b| if b < 0xF0 { 0 } else { b }).collect();
+        let plain = [&[tags::TYPED_NULL, tag][..], &rest[..]].concat();
+        let envelope = [
+            &[tags::TYPED_NULL, tags::LOGICAL, id % 8, param % 32, tag][..],
+            &rest,
+        ]
+        .concat();
+        [plain, envelope].iter().all(|bytes| {
+            [Form::Leaf, Form::Frame]
+                .into_iter()
+                .all(|form| match read_item(bytes, form) {
+                    Err(_) => true,
+                    Ok((Item::TypedNull(ty), used)) => typed_null(ty) == bytes[..used],
+                    Ok((Item::Scalar(..), _)) => false,
+                })
+        })
     }
 
     #[test]

@@ -12,22 +12,23 @@ use std::collections::{BTreeMap, HashMap};
 use vitaminc_protected::{Controlled, OpaqueDebug, Protected};
 use zeroize::Zeroize;
 
-use super::kinds::{Float, Logical, Physical};
+use super::kinds::{FixedType, Float, Logical, Physical, Width};
 use super::{depth, visit_seq, Encrypt, MapSink, SeqSink, Sink};
 
 macro_rules! int {
-    ($($ty:ty),* $(,)?) => {
+    ($($ty:ty => $width:ident),* $(,)?) => {
         $(
             impl Encrypt for $ty {
                 const DEPTH: Option<usize> = depth::SCALAR;
+                const FIXED: Option<FixedType> = Some(FixedType::plain(Width::$width));
                 fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                     sink.scalar(None, Physical::Int(self.into()))
                 }
             }
 
             impl Encrypt for &$ty {
-
                 const DEPTH: Option<usize> = depth::SCALAR;
+                const FIXED: Option<FixedType> = <$ty as Encrypt>::FIXED;
                 fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                     (*self).visit(sink)
                 }
@@ -36,7 +37,10 @@ macro_rules! int {
     };
 }
 
-int!(i8, i16, i32, i64, i128, u16, u32, u64, u128);
+int! {
+    i8 => I8, i16 => I16, i32 => I32, i64 => I64, i128 => I128,
+    u16 => U16, u32 => U32, u64 => U64, u128 => U128,
+}
 
 impl Encrypt for bool {
     const DEPTH: Option<usize> = depth::SCALAR;
@@ -47,6 +51,7 @@ impl Encrypt for bool {
 
 impl Encrypt for f32 {
     const DEPTH: Option<usize> = depth::SCALAR;
+    const FIXED: Option<FixedType> = Some(FixedType::plain(Width::F32));
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(None, Physical::Float(Float::F32(self)))
     }
@@ -54,6 +59,7 @@ impl Encrypt for f32 {
 
 impl Encrypt for f64 {
     const DEPTH: Option<usize> = depth::SCALAR;
+    const FIXED: Option<FixedType> = Some(FixedType::plain(Width::F64));
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(None, Physical::Float(Float::F64(self)))
     }
@@ -66,6 +72,7 @@ macro_rules! by_ref {
         $(
             impl Encrypt for &$ty {
                 const DEPTH: Option<usize> = depth::SCALAR;
+                const FIXED: Option<FixedType> = <$ty as Encrypt>::FIXED;
                 fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
                     (*self).visit(sink)
                 }
@@ -188,6 +195,7 @@ where
     &'b T: Encrypt,
 {
     const DEPTH: Option<usize> = <&'b T as Encrypt>::DEPTH;
+    const FIXED: Option<FixedType> = <&'b T as Encrypt>::FIXED;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         (*self).visit(sink)
     }
@@ -195,12 +203,18 @@ where
 
 /// `None` is a null. There is no separate "absent" in the data model, so a
 /// host null and a Rust `None` are the same leaf.
+///
+/// When `T` has a [`FIXED`](Encrypt::FIXED) type, `None` is a typed null
+/// of it, which the encrypting sink pads to the length of a `Some`.
+/// Otherwise it is the plain null. An `Option<Option<T>>` has `T`'s type
+/// too, so its two `None`s seal alike, as they always have.
 impl<T: Encrypt> Encrypt for Option<T> {
     const DEPTH: Option<usize> = T::DEPTH;
+    const FIXED: Option<FixedType> = T::FIXED;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         match self {
             Some(v) => v.visit(sink),
-            None => sink.scalar(None, Physical::Null),
+            None => null::<T, S>(sink),
         }
     }
 }
@@ -210,11 +224,20 @@ where
     &'a T: Encrypt,
 {
     const DEPTH: Option<usize> = <&'a T as Encrypt>::DEPTH;
+    const FIXED: Option<FixedType> = <&'a T as Encrypt>::FIXED;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         match self {
             Some(v) => v.visit(sink),
-            None => sink.scalar(None, Physical::Null),
+            None => null::<&'a T, S>(sink),
         }
+    }
+}
+
+/// The null an absent `T` walks as: typed if `T` is fixed width.
+fn null<T: Encrypt, S: Sink>(sink: S) -> Result<S::Ok, S::Error> {
+    match T::FIXED {
+        Some(ty) => sink.typed_null(ty),
+        None => sink.scalar(None, Physical::Null),
     }
 }
 
@@ -226,6 +249,7 @@ where
     for<'a> &'a T: Encrypt,
 {
     const DEPTH: Option<usize> = <&T as Encrypt>::DEPTH;
+    const FIXED: Option<FixedType> = <&T as Encrypt>::FIXED;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         self.risky_ref().visit(sink)
         // `self` drops here and zeroizes the whole value.
@@ -239,6 +263,7 @@ where
     &'a T: Encrypt,
 {
     const DEPTH: Option<usize> = <&'a T as Encrypt>::DEPTH;
+    const FIXED: Option<FixedType> = <&'a T as Encrypt>::FIXED;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         self.risky_ref().visit(sink)
     }
@@ -313,6 +338,10 @@ impl Sink for Discard {
     type Map = Discard;
 
     fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), Discarded> {
+        Ok(())
+    }
+
+    fn typed_null(self, _: FixedType) -> Result<(), Discarded> {
         Ok(())
     }
 
@@ -442,6 +471,7 @@ mod chrono_sources {
 
     impl Encrypt for NaiveDate {
         const DEPTH: Option<usize> = depth::SCALAR;
+        const FIXED: Option<FixedType> = FixedType::new(Some(Logical::Date), Width::I32);
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             sink.scalar(
                 Some(Logical::Date),
@@ -455,6 +485,8 @@ mod chrono_sources {
     /// field refuses it when the value is built instead.
     impl Encrypt for DateTime<Utc> {
         const DEPTH: Option<usize> = depth::SCALAR;
+        const FIXED: Option<FixedType> =
+            FixedType::new(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128);
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             let nanos = conv::timestamp_nanos(self).ok_or_else(|| {
                 S::Error::source(SourceError::msg(
@@ -470,6 +502,7 @@ mod chrono_sources {
 
     impl Encrypt for &NaiveDate {
         const DEPTH: Option<usize> = depth::SCALAR;
+        const FIXED: Option<FixedType> = NaiveDate::FIXED;
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             (*self).visit(sink)
         }
@@ -477,6 +510,7 @@ mod chrono_sources {
 
     impl Encrypt for &DateTime<Utc> {
         const DEPTH: Option<usize> = depth::SCALAR;
+        const FIXED: Option<FixedType> = <DateTime<Utc> as Encrypt>::FIXED;
         fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
             (*self).visit(sink)
         }
@@ -486,6 +520,9 @@ mod chrono_sources {
 #[cfg(feature = "rust_decimal")]
 impl Encrypt for rust_decimal::Decimal {
     const DEPTH: Option<usize> = depth::SCALAR;
+    /// Every scale shares the one typed null: the scale is in the payload.
+    const FIXED: Option<FixedType> =
+        FixedType::new(Some(Logical::Decimal { scale: 0 }), Width::I128);
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         let (scale, mantissa) = super::kinds::decimal::parts(self);
         sink.scalar(
@@ -498,6 +535,7 @@ impl Encrypt for rust_decimal::Decimal {
 #[cfg(feature = "rust_decimal")]
 impl Encrypt for &rust_decimal::Decimal {
     const DEPTH: Option<usize> = depth::SCALAR;
+    const FIXED: Option<FixedType> = <rust_decimal::Decimal as Encrypt>::FIXED;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         (*self).visit(sink)
     }
@@ -742,6 +780,10 @@ mod tests {
             Ok(())
         }
 
+        fn typed_null(self, _: FixedType) -> Result<(), RecordError> {
+            Ok(())
+        }
+
         fn seq(self, _: Option<usize>) -> Result<Self, RecordError> {
             Ok(self)
         }
@@ -863,7 +905,11 @@ mod tests {
             record(&Some(1.5f64)).expect("ok"),
             record(Some(1.5f64)).expect("ok")
         );
-        assert_eq!(record(&None::<i8>).expect("ok"), [scalar(Owned::Null)]);
+        assert_eq!(
+            record(&None::<i8>).expect("ok"),
+            [Event::TypedNull(FixedType::plain(Width::I8))]
+        );
+        assert_eq!(record(&None::<&str>).expect("ok"), [scalar(Owned::Null)]);
         // A borrowed `Vec<u8>` is still a byte leaf, not a sequence.
         assert_eq!(
             record(&vec![1u8, 2]).expect("ok"),
@@ -886,11 +932,32 @@ mod tests {
 
     #[test]
     fn option_none_is_null() {
-        assert_eq!(record(None::<u32>).expect("ok"), [scalar(Owned::Null)]);
+        assert_eq!(record(None::<String>).expect("ok"), [scalar(Owned::Null)]);
+        assert_eq!(record(None::<bool>).expect("ok"), [scalar(Owned::Null)]);
+        assert_eq!(record(None::<Vec<u32>>).expect("ok"), [scalar(Owned::Null)]);
         assert_eq!(
             record(Some(1u32)).expect("ok"),
             [scalar(Owned::Int(Int::U32(1)))]
         );
+    }
+
+    /// A fixed-width `None` names its type, at every layer that wraps it.
+    // The borrows are the point: each one picks the reference impl.
+    #[allow(clippy::needless_borrows_for_generic_args)]
+    #[test]
+    fn a_fixed_width_none_is_a_typed_null() {
+        let typed = |w| [Event::TypedNull(FixedType::plain(w))];
+        assert_eq!(record(None::<u32>).expect("ok"), typed(Width::U32));
+        assert_eq!(record(None::<i128>).expect("ok"), typed(Width::I128));
+        assert_eq!(record(None::<f32>).expect("ok"), typed(Width::F32));
+        assert_eq!(record(&None::<f64>).expect("ok"), typed(Width::F64));
+        assert_eq!(record(None::<Option<i16>>).expect("ok"), typed(Width::I16));
+        assert_eq!(record(Some(None::<i16>)).expect("ok"), typed(Width::I16));
+        assert_eq!(
+            record(Protected::new(None::<u64>)).expect("ok"),
+            typed(Width::U64)
+        );
+        assert_eq!(record(&&None::<i64>).expect("ok"), typed(Width::I64));
     }
 
     #[test]

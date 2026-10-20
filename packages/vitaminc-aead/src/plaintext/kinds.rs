@@ -250,6 +250,129 @@ pub enum Float {
     F64(f64),
 }
 
+/// The physical type of a fixed-width scalar whose leaf has a payload: an
+/// int or a float, with its width. What a [`FixedType`] rides on.
+///
+/// `bool` is fixed width too, but its leaf is the tag alone, one byte, the
+/// same length as the plain null leaf, so it has no width here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Width {
+    I8,
+    I16,
+    I32,
+    I64,
+    I128,
+    U8,
+    U16,
+    U32,
+    U64,
+    U128,
+    F32,
+    F64,
+}
+
+impl Width {
+    /// The physical kind: [`Kind::Int`] or [`Kind::Float`].
+    pub const fn kind(self) -> Kind {
+        match self {
+            Width::F32 | Width::F64 => Kind::Float,
+            _ => Kind::Int,
+        }
+    }
+
+    /// The width of a value of this physical type, or `None` for a value
+    /// with no [`Width`]: null, bool, text and bytes.
+    pub fn of(v: &Physical<'_>) -> Option<Self> {
+        Some(match v {
+            Physical::Int(Int::I8(_)) => Width::I8,
+            Physical::Int(Int::I16(_)) => Width::I16,
+            Physical::Int(Int::I32(_)) => Width::I32,
+            Physical::Int(Int::I64(_)) => Width::I64,
+            Physical::Int(Int::I128(_)) => Width::I128,
+            Physical::Int(Int::U8(_)) => Width::U8,
+            Physical::Int(Int::U16(_)) => Width::U16,
+            Physical::Int(Int::U32(_)) => Width::U32,
+            Physical::Int(Int::U64(_)) => Width::U64,
+            Physical::Int(Int::U128(_)) => Width::U128,
+            Physical::Float(Float::F32(_)) => Width::F32,
+            Physical::Float(Float::F64(_)) => Width::F64,
+            Physical::Null | Physical::Bool(_) | Physical::Text(_) | Physical::Bytes(_) => {
+                return None
+            }
+        })
+    }
+}
+
+/// A fixed-width scalar type, named without a value: what an absent value
+/// of that type stands in for.
+///
+/// AES-GCM keeps the plaintext's length, so a plain null leaf (one byte)
+/// sealed in place of a date (five) shows which values are absent to
+/// anyone who can see the ciphertexts. A null of a `FixedType` is sealed as
+/// a **typed null** padded to the type's own leaf length, so a sealed
+/// `None` and a sealed `Some` are the same length. See
+/// [`Sink::typed_null`](crate::plaintext::Sink::typed_null) and
+/// [`tags::TYPED_NULL`](crate::tags::TYPED_NULL).
+///
+/// A `FixedType` is normalised to how its leaf is written, so two are equal
+/// exactly when their typed nulls are the same bytes. A logical type with a
+/// tag of its own fixes its width: a date is written as an `i32` day count
+/// and a nanosecond timestamp and a decimal as 128-bit words, whatever
+/// width the value came with. A decimal's scale travels inside its payload
+/// rather than in its tag, so every decimal has the one typed null, of
+/// scale 0.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FixedType {
+    ty: Option<Logical>,
+    width: Width,
+}
+
+impl FixedType {
+    /// A plain int or float, with no logical type.
+    pub const fn plain(width: Width) -> Self {
+        Self { ty: None, width }
+    }
+
+    /// `ty` over `width`, normalised, or `None` if `ty` does not ride on a
+    /// fixed-width physical type: undefined (over null) and uuid (over
+    /// bytes, whose frame form is variable width), and a date, timestamp or
+    /// decimal over a float.
+    pub const fn new(ty: Option<Logical>, width: Width) -> Option<Self> {
+        let float = matches!(width, Width::F32 | Width::F64);
+        let (ty, width) = match ty {
+            None => (None, width),
+            Some(Logical::Unknown(u)) => (Some(Logical::Unknown(u)), width),
+            Some(Logical::Undefined | Logical::Uuid) => return None,
+            Some(_) if float => return None,
+            Some(Logical::Date) => (Some(Logical::Date), Width::I32),
+            Some(Logical::Timestamp(TimeUnit::Nanos)) => {
+                (Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128)
+            }
+            Some(Logical::Decimal { .. }) => (Some(Logical::Decimal { scale: 0 }), Width::I128),
+            Some(Logical::Timestamp(unit)) => (Some(Logical::Timestamp(unit)), width),
+        };
+        Some(Self { ty, width })
+    }
+
+    /// The type of `v` under `ty`, or `None` if it has none (see
+    /// [`new`](FixedType::new)): what a host that knows the value's type
+    /// but holds no value passes to
+    /// [`Sink::typed_null`](crate::plaintext::Sink::typed_null).
+    pub fn of(ty: Option<Logical>, v: &Physical<'_>) -> Option<Self> {
+        Self::new(ty, Width::of(v)?)
+    }
+
+    /// The logical type, if any.
+    pub const fn logical(self) -> Option<Logical> {
+        self.ty
+    }
+
+    /// The physical width.
+    pub const fn width(self) -> Width {
+        self.width
+    }
+}
+
 // `Physical` and `Float` derive their constant-time equality: the derive
 // compares same-variant payloads with `ts_eq` and treats different
 // variants as unequal, which is the structural equality wanted here. The
@@ -747,6 +870,57 @@ impl fmt::Display for Logical {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fixed_type_is_normalised_to_how_its_leaf_is_written() {
+        let fixed = |ty, width| FixedType::new(ty, width).expect("fixed width");
+        // A tag of its own fixes the width, and a decimal's scale.
+        assert_eq!(
+            fixed(Some(Logical::Date), Width::I64),
+            fixed(Some(Logical::Date), Width::I32)
+        );
+        assert_eq!(fixed(Some(Logical::Date), Width::U8).width(), Width::I32);
+        let ns = Some(Logical::Timestamp(TimeUnit::Nanos));
+        assert_eq!(fixed(ns, Width::I64).width(), Width::I128);
+        assert_eq!(
+            fixed(Some(Logical::Decimal { scale: 2 }), Width::I64),
+            fixed(Some(Logical::Decimal { scale: 0 }), Width::I128)
+        );
+        // Through the envelope, the width is the value's own.
+        let ms = Some(Logical::Timestamp(TimeUnit::Millis));
+        assert_eq!(fixed(ms, Width::I64).width(), Width::I64);
+        assert_ne!(fixed(ms, Width::I64), fixed(ms, Width::I32));
+        let unknown = Logical::from_wire(200, 9);
+        assert_eq!(fixed(unknown, Width::F32).logical(), unknown);
+        assert_eq!(FixedType::plain(Width::U8).logical(), None);
+    }
+
+    #[test]
+    fn a_type_not_over_a_fixed_width_physical_type_has_no_fixed_type() {
+        assert_eq!(FixedType::new(Some(Logical::Uuid), Width::U128), None);
+        assert_eq!(FixedType::new(Some(Logical::Undefined), Width::U8), None);
+        assert_eq!(FixedType::new(Some(Logical::Date), Width::F64), None);
+        assert_eq!(
+            FixedType::new(Some(Logical::Timestamp(TimeUnit::Millis)), Width::F64),
+            None
+        );
+        assert_eq!(
+            FixedType::new(Some(Logical::Decimal { scale: 2 }), Width::F32),
+            None
+        );
+        for v in [
+            Physical::Null,
+            Physical::Bool(true),
+            Physical::Text("x"),
+            Physical::Bytes(&[1]),
+        ] {
+            assert_eq!(Width::of(&v), None);
+            assert_eq!(FixedType::of(None, &v), None);
+        }
+        assert_eq!(Width::of(&Physical::Int(Int::U16(1))), Some(Width::U16));
+        assert_eq!(Width::F32.kind(), Kind::Float);
+        assert_eq!(Width::I128.kind(), Kind::Int);
+    }
 
     #[test]
     fn every_known_logical_type_round_trips_through_the_wire() {

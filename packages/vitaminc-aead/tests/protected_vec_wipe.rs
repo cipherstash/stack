@@ -11,7 +11,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use vitaminc_aead::plaintext::{
-    Encrypt, Error, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
+    Encrypt, Error, FixedType, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
 };
 use vitaminc_protected::Protected;
 
@@ -67,6 +67,10 @@ impl Sink for Quiet {
     type Map = Self;
 
     fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), Stopped> {
+        Ok(())
+    }
+
+    fn typed_null(self, _: FixedType) -> Result<(), Stopped> {
         Ok(())
     }
 
