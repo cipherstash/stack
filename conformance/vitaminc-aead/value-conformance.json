@@ -522,7 +522,7 @@
     },
     {
       "name": "typed-null-uuid-with-length",
-      "transport": "15f305000b10000000",
+      "transport": "15f305000b10000000000000000000000000000000000000",
       "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
     },
     {
