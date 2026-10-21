@@ -11,12 +11,14 @@
 > Python and toolchain section (pyo3 0.29, maturin-only `extension-module`,
 > libpython on the loader path, `Pending` as `IntoFuture`, width narrowing,
 > the psycopg plumbing) still holds. The restart plan reads
-> `packages/stack-encrypt/docs/language-integration.md` on `next` first.
+> `packages/stack-encrypt/docs/language-integration.md` first; that guide
+> is PR #1287, open against `next` as this header is written, and this
+> document merges after it.
 
 **Status:** a proto-prototype, stopped by decision on 2026-10-13 after 7 of 9
 tasks, to be restarted fresh. The branch is kept as a reference under
 `prototype/python-sdk-tracer`. **Do not merge it.** Read this file, then
-the Python SDK discovery ticket, then start again from `main`.
+the Python SDK discovery ticket, then start again from `next`.
 
 The code is disposable. What follows is not: it is what the code proved,
 and most of it would take days to rediscover.
@@ -66,7 +68,8 @@ design choice.
   no EQL type is built from them yet"; the ORE types because "EQL stores a
   block ORE term and the engine derives a CLLW ORE term; the two are
   different algorithms"; `Text` because it "follows once TextEq is proven
-  end-to-end in PostgreSQL". **Consequence for the discovery ticket:** decision 9 lists
+  end-to-end in PostgreSQL". (Superseded: both are producible on `next`;
+  see open question 1.) **Consequence for the discovery ticket:** decision 9 lists
   `equality`, `match`, `ore` as the engine features the four tasks need, and
   backlog item 5 is "`match` and `ore` queries". Neither is a Python change;
   both wait on the engine. Amend the ticket before anyone builds against it.
@@ -138,7 +141,7 @@ design choice.
   for the same plaintext are *different* JSON and an index on the column
   itself never matches. The index EQL v3 is built for is a functional one on
   the extracted term —
-  `create index … using hash (eql_v3_internal.eq_term(col))` (or `btree`:
+  `create index … using hash (eql_v3.eq_term(col))` (or `btree`:
   the term's type rides on `bytea`'s default operator classes, so both work
   and only `=` means anything) — and the bundle marks the extractor
   `IMMUTABLE` and inlinable so the domain's `=` operator folds into the
@@ -251,11 +254,15 @@ the engine *through the shell* against the engine bare); the record as
 
 ## Open questions for the restart
 
-1. Amend the discovery ticket's decision 9 and backlog item 5 for the catalog gap, with
-   the dependencies named precisely: `ore` → #1132 and the `vitaminc-ore`
-   proposal (link above); the non-text kinds → #1130 and the same
-   proposal; `match` → a TextMatch EQL type over the existing term, not yet
-   ticketed.
+1. Re-read the discovery ticket's decision 9 and backlog item 5 against
+   `next`, not against the catalog gap this document recorded on 13
+   October. On `next` 40 of the 51 EQL v4 types are producible
+   (`languages/golang/encrypt/eql/eql_gen.go` says which): `Text`,
+   `TextMatch`, `TextSearch` (#1274) and the block ORE `Ord` types (#1280)
+   among them, both merged on 2026-10-19. The 11 that are not are the
+   order terms for `date`, `timestamp` and `decimal`, whose ordering is
+   not decided, and the two JSON types (#1060). Amend the ticket from
+   that list, and name only the dependencies that remain.
 2. Which of those lands first, and does the week-1 restart wait for any of
    them? (Nothing in the six-step path needs them; `TextEq` is enough to
    prove the path, which it did.)
@@ -271,15 +278,21 @@ the engine *through the shell* against the engine bare); the record as
 7. The model contract: write it down as a `Protocol` (annotated fields,
    attribute access, kwargs constructor), and check SQLAlchemy declarative
    models against it before the layer is designed.
-8. Indexing guidance for the SDK docs: the functional hash index on
-   `eql_v3_internal.eq_term(col)` is the one a `TextEq` column wants; the
-   tracer never created one, and a user copying its SQL would not either.
+8. Indexing guidance for the SDK docs: the functional hash index on the
+   extracted term is the one a `TextEq` column wants; on the v4 bundle the
+   restart installs that is `eql_v4.eq_term(col)` on a
+   `public.eql_v4_text_eq` column (`eql_v3.eq_term` on v3; there is no
+   `_internal` extractor). The tracer never created one, and a user
+   copying its SQL would not either.
 
 ## Where the record is
 
-- This branch: `prototype/python-sdk-tracer` — commits
-  `6c3bc191f..` (Tasks 1–7), each message self-contained.
-- The plan: `docs/plans/2026-10-08-python-sdk-tracer.md` (revised in place).
+- The prototype branch: `prototype/python-sdk-tracer` — commits
+  `6c3bc191f..` (Tasks 1–7), each message self-contained. This document
+  and the ledger land on `next`; the files below exist only on that
+  branch.
+- The plan: `docs/plans/2026-10-08-python-sdk-tracer.md` on the prototype
+  branch (revised in place there).
 - The ledger: `docs/plans/2026-10-13-python-sdk-tracer-ledger.md` — every
   ruling with its cost, copied from the gitignored SDD workspace.
-- How to run it: `languages/python/README.md`.
+- How to run it: `languages/python/README.md` on the prototype branch.
