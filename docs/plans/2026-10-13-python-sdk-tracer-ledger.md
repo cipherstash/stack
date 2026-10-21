@@ -101,7 +101,7 @@ interception fails CPython's cert verification with `OSStatus -26276`, the
 same error `gh` gives), and the repo's node scripts need node >= 20.11 for
 `import.meta.dirname` — the shell's `node` and `mise x -- node` are both
 20.3.1, so `lint-no-eql-registry-pins.mjs` was run with
-`/Users/yuji/.local/share/mise/installs/node/24.11.1/bin/node` and passes
+`$(mise where node)/bin/node` (node 24.11.1) and passes
 with the new `eql-bindings` path dependency.
 
 Task 2: Ruling: the plan's kind names are wrong — `"Utf8Str"` → `"string"`,
@@ -209,7 +209,7 @@ libpython, which is fine and is what every non-wheel build wants.
 
 Task 4: Note (environment): `cargo test` here needs
 `DYLD_FALLBACK_LIBRARY_PATH` pointing at the interpreter's `LIBDIR`
-(`/Users/yuji/.local/share/mise/installs/python/3.14.2/lib`), because the
+(`$(mise where python)/lib`, Python 3.14.2), because the
 test binary links libpython by rpath and mise's install is not on the
 default search path. Linux CI uses `LD_LIBRARY_PATH`. Task 8 must set it in
 the workflow or the Rust tests fail at load with
@@ -297,7 +297,7 @@ Task 5: complete (commits bc785b2..8085642, tests: ./languages/python/.venv/bin/
 Task 6: Ruling (plan revised, with the user, 2026-10-13): NO committed
 fixture. The plan's `tests/fixtures/record.json` carried an equality term
 that is an HMAC under the workspace keyset, so the committed bytes would pass
-only in the workspace that generated them — the user's `TCDLFX5CQ6T5LKCP`
+only in the workspace that generated them — the author's `<workspace-id>`
 here, not CI's. The Rust side is now produced AT TEST TIME by a `parity`
 bin (`seal` / `open`) under the same credentials as the Python side, so the
 comparison holds in any workspace and nothing keyed to a keyset is
