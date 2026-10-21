@@ -30,7 +30,9 @@ impl Encrypted {
 }
 
 /// An authenticated "no value" marker: the null leaf (`[tags::NULL]`)
-/// sealed under the slot's AAD, the same leaf the sink path seals for `None`.
+/// sealed under the slot's AAD, the same leaf the sink path seals for the
+/// `None` of the bytes an [`Encrypted`] holds. (A `None` of a fixed-width
+/// type seals there as a typed null instead, which is not an `Absent`.)
 ///
 /// Inner field is private for the same reason as [`Encrypted`].
 #[derive(Debug)]

@@ -19,7 +19,7 @@ use std::collections::HashSet;
 
 use vitaminc_protected::{Controlled, Protected};
 
-use crate::leaf;
+use crate::leaf::{self, Item};
 use crate::plaintext::{Error, MapSink, SeqSink, Sink, SourceError};
 use crate::seal::{open_all, open_all_async, AsyncCipher, Cipher, Node, OpenError, Opened};
 use crate::{CipherText, IntoAad};
@@ -139,9 +139,12 @@ pub fn walk<S: Sink>(node: Node<Opened>, sink: S) -> Result<S::Ok, DecryptError<
     };
     match node {
         CipherText::Single(plaintext) => {
-            let (ty, v) =
-                leaf::read_leaf(plaintext.risky_ref()).map_err(|_| DecryptError::Malformed)?;
-            Ok(sink.scalar(ty, v)?)
+            let item =
+                leaf::read_leaf_item(plaintext.risky_ref()).map_err(|_| DecryptError::Malformed)?;
+            Ok(match item {
+                Item::Scalar(ty, v) => sink.scalar(ty, v)?,
+                Item::TypedNull(ty) => sink.typed_null(ty)?,
+            })
             // `plaintext` drops and wipes here.
         }
         CipherText::Sequence(items) => walk_seq(items, sink),

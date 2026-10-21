@@ -21,6 +21,11 @@
 //! | bool | bool |
 //! | null, and JavaScript's `undefined` | unit, and `None` |
 //!
+//! A typed null ([`tags::TYPED_NULL`](vitaminc_aead::tags::TYPED_NULL)) is
+//! refused as malformed. It is how plaintext marks an absent fixed-width
+//! value so its sealed length matches a present one, which is no concern of
+//! data that is not sealed, and this format never writes one.
+//!
 //! Each kind reads only as itself: a struct or a map reads an object, never
 //! an array by position, and a string reads text, never bytes that happen
 //! to be UTF-8, nor bytes text.
@@ -1489,5 +1494,21 @@ mod tests {
                 "{message}"
             );
         }
+    }
+
+    /// A typed null is plaintext's, not this format's: refused wherever it
+    /// appears, an option included, rather than read as a null.
+    #[test]
+    fn a_typed_null_is_refused() {
+        let null_u32 = [
+            vitaminc_aead::tags::TYPED_NULL,
+            vitaminc_aead::tags::UINT32,
+            0,
+            0,
+            0,
+        ];
+        assert!(from_slice::<Option<u32>>(&null_u32).is_err());
+        assert!(from_slice::<()>(&null_u32).is_err());
+        assert!(from_slice::<u32>(&null_u32).is_err());
     }
 }

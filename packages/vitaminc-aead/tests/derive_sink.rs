@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 
 use vitaminc_aead::{
-    decrypt, encrypt, Bytes, Context, DecodeError, Decrypt, DecryptError, Encrypt, Int, IntoAad,
-    Logical, MapSink, Physical, Raw, SeqSink, Sink, SourceError,
+    decrypt, encrypt, Bytes, Context, DecodeError, Decrypt, DecryptError, Encrypt, FixedType, Int,
+    IntoAad, Logical, MapSink, Physical, Raw, SeqSink, Sink, SourceError,
 };
 use vitaminc_protected::{Controlled, Protected};
 use zeroize::ZeroizeOnDrop;
@@ -18,6 +18,7 @@ use zeroize::ZeroizeOnDrop;
 #[derive(Debug, Clone, PartialEq)]
 enum Event {
     Scalar(Option<Logical>, String),
+    TypedNull(FixedType),
     Seq(Option<usize>),
     Element,
     EndSeq,
@@ -54,6 +55,11 @@ impl Sink for Record<'_> {
             Physical::Bytes(b) => format!("{b:?}"),
         };
         self.0.push(Event::Scalar(ty, shown));
+        Ok(())
+    }
+
+    fn typed_null(self, ty: FixedType) -> Result<(), RecordError> {
+        self.0.push(Event::TypedNull(ty));
         Ok(())
     }
 
@@ -831,6 +837,10 @@ impl Sink for StopAt {
     type Map = Self;
 
     fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), RecordError> {
+        Ok(())
+    }
+
+    fn typed_null(self, _: FixedType) -> Result<(), RecordError> {
         Ok(())
     }
 

@@ -29,8 +29,17 @@
 //!   leap second. It has no count in any unit and is refused.
 //! - A `DECIMAL` with the sign bit set on a zero mantissa reads as zero,
 //!   and zero is always written without the sign.
+//!
+//! An absent value of a fixed-width type is a **typed null**
+//! ([`tags::TYPED_NULL`]), padded to the length of a value of the type so
+//! the two cannot be told apart by length once sealed. It is not a scalar:
+//! [`write_typed_null`] writes one, [`read_item`] and [`read_leaf_item`]
+//! read one, and [`read`] and [`read_leaf`] refuse one, so a reader that
+//! does not know about typed nulls fails closed.
 
-use crate::plaintext::kinds::{Float, Int, Logical, Physical, TimeUnit, MAX_DECIMAL_SCALE};
+use crate::plaintext::kinds::{
+    FixedType, Float, Int, Logical, Physical, TimeUnit, Width, MAX_DECIMAL_SCALE,
+};
 use crate::tags;
 
 /// Which wire form a scalar is in.
@@ -167,6 +176,84 @@ pub fn write_leaf(
     write(ty, v, Form::Leaf, out)
 }
 
+/// Write a typed null of `ty`: [`tags::TYPED_NULL`], the header a value of
+/// `ty` starts with, then zeros, to the length a value of `ty` takes. The
+/// same bytes in either form, since a fixed-width scalar has no length
+/// prefix. Cannot fail: a [`FixedType`] is valid by construction.
+///
+/// # Examples
+///
+/// A null date is as long as a date.
+///
+/// ```
+/// use vitaminc_aead::leaf::{read_leaf_item, write_typed_null, Item, ScalarError};
+/// use vitaminc_aead::plaintext::{FixedType, Logical, Width};
+/// use vitaminc_aead::tags;
+///
+/// let date = FixedType::new(Some(Logical::Date), Width::I32).expect("fixed");
+/// let mut out = Vec::new();
+/// write_typed_null(date, &mut out);
+/// assert_eq!(out, [tags::TYPED_NULL, tags::DATE, 0, 0, 0]);
+/// assert_eq!(read_leaf_item(&out)?, Item::TypedNull(date));
+/// # Ok::<(), ScalarError>(())
+/// ```
+pub fn write_typed_null(ty: FixedType, out: &mut Vec<u8>) {
+    let (zero, header) = zero_leaf(ty);
+    out.push(tags::TYPED_NULL);
+    out.extend_from_slice(&zero[..header]);
+    // One byte of the value's length went to `TYPED_NULL`. Every payload
+    // here is at least one byte, so nothing is lost to the saturation.
+    out.resize(out.len() + zero.len().saturating_sub(header + 1), 0);
+}
+
+/// The leaf of a zero of `ty`, and how many of its bytes are the header:
+/// the tag, or the envelope's `LOGICAL, id, param, tag`. Written by the
+/// codec every value goes through, so a typed null cannot drift from the
+/// value it stands in for.
+fn zero_leaf(ty: FixedType) -> (Vec<u8>, usize) {
+    let zero = ty.width().zero();
+    let mut leaf = Vec::with_capacity(max_len(&zero));
+    // A `FixedType` admits its own zero (a test pins every kind), so this
+    // cannot fail.
+    let written = write(ty.logical(), zero, Form::Leaf, &mut leaf);
+    debug_assert!(written.is_ok(), "{ty:?} refuses its zero");
+    let header = if leaf.first() == Some(&tags::LOGICAL) {
+        4
+    } else {
+        1
+    };
+    let header = header.min(leaf.len());
+    (leaf, header)
+}
+
+/// The width a plain tag is written for, or `None` for a tag no
+/// [`FixedType`] is written with. Bytes are sixteen wide only under a
+/// uuid, which [`FixedType::new`] checks.
+fn tag_width(tag: u8) -> Option<Width> {
+    Some(match tag {
+        tags::INT8 => Width::I8,
+        tags::INT16 => Width::I16,
+        tags::INT32 => Width::I32,
+        tags::INT64 => Width::I64,
+        tags::INT128 => Width::I128,
+        tags::UINT8 => Width::U8,
+        tags::UINT16 => Width::U16,
+        tags::UINT32 => Width::U32,
+        tags::UINT64 => Width::U64,
+        tags::UINT128 => Width::U128,
+        tags::FLOAT32 => Width::F32,
+        tags::FLOAT64 => Width::F64,
+        tags::BYTES => Width::Bytes16,
+        _ => return None,
+    })
+}
+
+/// The length of a typed null of `ty`, which is the length of a leaf
+/// holding a value of `ty`.
+pub fn typed_null_len(ty: FixedType) -> usize {
+    zero_leaf(ty).0.len()
+}
+
 /// An upper bound on the bytes [`write()`] appends for `v` in either form:
 /// an envelope, a tag, a length and the payload. Lets a caller size a
 /// `Protected` buffer once rather than let it regrow, since a regrowing
@@ -256,8 +343,19 @@ fn write_int(i: Int, out: &mut Vec<u8>) {
 /// One scalar as read from the wire.
 pub type Scalar<'a> = (Option<Logical>, Physical<'a>);
 
+/// One leaf or frame scalar node as read from the wire: a scalar, or a
+/// typed null.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Item<'a> {
+    /// A value, or the plain null.
+    Scalar(Option<Logical>, Physical<'a>),
+    /// An absent value of a fixed-width type.
+    TypedNull(FixedType),
+}
+
 /// Read one scalar in `form` from the front of `bytes`, validating it.
-/// Returns the scalar and how many bytes it occupied.
+/// Returns the scalar and how many bytes it occupied. A typed null is not
+/// a scalar and is refused; [`read_item`] reads either.
 ///
 /// # Examples
 ///
@@ -283,13 +381,67 @@ pub fn read(bytes: &[u8], form: Form) -> Result<(Scalar<'_>, usize), ScalarError
     Ok((scalar, c.pos))
 }
 
-/// Read one sealed leaf's plaintext, which must be exactly one scalar.
+/// Read one sealed leaf's plaintext, which must be exactly one scalar. A
+/// typed null is refused; [`read_leaf_item`] reads either.
 pub fn read_leaf(bytes: &[u8]) -> Result<Scalar<'_>, ScalarError> {
     let (scalar, used) = read(bytes, Form::Leaf)?;
     if used != bytes.len() {
         return Err(ScalarError::Malformed);
     }
     Ok(scalar)
+}
+
+/// Read one scalar or typed null in `form` from the front of `bytes`,
+/// validating it. Returns it and how many bytes it occupied.
+pub fn read_item(bytes: &[u8], form: Form) -> Result<(Item<'_>, usize), ScalarError> {
+    if bytes.first() == Some(&tags::TYPED_NULL) {
+        let mut c = Cursor { buf: bytes, pos: 1 };
+        let ty = read_typed_null(&mut c)?;
+        return Ok((Item::TypedNull(ty), c.pos));
+    }
+    let ((ty, v), used) = read(bytes, form)?;
+    Ok((Item::Scalar(ty, v), used))
+}
+
+/// Read one sealed leaf's plaintext, which must be exactly one scalar or
+/// typed null.
+pub fn read_leaf_item(bytes: &[u8]) -> Result<Item<'_>, ScalarError> {
+    let (item, used) = read_item(bytes, Form::Leaf)?;
+    if used != bytes.len() {
+        return Err(ScalarError::Malformed);
+    }
+    Ok(item)
+}
+
+/// A typed null after its `TYPED_NULL` tag. Strict, so that every absence
+/// has one encoding: the header names a [`FixedType`], and the whole typed
+/// null, header and padding, must be byte for byte what
+/// [`write_typed_null`] writes for it.
+fn read_typed_null(c: &mut Cursor<'_>) -> Result<FixedType, ScalarError> {
+    let start = c.pos - 1;
+    let (ty, width) = match c.byte()? {
+        tags::DATE => (Some(Logical::Date), Width::I32),
+        tags::TIMESTAMP => (Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128),
+        tags::DECIMAL => (Some(Logical::Decimal { scale: 0 }), Width::I128),
+        tags::LOGICAL => {
+            let ty = Logical::from_wire(c.byte()?, c.byte()?).ok_or(ScalarError::Malformed)?;
+            let width = tag_width(c.byte()?).ok_or(ScalarError::Malformed)?;
+            (Some(ty), width)
+        }
+        tag => (None, tag_width(tag).ok_or(ScalarError::Malformed)?),
+    };
+    // A logical type over a physical type it cannot ride on (a uuid over
+    // an int, a timestamp over a float) has no typed null.
+    let fixed = FixedType::new(ty, width).ok_or(ScalarError::Malformed)?;
+    // An envelope where a shorthand tag exists, or padding that is not
+    // zero, is not what the writer writes.
+    let mut expected = Vec::new();
+    write_typed_null(fixed, &mut expected);
+    c.pos = start;
+    if c.take(expected.len())? != expected {
+        return Err(ScalarError::Malformed);
+    }
+    Ok(fixed)
 }
 
 struct Cursor<'a> {
@@ -737,7 +889,7 @@ mod tests {
         assert_eq!(read_leaf(&[0x06, 1, 2]), Err(ScalarError::Malformed));
         assert_eq!(read_leaf(&[0x00, 0x00]), Err(ScalarError::Malformed));
         assert_eq!(read_leaf(&[0x0A, 0xFF]), Err(ScalarError::Malformed));
-        assert_eq!(read_leaf(&[0x15]), Err(ScalarError::Malformed));
+        assert_eq!(read_leaf(&[0x16]), Err(ScalarError::Malformed));
         assert_eq!(read_leaf(&[0xF0]), Err(ScalarError::Malformed));
         assert_eq!(
             read(&[0x0A, 5, 0, 0, 0, b'x'], Form::Frame),
@@ -821,16 +973,29 @@ mod tests {
         assert!(checked > 20, "only {checked} scalar vectors");
 
         // A normalized vector reads, and writes back as its canonical bytes.
+        // A typed null is written back as the plain null, as a frame writer
+        // writes it, and its typed form back as itself.
+        let mut typed_nulls = 0;
         for v in corpus["normalized"].as_array().expect("normalized") {
             let name = v["name"].as_str().expect("name");
             let bytes = hex(v["transport"].as_str().expect("transport"));
             let canonical = hex(v["reencode"].as_str().expect("reencode"));
-            let ((ty, value), used) = read(&bytes, Form::Frame).expect(name);
+            let (item, used) = read_item(&bytes, Form::Frame).expect(name);
             assert_eq!(used, bytes.len(), "{name}");
             let mut out = Vec::new();
-            write(ty, value, Form::Frame, &mut out).expect(name);
+            match item {
+                Item::Scalar(ty, value) => write(ty, value, Form::Frame, &mut out).expect(name),
+                Item::TypedNull(ty) => {
+                    write(None, Physical::Null, Form::Frame, &mut out).expect(name);
+                    let mut typed = Vec::new();
+                    write_typed_null(ty, &mut typed);
+                    assert_eq!(typed, bytes, "{name}");
+                    typed_nulls += 1;
+                }
+            }
             assert_eq!(out, canonical, "{name}");
         }
+        assert!(typed_nulls > 5, "only {typed_nulls} typed null vectors");
 
         for v in corpus["malformed"].as_array().expect("malformed") {
             let name = v["name"].as_str().expect("name");
@@ -839,7 +1004,7 @@ mod tests {
                 continue;
             }
             // Refused outright, or a valid scalar followed by trailing bytes.
-            match read(&bytes, Form::Frame) {
+            match read_item(&bytes, Form::Frame) {
                 Err(_) => {}
                 Ok((_, used)) => assert!(used < bytes.len(), "{name}"),
             }
@@ -1052,9 +1217,13 @@ mod tests {
             read_leaf(&[0xF3, 200, 0, 0x12, 0x44, 0x24, 0x0B, 0x00]),
             Err(ScalarError::Malformed)
         );
-        // An unknown tag, and no tag at all.
+        // An unknown tag, a typed null, and no tag at all.
         assert_eq!(
-            read_leaf(&[0xF3, 200, 0, 0x15]),
+            read_leaf(&[0xF3, 200, 0, 0x16]),
+            Err(ScalarError::Malformed)
+        );
+        assert_eq!(
+            read_leaf_item(&[0xF3, 200, 0, tags::TYPED_NULL, tags::INT8]),
             Err(ScalarError::Malformed)
         );
         assert_eq!(read_leaf(&[0xF3, 200, 0]), Err(ScalarError::Malformed));
@@ -1073,6 +1242,290 @@ mod tests {
     fn a_leaf_of_only_the_text_or_bytes_tag_is_empty() {
         assert_eq!(read_leaf(&[tags::STRING]), Ok((None, Physical::Text(""))));
         assert_eq!(read_leaf(&[tags::BYTES]), Ok((None, Physical::Bytes(&[]))));
+    }
+
+    fn typed_null(ty: FixedType) -> Vec<u8> {
+        let mut out = Vec::new();
+        write_typed_null(ty, &mut out);
+        out
+    }
+
+    fn fixed(ty: Option<Logical>, width: Width) -> FixedType {
+        FixedType::new(ty, width).expect("fixed width")
+    }
+
+    /// Every fixed-width type's typed null, pinned, beside a value of the
+    /// type: the cross-language wire commitment, and the same length.
+    #[test]
+    fn typed_null_known_answers() {
+        use tags::TYPED_NULL as T;
+        let ms = Logical::Timestamp(TimeUnit::Millis);
+        let unknown = Logical::from_wire(200, 9);
+        let cases: Vec<(FixedType, Vec<u8>, Physical<'_>)> = vec![
+            (
+                FixedType::plain(Width::I8).expect("fixed"),
+                vec![T, 0x0C],
+                Physical::Int(Int::I8(-1)),
+            ),
+            (
+                FixedType::plain(Width::U8).expect("fixed"),
+                vec![T, 0x0D],
+                Physical::Int(Int::U8(1)),
+            ),
+            (
+                FixedType::plain(Width::I16).expect("fixed"),
+                vec![T, 0x0E, 0],
+                Physical::Int(Int::I16(1)),
+            ),
+            (
+                FixedType::plain(Width::U16).expect("fixed"),
+                vec![T, 0x0F, 0],
+                Physical::Int(Int::U16(1)),
+            ),
+            (
+                FixedType::plain(Width::I32).expect("fixed"),
+                vec![T, 0x04, 0, 0, 0],
+                Physical::Int(Int::I32(1)),
+            ),
+            (
+                FixedType::plain(Width::U32).expect("fixed"),
+                vec![T, 0x06, 0, 0, 0],
+                Physical::Int(Int::U32(1)),
+            ),
+            (
+                FixedType::plain(Width::F32).expect("fixed"),
+                vec![T, 0x08, 0, 0, 0],
+                Physical::Float(Float::F32(1.5)),
+            ),
+            (
+                FixedType::plain(Width::I64).expect("fixed"),
+                vec![T, 0x05, 0, 0, 0, 0, 0, 0, 0],
+                Physical::Int(Int::I64(1)),
+            ),
+            (
+                FixedType::plain(Width::U64).expect("fixed"),
+                vec![T, 0x07, 0, 0, 0, 0, 0, 0, 0],
+                Physical::Int(Int::U64(1)),
+            ),
+            (
+                FixedType::plain(Width::F64).expect("fixed"),
+                vec![T, 0x09, 0, 0, 0, 0, 0, 0, 0],
+                Physical::Float(Float::F64(1.5)),
+            ),
+            (
+                FixedType::plain(Width::I128).expect("fixed"),
+                [&[T, 0x10][..], &[0; 15]].concat(),
+                Physical::Int(Int::I128(1)),
+            ),
+            (
+                FixedType::plain(Width::U128).expect("fixed"),
+                [&[T, 0x11][..], &[0; 15]].concat(),
+                Physical::Int(Int::U128(1)),
+            ),
+            (
+                fixed(Some(Logical::Date), Width::I32),
+                vec![T, 0x12, 0, 0, 0],
+                Physical::Int(Int::I32(11_017)),
+            ),
+            (
+                fixed(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128),
+                [&[T, 0x13][..], &[0; 11]].concat(),
+                Physical::Int(Int::I128(1_000_000_005)),
+            ),
+            (
+                fixed(Some(Logical::Decimal { scale: 0 }), Width::I128),
+                [&[T, 0x14][..], &[0; 15]].concat(),
+                Physical::Int(Int::I128(150)),
+            ),
+            // Through the envelope: the envelope's header, then the
+            // physical tag, then the padding.
+            (
+                fixed(Some(ms), Width::I64),
+                [&[T, 0xF3, 3, 1, 0x05][..], &[0; 7]].concat(),
+                Physical::Int(Int::I64(1_700_000_000_000)),
+            ),
+            // A uuid's sixteen bytes are fixed by its type: no length.
+            (
+                fixed(Some(Logical::Uuid), Width::Bytes16),
+                [&[T, 0xF3, 5, 0, 0x0B][..], &[0; 15]].concat(),
+                Physical::Bytes(&[0xAB; 16]),
+            ),
+            (
+                fixed(unknown, Width::F32),
+                vec![T, 0xF3, 200, 9, 0x08, 0, 0, 0],
+                Physical::Float(Float::F32(1.5)),
+            ),
+        ];
+        for (ty, expected, value) in cases {
+            assert_eq!(typed_null(ty), expected, "{ty:?}");
+            assert_eq!(typed_null_len(ty), expected.len(), "{ty:?}");
+            assert_eq!(
+                read_leaf_item(&expected).expect("reads"),
+                Item::TypedNull(ty),
+                "{ty:?}"
+            );
+            // A frame carries the same bytes, and reads to where they end.
+            let framed = [&expected[..], &[tags::NULL]].concat();
+            assert_eq!(
+                read_item(&framed, Form::Frame).expect("reads"),
+                (Item::TypedNull(ty), expected.len()),
+                "{ty:?}"
+            );
+            // As long as a value of the type: the point of it.
+            let present = leaf(ty.logical(), value);
+            assert_eq!(present.len(), expected.len(), "{ty:?}");
+            assert_eq!(FixedType::of(ty.logical(), &value), Some(ty), "{ty:?}");
+        }
+    }
+
+    /// `write_typed_null` writes from a zero of the type, so every
+    /// [`FixedType`] must admit its zero.
+    #[test]
+    fn every_fixed_type_admits_its_zero() {
+        let widths = [
+            Width::I8,
+            Width::I16,
+            Width::I32,
+            Width::I64,
+            Width::I128,
+            Width::U8,
+            Width::U16,
+            Width::U32,
+            Width::U64,
+            Width::U128,
+            Width::F32,
+            Width::F64,
+            Width::Bytes16,
+        ];
+        let types = [
+            None,
+            Some(Logical::Undefined),
+            Some(Logical::Date),
+            Some(Logical::Timestamp(TimeUnit::Seconds)),
+            Some(Logical::Timestamp(TimeUnit::Millis)),
+            Some(Logical::Timestamp(TimeUnit::Micros)),
+            Some(Logical::Timestamp(TimeUnit::Nanos)),
+            Some(Logical::Decimal { scale: 28 }),
+            Some(Logical::Uuid),
+            Logical::from_wire(200, 9),
+        ];
+        let mut checked = 0;
+        for ty in types {
+            for width in widths {
+                let Some(fixed) = FixedType::new(ty, width) else {
+                    continue;
+                };
+                let mut out = Vec::new();
+                assert!(
+                    write_leaf(fixed.logical(), width.zero(), &mut out).is_ok(),
+                    "{fixed:?}"
+                );
+                assert_eq!(typed_null(fixed).len(), out.len(), "{fixed:?}");
+                assert_eq!(
+                    read_leaf_item(&typed_null(fixed)),
+                    Ok(Item::TypedNull(fixed))
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 40, "only {checked}");
+    }
+
+    #[test]
+    fn a_typed_null_is_not_a_scalar() {
+        let null_date = typed_null(fixed(Some(Logical::Date), Width::I32));
+        assert_eq!(read_leaf(&null_date), Err(ScalarError::Malformed));
+        assert_eq!(read(&null_date, Form::Frame), Err(ScalarError::Malformed));
+        // And a scalar reads through `read_item` as a scalar.
+        assert_eq!(
+            read_leaf_item(&[0x06, 34, 0, 0, 0]),
+            Ok(Item::Scalar(None, Physical::Int(Int::U32(34))))
+        );
+        assert_eq!(
+            read_leaf_item(&[0x00]),
+            Ok(Item::Scalar(None, Physical::Null))
+        );
+    }
+
+    /// Every absence has one encoding, so a key-holding writer cannot pass
+    /// another plaintext off as one.
+    #[test]
+    fn a_typed_null_is_read_strictly() {
+        use tags::TYPED_NULL as T;
+        let refused: &[&[u8]] = &[
+            // No header, and a header with no padding.
+            &[T],
+            &[T, 0x06],
+            // Padding that is not zero, short, or followed by more.
+            &[T, 0x06, 0, 1, 0],
+            &[T, 0x06, 0, 0],
+            &[T, 0x06, 0, 0, 0, 0],
+            &[T, 0x12, 0, 0, 0, 0],
+            // A tag with no typed null: null, undefined, bool, text, bytes,
+            // another typed null, an unknown tag.
+            &[T, 0x00],
+            &[T, 0x01],
+            &[T, 0x02],
+            &[T, 0x03],
+            &[T, 0x0A],
+            &[T, 0x0B],
+            &[T, T, 0x06, 0, 0, 0],
+            &[T, 0x16],
+            // An envelope where a shorthand tag exists (a date), with no
+            // logical type (id 0), and over the reserved long envelope.
+            &[T, 0xF3, 2, 0, 0x04, 0, 0, 0],
+            &[T, 0xF3, 0, 0, 0x04, 0, 0, 0],
+            &[T, 0xF4, 200, 0, 0x04, 0, 0, 0],
+            // A logical type over a physical type it cannot ride on: a
+            // uuid over an int, a millisecond timestamp over a float, an
+            // unknown type over a bool, text or bytes; and plain bytes.
+            &[T, 0xF3, 5, 0, 0x04, 0, 0, 0],
+            &[T, 0xF3, 3, 1, 0x09, 0, 0, 0, 0, 0, 0, 0],
+            &[T, 0xF3, 200, 0, 0x02],
+            &[T, 0xF3, 200, 0, 0x0A],
+            &[
+                T, 0xF3, 200, 0, 0x0B, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            &[T, 0x0B, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            // A uuid's typed null with a length, as a frame gives bytes.
+            &[T, 0xF3, 5, 0, 0x0B, 16, 0, 0, 0],
+        ];
+        for bytes in refused {
+            assert_eq!(
+                read_leaf_item(bytes),
+                Err(ScalarError::Malformed),
+                "{bytes:?}"
+            );
+        }
+    }
+
+    /// Whatever `read_item` accepts after a typed null tag writes back to
+    /// the bytes it read: one encoding per absence.
+    #[quickcheck]
+    fn any_typed_null_input_reads_without_panic_and_has_one_encoding(
+        tag: u8,
+        id: u8,
+        param: u8,
+        rest: Vec<u8>,
+    ) -> bool {
+        let tag = tag % 0x16;
+        // Mostly zero padding, so the accepting path is exercised too.
+        let rest: Vec<u8> = rest.iter().map(|&b| if b < 0xF0 { 0 } else { b }).collect();
+        let plain = [&[tags::TYPED_NULL, tag][..], &rest[..]].concat();
+        let envelope = [
+            &[tags::TYPED_NULL, tags::LOGICAL, id % 8, param % 32, tag][..],
+            &rest,
+        ]
+        .concat();
+        [plain, envelope].iter().all(|bytes| {
+            [Form::Leaf, Form::Frame]
+                .into_iter()
+                .all(|form| match read_item(bytes, form) {
+                    Err(_) => true,
+                    Ok((Item::TypedNull(ty), used)) => typed_null(ty) == bytes[..used],
+                    Ok((Item::Scalar(..), _)) => false,
+                })
+        })
     }
 
     #[test]

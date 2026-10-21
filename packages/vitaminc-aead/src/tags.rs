@@ -89,6 +89,23 @@ pub const TIMESTAMP: u8 = 0x13;
 /// [`Logical::Decimal`](crate::Logical) over an int holding the mantissa,
 /// so a negative zero reads as zero (see [`crate::leaf`]).
 pub const DECIMAL: u8 = 0x14;
+/// Typed null: an absent value of a fixed-width type, padded to the length
+/// of that type's leaf so a sealed absence cannot be told from a sealed
+/// value by its length. `TYPED_NULL`, then the header a value of the type
+/// starts with (its own tag, or the [`LOGICAL`] envelope's `LOGICAL, id,
+/// param, tag`), then zero bytes for all but one byte of its payload. A
+/// null date is `[TYPED_NULL, DATE, 0, 0, 0]`, five bytes like
+/// `[DATE, d0, d1, d2, d3]`.
+///
+/// Only an int or a float, plain or under a logical type, and a uuid have a
+/// typed null (see [`FixedType`](crate::FixedType)). A bool's leaf is the
+/// tag alone, already as short as [`NULL`]; other text and bytes are
+/// variable width. A uuid's typed null has no length before its padding,
+/// even in a frame: its type fixes the length. A
+/// reader refuses a typed null of any other tag, an envelope where a
+/// shorthand tag exists, and padding that is not zero, so every absence
+/// has one encoding. [`NULL`] stays a valid absence of any type.
+pub const TYPED_NULL: u8 = 0x15;
 
 /// The generic logical-type envelope: `LOGICAL, id, param`, then the plain
 /// physical scalar. Carries any logical type that has no tag of its own.

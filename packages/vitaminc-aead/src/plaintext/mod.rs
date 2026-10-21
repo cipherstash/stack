@@ -26,7 +26,8 @@ mod sources;
 mod tee;
 
 pub use kinds::{
-    Float, Int, Kind, KnownLogical, Logical, Physical, TimeUnit, UnknownLogical, UnknownLogicalId,
+    FixedType, Float, Int, Kind, KnownLogical, Logical, Physical, TimeUnit, UnknownLogical,
+    UnknownLogicalId, Width,
 };
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
@@ -88,6 +89,21 @@ pub trait Encrypt {
     /// value that is too deep. It must never be more than the deepest a
     /// value of the type can nest, or a type that is fine fails to compile.
     const DEPTH: Option<usize> = None;
+
+    /// The fixed-width scalar type every value of this type has, if it has
+    /// one: an int, a float, a date, a timestamp, a decimal. `None`, the
+    /// default, for everything else: a bool (whose leaf is already as short
+    /// as a null's), text, bytes, a container, a value whose type depends
+    /// on the value.
+    ///
+    /// `Option<Self>` walks its `None` as a [`Sink::typed_null`] of this
+    /// type, so the encrypting sink seals it padded to the length of a
+    /// `Some`, and [`Decrypt`](crate::Decrypt) reads that typed null back
+    /// only into an `Option` of the same type. It must be the type
+    /// [`visit`](Encrypt::visit) always walks, normalised as
+    /// [`FixedType`] normalises it, or a `None` and a `Some` seal at
+    /// different lengths.
+    const FIXED: Option<FixedType> = None;
 
     /// Describe `self` to `sink`, consuming it.
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error>;
@@ -175,6 +191,21 @@ pub trait Sink: Sized {
     /// }
     /// ```
     fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<Self::Ok, Self::Error>;
+
+    /// An absent value of a fixed-width type: a null that says what it
+    /// stands in for. `Option<T>` walks its `None` here when `T` has a
+    /// [`FIXED`](Encrypt::FIXED) type, and a host that knows a missing
+    /// value's type does the same.
+    ///
+    /// It means what `scalar(None, Physical::Null)` means; the type is
+    /// there so its length can be hidden. The encrypting sink seals it as a
+    /// typed null padded to the type's leaf length (see
+    /// [`tags::TYPED_NULL`](crate::tags::TYPED_NULL)), the frame carries
+    /// it, and a typed decode target reads it only as an `Option` of the
+    /// same type. A sink that only needs to know a value is absent treats
+    /// it as a null. A sink that forwards to other sinks must forward it as
+    /// it is, or the padding is lost and absent values show again.
+    fn typed_null(self, ty: FixedType) -> Result<Self::Ok, Self::Error>;
 
     /// Start a sequence. `len` is a hint; a source that does not know its
     /// length passes `None`.
@@ -281,6 +312,7 @@ pub(crate) mod record {
     #[derive(Debug, Clone, PartialEq)]
     pub enum Event {
         Scalar(Option<Logical>, Owned),
+        TypedNull(FixedType),
         Seq(Option<usize>),
         Element,
         EndSeq,
@@ -335,6 +367,11 @@ pub(crate) mod record {
 
         fn scalar(self, ty: Option<Logical>, value: Physical<'_>) -> Result<(), RecordError> {
             self.0.push(Event::Scalar(ty, value.into()));
+            Ok(())
+        }
+
+        fn typed_null(self, ty: FixedType) -> Result<(), RecordError> {
+            self.0.push(Event::TypedNull(ty));
             Ok(())
         }
 

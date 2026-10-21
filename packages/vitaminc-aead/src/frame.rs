@@ -21,8 +21,10 @@ use std::collections::HashSet;
 use vitaminc_protected::{Controlled, OpaqueDebug, Protected, TimingSafeEq};
 use zeroize::Zeroize;
 
-use crate::leaf::{self, Form, ScalarError};
-use crate::plaintext::{Encrypt, Error, Logical, MapSink, Physical, SeqSink, Sink, SourceError};
+use crate::leaf::{self, Form, Item, ScalarError};
+use crate::plaintext::{
+    Encrypt, Error, FixedType, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
+};
 
 /// Framing tag for a sequence: `ARRAY`, `u32` count, then the elements.
 pub const ARRAY: u8 = 0xF0;
@@ -117,11 +119,11 @@ impl<'a> Cursor<'a> {
         core::str::from_utf8(self.take(len)?).map_err(|_| FrameError)
     }
 
-    fn scalar(&mut self) -> Result<(Option<Logical>, Physical<'a>), FrameError> {
-        let (scalar, used) =
-            leaf::read(&self.buf[self.pos..], Form::Frame).map_err(|_| FrameError)?;
+    fn scalar(&mut self) -> Result<Item<'a>, FrameError> {
+        let (item, used) =
+            leaf::read_item(&self.buf[self.pos..], Form::Frame).map_err(|_| FrameError)?;
         self.pos += used;
-        Ok(scalar)
+        Ok(item)
     }
 
     /// The next whole value node, as its own frame.
@@ -221,10 +223,10 @@ fn visit_node<S: Sink>(c: &mut Cursor<'_>, sink: S) -> Result<S::Ok, S::Error> {
             c.byte().expect(VALIDATED);
             sink.passthrough(c.node(0).expect(VALIDATED))
         }
-        _ => {
-            let (ty, v) = c.scalar().expect(VALIDATED);
-            sink.scalar(ty, v)
-        }
+        _ => match c.scalar().expect(VALIDATED) {
+            Item::Scalar(ty, v) => sink.scalar(ty, v),
+            Item::TypedNull(ty) => sink.typed_null(ty),
+        },
     }
 }
 
@@ -452,6 +454,17 @@ impl<'o> Sink for FrameWriter<'o> {
             ScalarError::Invalid => FrameWriteError::Invalid,
             ScalarError::TooLong | ScalarError::Malformed => FrameWriteError::TooLong,
         })
+    }
+
+    /// Written as the plain null. A frame is plaintext, never sealed, so
+    /// padding hides nothing in it: what a frame writer produces goes to a
+    /// host (the frame [`decrypt_to_frame`](crate::decrypt_to_frame)
+    /// returns) or into the clear (a passthrough subtree), where the plain
+    /// null is what every reader already knows. A frame a host sends may
+    /// still carry a typed null, which [`Frame`] reads, so the host's
+    /// absent values are padded when sealed.
+    fn typed_null(self, _: FixedType) -> Result<(), FrameWriteError> {
+        self.scalar(None, Physical::Null)
     }
 
     fn seq(self, len: Option<usize>) -> Result<FrameSeq<'o>, FrameWriteError> {

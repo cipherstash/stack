@@ -41,7 +41,8 @@ pub trait StaticCipher: Sized + Copy {
         A: IntoAad<'a>;
 
     /// Produce an authenticated "no value" marker bound to `aad`: the null
-    /// leaf, `[tags::NULL]`, the same leaf the sink path seals for `None`.
+    /// leaf, `[tags::NULL]`, the same leaf the sink path seals for a `None`
+    /// of bytes. Bytes are variable width, so it is not padded.
     fn encrypt_none<'a, A>(self, aad: A) -> Result<Absent, Self::Error>
     where
         A: IntoAad<'a>;

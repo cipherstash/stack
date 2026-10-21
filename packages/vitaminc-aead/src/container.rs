@@ -9,7 +9,9 @@
 /// [`EmptyMap`](CipherText::EmptyMap), since they contain no element
 /// ciphertexts to authenticate the supplied AAD. Nested structures are
 /// represented recursively. An absent value (`Option::None`, a host null)
-/// is a null leaf, a `Single` like any other scalar.
+/// is a null leaf, a `Single` like any other scalar: the plain null, or a
+/// typed null padded to its type's length (see
+/// [`tags::TYPED_NULL`](crate::tags::TYPED_NULL)).
 ///
 /// The two parameters:
 ///

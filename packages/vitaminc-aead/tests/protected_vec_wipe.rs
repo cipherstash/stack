@@ -11,7 +11,7 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use vitaminc_aead::plaintext::{
-    Encrypt, Error, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
+    Encrypt, Error, FixedType, Logical, MapSink, Physical, SeqSink, Sink, SourceError,
 };
 use vitaminc_protected::Protected;
 
@@ -33,10 +33,10 @@ unsafe impl GlobalAlloc for Inspecting {
         if ARMED.load(Ordering::SeqCst) {
             // SAFETY: `ptr` is a live block of `layout.size()` bytes.
             let block = unsafe { core::slice::from_raw_parts(ptr, layout.size()) };
-            let found = block
-                .chunks_exact(8)
-                .filter(|w| *w == SECRET.to_ne_bytes())
-                .count();
+            // Whole eight-byte words only; a tail shorter than a word
+            // cannot hold the secret.
+            let (words, _) = block.as_chunks::<8>();
+            let found = words.iter().filter(|w| **w == SECRET.to_ne_bytes()).count();
             LEFT_IN_FREED_BLOCKS.fetch_add(found, Ordering::SeqCst);
         }
         unsafe { System.dealloc(ptr, layout) }
@@ -67,6 +67,10 @@ impl Sink for Quiet {
     type Map = Self;
 
     fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), Stopped> {
+        Ok(())
+    }
+
+    fn typed_null(self, _: FixedType) -> Result<(), Stopped> {
         Ok(())
     }
 

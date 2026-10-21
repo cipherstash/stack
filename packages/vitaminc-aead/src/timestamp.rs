@@ -4,7 +4,7 @@ use ::chrono::{DateTime, Utc};
 use vitaminc_protected::{OpaqueDebug, TimingSafeEq};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use crate::plaintext::{depth, Encrypt, Int, Logical, Physical, Sink, TimeUnit};
+use crate::plaintext::{depth, Encrypt, FixedType, Int, Logical, Physical, Sink, TimeUnit, Width};
 use crate::typed::FromScalar;
 
 /// A UTC instant that is never a leap second, so it can always be encrypted.
@@ -110,6 +110,7 @@ impl From<Timestamp> for DateTime<Utc> {
 /// sake.
 impl Encrypt for Timestamp {
     const DEPTH: Option<usize> = depth::SCALAR;
+    const FIXED: Option<FixedType> = <&Timestamp as Encrypt>::FIXED;
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         (&self).visit(sink)
     }
@@ -117,6 +118,8 @@ impl Encrypt for Timestamp {
 
 impl Encrypt for &Timestamp {
     const DEPTH: Option<usize> = depth::SCALAR;
+    const FIXED: Option<FixedType> =
+        FixedType::new(Some(Logical::Timestamp(TimeUnit::Nanos)), Width::I128);
     fn visit<S: Sink>(self, sink: S) -> Result<S::Ok, S::Error> {
         sink.scalar(
             Some(Logical::Timestamp(TimeUnit::Nanos)),

@@ -4,7 +4,7 @@
 //! source as one sink, so both consumers receive every call in the same
 //! order. Any sinks with the same error type compose, at any depth.
 
-use super::kinds::{Logical, Physical};
+use super::kinds::{FixedType, Logical, Physical};
 use super::{Encrypt, MapSink, SeqSink, Sink};
 
 /// A pair of sinks that forwards every call to both and pairs the results.
@@ -39,6 +39,12 @@ impl<A: Sink, B: Sink<Error = A::Error>> Sink for Tee<A, B> {
         let (a, b) = (self.0, self.1);
         a.scalar(ty, value)
             .and_then(|a| b.scalar(ty, value).map(|b| (a, b)))
+    }
+
+    fn typed_null(self, ty: FixedType) -> Result<Self::Ok, A::Error> {
+        let (a, b) = (self.0, self.1);
+        a.typed_null(ty)
+            .and_then(|a| b.typed_null(ty).map(|b| (a, b)))
     }
 
     fn seq(self, len: Option<usize>) -> Result<Self::Seq, A::Error> {
@@ -160,6 +166,23 @@ mod tests {
     }
 
     #[test]
+    fn a_typed_null_reaches_both_sides_as_a_typed_null() {
+        use crate::plaintext::kinds::Width;
+        use crate::plaintext::record::Event;
+        let (mut left, mut right) = (Vec::new(), Vec::new());
+        None::<i32>
+            .visit(Tee(Record(&mut left), Record(&mut right)))
+            .expect("ok");
+        assert_eq!(left, right);
+        assert_eq!(
+            left,
+            [Event::TypedNull(
+                FixedType::plain(Width::I32).expect("fixed")
+            )]
+        );
+    }
+
+    #[test]
     fn visit_map_walks_each_entry_into_its_own_sink() {
         use crate::plaintext::record::{Event, Owned};
         use crate::plaintext::visit_map;
@@ -215,6 +238,9 @@ mod tests {
             type Seq = Self;
             type Map = Self;
             fn scalar(self, _: Option<Logical>, _: Physical<'_>) -> Result<(), RecordError> {
+                Err(RecordError("refused".into()))
+            }
+            fn typed_null(self, _: FixedType) -> Result<(), RecordError> {
                 Err(RecordError("refused".into()))
             }
             fn seq(self, _: Option<usize>) -> Result<Self, RecordError> {

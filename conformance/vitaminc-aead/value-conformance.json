@@ -439,6 +439,132 @@
       "transport": "f3c8",
       "rule": "ADR 0001 section 3: the envelope is id, parameter and a physical scalar; a parameter and payload cut off are refused"
     }
+,
+    {
+      "name": "typed-null-truncated",
+      "transport": "15",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-no-padding",
+      "transport": "1506",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-short-padding",
+      "transport": "15060000",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-nonzero-padding",
+      "transport": "1506000100",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-trailing",
+      "transport": "150600000000",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-of-null",
+      "transport": "1500",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-of-undefined",
+      "transport": "1501",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-of-bool",
+      "transport": "1502",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-of-text",
+      "transport": "150a",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-of-plain-bytes",
+      "transport": "150b000000000000000000000000000000",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-nested",
+      "transport": "151506000000",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-of-array",
+      "transport": "15f000000000",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-envelope-over-shorthand",
+      "transport": "15f3020004000000",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-envelope-timestamp-nanos",
+      "transport": "15f3030310000000000000000000000000000000",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-envelope-id-zero",
+      "transport": "15f3000004000000",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-envelope-undefined",
+      "transport": "15f3010004000000",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-envelope-decimal",
+      "transport": "15f3040004000000",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-uuid-over-int",
+      "transport": "15f3050004000000",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-uuid-with-length",
+      "transport": "15f305000b10000000000000000000000000000000000000",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-uuid-with-parameter",
+      "transport": "15f305010b000000000000000000000000000000",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-timestamp-over-float",
+      "transport": "15f303010900000000000000",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-unknown-over-bytes",
+      "transport": "15f3c8000b000000000000000000000000000000",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-unknown-over-bool",
+      "transport": "15f3c80002",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-inside-envelope",
+      "transport": "f3c800150c",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    },
+    {
+      "name": "typed-null-0xf4",
+      "transport": "15f4c80004000000",
+      "rule": "Typed null (vitaminc#493): every absence has one encoding, so a typed null is TYPED_NULL, the header a value of a fixed-width type starts with, then zero padding to that value's length, and nothing else"
+    }
   ],
   "normalized": [
     {
@@ -449,6 +575,88 @@
       "reencode": "1400000200000000000000000000000000",
       "reencode_value": "0.00",
       "rule": "ADR 0001 section 3: a decimal negative zero reads back as zero with its scale kept, and zero is always written without the sign"
+    }
+,
+    {
+      "name": "typed-null-uint32",
+      "kind": "null",
+      "value": null,
+      "transport": "1506000000",
+      "reencode": "00",
+      "reencode_value": null,
+      "rule": "Typed null (vitaminc#493): an absent value of a fixed-width type, padded to that type's leaf length so its sealed length matches a present value's. A frame is never sealed, so it reads as null and is written back as the plain null"
+    },
+    {
+      "name": "typed-null-int8",
+      "kind": "null",
+      "value": null,
+      "transport": "150c",
+      "reencode": "00",
+      "reencode_value": null,
+      "rule": "Typed null (vitaminc#493): an absent value of a fixed-width type, padded to that type's leaf length so its sealed length matches a present value's. A frame is never sealed, so it reads as null and is written back as the plain null"
+    },
+    {
+      "name": "typed-null-float64",
+      "kind": "null",
+      "value": null,
+      "transport": "150900000000000000",
+      "reencode": "00",
+      "reencode_value": null,
+      "rule": "Typed null (vitaminc#493): an absent value of a fixed-width type, padded to that type's leaf length so its sealed length matches a present value's. A frame is never sealed, so it reads as null and is written back as the plain null"
+    },
+    {
+      "name": "typed-null-date",
+      "kind": "null",
+      "value": null,
+      "transport": "1512000000",
+      "reencode": "00",
+      "reencode_value": null,
+      "rule": "Typed null (vitaminc#493): an absent value of a fixed-width type, padded to that type's leaf length so its sealed length matches a present value's. A frame is never sealed, so it reads as null and is written back as the plain null"
+    },
+    {
+      "name": "typed-null-timestamp",
+      "kind": "null",
+      "value": null,
+      "transport": "15130000000000000000000000",
+      "reencode": "00",
+      "reencode_value": null,
+      "rule": "Typed null (vitaminc#493): an absent value of a fixed-width type, padded to that type's leaf length so its sealed length matches a present value's. A frame is never sealed, so it reads as null and is written back as the plain null"
+    },
+    {
+      "name": "typed-null-decimal",
+      "kind": "null",
+      "value": null,
+      "transport": "1514000000000000000000000000000000",
+      "reencode": "00",
+      "reencode_value": null,
+      "rule": "Typed null (vitaminc#493): an absent value of a fixed-width type, padded to that type's leaf length so its sealed length matches a present value's. A frame is never sealed, so it reads as null and is written back as the plain null"
+    },
+    {
+      "name": "typed-null-timestamp-millis",
+      "kind": "null",
+      "value": null,
+      "transport": "15f303010500000000000000",
+      "reencode": "00",
+      "reencode_value": null,
+      "rule": "Typed null (vitaminc#493): an absent value of a fixed-width type, padded to that type's leaf length so its sealed length matches a present value's. A frame is never sealed, so it reads as null and is written back as the plain null"
+    },
+    {
+      "name": "typed-null-uuid",
+      "kind": "null",
+      "value": null,
+      "transport": "15f305000b000000000000000000000000000000",
+      "reencode": "00",
+      "reencode_value": null,
+      "rule": "Typed null (vitaminc#493): an absent value of a fixed-width type, padded to that type's leaf length so its sealed length matches a present value's. A frame is never sealed, so it reads as null and is written back as the plain null"
+    },
+    {
+      "name": "typed-null-unknown-over-float32",
+      "kind": "null",
+      "value": null,
+      "transport": "15f3c80908000000",
+      "reencode": "00",
+      "reencode_value": null,
+      "rule": "Typed null (vitaminc#493): an absent value of a fixed-width type, padded to that type's leaf length so its sealed length matches a present value's. A frame is never sealed, so it reads as null and is written back as the plain null"
     }
   ],
   "ciphertext_malformed": [
