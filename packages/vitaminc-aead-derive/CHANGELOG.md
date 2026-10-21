@@ -1,4 +1,10 @@
 
+## [0.8.0] - 2026-10-21
+
+### Breaking
+
+- **Breaking:** A derived type knows its fixed width, so a `None` of a derived newtype over a fixed-width type, or of a fieldless enum, now seals as a typed null padded to a `Some`'s length, and reads back as `None` wherever the inner type's, or a `u32`'s, would. A struct is a map and has no fixed width. No derive input changes, but the sealed bytes do: see `vitaminc-aead` 0.8.0 for what a typed null is, and which readers accept one.
+
 ## [0.7.0] - 2026-10-20
 
 ## [0.6.1] - 2026-10-18

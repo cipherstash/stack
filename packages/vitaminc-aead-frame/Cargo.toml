@@ -16,7 +16,7 @@ rust-version.workspace = true
 all-features = true
 
 [dependencies]
-vitaminc-aead = { version = "0.7.0", path = "../aead" }
+vitaminc-aead = { version = "0.8.0", path = "../aead" }
 serde = { workspace = true, optional = true }
 zeroize = { workspace = true, optional = true }
 
