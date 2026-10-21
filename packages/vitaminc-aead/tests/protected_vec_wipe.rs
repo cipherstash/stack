@@ -33,10 +33,10 @@ unsafe impl GlobalAlloc for Inspecting {
         if ARMED.load(Ordering::SeqCst) {
             // SAFETY: `ptr` is a live block of `layout.size()` bytes.
             let block = unsafe { core::slice::from_raw_parts(ptr, layout.size()) };
-            let found = block
-                .chunks_exact(8)
-                .filter(|w| *w == SECRET.to_ne_bytes())
-                .count();
+            // Whole eight-byte words only; a tail shorter than a word
+            // cannot hold the secret.
+            let (words, _) = block.as_chunks::<8>();
+            let found = words.iter().filter(|w| **w == SECRET.to_ne_bytes()).count();
             LEFT_IN_FREED_BLOCKS.fetch_add(found, Ordering::SeqCst);
         }
         unsafe { System.dealloc(ptr, layout) }
