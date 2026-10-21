@@ -13,10 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Arc<StackKms>`, as a `vitaminc-kms` `KeyProvider<32>` and
   `IndexKeyProvider<32>`. A client library can be generic over those traits
   and run on ZeroKMS or on another data key source. It reconstructs keys
-  client-and-server, isolates them per value, and binds each key to its
-  descriptor. Its `KeyId` is the IV followed by the tag.
-- `Error::BindingNotUtf8` and `Error::MalformedKeyId`, for a binding or a
-  key id that `ZeroKmsKeyset` cannot use.
+  client-and-server, mints one key per value, and binds each key to its
+  descriptor. Its `KeyId` is the IV followed by the tag, and its custody is
+  `BackendHeld`: the id names a key ZeroKMS rebuilds, not a wrapped copy of
+  the key.
+- `Error::BindingNotUtf8` (code `stack_kms::binding_not_utf8`) and
+  `Error::MalformedKeyId` (code `stack_kms::malformed_key_id`), for a binding
+  or a key id that `ZeroKmsKeyset` cannot use.
 
 ### Changed
 

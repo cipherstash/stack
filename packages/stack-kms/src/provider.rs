@@ -9,11 +9,14 @@
 //!   material and the data key only exists after the client's own keyset
 //!   re-enciphers it (`recipher`). A server-side compromise plus a stored
 //!   key id does not recover a key.
-//! - `ISOLATION = PerValue`: every value gets its own key, in one round
-//!   trip per batch.
-//! - `BINDING = Bound`: the binding is the descriptor. ZeroKMS binds it into
-//!   the key server-side, refuses retrieval under a different one, and logs
-//!   it per retrieval (ADR 0002 in `packages/stack-encrypt/docs/adr`).
+//! - `CUSTODY = BackendHeld`: the [`KeyId`] is not the data key in wrapped
+//!   form. It names a key the service rebuilds from material it holds, so
+//!   losing a stored id does not lose the only copy of the key.
+//!
+//! Every value gets its own key, in one round trip per batch. The binding is
+//! the descriptor: ZeroKMS binds it into the key server-side, refuses
+//! retrieval under a different one, and logs it per retrieval (ADR 0002 in
+//! `packages/stack-encrypt/docs/adr`).
 //!
 //! The [`KeyId`] is the ZeroKMS IV followed by the tag: the two halves the
 //! service needs back to re-derive a key.
@@ -22,8 +25,8 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use uuid::Uuid;
-use vitaminc_kms::provider::{Binding, BindingSupport, IndexKeyProvider, KeyProvider};
-use vitaminc_kms::{GeneratedDataKey, IndexKeyMaterial, KeyId, KeyIsolation, KeyReconstruction};
+use vitaminc_kms::provider::{Binding, IndexKeyProvider, KeyProvider};
+use vitaminc_kms::{GeneratedDataKey, IndexKeyMaterial, KeyCustody, KeyId, KeyReconstruction};
 use vitaminc_protected_kms::Protected;
 use zerokms_protocol::IdentifiedBy;
 
@@ -111,8 +114,7 @@ where
     type Error = Error;
 
     const RECONSTRUCTION: KeyReconstruction = KeyReconstruction::ClientAndServer;
-    const ISOLATION: KeyIsolation = KeyIsolation::PerValue;
-    const BINDING: BindingSupport = BindingSupport::Bound;
+    const CUSTODY: KeyCustody = KeyCustody::BackendHeld;
 
     async fn generate_keys(
         &self,
@@ -598,12 +600,8 @@ mod tests {
             KeyReconstruction::ClientAndServer
         );
         assert_eq!(
-            <TestKeyset as KeyProvider<32>>::ISOLATION,
-            KeyIsolation::PerValue
-        );
-        assert_eq!(
-            <TestKeyset as KeyProvider<32>>::BINDING,
-            BindingSupport::Bound
+            <TestKeyset as KeyProvider<32>>::CUSTODY,
+            KeyCustody::BackendHeld
         );
     }
 }

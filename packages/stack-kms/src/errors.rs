@@ -339,6 +339,8 @@ mod codes {
                 Error::ConnectionInit(Box::new(std::io::Error::other("no")))
             },
             Error::InvalidEndpoint(_) => Error::InvalidEndpoint(InvalidEndpoint::Userinfo),
+            Error::BindingNotUtf8 => Error::BindingNotUtf8,
+            Error::MalformedKeyId { .. } => Error::MalformedKeyId { len: 3, min: 16 },
             Error::Unexpected(_) => Error::Unexpected("unexpected".into()),
         ]));
         errors.extend(boxed(variants![
@@ -752,12 +754,14 @@ pub enum Error {
     /// [`ZeroKmsKeyset`](crate::ZeroKmsKeyset) was not UTF-8. ZeroKMS
     /// descriptors are strings.
     #[error("a ZeroKMS binding must be UTF-8 text (it is the descriptor)")]
+    #[diagnostic(code(stack_kms::binding_not_utf8))]
     BindingNotUtf8,
 
     /// A [`KeyId`](vitaminc_kms::KeyId) handed to
     /// [`ZeroKmsKeyset`](crate::ZeroKmsKeyset) is too short to hold the IV
     /// that leads every id it mints.
     #[error("ZeroKMS key id is {len} bytes; the IV alone is {min}")]
+    #[diagnostic(code(stack_kms::malformed_key_id))]
     MalformedKeyId { len: usize, min: usize },
 
     #[error("Unexpected error: {0}")]
@@ -772,9 +776,11 @@ impl ErrorPayload for Error {
             Self::RetrieveKey(error) => error.payload(),
             Self::LoadKeyset(error) => error.payload(),
             Self::Auth(error) => error.payload(),
-            Self::ConnectionInit(_) | Self::InvalidEndpoint(_) | Self::Unexpected(_) => {
-                serde_json::Map::new()
-            }
+            Self::ConnectionInit(_)
+            | Self::InvalidEndpoint(_)
+            | Self::BindingNotUtf8
+            | Self::MalformedKeyId { .. }
+            | Self::Unexpected(_) => serde_json::Map::new(),
         }
     }
 }
