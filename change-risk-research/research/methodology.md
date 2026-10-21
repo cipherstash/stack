@@ -1,5 +1,8 @@
 # Evaluation methodology
 
+> Historical v1 protocol below is preserved. The final section defines scoring v2
+> and supersedes active evaluation/roadmap interpretation; Qodo and CodeScene are closed options.
+
 Written on 2026-10-12, before any evaluator output was scored. Changes after scoring are listed at the end with their reason.
 
 ## 1. Corpus
@@ -103,3 +106,41 @@ Computed by `harness/score_results.py`, all with counts and Wilson 95% intervals
 6. **Rate-limit interruption.** Running twelve evaluators at once hit API rate limits; several runs waited for hours and hit the 3600 s timeout. Those runs were discarded and rerun at a concurrency of three, from the same case directories and the same skill revision. No completed run was rerun or replaced.
 7. **Stability subset and condition A coverage.** The stability subset (three runs of condition C) is 6 of the 8 holdout defect PRs and 2 high-impact controls. Condition A was completed for all 31 holdout PRs, so the ablation compares the same cases in every condition.
 8. **Blind second adjudication (2026-10-13, after the results were written).** At the user's request every holdout finding was labelled again by a second adjudicator blind to the first labels, evaluator names and expert impact (`harness/blind_rescore.py`, results in `eval/adjudication-blind/` and `eval/agreement.json`). The first labels stay the pre-registered result; the blind labels are reported beside them in `eval/comparison.md`, not substituted.
+
+
+## Scoring methodology v2 — 2026-10-21 amendment
+
+The original protocol and recorded v1 summaries above are historical, not rewritten.
+`score_results.py` now emits `scoring_version: "2"`; `report_tables.py` writes
+`results-summary-v2.json` and `results-paired-v2.json`. Original summaries, assessments,
+ground truth, and adjudications remain unchanged. These are new definitions applied
+to stored labels, not a fresh experiment.
+
+- **Adjudicated scenario validity:** (match + valid) / non-trivial findings.
+  `match` identifies a known-defect mechanism; `valid` is an agent judgement that a
+  scenario is plausible and code-supported, not proof of a defect. Unsupported,
+  incorrect and trivial labels remain separate counts.
+- **Evidence verification coverage:** checked material findings / all material findings.
+- **Evidence correctness among checked:** passing / checked material findings.
+  Report material total, checked, passed, failed, and unassessed explicitly. Null
+  `evidence_ok` means unassessed, never passed; zero checked means no correctness estimate.
+- Central success criterion: a credible consequential scenario or missing verification
+  that existing review would otherwise overlook. Prioritize validity, actionable
+  incremental insight, unnecessary reviewer workload, accurate contracts/consumers,
+  missing verification, and human practical-usefulness judgement. Known-defect recall
+  is a secondary diagnostic. Incremental usefulness is not established by raw counts.
+
+The second, evaluator-blinded agent adjudication used another Claude Opus session.
+It shares model-family limitations and research-design assumptions; style partially
+reveals evaluator identity and errors can be correlated. It is not independent human
+verification or objective correctness. The ground truth is also agent-authored.
+
+Historical CodeRabbit comments cover intermediate pushes on 19/31 holdout PRs;
+change-risk assessed reconstructed final heads on 31/31. Earlier comments may have
+caused repairs visible at final head. Counts and recall therefore cannot establish
+superiority. The evidence suggests complementary capabilities, subject to human review.
+
+The 1.1 method was informed by observed misses. The original 1.0 holdout results are
+preserved, but that set is now development evidence for 1.1, not an untouched holdout.
+No improved recall or effectiveness is claimed without a fresh evaluation. Qodo,
+CodeScene, further commercial comparisons and score calibration are out of scope.

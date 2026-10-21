@@ -1010,3 +1010,12 @@ pnpm changeset:publish
 - Can't decrypt after encrypting with a lock context: ensure the exact same lock context is provided to decrypt.
 - Tests failing due to missing credentials: provide `CS_*` env vars; lock-context tests are skipped without `USER_JWT`.
 - Performance testing: prefer bulk operations (`bulkEncrypt*` / `bulkDecrypt*`) to exercise ZeroKMS bulk speed.
+
+
+## Internal change-risk skill
+
+`.agents/skills/change-risk/` is the canonical on-demand PR impact skill;
+`.claude/skills/change-risk` points to it for Claude discovery. It is internal
+review tooling, separate from customer `skills/`, which the CLI copies into
+`dist/skills`. It adds no published package or automated check. Normal invocation
+and limitations: [change-risk README](change-risk-research/README.md).

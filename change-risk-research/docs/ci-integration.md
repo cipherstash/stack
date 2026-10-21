@@ -1,3 +1,7 @@
+> Status: inactive proposal. Qodo/CodeScene evaluation, a shadow trial and CI
+> activation are not part of on-demand adoption. No additional paid service is
+> authorized. Any future activation needs its own decision and verified controls.
+
 # CI integration proposal (not active)
 
 **Status: proposal only.** Nothing here runs. The example workflow is
@@ -66,6 +70,27 @@ Turning this on should require all of:
 
 ## Moving the skill
 
-The workflow reads the skill from `change-risk-research/.agents/skills/change-risk` at the base SHA. If
-the skill is promoted, update the two `sparse-checkout` paths. Do **not** move it to the root `skills/`
-directory without a decision: that directory ships to customers inside the `stash` npm tarball.
+The workflow reads the canonical `.agents/skills/change-risk` at the trusted base SHA.
+Both sparse checkouts use that location; publishing includes scripts and schema.
+The root `skills/` directory ships to customers inside the `stash` npm tarball and
+is separate from this internal skill.
+
+
+## Validation boundary after the completion pass
+
+The publish checkout includes both trusted base-branch `scripts/` and `schemas/`
+under `.agents/skills/change-risk`. Publishing validates structure and semantic
+relationships without `--repo`; it does **not** independently verify source paths,
+line ranges, test execution or the truth of claims. The analysis job runs the
+trusted validator with `--repo` and passes its `evidence_valid` job output; a
+missing/false result produces a neutral assessment error. Source existence and
+line bounds still do not prove a claim's meaning or that tests actually passed.
+
+Publishing checks the artifact's head SHA against the pinned assessed SHA and
+suppresses results when the current PR head differs. Keep analysis read-only,
+trusted base instructions, execution budgets and timeouts, separate publishing,
+and neutral errors. A head can move after the final freshness check; exact-SHA
+check association limits this race but cannot make a comment atomic with pushes.
+The fixture tests exercise the publishing shell from its actual sparse layout,
+including invalid, stale and wrong-head artifacts. No live GitHub write is tested
+or enabled. This file remains outside `.github/workflows`.

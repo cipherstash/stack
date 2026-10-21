@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Re-label every holdout finding blind, with a second, independent adjudicator.
+"""Re-label every holdout finding blind, with a second, evaluator-blinded agent adjudicator.
 
     blind_rescore.py prepare            build packets and the (hidden) id maps
     blind_rescore.py run [--jobs 3]     run the adjudicator on every packet

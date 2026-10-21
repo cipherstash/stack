@@ -50,6 +50,7 @@ jobs:
       id-token: write # Anthropic workload-identity federation only
     outputs:
       head_sha: ${{ steps.pin.outputs.head_sha }}
+      evidence_valid: ${{ steps.validate.outputs.valid }}
     steps:
       - name: Pin the head SHA under assessment
         id: pin
@@ -75,7 +76,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             AGENTS.md
-            change-risk-research/.agents/skills/change-risk
+            .agents/skills/change-risk
           sparse-checkout-cone-mode: false
 
       - name: Install base-branch skill
@@ -83,10 +84,10 @@ jobs:
         run: |
           rm -rf .claude AGENTS.md CLAUDE.md
           mkdir -p .claude/skills
-          cp -R .assess-base/change-risk-research/.agents/skills/change-risk .claude/skills/change-risk
+          cp -R .assess-base/.agents/skills/change-risk .claude/skills/change-risk
           rm -rf .claude/skills/change-risk/scripts/tests .claude/skills/change-risk/evals
           [ -f .assess-base/AGENTS.md ] && cp .assess-base/AGENTS.md AGENTS.md
-          mv .assess-base/change-risk-research/.agents/skills/change-risk "$RUNNER_TEMP/skill-base"
+          mv .assess-base/.agents/skills/change-risk "$RUNNER_TEMP/skill-base"
           rm -rf .assess-base
 
       - name: Collect deterministic evidence
@@ -173,7 +174,9 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 1
           persist-credentials: false
-          sparse-checkout: change-risk-research/.agents/skills/change-risk/scripts
+          sparse-checkout: |
+            .agents/skills/change-risk/scripts
+            .agents/skills/change-risk/schemas
           sparse-checkout-cone-mode: false
 
       - name: Download assessment
@@ -189,18 +192,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ASSESSED_SHA: ${{ needs.assess.outputs.head_sha }}
+          EVIDENCE_VALID: ${{ needs.assess.outputs.evidence_valid }}
           PR: ${{ github.event.pull_request.number }}
         run: |
-          S=change-risk-research/.agents/skills/change-risk/scripts
+          S=.agents/skills/change-risk/scripts
           current=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .head.sha)
           if [ "$current" != "$ASSESSED_SHA" ]; then
             echo "outcome=stale" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          if [ ! -f out/assessment.json ]; then
+          if [ "$EVIDENCE_VALID" != true ] || [ ! -f out/assessment.json ]; then
             echo "outcome=error" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          # Re-validate with the base branch's validator: the artifact was
-          # produced by a job that read untrusted content.
+          # Structure/semantics only: no --repo here. Repository path/line
+          # checks ran in assess; require its validation result above.
           if ! python3 "$S/validate_assessment.py" out/assessment.json; then
             echo "outcome=error" >> "$GITHUB_OUTPUT"; exit 0
           fi
@@ -225,8 +229,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
         run: |
           # Advisory: `success` for pass, `neutral` for everything else.
-          # Never `failure`, so the check cannot block a merge even if someone
-          # marks it required by mistake.
+          # Never configure this advisory check as required.
           conclusion=neutral; [ "$OUTCOME" = pass ] && conclusion=success
           title="Change risk: $OUTCOME (advisory)"
           [ -f out/report.md ] || printf 'The assessment did not complete or failed validation (%s). This says nothing about the change.\n' "$OUTCOME" > out/report.md

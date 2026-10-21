@@ -5,7 +5,7 @@
 
 Prints per-finding agreement (raw and Cohen's kappa over the five labels and over sound/not sound),
 the confusion matrix, known-defect matches that differ, and the headline metrics under each set of
-labels. Writes eval/agreement.json.
+labels. Writes eval/agreement-v2.json.
 """
 
 from __future__ import annotations
@@ -74,7 +74,7 @@ def main() -> int:
                       "kappa_5_labels": kappa(all_pairs, LABELS),
                       "kappa_sound": kappa([(sound(a), sound(b)) for a, b in all_pairs], ["sound", "not"]),
                       "confusion_first_by_blind": {f"{a}->{b}": n for (a, b), n in sorted(confusion.items())}}
-    (ROOT / "eval/agreement.json").write_text(json.dumps(out, indent=2) + "\n")
+    (ROOT / "eval/agreement-v2.json").write_text(json.dumps(out, indent=2) + "\n")
 
     o = out["overall"]
     print(f"overall: {o['findings']} findings, raw {o['raw_agreement']}, kappa {o['kappa_5_labels']}, "
@@ -88,13 +88,13 @@ def main() -> int:
     def pct(m: dict) -> str:
         return f"{m['k']}/{m['n']} ({m['value']:.0%})" if m and m.get("n") else "n/a"
 
-    print("\n| Evaluator | Raw agreement | κ (5 labels) | κ (sound) | Precision first | Precision blind "
+    print("\n| Evaluator | Raw agreement | κ (5 labels) | κ (sound) | Scenario validity first | Scenario validity blind "
           "| Recall first | Recall blind | FP/case first | FP/case blind |")
     print("|---|---|---|---|---|---|---|---|---|---|")
     for ev, r in out["by_evaluator"].items():
         a, b = r["metrics_first"], r["metrics_blind"]
         print(f"| {ev} | {r['raw_agreement']} | {r['kappa_5_labels']} | {r['kappa_sound']} "
-              f"| {pct(a['scenario_precision_material'])} | {pct(b['scenario_precision_material'])} "
+              f"| {pct(a['scenario_validity_material'])} | {pct(b['scenario_validity_material'])} "
               f"| {pct(a['known_defect_recall'])} | {pct(b['known_defect_recall'])} "
               f"| {a['false_positive_burden_per_case']} | {b['false_positive_burden_per_case']} |")
         only_first = sorted(set(r["known_defects_first"]) - set(r["known_defects_blind"]))

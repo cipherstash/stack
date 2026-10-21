@@ -251,3 +251,12 @@ For vulnerability disclosures:
 ---
 
 Thank you for helping keep the CipherStash ecosystem secure.
+
+
+## Internal change-risk skill
+
+`.agents/skills/change-risk/` is the canonical on-demand PR impact skill;
+`.claude/skills/change-risk` points to it for Claude discovery. It is internal
+review tooling, separate from customer `skills/`, which the CLI copies into
+`dist/skills`. It adds no published package or automated check. Normal invocation
+and limitations: [change-risk README](change-risk-research/README.md).

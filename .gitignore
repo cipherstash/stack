@@ -122,3 +122,7 @@ languages/golang/auth/wasm/*.sha256
 # wasm:guest:build:deterministic`; under testdata so no binary embeds it.
 languages/golang/encrypt/testdata/*.wasm
 languages/golang/encrypt/testdata/*.sha256
+
+# Python helper and research caches
+__pycache__/
+*.py[cod]

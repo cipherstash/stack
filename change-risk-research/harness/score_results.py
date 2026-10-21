@@ -128,8 +128,8 @@ def score(evaluator_dir: Path, gt: dict, cases: dict, split: str | None, post_ho
         "findings": total,
         "findings_per_case": round(total / len(adj), 2) if adj else None,
         "labels": dict(labels),
-        "scenario_precision_all": prop(good, total),
-        "scenario_precision_material": prop(good, material),
+        "scenario_validity_all": prop(good, total),
+        "scenario_validity_material": prop(good, material),
         "known_defect_recall": prop(kd_hit, kd_total),
         "defect_case_recall": prop(defect_cases_hit, defect_cases),
         "high_impact_attention": prop(hi_attended, hi_cases),
@@ -141,7 +141,13 @@ def score(evaluator_dir: Path, gt: dict, cases: dict, split: str | None, post_ho
         "impact_exact_agreement": prop(exact, len(impact_pairs)),
         "impact_within_one": prop(within, len(impact_pairs)),
         "impact_weighted_kappa": weighted_kappa(impact_pairs),
-        "evidence_quality": prop(ev_ok, ev_n),
+        "material_findings": material,
+        "evidence_checked": ev_n,
+        "evidence_passed": ev_ok,
+        "evidence_failed": ev_n - ev_ok,
+        "evidence_unassessed": material - ev_n,
+        "evidence_verification_coverage": prop(ev_n, material),
+        "evidence_correctness_checked": prop(ev_ok, ev_n),
         "actionability": prop(act_ok, act_n),
         "cost_usd": {"mean": round(sum(cost) / len(cost), 2) if cost else None, "total": round(sum(cost), 2), "n": len(cost)},
         "wall_seconds": {"mean": round(sum(secs) / len(secs), 1) if secs else None, "n": len(secs)},
@@ -163,7 +169,7 @@ def main() -> int:
     for d in sorted(Path(args.adjudication).glob("*/*")):
         if d.is_dir():
             out[f"{d.parent.name}/{d.name}"] = score(d, gt, cases, args.split, args.include_post_hoc)
-    text = json.dumps({"split": args.split or "all", "post_hoc_defects": args.include_post_hoc, "evaluators": out}, indent=2) + "\n"
+    text = json.dumps({"scoring_version": "2", "split": args.split or "all", "post_hoc_defects": args.include_post_hoc, "evaluators": out}, indent=2) + "\n"
     if args.out:
         Path(args.out).write_text(text)
     print(text)
