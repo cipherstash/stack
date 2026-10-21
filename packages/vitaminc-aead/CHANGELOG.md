@@ -8,13 +8,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.8.0] - 2026-10-21
 
+Ciphertexts written by 0.7 still decrypt: the one-byte null it wrote for a `None` opens as `None` as before. The reverse does not hold. A `None` of a fixed-width type now seals as a new kind of leaf, which a 0.7 reader refuses, so upgrade readers before writers.
+
 ### Breaking
 
-- **Breaking:** seal a fixed-width None as a typed null as long as a Some, so ciphertext length no longer shows which values are absent
+- **Breaking:** A `None` of a fixed-width type (an integer, a float, a date, a timestamp, a decimal, a uuid) seals as a typed null, padded to the length of a `Some` of the type. AES-GCM keeps the plaintext's length, and a one-byte null stood in for a value of up to seventeen, so anyone holding the ciphertexts could list the absent rows of a column without a key. A typed null is the new `TYPED_NULL` tag, the header a value of the type starts with, then zero padding; it opens only as `None` of an `Option` of a type that reads values of that type, so a widened field (`u32` to `u64`, `f32` to `f64`) reads its old `None`s as it reads its old values, and any other target refuses it as the wrong kind. A `None` of a bool, text or bytes still seals as the one-byte null, since those types have no fixed length to pad to.
+- **Breaking:** `Sink` has a new required method, `typed_null`. A sink that only needs to know a value is absent treats it as a null. A sink that forwards to other sinks must forward it as it is, or the padding is lost and absent values show again.
+- **Breaking:** `Encrypt` gains a `FIXED` constant, the type's fixed width if it has one, and `Decrypt` gains `reads_null`, which says whether an `Option` of the type reads a given typed null as `None`. Both have defaults, so existing impls compile. A hand-written scalar type sets `FromScalar::FIXED` only if it refuses zero, such as a fieldless enum with no variant at zero, so that its own `None` reads back.
 
-### Fixes
+### Not guaranteed
 
-- address review of the typed null: plain null in frames, widening-tolerant reads, uuid
+- Padding belongs to the sealed leaf, not to a frame. A frame is never sealed, so every frame this crate writes (`decrypt_to_frame`, `to_frame`, a passthrough subtree) carries the plain one-byte null, and a frame a host sends may carry either.
 
 ## [0.7.0] - 2026-10-20
 

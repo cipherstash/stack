@@ -1,9 +1,7 @@
 
 ## [0.8.0] - 2026-10-21
 
-### Breaking
-
-- **Breaking:** seal a fixed-width None as a typed null as long as a Some, so ciphertext length no longer shows which values are absent
+The `serde` format refuses a typed null (`vitaminc-aead` 0.8.0) as malformed wherever it appears, an `Option` included, and never writes one. A typed null is how plaintext hides the length of an absent fixed-width value once sealed, which is no concern of data that is not sealed. The frame's bytes are otherwise unchanged.
 
 ## [0.7.0] - 2026-10-20
 
