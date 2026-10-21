@@ -115,19 +115,46 @@ Option 2.
    The decorator is the one that also works with the bases the first
    user's classes already have (option 3).
 2. **One decorator, and it carries the context.**
-   `@stash.model("users")`, with one argument: the table.
+   `@stash.model("users")`, with one required argument: the table.
+   Its one option, `redact=False`, is decision 9's and changes no label.
    The engine's target context is exactly a table and a column, and the
    column is the field's name, so the class needs nothing more.
+   That name is an input to the key ZeroKMS derives and to the
+   authentication tag, so it is permanent once a row is written: a rename
+   in Python changes both, and no stored row opens.
+   A rename is a migration, and the first version has none.
+   A field that names its column part itself, so the attribute can move
+   while the label stays, is deferred with the Go SDK's #1308, so both
+   SDKs get one answer, including what `i.c` then holds.
+   Where the library shows a column name that differs from the attribute,
+   SQLAlchemy's `mapped_column("email_addr")`, the decorator refuses at the
+   class statement, since `i.c` would not match the SQL column.
+   A Pydantic alias is a JSON name, not a column, and is left alone.
    The name is open to the reviewers; the alternatives are
    `@stash.encrypted(...)` and `@stash.declare(...)`.
    The argument is documented once as the engine's `context`.
    A record that names its own tenant (the engine's `context_field`) is
    a record-level setting in the plan grammar, so if the SDK supports it,
    it is a second decorator argument and not a field marker.
-   The first version does not support it; a tenant attaches to the cipher.
-3. **The decorator does four things and nothing else.**
-   It reads the hints, builds the field map, asks the engine to check the
-   plan, and stores the result on the class under one dunder attribute.
+   The first version has no per-caller tenant, by either route.
+   On `next` the engine refuses both for a field that names an EQL type,
+   because the field's label becomes the EQL value's `i` and must be
+   exactly a table and a column: an extended cipher is refused with
+   `TargetError::Extended`, and a plan with `context_field` with
+   `TargetError::ContextField` (`packages/stack-encrypt/src/dynamic/record.rs`).
+   Every sealed marker in this ADR names an EQL type, so the refusal
+   covers every sealed field.
+   The route that fits an EQL field is the ZeroKMS lock context, bound
+   into the key and not into the label, which stack-encrypt does not send
+   yet (#1067).
+3. **The decorator does five things and nothing else.**
+   It reads the field list, builds the field map, asks the engine to check
+   the plan, stores the result on the class under one dunder attribute,
+   and writes the print methods of decision 9.
+   It stores it in the class's own `__dict__`, so a subclass does not
+   inherit it: a subclass is decorated itself, and its decorator checks
+   every field the subclass has, inherited or added, since
+   `get_type_hints` returns both.
    It makes no network request and needs no credentials.
 
    Two checks run, and they are not the same check:
@@ -141,24 +168,49 @@ Option 2.
 4. **The call site takes the class.** `Cipher(User)`.
    `Cipher` refuses a class the decorator has not seen, with the remedy in
    the message.
+   It looks for the decorator's attribute in `cls.__dict__`, not through
+   `getattr`, so an undecorated subclass of a decorated class is refused
+   with the same message.
    No public name is called a plan or returns one.
 
    `DeclarationError` and that refusal are built from structured facts:
    the field name and the engine's `Reason`, as the language-integration
-   guide gives them, never by parsing the engine's message text.
+   guide (`packages/stack-encrypt/docs/language-integration.md`, PR #1287,
+   open on `next` as this ADR is written) gives them, never by parsing
+   the engine's message text.
    No message carries a value.
    A dataclass default is a value, so a message names the field and not
    its default.
 5. **The model contract is a `Protocol`, not a dataclass.**
    A model class must give:
-   - field hints that `typing.get_type_hints(cls, include_extras=True)`
-     returns, each carrying its stash markers in `Annotated`;
+   - a field list, each field carrying its stash markers in `Annotated`;
    - a constructor that accepts every declared field as a keyword argument;
    - attribute access by field name on an instance.
+
+   The field list is the library's own where one exists:
+   `dataclasses.fields`, `attrs.fields`, Pydantic's `model_fields`, and
+   SQLAlchemy's mapper columns.
+   Those lists exist because the decorator is outermost, and they leave
+   out what is not a column: `ClassVar`, `InitVar`, Pydantic's
+   `model_config`, and a SQLAlchemy relationship.
+   For a class with no such list, the fields are the hints that
+   `typing.get_type_hints(cls, include_extras=True)` returns, minus
+   `ClassVar` and `InitVar`.
+   A field's hint is evaluated at decoration.
+   One that cannot be evaluated then, a forward reference under
+   `from __future__ import annotations` or a deferred annotation on 3.14,
+   is a `DeclarationError` naming the field; a relationship never reaches
+   that point, since it is not in the column list.
+   Skipping a relationship covers only this class: the related class is
+   checked by its own decorator, or not at all, and `Cipher(Post)` refuses
+   an undecorated `Post` as decision 4 says.
 
    The first two are checked at decoration.
    The constructor check reads `inspect.signature(cls)` and accepts a
    `**kwargs` parameter.
+   A base that supplies one, Pydantic or SQLAlchemy, passes that check in
+   any decorator order, so decision 9 adds a second order check at
+   `Cipher(User)`.
    The third is checked only when a row is read; Python cannot check it
    earlier.
    `is_dataclass` is not the guard: it rejects classes that meet the
@@ -186,6 +238,12 @@ Option 2.
    `Passthrough` is the one hand-written marker: a field stored as it is,
    and the engine's word for it (principle G2).
    Markers are names, not calls.
+   The decorator finds a marker by identity, not by name: it walks the
+   `Annotated` metadata and keeps the objects that are stash markers, so
+   another library's metadata on the same field is ignored, and a marker
+   from another package that is also called `TextEq` is not a stash marker
+   and leaves the field unmarked, which rule A refuses by field name.
+   Two stash markers on one field is a refusal: one field, one marker.
 
    | Field | Spelling |
    | --- | --- |
@@ -200,7 +258,8 @@ Option 2.
    That spelling needs a Python copy of the catalog's kind-and-index
    table, which is what G1 forbids, so it was dropped at review.
 
-9. **A model never prints a sealed value, by default.**
+9. **A model does not print a sealed value through `repr`, `str` or
+   `logging`, by default.**
    The decorator writes `__repr__` and `__str__` on the class it
    decorates and on the encrypted type the SDK returns.
    Both print the passthrough fields and `[sealed]` in place of each
@@ -211,6 +270,15 @@ Option 2.
    `repr=False` is needed, and none is read.
    Python's `logging` calls `__str__`, so logs are covered by the same
    methods.
+   Serialisation is not printing and is not covered: `dataclasses.asdict`,
+   `attrs.asdict`, Pydantic's `model_dump` and `model_dump_json`, `vars`,
+   a NamedTuple's `_asdict`, iteration and indexing all return the
+   plaintext, because the user asked for the data, and that is how a row
+   reaches an ORM.
+   A log line that formats one of those is the user's print, not the
+   model's.
+   The linter rule below should report those calls on a model when it
+   reports a print.
    `@stash.model("users", redact=False)` is the class-level opt-out.
    A class that defines its own `__repr__` or `__str__` by hand is
    refused at the class statement with the remedy named (`redact=False`,
@@ -218,6 +286,26 @@ Option 2.
    user wrote.
    The methods `dataclass`, attrs and Pydantic generate are replaced,
    since the decorator is outermost.
+   The rule that tells the two apart looks only at `cls.__dict__`.
+   A method there whose code comes from the class's own module file
+   (`__code__.co_filename`) is hand-written and refused; one from another
+   file, the standard library for `dataclass` or attrs' generated source,
+   is generated and replaced.
+   A method the user assigns from another module is therefore replaced,
+   not refused; that is the one known miss, and `redact=False` is its
+   answer.
+   An inherited method is not in `cls.__dict__` and is neither refused
+   nor touched: Pydantic's `BaseModel.__repr__`, or a hand-written one on
+   a SQLAlchemy `Base`, stays for undecorated classes, and the decorated
+   class's own method shadows it, as a subclass override does.
+   The decorator keeps the methods it wrote in the result it stores under
+   the dunder attribute (decision 3), and `Cipher(User)` checks by
+   identity that `cls.__dict__` still holds them; a decorator that ran
+   later and replaced one means this decorator was not outermost, and
+   `Cipher` refuses with the wrong-order message.
+   That closes the case where a base class supplies a `**kwargs`
+   constructor and the constructor check in decision 5 passes in any
+   order.
    This is Go's `stashgen -redact` made the default, which Python can do
    because the decorator holds the user's class and a generator does not.
    A linter rule that reports a print of an opted-out model is open
@@ -269,8 +357,11 @@ defined, does not depend on the plan's wire form.
 The rig is not committed.
 
 Not run: the error text a user sees, which the restart builds from the
-engine's structured reason fields; and the replacement of the
-`__repr__` that attrs and Pydantic generate, which the probe did not cover.
+engine's structured reason fields; the replacement of the `__repr__`
+that attrs and Pydantic generate, which the probe did not cover; and the
+hand-written-method rule of decision 9 across Python versions, run on
+3.14.2 only, where `dataclass`'s `__repr__` reports `reprlib.py` as its
+file and a hand-written one reports the class's module.
 
 ## Consequences
 
@@ -295,9 +386,11 @@ engine's structured reason fields; and the replacement of the
   wrong order with the fix.
 - A class the user does not own gains one dunder attribute.
   That is what `dataclass` and `attrs` do too.
-- One context per class.
-  What varies per caller, such as a tenant, attaches to the cipher through
-  the engine's extend (principle G4), not to the class.
+- One context per class, and no per-caller part in the first version.
+  Principle G4 puts what varies per caller on the cipher, not on the
+  class, but the engine refuses an extended cipher for an EQL-typed field
+  (decision 2), so per-caller tenant or per-user locking on these fields
+  waits on the ZeroKMS lock context (#1067).
 - `Plan`, `PlanBuilder` and `PlanSpec` leave the public surface.
   The engine's plan grammar still exists behind the decorator; the user
   never names it.
