@@ -1,4 +1,14 @@
 
+## [0.8.0] - 2026-10-21
+
+### Breaking
+
+- **Breaking:** seal a fixed-width None as a typed null as long as a Some, so ciphertext length no longer shows which values are absent
+
+### Fixes
+
+- address review of the typed null: plain null in frames, widening-tolerant reads, uuid
+
 ## [0.7.0] - 2026-10-20
 
 ## [0.6.1] - 2026-10-18
