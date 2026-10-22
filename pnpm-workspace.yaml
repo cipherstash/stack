@@ -42,13 +42,13 @@ catalogs:
     tsup: 8.5.1
     tsx: 4.23.15
     typescript: 5.9.3
-    vitest: 4.1.11
+    vitest: 4.1.12
     # Must track `vitest` exactly: the coverage provider is versioned in
     # lockstep with the runner, and vitest refuses to start against a mismatched
     # one ("Vitest failed to load @vitest/coverage-v8"). Enforced by a test
     # rather than by this comment: see `e2e/tests/supply-chain.e2e.test.ts`. Dependabot
     # groups both under `dev-dependencies` and will otherwise move one alone.
-    '@vitest/coverage-v8': 4.1.11
+    '@vitest/coverage-v8': 4.1.12
   security:
     '@clerk/nextjs': 7.9.14
     next: 15.5.27
