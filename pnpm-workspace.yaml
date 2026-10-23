@@ -169,6 +169,10 @@ overrides:
   # #246 GHSA-wq5f-xc86-pv6w / CVE-2026-96889 — bundled librsvg memory-safety
   # bug (possible RCE); raised to 0.35.5 (published 2026-09-27).
   'sharp@<0.35.5': '0.35.5'
+  # GHSA-rxp7-6hxx-x8q5 / CVE-2026-111997 (Dependabot #257) — ip-address <=10.7.3,
+  # patched 10.7.4 (published 2026-10-11). Transitive via
+  # express-rate-limit > @modelcontextprotocol/sdk, which declares a range that admits it.
+  'ip-address@<10.7.4': '10.7.4'
 
 # Supply-chain hardening — see skills/stash-supply-chain-security/
 # 7 days in minutes; mirrors the Dependabot cooldown so manual + automated
