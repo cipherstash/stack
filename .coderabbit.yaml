@@ -1,0 +1,99 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit reviews a pull request from this repository with the copy of this
+# file on the PR's own branch, so a PR can change its own review. The settings
+# a PR must not be able to change live in the CodeRabbit organisation's Global
+# Overrides instead, which win over this file:
+#
+#   reviews.request_changes_workflow: false     (advisory only)
+#   reviews.finishing_touches.*: disabled       (nothing commits or opens PRs)
+#   reviews.path_instructions for .github/** and
+#     languages/typescript/packages/**/src/**   (the security instructions)
+#   chat.allow_non_org_members: false
+#   knowledge_base.web_search: disabled
+#   knowledge_base.learnings.scope: local
+#
+# Edit those in the CodeRabbit UI, not here. `@coderabbitai configuration` on
+# any PR prints the resolved settings with the source of each value.
+language: en-AU
+tone_instructions: "Plain and direct. For a security finding, name who controls the input and what they gain. No praise."
+
+reviews:
+  profile: chill
+  allow_author_approval: false      # a PR branch cannot turn this back on
+  high_level_summary: false         # PR bodies are written by hand; don't rewrite them
+  high_level_summary_in_walkthrough: true
+  review_details: true              # rollout only: shows which guidelines and tools were used
+  poem: false
+  in_progress_fortune: false
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  suggested_labels: false
+  suggested_reviewers: false
+  enable_prompt_for_ai_agents: true # feeds the local autofix skill
+
+  auto_review:
+    enabled: true
+    drafts: false                   # a draft is the debounce; ready-for-review starts the first review
+    base_branches: [".*"]           # stacked PRs too; the default branch is always included
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 3
+    ignore_title_keywords: ["Version Packages", "WIP"]
+    ignore_usernames: ["dependabot[bot]", "github-actions[bot]", "changeset-bot[bot]"]
+
+  path_filters:
+    - "!docs/plans/**"
+    - "!**/__snapshots__/**"
+    - "!**/*.snap"
+    - "!**/CHANGELOG.md"
+
+  path_instructions:
+    - path: "packages/eql/**/*.sql"
+      instructions: "PostgreSQL extension SQL. Flag SQL built by string concatenation, SECURITY DEFINER without a pinned search_path, and changes to eql_v3 domain or operator signatures without a matching change in the Rust that emits payloads."
+    - path: "packages/**/*.rs"
+      instructions: "Rust crypto and auth crates. Flag secrets that implement Debug or Display, key material not zeroized, nonce reuse, unchecked unwrap on input from outside the process, and unsafe without a SAFETY comment."
+    - path: "languages/typescript/packages/protect-ffi/crates/**/*.rs"
+      instructions: "Rust crypto and auth crates. Flag secrets that implement Debug or Display, key material not zeroized, nonce reuse, unchecked unwrap on input from outside the process, and unsafe without a SAFETY comment."
+    - path: "skills/**/SKILL.md"
+      instructions: "Ships to customers inside the stash npm tarball. Every command and flag named must exist. No Linear issue IDs (CIP-1234). Each SKILL.md must stand alone: sibling files are dropped when it is inlined into AGENTS.md."
+
+  pre_merge_checks:
+    title: { mode: "off" }
+    description: { mode: "off" }
+    docstrings: { mode: "off" }
+    issue_assessment: { mode: warning }
+    custom_checks:
+      - name: Changeset
+        mode: warning
+        instructions: "Fail if files under languages/typescript/packages/*/src, packages/eql/packages/eql, or skills/ changed and no .changeset/*.md file was added. A skills-only change needs a 'stash' patch changeset. Fail if any .changeset file ends in .md.deferred. Pass for changes that only touch tests, scripts/, docs/ or .github/."
+      - name: Customer skills
+        mode: warning
+        instructions: "If the CLI command registry, CLI flags, or a public export of @cipherstash/stack, stack-drizzle, stack-supabase, stack-prisma or the dynamodb entry changed, fail unless the matching skills/*/SKILL.md (per the table in AGENTS.md 'Agent Skills') also changed, or the PR description explains why no skill is affected."
+      - name: Layout docs
+        mode: warning
+        instructions: "If a package, example, skill or subpath export was added, removed or renamed, fail unless AGENTS.md 'Repository Layout' and the package list in SECURITY.md changed in the same PR."
+      - name: Public text hygiene
+        mode: warning
+        instructions: "Fail if an added line under skills/ contains a Linear issue ID (pattern [A-Z]{2,5}-[0-9]+, e.g. CIP-1234). Fail if a workflow file is added under any directory other than the root .github/workflows/."
+
+  tools:
+    biome: { enabled: true }        # uses the repo biome.json
+    eslint: { enabled: false }
+    oxc: { enabled: false }
+    actionlint: { enabled: true }
+    zizmor: { enabled: true }       # CI does not run it today
+    shellcheck: { enabled: true }
+    gitleaks: { enabled: true }     # runs Betterleaks
+    skillspector: { enabled: true } # static scan of changed SKILL.md files
+    github-checks: { enabled: true }
+    osvScanner: { enabled: false }  # osv-scanner.yml already runs
+    golangci-lint: { enabled: false } # tests-golang.yml already runs
+    sqlfluff: { enabled: false }    # EQL is PL/pgSQL; no sqlfluff config yet
+    markdownlint: { enabled: false }
+    languagetool: { enabled: false }
+
+chat:
+  art: false
+
+knowledge_base:
+  code_guidelines: { enabled: true }
